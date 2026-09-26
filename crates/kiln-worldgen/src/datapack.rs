@@ -93,7 +93,7 @@ impl Datapack {
                 rules.insert(id, r);
             }
             for (id, json) in entries(&worldgen.join("material_condition"), &ns)? {
-                let c = parse_condition(&mut graph, &json).map_err(|e| e.context(&id))?;
+                let c = parse_condition(&json).map_err(|e| e.context(&id))?;
                 conditions.insert(id, c);
             }
             biomes.extend(entries(&worldgen.join("biome"), &ns)?);

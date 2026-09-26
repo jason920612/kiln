@@ -126,7 +126,7 @@ pub fn parse_rule(graph: &mut Graph, json: &Json) -> Result<Ref<RuleDef>, Error>
             RuleDef::Sequence(list)
         }
         "condition" => RuleDef::Condition {
-            if_true: parse_condition(graph, field(json, "if_true")?)?,
+            if_true: parse_condition(field(json, "if_true")?)?,
             then_run: parse_rule(graph, field(json, "then_run")?)?,
         },
         "ore_vein" => RuleDef::OreVein {
@@ -147,7 +147,7 @@ pub fn parse_rule(graph: &mut Graph, json: &Json) -> Result<Ref<RuleDef>, Error>
 }
 
 /// `MaterialCondition.CODEC`.
-pub fn parse_condition(graph: &mut Graph, json: &Json) -> Result<Ref<CondDef>, Error> {
+pub fn parse_condition(json: &Json) -> Result<Ref<CondDef>, Error> {
     if let Some(name) = json.as_str() {
         return Ok(Ref::Named(qualify(name)));
     }
@@ -193,7 +193,7 @@ pub fn parse_condition(graph: &mut Graph, json: &Json) -> Result<Ref<CondDef>, E
         },
         "temperature" => CondDef::Temperature,
         "steep" => CondDef::Steep,
-        "not" => CondDef::Not(parse_condition(graph, field(json, "invert")?)?),
+        "not" => CondDef::Not(parse_condition(field(json, "invert")?)?),
         "hole" => CondDef::Hole,
         "above_preliminary_surface" => CondDef::AbovePreliminarySurface,
         "stone_depth" => CondDef::StoneDepth {
