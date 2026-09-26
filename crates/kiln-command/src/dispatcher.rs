@@ -1,11 +1,12 @@
 //! The command tree and Brigadier's algorithms: parsing with backtracking over literal and
-//! argument children, execution through redirects, completion and usage strings, plus the
+//! argument children, execution through redirects (with redirect modifiers and forks, run the
+//! way 26.3's queued execution runs them), completion and usage strings, plus the
 //! per-permission-level commands packet.
 
 use crate::arguments::{ArgumentType, ArgumentValue, GameProfileArg, MessageArg};
 use crate::coords::Coordinates;
 use crate::error::CommandError;
-use crate::host::Source;
+use crate::host::{Source, SourceStack};
 use crate::reader::StringReader;
 use crate::selector::{EntitySelector, SELECTOR_PERMISSION};
 use crate::suggestion::{Suggestions, SuggestionsBuilder};
@@ -16,9 +17,13 @@ use std::sync::Arc;
 
 pub type Handler<S> = Arc<dyn Fn(&CommandContext<S>, &mut S) -> Result<i32, CommandError> + Send + Sync>;
 pub type SuggestFn<S> = Arc<dyn Fn(&CommandContext<S>, &S, &mut SuggestionsBuilder) + Send + Sync>;
+/// Brigadier's `RedirectModifier`: the sources a redirect continues with, derived from the
+/// current one (set on `S` while it runs); may be empty.
+pub type Modifier<S> =
+    Arc<dyn Fn(&CommandContext<S>, &mut S) -> Result<Vec<SourceStack<S>>, CommandError> + Send + Sync>;
 
 /// Custom suggestions for an argument node.
-pub enum SuggestionProvider<S> {
+pub enum SuggestionProvider<S: Source> {
     /// A provider the client implements, e.g. `minecraft:summonable_entities`.
     Named(&'static str),
     /// `minecraft:ask_server`: the client sends a `command_suggestion` request and the server
@@ -26,7 +31,7 @@ pub enum SuggestionProvider<S> {
     Server(SuggestFn<S>),
 }
 
-impl<S> Clone for SuggestionProvider<S> {
+impl<S: Source> Clone for SuggestionProvider<S> {
     fn clone(&self) -> Self {
         match self {
             SuggestionProvider::Named(n) => SuggestionProvider::Named(n),
@@ -35,7 +40,7 @@ impl<S> Clone for SuggestionProvider<S> {
     }
 }
 
-impl<S> SuggestionProvider<S> {
+impl<S: Source> SuggestionProvider<S> {
     fn id(&self) -> &'static str {
         match self {
             SuggestionProvider::Named(n) => n,
@@ -64,36 +69,49 @@ impl NodeKind {
     }
 }
 
-struct Node<S> {
+struct Node<S: Source> {
     kind: NodeKind,
     children: Vec<NodeId>,
     command: Option<Handler<S>>,
     redirect: Option<NodeId>,
+    modifier: Option<Modifier<S>>,
+    forks: bool,
     permission: u8,
     suggestions: Option<SuggestionProvider<S>>,
 }
 
 /// A node under construction, as with Brigadier's `literal(...)` and `argument(...)`.
-pub struct Builder<S> {
+pub struct Builder<S: Source> {
     kind: NodeKind,
     children: Vec<Builder<S>>,
     command: Option<Handler<S>>,
     redirect: Option<NodeId>,
+    modifier: Option<Modifier<S>>,
+    forks: bool,
     permission: u8,
     suggestions: Option<SuggestionProvider<S>>,
 }
 
-pub fn literal<S>(name: &str) -> Builder<S> {
+pub fn literal<S: Source>(name: &str) -> Builder<S> {
     Builder::new(NodeKind::Literal(name.to_owned()))
 }
 
-pub fn argument<S>(name: &str, ty: ArgumentType) -> Builder<S> {
+pub fn argument<S: Source>(name: &str, ty: ArgumentType) -> Builder<S> {
     Builder::new(NodeKind::Argument { name: name.to_owned(), ty })
 }
 
-impl<S> Builder<S> {
+impl<S: Source> Builder<S> {
     fn new(kind: NodeKind) -> Self {
-        Builder { kind, children: Vec::new(), command: None, redirect: None, permission: 0, suggestions: None }
+        Builder {
+            kind,
+            children: Vec::new(),
+            command: None,
+            redirect: None,
+            modifier: None,
+            forks: false,
+            permission: 0,
+            suggestions: None,
+        }
     }
 
     pub fn then(mut self, child: Builder<S>) -> Self {
@@ -120,6 +138,35 @@ impl<S> Builder<S> {
     pub fn redirect(mut self, target: NodeId) -> Self {
         assert!(self.children.is_empty(), "cannot redirect a node with children");
         self.redirect = Some(target);
+        self
+    }
+
+    /// `redirect(target, SingleRedirectModifier)`: continues at `target` with the one source
+    /// `f` derives (e.g. `execute positioned`).
+    pub fn redirect_with(
+        self,
+        target: NodeId,
+        f: impl Fn(&CommandContext<S>, &mut S) -> Result<SourceStack<S>, CommandError> + Send + Sync + 'static,
+    ) -> Self {
+        self.forward(target, Arc::new(move |c, s| f(c, s).map(|stack| vec![stack])), false)
+    }
+
+    /// `fork(target, RedirectModifier)`: continues at `target` once per source `f` returns
+    /// (e.g. `execute as`); failures after a fork are not reported.
+    pub fn fork(
+        self,
+        target: NodeId,
+        f: impl Fn(&CommandContext<S>, &mut S) -> Result<Vec<SourceStack<S>>, CommandError> + Send + Sync + 'static,
+    ) -> Self {
+        self.forward(target, Arc::new(f), true)
+    }
+
+    /// `forward(target, modifier, fork)`.
+    pub fn forward(mut self, target: NodeId, modifier: Modifier<S>, fork: bool) -> Self {
+        assert!(self.children.is_empty(), "cannot redirect a node with children");
+        self.redirect = Some(target);
+        self.modifier = Some(modifier);
+        self.forks = fork;
         self
     }
 
@@ -165,14 +212,6 @@ impl ContextBuilder {
     fn with_node(&mut self, node: NodeId, start: usize, end: usize) {
         self.nodes.push((node, start, end));
         self.range = (self.range.0.min(start), self.range.1.max(end));
-    }
-
-    fn last_child(&self) -> &ContextBuilder {
-        let mut c = self;
-        while let Some(child) = &c.child {
-            c = child;
-        }
-        c
     }
 
     /// The node whose children complete the text at `cursor`, and where completion starts.
@@ -233,13 +272,13 @@ impl ParseResults<'_> {
 }
 
 /// Arguments and nodes of the context a command runs in (the last one after redirects).
-pub struct CommandContext<'a, S> {
+pub struct CommandContext<'a, S: Source> {
     dispatcher: &'a Dispatcher<S>,
     input: &'a str,
     context: &'a ContextBuilder,
 }
 
-impl<'a, S> CommandContext<'a, S> {
+impl<'a, S: Source> CommandContext<'a, S> {
     pub fn input(&self) -> &'a str {
         self.input
     }
@@ -272,7 +311,7 @@ impl<'a, S> CommandContext<'a, S> {
 
 macro_rules! getters {
     ($($fn:ident: $variant:ident => $ty:ty $(, $deref:tt)?;)*) => {
-        impl<'a, S> CommandContext<'a, S> {
+        impl<'a, S: Source> CommandContext<'a, S> {
             $(
                 #[doc = concat!("The `", stringify!($variant), "` argument `name`; panics if missing or of another type.")]
                 pub fn $fn(&self, name: &str) -> $ty {
@@ -302,27 +341,41 @@ getters! {
     anchor: Anchor => Anchor, *;
     game_mode: GameMode => GameMode, *;
     time: Time => i32, *;
+    block_state: BlockState => &'a crate::blocks::BlockInput;
+    block_predicate: BlockPredicate => &'a crate::blocks::BlockPredicate;
+    swizzle: Swizzle => [bool; 3], *;
+    heightmap: Heightmap => crate::types::Heightmap, *;
+    score_holder: ScoreHolder => &'a crate::arguments::ScoreHolderArg;
+    operation: Operation => crate::arguments::Operation, *;
+    int_range: IntRange => crate::range::IntRange, *;
+    double_range: DoubleRange => crate::range::DoubleRange, *;
+    nbt_path: NbtPath => &'a crate::nbt_path::NbtPath;
+    resource_or_tag: ResourceOrTag => &'a crate::arguments::ResourceOrTag;
+    component: Component => &'a crate::component::Component;
+    nbt: Nbt => &'a kiln_proto::nbt::Tag;
 }
 
 /// A command tree over sources of type `S`.
-pub struct Dispatcher<S> {
+pub struct Dispatcher<S: Source> {
     nodes: Vec<Node<S>>,
     parents: Vec<Option<NodeId>>,
 }
 
-impl<S> Default for Dispatcher<S> {
+impl<S: Source> Default for Dispatcher<S> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<S> Dispatcher<S> {
+impl<S: Source> Dispatcher<S> {
     pub fn new() -> Self {
         let root = Node {
             kind: NodeKind::Root,
             children: Vec::new(),
             command: None,
             redirect: None,
+            modifier: None,
+            forks: false,
             permission: 0,
             suggestions: None,
         };
@@ -354,6 +407,8 @@ impl<S> Dispatcher<S> {
                     children: Vec::new(),
                     command: b.command,
                     redirect: b.redirect,
+                    modifier: b.modifier,
+                    forks: b.forks,
                     permission: b.permission,
                     suggestions: b.suggestions,
                 });
@@ -534,6 +589,10 @@ impl<S: Source> Dispatcher<S> {
 
     /// Runs a parse result. Parse errors carry the input and cursor; errors raised by the
     /// command itself do not (vanilla shows only their message).
+    ///
+    /// Returns the error to show the source, if any, or the sum of the results of every
+    /// execution (the source's stack is restored afterwards). After a fork, failures are
+    /// silent, as vanilla handles them.
     pub fn execute_parsed(&self, parse: &ParseResults, source: &mut S) -> Result<i32, CommandError> {
         if parse.cursor < parse.input.len() {
             if let [(_, e)] = parse.errors.as_slice() {
@@ -546,13 +605,82 @@ impl<S: Source> Dispatcher<S> {
             };
             return Err(e.with_context(parse.input, parse.cursor));
         }
-        let last = parse.context.last_child();
-        let Some(node) = last.command else {
+        let mut chain = vec![&parse.context];
+        while let Some(child) = &chain[chain.len() - 1].child {
+            chain.push(child);
+        }
+        let Some(command) = chain[chain.len() - 1].command else {
             return Err(CommandError::unknown_command().with_context(parse.input, parse.cursor));
         };
-        let handler = self.node(node).command.clone().expect("command node has a handler");
-        let ctx = CommandContext { dispatcher: self, input: parse.input, context: last };
-        handler(&ctx, source).map_err(CommandError::without_context)
+        let original = source.stack().clone();
+        let result = self.run_chain(&chain, command, parse.input, source);
+        *source.stack_mut() = original;
+        result
+    }
+
+    /// `BuildContexts.execute` then one `ExecuteCommand` per source: every modifier stage runs
+    /// for all current sources (at most `max_command_forks` per stage), then the command runs
+    /// once per resulting source while `max_command_sequence_length` allows, telling each
+    /// source's result callbacks the outcome.
+    fn run_chain(
+        &self,
+        chain: &[&ContextBuilder],
+        command: NodeId,
+        input: &str,
+        source: &mut S,
+    ) -> Result<i32, CommandError> {
+        let fork_limit = source.fork_limit();
+        let mut quota = source.command_limit().max(1);
+        let mut forked = false;
+        let mut sources = vec![source.stack().clone()];
+        for &ctx in &chain[..chain.len() - 1] {
+            let Some(&(last, _, _)) = ctx.nodes.last() else { continue };
+            let node = self.node(last);
+            forked |= node.forks;
+            let Some(modifier) = node.modifier.clone() else { continue };
+            quota -= 1;
+            let cctx = CommandContext { dispatcher: self, input, context: ctx };
+            let mut next = Vec::new();
+            for stack in sources {
+                *source.stack_mut() = stack;
+                match modifier(&cctx, source) {
+                    Ok(found) => {
+                        if next.len() + found.len() >= fork_limit {
+                            return if forked { Ok(0) } else { Err(CommandError::fork_limit(fork_limit)) };
+                        }
+                        next.extend(found);
+                    }
+                    Err(_) if forked => {}
+                    Err(e) => return Err(e.without_context()),
+                }
+            }
+            sources = next;
+        }
+        let handler = self.node(command).command.clone().expect("command node has a handler");
+        let ctx = CommandContext { dispatcher: self, input, context: chain[chain.len() - 1] };
+        let mut total = 0i32;
+        for stack in sources {
+            if quota <= 0 {
+                break;
+            }
+            quota -= 1;
+            *source.stack_mut() = stack;
+            let result = handler(&ctx, source);
+            let (success, value) = match &result {
+                Ok(v) => (true, *v),
+                Err(_) => (false, 0),
+            };
+            let callbacks = source.stack().callbacks.clone();
+            for callback in &callbacks {
+                callback(source, success, value);
+            }
+            match result {
+                Ok(v) => total = total.wrapping_add(v),
+                Err(_) if forked => {}
+                Err(e) => return Err(e.without_context()),
+            }
+        }
+        Ok(total)
     }
 
     /// Completions at byte `cursor` of `input` (which is parsed in full, as Brigadier does).
@@ -694,7 +822,7 @@ impl<S: Source> Dispatcher<S> {
     }
 }
 
-impl<S> Dispatcher<S> {
+impl<S: Source> Dispatcher<S> {
     /// The `commands` packet for a player at permission `level`: the nodes that level may use
     /// (`Commands.sendCommands`), numbered breadth-first like `ClientboundCommandsPacket`.
     pub fn commands_packet(&self, level: u8) -> Bytes {
@@ -760,16 +888,152 @@ mod tests {
     struct Src {
         level: u8,
         log: Vec<String>,
+        stack: SourceStack<Src>,
+        forks: usize,
+        limit: i32,
     }
 
     impl Source for Src {
+        type Entity = crate::selector::NoEntity;
         fn permission_level(&self) -> u8 {
             self.level
+        }
+        fn stack(&self) -> &SourceStack<Src> {
+            &self.stack
+        }
+        fn stack_mut(&mut self) -> &mut SourceStack<Src> {
+            &mut self.stack
+        }
+        fn fork_limit(&self) -> usize {
+            self.forks
+        }
+        fn command_limit(&self) -> i32 {
+            self.limit
         }
     }
 
     fn src(level: u8) -> Src {
-        Src { level, log: Vec::new() }
+        let stack = SourceStack::new(crate::text::Text::literal("Server"), "minecraft:overworld", [0.0; 3]);
+        Src { level, log: Vec::new(), stack, forks: 65536, limit: 65536 }
+    }
+
+    /// `run` redirects to the root; `each <n>` forks into n sources at x = 0..n; `move <x>`
+    /// moves without forking; `fail` fails; `x` reports the source's x.
+    fn forking_tree() -> Dispatcher<Src> {
+        let mut d: Dispatcher<Src> = Dispatcher::new();
+        let exec = d.register(literal("exec"));
+        d.register(
+            literal("exec")
+                .then(literal("run").redirect(d.root()))
+                .then(argument("n", ArgumentType::integer_min(0)).fork(exec, |c, s: &mut Src| {
+                    Ok((0..c.integer("n")).map(|i| s.stack().clone().with_position([i as f64, 0.0, 0.0])).collect())
+                }))
+                .then(literal("move").then(argument("x", ArgumentType::integer()).redirect_with(exec, |c, s: &mut Src| {
+                    Ok(s.stack().clone().with_position([c.integer("x") as f64, 0.0, 0.0]))
+                })))
+                .then(literal("bad").redirect_with(exec, |_, _| Err(CommandError::unknown_argument())))
+                .then(literal("store").redirect_with(exec, |_, s: &mut Src| {
+                    Ok(s.stack().clone().with_callback(Arc::new(|s: &mut Src, ok, v| s.log.push(format!("store {ok} {v}")))))
+                })),
+        );
+        d.register(literal("x").executes(|_, s: &mut Src| {
+            let x = s.stack().position[0] as i32;
+            s.log.push(format!("x={x}"));
+            Ok(x)
+        }));
+        d.register(literal("fail").executes(|_, _| Err(CommandError::no_entities_found())));
+        d
+    }
+
+    #[test]
+    fn forks_and_redirect_modifiers() {
+        let d = forking_tree();
+        let s = &mut src(4);
+        assert_eq!(d.execute("exec 3 run x", s), Ok(3));
+        assert_eq!(s.log, ["x=0", "x=1", "x=2"]);
+        assert_eq!(s.stack.position, [0.0; 3], "the stack is restored");
+        s.log.clear();
+        // Stages run breadth-first: each of the 2 sources forks into 2 more.
+        assert_eq!(d.execute("exec 2 move 5 2 run x", s), Ok(2), "x = 0, 1, 0, 1");
+        assert_eq!(d.execute("exec 0 run x", s), Ok(0), "no sources: nothing runs");
+        assert_eq!(d.execute("exec move 7 run x", s), Ok(7));
+        // Without a fork errors are reported; after one they are not.
+        assert_eq!(d.execute("exec move 1 run fail", s).unwrap_err().key(), Some("argument.entity.notfound.entity"));
+        assert_eq!(d.execute("exec 2 run fail", s), Ok(0));
+        assert_eq!(d.execute("exec bad run x", s).unwrap_err().key(), Some("command.unknown.argument"));
+        assert_eq!(d.execute("exec 1 bad run x", s), Ok(0));
+        let e = d.execute("exec run", s).unwrap_err();
+        assert_eq!((e.key(), e.cursor()), (Some("command.unknown.command"), Some(8)));
+    }
+
+    #[test]
+    fn fork_and_command_limits() {
+        let d = forking_tree();
+        let s = &mut src(4);
+        s.forks = 3;
+        // A stage may produce fewer than max_command_forks sources.
+        assert_eq!(d.execute("exec 2 run x", s), Ok(1));
+        // The stage that forks is already forked: its limit error is silent.
+        assert_eq!(d.execute("exec move 1 3 run x", s), Ok(0));
+        // Only a non-forking stage reports it, which needs a limit of 1.
+        s.forks = 1;
+        assert_eq!(d.execute("exec move 1 run x", s).unwrap_err().key(), Some("command.forkLimit"));
+        assert_eq!(d.execute("x", s), Ok(0), "no modifier, no limit");
+        s.forks = 65536;
+        // Each modifier stage and each execution costs one of max_command_sequence_length.
+        s.limit = 3;
+        s.log.clear();
+        assert_eq!(d.execute("exec 5 run x", s), Ok(1), "x = 0, 1");
+        assert_eq!(s.log, ["x=0", "x=1"]);
+    }
+
+    #[test]
+    fn result_callbacks_follow_each_execution() {
+        let d = forking_tree();
+        let s = &mut src(4);
+        d.execute("exec store 2 run x", s).unwrap();
+        assert_eq!(s.log, ["x=0", "store true 0", "x=1", "store true 1"]);
+        s.log.clear();
+        d.execute("exec store run fail", s).unwrap_err();
+        assert_eq!(s.log, ["store false 0"]);
+    }
+
+    #[test]
+    fn packet_encodes_redirects() {
+        let d = forking_tree();
+        let p = d.commands_packet(4);
+        let mut r = kiln_proto::Reader::new(&p);
+        r.varint().unwrap();
+        let n = r.varint().unwrap();
+        let mut redirects = Vec::new();
+        for i in 0..n {
+            let flags = r.u8().unwrap();
+            let children = r.varint().unwrap();
+            for _ in 0..children {
+                r.varint().unwrap();
+            }
+            if flags & 0x08 != 0 {
+                redirects.push((i, r.varint().unwrap()));
+            }
+            match flags & 3 {
+                1 => drop(r.string(32767).unwrap()),
+                2 => {
+                    r.string(32767).unwrap();
+                    let parser = r.varint().unwrap();
+                    if kiln_data::builtin_entries("minecraft:command_argument_type").unwrap()[parser as usize]
+                        == "brigadier:integer"
+                    {
+                        let f = r.u8().unwrap();
+                        r.bytes(4 * (f & 1) as usize + 4 * ((f >> 1) & 1) as usize).unwrap();
+                    }
+                }
+                _ => {}
+            }
+        }
+        // run -> root, <n> -> exec, <x> -> exec, bad -> exec, store -> exec.
+        assert_eq!(redirects.len(), 5);
+        assert!(redirects.iter().any(|&(_, target)| target == 0), "run redirects to the root");
+        assert_eq!(redirects.iter().filter(|&&(_, target)| target == 1).count(), 4, "the rest to exec (index 1)");
     }
 
     fn tree() -> Dispatcher<Src> {

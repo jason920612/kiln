@@ -1,15 +1,21 @@
 //! Argument types: parsing with vanilla semantics, server-side suggestions and the parser
 //! id and properties sent in the commands packet.
 
+use crate::blocks::{self, BlockInput, BlockPredicate};
+use crate::component::{self, Component};
 use crate::coords::Coordinates;
 use crate::error::CommandError;
 use crate::host::Source;
+use crate::nbt_path::NbtPath;
+use crate::range::{DoubleRange, IntRange};
 use crate::reader::StringReader;
-use crate::selector::{self, EntitySelector, SELECTOR_PERMISSION, SelectorWorld};
+use crate::selector::{self, EntitySelector, SELECTOR_PERMISSION, SelectorTarget, SelectorWorld};
 use crate::snbt;
 use crate::suggestion::SuggestionsBuilder;
 use crate::text::Text;
-use crate::types::{self, Anchor, GameMode, Identifier, ItemInput};
+use crate::tr;
+use crate::types::{self, Anchor, GameMode, Heightmap, Identifier, ItemInput};
+use kiln_proto::nbt::Tag;
 use kiln_proto::packets::commands::{Parser, StringKind};
 
 type Result<T> = std::result::Result<T, CommandError>;
@@ -58,6 +64,44 @@ pub enum ArgumentType {
     Time { min: i32 },
     /// `minecraft:resource`: an entry of `registry`.
     Resource { registry: &'static str },
+    /// `minecraft:block_state`
+    BlockState,
+    /// `minecraft:block_predicate`
+    BlockPredicate,
+    /// `minecraft:swizzle`: a set of axes such as `xz`.
+    Swizzle,
+    /// `minecraft:heightmap`
+    Heightmap,
+    /// `minecraft:score_holder`
+    ScoreHolder { multiple: bool },
+    /// `minecraft:objective`: an objective name (looked up when used).
+    Objective,
+    /// `minecraft:objective_criteria`
+    ObjectiveCriteria,
+    /// `minecraft:scoreboard_slot`
+    ScoreboardSlot,
+    /// `minecraft:operation`: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `<`, `>`, `><`.
+    Operation,
+    /// `minecraft:int_range`
+    IntRange,
+    /// `minecraft:float_range`
+    FloatRange,
+    /// `minecraft:nbt_path`
+    NbtPath,
+    /// `minecraft:resource_or_tag`: an entry or `#tag` of `registry`.
+    ResourceOrTag { registry: &'static str },
+    /// `minecraft:function`: a function id or `#tag`.
+    Function,
+    /// `minecraft:item_predicate`
+    ItemPredicate,
+    /// `minecraft:slot_source`
+    SlotSource,
+    /// `minecraft:loot_predicate`: an id or an inline predicate.
+    LootPredicate,
+    /// `minecraft:component`: a text component.
+    Component,
+    /// `minecraft:style`: text style fields.
+    Style,
 }
 
 impl ArgumentType {
@@ -152,6 +196,25 @@ impl ArgumentType {
             ArgumentType::GameMode => Parser::Plain("minecraft:gamemode"),
             ArgumentType::Time { min } => Parser::Time { min },
             ArgumentType::Resource { registry } => Parser::Registry { id: "minecraft:resource", registry },
+            ArgumentType::BlockState => Parser::Plain("minecraft:block_state"),
+            ArgumentType::BlockPredicate => Parser::Plain("minecraft:block_predicate"),
+            ArgumentType::Swizzle => Parser::Plain("minecraft:swizzle"),
+            ArgumentType::Heightmap => Parser::Plain("minecraft:heightmap"),
+            ArgumentType::ScoreHolder { multiple } => Parser::ScoreHolder { multiple },
+            ArgumentType::Objective => Parser::Plain("minecraft:objective"),
+            ArgumentType::ObjectiveCriteria => Parser::Plain("minecraft:objective_criteria"),
+            ArgumentType::ScoreboardSlot => Parser::Plain("minecraft:scoreboard_slot"),
+            ArgumentType::Operation => Parser::Plain("minecraft:operation"),
+            ArgumentType::IntRange => Parser::Plain("minecraft:int_range"),
+            ArgumentType::FloatRange => Parser::Plain("minecraft:float_range"),
+            ArgumentType::NbtPath => Parser::Plain("minecraft:nbt_path"),
+            ArgumentType::ResourceOrTag { registry } => Parser::Registry { id: "minecraft:resource_or_tag", registry },
+            ArgumentType::Function => Parser::Plain("minecraft:function"),
+            ArgumentType::ItemPredicate => Parser::Plain("minecraft:item_predicate"),
+            ArgumentType::SlotSource => Parser::Plain("minecraft:slot_source"),
+            ArgumentType::LootPredicate => Parser::Plain("minecraft:loot_predicate"),
+            ArgumentType::Component => Parser::Plain("minecraft:component"),
+            ArgumentType::Style => Parser::Plain("minecraft:style"),
         }
     }
 
@@ -289,11 +352,110 @@ impl ArgumentType {
                 }
                 ArgumentValue::Time(ticks)
             }
+            ArgumentType::BlockState => ArgumentValue::BlockState(blocks::parse_block_state(reader)?),
+            ArgumentType::BlockPredicate => ArgumentValue::BlockPredicate(blocks::parse_block_predicate(reader)?),
+            ArgumentType::Swizzle => ArgumentValue::Swizzle(parse_swizzle(reader)?),
+            ArgumentType::Heightmap => {
+                let s = reader.read_unquoted_string();
+                match Heightmap::by_name(s) {
+                    Some(h) => ArgumentValue::Heightmap(h),
+                    None => return Err(CommandError::new(tr!("argument.enum.invalid", s)).at(reader)),
+                }
+            }
+            ArgumentType::ScoreHolder { multiple } => {
+                ArgumentValue::ScoreHolder(ScoreHolderArg::parse(reader, allow_selectors, multiple)?)
+            }
+            ArgumentType::Objective => ArgumentValue::String(reader.read_unquoted_string().to_owned()),
+            ArgumentType::ObjectiveCriteria => {
+                let s = read_until_space(reader);
+                if !criterion_exists(s) {
+                    reader.set_cursor(start);
+                    return Err(CommandError::new(tr!("argument.criteria.invalid", s)).at(reader));
+                }
+                ArgumentValue::String(s.to_owned())
+            }
+            ArgumentType::ScoreboardSlot => {
+                let s = reader.read_unquoted_string();
+                if !display_slot_exists(s) {
+                    return Err(CommandError::new(tr!("argument.scoreboardDisplaySlot.invalid", s)).at(reader));
+                }
+                ArgumentValue::String(s.to_owned())
+            }
+            ArgumentType::Operation => {
+                if !reader.can_read() {
+                    return Err(CommandError::new(tr!("arguments.operation.invalid")).at(reader));
+                }
+                let s = read_until_space(reader);
+                match Operation::by_symbol(s) {
+                    Some(op) => ArgumentValue::Operation(op),
+                    None => return Err(CommandError::new(tr!("arguments.operation.invalid"))),
+                }
+            }
+            ArgumentType::IntRange => ArgumentValue::IntRange(IntRange::parse(reader)?),
+            ArgumentType::FloatRange => ArgumentValue::DoubleRange(DoubleRange::parse(reader)?),
+            ArgumentType::NbtPath => ArgumentValue::NbtPath(NbtPath::parse(reader)?),
+            ArgumentType::ResourceOrTag { registry } => {
+                if reader.can_read() && reader.peek() == '#' {
+                    reader.skip();
+                    let id = Identifier::read(reader)?;
+                    if blocks::registry_tag(registry, id.as_str()).is_none() {
+                        let e = CommandError::new(tr!("argument.resource_tag.not_found", id.to_string(), registry));
+                        let e = e.at(reader);
+                        reader.set_cursor(start);
+                        return Err(e);
+                    }
+                    ArgumentValue::ResourceOrTag(ResourceOrTag::Tag(id))
+                } else {
+                    let id = Identifier::read(reader)?;
+                    if types::registry_entries(registry).is_some_and(|e| !e.contains(&id.as_str())) {
+                        return Err(CommandError::unknown_resource(id.as_str(), registry).at(reader));
+                    }
+                    ArgumentValue::ResourceOrTag(ResourceOrTag::Resource(id))
+                }
+            }
+            ArgumentType::Function => {
+                let tag = reader.can_read() && reader.peek() == '#';
+                if tag {
+                    reader.skip();
+                }
+                ArgumentValue::Function { tag, id: Identifier::read(reader)? }
+            }
+            ArgumentType::ItemPredicate => ArgumentValue::String(parse_item_predicate(reader)?),
+            ArgumentType::SlotSource => ArgumentValue::String(parse_slot_source(reader)?),
+            ArgumentType::LootPredicate => {
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    ArgumentValue::Nbt(snbt::parse_tag(reader)?)
+                } else {
+                    let id = Identifier::read(reader)?;
+                    // No data-driven predicates are loaded.
+                    return Err(CommandError::new(tr!(
+                        "argument.resource_or_id.no_such_element",
+                        id.to_string(),
+                        "minecraft:predicate"
+                    ))
+                    .at(reader));
+                }
+            }
+            ArgumentType::Component => ArgumentValue::Component(Box::new(component::parse(reader)?)),
+            ArgumentType::Style => {
+                let tag = snbt::parse_tag(reader)?;
+                let valid = match &tag {
+                    Tag::Compound(f) => component::decode(&Tag::Compound(
+                        std::iter::once(("text".to_owned(), Tag::String(String::new()))).chain(f.iter().cloned()).collect(),
+                    ))
+                    .map(|_| ()),
+                    other => Err(format!("Not a map: {}", snbt::to_snbt(other))),
+                };
+                if let Err(message) = valid {
+                    return Err(CommandError::new(tr!("argument.style.invalid", message)).at(reader));
+                }
+                ArgumentValue::Nbt(tag)
+            }
         })
     }
 
     /// Server-side suggestions (the client computes most of these itself).
-    pub fn suggest(&self, builder: &mut SuggestionsBuilder, source: &dyn Source) {
+    pub fn suggest<S: Source>(&self, builder: &mut SuggestionsBuilder, source: &S) {
         let allow = source.permission_level() >= SELECTOR_PERMISSION;
         match self {
             ArgumentType::Bool => {
@@ -325,6 +487,40 @@ impl ArgumentType {
             }
             ArgumentType::EntityAnchor => builder.suggest_matching(["feet", "eyes"]),
             ArgumentType::GameMode => builder.suggest_matching(GameMode::ALL.map(GameMode::name)),
+            ArgumentType::BlockState => blocks::suggest(builder, false),
+            ArgumentType::BlockPredicate => blocks::suggest(builder, true),
+            ArgumentType::Heightmap => builder.suggest_matching(Heightmap::ALL.map(Heightmap::name)),
+            ArgumentType::Swizzle => builder.suggest_matching(["x", "xy", "xz", "xyz", "y", "yz", "z"]),
+            ArgumentType::ScoreHolder { .. } => {
+                let mut names = source.player_names();
+                names.push("*".to_owned());
+                selector::suggest(builder, allow, &names);
+            }
+            ArgumentType::Operation => builder.suggest_matching(Operation::ALL.map(Operation::symbol)),
+            ArgumentType::ScoreboardSlot => {
+                let mut slots = vec!["list".to_owned(), "sidebar".to_owned(), "below_name".to_owned()];
+                slots.extend(TEAM_COLORS.iter().map(|c| format!("sidebar.team.{c}")));
+                builder.suggest_matching(slots.iter().map(String::as_str));
+            }
+            ArgumentType::ObjectiveCriteria => {
+                let mut all: Vec<String> = CUSTOM_CRITERIA.iter().map(|c| (*c).to_owned()).collect();
+                for c in TEAM_COLORS {
+                    all.push(format!("teamkill.{c}"));
+                    all.push(format!("killedByTeam.{c}"));
+                }
+                builder.suggest_matching(all.iter().map(String::as_str));
+            }
+            ArgumentType::ResourceOrTag { registry } => {
+                if let Some(entries) = types::registry_entries(registry) {
+                    builder.suggest_resources(entries.iter().copied(), "");
+                }
+                let tags: Vec<&str> = kiln_data::registries::TAGS
+                    .iter()
+                    .filter(|(r, _)| r == registry)
+                    .flat_map(|(_, t)| t.iter().map(|(n, _)| *n))
+                    .collect();
+                builder.suggest_resources(tags, "#");
+            }
             ArgumentType::Time { .. } => {
                 let mut r = StringReader::new(builder.remaining());
                 if r.read_float().is_ok() {
@@ -396,7 +592,7 @@ fn parse_item(reader: &mut StringReader) -> Result<ItemInput> {
             }
             let id = read_component_type(reader)?;
             if components.iter().any(|(c, _)| *c == id) {
-                return Err(CommandError::new(crate::tr!("arguments.item.component.repeated", id.to_string())));
+                return Err(CommandError::new(tr!("arguments.item.component.repeated", id.to_string())));
             }
             let value = if remove {
                 None
@@ -414,7 +610,7 @@ fn parse_item(reader: &mut StringReader) -> Result<ItemInput> {
             reader.skip();
             reader.skip_whitespace();
             if !reader.can_read() {
-                return Err(CommandError::new(crate::tr!("arguments.item.component.expected")).at(reader));
+                return Err(CommandError::new(tr!("arguments.item.component.expected")).at(reader));
             }
         }
         reader.expect(']')?;
@@ -424,15 +620,284 @@ fn parse_item(reader: &mut StringReader) -> Result<ItemInput> {
 
 fn read_component_type(reader: &mut StringReader) -> Result<Identifier> {
     if !reader.can_read() {
-        return Err(CommandError::new(crate::tr!("arguments.item.component.expected")).at(reader));
+        return Err(CommandError::new(tr!("arguments.item.component.expected")).at(reader));
     }
     let start = reader.cursor();
     let id = Identifier::read(reader)?;
     if kiln_data::builtin_id("minecraft:data_component_type", id.as_str()).is_none() {
         reader.set_cursor(start);
-        return Err(CommandError::new(crate::tr!("arguments.item.component.unknown", id.to_string())).at(reader));
+        return Err(CommandError::new(tr!("arguments.item.component.unknown", id.to_string())).at(reader));
     }
     Ok(id)
+}
+
+/// `SwizzleArgument.parse`: each of `x`, `y`, `z` at most once, up to a space.
+fn parse_swizzle(reader: &mut StringReader) -> Result<[bool; 3]> {
+    let mut axes = [false; 3];
+    while reader.can_read() && reader.peek() != ' ' {
+        let axis = match reader.read() {
+            'x' => 0,
+            'y' => 1,
+            'z' => 2,
+            _ => return Err(CommandError::new(tr!("arguments.swizzle.invalid")).at(reader)),
+        };
+        if axes[axis] {
+            return Err(CommandError::new(tr!("arguments.swizzle.invalid")).at(reader));
+        }
+        axes[axis] = true;
+    }
+    Ok(axes)
+}
+
+fn read_until_space<'a>(reader: &mut StringReader<'a>) -> &'a str {
+    let start = reader.cursor();
+    while reader.can_read() && reader.peek() != ' ' {
+        reader.skip();
+    }
+    &reader.string()[start..reader.cursor()]
+}
+
+/// `ChatFormatting` colors usable for teams (`sidebar.team.<color>`, `teamkill.<color>`).
+pub const TEAM_COLORS: [&str; 16] = [
+    "black",
+    "dark_blue",
+    "dark_green",
+    "dark_aqua",
+    "dark_red",
+    "dark_purple",
+    "gold",
+    "gray",
+    "dark_gray",
+    "blue",
+    "green",
+    "aqua",
+    "red",
+    "light_purple",
+    "yellow",
+    "white",
+];
+
+/// `ObjectiveCriteria.CUSTOM_CRITERIA` apart from the team ones.
+pub const CUSTOM_CRITERIA: [&str; 11] =
+    ["dummy", "trigger", "deathCount", "playerKillCount", "totalKillCount", "health", "xp", "level", "food", "air", "armor"];
+
+/// `ObjectiveCriteria.byName`: custom criteria, team criteria and `<stat type>:<stat>`
+/// statistics with `.` for `:` in the ids (`minecraft.mined:minecraft.stone`).
+pub fn criterion_exists(name: &str) -> bool {
+    if CUSTOM_CRITERIA.contains(&name) {
+        return true;
+    }
+    for prefix in ["teamkill.", "killedByTeam."] {
+        if let Some(color) = name.strip_prefix(prefix) {
+            return TEAM_COLORS.contains(&color);
+        }
+    }
+    let Some((kind, value)) = name.split_once(':') else { return false };
+    let registry = match kind.replacen('.', ":", 1).as_str() {
+        "minecraft:mined" => "minecraft:block",
+        "minecraft:crafted" | "minecraft:used" | "minecraft:broken" | "minecraft:picked_up" | "minecraft:dropped" => {
+            "minecraft:item"
+        }
+        "minecraft:killed" | "minecraft:killed_by" => "minecraft:entity_type",
+        "minecraft:custom" => "minecraft:custom_stat",
+        _ => return false,
+    };
+    let id = value.replacen('.', ":", 1);
+    kiln_data::builtin_id(registry, &id).is_some()
+}
+
+/// `DisplaySlot` names.
+pub fn display_slot_exists(name: &str) -> bool {
+    matches!(name, "list" | "sidebar" | "below_name")
+        || name.strip_prefix("sidebar.team.").is_some_and(|c| TEAM_COLORS.contains(&c))
+}
+
+/// `OperationArgument.Operation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Operation {
+    Assign,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+    Min,
+    Max,
+    Swap,
+}
+
+impl Operation {
+    pub const ALL: [Operation; 9] = [
+        Operation::Assign,
+        Operation::Add,
+        Operation::Subtract,
+        Operation::Multiply,
+        Operation::Divide,
+        Operation::Modulo,
+        Operation::Min,
+        Operation::Max,
+        Operation::Swap,
+    ];
+
+    pub fn symbol(self) -> &'static str {
+        ["=", "+=", "-=", "*=", "/=", "%=", "<", ">", "><"][self as usize]
+    }
+
+    pub fn by_symbol(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|o| o.symbol() == s)
+    }
+}
+
+/// `ResourceOrTagArgument.Result`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ResourceOrTag {
+    Resource(Identifier),
+    Tag(Identifier),
+}
+
+impl ResourceOrTag {
+    /// Whether registry entry `id` of `registry` is this resource or in this tag.
+    pub fn test(&self, registry: &str, id: &str) -> bool {
+        match self {
+            ResourceOrTag::Resource(r) => r.as_str() == id,
+            ResourceOrTag::Tag(t) => {
+                let index = types::registry_entries(registry).and_then(|e| e.iter().position(|x| *x == id));
+                index.zip(blocks::registry_tag(registry, t.as_str())).is_some_and(|(i, tag)| tag.contains(&(i as i32)))
+            }
+        }
+    }
+}
+
+/// `ScoreHolderArgument.Result`: a selector, `*` or a name.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ScoreHolderArg {
+    Selector(Box<EntitySelector>),
+    Wildcard,
+    Name(String),
+}
+
+impl ScoreHolderArg {
+    /// `ScoreHolderArgument.parse`.
+    pub fn parse(reader: &mut StringReader, allow_selectors: bool, multiple: bool) -> Result<Self> {
+        if reader.can_read() && reader.peek() == '@' {
+            let sel = EntitySelector::parse(reader, allow_selectors)?;
+            if !multiple && sel.max_results > 1 {
+                return Err(CommandError::not_single_entity().at(reader));
+            }
+            return Ok(ScoreHolderArg::Selector(Box::new(sel)));
+        }
+        let name = read_until_space(reader);
+        Ok(if name == "*" { ScoreHolderArg::Wildcard } else { ScoreHolderArg::Name(name.to_owned()) })
+    }
+
+    /// `ScoreHolderArgument.getNames`: holder names; `*` stands for `wildcard` (the
+    /// scoreboard's tracked holders for `getNamesWithDefaultWildcard`, nothing otherwise).
+    pub fn names<W: SelectorWorld>(&self, world: &mut W, wildcard: Option<Vec<String>>) -> Result<Vec<String>> {
+        let names = match self {
+            ScoreHolderArg::Selector(sel) => {
+                let found = sel.find_entities(world)?;
+                if found.is_empty() {
+                    return Err(CommandError::no_entities_found());
+                }
+                found.iter().map(SelectorTarget::scoreboard_name).collect()
+            }
+            ScoreHolderArg::Wildcard => {
+                let all = wildcard.unwrap_or_default();
+                if all.is_empty() {
+                    return Err(CommandError::new(tr!("argument.scoreHolder.empty")));
+                }
+                all
+            }
+            ScoreHolderArg::Name(name) if name.starts_with('#') => vec![name.clone()],
+            ScoreHolderArg::Name(name) => match selector::java_uuid_from_string(name) {
+                Some(uuid) => {
+                    vec![world.entity_by_uuid(uuid).map_or_else(|| name.clone(), |e| e.scoreboard_name())]
+                }
+                None => vec![
+                    world
+                        .players()
+                        .into_iter()
+                        .find(|p| p.name() == *name)
+                        .map_or_else(|| name.clone(), |p| p.scoreboard_name()),
+                ],
+            },
+        };
+        if names.is_empty() {
+            return Err(CommandError::no_entities_found());
+        }
+        Ok(names)
+    }
+
+    /// `ScoreHolderArgument.getName`: the first holder.
+    pub fn name<W: SelectorWorld>(&self, world: &mut W) -> Result<String> {
+        Ok(self.names(world, None)?.swap_remove(0))
+    }
+}
+
+/// `ItemPredicateArgument`: `*`, an item id or `#tag`, then optional `[...]` tests. Kept as
+/// text: Kiln cannot evaluate item predicates yet.
+fn parse_item_predicate(reader: &mut StringReader) -> Result<String> {
+    let start = reader.cursor();
+    if reader.can_read() && reader.peek() == '*' {
+        reader.skip();
+    } else if reader.can_read() && reader.peek() == '#' {
+        reader.skip();
+        let id = Identifier::read(reader)?;
+        if blocks::registry_tag("minecraft:item", id.as_str()).is_none() {
+            reader.set_cursor(start);
+            return Err(CommandError::new(tr!("arguments.item.tag.unknown", id.to_string())).at(reader));
+        }
+    } else {
+        let id = Identifier::read(reader)?;
+        if kiln_data::builtin_id("minecraft:item", id.as_str()).is_none() {
+            reader.set_cursor(start);
+            return Err(CommandError::unknown_item(id.as_str()).at(reader));
+        }
+    }
+    if reader.can_read() && reader.peek() == '[' {
+        reader.skip();
+        loop {
+            reader.skip_whitespace();
+            if !reader.can_read() {
+                return Err(CommandError::expected_symbol(']').at(reader));
+            }
+            if reader.peek() == ']' {
+                reader.skip();
+                break;
+            }
+            while reader.can_read() && matches!(reader.peek(), '!' | '~') {
+                reader.skip();
+            }
+            Identifier::read(reader)?;
+            reader.skip_whitespace();
+            if reader.can_read() && reader.peek() == '=' {
+                reader.skip();
+                snbt::parse_tag(reader)?;
+            }
+            reader.skip_whitespace();
+            if reader.can_read() && matches!(reader.peek(), ',' | '|') {
+                reader.skip();
+            }
+        }
+    }
+    Ok(reader.string()[start..reader.cursor()].to_owned())
+}
+
+/// `SlotSourceArgument`: a slot range such as `container.*` or a slot source id or inline
+/// definition. Kept as text.
+fn parse_slot_source(reader: &mut StringReader) -> Result<String> {
+    let start = reader.cursor();
+    if reader.can_read() && matches!(reader.peek(), '{' | '[') {
+        snbt::parse_tag(reader)?;
+    } else {
+        while reader.can_read() && (types::is_allowed_in_identifier(reader.peek()) || reader.peek() == '*') {
+            reader.skip();
+        }
+        if reader.cursor() == start {
+            return Err(CommandError::invalid_id().at(reader));
+        }
+    }
+    Ok(reader.string()[start..reader.cursor()].to_owned())
 }
 
 /// A parsed argument value.
@@ -455,6 +920,21 @@ pub enum ArgumentValue {
     Anchor(Anchor),
     GameMode(GameMode),
     Time(i32),
+    BlockState(BlockInput),
+    BlockPredicate(BlockPredicate),
+    /// Axes `[x, y, z]`.
+    Swizzle([bool; 3]),
+    Heightmap(Heightmap),
+    ScoreHolder(ScoreHolderArg),
+    Operation(Operation),
+    IntRange(IntRange),
+    DoubleRange(DoubleRange),
+    NbtPath(NbtPath),
+    ResourceOrTag(ResourceOrTag),
+    Function { tag: bool, id: Identifier },
+    Component(Box<Component>),
+    /// Inline NBT (`loot_predicate` definitions, `style`).
+    Nbt(Tag),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -510,7 +990,7 @@ impl MessageArg {
     }
 
     /// `Message.toComponent`: selectors become the names of the entities they find.
-    pub fn resolve<W: SelectorWorld + ?Sized>(&self, world: &mut W) -> Result<Text> {
+    pub fn resolve<W: SelectorWorld>(&self, world: &mut W) -> Result<Text> {
         if self.parts.is_empty() || world.permission_level() < SELECTOR_PERMISSION {
             return Ok(Text::literal(&self.text));
         }
@@ -672,10 +1152,17 @@ mod tests {
         assert_eq!(ArgumentType::greedy_string().wire(), Parser::String(StringKind::Greedy));
     }
 
-    struct Src(u8);
+    struct Src(u8, crate::host::SourceStack<Src>);
     impl Source for Src {
+        type Entity = crate::selector::NoEntity;
         fn permission_level(&self) -> u8 {
             self.0
+        }
+        fn stack(&self) -> &crate::host::SourceStack<Src> {
+            &self.1
+        }
+        fn stack_mut(&mut self) -> &mut crate::host::SourceStack<Src> {
+            &mut self.1
         }
         fn player_names(&self) -> Vec<String> {
             vec!["Alice".into(), "Bob".into()]
@@ -684,7 +1171,8 @@ mod tests {
 
     fn suggest(ty: ArgumentType, input: &str, start: usize, level: u8) -> Vec<String> {
         let mut b = SuggestionsBuilder::new(input, start);
-        ty.suggest(&mut b, &Src(level));
+        let stack = crate::host::SourceStack::new(Text::literal("Server"), "minecraft:overworld", [0.0; 3]);
+        ty.suggest(&mut b, &Src(level, stack));
         b.build().list.into_iter().map(|s| s.text).collect()
     }
 

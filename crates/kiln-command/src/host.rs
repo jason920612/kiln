@@ -1,19 +1,36 @@
-//! What the simulation implements for commands to run: the command source ([`Source`]), the
-//! world as seen by selectors ([`SelectorWorld`]) and the effects of the built-in commands
-//! ([`Host`]). Commands parse arguments, resolve selectors and coordinates, validate, call the
-//! host for the effect and send vanilla's feedback; the host only mutates game state.
+//! What the simulation implements for commands to run: the command source ([`Source`]) with
+//! its [`SourceStack`], the world as seen by selectors ([`SelectorWorld`]) and the effects of
+//! the built-in commands ([`Host`]). Commands parse arguments, resolve selectors and
+//! coordinates, validate, call the host for the effect and send vanilla's feedback; the host
+//! only mutates game state.
 
+use crate::blocks::UpdateFlags;
+use crate::coords::{Coordinates, wrap_degrees};
 use crate::error::CommandError;
-use crate::selector::SelectorWorld;
+use crate::scoreboard::Scoreboard;
+use crate::selector::{SelectorTarget, SelectorWorld};
 use crate::text::{Arg, Text};
 use crate::tr;
-use crate::types::{Difficulty, GameMode, Identifier, ItemInput};
+use crate::types::{Anchor, Difficulty, GameMode, Heightmap, Identifier, ItemInput};
+use kiln_proto::nbt::Tag;
+use std::sync::Arc;
 use uuid::Uuid;
 
-/// The executor of a command.
+/// The executor of a command. The dispatcher replaces the [`stack`](Source::stack) for each
+/// source a redirect modifier (`execute as`, `at`, ...) produces and restores it afterwards.
 pub trait Source {
+    /// Entity handles, as selectors find them; [`NoEntity`](crate::selector::NoEntity) for
+    /// sources without entities.
+    type Entity: SelectorTarget + Clone;
     /// Permission level 0-4: all, moderators, gamemasters, admins, owners.
     fn permission_level(&self) -> u8;
+    /// Where, how and as whom the command currently runs.
+    fn stack(&self) -> &SourceStack<Self>
+    where
+        Self: Sized;
+    fn stack_mut(&mut self) -> &mut SourceStack<Self>
+    where
+        Self: Sized;
     /// Online player names, for suggestions.
     fn player_names(&self) -> Vec<String> {
         Vec::new()
@@ -22,6 +39,204 @@ pub trait Source {
     fn dimensions(&self) -> Vec<String> {
         ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"].map(String::from).to_vec()
     }
+    /// The `max_command_forks` game rule: sources one modifier stage may produce.
+    fn fork_limit(&self) -> usize {
+        65536
+    }
+    /// The `max_command_sequence_length` game rule: modifier stages plus executions one
+    /// command may cost.
+    fn command_limit(&self) -> i32 {
+        65536
+    }
+
+    /// Where the command runs (`CommandSourceStack.getPosition`).
+    fn origin(&self) -> [f64; 3]
+    where
+        Self: Sized,
+    {
+        self.stack().position
+    }
+    /// The dimension the command runs in.
+    fn dimension(&self) -> &str
+    where
+        Self: Sized,
+    {
+        &self.stack().dimension
+    }
+    /// The executing entity (`@s`), if any.
+    fn source_entity(&self) -> Option<Self::Entity>
+    where
+        Self: Sized,
+    {
+        self.stack().entity.clone()
+    }
+    /// The source's `[yaw, pitch]`, for `~` rotations and `^` coordinates.
+    fn source_rotation(&self) -> [f32; 2]
+    where
+        Self: Sized,
+    {
+        self.stack().rotation
+    }
+    /// The source's display name (the entity's name, `Server` for the console).
+    fn source_name(&self) -> Text
+    where
+        Self: Sized,
+    {
+        self.stack().display_name()
+    }
+}
+
+/// `CommandResultCallback`: told the outcome of each execution (`execute store`).
+pub type ResultCallback<S> = Arc<dyn Fn(&mut S, bool, i32) + Send + Sync>;
+
+/// `CommandSourceStack` without the server: the executing entity, position, rotation,
+/// dimension, anchor and result callbacks. Feedback always goes to the original source
+/// (the host's concern); `execute` derives new stacks with the `with_*` methods.
+pub struct SourceStack<S: Source> {
+    pub entity: Option<S::Entity>,
+    pub position: [f64; 3],
+    /// `[yaw, pitch]`.
+    pub rotation: [f32; 2],
+    pub dimension: String,
+    pub anchor: Anchor,
+    /// The display name when no entity executes (`Server` for the console).
+    pub name: Text,
+    /// Run in order after each execution (`CommandResultCallback.chain`).
+    pub callbacks: Vec<ResultCallback<S>>,
+}
+
+impl<S: Source> Clone for SourceStack<S> {
+    fn clone(&self) -> Self {
+        SourceStack {
+            entity: self.entity.clone(),
+            position: self.position,
+            rotation: self.rotation,
+            dimension: self.dimension.clone(),
+            anchor: self.anchor,
+            name: self.name.clone(),
+            callbacks: self.callbacks.clone(),
+        }
+    }
+}
+
+impl<S: Source> std::fmt::Debug for SourceStack<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.debug_struct("SourceStack")
+            .field("entity", &self.entity.as_ref().map(SelectorTarget::name))
+            .field("position", &self.position)
+            .field("rotation", &self.rotation)
+            .field("dimension", &self.dimension)
+            .field("anchor", &self.anchor)
+            .field("callbacks", &self.callbacks.len())
+            .finish()
+    }
+}
+
+impl<S: Source> SourceStack<S> {
+    /// A stack without an entity, e.g. the server console at the world spawn.
+    pub fn new(name: Text, dimension: &str, position: [f64; 3]) -> Self {
+        SourceStack {
+            entity: None,
+            position,
+            rotation: [0.0, 0.0],
+            dimension: dimension.to_owned(),
+            anchor: Anchor::Feet,
+            name,
+            callbacks: Vec::new(),
+        }
+    }
+
+    /// A stack executing as `entity` at its position and rotation (a player's own source).
+    pub fn of_entity(entity: S::Entity) -> Self {
+        SourceStack {
+            position: entity.position(),
+            rotation: entity.rotation(),
+            dimension: entity.dimension().to_owned(),
+            name: entity.display_name(),
+            entity: Some(entity),
+            anchor: Anchor::Feet,
+            callbacks: Vec::new(),
+        }
+    }
+
+    /// `getDisplayName`: the entity's name once one executes.
+    pub fn display_name(&self) -> Text {
+        self.entity.as_ref().map_or_else(|| self.name.clone(), SelectorTarget::display_name)
+    }
+
+    /// `withEntity`: runs as `entity` without moving.
+    pub fn with_entity(mut self, entity: S::Entity) -> Self {
+        self.entity = Some(entity);
+        self
+    }
+
+    pub fn with_position(mut self, position: [f64; 3]) -> Self {
+        self.position = position;
+        self
+    }
+
+    /// `[yaw, pitch]`.
+    pub fn with_rotation(mut self, rotation: [f32; 2]) -> Self {
+        self.rotation = rotation;
+        self
+    }
+
+    pub fn with_anchor(mut self, anchor: Anchor) -> Self {
+        self.anchor = anchor;
+        self
+    }
+
+    /// `withLevel`: x and z scale by the dimensions' coordinate scales (1/8 into the nether).
+    pub fn with_dimension(mut self, dimension: &str) -> Self {
+        if self.dimension != dimension {
+            let scale = coordinate_scale(&self.dimension) / coordinate_scale(dimension);
+            self.position = [self.position[0] * scale, self.position[1], self.position[2] * scale];
+            self.dimension = dimension.to_owned();
+        }
+        self
+    }
+
+    /// `withCallback(callback, CommandResultCallback::chain)`.
+    pub fn with_callback(mut self, callback: ResultCallback<S>) -> Self {
+        self.callbacks.push(callback);
+        self
+    }
+
+    /// `EntityAnchorArgument.Anchor.apply(CommandSourceStack)`: the position the anchor
+    /// selects, the eyes of the executing entity or the position itself.
+    pub fn anchor_position(&self) -> [f64; 3] {
+        match (&self.entity, self.anchor) {
+            (Some(e), Anchor::Eyes) => {
+                let [x, y, z] = self.position;
+                [x, y + e.eye_height(), z]
+            }
+            _ => self.position,
+        }
+    }
+
+    /// `facing(Vec3)`: turns toward `target` from the anchor position.
+    pub fn facing(self, target: [f64; 3]) -> Self {
+        let rotation = look_at(self.anchor_position(), target);
+        self.with_rotation(rotation)
+    }
+
+    /// World position of `c` (`Coordinates.getPosition`): `^` offsets start at the anchor.
+    pub fn resolve(&self, c: &Coordinates) -> [f64; 3] {
+        match c {
+            Coordinates::World(_) => c.position(self.position, self.rotation),
+            Coordinates::Local { .. } => c.position(self.anchor_position(), self.rotation),
+        }
+    }
+
+    /// `Coordinates.getBlockPos`: the block containing [`resolve`](Self::resolve).
+    pub fn resolve_block(&self, c: &Coordinates) -> [i32; 3] {
+        self.resolve(c).map(|v| v.floor() as i32)
+    }
+}
+
+/// `DimensionType.coordinateScale` of the vanilla dimension types.
+pub fn coordinate_scale(dimension: &str) -> f64 {
+    if dimension == "minecraft:the_nether" { 8.0 } else { 1.0 }
 }
 
 /// A player identity (`NameAndId`), as `op` and `deop` take it.
@@ -68,12 +283,11 @@ pub struct Teleport {
 /// `CommandSourceStack.facing` / `Entity.lookAt`: the `[yaw, pitch]` that faces `to` from
 /// `from`, with `Mth.atan2` for bit-exact angles.
 pub fn look_at(from: [f64; 3], to: [f64; 3]) -> [f32; 2] {
-    use crate::coords::{mth_atan2, wrap_degrees};
     const RAD_TO_DEG: f64 = 57.2957763671875;
     let (dx, dy, dz) = (to[0] - from[0], to[1] - from[1], to[2] - from[2]);
     let horizontal = (dx * dx + dz * dz).sqrt();
-    let pitch = wrap_degrees((-(mth_atan2(dy, horizontal) * RAD_TO_DEG)) as f32);
-    let yaw = wrap_degrees((mth_atan2(dz, dx) * RAD_TO_DEG) as f32 - 90.0);
+    let pitch = wrap_degrees((-(crate::coords::mth_atan2(dy, horizontal) * RAD_TO_DEG)) as f32);
+    let yaw = wrap_degrees((crate::coords::mth_atan2(dz, dx) * RAD_TO_DEG) as f32 - 90.0);
     [yaw, pitch]
 }
 
@@ -176,10 +390,6 @@ impl ChatMessage {
 
 /// Effects of the built-in commands. `Self::Entity` handles come from selectors.
 pub trait Host: SelectorWorld {
-    /// The source's display name (the player's name, `Server` for the console).
-    fn source_name(&self) -> Text;
-    /// The source's `[yaw, pitch]`, for `~` rotations and `^` coordinates.
-    fn source_rotation(&self) -> [f32; 2];
     /// `sendSuccess`: feedback to the source; `broadcast` also informs operators and the log.
     fn send_success(&mut self, text: Text, broadcast: bool);
     /// A system message to one player.
@@ -245,6 +455,62 @@ pub trait Host: SelectorWorld {
     fn kiln_tick(&mut self) -> Vec<Text>;
     /// `/kiln regions`: region report lines.
     fn kiln_regions(&mut self) -> Vec<Text>;
+
+    /// Whether chunk `(cx, cz)` of `dimension` is loaded (`ChunkSource.hasChunk`).
+    fn is_chunk_loaded(&self, dimension: &str, cx: i32, cz: i32) -> bool;
+    /// `execute if loaded` (`isChunkLoaded`): loaded at entity-ticking level with its
+    /// entities; hosts that do not track ticket levels answer [`is_chunk_loaded`](Self::is_chunk_loaded).
+    fn is_chunk_ticking(&self, dimension: &str, cx: i32, cz: i32) -> bool {
+        self.is_chunk_loaded(dimension, cx, cz)
+    }
+    /// The build height of `dimension` as `[min_y, max_y)`.
+    fn build_height(&self, _dimension: &str) -> (i32, i32) {
+        (-64, 320)
+    }
+    /// The block state at `pos` (void air outside the build height), loading or generating
+    /// the chunk if needed.
+    fn block_state(&mut self, dimension: &str, pos: [i32; 3]) -> u16;
+    /// The block entity data at `pos` (`saveWithFullMetadata`) if the block has an entity.
+    /// Hosts without block entity storage return `None`.
+    fn block_entity(&mut self, _dimension: &str, _pos: [i32; 3]) -> Option<Tag> {
+        None
+    }
+    /// `Level.setBlock` (`BlockInput.place` when `nbt` is given): returns whether the state
+    /// changed. Without [`UpdateFlags::KNOWN_SHAPE`] vanilla first adapts `state` to its
+    /// neighbours' shapes (fences, stairs, ...); hosts may place it as given. `nbt` is block
+    /// entity data to merge into the new block's entity; hosts without block entity storage
+    /// ignore it.
+    fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool;
+    /// `Level.updateNeighboursOnBlockSet`: neighbour reactions to a change made without
+    /// `strict`.
+    fn update_neighbours(&mut self, _dimension: &str, _pos: [i32; 3], _old: u16) {}
+    /// `Level.destroyBlock(pos, drop)`: breaks the block as a player would (particles, drops);
+    /// returns whether there was a block (not air).
+    fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], drop: bool) -> bool;
+    /// `Level.getHeight(heightmap, x, z)` of a loaded column: one above the highest block
+    /// the heightmap counts, or the minimum build height.
+    fn height(&mut self, dimension: &str, heightmap: Heightmap, x: i32, z: i32) -> i32;
+    /// The biome id at `pos` (`Level.getBiome`), if the host knows biomes.
+    fn biome(&mut self, _dimension: &str, _pos: [i32; 3]) -> Option<String> {
+        None
+    }
+    /// Whether the level `dimension` exists (`DimensionArgument.getDimension`).
+    fn has_dimension(&self, dimension: &str) -> bool {
+        self.dimensions().iter().any(|d| d == dimension)
+    }
+    /// The scoreboard, if the host keeps one (see [`SelectorWorld::scoreboard`]).
+    fn scoreboard_mut(&mut self) -> Option<&mut Scoreboard> {
+        None
+    }
+    /// Sets the value (or `max`) of custom boss bar `id` (`execute store ... bossbar`).
+    /// Hosts without boss bars have none, like a fresh vanilla server.
+    fn set_bossbar(&mut self, id: &Identifier, _max: bool, _value: i32) -> Result<(), CommandError> {
+        Err(CommandError::new(tr!("commands.bossbar.unknown", id.to_string())))
+    }
+    /// Whether custom boss bar `id` exists.
+    fn has_bossbar(&self, _id: &Identifier) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

@@ -2,18 +2,21 @@
 
 use super::*;
 use crate::arguments::ArgumentType;
+use crate::blocks::UpdateFlags;
 use crate::dispatcher::NodeKind;
-use crate::host::{ChatMessage, GameRuleValue, Source, SpawnPoint, Teleport, TimeAction, Weather};
+use crate::host::{ChatMessage, GameRuleValue, Source, SourceStack, SpawnPoint, Teleport, TimeAction, Weather};
+use crate::scoreboard::Scoreboard;
 use crate::selector::{Aabb, SelectorWorld};
 use crate::text::Text;
-use crate::types::{Difficulty, GameMode, Identifier, ItemInput};
+use crate::types::{Difficulty, GameMode, Heightmap, Identifier, ItemInput};
+use kiln_proto::nbt::Tag;
 use kiln_proto::packets::commands::{Parser, StringKind};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
-struct Ent {
+pub(super) struct Ent {
     id: u64,
     name: String,
     kind: &'static str,
@@ -54,20 +57,23 @@ impl SelectorTarget for Ent {
     }
 }
 
-struct Mock {
+pub(super) struct Mock {
     level: u8,
-    me: Option<u64>,
     ents: Vec<Ent>,
-    effects: Vec<String>,
-    feedback: Vec<(String, bool)>,
-    chat: Vec<String>,
+    stack: SourceStack<Mock>,
+    pub(super) effects: Vec<String>,
+    pub(super) feedback: Vec<(String, bool)>,
+    pub(super) chat: Vec<String>,
     ops: Vec<String>,
     difficulty: Difficulty,
-    rules: HashMap<String, GameRuleValue>,
+    pub(super) rules: HashMap<String, GameRuleValue>,
+    /// Blocks changed from the generated terrain (stone below y 64, air above).
+    pub(super) blocks: HashMap<[i32; 3], u16>,
+    pub(super) scoreboard: Scoreboard,
 }
 
 impl Mock {
-    fn new(level: u8) -> Self {
+    pub(super) fn new(level: u8) -> Self {
         let player = |id, name: &str, pos, dim| Ent {
             id,
             name: name.into(),
@@ -77,11 +83,12 @@ impl Mock {
             dim,
             mode: Some(GameMode::Survival),
         };
+        let alice = player(1, "Alice", [0.5, 64.0, 0.5], "minecraft:overworld");
         Mock {
             level,
-            me: Some(1),
+            stack: SourceStack::of_entity(alice.clone()),
             ents: vec![
-                player(1, "Alice", [0.5, 64.0, 0.5], "minecraft:overworld"),
+                alice,
                 player(2, "Bob", [10.5, 64.0, 0.5], "minecraft:overworld"),
                 player(3, "Carol", [0.0, 70.0, 0.0], "minecraft:the_nether"),
                 Ent {
@@ -100,46 +107,60 @@ impl Mock {
             ops: vec!["Alice".into()],
             difficulty: Difficulty::Normal,
             rules: HashMap::new(),
+            blocks: HashMap::new(),
+            scoreboard: Scoreboard::default(),
         }
     }
 
-    fn console(level: u8) -> Self {
-        Mock { me: None, ..Mock::new(level) }
+    pub(super) fn console(level: u8) -> Self {
+        Mock { stack: SourceStack::new(Text::literal("Server"), "minecraft:overworld", [0.0; 3]), ..Mock::new(level) }
     }
 
-    fn me(&self) -> Option<&Ent> {
-        self.ents.iter().find(|e| Some(e.id) == self.me)
-    }
-
-    fn run(&mut self, d: &Dispatcher<Mock>, cmd: &str) -> Result<i32, CommandError> {
+    pub(super) fn run(&mut self, d: &Dispatcher<Mock>, cmd: &str) -> Result<i32, CommandError> {
         d.execute(cmd, self)
     }
 
-    fn feedback_keys(&self) -> Vec<String> {
+    pub(super) fn feedback_keys(&self) -> Vec<String> {
         self.feedback.iter().map(|f| f.0.clone()).collect()
+    }
+
+    pub(super) fn block(&self, pos: [i32; 3]) -> u16 {
+        self.blocks.get(&pos).copied().unwrap_or(if pos[1] < 64 { STONE } else { AIR })
     }
 }
 
 impl Source for Mock {
+    type Entity = Ent;
     fn permission_level(&self) -> u8 {
         self.level
+    }
+    fn stack(&self) -> &SourceStack<Mock> {
+        &self.stack
+    }
+    fn stack_mut(&mut self) -> &mut SourceStack<Mock> {
+        &mut self.stack
     }
     fn player_names(&self) -> Vec<String> {
         self.players().iter().map(|p| p.name.clone()).collect()
     }
+    fn dimensions(&self) -> Vec<String> {
+        vec!["minecraft:overworld".into(), "minecraft:the_nether".into()]
+    }
+    fn fork_limit(&self) -> usize {
+        match self.rules.get("minecraft:max_command_forks") {
+            Some(GameRuleValue::Int(v)) => *v as usize,
+            _ => 65536,
+        }
+    }
+    fn command_limit(&self) -> i32 {
+        match self.rules.get("minecraft:max_command_sequence_length") {
+            Some(GameRuleValue::Int(v)) => *v,
+            _ => 65536,
+        }
+    }
 }
 
 impl SelectorWorld for Mock {
-    type Entity = Ent;
-    fn origin(&self) -> [f64; 3] {
-        self.me().map_or([0.0, 0.0, 0.0], |e| e.pos)
-    }
-    fn dimension(&self) -> &str {
-        self.me().map_or("minecraft:overworld", |e| e.dim)
-    }
-    fn source_entity(&self) -> Option<Ent> {
-        self.me().cloned()
-    }
     fn players(&self) -> Vec<Ent> {
         self.ents.iter().filter(|e| e.is_player()).cloned().collect()
     }
@@ -147,15 +168,12 @@ impl SelectorWorld for Mock {
         self.ents.iter().filter(|e| dimension.is_none_or(|d| d == e.dim)).cloned().collect()
     }
     fn shuffle(&mut self, _: &mut [Ent]) {}
+    fn scoreboard(&self) -> Option<&Scoreboard> {
+        Some(&self.scoreboard)
+    }
 }
 
 impl Host for Mock {
-    fn source_name(&self) -> Text {
-        Text::literal(self.me().map_or("Server".to_owned(), |e| e.name.clone()))
-    }
-    fn source_rotation(&self) -> [f32; 2] {
-        self.me().map_or([0.0, 0.0], |e| e.rot)
-    }
     fn send_success(&mut self, text: Text, broadcast: bool) {
         self.feedback.push((text.to_plain(), broadcast));
     }
@@ -266,7 +284,48 @@ impl Host for Mock {
     fn kiln_regions(&mut self) -> Vec<Text> {
         vec![Text::literal("1 region")]
     }
+    /// Chunks within 10 of the origin are loaded, in the overworld and the nether.
+    fn is_chunk_loaded(&self, dimension: &str, cx: i32, cz: i32) -> bool {
+        self.has_dimension(dimension) && cx.abs() <= 10 && cz.abs() <= 10
+    }
+    fn block_state(&mut self, _: &str, pos: [i32; 3]) -> u16 {
+        if !(-64..320).contains(&pos[1]) {
+            return kiln_data::blocks::default_state::VOID_AIR;
+        }
+        self.block(pos)
+    }
+    fn set_block(&mut self, _: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool {
+        if self.block(pos) == state {
+            return false;
+        }
+        self.blocks.insert(pos, state);
+        if let Some(nbt) = nbt {
+            self.effects.push(format!("nbt {pos:?} {}", crate::snbt::to_snbt(nbt)));
+        }
+        let _ = flags;
+        true
+    }
+    fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], drop: bool) -> bool {
+        let old = self.block(pos);
+        if kiln_data::blocks_types::is_air(old) {
+            return false;
+        }
+        self.effects.push(format!("destroy {pos:?} {drop}"));
+        self.set_block(dimension, pos, AIR, None, UpdateFlags::ALL)
+    }
+    fn height(&mut self, _: &str, heightmap: Heightmap, x: i32, z: i32) -> i32 {
+        (-64..320).rev().find(|&y| heightmap.counts(self.block([x, y, z]))).map_or(-64, |y| y + 1)
+    }
+    fn biome(&mut self, _: &str, _: [i32; 3]) -> Option<String> {
+        Some("minecraft:plains".into())
+    }
+    fn scoreboard_mut(&mut self) -> Option<&mut Scoreboard> {
+        Some(&mut self.scoreboard)
+    }
 }
+
+const STONE: u16 = kiln_data::blocks::default_state::STONE;
+const AIR: u16 = kiln_data::blocks::default_state::AIR;
 
 /// The simulation keeps the dispatcher on its own thread and may share it.
 #[test]
@@ -731,7 +790,8 @@ fn to_json(d: &Dispatcher<Mock>, id: crate::dispatcher::NodeId) -> Value {
     if d.is_executable(id) {
         o.insert("executable".into(), json!(true));
     }
-    if let Some(r) = d.redirect_of(id) {
+    // `ArgumentUtils` omits redirects to the root (an empty path).
+    if let Some(r) = d.redirect_of(id).filter(|&r| r != d.root()) {
         o.insert("redirect".into(), json!(d.path(r)));
     }
     if d.permission(id) > 0 {
@@ -764,7 +824,10 @@ fn first_difference(path: &str, ours: &Value, theirs: &Value) -> Option<String> 
 
 #[test]
 fn tree_matches_vanilla_commands_json() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work/generated/reports/commands.json");
+    let work = std::env::var_os("KILN_WORK")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work"));
+    let path = work.join("generated/reports/commands.json");
     let Ok(text) = std::fs::read_to_string(&path) else {
         eprintln!("skipped: {} not found (run the data generator)", path.display());
         return;

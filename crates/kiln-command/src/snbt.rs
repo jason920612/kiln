@@ -391,13 +391,13 @@ impl Parser<'_, '_> {
         let at = self.reader.cursor();
         let parts = 'alt: {
             // whole '.' cut fraction? exponent? suffix?
-            if let Some(whole) = self.decimal() {
-                if self.char('.') {
-                    let fraction = self.optional(|p| p.decimal());
-                    let exponent = self.optional(|p| p.exponent());
-                    let suffix = self.optional(|p| p.float_suffix());
-                    break 'alt Some((Some(whole), fraction, exponent, suffix));
-                }
+            if let Some(whole) = self.decimal()
+                && self.char('.')
+            {
+                let fraction = self.optional(|p| p.decimal());
+                let exponent = self.optional(|p| p.exponent());
+                let suffix = self.optional(|p| p.float_suffix());
+                break 'alt Some((Some(whole), fraction, exponent, suffix));
             }
             self.reader.set_cursor(at);
             // '.' cut fraction exponent? suffix?
@@ -410,11 +410,11 @@ impl Parser<'_, '_> {
             }
             self.reader.set_cursor(at);
             // whole exponent cut suffix?
-            if let Some(whole) = self.decimal() {
-                if let Some(exponent) = self.exponent() {
-                    let suffix = self.optional(|p| p.float_suffix());
-                    break 'alt Some((Some(whole), None, Some(exponent), suffix));
-                }
+            if let Some(whole) = self.decimal()
+                && let Some(exponent) = self.exponent()
+            {
+                let suffix = self.optional(|p| p.float_suffix());
+                break 'alt Some((Some(whole), None, Some(exponent), suffix));
             }
             self.reader.set_cursor(at);
             // whole exponent? suffix
@@ -498,7 +498,7 @@ impl Parser<'_, '_> {
             let at = self.reader.cursor();
             // plain run
             let s = self.reader.string();
-            let len = s[at..].find(|c: char| matches!(c, '"' | '\'' | '\\')).unwrap_or(s.len() - at);
+            let len = s[at..].find(['"', '\'', '\\']).unwrap_or(s.len() - at);
             if len > 0 {
                 out.push_str(&s[at..at + len]);
                 self.reader.set_cursor(at + len);
@@ -506,12 +506,12 @@ impl Parser<'_, '_> {
                 continue;
             }
             self.fail(at, snbt_error("invalid_string_contents"));
-            if self.char('\\') {
-                if let Some(e) = self.escape() {
-                    out.push_str(&e);
-                    any = true;
-                    continue;
-                }
+            if self.char('\\')
+                && let Some(e) = self.escape()
+            {
+                out.push_str(&e);
+                any = true;
+                continue;
             }
             self.reader.set_cursor(at);
             if self.char(other) {
