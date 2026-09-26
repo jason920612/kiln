@@ -7,6 +7,8 @@ use crate::nbt::Tag;
 use crate::{DecodeError, Reader, WriteExt};
 use uuid::Uuid;
 
+pub mod login_ext;
+
 fn packet(id: i32) -> BytesMut {
     let mut b = BytesMut::with_capacity(64);
     b.put_varint(id);
