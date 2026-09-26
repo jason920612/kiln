@@ -413,6 +413,8 @@ impl Sim {
                 self.ack(conn, sequence);
             }
             PlayIn::Punch => p.swung = true,
+            // Decoded but not handled by the simulation yet.
+            _ => {}
         }
     }
 

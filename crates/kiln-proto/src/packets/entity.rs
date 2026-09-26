@@ -30,10 +30,15 @@
 pub mod metadata;
 pub mod movement;
 pub mod player_info;
+pub mod status;
 
 pub use metadata::{DataValue, EntityData};
 pub use movement::{MoveState, MovementTracker, PositionCodec, put_lp_vec3, read_lp_vec3};
 pub use player_info::{ChatSession, PlayerInfoActions, PlayerInfoEntry, player_info_remove, player_info_update};
+pub use status::{
+    AttributeModifier, AttributeSnapshot, MobEffect, ModifierOperation, damage_event, effect_flags, entity_event,
+    hurt_animation, remove_mob_effect, take_item_entity, update_attributes, update_mob_effect,
+};
 
 use super::packet;
 use crate::WriteExt;
