@@ -1,19 +1,25 @@
-//! World storage: chunks grouped into 8×8-chunk cells (the unit regions will own), a
-//! superflat generator, block access and cached chunk packets.
+//! World storage: chunks grouped into 8×8-chunk cells (the unit regions own), block and
+//! light access over any set of cells, chunk loading and generation, and cached chunk packets.
+//!
+//! Block, light and chunk operations are written once against [`CellStore`] (through the
+//! [`Blocks`] extension trait), so they run the same on a standalone [`World`], on the cells
+//! one region owns, or on every region of a dimension. They only ever see loaded chunks;
+//! loading and generating is the [`ChunkProvider`]'s job.
 
 pub mod block_entity;
 pub mod chunk;
 pub mod light;
 pub mod section;
-mod spawn;
+pub mod spawn;
 
 use bytes::Bytes;
 use chunk::Chunk;
 use kiln_data::blocks::default_state as block;
+pub use kiln_region::CellPos;
+use kiln_region::{CELL_SHIFT, CellSet, Regions};
 use section::Section;
 use std::collections::HashMap;
 
-pub const CELL_SHIFT: i32 = 3;
 const CELL_CHUNKS: usize = 1 << (2 * CELL_SHIFT);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -32,21 +38,22 @@ impl ChunkPos {
     }
 
     pub fn cell(self) -> CellPos {
-        CellPos { x: self.x >> CELL_SHIFT, z: self.z >> CELL_SHIFT }
+        CellPos::of_chunk(self.x, self.z)
     }
 
     fn cell_index(self) -> usize {
         let m = (1 << CELL_SHIFT) - 1;
         (((self.z & m) << CELL_SHIFT) | (self.x & m)) as usize
     }
+
+    /// The chunk at index `i` of `cell`.
+    fn in_cell(cell: CellPos, i: usize) -> Self {
+        let m = (1 << CELL_SHIFT) - 1;
+        Self::new((cell.x << CELL_SHIFT) | (i as i32 & m), (cell.z << CELL_SHIFT) | ((i as i32 >> CELL_SHIFT) & m))
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct CellPos {
-    pub x: i32,
-    pub z: i32,
-}
-
+/// The loaded chunks of one cell.
 pub struct Cell {
     chunks: [Option<Box<Chunk>>; CELL_CHUNKS],
 }
@@ -54,6 +61,45 @@ pub struct Cell {
 impl Default for Cell {
     fn default() -> Self {
         Self { chunks: std::array::from_fn(|_| None) }
+    }
+}
+
+impl Cell {
+    pub fn chunk(&self, pos: ChunkPos) -> Option<&Chunk> {
+        self.chunks[pos.cell_index()].as_deref()
+    }
+
+    pub fn chunk_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        self.chunks[pos.cell_index()].as_deref_mut()
+    }
+
+    /// Installs a chunk (`pos` must lie in this cell); returns the one it replaced.
+    pub fn insert(&mut self, pos: ChunkPos, chunk: Chunk) -> Option<Box<Chunk>> {
+        self.chunks[pos.cell_index()].replace(Box::new(chunk))
+    }
+
+    pub fn remove(&mut self, pos: ChunkPos) -> Option<Box<Chunk>> {
+        self.chunks[pos.cell_index()].take()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.chunks.iter().all(Option::is_none)
+    }
+
+    pub fn len(&self) -> usize {
+        self.chunks.iter().filter(|c| c.is_some()).count()
+    }
+
+    /// Loaded chunks with their positions, given this cell's position.
+    pub fn chunks(&self, cell: CellPos) -> impl Iterator<Item = (ChunkPos, &Chunk)> {
+        self.chunks.iter().enumerate().filter_map(move |(i, c)| Some((ChunkPos::in_cell(cell, i), c.as_deref()?)))
+    }
+
+    pub fn chunks_mut(&mut self, cell: CellPos) -> impl Iterator<Item = (ChunkPos, &mut Chunk)> {
+        self.chunks
+            .iter_mut()
+            .enumerate()
+            .filter_map(move |(i, c)| Some((ChunkPos::in_cell(cell, i), c.as_deref_mut()?)))
     }
 }
 
@@ -89,21 +135,22 @@ pub enum Terrain {
     Void,
 }
 
-pub struct World {
+/// Loads chunks from storage, generates the missing ones and writes changed ones back.
+pub struct ChunkProvider {
     pub dimension: Dimension,
-    cells: HashMap<CellPos, Box<Cell>>,
     source: Option<Box<dyn ChunkSource>>,
     terrain: Terrain,
     biome: u16,
-    biome_count: usize,
+    /// Size of the biome registry (the width of direct biome palettes on the wire).
+    pub biome_count: usize,
 }
 
-impl World {
+impl ChunkProvider {
     pub fn flat(dimension: Dimension, biome: u16, biome_count: usize) -> Self {
-        Self { dimension, cells: HashMap::new(), source: None, terrain: Terrain::Flat, biome, biome_count }
+        Self { dimension, source: None, terrain: Terrain::Flat, biome, biome_count }
     }
 
-    /// A world backed by stored chunks, with `fallback` terrain where the source has none.
+    /// Stored chunks, with `fallback` terrain where the source has none.
     pub fn with_source(
         dimension: Dimension,
         source: Box<dyn ChunkSource>,
@@ -111,7 +158,7 @@ impl World {
         biome: u16,
         biome_count: usize,
     ) -> Self {
-        Self { dimension, cells: HashMap::new(), source: Some(source), terrain: fallback, biome, biome_count }
+        Self { dimension, source: Some(source), terrain: fallback, biome, biome_count }
     }
 
     /// Y coordinate a player stands at on top of the flat terrain.
@@ -134,7 +181,7 @@ impl World {
         Chunk::new(sections, self.dimension.min_y)
     }
 
-    fn load_or_generate(&mut self, pos: ChunkPos) -> Chunk {
+    pub fn load_or_generate(&mut self, pos: ChunkPos) -> Chunk {
         let dim = self.dimension;
         self.source.as_mut().and_then(|s| s.load(pos, dim)).unwrap_or_else(|| {
             let mut c = self.generate();
@@ -143,67 +190,123 @@ impl World {
         })
     }
 
-    /// Writes every changed or newly generated chunk to the chunk source.
-    /// Returns how many chunks were saved.
-    pub fn save(&mut self) -> std::io::Result<usize> {
-        let Some(source) = self.source.as_mut() else { return Ok(0) };
-        let mut saved = 0;
-        for (cell_pos, cell) in &mut self.cells {
-            for (i, slot) in cell.chunks.iter_mut().enumerate() {
-                let Some(chunk) = slot.as_deref_mut() else { continue };
-                if !chunk.needs_save() {
-                    continue;
-                }
-                let m = (1 << CELL_SHIFT) - 1;
-                let pos = ChunkPos::new(
-                    (cell_pos.x << CELL_SHIFT) | (i as i32 & m),
-                    (cell_pos.z << CELL_SHIFT) | ((i as i32 >> CELL_SHIFT) & m),
-                );
-                source.save(pos, chunk);
-                chunk.mark_saved();
-                saved += 1;
-            }
+    /// Queues `chunk` for writing if it changed (or was generated) since it was last saved.
+    /// Returns whether it was queued.
+    pub fn save(&mut self, pos: ChunkPos, chunk: &mut Chunk) -> bool {
+        let Some(source) = self.source.as_mut() else { return false };
+        if !chunk.needs_save() {
+            return false;
         }
-        source.flush()?;
+        source.save(pos, chunk);
+        chunk.mark_saved();
+        true
+    }
+
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.source.as_mut().map_or(Ok(()), |s| s.flush())
+    }
+
+    /// Whether unloaded chunks can be written somewhere (a superflat test world cannot).
+    pub fn stores(&self) -> bool {
+        self.source.is_some()
+    }
+
+    /// Queues every changed chunk in `cells` and flushes; returns how many were written.
+    pub fn save_all<S: CellStore + ?Sized>(&mut self, cells: &mut S) -> std::io::Result<usize> {
+        let mut saved = 0;
+        cells.for_each_cell_mut(&mut |pos, cell| {
+            for (chunk_pos, chunk) in cell.chunks_mut(pos) {
+                saved += self.save(chunk_pos, chunk) as usize;
+            }
+        });
+        self.flush()?;
         Ok(saved)
     }
+}
 
-    pub fn chunk(&self, pos: ChunkPos) -> Option<&Chunk> {
-        self.cells.get(&pos.cell())?.chunks[pos.cell_index()].as_deref()
+/// Cells that block, light and chunk operations run on.
+pub trait CellStore {
+    fn cell(&self, pos: CellPos) -> Option<&Cell>;
+    fn cell_mut(&mut self, pos: CellPos) -> Option<&mut Cell>;
+    fn for_each_cell<'a>(&'a self, f: &mut dyn FnMut(CellPos, &'a Cell));
+    fn for_each_cell_mut(&mut self, f: &mut dyn FnMut(CellPos, &mut Cell));
+}
+
+/// The cells one region owns.
+impl CellStore for CellSet<Cell> {
+    fn cell(&self, pos: CellPos) -> Option<&Cell> {
+        self.get(pos)
+    }
+    fn cell_mut(&mut self, pos: CellPos) -> Option<&mut Cell> {
+        self.get_mut(pos)
+    }
+    fn for_each_cell<'a>(&'a self, f: &mut dyn FnMut(CellPos, &'a Cell)) {
+        self.iter().for_each(|(p, c)| f(p, c));
+    }
+    fn for_each_cell_mut(&mut self, f: &mut dyn FnMut(CellPos, &mut Cell)) {
+        self.iter_mut().for_each(|(p, c)| f(p, c));
+    }
+}
+
+/// Every region of a dimension (serial phases only).
+impl<P> CellStore for Regions<Cell, P> {
+    fn cell(&self, pos: CellPos) -> Option<&Cell> {
+        self.at(pos)?.cells().get(pos)
+    }
+    fn cell_mut(&mut self, pos: CellPos) -> Option<&mut Cell> {
+        self.at_mut(pos)?.cells_mut().get_mut(pos)
+    }
+    fn for_each_cell<'a>(&'a self, f: &mut dyn FnMut(CellPos, &'a Cell)) {
+        self.iter().for_each(|r| r.cells().for_each_cell(f));
+    }
+    fn for_each_cell_mut(&mut self, f: &mut dyn FnMut(CellPos, &mut Cell)) {
+        self.iter_mut().for_each(|r| r.cells_mut().for_each_cell_mut(f));
+    }
+}
+
+impl CellStore for HashMap<CellPos, Box<Cell>> {
+    fn cell(&self, pos: CellPos) -> Option<&Cell> {
+        self.get(&pos).map(|c| &**c)
+    }
+    fn cell_mut(&mut self, pos: CellPos) -> Option<&mut Cell> {
+        self.get_mut(&pos).map(|c| &mut **c)
+    }
+    fn for_each_cell<'a>(&'a self, f: &mut dyn FnMut(CellPos, &'a Cell)) {
+        self.iter().for_each(|(p, c)| f(*p, c));
+    }
+    fn for_each_cell_mut(&mut self, f: &mut dyn FnMut(CellPos, &mut Cell)) {
+        self.iter_mut().for_each(|(p, c)| f(*p, c));
+    }
+}
+
+/// Block, light and chunk access over loaded chunks; unloaded chunks read as `None`.
+pub trait Blocks: CellStore {
+    fn chunk(&self, pos: ChunkPos) -> Option<&Chunk> {
+        self.cell(pos.cell())?.chunk(pos)
     }
 
-    pub fn chunk_mut(&mut self, pos: ChunkPos) -> &mut Chunk {
-        if self.chunk(pos).is_none() {
-            let chunk = Box::new(self.load_or_generate(pos));
-            let cell = self.cells.entry(pos.cell()).or_default();
-            cell.chunks[pos.cell_index()] = Some(chunk);
-        }
-        self.cells.get_mut(&pos.cell()).unwrap().chunks[pos.cell_index()].as_deref_mut().unwrap()
+    fn chunk_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        self.cell_mut(pos.cell())?.chunk_mut(pos)
     }
 
-    pub fn chunk_body(&mut self, pos: ChunkPos) -> Bytes {
-        let biome_count = self.biome_count;
-        self.chunk_mut(pos).packet_body(biome_count)
-    }
-
-    pub fn get_block(&self, x: i32, y: i32, z: i32) -> Option<u16> {
+    fn get_block(&self, x: i32, y: i32, z: i32) -> Option<u16> {
         let c = self.chunk(ChunkPos::of_block(x, z))?;
         Some(c.get((x & 15) as usize, y, (z & 15) as usize))
     }
 
-    /// Sets a block, generating its chunk if needed, and updates light. Returns the
-    /// previous state, or `None` if `y` is outside the world.
-    pub fn set_block(&mut self, x: i32, y: i32, z: i32, state: u16) -> Option<u16> {
-        let old = self.chunk_mut(ChunkPos::of_block(x, z)).set((x & 15) as usize, y, (z & 15) as usize, state)?;
+    /// Sets a block in a loaded chunk and updates light. Returns the previous state, or
+    /// `None` if the chunk is not loaded or `y` is outside the world.
+    fn set_block(&mut self, x: i32, y: i32, z: i32, state: u16) -> Option<u16> {
+        let old = self.chunk_mut(ChunkPos::of_block(x, z))?.set((x & 15) as usize, y, (z & 15) as usize, state)?;
         if old != state {
-            self.update_light(x, y, z, old, state);
+            light::update_light(self, x, y, z, old, state);
         }
         Some(old)
     }
 
     /// Type and update tag of the block entity at a position for a Block Entity Data packet,
     /// if vanilla sends one when that block changes (an empty update tag is an empty compound).
-    pub fn block_entity_data(&self, x: i32, y: i32, z: i32) -> Option<(u16, kiln_proto::nbt::Tag)> {
+    fn block_entity_data(&self, x: i32, y: i32, z: i32) -> Option<(u16, kiln_proto::nbt::Tag)> {
         let c = self.chunk(ChunkPos::of_block(x, z))?;
         let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
         let be = c.block_entity(lx, y, lz).filter(|be| block_entity::sends_updates(be.kind))?;
@@ -211,48 +314,52 @@ impl World {
         Some((be.kind, tag))
     }
 
-    /// The chunk at `pos` if it is loaded (never loads or generates).
-    pub fn chunk_mut_loaded(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
-        self.cells.get_mut(&pos.cell())?.chunks[pos.cell_index()].as_deref_mut()
+    fn light_at(&self, layer: chunk::LightLayer, x: i32, y: i32, z: i32) -> Option<u8> {
+        light::light_at(self, layer, x, y, z)
     }
 
     /// Light Data for an Update Light packet covering the given sections of a loaded chunk.
-    pub fn light_update_body(&self, pos: ChunkPos, sky: u64, block: u64) -> Option<Bytes> {
+    fn light_update_body(&self, pos: ChunkPos, sky: u64, block: u64) -> Option<Bytes> {
         let mut b = bytes::BytesMut::new();
         self.chunk(pos)?.encode_light_update(sky, block, &mut b);
         Some(b.freeze())
     }
 
     /// Loaded chunks with light changes since the last call, with their section masks.
-    pub fn take_light_changes(&mut self) -> Vec<(ChunkPos, u64, u64)> {
+    fn take_light_changes(&mut self) -> Vec<(ChunkPos, u64, u64)> {
         let mut out = Vec::new();
-        for (cell_pos, cell) in &mut self.cells {
-            for (i, slot) in cell.chunks.iter_mut().enumerate() {
-                let Some(chunk) = slot.as_deref_mut() else { continue };
+        self.for_each_cell_mut(&mut |pos, cell| {
+            for (chunk_pos, chunk) in cell.chunks_mut(pos) {
                 let (sky, block) = chunk.take_light_dirty();
                 if sky | block != 0 {
-                    let m = (1 << CELL_SHIFT) - 1;
-                    let pos = ChunkPos::new(
-                        (cell_pos.x << CELL_SHIFT) | (i as i32 & m),
-                        (cell_pos.z << CELL_SHIFT) | ((i as i32 >> CELL_SHIFT) & m),
-                    );
-                    out.push((pos, sky, block));
+                    out.push((chunk_pos, sky, block));
                 }
             }
-        }
+        });
         out
     }
 
-    /// Feeds every loaded chunk's position and block states to `h` in a fixed order that does
-    /// not depend on container layout (for determinism tests).
-    pub fn hash_blocks<H: std::hash::Hasher>(&self, h: &mut H) {
+    fn loaded_chunks(&self) -> usize {
+        let mut n = 0;
+        self.for_each_cell(&mut |_, cell| n += cell.len());
+        n
+    }
+
+    /// Feeds the position and block states of every loaded chunk with block edits to `h`, in
+    /// an order that depends neither on container layout nor on how the cells are split
+    /// between regions (for determinism tests). Unedited chunks are the generator's or the
+    /// save's and which of them happen to be loaded is not part of the state.
+    fn hash_blocks<H: std::hash::Hasher>(&self, h: &mut H)
+    where
+        Self: Sized,
+    {
         use std::hash::Hash;
-        let mut cells: Vec<_> = self.cells.iter().collect();
-        cells.sort_by_key(|(pos, _)| **pos);
+        let mut cells: Vec<(CellPos, &Cell)> = Vec::new();
+        self.for_each_cell(&mut |pos, cell| cells.push((pos, cell)));
+        cells.sort_by_key(|(pos, _)| *pos);
         for (cell_pos, cell) in cells {
-            for (i, chunk) in cell.chunks.iter().enumerate() {
-                let Some(chunk) = chunk else { continue };
-                (cell_pos.x, cell_pos.z, i).hash(h);
+            for (pos, chunk) in cell.chunks(cell_pos).filter(|(_, c)| c.edited()) {
+                (pos.x, pos.z).hash(h);
                 // Runs of equal states, so a single-state container and a paletted one with
                 // the same contents hash alike.
                 for section in &chunk.sections {
@@ -275,9 +382,83 @@ impl World {
             }
         }
     }
+}
 
-    pub fn loaded_chunks(&self) -> usize {
-        self.cells.values().map(|c| c.chunks.iter().filter(|c| c.is_some()).count()).sum()
+impl<S: CellStore + ?Sized> Blocks for S {}
+
+/// A standalone world: cells in a map, loading chunks on demand (tools and tests; the
+/// simulation keeps its cells in regions).
+pub struct World {
+    pub dimension: Dimension,
+    cells: HashMap<CellPos, Box<Cell>>,
+    provider: ChunkProvider,
+}
+
+impl World {
+    pub fn flat(dimension: Dimension, biome: u16, biome_count: usize) -> Self {
+        Self::new(ChunkProvider::flat(dimension, biome, biome_count))
+    }
+
+    /// A world backed by stored chunks, with `fallback` terrain where the source has none.
+    pub fn with_source(
+        dimension: Dimension,
+        source: Box<dyn ChunkSource>,
+        fallback: Terrain,
+        biome: u16,
+        biome_count: usize,
+    ) -> Self {
+        Self::new(ChunkProvider::with_source(dimension, source, fallback, biome, biome_count))
+    }
+
+    pub fn new(provider: ChunkProvider) -> Self {
+        Self { dimension: provider.dimension, cells: HashMap::new(), provider }
+    }
+
+    /// Y coordinate a player stands at on top of the flat terrain.
+    pub fn flat_surface_y(&self) -> f64 {
+        self.provider.flat_surface_y()
+    }
+
+    /// Writes every changed or newly generated chunk to the chunk source.
+    /// Returns how many chunks were saved.
+    pub fn save(&mut self) -> std::io::Result<usize> {
+        self.provider.save_all(&mut self.cells)
+    }
+
+    /// The chunk at `pos`, loading or generating it first if needed.
+    pub fn load_chunk(&mut self, pos: ChunkPos) -> &mut Chunk {
+        if self.chunk(pos).is_none() {
+            let chunk = self.provider.load_or_generate(pos);
+            self.cells.entry(pos.cell()).or_default().insert(pos, chunk);
+        }
+        Blocks::chunk_mut(self, pos).unwrap()
+    }
+
+    pub fn chunk_body(&mut self, pos: ChunkPos) -> Bytes {
+        let biome_count = self.provider.biome_count;
+        self.load_chunk(pos).packet_body(biome_count)
+    }
+
+    /// Sets a block, loading its chunk if needed, and updates light. Returns the previous
+    /// state, or `None` if `y` is outside the world.
+    pub fn set_block(&mut self, x: i32, y: i32, z: i32, state: u16) -> Option<u16> {
+        self.load_chunk(ChunkPos::of_block(x, z));
+        Blocks::set_block(self, x, y, z, state)
+    }
+}
+
+impl CellStore for World {
+    fn cell(&self, pos: CellPos) -> Option<&Cell> {
+        self.cells.cell(pos)
+    }
+    fn cell_mut(&mut self, pos: CellPos) -> Option<&mut Cell> {
+        self.cells.cell_mut(pos)
+    }
+    fn for_each_cell<'a>(&'a self, f: &mut dyn FnMut(CellPos, &'a Cell)) {
+        self.cells.for_each_cell(f)
+    }
+    fn for_each_cell_mut(&mut self, f: &mut dyn FnMut(CellPos, &mut Cell)) {
+        self.cells.for_each_cell_mut(f)
     }
 }
 
@@ -320,7 +501,7 @@ mod tests {
         };
         w.set_block(2, 0, 2, block::COPPER_CHEST);
         let chest = block_entity::type_id("minecraft:chest").unwrap();
-        w.chunk_mut(ChunkPos::new(0, 0)).set_block_entity(2, 0, 2, marked(chest));
+        Blocks::chunk_mut(&mut w, ChunkPos::new(0, 0)).unwrap().set_block_entity(2, 0, 2, marked(chest));
         let facing = kiln_data::blocks_types::block_of(block::COPPER_CHEST);
         w.set_block(2, 0, 2, facing.with_property(block::COPPER_CHEST, "facing", "east").unwrap());
         w.set_block(2, 0, 2, block::EXPOSED_COPPER_CHEST);
@@ -339,6 +520,14 @@ mod tests {
     }
 
     #[test]
+    fn unloaded_chunks_are_not_edited_through_blocks() {
+        let mut w = World::flat(OVERWORLD, 0, 67);
+        assert_eq!(Blocks::set_block(&mut w, 5, 10, 5, block::STONE), None);
+        assert_eq!(w.get_block(5, 10, 5), None);
+        assert_eq!(w.loaded_chunks(), 0);
+    }
+
+    #[test]
     fn packet_body_cache_invalidates_on_change() {
         let mut w = World::flat(OVERWORLD, 0, 67);
         let p = ChunkPos::new(0, 0);
@@ -348,5 +537,13 @@ mod tests {
         w.set_block(3, 5, 3, block::STONE);
         let c = w.chunk_body(p);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn chunk_positions_round_trip_through_cells() {
+        for &(x, z) in &[(0, 0), (7, 7), (8, -1), (-9, 17), (-1_875_000, 1_875_000)] {
+            let pos = ChunkPos::new(x, z);
+            assert_eq!(ChunkPos::in_cell(pos.cell(), pos.cell_index()), pos);
+        }
     }
 }

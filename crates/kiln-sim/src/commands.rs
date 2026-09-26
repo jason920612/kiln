@@ -543,7 +543,7 @@ impl Host for Sim {
 
     fn kiln_tick(&mut self) -> Vec<Text> {
         let players = self.players.len();
-        let chunks = self.world.loaded_chunks();
+        let chunks = kiln_world::Blocks::loaded_chunks(&self.dim.regions);
         let mut lines = vec![Text::literal(format!("{players} players, {chunks} loaded chunks"))];
         match &self.commands.last_report {
             Some(r) => lines.push(Text::literal(r.clone())),

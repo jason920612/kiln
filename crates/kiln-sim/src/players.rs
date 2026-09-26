@@ -9,6 +9,7 @@ use kiln_proto::packets::entity::metadata::{HumanoidArm, shared_flags};
 use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, PlayerInfoActions, PlayerInfoEntry};
 use kiln_proto::packets::ProfileProperty;
 use kiln_world::ChunkPos;
+use std::collections::HashMap;
 
 /// A command chat message (`say`, `me`, `msg`) through its chat type.
 pub(crate) fn chat_disguised(message: &kiln_command::ChatMessage) -> Bytes {
@@ -117,142 +118,165 @@ impl Sim {
         self.broadcast(entity::player_info_remove(&[gone.uuid]));
     }
 
-    /// Recomputes who sees whom.
-    /// Vanilla's tracking triggers (`ChunkMap.tick`): a player whose section changed has its
-    /// viewers re-evaluated against everyone, and every player re-evaluates its pairing with
-    /// the viewers whose section changed. Nothing else changes who sees whom.
-    pub(crate) fn update_visibility(&mut self) {
-        struct Snap {
-            conn: ConnId,
-            x: f64,
-            z: f64,
-            chunk: ChunkPos,
-            /// Viewer's tracking radius in blocks and its view distance in chunks.
-            range: f64,
-            view: i32,
-            moved: bool,
-        }
-        let range_cap = PLAYER.tracking_range as f64 * 16.0;
-        // Sorted by connection so the wanted viewer lists come out sorted, like `seen_by`.
-        let mut snaps: Vec<Snap> = self
-            .players
-            .iter_mut()
-            .map(|(&conn, p)| {
-                let block = p.pos.map(|c| c.floor() as i32);
-                let section = block.map(|c| c >> 4);
-                let moved = p.section != Some(section);
-                p.section = Some(section);
-                Snap {
-                    conn,
-                    x: p.pos[0],
-                    z: p.pos[2],
-                    chunk: ChunkPos::of_block(block[0], block[2]),
-                    range: range_cap.min(p.view_distance as f64 * 16.0),
-                    view: p.view_distance,
-                    moved,
+    /// Ends pairings between players now in different regions (one was teleported away):
+    /// tracking only runs within a region, so the viewer forgets the entity.
+    pub(crate) fn drop_cross_region_pairs(&mut self) {
+        let region: HashMap<ConnId, (kiln_region::RegionId, i32)> =
+            self.players.iter().map(|(&c, p)| (c, (p.region, p.entity_id))).collect();
+        let mut forget: Vec<(ConnId, i32)> = Vec::new();
+        for (&conn, p) in self.players.iter_mut() {
+            let (mine, id) = region[&conn];
+            let before = forget.len();
+            p.seen_by.retain(|v| {
+                let same = region.get(v).is_some_and(|&(r, _)| r == mine);
+                if !same {
+                    forget.push((*v, id));
                 }
-            })
-            .collect();
-        if !snaps.iter().any(|s| s.moved) {
-            return;
-        }
-        snaps.sort_unstable_by_key(|s| s.conn);
-        let movers: Vec<&Snap> = snaps.iter().filter(|s| s.moved).collect();
-
-        // Vanilla `updatePlayer`: within the entity's tracking range and the viewer's view
-        // distance, and in a chunk inside the viewer's chunk view.
-        let sees = |v: &Snap, t: &Snap| {
-            let (dx, dz) = (v.x - t.x, v.z - t.z);
-            v.conn != t.conn
-                && dx * dx + dz * dz <= v.range * v.range
-                && (t.chunk.x - v.chunk.x).abs() <= v.view
-                && (t.chunk.z - v.chunk.z).abs() <= v.view
-        };
-        let mut changes: Vec<(ConnId, Vec<ConnId>, Vec<ConnId>)> = Vec::new();
-        let mut want: Vec<ConnId> = Vec::with_capacity(snaps.len());
-        for t in &snaps {
-            let seen = &self.players[&t.conn].seen_by;
-            let (added, removed) = if t.moved {
-                want.clear();
-                want.extend(snaps.iter().filter(|v| sees(v, t)).map(|v| v.conn));
-                if seen[..] == want[..] {
-                    continue;
-                }
-                sorted_diff(&want, seen)
-            } else {
-                let (mut added, mut removed) = (Vec::new(), Vec::new());
-                for v in &movers {
-                    match (sees(v, t), seen.binary_search(&v.conn).is_ok()) {
-                        (true, false) => added.push(v.conn),
-                        (false, true) => removed.push(v.conn),
-                        _ => {}
-                    }
-                }
-                if added.is_empty() && removed.is_empty() {
-                    continue;
-                }
-                (added, removed)
-            };
-            changes.push((t.conn, added, removed));
-        }
-        for (t, added, removed) in changes {
-            let (spawn, id) = {
-                let target = &self.players[&t];
-                (target.spawn_packets(), target.entity_id)
-            };
-            let despawn = entity::remove_entities(&[id]);
-            for v in &added {
-                if let Some(p) = self.players.get_mut(v) {
-                    for pkt in &spawn {
-                        p.send(pkt.clone());
-                    }
-                }
+                same
+            });
+            if forget.len() > before {
+                p.section = None;
             }
-            for v in &removed {
-                if let Some(p) = self.players.get_mut(v) {
-                    p.send(despawn.clone());
-                }
+        }
+        for (viewer, id) in forget {
+            if let Some(v) = self.players.get_mut(&viewer) {
+                v.send(entity::remove_entities(&[id]));
+                v.section = None;
             }
-            let target = self.players.get_mut(&t).unwrap();
-            target.seen_by.retain(|v| removed.binary_search(v).is_err());
-            target.seen_by.extend(added);
-            target.seen_by.sort_unstable();
         }
     }
 
-    /// Streams movement and metadata changes: encoded once per player, shared by its viewers.
-    pub(crate) fn broadcast_movement(&mut self) {
-        let ids: Vec<ConnId> = self.players.keys().copied().collect();
-        for &t in &ids {
-            let (packets, viewers) = {
-                let target = self.players.get_mut(&t).unwrap();
-                let state = target.move_state();
-                let mut packets = target.tracker.tick(&state);
-                if target.meta_dirty {
-                    target.meta_dirty = false;
-                    let mut d = EntityData::new();
-                    d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
-                    d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
-                    packets.push(entity::set_entity_data(target.entity_id, &d));
+}
+
+/// Recomputes who sees whom among one region's players (sorted by connection), with
+/// vanilla's tracking triggers (`ChunkMap.tick`): a player whose section changed has its
+/// viewers re-evaluated against everyone, and every player re-evaluates its pairing with
+/// the viewers whose section changed. Nothing else changes who sees whom. Players of other
+/// regions are too far away to track.
+pub(crate) fn update_visibility(players: &mut [&mut Player]) {
+    struct Snap {
+        conn: ConnId,
+        x: f64,
+        z: f64,
+        chunk: ChunkPos,
+        /// Viewer's tracking radius in blocks and its view distance in chunks.
+        range: f64,
+        view: i32,
+        moved: bool,
+    }
+    let range_cap = PLAYER.tracking_range as f64 * 16.0;
+    let snaps: Vec<Snap> = players
+        .iter_mut()
+        .map(|p| {
+            let block = p.pos.map(|c| c.floor() as i32);
+            let section = block.map(|c| c >> 4);
+            let moved = p.section != Some(section);
+            p.section = Some(section);
+            Snap {
+                conn: p.conn,
+                x: p.pos[0],
+                z: p.pos[2],
+                chunk: ChunkPos::of_block(block[0], block[2]),
+                range: range_cap.min(p.view_distance as f64 * 16.0),
+                view: p.view_distance,
+                moved,
+            }
+        })
+        .collect();
+    if !snaps.iter().any(|s| s.moved) {
+        return;
+    }
+    let movers: Vec<&Snap> = snaps.iter().filter(|s| s.moved).collect();
+
+    // Vanilla `updatePlayer`: within the entity's tracking range and the viewer's view
+    // distance, and in a chunk inside the viewer's chunk view.
+    let sees = |v: &Snap, t: &Snap| {
+        let (dx, dz) = (v.x - t.x, v.z - t.z);
+        v.conn != t.conn
+            && dx * dx + dz * dz <= v.range * v.range
+            && (t.chunk.x - v.chunk.x).abs() <= v.view
+            && (t.chunk.z - v.chunk.z).abs() <= v.view
+    };
+    let mut changes: Vec<(usize, Vec<ConnId>, Vec<ConnId>)> = Vec::new();
+    let mut want: Vec<ConnId> = Vec::with_capacity(snaps.len());
+    for (ti, t) in snaps.iter().enumerate() {
+        let seen = &players[ti].seen_by;
+        let (added, removed) = if t.moved {
+            want.clear();
+            want.extend(snaps.iter().filter(|v| sees(v, t)).map(|v| v.conn));
+            if seen[..] == want[..] {
+                continue;
+            }
+            sorted_diff(&want, seen)
+        } else {
+            let (mut added, mut removed) = (Vec::new(), Vec::new());
+            for v in &movers {
+                match (sees(v, t), seen.binary_search(&v.conn).is_ok()) {
+                    (true, false) => added.push(v.conn),
+                    (false, true) => removed.push(v.conn),
+                    _ => {}
                 }
-                if std::mem::take(&mut target.swung) {
-                    packets.push(entity::swing_animation(
-                        target.entity_id,
-                        false,
-                        entity::swing::WHACK,
-                        entity::swing::DEFAULT_DURATION,
-                    ));
+            }
+            if added.is_empty() && removed.is_empty() {
+                continue;
+            }
+            (added, removed)
+        };
+        changes.push((ti, added, removed));
+    }
+    let index = |conn: ConnId| snaps.binary_search_by_key(&conn, |s| s.conn).ok();
+    for (ti, added, removed) in changes {
+        let (spawn, id) = (players[ti].spawn_packets(), players[ti].entity_id);
+        let despawn = entity::remove_entities(&[id]);
+        for &v in &added {
+            if let Some(i) = index(v) {
+                for pkt in &spawn {
+                    players[i].send(pkt.clone());
                 }
-                if packets.is_empty() || target.seen_by.is_empty() {
-                    continue;
-                }
-                (packets, target.seen_by.clone())
-            };
-            for v in viewers {
-                if let Some(p) = self.players.get_mut(&v) {
-                    for pkt in &packets {
-                        p.send(pkt.clone());
-                    }
+            }
+        }
+        for &v in &removed {
+            if let Some(i) = index(v) {
+                players[i].send(despawn.clone());
+            }
+        }
+        let target = &mut players[ti];
+        target.seen_by.retain(|v| removed.binary_search(v).is_err());
+        target.seen_by.extend(added);
+        target.seen_by.sort_unstable();
+    }
+}
+
+/// Streams movement and metadata changes of one region's players (sorted by connection):
+/// encoded once per player, shared by its viewers.
+pub(crate) fn broadcast_movement(players: &mut [&mut Player]) {
+    for ti in 0..players.len() {
+        let target = &mut players[ti];
+        let state = target.move_state();
+        let mut packets = target.tracker.tick(&state);
+        if target.meta_dirty {
+            target.meta_dirty = false;
+            let mut d = EntityData::new();
+            d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
+            d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
+            packets.push(entity::set_entity_data(target.entity_id, &d));
+        }
+        if std::mem::take(&mut target.swung) {
+            packets.push(entity::swing_animation(
+                target.entity_id,
+                false,
+                entity::swing::WHACK,
+                entity::swing::DEFAULT_DURATION,
+            ));
+        }
+        if packets.is_empty() || target.seen_by.is_empty() {
+            continue;
+        }
+        let viewers = target.seen_by.clone();
+        for v in viewers {
+            if let Ok(i) = players.binary_search_by_key(&v, |p| p.conn) {
+                for pkt in &packets {
+                    players[i].send(pkt.clone());
                 }
             }
         }

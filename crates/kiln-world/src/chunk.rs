@@ -59,6 +59,8 @@ pub struct Chunk {
     surface: Box<[u16; 256]>,
     version: u32,
     saved_version: u32,
+    /// Block changes since the chunk was loaded or generated (light changes not counted).
+    edits: u32,
     cached: Option<(u32, Bytes)>,
     /// Light sections changed since the last Update Light, per layer.
     light_dirty: [u64; 2],
@@ -83,6 +85,7 @@ impl Chunk {
             surface: Box::new([0; 256]),
             version: 0,
             saved_version: 0,
+            edits: 0,
             cached: None,
             light_dirty: [0, 0],
             block_entities: BTreeMap::new(),
@@ -120,6 +123,11 @@ impl Chunk {
     /// Whether blocks changed since the chunk was loaded or created.
     pub fn modified(&self) -> bool {
         self.version != 0
+    }
+
+    /// Whether any block changed since the chunk was loaded or generated.
+    pub fn edited(&self) -> bool {
+        self.edits != 0
     }
 
     pub fn needs_save(&self) -> bool {
@@ -193,6 +201,7 @@ impl Chunk {
         let old = self.sections[s].set(x, ly, z, state);
         if old != state {
             self.version += 1;
+            self.edits += 1;
             if is_air(old) != is_air(state) {
                 self.surface[(z << 4) | x] = self.column_top(x, z);
             }
@@ -265,6 +274,11 @@ impl Chunk {
             }
         }
         self.min_y
+    }
+
+    /// Whether light is stored at absolute `y`: the chunk's height plus one section each side.
+    pub fn in_light_range(&self, y: i32) -> bool {
+        self.light_section(y).is_some()
     }
 
     /// Light section index (0 = below the world) of absolute `y`, if stored.

@@ -7,6 +7,8 @@ publish.workspace = true
 [dependencies]
 kiln-link.workspace = true
 kiln-world.workspace = true
+kiln-region.workspace = true
+kiln-sched.workspace = true
 kiln-command.workspace = true
 kiln-storage.workspace = true
 kiln-proto.workspace = true

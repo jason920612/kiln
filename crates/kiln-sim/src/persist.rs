@@ -74,7 +74,7 @@ impl Sim {
     pub(crate) fn new_player_position(&mut self, uuid: Uuid) -> [f64; 3] {
         let level = self.storage.as_ref().map(|s| &s.level);
         if level.and_then(LevelStore::game_type) == Some(ADVENTURE) {
-            return self.world.free_spawn_at(self.spawn);
+            return kiln_world::spawn::free_spawn_at(&mut self.dim, self.spawn);
         }
         let radius = match self.commands.game_rules.get("minecraft:respawn_radius") {
             Some(kiln_command::GameRuleValue::Int(r)) => *r as i64,
@@ -82,7 +82,7 @@ impl Sim {
         };
         let (hi, lo) = uuid.as_u64_pair();
         let offset = ((hi ^ lo) % 1024) as u32;
-        self.world.find_spawn(self.spawn, radius.clamp(0, i32::MAX as i64) as i32, offset)
+        kiln_world::spawn::find_spawn(&mut self.dim, self.spawn, radius.clamp(0, i32::MAX as i64) as i32, offset)
     }
 
     pub(crate) fn save_player(&self, p: &Player) {

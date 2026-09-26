@@ -6,7 +6,7 @@
 //! light, then re-spread from the brighter levels found at the edge of the cleared area.
 
 use crate::chunk::LightLayer;
-use crate::{ChunkPos, World};
+use crate::{Blocks, CellStore, ChunkPos};
 use kiln_data::block_props::{face_full, light_dampening, light_emission, propagates_skylight_down, uses_shape_for_light_occlusion};
 use std::collections::VecDeque;
 
@@ -40,113 +40,100 @@ pub fn affects_light(old: u16, new: u16) -> bool {
         || uses_shape_for_light_occlusion(new)
 }
 
-impl World {
-    /// Whether `y` is within stored light: the build height plus one section each side.
-    /// Positions outside take no part in propagation (full sky light would otherwise
-    /// keep travelling down through void air forever).
-    fn in_light_range(&self, y: i32) -> bool {
-        let d = self.dimension;
-        y >= d.min_y - 16 && y < d.min_y + d.height + 16
-    }
+/// Block state if its chunk is loaded and `y` is within the chunk's stored light. Positions
+/// outside take no part in propagation (full sky light would otherwise keep travelling down
+/// through void air forever).
+fn state_at<S: CellStore + ?Sized>(w: &S, x: i32, y: i32, z: i32) -> Option<u16> {
+    let c = w.chunk(ChunkPos::of_block(x, z))?;
+    c.in_light_range(y).then(|| c.get((x & 15) as usize, y, (z & 15) as usize))
+}
 
-    /// Block state if its chunk is loaded and `y` is within stored light.
-    fn state_at(&self, x: i32, y: i32, z: i32) -> Option<u16> {
-        if !self.in_light_range(y) {
-            return None;
-        }
-        let c = self.chunk(ChunkPos::of_block(x, z))?;
-        Some(c.get((x & 15) as usize, y, (z & 15) as usize))
-    }
+/// Light level at a position, if its chunk is loaded and light is stored there.
+pub fn light_at<S: CellStore + ?Sized>(w: &S, layer: LightLayer, x: i32, y: i32, z: i32) -> Option<u8> {
+    let c = w.chunk(ChunkPos::of_block(x, z))?;
+    c.in_light_range(y).then(|| c.light(layer, (x & 15) as usize, y, (z & 15) as usize))
+}
 
-    pub fn light_at(&self, layer: LightLayer, x: i32, y: i32, z: i32) -> Option<u8> {
-        if !self.in_light_range(y) {
-            return None;
-        }
-        let c = self.chunk(ChunkPos::of_block(x, z))?;
-        Some(c.light(layer, (x & 15) as usize, y, (z & 15) as usize))
+fn set_light_at<S: CellStore + ?Sized>(w: &mut S, layer: LightLayer, x: i32, y: i32, z: i32, v: u8) {
+    if let Some(c) = w.chunk_mut(ChunkPos::of_block(x, z)) {
+        c.set_light(layer, (x & 15) as usize, y, (z & 15) as usize, v);
     }
+}
 
-    fn set_light_at(&mut self, layer: LightLayer, x: i32, y: i32, z: i32, v: u8) {
-        if let Some(c) = self.chunk_mut_loaded(ChunkPos::of_block(x, z)) {
-            c.set_light(layer, (x & 15) as usize, y, (z & 15) as usize, v);
-        }
+/// Re-lights around a block that changed from `old` to `new`.
+pub fn update_light<S: CellStore + ?Sized>(w: &mut S, x: i32, y: i32, z: i32, old: u16, new: u16) {
+    if !affects_light(old, new) {
+        return;
     }
-
-    /// Re-lights around a block that changed from `old` to `new`.
-    pub fn update_light(&mut self, x: i32, y: i32, z: i32, old: u16, new: u16) {
-        if !affects_light(old, new) {
-            return;
+    for layer in [LightLayer::Block, LightLayer::Sky] {
+        let mut relight = Queue::new();
+        let current = light_at(w, layer, x, y, z).unwrap_or(0);
+        if current > 0 {
+            set_light_at(w, layer, x, y, z, 0);
+            let mut removal = Queue::from([(x, y, z, current)]);
+            decrease(w, layer, &mut removal, &mut relight);
         }
-        for layer in [LightLayer::Block, LightLayer::Sky] {
-            let mut relight = Queue::new();
-            let current = self.light_at(layer, x, y, z).unwrap_or(0);
-            if current > 0 {
-                self.set_light_at(layer, x, y, z, 0);
-                let mut removal = Queue::from([(x, y, z, current)]);
-                self.decrease(layer, &mut removal, &mut relight);
+        if layer == LightLayer::Block && light_emission(new) > 0 {
+            let e = light_emission(new);
+            set_light_at(w, layer, x, y, z, e);
+            relight.push_back((x, y, z, e));
+        }
+        // Neighbors may now shine into (or through) the changed block.
+        for (dx, dy, dz) in DIRS {
+            let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+            if let Some(l) = light_at(w, layer, nx, ny, nz).filter(|&l| l > 0) {
+                relight.push_back((nx, ny, nz, l));
             }
-            if layer == LightLayer::Block && light_emission(new) > 0 {
-                let e = light_emission(new);
-                self.set_light_at(layer, x, y, z, e);
-                relight.push_back((x, y, z, e));
-            }
-            // Neighbors may now shine into (or through) the changed block.
-            for (dx, dy, dz) in DIRS {
-                let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-                if let Some(l) = self.light_at(layer, nx, ny, nz).filter(|&l| l > 0) {
-                    relight.push_back((nx, ny, nz, l));
-                }
-            }
-            if layer == LightLayer::Sky && self.light_at(layer, x, y + 1, z).is_none_or(|l| l == 15) {
-                relight.push_back((x, y + 1, z, 15));
-            }
-            self.increase(layer, &mut relight);
         }
+        if layer == LightLayer::Sky && light_at(w, layer, x, y + 1, z).is_none_or(|l| l == 15) {
+            relight.push_back((x, y + 1, z, 15));
+        }
+        increase(w, layer, &mut relight);
     }
+}
 
-    fn increase(&mut self, layer: LightLayer, queue: &mut Queue) {
-        while let Some((x, y, z, level)) = queue.pop_front() {
-            if level <= 1 {
+fn increase<S: CellStore + ?Sized>(w: &mut S, layer: LightLayer, queue: &mut Queue) {
+    while let Some((x, y, z, level)) = queue.pop_front() {
+        if level <= 1 {
+            continue;
+        }
+        let from = state_at(w, x, y, z).unwrap_or(kiln_data::blocks::default_state::AIR);
+        for (dir, (dx, dy, dz)) in DIRS.iter().enumerate() {
+            let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+            let Some(to) = state_at(w, nx, ny, nz) else { continue };
+            if occludes(from, to, dir) {
                 continue;
             }
-            let from = self.state_at(x, y, z).unwrap_or(kiln_data::blocks::default_state::AIR);
-            for (dir, (dx, dy, dz)) in DIRS.iter().enumerate() {
-                let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-                let Some(to) = self.state_at(nx, ny, nz) else { continue };
-                if occludes(from, to, dir) {
-                    continue;
-                }
-                let v = transmitted(layer, level, to, dir);
-                if v > self.light_at(layer, nx, ny, nz).unwrap_or(15) {
-                    self.set_light_at(layer, nx, ny, nz, v);
-                    queue.push_back((nx, ny, nz, v));
-                }
+            let v = transmitted(layer, level, to, dir);
+            if v > light_at(w, layer, nx, ny, nz).unwrap_or(15) {
+                set_light_at(w, layer, nx, ny, nz, v);
+                queue.push_back((nx, ny, nz, v));
             }
         }
     }
+}
 
-    fn decrease(&mut self, layer: LightLayer, removal: &mut Queue, relight: &mut Queue) {
-        while let Some((x, y, z, level)) = removal.pop_front() {
-            for (dir, (dx, dy, dz)) in DIRS.iter().enumerate() {
-                let (nx, ny, nz) = (x + dx, y + dy, z + dz);
-                let Some(to) = self.state_at(nx, ny, nz) else { continue };
-                let cur = self.light_at(layer, nx, ny, nz).unwrap_or(0);
-                if cur == 0 {
-                    continue;
+fn decrease<S: CellStore + ?Sized>(w: &mut S, layer: LightLayer, removal: &mut Queue, relight: &mut Queue) {
+    while let Some((x, y, z, level)) = removal.pop_front() {
+        for (dir, (dx, dy, dz)) in DIRS.iter().enumerate() {
+            let (nx, ny, nz) = (x + dx, y + dy, z + dz);
+            let Some(to) = state_at(w, nx, ny, nz) else { continue };
+            let cur = light_at(w, layer, nx, ny, nz).unwrap_or(0);
+            if cur == 0 {
+                continue;
+            }
+            // Full sky light directly below full sky light came from above.
+            let dependent_sky = layer == LightLayer::Sky && dir == DOWN && level == 15 && cur == 15;
+            if cur < level || dependent_sky {
+                set_light_at(w, layer, nx, ny, nz, 0);
+                removal.push_back((nx, ny, nz, cur));
+                if layer == LightLayer::Block && light_emission(to) > 0 {
+                    let e = light_emission(to);
+                    set_light_at(w, layer, nx, ny, nz, e);
+                    relight.push_back((nx, ny, nz, e));
                 }
-                // Full sky light directly below full sky light came from above.
-                let dependent_sky = layer == LightLayer::Sky && dir == DOWN && level == 15 && cur == 15;
-                if cur < level || dependent_sky {
-                    self.set_light_at(layer, nx, ny, nz, 0);
-                    removal.push_back((nx, ny, nz, cur));
-                    if layer == LightLayer::Block && light_emission(to) > 0 {
-                        let e = light_emission(to);
-                        self.set_light_at(layer, nx, ny, nz, e);
-                        relight.push_back((nx, ny, nz, e));
-                    }
-                } else {
-                    relight.push_back((nx, ny, nz, cur));
-                }
+            } else {
+                relight.push_back((nx, ny, nz, cur));
             }
         }
     }
@@ -155,14 +142,14 @@ impl World {
 #[cfg(test)]
 mod tests {
     use crate::chunk::LightLayer::{Block, Sky};
-    use crate::{OVERWORLD, World};
+    use crate::{Blocks, OVERWORLD, World};
     use kiln_data::blocks::default_state as b;
 
     fn world() -> World {
         let mut w = World::flat(OVERWORLD, 0, 67);
         for cx in -2..=2 {
             for cz in -2..=2 {
-                w.chunk_mut(crate::ChunkPos::new(cx, cz));
+                w.load_chunk(crate::ChunkPos::new(cx, cz));
             }
         }
         w

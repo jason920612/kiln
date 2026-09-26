@@ -8,7 +8,7 @@
 //! collision check uses the smallest pose height, so it can miss a head moving into a block
 //! but never rejects a legitimate move.
 
-use kiln_world::World;
+use kiln_world::Blocks;
 
 /// Ticks a client has to report that its world finished loading before movement counts anyway.
 pub(crate) const CLIENT_LOADED_TIMEOUT: u32 = 60;
@@ -81,7 +81,7 @@ pub(crate) fn too_fast(first_good: [f64; 3], to: [f64; 3], velocity_sqr: f64, pa
 
 /// `isEntityCollidingWithAnythingNew`: whether the box at the new position overlaps a block
 /// collision shape that the old box did not already overlap.
-pub(crate) fn collides_with_anything_new(world: &World, old: Aabb, new: Aabb) -> bool {
+pub(crate) fn collides_with_anything_new<W: Blocks + ?Sized>(world: &W, old: Aabb, new: Aabb) -> bool {
     let new = new.deflate(EPSILON);
     let old = old.deflate(EPSILON);
     // One block of margin: shapes such as fences and walls reach outside their block.
@@ -113,7 +113,7 @@ pub(crate) fn collides_with_anything_new(world: &World, old: Aabb, new: Aabb) ->
 mod tests {
     use super::*;
     use kiln_data::blocks::default_state as block;
-    use kiln_world::OVERWORLD;
+    use kiln_world::{OVERWORLD, World};
 
     fn world() -> World {
         World::flat(OVERWORLD, 0, 67)

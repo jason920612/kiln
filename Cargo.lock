@@ -638,6 +638,8 @@ dependencies = [
  "kiln-data",
  "kiln-link",
  "kiln-proto",
+ "kiln-region",
+ "kiln-sched",
  "kiln-storage",
  "kiln-world",
  "tracing",
@@ -666,6 +668,7 @@ dependencies = [
  "bytes",
  "kiln-data",
  "kiln-proto",
+ "kiln-region",
 ]
 
 [[package]]

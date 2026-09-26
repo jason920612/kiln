@@ -26,13 +26,14 @@ fn main() -> Result<()> {
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();
     let shutdown = to_sim.clone();
     let shared = Arc::new(kiln_net::Shared::new(net_config, to_sim));
-    let sim_config = kiln_sim::SimConfig {
-        max_players,
-        view_distance,
-        simulation_distance,
-        world: std::env::var_os("KILN_WORLD").map(Into::into),
-        online_mode: shared.authenticates(),
-    };
+    let mut sim_config = kiln_sim::SimConfig::new(max_players, view_distance, std::env::var_os("KILN_WORLD").map(Into::into));
+    sim_config.simulation_distance = simulation_distance;
+    sim_config.online_mode = shared.authenticates();
+    // KILN_TICK_THREADS: tick pool size; KILN_REGIONS=unified: one region (vanilla profile).
+    if let Some(n) = std::env::var("KILN_TICK_THREADS").ok().and_then(|v| v.parse().ok()) {
+        sim_config.pool.workers = n;
+    }
+    sim_config.unified_regions = std::env::var("KILN_REGIONS").is_ok_and(|v| v == "unified");
 
     // The simulation also ends on its own after /stop; that ends the process.
     let (sim_done_tx, sim_done_rx) = tokio::sync::oneshot::channel::<()>();

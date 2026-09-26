@@ -2,7 +2,7 @@
 
 use kiln_data::blocks::default_state as block;
 use kiln_storage::AnvilSource;
-use kiln_world::{ChunkPos, ChunkSource, OVERWORLD, Terrain, World};
+use kiln_world::{Blocks, ChunkPos, ChunkSource, OVERWORLD, Terrain, World};
 use std::path::PathBuf;
 
 /// `KILN_WORK` or `<workspace>/work`.
@@ -76,8 +76,8 @@ fn edits_persist_through_the_world_api() {
     assert!(saved >= 2);
 
     let mut w2 = World::with_source(OVERWORLD, Box::new(AnvilSource::new(&dir)), Terrain::Void, 0, 67);
-    w2.chunk_mut(ChunkPos::of_block(96, -32));
-    w2.chunk_mut(ChunkPos::of_block(1000, 1000));
+    w2.load_chunk(ChunkPos::of_block(96, -32));
+    w2.load_chunk(ChunkPos::of_block(1000, 1000));
     assert_eq!(w2.get_block(96, 150, -32), Some(block::GOLD_BLOCK));
     assert_eq!(w2.get_block(1000, 100, 1000), Some(block::DIAMOND_BLOCK));
 }

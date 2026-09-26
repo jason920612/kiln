@@ -1,11 +1,30 @@
 //! The simulation thread: owns all game state and runs the 20 TPS tick loop.
 //! It never awaits; connections talk to it through channels.
+//!
+//! # Regions and the tick (design §4.3, lockstep mode)
+//!
+//! Loaded chunks live in 8×8-chunk cells, and cells belong to regions that the regionizer
+//! (`kiln-region`) keeps apart by at least 256 blocks, so regions cannot affect each other
+//! within a tick and run in parallel on the tick pool (`kiln-sched`). Players belong to the
+//! region that owns the cell they stand in. Each tick:
+//!
+//! - **B0** (serial): connection events; chunk unloads and loads (requests from the last
+//!   tick, spawn points of joining players); the regionizer merges and splits regions;
+//!   joins; region membership of every player.
+//! - **P** (parallel): each region applies its players' packets in arrival order, up to the
+//!   first packet that needs the whole server (chat, commands).
+//! - **PX** (serial): those packets and everything their regions received after them, in
+//!   arrival order, with access to everything.
+//! - **G** (serial): console commands, world time, autosave.
+//! - **L** (parallel): each region streams chunks, tracks entities, sends movement and light,
+//!   and flushes its players' packets.
 
 mod commands;
 mod interact;
 mod movement;
 mod persist;
 mod players;
+mod region;
 mod stats;
 pub mod testing;
 
@@ -14,8 +33,12 @@ use crossbeam_channel::Receiver;
 use kiln_link::{ClientInfo, ConnId, JoinInfo, PlayIn, Property, Sink, ToSim};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
-use kiln_world::{ChunkPos, OVERWORLD as OVERWORLD_DIM, Terrain, World};
-use std::collections::{HashMap, HashSet};
+use kiln_region::{DefaultCells, RegionId, RegionPolicy, Regionizer, Regions, TopologyEvent};
+use kiln_world::chunk::Chunk;
+use kiln_world::spawn::LoadChunks;
+use kiln_world::{Blocks, Cell, CellStore, ChunkPos, ChunkProvider, Dimension, OVERWORLD as OVERWORLD_DIM, Terrain};
+use region::{Env, RegionOut, RegionWork};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -28,6 +51,26 @@ pub struct SimConfig {
     pub world: Option<std::path::PathBuf>,
     /// Whether players were authenticated with Mojang (sent to clients in Login).
     pub online_mode: bool,
+    /// Tick pool: worker count and, for tests, forced strategies and chaos scheduling.
+    pub pool: kiln_sched::PoolConfig,
+    /// One region per dimension (the vanilla profile) instead of regions around players.
+    pub unified_regions: bool,
+}
+
+impl SimConfig {
+    /// Defaults for a server on this machine: all cores but one tick (at most 7), regions on.
+    pub fn new(max_players: usize, view_distance: u8, world: Option<std::path::PathBuf>) -> Self {
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        Self {
+            max_players,
+            view_distance,
+            simulation_distance: view_distance,
+            world,
+            online_mode: false,
+            pool: kiln_sched::PoolConfig::new(cores.saturating_sub(1).clamp(1, 7)),
+            unified_regions: false,
+        }
+    }
 }
 
 const TICK: Duration = Duration::from_millis(50);
@@ -40,8 +83,11 @@ const AUTOSAVE_TICKS: i64 = 6000;
 /// Player inventory container slots 36..=44 are the hotbar.
 const HOTBAR_START: usize = 36;
 const INVENTORY_SLOTS: usize = 46;
+/// Chunks loaded or generated per tick at most (requests beyond wait for later ticks).
+const CHUNK_LOADS_PER_TICK: usize = 256;
 
 struct Player {
+    conn: ConnId,
     name: String,
     uuid: Uuid,
     entity_id: i32,
@@ -51,6 +97,10 @@ struct Player {
     sink: Box<dyn Sink>,
     /// Packets queued this tick; flushed in the egress phase.
     outbox: Vec<Bytes>,
+    /// Set once the connection was told to close; the player leaves when it does.
+    disconnected: bool,
+    /// The region that owns the cell the player stands in (updated in B0).
+    region: RegionId,
     pos: [f64; 3],
     rot: [f32; 2],
     on_ground: bool,
@@ -83,6 +133,9 @@ struct Player {
     /// Player inventory container state id (incremented on server-side changes).
     inventory_state: i32,
     respawn: Option<[i32; 3]>,
+    /// Saved player data this player was loaded from: tags Kiln does not model are written
+    /// back from here.
+    saved: kiln_storage::PlayerData,
     /// Position at the start of this tick, for the "moved too quickly" check.
     first_good: [f64; 3],
     /// Move packets with a position received this tick.
@@ -93,9 +146,6 @@ struct Player {
     load_timeout: u32,
     /// A position arrived since the client's last tick end (a second one is a protocol error).
     position_this_tick: bool,
-    /// Saved player data this player was loaded from: tags Kiln does not model are written
-    /// back from here.
-    saved: kiln_storage::PlayerData,
 }
 
 impl Player {
@@ -110,9 +160,7 @@ impl Player {
     fn disconnect(&mut self, reason: &str) {
         self.flush();
         self.sink.disconnect(packets::play_disconnect(reason));
-    }
-    fn held_item(&self) -> Option<(i32, i32)> {
-        self.inventory[HOTBAR_START + self.selected]
+        self.disconnected = true;
     }
     /// Moves the player and waits for the client to confirm (`ServerGamePacketListenerImpl.teleport`).
     fn teleport(&mut self, pos: [f64; 3], rot: [f32; 2], now: i64) {
@@ -126,14 +174,109 @@ impl Player {
     }
 }
 
+/// A dimension's chunks: loaded cells grouped into regions, and where chunks come from.
+struct Dim {
+    provider: ChunkProvider,
+    regions: Regions<Cell, ()>,
+    regionizer: Regionizer,
+    /// Chunks loaded for cells without an owner yet; installed once the regionizer ran.
+    pending: HashMap<ChunkPos, Chunk>,
+    /// Chunks the regions asked for in their last tick.
+    requests: Vec<ChunkPos>,
+    /// Chunks the regions no longer need.
+    unloads: Vec<ChunkPos>,
+    /// Cells emptied by unloads; vacated when the regionizer runs, unless refilled first.
+    emptied: Vec<kiln_world::CellPos>,
+}
+
+/// Serial access that loads chunks on demand: into their region if the cell has an owner,
+/// otherwise pending until the next B0 gives the cell one.
+impl LoadChunks for Dim {
+    fn dimension(&self) -> Dimension {
+        self.provider.dimension
+    }
+
+    fn load_chunk(&mut self, pos: ChunkPos) -> &mut Chunk {
+        if self.regions.chunk(pos).is_some() {
+            return self.regions.chunk_mut(pos).unwrap();
+        }
+        if !self.pending.contains_key(&pos) {
+            let chunk = self.provider.load_or_generate(pos);
+            if let Some(cell) = self.regions.cell_mut(pos.cell()) {
+                cell.insert(pos, chunk);
+                return self.regions.chunk_mut(pos).unwrap();
+            }
+            self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
+            self.pending.insert(pos, chunk);
+        }
+        self.pending.get_mut(&pos).unwrap()
+    }
+}
+
+impl Dim {
+    fn is_loaded(&self, pos: ChunkPos) -> bool {
+        self.regions.chunk(pos).is_some() || self.pending.contains_key(&pos)
+    }
+
+    /// Saves and drops chunks the regions released; cells left empty are vacated.
+    fn unload(&mut self, chunks: Vec<ChunkPos>, keep: &HashSet<ChunkPos>) -> usize {
+        let mut unloaded = 0;
+        for pos in chunks {
+            if keep.contains(&pos) {
+                continue;
+            }
+            let stores = self.provider.stores();
+            let Some(cell) = self.regions.cell_mut(pos.cell()) else { continue };
+            // Without storage, changed chunks stay loaded or the changes would be lost.
+            if !stores && cell.chunk(pos).is_some_and(Chunk::modified) {
+                continue;
+            }
+            if let Some(mut chunk) = cell.remove(pos) {
+                self.provider.save(pos, &mut chunk);
+                unloaded += 1;
+            }
+            if cell.is_empty() {
+                self.emptied.push(pos.cell());
+            }
+        }
+        unloaded
+    }
+
+    /// Runs the regionizer and installs the chunks that were waiting for their cell's owner.
+    /// Returns whether the topology changed.
+    fn apply_topology(&mut self, tick: u64) -> bool {
+        for pos in std::mem::take(&mut self.emptied) {
+            if self.regions.cell(pos).is_some_and(Cell::is_empty) {
+                self.regionizer.push(TopologyEvent::Vacated(pos));
+            }
+        }
+        let deltas = self.regionizer.apply(&mut self.regions, tick, &mut DefaultCells);
+        for (pos, chunk) in std::mem::take(&mut self.pending) {
+            match self.regions.cell_mut(pos.cell()) {
+                Some(cell) => {
+                    cell.insert(pos, chunk);
+                }
+                None => {
+                    self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
+                    self.pending.insert(pos, chunk);
+                }
+            }
+        }
+        for d in &deltas {
+            debug!("regions: {d:?}");
+        }
+        !deltas.is_empty()
+    }
+}
+
 pub struct Sim {
     config: SimConfig,
-    world: World,
-    /// World spawn; new players appear around it.
+    dim: Dim,
+    pool: kiln_sched::TickPool,
+    /// World spawn block; players appear around it.
     spawn: [i32; 3],
-    /// World spawn yaw and pitch, the rotation of new players.
+    /// Angles players at the world spawn face.
     spawn_rot: [f32; 2],
-    /// Level data and player files of the world save (none for the in-memory flat world).
     storage: Option<persist::Storage>,
     players: HashMap<ConnId, Player>,
     next_entity_id: i32,
@@ -144,7 +287,6 @@ pub struct Sim {
     /// The overworld clock (time of day).
     day_time: i64,
     overworld_clock: i32,
-    stopped: bool,
     commands: commands::CommandState,
 }
 
@@ -189,22 +331,37 @@ impl Sim {
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .map_or(0, |(_, e)| e.len());
-        let (world, spawn) = match &config.world {
+        let (provider, spawn) = match &config.world {
             Some(dir) => {
                 let source = kiln_storage::AnvilSource::new(dir.join("dimensions/minecraft/overworld/region"));
-                let world =
-                    World::with_source(OVERWORLD_DIM, Box::new(source), Terrain::Void, plains as u16, biome_count);
+                let provider =
+                    ChunkProvider::with_source(OVERWORLD_DIM, Box::new(source), Terrain::Void, plains as u16, biome_count);
                 let spawn = kiln_storage::read_spawn(dir).unwrap_or([0, 64, 0]);
                 info!("loaded world {} (spawn {spawn:?})", dir.display());
-                (world, spawn)
+                (provider, spawn)
             }
-            None => (World::flat(OVERWORLD_DIM, plains as u16, biome_count), [8, 0, 8]),
+            None => (ChunkProvider::flat(OVERWORLD_DIM, plains as u16, biome_count), [8, 0, 8]),
         };
+        let policy = if config.unified_regions { RegionPolicy::unified() } else { RegionPolicy::default() };
         let storage = config.world.as_deref().map(persist::Storage::open);
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
+        info!(
+            "tick pool: {} workers, {} regions",
+            config.pool.workers,
+            if config.unified_regions { "unified" } else { "split" }
+        );
         Sim {
+            pool: kiln_sched::TickPool::with_config(config.pool.clone()),
             config,
-            world,
+            dim: Dim {
+                provider,
+                regions: Regions::new(),
+                regionizer: Regionizer::new(policy),
+                pending: HashMap::new(),
+                requests: Vec::new(),
+                unloads: Vec::new(),
+                emptied: Vec::new(),
+            },
             spawn,
             spawn_rot: level.as_ref().map_or([0.0; 2], |l| [l.spawn.yaw, l.spawn.pitch]),
             storage,
@@ -215,7 +372,6 @@ impl Sim {
             game_time: level.as_ref().map_or(0, |l| l.game_time),
             day_time: level.as_ref().map_or(1000, |l| l.day_time),
             overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
-            stopped: false,
             commands: commands::CommandState::new(ops_from_env()),
         }
     }
@@ -230,48 +386,95 @@ impl Sim {
             stats.phase(name, now - mark);
             mark = now;
         };
-        // P: apply packets and connection events received since the last tick.
+
+        // B0: connection events, chunks, topology, joins, membership.
+        let (mut packets, mut joins, mut console) = (Vec::new(), Vec::new(), Vec::new());
         for msg in inbox {
-            self.handle(msg);
-            if self.stopped {
-                return false;
+            match msg {
+                ToSim::Join(j) => joins.push(j),
+                ToSim::Leave(conn) => self.leave(conn),
+                ToSim::Packet(conn, pkt) => packets.push((conn, pkt)),
+                ToSim::Console(command) => console.push(command),
+                ToSim::Shutdown { done } => {
+                    self.shut_down();
+                    let _ = done.send(());
+                    return false;
+                }
             }
         }
-        lap(&mut self.stats, "packets");
-        self.tick();
-        self.answer_suggestions();
-        lap(&mut self.stats, "tick");
-        self.update_visibility();
-        lap(&mut self.stats, "visibility");
-        self.broadcast_movement();
-        lap(&mut self.stats, "movement");
-        self.send_light_updates();
-        // E: one batch per connection.
-        for p in self.players.values_mut() {
-            p.flush();
+        self.maintain_chunks();
+        let joining: Vec<_> = joins.into_iter().map(|j| (self.joining(j.uuid), j)).collect();
+        for (jn, _) in &joining {
+            self.dim.load_chunk(player_chunk(jn.pos));
         }
-        lap(&mut self.stats, "egress");
+        let changed = self.dim.apply_topology(self.game_time as u64);
+        for (jn, j) in joining {
+            self.join(j, jn);
+        }
+        self.update_membership(changed);
+        lap(&mut self.stats, "b0");
+
+        // P: region-local packets in parallel.
+        let (local, exclusive) = self.route(packets);
+        let env = self.env();
+        self.run_regions(local, |w, env| w.apply_packets(env), env);
+        lap(&mut self.stats, "packets");
+
+        // PX: chat, commands and what followed them, in arrival order.
+        for (conn, pkt) in exclusive {
+            self.exclusive_packet(conn, pkt);
+        }
+        self.answer_suggestions();
+        lap(&mut self.stats, "px");
+
+        // G: console, time, autosave.
+        for command in console {
+            self.run_console_command(command.trim_start_matches('/'));
+        }
+        self.tick_global();
+        lap(&mut self.stats, "global");
+
+        // L: regions tick in parallel.
+        let env = self.env();
+        let outs = self.run_regions(BTreeMap::new(), |w, env| w.tick(env), env);
+        let mut times = [Duration::ZERO; region::SUB_PHASES.len()];
+        for out in outs {
+            self.dim.requests.extend(out.wanted);
+            self.dim.unloads.extend(out.unload);
+            for (t, d) in times.iter_mut().zip(out.times) {
+                *t += d;
+            }
+        }
+        lap(&mut self.stats, "regions");
+        // CPU time summed over regions (the "regions" phase is wall time).
+        for (name, d) in region::SUB_PHASES.iter().zip(times) {
+            self.stats.phase(name, d);
+        }
+
         if let Some(report) = self.stats.record(start.elapsed()) {
-            info!("{} players, {} chunks | {report}", self.players.len(), self.world.loaded_chunks());
+            info!(
+                "{} players, {} regions, {} chunks | {report}",
+                self.players.len(),
+                self.dim.regions.len(),
+                self.dim.regions.loaded_chunks()
+            );
             self.commands.last_report = Some(report.to_string());
         }
         if self.commands.stop_requested {
-            for p in self.players.values_mut() {
-                p.disconnect("Server closed");
-            }
-            self.save();
+            self.shut_down();
             return false;
         }
         true
     }
 
     /// Hash of the simulated state (world age and time, blocks of loaded chunks, players), for
-    /// determinism tests. Connection state such as keep-alives is left out.
+    /// determinism tests. Independent of how regions split the world; connection state such
+    /// as keep-alives is left out.
     pub fn state_hash(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = std::hash::DefaultHasher::new();
         (self.game_time, self.day_time).hash(&mut h);
-        self.world.hash_blocks(&mut h);
+        self.dim.regions.hash_blocks(&mut h);
         let mut players: Vec<&Player> = self.players.values().collect();
         players.sort_by_key(|p| p.uuid);
         for p in players {
@@ -287,47 +490,169 @@ impl Sim {
         self.game_time
     }
 
-    pub fn world(&self) -> &World {
-        &self.world
+    /// Block state at a position, if its chunk is loaded.
+    pub fn block_at(&self, x: i32, y: i32, z: i32) -> Option<u16> {
+        self.dim.regions.get_block(x, y, z)
     }
 
     pub fn player_count(&self) -> usize {
         self.players.len()
     }
 
+    pub fn region_count(&self) -> usize {
+        self.dim.regions.len()
+    }
+
     /// Timing of the last completed statistics window.
     pub fn last_report(&self) -> Option<&str> {
         self.commands.last_report.as_deref()
     }
-}
 
-impl Sim {
-    fn handle(&mut self, msg: ToSim) {
-        match msg {
-            ToSim::Join(j) => self.join(j),
-            ToSim::Leave(conn) => {
-                if let Some(p) = self.players.remove(&conn) {
-                    self.save_player(&p);
-                    self.announce_leave(&p, conn);
-                    self.broadcast_system(yellow(&format!("{} left the game", p.name)));
-                }
+    fn env(&self) -> Env {
+        Env {
+            game_time: self.game_time,
+            max_view: self.config.view_distance as i32,
+            movement_check: self.rule_bool("minecraft:player_movement_check"),
+            biome_count: self.dim.provider.biome_count,
+            now: Instant::now(),
+            keep_alive_id: self.started.elapsed().as_millis() as i64,
+        }
+    }
+
+    /// Hands every region its cells, its players (sorted by connection) and its packets, and
+    /// runs `f` on each in parallel on the tick pool.
+    fn run_regions(
+        &mut self,
+        mut packets: BTreeMap<RegionId, Vec<(ConnId, PlayIn)>>,
+        f: impl Fn(&mut RegionWork, &Env) + Sync,
+        env: Env,
+    ) -> Vec<RegionOut> {
+        let mut buckets: BTreeMap<RegionId, Vec<&mut Player>> = BTreeMap::new();
+        for p in self.players.values_mut() {
+            buckets.entry(p.region).or_default().push(p);
+        }
+        let (_, regions) = self.dim.regions.split_mut();
+        let mut work: Vec<RegionWork> = regions
+            .map(|r| {
+                let id = r.id();
+                let mut players = buckets.remove(&id).unwrap_or_default();
+                players.sort_unstable_by_key(|p| p.conn);
+                let packets = packets.remove(&id).unwrap_or_default();
+                RegionWork { id, cells: r.cells_mut(), players, packets, out: RegionOut::default() }
+            })
+            .collect();
+        debug_assert!(buckets.is_empty(), "players in regions that do not exist");
+        // Rough estimate for the pool's start order: players dominate a region's cost.
+        let cost = |w: &RegionWork| 20_000 + w.players.len() as u64 * 5_000 + w.packets.len() as u64 * 500;
+        self.pool.run_units(&mut work, cost, |w, _ctx| f(w, &env));
+        work.into_iter().map(|w| w.out).collect()
+    }
+
+    /// Splits this tick's packets into each region's local stream and the serial PX stream:
+    /// a region's stream stops at its first packet that needs the whole server.
+    #[allow(clippy::type_complexity)]
+    fn route(
+        &self,
+        packets: Vec<(ConnId, PlayIn)>,
+    ) -> (BTreeMap<RegionId, Vec<(ConnId, PlayIn)>>, Vec<(ConnId, PlayIn)>) {
+        let (mut local, mut exclusive) = (BTreeMap::<RegionId, Vec<_>>::new(), Vec::new());
+        let mut stopped = HashSet::new();
+        for (conn, pkt) in packets {
+            let Some(p) = self.players.get(&conn) else { continue };
+            if stopped.contains(&p.region) || region::is_exclusive(&pkt) {
+                stopped.insert(p.region);
+                exclusive.push((conn, pkt));
+            } else {
+                local.entry(p.region).or_default().push((conn, pkt));
             }
-            ToSim::Packet(conn, pkt) => self.packet(conn, pkt),
-            ToSim::Console(command) => self.run_console_command(command.trim_start_matches('/')),
-            ToSim::Shutdown { done } => {
-                for p in self.players.values_mut() {
-                    p.disconnect("Server closed");
+        }
+        (local, exclusive)
+    }
+
+    /// Unloads what the regions released, then loads what they asked for plus every
+    /// player's own chunk (so each player stands in an owned cell after the regionizer runs).
+    fn maintain_chunks(&mut self) {
+        let keep: HashSet<ChunkPos> = self.players.values().map(|p| player_chunk(p.pos)).collect();
+        let unloads = std::mem::take(&mut self.dim.unloads);
+        let unloaded = self.dim.unload(unloads, &keep);
+        if unloaded > 0 {
+            debug!("unloaded {unloaded} chunks");
+        }
+        let mut own: Vec<ChunkPos> = keep.into_iter().collect();
+        own.sort_unstable();
+        let requests = region::merge_requests(own.into_iter().chain(std::mem::take(&mut self.dim.requests)));
+        let mut loads = 0;
+        for pos in requests {
+            if self.dim.is_loaded(pos) {
+                continue;
+            }
+            if loads == CHUNK_LOADS_PER_TICK {
+                break;
+            }
+            self.dim.load_chunk(pos);
+            loads += 1;
+        }
+    }
+
+    /// Puts every player in the region that owns its cell, and ends pairings between players
+    /// that ended up in different regions.
+    fn update_membership(&mut self, topology_changed: bool) {
+        let mut moved = topology_changed;
+        for p in self.players.values_mut() {
+            let owner = self.dim.regions.owner(player_chunk(p.pos).cell());
+            if let Some(r) = owner.filter(|&r| r != p.region) {
+                p.region = r;
+                moved = true;
+            }
+        }
+        if moved {
+            self.drop_cross_region_pairs();
+        }
+    }
+
+    /// A packet from the serial PX stream.
+    fn exclusive_packet(&mut self, conn: ConnId, pkt: PlayIn) {
+        match pkt {
+            PlayIn::ChatCommand { command } => self.run_command(conn, &command),
+            PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
+            PlayIn::Chat { message } => {
+                let Some(p) = self.players.get_mut(&conn) else { return };
+                if commands::has_illegal_chars(&message) {
+                    p.disconnect("Illegal characters in chat");
+                    return;
                 }
-                self.save();
-                let _ = done.send(());
-                self.stopped = true;
+                info!("<{}> {}", p.name, message);
+                let pkt = players::chat_player(&p.name, &message);
+                self.broadcast(pkt);
+            }
+            pkt => {
+                let env = self.env();
+                let Some(p) = self.players.get_mut(&conn) else { return };
+                let mut changes = Vec::new();
+                region::local_packet(p, &mut self.dim.regions, &env, pkt, &mut changes);
+                region::notify_block_changes(self.players.values_mut(), &changes);
             }
         }
     }
 
+    fn leave(&mut self, conn: ConnId) {
+        if let Some(p) = self.players.remove(&conn) {
+            self.save_player(&p);
+            self.announce_leave(&p, conn);
+            self.broadcast_system(yellow(&format!("{} left the game", p.name)));
+        }
+    }
+
+    fn shut_down(&mut self) {
+        for p in self.players.values_mut() {
+            p.disconnect("Server closed");
+        }
+        self.save();
+    }
+
     fn save(&mut self) {
         let start = Instant::now();
-        match self.world.save() {
+        match self.dim.provider.save_all(&mut self.dim.regions) {
             Ok(0) => {}
             Ok(n) => info!("saved {n} chunks in {:.1} ms", start.elapsed().as_secs_f64() * 1e3),
             Err(e) => warn!("saving the world failed: {e}"),
@@ -338,17 +663,18 @@ impl Sim {
         self.save_level();
     }
 
-    fn join(&mut self, j: JoinInfo) {
+    fn join(&mut self, j: JoinInfo, joining: persist::Joining) {
         let entity_id = self.next_entity_id;
         self.next_entity_id += 1;
-        let joining = self.joining(j.uuid);
         let spawn = joining.pos;
         let [yaw, pitch] = joining.rot;
         let view_distance = (j.client.view_distance as i32).min(self.config.view_distance as i32);
         let move_state = packets::entity::MoveState { pos: spawn, yaw, pitch, head_yaw: yaw, on_ground: true };
         let dimension_type =
             kiln_data::synced_id("minecraft:dimension_type", OVERWORLD).expect("overworld dimension type");
+        let region = self.dim.regions.owner(player_chunk(spawn).cell()).expect("spawn chunk loaded");
         let mut player = Player {
+            conn: j.conn,
             name: j.name,
             uuid: j.uuid,
             entity_id,
@@ -357,11 +683,13 @@ impl Sim {
             game_mode: joining.game_mode,
             sink: j.sink,
             outbox: Vec::new(),
+            disconnected: false,
+            region,
             pos: spawn,
             rot: joining.rot,
             on_ground: true,
             view_distance,
-            center: ChunkPos::of_block(spawn[0] as i32, spawn[2] as i32),
+            center: player_chunk(spawn),
             sent_chunks: HashSet::new(),
             awaiting_teleport: Some(1),
             keep_alive: None,
@@ -422,155 +750,10 @@ impl Sim {
         self.broadcast_system(msg);
     }
 
-    fn packet(&mut self, conn: ConnId, pkt: PlayIn) {
-        let Some(p) = self.players.get_mut(&conn) else { return };
-        match pkt {
-            PlayIn::AcceptTeleport { id } => {
-                if p.awaiting_teleport == Some(id) {
-                    p.awaiting_teleport = None;
-                }
-            }
-            PlayIn::KeepAlive { id } => {
-                if p.keep_alive.is_some_and(|(k, _)| k == id) {
-                    p.keep_alive = None;
-                }
-            }
-            PlayIn::Move { pos, rot, on_ground } => self.handle_move(conn, pos, rot, on_ground),
-            PlayIn::ChunkBatchReceived { chunks_per_tick } => {
-                p.unacked_batches = p.unacked_batches.saturating_sub(1);
-                if chunks_per_tick.is_finite() {
-                    p.chunks_per_tick = chunks_per_tick.clamp(0.01, 64.0);
-                }
-            }
-            PlayIn::ClientInformation(info) => {
-                p.view_distance = (info.view_distance as i32).min(self.config.view_distance as i32);
-                p.section = None;
-                p.client = info;
-            }
-            PlayIn::PlayerInput { flags } => {
-                let sneaking = flags & 0x20 != 0;
-                if sneaking != p.sneaking {
-                    p.sneaking = sneaking;
-                    p.meta_dirty = true;
-                }
-            }
-            PlayIn::PlayerCommand { action } => {
-                const START_SPRINTING: i32 = 1;
-                const STOP_SPRINTING: i32 = 2;
-                let sprinting = match action {
-                    START_SPRINTING => true,
-                    STOP_SPRINTING => false,
-                    _ => p.sprinting,
-                };
-                if sprinting != p.sprinting {
-                    p.sprinting = sprinting;
-                    p.meta_dirty = true;
-                }
-            }
-            PlayIn::ChatCommand { command } => self.run_command(conn, &command),
-            PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
-            PlayIn::Chat { message } => {
-                if commands::has_illegal_chars(&message) {
-                    p.disconnect("Illegal characters in chat");
-                    return;
-                }
-                info!("<{}> {}", p.name, message);
-                let pkt = players::chat_player(&p.name, &message);
-                self.broadcast(pkt);
-            }
-            // Sent by the client when its "Loading terrain" screen closes.
-            PlayIn::PlayerLoaded => {
-                p.load_timeout = 0;
-                info!("{} finished loading terrain", p.name);
-            }
-            PlayIn::SetCarriedItem { slot } => {
-                if (0..9).contains(&slot) {
-                    p.selected = slot as usize;
-                }
-            }
-            PlayIn::SetCreativeSlot { slot, item } => {
-                if let Some(s) = usize::try_from(slot).ok().filter(|&s| s < INVENTORY_SLOTS) {
-                    p.inventory[s] = item.map(|i| (i.item, i.count));
-                }
-            }
-            PlayIn::PlayerAction { action, pos, sequence, .. } => {
-                // Creative mode: starting to dig breaks the block instantly.
-                const START_DIGGING: i32 = 0;
-                if action == START_DIGGING && self.within_reach(conn, pos) {
-                    self.set_block(pos, kiln_data::blocks::default_state::AIR);
-                }
-                self.ack(conn, sequence);
-            }
-            PlayIn::UseItemOn { hand, pos, face, sequence, .. } => {
-                self.use_item_on(conn, hand, pos, face);
-                self.ack(conn, sequence);
-            }
-            PlayIn::Punch => p.swung = true,
-            PlayIn::ClientTickEnd => p.position_this_tick = false,
-            // Decoded but not handled by the simulation yet.
-            _ => {}
-        }
-    }
-
-    fn handle_move(&mut self, conn: ConnId, pos: Option<[f64; 3]>, rot: Option<[f32; 2]>, on_ground: bool) {
-        let check = self.rule_bool("minecraft:player_movement_check");
-        let now = self.game_time;
-        let Some(p) = self.players.get_mut(&conn) else { return };
-        if movement::invalid(pos, rot) {
-            p.disconnect("Invalid movement");
-            return;
-        }
-        if pos.is_some() {
-            // The 26.3 client sends at most one position per client tick.
-            if p.position_this_tick {
-                p.disconnect("Invalid movement");
-                return;
-            }
-            p.position_this_tick = true;
-        }
-        if p.load_timeout > 0 {
-            return;
-        }
-        let rot = rot.map_or(p.rot, movement::normalize_rotation);
-        if p.awaiting_teleport.is_some() {
-            // Movement sent before the client saw our teleport is stale; only the view turns.
-            p.rot = rot;
-            if now - p.teleport_sent > movement::TELEPORT_RESEND_TICKS {
-                p.teleport(p.pos, rot, now);
-            }
-            return;
-        }
-        let to = pos.map_or(p.pos, movement::clamp_position);
-        p.move_packets += 1;
-        if check && movement::too_fast(p.first_good, to, 0.0, p.move_packets, false) {
-            warn!("{} moved too quickly! {:?}", p.name, [to[0] - p.first_good[0], to[1] - p.first_good[1], to[2] - p.first_good[2]]);
-            p.teleport(p.pos, p.rot, now);
-            return;
-        }
-        // Spectators have no physics.
-        if p.game_mode != 3 && to != p.pos {
-            let old = movement::Aabb::player(p.pos, movement::MIN_POSE_HEIGHT);
-            let new = movement::Aabb::player(to, movement::MIN_POSE_HEIGHT);
-            if movement::collides_with_anything_new(&self.world, old, new) {
-                p.teleport(p.pos, rot, now);
-                return;
-            }
-        }
-        p.pos = to;
-        p.rot = rot;
-        p.on_ground = on_ground;
-    }
-
     /// A spawn point around the world spawn, as vanilla finds one for players without a
     /// respawn point.
     fn spawn_position(&mut self) -> [f64; 3] {
         self.new_player_position(Uuid::nil())
-    }
-
-    fn ack(&mut self, conn: ConnId, sequence: i32) {
-        if let Some(p) = self.players.get_mut(&conn) {
-            p.send(packets::block_changed_ack(sequence));
-        }
     }
 
     fn time_packet(&self) -> Bytes {
@@ -578,82 +761,29 @@ impl Sim {
         packets::set_time(self.game_time, &[clock])
     }
 
-    fn within_reach(&self, conn: ConnId, pos: [i32; 3]) -> bool {
-        let Some(p) = self.players.get(&conn) else { return false };
-        let d: f64 = (0..3).map(|i| (pos[i] as f64 + 0.5 - p.pos[i]).powi(2)).sum();
-        d <= 12.0 * 12.0
-    }
-
-    fn use_item_on(&mut self, conn: ConnId, hand: i32, pos: [i32; 3], face: i32) {
-        let Some(p) = self.players.get(&conn) else { return };
-        let item = if hand == 0 { p.held_item() } else { p.inventory[45] };
-        let Some((item, _)) = item else { return };
-        let Some(block) = interact::block_for_item(item) else { return };
-        let Some(off) = interact::offset(face) else { return };
-        let yaw = p.rot[0];
-        // Place into the clicked block if it is replaceable, otherwise next to it.
-        let clicked = self.world.get_block(pos[0], pos[1], pos[2]);
-        let target = if clicked.is_some_and(interact::replaceable) {
-            pos
-        } else {
-            [pos[0] + off[0], pos[1] + off[1], pos[2] + off[2]]
-        };
-        if !self.within_reach(conn, target) {
-            return;
-        }
-        if !self.world.get_block(target[0], target[1], target[2]).is_some_and(interact::replaceable) {
-            return;
-        }
-        self.set_block(target, interact::placement_state(block, face, yaw));
-    }
-
-    /// Changes a block (light follows) and tells everyone who has its chunk.
-    fn set_block(&mut self, pos: [i32; 3], state: u16) {
-        match self.world.set_block(pos[0], pos[1], pos[2], state) {
-            Some(old) if old != state => {
-                let chunk = ChunkPos::of_block(pos[0], pos[2]);
-                let pkt = packets::block_update(pos, state);
-                let data = self.world.block_entity_data(pos[0], pos[1], pos[2]);
-                let data = data.map(|(kind, tag)| packets::block_entity_data(pos, kind as i32, &tag));
-                for p in self.players.values_mut().filter(|p| p.sent_chunks.contains(&chunk)) {
-                    p.send(pkt.clone());
-                    if let Some(d) = &data {
-                        p.send(d.clone());
-                    }
-                }
-            }
-            Some(_) => {}
-            None => debug!("block change outside the world at {pos:?}"),
-        }
-    }
-
-    /// Update Light for every chunk whose light changed this tick, to players who have it.
-    fn send_light_updates(&mut self) {
-        for (pos, sky, block) in self.world.take_light_changes() {
-            if !self.players.values().any(|p| p.sent_chunks.contains(&pos)) {
-                continue;
-            }
-            let Some(body) = self.world.light_update_body(pos, sky, block) else { continue };
-            let pkt = packets::light_update(pos.x, pos.z, &body);
-            for p in self.players.values_mut().filter(|p| p.sent_chunks.contains(&pos)) {
-                p.send(pkt.clone());
-            }
-        }
+    /// Changes a block anywhere (serial phases): light follows, players with the chunk hear
+    /// about it. Returns whether the chunk was loaded.
+    #[allow(dead_code)]
+    fn set_block(&mut self, pos: [i32; 3], state: u16) -> bool {
+        let mut changes = Vec::new();
+        let loaded = region::set_block(&mut self.dim.regions, pos, state, &mut changes);
+        region::notify_block_changes(self.players.values_mut(), &changes);
+        loaded
     }
 
     fn broadcast_system(&mut self, text: Tag) {
         self.broadcast(packets::system_chat(text, false));
     }
 
-    /// Encoded once; every player's outbox shares the same bytes.
+    /// Encoded once; every player's outbox shares the same bytes. Serial phases only.
     fn broadcast(&mut self, pkt: Bytes) {
         for p in self.players.values_mut() {
             p.send(pkt.clone());
         }
     }
 
-    fn tick(&mut self) {
-        // G: global state.
+    /// G: world age and time, autosave.
+    fn tick_global(&mut self) {
         self.game_time += 1;
         if self.game_time % AUTOSAVE_TICKS == 0 {
             self.save();
@@ -663,78 +793,11 @@ impl Sim {
             let pkt = self.time_packet();
             self.broadcast(pkt);
         }
-
-        // C: per-connection work (keep-alive, chunk streaming).
-        let now = Instant::now();
-        let world = &mut self.world;
-        for p in self.players.values_mut() {
-            p.first_good = p.pos;
-            p.move_packets = 0;
-            p.load_timeout = p.load_timeout.saturating_sub(1);
-            if let Some((_, sent)) = p.keep_alive {
-                if now - sent > KEEP_ALIVE_TIMEOUT {
-                    warn!("{} timed out", p.name);
-                    p.disconnect("Timed out");
-                    continue;
-                }
-            } else if now - p.last_keep_alive > KEEP_ALIVE_INTERVAL {
-                let id = self.started.elapsed().as_millis() as i64;
-                p.keep_alive = Some((id, now));
-                p.last_keep_alive = now;
-                p.send(packets::keep_alive(id));
-            }
-            update_chunks(p, world);
-        }
     }
-
-
 }
 
-/// Recenters the player's chunk view and streams missing chunks, nearest first.
-fn update_chunks(p: &mut Player, world: &mut World) {
-    let center = ChunkPos::of_block(p.pos[0].floor() as i32, p.pos[2].floor() as i32);
-    let r = p.view_distance;
-    if center != p.center {
-        p.center = center;
-        p.send(packets::set_chunk_cache_center(center.x, center.z));
-        let stale: Vec<_> = p
-            .sent_chunks
-            .iter()
-            .copied()
-            .filter(|c| (c.x - center.x).abs() > r || (c.z - center.z).abs() > r)
-            .collect();
-        for c in stale {
-            p.sent_chunks.remove(&c);
-            p.send(packets::forget_level_chunk(c.x, c.z));
-        }
-    }
-
-    if p.unacked_batches >= MAX_UNACKED_BATCHES {
-        return;
-    }
-    let budget = (p.chunks_per_tick.ceil() as usize).max(1);
-    let mut missing: Vec<ChunkPos> = Vec::new();
-    for x in center.x - r..=center.x + r {
-        for z in center.z - r..=center.z + r {
-            let c = ChunkPos::new(x, z);
-            if !p.sent_chunks.contains(&c) {
-                missing.push(c);
-            }
-        }
-    }
-    if missing.is_empty() {
-        return;
-    }
-    missing.sort_by_key(|c| (c.x - center.x).pow(2) + (c.z - center.z).pow(2));
-    missing.truncate(budget);
-
-    p.send(packets::chunk_batch_start());
-    for &c in &missing {
-        p.send(packets::level_chunk_with_light(c.x, c.z, &world.chunk_body(c)));
-        p.sent_chunks.insert(c);
-    }
-    p.send(packets::chunk_batch_finished(missing.len() as i32));
-    p.unacked_batches += 1;
+fn player_chunk(pos: [f64; 3]) -> ChunkPos {
+    ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)
 }
 
 fn yellow(s: &str) -> Tag {

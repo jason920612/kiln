@@ -20,10 +20,23 @@ struct Args {
     ticks: usize,
     view_distance: u8,
     walk: bool,
+    threads: usize,
+    unified: bool,
 }
 
 fn args() -> Args {
-    let mut a = Args { players: 1000, groups: 20, spacing: 48.0, radius: 6.0, ticks: 1200, view_distance: 2, walk: false };
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let mut a = Args {
+        players: 1000,
+        groups: 20,
+        spacing: 48.0,
+        radius: 6.0,
+        ticks: 1200,
+        view_distance: 2,
+        walk: false,
+        threads: cores.saturating_sub(1).clamp(1, 7),
+        unified: false,
+    };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
         let mut value = || it.next().unwrap_or_else(|| panic!("{flag} needs a value"));
@@ -35,6 +48,8 @@ fn args() -> Args {
             "--ticks" => a.ticks = value().parse().unwrap(),
             "--view-distance" => a.view_distance = value().parse().unwrap(),
             "--behavior" => a.walk = value() == "walk",
+            "--threads" => a.threads = value().parse().unwrap(),
+            "--unified" => a.unified = true,
             other => panic!("unknown argument {other}"),
         }
     }
@@ -47,13 +62,10 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 
 fn main() {
     let a = args();
-    let mut sim = Sim::new(SimConfig {
-        max_players: a.players,
-        view_distance: 10,
-        simulation_distance: 10,
-        world: None,
-        online_mode: false,
-    });
+    let mut config = SimConfig::new(a.players, 10, None);
+    config.pool.workers = a.threads;
+    config.unified_regions = a.unified;
+    let mut sim = Sim::new(config);
     let mut walkers: Vec<Walker> = Vec::with_capacity(a.players);
     let mut inbox = Vec::new();
     // Joins at 100 per second, like the network bots.

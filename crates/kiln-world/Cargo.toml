@@ -6,5 +6,6 @@ publish.workspace = true
 
 [dependencies]
 kiln-data.workspace = true
+kiln-region.workspace = true
 kiln-proto.workspace = true
 bytes.workspace = true
