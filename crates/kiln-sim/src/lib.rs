@@ -37,6 +37,8 @@ struct Player {
     #[allow(dead_code)]
     entity_id: i32,
     sink: Box<dyn Sink>,
+    /// Packets queued this tick; flushed in the egress phase.
+    outbox: Vec<Bytes>,
     pos: [f64; 3],
     rot: [f32; 2],
     on_ground: bool,
@@ -54,10 +56,16 @@ struct Player {
 }
 
 impl Player {
-    fn send(&self, p: Bytes) {
-        self.sink.send(p);
+    fn send(&mut self, p: Bytes) {
+        self.outbox.push(p);
     }
-    fn disconnect(&self, reason: &str) {
+    fn flush(&mut self) {
+        if !self.outbox.is_empty() {
+            self.sink.send_batch(std::mem::take(&mut self.outbox));
+        }
+    }
+    fn disconnect(&mut self, reason: &str) {
+        self.flush();
         self.sink.disconnect(packets::play_disconnect(reason));
     }
     fn held_item(&self) -> Option<(i32, i32)> {
@@ -72,6 +80,11 @@ pub struct Sim {
     next_entity_id: i32,
     started: Instant,
     stats: stats::TickStats,
+    /// World age in ticks.
+    game_time: i64,
+    /// The overworld clock (time of day).
+    day_time: i64,
+    overworld_clock: i32,
 }
 
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
@@ -87,10 +100,14 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         next_entity_id: 1,
         started: Instant::now(),
         stats: stats::TickStats::default(),
+        game_time: 0,
+        day_time: 1000,
+        overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
     };
     let mut next_tick = Instant::now();
     loop {
         let start = Instant::now();
+        // P: apply packets and connection events received since the last tick.
         loop {
             match rx.try_recv() {
                 Ok(msg) => sim.handle(msg),
@@ -99,6 +116,10 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
             }
         }
         sim.tick();
+        // E: one batch per connection.
+        for p in sim.players.values_mut() {
+            p.flush();
+        }
         if let Some(report) = sim.stats.record(start.elapsed()) {
             info!("{} players, {} chunks | {report}", sim.players.len(), sim.world.loaded_chunks());
         }
@@ -134,11 +155,12 @@ impl Sim {
         let view_distance = (j.view_distance as i32).min(self.config.view_distance as i32);
         let dimension_type =
             kiln_data::synced_id("minecraft:dimension_type", OVERWORLD).expect("overworld dimension type");
-        let player = Player {
+        let mut player = Player {
             name: j.name,
             uuid: j.uuid,
             entity_id,
             sink: j.sink,
+            outbox: Vec::new(),
             pos: spawn,
             rot: [0.0, 0.0],
             on_ground: true,
@@ -170,6 +192,7 @@ impl Sim {
         player.send(packets::set_default_spawn_position(OVERWORLD, [8, spawn[1] as i32, 8], 0.0, 0.0));
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
+        player.send(self.time_packet());
 
         let msg = yellow(&format!("{} joined the game", player.name));
         self.players.insert(j.conn, player);
@@ -250,10 +273,15 @@ impl Sim {
         }
     }
 
-    fn ack(&self, conn: ConnId, sequence: i32) {
-        if let Some(p) = self.players.get(&conn) {
+    fn ack(&mut self, conn: ConnId, sequence: i32) {
+        if let Some(p) = self.players.get_mut(&conn) {
             p.send(packets::block_changed_ack(sequence));
         }
+    }
+
+    fn time_packet(&self) -> Bytes {
+        let clock = packets::ClockState { clock: self.overworld_clock, time: self.day_time, fraction: 0.0, rate: 1.0 };
+        packets::set_time(self.game_time, &[clock])
     }
 
     fn within_reach(&self, conn: ConnId, pos: [i32; 3]) -> bool {
@@ -291,7 +319,7 @@ impl Sim {
             Some(old) if old != state => {
                 let chunk = ChunkPos::of_block(pos[0], pos[2]);
                 let pkt = packets::block_update(pos, state);
-                for p in self.players.values().filter(|p| p.sent_chunks.contains(&chunk)) {
+                for p in self.players.values_mut().filter(|p| p.sent_chunks.contains(&chunk)) {
                     p.send(pkt.clone());
                 }
             }
@@ -300,14 +328,27 @@ impl Sim {
         }
     }
 
-    fn broadcast_system(&self, text: Tag) {
-        let pkt = packets::system_chat(text, false);
-        for p in self.players.values() {
+    fn broadcast_system(&mut self, text: Tag) {
+        self.broadcast(packets::system_chat(text, false));
+    }
+
+    /// Encoded once; every player's outbox shares the same bytes.
+    fn broadcast(&mut self, pkt: Bytes) {
+        for p in self.players.values_mut() {
             p.send(pkt.clone());
         }
     }
 
     fn tick(&mut self) {
+        // G: global state.
+        self.game_time += 1;
+        self.day_time += 1;
+        if self.game_time % 20 == 0 {
+            let pkt = self.time_packet();
+            self.broadcast(pkt);
+        }
+
+        // C: per-connection work (keep-alive, chunk streaming).
         let now = Instant::now();
         let world = &mut self.world;
         for p in self.players.values_mut() {

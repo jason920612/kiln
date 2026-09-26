@@ -13,6 +13,12 @@ pub type ConnId = u64;
 /// compression and encryption happen on the network side.
 pub trait Sink: Send {
     fn send(&self, packet: Bytes);
+    /// Sends a tick's worth of packets in order; one wakeup for the writer.
+    fn send_batch(&self, packets: Vec<Bytes>) {
+        for p in packets {
+            self.send(p);
+        }
+    }
     /// Sends `packet`, then closes the connection.
     fn disconnect(&self, packet: Bytes);
 }

@@ -333,6 +333,28 @@ pub fn read_untrusted_slot(r: &mut Reader) -> Result<Option<ItemStack>, DecodeEr
     Ok(Some(ItemStack { item, count, added, removed }))
 }
 
+/// World clock state for Set Time: registry id in `minecraft:world_clock`, time, rate.
+pub struct ClockState {
+    pub clock: i32,
+    pub time: i64,
+    pub fraction: f32,
+    pub rate: f32,
+}
+
+/// 26.x Set Time: world age plus the state of each world clock.
+pub fn set_time(game_time: i64, clocks: &[ClockState]) -> Bytes {
+    let mut b = packet(ids::play::clientbound::SET_TIME);
+    b.put_i64(game_time);
+    b.put_varint(clocks.len() as i32);
+    for c in clocks {
+        b.put_varint(c.clock);
+        b.put_varlong(c.time);
+        b.put_f32(c.fraction);
+        b.put_f32(c.rate);
+    }
+    b.freeze()
+}
+
 pub fn block_update(pos: [i32; 3], state: u16) -> Bytes {
     let mut b = packet(ids::play::clientbound::BLOCK_UPDATE);
     b.put_position(pos[0], pos[1], pos[2]);
