@@ -340,8 +340,8 @@ pub fn play_disconnect(reason: &str) -> Bytes {
 
 // ---- serverbound play ---------------------------------------------------------------------
 
-/// Serverbound play packets the simulation cares about.
-#[derive(Debug)]
+/// Serverbound play packets, decoded by [`decode_play`].
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlayIn {
     AcceptTeleport { id: i32 },
     KeepAlive { id: i64 },
