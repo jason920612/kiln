@@ -17,6 +17,8 @@ kiln-world = { path = "crates/kiln-world" }
 kiln-storage = { path = "crates/kiln-storage" }
 aes = "0.9"
 kiln-command = { path = "crates/kiln-command" }
+kiln-javamath = { path = "crates/kiln-javamath" }
+kiln-worldgen = { path = "crates/kiln-worldgen" }
 anyhow = "1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }

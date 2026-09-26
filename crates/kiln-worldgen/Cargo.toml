@@ -1,0 +1,9 @@
+[package]
+name = "kiln-worldgen"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+kiln-javamath.workspace = true
+thiserror.workspace = true
