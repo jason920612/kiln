@@ -16,6 +16,7 @@ kiln-sim = { path = "crates/kiln-sim" }
 kiln-world = { path = "crates/kiln-world" }
 kiln-storage = { path = "crates/kiln-storage" }
 aes = "0.9"
+kiln-command = { path = "crates/kiln-command" }
 anyhow = "1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }

@@ -10,6 +10,7 @@ use crate::{DecodeError, Reader, WriteExt};
 use uuid::Uuid;
 
 pub mod login_ext;
+pub mod commands;
 
 fn packet(id: i32) -> BytesMut {
     let mut b = BytesMut::with_capacity(64);
