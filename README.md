@@ -7,9 +7,13 @@ documented approximations where they buy speed.
 
 Status: early. Players can join (offline, online mode, Velocity or BungeeCord forwarding),
 see and track each other, chat, run the basic vanilla commands, build and break blocks in
-creative mode with correct lighting, on a superflat world or a vanilla 26.3 save (Anvil read
-and write). Most gameplay (survival, mobs, redstone, world generation) is still to come; the
-milestones are in [docs/design-v2-regionized.md](docs/design-v2-regionized.md) §14.
+creative mode with correct lighting and block entities, on a superflat world or a vanilla 26.3
+save (Anvil, player data and level data read and written). The simulation is region-parallel:
+cells of 8×8 chunks group into regions at least 256 blocks apart, which tick in parallel on
+the tick pool with results identical to a single region (tested). Item stacks with all data
+components and bit-exact overworld density functions are in place for what comes next; most
+gameplay (survival, mobs, redstone, full world generation) is still to come. The milestones
+are in [docs/design-v2-regionized.md](docs/design-v2-regionized.md) §14.
 
 ## Layout
 
@@ -19,8 +23,12 @@ milestones are in [docs/design-v2-regionized.md](docs/design-v2-regionized.md) �
 | `kiln-data` | tables generated from the vanilla jar (packets, registries, blocks, entities, game rules) |
 | `kiln-link` | the boundary between networking and the simulation |
 | `kiln-net` | tokio networking: handshake, status, login, configuration, per-connection writer |
-| `kiln-sim` | the simulation: one synchronous tick loop, never awaits |
-| `kiln-world` | paletted sections, chunks grouped in 8×8-chunk cells, light engine |
+| `kiln-sim` | the simulation: a synchronous tick loop that never awaits, regions ticked in parallel |
+| `kiln-region` | the regionizer: cells, regions, merge, lazy split, fusion |
+| `kiln-sched` | the tick pool: region fork-join and phase windows without priority inversion |
+| `kiln-world` | paletted sections, chunks grouped in 8×8-chunk cells, light engine, spawn finder |
+| `kiln-item` | item stacks with every data component (wire, NBT, hashed) |
+| `kiln-worldgen`, `kiln-javamath` | 26.3 density functions and noise, bit-exact with vanilla |
 | `kiln-storage` | Anvil region files and chunk NBT |
 | `kiln-command` | Brigadier-compatible commands and the vanilla command set |
 | `kiln-server` | the `kiln` binary |
@@ -49,6 +57,8 @@ Settings come from the environment until there is a config file:
 | `KILN_MAX_PLAYERS` | player limit (100) |
 | `KILN_WORLD` | a vanilla 26.3 world directory to load; superflat when unset |
 | `KILN_OPS` | comma-separated operator names; `prefix*` matches every name with that prefix |
+| `KILN_TICK_THREADS` | tick pool size (all cores but one, at most 7) |
+| `KILN_REGIONS` | `unified` for one region per dimension (vanilla profile) |
 | `KILN_ONLINE_MODE` | authenticate with Mojang (`true`/`false`) |
 | `KILN_PROXY` | `none`, `velocity` or `bungeecord` |
 | `KILN_VELOCITY_SECRET`, `KILN_VELOCITY_SECRET_FILE` | Velocity modern forwarding secret |
