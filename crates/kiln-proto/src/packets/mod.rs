@@ -342,6 +342,13 @@ fn put_plain_item(b: &mut BytesMut, item: Option<(i32, i32)>) {
     }
 }
 
+/// Set Held Slot: the selected hotbar slot (0-8).
+pub fn set_held_slot(slot: i32) -> Bytes {
+    let mut b = packet(ids::play::clientbound::SET_HELD_SLOT);
+    b.put_varint(slot);
+    b.freeze()
+}
+
 /// Block Entity Data: the block entity type (protocol id) and its update tag.
 pub fn block_entity_data(pos: [i32; 3], kind: i32, tag: &Tag) -> Bytes {
     let mut b = packet(ids::play::clientbound::BLOCK_ENTITY_DATA);

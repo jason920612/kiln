@@ -3,6 +3,7 @@
 
 mod commands;
 mod interact;
+mod persist;
 mod players;
 mod stats;
 
@@ -78,6 +79,9 @@ struct Player {
     /// Player inventory container state id (incremented on server-side changes).
     inventory_state: i32,
     respawn: Option<[i32; 3]>,
+    /// Saved player data this player was loaded from: tags Kiln does not model are written
+    /// back from here.
+    saved: kiln_storage::PlayerData,
 }
 
 impl Player {
@@ -101,8 +105,12 @@ impl Player {
 pub struct Sim {
     config: SimConfig,
     world: World,
-    /// World spawn column; players stand on the highest block there.
+    /// World spawn; new players appear around it.
     spawn: [i32; 3],
+    /// World spawn yaw and pitch, the rotation of new players.
+    spawn_rot: [f32; 2],
+    /// Level data and player files of the world save (none for the in-memory flat world).
+    storage: Option<persist::Storage>,
     players: HashMap<ConnId, Player>,
     next_entity_id: i32,
     started: Instant,
@@ -139,16 +147,20 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         }
         None => (World::flat(OVERWORLD_DIM, plains as u16, biome_count), [8, 0, 8]),
     };
+    let storage = config.world.as_deref().map(persist::Storage::open);
+    let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
     let mut sim = Sim {
         config,
         world,
         spawn,
+        spawn_rot: level.as_ref().map_or([0.0; 2], |l| [l.spawn.yaw, l.spawn.pitch]),
+        storage,
         players: HashMap::new(),
         next_entity_id: 1,
         started: Instant::now(),
         stats: stats::TickStats::default(),
-        game_time: 0,
-        day_time: 1000,
+        game_time: level.as_ref().map_or(0, |l| l.game_time),
+        day_time: level.as_ref().map_or(1000, |l| l.day_time),
         overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
         stopped: false,
         commands: commands::CommandState::new(ops_from_env()),
@@ -216,6 +228,7 @@ impl Sim {
             ToSim::Join(j) => self.join(j),
             ToSim::Leave(conn) => {
                 if let Some(p) = self.players.remove(&conn) {
+                    self.save_player(&p);
                     self.announce_leave(&p, conn);
                     self.broadcast_system(yellow(&format!("{} left the game", p.name)));
                 }
@@ -240,14 +253,20 @@ impl Sim {
             Ok(n) => info!("saved {n} chunks in {:.1} ms", start.elapsed().as_secs_f64() * 1e3),
             Err(e) => warn!("saving the world failed: {e}"),
         }
+        for p in self.players.values() {
+            self.save_player(p);
+        }
+        self.save_level();
     }
 
     fn join(&mut self, j: JoinInfo) {
         let entity_id = self.next_entity_id;
         self.next_entity_id += 1;
-        let spawn = self.spawn_position();
+        let joining = self.joining(j.uuid);
+        let spawn = joining.pos;
+        let [yaw, pitch] = joining.rot;
         let view_distance = (j.client.view_distance as i32).min(self.config.view_distance as i32);
-        let move_state = packets::entity::MoveState { pos: spawn, yaw: 0.0, pitch: 0.0, head_yaw: 0.0, on_ground: true };
+        let move_state = packets::entity::MoveState { pos: spawn, yaw, pitch, head_yaw: yaw, on_ground: true };
         let dimension_type =
             kiln_data::synced_id("minecraft:dimension_type", OVERWORLD).expect("overworld dimension type");
         let mut player = Player {
@@ -256,11 +275,11 @@ impl Sim {
             entity_id,
             properties: j.properties,
             client: j.client,
-            game_mode: 1,
+            game_mode: joining.game_mode,
             sink: j.sink,
             outbox: Vec::new(),
             pos: spawn,
-            rot: [0.0, 0.0],
+            rot: joining.rot,
             on_ground: true,
             view_distance,
             center: ChunkPos::of_block(spawn[0] as i32, spawn[2] as i32),
@@ -270,8 +289,8 @@ impl Sim {
             last_keep_alive: Instant::now(),
             chunks_per_tick: 9.0,
             unacked_batches: 0,
-            inventory: [None; INVENTORY_SLOTS],
-            selected: 0,
+            inventory: joining.inventory,
+            selected: joining.selected,
             tracker: packets::entity::MovementTracker::new(
                 entity_id,
                 kiln_data::entities::types::PLAYER.update_interval,
@@ -285,7 +304,8 @@ impl Sim {
             pending_suggestion: None,
             teleport_id: 1,
             inventory_state: 0,
-            respawn: None,
+            respawn: joining.respawn,
+            saved: joining.saved,
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -301,11 +321,14 @@ impl Sim {
             sea_level: 63,
             online_mode: self.config.online_mode,
         }));
-        player.send(packets::player_position(player.teleport_id, spawn, 0.0, 0.0));
-        player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, 0.0, 0.0));
+        player.send(packets::player_position(player.teleport_id, spawn, yaw, pitch));
+        let [spawn_yaw, spawn_pitch] = self.spawn_rot;
+        player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, spawn_yaw, spawn_pitch));
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
         player.send(self.time_packet());
+        player.send(packets::set_held_slot(player.selected as i32));
+        player.send(packets::container_set_content(0, player.inventory_state, &player.inventory, None));
 
         let msg = yellow(&format!("{} joined the game", player.name));
         self.players.insert(j.conn, player);
@@ -416,16 +439,10 @@ impl Sim {
         }
     }
 
-    /// On top of the highest non-air block in the spawn column.
+    /// A spawn point around the world spawn, as vanilla finds one for players without a
+    /// respawn point.
     fn spawn_position(&mut self) -> [f64; 3] {
-        let [x, _, z] = self.spawn;
-        let dim = self.world.dimension;
-        self.world.chunk_mut(ChunkPos::of_block(x, z));
-        let top = (dim.min_y..dim.min_y + dim.height)
-            .rev()
-            .find(|&y| self.world.get_block(x, y, z).is_some_and(|s| !kiln_data::blocks_types::is_air(s)))
-            .map_or(dim.min_y + dim.height, |y| y + 1);
-        [x as f64 + 0.5, top as f64, z as f64 + 0.5]
+        self.new_player_position(Uuid::nil())
     }
 
     fn ack(&mut self, conn: ConnId, sequence: i32) {
@@ -474,8 +491,13 @@ impl Sim {
             Some(old) if old != state => {
                 let chunk = ChunkPos::of_block(pos[0], pos[2]);
                 let pkt = packets::block_update(pos, state);
+                let data = self.world.block_entity_data(pos[0], pos[1], pos[2]);
+                let data = data.map(|(kind, tag)| packets::block_entity_data(pos, kind as i32, &tag));
                 for p in self.players.values_mut().filter(|p| p.sent_chunks.contains(&chunk)) {
                     p.send(pkt.clone());
+                    if let Some(d) = &data {
+                        p.send(d.clone());
+                    }
                 }
             }
             Some(_) => {}

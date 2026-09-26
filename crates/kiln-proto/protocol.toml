@@ -178,7 +178,7 @@ set_entity_motion = { status = "deferred", note = "entity velocity" }
 set_equipment = { status = "deferred", note = "entity equipment" }
 set_experience = { status = "deferred", note = "experience" }
 set_health = { status = "deferred", note = "health and food" }
-set_held_slot = { status = "deferred", note = "inventory" }
+set_held_slot = { status = "implemented", note = "packets::set_held_slot: saved selected slot on join" }
 set_objective = { status = "deferred", note = "scoreboard" }
 set_passengers = { status = "deferred", note = "vehicles" }
 set_player_inventory = { status = "deferred", note = "inventory" }

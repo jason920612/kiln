@@ -36,6 +36,8 @@ pub struct LevelStore {
     level: Option<Tag>,
     /// `world_clocks.dat` as loaded.
     clocks: Option<Tag>,
+    /// `game_rules.dat` (read only: Kiln does not persist game rule changes yet).
+    game_rules: Option<Tag>,
     /// Game time when the clocks were last read or written, to advance the clocks Kiln does
     /// not run.
     clocks_game_time: i64,
@@ -52,11 +54,12 @@ impl LevelStore {
             }
             read_nbt_file(&path).map_err(|e| warn!("cannot read {}: {e}", path.display())).ok()
         });
-        let clocks_path = world_dir.join("data/minecraft/world_clocks.dat");
-        let clocks = clocks_path.exists().then(|| read_nbt_file(&clocks_path)).and_then(|r| {
-            r.map_err(|e| warn!("cannot read {}: {e}", clocks_path.display())).ok()
-        });
-        let mut store = Self { dir: world_dir.to_owned(), level, clocks, clocks_game_time: 0 };
+        let saved_data = |name: &str| {
+            let path = world_dir.join("data/minecraft").join(name);
+            path.exists().then(|| read_nbt_file(&path)).and_then(|r| r.map_err(|e| warn!("cannot read {}: {e}", path.display())).ok())
+        };
+        let (clocks, game_rules) = (saved_data("world_clocks.dat"), saved_data("game_rules.dat"));
+        let mut store = Self { dir: world_dir.to_owned(), level, clocks, game_rules, clocks_game_time: 0 };
         store.clocks_game_time = store.state().game_time;
         store
     }
@@ -101,6 +104,11 @@ impl LevelStore {
     /// The default game mode for new players (`Data.GameType`), if the world has one.
     pub fn game_type(&self) -> Option<u8> {
         self.data()?.get("GameType")?.as_i64().map(|g| g as u8)
+    }
+
+    /// A saved game rule (`minecraft:respawn_radius`, ...) as a number (booleans are 0 or 1).
+    pub fn game_rule(&self, name: &str) -> Option<i64> {
+        self.game_rules.as_ref()?.get("data")?.get(name)?.as_i64()
     }
 
     /// Writes `level.dat` (keeping the previous one as `level.dat_old`) and the world clocks.
