@@ -9,8 +9,14 @@ use crate::nbt::Tag;
 use crate::{DecodeError, Reader, WriteExt};
 use uuid::Uuid;
 
-pub mod login_ext;
 pub mod commands;
+pub mod common;
+pub mod hud;
+pub mod login_ext;
+pub mod player;
+pub mod scoreboard;
+pub mod serverbound;
+pub mod world_fx;
 
 fn packet(id: i32) -> BytesMut {
     let mut b = BytesMut::with_capacity(64);
@@ -172,18 +178,21 @@ pub fn play_login(l: &Login) -> Bytes {
     b.put_bool(false); // reduced debug info
     b.put_bool(true); // show respawn screen
     b.put_bool(false); // limited crafting
-    // CommonPlayerSpawnInfo
-    b.put_varint(l.dimension_type);
-    b.put_string(l.dimension);
-    b.put_i64(0); // hashed seed
-    b.put_varint(l.game_mode as i32);
-    b.put_varint(0); // previous game mode: none
-    b.put_bool(false); // debug world
-    b.put_bool(l.is_flat);
-    b.put_bool(false); // no death location
-    b.put_varint(0); // portal cooldown
-    b.put_varint(l.sea_level);
-    // Login
+    player::put_spawn_info(
+        &mut b,
+        &player::SpawnInfo {
+            dimension_type: l.dimension_type,
+            dimension: l.dimension,
+            hashed_seed: 0,
+            game_mode: l.game_mode,
+            previous_game_mode: None,
+            is_debug: false,
+            is_flat: l.is_flat,
+            death_location: None,
+            portal_cooldown: 0,
+            sea_level: l.sea_level,
+        },
+    );
     b.put_bool(l.online_mode);
     b.put_bool(false); // enforces secure chat
     b.freeze()
@@ -331,8 +340,8 @@ pub fn play_disconnect(reason: &str) -> Bytes {
 
 // ---- serverbound play ---------------------------------------------------------------------
 
-/// Serverbound play packets the simulation cares about.
-#[derive(Debug)]
+/// Serverbound play packets, decoded by [`decode_play`].
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlayIn {
     AcceptTeleport { id: i32 },
     KeepAlive { id: i64 },
@@ -354,6 +363,64 @@ pub enum PlayIn {
     SetCreativeSlot { slot: i16, item: Option<ItemStack> },
     /// Arm swing (26.3 renamed `swing` to `punch`; it has no fields).
     Punch,
+    ClientCommand(serverbound::ClientCommand),
+    /// Right click on an entity; `location` is the hit point relative to the entity's position.
+    Interact { entity_id: i32, hand: serverbound::Hand, location: [f64; 3], sneaking: bool },
+    Attack { entity_id: i32 },
+    UseItem { hand: serverbound::Hand, sequence: i32, yaw: f32, pitch: f32 },
+    ContainerClose { container_id: i32 },
+    ContainerButtonClick { container_id: i32, button_id: i32 },
+    /// A crafter slot toggled.
+    ContainerSlotStateChanged { slot: i32, container_id: i32, enabled: bool },
+    PickItemFromBlock { pos: [i32; 3], include_data: bool },
+    PickItemFromEntity { entity_id: i32, include_data: bool },
+    SignUpdate { pos: [i32; 3], lines: Box<[String; 4]>, front: bool },
+    SetCommandBlock(Box<serverbound::CommandBlockUpdate>),
+    SetCommandMinecart { entity_id: i32, command: String, track_output: bool },
+    SetStructureBlock(Box<serverbound::StructureBlockUpdate>),
+    SetJigsawBlock(Box<serverbound::JigsawBlockUpdate>),
+    JigsawGenerate { pos: [i32; 3], levels: i32, keep_jigsaws: bool },
+    /// Anvil item name (vanilla rejects names over 50 characters when applying it).
+    RenameItem { name: String },
+    SelectTrade { offer: i32 },
+    /// Effect ids in `minecraft:mob_effect`.
+    SetBeacon { primary: Option<i32>, secondary: Option<i32> },
+    /// `slot` is a hotbar slot (0..9) or 40 (off hand); `title` signs the book.
+    EditBook { slot: i32, pages: Vec<String>, title: Option<String> },
+    /// Only the flying flag is read.
+    PlayerAbilities { flying: bool },
+    ClientTickEnd,
+    PaddleBoat { left: bool, right: bool },
+    MoveVehicle { pos: [f64; 3], rot: [f32; 2], on_ground: bool },
+    /// 0 peaceful ..= 3 hard (ids wrap, as in vanilla).
+    ChangeDifficulty { difficulty: u8 },
+    LockDifficulty { locked: bool },
+    /// Game mode id from the F3+F4 switcher (unknown ids are survival, as in vanilla).
+    ChangeGameMode { game_mode: u8 },
+    /// Spectator menu teleport.
+    TeleportToEntity { target: Uuid },
+    /// Spectate an entity (or stop, with `None`).
+    SpectatorAction { entity_id: Option<i32> },
+    ChatAck { offset: i32 },
+    /// `index` -1 deselects.
+    SelectBundleItem { slot: i32, index: i32 },
+    /// `tab` is the opened advancement tab, `None` when the screen closed.
+    SeenAdvancements { tab: Option<String> },
+    RecipeBookSeenRecipe { recipe: i32 },
+    RecipeBookChangeSettings { book: serverbound::RecipeBookType, open: bool, filtering: bool },
+    PlaceRecipe { container_id: i32, recipe: i32, use_max_items: bool },
+    BlockEntityTagQuery { transaction: i32, pos: [i32; 3] },
+    EntityTagQuery { transaction: i32, entity_id: i32 },
+    /// (game rule key, value) pairs from the edit game rules screen.
+    SetGameRules { rules: Vec<(String, String)> },
+    /// Network debug screen ping; answer with `common::pong_response(time)`.
+    PingRequest { time: i64 },
+    /// Answer to `common::ping`.
+    Pong { id: i32 },
+    ResourcePack { id: Uuid, action: common::ResourcePackAction },
+    CookieResponse(common::CookieResponse),
+    /// A `minecraft:custom` click action from a dialog or chat.
+    CustomClickAction { id: String, payload: Option<Tag> },
 }
 
 /// An item stack as sent by the client. Component patches are kept as raw, length-delimited
@@ -500,6 +567,61 @@ pub fn decode_play(id: i32, r: &mut Reader) -> Result<Option<PlayIn>, DecodeErro
         sb::SET_CARRIED_ITEM => PlayIn::SetCarriedItem { slot: r.i16()? },
         sb::SET_CREATIVE_MODE_SLOT => PlayIn::SetCreativeSlot { slot: r.i16()?, item: read_untrusted_slot(r)? },
         sb::PUNCH => PlayIn::Punch,
+        sb::CLIENT_COMMAND => serverbound::read_client_command(r)?,
+        sb::INTERACT => serverbound::read_interact(r)?,
+        sb::ATTACK => PlayIn::Attack { entity_id: r.varint()? },
+        sb::USE_ITEM => serverbound::read_use_item(r)?,
+        sb::CONTAINER_CLOSE => PlayIn::ContainerClose { container_id: r.varint()? },
+        sb::CONTAINER_BUTTON_CLICK => PlayIn::ContainerButtonClick { container_id: r.varint()?, button_id: r.varint()? },
+        sb::CONTAINER_SLOT_STATE_CHANGED => {
+            PlayIn::ContainerSlotStateChanged { slot: r.varint()?, container_id: r.varint()?, enabled: r.bool()? }
+        }
+        sb::PICK_ITEM_FROM_BLOCK => PlayIn::PickItemFromBlock { pos: read_position(r)?, include_data: r.bool()? },
+        sb::PICK_ITEM_FROM_ENTITY => PlayIn::PickItemFromEntity { entity_id: r.varint()?, include_data: r.bool()? },
+        sb::SIGN_UPDATE => serverbound::read_sign_update(r)?,
+        sb::SET_COMMAND_BLOCK => serverbound::read_set_command_block(r)?,
+        sb::SET_COMMAND_MINECART => serverbound::read_set_command_minecart(r)?,
+        sb::SET_STRUCTURE_BLOCK => serverbound::read_set_structure_block(r)?,
+        sb::SET_JIGSAW_BLOCK => serverbound::read_set_jigsaw_block(r)?,
+        sb::JIGSAW_GENERATE => PlayIn::JigsawGenerate { pos: read_position(r)?, levels: r.varint()?, keep_jigsaws: r.bool()? },
+        sb::RENAME_ITEM => PlayIn::RenameItem { name: r.string(32767)?.to_owned() },
+        sb::SELECT_TRADE => PlayIn::SelectTrade { offer: r.varint()? },
+        sb::SET_BEACON => serverbound::read_set_beacon(r)?,
+        sb::EDIT_BOOK => serverbound::read_edit_book(r)?,
+        sb::PLAYER_ABILITIES => PlayIn::PlayerAbilities { flying: r.u8()? & 0x02 != 0 },
+        sb::CLIENT_TICK_END => PlayIn::ClientTickEnd,
+        sb::PADDLE_BOAT => PlayIn::PaddleBoat { left: r.bool()?, right: r.bool()? },
+        sb::MOVE_VEHICLE => serverbound::read_move_vehicle(r)?,
+        sb::CHANGE_DIFFICULTY => PlayIn::ChangeDifficulty { difficulty: r.varint()?.rem_euclid(4) as u8 },
+        sb::LOCK_DIFFICULTY => PlayIn::LockDifficulty { locked: r.bool()? },
+        sb::CHANGE_GAME_MODE => {
+            let id = r.varint()?;
+            PlayIn::ChangeGameMode { game_mode: if (0..4).contains(&id) { id as u8 } else { 0 } }
+        }
+        sb::TELEPORT_TO_ENTITY => PlayIn::TeleportToEntity { target: r.uuid()? },
+        sb::SPECTATOR_ACTION => serverbound::read_spectator_action(r)?,
+        sb::CHAT_ACK => PlayIn::ChatAck { offset: r.varint()? },
+        sb::BUNDLE_ITEM_SELECTED => serverbound::read_select_bundle_item(r)?,
+        sb::SEEN_ADVANCEMENTS => serverbound::read_seen_advancements(r)?,
+        sb::RECIPE_BOOK_SEEN_RECIPE => PlayIn::RecipeBookSeenRecipe { recipe: r.varint()? },
+        sb::RECIPE_BOOK_CHANGE_SETTINGS => serverbound::read_recipe_book_change_settings(r)?,
+        sb::PLACE_RECIPE => {
+            PlayIn::PlaceRecipe { container_id: r.varint()?, recipe: r.varint()?, use_max_items: r.bool()? }
+        }
+        sb::BLOCK_ENTITY_TAG_QUERY => PlayIn::BlockEntityTagQuery { transaction: r.varint()?, pos: read_position(r)? },
+        sb::ENTITY_TAG_QUERY => PlayIn::EntityTagQuery { transaction: r.varint()?, entity_id: r.varint()? },
+        sb::SET_GAME_RULE => serverbound::read_set_game_rules(r)?,
+        sb::PING_REQUEST => PlayIn::PingRequest { time: r.i64()? },
+        sb::PONG => PlayIn::Pong { id: r.i32()? },
+        sb::RESOURCE_PACK => {
+            let (id, action) = common::read_resource_pack_response(r)?;
+            PlayIn::ResourcePack { id, action }
+        }
+        sb::COOKIE_RESPONSE => PlayIn::CookieResponse(common::read_cookie_response(r)?),
+        sb::CUSTOM_CLICK_ACTION => {
+            let (id, payload) = common::read_custom_click_action(r)?;
+            PlayIn::CustomClickAction { id, payload }
+        }
         _ => {
             r.rest();
             return Ok(None);

@@ -1,8 +1,9 @@
 // Decodes packet bodies with vanilla's StreamCodecs and prints every decoded field, and prints
 // the entity tables (types, data fields, serializers) from the running game for comparison with
-// Kiln's generated ones. Run through tools/entity_vectors.py.
+// Kiln's generated ones. Run through tools/entity_vectors.py and tools/packet_vectors.py.
 //
-// usage: java -cp <server jar + libraries> tools/VanillaDump.java packets <dir>   (reads <dir>/manifest.txt)
+// usage: java -cp <server jar + libraries> tools/VanillaDump.java packets <dir> [full]   (reads <dir>/manifest.txt;
+//            `full` also loads the vanilla data pack's world registries: dimension types, damage types, dialogs...)
 //        java -cp <server jar + libraries> tools/VanillaDump.java entities <class list file>
 
 import com.google.common.collect.Multimap;
@@ -24,14 +25,17 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 import java.util.UUID;
 import net.minecraft.core.Holder;
+import net.minecraft.core.HolderLookup;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.component.DataComponentMap;
 import net.minecraft.core.particles.ParticleOptions;
+import net.minecraft.core.particles.ParticleType;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.RegistryFriendlyByteBuf;
 import net.minecraft.network.chat.Component;
@@ -39,11 +43,19 @@ import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializer;
 import net.minecraft.network.syncher.EntityDataSerializers;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.RegistryDataLoader;
 import net.minecraft.resources.ResourceKey;
+import net.minecraft.server.RegistryLayer;
+import net.minecraft.server.packs.PackType;
+import net.minecraft.server.packs.repository.ServerPacksSource;
+import net.minecraft.server.packs.resources.MultiPackResourceManager;
+import net.minecraft.tags.TagLoader;
 import net.minecraft.world.entity.EntityReference;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 public class VanillaDump {
@@ -54,7 +66,9 @@ public class VanillaDump {
     public static void main(String[] args) throws Exception {
         net.minecraft.SharedConstants.tryDetectVersion();
         net.minecraft.server.Bootstrap.bootStrap();
-        access = RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
+        access = args.length > 2 && args[2].equals("full")
+                ? withWorldRegistries()
+                : RegistryAccess.fromRegistryOfRegistries(BuiltInRegistries.REGISTRY);
         // Default item components are only bound once data-driven registries load; item stacks
         // on the wire are (count, item id, component patch), so empty prototypes suffice here.
         BuiltInRegistries.ITEM.listElements().filter(h -> !h.areComponentsBound())
@@ -66,15 +80,29 @@ public class VanillaDump {
         }
     }
 
+    /** Static registries plus the vanilla data pack's world registries, loaded as WorldLoader does. */
+    static RegistryAccess withWorldRegistries() {
+        var layers = RegistryLayer.createRegistryAccess();
+        var resources = new MultiPackResourceManager(PackType.SERVER_DATA,
+                List.of(ServerPacksSource.createVanillaPackSource().fullResources()));
+        var staticTags = TagLoader.loadTagsForExistingRegistries(resources, layers.getLayer(RegistryLayer.STATIC));
+        List<HolderLookup.RegistryLookup<?>> lookups =
+                TagLoader.buildUpdatedLookups(layers.getAccessForLoading(RegistryLayer.WORLD), staticTags);
+        var world = RegistryDataLoader.load(resources, lookups, RegistryDataLoader.WORLD_REGISTRIES, Runnable::run).join();
+        return layers.replaceFrom(RegistryLayer.WORLD, world).compositeAccess();
+    }
+
     static void packets(Path dir) throws Exception {
         for (String line : Files.readAllLines(dir.resolve("manifest.txt"))) {
             String[] parts = line.split(" ");
             String name = parts[0];
             OUT.println("== " + name);
             try {
+                // `Class` or `Class#FIELD` for packets with more than one codec.
+                String[] target = (parts[1] + "#STREAM_CODEC").split("#");
                 @SuppressWarnings("unchecked")
                 StreamCodec<ByteBuf, Object> codec =
-                        (StreamCodec<ByteBuf, Object>) Class.forName(parts[1]).getField("STREAM_CODEC").get(null);
+                        (StreamCodec<ByteBuf, Object>) Class.forName(target[0]).getField(target[1]).get(null);
                 byte[] data = Files.readAllBytes(dir.resolve(name + ".bin"));
                 ByteBuf buf = new RegistryFriendlyByteBuf(Unpooled.wrappedBuffer(data), access);
                 Object packet = codec.decode(buf);
@@ -135,6 +163,11 @@ public class VanillaDump {
             out.add(path + "=" + EntityDataSerializers.getSerializedId(s));
         } else if (o instanceof Holder<?> h) {
             out.add(path + "=" + h.unwrapKey().map(k -> k.identifier().toString()).orElse("<direct>"));
+            if (h.unwrapKey().isEmpty()) dump(join(path, "value"), h.value(), out, depth + 1);
+        } else if (o instanceof Identifier id) {
+            out.add(path + "=" + id);
+        } else if (o instanceof Block b) {
+            out.add(path + "=" + BuiltInRegistries.BLOCK.getKey(b));
         } else if (o instanceof ResourceKey<?> k) {
             out.add(path + "=" + k.identifier());
         } else if (o instanceof EntityType<?> t) {
@@ -145,23 +178,41 @@ public class VanillaDump {
             out.add(path + "=" + s);
         } else if (o instanceof ParticleOptions p) {
             out.add(path + "=" + BuiltInRegistries.PARTICLE_TYPE.getKey(p.getType()));
+            if (!(p instanceof ParticleType<?>)) fields(path, p, out, depth);
+        } else if (o instanceof ParticleType<?> t) {
+            out.add(path + "=" + BuiltInRegistries.PARTICLE_TYPE.getKey(t));
+        } else if (o instanceof Map<?, ?> map) {
+            if (map.isEmpty()) out.add(path + "={}");
+            for (var e : map.entrySet()) dump(path + "[" + e.getKey() + "]", e.getValue(), out, depth + 1);
+        } else if (o.getClass().isArray()) {
+            int n = java.lang.reflect.Array.getLength(o);
+            if (n == 0) out.add(path + "=[]");
+            for (int i = 0; i < n; i++) dump(path + "[" + i + "]", java.lang.reflect.Array.get(o, i), out, depth + 1);
         } else if (o instanceof ItemStack s) {
             out.add(path + "=" + (s.isEmpty() ? "empty" : s.getCount() + " " + BuiltInRegistries.ITEM.getKey(s.getItem())));
         } else if (o.getClass().getName().startsWith("java.")) {
             out.add(path + "=" + o);
-        } else if (o.getClass().isRecord()) {
+        } else {
+            fields(path, o, out, depth);
+        }
+    }
+
+    /** Record components or instance fields, after the concrete class (for polymorphic values). */
+    static void fields(String path, Object o, List<String> out, int depth) throws Exception {
+        out.add(join(path, "@class") + "=" + o.getClass().getSimpleName());
+        if (o.getClass().isRecord()) {
             for (var c : o.getClass().getRecordComponents()) {
                 var accessor = c.getAccessor();
                 accessor.setAccessible(true);
                 dump(join(path, c.getName()), accessor.invoke(o), out, depth + 1);
             }
-        } else {
-            for (Class<?> c = o.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
-                for (Field f : c.getDeclaredFields()) {
-                    if (Modifier.isStatic(f.getModifiers())) continue;
-                    f.setAccessible(true);
-                    dump(join(path, f.getName()), f.get(o), out, depth + 1);
-                }
+            return;
+        }
+        for (Class<?> c = o.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (Modifier.isStatic(f.getModifiers())) continue;
+                f.setAccessible(true);
+                dump(join(path, f.getName()), f.get(o), out, depth + 1);
             }
         }
     }
