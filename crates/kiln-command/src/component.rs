@@ -66,9 +66,14 @@ const NAMED_COLORS: [&str; 16] = [
 const BOOL_STYLES: [&str; 5] = ["bold", "italic", "underlined", "strikethrough", "obfuscated"];
 
 /// `ComponentArgument.parse`: SNBT, then the component codec.
+/// Codec failures point at the start of the argument (`CommandArgumentParser.withCodec`).
 pub fn parse(reader: &mut StringReader) -> Result<Component> {
+    let start = reader.cursor();
     let tag = snbt::parse_tag(reader)?;
-    decode(&tag).map_err(|message| CommandError::new(tr!("argument.component.invalid", message)).at(reader))
+    decode(&tag).map_err(|message| {
+        reader.set_cursor(start);
+        CommandError::new(tr!("argument.component.invalid", message)).at(reader)
+    })
 }
 
 fn invalid<T>(message: impl Into<String>) -> std::result::Result<T, String> {
@@ -80,26 +85,69 @@ pub fn decode(tag: &Tag) -> std::result::Result<Component, String> {
     decode_depth(tag, 0)
 }
 
+/// The codec is `either(either(string, nonEmptyList(listOf(component))), map)`; failures read
+/// like DataFixerUpper's (`Failed to parse either. First: ...; Second: ...`), except that an
+/// `either` whose branch failed with a partial result reports only that branch.
 fn decode_depth(tag: &Tag, depth: usize) -> std::result::Result<Component, String> {
     if depth > 512 {
         return invalid("Component nested too deeply");
     }
-    match tag {
-        Tag::String(s) => Ok(Component::text(s)),
-        Tag::List(items) => {
-            let mut parts = items.iter().map(|t| decode_depth(t.unwrap_list_element(), depth + 1));
-            let Some(first) = parts.next() else { return invalid("List must have contents") };
-            let mut first = first?;
-            for p in parts {
-                first.extra.push(p?);
-            }
+    if let Tag::String(s) = tag {
+        return Ok(Component::text(s));
+    }
+    let list = match list_elements(tag) {
+        Some(items) => match decode_list(&items, depth) {
+            Ok(c) => return Ok(c),
+            Err((message, true)) => return Err(message),
+            Err((message, false)) => message,
+        },
+        None => format!("Not a list: {}", snbt::to_snbt(tag)),
+    };
+    let map = match tag {
+        Tag::Compound(fields) => match decode_compound(fields, depth) {
+            Ok(c) => return Ok(c),
+            Err((message, true)) => return Err(message),
+            Err((message, false)) => message,
+        },
+        _ => format!("Not a map: {}", snbt::to_snbt(tag)),
+    };
+    Err(format!("Failed to parse either. First: Failed to parse either. First: Not a string; Second: {list}; Second: {map}"))
+}
+
+/// `NbtOps.getList`: lists and typed arrays.
+fn list_elements(tag: &Tag) -> Option<Vec<Tag>> {
+    Some(match tag {
+        Tag::List(items) => items.iter().map(|t| t.unwrap_list_element().clone()).collect(),
+        Tag::ByteArray(v) => v.iter().map(|&b| Tag::Byte(b)).collect(),
+        Tag::IntArray(v) => v.iter().map(|&i| Tag::Int(i)).collect(),
+        Tag::LongArray(v) => v.iter().map(|&l| Tag::Long(l)).collect(),
+        _ => return None,
+    })
+}
+
+/// `ExtraCodecs.nonEmptyList(listOf)`: the first element with the rest as siblings. Errors
+/// carry whether some elements decoded (a partial result); messages of later elements come
+/// first, as `DataResult.apply2stable` joins them.
+fn decode_list(items: &[Tag], depth: usize) -> std::result::Result<Component, (String, bool)> {
+    let mut parts = Vec::new();
+    let mut error: Option<String> = None;
+    for item in items {
+        match decode_depth(item, depth + 1) {
+            Ok(c) => parts.push(c),
+            Err(e) => error = Some(error.map_or(e.clone(), |prev| format!("{e}; {prev}"))),
+        }
+    }
+    const EMPTY: &str = "List must have contents";
+    match (error, parts.is_empty()) {
+        (Some(e), false) => Err((e, true)),
+        (Some(e), true) => Err((format!("{e}; {EMPTY}"), false)),
+        (None, true) => Err((EMPTY.to_owned(), false)),
+        (None, false) => {
+            let mut parts = parts.into_iter();
+            let mut first = parts.next().expect("non-empty");
+            first.extra.extend(parts);
             Ok(first)
         }
-        Tag::Compound(fields) => decode_compound(fields, depth),
-        Tag::Byte(_) | Tag::Short(_) | Tag::Int(_) | Tag::Long(_) | Tag::Float(_) | Tag::Double(_) => {
-            invalid(format!("Not a string: {}", snbt::to_snbt(tag)))
-        }
-        _ => invalid(format!("Not a string: {}", snbt::to_snbt(tag))),
     }
 }
 
@@ -127,18 +175,38 @@ fn bool_value(tag: &Tag) -> Option<bool> {
     }
 }
 
-fn decode_compound(fields: &[(String, Tag)], depth: usize) -> std::result::Result<Component, String> {
-    let kind = match string_field(fields, "type")? {
-        Some(t) => t,
-        None => ["text", "translate", "score", "selector", "keybind", "nbt", "object"]
+/// The component map codec: contents, then style and siblings. Contents failures carry no
+/// partial result (the caller's `either` wraps them); style and sibling failures do.
+fn decode_compound(fields: &[(String, Tag)], depth: usize) -> std::result::Result<Component, (String, bool)> {
+    // `ComponentSerialization.createLegacyComponentMatcher`: an explicit `type`, else the
+    // first contents type that decodes.
+    let content = match string_field(fields, "type").map_err(|e| (e, false))? {
+        Some(kind) => decode_contents(fields, &kind, depth).map_err(|e| (e, false))?,
+        None => ["text", "translatable", "score", "selector", "keybind", "nbt", "object"]
             .into_iter()
-            .find(|k| field(fields, k).is_some())
-            .map(|k| if k == "text" { "text".to_owned() } else { k.to_owned() })
-            .ok_or_else(|| format!("No key text in MapLike[{}]", snbt::to_snbt(&Tag::Compound(fields.to_vec()))))?,
+            .find_map(|kind| decode_contents(fields, kind, depth).ok())
+            .ok_or_else(|| ("No matching codec found".to_owned(), false))?,
     };
-    let content = match kind.as_str() {
-        "text" => Contents::Text(string_field(fields, "text")?.ok_or("No key text in MapLike")?),
-        "translatable" | "translate" => {
+    let style = decode_style(fields, depth).map_err(|e| (e, true))?;
+    let extra = match field(fields, "extra") {
+        None => Vec::new(),
+        Some(Tag::List(items)) if !items.is_empty() => items
+            .iter()
+            .map(|t| decode_depth(t.unwrap_list_element(), depth + 1))
+            .collect::<std::result::Result<_, _>>()
+            .map_err(|e| (e, true))?,
+        Some(Tag::List(_)) => return Err(("List must have contents".to_owned(), true)),
+        Some(other) => return Err((format!("Not a list: {}", snbt::to_snbt(other)), true)),
+    };
+    Ok(Component { content, style, extra })
+}
+
+/// One contents type's map codec.
+fn decode_contents(fields: &[(String, Tag)], kind: &str, depth: usize) -> std::result::Result<Contents, String> {
+    let missing = |key: &str| format!("No key {key} in MapLike[{}]", snbt::to_snbt(&Tag::Compound(fields.to_vec())));
+    Ok(match kind {
+        "text" => Contents::Text(string_field(fields, "text")?.ok_or_else(|| missing("text"))?),
+        "translatable" => {
             let key = string_field(fields, "translate")?.ok_or("No key translate in MapLike")?;
             let fallback = string_field(fields, "fallback")?;
             let with = match field(fields, "with") {
@@ -174,7 +242,10 @@ fn decode_compound(fields: &[(String, Tag)], depth: usize) -> std::result::Resul
         }
         "keybind" => Contents::Keybind(string_field(fields, "keybind")?.ok_or("No key keybind in MapLike")?),
         "nbt" => {
-            string_field(fields, "nbt")?.ok_or("No key nbt in MapLike")?;
+            string_field(fields, "nbt")?.ok_or_else(|| missing("nbt"))?;
+            if !["block", "entity", "storage"].iter().any(|k| field(fields, k).is_some()) {
+                return invalid("No matching codec found");
+            }
             let keep: Vec<(String, Tag)> = fields
                 .iter()
                 .filter(|(k, _)| matches!(k.as_str(), "nbt" | "interpret" | "separator" | "block" | "entity" | "storage" | "source" | "plain"))
@@ -183,22 +254,13 @@ fn decode_compound(fields: &[(String, Tag)], depth: usize) -> std::result::Resul
             Contents::Nbt(keep)
         }
         "object" => {
+            string_field(fields, "object")?.ok_or_else(|| missing("object"))?;
             let keep: Vec<(String, Tag)> =
                 fields.iter().filter(|(k, _)| !is_style_key(k) && k != "extra" && k != "type").cloned().collect();
             Contents::Object(keep)
         }
         other => return invalid(format!("Unknown component type: {other}")),
-    };
-    let style = decode_style(fields, depth)?;
-    let extra = match field(fields, "extra") {
-        None => Vec::new(),
-        Some(Tag::List(items)) if !items.is_empty() => {
-            items.iter().map(|t| decode_depth(t.unwrap_list_element(), depth + 1)).collect::<std::result::Result<_, _>>()?
-        }
-        Some(Tag::List(_)) => return invalid("List must have contents"),
-        Some(other) => return invalid(format!("Not a list: {}", snbt::to_snbt(other))),
-    };
-    Ok(Component { content, style, extra })
+    })
 }
 
 fn is_style_key(k: &str) -> bool {

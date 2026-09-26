@@ -9,20 +9,38 @@ use bytes::Bytes;
 use kiln_command::selector::{Aabb, SelectorTarget, SelectorWorld};
 use kiln_command::{
     ChatMessage, CommandError, Difficulty, Dispatcher, GameMode, GameRuleValue, Heightmap, Host, Identifier, ItemInput,
-    Profile, Scoreboard, Source, SourceStack, SpawnPoint, Teleport, Text, TimeAction, UpdateFlags, Weather,
+    Language, Profile, Scoreboard, Source, SourceStack, SpawnPoint, Teleport, Text, TimeAction, UpdateFlags, Weather,
 };
 use kiln_link::ConnId;
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
 use kiln_world::ChunkPos;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::info;
 use uuid::Uuid;
 
 const OVERWORLD: &str = "minecraft:overworld";
 /// Longest tab-completion request answered for players without command-block rights (vanilla).
 const MAX_SUGGESTION_LEN: usize = 256;
+
+/// Console rendering of a message: in the language file named by `KILN_LANG` (vanilla's
+/// console prints its bundled `en_us`), else translation keys as `key[args]`.
+fn console_text(text: &Text) -> String {
+    static LANG: OnceLock<Option<Language>> = OnceLock::new();
+    let lang = LANG.get_or_init(|| {
+        let path = std::env::var_os("KILN_LANG")?;
+        let lang = std::fs::read_to_string(&path).ok().and_then(|s| Language::from_json(&s));
+        if lang.is_none() {
+            tracing::warn!("could not read language file {}", path.to_string_lossy());
+        }
+        lang
+    });
+    match lang {
+        Some(lang) => text.to_string_in(lang),
+        None => text.to_plain(),
+    }
+}
 
 /// Characters chat and commands may not contain (vanilla kicks for them): the section sign,
 /// control characters and DEL.
@@ -187,7 +205,7 @@ impl Sim {
         let dispatcher = self.commands.dispatcher.clone();
         let previous = std::mem::replace(&mut self.commands.source, source);
         let start = self.source_stack(source);
-        let stack = std::mem::replace(&mut self.commands.stack, start);
+            let stack = std::mem::replace(&mut self.commands.stack, start);
         if let Err(e) = dispatcher.execute(command, self) {
             for line in e.chat_lines(command) {
                 self.reply(line);
@@ -232,7 +250,7 @@ impl Sim {
             let source = CommandSource::Player(conn);
             let previous = std::mem::replace(&mut self.commands.source, source);
             let start = self.source_stack(source);
-        let stack = std::mem::replace(&mut self.commands.stack, start);
+            let stack = std::mem::replace(&mut self.commands.stack, start);
             let pkt = dispatcher.suggestions_packet(id, &text, self);
             self.commands.source = previous;
             self.commands.stack = stack;
@@ -245,7 +263,7 @@ impl Sim {
     /// System message to the current command source.
     fn reply(&mut self, text: Text) {
         match self.commands.source {
-            CommandSource::Console => info!("{}", text.to_plain()),
+            CommandSource::Console => info!("{}", console_text(&text)),
             CommandSource::Player(conn) => {
                 if let Some(p) = self.players.get_mut(&conn) {
                     p.send(packets::system_chat(text.to_nbt(), false));
@@ -297,9 +315,8 @@ impl Source for Sim {
         self.players.values().map(|p| p.name.clone()).collect()
     }
 
-    fn dimensions(&self) -> Vec<String> {
-        vec![OVERWORLD.to_owned()]
-    }
+    // `dimensions` keeps the default (all three vanilla levels): the nether and the end exist
+    // for dimension arguments but never have loaded chunks.
 
     fn fork_limit(&self) -> usize {
         Host::game_rule(self, "minecraft:max_command_forks").command_result().max(0) as usize
@@ -368,7 +385,7 @@ impl Host for Sim {
     }
 
     fn broadcast_chat(&mut self, message: ChatMessage) {
-        info!("{}", message.to_text().to_plain());
+        info!("{}", console_text(&message.to_text()));
         self.broadcast(chat_disguised(&message));
     }
 
@@ -379,7 +396,7 @@ impl Host for Sim {
     fn send_chat_to_source(&mut self, message: ChatMessage) {
         match self.commands.source {
             CommandSource::Player(conn) => self.send_to(conn, chat_disguised(&message)),
-            CommandSource::Console => info!("{}", message.to_text().to_plain()),
+            CommandSource::Console => info!("{}", console_text(&message.to_text())),
         }
     }
 
@@ -585,6 +602,15 @@ impl Host for Sim {
     fn block_state(&mut self, _dimension: &str, pos: [i32; 3]) -> u16 {
         let [x, y, z] = pos;
         self.world.chunk_mut(ChunkPos::of_block(x, z)).get((x & 15) as usize, y, (z & 15) as usize)
+    }
+
+    /// Block entities are not stored yet: blocks that have one report only the position
+    /// fields of `BlockEntity.saveWithFullMetadata` (no `id`, no contents).
+    fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
+        let state = self.block_state(dimension, pos);
+        kiln_data::block_props::has_block_entity(state).then(|| {
+            Tag::Compound(["x", "y", "z"].into_iter().zip(pos).map(|(k, v)| (k.to_owned(), Tag::Int(v))).collect())
+        })
     }
 
     /// Places the state as given: Kiln has no neighbour shape updates yet, and block entity

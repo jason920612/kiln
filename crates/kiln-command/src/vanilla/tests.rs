@@ -963,11 +963,12 @@ fn commands_packet_flags() {
     let (n4, lit4, ask4, res4) = decode(4);
     assert!(n4 > n0 + 100);
     assert!(lit4.contains(&"kiln".to_owned()));
-    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id"];
+    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective"];
     ask4.iter().for_each(|a| assert!(allowed.contains(&a.as_str()), "{a}"));
-    // op, deop, time's markers/timelines at both levels, and execute's score holders (if and
-    // unless: target + 5 sources each; store result and success: targets) and boss bars.
-    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2);
+    // op, deop, time's markers/timelines at both levels, execute's score holders (if and
+    // unless: target + 5 sources each; store result and success: targets) and boss bars, and
+    // scoreboard's 11 score holders plus `players enable`'s trigger objectives.
+    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1);
     assert!(res4.contains(&"stop".to_owned()) && res4.contains(&"tp".to_owned()) && !res4.contains(&"msg".to_owned()));
 }
 

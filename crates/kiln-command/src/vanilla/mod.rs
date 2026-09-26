@@ -6,6 +6,7 @@ mod chat;
 mod execute;
 pub mod gamerules;
 mod players;
+mod scoreboard;
 mod server;
 
 use crate::arguments::GameProfileArg;
@@ -51,6 +52,7 @@ pub const COMMANDS: &[&str] = &[
     "fill",
     "clone",
     "tellraw",
+    "scoreboard",
     "kiln",
 ];
 
@@ -81,6 +83,7 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     blocks::fill(d);
     blocks::clone(d);
     chat::tellraw(d);
+    scoreboard::scoreboard(d);
     server::kiln(d);
 }
 

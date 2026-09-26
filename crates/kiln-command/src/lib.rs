@@ -53,5 +53,5 @@ pub use reader::StringReader;
 pub use scoreboard::{Objective, Scoreboard};
 pub use selector::{Aabb, EntitySelector, NoEntity, SelectorTarget, SelectorWorld};
 pub use suggestion::{Suggestion, Suggestions, SuggestionsBuilder};
-pub use text::{Arg, Text};
+pub use text::{Arg, Language, Text};
 pub use types::{Anchor, Difficulty, GameMode, Heightmap, Identifier, ItemInput};

@@ -742,7 +742,14 @@ impl Parser<'_, '_> {
             return None;
         }
         let at = self.reader.cursor();
-        let prefix = self.chars(&['B', 'L', 'I']).filter(|_| self.char(';'));
+        // `array_prefix` is an alternative of single characters, each failing on its own.
+        let prefix = ['B', 'L', 'I']
+            .into_iter()
+            .find(|&c| {
+                self.reader.set_cursor(at);
+                self.char(c)
+            })
+            .filter(|_| self.char(';'));
         let entries = match prefix {
             Some(_) => Err(self.repeated(|p| p.integer_literal())),
             None => {

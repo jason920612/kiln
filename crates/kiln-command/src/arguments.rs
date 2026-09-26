@@ -447,6 +447,7 @@ impl ArgumentType {
                     other => Err(format!("Not a map: {}", snbt::to_snbt(other))),
                 };
                 if let Err(message) = valid {
+                    reader.set_cursor(start);
                     return Err(CommandError::new(tr!("argument.style.invalid", message)).at(reader));
                 }
                 ArgumentValue::Nbt(tag)
