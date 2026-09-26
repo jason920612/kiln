@@ -31,6 +31,11 @@ pub struct AnvilSource {
     biomes: HashMap<&'static str, u16>,
     default_biome: u16,
     warned_version: bool,
+    /// Loaded chunks' NBT minus `sections`: fields we do not model yet (block entities,
+    /// structure references, scheduled ticks, ...) are written back unchanged.
+    preserved: HashMap<ChunkPos, Tag>,
+    /// Encoded chunks waiting for `flush`, per region.
+    pending: HashMap<(i32, i32), Vec<(usize, usize, Vec<u8>)>>,
 }
 
 impl AnvilSource {
@@ -41,7 +46,15 @@ impl AnvilSource {
             .map(|(_, e)| e.iter().enumerate().map(|(i, &n)| (n, i as u16)).collect())
             .unwrap_or_default();
         let default_biome = kiln_data::synced_id("minecraft:worldgen/biome", "minecraft:plains").unwrap_or(0) as u16;
-        Self { region_dir: region_dir.into(), regions: HashMap::new(), biomes, default_biome, warned_version: false }
+        Self {
+            region_dir: region_dir.into(),
+            regions: HashMap::new(),
+            biomes,
+            default_biome,
+            warned_version: false,
+            preserved: HashMap::new(),
+            pending: HashMap::new(),
+        }
     }
 
     fn read_nbt(&mut self, pos: ChunkPos) -> Option<Vec<u8>> {
@@ -143,7 +156,13 @@ impl ChunkSource for AnvilSource {
     fn load(&mut self, pos: ChunkPos, dim: Dimension) -> Option<Chunk> {
         let data = self.read_nbt(pos)?;
         match self.decode(&data, dim) {
-            Ok(c) => Some(c),
+            Ok(c) => {
+                if let Ok((_, Tag::Compound(mut fields))) = nbt::read_named(&data) {
+                    fields.retain(|(k, _)| k != "sections");
+                    self.preserved.insert(pos, Tag::Compound(fields));
+                }
+                Some(c)
+            }
             Err(ChunkError::NotFull(_)) => None,
             Err(e) => {
                 warn!("chunk {pos:?}: {e}");
@@ -151,6 +170,164 @@ impl ChunkSource for AnvilSource {
             }
         }
     }
+
+    fn save(&mut self, pos: ChunkPos, chunk: &Chunk) {
+        let root = encode_chunk(pos, chunk, self.preserved.get(&pos));
+        let mut buf = bytes::BytesMut::new();
+        root.write_named("", &mut buf);
+        let payload = crate::region::compress_chunk(&buf);
+        let entry = self.pending.entry((pos.x >> 5, pos.z >> 5)).or_default();
+        let (lx, lz) = ((pos.x & 31) as usize, (pos.z & 31) as usize);
+        entry.retain(|(x, z, _)| (*x, *z) != (lx, lz));
+        entry.push((lx, lz, payload));
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        std::fs::create_dir_all(&self.region_dir)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as u32);
+        for ((rx, rz), updates) in std::mem::take(&mut self.pending) {
+            let path = self.region_dir.join(format!("r.{rx}.{rz}.mca"));
+            // Drop our read handle; the file is replaced and reopened on the next load.
+            self.regions.remove(&(rx, rz));
+            crate::region::write_region(&path, &updates, now).map_err(std::io::Error::other)?;
+        }
+        Ok(())
+    }
+}
+
+fn set(fields: &mut Vec<(String, Tag)>, key: &str, value: Tag) {
+    match fields.iter_mut().find(|(k, _)| k == key) {
+        Some((_, v)) => *v = value,
+        None => fields.push((key.to_owned(), value)),
+    }
+}
+
+/// Encodes a chunk as 26.3 chunk NBT, keeping `preserved` fields from the loaded chunk.
+pub fn encode_chunk(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Tag {
+    let mut fields = match preserved {
+        Some(Tag::Compound(f)) => f.clone(),
+        _ => vec![
+            ("block_entities".into(), Tag::List(Vec::new())),
+            ("block_ticks".into(), Tag::List(Vec::new())),
+            ("fluid_ticks".into(), Tag::List(Vec::new())),
+            ("InhabitedTime".into(), Tag::Long(0)),
+            ("LastUpdate".into(), Tag::Long(0)),
+            (
+                "structures".into(),
+                Tag::Compound(vec![
+                    ("References".into(), Tag::Compound(Vec::new())),
+                    ("starts".into(), Tag::Compound(Vec::new())),
+                ]),
+            ),
+        ],
+    };
+    let min_section = chunk.min_y() >> 4;
+    set(&mut fields, "DataVersion", Tag::Int(DATA_VERSION as i32));
+    set(&mut fields, "xPos", Tag::Int(pos.x));
+    set(&mut fields, "zPos", Tag::Int(pos.z));
+    set(&mut fields, "yPos", Tag::Int(min_section));
+    set(&mut fields, "Status", Tag::String("minecraft:full".into()));
+    // Changed chunks go back without light (vanilla relights them) and without heightmaps
+    // (vanilla recomputes missing ones on load); untouched chunks keep both as loaded.
+    let light_valid = !chunk.modified();
+    set(&mut fields, "isLightOn", Tag::Byte(light_valid as i8));
+    if chunk.modified() {
+        fields.retain(|(k, _)| k != "Heightmaps");
+    }
+
+    let biome_names = kiln_data::registries::SYNCHRONIZED
+        .iter()
+        .find(|(r, _)| *r == "minecraft:worldgen/biome")
+        .map(|(_, e)| *e)
+        .unwrap_or(&[]);
+    let n = chunk.sections.len();
+    let mut sections = Vec::with_capacity(n + 2);
+    for li in 0..n + 2 {
+        let mut s = vec![("Y".to_owned(), Tag::Byte((min_section + li as i32 - 1) as i8))];
+        if (1..=n).contains(&li) {
+            let sec = &chunk.sections[li - 1];
+            s.push(("block_states".into(), encode_blocks(&sec.blocks)));
+            s.push(("biomes".into(), encode_biomes(&sec.biomes, biome_names)));
+        }
+        if light_valid {
+            let sky = &chunk.sky_light()[li];
+            s.push(("SkyLight".into(), Tag::ByteArray(sky.to_bytes().iter().map(|&b| b as i8).collect())));
+            let block = &chunk.block_light()[li];
+            if !matches!(block, Light::Zero) {
+                s.push(("BlockLight".into(), Tag::ByteArray(block.to_bytes().iter().map(|&b| b as i8).collect())));
+            }
+        }
+        if s.len() > 1 {
+            sections.push(Tag::Compound(s));
+        }
+    }
+    set(&mut fields, "sections", Tag::List(sections));
+    Tag::Compound(fields)
+}
+
+/// A palette entry: the bare block id for a block's default state, else `{id, properties}`.
+fn state_tag(state: u16) -> Tag {
+    let block = kiln_data::blocks_types::block_of(state);
+    if state == block.default || block.properties.is_empty() {
+        return Tag::String(block.name.to_owned());
+    }
+    let props = block
+        .properties
+        .iter()
+        .zip(block.property_indices(state))
+        .map(|(p, i)| (p.name.to_owned(), Tag::String(p.values[i].to_owned())))
+        .collect();
+    Tag::Compound(vec![("id".into(), Tag::String(block.name.to_owned())), ("properties".into(), Tag::Compound(props))])
+}
+
+fn encode_blocks(c: &BlockContainer) -> Tag {
+    let mut palette: Vec<u16> = Vec::new();
+    let mut idx = vec![0usize; 4096];
+    let mut lookup: HashMap<u16, usize> = HashMap::new();
+    for (i, e) in idx.iter_mut().enumerate() {
+        let s = c.get(i);
+        *e = *lookup.entry(s).or_insert_with(|| {
+            palette.push(s);
+            palette.len() - 1
+        });
+    }
+    let mut fields = vec![("palette".to_owned(), Tag::heterogeneous_list(palette.iter().map(|&s| state_tag(s)).collect()))];
+    if palette.len() > 1 {
+        let bits = bits_for(palette.len()).max(4);
+        let packed = kiln_world::section::pack(&idx.iter().map(|&i| i as u64).collect::<Vec<_>>(), bits);
+        fields.push(("data".into(), Tag::LongArray(packed.into_iter().map(|l| l as i64).collect())));
+    }
+    Tag::Compound(fields)
+}
+
+fn encode_biomes(b: &Biomes, names: &[&str]) -> Tag {
+    let cells: Vec<u16> = match b {
+        Biomes::Single(s) => vec![*s],
+        Biomes::Cells(c) => c.to_vec(),
+    };
+    let mut palette: Vec<u16> = Vec::new();
+    let idx: Vec<u64> = cells
+        .iter()
+        .map(|c| match palette.iter().position(|p| p == c) {
+            Some(i) => i as u64,
+            None => {
+                palette.push(*c);
+                (palette.len() - 1) as u64
+            }
+        })
+        .collect();
+    let name = |id: u16| Tag::String(names.get(id as usize).copied().unwrap_or("minecraft:plains").to_owned());
+    let mut fields = vec![("palette".to_owned(), Tag::List(palette.iter().map(|&p| name(p)).collect()))];
+    if palette.len() > 1 {
+        let packed = kiln_world::section::pack(&idx, bits_for(palette.len()));
+        fields.push(("data".into(), Tag::LongArray(packed.into_iter().map(|l| l as i64).collect())));
+    }
+    Tag::Compound(fields)
 }
 
 fn bits_for(n: usize) -> u32 {

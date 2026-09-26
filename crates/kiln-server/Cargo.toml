@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 kiln-net.workspace = true
 kiln-sim.workspace = true
+kiln-link.workspace = true
 anyhow.workspace = true
 crossbeam-channel.workspace = true
 mimalloc.workspace = true

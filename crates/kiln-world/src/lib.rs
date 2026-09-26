@@ -70,6 +70,13 @@ pub const FLAT_LAYERS: [u16; 4] = [block::BEDROCK, block::DIRT, block::DIRT, blo
 pub trait ChunkSource: Send {
     /// Loads the chunk at `pos`, or `None` if the source has none there.
     fn load(&mut self, pos: ChunkPos, dimension: Dimension) -> Option<Chunk>;
+
+    /// Queues a chunk for writing; data reaches storage on `flush`.
+    fn save(&mut self, _pos: ChunkPos, _chunk: &Chunk) {}
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 /// What to create where the chunk source has nothing.
@@ -126,7 +133,36 @@ impl World {
 
     fn load_or_generate(&mut self, pos: ChunkPos) -> Chunk {
         let dim = self.dimension;
-        self.source.as_mut().and_then(|s| s.load(pos, dim)).unwrap_or_else(|| self.generate())
+        self.source.as_mut().and_then(|s| s.load(pos, dim)).unwrap_or_else(|| {
+            let mut c = self.generate();
+            c.mark_new();
+            c
+        })
+    }
+
+    /// Writes every changed or newly generated chunk to the chunk source.
+    /// Returns how many chunks were saved.
+    pub fn save(&mut self) -> std::io::Result<usize> {
+        let Some(source) = self.source.as_mut() else { return Ok(0) };
+        let mut saved = 0;
+        for (cell_pos, cell) in &mut self.cells {
+            for (i, slot) in cell.chunks.iter_mut().enumerate() {
+                let Some(chunk) = slot.as_deref_mut() else { continue };
+                if !chunk.needs_save() {
+                    continue;
+                }
+                let m = (1 << CELL_SHIFT) - 1;
+                let pos = ChunkPos::new(
+                    (cell_pos.x << CELL_SHIFT) | (i as i32 & m),
+                    (cell_pos.z << CELL_SHIFT) | ((i as i32 >> CELL_SHIFT) & m),
+                );
+                source.save(pos, chunk);
+                chunk.mark_saved();
+                saved += 1;
+            }
+        }
+        source.flush()?;
+        Ok(saved)
     }
 
     pub fn chunk(&self, pos: ChunkPos) -> Option<&Chunk> {

@@ -27,14 +27,23 @@ fn main() -> Result<()> {
     };
 
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();
+    let shutdown = to_sim.clone();
     let shared = Arc::new(kiln_net::Shared::new(net_config, to_sim));
 
-    std::thread::Builder::new().name("sim".into()).spawn(move || kiln_sim::run(sim_config, sim_rx))?;
+    let sim = std::thread::Builder::new().name("sim".into()).spawn(move || kiln_sim::run(sim_config, sim_rx))?;
 
-    tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .thread_name("net")
-        .enable_all()
-        .build()?
-        .block_on(kiln_net::listen(shared))
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("net").enable_all().build()?;
+    runtime.block_on(async {
+        tokio::select! {
+            r = kiln_net::listen(shared) => r,
+            _ = tokio::signal::ctrl_c() => Ok(()),
+        }
+    })?;
+    tracing::info!("stopping");
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    if shutdown.send(kiln_link::ToSim::Shutdown { done: done_tx }).is_ok() {
+        let _ = done_rx.recv_timeout(std::time::Duration::from_secs(60));
+    }
+    let _ = sim.join();
+    Ok(())
 }

@@ -43,6 +43,31 @@ impl Tag {
         self.write_payload(out);
     }
 
+    /// Writes this tag as a file-format root: type id, name, payload.
+    pub fn write_named(&self, name: &str, out: &mut BytesMut) {
+        out.put_u8(self.id());
+        put_mutf8(out, name);
+        self.write_payload(out);
+    }
+
+    /// A list that may mix element types: when they differ, non-compound elements (and
+    /// compounds that would be ambiguous) are wrapped as `{"": value}`, as vanilla does.
+    pub fn heterogeneous_list(items: Vec<Tag>) -> Tag {
+        let mixed = items.windows(2).any(|w| w[0].id() != w[1].id());
+        if !mixed {
+            return Tag::List(items);
+        }
+        Tag::List(
+            items
+                .into_iter()
+                .map(|t| match t {
+                    Tag::Compound(ref f) if !(f.len() == 1 && f[0].0.is_empty()) => t,
+                    t => Tag::Compound(vec![(String::new(), t)]),
+                })
+                .collect(),
+        )
+    }
+
     fn write_payload(&self, out: &mut BytesMut) {
         match self {
             Tag::Byte(v) => out.put_i8(*v),

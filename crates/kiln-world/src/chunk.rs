@@ -14,6 +14,15 @@ pub enum Light {
 }
 
 impl Light {
+    /// The 2048-byte nibble array (index `i` in byte `i / 2`, low nibble first).
+    pub fn to_bytes(&self) -> Box<[u8; 2048]> {
+        match self {
+            Light::Zero => Box::new([0; 2048]),
+            Light::Full => Box::new([0xff; 2048]),
+            Light::Nibbles(n) => n.clone(),
+        }
+    }
+
     fn get(&self, i: usize) -> u8 {
         match self {
             Light::Zero => 0,
@@ -46,6 +55,7 @@ pub struct Chunk {
     /// Per column: highest non-air block + 1, relative to `min_y` (0 = empty column).
     surface: Box<[u16; 256]>,
     version: u32,
+    saved_version: u32,
     cached: Option<(u32, Bytes)>,
 }
 
@@ -65,6 +75,7 @@ impl Chunk {
             block: block.filter(|b| b.len() == n + 2).unwrap_or_else(|| vec![Light::Zero; n + 2]),
             surface: Box::new([0; 256]),
             version: 0,
+            saved_version: 0,
             cached: None,
         };
         for x in 0..16 {
@@ -85,6 +96,34 @@ impl Chunk {
 
     pub fn min_y(&self) -> i32 {
         self.min_y
+    }
+
+    /// Sky light per section, index 0 being the section below the world.
+    pub fn sky_light(&self) -> &[Light] {
+        &self.sky
+    }
+
+    /// Block light, indexed like [`Chunk::sky_light`].
+    pub fn block_light(&self) -> &[Light] {
+        &self.block
+    }
+
+    /// Whether blocks changed since the chunk was loaded or created.
+    pub fn modified(&self) -> bool {
+        self.version != 0
+    }
+
+    pub fn needs_save(&self) -> bool {
+        self.version != self.saved_version
+    }
+
+    pub fn mark_saved(&mut self) {
+        self.saved_version = self.version;
+    }
+
+    /// Marks a newly generated chunk as unsaved.
+    pub fn mark_new(&mut self) {
+        self.saved_version = u32::MAX;
     }
 
     /// Sky light of light section `li` (0 = below the world) from the surface heights.

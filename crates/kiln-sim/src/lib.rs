@@ -28,6 +28,8 @@ const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(30);
 const OVERWORLD: &str = "minecraft:overworld";
 const MAX_UNACKED_BATCHES: u32 = 10;
+/// Save changed chunks every 5 minutes.
+const AUTOSAVE_TICKS: i64 = 6000;
 /// Player inventory container slots 36..=44 are the hotbar.
 const HOTBAR_START: usize = 36;
 const INVENTORY_SLOTS: usize = 46;
@@ -89,6 +91,7 @@ pub struct Sim {
     /// The overworld clock (time of day).
     day_time: i64,
     overworld_clock: i32,
+    stopped: bool,
 }
 
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
@@ -118,6 +121,7 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         game_time: 0,
         day_time: 1000,
         overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
+        stopped: false,
     };
     let mut next_tick = Instant::now();
     loop {
@@ -129,6 +133,9 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return,
             }
+        }
+        if sim.stopped {
+            return;
         }
         sim.tick();
         // E: one batch per connection.
@@ -160,6 +167,23 @@ impl Sim {
                 }
             }
             ToSim::Packet(conn, pkt) => self.packet(conn, pkt),
+            ToSim::Shutdown { done } => {
+                for p in self.players.values_mut() {
+                    p.disconnect("Server closed");
+                }
+                self.save();
+                let _ = done.send(());
+                self.stopped = true;
+            }
+        }
+    }
+
+    fn save(&mut self) {
+        let start = Instant::now();
+        match self.world.save() {
+            Ok(0) => {}
+            Ok(n) => info!("saved {n} chunks in {:.1} ms", start.elapsed().as_secs_f64() * 1e3),
+            Err(e) => warn!("saving the world failed: {e}"),
         }
     }
 
@@ -369,6 +393,9 @@ impl Sim {
     fn tick(&mut self) {
         // G: global state.
         self.game_time += 1;
+        if self.game_time % AUTOSAVE_TICKS == 0 {
+            self.save();
+        }
         self.day_time += 1;
         if self.game_time % 20 == 0 {
             let pkt = self.time_packet();

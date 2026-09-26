@@ -75,6 +75,91 @@ impl RegionFile {
     }
 }
 
+/// Zlib-compresses chunk NBT into the payload stored after the length field
+/// (compression byte + data).
+pub fn compress_chunk(nbt: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut out = vec![2u8];
+    let mut enc = flate2::write::ZlibEncoder::new(&mut out, flate2::Compression::new(6));
+    enc.write_all(nbt).expect("in-memory write");
+    enc.finish().expect("in-memory write");
+    out
+}
+
+/// Rewrites a region file with `updates` (local x, local z, payload from [`compress_chunk`])
+/// replacing or adding chunks; other chunks are copied as stored. Writes a temporary
+/// file and renames it over the old one.
+pub fn write_region(path: &Path, updates: &[(usize, usize, Vec<u8>)], now: u32) -> Result<(), RegionError> {
+    const MAX_SECTORS: usize = 255;
+    let mut payloads: Vec<Option<Vec<u8>>> = vec![None; 1024];
+    let mut stamps = vec![0u32; 1024];
+    if path.exists() {
+        let mut file = File::open(path)?;
+        let mut header = vec![0u8; 8192];
+        file.read_exact(&mut header).map_err(|_| RegionError::Corrupt("short header"))?;
+        for i in 0..1024 {
+            let loc = u32::from_be_bytes(header[i * 4..i * 4 + 4].try_into().unwrap());
+            stamps[i] = u32::from_be_bytes(header[4096 + i * 4..4096 + i * 4 + 4].try_into().unwrap());
+            if loc == 0 {
+                continue;
+            }
+            let (sector, count) = ((loc >> 8) as u64, (loc & 0xff) as u64);
+            file.seek(SeekFrom::Start(sector * SECTOR))?;
+            let mut len = [0u8; 4];
+            file.read_exact(&mut len)?;
+            let len = u32::from_be_bytes(len) as u64;
+            if len == 0 || len > count * SECTOR {
+                return Err(RegionError::Corrupt("chunk length exceeds its sectors"));
+            }
+            let mut p = vec![0u8; len as usize];
+            file.read_exact(&mut p)?;
+            payloads[i] = Some(p);
+        }
+    }
+    for (x, z, payload) in updates {
+        let i = (z << 5) | x;
+        payloads[i] = Some(payload.clone());
+        stamps[i] = now;
+    }
+
+    let mut header = vec![0u8; 8192];
+    let mut body = Vec::new();
+    let mut sector = 2u32;
+    for (i, p) in payloads.iter().enumerate() {
+        let Some(p) = p else { continue };
+        let mut record = Vec::with_capacity(p.len() + 4);
+        let sectors = (p.len() + 4).div_ceil(SECTOR as usize);
+        if sectors > MAX_SECTORS {
+            // Too big for the region: store externally and keep a stub with the flag set.
+            let (rx, rz) = region_coords(path).ok_or(RegionError::Corrupt("region file name"))?;
+            let (x, z) = ((i & 31) as i32, (i >> 5) as i32);
+            let ext = path.with_file_name(format!("c.{}.{}.mcc", rx * 32 + x, rz * 32 + z));
+            std::fs::write(ext, &p[1..])?;
+            record.extend_from_slice(&1u32.to_be_bytes());
+            record.push(p[0] | EXTERNAL_FLAG);
+        } else {
+            record.extend_from_slice(&(p.len() as u32).to_be_bytes());
+            record.extend_from_slice(p);
+        }
+        let count = record.len().div_ceil(SECTOR as usize);
+        record.resize(count * SECTOR as usize, 0);
+        header[i * 4..i * 4 + 4].copy_from_slice(&((sector << 8) | count as u32).to_be_bytes());
+        header[4096 + i * 4..4096 + i * 4 + 4].copy_from_slice(&stamps[i].to_be_bytes());
+        body.extend_from_slice(&record);
+        sector += count as u32;
+    }
+    let tmp = path.with_extension("mca.tmp");
+    {
+        let mut f = File::create(&tmp)?;
+        use std::io::Write;
+        f.write_all(&header)?;
+        f.write_all(&body)?;
+        f.sync_all()?;
+    }
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// Region coordinates from a `r.<x>.<z>.mca` file name.
 fn region_coords(path: &Path) -> Option<(i32, i32)> {
     let name = path.file_name()?.to_str()?;
