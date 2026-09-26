@@ -43,6 +43,10 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
         .map(|(k, v)| (k.clone(), v["protocol_id"].as_u64().unwrap() as u8))
         .collect();
     fs::write(out.join("block_props.bin"), crate::block_props::pack(&extra, state_count, &block_entity_types)?)?;
+    let logic = read_json(&input.generated.join("extra/block_logic.json")).context("run `cargo xtask extract` first")?;
+    fs::write(out.join("block_logic.bin"), crate::block_logic::pack(&logic, state_count)?)?;
+    let classes = read_json(&input.generated.join("extra/block_classes.json")).context("run `cargo xtask extract` first")?;
+    fs::write(out.join("block_classes.rs"), crate::block_logic::gen_classes(&classes)?)?;
     let rules = read_json(&input.generated.join("extra/game_rules.json")).context("run `cargo xtask extract` first")?;
     fs::write(out.join("game_rules.rs"), gen_game_rules(&rules)?)?;
     println!("codegen: wrote {}", out.display());
