@@ -16,7 +16,9 @@ kiln-sim = { path = "crates/kiln-sim" }
 kiln-world = { path = "crates/kiln-world" }
 anyhow = "1"
 bytes = "1"
+clap = { version = "4", features = ["derive"] }
 crossbeam-channel = "0.5"
+flate2 = "1"
 libdeflater = "1"
 md-5 = "0.10"
 mimalloc = "0.1"
