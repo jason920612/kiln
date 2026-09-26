@@ -17,6 +17,7 @@ kiln-world = { path = "crates/kiln-world" }
 kiln-storage = { path = "crates/kiln-storage" }
 aes = "0.9"
 kiln-command = { path = "crates/kiln-command" }
+kiln-region = { path = "crates/kiln-region" }
 anyhow = "1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
@@ -28,12 +29,14 @@ hmac = "0.12"
 libdeflater = "1"
 md-5 = "0.10"
 mimalloc = "0.1"
+proptest = { version = "1", default-features = false, features = ["std"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
 rsa = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha1 = "0.10"
 sha2 = "0.10"
+smallvec = "1"
 subtle = "2"
 thiserror = "2"
 toml = "1"
