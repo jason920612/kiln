@@ -172,6 +172,12 @@ impl Shared {
         }
     }
 
+    /// Whether Kiln itself authenticates players with the session server, i.e. the value for
+    /// the `onlineMode` flag of the play Login packet (a proxy rewrites it for its clients).
+    pub fn authenticates(&self) -> bool {
+        self.auth.is_some()
+    }
+
     fn compression_threshold(&self) -> Option<usize> {
         match self.login.proxy {
             ProxyMode::None => self.config.compression_threshold,
@@ -183,7 +189,7 @@ impl Shared {
     fn log_login_mode(&self) {
         let threshold = self.compression_threshold().map_or("off".to_string(), |t| t.to_string());
         let mode = match &self.login.proxy {
-            ProxyMode::None if self.auth.is_some() => "online mode".to_string(),
+            ProxyMode::None if self.authenticates() => "online mode".to_string(),
             ProxyMode::None => "offline mode".to_string(),
             ProxyMode::Velocity { .. } => "Velocity modern forwarding".to_string(),
             ProxyMode::BungeeCord { tokens } if tokens.is_empty() => "BungeeCord legacy forwarding".to_string(),

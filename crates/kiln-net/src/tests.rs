@@ -477,6 +477,14 @@ fn cipher_sits_below_framing() {
     assert_eq!(got, packets);
 }
 
+#[test]
+fn authenticates_only_without_a_proxy() {
+    let online = |proxy| LoginConfig { online_mode: true, proxy, ..Default::default() };
+    assert!(!shared(LoginConfig::default(), None).0.authenticates());
+    assert!(!shared(online(ProxyMode::Velocity { secret: SECRET.to_vec() }), None).0.authenticates());
+    assert!(shared(online(ProxyMode::None), None).0.authenticates());
+}
+
 /// Writes the clientbound login packets Kiln builds (bodies without the packet id) for
 /// `tools/vanilla_decode.py`: `KILN_DUMP_DIR=work/wp-proxy cargo test -p kiln-net -- --ignored`.
 #[test]
