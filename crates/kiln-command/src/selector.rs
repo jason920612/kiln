@@ -6,6 +6,7 @@ use crate::error::CommandError;
 use crate::host::Source;
 use crate::range::{DoubleRange, FloatRange, IntRange};
 use crate::reader::StringReader;
+use crate::scoreboard::Scoreboard;
 use crate::snbt;
 use crate::suggestion::SuggestionsBuilder;
 use crate::text::Text;
@@ -145,17 +146,43 @@ pub trait SelectorTarget {
     fn test_predicate(&self, _id: &str) -> Option<bool> {
         None
     }
+    /// `Entity.getScoreboardName`: the player name, or the UUID for other entities.
+    fn scoreboard_name(&self) -> String {
+        if self.is_player() { self.name() } else { self.uuid().to_string() }
+    }
 }
 
-/// The world as seen by selectors, implemented by the command source.
+/// The entity type of sources that never have entities (it has no values).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NoEntity {}
+
+impl SelectorTarget for NoEntity {
+    fn uuid(&self) -> Uuid {
+        match *self {}
+    }
+    fn name(&self) -> String {
+        match *self {}
+    }
+    fn entity_type(&self) -> &str {
+        match *self {}
+    }
+    fn position(&self) -> [f64; 3] {
+        match *self {}
+    }
+    fn rotation(&self) -> [f32; 2] {
+        match *self {}
+    }
+    fn dimension(&self) -> &str {
+        match *self {}
+    }
+    fn bounding_box(&self) -> Aabb {
+        match *self {}
+    }
+}
+
+/// The world as seen by selectors, implemented by the command source. The executing entity,
+/// position and dimension come from the [`SourceStack`](crate::SourceStack).
 pub trait SelectorWorld: Source {
-    type Entity: SelectorTarget + Clone;
-    /// Where the command runs (`CommandSourceStack.getPosition`).
-    fn origin(&self) -> [f64; 3];
-    /// The dimension the command runs in.
-    fn dimension(&self) -> &str;
-    /// The executing entity (`@s`), if any.
-    fn source_entity(&self) -> Option<Self::Entity>;
     /// Online players in player-list order.
     fn players(&self) -> Vec<Self::Entity>;
     /// Candidate entities in `dimension` (all dimensions if `None`); may be pre-filtered to
@@ -166,6 +193,10 @@ pub trait SelectorWorld: Source {
     }
     /// Shuffles for `sort=random` and `@r`.
     fn shuffle(&mut self, entities: &mut [Self::Entity]);
+    /// The server scoreboard, if the host keeps one.
+    fn scoreboard(&self) -> Option<&crate::scoreboard::Scoreboard> {
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -787,7 +818,7 @@ fn rotation_matches(range: &FloatRange, value: f32) -> bool {
 }
 
 impl Filter {
-    fn test<E: SelectorTarget>(&self, e: &E) -> bool {
+    fn test<E: SelectorTarget>(&self, e: &E, scoreboard: Option<&Scoreboard>) -> bool {
         match self {
             Filter::Alive => e.is_alive(),
             Filter::Name { name, invert } => (e.name() == *name) != *invert,
@@ -798,7 +829,13 @@ impl Filter {
             Filter::Team { team, invert } => (e.team().unwrap_or("") == team) != *invert,
             Filter::GameMode { mode, invert } => e.game_mode().is_some_and(|m| (m == *mode) != *invert),
             Filter::Nbt { snbt, invert } => e.matches_nbt(snbt) != *invert,
-            Filter::Scores(scores) => scores.iter().all(|(obj, range)| e.score(obj).is_some_and(|v| range.matches(v))),
+            Filter::Scores(scores) => scores.iter().all(|(obj, range)| {
+                let score = match scoreboard {
+                    Some(sb) => sb.objective(obj).and(sb.score(&e.scoreboard_name(), obj)),
+                    None => e.score(obj),
+                };
+                score.is_some_and(|v| range.matches(v))
+            }),
             Filter::Advancements(checks) => {
                 e.is_player()
                     && checks.iter().all(|(id, check)| match check {
@@ -840,8 +877,8 @@ impl EntitySelector {
         }
     }
 
-    fn matches<E: SelectorTarget>(&self, e: &E, pos: [f64; 3], aabb: Option<&Aabb>) -> bool {
-        self.filters.iter().all(|f| f.test(e))
+    fn matches<E: SelectorTarget>(&self, e: &E, pos: [f64; 3], aabb: Option<&Aabb>, sb: Option<&Scoreboard>) -> bool {
+        self.filters.iter().all(|f| f.test(e, sb))
             && self.x_rotation.is_none_or(|r| rotation_matches(&r, e.rotation()[1]))
             && self.y_rotation.is_none_or(|r| rotation_matches(&r, e.rotation()[0]))
             && self.level.is_none_or(|r| e.is_player() && e.experience_level().is_some_and(|l| r.matches(l)))
@@ -853,7 +890,7 @@ impl EntitySelector {
         if self.order == Order::Arbitrary { self.max_results } else { usize::MAX }
     }
 
-    fn sort_and_limit<W: SelectorWorld + ?Sized>(
+    fn sort_and_limit<W: SelectorWorld>(
         &self,
         world: &mut W,
         pos: [f64; 3],
@@ -876,7 +913,7 @@ impl EntitySelector {
     }
 
     /// `findEntities`: every match, possibly empty.
-    pub fn find_entities<W: SelectorWorld + ?Sized>(&self, world: &mut W) -> Result<Vec<W::Entity>> {
+    pub fn find_entities<W: SelectorWorld>(&self, world: &mut W) -> Result<Vec<W::Entity>> {
         self.check_permissions(world)?;
         if !self.includes_entities {
             return self.find_players(world);
@@ -889,14 +926,16 @@ impl EntitySelector {
         }
         let pos = self.resolve_position(world.origin());
         let aabb = self.relative_aabb().map(|b| b.offset(pos));
+        let sb = world.scoreboard();
         if self.current_entity {
-            return Ok(world.source_entity().filter(|e| self.matches(e, pos, aabb.as_ref())).into_iter().collect());
+            return Ok(world.source_entity().filter(|e| self.matches(e, pos, aabb.as_ref(), sb)).into_iter().collect());
         }
         let dimension = self.world_limited.then(|| world.dimension().to_owned());
         let limit = self.result_limit();
         let mut list = Vec::new();
         for e in world.entities(dimension.as_deref(), aabb.as_ref()) {
-            if self.entity_type.as_ref().is_some_and(|t| t != e.entity_type()) || !self.matches(&e, pos, aabb.as_ref())
+            if self.entity_type.as_ref().is_some_and(|t| t != e.entity_type())
+                || !self.matches(&e, pos, aabb.as_ref(), world.scoreboard())
             {
                 continue;
             }
@@ -909,7 +948,7 @@ impl EntitySelector {
     }
 
     /// `findPlayers`: every matching player, possibly empty.
-    pub fn find_players<W: SelectorWorld + ?Sized>(&self, world: &mut W) -> Result<Vec<W::Entity>> {
+    pub fn find_players<W: SelectorWorld>(&self, world: &mut W) -> Result<Vec<W::Entity>> {
         self.check_permissions(world)?;
         if let Some(name) = &self.player_name {
             return Ok(world.players().into_iter().filter(|p| p.name().eq_ignore_ascii_case(name)).take(1).collect());
@@ -920,9 +959,10 @@ impl EntitySelector {
         let pos = self.resolve_position(world.origin());
         let aabb = self.relative_aabb().map(|b| b.offset(pos));
         if self.current_entity {
+            let sb = world.scoreboard();
             return Ok(world
                 .source_entity()
-                .filter(|e| e.is_player() && self.matches(e, pos, aabb.as_ref()))
+                .filter(|e| e.is_player() && self.matches(e, pos, aabb.as_ref(), sb))
                 .into_iter()
                 .collect());
         }
@@ -930,7 +970,9 @@ impl EntitySelector {
         let dimension = world.dimension().to_owned();
         let mut list = Vec::new();
         for p in world.players() {
-            if (self.world_limited && p.dimension() != dimension) || !self.matches(&p, pos, aabb.as_ref()) {
+            if (self.world_limited && p.dimension() != dimension)
+                || !self.matches(&p, pos, aabb.as_ref(), world.scoreboard())
+            {
                 continue;
             }
             list.push(p);
@@ -942,19 +984,19 @@ impl EntitySelector {
     }
 
     /// `EntityArgument.getEntities`: at least one entity.
-    pub fn entities<W: SelectorWorld + ?Sized>(&self, world: &mut W) -> Result<Vec<W::Entity>> {
+    pub fn entities<W: SelectorWorld>(&self, world: &mut W) -> Result<Vec<W::Entity>> {
         let list = self.find_entities(world)?;
         if list.is_empty() { Err(CommandError::no_entities_found()) } else { Ok(list) }
     }
 
     /// `EntityArgument.getPlayers`: at least one player.
-    pub fn players<W: SelectorWorld + ?Sized>(&self, world: &mut W) -> Result<Vec<W::Entity>> {
+    pub fn players<W: SelectorWorld>(&self, world: &mut W) -> Result<Vec<W::Entity>> {
         let list = self.find_players(world)?;
         if list.is_empty() { Err(CommandError::no_players_found()) } else { Ok(list) }
     }
 
     /// `EntityArgument.getEntity` (`findSingleEntity`).
-    pub fn entity<W: SelectorWorld + ?Sized>(&self, world: &mut W) -> Result<W::Entity> {
+    pub fn entity<W: SelectorWorld>(&self, world: &mut W) -> Result<W::Entity> {
         let mut list = self.find_entities(world)?;
         match list.len() {
             0 => Err(CommandError::no_entities_found()),
@@ -964,7 +1006,7 @@ impl EntitySelector {
     }
 
     /// `EntityArgument.getPlayer` (`findSinglePlayer`).
-    pub fn player<W: SelectorWorld + ?Sized>(&self, world: &mut W) -> Result<W::Entity> {
+    pub fn player<W: SelectorWorld>(&self, world: &mut W) -> Result<W::Entity> {
         let mut list = self.find_players(world)?;
         if list.len() != 1 {
             return Err(CommandError::no_players_found());
@@ -1117,25 +1159,23 @@ mod tests {
     struct World {
         ents: Vec<Ent>,
         level: u8,
+        stack: crate::host::SourceStack<World>,
     }
 
     impl Source for World {
+        type Entity = Ent;
         fn permission_level(&self) -> u8 {
             self.level
+        }
+        fn stack(&self) -> &crate::host::SourceStack<World> {
+            &self.stack
+        }
+        fn stack_mut(&mut self) -> &mut crate::host::SourceStack<World> {
+            &mut self.stack
         }
     }
 
     impl SelectorWorld for World {
-        type Entity = Ent;
-        fn origin(&self) -> [f64; 3] {
-            [0.0, 0.0, 0.0]
-        }
-        fn dimension(&self) -> &str {
-            "minecraft:overworld"
-        }
-        fn source_entity(&self) -> Option<Ent> {
-            self.ents.first().cloned()
-        }
         fn players(&self) -> Vec<Ent> {
             self.ents.iter().filter(|e| e.is_player()).cloned().collect()
         }
@@ -1149,7 +1189,10 @@ mod tests {
 
     fn world() -> World {
         let p = |name, pos, dim, mode| Ent { name, kind: "minecraft:player", pos, dim, mode: Some(mode), tags: vec![] };
+        let alice = p("Alice", [1.0, 0.0, 0.0], "minecraft:overworld", GameMode::Creative);
+        let stack = crate::host::SourceStack::new(Text::literal("Alice"), "minecraft:overworld", [0.0; 3]).with_entity(alice);
         World {
+            stack,
             ents: vec![
                 p("Alice", [1.0, 0.0, 0.0], "minecraft:overworld", GameMode::Creative),
                 p("Bob", [10.0, 0.0, 0.0], "minecraft:overworld", GameMode::Survival),

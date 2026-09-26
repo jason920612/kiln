@@ -318,6 +318,15 @@ impl CommandError {
     pub fn failed() -> Self {
         err(tr!("command.failed"))
     }
+    /// `BuildContexts.ERROR_FORK_LIMIT_REACHED`.
+    pub fn fork_limit(limit: usize) -> Self {
+        err(tr!("command.forkLimit", limit as i32))
+    }
+    /// Something vanilla supports that needs a Kiln subsystem that does not exist yet
+    /// (entity data, loot predicates, ...).
+    pub fn unsupported(what: &str) -> Self {
+        err(Text::literal(format!("{what} is not supported by this server yet")))
+    }
 }
 
 #[cfg(test)]

@@ -77,7 +77,7 @@ pub fn teleport<S: Host + 'static>(d: &mut Dispatcher<S>) {
 }
 
 fn position<S: Host>(c: &Coordinates, s: &S) -> [f64; 3] {
-    c.position(s.origin(), s.source_rotation())
+    s.stack().resolve(c)
 }
 
 fn anchor_position<E: SelectorTarget>(e: &E, anchor: Anchor) -> [f64; 3] {
@@ -275,7 +275,7 @@ pub(super) fn spawn_pos<S: Host>(c: &CommandContext<S>, s: &S, name: &str) -> Re
     match c.get(name) {
         None => Ok(s.origin().map(|v| v.floor() as i32)),
         Some(_) => {
-            let pos = c.coordinates(name).block_pos(s.origin(), s.source_rotation());
+            let pos = s.stack().resolve_block(c.coordinates(name));
             if s.is_in_spawnable_bounds(pos) { Ok(pos) } else { Err(CommandError::pos_out_of_bounds()) }
         }
     }

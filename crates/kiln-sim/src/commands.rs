@@ -8,19 +8,39 @@ use crate::{Player, Sim, players::chat_disguised};
 use bytes::Bytes;
 use kiln_command::selector::{Aabb, SelectorTarget, SelectorWorld};
 use kiln_command::{
-    ChatMessage, CommandError, Difficulty, Dispatcher, GameMode, GameRuleValue, Host, Identifier, ItemInput, Profile,
-    Source, SpawnPoint, Teleport, Text, TimeAction, Weather,
+    ChatMessage, CommandError, Difficulty, Dispatcher, GameMode, GameRuleValue, Heightmap, Host, Identifier, ItemInput,
+    Language, Profile, Scoreboard, Source, SourceStack, SpawnPoint, Teleport, Text, TimeAction, UpdateFlags, Weather,
 };
 use kiln_link::ConnId;
+use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
+use kiln_world::ChunkPos;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tracing::info;
 use uuid::Uuid;
 
 const OVERWORLD: &str = "minecraft:overworld";
 /// Longest tab-completion request answered for players without command-block rights (vanilla).
 const MAX_SUGGESTION_LEN: usize = 256;
+
+/// Console rendering of a message: in the language file named by `KILN_LANG` (vanilla's
+/// console prints its bundled `en_us`), else translation keys as `key[args]`.
+fn console_text(text: &Text) -> String {
+    static LANG: OnceLock<Option<Language>> = OnceLock::new();
+    let lang = LANG.get_or_init(|| {
+        let path = std::env::var_os("KILN_LANG")?;
+        let lang = std::fs::read_to_string(&path).ok().and_then(|s| Language::from_json(&s));
+        if lang.is_none() {
+            tracing::warn!("could not read language file {}", path.to_string_lossy());
+        }
+        lang
+    });
+    match lang {
+        Some(lang) => text.to_string_in(lang),
+        None => text.to_plain(),
+    }
+}
 
 /// Characters chat and commands may not contain (vanilla kicks for them): the section sign,
 /// control characters and DEL.
@@ -84,7 +104,8 @@ impl SelectorTarget for PlayerRef {
         Aabb { min: [x - 0.3, y, z - 0.3], max: [x + 0.3, y + 1.8, z + 0.3] }
     }
     fn eye_height(&self) -> f64 {
-        1.62
+        // `Entity.getEyeHeight` is a float.
+        1.62f32 as f64
     }
     fn game_mode(&self) -> Option<GameMode> {
         Some(self.mode)
@@ -94,7 +115,12 @@ impl SelectorTarget for PlayerRef {
 /// Server-wide state the commands change.
 pub(crate) struct CommandState {
     pub dispatcher: Arc<Dispatcher<Sim>>,
+    /// Who receives feedback for the running command.
     pub source: CommandSource,
+    /// Where and as whom it runs (`execute` changes this per fork).
+    pub stack: SourceStack<Sim>,
+    pub scoreboard: Scoreboard,
+    pub storage: kiln_command::CommandStorage,
     /// Operators by name (permission level 4).
     pub ops: std::collections::HashSet<String>,
     pub difficulty: Difficulty,
@@ -123,6 +149,9 @@ impl CommandState {
         Self {
             dispatcher: Arc::new(d),
             source: CommandSource::Console,
+            stack: SourceStack::new(Text::literal("Server"), OVERWORLD, [0.0; 3]),
+            scoreboard: Scoreboard::default(),
+            storage: kiln_command::CommandStorage::default(),
             ops,
             difficulty: Difficulty::Normal,
             raining: false,
@@ -177,12 +206,29 @@ impl Sim {
     fn execute_as(&mut self, source: CommandSource, command: &str) {
         let dispatcher = self.commands.dispatcher.clone();
         let previous = std::mem::replace(&mut self.commands.source, source);
+        let start = self.source_stack(source);
+            let stack = std::mem::replace(&mut self.commands.stack, start);
         if let Err(e) = dispatcher.execute(command, self) {
             for line in e.chat_lines(command) {
                 self.reply(line);
             }
         }
         self.commands.source = previous;
+        self.commands.stack = stack;
+    }
+
+    /// The stack a command starts with: the player where they stand, or the console at the
+    /// world spawn (`MinecraftServer.createCommandSourceStack`).
+    fn source_stack(&self, source: CommandSource) -> SourceStack<Sim> {
+        match source {
+            CommandSource::Player(conn) => match self.players.get(&conn) {
+                Some(p) => SourceStack::of_entity(PlayerRef::of(conn, p)),
+                None => SourceStack::new(Text::literal(""), OVERWORLD, [0.0; 3]),
+            },
+            CommandSource::Console => {
+                SourceStack::new(Text::literal("Server"), OVERWORLD, self.spawn.map(|v| v as f64))
+            }
+        }
     }
 
     /// Queues a tab-completion request; answered once per tick (latest request wins).
@@ -203,9 +249,13 @@ impl Sim {
             .collect();
         let dispatcher = self.commands.dispatcher.clone();
         for (conn, id, text) in pending {
-            let previous = std::mem::replace(&mut self.commands.source, CommandSource::Player(conn));
+            let source = CommandSource::Player(conn);
+            let previous = std::mem::replace(&mut self.commands.source, source);
+            let start = self.source_stack(source);
+            let stack = std::mem::replace(&mut self.commands.stack, start);
             let pkt = dispatcher.suggestions_packet(id, &text, self);
             self.commands.source = previous;
+            self.commands.stack = stack;
             if let Some(p) = self.players.get_mut(&conn) {
                 p.send(pkt);
             }
@@ -215,7 +265,7 @@ impl Sim {
     /// System message to the current command source.
     fn reply(&mut self, text: Text) {
         match self.commands.source {
-            CommandSource::Console => info!("{}", text.to_plain()),
+            CommandSource::Console => info!("{}", console_text(&text)),
             CommandSource::Player(conn) => {
                 if let Some(p) = self.players.get_mut(&conn) {
                     p.send(packets::system_chat(text.to_nbt(), false));
@@ -246,6 +296,8 @@ impl Sim {
 }
 
 impl Source for Sim {
+    type Entity = PlayerRef;
+
     fn permission_level(&self) -> u8 {
         match self.commands.source {
             CommandSource::Console => 4,
@@ -253,36 +305,31 @@ impl Source for Sim {
         }
     }
 
+    fn stack(&self) -> &SourceStack<Sim> {
+        &self.commands.stack
+    }
+
+    fn stack_mut(&mut self) -> &mut SourceStack<Sim> {
+        &mut self.commands.stack
+    }
+
     fn player_names(&self) -> Vec<String> {
         self.players.values().map(|p| p.name.clone()).collect()
     }
 
-    fn dimensions(&self) -> Vec<String> {
-        vec![OVERWORLD.to_owned()]
+    // `dimensions` keeps the default (all three vanilla levels): the nether and the end exist
+    // for dimension arguments but never have loaded chunks.
+
+    fn fork_limit(&self) -> usize {
+        Host::game_rule(self, "minecraft:max_command_forks").command_result().max(0) as usize
+    }
+
+    fn command_limit(&self) -> i32 {
+        Host::game_rule(self, "minecraft:max_command_sequence_length").command_result()
     }
 }
 
 impl SelectorWorld for Sim {
-    type Entity = PlayerRef;
-
-    fn origin(&self) -> [f64; 3] {
-        match self.commands.source {
-            CommandSource::Player(conn) => self.players.get(&conn).map_or([0.0; 3], |p| p.pos),
-            CommandSource::Console => [self.spawn[0] as f64, self.spawn[1] as f64, self.spawn[2] as f64],
-        }
-    }
-
-    fn dimension(&self) -> &str {
-        OVERWORLD
-    }
-
-    fn source_entity(&self) -> Option<PlayerRef> {
-        match self.commands.source {
-            CommandSource::Player(conn) => self.players.get(&conn).map(|p| PlayerRef::of(conn, p)),
-            CommandSource::Console => None,
-        }
-    }
-
     fn players(&self) -> Vec<PlayerRef> {
         let mut v: Vec<PlayerRef> = self.players.iter().map(|(&c, p)| PlayerRef::of(c, p)).collect();
         v.sort_by_key(|p| p.conn); // join order
@@ -306,23 +353,13 @@ impl SelectorWorld for Sim {
             entities.swap(i, (*r % (i as u64 + 1)) as usize);
         }
     }
+
+    fn scoreboard(&self) -> Option<&Scoreboard> {
+        Some(&self.commands.scoreboard)
+    }
 }
 
 impl Host for Sim {
-    fn source_name(&self) -> Text {
-        match self.commands.source {
-            CommandSource::Player(conn) => Text::literal(self.players.get(&conn).map_or("", |p| p.name.as_str())),
-            CommandSource::Console => Text::literal("Server"),
-        }
-    }
-
-    fn source_rotation(&self) -> [f32; 2] {
-        match self.commands.source {
-            CommandSource::Player(conn) => self.players.get(&conn).map_or([0.0; 2], |p| p.rot),
-            CommandSource::Console => [0.0; 2],
-        }
-    }
-
     fn send_success(&mut self, text: Text, broadcast: bool) {
         if broadcast {
             // Other operators see a gray, italic "[Source: message]" (chat.type.admin).
@@ -350,7 +387,7 @@ impl Host for Sim {
     }
 
     fn broadcast_chat(&mut self, message: ChatMessage) {
-        info!("{}", message.to_text().to_plain());
+        info!("{}", console_text(&message.to_text()));
         self.broadcast(chat_disguised(&message));
     }
 
@@ -361,7 +398,7 @@ impl Host for Sim {
     fn send_chat_to_source(&mut self, message: ChatMessage) {
         match self.commands.source {
             CommandSource::Player(conn) => self.send_to(conn, chat_disguised(&message)),
-            CommandSource::Console => info!("{}", message.to_text().to_plain()),
+            CommandSource::Console => info!("{}", console_text(&message.to_text())),
         }
     }
 
@@ -554,5 +591,81 @@ impl Host for Sim {
 
     fn kiln_regions(&mut self) -> Vec<Text> {
         vec![Text::literal("1 region (the regionizer is not enabled yet)")]
+    }
+
+    fn is_chunk_loaded(&self, dimension: &str, cx: i32, cz: i32) -> bool {
+        dimension == OVERWORLD && self.world.chunk(ChunkPos::new(cx, cz)).is_some()
+    }
+
+    fn build_height(&self, _dimension: &str) -> (i32, i32) {
+        let d = self.world.dimension;
+        (d.min_y, d.min_y + d.height)
+    }
+
+    fn block_state(&mut self, _dimension: &str, pos: [i32; 3]) -> u16 {
+        let [x, y, z] = pos;
+        self.world.chunk_mut(ChunkPos::of_block(x, z)).get((x & 15) as usize, y, (z & 15) as usize)
+    }
+
+    /// Block entities are not stored yet: blocks that have one report only the position
+    /// fields of `BlockEntity.saveWithFullMetadata` (no `id`, no contents).
+    fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
+        let state = self.block_state(dimension, pos);
+        kiln_data::block_props::has_block_entity(state).then(|| {
+            Tag::Compound(["x", "y", "z"].into_iter().zip(pos).map(|(k, v)| (k.to_owned(), Tag::Int(v))).collect())
+        })
+    }
+
+    /// Places the state as given: Kiln has no neighbour shape updates yet, and block entity
+    /// data (`nbt`) is ignored until block entities are stored.
+    fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, _nbt: Option<&Tag>, _: UpdateFlags) -> bool {
+        if self.block_state(dimension, pos) == state {
+            return false;
+        }
+        Sim::set_block(self, pos, state);
+        true
+    }
+
+    fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], _drop: bool) -> bool {
+        if kiln_data::blocks_types::is_air(self.block_state(dimension, pos)) {
+            return false;
+        }
+        Sim::set_block(self, pos, kiln_data::blocks::default_state::AIR);
+        true
+    }
+
+    fn height(&mut self, _dimension: &str, heightmap: Heightmap, x: i32, z: i32) -> i32 {
+        let (min_y, max_y) = Host::build_height(self, OVERWORLD);
+        let chunk = self.world.chunk_mut(ChunkPos::of_block(x, z));
+        (min_y..max_y)
+            .rev()
+            .find(|&y| heightmap.counts(chunk.get((x & 15) as usize, y, (z & 15) as usize)))
+            .map_or(min_y, |y| y + 1)
+    }
+
+    /// The stored biome of the 4x4x4 cell holding `pos` (vanilla adds a seeded jitter between
+    /// neighbouring cells, which only matters at biome borders).
+    fn biome(&mut self, _dimension: &str, pos: [i32; 3]) -> Option<String> {
+        let [x, y, z] = pos;
+        let chunk = self.world.chunk(ChunkPos::of_block(x, z))?;
+        let rel = y - chunk.min_y();
+        let section = chunk.sections.get(usize::try_from(rel >> 4).ok()?)?;
+        let id = match &section.biomes {
+            kiln_world::section::Biomes::Single(b) => *b,
+            kiln_world::section::Biomes::Cells(cells) => {
+                cells[((((rel & 15) >> 2) << 4) | (((z & 15) >> 2) << 2) | ((x & 15) >> 2)) as usize]
+            }
+        };
+        let biomes = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
+        biomes.get(id as usize).map(|b| (*b).to_owned())
+    }
+
+    fn scoreboard_mut(&mut self) -> Option<&mut Scoreboard> {
+        Some(&mut self.commands.scoreboard)
+    }
+
+    /// Kept in memory only (not saved with the world yet).
+    fn storage_mut(&mut self) -> Option<&mut kiln_command::CommandStorage> {
+        Some(&mut self.commands.storage)
     }
 }

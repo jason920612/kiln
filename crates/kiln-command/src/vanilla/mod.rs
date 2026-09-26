@@ -1,9 +1,12 @@
 //! Built-in commands with vanilla 26.3's tree shape (checked against the data generator's
 //! `commands.json`) and feedback, plus Kiln's `/kiln`.
 
+mod blocks;
 mod chat;
+mod execute;
 pub mod gamerules;
 mod players;
+mod scoreboard;
 mod server;
 
 use crate::arguments::GameProfileArg;
@@ -44,6 +47,12 @@ pub const COMMANDS: &[&str] = &[
     "difficulty",
     "spawnpoint",
     "setworldspawn",
+    "execute",
+    "setblock",
+    "fill",
+    "clone",
+    "tellraw",
+    "scoreboard",
     "kiln",
 ];
 
@@ -69,6 +78,12 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     server::difficulty(d);
     players::spawnpoint(d);
     server::setworldspawn(d);
+    execute::execute(d);
+    blocks::setblock(d);
+    blocks::fill(d);
+    blocks::clone(d);
+    chat::tellraw(d);
+    scoreboard::scoreboard(d);
     server::kiln(d);
 }
 
@@ -107,3 +122,5 @@ fn format_double(v: f64) -> String {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod world_tests;

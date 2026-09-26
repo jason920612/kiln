@@ -133,6 +133,49 @@ impl Anchor {
     }
 }
 
+/// `Heightmap.Types` kept after world generation (the `heightmap` argument's values).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Heightmap {
+    /// Highest non-air block.
+    WorldSurface,
+    /// Highest block in `#blocks_motion_in_heightmap`.
+    OceanFloor,
+    /// Highest block in `#blocks_motion_in_heightmap` or with a fluid.
+    MotionBlocking,
+    /// As [`MotionBlocking`](Self::MotionBlocking) with the `_no_leaves` tag.
+    MotionBlockingNoLeaves,
+}
+
+impl Heightmap {
+    pub const ALL: [Heightmap; 4] =
+        [Heightmap::WorldSurface, Heightmap::OceanFloor, Heightmap::MotionBlocking, Heightmap::MotionBlockingNoLeaves];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Heightmap::WorldSurface => "world_surface",
+            Heightmap::OceanFloor => "ocean_floor",
+            Heightmap::MotionBlocking => "motion_blocking",
+            Heightmap::MotionBlockingNoLeaves => "motion_blocking_no_leaves",
+        }
+    }
+
+    pub fn by_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|h| h.name() == name)
+    }
+
+    /// Whether `state` counts toward this heightmap.
+    pub fn counts(self, state: u16) -> bool {
+        match self {
+            Heightmap::WorldSurface => !kiln_data::blocks_types::is_air(state),
+            Heightmap::OceanFloor => crate::blocks::block_tag("minecraft:blocks_motion_in_heightmap")
+                .zip(kiln_data::builtin_id("minecraft:block", kiln_data::blocks_types::block_of(state).name))
+                .is_some_and(|(tag, id)| tag.contains(&id)),
+            Heightmap::MotionBlocking => kiln_data::block_props::motion_blocking(state),
+            Heightmap::MotionBlockingNoLeaves => kiln_data::block_props::motion_blocking_no_leaves(state),
+        }
+    }
+}
+
 /// An item argument: a registered item id plus its component list as written (`[k=v,!k]`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ItemInput {

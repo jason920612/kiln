@@ -19,6 +19,9 @@ pub enum Content {
         key: String,
         args: Vec<Arg>,
     },
+    /// A component already in network NBT form (e.g. from `/tellraw`); style and siblings
+    /// of the surrounding [`Text`] are ignored.
+    Raw(Tag),
 }
 
 impl Default for Content {
@@ -71,6 +74,11 @@ impl Text {
         Text { content: Content::Translate { key: key.into(), args }, ..Default::default() }
     }
 
+    /// A component given as network NBT.
+    pub fn raw(tag: Tag) -> Self {
+        Text { content: Content::Raw(tag), ..Default::default() }
+    }
+
     pub fn color(mut self, color: &'static str) -> Self {
         self.style.color = Some(color);
         self
@@ -110,14 +118,14 @@ impl Text {
     pub fn key(&self) -> Option<&str> {
         match &self.content {
             Content::Translate { key, .. } => Some(key),
-            Content::Literal(_) => None,
+            Content::Literal(_) | Content::Raw(_) => None,
         }
     }
 
     pub fn args(&self) -> &[Arg] {
         match &self.content {
             Content::Translate { args, .. } => args,
-            Content::Literal(_) => &[],
+            Content::Literal(_) | Content::Raw(_) => &[],
         }
     }
 
@@ -149,6 +157,7 @@ impl Text {
         }
         let mut fields: Vec<(String, Tag)> = Vec::new();
         match &self.content {
+            Content::Raw(tag) => return tag.clone(),
             Content::Literal(s) => fields.push(("text".into(), Tag::String(s.clone()))),
             Content::Translate { key, args } => {
                 fields.push(("translate".into(), Tag::String(key.clone())));
@@ -205,9 +214,42 @@ impl Text {
         out
     }
 
+    /// `Component.getString()` with `lang` as the active language, the way vanilla's dedicated
+    /// server prints to its console (with its bundled `en_us`).
+    pub fn to_string_in(&self, lang: &Language) -> String {
+        let mut out = String::new();
+        self.write_in(lang, &mut out);
+        out
+    }
+
+    fn write_in(&self, lang: &Language, out: &mut String) {
+        match &self.content {
+            Content::Literal(s) => out.push_str(s),
+            Content::Raw(tag) => write_plain_nbt(tag, out),
+            Content::Translate { key, args } => {
+                let args: Vec<String> = args
+                    .iter()
+                    .map(|a| match a {
+                        Arg::Text(t) => t.to_string_in(lang),
+                        other => {
+                            let mut s = String::new();
+                            other.write_plain(&mut s);
+                            s
+                        }
+                    })
+                    .collect();
+                lang.format(key, &args, out);
+            }
+        }
+        for e in &self.extra {
+            e.write_in(lang, out);
+        }
+    }
+
     fn write_plain(&self, out: &mut String) {
         match &self.content {
             Content::Literal(s) => out.push_str(s),
+            Content::Raw(tag) => write_plain_nbt(tag, out),
             Content::Translate { key, args } if key == "chat.square_brackets" && args.len() == 1 => {
                 out.push('[');
                 args[0].write_plain(out);
@@ -230,6 +272,109 @@ impl Text {
         for e in &self.extra {
             e.write_plain(out);
         }
+    }
+}
+
+/// A translation table in the format of `assets/minecraft/lang/*.json`.
+#[derive(Debug, Clone, Default)]
+pub struct Language(std::collections::HashMap<String, String>);
+
+impl Language {
+    /// Reads a language file. A JSON object of strings is also valid SNBT.
+    pub fn from_json(text: &str) -> Option<Self> {
+        let Ok(Tag::Compound(fields)) = crate::snbt::parse_tag(&mut crate::StringReader::new(text)) else {
+            return None;
+        };
+        let map = fields
+            .into_iter()
+            .filter_map(|(k, v)| match v {
+                Tag::String(s) => Some((k, s)),
+                _ => None,
+            })
+            .collect();
+        Some(Self(map))
+    }
+
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).map(String::as_str)
+    }
+
+    /// `TranslatableContents.decomposeTemplate`: `%s`, `%n$s` and `%%`; a malformed template
+    /// or a missing argument shows the template itself. Unknown keys show the key.
+    fn format(&self, key: &str, args: &[String], out: &mut String) {
+        let template = self.get(key).unwrap_or(key);
+        match decompose(template, args) {
+            Some(s) => out.push_str(&s),
+            None => out.push_str(template),
+        }
+    }
+}
+
+fn decompose(template: &str, args: &[String]) -> Option<String> {
+    let mut out = String::new();
+    let mut next = 0;
+    let mut rest = template;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        let spec = &rest[at + 1..];
+        let digits = spec.bytes().take_while(u8::is_ascii_digit).count();
+        let (index, spec) = match spec[digits..].strip_prefix('$') {
+            Some(after) if digits > 0 => (Some(spec[..digits].parse::<usize>().ok()?.checked_sub(1)?), after),
+            _ => (None, spec),
+        };
+        match spec.chars().next() {
+            Some('%') if index.is_none() => out.push('%'),
+            Some('s') => {
+                let i = index.unwrap_or_else(|| {
+                    next += 1;
+                    next - 1
+                });
+                out.push_str(args.get(i)?);
+            }
+            _ => return None,
+        }
+        rest = &spec[1..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
+/// Plain rendering of a component in NBT form: text as-is, translations as `key[args]`.
+fn write_plain_nbt(tag: &Tag, out: &mut String) {
+    match tag {
+        Tag::String(s) => out.push_str(s),
+        Tag::List(items) => items.iter().for_each(|t| write_plain_nbt(t.unwrap_list_element(), out)),
+        Tag::Compound(_) => {
+            if let Some(Tag::String(s)) = tag.get("text") {
+                out.push_str(s);
+            } else if let Some(Tag::String(k)) = tag.get("translate") {
+                out.push_str(k);
+                if let Some(Tag::List(args)) = tag.get("with") {
+                    out.push('[');
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        write_plain_nbt(a.unwrap_list_element(), out);
+                    }
+                    out.push(']');
+                }
+            } else if let Some(Tag::String(s)) = tag.get("selector") {
+                out.push_str(s);
+            } else if let Some(Tag::String(k)) = tag.get("keybind") {
+                out.push_str(k);
+            }
+            if let Some(Tag::List(extra)) = tag.get("extra") {
+                extra.iter().for_each(|t| write_plain_nbt(t.unwrap_list_element(), out));
+            }
+        }
+        Tag::Byte(v) => out.push_str(&v.to_string()),
+        Tag::Short(v) => out.push_str(&v.to_string()),
+        Tag::Int(v) => out.push_str(&v.to_string()),
+        Tag::Long(v) => out.push_str(&v.to_string()),
+        Tag::Float(v) => out.push_str(&v.to_string()),
+        Tag::Double(v) => out.push_str(&v.to_string()),
+        _ => {}
     }
 }
 
@@ -357,5 +502,14 @@ mod tests {
     fn plain_rendering() {
         let t = Text::literal("a").append(tr!("k", 1, "x")).append(Text::literal("b").bracketed());
         assert_eq!(t.to_plain(), "ak[1, x][b]");
+    }
+
+    #[test]
+    fn language_rendering() {
+        let lang = Language::from_json(r#"{"k": "%s and %2$s, 100%%", "bad": "%d", "chat.square_brackets": "[%s]"}"#)
+            .unwrap();
+        let t = tr!("k", 1, tr!("bad", 2)).append(Text::literal("b").bracketed()).append(tr!("k", 1));
+        assert_eq!(t.to_string_in(&lang), "1 and %d, 100%[b]%s and %2$s, 100%%");
+        assert_eq!(tr!("missing.key").to_string_in(&lang), "missing.key");
     }
 }
