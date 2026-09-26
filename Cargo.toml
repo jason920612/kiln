@@ -18,15 +18,19 @@ kiln-storage = { path = "crates/kiln-storage" }
 aes = "0.9"
 kiln-command = { path = "crates/kiln-command" }
 kiln-region = { path = "crates/kiln-region" }
+kiln-sched = { path = "crates/kiln-sched" }
 anyhow = "1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 cfb8 = "0.9"
 crossbeam-channel = "0.5"
+crossbeam-deque = "0.8"
+crossbeam-utils = "0.8"
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 lz4_flex = { version = "0.11", default-features = false, features = ["std", "safe-decode", "safe-encode"] }
 hmac = "0.12"
 libdeflater = "1"
+loom = "0.7"
 md-5 = "0.10"
 mimalloc = "0.1"
 proptest = { version = "1", default-features = false, features = ["std"] }
