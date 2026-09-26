@@ -98,6 +98,6 @@ pub fn generate(json: &Value, out: &Path) -> Result<()> {
 }
 
 fn hex(s: &str) -> Result<Vec<u8>> {
-    ensure!(s.len() % 2 == 0, "odd hex length");
+    ensure!(s.len().is_multiple_of(2), "odd hex length");
     (0..s.len()).step_by(2).map(|i| Ok(u8::from_str_radix(&s[i..i + 2], 16)?)).collect()
 }
