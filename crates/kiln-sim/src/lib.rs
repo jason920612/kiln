@@ -602,6 +602,8 @@ impl Sim {
             let owner = self.dim.regions.owner(player_chunk(p.pos).cell());
             if let Some(r) = owner.filter(|&r| r != p.region) {
                 p.region = r;
+                // Tracking starts over among the new region's players.
+                p.section = None;
                 moved = true;
             }
         }

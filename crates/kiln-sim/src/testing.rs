@@ -17,6 +17,13 @@ pub struct SinkStats {
     pub disconnected: AtomicBool,
     /// Latest Player Position (teleport) received: id and position.
     pub teleport: Mutex<Option<(i32, [f64; 3])>>,
+    /// Packets and bytes per packet id, when `KILN_SINK_IDS` is set (costs time per packet).
+    pub by_id: Mutex<std::collections::BTreeMap<i32, (u64, u64)>>,
+}
+
+fn track_ids() -> bool {
+    static TRACK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACK.get_or_init(|| std::env::var_os("KILN_SINK_IDS").is_some())
 }
 
 impl SinkStats {
@@ -24,7 +31,14 @@ impl SinkStats {
         self.packets.fetch_add(1, Relaxed);
         self.bytes.fetch_add(p.len() as u64, Relaxed);
         let mut r = Reader::new(p);
-        if r.varint().ok() == Some(kiln_data::packets::play::clientbound::PLAYER_POSITION)
+        let id = r.varint().ok();
+        if track_ids() && let Some(id) = id {
+            let mut m = self.by_id.lock().unwrap();
+            let e = m.entry(id).or_default();
+            e.0 += 1;
+            e.1 += p.len() as u64;
+        }
+        if id == Some(kiln_data::packets::play::clientbound::PLAYER_POSITION)
             && let (Ok(id), Ok(x), Ok(y), Ok(z)) = (r.varint(), r.f64(), r.f64(), r.f64())
         {
             *self.teleport.lock().unwrap() = Some((id, [x, y, z]));

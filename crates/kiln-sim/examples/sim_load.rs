@@ -128,11 +128,27 @@ fn main() {
         times.last().copied().unwrap_or(0.0),
     );
     println!(
-        "sent {:.0} packets/tick, {:.1} kB/tick; disconnected {disconnected}; state hash {:016x}",
+        "{} regions; sent {:.0} packets/tick, {:.1} kB/tick; disconnected {disconnected}; state hash {:016x}",
+        sim.region_count(),
         (packets - packets0) as f64 / n,
         (bytes - bytes0) as f64 / n / 1e3,
         sim.state_hash()
     );
+    if std::env::var_os("KILN_SINK_IDS").is_some() {
+        let mut total: std::collections::BTreeMap<i32, (u64, u64)> = Default::default();
+        for w in &walkers {
+            for (id, (n, b)) in w.client.stats.by_id.lock().unwrap().iter() {
+                let e = total.entry(*id).or_default();
+                e.0 += n;
+                e.1 += b;
+            }
+        }
+        let mut rows: Vec<_> = total.into_iter().collect();
+        rows.sort_by_key(|(_, (_, b))| std::cmp::Reverse(*b));
+        for (id, (n, b)) in rows.iter().take(8) {
+            println!("  packet {id:#04x}: {n} packets, {:.1} kB", *b as f64 / 1e3);
+        }
+    }
     if let Some(r) = sim.last_report() {
         println!("last window: {r}");
     }
