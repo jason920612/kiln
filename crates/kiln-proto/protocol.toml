@@ -78,7 +78,7 @@ animate = { status = "implemented", note = "entity::animate (wake up, critical h
 award_stats = { status = "deferred", note = "statistics" }
 block_changed_ack = { status = "implemented", note = "packets::block_changed_ack after player_action / use_item_on" }
 block_destruction = { status = "implemented", note = "world_fx::block_destruction" }
-block_entity_data = { status = "deferred", note = "block entities" }
+block_entity_data = { status = "implemented", note = "packets::block_entity_data after block changes (update tag derived from saved NBT)" }
 block_event = { status = "implemented", note = "world_fx::block_event" }
 block_update = { status = "implemented", note = "packets::block_update to players with the chunk" }
 boss_event = { status = "implemented", note = "hud::boss_event: every operation" }
@@ -90,7 +90,7 @@ clear_titles = { status = "implemented", note = "hud::clear_titles" }
 command_suggestions = { status = "implemented", note = "kiln-command Dispatcher::suggestions_packet" }
 commands = { status = "implemented", note = "packets::commands via kiln-command Dispatcher::commands_packet" }
 container_close = { status = "deferred", note = "containers" }
-container_set_content = { status = "deferred", note = "containers and inventory" }
+container_set_content = { status = "implemented", note = "packets::container_set_content: player inventory on join (no item components yet)" }
 container_set_data = { status = "deferred", note = "containers (furnace progress, enchanting)" }
 container_set_slot = { status = "implemented", note = "packets::container_set_slot from /give (no item components yet)" }
 cookie_request = { status = "implemented", note = "common::cookie_request" }
@@ -179,7 +179,7 @@ set_entity_motion = { status = "implemented", note = "entity::set_entity_motion"
 set_equipment = { status = "deferred", note = "entity equipment" }
 set_experience = { status = "implemented", note = "player::set_experience" }
 set_health = { status = "implemented", note = "player::set_health" }
-set_held_slot = { status = "deferred", note = "inventory" }
+set_held_slot = { status = "implemented", note = "packets::set_held_slot: saved selected slot on join" }
 set_objective = { status = "implemented", note = "scoreboard::set_objective with number formats" }
 set_passengers = { status = "deferred", note = "vehicles" }
 set_player_inventory = { status = "deferred", note = "inventory" }

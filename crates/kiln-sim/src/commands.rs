@@ -535,6 +535,7 @@ impl Host for Sim {
 
     fn set_world_spawn(&mut self, spawn: &SpawnPoint) -> Result<(), CommandError> {
         self.spawn = spawn.pos;
+        self.spawn_rot = [spawn.yaw, spawn.pitch];
         let pkt = packets::set_default_spawn_position(OVERWORLD, spawn.pos, spawn.yaw, spawn.pitch);
         self.broadcast(pkt);
         Ok(())

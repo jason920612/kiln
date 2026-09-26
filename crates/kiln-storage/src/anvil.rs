@@ -4,6 +4,7 @@ use crate::region::RegionFile;
 use kiln_data::blocks::default_state;
 use kiln_data::blocks_types::block_by_name;
 use kiln_proto::nbt::{self, Tag};
+use kiln_world::block_entity::BlockEntity;
 use kiln_world::chunk::{Chunk, Light};
 use kiln_world::section::{BlockContainer, Biomes, Section};
 use kiln_world::{ChunkPos, ChunkSource, Dimension};
@@ -31,8 +32,8 @@ pub struct AnvilSource {
     biomes: HashMap<&'static str, u16>,
     default_biome: u16,
     warned_version: bool,
-    /// Loaded chunks' NBT minus `sections`: fields we do not model yet (block entities,
-    /// structure references, scheduled ticks, ...) are written back unchanged.
+    /// Loaded chunks' NBT minus `sections` and `block_entities`: fields we do not model yet
+    /// (structure references, scheduled ticks, ...) are written back unchanged.
     preserved: HashMap<ChunkPos, Tag>,
     /// Encoded chunks waiting for `flush`, per region.
     pending: HashMap<(i32, i32), Vec<(usize, usize, Vec<u8>)>>,
@@ -125,7 +126,15 @@ impl AnvilSource {
         }
 
         let sky = if light_on { Some(fill_missing_sky(sky)) } else { None };
-        Ok(Chunk::with_light(sections, dim.min_y, sky, light_on.then_some(block)))
+        let mut chunk = Chunk::with_light(sections, dim.min_y, sky, light_on.then_some(block));
+        let origin = match (root.get("xPos").and_then(Tag::as_i64), root.get("zPos").and_then(Tag::as_i64)) {
+            (Some(x), Some(z)) => Some((x as i32, z as i32)),
+            _ => None,
+        };
+        for entry in root.get("block_entities").and_then(Tag::as_list).unwrap_or(&[]) {
+            load_block_entity(&mut chunk, entry, origin);
+        }
+        Ok(chunk)
     }
 
     fn decode_biomes(&self, tag: &Tag) -> Result<Biomes, ChunkError> {
@@ -158,7 +167,7 @@ impl ChunkSource for AnvilSource {
         match self.decode(&data, dim) {
             Ok(c) => {
                 if let Ok((_, Tag::Compound(mut fields))) = nbt::read_named(&data) {
-                    fields.retain(|(k, _)| k != "sections");
+                    fields.retain(|(k, _)| k != "sections" && k != "block_entities");
                     self.preserved.insert(pos, Tag::Compound(fields));
                 }
                 Some(c)
@@ -267,7 +276,36 @@ pub fn encode_chunk(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Ta
         }
     }
     set(&mut fields, "sections", Tag::List(sections));
+    let (bx, bz) = (pos.x * 16, pos.z * 16);
+    let block_entities = chunk.block_entities().map(|((x, y, z), be)| be.saved([bx + x as i32, y, bz + z as i32])).collect();
+    set(&mut fields, "block_entities", Tag::List(block_entities));
     Tag::Compound(fields)
+}
+
+/// Adds a `block_entities` entry to the chunk if it belongs to the block at its position, as
+/// vanilla does when it promotes the saved entries (others are dropped with a warning).
+fn load_block_entity(chunk: &mut Chunk, entry: &Tag, origin: Option<(i32, i32)>) {
+    let coord = |k| entry.get(k).and_then(Tag::as_i64).map(|v| v as i32);
+    let (Some(x), Some(y), Some(z)) = (coord("x"), coord("y"), coord("z")) else {
+        warn!("block entity without a position: {entry:?}");
+        return;
+    };
+    if origin.is_some_and(|o| o != (x >> 4, z >> 4)) {
+        warn!("block entity at {x},{y},{z} lies outside its chunk; dropped");
+        return;
+    }
+    let Some(be) = BlockEntity::from_saved(entry.clone()) else {
+        warn!("block entity of unknown type {:?} at {x},{y},{z}; dropped", entry.get("id"));
+        return;
+    };
+    let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
+    let state = chunk.get(lx, y, lz);
+    if kiln_data::block_props::block_entity_type(state) != Some(be.kind) {
+        let block = kiln_data::blocks_types::block_of(state).name;
+        warn!("block entity {} at {x},{y},{z} does not match {block}; dropped", kiln_world::block_entity::type_name(be.kind));
+        return;
+    }
+    chunk.load_block_entity(lx, y, lz, be);
 }
 
 /// A palette entry: the bare block id for a block's default state, else `{id, properties}`.

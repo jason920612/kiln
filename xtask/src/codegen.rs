@@ -35,7 +35,14 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
     let extra = read_json(&input.generated.join("extra/block_states.json")).context("run `cargo xtask extract` first")?;
     let blocks = read_json(&input.generated.join("reports/blocks.json"))?;
     let state_count = blocks.as_object().context("blocks")?.values().map(|b| b["states"].as_array().map_or(0, Vec::len)).sum();
-    fs::write(out.join("block_props.bin"), crate::block_props::pack(&extra, state_count)?)?;
+    let builtin = read_json(&input.generated.join("reports/registries.json"))?;
+    let block_entity_types: HashMap<String, u8> = builtin["minecraft:block_entity_type"]["entries"]
+        .as_object()
+        .context("block_entity_type registry")?
+        .iter()
+        .map(|(k, v)| (k.clone(), v["protocol_id"].as_u64().unwrap() as u8))
+        .collect();
+    fs::write(out.join("block_props.bin"), crate::block_props::pack(&extra, state_count, &block_entity_types)?)?;
     let rules = read_json(&input.generated.join("extra/game_rules.json")).context("run `cargo xtask extract` first")?;
     fs::write(out.join("game_rules.rs"), gen_game_rules(&rules)?)?;
     println!("codegen: wrote {}", out.display());

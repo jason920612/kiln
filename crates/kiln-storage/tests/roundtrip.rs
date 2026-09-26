@@ -5,8 +5,15 @@ use kiln_storage::AnvilSource;
 use kiln_world::{ChunkPos, ChunkSource, OVERWORLD, Terrain, World};
 use std::path::PathBuf;
 
+/// `KILN_WORK` or `<workspace>/work`.
+fn work_dir() -> PathBuf {
+    std::env::var_os("KILN_WORK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work"))
+}
+
 fn copy_regions(tag: &str) -> Option<PathBuf> {
-    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work/vanilla-world/world/dimensions/minecraft/overworld/region");
+    let src = work_dir().join("vanilla-world/world/dimensions/minecraft/overworld/region");
     if !src.exists() {
         eprintln!("no reference world; run tools/gen_vanilla_world.py");
         return None;

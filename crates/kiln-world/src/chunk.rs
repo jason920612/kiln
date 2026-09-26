@@ -1,9 +1,12 @@
-//! Chunk columns: sections, light, heightmaps and a cached encoded packet body.
+//! Chunk columns: sections, light, heightmaps, block entities and a cached encoded packet body.
 
+use crate::block_entity::BlockEntity;
 use crate::section::{Section, bits_for, pack};
 use bytes::{BufMut, Bytes, BytesMut};
-use kiln_data::blocks_types::is_air;
+use kiln_data::block_props::{block_entity_type, has_block_entity, keeps_block_entity};
+use kiln_data::blocks_types::{block_of, is_air};
 use kiln_proto::WriteExt;
+use std::collections::BTreeMap;
 
 /// Light of one section.
 #[derive(Clone)]
@@ -59,6 +62,8 @@ pub struct Chunk {
     cached: Option<(u32, Bytes)>,
     /// Light sections changed since the last Update Light, per layer.
     light_dirty: [u64; 2],
+    /// By [`Chunk::block_index`].
+    block_entities: BTreeMap<u32, BlockEntity>,
 }
 
 impl Chunk {
@@ -80,6 +85,7 @@ impl Chunk {
             saved_version: 0,
             cached: None,
             light_dirty: [0, 0],
+            block_entities: BTreeMap::new(),
         };
         for x in 0..16 {
             for z in 0..16 {
@@ -178,6 +184,10 @@ impl Chunk {
 
     /// Returns the previous state, or `None` if `y` is outside the world.
     /// Light is not updated here; the world's light engine does that.
+    ///
+    /// Block entities follow vanilla's `LevelChunk.setBlockState`: replacing the block with a
+    /// different one drops its block entity (unless the new block keeps it), and a block that
+    /// needs a block entity gets a default one if it has none of the right type.
     pub fn set(&mut self, x: usize, y: i32, z: usize, state: u16) -> Option<u16> {
         let (s, ly) = self.section_of(y)?;
         let old = self.sections[s].set(x, ly, z, state);
@@ -186,8 +196,75 @@ impl Chunk {
             if is_air(old) != is_air(state) {
                 self.surface[(z << 4) | x] = self.column_top(x, z);
             }
+            let key = self.block_index(x, y, z);
+            let same_block = block_of(old).first == block_of(state).first;
+            if !same_block && has_block_entity(old) && !keeps_block_entity(state, old) {
+                self.block_entities.remove(&key);
+            }
+            if let Some(kind) = block_entity_type(state)
+                && self.block_entities.get(&key).is_none_or(|be| be.kind != kind)
+            {
+                self.block_entities.insert(key, BlockEntity::new(kind));
+            }
         }
         Some(old)
+    }
+
+    fn block_index(&self, x: usize, y: i32, z: usize) -> u32 {
+        (((y - self.min_y) as u32) << 8) | ((z as u32) << 4) | x as u32
+    }
+
+    fn block_at_index(&self, i: u32) -> (usize, i32, usize) {
+        ((i & 15) as usize, (i >> 8) as i32 + self.min_y, ((i >> 4) & 15) as usize)
+    }
+
+    pub fn block_entity(&self, x: usize, y: i32, z: usize) -> Option<&BlockEntity> {
+        self.section_of(y)?;
+        self.block_entities.get(&self.block_index(x, y, z))
+    }
+
+    /// Sets or replaces the block entity at a position inside the world; the caller keeps it
+    /// consistent with the block there.
+    pub fn set_block_entity(&mut self, x: usize, y: i32, z: usize, be: BlockEntity) {
+        if self.section_of(y).is_some() {
+            self.block_entities.insert(self.block_index(x, y, z), be);
+            self.version += 1;
+        }
+    }
+
+    /// Adds a block entity read with the chunk; unlike [`Chunk::set_block_entity`] this is
+    /// not a change to save.
+    pub fn load_block_entity(&mut self, x: usize, y: i32, z: usize, be: BlockEntity) {
+        if self.section_of(y).is_some() {
+            self.block_entities.insert(self.block_index(x, y, z), be);
+            self.cached = None;
+        }
+    }
+
+    pub fn remove_block_entity(&mut self, x: usize, y: i32, z: usize) -> Option<BlockEntity> {
+        self.section_of(y)?;
+        let be = self.block_entities.remove(&self.block_index(x, y, z));
+        if be.is_some() {
+            self.version += 1;
+        }
+        be
+    }
+
+    /// Block entities with their chunk-local x, absolute y and local z.
+    pub fn block_entities(&self) -> impl Iterator<Item = ((usize, i32, usize), &BlockEntity)> {
+        self.block_entities.iter().map(|(&i, be)| (self.block_at_index(i), be))
+    }
+
+    /// Height of the first block above the column's topmost block matching `pred` (the value a
+    /// vanilla heightmap stores, as an absolute y; `min_y` for an empty column).
+    pub fn column_height(&self, x: usize, z: usize, pred: impl Fn(u16) -> bool) -> i32 {
+        for rel in (0..self.height()).rev() {
+            let (s, ly) = ((rel >> 4) as usize, (rel & 15) as usize);
+            if !self.sections[s].is_empty() && pred(self.sections[s].get(x, ly, z)) {
+                return self.min_y + rel + 1;
+            }
+        }
+        self.min_y
     }
 
     /// Light section index (0 = below the world) of absolute `y`, if stored.
@@ -273,7 +350,17 @@ impl Chunk {
         b.put_varint(data.len() as i32);
         b.put_slice(&data);
 
-        b.put_varint(0); // block entities
+        b.put_varint(self.block_entities.len() as i32);
+        for (&i, be) in &self.block_entities {
+            let (x, y, z) = self.block_at_index(i);
+            b.put_u8(((x << 4) | z) as u8);
+            b.put_i16(y as i16);
+            b.put_varint(be.kind as i32);
+            match be.update_tag(self.get(x, y, z)) {
+                Some(tag) => tag.write_network(&mut b),
+                None => b.put_u8(0), // an absent tag (TAG_End)
+            }
+        }
 
         let all = (1u64 << self.sky.len()) - 1;
         put_light_data(&mut b, &self.sky, all, &self.block, all);
