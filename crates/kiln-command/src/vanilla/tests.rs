@@ -257,9 +257,13 @@ impl Host for Mock {
         vec!["minecraft:day".into(), "minecraft:moon".into()]
     }
     fn game_rule(&self, rule: &str) -> GameRuleValue {
-        self.rules.get(rule).copied().unwrap_or(match gamerules::value_type(rule) {
-            ArgumentType::Bool => GameRuleValue::Bool(false),
-            _ => GameRuleValue::Int(3),
+        self.rules.get(rule).copied().unwrap_or(match kiln_data::game_rule_default(rule) {
+            Some(kiln_data::GameRuleDefault::Int(v)) => GameRuleValue::Int(v),
+            Some(kiln_data::GameRuleDefault::Bool(b)) => GameRuleValue::Bool(b),
+            None => match gamerules::value_type(rule) {
+                ArgumentType::Bool => GameRuleValue::Bool(false),
+                _ => GameRuleValue::Int(3),
+            },
         })
     }
     fn set_game_rule(&mut self, rule: &str, value: GameRuleValue) {
@@ -334,13 +338,13 @@ fn dispatcher_is_send_and_sync() {
     check::<Dispatcher<Mock>>();
 }
 
-fn dispatcher() -> Dispatcher<Mock> {
+pub(super) fn dispatcher() -> Dispatcher<Mock> {
     let mut d = Dispatcher::new();
     register_all(&mut d);
     d
 }
 
-fn err_key(r: Result<i32, CommandError>) -> String {
+pub(super) fn err_key(r: Result<i32, CommandError>) -> String {
     r.unwrap_err().key().unwrap().to_owned()
 }
 
@@ -709,6 +713,35 @@ fn arbitrary_input_never_panics() {
         "creative",
         "Alice",
         "0-0-0-0-1",
+        "execute ",
+        "as ",
+        "at ",
+        "run ",
+        "if ",
+        "unless ",
+        "block ",
+        "blocks ",
+        "store ",
+        "result ",
+        "score ",
+        "positioned ",
+        "over ",
+        "facing ",
+        "setblock ",
+        "fill ",
+        "clone ",
+        "tellraw ",
+        "{text:",
+        "#minecraft:logs",
+        "oak_log[",
+        "axis=",
+        "0x",
+        "1b",
+        "[B;",
+        "\\u00",
+        "bool(",
+        "masked",
+        "0 64 0 ",
     ];
     let mut state = 0x2545_f491_4f6c_dd1du64;
     let mut next = || {
@@ -806,7 +839,8 @@ fn to_json(d: &Dispatcher<Mock>, id: crate::dispatcher::NodeId) -> Value {
 fn first_difference(path: &str, ours: &Value, theirs: &Value) -> Option<String> {
     match (ours, theirs) {
         (Value::Object(a), Value::Object(b)) => {
-            for k in a.keys().chain(b.keys()) {
+            // Each key once: visiting shared keys twice doubles the work per level.
+            for k in a.keys().chain(b.keys().filter(|k| !a.contains_key(*k))) {
                 match (a.get(k), b.get(k)) {
                     (Some(x), Some(y)) => {
                         if let Some(d) = first_difference(&format!("{path}.{k}"), x, y) {
@@ -899,15 +933,21 @@ fn commands_packet_flags() {
                             let f = r.u8().unwrap();
                             r.bytes(4 * (f & 1) as usize + 4 * ((f >> 1) & 1) as usize).unwrap();
                         }
+                        "brigadier:double" => {
+                            let f = r.u8().unwrap();
+                            r.bytes(8 * (f & 1) as usize + 8 * ((f >> 1) & 1) as usize).unwrap();
+                        }
                         "brigadier:string" => drop(r.varint().unwrap()),
-                        "minecraft:entity" => drop(r.u8().unwrap()),
+                        "minecraft:entity" | "minecraft:score_holder" => drop(r.u8().unwrap()),
                         "minecraft:time" => drop(r.i32().unwrap()),
-                        "minecraft:resource" => drop(r.string(32767).unwrap()),
+                        "minecraft:resource" | "minecraft:resource_or_tag" => drop(r.string(32767).unwrap()),
                         _ => {}
                     }
                     if flags & 0x10 != 0 {
-                        assert_eq!(r.string(32767).unwrap(), "minecraft:ask_server");
-                        ask_server.push(name);
+                        match r.string(32767).unwrap() {
+                            "minecraft:ask_server" => ask_server.push(name),
+                            other => assert_eq!((name.as_str(), other), ("entity", "minecraft:summonable_entities")),
+                        }
                     }
                 }
                 _ => {}
@@ -923,8 +963,11 @@ fn commands_packet_flags() {
     let (n4, lit4, ask4, res4) = decode(4);
     assert!(n4 > n0 + 100);
     assert!(lit4.contains(&"kiln".to_owned()));
-    ask4.iter().for_each(|a| assert!(["targets", "timemarker", "timeline"].contains(&a.as_str()), "{a}"));
-    assert_eq!(ask4.len(), 6, "op, deop and time's markers/timelines at both levels");
+    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id"];
+    ask4.iter().for_each(|a| assert!(allowed.contains(&a.as_str()), "{a}"));
+    // op, deop, time's markers/timelines at both levels, and execute's score holders (if and
+    // unless: target + 5 sources each; store result and success: targets) and boss bars.
+    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2);
     assert!(res4.contains(&"stop".to_owned()) && res4.contains(&"tp".to_owned()) && !res4.contains(&"msg".to_owned()));
 }
 

@@ -46,6 +46,23 @@ pub fn msg<S: Host + 'static>(d: &mut Dispatcher<S>) {
     d.register(literal("w").redirect(msg));
 }
 
+/// `TellRawCommand`: the component, resolved with each recipient as `@s`.
+pub fn tellraw<S: Host + 'static>(d: &mut Dispatcher<S>) {
+    d.register(literal("tellraw").requires(LEVEL_GAMEMASTERS).then(
+        argument("targets", ArgumentType::players()).then(argument("message", ArgumentType::Component).executes(
+            |c, s: &mut S| {
+                let targets = c.selector("targets").players(s)?;
+                let message = c.component("message");
+                for target in &targets {
+                    let resolved = message.resolve(s, Some(target))?;
+                    s.send_system(target, resolved.to_text());
+                }
+                Ok(targets.len() as i32)
+            },
+        )),
+    ));
+}
+
 pub fn me<S: Host + 'static>(d: &mut Dispatcher<S>) {
     d.register(literal("me").then(argument("action", ArgumentType::Message).executes(|c, s: &mut S| {
         let content = c.message("action").resolve(s)?;
