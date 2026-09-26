@@ -14,7 +14,8 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-WORK = ROOT / "work"
+WORK = Path(os.environ.get("KILN_WORK") or ROOT / "work").resolve()
+os.environ["KILN_WORK"] = str(WORK)  # child tools resolve the same directory
 SERVER_LOG = WORK / "server.log"  # replaced per port in main()
 EXE = ROOT / "target" / "release" / ("kiln.exe" if os.name == "nt" else "kiln")
 

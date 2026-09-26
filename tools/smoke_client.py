@@ -18,9 +18,10 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PACKETS = json.loads((ROOT / "work/generated/reports/packets.json").read_text())
+WORK = Path(os.environ.get("KILN_WORK") or ROOT / "work").resolve()
+PACKETS = json.loads((WORK / "generated/reports/packets.json").read_text())
 # Raw packet bodies are saved here for tools/VanillaDecode.java.
-DUMP_DIR = Path(os.environ.get("KILN_DUMP_DIR", ROOT / "work" / "dumps"))
+DUMP_DIR = Path(os.environ.get("KILN_DUMP_DIR", WORK / "dumps"))
 DUMP_DIR.mkdir(parents=True, exist_ok=True)
 
 

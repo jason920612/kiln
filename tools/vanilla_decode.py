@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-WORK = ROOT / "work"
+WORK = Path(os.environ.get("KILN_WORK") or ROOT / "work").resolve()
 
 
 def classpath():
