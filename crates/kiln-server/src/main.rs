@@ -1,8 +1,3 @@
-mod net;
-mod packets;
-mod sim;
-mod world;
-
 use anyhow::Result;
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
@@ -16,7 +11,7 @@ fn main() -> Result<()> {
         .init();
 
     let port: u16 = std::env::var("KILN_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(25565);
-    let config = net::Config {
+    let net_config = kiln_net::Config {
         bind: ([0, 0, 0, 0], port).into(),
         motd: "A Kiln server".into(),
         max_players: 100,
@@ -24,17 +19,21 @@ fn main() -> Result<()> {
         simulation_distance: 10,
         compression_threshold: Some(256),
     };
+    let sim_config = kiln_sim::SimConfig {
+        max_players: net_config.max_players,
+        view_distance: net_config.view_distance,
+        simulation_distance: net_config.simulation_distance,
+    };
 
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();
-    let shared = Arc::new(net::Shared::new(config, to_sim));
+    let shared = Arc::new(kiln_net::Shared::new(net_config, to_sim));
 
-    let sim_shared = shared.clone();
-    std::thread::Builder::new().name("sim".into()).spawn(move || sim::run(sim_shared, sim_rx))?;
+    std::thread::Builder::new().name("sim".into()).spawn(move || kiln_sim::run(sim_config, sim_rx))?;
 
     tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .thread_name("net")
         .enable_all()
         .build()?
-        .block_on(net::listen(shared))
+        .block_on(kiln_net::listen(shared))
 }

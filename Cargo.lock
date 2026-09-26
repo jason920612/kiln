@@ -162,11 +162,39 @@ name = "kiln-data"
 version = "0.1.0"
 
 [[package]]
+name = "kiln-link"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "kiln-proto",
+ "uuid",
+]
+
+[[package]]
+name = "kiln-net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "crossbeam-channel",
+ "kiln-data",
+ "kiln-link",
+ "kiln-proto",
+ "md-5",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "kiln-proto"
 version = "0.1.0"
 dependencies = [
  "bytes",
+ "kiln-data",
  "libdeflater",
+ "serde_json",
  "thiserror",
  "uuid",
 ]
@@ -176,17 +204,36 @@ name = "kiln-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytes",
  "crossbeam-channel",
- "kiln-data",
- "kiln-proto",
- "md-5",
+ "kiln-net",
+ "kiln-sim",
  "mimalloc",
- "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "kiln-sim"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "crossbeam-channel",
+ "kiln-data",
+ "kiln-link",
+ "kiln-proto",
+ "kiln-world",
+ "tracing",
  "uuid",
+]
+
+[[package]]
+name = "kiln-world"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "kiln-data",
+ "kiln-proto",
 ]
 
 [[package]]

@@ -3,8 +3,8 @@
 
 use bytes::{BufMut, Bytes, BytesMut};
 use kiln_data::packets as ids;
-use kiln_proto::nbt::Tag;
-use kiln_proto::{DecodeError, Reader, WriteExt};
+use crate::nbt::Tag;
+use crate::{DecodeError, Reader, WriteExt};
 use uuid::Uuid;
 
 fn packet(id: i32) -> BytesMut {
@@ -41,11 +41,30 @@ pub fn login_compression(threshold: i32) -> Bytes {
     b.freeze()
 }
 
-pub fn login_finished(uuid: Uuid, name: &str, session: Uuid) -> Bytes {
-    let mut b = packet(ids::login::clientbound::LOGIN_FINISHED);
+/// A game profile property, e.g. `textures`.
+pub struct ProfileProperty<'a> {
+    pub name: &'a str,
+    pub value: &'a str,
+    pub signature: Option<&'a str>,
+}
+
+pub fn put_game_profile(b: &mut BytesMut, uuid: Uuid, name: &str, properties: &[ProfileProperty]) {
     b.put_uuid(uuid);
     b.put_string(name);
-    b.put_varint(0); // no profile properties (default skin)
+    b.put_varint(properties.len() as i32);
+    for p in properties {
+        b.put_string(p.name);
+        b.put_string(p.value);
+        b.put_bool(p.signature.is_some());
+        if let Some(sig) = p.signature {
+            b.put_string(sig);
+        }
+    }
+}
+
+pub fn login_finished(uuid: Uuid, name: &str, properties: &[ProfileProperty], session: Uuid) -> Bytes {
+    let mut b = packet(ids::login::clientbound::LOGIN_FINISHED);
+    put_game_profile(&mut b, uuid, name, properties);
     b.put_uuid(session);
     b.freeze()
 }
@@ -114,7 +133,7 @@ pub fn finish_configuration() -> Bytes {
 
 pub fn config_disconnect(reason: &str) -> Bytes {
     let mut b = packet(ids::configuration::clientbound::DISCONNECT);
-    kiln_proto::nbt::text(reason).write_network(&mut b);
+    crate::nbt::text(reason).write_network(&mut b);
     b.freeze()
 }
 
@@ -246,7 +265,7 @@ pub fn system_chat(text: Tag, overlay: bool) -> Bytes {
 
 pub fn play_disconnect(reason: &str) -> Bytes {
     let mut b = packet(ids::play::clientbound::DISCONNECT);
-    kiln_proto::nbt::text(reason).write_network(&mut b);
+    crate::nbt::text(reason).write_network(&mut b);
     b.freeze()
 }
 

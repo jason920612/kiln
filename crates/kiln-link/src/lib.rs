@@ -1,0 +1,41 @@
+//! The boundary between the network runtime and the simulation.
+//!
+//! The simulation never depends on tokio: connections reach it through `ToSim` messages
+//! and it answers through `Sink`s, which the network layer implements.
+
+use bytes::Bytes;
+pub use kiln_proto::packets::PlayIn;
+use uuid::Uuid;
+
+pub type ConnId = u64;
+
+/// Outbound side of a player connection. Packets are packet id + data; framing,
+/// compression and encryption happen on the network side.
+pub trait Sink: Send {
+    fn send(&self, packet: Bytes);
+    /// Sends `packet`, then closes the connection.
+    fn disconnect(&self, packet: Bytes);
+}
+
+pub enum ToSim {
+    Join(JoinInfo),
+    Packet(ConnId, PlayIn),
+    Leave(ConnId),
+}
+
+pub struct JoinInfo {
+    pub conn: ConnId,
+    pub name: String,
+    pub uuid: Uuid,
+    /// Profile properties from authentication or proxy forwarding (e.g. skin textures).
+    pub properties: Vec<Property>,
+    pub view_distance: u8,
+    pub sink: Box<dyn Sink>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Property {
+    pub name: String,
+    pub value: String,
+    pub signature: Option<String>,
+}

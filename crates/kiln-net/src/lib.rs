@@ -1,8 +1,8 @@
 //! Connection handling on the tokio runtime: handshake, status, login and configuration run
 //! here; once a player reaches play state, packets are relayed to and from the simulation.
 
-use crate::packets;
-use crate::sim::{JoinInfo, ToSim};
+use kiln_link::{ConnId, JoinInfo, Sink, ToSim};
+use kiln_proto::packets;
 use anyhow::{Context, Result, anyhow, bail};
 use bytes::{Bytes, BytesMut};
 use kiln_data::packets as ids;
@@ -60,13 +60,22 @@ impl Shared {
 }
 
 /// Messages from the simulation to a connection's writer.
-pub enum Outbound {
+enum Outbound {
     Packet(Bytes),
     /// Send this packet, then close the connection.
     Disconnect(Bytes),
 }
 
-pub type ConnId = u64;
+struct ChannelSink(mpsc::UnboundedSender<Outbound>);
+
+impl Sink for ChannelSink {
+    fn send(&self, packet: Bytes) {
+        let _ = self.0.send(Outbound::Packet(packet));
+    }
+    fn disconnect(&self, packet: Bytes) {
+        let _ = self.0.send(Outbound::Disconnect(packet));
+    }
+}
 
 const PRE_PLAY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -229,7 +238,7 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32)
         conn.tx.set_threshold(Some(t));
     }
     let uuid = offline_uuid(&name);
-    conn.send(&packets::login_finished(uuid, &name, Uuid::new_v4())).await?;
+    conn.send(&packets::login_finished(uuid, &name, &[], Uuid::new_v4())).await?;
 
     let pkt = conn.read().await?;
     let (id, _) = split_id(&pkt)?;
@@ -294,7 +303,14 @@ async fn play(conn: Conn, shared: &Shared, name: String, uuid: Uuid, view_distan
     shared.online.fetch_add(1, Ordering::Relaxed);
     let joined = shared
         .to_sim
-        .send(ToSim::Join(JoinInfo { conn: conn_id, name: name.clone(), uuid, view_distance, out: out_tx }))
+        .send(ToSim::Join(JoinInfo {
+            conn: conn_id,
+            name: name.clone(),
+            uuid,
+            properties: Vec::new(),
+            view_distance,
+            sink: Box::new(ChannelSink(out_tx)),
+        }))
         .is_ok();
 
     let writer_task = tokio::spawn(write_loop(writer, tx, wbuf, out_rx));

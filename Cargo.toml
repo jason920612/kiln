@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kiln-proto", "crates/kiln-data", "crates/kiln-server", "xtask"]
+members = ["crates/*", "xtask"]
 
 [workspace.package]
 edition = "2024"
@@ -10,6 +10,10 @@ publish = false
 [workspace.dependencies]
 kiln-proto = { path = "crates/kiln-proto" }
 kiln-data = { path = "crates/kiln-data" }
+kiln-link = { path = "crates/kiln-link" }
+kiln-net = { path = "crates/kiln-net" }
+kiln-sim = { path = "crates/kiln-sim" }
+kiln-world = { path = "crates/kiln-world" }
 anyhow = "1"
 bytes = "1"
 crossbeam-channel = "0.5"

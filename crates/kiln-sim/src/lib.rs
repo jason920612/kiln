@@ -1,31 +1,21 @@
 //! The simulation thread: owns all game state and runs the 20 TPS tick loop.
 //! It never awaits; connections talk to it through channels.
 
-use crate::net::{ConnId, Outbound, Shared};
-use crate::packets::{self, PlayIn};
-use crate::world::{self, FlatWorld};
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
+use kiln_link::{ConnId, JoinInfo, PlayIn, Sink, ToSim};
 use kiln_proto::nbt::Tag;
+use kiln_proto::packets;
+use kiln_world::{self as world, FlatWorld};
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc::UnboundedSender;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-pub enum ToSim {
-    Join(JoinInfo),
-    Packet(ConnId, PlayIn),
-    Leave(ConnId),
-}
-
-pub struct JoinInfo {
-    pub conn: ConnId,
-    pub name: String,
-    pub uuid: Uuid,
+pub struct SimConfig {
+    pub max_players: usize,
     pub view_distance: u8,
-    pub out: UnboundedSender<Outbound>,
+    pub simulation_distance: u8,
 }
 
 const TICK: Duration = Duration::from_millis(50);
@@ -40,7 +30,7 @@ struct Player {
     uuid: Uuid,
     #[allow(dead_code)]
     entity_id: i32,
-    out: UnboundedSender<Outbound>,
+    sink: Box<dyn Sink>,
     pos: [f64; 3],
     rot: [f32; 2],
     on_ground: bool,
@@ -56,15 +46,15 @@ struct Player {
 
 impl Player {
     fn send(&self, p: Bytes) {
-        let _ = self.out.send(Outbound::Packet(p));
+        self.sink.send(p);
     }
     fn disconnect(&self, reason: &str) {
-        let _ = self.out.send(Outbound::Disconnect(packets::play_disconnect(reason)));
+        self.sink.disconnect(packets::play_disconnect(reason));
     }
 }
 
 pub struct Sim {
-    shared: Arc<Shared>,
+    config: SimConfig,
     world: FlatWorld,
     players: HashMap<ConnId, Player>,
     next_entity_id: i32,
@@ -73,10 +63,10 @@ pub struct Sim {
     tick_nanos: u64,
 }
 
-pub fn run(shared: Arc<Shared>, rx: Receiver<ToSim>) {
+pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     let plains = kiln_data::synced_id("minecraft:worldgen/biome", "minecraft:plains").expect("plains biome");
     let mut sim = Sim {
-        shared,
+        config,
         world: FlatWorld::new(plains),
         players: HashMap::new(),
         next_entity_id: 1,
@@ -136,14 +126,14 @@ impl Sim {
         let entity_id = self.next_entity_id;
         self.next_entity_id += 1;
         let spawn = [8.5, world::SURFACE_Y, 8.5];
-        let view_distance = (j.view_distance as i32).min(self.shared.config.view_distance as i32);
+        let view_distance = (j.view_distance as i32).min(self.config.view_distance as i32);
         let dimension_type =
             kiln_data::synced_id("minecraft:dimension_type", OVERWORLD).expect("overworld dimension type");
         let player = Player {
             name: j.name,
             uuid: j.uuid,
             entity_id,
-            out: j.out,
+            sink: j.sink,
             pos: spawn,
             rot: [0.0, 0.0],
             on_ground: true,
@@ -160,9 +150,9 @@ impl Sim {
         player.send(packets::play_login(&packets::Login {
             entity_id,
             dimensions: &[OVERWORLD],
-            max_players: self.shared.config.max_players as i32,
-            view_distance: self.shared.config.view_distance as i32,
-            simulation_distance: self.shared.config.simulation_distance as i32,
+            max_players: self.config.max_players as i32,
+            view_distance: self.config.view_distance as i32,
+            simulation_distance: self.config.simulation_distance as i32,
             dimension_type,
             dimension: OVERWORLD,
             game_mode: 1,
@@ -220,7 +210,7 @@ impl Sim {
                 }
             }
             PlayIn::ClientInformation { view_distance } => {
-                p.view_distance = (view_distance as i32).min(self.shared.config.view_distance as i32);
+                p.view_distance = (view_distance as i32).min(self.config.view_distance as i32);
             }
             PlayIn::Chat { message } => {
                 let line = format!("<{}> {}", p.name, message);

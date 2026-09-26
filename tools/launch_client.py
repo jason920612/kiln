@@ -92,14 +92,33 @@ def main():
         "--height", "540",
         "--quickPlayMultiplayer", server,
     ]
-    log = open(game / "client-stdout.log", "w", encoding="utf-8", errors="replace")
-    # Detach so the client outlives the shell (and its job object) that started it.
-    flags = 0
-    if os.name == "nt":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP | 0x01000000  # BREAKAWAY_FROM_JOB
-    p = subprocess.Popen(args, cwd=game, stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
-    print(f"client pid {p.pid}; log: {game / 'client-stdout.log'}")
-
+    # Launch through WMI so the client is not part of our process tree or job object
+    # (it otherwise gets terminated along with the shell that started it). Arguments
+    # go through a Java @argfile to keep the command line short; output goes to
+    # the client's own logs/latest.log.
+    argfile = game / "launch.args"
+    quoted = ['"' + a.replace("\\", "\\\\") + '"' for a in args[1:]]
+    argfile.write_text("\n".join(quoted) + "\n", encoding="utf-8")
+    java = subprocess.run(["where", "java"], capture_output=True, text=True).stdout.splitlines()[0].strip()
+    # OpenAL Soft's null backend: the test client needs no audio, and initializing the
+    # system audio device intermittently killed the client during startup.
+    bat = game / "launch.bat"
+    bat.write_text(
+        f'@echo off\r\nset ALSOFT_DRIVERS=null\r\n"{java}" @"{argfile}" > "{game / "client-stdout.log"}" 2>&1\r\n'
+    )
+    ps = (
+        "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
+        f"@{{CommandLine='cmd.exe /c \"{bat}\"'; CurrentDirectory='{game}'}}; "
+        "if ($r.ReturnValue -ne 0) { exit 1 }; "
+        "for ($i = 0; $i -lt 50; $i++) { "
+        "  $j = Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | "
+        "       Where-Object { $_.CommandLine -like '*launch.args*' } | Select-Object -First 1; "
+        "  if ($j) { $j.ProcessId; exit 0 }; Start-Sleep -Milliseconds 100 }; exit 1"
+    )
+    out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True)
+    if out.returncode:
+        sys.exit("failed to start client: " + out.stderr)
+    print(f"client pid {out.stdout.strip()}; log: {game / 'logs' / 'latest.log'}")
 
 if __name__ == "__main__":
     main()
