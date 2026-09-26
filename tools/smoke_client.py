@@ -206,6 +206,7 @@ def use_item_on(pos, face, seq):
 # plus an oak log placed and then broken again. Ground surface is y = -61.
 PILLAR = [(8, -60, 12), (8, -59, 12), (8, -58, 12)]
 LOG = (10, -60, 12)
+TORCH = (6, -60, 12)
 
 
 def build(c, sb):
@@ -220,6 +221,9 @@ def build(c, sb):
     seq += 1
     # Start digging (creative: instant break).
     c.send(sb("player_action"), varint(0) + position(*LOG) + bytes([1]) + varint(seq))
+    seq += 1
+    c.send(sb("set_creative_mode_slot"), creative_slot(36, item_id("torch")))
+    c.send(sb("use_item_on"), use_item_on((TORCH[0], TORCH[1] - 1, TORCH[2]), 1, seq))
 
 
 def check_build(updates, acks):
@@ -228,7 +232,8 @@ def check_build(updates, acks):
         assert (p, stone) in updates, f"no stone block update at {p}: {updates}"
     log_states = [s for (p, s) in updates if p == LOG]
     assert len(log_states) == 2 and log_states[1] == default_state("air"), f"log place/break: {log_states}"
-    assert acks == [1, 2, 3, 4, 5], f"acks {acks}"
+    assert (TORCH, default_state("torch")) in updates, "torch not placed"
+    assert acks == [1, 2, 3, 4, 5, 6], f"acks {acks}"
     print(f"build: {len(updates)} block updates, acks {acks}")
 
 
@@ -301,6 +306,7 @@ def join(host, port, name):
     got_login = got_pos = got_wait = False
     chats = []
     block_updates = []
+    light_updates = []
     acks = []
     deadline = time.time() + 5
     sent_chat = False
@@ -347,6 +353,10 @@ def join(host, port, name):
             pos = tuple(c - (1 << 26) if i != 1 and c >= 1 << 25 else c for i, c in enumerate(pos))
             pos = (pos[0], pos[1] - (1 << 12) if pos[1] >= 1 << 11 else pos[1], pos[2])
             block_updates.append((pos, b.varint()))
+        elif i == cb("light_update"):
+            if not light_updates and DUMP_DIR:
+                (DUMP_DIR / "light_update.bin").write_bytes(b.d[b.i :])
+            light_updates.append((b.varint(), b.varint()))
         elif i == cb("block_changed_ack"):
             acks.append(b.varint())
         elif i == cb("keep_alive"):
@@ -358,6 +368,7 @@ def join(host, port, name):
     assert any(b"hello from smoke test" in m for m in chats), "chat was not echoed"
     if not os.environ.get("KILN_SMOKE_NO_BUILD"):
         check_build(block_updates, acks)
+        assert (0, 0) in light_updates, f"no light update for the torch's chunk: {light_updates}"
     print("OK")
 
 

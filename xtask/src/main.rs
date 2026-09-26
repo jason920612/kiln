@@ -13,13 +13,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod block_props;
+
 fn main() -> Result<()> {
     let task = std::env::args().nth(1).unwrap_or_default();
     let root = workspace_root();
     match task.as_str() {
         "codegen" => codegen(&root),
+        "extract" => {
+            let (_, input) = inputs(&root)?;
+            block_props::extract(&root, &input.server_jar)
+        }
         _ => {
-            eprintln!("usage: cargo xtask codegen");
+            eprintln!("usage: cargo xtask <codegen|extract>");
             std::process::exit(2);
         }
     }
@@ -34,15 +40,20 @@ struct Input {
     server_jar: PathBuf,
 }
 
-fn codegen(root: &Path) -> Result<()> {
+fn inputs(root: &Path) -> Result<(Value, Input)> {
     let work = root.join("work");
     let version: Value = read_json(&work.join("server_version.json"))
         .context("run the data fetch step first (work/server_version.json missing)")?;
-    let name = version["name"].as_str().context("version name")?;
+    let name = version["name"].as_str().context("version name")?.to_owned();
     let input = Input {
         generated: work.join("generated"),
-        server_jar: work.join("versions").join(name).join(format!("server-{name}.jar")),
+        server_jar: work.join("versions").join(&name).join(format!("server-{name}.jar")),
     };
+    Ok((version, input))
+}
+
+fn codegen(root: &Path) -> Result<()> {
+    let (version, input) = inputs(root)?;
     let out = root.join("crates/kiln-data/src/gen");
     fs::create_dir_all(&out)?;
 
@@ -51,6 +62,11 @@ fn codegen(root: &Path) -> Result<()> {
     fs::write(out.join("blocks.rs"), gen_blocks(&input)?)?;
     let registries = gen_registries(&input)?;
     fs::write(out.join("registries.rs"), registries)?;
+    let extra = input.generated.join("extra/block_states.json");
+    let extra = read_json(&extra).context("run `cargo xtask extract` first")?;
+    let blocks = read_json(&input.generated.join("reports/blocks.json"))?;
+    let state_count = blocks.as_object().unwrap().values().map(|b| b["states"].as_array().unwrap().len()).sum();
+    fs::write(out.join("block_props.bin"), block_props::pack(&extra, state_count)?)?;
     println!("codegen: wrote {}", out.display());
     Ok(())
 }

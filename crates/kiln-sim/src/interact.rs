@@ -1,6 +1,6 @@
 //! Block placement rules (for now: block items place their block, oriented by axis/facing).
 
-use kiln_data::blocks_types::{BlockInfo, block_by_name, has_fluid, is_air};
+use kiln_data::blocks_types::{BlockInfo, block_by_name, is_air};
 
 /// Block face / direction ids as used by the protocol (Direction.get3DDataValue).
 pub const DOWN: i32 = 0;
@@ -29,9 +29,9 @@ pub fn block_for_item(item: i32) -> Option<&'static BlockInfo> {
     (!is_air(block.default)).then_some(block)
 }
 
-/// Whether placing into a position holding `state` replaces it.
+/// Whether placing into a position holding `state` replaces it (air, water, short grass, ...).
 pub fn replaceable(state: u16) -> bool {
-    is_air(state) || (has_fluid(state) && kiln_data::blocks_types::block_of(state).properties.iter().any(|p| p.name == "level"))
+    kiln_data::block_props::replaceable(state)
 }
 
 /// Horizontal direction the player faces, from yaw in degrees.

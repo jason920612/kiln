@@ -57,6 +57,8 @@ pub struct Chunk {
     version: u32,
     saved_version: u32,
     cached: Option<(u32, Bytes)>,
+    /// Light sections changed since the last Update Light, per layer.
+    light_dirty: [u64; 2],
 }
 
 impl Chunk {
@@ -77,6 +79,7 @@ impl Chunk {
             version: 0,
             saved_version: 0,
             cached: None,
+            light_dirty: [0, 0],
         };
         for x in 0..16 {
             for z in 0..16 {
@@ -174,42 +177,64 @@ impl Chunk {
     }
 
     /// Returns the previous state, or `None` if `y` is outside the world.
+    /// Light is not updated here; the world's light engine does that.
     pub fn set(&mut self, x: usize, y: i32, z: usize, state: u16) -> Option<u16> {
         let (s, ly) = self.section_of(y)?;
         let old = self.sections[s].set(x, ly, z, state);
         if old != state {
             self.version += 1;
             if is_air(old) != is_air(state) {
-                self.recompute_column(x, z);
+                self.surface[(z << 4) | x] = self.column_top(x, z);
             }
         }
         Some(old)
     }
 
-    /// Updates the surface height and the column's sky light: full above the surface, dark below.
-    /// (Vertical-only sky light; horizontal propagation arrives with the lighting engine.)
-    fn recompute_column(&mut self, x: usize, z: usize) {
-        let old = self.surface[(z << 4) | x] as i32;
-        let top = self.column_top(x, z);
-        self.surface[(z << 4) | x] = top;
-        let (lo, hi) = (old.min(top as i32), old.max(top as i32));
-        for (li, light) in self.sky.iter_mut().enumerate() {
-            let base = (li as i32 - 1) * 16;
-            if base + 16 <= lo || base >= hi {
-                continue; // this section's column values did not change
-            }
-            for ly in 0..16 {
-                let v = if base + ly >= top as i32 { 15 } else { 0 };
-                light.set(((ly as usize) << 8) | (z << 4) | x, v);
-            }
-            if let Light::Nibbles(n) = light {
-                if n.iter().all(|&b| b == 0xff) {
-                    *light = Light::Full;
-                } else if n.iter().all(|&b| b == 0) {
-                    *light = Light::Zero;
-                }
-            }
+    /// Light section index (0 = below the world) of absolute `y`, if stored.
+    fn light_section(&self, y: i32) -> Option<usize> {
+        let li = ((y - self.min_y) >> 4) + 1;
+        (li >= 0 && (li as usize) < self.sky.len()).then_some(li as usize)
+    }
+
+    /// Light level at local `x`, `z` and absolute `y` (sections -1..=n are stored).
+    pub fn light(&self, layer: LightLayer, x: usize, y: i32, z: usize) -> u8 {
+        let Some(li) = self.light_section(y) else {
+            return if layer == LightLayer::Sky && y >= self.min_y { 15 } else { 0 };
+        };
+        let l = match layer {
+            LightLayer::Sky => &self.sky[li],
+            LightLayer::Block => &self.block[li],
+        };
+        l.get((((y - self.min_y) & 15) as usize) << 8 | (z << 4) | x)
+    }
+
+    /// Sets a light level; returns whether it changed.
+    pub fn set_light(&mut self, layer: LightLayer, x: usize, y: i32, z: usize, v: u8) -> bool {
+        let Some(li) = self.light_section(y) else { return false };
+        let i = (((y - self.min_y) & 15) as usize) << 8 | (z << 4) | x;
+        let l = match layer {
+            LightLayer::Sky => &mut self.sky[li],
+            LightLayer::Block => &mut self.block[li],
+        };
+        if l.get(i) == v {
+            return false;
         }
+        l.set(i, v);
+        self.light_dirty[layer as usize] |= 1 << li;
+        self.version += 1;
+        true
+    }
+
+    /// Light sections changed since the last call, as bit masks (sky, block).
+    pub fn take_light_dirty(&mut self) -> (u64, u64) {
+        let d = self.light_dirty;
+        self.light_dirty = [0, 0];
+        (d[0], d[1])
+    }
+
+    /// Encodes an Update Light payload for the given section masks (after the chunk coords).
+    pub fn encode_light_update(&self, sky: u64, block: u64, b: &mut BytesMut) {
+        put_light_data(b, &self.sky, sky, &self.block, block);
     }
 
     /// Chunk Data body after the coordinates; re-encoded only when the chunk changed.
@@ -250,38 +275,50 @@ impl Chunk {
 
         b.put_varint(0); // block entities
 
-        let masks = |layer: &[Light]| {
-            let (mut data, mut empty) = (0u64, 0u64);
-            for (i, l) in layer.iter().enumerate() {
-                match l {
-                    Light::Zero => empty |= 1 << i,
-                    _ => data |= 1 << i,
-                }
-            }
-            (data, empty)
-        };
-        let (sky_mask, empty_sky) = masks(&self.sky);
-        let (block_mask, empty_block) = masks(&self.block);
-        b.put_bitset(&[sky_mask]);
-        b.put_bitset(&[block_mask]);
-        b.put_bitset(&[empty_sky]);
-        b.put_bitset(&[empty_block]);
-        for (layer, mask) in [(&self.sky, sky_mask), (&self.block, block_mask)] {
-            b.put_varint(mask.count_ones() as i32);
-            for l in layer {
-                match l {
-                    Light::Zero => {}
-                    Light::Full => {
-                        b.put_varint(2048);
-                        b.put_bytes(0xff, 2048);
-                    }
-                    Light::Nibbles(n) => {
-                        b.put_varint(2048);
-                        b.put_slice(&n[..]);
-                    }
-                }
+        let all = (1u64 << self.sky.len()) - 1;
+        put_light_data(&mut b, &self.sky, all, &self.block, all);
+        b.freeze()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LightLayer {
+    Sky = 0,
+    Block = 1,
+}
+
+/// Light Data for the sections selected by `sky_sel`/`block_sel`: all-zero sections go in
+/// the empty masks, the rest are sent as arrays.
+fn put_light_data(b: &mut BytesMut, sky: &[Light], sky_sel: u64, block: &[Light], block_sel: u64) {
+    let masks = |layer: &[Light], sel: u64| {
+        let (mut data, mut empty) = (0u64, 0u64);
+        for (i, l) in layer.iter().enumerate().filter(|(i, _)| sel & (1 << i) != 0) {
+            match l {
+                Light::Zero => empty |= 1 << i,
+                Light::Nibbles(n) if n.iter().all(|&v| v == 0) => empty |= 1 << i,
+                _ => data |= 1 << i,
             }
         }
-        b.freeze()
+        (data, empty)
+    };
+    let (sky_mask, empty_sky) = masks(sky, sky_sel);
+    let (block_mask, empty_block) = masks(block, block_sel);
+    b.put_bitset(&[sky_mask]);
+    b.put_bitset(&[block_mask]);
+    b.put_bitset(&[empty_sky]);
+    b.put_bitset(&[empty_block]);
+    for (layer, mask) in [(sky, sky_mask), (block, block_mask)] {
+        b.put_varint(mask.count_ones() as i32);
+        for (i, l) in layer.iter().enumerate() {
+            if mask & (1 << i) == 0 {
+                continue;
+            }
+            b.put_varint(2048);
+            match l {
+                Light::Full => b.put_bytes(0xff, 2048),
+                Light::Nibbles(n) => b.put_slice(&n[..]),
+                Light::Zero => unreachable!("zero sections go in the empty mask"),
+            }
+        }
     }
 }

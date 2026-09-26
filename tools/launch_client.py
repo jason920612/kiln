@@ -26,6 +26,20 @@ def allowed(rules):
     return ok
 
 
+def bundled_java(component):
+    """The Java runtime the official launcher installed for this version, if present.
+    (A system JDK 25.0.3 crashed the client intermittently inside jvm.dll.)"""
+    roots = [MC / "runtime"]
+    packages = Path(os.environ.get("LOCALAPPDATA", "")) / "Packages"
+    if packages.exists():
+        roots += [p / "LocalCache" / "Local" / "runtime" for p in packages.glob("Microsoft.4297127D64EC6_*")]
+    for root in roots:
+        exe = root / component / "windows-x64" / component / "bin" / "java.exe"
+        if exe.exists():
+            return str(exe)
+    return None
+
+
 def main():
     server = sys.argv[1] if len(sys.argv) > 1 else "localhost:25570"
     name = sys.argv[2] if len(sys.argv) > 2 else "KilnTest"
@@ -70,7 +84,15 @@ def main():
     offline_uuid = uuid.UUID(bytes=bytes(16))  # replaced by the server's offline UUID on login
     args = [
         "java",
+        # The official launcher's defaults, plus a crash report location.
         "-Xmx2G",
+        "-XX:+UnlockExperimentalVMOptions",
+        "-XX:+UseG1GC",
+        "-XX:G1NewSizePercent=20",
+        "-XX:G1ReservePercent=20",
+        "-XX:MaxGCPauseMillis=50",
+        "-XX:G1HeapRegionSize=32M",
+        f"-XX:ErrorFile={game / 'hs_err_pid%p.log'}",
         "--enable-native-access=ALL-UNNAMED",
         f"-Djava.library.path={natives / 'java'}",
         f"-Djna.tmpdir={natives / 'jna'}",
@@ -99,7 +121,10 @@ def main():
     argfile = game / "launch.args"
     quoted = ['"' + a.replace("\\", "\\\\") + '"' for a in args[1:]]
     argfile.write_text("\n".join(quoted) + "\n", encoding="utf-8")
-    java = subprocess.run(["where", "java"], capture_output=True, text=True).stdout.splitlines()[0].strip()
+    java = bundled_java(v["javaVersion"]["component"]) or subprocess.run(
+        ["where", "java"], capture_output=True, text=True
+    ).stdout.splitlines()[0].strip()
+    print(f"java: {java}")
     # OpenAL Soft's null backend: the test client needs no audio, and initializing the
     # system audio device intermittently killed the client during startup.
     bat = game / "launch.bat"

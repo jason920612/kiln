@@ -138,6 +138,7 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
             return;
         }
         sim.tick();
+        sim.send_light_updates();
         // E: one batch per connection.
         for p in sim.players.values_mut() {
             p.flush();
@@ -364,7 +365,7 @@ impl Sim {
         self.set_block(target, interact::placement_state(block, face, yaw));
     }
 
-    /// Changes a block and tells everyone who has its chunk.
+    /// Changes a block (light follows) and tells everyone who has its chunk.
     fn set_block(&mut self, pos: [i32; 3], state: u16) {
         match self.world.set_block(pos[0], pos[1], pos[2], state) {
             Some(old) if old != state => {
@@ -376,6 +377,20 @@ impl Sim {
             }
             Some(_) => {}
             None => debug!("block change outside the world at {pos:?}"),
+        }
+    }
+
+    /// Update Light for every chunk whose light changed this tick, to players who have it.
+    fn send_light_updates(&mut self) {
+        for (pos, sky, block) in self.world.take_light_changes() {
+            if !self.players.values().any(|p| p.sent_chunks.contains(&pos)) {
+                continue;
+            }
+            let Some(body) = self.world.light_update_body(pos, sky, block) else { continue };
+            let pkt = packets::light_update(pos.x, pos.z, &body);
+            for p in self.players.values_mut().filter(|p| p.sent_chunks.contains(&pos)) {
+                p.send(pkt.clone());
+            }
         }
     }
 

@@ -243,6 +243,16 @@ pub fn level_chunk_with_light(x: i32, z: i32, body: &[u8]) -> Bytes {
     b.freeze()
 }
 
+/// `body` is Light Data (masks and arrays) for the changed sections.
+pub fn light_update(x: i32, z: i32, body: &[u8]) -> Bytes {
+    let mut b = BytesMut::with_capacity(8 + body.len());
+    b.put_varint(ids::play::clientbound::LIGHT_UPDATE);
+    b.put_varint(x);
+    b.put_varint(z);
+    b.put_slice(body);
+    b.freeze()
+}
+
 pub fn forget_level_chunk(x: i32, z: i32) -> Bytes {
     let mut b = packet(ids::play::clientbound::FORGET_LEVEL_CHUNK);
     // ChunkPos written as a single long: z in the high half, x in the low half.

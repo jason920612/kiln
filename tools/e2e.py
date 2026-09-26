@@ -22,6 +22,7 @@ EXE = ROOT / "target" / "release" / ("kiln.exe" if os.name == "nt" else "kiln")
 DECODE = {
     "level_chunk_with_light.bin": "net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket",
     "block_update.bin": "net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket",
+    "light_update.bin": "net.minecraft.network.protocol.game.ClientboundLightUpdatePacket",
 }
 
 
@@ -89,22 +90,38 @@ $g.ReleaseHdc($hdc); $g.Dispose(); $bmp.Save("{out}"); $bmp.Dispose()
     subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=True)
 
 
-def real_client(port, name, keep):
+def alive(pid):
+    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
+    return str(pid) in out
+
+
+def launch(port, name):
     out = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "launch_client.py"), f"localhost:{port}", name],
         capture_output=True, text=True, check=True,
     ).stdout
-    pid = int(re.search(r"client pid (\d+)", out).group(1))
-    deadline = time.time() + 180
+    return int(re.search(r"client pid (\d+)", out).group(1))
+
+
+def real_client(port, name, keep):
     ok = False
-    while time.time() < deadline:
-        log = server_log()
-        if f"{name} finished loading terrain" in log:
-            ok = True
+    for attempt in range(3):
+        pid = launch(port, name)
+        joins_before = server_log().count(f"{name} finished loading terrain")
+        deadline = time.time() + 180
+        while time.time() < deadline:
+            log = server_log()
+            if log.count(f"{name} finished loading terrain") > joins_before:
+                ok = True
+                break
+            if not alive(pid):
+                break
+            time.sleep(1)
+        if ok or alive(pid):
             break
-        if re.search(rf"{name} left", log):
-            break
-        time.sleep(1)
+        # The client JVM itself crashes now and then during startup (jvm.dll access
+        # violation, independent of the server); try again.
+        print(f"client exited before joining (attempt {attempt + 1}); relaunching")
     time.sleep(3)
     shot = WORK / "client.png"
     try:

@@ -2,6 +2,7 @@
 //! superflat generator, block access and cached chunk packets.
 
 pub mod chunk;
+pub mod light;
 pub mod section;
 
 use bytes::Bytes;
@@ -188,10 +189,46 @@ impl World {
         Some(c.get((x & 15) as usize, y, (z & 15) as usize))
     }
 
-    /// Sets a block, generating its chunk if needed. Returns the previous state,
-    /// or `None` if `y` is outside the world.
+    /// Sets a block, generating its chunk if needed, and updates light. Returns the
+    /// previous state, or `None` if `y` is outside the world.
     pub fn set_block(&mut self, x: i32, y: i32, z: i32, state: u16) -> Option<u16> {
-        self.chunk_mut(ChunkPos::of_block(x, z)).set((x & 15) as usize, y, (z & 15) as usize, state)
+        let old = self.chunk_mut(ChunkPos::of_block(x, z)).set((x & 15) as usize, y, (z & 15) as usize, state)?;
+        if old != state {
+            self.update_light(x, y, z, old, state);
+        }
+        Some(old)
+    }
+
+    /// The chunk at `pos` if it is loaded (never loads or generates).
+    pub fn chunk_mut_loaded(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
+        self.cells.get_mut(&pos.cell())?.chunks[pos.cell_index()].as_deref_mut()
+    }
+
+    /// Light Data for an Update Light packet covering the given sections of a loaded chunk.
+    pub fn light_update_body(&self, pos: ChunkPos, sky: u64, block: u64) -> Option<Bytes> {
+        let mut b = bytes::BytesMut::new();
+        self.chunk(pos)?.encode_light_update(sky, block, &mut b);
+        Some(b.freeze())
+    }
+
+    /// Loaded chunks with light changes since the last call, with their section masks.
+    pub fn take_light_changes(&mut self) -> Vec<(ChunkPos, u64, u64)> {
+        let mut out = Vec::new();
+        for (cell_pos, cell) in &mut self.cells {
+            for (i, slot) in cell.chunks.iter_mut().enumerate() {
+                let Some(chunk) = slot.as_deref_mut() else { continue };
+                let (sky, block) = chunk.take_light_dirty();
+                if sky | block != 0 {
+                    let m = (1 << CELL_SHIFT) - 1;
+                    let pos = ChunkPos::new(
+                        (cell_pos.x << CELL_SHIFT) | (i as i32 & m),
+                        (cell_pos.z << CELL_SHIFT) | ((i as i32 >> CELL_SHIFT) & m),
+                    );
+                    out.push((pos, sky, block));
+                }
+            }
+        }
+        out
     }
 
     pub fn loaded_chunks(&self) -> usize {
