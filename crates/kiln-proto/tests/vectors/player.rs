@@ -85,6 +85,39 @@ pub fn player(c: &mut Cases) {
     let e = vec![is(&si("gameType"), "CREATIVE"), is(&si("previousGameType"), "SPECTATOR"), is("dataToKeep", 0)];
     c.play("respawn_creative", "ClientboundRespawnPacket", "respawn", respawn(&spawn, respawn_keep::NOTHING), e);
 
+    // `login` now writes its spawn info through the shared SpawnInfo encoder.
+    let login = kiln_proto::packets::Login {
+        entity_id: 42,
+        // One level: vanilla keeps them in a HashSet of identity-hashed keys, so the order it
+        // re-encodes several in varies between runs.
+        dimensions: &["minecraft:overworld"],
+        max_players: 100,
+        view_distance: 10,
+        simulation_distance: 8,
+        dimension_type: synced("minecraft:dimension_type", "minecraft:overworld"),
+        dimension: "minecraft:overworld",
+        game_mode: 1,
+        is_flat: true,
+        sea_level: 63,
+        online_mode: true,
+    };
+    let e = vec![
+        is("playerId", 42),
+        is("levels", "[ResourceKey[minecraft:dimension / minecraft:overworld]]"),
+        is("maxPlayers", 100),
+        is("chunkRadius", 10),
+        is("simulationDistance", 8),
+        is(&si("dimensionType"), "minecraft:overworld"),
+        is(&si("gameType"), "CREATIVE"),
+        is(&si("previousGameType"), "empty"),
+        is(&si("isFlat"), true),
+        is(&si("lastDeathLocation"), "empty"),
+        is(&si("seaLevel"), 63),
+        is("onlineMode", true),
+        is("enforcesSecureChat", false),
+    ];
+    c.play("login", "ClientboundLoginPacket", "login", kiln_proto::packets::play_login(&login), e);
+
     let p = set_simulation_distance(12);
     let e = vec![is("simulationDistance", 12)];
     c.play("set_simulation_distance", "ClientboundSetSimulationDistancePacket", "set_simulation_distance", p, e);
