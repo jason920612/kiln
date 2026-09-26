@@ -68,6 +68,8 @@ struct Player {
     tracker: packets::entity::MovementTracker,
     /// Players currently seeing this one (sorted).
     seen_by: Vec<ConnId>,
+    /// Section at the last visibility update; `None` forces a re-evaluation.
+    section: Option<[i32; 3]>,
     sneaking: bool,
     sprinting: bool,
     /// Shared flags or pose changed since the last broadcast.
@@ -353,6 +355,7 @@ impl Sim {
                 &move_state,
             ),
             seen_by: Vec::new(),
+            section: None,
             sneaking: false,
             sprinting: false,
             meta_dirty: false,
@@ -415,6 +418,7 @@ impl Sim {
             }
             PlayIn::ClientInformation(info) => {
                 p.view_distance = (info.view_distance as i32).min(self.config.view_distance as i32);
+                p.section = None;
                 p.client = info;
             }
             PlayIn::PlayerInput { flags } => {

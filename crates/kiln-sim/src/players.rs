@@ -118,6 +118,9 @@ impl Sim {
     }
 
     /// Recomputes who sees whom.
+    /// Vanilla's tracking triggers (`ChunkMap.tick`): a player whose section changed has its
+    /// viewers re-evaluated against everyone, and every player re-evaluates its pairing with
+    /// the viewers whose section changed. Nothing else changes who sees whom.
     pub(crate) fn update_visibility(&mut self) {
         struct Snap {
             conn: ConnId,
@@ -127,46 +130,69 @@ impl Sim {
             /// Viewer's tracking radius in blocks and its view distance in chunks.
             range: f64,
             view: i32,
+            moved: bool,
         }
         let range_cap = PLAYER.tracking_range as f64 * 16.0;
         // Sorted by connection so the wanted viewer lists come out sorted, like `seen_by`.
         let mut snaps: Vec<Snap> = self
             .players
-            .iter()
-            .map(|(&conn, p)| Snap {
-                conn,
-                x: p.pos[0],
-                z: p.pos[2],
-                chunk: ChunkPos::of_block(p.pos[0].floor() as i32, p.pos[2].floor() as i32),
-                range: range_cap.min(p.view_distance as f64 * 16.0),
-                view: p.view_distance,
+            .iter_mut()
+            .map(|(&conn, p)| {
+                let block = p.pos.map(|c| c.floor() as i32);
+                let section = block.map(|c| c >> 4);
+                let moved = p.section != Some(section);
+                p.section = Some(section);
+                Snap {
+                    conn,
+                    x: p.pos[0],
+                    z: p.pos[2],
+                    chunk: ChunkPos::of_block(block[0], block[2]),
+                    range: range_cap.min(p.view_distance as f64 * 16.0),
+                    view: p.view_distance,
+                    moved,
+                }
             })
             .collect();
+        if !snaps.iter().any(|s| s.moved) {
+            return;
+        }
         snaps.sort_unstable_by_key(|s| s.conn);
+        let movers: Vec<&Snap> = snaps.iter().filter(|s| s.moved).collect();
 
-        // Which viewers should see each player (vanilla: within the entity's tracking range
-        // and the viewer's view distance, and in a chunk inside the viewer's chunk view).
+        // Vanilla `updatePlayer`: within the entity's tracking range and the viewer's view
+        // distance, and in a chunk inside the viewer's chunk view.
+        let sees = |v: &Snap, t: &Snap| {
+            let (dx, dz) = (v.x - t.x, v.z - t.z);
+            v.conn != t.conn
+                && dx * dx + dz * dz <= v.range * v.range
+                && (t.chunk.x - v.chunk.x).abs() <= v.view
+                && (t.chunk.z - v.chunk.z).abs() <= v.view
+        };
         let mut changes: Vec<(ConnId, Vec<ConnId>, Vec<ConnId>)> = Vec::new();
         let mut want: Vec<ConnId> = Vec::with_capacity(snaps.len());
         for t in &snaps {
-            want.clear();
-            for v in &snaps {
-                if v.conn == t.conn {
+            let seen = &self.players[&t.conn].seen_by;
+            let (added, removed) = if t.moved {
+                want.clear();
+                want.extend(snaps.iter().filter(|v| sees(v, t)).map(|v| v.conn));
+                if seen[..] == want[..] {
                     continue;
                 }
-                let (dx, dz) = (v.x - t.x, v.z - t.z);
-                if dx * dx + dz * dz <= v.range * v.range
-                    && (t.chunk.x - v.chunk.x).abs() <= v.view
-                    && (t.chunk.z - v.chunk.z).abs() <= v.view
-                {
-                    want.push(v.conn);
+                sorted_diff(&want, seen)
+            } else {
+                let (mut added, mut removed) = (Vec::new(), Vec::new());
+                for v in &movers {
+                    match (sees(v, t), seen.binary_search(&v.conn).is_ok()) {
+                        (true, false) => added.push(v.conn),
+                        (false, true) => removed.push(v.conn),
+                        _ => {}
+                    }
                 }
-            }
-            let seen = &self.players[&t.conn].seen_by;
-            if seen[..] == want[..] {
-                continue;
-            }
-            let (added, removed) = sorted_diff(&want, seen);
+                if added.is_empty() && removed.is_empty() {
+                    continue;
+                }
+                (added, removed)
+            };
             changes.push((t.conn, added, removed));
         }
         for (t, added, removed) in changes {
