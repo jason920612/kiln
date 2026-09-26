@@ -14,21 +14,25 @@ fn main() -> Result<()> {
     let net_config = kiln_net::Config {
         bind: ([0, 0, 0, 0], port).into(),
         motd: "A Kiln server".into(),
-        max_players: 100,
+        max_players: std::env::var("KILN_MAX_PLAYERS").ok().and_then(|v| v.parse().ok()).unwrap_or(100),
         view_distance: 10,
         simulation_distance: 10,
         compression_threshold: Some(256),
     };
-    let sim_config = kiln_sim::SimConfig {
-        max_players: net_config.max_players,
-        view_distance: net_config.view_distance,
-        simulation_distance: net_config.simulation_distance,
-        world: std::env::var_os("KILN_WORLD").map(Into::into),
-    };
+    let max_players = net_config.max_players;
+    let view_distance = net_config.view_distance;
+    let simulation_distance = net_config.simulation_distance;
 
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();
     let shutdown = to_sim.clone();
     let shared = Arc::new(kiln_net::Shared::new(net_config, to_sim));
+    let sim_config = kiln_sim::SimConfig {
+        max_players,
+        view_distance,
+        simulation_distance,
+        world: std::env::var_os("KILN_WORLD").map(Into::into),
+        online_mode: shared.authenticates(),
+    };
 
     let sim = std::thread::Builder::new().name("sim".into()).spawn(move || kiln_sim::run(sim_config, sim_rx))?;
 

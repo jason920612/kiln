@@ -9,6 +9,8 @@ use crate::nbt::Tag;
 use crate::{DecodeError, Reader, WriteExt};
 use uuid::Uuid;
 
+pub mod login_ext;
+
 fn packet(id: i32) -> BytesMut {
     let mut b = BytesMut::with_capacity(64);
     b.put_varint(id);
@@ -152,6 +154,7 @@ pub struct Login<'a> {
     pub game_mode: u8,
     pub is_flat: bool,
     pub sea_level: i32,
+    pub online_mode: bool,
 }
 
 pub fn play_login(l: &Login) -> Bytes {
@@ -180,7 +183,7 @@ pub fn play_login(l: &Login) -> Bytes {
     b.put_varint(0); // portal cooldown
     b.put_varint(l.sea_level);
     // Login
-    b.put_bool(false); // online mode
+    b.put_bool(l.online_mode);
     b.put_bool(false); // enforces secure chat
     b.freeze()
 }

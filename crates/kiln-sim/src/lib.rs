@@ -21,6 +21,8 @@ pub struct SimConfig {
     pub simulation_distance: u8,
     /// A vanilla world save to load; a superflat world is used when `None`.
     pub world: Option<std::path::PathBuf>,
+    /// Whether players were authenticated with Mojang (sent to clients in Login).
+    pub online_mode: bool,
 }
 
 const TICK: Duration = Duration::from_millis(50);
@@ -225,8 +227,9 @@ impl Sim {
             dimension_type,
             dimension: OVERWORLD,
             game_mode: 1,
-            is_flat: true,
+            is_flat: self.config.world.is_none(),
             sea_level: 63,
+            online_mode: self.config.online_mode,
         }));
         player.send(packets::player_position(1, spawn, 0.0, 0.0));
         player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, 0.0, 0.0));
