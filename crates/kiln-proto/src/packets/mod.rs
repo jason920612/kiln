@@ -1,6 +1,8 @@
 //! Packet bodies (packet id + data) for the states the server speaks so far.
 //! Field layouts follow the 26.3 protocol (minecraft.wiki, checked against the jar).
 
+pub mod entity;
+
 use bytes::{BufMut, Bytes, BytesMut};
 use kiln_data::packets as ids;
 use crate::nbt::Tag;
