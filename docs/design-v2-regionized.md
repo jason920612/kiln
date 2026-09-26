@@ -759,7 +759,15 @@ libdeflater（MSVC 以 `cc` 建置）、zlib-rs 備援、不用 miniz；輸出�
 ## 8. 世界生成與光照
 
 ### 8.1 26.3 f32 語意
-26.3 的 density function 與 noise 在所有中間步驟使用 f32，並重構了 noise settings（`material_rule`、`aquifers`/`ore_veins` 物件、不再有隱含的 beardifier、約 15 個新 op）。TERRAIN 合併了 NOISE、SURFACE、CARVERS。實作規則：嚴格 IEEE f32、禁止 FMA 收縮、`(float)` 轉型只出現在 Java 有的地方、`kiln-javamath` 播種（LCG、Xoroshiro128++、MD5 位置種子）、extractor 內嵌的 multi-noise RTree（Tier A）、數學參考見 §2.5。SIMD 只沿取樣位置向量化，永不沿運算式樹。SteelMC 的 26.2 parity 是 f64，不適用。
+（2026-09-27 以 javap 與 f32 spike 驗證後更正；原始 javap 輸出在 work/wp2-worldgen/javap，屬 Tier A。）
+- **f32 與 f64 的分界**：取樣介面為 `sampleValue(ctx, int x, int y, int z) → float` 與 volume 版 `sampleVolume(ctx, DensityBuffer(float[]), DensityVolume)`，座標一律是整數方塊座標。座標在進入 lattice 之前是 f64（`xz_scale`/`y_scale` 與 `NoiseStack` 頻率都是 double；2²⁵ 週期的 wrap、double lattice offset、`Mth.floor(double)`；float 的 shift 以 `(double)` 加入）；進入 lattice 之後全部是 f32（小數部分 `(float)(x - floor)`、gradient dot、smoothstep、lerp3、振幅相乘與逐層累加、所有 density op、spline、gradient、內插）。SmearedPerlin 例外：y 小數與 fudge 保持 double，最後才轉 float。octave 設定以 double 計算後 `(float)` 轉成每層振幅，振幅加總是 `DoubleStream.sum()`（Kahan 補償）。
+- datapack 常數以 `Codec.FLOAT` 直接從十進位字串轉 float（不可經 f64 二次捨入），`xz_scale` 等用 `Codec.DOUBLE`。超越函數只有 `Math.sqrt`、`Math.log`（log op）與 `Math.pow`（octave 設定，2 的冪），沒有 `StrictMath`。
+- **point 與 volume 本來就算出不同的 bit**：dot 項順序、振幅套用位置、座標合成（point `(b*s)*f`、volume `b*(s*f)`）、`Mul`/`Div` 在 point 模式遇左值 0 提早回傳、min/max 在 point 模式以宣告的 range 短路、fillCell 的內插順序都不同；vanilla 自己的兩種模式在 `final_density` 上每個 seed 有 7–70 個位置（共 1,019,200 個）不一致。Kiln 兩種模式各自移植、各自逐位元相同。
+- **編譯器會影響數值**：`DensityFunctionCompiler` 會 inline reference、把 `cache` 換成共用的 prepared cache、以 `slice` 固定子節點缺少的軸，並依常數與宣告的 `Interval` range 特化（例如 `x/c` 變成 `x*(1/c)`、以 range 剪掉 min/max 分支），所以 `Interval` 的 float 運算也要照搬。
+- **noise settings**：有 `material_rule` 與 `aquifers` 物件（barrier、fluid_level_floodedness、fluid_level_spread、lava、exclusion、surface_level 六個 density function），**沒有 `ore_veins` 物件**。`NoiseRouter` 有 8 個欄位：temperature、vegetation、continents、erosion、depth、ridges、`chunk_surface_level`（新）、final_density。beardifier 是 `final_density` 裡明寫的 `minecraft:beardifier`，沒有結構時為 0。新 op：distance_to_point、gradient、pow、lerp、interval_select、find_top_surface、slice、sqrt、reciprocal、negate、log、sign、div、sub 與 floor/ceil/round/truncate/multiple；1.21 的 cache_2d、flat_cache、cache_once、cache_all_in_cell、y_clamped_gradient、weird_scaled_sampler、shifted_noise 已不存在。`ImprovedNoise` 改為 `GradientNoise`、`PerlinNoise`、`SmearedPerlinNoise`、`NoiseStack`；noise 參數改為 `base_octave`、`octave_count`、`amplitude_modifiers`、`base_amplitude`。
+- TERRAIN 狀態（`NoiseBasedChunkGenerator.buildTerrain`）依序做 fill、surface、carvers。
+- 實作規則不變：嚴格 IEEE f32、禁止 FMA 收縮、`(float)` 轉型只出現在 Java 有的地方、`kiln-javamath` 播種（LCG、Xoroshiro128++、MD5 位置種子）。SIMD 只沿取樣位置向量化，永不沿運算式樹。SteelMC 的 26.2 parity 是 f64，不適用。
+- **spike 結果（M2 提前完成）**：5 個 seed（含隨機一個）、8 個 router 欄位加 6 個 aquifer 輸出，point／volume／caching 三種模式各 5,096,000 個角點，**0 mismatch**；29 個 overworld density function 與全部 noise instance 也是 0 mismatch。單執行緒 volume 吞吐 926k 點/秒，vanilla caching 路徑 399k（約 2.3×，T4 目標 3× 需 SIMD）。
 
 ### 8.2 直譯器與轉譯器
 - **批次直譯器（oracle 與預設路徑）**：把 density function 圖攤平成拓撲排序的 `Vec<Node>` 加暫存槽；每個節點一次處理一批位置（一個 cell 柱）的 f32 陣列，自動向量化或以 `std::arch` AVX2（執行期偵測）；f32 的 SIMD 通道數是 f64 的兩倍。同一個直譯器也執行 datapack 的自訂世界生成；遇到未知的 density 或 feature 類型時以名稱明確失敗。
