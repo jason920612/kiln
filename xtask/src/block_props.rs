@@ -26,8 +26,7 @@ pub const FLAGS: &[&str] = &[
 ];
 
 /// Runs the Java extractor against the server jar and its libraries.
-pub fn extract(root: &Path, server_jar: &Path) -> Result<()> {
-    let work = root.join("work");
+pub fn extract(root: &Path, work: &Path, server_jar: &Path) -> Result<()> {
     let mut cp = vec![server_jar.to_path_buf()];
     collect_jars(&work.join("libraries"), &mut cp)?;
     let cp = std::env::join_paths(&cp)?;
@@ -38,7 +37,7 @@ pub fn extract(root: &Path, server_jar: &Path) -> Result<()> {
         .arg(cp)
         .arg(root.join("tools/ExtractBlocks.java"))
         .arg(out.join("block_states.json"))
-        .current_dir(&work)
+        .current_dir(work)
         .status()
         .context("running java (JDK 25 must be on PATH)")?;
     if !status.success() {

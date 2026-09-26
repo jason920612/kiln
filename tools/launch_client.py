@@ -13,6 +13,7 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+WORK = Path(os.environ.get("KILN_WORK") or ROOT / "work").resolve()
 MC = Path(os.environ["APPDATA"]) / ".minecraft"
 
 
@@ -59,7 +60,7 @@ def main():
             cp.append(str(path))
     cp.append(str(vdir / f"{version}.jar"))
 
-    game = ROOT / "work" / "client"
+    game = WORK / "client"
     natives = game / "natives"
     for d in ("java", "jna", "lwjgl", "netty"):
         (natives / d).mkdir(parents=True, exist_ok=True)

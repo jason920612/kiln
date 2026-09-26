@@ -1,0 +1,288 @@
+# Protocol completeness list, checked by `cargo xtask completeness` against the generated
+# packets.json: every packet must be listed, and every listed packet must still exist.
+#
+#   implemented  encoded or decoded by Kiln (the note says how much of it)
+#   ignored      received and deliberately dropped, with a test that proves it is harmless
+#   deferred     not implemented yet; the note names the feature it belongs to
+#
+# Serverbound packets that are not implemented are currently read and dropped
+# (kiln-proto `decode_play`, kiln-net `configure`). Keys are packet names without the
+# `minecraft:` namespace, in protocol id order.
+
+[handshake.serverbound]
+intention = { status = "implemented", note = "kiln-net handle(); host and port are read and ignored" }
+
+[status.clientbound]
+status_response = { status = "implemented", note = "packets::status_response: version, player counts, MOTD" }
+pong_response = { status = "implemented", note = "packets::status_pong" }
+
+[status.serverbound]
+status_request = { status = "implemented", note = "kiln-net status()" }
+ping_request = { status = "implemented", note = "kiln-net status(); answered, then the connection ends" }
+
+[login.clientbound]
+login_disconnect = { status = "implemented", note = "packets::login_disconnect: wrong protocol, invalid name, server full" }
+hello = { status = "deferred", note = "encryption request: online mode" }
+login_finished = { status = "implemented", note = "packets::login_finished: offline-mode UUID, no profile properties yet" }
+login_compression = { status = "implemented", note = "packets::login_compression when a threshold is configured" }
+custom_query = { status = "deferred", note = "login plugin request: Velocity modern forwarding" }
+cookie_request = { status = "deferred", note = "cookies (transfers)" }
+
+[login.serverbound]
+hello = { status = "implemented", note = "kiln-net login(); name validated, client UUID ignored" }
+key = { status = "deferred", note = "encryption response: online mode" }
+custom_query_answer = { status = "deferred", note = "login plugin response: Velocity modern forwarding" }
+login_acknowledged = { status = "implemented", note = "kiln-net login(); switches to configuration" }
+cookie_response = { status = "deferred", note = "cookies (transfers)" }
+
+[configuration.clientbound]
+cookie_request = { status = "deferred", note = "cookies (transfers)" }
+custom_payload = { status = "implemented", note = "packets::config_brand: minecraft:brand only" }
+disconnect = { status = "implemented", note = "packets::config_disconnect: client lacks minecraft:core" }
+finish_configuration = { status = "implemented", note = "packets::finish_configuration" }
+keep_alive = { status = "deferred", note = "configuration keep-alive: needed once configuration can outlast the client timeout" }
+ping = { status = "deferred", note = "configuration ping" }
+reset_chat = { status = "deferred", note = "re-entering configuration from play" }
+registry_data = { status = "implemented", note = "packets::registry_data: known-packs path only (entry names, data from minecraft:core)" }
+resource_pack_pop = { status = "deferred", note = "server resource packs" }
+resource_pack_push = { status = "deferred", note = "server resource packs" }
+post_effects = { status = "deferred", note = "post-processing shader effects" }
+store_cookie = { status = "deferred", note = "cookies (transfers)" }
+transfer = { status = "deferred", note = "server transfer" }
+update_enabled_features = { status = "implemented", note = "packets::update_enabled_features: minecraft:vanilla only" }
+update_tags = { status = "implemented", note = "packets::update_tags with kiln_data::registries::TAGS" }
+select_known_packs = { status = "implemented", note = "packets::select_known_packs: offers minecraft:core" }
+custom_report_details = { status = "deferred", note = "crash report details" }
+server_links = { status = "deferred", note = "server links (pause menu)" }
+clear_dialog = { status = "deferred", note = "dialogs" }
+show_dialog = { status = "deferred", note = "dialogs" }
+code_of_conduct = { status = "deferred", note = "server code of conduct screen" }
+
+[configuration.serverbound]
+client_information = { status = "implemented", note = "packets::read_client_information: only the view distance is kept" }
+cookie_response = { status = "deferred", note = "cookies (transfers)" }
+custom_payload = { status = "deferred", note = "plugin channels, client brand" }
+finish_configuration = { status = "implemented", note = "kiln-net configure(); enters play" }
+keep_alive = { status = "deferred", note = "configuration keep-alive" }
+pong = { status = "deferred", note = "configuration ping" }
+resource_pack = { status = "deferred", note = "server resource packs (status replies)" }
+select_known_packs = { status = "implemented", note = "kiln-net configure(); clients without minecraft:core are disconnected" }
+custom_click_action = { status = "deferred", note = "dialogs (custom click actions)" }
+accept_code_of_conduct = { status = "deferred", note = "server code of conduct screen" }
+
+[play.clientbound]
+bundle_delimiter = { status = "deferred", note = "packet bundles (atomic entity spawns)" }
+add_entity = { status = "deferred", note = "entity tracking" }
+animate = { status = "deferred", note = "entity animations" }
+award_stats = { status = "deferred", note = "statistics" }
+block_changed_ack = { status = "deferred", note = "block interaction (sequence acks)" }
+block_destruction = { status = "deferred", note = "block breaking progress" }
+block_entity_data = { status = "deferred", note = "block entities" }
+block_event = { status = "deferred", note = "block events (note blocks, pistons, chests)" }
+block_update = { status = "deferred", note = "world edits" }
+boss_event = { status = "deferred", note = "boss bars" }
+change_difficulty = { status = "deferred", note = "difficulty" }
+chunk_batch_finished = { status = "implemented", note = "packets::chunk_batch_finished" }
+chunk_batch_start = { status = "implemented", note = "packets::chunk_batch_start: kiln-sim streams chunks in acked batches" }
+chunks_biomes = { status = "deferred", note = "biome updates (/fillbiome)" }
+clear_titles = { status = "deferred", note = "titles" }
+command_suggestions = { status = "deferred", note = "commands (tab completion)" }
+commands = { status = "deferred", note = "command tree" }
+container_close = { status = "deferred", note = "containers" }
+container_set_content = { status = "deferred", note = "containers and inventory" }
+container_set_data = { status = "deferred", note = "containers (furnace progress, enchanting)" }
+container_set_slot = { status = "deferred", note = "containers and inventory" }
+cookie_request = { status = "deferred", note = "cookies (transfers)" }
+cooldown = { status = "deferred", note = "item cooldowns" }
+custom_chat_completions = { status = "deferred", note = "chat completions" }
+custom_payload = { status = "deferred", note = "plugin channels" }
+damage_event = { status = "deferred", note = "combat" }
+"debug/block_value" = { status = "deferred", note = "debug subscriptions (development only)" }
+"debug/chunk_value" = { status = "deferred", note = "debug subscriptions (development only)" }
+"debug/entity_value" = { status = "deferred", note = "debug subscriptions (development only)" }
+"debug/event" = { status = "deferred", note = "debug subscriptions (development only)" }
+debug_sample = { status = "deferred", note = "debug charts (tick time samples)" }
+delete_chat = { status = "deferred", note = "signed chat (not planned for chat v1)" }
+disconnect = { status = "implemented", note = "packets::play_disconnect" }
+disguised_chat = { status = "deferred", note = "chat v1: player messages" }
+entity_event = { status = "deferred", note = "entity status events" }
+entity_position_sync = { status = "deferred", note = "entity movement" }
+explode = { status = "deferred", note = "explosions" }
+add_transient_block = { status = "deferred", note = "client-side transient blocks" }
+forget_level_chunk = { status = "implemented", note = "packets::forget_level_chunk" }
+game_event = { status = "implemented", note = "packets::game_event: only START_WAITING_FOR_CHUNKS so far" }
+game_rule_values = { status = "deferred", note = "game rules (client-visible values)" }
+game_test_highlight_pos = { status = "deferred", note = "game tests (development only)" }
+mount_screen_open = { status = "deferred", note = "mount inventories (horses, camels)" }
+hurt_animation = { status = "deferred", note = "combat" }
+initialize_border = { status = "deferred", note = "world border" }
+keep_alive = { status = "implemented", note = "packets::keep_alive: every 15 s, 30 s timeout" }
+level_chunk_with_light = { status = "implemented", note = "packets::level_chunk_with_light: superflat body from kiln-world" }
+level_event = { status = "deferred", note = "world events (sounds and particles)" }
+level_particles = { status = "deferred", note = "particles" }
+light_update = { status = "deferred", note = "lighting updates" }
+login = { status = "implemented", note = "packets::play_login: overworld only, offline mode" }
+low_disk_space_warning = { status = "deferred", note = "server warnings" }
+map_item_data = { status = "deferred", note = "maps" }
+merchant_offers = { status = "deferred", note = "villager trading" }
+move_entity_pos = { status = "deferred", note = "entity movement" }
+move_entity_pos_rot = { status = "deferred", note = "entity movement" }
+move_minecart_along_track = { status = "deferred", note = "minecart improvements experiment" }
+move_entity_rot = { status = "deferred", note = "entity movement" }
+move_vehicle = { status = "deferred", note = "vehicles" }
+open_book = { status = "deferred", note = "books" }
+open_screen = { status = "deferred", note = "containers" }
+open_sign_editor = { status = "deferred", note = "signs" }
+ping = { status = "deferred", note = "play ping" }
+pong_response = { status = "deferred", note = "network debug ping" }
+place_ghost_recipe = { status = "deferred", note = "recipe book" }
+player_abilities = { status = "deferred", note = "abilities (flight, creative)" }
+player_chat = { status = "deferred", note = "signed chat (not planned for chat v1)" }
+player_combat_end = { status = "deferred", note = "combat tracking" }
+player_combat_enter = { status = "deferred", note = "combat tracking" }
+player_combat_kill = { status = "deferred", note = "death screen" }
+player_info_remove = { status = "deferred", note = "player list" }
+player_info_update = { status = "deferred", note = "player list and profiles (skins)" }
+player_look_at = { status = "deferred", note = "commands (/tp facing)" }
+player_position = { status = "implemented", note = "packets::player_position: absolute teleport on join" }
+player_rotation = { status = "deferred", note = "rotation-only teleports" }
+recipe_book_add = { status = "deferred", note = "recipe book" }
+recipe_book_remove = { status = "deferred", note = "recipe book" }
+recipe_book_settings = { status = "deferred", note = "recipe book" }
+remove_entities = { status = "deferred", note = "entity tracking" }
+remove_mob_effect = { status = "deferred", note = "status effects" }
+reset_score = { status = "deferred", note = "scoreboard" }
+resource_pack_pop = { status = "deferred", note = "server resource packs" }
+resource_pack_push = { status = "deferred", note = "server resource packs" }
+post_effects = { status = "deferred", note = "post-processing shader effects" }
+respawn = { status = "deferred", note = "respawn and dimension changes" }
+rotate_head = { status = "deferred", note = "entity movement" }
+section_blocks_update = { status = "deferred", note = "world edits" }
+select_advancements_tab = { status = "deferred", note = "advancements" }
+server_data = { status = "deferred", note = "server data (MOTD, icon)" }
+set_action_bar_text = { status = "deferred", note = "titles and action bar" }
+set_border_center = { status = "deferred", note = "world border" }
+set_border_lerp_size = { status = "deferred", note = "world border" }
+set_border_size = { status = "deferred", note = "world border" }
+set_border_warning_delay = { status = "deferred", note = "world border" }
+set_border_warning_distance = { status = "deferred", note = "world border" }
+set_camera = { status = "deferred", note = "spectator camera" }
+set_chunk_cache_center = { status = "implemented", note = "packets::set_chunk_cache_center" }
+set_chunk_cache_radius = { status = "deferred", note = "view distance changes" }
+set_cursor_item = { status = "deferred", note = "inventory" }
+set_default_spawn_position = { status = "implemented", note = "packets::set_default_spawn_position" }
+set_display_objective = { status = "deferred", note = "scoreboard" }
+set_entity_data = { status = "deferred", note = "entity metadata" }
+set_entity_link = { status = "deferred", note = "leads" }
+set_entity_motion = { status = "deferred", note = "entity velocity" }
+set_equipment = { status = "deferred", note = "entity equipment" }
+set_experience = { status = "deferred", note = "experience" }
+set_health = { status = "deferred", note = "health and food" }
+set_held_slot = { status = "deferred", note = "inventory" }
+set_objective = { status = "deferred", note = "scoreboard" }
+set_passengers = { status = "deferred", note = "vehicles" }
+set_player_inventory = { status = "deferred", note = "inventory" }
+set_player_team = { status = "deferred", note = "teams" }
+set_score = { status = "deferred", note = "scoreboard" }
+set_simulation_distance = { status = "deferred", note = "simulation distance changes" }
+set_subtitle_text = { status = "deferred", note = "titles" }
+set_time = { status = "deferred", note = "world time and day cycle" }
+set_title_text = { status = "deferred", note = "titles" }
+set_titles_animation = { status = "deferred", note = "titles" }
+sound_entity = { status = "deferred", note = "sounds" }
+sound = { status = "deferred", note = "sounds" }
+start_configuration = { status = "deferred", note = "re-entering configuration from play" }
+stop_sound = { status = "deferred", note = "sounds" }
+store_cookie = { status = "deferred", note = "cookies (transfers)" }
+swing_animation = { status = "deferred", note = "entity animations (item swing)" }
+system_chat = { status = "implemented", note = "packets::system_chat: join/leave messages and unsigned chat" }
+tab_list = { status = "deferred", note = "player list header and footer" }
+tag_query = { status = "deferred", note = "debug NBT queries" }
+take_item_entity = { status = "deferred", note = "item pickup" }
+teleport_entity = { status = "deferred", note = "entity movement" }
+test_instance_block_status = { status = "deferred", note = "game tests (development only)" }
+ticking_state = { status = "deferred", note = "/tick command" }
+ticking_step = { status = "deferred", note = "/tick command" }
+transfer = { status = "deferred", note = "server transfer" }
+update_advancements = { status = "deferred", note = "advancements" }
+update_attributes = { status = "deferred", note = "entity attributes" }
+update_mob_effect = { status = "deferred", note = "status effects" }
+update_recipes = { status = "deferred", note = "recipes" }
+update_tags = { status = "deferred", note = "datapack reload (packets::update_tags is shared with configuration)" }
+projectile_power = { status = "deferred", note = "projectiles (wind charges)" }
+custom_report_details = { status = "deferred", note = "crash report details" }
+server_links = { status = "deferred", note = "server links (pause menu)" }
+waypoint = { status = "deferred", note = "locator bar waypoints" }
+clear_dialog = { status = "deferred", note = "dialogs" }
+show_dialog = { status = "deferred", note = "dialogs" }
+
+[play.serverbound]
+accept_teleportation = { status = "implemented", note = "PlayIn::AcceptTeleport; the echoed position is skipped" }
+attack = { status = "deferred", note = "combat" }
+block_entity_tag_query = { status = "deferred", note = "debug NBT queries" }
+bundle_item_selected = { status = "deferred", note = "bundle items" }
+change_difficulty = { status = "deferred", note = "difficulty" }
+change_game_mode = { status = "deferred", note = "game mode switcher (F3+F4)" }
+chat_ack = { status = "deferred", note = "chat v1: accept and ignore" }
+chat_command = { status = "deferred", note = "commands" }
+chat_command_signed = { status = "deferred", note = "chat v1: accept and ignore" }
+chat = { status = "implemented", note = "PlayIn::Chat: message only, signature fields skipped (unsigned chat)" }
+chat_session_update = { status = "deferred", note = "chat v1: accept and ignore" }
+chunk_batch_received = { status = "implemented", note = "PlayIn::ChunkBatchReceived: paces chunk streaming" }
+client_command = { status = "deferred", note = "respawn and statistics requests" }
+client_tick_end = { status = "deferred", note = "movement (client tick boundary)" }
+client_information = { status = "implemented", note = "PlayIn::ClientInformation: view distance only" }
+command_suggestion = { status = "deferred", note = "commands (tab completion)" }
+configuration_acknowledged = { status = "deferred", note = "re-entering configuration from play" }
+container_button_click = { status = "deferred", note = "containers (enchanting, stonecutter, lectern)" }
+container_click = { status = "deferred", note = "containers and inventory" }
+container_close = { status = "deferred", note = "containers" }
+container_slot_state_changed = { status = "deferred", note = "crafter slots" }
+cookie_response = { status = "deferred", note = "cookies (transfers)" }
+custom_payload = { status = "deferred", note = "plugin channels" }
+debug_subscription_request = { status = "deferred", note = "debug subscriptions (development only)" }
+edit_book = { status = "deferred", note = "books" }
+entity_tag_query = { status = "deferred", note = "debug NBT queries" }
+interact = { status = "deferred", note = "entity interaction" }
+jigsaw_generate = { status = "deferred", note = "jigsaw blocks (operator tools)" }
+keep_alive = { status = "implemented", note = "PlayIn::KeepAlive" }
+lock_difficulty = { status = "deferred", note = "difficulty" }
+move_player_pos = { status = "implemented", note = "PlayIn::Move: only checked for finite values" }
+move_player_pos_rot = { status = "implemented", note = "PlayIn::Move: only checked for finite values" }
+move_player_rot = { status = "implemented", note = "PlayIn::Move" }
+move_player_status_only = { status = "implemented", note = "PlayIn::Move: on-ground flag" }
+move_vehicle = { status = "deferred", note = "vehicles" }
+paddle_boat = { status = "deferred", note = "vehicles (boats)" }
+pick_item_from_block = { status = "deferred", note = "pick block" }
+pick_item_from_entity = { status = "deferred", note = "pick block" }
+ping_request = { status = "deferred", note = "network debug ping" }
+place_recipe = { status = "deferred", note = "recipe book" }
+player_abilities = { status = "deferred", note = "abilities (flight)" }
+player_action = { status = "deferred", note = "block breaking, dropping items, swapping hands" }
+player_command = { status = "deferred", note = "sprinting, elytra, vehicle inventory" }
+player_input = { status = "deferred", note = "movement input (sneak, jump)" }
+player_loaded = { status = "implemented", note = "PlayIn::PlayerLoaded: logged" }
+pong = { status = "deferred", note = "play ping" }
+punch = { status = "deferred", note = "combat (attacking the air)" }
+recipe_book_change_settings = { status = "deferred", note = "recipe book" }
+recipe_book_seen_recipe = { status = "deferred", note = "recipe book" }
+rename_item = { status = "deferred", note = "anvils" }
+resource_pack = { status = "deferred", note = "server resource packs (status replies)" }
+seen_advancements = { status = "deferred", note = "advancements" }
+select_trade = { status = "deferred", note = "villager trading" }
+set_beacon = { status = "deferred", note = "beacons" }
+set_carried_item = { status = "deferred", note = "inventory (held slot)" }
+set_command_block = { status = "deferred", note = "command blocks" }
+set_command_minecart = { status = "deferred", note = "command blocks" }
+set_creative_mode_slot = { status = "deferred", note = "creative inventory" }
+set_game_rule = { status = "deferred", note = "game rules (edit screen)" }
+set_jigsaw_block = { status = "deferred", note = "jigsaw blocks (operator tools)" }
+set_structure_block = { status = "deferred", note = "structure blocks (operator tools)" }
+set_test_block = { status = "deferred", note = "game tests (development only)" }
+sign_update = { status = "deferred", note = "signs" }
+spectator_action = { status = "deferred", note = "spectator mode" }
+teleport_to_entity = { status = "deferred", note = "spectator mode (teleport to player)" }
+test_instance_block_action = { status = "deferred", note = "game tests (development only)" }
+use_item_on = { status = "deferred", note = "block placement and interaction" }
+use_item = { status = "deferred", note = "item use" }
+custom_click_action = { status = "deferred", note = "dialogs (custom click actions)" }
