@@ -132,6 +132,7 @@ struct Authenticator {
 pub struct Shared {
     pub config: Config,
     pub login: LoginConfig,
+    /// Players in the game or past the login capacity check.
     pub online: AtomicUsize,
     pub to_sim: crossbeam_channel::Sender<ToSim>,
     next_conn: AtomicU64,
@@ -398,10 +399,11 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
         conn.send(&packets::login_disconnect("Invalid username.")).await?;
         bail!("invalid username {name:?}");
     }
-    if shared.online.load(Ordering::Relaxed) >= shared.config.max_players {
+    // Reserved until the connection ends, so concurrent logins cannot overfill the server.
+    let Some(_slot) = PlayerSlot::reserve(shared) else {
         conn.send(&packets::login_disconnect("The server is full.")).await?;
         bail!("{name}: server full");
-    }
+    };
 
     let (profile, remote, via) = match &shared.login.proxy {
         ProxyMode::Velocity { secret } => {
@@ -587,6 +589,23 @@ async fn configure(conn: &mut Conn, shared: &Shared) -> Result<packets::ClientIn
     }
 }
 
+/// One of `max_players` places, held from login until the connection closes.
+struct PlayerSlot<'a>(&'a AtomicUsize);
+
+impl<'a> PlayerSlot<'a> {
+    fn reserve(shared: &'a Shared) -> Option<Self> {
+        let max = shared.config.max_players;
+        shared.online.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < max).then_some(n + 1)).ok()?;
+        Some(Self(&shared.online))
+    }
+}
+
+impl Drop for PlayerSlot<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr, client: packets::ClientInfo) -> Result<()> {
     let conn_id = shared.next_conn.fetch_add(1, Ordering::Relaxed);
     let Conn { stream, mut rbuf, mut rx, tx, wbuf, encrypt, mut decrypt } = conn;
@@ -594,7 +613,6 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
     let (out_tx, out_rx) = mpsc::unbounded_channel();
     let name = profile.name.clone();
 
-    shared.online.fetch_add(1, Ordering::Relaxed);
     let joined = shared
         .to_sim
         .send(ToSim::Join(JoinInfo {
@@ -615,7 +633,6 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
     };
 
     let _ = shared.to_sim.send(ToSim::Leave(conn_id));
-    shared.online.fetch_sub(1, Ordering::Relaxed);
     writer_task.abort();
     let why = result.as_ref().err().map_or("disconnected".to_string(), |e| format!("{e:#}"));
     info!("{name} ({remote}) left: {why}");

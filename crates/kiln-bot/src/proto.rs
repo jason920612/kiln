@@ -160,6 +160,12 @@ pub fn configuration_acknowledged(b: &mut BytesMut) {
     b.put_varint(ids::play::serverbound::CONFIGURATION_ACKNOWLEDGED);
 }
 
+/// A command typed in chat, without the leading slash.
+pub fn chat_command(b: &mut BytesMut, command: &str) {
+    b.put_varint(ids::play::serverbound::CHAT_COMMAND);
+    b.put_string(command);
+}
+
 /// An unsigned chat message with nothing acknowledged (offline mode, no chat session).
 pub fn chat(b: &mut BytesMut, message: &str, timestamp_ms: i64, salt: i64) {
     b.put_varint(ids::play::serverbound::CHAT);

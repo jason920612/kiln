@@ -220,7 +220,7 @@ impl Sim {
                 if packets.is_empty() || target.seen_by.is_empty() {
                     continue;
                 }
-                (packets, target.seen_by.iter().copied().collect::<Vec<_>>())
+                (packets, target.seen_by.clone())
             };
             for v in viewers {
                 if let Some(p) = self.players.get_mut(&v) {

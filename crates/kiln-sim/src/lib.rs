@@ -3,6 +3,7 @@
 
 mod commands;
 mod interact;
+mod movement;
 mod players;
 mod stats;
 
@@ -78,6 +79,14 @@ struct Player {
     /// Player inventory container state id (incremented on server-side changes).
     inventory_state: i32,
     respawn: Option<[i32; 3]>,
+    /// Position at the start of this tick, for the "moved too quickly" check.
+    first_good: [f64; 3],
+    /// Move packets with a position received this tick.
+    move_packets: u32,
+    /// Game time the pending teleport was (re)sent.
+    teleport_sent: i64,
+    /// Ticks left until movement counts without the client's "loaded" report.
+    load_timeout: u32,
 }
 
 impl Player {
@@ -95,6 +104,16 @@ impl Player {
     }
     fn held_item(&self) -> Option<(i32, i32)> {
         self.inventory[HOTBAR_START + self.selected]
+    }
+    /// Moves the player and waits for the client to confirm (`ServerGamePacketListenerImpl.teleport`).
+    fn teleport(&mut self, pos: [f64; 3], rot: [f32; 2], now: i64) {
+        self.pos = pos;
+        self.rot = rot;
+        self.teleport_id += 1;
+        self.awaiting_teleport = Some(self.teleport_id);
+        self.teleport_sent = now;
+        self.send(packets::player_position(self.teleport_id, pos, rot[0], rot[1]));
+        self.tracker.mark_dirty();
     }
 }
 
@@ -286,6 +305,10 @@ impl Sim {
             teleport_id: 1,
             inventory_state: 0,
             respawn: None,
+            first_good: spawn,
+            move_packets: 0,
+            teleport_sent: self.game_time,
+            load_timeout: movement::CLIENT_LOADED_TIMEOUT,
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -327,26 +350,7 @@ impl Sim {
                     p.keep_alive = None;
                 }
             }
-            PlayIn::Move { pos, rot, on_ground } => {
-                // Movement sent before the client saw our teleport is stale.
-                if p.awaiting_teleport.is_some() {
-                    return;
-                }
-                if pos.is_some_and(|v| v.iter().any(|c| !c.is_finite()))
-                    || rot.is_some_and(|v| v.iter().any(|c| !c.is_finite()))
-                {
-                    p.disconnect("Invalid movement");
-                    return;
-                }
-                if let Some(pos) = pos {
-                    // Vanilla clamps accepted positions to the world's coordinate limits.
-                    p.pos = [pos[0].clamp(-3.0e7, 3.0e7), pos[1].clamp(-2.0e7, 2.0e7), pos[2].clamp(-3.0e7, 3.0e7)];
-                }
-                if let Some(rot) = rot {
-                    p.rot = rot;
-                }
-                p.on_ground = on_ground;
-            }
+            PlayIn::Move { pos, rot, on_ground } => self.handle_move(conn, pos, rot, on_ground),
             PlayIn::ChunkBatchReceived { chunks_per_tick } => {
                 p.unacked_batches = p.unacked_batches.saturating_sub(1);
                 if chunks_per_tick.is_finite() {
@@ -389,7 +393,10 @@ impl Sim {
                 self.broadcast(pkt);
             }
             // Sent by the client when its "Loading terrain" screen closes.
-            PlayIn::PlayerLoaded => info!("{} finished loading terrain", p.name),
+            PlayIn::PlayerLoaded => {
+                p.load_timeout = 0;
+                info!("{} finished loading terrain", p.name);
+            }
             PlayIn::SetCarriedItem { slot } => {
                 if (0..9).contains(&slot) {
                     p.selected = slot as usize;
@@ -414,6 +421,47 @@ impl Sim {
             }
             PlayIn::Punch => p.swung = true,
         }
+    }
+
+    fn handle_move(&mut self, conn: ConnId, pos: Option<[f64; 3]>, rot: Option<[f32; 2]>, on_ground: bool) {
+        let check = self.rule_bool("minecraft:player_movement_check");
+        let now = self.game_time;
+        let Some(p) = self.players.get_mut(&conn) else { return };
+        if movement::invalid(pos, rot) {
+            p.disconnect("Invalid movement");
+            return;
+        }
+        if p.load_timeout > 0 {
+            return;
+        }
+        let rot = rot.map_or(p.rot, movement::normalize_rotation);
+        if p.awaiting_teleport.is_some() {
+            // Movement sent before the client saw our teleport is stale; only the view turns.
+            p.rot = rot;
+            if now - p.teleport_sent > movement::TELEPORT_RESEND_TICKS {
+                p.teleport(p.pos, rot, now);
+            }
+            return;
+        }
+        let to = pos.map_or(p.pos, movement::clamp_position);
+        p.move_packets += 1;
+        if check && movement::too_fast(p.first_good, to, 0.0, p.move_packets, false) {
+            warn!("{} moved too quickly! {:?}", p.name, [to[0] - p.first_good[0], to[1] - p.first_good[1], to[2] - p.first_good[2]]);
+            p.teleport(p.pos, p.rot, now);
+            return;
+        }
+        // Spectators have no physics.
+        if p.game_mode != 3 && to != p.pos {
+            let old = movement::Aabb::player(p.pos, p.sneaking);
+            let new = movement::Aabb::player(to, p.sneaking);
+            if movement::collides_with_anything_new(&self.world, old, new) {
+                p.teleport(p.pos, rot, now);
+                return;
+            }
+        }
+        p.pos = to;
+        p.rot = rot;
+        p.on_ground = on_ground;
     }
 
     /// On top of the highest non-air block in the spawn column.
@@ -524,6 +572,9 @@ impl Sim {
         let now = Instant::now();
         let world = &mut self.world;
         for p in self.players.values_mut() {
+            p.first_good = p.pos;
+            p.move_packets = 0;
+            p.load_timeout = p.load_timeout.saturating_sub(1);
             if let Some((_, sent)) = p.keep_alive {
                 if now - sent > KEEP_ALIVE_TIMEOUT {
                     warn!("{} timed out", p.name);

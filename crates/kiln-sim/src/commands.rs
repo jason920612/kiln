@@ -110,6 +110,13 @@ pub(crate) struct CommandState {
 }
 
 impl CommandState {
+    /// Operator by name; a `prefix*` entry (from `KILN_OPS`, for load tests) matches every name
+    /// starting with the prefix.
+    pub fn is_op(&self, name: &str) -> bool {
+        self.ops.contains(name)
+            || self.ops.iter().any(|o| o.strip_suffix('*').is_some_and(|prefix| name.starts_with(prefix)))
+    }
+
     pub fn new(ops: std::collections::HashSet<String>) -> Self {
         let mut d = Dispatcher::new();
         kiln_command::vanilla::register_all(&mut d);
@@ -130,9 +137,13 @@ impl CommandState {
 }
 
 impl Sim {
+    pub(crate) fn rule_bool(&self, rule: &str) -> bool {
+        matches!(Host::game_rule(self, rule), GameRuleValue::Bool(true))
+    }
+
     pub(crate) fn permission_level_of(&self, conn: ConnId) -> u8 {
         match self.players.get(&conn) {
-            Some(p) if self.commands.ops.contains(&p.name) => 4,
+            Some(p) if self.commands.is_op(&p.name) => 4,
             _ => 0,
         }
     }
@@ -324,7 +335,7 @@ impl Host for Sim {
             let ops: Vec<ConnId> = self
                 .players
                 .iter()
-                .filter(|(c, p)| Some(**c) != me && self.commands.ops.contains(&p.name))
+                .filter(|(c, p)| Some(**c) != me && self.commands.is_op(&p.name))
                 .map(|(c, _)| *c)
                 .collect();
             for c in ops {
@@ -364,13 +375,7 @@ impl Host for Sim {
             (None, Some(r)) => r,
             (None, None) => p.rot,
         };
-        p.pos = to.pos;
-        p.rot = rot;
-        p.teleport_id += 1;
-        p.awaiting_teleport = Some(p.teleport_id);
-        let pkt = packets::player_position(p.teleport_id, to.pos, rot[0], rot[1]);
-        p.send(pkt);
-        p.tracker.mark_dirty();
+        p.teleport(to.pos, rot, self.game_time);
         Ok(())
     }
 
@@ -433,7 +438,7 @@ impl Host for Sim {
     }
 
     fn is_operator(&self, profile: &Profile) -> bool {
-        self.commands.ops.contains(&profile.name)
+        self.commands.is_op(&profile.name)
     }
 
     fn operator_names(&self) -> Vec<String> {
@@ -503,7 +508,11 @@ impl Host for Sim {
     }
 
     fn game_rule(&self, rule: &str) -> GameRuleValue {
-        self.commands.game_rules.get(rule).copied().unwrap_or(GameRuleValue::Bool(false))
+        self.commands.game_rules.get(rule).copied().unwrap_or(match kiln_data::game_rule_default(rule) {
+            Some(kiln_data::GameRuleDefault::Int(v)) => GameRuleValue::Int(v),
+            Some(kiln_data::GameRuleDefault::Bool(b)) => GameRuleValue::Bool(b),
+            None => GameRuleValue::Bool(false),
+        })
     }
 
     fn set_game_rule(&mut self, rule: &str, value: GameRuleValue) {

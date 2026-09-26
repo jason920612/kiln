@@ -47,6 +47,15 @@ struct Args {
     /// Seed for the behaviors.
     #[arg(long, default_value_t = 1)]
     seed: u64,
+    /// Deal the bots into this many groups with their own centres on a grid.
+    #[arg(long, default_value_t = 1)]
+    groups: usize,
+    /// Blocks between neighbouring group centres.
+    #[arg(long, default_value_t = 48.0)]
+    group_spacing: f64,
+    /// Teleport bots to their group centre with /tp (the server must make them operators).
+    #[arg(long)]
+    teleport_to_group: bool,
     /// Seconds between progress lines.
     #[arg(long, default_value_t = 5.0)]
     report_interval: f64,
@@ -78,6 +87,9 @@ fn main() -> Result<()> {
         chat_interval: a.chat_interval.map(|s| secs(s, "chat interval")).transpose()?,
         report_interval: secs(a.report_interval, "report interval")?,
         seed: a.seed,
+        groups: a.groups,
+        group_spacing: a.group_spacing,
+        teleport_to_group: a.teleport_to_group,
         ..Config::default()
     };
 

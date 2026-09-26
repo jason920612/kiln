@@ -57,6 +57,12 @@ pub struct Config {
     pub report_interval: Duration,
     /// Seed for the movement scripts and chat salts.
     pub seed: u64,
+    /// Bots are dealt round-robin into this many groups, each with its own centre on a grid.
+    pub groups: usize,
+    /// Distance between neighbouring group centres.
+    pub group_spacing: f64,
+    /// Bots whose group centre is far from where they spawned `/tp` there (they must be ops).
+    pub teleport_to_group: bool,
 }
 
 impl Default for Config {
@@ -77,17 +83,30 @@ impl Default for Config {
             join_timeout: Duration::from_secs(60),
             report_interval: Duration::from_secs(5),
             seed: 1,
+            groups: 1,
+            group_spacing: 48.0,
+            teleport_to_group: false,
         }
     }
 }
 
 impl Config {
+    /// Offset of group `g`'s centre from the shared centre: groups fill a square grid.
+    pub fn group_offset(&self, g: usize) -> [f64; 2] {
+        let cols = (self.groups as f64).sqrt().ceil().max(1.0) as usize;
+        let rows = self.groups.div_ceil(cols);
+        let at = |i: usize, n: usize| (i as f64 - (n - 1) as f64 / 2.0) * self.group_spacing;
+        [at(g % cols, cols), at(g / cols, rows)]
+    }
+
     fn validate(&self) -> Result<()> {
         ensure!(self.rate.is_finite() && self.rate > 0.0, "rate must be positive");
         ensure!(self.speed.is_finite() && self.speed >= 0.0, "speed must be non-negative");
         ensure!(self.radius.is_none_or(|r| r.is_finite() && r >= 0.0), "radius must be non-negative");
         ensure!(self.chat_interval.is_none_or(|d| !d.is_zero()), "chat interval must be positive");
         ensure!(!self.report_interval.is_zero(), "report interval must be positive");
+        ensure!(self.groups >= 1, "groups must be at least 1");
+        ensure!(self.group_spacing.is_finite(), "group spacing must be finite");
         ensure!(
             self.name_prefix.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_'),
             "name prefix may only contain letters, digits and _"
@@ -186,5 +205,17 @@ mod tests {
     fn parses_center() {
         assert_eq!(parse_center("100, -20.5").unwrap(), [100.0, -20.5]);
         assert!(parse_center("100").is_err());
+    }
+
+    #[test]
+    fn groups_form_a_centred_grid() {
+        let c = Config { groups: 4, group_spacing: 100.0, ..Config::default() };
+        let offsets: Vec<_> = (0..4).map(|g| c.group_offset(g)).collect();
+        assert_eq!(offsets, [[-50.0, -50.0], [50.0, -50.0], [-50.0, 50.0], [50.0, 50.0]]);
+        assert_eq!(Config::default().group_offset(0), [0.0, 0.0]);
+        let c = Config { groups: 20, ..Config::default() };
+        let mut all: Vec<_> = (0..20).map(|g| c.group_offset(g)).collect();
+        all.dedup();
+        assert_eq!(all.len(), 20);
     }
 }

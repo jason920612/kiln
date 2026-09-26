@@ -36,6 +36,8 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
     let blocks = read_json(&input.generated.join("reports/blocks.json"))?;
     let state_count = blocks.as_object().context("blocks")?.values().map(|b| b["states"].as_array().map_or(0, Vec::len)).sum();
     fs::write(out.join("block_props.bin"), crate::block_props::pack(&extra, state_count)?)?;
+    let rules = read_json(&input.generated.join("extra/game_rules.json")).context("run `cargo xtask extract` first")?;
+    fs::write(out.join("game_rules.rs"), gen_game_rules(&rules)?)?;
     println!("codegen: wrote {}", out.display());
     Ok(())
 }
@@ -53,6 +55,29 @@ pub(crate) fn const_name(id: &str) -> String {
         s.insert(0, '_');
     }
     s
+}
+
+/// Game rules in registry order with their default values.
+fn gen_game_rules(rules: &Value) -> Result<String> {
+    let mut s = String::from(HEADER);
+    s.push_str("use crate::GameRuleDefault::{self, Bool, Int};
+
+");
+    s.push_str("pub const GAME_RULES: &[(&str, GameRuleDefault)] = &[
+");
+    for r in rules.as_array().context("game rules")? {
+        let name = r["name"].as_str().context("name")?;
+        let default = r["default"].as_str().context("default")?;
+        let value = match r["type"].as_str() {
+            Some("bool") => format!("Bool({default})"),
+            Some("int") => format!("Int({default})"),
+            other => bail!("game rule {name}: unsupported type {other:?}"),
+        };
+        writeln!(s, "    ({name:?}, {value}),")?;
+    }
+    s.push_str("];
+");
+    Ok(s)
 }
 
 fn gen_version(v: &Value) -> Result<String> {

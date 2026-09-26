@@ -516,3 +516,13 @@ fn dump_login_packets() {
         std::fs::write(dir.join(file), r.rest()).unwrap();
     }
 }
+
+#[test]
+fn player_slots_cap_concurrent_logins() {
+    let (shared, _sim) = shared(LoginConfig::default(), None);
+    let mut slots: Vec<_> = (0..10).map(|_| super::PlayerSlot::reserve(&shared).expect("free slot")).collect();
+    assert!(super::PlayerSlot::reserve(&shared).is_none(), "the eleventh login must be refused");
+    slots.pop();
+    let _again = super::PlayerSlot::reserve(&shared).expect("a closed connection frees its slot");
+    assert!(super::PlayerSlot::reserve(&shared).is_none());
+}

@@ -28,6 +28,8 @@ const SILENCE_TIMEOUT: Duration = Duration::from_secs(60);
 const BRAND: &str = "kiln-bot";
 /// Longest wait for terrain before confirming the first teleport anyway.
 const FIRST_TELEPORT_WAIT: Duration = Duration::from_secs(1);
+/// Bots farther than this from their group centre teleport there when `teleport_to_group` is set.
+const GROUP_TELEPORT_DISTANCE: f64 = 16.0;
 
 /// Where the bots connect, resolved once.
 pub(crate) struct Target {
@@ -98,6 +100,7 @@ impl Out {
 }
 
 struct Bot {
+    index: usize,
     name: String,
     cfg: Arc<Config>,
     shared: Arc<Shared>,
@@ -133,6 +136,7 @@ pub(crate) async fn run(
     shared.launched.fetch_add(1, Relaxed);
     let now = Instant::now();
     let mut bot = Bot {
+        index,
         name: format!("{}{}", cfg.name_prefix, index),
         rng: Rng::new(cfg.seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ index as u64),
         cfg,
@@ -373,7 +377,13 @@ impl Bot {
             m.teleported(pos, yaw, pitch);
             return;
         }
-        let origin = *self.shared.origin.get_or_init(|| [pos[0], pos[2]]);
+        let [cx, cz] = *self.shared.origin.get_or_init(|| [pos[0], pos[2]]);
+        let [dx, dz] = self.cfg.group_offset(self.index % self.cfg.groups);
+        let origin = [cx + dx, cz + dz];
+        if self.cfg.teleport_to_group && (origin[0] - pos[0]).hypot(origin[1] - pos[2]) > GROUP_TELEPORT_DISTANCE {
+            let command = format!("tp @s {:.1} ~ {:.1}", origin[0], origin[1]);
+            self.out.send(|b| proto::chat_command(b, &command));
+        }
         let behavior = self.cfg.behavior;
         let radius = self.cfg.radius.unwrap_or(behavior.default_radius());
         let mut m = Mover::new(behavior, Rng::new(self.rng.next_u64()), origin, radius, self.cfg.speed);

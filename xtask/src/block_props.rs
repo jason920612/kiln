@@ -32,16 +32,18 @@ pub fn extract(root: &Path, work: &Path, server_jar: &Path) -> Result<()> {
     let cp = std::env::join_paths(&cp)?;
     let out = work.join("generated/extra");
     std::fs::create_dir_all(&out)?;
-    let status = Command::new("java")
-        .arg("-cp")
-        .arg(cp)
-        .arg(root.join("tools/ExtractBlocks.java"))
-        .arg(out.join("block_states.json"))
-        .current_dir(work)
-        .status()
-        .context("running java (JDK 25 must be on PATH)")?;
-    if !status.success() {
-        bail!("block extractor failed");
+    for (tool, file) in [("ExtractBlocks.java", "block_states.json"), ("ExtractGameRules.java", "game_rules.json")] {
+        let status = Command::new("java")
+            .arg("-cp")
+            .arg(&cp)
+            .arg(root.join("tools").join(tool))
+            .arg(out.join(file))
+            .current_dir(work)
+            .status()
+            .context("running java (JDK 25 must be on PATH)")?;
+        if !status.success() {
+            bail!("{tool} failed");
+        }
     }
     Ok(())
 }
