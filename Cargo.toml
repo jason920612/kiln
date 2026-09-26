@@ -19,6 +19,8 @@ aes = "0.9"
 kiln-command = { path = "crates/kiln-command" }
 kiln-region = { path = "crates/kiln-region" }
 kiln-sched = { path = "crates/kiln-sched" }
+kiln-javamath = { path = "crates/kiln-javamath" }
+kiln-worldgen = { path = "crates/kiln-worldgen" }
 anyhow = "1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }

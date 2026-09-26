@@ -546,6 +546,13 @@ name = "kiln-data"
 version = "0.1.0"
 
 [[package]]
+name = "kiln-javamath"
+version = "0.1.0"
+dependencies = [
+ "md-5",
+]
+
+[[package]]
 name = "kiln-link"
 version = "0.1.0"
 dependencies = [
@@ -669,6 +676,14 @@ dependencies = [
  "kiln-data",
  "kiln-proto",
  "kiln-region",
+]
+
+[[package]]
+name = "kiln-worldgen"
+version = "0.1.0"
+dependencies = [
+ "kiln-javamath",
+ "thiserror",
 ]
 
 [[package]]
