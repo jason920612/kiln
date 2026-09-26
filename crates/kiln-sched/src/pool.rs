@@ -5,11 +5,11 @@ use std::cell::Cell;
 use std::hint;
 use std::mem;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::Ordering::{Acquire, SeqCst};
+use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle, Thread, ThreadId};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crossbeam_deque::{Injector, Steal};
 use crossbeam_utils::CachePadded;
@@ -27,6 +27,11 @@ pub const MAX_WORKERS: usize = 64;
 /// Family of a worker outside any unit: it may help every window.
 pub(crate) const ANY: u64 = 0;
 
+/// How many parked workers one thread unparks for a wake-up; the workers it wakes pass the rest
+/// on. An unpark costs the caller about 5 µs on Windows, so this keeps a publisher from spending
+/// 30 µs waking six helpers before it gets to its own work.
+const WAKE_FANOUT: usize = 2;
+
 type HkJob = Box<dyn FnOnce() + Send>;
 
 pub(crate) struct Shared {
@@ -42,6 +47,11 @@ pub(crate) struct Shared {
     fork_active: AtomicBool,
     /// Bit `i`: worker `i` is parked (or about to park) and wants to be woken for work.
     sleepers: CachePadded<AtomicU64>,
+    /// Wake-ups requested but not yet passed on (a hint: nothing depends on them for progress).
+    wake_debt: CachePadded<AtomicUsize>,
+    epoch: Instant,
+    /// Until this time (ns since `epoch`) idle workers keep spinning; see `prewake`.
+    hot_until: AtomicU64,
     hk: Injector<HkJob>,
     hk_pending: AtomicUsize,
     shutdown: AtomicBool,
@@ -81,10 +91,13 @@ impl WorkerLocal {
         self.shared.tuning.chaos
     }
 
-    /// Yields now and then in chaos mode to shake up interleavings.
+    /// Delays now and then in chaos mode to shake up interleavings. Spins rather than yields:
+    /// a yield can hand the core away for a whole OS quantum on a busy machine.
     pub fn chaos_point(&self) {
         if self.chaos() && self.rand_below(8) == 0 {
-            thread::yield_now();
+            for _ in 0..self.rand_below(1024) {
+                hint::spin_loop();
+            }
         }
     }
 
@@ -109,14 +122,16 @@ impl Idle {
         self.since = None;
     }
 
-    /// Spins briefly; false once the spin budget is used up and the caller should park.
-    pub fn spin(&mut self, budget_ns: u64) -> bool {
+    /// Spins briefly; false once the spin budget (or a longer `prewake` hold) is used up and
+    /// the caller should park. Only idle workers `may_yield`: a waiting owner is on the
+    /// critical path, and a yield can cost it a whole OS quantum when the machine is busy.
+    pub fn spin(&mut self, sh: &Shared, may_yield: bool) -> bool {
         let since = *self.since.get_or_insert_with(Instant::now);
-        if since.elapsed().as_nanos() as u64 >= budget_ns {
+        if since.elapsed().as_nanos() as u64 >= sh.tuning.spin_ns && sh.now_ns() >= sh.hot_until.load(Relaxed) {
             return false;
         }
         self.rounds = self.rounds.wrapping_add(1);
-        if self.rounds.is_multiple_of(16) {
+        if may_yield && self.rounds.is_multiple_of(16) {
             thread::yield_now();
         } else {
             for _ in 0..64 {
@@ -139,6 +154,9 @@ impl Shared {
             fork_pending: CachePadded::new(AtomicBool::new(false)),
             fork_active: AtomicBool::new(false),
             sleepers: CachePadded::new(AtomicU64::new(0)),
+            wake_debt: CachePadded::new(AtomicUsize::new(0)),
+            epoch: Instant::now(),
+            hot_until: AtomicU64::new(0),
             hk: Injector::new(),
             hk_pending: AtomicUsize::new(0),
             shutdown: AtomicBool::new(false),
@@ -158,20 +176,59 @@ impl Shared {
         }
     }
 
-    /// Wakes up to `k` parked workers. Publishers call this after making work visible with a
-    /// `SeqCst` write; `sleep` registers before its `SeqCst` re-check, so no wakeup is lost.
-    pub fn wake(&self, mut k: usize) {
-        while k > 0 {
+    /// Wakes up to `k` parked workers: a couple directly, the rest through the workers woken.
+    /// Publishers call this after making work visible with a `SeqCst` write; `sleep` registers
+    /// before its `SeqCst` re-check, so the direct wake-up is never lost. Progress never depends
+    /// on it anyway: every publisher completes its own work if nobody helps.
+    pub fn wake(&self, k: usize) {
+        if k == 0 || self.sleepers.load(SeqCst) == 0 {
+            return;
+        }
+        let direct = k.min(WAKE_FANOUT);
+        if k > direct {
+            self.wake_debt.fetch_add(k - direct, Relaxed);
+        }
+        if self.wake_now(direct) < direct {
+            self.wake_debt.store(0, Relaxed);
+        }
+    }
+
+    /// Unparks up to `k` sleepers; returns how many.
+    fn wake_now(&self, k: usize) -> usize {
+        let mut woke = 0;
+        while woke < k {
             let s = self.sleepers.load(SeqCst);
             if s == 0 {
-                return;
+                break;
             }
             let bit = 1u64 << s.trailing_zeros();
             if self.sleepers.fetch_and(!bit, SeqCst) & bit != 0 {
                 self.unpark(bit.trailing_zeros() as usize);
-                k -= 1;
+                woke += 1;
             }
         }
+        woke
+    }
+
+    /// Called by a worker that was just unparked: takes over part of a pending wake-up.
+    fn pass_on_wake(&self) {
+        let mut debt = self.wake_debt.load(Relaxed);
+        while debt > 0 {
+            let take = debt.min(WAKE_FANOUT);
+            match self.wake_debt.compare_exchange_weak(debt, debt - take, Relaxed, Relaxed) {
+                Ok(_) => {
+                    if self.wake_now(take) < take {
+                        self.wake_debt.store(0, Relaxed);
+                    }
+                    return;
+                }
+                Err(d) => debt = d,
+            }
+        }
+    }
+
+    fn now_ns(&self) -> u64 {
+        self.epoch.elapsed().as_nanos() as u64
     }
 
     /// How many helpers to wake for `extra` pieces beyond the one the publisher runs.
@@ -187,6 +244,7 @@ impl Shared {
         self.sleepers.fetch_or(bit, SeqCst);
         if !has_work() {
             local.park();
+            self.pass_on_wake();
         }
         self.sleepers.fetch_and(!bit, SeqCst);
     }
@@ -256,7 +314,7 @@ impl Shared {
         while !slot.drained() {
             if self.help_windows(local, family) {
                 idle.reset();
-            } else if !idle.spin(self.tuning.spin_ns) {
+            } else if !idle.spin(self, false) {
                 // The last helper to leave unparks us; a wakeup that raced ahead leaves a token.
                 local.park();
                 idle.reset();
@@ -341,7 +399,7 @@ fn worker_main(shared: Arc<Shared>, idx: usize, seed: u64) {
         if sh.shutdown.load(SeqCst) && sh.hk_pending.load(SeqCst) == 0 {
             return;
         }
-        if !idle.spin(sh.tuning.spin_ns) {
+        if !idle.spin(sh, true) {
             sh.sleep(&local, || sh.idle_has_work());
             idle.reset();
         }
@@ -446,8 +504,8 @@ impl TickPool {
         let local = &self.local;
         assert!(sh.fork.try_reserve(), "fork slot busy");
         let abort = AbortOnUnwind;
-        sh.fork.publish(jp.cast(), ANY, 0);
         sh.fork_active.store(true, SeqCst);
+        sh.fork.publish(jp.cast(), ANY, 0);
         sh.fork_pending.store(true, SeqCst);
         sh.wake(sh.wake_count(local, batches - 1));
         coordinate(sh, local, jp);
@@ -502,6 +560,15 @@ impl TickPool {
         n
     }
 
+    /// Wakes every parked worker and keeps idle workers spinning for `hold`, so forks and
+    /// windows in the next `hold` do not pay the OS wake-up (tens of µs). Meant for the start
+    /// of a tick, just before its first serial segment; costs up to `hold` of CPU per worker.
+    pub fn prewake(&self, hold: Duration) {
+        let sh = &*self.shared;
+        sh.hot_until.fetch_max(sh.now_ns().saturating_add(hold.as_nanos() as u64), Relaxed);
+        sh.wake(sh.workers - 1);
+    }
+
     /// Per-worker counters, index 0 being the coordinator.
     pub fn stats(&self) -> Vec<WorkerStats> {
         self.shared.stats.iter().map(|c| c.snapshot()).collect()
@@ -518,7 +585,7 @@ impl Drop for TickPool {
     /// Stops the workers after they drained the housekeeping queue.
     fn drop(&mut self) {
         self.shared.shutdown.store(true, SeqCst);
-        self.shared.wake(self.shared.workers);
+        self.shared.wake_now(self.shared.workers);
         for t in self.threads.drain(..) {
             let _ = t.join();
         }
@@ -558,7 +625,7 @@ fn coordinate(sh: &Shared, local: &WorkerLocal, jp: *const Header) {
     while !sh.fork.drained() {
         if sh.timed(local, || sh.help_windows(local, ANY)) {
             idle.reset();
-        } else if !idle.spin(sh.tuning.spin_ns) {
+        } else if !idle.spin(sh, false) {
             sh.sleep(local, || sh.live.load(SeqCst) != 0 || sh.fork.drained());
             idle.reset();
         }

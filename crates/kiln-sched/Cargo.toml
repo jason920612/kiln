@@ -8,6 +8,9 @@ publish.workspace = true
 crossbeam-deque.workspace = true
 crossbeam-utils.workspace = true
 
+[dev-dependencies]
+mimalloc.workspace = true
+
 [target.'cfg(loom)'.dependencies]
 loom.workspace = true
 

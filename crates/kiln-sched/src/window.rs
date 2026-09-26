@@ -151,32 +151,29 @@ impl<'a> Ctx<'a> {
         }
     }
 
-    /// Maps items inline while timing them at doubling counts. Once the prefix took long enough
-    /// to extrapolate, returns a chunk size if the rest is worth splitting.
+    /// Maps items inline in blocks that double the count done, timing them. Once the prefix
+    /// took long enough to extrapolate, returns a chunk size if the rest is worth splitting.
     fn probe<In, Out, R>(&self, items: &[In], out: &mut Vec<Out>, run: &R, hint: Option<usize>) -> Option<usize>
     where
         R: Fn(&Ctx<'_>, &In) -> Out,
     {
         let t = &self.local.shared.tuning;
+        let n = items.len();
         let probe_ns = t.chunk_target_ns / 4;
         let start = Instant::now();
-        let mut check = 1;
-        for (i, item) in items.iter().enumerate() {
-            out.push(run(self, item));
-            let done = i + 1;
-            if done < check {
-                continue;
-            }
-            check *= 2;
+        while out.len() < n {
+            let from = out.len();
+            let done = (2 * from).clamp(1, n);
+            out.extend(items[from..done].iter().map(|x| run(self, x)));
             let elapsed = start.elapsed().as_nanos() as u64;
             if elapsed < probe_ns {
                 continue;
             }
-            let rest = elapsed as u128 * (items.len() - done) as u128 / done as u128;
+            let rest = elapsed as u128 * (n - done) as u128 / done as u128;
             if rest < t.inline_below_ns as u128 {
                 return None;
             }
-            return Some(hint.unwrap_or_else(|| t.chunk_for(elapsed / done as u64, items.len())));
+            return Some(hint.unwrap_or_else(|| t.chunk_for(elapsed / done as u64, n)));
         }
         None
     }
