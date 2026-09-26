@@ -1,0 +1,3 @@
+/target
+# Mojang jar, data generator output and fetched specs (Tier A: never commit)
+/work
