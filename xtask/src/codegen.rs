@@ -37,6 +37,12 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
     let state_count = blocks.as_object().context("blocks")?.values().map(|b| b["states"].as_array().map_or(0, Vec::len)).sum();
     fs::write(out.join("block_props.bin"), crate::block_props::pack(&extra, state_count)?)?;
     println!("codegen: wrote {}", out.display());
+
+    let items = read_json(&input.generated.join("extra/item_components.json")).context("run `cargo xtask extract items` first")?;
+    let item_out = root.join("crates/kiln-item/src/gen");
+    fs::create_dir_all(&item_out)?;
+    crate::items::generate(&items, &item_out)?;
+    println!("codegen: wrote {}", item_out.display());
     Ok(())
 }
 
