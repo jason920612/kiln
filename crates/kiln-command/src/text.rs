@@ -1,0 +1,361 @@
+//! Chat components for command feedback and errors, encoded as network NBT.
+
+use kiln_proto::nbt::Tag;
+use std::fmt::Write as _;
+
+/// A chat component: literal or translatable content, a style and siblings.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Text {
+    pub content: Content,
+    pub style: Style,
+    pub extra: Vec<Text>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Content {
+    Literal(String),
+    /// A translation key rendered by the client, with its `%s` arguments.
+    Translate {
+        key: String,
+        args: Vec<Arg>,
+    },
+}
+
+impl Default for Content {
+    fn default() -> Self {
+        Content::Literal(String::new())
+    }
+}
+
+/// A translation argument. Numbers stay numbers on the wire so the client formats them the
+/// way vanilla does (`Component.translatable` keeps `Integer`, `Float`, ... as primitives).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Arg {
+    Text(Text),
+    Str(String),
+    Int(i32),
+    Long(i64),
+    Float(f32),
+    Double(f64),
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Style {
+    /// A named color (`red`, `gray`, ...) or `#rrggbb`.
+    pub color: Option<&'static str>,
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub underlined: Option<bool>,
+    pub click: Option<ClickEvent>,
+    pub hover: Option<Box<Text>>,
+    pub insertion: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClickEvent {
+    SuggestCommand(String),
+    RunCommand(String),
+    CopyToClipboard(String),
+}
+
+impl Text {
+    pub fn literal(s: impl Into<String>) -> Self {
+        Text { content: Content::Literal(s.into()), ..Default::default() }
+    }
+
+    pub fn empty() -> Self {
+        Text::default()
+    }
+
+    pub fn translate(key: impl Into<String>, args: Vec<Arg>) -> Self {
+        Text { content: Content::Translate { key: key.into(), args }, ..Default::default() }
+    }
+
+    pub fn color(mut self, color: &'static str) -> Self {
+        self.style.color = Some(color);
+        self
+    }
+
+    pub fn italic(mut self) -> Self {
+        self.style.italic = Some(true);
+        self
+    }
+
+    pub fn underlined(mut self) -> Self {
+        self.style.underlined = Some(true);
+        self
+    }
+
+    pub fn click(mut self, event: ClickEvent) -> Self {
+        self.style.click = Some(event);
+        self
+    }
+
+    pub fn hover(mut self, text: Text) -> Self {
+        self.style.hover = Some(Box::new(text));
+        self
+    }
+
+    pub fn insertion(mut self, s: impl Into<String>) -> Self {
+        self.style.insertion = Some(s.into());
+        self
+    }
+
+    pub fn append(mut self, child: Text) -> Self {
+        self.extra.push(child);
+        self
+    }
+
+    /// The translation key, if this is a translatable component.
+    pub fn key(&self) -> Option<&str> {
+        match &self.content {
+            Content::Translate { key, .. } => Some(key),
+            Content::Literal(_) => None,
+        }
+    }
+
+    pub fn args(&self) -> &[Arg] {
+        match &self.content {
+            Content::Translate { args, .. } => args,
+            Content::Literal(_) => &[],
+        }
+    }
+
+    /// `[text]` as `ComponentUtils.wrapInSquareBrackets` builds it.
+    pub fn bracketed(self) -> Self {
+        Text::translate("chat.square_brackets", vec![Arg::Text(self)])
+    }
+
+    /// Joins with `, ` like `ComponentUtils.formatList`.
+    pub fn join(items: impl IntoIterator<Item = Text>) -> Self {
+        let mut out = Text::empty();
+        for (i, item) in items.into_iter().enumerate() {
+            if i > 0 {
+                out.extra.push(Text::literal(", ").color("gray"));
+            }
+            out.extra.push(item);
+        }
+        out
+    }
+
+    fn is_plain(&self) -> bool {
+        matches!(self.content, Content::Literal(_)) && self.style == Style::default() && self.extra.is_empty()
+    }
+
+    /// Network NBT form: a bare string for plain literals, otherwise a compound.
+    pub fn to_nbt(&self) -> Tag {
+        if let (true, Content::Literal(s)) = (self.is_plain(), &self.content) {
+            return Tag::String(s.clone());
+        }
+        let mut fields: Vec<(String, Tag)> = Vec::new();
+        match &self.content {
+            Content::Literal(s) => fields.push(("text".into(), Tag::String(s.clone()))),
+            Content::Translate { key, args } => {
+                fields.push(("translate".into(), Tag::String(key.clone())));
+                if !args.is_empty() {
+                    fields.push(("with".into(), list(args.iter().map(Arg::to_nbt).collect())));
+                }
+            }
+        }
+        let s = &self.style;
+        if let Some(c) = s.color {
+            fields.push(("color".into(), Tag::String(c.into())));
+        }
+        for (name, v) in [("bold", s.bold), ("italic", s.italic), ("underlined", s.underlined)] {
+            if let Some(v) = v {
+                fields.push((name.into(), Tag::Byte(v as i8)));
+            }
+        }
+        if let Some(click) = &s.click {
+            let (action, key, value) = match click {
+                ClickEvent::SuggestCommand(c) => ("suggest_command", "command", c),
+                ClickEvent::RunCommand(c) => ("run_command", "command", c),
+                ClickEvent::CopyToClipboard(v) => ("copy_to_clipboard", "value", v),
+            };
+            fields.push((
+                "click_event".into(),
+                Tag::Compound(vec![
+                    ("action".into(), Tag::String(action.into())),
+                    (key.into(), Tag::String(value.clone())),
+                ]),
+            ));
+        }
+        if let Some(hover) = &s.hover {
+            fields.push((
+                "hover_event".into(),
+                Tag::Compound(vec![
+                    ("action".into(), Tag::String("show_text".into())),
+                    ("value".into(), hover.to_nbt()),
+                ]),
+            ));
+        }
+        if let Some(ins) = &s.insertion {
+            fields.push(("insertion".into(), Tag::String(ins.clone())));
+        }
+        if !self.extra.is_empty() {
+            fields.push(("extra".into(), list(self.extra.iter().map(Text::to_nbt).collect())));
+        }
+        Tag::Compound(fields)
+    }
+
+    /// Plain rendering for logs and the console: literals as-is, translations as `key[args]`.
+    pub fn to_plain(&self) -> String {
+        let mut out = String::new();
+        self.write_plain(&mut out);
+        out
+    }
+
+    fn write_plain(&self, out: &mut String) {
+        match &self.content {
+            Content::Literal(s) => out.push_str(s),
+            Content::Translate { key, args } if key == "chat.square_brackets" && args.len() == 1 => {
+                out.push('[');
+                args[0].write_plain(out);
+                out.push(']');
+            }
+            Content::Translate { key, args } => {
+                out.push_str(key);
+                if !args.is_empty() {
+                    out.push('[');
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        a.write_plain(out);
+                    }
+                    out.push(']');
+                }
+            }
+        }
+        for e in &self.extra {
+            e.write_plain(out);
+        }
+    }
+}
+
+impl Arg {
+    fn to_nbt(&self) -> Tag {
+        match self {
+            Arg::Text(t) => t.to_nbt(),
+            Arg::Str(s) => Tag::String(s.clone()),
+            Arg::Int(v) => Tag::Int(*v),
+            Arg::Long(v) => Tag::Long(*v),
+            Arg::Float(v) => Tag::Float(*v),
+            Arg::Double(v) => Tag::Double(*v),
+        }
+    }
+
+    fn write_plain(&self, out: &mut String) {
+        match self {
+            Arg::Text(t) => t.write_plain(out),
+            Arg::Str(s) => out.push_str(s),
+            Arg::Int(v) => write!(out, "{v}").unwrap(),
+            Arg::Long(v) => write!(out, "{v}").unwrap(),
+            Arg::Float(v) => write!(out, "{v:?}").unwrap(),
+            Arg::Double(v) => write!(out, "{v:?}").unwrap(),
+        }
+    }
+}
+
+impl From<Text> for Arg {
+    fn from(t: Text) -> Self {
+        Arg::Text(t)
+    }
+}
+
+impl From<&str> for Arg {
+    fn from(s: &str) -> Self {
+        Arg::Str(s.to_owned())
+    }
+}
+
+impl From<String> for Arg {
+    fn from(s: String) -> Self {
+        Arg::Str(s)
+    }
+}
+
+impl From<i32> for Arg {
+    fn from(v: i32) -> Self {
+        Arg::Int(v)
+    }
+}
+
+impl From<i64> for Arg {
+    fn from(v: i64) -> Self {
+        Arg::Long(v)
+    }
+}
+
+impl From<f32> for Arg {
+    fn from(v: f32) -> Self {
+        Arg::Float(v)
+    }
+}
+
+impl From<f64> for Arg {
+    fn from(v: f64) -> Self {
+        Arg::Double(v)
+    }
+}
+
+/// An NBT list as vanilla's `ListTag` writes it: elements of mixed types become compounds,
+/// wrapping each non-compound as `{"": value}`.
+fn list(items: Vec<Tag>) -> Tag {
+    let id = |t: &Tag| std::mem::discriminant(t);
+    let mixed = items.windows(2).any(|w| id(&w[0]) != id(&w[1]));
+    if !mixed {
+        return Tag::List(items);
+    }
+    Tag::List(
+        items
+            .into_iter()
+            .map(|t| match t {
+                Tag::Compound(f) if !(f.len() == 1 && f[0].0.is_empty()) => Tag::Compound(f),
+                other => Tag::Compound(vec![(String::new(), other)]),
+            })
+            .collect(),
+    )
+}
+
+/// Builds a translatable component: `tr!("key", a, b)`.
+#[macro_export]
+macro_rules! tr {
+    ($key:expr $(, $arg:expr)* $(,)?) => {
+        $crate::Text::translate($key, vec![$($crate::text::Arg::from($arg)),*])
+    };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plain_literal_is_a_string_tag() {
+        assert_eq!(Text::literal("hi").to_nbt(), Tag::String("hi".into()));
+    }
+
+    #[test]
+    fn translatable_with_mixed_args_wraps_like_list_tag() {
+        let t = tr!("commands.give.success.single", 3, Text::literal("[Stone]").color("white"), "Steve").color("red");
+        let Tag::Compound(fields) = t.to_nbt() else { panic!() };
+        assert_eq!(fields[0], ("translate".into(), Tag::String("commands.give.success.single".into())));
+        let Tag::List(with) = &fields[1].1 else { panic!() };
+        assert_eq!(with[0], Tag::Compound(vec![(String::new(), Tag::Int(3))]));
+        assert!(matches!(&with[1], Tag::Compound(f) if f[0].0 == "text"));
+        assert_eq!(with[2], Tag::Compound(vec![(String::new(), Tag::String("Steve".into()))]));
+        assert_eq!(fields[2], ("color".into(), Tag::String("red".into())));
+    }
+
+    #[test]
+    fn homogeneous_args_stay_unwrapped() {
+        let Tag::Compound(fields) = tr!("argument.integer.low", 1, 0).to_nbt() else { panic!() };
+        assert_eq!(fields[1].1, Tag::List(vec![Tag::Int(1), Tag::Int(0)]));
+    }
+
+    #[test]
+    fn plain_rendering() {
+        let t = Text::literal("a").append(tr!("k", 1, "x")).append(Text::literal("b").bracketed());
+        assert_eq!(t.to_plain(), "ak[1, x][b]");
+    }
+}
