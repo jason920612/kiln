@@ -452,8 +452,8 @@ impl Sim {
         }
         // Spectators have no physics.
         if p.game_mode != 3 && to != p.pos {
-            let old = movement::Aabb::player(p.pos, p.sneaking);
-            let new = movement::Aabb::player(to, p.sneaking);
+            let old = movement::Aabb::player(p.pos, movement::MIN_POSE_HEIGHT);
+            let new = movement::Aabb::player(to, movement::MIN_POSE_HEIGHT);
             if movement::collides_with_anything_new(&self.world, old, new) {
                 p.teleport(p.pos, rot, now);
                 return;

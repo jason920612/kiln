@@ -3,6 +3,10 @@
 //! Implemented: invalid values, the "moved too quickly" distance check and the "colliding
 //! with anything new" block check. The "moved wrongly" check needs the player's collision
 //! physics (`Entity.move`) and arrives with entity physics.
+//!
+//! Until the server tracks poses (swimming, crawling and gliding are 0.6 blocks tall), the
+//! collision check uses the smallest pose height, so it can miss a head moving into a block
+//! but never rejects a legitimate move.
 
 use kiln_world::World;
 
@@ -12,8 +16,8 @@ pub(crate) const CLIENT_LOADED_TIMEOUT: u32 = 60;
 pub(crate) const TELEPORT_RESEND_TICKS: i64 = 20;
 
 const PLAYER_WIDTH: f64 = 0.6;
-const STANDING_HEIGHT: f64 = 1.8;
-const CROUCHING_HEIGHT: f64 = 1.5;
+/// Height of the swimming, crawling, gliding and spin-attack poses; standing is 1.8.
+pub(crate) const MIN_POSE_HEIGHT: f64 = 0.6;
 const EPSILON: f64 = 1.0e-5;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,9 +27,8 @@ pub(crate) struct Aabb {
 }
 
 impl Aabb {
-    /// The player's box standing (or crouching) at `pos` (bottom centre).
-    pub fn player(pos: [f64; 3], crouching: bool) -> Self {
-        let h = if crouching { CROUCHING_HEIGHT } else { STANDING_HEIGHT };
+    /// A player's box of the given height at `pos` (bottom centre).
+    pub fn player(pos: [f64; 3], h: f64) -> Self {
         let r = PLAYER_WIDTH / 2.0;
         Self { min: [pos[0] - r, pos[1], pos[2] - r], max: [pos[0] + r, pos[1] + h, pos[2] + r] }
     }
@@ -133,12 +136,12 @@ mod tests {
         let y = w.flat_surface_y();
         let from = [0.5, y, 0.5];
         let to = [0.8, y, 0.5];
-        assert!(!collides_with_anything_new(&w, Aabb::player(from, false), Aabb::player(to, false)));
+        assert!(!collides_with_anything_new(&w, Aabb::player(from, 1.8), Aabb::player(to, 1.8)));
         w.set_block(1, y as i32, 0, block::STONE);
-        assert!(collides_with_anything_new(&w, Aabb::player(from, false), Aabb::player(to, false)));
+        assert!(collides_with_anything_new(&w, Aabb::player(from, 1.8), Aabb::player(to, 1.8)));
         // Standing against the wall already, moving along it is not new.
         let from = [0.7, y, 0.5];
-        assert!(!collides_with_anything_new(&w, Aabb::player(from, false), Aabb::player([0.7, y, 0.4], false)));
+        assert!(!collides_with_anything_new(&w, Aabb::player(from, 1.8), Aabb::player([0.7, y, 0.4], 1.8)));
     }
 
     #[test]
@@ -146,10 +149,10 @@ mod tests {
         let mut w = world();
         let y = w.flat_surface_y();
         w.set_block(0, y as i32, 0, block::OAK_FENCE);
-        // Standing on top of the block space but inside the fence's 1.5-high post.
+        // Above the block space but inside the fence's 1.5-high post.
         let from = [0.5, y + 3.0, 0.5];
-        assert!(collides_with_anything_new(&w, Aabb::player(from, false), Aabb::player([0.5, y + 1.2, 0.5], false)));
-        assert!(!collides_with_anything_new(&w, Aabb::player(from, false), Aabb::player([0.5, y + 1.5, 0.5], false)));
+        assert!(collides_with_anything_new(&w, Aabb::player(from, 1.8), Aabb::player([0.5, y + 1.2, 0.5], MIN_POSE_HEIGHT)));
+        assert!(!collides_with_anything_new(&w, Aabb::player(from, 1.8), Aabb::player([0.5, y + 1.5, 0.5], MIN_POSE_HEIGHT)));
     }
 
     #[test]
