@@ -694,6 +694,8 @@ dependencies = [
 name = "kiln-worldgen"
 version = "0.1.0"
 dependencies = [
+ "flate2",
+ "kiln-data",
  "kiln-javamath",
  "thiserror",
 ]

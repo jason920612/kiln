@@ -53,6 +53,19 @@ impl Volume {
         self.min[axis].wrapping_add(self.size[axis].wrapping_mul(self.step[axis])).wrapping_sub(1)
     }
 
+    /// `DensityVolume.indexOfBlock`: the buffer index of a block position on the volume's
+    /// grid, if it is one.
+    pub fn index_of_block(&self, x: i32, y: i32, z: i32) -> Option<usize> {
+        let r = [x.wrapping_sub(self.min[0]), y.wrapping_sub(self.min[1]), z.wrapping_sub(self.min[2])];
+        if self.step == [1, 1, 1] {
+            return (0..3).all(|a| r[a] >= 0 && r[a] < self.size[a]).then(|| self.index(r[0], r[1], r[2]));
+        }
+        let on_grid = (0..3).all(|a| {
+            r[a] >= 0 && r[a] < self.size[a].wrapping_mul(self.step[a]) && r[a].rem_euclid(self.step[a]) == 0
+        });
+        on_grid.then(|| self.index(r[0] / self.step[0], r[1] / self.step[1], r[2] / self.step[2]))
+    }
+
     /// Every position in buffer order.
     pub fn positions(&self) -> impl Iterator<Item = [i32; 3]> + '_ {
         (0..self.size[2]).flat_map(move |z| {

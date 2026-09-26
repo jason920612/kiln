@@ -107,16 +107,64 @@ pub enum Sampler {
     DistanceToPoint { point: [i32; 3], metric: DistanceMetric },
 }
 
-/// Recycled buffers for volume evaluation, plus the cache buffers of the evaluation in
-/// progress (released when the outermost `fill` returns).
+/// Recycled buffers for volume evaluation, plus the sampling context.
+///
+/// By default the context is uncached (`SamplerContext.EMPTY_UNCACHED`); a volume still
+/// evaluates each prepared cache once and reuses the buffer until the outermost `fill`
+/// returns, which cannot change a value. [`Scratch::caching`] emulates a caching context
+/// instead (`SamplerContext.builder().enableCaches()`), whose state is observable: each
+/// prepared cache keeps the last volume it was sampled on and the last point, and a point
+/// query inside that volume returns the volume's value, which can differ from the point
+/// evaluation in the last bit.
 #[derive(Default)]
 pub struct Scratch {
     free: Vec<Vec<f32>>,
     depth: u32,
     cached: Vec<(u32, Volume, Vec<f32>)>,
+    cells: Option<Vec<CacheCell>>,
+}
+
+/// `SamplerContext.CacheCell`.
+struct CacheCell {
+    volume: Option<Volume>,
+    buffer: Vec<f32>,
+    value_key: i64,
+    value: f32,
+}
+
+impl Default for CacheCell {
+    fn default() -> Self {
+        Self { volume: None, buffer: Vec::new(), value_key: 0, value: f32::NAN }
+    }
+}
+
+/// `BlockPos.asLong`, the key of a cache cell's last point.
+#[inline]
+fn pos_key(x: i32, y: i32, z: i32) -> i64 {
+    ((x as i64 & 0x3FF_FFFF) << 38) | ((z as i64 & 0x3FF_FFFF) << 12) | (y as i64 & 0xFFF)
 }
 
 impl Scratch {
+    /// A caching context (see the type docs).
+    pub fn caching() -> Self {
+        Self { cells: Some(Vec::new()), ..Self::default() }
+    }
+
+    /// Forgets every cached volume and point, as a fresh context would.
+    pub fn reset_caches(&mut self) {
+        if let Some(cells) = &mut self.cells {
+            for c in cells.iter_mut() {
+                c.volume = None;
+                c.value_key = 0;
+                c.value = f32::NAN;
+            }
+        }
+    }
+
+    pub fn is_caching(&self) -> bool {
+        self.cells.is_some()
+    }
+
     fn take(&mut self, len: usize) -> Vec<f32> {
         let mut v = self.free.pop().unwrap_or_default();
         v.clear();
@@ -127,6 +175,47 @@ impl Scratch {
     fn give(&mut self, v: Vec<f32>) {
         self.free.push(v);
     }
+
+    fn cell(&mut self, id: u32) -> &mut CacheCell {
+        let cells = self.cells.as_mut().expect("caching context");
+        if cells.len() <= id as usize {
+            cells.resize_with(id as usize + 1, CacheCell::default);
+        }
+        &mut cells[id as usize]
+    }
+
+    /// `SamplerContext.sampleValueCached`.
+    fn point_cached(&mut self, id: u32, input: &Sampler, x: i32, y: i32, z: i32) -> f32 {
+        let key = pos_key(x, y, z);
+        let cell = self.cell(id);
+        if cell.value_key == key && !cell.value.is_nan() {
+            return cell.value;
+        }
+        if let Some(i) = cell.volume.and_then(|v| v.index_of_block(x, y, z)) {
+            return cell.buffer[i];
+        }
+        let v = input.point(self, x, y, z);
+        let cell = self.cell(id);
+        cell.value_key = key;
+        cell.value = v;
+        v
+    }
+
+    /// `SamplerContext.sampleVolumeCached`.
+    fn fill_cached(&mut self, id: u32, input: &Sampler, vol: &Volume, out: &mut [f32]) {
+        let cell = self.cell(id);
+        if cell.volume.as_ref() == Some(vol) {
+            out.copy_from_slice(&cell.buffer);
+            return;
+        }
+        cell.volume = Some(*vol);
+        let mut buf = std::mem::take(&mut cell.buffer);
+        buf.clear();
+        buf.resize(vol.len(), 0.0);
+        input.fill(self, vol, &mut buf);
+        out.copy_from_slice(&buf);
+        self.cell(id).buffer = buf;
+    }
 }
 
 impl Sampler {
@@ -135,7 +224,13 @@ impl Sampler {
         use Sampler::*;
         match self {
             Const(v) => *v,
-            Cache { input, .. } => input.point(s, x, y, z),
+            Cache { id, input } => {
+                if s.cells.is_some() {
+                    s.point_cached(*id, input, x, y, z)
+                } else {
+                    input.point(s, x, y, z)
+                }
+            }
             Add(l, r) => l.point(s, x, y, z) + r.point(s, x, y, z),
             ConstAdd(i, c) => i.point(s, x, y, z) + c,
             Sub(l, r) => l.point(s, x, y, z) - r.point(s, x, y, z),
@@ -269,6 +364,9 @@ impl Sampler {
         match self {
             Const(v) => out.fill(*v),
             Cache { id, input } => {
+                if s.cells.is_some() {
+                    return s.fill_cached(*id, input, vol, out);
+                }
                 if let Some((_, _, buf)) = s.cached.iter().find(|(i, v, _)| i == id && v == vol) {
                     out.copy_from_slice(buf);
                     return;

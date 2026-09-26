@@ -9,11 +9,16 @@
 // positive comparison exactly when an operand is NaN.
 #![allow(clippy::neg_cmp_op_on_partial_ord)]
 
+pub mod aquifer;
+pub mod biome;
+pub mod blocks;
 pub mod compile;
 pub mod datapack;
 pub mod function;
+pub mod generator;
 pub mod interval;
 pub mod json;
+pub mod material;
 pub mod noise;
 pub mod sampler;
 pub mod spline;
@@ -21,6 +26,7 @@ pub mod state;
 pub mod volume;
 
 pub use datapack::{Datapack, NoiseSettings};
+pub use generator::{GenScratch, Generator, ProtoChunk};
 pub use sampler::{Sampler, SamplerRef, Scratch};
 pub use state::{NoiseRouter, RandomState};
 pub use volume::Volume;
