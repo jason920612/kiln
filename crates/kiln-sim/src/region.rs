@@ -10,7 +10,7 @@ use crate::{HOTBAR_START, INVENTORY_SLOTS, KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEO
 use bytes::Bytes;
 use kiln_link::{ConnId, PlayIn};
 use kiln_proto::packets;
-use kiln_region::{CellSet, RegionId};
+use kiln_region::CellSet;
 use kiln_world::{Blocks, Cell, CellStore, ChunkPos};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -42,8 +42,9 @@ pub(crate) struct BlockChange {
 /// What a region leaves for the next serial phase.
 #[derive(Default)]
 pub(crate) struct RegionOut {
-    /// Chunks its players need that are not loaded, nearest first per player.
-    pub wanted: Vec<(ConnId, ChunkPos)>,
+    /// Chunks its players need that are not loaded: (rank in the player's nearest-first
+    /// list, player, chunk).
+    pub wanted: Vec<(u32, ConnId, ChunkPos)>,
     /// Loaded chunks no player of the region is near any more.
     pub unload: Vec<ChunkPos>,
     /// CPU time per sub-phase, for the statistics.
@@ -53,7 +54,6 @@ pub(crate) struct RegionOut {
 pub(crate) const SUB_PHASES: [&str; 5] = ["connections", "visibility", "movement", "light", "egress"];
 
 pub(crate) struct RegionWork<'a> {
-    pub id: RegionId,
     pub cells: &'a mut CellSet<Cell>,
     /// Sorted by connection id.
     pub players: Vec<&'a mut Player>,
@@ -113,10 +113,17 @@ impl RegionWork<'_> {
         let mut centers: Vec<(ChunkPos, i32)> = self.players.iter().map(|p| (p.center, p.view_distance + 1)).collect();
         centers.sort_unstable_by_key(|&(c, r)| (c, r));
         centers.dedup();
-        let near = |c: ChunkPos| centers.iter().any(|&(o, r)| (c.x - o.x).abs() <= r && (c.z - o.z).abs() <= r);
+        let mut near = HashSet::new();
+        for (o, r) in centers {
+            for x in o.x - r..=o.x + r {
+                for z in o.z - r..=o.z + r {
+                    near.insert(ChunkPos::new(x, z));
+                }
+            }
+        }
         let mut unload = Vec::new();
         self.cells.for_each_cell(&mut |pos, cell| {
-            unload.extend(cell.chunks(pos).map(|(c, _)| c).filter(|&c| !near(c)));
+            unload.extend(cell.chunks(pos).map(|(c, _)| c).filter(|c| !near.contains(c)));
         });
         self.out.unload = unload;
     }
@@ -235,11 +242,11 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(
             if action == START_DIGGING && within_reach(p, pos) {
                 set_block(world, pos, kiln_data::blocks::default_state::AIR, changes);
             }
-            p.send(packets::block_changed_ack(sequence));
+            p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         PlayIn::UseItemOn { hand, pos, face, sequence, .. } => {
             use_item_on(p, world, hand, pos, face, changes);
-            p.send(packets::block_changed_ack(sequence));
+            p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         PlayIn::Punch => p.swung = true,
         PlayIn::ClientTickEnd => p.position_this_tick = false,
@@ -340,8 +347,13 @@ fn handle_move<W: Blocks + ?Sized>(
     p.on_ground = on_ground;
 }
 
-/// Start of a connection's tick: movement bookkeeping and keep-alives.
+/// Start of a connection's tick: block change acks (after the block updates they
+/// acknowledge, like vanilla's connection tick), movement bookkeeping and keep-alives.
 fn tick_connection(p: &mut Player, env: &Env) {
+    if p.ack_block_changes >= 0 {
+        p.send(packets::block_changed_ack(p.ack_block_changes));
+        p.ack_block_changes = -1;
+    }
     p.first_good = p.pos;
     p.move_packets = 0;
     p.load_timeout = p.load_timeout.saturating_sub(1);
@@ -359,14 +371,19 @@ fn tick_connection(p: &mut Player, env: &Env) {
 
 /// Recenters the player's chunk view and streams missing loaded chunks, nearest first;
 /// missing chunks that are not loaded yet are requested.
-fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &mut Vec<(ConnId, ChunkPos)>) {
+fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &mut Vec<(u32, ConnId, ChunkPos)>) {
     let center = ChunkPos::of_block(p.pos[0].floor() as i32, p.pos[2].floor() as i32);
     let r = p.view_distance;
-    if center != p.center {
-        p.center = center;
-        p.send(packets::set_chunk_cache_center(center.x, center.z));
-        let stale: Vec<_> =
+    // A smaller view distance forgets chunks too (vanilla `updateChunkTracking`).
+    if center != p.center || r != p.applied_view {
+        if center != p.center {
+            p.center = center;
+            p.send(packets::set_chunk_cache_center(center.x, center.z));
+        }
+        p.applied_view = r;
+        let mut stale: Vec<_> =
             p.sent_chunks.iter().copied().filter(|c| (c.x - center.x).abs() > r || (c.z - center.z).abs() > r).collect();
+        stale.sort_unstable();
         for c in stale {
             p.sent_chunks.remove(&c);
             p.send(packets::forget_level_chunk(c.x, c.z));
@@ -390,11 +407,17 @@ fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &
     missing.sort_by_key(|c| (c.x - center.x).pow(2) + (c.z - center.z).pow(2));
     let budget = (p.chunks_per_tick.ceil() as usize).max(1);
     let mut batch = Vec::new();
+    // Ask for about what the client takes in the next tick or two, nearest first.
+    let mut asked = 0;
     for c in missing {
         match cells.chunk_mut(c) {
             Some(chunk) if batch.len() < budget => batch.push((c, chunk.packet_body(env.biome_count))),
             Some(_) => {}
-            None => wanted.push((p.conn, c)),
+            None if asked < 2 * budget => {
+                wanted.push((asked as u32, p.conn, c));
+                asked += 1;
+            }
+            None => {}
         }
     }
     if batch.is_empty() {

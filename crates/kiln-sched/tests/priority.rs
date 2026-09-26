@@ -138,7 +138,16 @@ fn housekeeping_runs_and_survives_panics() {
     let mut got: Vec<i32> = (0..100).map(|_| rx.recv_timeout(Duration::from_secs(10)).unwrap()).collect();
     got.sort_unstable();
     assert_eq!(got, (0..100).collect::<Vec<_>>());
-    let stats = pool.stats();
+    // A job's counters are bumped after it returns, so the last send can beat them.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut stats = pool.stats();
+    let settled = |st: &[kiln_sched::WorkerStats]| {
+        st.iter().map(|s| s.housekeeping).sum::<u64>() >= 101 && st.iter().map(|s| s.housekeeping_panics).sum::<u64>() >= 1
+    };
+    while !settled(&stats) && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+        stats = pool.stats();
+    }
     assert_eq!(stats.iter().map(|s| s.housekeeping).sum::<u64>(), 101);
     assert_eq!(stats.iter().map(|s| s.housekeeping_panics).sum::<u64>(), 1);
 }

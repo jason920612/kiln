@@ -91,9 +91,11 @@ impl Sim {
         let Some(joiner) = self.players.get(&conn) else { return };
         let props = joiner.profile_properties();
         let to_all = entity::player_info_update(PlayerInfoActions::INITIALIZE, &[joiner.info_entry(&props)]);
-        let all_props: Vec<Vec<ProfileProperty>> = self.players.values().map(|p| p.profile_properties()).collect();
-        let entries: Vec<PlayerInfoEntry> =
-            self.players.values().zip(&all_props).map(|(p, props)| p.info_entry(props)).collect();
+        // In join order (connection ids grow), not hash order.
+        let mut everyone: Vec<&Player> = self.players.values().collect();
+        everyone.sort_by_key(|p| p.conn);
+        let all_props: Vec<Vec<ProfileProperty>> = everyone.iter().map(|p| p.profile_properties()).collect();
+        let entries: Vec<PlayerInfoEntry> = everyone.iter().zip(&all_props).map(|(p, props)| p.info_entry(props)).collect();
         let to_joiner = entity::player_info_update(PlayerInfoActions::INITIALIZE, &entries);
         drop(entries);
         self.broadcast(to_all);
@@ -126,7 +128,6 @@ impl Sim {
         let mut forget: Vec<(ConnId, i32)> = Vec::new();
         for (&conn, p) in self.players.iter_mut() {
             let (mine, id) = region[&conn];
-            let before = forget.len();
             p.seen_by.retain(|v| {
                 let same = region.get(v).is_some_and(|&(r, _)| r == mine);
                 if !same {
@@ -134,14 +135,11 @@ impl Sim {
                 }
                 same
             });
-            if forget.len() > before {
-                p.section = None;
-            }
         }
+        forget.sort_unstable();
         for (viewer, id) in forget {
             if let Some(v) = self.players.get_mut(&viewer) {
                 v.send(entity::remove_entities(&[id]));
-                v.section = None;
             }
         }
     }

@@ -56,11 +56,14 @@ impl ChunkPos {
 /// The loaded chunks of one cell.
 pub struct Cell {
     chunks: [Option<Box<Chunk>>; CELL_CHUNKS],
+    /// Chunks handed out mutably since the last [`Cell::take_touched`] (one bit per chunk),
+    /// so per-tick scans such as light changes skip chunks nothing touched.
+    touched: u64,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { chunks: std::array::from_fn(|_| None) }
+        Self { chunks: std::array::from_fn(|_| None), touched: 0 }
     }
 }
 
@@ -70,7 +73,17 @@ impl Cell {
     }
 
     pub fn chunk_mut(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
-        self.chunks[pos.cell_index()].as_deref_mut()
+        let i = pos.cell_index();
+        self.touched |= 1 << i;
+        self.chunks[i].as_deref_mut()
+    }
+
+    /// Loaded chunks touched through [`Cell::chunk_mut`] since the last call.
+    pub fn take_touched(&mut self, cell: CellPos) -> impl Iterator<Item = (ChunkPos, &mut Chunk)> {
+        let touched = std::mem::take(&mut self.touched);
+        self.chunks.iter_mut().enumerate().filter(move |(i, _)| touched & (1 << i) != 0).filter_map(
+            move |(i, c)| Some((ChunkPos::in_cell(cell, i), c.as_deref_mut()?)),
+        )
     }
 
     /// Installs a chunk (`pos` must lie in this cell); returns the one it replaced.
@@ -343,7 +356,7 @@ pub trait Blocks: CellStore {
     fn take_light_changes(&mut self) -> Vec<(ChunkPos, u64, u64)> {
         let mut out = Vec::new();
         self.for_each_cell_mut(&mut |pos, cell| {
-            for (chunk_pos, chunk) in cell.chunks_mut(pos) {
+            for (chunk_pos, chunk) in cell.take_touched(pos) {
                 let (sky, block) = chunk.take_light_dirty();
                 if sky | block != 0 {
                     out.push((chunk_pos, sky, block));

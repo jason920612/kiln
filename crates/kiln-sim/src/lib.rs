@@ -147,6 +147,10 @@ struct Player {
     load_timeout: u32,
     /// A position arrived since the client's last tick end (a second one is a protocol error).
     position_this_tick: bool,
+    /// Highest block change sequence to acknowledge in the connection tick (-1: none).
+    ack_block_changes: i32,
+    /// View distance the sent chunks were last trimmed to.
+    applied_view: i32,
 }
 
 impl Player {
@@ -182,8 +186,9 @@ struct Dim {
     regionizer: Regionizer,
     /// Chunks loaded for cells without an owner yet; installed once the regionizer ran.
     pending: HashMap<ChunkPos, Chunk>,
-    /// Chunks the regions asked for in their last tick, with the player that needs them.
-    requests: Vec<(ConnId, ChunkPos)>,
+    /// Chunks the regions asked for in their last tick: (rank in the player's list, player,
+    /// chunk).
+    requests: Vec<(u32, ConnId, ChunkPos)>,
     /// Chunks the regions no longer need.
     unloads: Vec<ChunkPos>,
     /// Cells emptied by unloads; vacated when the regionizer runs, unless refilled first.
@@ -389,11 +394,15 @@ impl Sim {
         };
 
         // B0: connection events, chunks, topology, joins, membership.
-        let (mut packets, mut joins, mut console) = (Vec::new(), Vec::new(), Vec::new());
+        let (mut packets, mut joins, mut console, mut leaves) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for msg in inbox {
             match msg {
                 ToSim::Join(j) => joins.push(j),
-                ToSim::Leave(conn) => self.leave(conn),
+                // A connection that joined and left in the same batch never enters the game.
+                ToSim::Leave(conn) => match joins.iter().position(|j: &JoinInfo| j.conn == conn) {
+                    Some(i) => drop(joins.remove(i)),
+                    None => leaves.push(conn),
+                },
                 ToSim::Packet(conn, pkt) => packets.push((conn, pkt)),
                 ToSim::Console(command) => console.push(command),
                 ToSim::Shutdown { done } => {
@@ -426,6 +435,10 @@ impl Sim {
             self.exclusive_packet(conn, pkt);
         }
         self.answer_suggestions();
+        // Leaves last, so the packets a player sent before leaving still apply.
+        for conn in leaves {
+            self.leave(conn);
+        }
         lap(&mut self.stats, "px");
 
         // G: console, time, autosave.
@@ -433,8 +446,8 @@ impl Sim {
             self.run_console_command(command.trim_start_matches('/'));
         }
         self.tick_global();
-        // Players teleported in PX or G into a loaded cell of another region tick there now.
-        self.update_membership(false);
+        // Players teleported in PX or G tick in their destination's region from now on.
+        self.settle_teleported();
         lap(&mut self.stats, "global");
 
         // L: regions tick in parallel.
@@ -541,7 +554,7 @@ impl Sim {
                 let mut players = buckets.remove(&id).unwrap_or_default();
                 players.sort_unstable_by_key(|p| p.conn);
                 let packets = packets.remove(&id).unwrap_or_default();
-                RegionWork { id, cells: r.cells_mut(), players, packets, out: RegionOut::default() }
+                RegionWork { cells: r.cells_mut(), players, packets, out: RegionOut::default() }
             })
             .collect();
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
@@ -581,14 +594,20 @@ impl Sim {
         if unloaded > 0 {
             debug!("unloaded {unloaded} chunks");
         }
+        // Every player's own chunk, uncapped: each player must stand in an owned cell.
         let mut own: Vec<ChunkPos> = keep.into_iter().collect();
         own.sort_unstable();
-        // By player, each player's nearest first: the same order however regions split them.
+        for pos in own {
+            if !self.dim.is_loaded(pos) {
+                self.dim.load_chunk(pos);
+            }
+        }
+        // Then the requests, players interleaved (everyone's nearest chunk first), in an
+        // order that does not depend on how regions split them.
         let mut wanted = std::mem::take(&mut self.dim.requests);
-        wanted.sort_by_key(|&(conn, _)| conn);
-        let requests = region::merge_requests(own.into_iter().chain(wanted.into_iter().map(|(_, c)| c)));
+        wanted.sort_unstable_by_key(|&(rank, conn, _)| (rank, conn));
         let mut loads = 0;
-        for pos in requests {
+        for pos in region::merge_requests(wanted.into_iter().map(|(_, _, c)| c)) {
             if self.dim.is_loaded(pos) {
                 continue;
             }
@@ -608,14 +627,32 @@ impl Sim {
             let owner = self.dim.regions.owner(player_chunk(p.pos).cell());
             if let Some(r) = owner.filter(|&r| r != p.region) {
                 p.region = r;
-                // Tracking starts over among the new region's players.
-                p.section = None;
                 moved = true;
             }
         }
         if moved {
             self.drop_cross_region_pairs();
         }
+    }
+
+    /// After the serial phases: players whose chunk is not loaded (teleported into the gap
+    /// between regions) get it loaded and a region now, like joining players, so every
+    /// player ticks in the region of its position whatever the topology.
+    fn settle_teleported(&mut self) {
+        let mut stray: Vec<ChunkPos> = self
+            .players
+            .values()
+            .map(|p| player_chunk(p.pos))
+            .filter(|&c| self.dim.regions.owner(c.cell()).is_none())
+            .collect();
+        let changed = !stray.is_empty() && {
+            stray.sort_unstable();
+            for c in stray {
+                self.dim.load_chunk(c);
+            }
+            self.dim.apply_topology(self.game_time as u64)
+        };
+        self.update_membership(changed);
     }
 
     /// A packet from the serial PX stream.
@@ -727,6 +764,8 @@ impl Sim {
             teleport_sent: self.game_time,
             load_timeout: movement::CLIENT_LOADED_TIMEOUT,
             position_this_tick: false,
+            ack_block_changes: -1,
+            applied_view: view_distance,
         };
 
         player.send(packets::play_login(&packets::Login {

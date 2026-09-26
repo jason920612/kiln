@@ -256,7 +256,8 @@ def check_build(updates, acks):
     log_states = [s for (p, s) in updates if p == LOG]
     assert len(log_states) == 2 and log_states[1] == default_state("air"), f"log place/break: {log_states}"
     assert (TORCH, default_state("torch")) in updates, "torch not placed"
-    assert acks == [1, 2, 3, 4, 5, 6], f"acks {acks}"
+    # Like vanilla, one ack per tick carries the highest sequence so far.
+    assert acks and acks == sorted(acks) and acks[-1] == 6, f"acks {acks}"
     print(f"build: {len(updates)} block updates, acks {acks}")
 
 
