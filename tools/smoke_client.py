@@ -139,6 +139,26 @@ class Conn:
         return p.varint(), p
 
 
+def skip_nbt(b, t):
+    """Skips an NBT payload of type `t` (0 = nothing)."""
+    if t in (1, 2, 3, 4, 5, 6):
+        b.take({1: 1, 2: 2, 3: 4, 4: 8, 5: 4, 6: 8}[t])
+    elif t in (7, 11, 12):
+        b.take(b.i32() * {7: 1, 11: 4, 12: 8}[t])
+    elif t == 8:
+        b.take(struct.unpack(">H", b.take(2))[0])
+    elif t == 9:
+        et = b.u8()
+        for _ in range(b.i32()):
+            skip_nbt(b, et)
+    elif t == 10:
+        while (tt := b.u8()) != 0:
+            b.take(struct.unpack(">H", b.take(2))[0])
+            skip_nbt(b, tt)
+    elif t != 0:
+        raise ValueError(f"NBT tag type {t}")
+
+
 def parse_chunk(b):
     x, z = b.i32(), b.i32()
     for _ in range(b.varint()):
@@ -162,7 +182,9 @@ def parse_chunk(b):
             data.take(8 * -(-entries // per_long))
         sections += 1
     assert sections == 24, f"expected 24 sections, got {sections}"
-    assert b.varint() == 0, "block entities"
+    for _ in range(b.varint()):  # block entities: packed xz, y, type, update tag (or TAG_End)
+        b.u8(), b.i16(), b.varint()
+        skip_nbt(b, b.u8())
     masks = []
     for _ in range(4):  # BitSet as a byte array (26.3 ByteBufCodecs.BIT_SET)
         masks.append(int.from_bytes(b.take(b.varint()), "little"))
@@ -177,7 +199,7 @@ def parse_chunk(b):
     return x, z
 
 
-REPORTS = ROOT / "work" / "generated" / "reports"
+REPORTS = WORK / "generated" / "reports"
 ITEMS = json.loads((REPORTS / "registries.json").read_text())["minecraft:item"]["entries"]
 BLOCKS = json.loads((REPORTS / "blocks.json").read_text())
 
