@@ -144,17 +144,7 @@ pub struct Region<C, P> {
     pub(crate) dirty: bool,
 }
 
-impl<C, P: RegionPart> Region<C, P> {
-    pub(crate) fn new(id: RegionId, pos: CellPos, cell: Box<C>) -> Self {
-        let mut cells = CellSet::new();
-        cells.insert(pos, cell);
-        Self { id, cells, part: P::default(), pins: SmallVec::new(), since: Vec::new(), dirty: false }
-    }
-
-    pub(crate) fn from_parts(id: RegionId, cells: CellSet<C>, part: P, tick: u64) -> Self {
-        Self { id, cells, part, pins: SmallVec::new(), since: vec![tick], dirty: false }
-    }
-
+impl<C, P> Region<C, P> {
     pub fn id(&self) -> RegionId {
         self.id
     }
@@ -199,17 +189,12 @@ impl<C, P: RegionPart> Region<C, P> {
         &self.pins
     }
 
-    /// Absorbs `other`: cells, part (linear merge), pins and split watch.
-    pub(crate) fn absorb(&mut self, other: Region<C, P>) {
-        let offset = self.since.len() as u32;
-        self.cells.merge(other.cells, offset);
-        self.since.extend(other.since);
-        self.compact_labels();
-        P::merge(&mut self.part, other.part);
-        for pin in other.pins {
-            self.add_pin(pin);
+    /// Adds a normalized pin; an existing pin with the same key keeps the later expiry.
+    pub(crate) fn add_pin(&mut self, pin: FusePin) {
+        match self.pins.binary_search_by_key(&pin.key(), FusePin::key) {
+            Ok(i) => self.pins[i].until_tick = self.pins[i].until_tick.max(pin.until_tick),
+            Err(i) => self.pins.insert(i, pin),
         }
-        self.dirty |= other.dirty;
     }
 
     /// Renumbers labels densely in cell order so `since` stays bounded by the cell count.
@@ -228,13 +213,30 @@ impl<C, P: RegionPart> Region<C, P> {
         }
         self.since = since;
     }
+}
 
-    /// Adds a normalized pin; an existing pin with the same key keeps the later expiry.
-    pub(crate) fn add_pin(&mut self, pin: FusePin) {
-        match self.pins.binary_search_by_key(&pin.key(), FusePin::key) {
-            Ok(i) => self.pins[i].until_tick = self.pins[i].until_tick.max(pin.until_tick),
-            Err(i) => self.pins.insert(i, pin),
+impl<C, P: RegionPart> Region<C, P> {
+    pub(crate) fn new(id: RegionId, pos: CellPos, cell: Box<C>) -> Self {
+        let mut cells = CellSet::new();
+        cells.insert(pos, cell);
+        Self { id, cells, part: P::default(), pins: SmallVec::new(), since: Vec::new(), dirty: false }
+    }
+
+    pub(crate) fn from_parts(id: RegionId, cells: CellSet<C>, part: P, tick: u64) -> Self {
+        Self { id, cells, part, pins: SmallVec::new(), since: vec![tick], dirty: false }
+    }
+
+    /// Absorbs `other`: cells, part (linear merge), pins and split watch.
+    pub(crate) fn absorb(&mut self, other: Region<C, P>) {
+        let offset = self.since.len() as u32;
+        self.cells.merge(other.cells, offset);
+        self.since.extend(other.since);
+        self.compact_labels();
+        P::merge(&mut self.part, other.part);
+        for pin in other.pins {
+            self.add_pin(pin);
         }
+        self.dirty |= other.dirty;
     }
 
     /// Splits off `n - 1` new regions. `piece_of[i]` is the piece of cell `i` (0 stays).

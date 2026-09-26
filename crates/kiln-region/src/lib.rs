@@ -27,9 +27,11 @@
 //!   `tick % split_period == id % split_period` if a cell was vacated or a pin removed
 //!   since its last check, or the last check found it disconnected. Components other
 //!   than the anchor's split off, each into a new region, once they have been apart for
-//!   `split_hysteresis` ticks as sampled by the checks (a pin counts as a link while it is
-//!   active, so its expiry starts the hysteresis). Components are numbered by anchor and
-//!   new ids are allocated in that order; the original region keeps its id.
+//!   `split_hysteresis` ticks as sampled by the checks: a component's clock starts at the
+//!   first check that sees it apart and restarts whenever a check finds it connected to
+//!   another part again. A pin counts as a link while it is active, so its expiry starts
+//!   the clock. Components are numbered by anchor and new ids are allocated in that
+//!   order; the original region keeps its id and anchor.
 //! - **Fuse**: a [`FusePin`] merges the owners of its two cells (smallest anchor survives)
 //!   and keeps them in one region until `until_tick`, even though they are not linked.
 //!
@@ -57,10 +59,11 @@
 //! - During the tick, [`Regions::split_mut`] yields the shared `&CellTable` and disjoint
 //!   `&mut Region`s for the workers. A region reaches its payloads through
 //!   [`Region::cells_mut`] and its state through [`Region::part_mut`].
-//! - Per-region state implements [`RegionPart`]: `merge` must be a linear merge in a key
-//!   order independent of the partition (global `TickSeq`, [`MsgKey`], ...), `split` a
-//!   stable partition by the new owner of each element's cell. [`TickList`], [`Inbox`]
-//!   and [`MaxCounters`] are reference implementations; tuples of parts are parts.
+//! - Per-region state implements [`RegionPart`] (`Default` is the state of a new region):
+//!   `merge` must be a linear merge in a key order independent of the partition (global
+//!   `TickSeq`, [`MsgKey`], ...), `split` a stable partition by the new owner of each
+//!   element's cell. [`TickList`], [`Inbox`] and [`MaxCounters`] are reference
+//!   implementations; tuples of parts are parts.
 //! - Debug builds check the invariants ([`Regionizer::check_invariants`]) and the
 //!   conservation of part elements after every `apply`.
 //! - [`RegionPolicy::unified`] keeps exactly one region per dimension (vanilla profile).

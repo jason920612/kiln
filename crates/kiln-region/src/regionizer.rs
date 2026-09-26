@@ -371,68 +371,14 @@ impl Regionizer {
         deltas: &mut Deltas,
     ) {
         let region = regions.map.get_mut(&id).unwrap();
-        let n = region.cells.len();
-        let mut uf = UnionFind::new(n);
-        for i in 0..n {
-            let p = region.cells.slots[i].pos;
-            for &(dx, dz) in &self.forward {
-                if let Some(j) = region.cells.index_of(p.offset(dx, dz)) {
-                    uf.union(i, j);
-                }
-            }
-        }
-        for pin in &region.pins {
-            if let (Some(i), Some(j)) = (region.cells.index_of(pin.a), region.cells.index_of(pin.b)) {
-                uf.union(i, j);
-            }
-        }
-        // Components numbered in order of first cell, i.e. by anchor.
-        let mut comp_of = vec![0u32; n];
-        let mut root_comp = vec![u32::MAX; n];
-        let mut m = 0u32;
-        for (i, c) in comp_of.iter_mut().enumerate() {
-            let root = uf.find(i);
-            if root_comp[root] == u32::MAX {
-                root_comp[root] = m;
-                m += 1;
-            }
-            *c = root_comp[root];
-        }
-        let m = m as usize;
+        let (comp_of, m) = self.components(region);
         if m == 1 {
             region.cells.slots.iter_mut().for_each(|s| s.label = 0);
             region.since = vec![tick];
             region.dirty = false;
             return;
         }
-
-        let labels = region.since.len();
-        let mut label_comp = vec![u32::MAX; labels];
-        let mut spanning = vec![false; labels];
-        for (s, &c) in region.cells.slots.iter().zip(&comp_of) {
-            if s.label != UNLABELED {
-                let l = s.label as usize;
-                if label_comp[l] == u32::MAX {
-                    label_comp[l] = c;
-                } else if label_comp[l] != c {
-                    spanning[l] = true;
-                }
-            }
-        }
-        let mut since: Vec<Option<u64>> = vec![None; m];
-        let mut reset = vec![false; m];
-        for (s, &c) in region.cells.slots.iter().zip(&comp_of) {
-            if s.label != UNLABELED {
-                let l = s.label as usize;
-                let c = c as usize;
-                if spanning[l] {
-                    reset[c] = true;
-                } else {
-                    since[c] = since[c].max(Some(region.since[l]));
-                }
-            }
-        }
-        let since: Vec<u64> = (0..m).map(|c| if reset[c] { tick } else { since[c].unwrap_or(tick) }).collect();
+        let since = apart_since(region, &comp_of, m, tick);
 
         // Piece 0 keeps the anchor's component and the young ones.
         let mut piece_of_comp = vec![0usize; m];
@@ -440,7 +386,7 @@ impl Regionizer {
         let mut stay_since = Vec::new();
         let mut leaving = 0usize;
         for c in 0..m {
-            if c > 0 && tick - since[c] >= self.policy.split_hysteresis {
+            if c > 0 && tick.saturating_sub(since[c]) >= self.policy.split_hysteresis {
                 leaving += 1;
                 piece_of_comp[c] = leaving;
             } else {
@@ -459,7 +405,6 @@ impl Regionizer {
 
         let piece_of: Vec<usize> = comp_of.iter().map(|&c| piece_of_comp[c as usize]).collect();
         let new_ids: SmallVec<[RegionId; 4]> = (0..leaving).map(|_| self.alloc_id()).collect();
-        let region = regions.map.get_mut(&id).unwrap();
         let pieces = region.split_off(&piece_of, &new_ids, tick);
         for piece in pieces {
             for pos in piece.cells.positions() {
@@ -468,6 +413,38 @@ impl Regionizer {
             regions.map.insert(piece.id(), piece);
         }
         deltas.push(TopologyDelta::Split { from: id, into: new_ids });
+    }
+
+    /// The component of every cell under links and active pins, numbered in order of each
+    /// component's first cell (so by anchor), and the number of components.
+    fn components<C, P>(&self, region: &Region<C, P>) -> (Vec<u32>, usize) {
+        let cells = &region.cells;
+        let n = cells.len();
+        let mut uf = UnionFind::new(n);
+        for (i, s) in cells.slots.iter().enumerate() {
+            for &(dx, dz) in &self.forward {
+                if let Some(j) = cells.index_of(s.pos.offset(dx, dz)) {
+                    uf.union(i, j);
+                }
+            }
+        }
+        for pin in &region.pins {
+            if let (Some(i), Some(j)) = (cells.index_of(pin.a), cells.index_of(pin.b)) {
+                uf.union(i, j);
+            }
+        }
+        let mut comp_of = vec![0u32; n];
+        let mut root_comp = vec![u32::MAX; n];
+        let mut m = 0u32;
+        for (i, c) in comp_of.iter_mut().enumerate() {
+            let root = uf.find(i);
+            if root_comp[root] == u32::MAX {
+                root_comp[root] = m;
+                m += 1;
+            }
+            *c = root_comp[root];
+        }
+        (comp_of, m as usize)
     }
 
     /// Checks §4.5.5 invariants 1, 2 and 5 plus internal consistency. Invariant 3
@@ -545,6 +522,38 @@ impl Regionizer {
         }
         Ok(())
     }
+}
+
+/// Since when each of the `m` components has been apart from the rest of the region, from
+/// the labels of the previous check: the latest `since` among its labels, or `tick` if it
+/// has no label yet or one of its labels also occurs in another component.
+fn apart_since<C, P>(region: &Region<C, P>, comp_of: &[u32], m: usize, tick: u64) -> Vec<u64> {
+    let slots = &region.cells.slots;
+    let mut label_comp = vec![u32::MAX; region.since.len()];
+    let mut spanning = vec![false; region.since.len()];
+    for (s, &c) in slots.iter().zip(comp_of) {
+        if s.label != UNLABELED {
+            let l = s.label as usize;
+            if label_comp[l] == u32::MAX {
+                label_comp[l] = c;
+            } else if label_comp[l] != c {
+                spanning[l] = true;
+            }
+        }
+    }
+    let mut since: Vec<Option<u64>> = vec![None; m];
+    let mut reset = vec![false; m];
+    for (s, &c) in slots.iter().zip(comp_of) {
+        if s.label != UNLABELED {
+            let (l, c) = (s.label as usize, c as usize);
+            if spanning[l] {
+                reset[c] = true;
+            } else {
+                since[c] = since[c].max(Some(region.since[l]));
+            }
+        }
+    }
+    (0..m).map(|c| if reset[c] { tick } else { since[c].unwrap_or(tick) }).collect()
 }
 
 fn part_count<C, P: RegionPart>(regions: &Regions<C, P>) -> usize {
