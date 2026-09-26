@@ -1,7 +1,8 @@
-//! Checks every codec against the corpus that tools/ItemVectors.java writes with vanilla's own
-//! codecs (`python tools/item_vectors.py corpus`, into `<work>/wp2-items/corpus.jsonl`; the
-//! test is skipped when it is absent; `KILN_ITEM_CORPUS` names another file).
-//! `KILN_ITEM_ONLY=<component name>[,<name>...]` restricts the checks to those component types.
+//! Checks every codec against item stacks that tools/ItemVectors.java encoded with vanilla's own
+//! codecs: the committed `vectors.jsonl` (a subset covering every component type), and the full
+//! corpus from `python tools/item_vectors.py corpus` (`<work>/wp2-items/corpus.jsonl`, or
+//! `KILN_ITEM_CORPUS`; skipped when absent). `KILN_ITEM_ONLY=<component name>[,<name>...]`
+//! restricts the corpus run to those component types.
 //!
 //! Per component value: network decode -> encode is byte-identical, the persistent form (NBT)
 //! and hash equal vanilla's, and NBT -> typed -> network gives vanilla's bytes. Per stack: the
@@ -78,11 +79,24 @@ impl Tally {
 }
 
 #[test]
+fn committed_vectors() {
+    let failed = check(include_str!("vectors.jsonl"), None);
+    assert_eq!(failed, 0, "{failed} vector checks failed (see the table above)");
+}
+
+#[test]
 fn vanilla_item_corpus() {
     let Some(text) = corpus() else { return };
     let only: Option<Vec<ComponentId>> = std::env::var("KILN_ITEM_ONLY")
         .ok()
         .map(|list| list.split(',').map(|n| component::by_name(n.trim()).expect("KILN_ITEM_ONLY")).collect());
+    let failed = check(&text, only);
+    assert_eq!(failed, 0, "{failed} corpus checks failed (see the table above)");
+}
+
+/// Runs every check over `text` (JSON lines), prints a per-component table and returns the
+/// number of failed checks.
+fn check(text: &str, only: Option<Vec<ComponentId>>) -> usize {
     let mut per_type: BTreeMap<ComponentId, Tally> = BTreeMap::new();
     let mut stacks = Tally::default();
     let mut records = 0;
@@ -233,5 +247,5 @@ fn vanilla_item_corpus() {
         println!("    {what}: {n}, e.g. {example}");
     }
     failed += bad;
-    assert_eq!(failed, 0, "{failed} corpus checks failed (see the table above)");
+    failed
 }

@@ -90,3 +90,23 @@ pub fn default_components(item: i32) -> &'static ComponentMap {
 pub fn decode_failures() -> &'static [(i32, ComponentId)] {
     &load().failures
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::component::{ids, keys};
+    use crate::registry::ITEM;
+
+    #[test]
+    fn every_default_value_decodes() {
+        let failures: Vec<String> = decode_failures()
+            .iter()
+            .map(|&(item, ty)| format!("{} {}", ITEM.name(item).unwrap_or("?"), crate::component::name(ty)))
+            .collect();
+        assert!(failures.is_empty(), "default components that failed to decode: {failures:?}");
+        let sword = default_components(ITEM.id("diamond_sword").unwrap());
+        assert_eq!(sword.len(), 19);
+        assert_eq!(sword.get(ids::MAX_DAMAGE).and_then(|c| keys::MAX_DAMAGE.get(c)), Some(&1561));
+        assert!(default_components(-1).is_empty());
+    }
+}
