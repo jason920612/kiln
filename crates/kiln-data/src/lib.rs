@@ -14,6 +14,9 @@ pub mod block_props;
 #[path = "gen/registries.rs"]
 pub mod registries;
 
+#[path = "gen/entities.rs"]
+pub mod entities;
+
 /// Index of `entry` in a synchronized registry, i.e. its network id.
 pub fn synced_id(registry: &str, entry: &str) -> Option<i32> {
     let (_, entries) = registries::SYNCHRONIZED.iter().find(|(r, _)| *r == registry)?;

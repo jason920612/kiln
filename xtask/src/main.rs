@@ -7,6 +7,7 @@ mod block_props;
 mod bytecode;
 mod codegen;
 mod completeness;
+mod entities;
 mod fetch;
 mod http;
 mod report;
