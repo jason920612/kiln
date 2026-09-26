@@ -21,8 +21,10 @@ pub mod json;
 pub mod material;
 pub mod noise;
 pub mod sampler;
+pub mod simplex;
 pub mod spline;
 pub mod state;
+pub mod surface;
 pub mod volume;
 
 pub use datapack::{Datapack, NoiseSettings};

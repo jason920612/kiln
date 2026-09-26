@@ -8,6 +8,7 @@ use crate::blocks::{is_air, state};
 use crate::datapack::Datapack;
 use crate::sampler::{SamplerRef, Scratch};
 use crate::state::RandomState;
+use crate::surface::{self, BiomeClimate, MaterialInputs, MaterialSystem};
 use crate::volume::Volume;
 use kiln_javamath::random::RandomSource;
 use std::collections::HashMap;
@@ -109,24 +110,105 @@ fn stored_biome(biomes: &[u16], min_y: i32, qx: i32, qy: i32, qz: i32) -> u16 {
 /// Per-thread working memory: sampling contexts and the biomes of recently generated chunks
 /// (vanilla reads neighbour biomes from chunks that already passed BIOMES).
 pub struct GenScratch {
-    pub(crate) biome_context: Scratch,
     pub(crate) noise_context: Scratch,
-    biome_cache: HashMap<(i32, i32), Vec<u16>>,
+    biomes: BiomeCache,
     density: Vec<f32>,
 }
 
 impl Default for GenScratch {
     fn default() -> Self {
         Self {
-            biome_context: Scratch::caching(),
             noise_context: Scratch::caching(),
-            biome_cache: HashMap::new(),
+            biomes: BiomeCache { context: Scratch::caching(), chunks: HashMap::new() },
             density: Vec::new(),
         }
     }
 }
 
+/// Stored biomes of chunks by position, computed on demand.
+struct BiomeCache {
+    context: Scratch,
+    chunks: HashMap<(i32, i32), Vec<u16>>,
+}
+
 const BIOME_CACHE_CHUNKS: usize = 4096;
+
+impl BiomeCache {
+    fn get(&mut self, generator: &Generator, cx: i32, cz: i32) -> &[u16] {
+        if !self.chunks.contains_key(&(cx, cz)) {
+            if self.chunks.len() >= BIOME_CACHE_CHUNKS {
+                self.chunks.clear();
+            }
+            let b = generator.chunk_biomes(&mut self.context, cx, cz);
+            self.chunks.insert((cx, cz), b);
+        }
+        &self.chunks[&(cx, cz)]
+    }
+
+    /// `BiomeManager.getBiome` over stored chunk biomes.
+    fn zoomed(&mut self, generator: &Generator, x: i32, y: i32, z: i32) -> u16 {
+        zoomed_biome(generator.zoom_seed, x, y, z, &mut |qx, qy, qz| {
+            stored_biome(self.get(generator, qx >> 2, qz >> 2), generator.min_y, qx, qy, qz)
+        })
+    }
+}
+
+/// `BiomeManager.obfuscateSeed`: the first 8 bytes (little-endian) of the SHA-256 of the
+/// seed's little-endian bytes.
+pub fn obfuscate_seed(seed: i64) -> i64 {
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(seed.to_le_bytes());
+    i64::from_le_bytes(hash[..8].try_into().unwrap())
+}
+
+/// `LinearCongruentialGenerator.next`.
+#[inline]
+fn lcg(a: i64, b: i64) -> i64 {
+    a.wrapping_mul(a.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407)).wrapping_add(b)
+}
+
+/// `BiomeManager.getFiddle`.
+#[inline]
+fn fiddle(l: i64) -> f64 {
+    let d = (l >> 24).rem_euclid(1024) as f64 / 1024.0;
+    (d - 0.5) * 0.9
+}
+
+/// `BiomeManager.getBiome`: the quart whose jittered corner is nearest (voronoi zoom).
+pub fn zoomed_biome(seed: i64, x: i32, y: i32, z: i32, noise_biome: &mut dyn FnMut(i32, i32, i32) -> u16) -> u16 {
+    let (x, y, z) = (x - 2, y - 2, z - 2);
+    let (qx, qy, qz) = (x >> 2, y >> 2, z >> 2);
+    let (fx, fy, fz) = ((x & 3) as f64 / 4.0, (y & 3) as f64 / 4.0, (z & 3) as f64 / 4.0);
+    let mut best = 0;
+    let mut best_distance = f64::INFINITY;
+    for i in 0..8 {
+        let (ex, ey, ez) = (i & 4 == 0, i & 2 == 0, i & 1 == 0);
+        let cx = if ex { qx } else { qx + 1 };
+        let cy = if ey { qy } else { qy + 1 };
+        let cz = if ez { qz } else { qz + 1 };
+        let dx = if ex { fx } else { fx - 1.0 };
+        let dy = if ey { fy } else { fy - 1.0 };
+        let dz = if ez { fz } else { fz - 1.0 };
+        let mut l = seed;
+        for v in [cx, cy, cz, cx, cy, cz] {
+            l = lcg(l, v as i64);
+        }
+        let f1 = fiddle(l);
+        l = lcg(l, seed);
+        let f2 = fiddle(l);
+        l = lcg(l, seed);
+        let f3 = fiddle(l);
+        let d = (dz + f3) * (dz + f3) + (dy + f2) * (dy + f2) + (dx + f1) * (dx + f1);
+        if best_distance > d {
+            best = i;
+            best_distance = d;
+        }
+    }
+    let cx = if best & 4 == 0 { qx } else { qx + 1 };
+    let cy = if best & 2 == 0 { qy } else { qy + 1 };
+    let cz = if best & 1 == 0 { qz } else { qz + 1 };
+    noise_biome(cx, cy, cz)
+}
 
 pub struct Generator {
     pub min_y: i32,
@@ -135,10 +217,12 @@ pub struct Generator {
     pub biomes: Vec<BiomeInfo>,
     parameters: ParameterList<u16>,
     climate: Vec<SamplerRef>,
+    zoom_seed: i64,
     final_density: SamplerRef,
     default_block: u16,
     fluid_picker: FluidPicker,
     aquifer: Option<AquiferFunctions>,
+    material: MaterialSystem,
 }
 
 impl Generator {
@@ -165,12 +249,17 @@ impl Generator {
         // way vanilla's per-RandomState compiler shares them.
         let mut state = RandomState::new(seed, s.legacy_random_source);
         let router = |name: &str| s.router.iter().find(|(n, _)| n == name).map(|(_, id)| *id).expect("router field");
+        let mut rule_densities = Vec::new();
+        surface::rule_densities(pack, &s.material_rule, &mut rule_densities)?;
         let mut roots: Vec<_> = CLIMATE.iter().map(|n| router(n)).collect();
         roots.push(router("final_density"));
+        roots.push(router("chunk_surface_level"));
         roots.extend(s.aquifers.iter().map(|(_, id)| *id));
+        roots.extend(&rule_densities);
         let mut compiled = state.compile(&pack.graph, &roots)?.into_iter();
         let climate: Vec<SamplerRef> = compiled.by_ref().take(CLIMATE.len()).collect();
         let final_density = compiled.next().expect("final density");
+        let chunk_surface_level = compiled.next().expect("chunk surface level");
         let aquifer = if s.aquifers.is_empty() {
             None
         } else {
@@ -185,7 +274,25 @@ impl Generator {
                 random: state.factory().from_hash_of("minecraft:aquifer").fork_positional(),
             })
         };
+        let densities: HashMap<_, _> = rule_densities.iter().copied().zip(compiled).collect();
+        let default_block = s.default_block.resolve()?;
         let default_fluid = s.default_fluid.resolve()?;
+        let biome_names: Vec<String> = biomes.iter().map(|b| b.name.clone()).collect();
+        let material = MaterialSystem::new(
+            &mut state,
+            MaterialInputs {
+                pack,
+                rule: &s.material_rule,
+                default_block,
+                sea_level: s.sea_level,
+                min_y: s.min_y,
+                height: s.height,
+                preliminary_surface: chunk_surface_level,
+                densities,
+                biome_names: &biome_names,
+                climate: biomes.iter().map(|b| BiomeClimate { temperature: b.temperature, frozen: b.frozen }).collect(),
+            },
+        )?;
         Ok(Generator {
             min_y: s.min_y,
             height: s.height,
@@ -193,10 +300,12 @@ impl Generator {
             biomes,
             parameters,
             climate,
+            zoom_seed: obfuscate_seed(seed),
             final_density,
-            default_block: s.default_block.resolve()?,
+            default_block,
             fluid_picker: FluidPicker::new(s.sea_level, default_fluid),
             aquifer,
+            material,
         })
     }
 
@@ -240,21 +349,9 @@ impl Generator {
         out
     }
 
-    /// The stored biomes of chunk `(cx, cz)`, from the per-thread cache.
-    pub(crate) fn cached_biomes<'a>(&self, gs: &'a mut GenScratch, cx: i32, cz: i32) -> &'a [u16] {
-        if !gs.biome_cache.contains_key(&(cx, cz)) {
-            if gs.biome_cache.len() >= BIOME_CACHE_CHUNKS {
-                gs.biome_cache.clear();
-            }
-            let b = self.chunk_biomes(&mut gs.biome_context, cx, cz);
-            gs.biome_cache.insert((cx, cz), b);
-        }
-        &gs.biome_cache[&(cx, cz)]
-    }
-
     /// Generates a chunk through the BIOMES status.
     pub fn new_chunk(&self, gs: &mut GenScratch, cx: i32, cz: i32) -> ProtoChunk {
-        let biomes = self.cached_biomes(gs, cx, cz).to_vec();
+        let biomes = gs.biomes.get(self, cx, cz).to_vec();
         ProtoChunk { x: cx, z: cz, min_y: self.min_y, blocks: vec![state::AIR; self.sections() * 4096], biomes, surface: [self.min_y; 256] }
     }
 
@@ -278,6 +375,10 @@ impl Generator {
         };
         self.fill(s, &mut gs.density, &mut aquifer, &vol, chunk);
         after(Step::Fill, chunk);
+
+        let biomes = &mut gs.biomes;
+        self.material.build_surface(s, &mut |x, y, z| biomes.zoomed(self, x, y, z), chunk);
+        after(Step::Surface, chunk);
     }
 
     /// `NoiseBasedChunkGenerator.doFill`: final density over the whole chunk, then the
