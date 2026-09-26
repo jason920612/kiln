@@ -6,8 +6,15 @@ use kiln_world::{ChunkPos, ChunkSource, OVERWORLD};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+/// `KILN_WORK` or `<workspace>/work`.
+fn work_dir() -> PathBuf {
+    std::env::var_os("KILN_WORK")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work"))
+}
+
 fn world_dir() -> Option<PathBuf> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work/vanilla-world/world");
+    let root = work_dir().join("vanilla-world/world");
     root.join("level.dat").exists().then_some(root)
 }
 

@@ -77,7 +77,7 @@ animate = { status = "deferred", note = "entity animations" }
 award_stats = { status = "deferred", note = "statistics" }
 block_changed_ack = { status = "implemented", note = "packets::block_changed_ack after player_action / use_item_on" }
 block_destruction = { status = "deferred", note = "block breaking progress" }
-block_entity_data = { status = "deferred", note = "block entities" }
+block_entity_data = { status = "implemented", note = "packets::block_entity_data after block changes (update tag derived from saved NBT)" }
 block_event = { status = "deferred", note = "block events (note blocks, pistons, chests)" }
 block_update = { status = "implemented", note = "packets::block_update to players with the chunk" }
 boss_event = { status = "deferred", note = "boss bars" }
@@ -89,7 +89,7 @@ clear_titles = { status = "deferred", note = "titles" }
 command_suggestions = { status = "implemented", note = "kiln-command Dispatcher::suggestions_packet" }
 commands = { status = "implemented", note = "packets::commands via kiln-command Dispatcher::commands_packet" }
 container_close = { status = "deferred", note = "containers" }
-container_set_content = { status = "deferred", note = "containers and inventory" }
+container_set_content = { status = "implemented", note = "packets::container_set_content: player inventory on join (no item components yet)" }
 container_set_data = { status = "deferred", note = "containers (furnace progress, enchanting)" }
 container_set_slot = { status = "implemented", note = "packets::container_set_slot from /give (no item components yet)" }
 cookie_request = { status = "deferred", note = "cookies (transfers)" }
@@ -117,7 +117,7 @@ mount_screen_open = { status = "deferred", note = "mount inventories (horses, ca
 hurt_animation = { status = "deferred", note = "combat" }
 initialize_border = { status = "deferred", note = "world border" }
 keep_alive = { status = "implemented", note = "packets::keep_alive: every 15 s, 30 s timeout" }
-level_chunk_with_light = { status = "implemented", note = "packets::level_chunk_with_light: superflat body from kiln-world" }
+level_chunk_with_light = { status = "implemented", note = "packets::level_chunk_with_light: body from kiln-world with block entities" }
 level_event = { status = "deferred", note = "world events (sounds and particles)" }
 level_particles = { status = "deferred", note = "particles" }
 light_update = { status = "implemented", note = "packets::light_update for sections the light engine changed" }

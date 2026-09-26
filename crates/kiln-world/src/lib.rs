@@ -1,9 +1,11 @@
 //! World storage: chunks grouped into 8×8-chunk cells (the unit regions will own), a
 //! superflat generator, block access and cached chunk packets.
 
+pub mod block_entity;
 pub mod chunk;
 pub mod light;
 pub mod section;
+mod spawn;
 
 use bytes::Bytes;
 use chunk::Chunk;
@@ -199,6 +201,16 @@ impl World {
         Some(old)
     }
 
+    /// Type and update tag of the block entity at a position for a Block Entity Data packet,
+    /// if vanilla sends one when that block changes (an empty update tag is an empty compound).
+    pub fn block_entity_data(&self, x: i32, y: i32, z: i32) -> Option<(u16, kiln_proto::nbt::Tag)> {
+        let c = self.chunk(ChunkPos::of_block(x, z))?;
+        let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
+        let be = c.block_entity(lx, y, lz).filter(|be| block_entity::sends_updates(be.kind))?;
+        let tag = be.update_tag(c.get(lx, y, lz)).unwrap_or(kiln_proto::nbt::Tag::Compound(Vec::new()));
+        Some((be.kind, tag))
+    }
+
     /// The chunk at `pos` if it is loaded (never loads or generates).
     pub fn chunk_mut_loaded(&mut self, pos: ChunkPos) -> Option<&mut Chunk> {
         self.cells.get_mut(&pos.cell())?.chunks[pos.cell_index()].as_deref_mut()
@@ -250,6 +262,47 @@ mod tests {
         }
         assert_eq!(w.set_block(0, 320, 0, block::STONE), None);
         assert_eq!(w.loaded_chunks(), 4);
+    }
+
+    #[test]
+    fn block_entities_follow_block_changes() {
+        use kiln_proto::nbt::Tag;
+        let mut w = World::flat(OVERWORLD, 0, 67);
+        let kind = |w: &World, x: i32, y, z: i32| {
+            let c = w.chunk(ChunkPos::of_block(x, z)).unwrap();
+            c.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| block_entity::type_name(be.kind))
+        };
+        w.set_block(1, 0, 1, block::CHEST);
+        assert_eq!(kind(&w, 1, 0, 1), Some("minecraft:chest"));
+        w.set_block(1, 0, 1, block::STONE);
+        assert_eq!(kind(&w, 1, 0, 1), None);
+
+        // Contents survive a state change of the same block and oxidation of a copper chest.
+        let marked = |kind| {
+            let mut be = block_entity::BlockEntity::new(kind);
+            if let Tag::Compound(f) = &mut be.nbt {
+                f.push(("Items".into(), Tag::List(vec![Tag::Int(7)])));
+            }
+            be
+        };
+        w.set_block(2, 0, 2, block::COPPER_CHEST);
+        let chest = block_entity::type_id("minecraft:chest").unwrap();
+        w.chunk_mut(ChunkPos::new(0, 0)).set_block_entity(2, 0, 2, marked(chest));
+        let facing = kiln_data::blocks_types::block_of(block::COPPER_CHEST);
+        w.set_block(2, 0, 2, facing.with_property(block::COPPER_CHEST, "facing", "east").unwrap());
+        w.set_block(2, 0, 2, block::EXPOSED_COPPER_CHEST);
+        let be = w.chunk(ChunkPos::new(0, 0)).unwrap().block_entity(2, 0, 2).unwrap();
+        assert_eq!(be, &marked(chest));
+        // A different block of the same type without the keep rule starts over.
+        w.set_block(2, 0, 2, block::CHEST);
+        assert_eq!(w.chunk(ChunkPos::new(0, 0)).unwrap().block_entity(2, 0, 2), Some(&block_entity::BlockEntity::new(chest)));
+        w.set_block(2, 0, 2, block::TRAPPED_CHEST);
+        assert_eq!(kind(&w, 2, 0, 2), Some("minecraft:trapped_chest"));
+
+        w.set_block(3, 0, 3, block::OAK_SIGN);
+        let (sign, tag) = w.block_entity_data(3, 0, 3).unwrap();
+        assert_eq!((block_entity::type_name(sign), tag), ("minecraft:sign", Tag::Compound(Vec::new())));
+        assert_eq!(w.block_entity_data(2, 0, 2), None, "chests send no block entity data");
     }
 
     #[test]

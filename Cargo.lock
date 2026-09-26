@@ -585,6 +585,7 @@ dependencies = [
  "lz4_flex",
  "thiserror",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

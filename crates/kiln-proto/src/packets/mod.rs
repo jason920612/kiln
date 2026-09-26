@@ -311,6 +311,26 @@ pub fn container_set_slot(window: i32, state: i32, slot: i16, item: Option<(i32,
     b.put_varint(window);
     b.put_varint(state);
     b.put_i16(slot);
+    put_plain_item(&mut b, item);
+    b.freeze()
+}
+
+/// Set Container Content: every slot of a container plus the carried item, as item stacks
+/// without data components.
+pub fn container_set_content(window: i32, state: i32, items: &[Option<(i32, i32)>], carried: Option<(i32, i32)>) -> Bytes {
+    let mut b = packet(ids::play::clientbound::CONTAINER_SET_CONTENT);
+    b.put_varint(window);
+    b.put_varint(state);
+    b.put_varint(items.len() as i32);
+    for &item in items {
+        put_plain_item(&mut b, item);
+    }
+    put_plain_item(&mut b, carried);
+    b.freeze()
+}
+
+/// `ItemStack.OPTIONAL_STREAM_CODEC` for a stack with an empty component patch.
+fn put_plain_item(b: &mut BytesMut, item: Option<(i32, i32)>) {
     match item {
         Some((id, count)) if count > 0 => {
             b.put_varint(count);
@@ -320,6 +340,14 @@ pub fn container_set_slot(window: i32, state: i32, slot: i16, item: Option<(i32,
         }
         _ => b.put_varint(0),
     }
+}
+
+/// Block Entity Data: the block entity type (protocol id) and its update tag.
+pub fn block_entity_data(pos: [i32; 3], kind: i32, tag: &Tag) -> Bytes {
+    let mut b = packet(ids::play::clientbound::BLOCK_ENTITY_DATA);
+    b.put_position(pos[0], pos[1], pos[2]);
+    b.put_varint(kind);
+    tag.write_network(&mut b);
     b.freeze()
 }
 
