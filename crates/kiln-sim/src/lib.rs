@@ -9,7 +9,7 @@ use crossbeam_channel::Receiver;
 use kiln_link::{ConnId, JoinInfo, PlayIn, Sink, ToSim};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
-use kiln_world::{ChunkPos, OVERWORLD as OVERWORLD_DIM, World};
+use kiln_world::{ChunkPos, OVERWORLD as OVERWORLD_DIM, Terrain, World};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
@@ -19,6 +19,8 @@ pub struct SimConfig {
     pub max_players: usize,
     pub view_distance: u8,
     pub simulation_distance: u8,
+    /// A vanilla world save to load; a superflat world is used when `None`.
+    pub world: Option<std::path::PathBuf>,
 }
 
 const TICK: Duration = Duration::from_millis(50);
@@ -76,6 +78,8 @@ impl Player {
 pub struct Sim {
     config: SimConfig,
     world: World,
+    /// World spawn column; players stand on the highest block there.
+    spawn: [i32; 3],
     players: HashMap<ConnId, Player>,
     next_entity_id: i32,
     started: Instant,
@@ -93,9 +97,20 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         .iter()
         .find(|(r, _)| *r == "minecraft:worldgen/biome")
         .map_or(0, |(_, e)| e.len());
+    let (world, spawn) = match &config.world {
+        Some(dir) => {
+            let source = kiln_storage::AnvilSource::new(dir.join("dimensions/minecraft/overworld/region"));
+            let world = World::with_source(OVERWORLD_DIM, Box::new(source), Terrain::Void, plains as u16, biome_count);
+            let spawn = kiln_storage::read_spawn(dir).unwrap_or([0, 64, 0]);
+            info!("loaded world {} (spawn {spawn:?})", dir.display());
+            (world, spawn)
+        }
+        None => (World::flat(OVERWORLD_DIM, plains as u16, biome_count), [8, 0, 8]),
+    };
     let mut sim = Sim {
         config,
-        world: World::flat(OVERWORLD_DIM, plains as u16, biome_count),
+        world,
+        spawn,
         players: HashMap::new(),
         next_entity_id: 1,
         started: Instant::now(),
@@ -151,7 +166,7 @@ impl Sim {
     fn join(&mut self, j: JoinInfo) {
         let entity_id = self.next_entity_id;
         self.next_entity_id += 1;
-        let spawn = [8.5, self.world.flat_surface_y(), 8.5];
+        let spawn = self.spawn_position();
         let view_distance = (j.view_distance as i32).min(self.config.view_distance as i32);
         let dimension_type =
             kiln_data::synced_id("minecraft:dimension_type", OVERWORLD).expect("overworld dimension type");
@@ -189,7 +204,7 @@ impl Sim {
             sea_level: 63,
         }));
         player.send(packets::player_position(1, spawn, 0.0, 0.0));
-        player.send(packets::set_default_spawn_position(OVERWORLD, [8, spawn[1] as i32, 8], 0.0, 0.0));
+        player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, 0.0, 0.0));
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
         player.send(self.time_packet());
@@ -271,6 +286,18 @@ impl Sim {
             }
             PlayIn::Punch => {}
         }
+    }
+
+    /// On top of the highest non-air block in the spawn column.
+    fn spawn_position(&mut self) -> [f64; 3] {
+        let [x, _, z] = self.spawn;
+        let dim = self.world.dimension;
+        self.world.chunk_mut(ChunkPos::of_block(x, z));
+        let top = (dim.min_y..dim.min_y + dim.height)
+            .rev()
+            .find(|&y| self.world.get_block(x, y, z).is_some_and(|s| !kiln_data::blocks_types::is_air(s)))
+            .map_or(dim.min_y + dim.height, |y| y + 1);
+        [x as f64 + 0.5, top as f64, z as f64 + 0.5]
     }
 
     fn ack(&mut self, conn: ConnId, sequence: i32) {

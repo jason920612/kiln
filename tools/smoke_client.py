@@ -334,7 +334,7 @@ def join(host, port, name):
                 body = string("hello from smoke test") + struct.pack(">qq", 0, 0) + b"\x00" + varint(0) + bytes(3) + b"\x00"
                 c.send(sb("chat"), body)
                 sent_chat = True
-            if not built and got_pos and len(chunks) > 50:
+            if not built and got_pos and len(chunks) > 50 and not os.environ.get("KILN_SMOKE_NO_BUILD"):
                 build(c, sb)
                 built = True
         elif i == cb("system_chat"):
@@ -356,7 +356,8 @@ def join(host, port, name):
     assert got_login and got_pos and got_wait, "join incomplete"
     assert len(chunks) == (2 * view + 1) ** 2, f"expected {(2 * view + 1) ** 2} chunks"
     assert any(b"hello from smoke test" in m for m in chats), "chat was not echoed"
-    check_build(block_updates, acks)
+    if not os.environ.get("KILN_SMOKE_NO_BUILD"):
+        check_build(block_updates, acks)
     print("OK")
 
 

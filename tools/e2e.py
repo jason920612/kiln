@@ -46,9 +46,11 @@ def stop_server(port):
         time.sleep(0.5)
 
 
-def start_server(port):
+def start_server(port, world=None):
     stop_server(port)
     env = dict(os.environ, KILN_PORT=str(port), RUST_LOG=os.environ.get("RUST_LOG", "info"))
+    if world:
+        env["KILN_WORLD"] = str(Path(world).resolve())
     log = open(SERVER_LOG, "w", encoding="utf-8")
     flags = 0x00000008 | 0x00000200 | 0x01000000 if os.name == "nt" else 0
     # Run a copy so rebuilding (here or in another worktree) never hits a locked exe.
@@ -126,6 +128,7 @@ def main():
     ap.add_argument("--port", type=int, default=25570)
     ap.add_argument("--skip-tests", action="store_true")
     ap.add_argument("--stop", action="store_true", help="stop the server afterwards")
+    ap.add_argument("--world", help="load this vanilla world save (sets KILN_WORLD)")
     a = ap.parse_args()
 
     if not a.skip_tests and run(["cargo", "test", "--workspace", "--quiet"]).returncode:
@@ -134,14 +137,18 @@ def main():
     SERVER_LOG = WORK / f"server-{a.port}.log"
     if run(["cargo", "build", "--release", "--quiet", "-p", "kiln-server"]).returncode:
         sys.exit("build failed")
-    start_server(a.port)
+    start_server(a.port, a.world)
     dumps = WORK / f"dumps-{a.port}"
     env = dict(os.environ, KILN_DUMP_DIR=str(dumps))
+    if a.world:
+        env["KILN_SMOKE_NO_BUILD"] = "1"  # the build test assumes the flat world
     if run([sys.executable, "tools/smoke_client.py", "127.0.0.1", str(a.port), "SmokeBot"], env=env).returncode:
         print(server_log())
         sys.exit("smoke client failed")
     for f, codec in DECODE.items():
         path = dumps / f
+        if not path.exists() and a.world:
+            continue
         if run([sys.executable, "tools/vanilla_decode.py", codec, str(path)], capture_output=True).returncode:
             sys.exit(f"vanilla codec rejected {f}")
         print(f"vanilla decode OK: {f}")

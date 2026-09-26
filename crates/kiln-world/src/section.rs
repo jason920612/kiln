@@ -25,6 +25,47 @@ pub enum BlockContainer {
 }
 
 impl BlockContainer {
+    /// Builds the most compact container from a palette and per-block palette indices.
+    /// Duplicate palette entries are allowed; indices must be in range.
+    pub fn from_palette(palette: &[u16], indices: impl Fn(usize) -> usize) -> Self {
+        let mut dedup: Vec<u16> = Vec::with_capacity(palette.len());
+        let remap: Vec<u8> = palette
+            .iter()
+            .map(|s| match dedup.iter().position(|d| d == s) {
+                Some(i) => i as u8,
+                None => {
+                    dedup.push(*s);
+                    (dedup.len() - 1).min(255) as u8
+                }
+            })
+            .collect();
+        match dedup.len() {
+            0 => Self::Single(0),
+            1 => Self::Single(dedup[0]),
+            2..=16 => {
+                let mut n = Box::new([0u8; 2048]);
+                for i in 0..4096 {
+                    n[i >> 1] |= remap[indices(i)] << ((i & 1) * 4);
+                }
+                Self::Nibble { palette: dedup, indices: n }
+            }
+            17..=256 => {
+                let mut b = Box::new([0u8; 4096]);
+                for (i, e) in b.iter_mut().enumerate() {
+                    *e = remap[indices(i)];
+                }
+                Self::Byte { palette: dedup, indices: b }
+            }
+            _ => {
+                let mut d = Box::new([0u16; 4096]);
+                for (i, e) in d.iter_mut().enumerate() {
+                    *e = palette[indices(i)];
+                }
+                Self::Direct(d)
+            }
+        }
+    }
+
     pub fn get(&self, i: usize) -> u16 {
         match self {
             Self::Single(s) => *s,
@@ -221,9 +262,18 @@ pub struct Section {
 
 impl Section {
     pub fn filled(state: u16, biome: u16) -> Self {
-        let n = if is_air(state) { 0 } else { 4096 };
-        let f = if has_fluid(state) { 4096 } else { 0 };
-        Self { blocks: BlockContainer::Single(state), biomes: Biomes::Single(biome), non_air: n, fluids: f }
+        Self::new(BlockContainer::Single(state), Biomes::Single(biome))
+    }
+
+    pub fn new(blocks: BlockContainer, biomes: Biomes) -> Self {
+        let (non_air, fluids) = match &blocks {
+            BlockContainer::Single(s) => (if is_air(*s) { 0 } else { 4096 }, if has_fluid(*s) { 4096 } else { 0 }),
+            _ => (0..4096).fold((0u16, 0u16), |(n, f), i| {
+                let s = blocks.get(i);
+                (n + !is_air(s) as u16, f + has_fluid(s) as u16)
+            }),
+        };
+        Self { blocks, biomes, non_air, fluids }
     }
 
     pub fn get(&self, x: usize, y: usize, z: usize) -> u16 {

@@ -41,6 +41,8 @@ pub struct Chunk {
     min_y: i32,
     /// Sky light for sections -1..=len (index 0 is the section below the world).
     sky: Vec<Light>,
+    /// Block light, same indexing as `sky`.
+    block: Vec<Light>,
     /// Per column: highest non-air block + 1, relative to `min_y` (0 = empty column).
     surface: Box<[u16; 256]>,
     version: u32,
@@ -48,12 +50,19 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    /// A chunk whose sky light is derived from its blocks and which has no block light.
     pub fn new(sections: Vec<Section>, min_y: i32) -> Self {
+        Self::with_light(sections, min_y, None, None)
+    }
+
+    /// A chunk with stored light (e.g. from a world save); missing layers are derived.
+    pub fn with_light(sections: Vec<Section>, min_y: i32, sky: Option<Vec<Light>>, block: Option<Vec<Light>>) -> Self {
         let n = sections.len();
         let mut c = Self {
             sections,
             min_y,
             sky: vec![Light::Zero; n + 2],
+            block: block.filter(|b| b.len() == n + 2).unwrap_or_else(|| vec![Light::Zero; n + 2]),
             surface: Box::new([0; 256]),
             version: 0,
             cached: None,
@@ -63,10 +72,19 @@ impl Chunk {
                 c.surface[(z << 4) | x] = c.column_top(x, z);
             }
         }
-        for li in 0..c.sky.len() {
-            c.sky[li] = c.section_sky(li);
+        match sky.filter(|s| s.len() == n + 2) {
+            Some(s) => c.sky = s,
+            None => {
+                for li in 0..c.sky.len() {
+                    c.sky[li] = c.section_sky(li);
+                }
+            }
         }
         c
+    }
+
+    pub fn min_y(&self) -> i32 {
+        self.min_y
     }
 
     /// Sky light of light section `li` (0 = below the world) from the surface heights.
@@ -193,34 +211,38 @@ impl Chunk {
 
         b.put_varint(0); // block entities
 
-        let mut sky_mask = 0u64;
-        let mut empty_sky = 0u64;
-        for (i, l) in self.sky.iter().enumerate() {
-            match l {
-                Light::Zero => empty_sky |= 1 << i,
-                _ => sky_mask |= 1 << i,
+        let masks = |layer: &[Light]| {
+            let (mut data, mut empty) = (0u64, 0u64);
+            for (i, l) in layer.iter().enumerate() {
+                match l {
+                    Light::Zero => empty |= 1 << i,
+                    _ => data |= 1 << i,
+                }
             }
-        }
-        let all = (1u64 << self.sky.len()) - 1;
+            (data, empty)
+        };
+        let (sky_mask, empty_sky) = masks(&self.sky);
+        let (block_mask, empty_block) = masks(&self.block);
         b.put_bitset(&[sky_mask]);
-        b.put_bitset(&[0]); // block light
+        b.put_bitset(&[block_mask]);
         b.put_bitset(&[empty_sky]);
-        b.put_bitset(&[all]); // no block light anywhere yet
-        b.put_varint(sky_mask.count_ones() as i32);
-        for l in &self.sky {
-            match l {
-                Light::Zero => {}
-                Light::Full => {
-                    b.put_varint(2048);
-                    b.put_bytes(0xff, 2048);
-                }
-                Light::Nibbles(n) => {
-                    b.put_varint(2048);
-                    b.put_slice(&n[..]);
+        b.put_bitset(&[empty_block]);
+        for (layer, mask) in [(&self.sky, sky_mask), (&self.block, block_mask)] {
+            b.put_varint(mask.count_ones() as i32);
+            for l in layer {
+                match l {
+                    Light::Zero => {}
+                    Light::Full => {
+                        b.put_varint(2048);
+                        b.put_bytes(0xff, 2048);
+                    }
+                    Light::Nibbles(n) => {
+                        b.put_varint(2048);
+                        b.put_slice(&n[..]);
+                    }
                 }
             }
         }
-        b.put_varint(0);
         b.freeze()
     }
 }

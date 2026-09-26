@@ -23,6 +23,7 @@ fn main() -> Result<()> {
         max_players: net_config.max_players,
         view_distance: net_config.view_distance,
         simulation_distance: net_config.simulation_distance,
+        world: std::env::var_os("KILN_WORLD").map(Into::into),
     };
 
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();

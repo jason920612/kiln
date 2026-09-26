@@ -66,16 +66,42 @@ pub const OVERWORLD: Dimension = Dimension { min_y: -64, height: 384 };
 /// Layers from the bottom of the world up (superflat "classic").
 pub const FLAT_LAYERS: [u16; 4] = [block::BEDROCK, block::DIRT, block::DIRT, block::GRASS_BLOCK];
 
+/// Stored chunks, e.g. an Anvil world save.
+pub trait ChunkSource: Send {
+    /// Loads the chunk at `pos`, or `None` if the source has none there.
+    fn load(&mut self, pos: ChunkPos, dimension: Dimension) -> Option<Chunk>;
+}
+
+/// What to create where the chunk source has nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Terrain {
+    Flat,
+    Void,
+}
+
 pub struct World {
     pub dimension: Dimension,
     cells: HashMap<CellPos, Box<Cell>>,
+    source: Option<Box<dyn ChunkSource>>,
+    terrain: Terrain,
     biome: u16,
     biome_count: usize,
 }
 
 impl World {
     pub fn flat(dimension: Dimension, biome: u16, biome_count: usize) -> Self {
-        Self { dimension, cells: HashMap::new(), biome, biome_count }
+        Self { dimension, cells: HashMap::new(), source: None, terrain: Terrain::Flat, biome, biome_count }
+    }
+
+    /// A world backed by stored chunks, with `fallback` terrain where the source has none.
+    pub fn with_source(
+        dimension: Dimension,
+        source: Box<dyn ChunkSource>,
+        fallback: Terrain,
+        biome: u16,
+        biome_count: usize,
+    ) -> Self {
+        Self { dimension, cells: HashMap::new(), source: Some(source), terrain: fallback, biome, biome_count }
     }
 
     /// Y coordinate a player stands at on top of the flat terrain.
@@ -86,14 +112,21 @@ impl World {
     fn generate(&self) -> Chunk {
         let n = (self.dimension.height / 16) as usize;
         let mut sections = vec![Section::filled(block::AIR, self.biome); n];
-        for (y, &layer) in FLAT_LAYERS.iter().enumerate() {
-            for x in 0..16 {
-                for z in 0..16 {
-                    sections[y >> 4].set(x, y & 15, z, layer);
+        if self.terrain == Terrain::Flat {
+            for (y, &layer) in FLAT_LAYERS.iter().enumerate() {
+                for x in 0..16 {
+                    for z in 0..16 {
+                        sections[y >> 4].set(x, y & 15, z, layer);
+                    }
                 }
             }
         }
         Chunk::new(sections, self.dimension.min_y)
+    }
+
+    fn load_or_generate(&mut self, pos: ChunkPos) -> Chunk {
+        let dim = self.dimension;
+        self.source.as_mut().and_then(|s| s.load(pos, dim)).unwrap_or_else(|| self.generate())
     }
 
     pub fn chunk(&self, pos: ChunkPos) -> Option<&Chunk> {
@@ -102,7 +135,7 @@ impl World {
 
     pub fn chunk_mut(&mut self, pos: ChunkPos) -> &mut Chunk {
         if self.chunk(pos).is_none() {
-            let chunk = Box::new(self.generate());
+            let chunk = Box::new(self.load_or_generate(pos));
             let cell = self.cells.entry(pos.cell()).or_default();
             cell.chunks[pos.cell_index()] = Some(chunk);
         }

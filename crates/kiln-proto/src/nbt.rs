@@ -1,4 +1,5 @@
-//! Minimal NBT writer for network use (nameless root tag, as sent since 1.20.2).
+//! NBT: a writer for network use (nameless root tag, as sent since 1.20.2) and a bounded
+//! reader for both the network form and the named-root file form.
 
 use bytes::{BufMut, BytesMut};
 
@@ -90,6 +91,213 @@ impl Tag {
     }
 }
 
+/// Maximum nesting depth accepted by the reader (as in vanilla).
+pub const MAX_DEPTH: usize = 512;
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+pub enum NbtError {
+    #[error("unexpected end of NBT data")]
+    Eof,
+    #[error("unknown tag type {0}")]
+    BadType(u8),
+    #[error("NBT nested deeper than {MAX_DEPTH}")]
+    TooDeep,
+    #[error("negative or oversized length")]
+    BadLength,
+    #[error("invalid modified UTF-8")]
+    BadString,
+}
+
+struct NbtReader<'a> {
+    buf: &'a [u8],
+}
+
+impl<'a> NbtReader<'a> {
+    fn take(&mut self, n: usize) -> Result<&'a [u8], NbtError> {
+        if self.buf.len() < n {
+            return Err(NbtError::Eof);
+        }
+        let (a, b) = self.buf.split_at(n);
+        self.buf = b;
+        Ok(a)
+    }
+
+    fn u8(&mut self) -> Result<u8, NbtError> {
+        Ok(self.take(1)?[0])
+    }
+
+    fn i32(&mut self) -> Result<i32, NbtError> {
+        Ok(i32::from_be_bytes(self.take(4)?.try_into().unwrap()))
+    }
+
+    /// A length prefix for `elem`-byte elements; rejects lengths the remaining input cannot hold.
+    fn len(&mut self, elem: usize) -> Result<usize, NbtError> {
+        let n = usize::try_from(self.i32()?).map_err(|_| NbtError::BadLength)?;
+        if n.checked_mul(elem).is_none_or(|b| b > self.buf.len()) {
+            return Err(NbtError::BadLength);
+        }
+        Ok(n)
+    }
+
+    fn string(&mut self) -> Result<String, NbtError> {
+        let n = u16::from_be_bytes(self.take(2)?.try_into().unwrap()) as usize;
+        decode_mutf8(self.take(n)?)
+    }
+
+    fn payload(&mut self, ty: u8, depth: usize) -> Result<Tag, NbtError> {
+        if depth > MAX_DEPTH {
+            return Err(NbtError::TooDeep);
+        }
+        Ok(match ty {
+            1 => Tag::Byte(self.u8()? as i8),
+            2 => Tag::Short(i16::from_be_bytes(self.take(2)?.try_into().unwrap())),
+            3 => Tag::Int(self.i32()?),
+            4 => Tag::Long(i64::from_be_bytes(self.take(8)?.try_into().unwrap())),
+            5 => Tag::Float(f32::from_be_bytes(self.take(4)?.try_into().unwrap())),
+            6 => Tag::Double(f64::from_be_bytes(self.take(8)?.try_into().unwrap())),
+            7 => {
+                let n = self.len(1)?;
+                Tag::ByteArray(self.take(n)?.iter().map(|&b| b as i8).collect())
+            }
+            8 => Tag::String(self.string()?),
+            9 => {
+                let elem_ty = self.u8()?;
+                // Every element takes at least one byte, except in lists of End tags,
+                // which must be empty.
+                let n = self.len(if elem_ty == 0 { 0 } else { 1 })?;
+                if elem_ty == 0 {
+                    return if n == 0 { Ok(Tag::List(Vec::new())) } else { Err(NbtError::BadLength) };
+                }
+                let mut items = Vec::with_capacity(n);
+                for _ in 0..n {
+                    items.push(self.payload(elem_ty, depth + 1)?);
+                }
+                Tag::List(items)
+            }
+            10 => {
+                let mut fields = Vec::new();
+                loop {
+                    let t = self.u8()?;
+                    if t == 0 {
+                        break;
+                    }
+                    let name = self.string()?;
+                    fields.push((name, self.payload(t, depth + 1)?));
+                }
+                Tag::Compound(fields)
+            }
+            11 => {
+                let n = self.len(4)?;
+                let raw = self.take(n * 4)?;
+                Tag::IntArray(raw.chunks_exact(4).map(|c| i32::from_be_bytes(c.try_into().unwrap())).collect())
+            }
+            12 => {
+                let n = self.len(8)?;
+                let raw = self.take(n * 8)?;
+                Tag::LongArray(raw.chunks_exact(8).map(|c| i64::from_be_bytes(c.try_into().unwrap())).collect())
+            }
+            t => return Err(NbtError::BadType(t)),
+        })
+    }
+}
+
+/// Reads a file-format root: type, name, payload. Returns the name and the tag.
+pub fn read_named(data: &[u8]) -> Result<(String, Tag), NbtError> {
+    let mut r = NbtReader { buf: data };
+    let ty = r.u8()?;
+    let name = r.string()?;
+    Ok((name, r.payload(ty, 0)?))
+}
+
+/// Reads a network root (no name) from the front of `data`; returns the tag and bytes consumed.
+pub fn read_network(data: &[u8]) -> Result<(Tag, usize), NbtError> {
+    let mut r = NbtReader { buf: data };
+    let ty = r.u8()?;
+    let tag = r.payload(ty, 0)?;
+    Ok((tag, data.len() - r.buf.len()))
+}
+
+fn decode_mutf8(b: &[u8]) -> Result<String, NbtError> {
+    // Fast path: plain UTF-8 without the encodings modified UTF-8 uses for NUL and surrogates.
+    if !b.iter().any(|&c| c == 0xc0 || c == 0xed) {
+        if let Ok(s) = std::str::from_utf8(b) {
+            return Ok(s.to_owned());
+        }
+    }
+    let mut units = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i] as u16;
+        let (unit, len) = if c < 0x80 {
+            (c, 1)
+        } else if c & 0xe0 == 0xc0 && i + 1 < b.len() {
+            (((c & 0x1f) << 6) | (b[i + 1] as u16 & 0x3f), 2)
+        } else if c & 0xf0 == 0xe0 && i + 2 < b.len() {
+            (((c & 0x0f) << 12) | ((b[i + 1] as u16 & 0x3f) << 6) | (b[i + 2] as u16 & 0x3f), 3)
+        } else {
+            return Err(NbtError::BadString);
+        };
+        units.push(unit);
+        i += len;
+    }
+    String::from_utf16(&units).map_err(|_| NbtError::BadString)
+}
+
+impl Tag {
+    pub fn get(&self, key: &str) -> Option<&Tag> {
+        match self {
+            Tag::Compound(fields) => fields.iter().find(|(k, _)| k == key).map(|(_, v)| v),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            Tag::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        match *self {
+            Tag::Byte(v) => Some(v as i64),
+            Tag::Short(v) => Some(v as i64),
+            Tag::Int(v) => Some(v as i64),
+            Tag::Long(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_list(&self) -> Option<&[Tag]> {
+        match self {
+            Tag::List(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_long_array(&self) -> Option<&[i64]> {
+        match self {
+            Tag::LongArray(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    pub fn as_byte_array(&self) -> Option<&[i8]> {
+        match self {
+            Tag::ByteArray(v) => Some(v),
+            _ => None,
+        }
+    }
+
+    /// Elements of heterogeneous lists are wrapped as `{"": value}` (since 1.21.5).
+    pub fn unwrap_list_element(&self) -> &Tag {
+        match self {
+            Tag::Compound(f) if f.len() == 1 && f[0].0.is_empty() => &f[0].1,
+            t => t,
+        }
+    }
+}
+
 /// Java "modified UTF-8" with a u16 byte-length prefix.
 fn put_mutf8(out: &mut BytesMut, s: &str) {
     let mut buf = Vec::with_capacity(s.len());
@@ -133,6 +341,34 @@ mod tests {
             0,
         ];
         assert_eq!(&b[..], expected);
+    }
+
+    #[test]
+    fn read_back_what_we_write() {
+        let t = Tag::Compound(vec![
+            ("a".into(), Tag::List(vec![Tag::Int(1), Tag::Int(2)])),
+            ("s".into(), Tag::String("\0𝄞 hé".into())),
+            ("l".into(), Tag::LongArray(vec![1, -1])),
+            ("n".into(), Tag::Compound(vec![("x".into(), Tag::Byte(-3))])),
+        ]);
+        let mut b = BytesMut::new();
+        t.write_network(&mut b);
+        let (back, used) = read_network(&b).unwrap();
+        assert_eq!((back, used), (t, b.len()));
+    }
+
+    #[test]
+    fn rejects_hostile_lengths_and_depth() {
+        // A list claiming i32::MAX ints with no data behind it.
+        let mut b = vec![9u8, 3];
+        b.extend_from_slice(&i32::MAX.to_be_bytes());
+        assert_eq!(read_network(&b), Err(NbtError::BadLength));
+        // Lists nested deeper than the limit.
+        let mut b = vec![9u8];
+        for _ in 0..600 {
+            b.extend_from_slice(&[9, 0, 0, 0, 1]);
+        }
+        assert!(matches!(read_network(&b), Err(NbtError::TooDeep)));
     }
 
     #[test]
