@@ -165,6 +165,8 @@ public class ExtractBlockLogic {
                     out.put(key + ".canOpenByHand", String.valueOf(t.canOpenByHand()));
                     out.put(key + ".canButtonBeActivatedByArrows", String.valueOf(t.canButtonBeActivatedByArrows()));
                     out.put(key + ".pressurePlateSensitivity", "\"" + t.pressurePlateSensitivity() + "\"");
+                } else if (v instanceof net.minecraft.tags.TagKey<?> t) {
+                    out.put(key, "\"" + t.location() + "\"");
                 } else if (v instanceof Enum<?> e) {
                     out.put(key, "\"" + e.name() + "\"");
                 }

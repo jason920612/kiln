@@ -10,6 +10,7 @@ publish = false
 [workspace.dependencies]
 kiln-proto = { path = "crates/kiln-proto" }
 kiln-data = { path = "crates/kiln-data" }
+kiln-blocks = { path = "crates/kiln-blocks" }
 kiln-item = { path = "crates/kiln-item" }
 kiln-link = { path = "crates/kiln-link" }
 kiln-net = { path = "crates/kiln-net" }

@@ -345,6 +345,7 @@ pub struct BlockParams {
     pub plate_mobs_only: bool,
     pub max_weight: i32,
     pub base_state: i32,
+    pub support_tag: Option<&'static str>,
 }
 
 use BlockClass as C;
@@ -762,10 +763,10 @@ pub static BLOCK_CLASSES: &[BlockClassInfo] = &[
     BlockClassInfo { classes: &[C::IronBarsBlock, C::CrossCollisionBlock, C::Block], interfaces: 0x10204, params: BlockParams { ..DEFAULT } }, // minecraft:glass_pane
     BlockClassInfo { classes: &[C::PumpkinBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:pumpkin
     BlockClassInfo { classes: &[C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:melon
-    BlockClassInfo { classes: &[C::AttachedStemBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:attached_pumpkin_stem
-    BlockClassInfo { classes: &[C::AttachedStemBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:attached_melon_stem
-    BlockClassInfo { classes: &[C::StemBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:pumpkin_stem
-    BlockClassInfo { classes: &[C::StemBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:melon_stem
+    BlockClassInfo { classes: &[C::AttachedStemBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { support_tag: Some("minecraft:supports_pumpkin_stem"), ..DEFAULT } }, // minecraft:attached_pumpkin_stem
+    BlockClassInfo { classes: &[C::AttachedStemBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { support_tag: Some("minecraft:supports_melon_stem"), ..DEFAULT } }, // minecraft:attached_melon_stem
+    BlockClassInfo { classes: &[C::StemBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { support_tag: Some("minecraft:supports_pumpkin_stem"), ..DEFAULT } }, // minecraft:pumpkin_stem
+    BlockClassInfo { classes: &[C::StemBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { support_tag: Some("minecraft:supports_melon_stem"), ..DEFAULT } }, // minecraft:melon_stem
     BlockClassInfo { classes: &[C::VineBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:vine
     BlockClassInfo { classes: &[C::GlowLichenBlock, C::MultifaceSpreadeableBlock, C::MultifaceBlock, C::Block], interfaces: 0x10206, params: BlockParams { ..DEFAULT } }, // minecraft:glow_lichen
     BlockClassInfo { classes: &[C::MultifaceBlock, C::Block], interfaces: 0x10204, params: BlockParams { ..DEFAULT } }, // minecraft:resin_clump
@@ -1307,22 +1308,22 @@ pub static BLOCK_CLASSES: &[BlockClassInfo] = &[
     BlockClassInfo { classes: &[C::RotatedPillarBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:warped_hyphae
     BlockClassInfo { classes: &[C::RotatedPillarBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:stripped_warped_hyphae
     BlockClassInfo { classes: &[C::NyliumBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:warped_nylium
-    BlockClassInfo { classes: &[C::NetherFungusBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:warped_fungus
+    BlockClassInfo { classes: &[C::NetherFungusBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { support_tag: Some("minecraft:supports_warped_fungus"), ..DEFAULT } }, // minecraft:warped_fungus
     BlockClassInfo { classes: &[C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:warped_wart_block
-    BlockClassInfo { classes: &[C::NetherRootsBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:warped_roots
+    BlockClassInfo { classes: &[C::NetherRootsBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { support_tag: Some("minecraft:supports_warped_roots"), ..DEFAULT } }, // minecraft:warped_roots
     BlockClassInfo { classes: &[C::NetherSproutsBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:nether_sprouts
     BlockClassInfo { classes: &[C::RotatedPillarBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:crimson_stem
     BlockClassInfo { classes: &[C::RotatedPillarBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:stripped_crimson_stem
     BlockClassInfo { classes: &[C::RotatedPillarBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:crimson_hyphae
     BlockClassInfo { classes: &[C::RotatedPillarBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:stripped_crimson_hyphae
     BlockClassInfo { classes: &[C::NyliumBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:crimson_nylium
-    BlockClassInfo { classes: &[C::NetherFungusBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:crimson_fungus
+    BlockClassInfo { classes: &[C::NetherFungusBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { support_tag: Some("minecraft:supports_crimson_fungus"), ..DEFAULT } }, // minecraft:crimson_fungus
     BlockClassInfo { classes: &[C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:shroomlight
     BlockClassInfo { classes: &[C::WeepingVinesBlock, C::GrowingPlantHeadBlock, C::GrowingPlantBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:weeping_vines
     BlockClassInfo { classes: &[C::WeepingVinesPlantBlock, C::GrowingPlantBodyBlock, C::GrowingPlantBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:weeping_vines_plant
     BlockClassInfo { classes: &[C::TwistingVinesBlock, C::GrowingPlantHeadBlock, C::GrowingPlantBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:twisting_vines
     BlockClassInfo { classes: &[C::TwistingVinesPlantBlock, C::GrowingPlantBodyBlock, C::GrowingPlantBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:twisting_vines_plant
-    BlockClassInfo { classes: &[C::NetherRootsBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:crimson_roots
+    BlockClassInfo { classes: &[C::NetherRootsBlock, C::VegetationBlock, C::Block], interfaces: 0x0, params: BlockParams { support_tag: Some("minecraft:supports_crimson_roots"), ..DEFAULT } }, // minecraft:crimson_roots
     BlockClassInfo { classes: &[C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:crimson_planks
     BlockClassInfo { classes: &[C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:warped_planks
     BlockClassInfo { classes: &[C::SlabBlock, C::Block], interfaces: 0x10204, params: BlockParams { ..DEFAULT } }, // minecraft:crimson_slab
@@ -1638,4 +1639,4 @@ pub static BLOCK_CLASSES: &[BlockClassInfo] = &[
     BlockClassInfo { classes: &[C::FireflyBushBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:firefly_bush
 ];
 
-const DEFAULT: BlockParams = BlockParams { ticks_to_stay_pressed: 0, arrows_press: false, open_by_hand: false, plate_mobs_only: false, max_weight: 0, base_state: 0, };
+const DEFAULT: BlockParams = BlockParams { ticks_to_stay_pressed: 0, arrows_press: false, open_by_hand: false, plate_mobs_only: false, max_weight: 0, base_state: 0, support_tag: None, };

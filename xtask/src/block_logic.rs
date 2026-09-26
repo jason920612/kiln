@@ -108,6 +108,10 @@ const PARAMS: &[(&str, &str, Kind)] = &[
     ("plate_mobs_only", "BasePressurePlateBlock.type.pressurePlateSensitivity", Kind::Mobs),
     ("max_weight", "WeightedPressurePlateBlock.maxWeight", Kind::Int),
     ("base_state", "StairBlock.baseState", Kind::Int),
+    ("support_tag", "AttachedStemBlock.supportBlocks", Kind::Str),
+    ("support_tag", "StemBlock.stemSupportBlocks", Kind::Str),
+    ("support_tag", "NetherFungusBlock.supportBlocks", Kind::Str),
+    ("support_tag", "NetherRootsBlock.supportBlocks", Kind::Str),
 ];
 
 #[derive(Clone, Copy)]
@@ -115,6 +119,7 @@ enum Kind {
     Int,
     Bool,
     Mobs,
+    Str,
 }
 
 pub fn gen_classes(blocks: &Value) -> Result<String> {
@@ -158,6 +163,7 @@ pub fn gen_classes(blocks: &Value) -> Result<String> {
         let ty = match k {
             Kind::Int => "i32",
             Kind::Bool | Kind::Mobs => "bool",
+            Kind::Str => "Option<&'static str>",
         };
         writeln!(s, "    pub {f}: {ty},")?;
     }
@@ -180,6 +186,7 @@ pub fn gen_classes(blocks: &Value) -> Result<String> {
                     Kind::Int => v.as_i64().with_context(|| format!("{key}"))?.to_string(),
                     Kind::Bool => v.as_bool().with_context(|| format!("{key}"))?.to_string(),
                     Kind::Mobs => (v.as_str() == Some("MOBS")).to_string(),
+                    Kind::Str => format!("Some({:?})", v.as_str().with_context(|| format!("{key}"))?),
                 };
                 write!(p, "{f}: {text}, ")?;
             }
@@ -197,6 +204,7 @@ pub fn gen_classes(blocks: &Value) -> Result<String> {
         let v = match k {
             Kind::Int => "0",
             Kind::Bool | Kind::Mobs => "false",
+            Kind::Str => "None",
         };
         write!(s, " {f}: {v},")?;
     }
