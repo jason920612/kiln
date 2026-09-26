@@ -19,6 +19,9 @@ pub enum Content {
         key: String,
         args: Vec<Arg>,
     },
+    /// A component already in network NBT form (e.g. from `/tellraw`); style and siblings
+    /// of the surrounding [`Text`] are ignored.
+    Raw(Tag),
 }
 
 impl Default for Content {
@@ -71,6 +74,11 @@ impl Text {
         Text { content: Content::Translate { key: key.into(), args }, ..Default::default() }
     }
 
+    /// A component given as network NBT.
+    pub fn raw(tag: Tag) -> Self {
+        Text { content: Content::Raw(tag), ..Default::default() }
+    }
+
     pub fn color(mut self, color: &'static str) -> Self {
         self.style.color = Some(color);
         self
@@ -110,14 +118,14 @@ impl Text {
     pub fn key(&self) -> Option<&str> {
         match &self.content {
             Content::Translate { key, .. } => Some(key),
-            Content::Literal(_) => None,
+            Content::Literal(_) | Content::Raw(_) => None,
         }
     }
 
     pub fn args(&self) -> &[Arg] {
         match &self.content {
             Content::Translate { args, .. } => args,
-            Content::Literal(_) => &[],
+            Content::Literal(_) | Content::Raw(_) => &[],
         }
     }
 
@@ -149,6 +157,7 @@ impl Text {
         }
         let mut fields: Vec<(String, Tag)> = Vec::new();
         match &self.content {
+            Content::Raw(tag) => return tag.clone(),
             Content::Literal(s) => fields.push(("text".into(), Tag::String(s.clone()))),
             Content::Translate { key, args } => {
                 fields.push(("translate".into(), Tag::String(key.clone())));
@@ -208,6 +217,7 @@ impl Text {
     fn write_plain(&self, out: &mut String) {
         match &self.content {
             Content::Literal(s) => out.push_str(s),
+            Content::Raw(tag) => write_plain_nbt(tag, out),
             Content::Translate { key, args } if key == "chat.square_brackets" && args.len() == 1 => {
                 out.push('[');
                 args[0].write_plain(out);
@@ -230,6 +240,45 @@ impl Text {
         for e in &self.extra {
             e.write_plain(out);
         }
+    }
+}
+
+/// Plain rendering of a component in NBT form: text as-is, translations as `key[args]`.
+fn write_plain_nbt(tag: &Tag, out: &mut String) {
+    match tag {
+        Tag::String(s) => out.push_str(s),
+        Tag::List(items) => items.iter().for_each(|t| write_plain_nbt(t.unwrap_list_element(), out)),
+        Tag::Compound(_) => {
+            if let Some(Tag::String(s)) = tag.get("text") {
+                out.push_str(s);
+            } else if let Some(Tag::String(k)) = tag.get("translate") {
+                out.push_str(k);
+                if let Some(Tag::List(args)) = tag.get("with") {
+                    out.push('[');
+                    for (i, a) in args.iter().enumerate() {
+                        if i > 0 {
+                            out.push_str(", ");
+                        }
+                        write_plain_nbt(a.unwrap_list_element(), out);
+                    }
+                    out.push(']');
+                }
+            } else if let Some(Tag::String(s)) = tag.get("selector") {
+                out.push_str(s);
+            } else if let Some(Tag::String(k)) = tag.get("keybind") {
+                out.push_str(k);
+            }
+            if let Some(Tag::List(extra)) = tag.get("extra") {
+                extra.iter().for_each(|t| write_plain_nbt(t.unwrap_list_element(), out));
+            }
+        }
+        Tag::Byte(v) => out.push_str(&v.to_string()),
+        Tag::Short(v) => out.push_str(&v.to_string()),
+        Tag::Int(v) => out.push_str(&v.to_string()),
+        Tag::Long(v) => out.push_str(&v.to_string()),
+        Tag::Float(v) => out.push_str(&v.to_string()),
+        Tag::Double(v) => out.push_str(&v.to_string()),
+        _ => {}
     }
 }
 

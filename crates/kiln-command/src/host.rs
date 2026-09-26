@@ -65,13 +65,15 @@ pub struct Teleport {
     pub facing: Option<[f64; 3]>,
 }
 
-/// `Entity.lookAt`: the `[yaw, pitch]` that faces `to` from `from`.
+/// `CommandSourceStack.facing` / `Entity.lookAt`: the `[yaw, pitch]` that faces `to` from
+/// `from`, with `Mth.atan2` for bit-exact angles.
 pub fn look_at(from: [f64; 3], to: [f64; 3]) -> [f32; 2] {
-    use crate::coords::wrap_degrees;
+    use crate::coords::{mth_atan2, wrap_degrees};
+    const RAD_TO_DEG: f64 = 57.2957763671875;
     let (dx, dy, dz) = (to[0] - from[0], to[1] - from[1], to[2] - from[2]);
     let horizontal = (dx * dx + dz * dz).sqrt();
-    let pitch = wrap_degrees((-(dy.atan2(horizontal) * (180.0 / std::f32::consts::PI as f64))) as f32);
-    let yaw = wrap_degrees((dz.atan2(dx) * (180.0 / std::f32::consts::PI as f64)) as f32 - 90.0);
+    let pitch = wrap_degrees((-(mth_atan2(dy, horizontal) * RAD_TO_DEG)) as f32);
+    let yaw = wrap_degrees((mth_atan2(dz, dx) * RAD_TO_DEG) as f32 - 90.0);
     [yaw, pitch]
 }
 
@@ -251,10 +253,12 @@ mod tests {
 
     #[test]
     fn look_at_directions() {
-        assert_eq!(look_at([0.0; 3], [0.0, 0.0, 5.0]), [0.0, 0.0]);
-        assert_eq!(look_at([0.0; 3], [-5.0, 0.0, 0.0]), [90.0, 0.0]);
+        // Vanilla multiplies by 57.2957763671875, slightly below 180/pi: due south is not 0.
+        assert_eq!(look_at([0.0; 3], [0.0, 0.0, 5.0]), [-7.6293945e-6, -0.0]);
+        let [yaw, pitch] = look_at([0.0; 3], [-5.0, 0.0, 0.0]);
+        assert!((yaw - 90.0).abs() < 1e-4 && pitch == 0.0);
         let [yaw, pitch] = look_at([0.0; 3], [1.0, 1.0, 0.0]);
-        assert_eq!(yaw, -90.0);
+        assert!((yaw + 90.0).abs() < 1e-4);
         assert!((pitch + 45.0).abs() < 1e-4);
     }
 

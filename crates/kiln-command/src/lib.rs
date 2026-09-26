@@ -17,12 +17,15 @@
 //! ```
 
 pub mod arguments;
+pub mod blocks;
 pub mod coords;
 pub mod dispatcher;
 pub mod error;
 pub mod host;
+pub mod nbt_path;
 pub mod range;
 pub mod reader;
+pub mod scoreboard;
 pub mod selector;
 pub mod snbt;
 pub mod suggestion;
