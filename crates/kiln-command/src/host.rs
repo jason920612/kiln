@@ -7,6 +7,7 @@
 use crate::blocks::UpdateFlags;
 use crate::coords::{Coordinates, wrap_degrees};
 use crate::error::CommandError;
+use crate::nbt_path::CommandStorage;
 use crate::scoreboard::Scoreboard;
 use crate::selector::{SelectorTarget, SelectorWorld};
 use crate::text::{Arg, Text};
@@ -476,10 +477,11 @@ pub trait Host: SelectorWorld {
         None
     }
     /// `Level.setBlock` (`BlockInput.place` when `nbt` is given): returns whether the state
-    /// changed. Without [`UpdateFlags::KNOWN_SHAPE`] vanilla first adapts `state` to its
-    /// neighbours' shapes (fences, stairs, ...); hosts may place it as given. `nbt` is block
-    /// entity data to merge into the new block's entity; hosts without block entity storage
-    /// ignore it.
+    /// changed, or (with `nbt`) whether the block entity's saved data changed. Without
+    /// [`UpdateFlags::KNOWN_SHAPE`] vanilla first adapts `state` to its neighbours' shapes
+    /// (fences, stairs, ...); hosts may place it as given. `nbt` is block entity data to load
+    /// into the block's entity; hosts without block entity storage ignore it (so re-applying
+    /// data to an unchanged block reports no change).
     fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool;
     /// `Level.updateNeighboursOnBlockSet`: neighbour reactions to a change made without
     /// `strict`.
@@ -500,6 +502,10 @@ pub trait Host: SelectorWorld {
     }
     /// The scoreboard, if the host keeps one (see [`SelectorWorld::scoreboard`]).
     fn scoreboard_mut(&mut self) -> Option<&mut Scoreboard> {
+        None
+    }
+    /// Command storage (`CommandStorage`), if the host keeps it.
+    fn storage_mut(&mut self) -> Option<&mut CommandStorage> {
         None
     }
     /// Sets the value (or `max`) of custom boss bar `id` (`execute store ... bossbar`).

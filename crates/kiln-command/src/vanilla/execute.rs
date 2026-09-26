@@ -14,6 +14,7 @@ use crate::selector::SelectorTarget;
 use crate::tr;
 use crate::types::{Anchor, Identifier};
 use kiln_data::blocks::default_state::AIR;
+use kiln_proto::nbt::Tag;
 use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, CommandError>;
@@ -335,8 +336,11 @@ fn data_conditionals<S: Host + 'static>(exec: NodeId, positive: bool) -> Builder
             exec,
             argument("path", ArgumentType::NbtPath),
             positive,
-            // Nothing can write command storage yet, so every storage is empty.
-            |c: &CommandContext<S>, _: &mut S| Ok(c.nbt_path("path").count_matching(&kiln_proto::nbt::Tag::Compound(Vec::new())) as i32),
+            |c: &CommandContext<S>, s: &mut S| {
+                let id = c.identifier("source").to_string();
+                let data = s.storage_mut().map_or(Tag::Compound(Vec::new()), |st| st.get(&id));
+                Ok(c.nbt_path("path").count_matching(&data) as i32)
+            },
         ))))
 }
 
@@ -491,7 +495,40 @@ fn stores<S: Host + 'static>(exec: NodeId, b: Builder<S>, result: bool) -> Build
         let target = c.selector("target").entity(s)?;
         if target.is_player() { Ok(true) } else { Err(CommandError::unsupported("Storing into entity data")) }
     })))
-    .then(literal("storage").then(nbt_target(exec, argument("target", ArgumentType::ResourceLocation), |_, _| {
-        Err(CommandError::unsupported("Command storage"))
-    })))
+    .then(literal("storage").then(storage_target(exec, result)))
+}
+
+/// `storage <target> <path> <type> <scale>`: `storeData` into command storage.
+fn storage_target<S: Host + 'static>(exec: NodeId, result: bool) -> Builder<S> {
+    let path = NUMERIC_TYPES.into_iter().fold(argument("path", ArgumentType::NbtPath), |p, ty| {
+        p.then(literal(ty).then(argument("scale", ArgumentType::double()).redirect_with(exec, move |c, s: &mut S| {
+            if s.storage_mut().is_none() {
+                return Err(CommandError::unsupported("Command storage"));
+            }
+            let id = c.identifier("target").to_string();
+            let path = c.nbt_path("path").clone();
+            let scale = c.double("scale");
+            Ok(s.stack().clone().with_callback(Arc::new(move |s: &mut S, success, value| {
+                let v = if result { value } else { success as i32 };
+                if let Some(storage) = s.storage_mut() {
+                    // Failures (no such parent) are dropped, as in vanilla.
+                    let _ = storage.store(&id, &path, &numeric_tag(ty, v, scale));
+                }
+            })))
+        })))
+    });
+    argument("target", ArgumentType::ResourceLocation).then(path)
+}
+
+/// The tag `store ... <type> <scale>` writes: `(type) (value * scale)` with Java's casts.
+fn numeric_tag(ty: &str, value: i32, scale: f64) -> Tag {
+    let v = f64::from(value) * scale;
+    match ty {
+        "byte" => Tag::Byte(v as i32 as i8),
+        "short" => Tag::Short(v as i32 as i16),
+        "int" => Tag::Int(v as i32),
+        "long" => Tag::Long(v as i64),
+        "float" => Tag::Float(v as f32),
+        _ => Tag::Double(v),
+    }
 }

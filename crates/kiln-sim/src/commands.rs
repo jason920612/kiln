@@ -120,6 +120,7 @@ pub(crate) struct CommandState {
     /// Where and as whom it runs (`execute` changes this per fork).
     pub stack: SourceStack<Sim>,
     pub scoreboard: Scoreboard,
+    pub storage: kiln_command::CommandStorage,
     /// Operators by name (permission level 4).
     pub ops: std::collections::HashSet<String>,
     pub difficulty: Difficulty,
@@ -150,6 +151,7 @@ impl CommandState {
             source: CommandSource::Console,
             stack: SourceStack::new(Text::literal("Server"), OVERWORLD, [0.0; 3]),
             scoreboard: Scoreboard::default(),
+            storage: kiln_command::CommandStorage::default(),
             ops,
             difficulty: Difficulty::Normal,
             raining: false,
@@ -659,5 +661,10 @@ impl Host for Sim {
 
     fn scoreboard_mut(&mut self) -> Option<&mut Scoreboard> {
         Some(&mut self.commands.scoreboard)
+    }
+
+    /// Kept in memory only (not saved with the world yet).
+    fn storage_mut(&mut self) -> Option<&mut kiln_command::CommandStorage> {
+        Some(&mut self.commands.storage)
     }
 }

@@ -50,6 +50,7 @@ pub use host::{
     TimeAction, Weather,
 };
 pub use reader::StringReader;
+pub use nbt_path::CommandStorage;
 pub use scoreboard::{Objective, Scoreboard};
 pub use selector::{Aabb, EntitySelector, NoEntity, SelectorTarget, SelectorWorld};
 pub use suggestion::{Suggestion, Suggestions, SuggestionsBuilder};

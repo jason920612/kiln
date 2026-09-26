@@ -70,6 +70,7 @@ pub(super) struct Mock {
     /// Blocks changed from the generated terrain (stone below y 64, air above).
     pub(super) blocks: HashMap<[i32; 3], u16>,
     pub(super) scoreboard: Scoreboard,
+    pub(super) storage: crate::CommandStorage,
 }
 
 impl Mock {
@@ -109,6 +110,7 @@ impl Mock {
             rules: HashMap::new(),
             blocks: HashMap::new(),
             scoreboard: Scoreboard::default(),
+            storage: crate::CommandStorage::default(),
         }
     }
 
@@ -325,6 +327,10 @@ impl Host for Mock {
     }
     fn scoreboard_mut(&mut self) -> Option<&mut Scoreboard> {
         Some(&mut self.scoreboard)
+    }
+
+    fn storage_mut(&mut self) -> Option<&mut crate::CommandStorage> {
+        Some(&mut self.storage)
     }
 }
 

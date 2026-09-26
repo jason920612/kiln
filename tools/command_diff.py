@@ -235,6 +235,29 @@ execute store result score Diff0 nosuchobjective run setblock 6 100 6 stone
 execute store result block 0 110 0 Items int 1 run setblock 6 100 6 stone
 execute store success bossbar minecraft:nosuchbar value run setblock 6 100 6 dirt
 execute store result storage minecraft:x foo int 1 run setblock 6 100 7 dirt
+execute if data storage minecraft:x foo
+execute if data storage minecraft:x bar
+execute if data storage minecraft:x {foo:1}
+execute store result storage minecraft:x a.b[0] int 1 run setblock 6 100 8 dirt
+execute if data storage minecraft:x a.b
+execute store result storage minecraft:new a.b[0] int 1 run setblock 6 100 9 dirt
+execute if data storage minecraft:new a
+execute store success storage minecraft:x l[] byte 1 run setblock 6 100 10 dirt
+execute if data storage minecraft:x l[]
+execute store result storage minecraft:x f float 0.5 run fill 6 101 6 8 101 6 dirt
+execute if data storage minecraft:x {f:1.5f}
+execute store result storage minecraft:y x.y.z long 10 run fill 6 102 6 8 102 6 dirt
+execute if data storage minecraft:y x.y{z:30L}
+execute store result storage minecraft:y s short 1000 run fill 6 103 6 8 103 6 dirt
+execute if data storage minecraft:y {s:3000s}
+execute store result storage minecraft:y b byte 100 run fill 6 104 6 8 104 6 dirt
+execute if data storage minecraft:y {b:44b}
+execute store result storage minecraft:y d double -0.1 run fill 6 105 6 8 105 6 dirt
+execute if data storage minecraft:y d
+execute store result storage minecraft:y l[{id:1}].v int 1 run fill 6 106 6 8 106 6 dirt
+execute if data storage minecraft:y l[{id:1}]
+execute if data storage minecraft:y l[0].v
+execute if data storage minecraft:empty x
 execute store result block 0 110 0 Items bogus 1 run say hi
 
 # game rules for execution limits
@@ -427,6 +450,57 @@ scoreboard objectives remove kills
 scoreboard objectives remove hp
 scoreboard objectives remove t
 scoreboard players list
+
+# coordinates, shapes and block entities
+setblock 2 100 0 chest[facing=north]{CustomName:"y"}
+setblock 2 100 0 chest[facing=north]{CustomName:"y"}
+setblock 2 100 0 chest[facing=north]
+setblock 0.5 100 0 stone
+setblock 0 100 ^ stone
+setblock 0 100 stone
+execute positioned 0 100 0 run setblock 0 ~0.5 0 stone
+setblock 30000000 100 0 stone
+setblock 29999999 100 0 stone
+setblock -30000001 100 0 stone
+fill 0 101 0 0 101 0 stone
+fill 0 101 0 2 103 2 glass hollow
+execute if block 1 102 1 air
+fill 0 101 0 1 102 1 dirt hollow
+fill 0 101 0 2 101 2 air outline
+fill 0 101 0 2 103 2 stone
+clone 0 101 0 2 103 2 0 101 0
+clone 0 101 0 2 103 2 0 101 0 replace force
+clone 0 101 0 2 103 2 1 101 0 masked move
+clone 0 101 0 2 103 2 1 101 0 masked force
+clone 0 101 0 2 103 2 1 102 1 replace move
+execute if blocks 0 101 0 2 103 2 0 101 0 all
+execute if blocks 1 102 1 3 104 3 1 102 1 masked
+execute align x positioned 3.7 110.2 4.9 run setblock ~ ~ ~ stone
+execute positioned 3.7 110.9 4.9 align y run setblock ~ ~ ~ stone
+execute rotated 45 0 positioned 0 115 0 run setblock ^ ^ ^3 dirt
+execute rotated 0 45 positioned 0 115 0 run setblock ^ ^ ^3 dirt
+execute rotated 0 0 positioned 0 115 0 run setblock ^1 ^ ^ glass
+execute rotated 0 0 positioned 0 115 0 run setblock ^ ^1 ^ glass
+execute rotated 180 -30 positioned 0.5 115 0.5 run setblock ^ ^ ^4 glass
+execute positioned 0 115 0 facing 3 118 3 run setblock ^ ^ ^2 glass
+execute positioned 0.5 115 0.5 facing 0.5 125 0.5 run setblock ^ ^ ^2 glass
+execute as Diff0 rotated as @s positioned 0 118 0 run setblock ^ ^ ^1 stone
+execute as Other0 rotated as @s positioned 0 118 0 run setblock ^ ^ ^1 stone
+execute if entity @a[x=8,y=160,z=8,distance=..1]
+execute if entity @a[x=0,y=0,z=0,distance=..1]
+execute if entity @a[x=8,y=160,z=8,dx=1,dy=1,dz=1]
+execute if entity @e[type=minecraft:player,limit=1,sort=furthest]
+execute if entity @a[y_rotation=80..100]
+execute if entity @a[x_rotation=0]
+execute as @a[sort=arbitrary] run say arb
+gamerule max_command_forks 0
+execute as @a run say zero
+execute run say zero2
+gamerule max_command_forks 65536
+gamerule max_command_sequence_length 0
+execute run say quota
+execute as @a run say quota2
+gamerule max_command_sequence_length 65536
 """
 
 

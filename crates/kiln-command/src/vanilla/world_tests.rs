@@ -7,6 +7,7 @@ use crate::scoreboard::Objective;
 use crate::text::Text;
 use kiln_data::blocks::default_state as b;
 use kiln_data::blocks_types::block_by_name;
+use kiln_proto::nbt::Tag;
 
 fn objective(name: &str) -> Objective {
     Objective {
@@ -205,8 +206,15 @@ fn execute_store_and_scores() {
     s.run(&d, "execute store result score * obj run seed").unwrap();
     assert_eq!(s.scoreboard.score("Bob", "obj"), Some(-1234567890123i64 as i32));
     assert_eq!(err_key(s.run(&d, "execute store result bossbar kiln:b value run seed")), "commands.bossbar.unknown");
-    let e = s.run(&d, "execute store result storage kiln:s a int 1 run seed").unwrap_err();
-    assert_eq!(e.message().to_plain(), "Command storage is not supported by this server yet");
+    // Storage: Java casts of value * scale, parents created on the way.
+    s.run(&d, "execute store result storage kiln:s a.b byte 0.5 run fill 0 72 0 4 72 0 stone").unwrap();
+    assert_eq!(s.storage.get("kiln:s"), Tag::Compound(vec![("a".into(), Tag::Compound(vec![("b".into(), Tag::Byte(2))]))]));
+    s.run(&d, "execute store result storage kiln:s big int 1 run seed").unwrap();
+    assert_eq!(s.run(&d, "execute if data storage kiln:s big"), Ok(1));
+    assert_eq!(s.run(&d, "execute if data storage kiln:s a.b"), Ok(1));
+    assert_eq!(err_key(s.run(&d, "execute if data storage kiln:other a")), "commands.execute.conditional.fail");
+    s.run(&d, "execute store success storage kiln:s a.b.c double 1 run seed").unwrap();
+    assert_eq!(err_key(s.run(&d, "execute if data storage kiln:s a.b.c")), "commands.execute.conditional.fail", "no parent");
     // Player data writes are dropped silently, as vanilla drops them.
     assert_eq!(Mock::new(2).run(&d, "execute store result entity @s Health float 1 run seed").map(|_| ()), Ok(()));
 }

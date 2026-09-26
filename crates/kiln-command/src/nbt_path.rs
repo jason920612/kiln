@@ -154,6 +154,149 @@ impl NbtPath {
     pub fn count_matching(&self, root: &Tag) -> usize {
         self.get(root).len()
     }
+
+    /// `NbtPath.set`: sets every tag the path selects to `value`, first creating missing
+    /// parents like `getOrCreateParents`; returns how many tags changed. List elements are
+    /// stored as given (no element type checks).
+    pub fn set(&self, root: &mut Tag, value: &Tag) -> Result<i32> {
+        let mut parents = 0;
+        let changed = set_in(&self.nodes, root, value, &mut parents);
+        if parents == 0 {
+            return Err(CommandError::new(tr!("arguments.nbtpath.nothing_found", self.text.as_str())));
+        }
+        Ok(changed)
+    }
+}
+
+impl Node {
+    /// `createPreferredParentTag`: what a missing parent of this node is created as.
+    fn preferred_parent(&self) -> Tag {
+        match self {
+            Node::MatchRoot(_) | Node::Child(_) | Node::MatchObject(..) => Tag::Compound(Vec::new()),
+            Node::AllElements | Node::Index(_) | Node::MatchElement(_) => Tag::List(Vec::new()),
+        }
+    }
+
+    /// `getOrCreate` on one tag: the selected children, missing ones created from `make`.
+    fn get_or_create<'t>(&self, tag: &'t mut Tag, make: impl Fn() -> Tag) -> Vec<&'t mut Tag> {
+        match (self, tag) {
+            (Node::MatchRoot(p), t) => {
+                if compare_nbt(p, t, true) {
+                    vec![t]
+                } else {
+                    Vec::new()
+                }
+            }
+            (Node::Child(name), Tag::Compound(f)) => vec![child_or_insert(f, name, make)],
+            (Node::MatchObject(name, p), Tag::Compound(f)) => {
+                let exists = f.iter().any(|(k, _)| k == name);
+                let child = child_or_insert(f, name, || p.clone());
+                if !exists || compare_nbt(p, child, true) { vec![child] } else { Vec::new() }
+            }
+            (Node::AllElements, Tag::List(items)) => {
+                if items.is_empty() {
+                    items.push(make());
+                }
+                items.iter_mut().collect()
+            }
+            (Node::Index(i), Tag::List(items)) => element(items, *i).into_iter().collect(),
+            (Node::MatchElement(p), Tag::List(items)) => {
+                if !items.iter().any(|e| compare_nbt(p, e, true)) {
+                    items.push(p.clone());
+                }
+                items.iter_mut().filter(|e| compare_nbt(p, e, true)).collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// `setTag` on one parent: the number of tags changed.
+    fn set_tag(&self, tag: &mut Tag, value: &Tag) -> i32 {
+        let assign = |slot: &mut Tag| {
+            let changed = slot != value;
+            *slot = value.clone();
+            changed as i32
+        };
+        match (self, tag) {
+            (Node::Child(name), Tag::Compound(f)) => match f.iter_mut().find(|(k, _)| k == name) {
+                Some((_, slot)) => assign(slot),
+                None => {
+                    f.push((name.clone(), value.clone()));
+                    1
+                }
+            },
+            (Node::MatchObject(name, p), Tag::Compound(f)) => match f.iter_mut().find(|(k, _)| k == name) {
+                Some((_, slot)) if compare_nbt(p, slot, true) => assign(slot),
+                _ => 0,
+            },
+            (Node::AllElements, Tag::List(items)) => {
+                if items.is_empty() {
+                    items.push(value.clone());
+                    return 1;
+                }
+                items.iter_mut().map(assign).sum()
+            }
+            (Node::Index(i), Tag::List(items)) => element(items, *i).map_or(0, assign),
+            (Node::MatchElement(p), Tag::List(items)) => {
+                items.iter_mut().filter(|e| compare_nbt(p, e, true)).map(assign).sum()
+            }
+            _ => 0,
+        }
+    }
+}
+
+fn child_or_insert<'t>(fields: &'t mut Vec<(String, Tag)>, name: &str, make: impl FnOnce() -> Tag) -> &'t mut Tag {
+    let i = match fields.iter().position(|(k, _)| k == name) {
+        Some(i) => i,
+        None => {
+            fields.push((name.to_owned(), make()));
+            fields.len() - 1
+        }
+    };
+    &mut fields[i].1
+}
+
+/// A list element by index, negative from the end.
+fn element(items: &mut [Tag], i: i32) -> Option<&mut Tag> {
+    let idx = if i < 0 { items.len() as i64 + i as i64 } else { i as i64 };
+    usize::try_from(idx).ok().and_then(|idx| items.get_mut(idx))
+}
+
+/// Walks the parents of the last node (creating them), then sets under each.
+fn set_in(nodes: &[Node], tag: &mut Tag, value: &Tag, parents: &mut usize) -> i32 {
+    let Some((node, rest)) = nodes.split_first() else { return 0 };
+    let Some(next) = rest.first() else {
+        *parents += 1;
+        return node.set_tag(tag, value);
+    };
+    node.get_or_create(tag, || next.preferred_parent()).into_iter().map(|child| set_in(rest, child, value, parents)).sum()
+}
+
+/// `CommandStorage`: compound tags by id for `execute store ... storage` and
+/// `execute if data storage`.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CommandStorage(std::collections::BTreeMap<String, Tag>);
+
+impl CommandStorage {
+    /// `get`: an empty compound for ids never written.
+    pub fn get(&self, id: &str) -> Tag {
+        self.0.get(id).cloned().unwrap_or(Tag::Compound(Vec::new()))
+    }
+
+    /// `ExecuteCommand.storeData` through `StorageDataAccessor`: `get` hands out the stored
+    /// compound itself (so parents created by a failed set stay), or a fresh one that is
+    /// only kept when the set succeeds.
+    pub fn store(&mut self, id: &str, path: &NbtPath, value: &Tag) -> Result<i32> {
+        match self.0.get_mut(id) {
+            Some(tag) => path.set(tag, value),
+            None => {
+                let mut tag = Tag::Compound(Vec::new());
+                let changed = path.set(&mut tag, value)?;
+                self.0.insert(id.to_owned(), tag);
+                Ok(changed)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -186,5 +329,23 @@ mod tests {
         assert_eq!(path("l[{id:y}]").unwrap().count_matching(&data), 1);
         assert_eq!(path("nope").unwrap().count_matching(&data), 0);
         assert_eq!(path("{a:{}}").unwrap().count_matching(&data), 1);
+    }
+
+    #[test]
+    fn set_creates_parents() {
+        let snbt = |s: &str| snbt::parse_tag(&mut StringReader::new(s)).unwrap();
+        let mut data = Tag::Compound(Vec::new());
+        assert_eq!(path("a.b.c").unwrap().set(&mut data, &Tag::Int(3)).unwrap(), 1);
+        assert_eq!(data, snbt("{a:{b:{c:3}}}"));
+        assert_eq!(path("a.b.c").unwrap().set(&mut data, &Tag::Int(3)).unwrap(), 0);
+        assert_eq!(path("l[].x").unwrap().set(&mut data, &Tag::Byte(1)).unwrap(), 1);
+        assert_eq!(path("l[0].x").unwrap().get(&data), [&Tag::Byte(1)]);
+        assert_eq!(path("l[{x:1b}].y").unwrap().set(&mut data, &Tag::Byte(2)).unwrap(), 1);
+        assert_eq!(path("l[{x:5b}].y").unwrap().set(&mut data, &Tag::Byte(2)).unwrap(), 1);
+        assert_eq!(path("l[]").unwrap().count_matching(&data), 2);
+        let e = path("a.b.c[0].d").unwrap().set(&mut data, &Tag::Int(1)).unwrap_err();
+        assert_eq!(e.key(), Some("arguments.nbtpath.nothing_found"));
+        let e = path("n[3].d").unwrap().set(&mut data, &Tag::Int(1)).unwrap_err();
+        assert_eq!(e.key(), Some("arguments.nbtpath.nothing_found"));
     }
 }
