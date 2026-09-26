@@ -546,6 +546,18 @@ name = "kiln-data"
 version = "0.1.0"
 
 [[package]]
+name = "kiln-inventory"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "kiln-data",
+ "kiln-item",
+ "kiln-proto",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "kiln-item"
 version = "0.1.0"
 dependencies = [
