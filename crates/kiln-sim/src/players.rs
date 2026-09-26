@@ -10,6 +10,24 @@ use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, Player
 use kiln_proto::packets::ProfileProperty;
 use kiln_world::ChunkPos;
 
+/// A command chat message (`say`, `me`, `msg`) through its chat type.
+pub(crate) fn chat_disguised(message: &kiln_command::ChatMessage) -> Bytes {
+    let chat_type = kiln_data::synced_id("minecraft:chat_type", message.kind.id()).unwrap_or(0);
+    let target = message.target.as_ref().map(|t| t.to_nbt());
+    kiln_proto::packets::disguised_chat(&message.content.to_nbt(), chat_type, &message.sender.to_nbt(), target.as_ref())
+}
+
+/// A player's chat line through the `minecraft:chat` chat type ("<name> message").
+pub(crate) fn chat_player(name: &str, content: &str) -> Bytes {
+    let chat_type = kiln_data::synced_id("minecraft:chat_type", "minecraft:chat").unwrap_or(0);
+    kiln_proto::packets::disguised_chat(&kiln_proto::nbt::text(content), chat_type, &kiln_proto::nbt::text(name), None)
+}
+
+/// Tab list game mode change.
+pub(crate) fn game_mode_update(uuid: uuid::Uuid, mode: i32) -> Bytes {
+    entity::player_info_update(PlayerInfoActions::UPDATE_GAME_MODE, &[PlayerInfoEntry::new(uuid, "", &[], mode)])
+}
+
 impl Player {
     pub(crate) fn move_state(&self) -> MoveState {
         MoveState { pos: self.pos, yaw: self.rot[0], pitch: self.rot[1], head_yaw: self.rot[0], on_ground: self.on_ground }

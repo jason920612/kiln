@@ -563,6 +563,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "crossbeam-channel",
+ "kiln-command",
  "kiln-data",
  "kiln-link",
  "kiln-proto",

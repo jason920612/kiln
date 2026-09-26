@@ -34,15 +34,36 @@ fn main() -> Result<()> {
         online_mode: shared.authenticates(),
     };
 
-    let sim = std::thread::Builder::new().name("sim".into()).spawn(move || kiln_sim::run(sim_config, sim_rx))?;
+    // The simulation also ends on its own after /stop; that ends the process.
+    let (sim_done_tx, sim_done_rx) = tokio::sync::oneshot::channel::<()>();
+    let sim = std::thread::Builder::new().name("sim".into()).spawn(move || {
+        kiln_sim::run(sim_config, sim_rx);
+        let _ = sim_done_tx.send(());
+    })?;
 
-    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("net").enable_all().build()?;
-    runtime.block_on(async {
-        tokio::select! {
-            r = kiln_net::listen(shared) => r,
-            _ = tokio::signal::ctrl_c() => Ok(()),
+    // Console: each line on stdin is a command run at permission level 4.
+    let console = shutdown.clone();
+    std::thread::Builder::new().name("console".into()).spawn(move || {
+        for line in std::io::stdin().lines().map_while(Result::ok) {
+            let line = line.trim();
+            if !line.is_empty() && console.send(kiln_link::ToSim::Console(line.to_owned())).is_err() {
+                break;
+            }
         }
     })?;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).thread_name("net").enable_all().build()?;
+    let sim_stopped = runtime.block_on(async {
+        tokio::select! {
+            r = kiln_net::listen(shared) => r.map(|_| false),
+            _ = tokio::signal::ctrl_c() => Ok(false),
+            _ = sim_done_rx => Ok(true),
+        }
+    })?;
+    if sim_stopped {
+        let _ = sim.join();
+        return Ok(());
+    }
     tracing::info!("stopping");
     let (done_tx, done_rx) = std::sync::mpsc::channel();
     if shutdown.send(kiln_link::ToSim::Shutdown { done: done_tx }).is_ok() {

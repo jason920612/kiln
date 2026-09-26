@@ -24,6 +24,8 @@ DECODE = {
     "level_chunk_with_light.bin": "net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket",
     "block_update.bin": "net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket",
     "light_update.bin": "net.minecraft.network.protocol.game.ClientboundLightUpdatePacket",
+    "commands.bin": "net.minecraft.network.protocol.game.ClientboundCommandsPacket",
+    "command_suggestions.bin": "net.minecraft.network.protocol.game.ClientboundCommandSuggestionsPacket",
 }
 
 
@@ -51,6 +53,7 @@ def stop_server(port):
 def start_server(port, world=None):
     stop_server(port)
     env = dict(os.environ, KILN_PORT=str(port), RUST_LOG=os.environ.get("RUST_LOG", "info"))
+    env.setdefault("KILN_OPS", "SmokeBot,KilnTest")
     if world:
         env["KILN_WORLD"] = str(Path(world).resolve())
     log = open(SERVER_LOG, "w", encoding="utf-8")

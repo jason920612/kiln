@@ -279,6 +279,50 @@ pub fn system_chat(text: Tag, overlay: bool) -> Bytes {
     b.freeze()
 }
 
+pub fn play_disconnect_text(reason: Tag) -> Bytes {
+    let mut b = packet(ids::play::clientbound::DISCONNECT);
+    reason.write_network(&mut b);
+    b.freeze()
+}
+
+/// Chat with a chat type but no signature: `chat_type` is the id in `minecraft:chat_type`.
+pub fn disguised_chat(message: &Tag, chat_type: i32, sender: &Tag, target: Option<&Tag>) -> Bytes {
+    let mut b = packet(ids::play::clientbound::DISGUISED_CHAT);
+    message.write_network(&mut b);
+    b.put_varint(chat_type + 1); // Holder: registry id + 1 (0 would be an inline definition)
+    sender.write_network(&mut b);
+    b.put_bool(target.is_some());
+    if let Some(t) = target {
+        t.write_network(&mut b);
+    }
+    b.freeze()
+}
+
+pub fn change_difficulty(difficulty: u8, locked: bool) -> Bytes {
+    let mut b = packet(ids::play::clientbound::CHANGE_DIFFICULTY);
+    b.put_u8(difficulty);
+    b.put_bool(locked);
+    b.freeze()
+}
+
+/// Set Container Slot with an item stack without data components (`None` = empty).
+pub fn container_set_slot(window: i32, state: i32, slot: i16, item: Option<(i32, i32)>) -> Bytes {
+    let mut b = packet(ids::play::clientbound::CONTAINER_SET_SLOT);
+    b.put_varint(window);
+    b.put_varint(state);
+    b.put_i16(slot);
+    match item {
+        Some((id, count)) if count > 0 => {
+            b.put_varint(count);
+            b.put_varint(id);
+            b.put_varint(0); // components added
+            b.put_varint(0); // components removed
+        }
+        _ => b.put_varint(0),
+    }
+    b.freeze()
+}
+
 pub fn play_disconnect(reason: &str) -> Bytes {
     let mut b = packet(ids::play::clientbound::DISCONNECT);
     crate::nbt::text(reason).write_network(&mut b);

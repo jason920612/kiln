@@ -1,6 +1,7 @@
 //! The simulation thread: owns all game state and runs the 20 TPS tick loop.
 //! It never awaits; connections talk to it through channels.
 
+mod commands;
 mod interact;
 mod players;
 mod stats;
@@ -71,6 +72,12 @@ struct Player {
     meta_dirty: bool,
     /// Arm swung this tick.
     swung: bool,
+    /// Latest tab-completion request, answered once per tick.
+    pending_suggestion: Option<(i32, String)>,
+    teleport_id: i32,
+    /// Player inventory container state id (incremented on server-side changes).
+    inventory_state: i32,
+    respawn: Option<[i32; 3]>,
 }
 
 impl Player {
@@ -106,6 +113,14 @@ pub struct Sim {
     day_time: i64,
     overworld_clock: i32,
     stopped: bool,
+    commands: commands::CommandState,
+}
+
+/// Operator names from `KILN_OPS` (comma separated).
+fn ops_from_env() -> HashSet<String> {
+    std::env::var("KILN_OPS")
+        .map(|v| v.split(',').map(|s| s.trim().to_owned()).filter(|s| !s.is_empty()).collect())
+        .unwrap_or_default()
 }
 
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
@@ -136,6 +151,7 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         day_time: 1000,
         overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
         stopped: false,
+        commands: commands::CommandState::new(ops_from_env()),
     };
     let mut next_tick = Instant::now();
     loop {
@@ -159,6 +175,7 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         }
         lap(&mut sim.stats, "packets");
         sim.tick();
+        sim.answer_suggestions();
         lap(&mut sim.stats, "tick");
         sim.update_visibility();
         lap(&mut sim.stats, "visibility");
@@ -172,6 +189,14 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         lap(&mut sim.stats, "egress");
         if let Some(report) = sim.stats.record(start.elapsed()) {
             info!("{} players, {} chunks | {report}", sim.players.len(), sim.world.loaded_chunks());
+            sim.commands.last_report = Some(report.to_string());
+        }
+        if sim.commands.stop_requested {
+            for p in sim.players.values_mut() {
+                p.disconnect("Server closed");
+            }
+            sim.save();
+            return;
         }
 
         // Fixed 50 ms cadence; if we fell behind, don't try to catch up.
@@ -196,6 +221,7 @@ impl Sim {
                 }
             }
             ToSim::Packet(conn, pkt) => self.packet(conn, pkt),
+            ToSim::Console(command) => self.run_console_command(command.trim_start_matches('/')),
             ToSim::Shutdown { done } => {
                 for p in self.players.values_mut() {
                     p.disconnect("Server closed");
@@ -256,6 +282,10 @@ impl Sim {
             sprinting: false,
             meta_dirty: false,
             swung: false,
+            pending_suggestion: None,
+            teleport_id: 1,
+            inventory_state: 0,
+            respawn: None,
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -271,7 +301,7 @@ impl Sim {
             sea_level: 63,
             online_mode: self.config.online_mode,
         }));
-        player.send(packets::player_position(1, spawn, 0.0, 0.0));
+        player.send(packets::player_position(player.teleport_id, spawn, 0.0, 0.0));
         player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, 0.0, 0.0));
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
@@ -279,6 +309,7 @@ impl Sim {
 
         let msg = yellow(&format!("{} joined the game", player.name));
         self.players.insert(j.conn, player);
+        self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);
     }
@@ -349,9 +380,13 @@ impl Sim {
             PlayIn::ChatCommand { command } => self.run_command(conn, &command),
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
             PlayIn::Chat { message } => {
-                let line = format!("<{}> {}", p.name, message);
-                info!("{line}");
-                self.broadcast_system(kiln_proto::nbt::text(&line));
+                if commands::has_illegal_chars(&message) {
+                    p.disconnect("Illegal characters in chat");
+                    return;
+                }
+                info!("<{}> {}", p.name, message);
+                let pkt = players::chat_player(&p.name, &message);
+                self.broadcast(pkt);
             }
             // Sent by the client when its "Loading terrain" screen closes.
             PlayIn::PlayerLoaded => info!("{} finished loading terrain", p.name),
@@ -505,12 +540,7 @@ impl Sim {
         }
     }
 
-    /// Placeholder until the command system is wired in.
-    fn run_command(&mut self, conn: ConnId, command: &str) {
-        info!("command from {conn}: /{command}");
-    }
 
-    fn suggest(&mut self, _conn: ConnId, _id: i32, _text: String) {}
 }
 
 /// Recenters the player's chunk view and streams missing chunks, nearest first.

@@ -27,6 +27,8 @@ pub enum ToSim {
     Join(JoinInfo),
     Packet(ConnId, PlayIn),
     Leave(ConnId),
+    /// A command typed at the server console.
+    Console(String),
     /// Save the world and stop; `done` is signalled when finished.
     Shutdown { done: std::sync::mpsc::Sender<()> },
 }

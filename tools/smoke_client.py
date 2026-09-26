@@ -306,6 +306,10 @@ def join(host, port, name):
     chunks = set()
     got_login = got_pos = got_wait = False
     chats = []
+    commands_tree = []
+    suggestions = []
+    teleports = []
+    commands_sent = False
     block_updates = []
     light_updates = []
     acks = []
@@ -326,8 +330,17 @@ def join(host, port, name):
             tid = b.varint()
             pos = (b.f64(), b.f64(), b.f64())
             got_pos = True
+            teleports.append(pos)
             print("teleport", tid, pos)
             c.send(sb("accept_teleportation"), varint(tid) + struct.pack(">dddff", *pos, 0.0, 0.0))
+        elif i == cb("commands"):
+            if not commands_tree and DUMP_DIR:
+                (DUMP_DIR / "commands.bin").write_bytes(b.d[b.i :])
+            commands_tree.append(len(b.d))
+        elif i == cb("command_suggestions"):
+            if not suggestions and DUMP_DIR:
+                (DUMP_DIR / "command_suggestions.bin").write_bytes(b.d[b.i :])
+            suggestions.append(b.d[b.i :])
         elif i == cb("game_event"):
             if b.u8() == 13:
                 got_wait = True
@@ -341,10 +354,18 @@ def join(host, port, name):
                 body = string("hello from smoke test") + struct.pack(">qq", 0, 0) + b"\x00" + varint(0) + bytes(3) + b"\x00"
                 c.send(sb("chat"), body)
                 sent_chat = True
-            if not built and got_pos and len(chunks) > 50 and not os.environ.get("KILN_SMOKE_NO_BUILD"):
-                build(c, sb)
+            if not commands_sent and got_pos and len(chunks) > 50:
+                c.send(sb("chat_command"), string("time set 6000"))
+                c.send(sb("chat_command"), string("definitelynotacommand"))
+                c.send(sb("command_suggestion"), varint(7) + string("/ti"))
+                commands_sent = True
+            if not built and got_pos and len(chunks) > 50:
+                if not os.environ.get("KILN_SMOKE_NO_BUILD"):
+                    build(c, sb)
+                # After building: the teleport moves the player out of reach of the pillar.
+                c.send(sb("chat_command"), string("tp @s 20 -60 20"))
                 built = True
-        elif i == cb("system_chat"):
+        elif i in (cb("system_chat"), cb("disguised_chat")):
             chats.append(b.d[b.i :])
         elif i == cb("block_update"):
             if not block_updates and DUMP_DIR:
@@ -367,6 +388,13 @@ def join(host, port, name):
     assert got_login and got_pos and got_wait, "join incomplete"
     assert len(chunks) == (2 * view + 1) ** 2, f"expected {(2 * view + 1) ** 2} chunks"
     assert any(b"hello from smoke test" in m for m in chats), "chat was not echoed"
+    assert commands_tree, "no command tree"
+    assert suggestions, "no tab-completion answer"
+    # Vanilla /tp centers integer x/z on the block.
+    assert any(p[0] == 20.5 and p[2] == 20.5 for p in teleports), f"tp not applied: {teleports}"
+    assert any(b"commands.time.set" in m for m in chats), "no /time feedback"
+    assert any(b"command.unknown.command" in m for m in chats), "no unknown-command error"
+    print(f"commands: tree {commands_tree[0]} bytes, {len(suggestions)} suggestion answers")
     if not os.environ.get("KILN_SMOKE_NO_BUILD"):
         check_build(block_updates, acks)
         assert (0, 0) in light_updates, f"no light update for the torch's chunk: {light_updates}"
