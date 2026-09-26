@@ -259,14 +259,30 @@ fn gen_registries(input: &Input) -> Result<String> {
     writeln!(s, "];\n")?;
 
     let builtin = read_json(&input.generated.join("reports/registries.json"))?;
+    writeln!(s, "/// Built-in (static) registries: entries indexed by protocol id.")?;
+    writeln!(s, "pub const BUILTIN: &[(&str, &[&str])] = &[")?;
     for (reg, body) in builtin.as_object().context("registries")? {
         let entries = body["entries"].as_object().context("entries")?;
-        let map = entries
+        let map: HashMap<String, i32> = entries
             .iter()
             .map(|(k, v)| (k.clone(), v["protocol_id"].as_i64().unwrap() as i32))
             .collect();
+        let mut by_id: Vec<(&i32, &String)> = map.iter().map(|(k, v)| (v, k)).collect();
+        by_id.sort();
+        for (i, (id, name)) in by_id.iter().enumerate() {
+            if **id != i as i32 {
+                bail!("{reg}: protocol ids are not dense at {name}");
+            }
+        }
+        writeln!(s, "    ({reg:?}, &[")?;
+        for (_, name) in &by_id {
+            writeln!(s, "        {name:?},")?;
+        }
+        writeln!(s, "    ]),")?;
         ids.insert(reg.clone(), map);
     }
+    writeln!(s, "];
+")?;
 
     // Tags for every registry the client knows (built-in + synchronized) that has a tag folder.
     let tag_root = data.join("minecraft/tags");

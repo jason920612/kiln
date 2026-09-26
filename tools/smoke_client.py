@@ -8,6 +8,7 @@ usage: python tools/smoke_client.py [host] [port] [name]
 """
 
 import json
+import os
 import socket
 import struct
 import sys
@@ -19,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 PACKETS = json.loads((ROOT / "work/generated/reports/packets.json").read_text())
 # Raw packet bodies are saved here for tools/VanillaDecode.java.
-DUMP_DIR = ROOT / "work" / "dumps"
+DUMP_DIR = Path(os.environ.get("KILN_DUMP_DIR", ROOT / "work" / "dumps"))
 DUMP_DIR.mkdir(parents=True, exist_ok=True)
 
 

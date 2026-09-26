@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORK = ROOT / "work"
-SERVER_LOG = WORK / "server.log"
+SERVER_LOG = WORK / "server.log"  # replaced per port in main()
 EXE = ROOT / "target" / "release" / ("kiln.exe" if os.name == "nt" else "kiln")
 
 # Packets captured by the smoke client -> vanilla codec that must decode them exactly.
@@ -29,20 +29,33 @@ def run(cmd, **kw):
     return subprocess.run(cmd, cwd=ROOT, **kw)
 
 
-def kill(image):
+def kill_pid(pid):
     if os.name == "nt":
-        subprocess.run(["taskkill", "/IM", image, "/F"], capture_output=True)
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
     else:
-        subprocess.run(["pkill", "-f", image], capture_output=True)
+        subprocess.run(["kill", "-9", str(pid)], capture_output=True)
+
+
+def stop_server(port):
+    """Stops only the server this script started on `port` (other worktrees may run their own)."""
+    pidfile = WORK / f"server-{port}.pid"
+    if pidfile.exists():
+        kill_pid(pidfile.read_text().strip())
+        pidfile.unlink()
+        time.sleep(0.5)
 
 
 def start_server(port):
-    kill(EXE.name)
-    time.sleep(0.5)
+    stop_server(port)
     env = dict(os.environ, KILN_PORT=str(port), RUST_LOG=os.environ.get("RUST_LOG", "info"))
     log = open(SERVER_LOG, "w", encoding="utf-8")
     flags = 0x00000008 | 0x00000200 | 0x01000000 if os.name == "nt" else 0
-    subprocess.Popen([str(EXE)], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
+    # Run a copy so rebuilding (here or in another worktree) never hits a locked exe.
+    exe = WORK / f"kiln-{port}{EXE.suffix}"
+    import shutil
+    shutil.copy2(EXE, exe)
+    p = subprocess.Popen([str(exe)], cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, creationflags=flags)
+    (WORK / f"server-{port}.pid").write_text(str(p.pid))
     for _ in range(50):
         if "listening on" in SERVER_LOG.read_text(encoding="utf-8", errors="replace"):
             return
@@ -111,19 +124,23 @@ def main():
     ap.add_argument("--keep-client", action="store_true")
     ap.add_argument("--port", type=int, default=25570)
     ap.add_argument("--skip-tests", action="store_true")
+    ap.add_argument("--stop", action="store_true", help="stop the server afterwards")
     a = ap.parse_args()
 
     if not a.skip_tests and run(["cargo", "test", "--workspace", "--quiet"]).returncode:
         sys.exit("unit tests failed")
-    kill(EXE.name)
+    global SERVER_LOG
+    SERVER_LOG = WORK / f"server-{a.port}.log"
     if run(["cargo", "build", "--release", "--quiet", "-p", "kiln-server"]).returncode:
         sys.exit("build failed")
     start_server(a.port)
-    if run([sys.executable, "tools/smoke_client.py", "127.0.0.1", str(a.port), "SmokeBot"]).returncode:
+    dumps = WORK / f"dumps-{a.port}"
+    env = dict(os.environ, KILN_DUMP_DIR=str(dumps))
+    if run([sys.executable, "tools/smoke_client.py", "127.0.0.1", str(a.port), "SmokeBot"], env=env).returncode:
         print(server_log())
         sys.exit("smoke client failed")
     for f, codec in DECODE.items():
-        path = WORK / "dumps" / f
+        path = dumps / f
         if run([sys.executable, "tools/vanilla_decode.py", codec, str(path)], capture_output=True).returncode:
             sys.exit(f"vanilla codec rejected {f}")
         print(f"vanilla decode OK: {f}")
@@ -132,6 +149,8 @@ def main():
             print(server_log())
             sys.exit("real client did not finish loading")
         print("real client joined")
+    if a.stop:
+        stop_server(a.port)
     print("E2E OK")
 
 

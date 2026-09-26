@@ -19,7 +19,11 @@ public class VanillaDecode {
         @SuppressWarnings("unchecked")
         StreamCodec<ByteBuf, Object> codec = (StreamCodec<ByteBuf, Object>) cls.getField("STREAM_CODEC").get(null);
         byte[] data = Files.readAllBytes(Path.of(args[1]));
-        ByteBuf buf = new RegistryFriendlyByteBuf(Unpooled.wrappedBuffer(data), null);
+        // Built-in (static) registries are enough for packets that reference entity types,
+        // items, blocks, etc. Data-driven registries are not available here.
+        var access = net.minecraft.core.RegistryAccess.fromRegistryOfRegistries(
+                net.minecraft.core.registries.BuiltInRegistries.REGISTRY);
+        ByteBuf buf = new RegistryFriendlyByteBuf(Unpooled.wrappedBuffer(data), access);
         Object packet = codec.decode(buf);
         if (buf.readableBytes() != 0) {
             System.out.println("FAIL: " + buf.readableBytes() + " trailing bytes after " + packet);
