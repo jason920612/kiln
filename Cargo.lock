@@ -595,14 +595,15 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
 name = "kiln-region"
 version = "0.1.0"
 dependencies = [
  "mimalloc",
  "proptest",
  "smallvec",
-=======
+]
+
+[[package]]
 name = "kiln-sched"
 version = "0.1.0"
 dependencies = [
@@ -610,7 +611,6 @@ dependencies = [
  "crossbeam-utils",
  "loom",
  "mimalloc",
->>>>>>> wp2/sched
 ]
 
 [[package]]
