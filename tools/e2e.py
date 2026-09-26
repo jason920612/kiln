@@ -21,6 +21,7 @@ EXE = ROOT / "target" / "release" / ("kiln.exe" if os.name == "nt" else "kiln")
 # Packets captured by the smoke client -> vanilla codec that must decode them exactly.
 DECODE = {
     "level_chunk_with_light.bin": "net.minecraft.network.protocol.game.ClientboundLevelChunkWithLightPacket",
+    "block_update.bin": "net.minecraft.network.protocol.game.ClientboundBlockUpdatePacket",
 }
 
 

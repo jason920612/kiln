@@ -281,6 +281,69 @@ pub enum PlayIn {
     ClientInformation { view_distance: u8 },
     Chat { message: String },
     PlayerLoaded,
+    PlayerAction { action: i32, pos: [i32; 3], face: u8, sequence: i32 },
+    UseItemOn { hand: i32, pos: [i32; 3], face: i32, cursor: [f32; 3], inside: bool, sequence: i32 },
+    SetCarriedItem { slot: i16 },
+    SetCreativeSlot { slot: i16, item: Option<ItemStack> },
+    /// Arm swing (26.3 renamed `swing` to `punch`; it has no fields).
+    Punch,
+}
+
+/// An item stack as sent by the client. Component patches are kept as raw, length-delimited
+/// entries (the "untrusted" slot codec prefixes each component with its length).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ItemStack {
+    pub item: i32,
+    pub count: i32,
+    pub added: Vec<(i32, Bytes)>,
+    pub removed: Vec<i32>,
+}
+
+/// Block position packed as x:26, z:26, y:12.
+pub fn read_position(r: &mut Reader) -> Result<[i32; 3], DecodeError> {
+    let v = r.i64()?;
+    Ok([(v >> 38) as i32, (v << 52 >> 52) as i32, (v << 26 >> 38) as i32])
+}
+
+/// `ItemStack.OPTIONAL_UNTRUSTED_STREAM_CODEC`: count, then item id and a delimited component patch.
+pub fn read_untrusted_slot(r: &mut Reader) -> Result<Option<ItemStack>, DecodeError> {
+    let count = r.varint()?;
+    if count <= 0 {
+        return Ok(None);
+    }
+    let item = r.varint()?;
+    let adds = r.len()?;
+    let removes = r.len()?;
+    if adds + removes > 256 {
+        return Err(DecodeError::Invalid("too many item components"));
+    }
+    let mut added = Vec::with_capacity(adds);
+    for _ in 0..adds {
+        let ty = r.varint()?;
+        let len = r.len()?;
+        if len > 2 * 1024 * 1024 {
+            return Err(DecodeError::Invalid("item component too large"));
+        }
+        added.push((ty, Bytes::copy_from_slice(r.bytes(len)?)));
+    }
+    let mut removed = Vec::with_capacity(removes);
+    for _ in 0..removes {
+        removed.push(r.varint()?);
+    }
+    Ok(Some(ItemStack { item, count, added, removed }))
+}
+
+pub fn block_update(pos: [i32; 3], state: u16) -> Bytes {
+    let mut b = packet(ids::play::clientbound::BLOCK_UPDATE);
+    b.put_position(pos[0], pos[1], pos[2]);
+    b.put_varint(state as i32);
+    b.freeze()
+}
+
+pub fn block_changed_ack(sequence: i32) -> Bytes {
+    let mut b = packet(ids::play::clientbound::BLOCK_CHANGED_ACK);
+    b.put_varint(sequence);
+    b.freeze()
 }
 
 /// Decodes a serverbound play packet; `Ok(None)` for packets we ignore for now.
@@ -318,6 +381,26 @@ pub fn decode_play(id: i32, r: &mut Reader) -> Result<Option<PlayIn>, DecodeErro
             PlayIn::Chat { message }
         }
         sb::PLAYER_LOADED => PlayIn::PlayerLoaded,
+        sb::PLAYER_ACTION => PlayIn::PlayerAction {
+            action: r.varint()?,
+            pos: read_position(r)?,
+            face: r.u8()?,
+            sequence: r.varint()?,
+        },
+        sb::USE_ITEM_ON => PlayIn::UseItemOn {
+            hand: r.varint()?,
+            pos: read_position(r)?,
+            face: r.varint()?,
+            cursor: [r.f32()?, r.f32()?, r.f32()?],
+            inside: r.bool()?,
+            sequence: {
+                let _world_border_hit = r.bool()?;
+                r.varint()?
+            },
+        },
+        sb::SET_CARRIED_ITEM => PlayIn::SetCarriedItem { slot: r.i16()? },
+        sb::SET_CREATIVE_MODE_SLOT => PlayIn::SetCreativeSlot { slot: r.i16()?, item: read_untrusted_slot(r)? },
+        sb::PUNCH => PlayIn::Punch,
         _ => {
             r.rest();
             return Ok(None);
@@ -339,4 +422,37 @@ pub fn read_client_information(r: &mut Reader) -> Result<u8, DecodeError> {
     let _allow_listing = r.bool()?;
     let _particles = r.varint()?;
     Ok(view_distance)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn position_roundtrip_including_negatives() {
+        for pos in [[18357644, 831, -20882616], [-1, -64, -1], [0, 0, 0], [-33554432, -2048, 33554431]] {
+            let mut b = BytesMut::new();
+            b.put_position(pos[0], pos[1], pos[2]);
+            assert_eq!(read_position(&mut Reader::new(&b)).unwrap(), pos);
+        }
+    }
+
+    #[test]
+    fn untrusted_slot_skips_delimited_components() {
+        let mut b = BytesMut::new();
+        b.put_varint(3); // count
+        b.put_varint(42); // item
+        b.put_varint(1); // one added component
+        b.put_varint(1); // one removed component
+        b.put_varint(7);
+        b.put_varint(2);
+        b.put_slice(&[0xAA, 0xBB]);
+        b.put_varint(9);
+        let mut r = Reader::new(&b);
+        let s = read_untrusted_slot(&mut r).unwrap().unwrap();
+        r.finish().unwrap();
+        assert_eq!((s.item, s.count, s.removed.as_slice()), (42, 3, &[9][..]));
+        assert_eq!(&s.added[0].1[..], &[0xAA, 0xBB]);
+        assert_eq!(read_untrusted_slot(&mut Reader::new(&[0])).unwrap(), None);
+    }
 }

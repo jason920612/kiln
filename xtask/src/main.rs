@@ -111,42 +111,77 @@ fn gen_packets(input: &Input) -> Result<String> {
 }
 
 fn gen_blocks(input: &Input) -> Result<String> {
+    struct Row {
+        first: u64,
+        name: String,
+        default: u64,
+        last: u64,
+        props: Vec<(String, Vec<String>)>,
+    }
     let blocks = read_json(&input.generated.join("reports/blocks.json"))?;
     let blocks = blocks.as_object().context("blocks")?;
     let mut rows = Vec::new();
     let mut state_count = 0u64;
     for (name, b) in blocks {
+        let props: Vec<(String, Vec<String>)> = match b.get("properties").and_then(Value::as_object) {
+            Some(p) => p
+                .iter()
+                .map(|(k, v)| {
+                    let vals = v.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect();
+                    (k.clone(), vals)
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         let states = b["states"].as_array().context("states")?;
-        let mut min = u64::MAX;
-        let mut max = 0;
+        let first = states.iter().map(|st| st["id"].as_u64().unwrap()).min().context("states")?;
         let mut default = None;
+        let mut last = 0;
         for st in states {
             let id = st["id"].as_u64().context("id")?;
-            min = min.min(id);
-            max = max.max(id);
+            last = last.max(id);
             if st.get("default").and_then(Value::as_bool) == Some(true) {
                 default = Some(id);
             }
+            // State ids enumerate property values with the last property varying fastest.
+            let mut offset = 0u64;
+            for (pname, vals) in &props {
+                let v = st["properties"][pname].as_str().context("property value")?;
+                let idx = vals.iter().position(|x| x == v).context("unknown property value")? as u64;
+                offset = offset * vals.len() as u64 + idx;
+            }
+            if first + offset != id {
+                bail!("{name}: state {id} does not follow the property order");
+            }
         }
-        state_count = state_count.max(max + 1);
-        rows.push((min, name.clone(), default.context("default state")?, max));
+        state_count = state_count.max(last + 1);
+        rows.push(Row { first, name: name.clone(), default: default.context("default state")?, last, props });
     }
-    rows.sort();
+    rows.sort_by_key(|r| r.first);
     if state_count > u16::MAX as u64 {
         bail!("{state_count} block states no longer fit in u16");
     }
     let mut s = String::from(HEADER);
+    writeln!(s, "use crate::blocks_types::{{BlockInfo, Property}};\n")?;
     writeln!(s, "/// Number of block states (the global palette size).")?;
     writeln!(s, "pub const STATE_COUNT: u32 = {state_count};")?;
     writeln!(s, "\n/// Default block state of each block.")?;
     writeln!(s, "pub mod default_state {{")?;
-    for (_, name, default, _) in &rows {
-        writeln!(s, "    pub const {}: u16 = {default};", const_name(name))?;
+    for r in &rows {
+        writeln!(s, "    pub const {}: u16 = {};", const_name(&r.name), r.default)?;
     }
-    writeln!(s, "}}\n\n/// (name, first state, default state, last state) in state-id order.")?;
-    writeln!(s, "pub const BLOCKS: &[(&str, u16, u16, u16)] = &[")?;
-    for (min, name, default, max) in &rows {
-        writeln!(s, "    ({name:?}, {min}, {default}, {max}),")?;
+    writeln!(s, "}}\n\n/// Blocks in state-id order.")?;
+    writeln!(s, "pub static BLOCKS: &[BlockInfo] = &[")?;
+    for r in &rows {
+        write!(
+            s,
+            "    BlockInfo {{ name: {:?}, first: {}, default: {}, last: {}, properties: &[",
+            r.name, r.first, r.default, r.last
+        )?;
+        for (pname, vals) in &r.props {
+            write!(s, "Property {{ name: {pname:?}, values: &{vals:?} }}, ")?;
+        }
+        writeln!(s, "] }},")?;
     }
     writeln!(s, "];")?;
     Ok(s)

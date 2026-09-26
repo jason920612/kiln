@@ -176,6 +176,62 @@ def parse_chunk(b):
     return x, z
 
 
+REPORTS = ROOT / "work" / "generated" / "reports"
+ITEMS = json.loads((REPORTS / "registries.json").read_text())["minecraft:item"]["entries"]
+BLOCKS = json.loads((REPORTS / "blocks.json").read_text())
+
+
+def item_id(name):
+    return ITEMS["minecraft:" + name]["protocol_id"]
+
+
+def default_state(name):
+    return next(s["id"] for s in BLOCKS["minecraft:" + name]["states"] if s.get("default"))
+
+
+def position(x, y, z):
+    return struct.pack(">q", ((x & 0x3FFFFFF) << 38) | ((z & 0x3FFFFFF) << 12) | (y & 0xFFF))
+
+
+def creative_slot(slot, item, count=1):
+    # Untrusted slot: count, item id, 0 added and 0 removed components.
+    return struct.pack(">h", slot) + varint(count) + varint(item) + varint(0) + varint(0)
+
+
+def use_item_on(pos, face, seq):
+    return varint(0) + position(*pos) + varint(face) + struct.pack(">fff", 0.5, 1.0, 0.5) + b"\x00\x00" + varint(seq)
+
+
+# A 3-high stone pillar in front of spawn (the player spawns at 8.5, -60, 8.5 facing +z),
+# plus an oak log placed and then broken again. Ground surface is y = -61.
+PILLAR = [(8, -60, 12), (8, -59, 12), (8, -58, 12)]
+LOG = (10, -60, 12)
+
+
+def build(c, sb):
+    c.send(sb("set_creative_mode_slot"), creative_slot(36, item_id("stone")))
+    c.send(sb("set_carried_item"), struct.pack(">h", 0))
+    seq = 1
+    for x, y, z in PILLAR:
+        c.send(sb("use_item_on"), use_item_on((x, y - 1, z), 1, seq))  # click the top of the block below
+        seq += 1
+    c.send(sb("set_creative_mode_slot"), creative_slot(36, item_id("oak_log")))
+    c.send(sb("use_item_on"), use_item_on((LOG[0], LOG[1] - 1, LOG[2]), 1, seq))
+    seq += 1
+    # Start digging (creative: instant break).
+    c.send(sb("player_action"), varint(0) + position(*LOG) + bytes([1]) + varint(seq))
+
+
+def check_build(updates, acks):
+    stone = default_state("stone")
+    for p in PILLAR:
+        assert (p, stone) in updates, f"no stone block update at {p}: {updates}"
+    log_states = [s for (p, s) in updates if p == LOG]
+    assert len(log_states) == 2 and log_states[1] == default_state("air"), f"log place/break: {log_states}"
+    assert acks == [1, 2, 3, 4, 5], f"acks {acks}"
+    print(f"build: {len(updates)} block updates, acks {acks}")
+
+
 def status(host, port):
     c = Conn(host, port)
     c.send(0, varint(777) + string(host) + struct.pack(">H", port) + varint(1))
@@ -244,8 +300,11 @@ def join(host, port, name):
     chunks = set()
     got_login = got_pos = got_wait = False
     chats = []
+    block_updates = []
+    acks = []
     deadline = time.time() + 5
     sent_chat = False
+    built = False
     while time.time() < deadline:
         c.s.settimeout(max(0.1, deadline - time.time()))
         try:
@@ -275,8 +334,21 @@ def join(host, port, name):
                 body = string("hello from smoke test") + struct.pack(">qq", 0, 0) + b"\x00" + varint(0) + bytes(3) + b"\x00"
                 c.send(sb("chat"), body)
                 sent_chat = True
+            if not built and got_pos and len(chunks) > 50:
+                build(c, sb)
+                built = True
         elif i == cb("system_chat"):
             chats.append(b.d[b.i :])
+        elif i == cb("block_update"):
+            if not block_updates and DUMP_DIR:
+                (DUMP_DIR / "block_update.bin").write_bytes(b.d[b.i :])
+            v = b.i64()
+            pos = (v >> 38, (v << 52 & (2**64 - 1)) >> 52, (v << 26 & (2**64 - 1)) >> 38)
+            pos = tuple(c - (1 << 26) if i != 1 and c >= 1 << 25 else c for i, c in enumerate(pos))
+            pos = (pos[0], pos[1] - (1 << 12) if pos[1] >= 1 << 11 else pos[1], pos[2])
+            block_updates.append((pos, b.varint()))
+        elif i == cb("block_changed_ack"):
+            acks.append(b.varint())
         elif i == cb("keep_alive"):
             c.send(sb("keep_alive"), b.take(8))
     print(f"play: login={got_login} position={got_pos} wait_event={got_wait} chunks={len(chunks)} system_chat={len(chats)}")
@@ -284,6 +356,7 @@ def join(host, port, name):
     assert got_login and got_pos and got_wait, "join incomplete"
     assert len(chunks) == (2 * view + 1) ** 2, f"expected {(2 * view + 1) ** 2} chunks"
     assert any(b"hello from smoke test" in m for m in chats), "chat was not echoed"
+    check_build(block_updates, acks)
     print("OK")
 
 
