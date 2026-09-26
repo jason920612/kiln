@@ -15,6 +15,9 @@ const SURFACE_Y: f64 = -60.0;
 
 struct Run {
     hashes: Vec<u64>,
+    /// Packets and bytes each player received, at every hash point: what the players see
+    /// must not depend on the topology either.
+    traffic: Vec<Vec<(u64, u64)>>,
     max_regions: usize,
 }
 
@@ -29,6 +32,7 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     let mut inbox = Vec::new();
     let mut hashes = Vec::new();
     let mut placed = Vec::new();
+    let mut traffic = Vec::new();
     let mut max_regions = 0;
     for tick in 0..ticks {
         if walkers.len() < PLAYERS {
@@ -66,6 +70,8 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
         max_regions = max_regions.max(sim.region_count());
         if tick % 100 == 99 {
             hashes.push(sim.state_hash());
+            let load = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed);
+            traffic.push(walkers.iter().map(|w| (load(&w.client.stats.packets), load(&w.client.stats.bytes))).collect());
         }
     }
     assert_eq!(sim.player_count(), PLAYERS);
@@ -73,7 +79,7 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     let built = placed.iter().filter(|p| sim.block_at(p[0], p[1], p[2]) == Some(stone_block)).count();
     assert!(built > 10, "only {built} of {} edits left stone", placed.len());
     assert!(walkers.iter().all(|w| !w.client.stats.disconnected.load(std::sync::atomic::Ordering::Relaxed)));
-    Run { hashes, max_regions }
+    Run { hashes, traffic, max_regions }
 }
 
 #[test]
@@ -81,6 +87,7 @@ fn same_inputs_give_the_same_states() {
     let a = run(400, 1, false, None);
     let b = run(400, 1, false, None);
     assert_eq!(a.hashes, b.hashes);
+    assert_eq!(a.traffic, b.traffic);
     assert!(a.hashes.windows(2).all(|w| w[0] != w[1]), "the state should keep changing: {:x?}", a.hashes);
 }
 
@@ -91,8 +98,10 @@ fn regions_and_workers_do_not_change_the_result() {
     let split = run(400, 1, false, None);
     assert!(split.max_regions >= GROUPS, "groups should tick as separate regions ({} regions)", split.max_regions);
     assert_eq!(split.hashes, unified.hashes, "one region vs one per group");
+    assert_eq!(split.traffic, unified.traffic, "players must receive the same packets");
     for (workers, seed) in [(4, 1), (7, 99)] {
         let parallel = run(400, workers, false, Some(seed));
         assert_eq!(parallel.hashes, unified.hashes, "{workers} workers, chaos seed {seed}");
+        assert_eq!(parallel.traffic, unified.traffic, "{workers} workers, chaos seed {seed}");
     }
 }

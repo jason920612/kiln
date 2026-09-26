@@ -15,7 +15,8 @@
 //!   first packet that needs the whole server (chat, commands).
 //! - **PX** (serial): those packets and everything their regions received after them, in
 //!   arrival order, with access to everything.
-//! - **G** (serial): console commands, world time, autosave.
+//! - **G** (serial): console commands, world time, autosave; players teleported into another
+//!   region's loaded cells move there.
 //! - **L** (parallel): each region streams chunks, tracks entities, sends movement and light,
 //!   and flushes its players' packets.
 
@@ -181,8 +182,8 @@ struct Dim {
     regionizer: Regionizer,
     /// Chunks loaded for cells without an owner yet; installed once the regionizer ran.
     pending: HashMap<ChunkPos, Chunk>,
-    /// Chunks the regions asked for in their last tick.
-    requests: Vec<ChunkPos>,
+    /// Chunks the regions asked for in their last tick, with the player that needs them.
+    requests: Vec<(ConnId, ChunkPos)>,
     /// Chunks the regions no longer need.
     unloads: Vec<ChunkPos>,
     /// Cells emptied by unloads; vacated when the regionizer runs, unless refilled first.
@@ -432,6 +433,8 @@ impl Sim {
             self.run_console_command(command.trim_start_matches('/'));
         }
         self.tick_global();
+        // Players teleported in PX or G into a loaded cell of another region tick there now.
+        self.update_membership(false);
         lap(&mut self.stats, "global");
 
         // L: regions tick in parallel.
@@ -580,7 +583,10 @@ impl Sim {
         }
         let mut own: Vec<ChunkPos> = keep.into_iter().collect();
         own.sort_unstable();
-        let requests = region::merge_requests(own.into_iter().chain(std::mem::take(&mut self.dim.requests)));
+        // By player, each player's nearest first: the same order however regions split them.
+        let mut wanted = std::mem::take(&mut self.dim.requests);
+        wanted.sort_by_key(|&(conn, _)| conn);
+        let requests = region::merge_requests(own.into_iter().chain(wanted.into_iter().map(|(_, c)| c)));
         let mut loads = 0;
         for pos in requests {
             if self.dim.is_loaded(pos) {

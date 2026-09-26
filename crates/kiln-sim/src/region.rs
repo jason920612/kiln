@@ -43,7 +43,7 @@ pub(crate) struct BlockChange {
 #[derive(Default)]
 pub(crate) struct RegionOut {
     /// Chunks its players need that are not loaded, nearest first per player.
-    pub wanted: Vec<ChunkPos>,
+    pub wanted: Vec<(ConnId, ChunkPos)>,
     /// Loaded chunks no player of the region is near any more.
     pub unload: Vec<ChunkPos>,
     /// CPU time per sub-phase, for the statistics.
@@ -91,7 +91,8 @@ impl RegionWork<'_> {
                 update_chunks(p, &mut *self.cells, env, &mut self.out.wanted);
             }
         }
-        if env.game_time % 20 == (self.id.0 % 20) as i64 {
+        // The same tick everywhere, so when chunks unload does not depend on the regions.
+        if env.game_time % 20 == 0 {
             self.find_unloads();
         }
         mark(&mut self.out.times, 0);
@@ -358,7 +359,7 @@ fn tick_connection(p: &mut Player, env: &Env) {
 
 /// Recenters the player's chunk view and streams missing loaded chunks, nearest first;
 /// missing chunks that are not loaded yet are requested.
-fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &mut Vec<ChunkPos>) {
+fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &mut Vec<(ConnId, ChunkPos)>) {
     let center = ChunkPos::of_block(p.pos[0].floor() as i32, p.pos[2].floor() as i32);
     let r = p.view_distance;
     if center != p.center {
@@ -393,7 +394,7 @@ fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &
         match cells.chunk_mut(c) {
             Some(chunk) if batch.len() < budget => batch.push((c, chunk.packet_body(env.biome_count))),
             Some(_) => {}
-            None => wanted.push(c),
+            None => wanted.push((p.conn, c)),
         }
     }
     if batch.is_empty() {
@@ -408,7 +409,7 @@ fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &
     p.unacked_batches += 1;
 }
 
-/// Sorted, de-duplicated union of chunk requests.
+/// De-duplicated union of chunk requests, keeping the first occurrence.
 pub(crate) fn merge_requests(requests: impl IntoIterator<Item = ChunkPos>) -> Vec<ChunkPos> {
     let mut seen = HashSet::new();
     requests.into_iter().filter(|c| seen.insert(*c)).collect()
