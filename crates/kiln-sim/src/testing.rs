@@ -77,24 +77,21 @@ impl Client {
     }
 
     /// Packets for this client tick: a teleport confirmation (which replaces movement this
-    /// tick), the loaded report once, or a move to `to` if given.
+    /// tick), the loaded report once, or a move to `to` if given; then Client Tick End.
     pub fn tick(&mut self, to: Option<[f64; 3]>, out: &mut Vec<ToSim>) {
         let teleport = *self.stats.teleport.lock().unwrap();
         if let Some((id, pos)) = teleport.filter(|(id, _)| *id != self.confirmed) {
             self.confirmed = id;
             self.pos = pos;
             out.push(ToSim::Packet(self.conn, PlayIn::AcceptTeleport { id }));
-            return;
-        }
-        if !self.loaded {
+        } else if !self.loaded {
             self.loaded = true;
             out.push(ToSim::Packet(self.conn, PlayIn::PlayerLoaded));
-            return;
-        }
-        if let Some(to) = to {
+        } else if let Some(to) = to {
             self.pos = to;
             out.push(ToSim::Packet(self.conn, PlayIn::Move { pos: Some(to), rot: None, on_ground: true }));
         }
+        out.push(ToSim::Packet(self.conn, PlayIn::ClientTickEnd));
     }
 
     /// Whether the server's latest teleport has been confirmed.

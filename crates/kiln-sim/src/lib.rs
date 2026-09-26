@@ -90,6 +90,8 @@ struct Player {
     teleport_sent: i64,
     /// Ticks left until movement counts without the client's "loaded" report.
     load_timeout: u32,
+    /// A position arrived since the client's last tick end (a second one is a protocol error).
+    position_this_tick: bool,
 }
 
 impl Player {
@@ -368,6 +370,7 @@ impl Sim {
             move_packets: 0,
             teleport_sent: self.game_time,
             load_timeout: movement::CLIENT_LOADED_TIMEOUT,
+            position_this_tick: false,
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -480,6 +483,7 @@ impl Sim {
                 self.ack(conn, sequence);
             }
             PlayIn::Punch => p.swung = true,
+            PlayIn::ClientTickEnd => p.position_this_tick = false,
             // Decoded but not handled by the simulation yet.
             _ => {}
         }
@@ -492,6 +496,14 @@ impl Sim {
         if movement::invalid(pos, rot) {
             p.disconnect("Invalid movement");
             return;
+        }
+        if pos.is_some() {
+            // The 26.3 client sends at most one position per client tick.
+            if p.position_this_tick {
+                p.disconnect("Invalid movement");
+                return;
+            }
+            p.position_this_tick = true;
         }
         if p.load_timeout > 0 {
             return;
