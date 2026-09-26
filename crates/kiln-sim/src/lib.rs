@@ -233,7 +233,7 @@ impl Dim {
                 continue;
             }
             if let Some(mut chunk) = cell.remove(pos) {
-                self.provider.save(pos, &mut chunk);
+                self.provider.unload(pos, &mut chunk);
                 unloaded += 1;
             }
             if cell.is_empty() {

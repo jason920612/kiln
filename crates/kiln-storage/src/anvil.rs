@@ -60,6 +60,11 @@ impl AnvilSource {
 
     fn read_nbt(&mut self, pos: ChunkPos) -> Option<Vec<u8>> {
         let key = (pos.x >> 5, pos.z >> 5);
+        // A save not flushed yet is newer than the region file.
+        let local = ((pos.x & 31) as usize, (pos.z & 31) as usize);
+        if let Some((_, _, payload)) = self.pending.get(&key).and_then(|p| p.iter().find(|(x, z, _)| (*x, *z) == local)) {
+            return crate::region::decompress_chunk(payload).map_err(|e| warn!("chunk {pos:?}: {e}")).ok();
+        }
         let dir = &self.region_dir;
         let region = self.regions.entry(key).or_insert_with(|| {
             let path = dir.join(format!("r.{}.{}.mca", key.0, key.1));
@@ -127,6 +132,7 @@ impl AnvilSource {
 
         let sky = if light_on { Some(fill_missing_sky(sky)) } else { None };
         let mut chunk = Chunk::with_light(sections, dim.min_y, sky, light_on.then_some(block));
+        chunk.set_light_trusted(light_on);
         let origin = match (root.get("xPos").and_then(Tag::as_i64), root.get("zPos").and_then(Tag::as_i64)) {
             (Some(x), Some(z)) => Some((x as i32, z as i32)),
             _ => None,
@@ -191,6 +197,10 @@ impl ChunkSource for AnvilSource {
         entry.push((lx, lz, payload));
     }
 
+    fn unloaded(&mut self, pos: ChunkPos) {
+        self.preserved.remove(&pos);
+    }
+
     fn flush(&mut self) -> std::io::Result<()> {
         if self.pending.is_empty() {
             return Ok(());
@@ -241,9 +251,10 @@ pub fn encode_chunk(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Ta
     set(&mut fields, "zPos", Tag::Int(pos.z));
     set(&mut fields, "yPos", Tag::Int(min_section));
     set(&mut fields, "Status", Tag::String("minecraft:full".into()));
-    // Changed chunks go back without light (vanilla relights them) and without heightmaps
-    // (vanilla recomputes missing ones on load); untouched chunks keep both as loaded.
-    let light_valid = !chunk.modified();
+    // Kiln keeps light up to date on every change, so complete light is saved (a chunk that
+    // came without light goes back without it and vanilla relights it). Changed chunks go
+    // back without heightmaps (vanilla recomputes missing ones on load).
+    let light_valid = chunk.light_trusted();
     set(&mut fields, "isLightOn", Tag::Byte(light_valid as i8));
     if chunk.modified() {
         fields.retain(|(k, _)| k != "Heightmaps");

@@ -61,6 +61,9 @@ pub struct Chunk {
     saved_version: u32,
     /// Block changes since the chunk was loaded or generated (light changes not counted).
     edits: u32,
+    /// Whether stored light is complete: generated here, or loaded with light. A chunk
+    /// saved without light gets its sky light from the heightmap and no block light.
+    light_trusted: bool,
     cached: Option<(u32, Bytes)>,
     /// Light sections changed since the last Update Light, per layer.
     light_dirty: [u64; 2],
@@ -86,6 +89,7 @@ impl Chunk {
             version: 0,
             saved_version: 0,
             edits: 0,
+            light_trusted: true,
             cached: None,
             light_dirty: [0, 0],
             block_entities: BTreeMap::new(),
@@ -123,6 +127,14 @@ impl Chunk {
     /// Whether blocks changed since the chunk was loaded or created.
     pub fn modified(&self) -> bool {
         self.version != 0
+    }
+
+    pub fn light_trusted(&self) -> bool {
+        self.light_trusted
+    }
+
+    pub fn set_light_trusted(&mut self, trusted: bool) {
+        self.light_trusted = trusted;
     }
 
     /// Whether any block changed since the chunk was loaded or generated.

@@ -75,6 +75,12 @@ impl RegionFile {
     }
 }
 
+/// Uncompressed NBT of a payload made by [`compress_chunk`].
+pub fn decompress_chunk(payload: &[u8]) -> Result<Vec<u8>, RegionError> {
+    let (&kind, data) = payload.split_first().ok_or(RegionError::Corrupt("empty payload"))?;
+    decompress(kind, data)
+}
+
 /// Zlib-compresses chunk NBT into the payload stored after the length field
 /// (compression byte + data).
 pub fn compress_chunk(nbt: &[u8]) -> Vec<u8> {

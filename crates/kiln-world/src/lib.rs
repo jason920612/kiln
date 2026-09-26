@@ -120,8 +120,13 @@ pub trait ChunkSource: Send {
     /// Loads the chunk at `pos`, or `None` if the source has none there.
     fn load(&mut self, pos: ChunkPos, dimension: Dimension) -> Option<Chunk>;
 
-    /// Queues a chunk for writing; data reaches storage on `flush`.
+    /// Queues a chunk for writing; data reaches storage on `flush`, and until then `load`
+    /// must return the queued version.
     fn save(&mut self, _pos: ChunkPos, _chunk: &Chunk) {}
+
+    /// The chunk left memory (after `save`, if it needed one): per-chunk state kept since
+    /// `load` can go.
+    fn unloaded(&mut self, _pos: ChunkPos) {}
 
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
@@ -204,6 +209,15 @@ impl ChunkProvider {
 
     pub fn flush(&mut self) -> std::io::Result<()> {
         self.source.as_mut().map_or(Ok(()), |s| s.flush())
+    }
+
+    /// Saves a chunk that is leaving memory if it needs it, and lets the source forget it.
+    pub fn unload(&mut self, pos: ChunkPos, chunk: &mut Chunk) -> bool {
+        let saved = self.save(pos, chunk);
+        if let Some(source) = self.source.as_mut() {
+            source.unloaded(pos);
+        }
+        saved
     }
 
     /// Whether unloaded chunks can be written somewhere (a superflat test world cannot).

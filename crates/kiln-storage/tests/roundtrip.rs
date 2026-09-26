@@ -81,3 +81,28 @@ fn edits_persist_through_the_world_api() {
     assert_eq!(w2.get_block(96, 150, -32), Some(block::GOLD_BLOCK));
     assert_eq!(w2.get_block(1000, 100, 1000), Some(block::DIAMOND_BLOCK));
 }
+
+#[test]
+fn a_saved_chunk_reloads_before_it_is_flushed() {
+    // A chunk unloaded between autosaves must come back as saved, not as the region file has it.
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("roundtrip-unflushed");
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut w = World::with_source(OVERWORLD, Box::new(AnvilSource::new(&dir)), Terrain::Flat, 0, 67);
+    w.set_block(8, 100, 10, block::STONE);
+    w.set_block(8, 101, 10, block::TORCH);
+    let light = w.light_at(kiln_world::chunk::LightLayer::Block, 9, 101, 10);
+    let pos = ChunkPos::of_block(8, 10);
+    let mut chunk = std::mem::replace(w.load_chunk(pos), kiln_world::chunk::Chunk::new(Vec::new(), -64));
+
+    let mut src = AnvilSource::new(&dir);
+    src.save(pos, &chunk);
+    src.unloaded(pos);
+    let back = src.load(pos, OVERWORLD).expect("queued chunk");
+    assert_eq!(back.get(8, 100, 10), block::STONE);
+    assert_eq!(back.get(8, 101, 10), block::TORCH);
+    // Light is saved with the chunk, so a torch placed before the unload still lights up.
+    assert_eq!(back.light(kiln_world::chunk::LightLayer::Block, 9, 101, 10), light.unwrap());
+    src.flush().unwrap();
+    chunk.set(8, 100, 10, block::DIRT);
+    assert_eq!(AnvilSource::new(&dir).load(pos, OVERWORLD).unwrap().get(8, 100, 10), block::STONE);
+}
