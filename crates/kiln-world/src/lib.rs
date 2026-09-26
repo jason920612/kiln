@@ -231,6 +231,39 @@ impl World {
         out
     }
 
+    /// Feeds every loaded chunk's position and block states to `h` in a fixed order that does
+    /// not depend on container layout (for determinism tests).
+    pub fn hash_blocks<H: std::hash::Hasher>(&self, h: &mut H) {
+        use std::hash::Hash;
+        let mut cells: Vec<_> = self.cells.iter().collect();
+        cells.sort_by_key(|(pos, _)| **pos);
+        for (cell_pos, cell) in cells {
+            for (i, chunk) in cell.chunks.iter().enumerate() {
+                let Some(chunk) = chunk else { continue };
+                (cell_pos.x, cell_pos.z, i).hash(h);
+                // Runs of equal states, so a single-state container and a paletted one with
+                // the same contents hash alike.
+                for section in &chunk.sections {
+                    let blocks = &section.blocks;
+                    if let section::BlockContainer::Single(state) = blocks {
+                        (*state, 4096u16).hash(h);
+                        continue;
+                    }
+                    let (mut run_state, mut run) = (blocks.get(0), 0u16);
+                    for i in 0..4096 {
+                        let state = blocks.get(i);
+                        if state != run_state {
+                            (run_state, run).hash(h);
+                            (run_state, run) = (state, 0);
+                        }
+                        run += 1;
+                    }
+                    (run_state, run).hash(h);
+                }
+            }
+        }
+    }
+
     pub fn loaded_chunks(&self) -> usize {
         self.cells.values().map(|c| c.chunks.iter().filter(|c| c.is_some()).count()).sum()
     }

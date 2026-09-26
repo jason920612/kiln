@@ -6,6 +6,7 @@ mod interact;
 mod movement;
 mod players;
 mod stats;
+pub mod testing;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -143,78 +144,18 @@ fn ops_from_env() -> HashSet<String> {
 }
 
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
-    let plains = kiln_data::synced_id("minecraft:worldgen/biome", "minecraft:plains").expect("plains biome");
-    let biome_count = kiln_data::registries::SYNCHRONIZED
-        .iter()
-        .find(|(r, _)| *r == "minecraft:worldgen/biome")
-        .map_or(0, |(_, e)| e.len());
-    let (world, spawn) = match &config.world {
-        Some(dir) => {
-            let source = kiln_storage::AnvilSource::new(dir.join("dimensions/minecraft/overworld/region"));
-            let world = World::with_source(OVERWORLD_DIM, Box::new(source), Terrain::Void, plains as u16, biome_count);
-            let spawn = kiln_storage::read_spawn(dir).unwrap_or([0, 64, 0]);
-            info!("loaded world {} (spawn {spawn:?})", dir.display());
-            (world, spawn)
-        }
-        None => (World::flat(OVERWORLD_DIM, plains as u16, biome_count), [8, 0, 8]),
-    };
-    let mut sim = Sim {
-        config,
-        world,
-        spawn,
-        players: HashMap::new(),
-        next_entity_id: 1,
-        started: Instant::now(),
-        stats: stats::TickStats::default(),
-        game_time: 0,
-        day_time: 1000,
-        overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
-        stopped: false,
-        commands: commands::CommandState::new(ops_from_env()),
-    };
+    let mut sim = Sim::new(config);
     let mut next_tick = Instant::now();
+    let mut inbox = Vec::new();
     loop {
-        let start = Instant::now();
-        let mut mark = start;
-        let mut lap = |stats: &mut stats::TickStats, name| {
-            let now = Instant::now();
-            stats.phase(name, now - mark);
-            mark = now;
-        };
-        // P: apply packets and connection events received since the last tick.
         loop {
             match rx.try_recv() {
-                Ok(msg) => sim.handle(msg),
+                Ok(msg) => inbox.push(msg),
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return,
             }
         }
-        if sim.stopped {
-            return;
-        }
-        lap(&mut sim.stats, "packets");
-        sim.tick();
-        sim.answer_suggestions();
-        lap(&mut sim.stats, "tick");
-        sim.update_visibility();
-        lap(&mut sim.stats, "visibility");
-        sim.broadcast_movement();
-        lap(&mut sim.stats, "movement");
-        sim.send_light_updates();
-        // E: one batch per connection.
-        for p in sim.players.values_mut() {
-            p.flush();
-        }
-        lap(&mut sim.stats, "egress");
-        if let Some(report) = sim.stats.record(start.elapsed()) {
-            info!("{} players, {} chunks | {report}", sim.players.len(), sim.world.loaded_chunks());
-            sim.commands.last_report = Some(report.to_string());
-        }
-        if sim.commands.stop_requested {
-            for p in sim.players.values_mut() {
-                p.disconnect("Server closed");
-            }
-            sim.save();
+        if !sim.step(inbox.drain(..)) {
             return;
         }
 
@@ -226,6 +167,121 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         } else {
             next_tick = now;
         }
+    }
+}
+
+impl Sim {
+    pub fn new(config: SimConfig) -> Sim {
+        let plains = kiln_data::synced_id("minecraft:worldgen/biome", "minecraft:plains").expect("plains biome");
+        let biome_count = kiln_data::registries::SYNCHRONIZED
+            .iter()
+            .find(|(r, _)| *r == "minecraft:worldgen/biome")
+            .map_or(0, |(_, e)| e.len());
+        let (world, spawn) = match &config.world {
+            Some(dir) => {
+                let source = kiln_storage::AnvilSource::new(dir.join("dimensions/minecraft/overworld/region"));
+                let world =
+                    World::with_source(OVERWORLD_DIM, Box::new(source), Terrain::Void, plains as u16, biome_count);
+                let spawn = kiln_storage::read_spawn(dir).unwrap_or([0, 64, 0]);
+                info!("loaded world {} (spawn {spawn:?})", dir.display());
+                (world, spawn)
+            }
+            None => (World::flat(OVERWORLD_DIM, plains as u16, biome_count), [8, 0, 8]),
+        };
+        Sim {
+            config,
+            world,
+            spawn,
+            players: HashMap::new(),
+            next_entity_id: 1,
+            started: Instant::now(),
+            stats: stats::TickStats::default(),
+            game_time: 0,
+            day_time: 1000,
+            overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
+            stopped: false,
+            commands: commands::CommandState::new(ops_from_env()),
+        }
+    }
+
+    /// Runs one tick: applies the connection events received since the last tick, then
+    /// simulates and flushes every connection. Returns `false` once the simulation stopped.
+    pub fn step(&mut self, inbox: impl IntoIterator<Item = ToSim>) -> bool {
+        let start = Instant::now();
+        let mut mark = start;
+        let mut lap = |stats: &mut stats::TickStats, name| {
+            let now = Instant::now();
+            stats.phase(name, now - mark);
+            mark = now;
+        };
+        // P: apply packets and connection events received since the last tick.
+        for msg in inbox {
+            self.handle(msg);
+            if self.stopped {
+                return false;
+            }
+        }
+        lap(&mut self.stats, "packets");
+        self.tick();
+        self.answer_suggestions();
+        lap(&mut self.stats, "tick");
+        self.update_visibility();
+        lap(&mut self.stats, "visibility");
+        self.broadcast_movement();
+        lap(&mut self.stats, "movement");
+        self.send_light_updates();
+        // E: one batch per connection.
+        for p in self.players.values_mut() {
+            p.flush();
+        }
+        lap(&mut self.stats, "egress");
+        if let Some(report) = self.stats.record(start.elapsed()) {
+            info!("{} players, {} chunks | {report}", self.players.len(), self.world.loaded_chunks());
+            self.commands.last_report = Some(report.to_string());
+        }
+        if self.commands.stop_requested {
+            for p in self.players.values_mut() {
+                p.disconnect("Server closed");
+            }
+            self.save();
+            return false;
+        }
+        true
+    }
+
+    /// Hash of the simulated state (world age and time, blocks of loaded chunks, players), for
+    /// determinism tests. Connection state such as keep-alives is left out.
+    pub fn state_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        (self.game_time, self.day_time).hash(&mut h);
+        self.world.hash_blocks(&mut h);
+        let mut players: Vec<&Player> = self.players.values().collect();
+        players.sort_by_key(|p| p.uuid);
+        for p in players {
+            p.uuid.hash(&mut h);
+            p.pos.map(f64::to_bits).hash(&mut h);
+            p.rot.map(f32::to_bits).hash(&mut h);
+            (p.game_mode, p.selected, p.inventory, p.sneaking, p.sprinting).hash(&mut h);
+        }
+        h.finish()
+    }
+
+    pub fn game_time(&self) -> i64 {
+        self.game_time
+    }
+
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+
+    pub fn player_count(&self) -> usize {
+        self.players.len()
+    }
+
+    /// Timing of the last completed statistics window.
+    pub fn last_report(&self) -> Option<&str> {
+        self.commands.last_report.as_deref()
     }
 }
 
