@@ -63,8 +63,8 @@ struct Player {
     selected: usize,
     /// Movement packets for this player's viewers.
     tracker: packets::entity::MovementTracker,
-    /// Players currently seeing this one.
-    seen_by: HashSet<ConnId>,
+    /// Players currently seeing this one (sorted).
+    seen_by: Vec<ConnId>,
     sneaking: bool,
     sprinting: bool,
     /// Shared flags or pose changed since the last broadcast.
@@ -140,6 +140,12 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     let mut next_tick = Instant::now();
     loop {
         let start = Instant::now();
+        let mut mark = start;
+        let mut lap = |stats: &mut stats::TickStats, name| {
+            let now = Instant::now();
+            stats.phase(name, now - mark);
+            mark = now;
+        };
         // P: apply packets and connection events received since the last tick.
         loop {
             match rx.try_recv() {
@@ -151,12 +157,19 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
         if sim.stopped {
             return;
         }
+        lap(&mut sim.stats, "packets");
         sim.tick();
+        lap(&mut sim.stats, "tick");
+        sim.update_visibility();
+        lap(&mut sim.stats, "visibility");
+        sim.broadcast_movement();
+        lap(&mut sim.stats, "movement");
         sim.send_light_updates();
         // E: one batch per connection.
         for p in sim.players.values_mut() {
             p.flush();
         }
+        lap(&mut sim.stats, "egress");
         if let Some(report) = sim.stats.record(start.elapsed()) {
             info!("{} players, {} chunks | {report}", sim.players.len(), sim.world.loaded_chunks());
         }
@@ -238,7 +251,7 @@ impl Sim {
                 kiln_data::entities::types::PLAYER.update_interval,
                 &move_state,
             ),
-            seen_by: HashSet::new(),
+            seen_by: Vec::new(),
             sneaking: false,
             sprinting: false,
             meta_dirty: false,
@@ -490,7 +503,6 @@ impl Sim {
             }
             update_chunks(p, world);
         }
-        self.update_tracking();
     }
 
     /// Placeholder until the command system is wired in.

@@ -213,6 +213,8 @@ impl Shared {
 /// Messages from the simulation to a connection's writer.
 enum Outbound {
     Packet(Bytes),
+    /// A tick's packets for this connection, in order.
+    Batch(Vec<Bytes>),
     /// Send this packet, then close the connection.
     Disconnect(Bytes),
 }
@@ -222,6 +224,9 @@ struct ChannelSink(mpsc::UnboundedSender<Outbound>);
 impl Sink for ChannelSink {
     fn send(&self, packet: Bytes) {
         let _ = self.0.send(Outbound::Packet(packet));
+    }
+    fn send_batch(&self, packets: Vec<Bytes>) {
+        let _ = self.0.send(Outbound::Batch(packets));
     }
     fn disconnect(&self, packet: Bytes) {
         let _ = self.0.send(Outbound::Disconnect(packet));
@@ -665,6 +670,11 @@ async fn write_loop(
         while let Some(msg) = next {
             match msg {
                 Outbound::Packet(p) => tx.encode(&p, &mut wbuf)?,
+                Outbound::Batch(ps) => {
+                    for p in &ps {
+                        tx.encode(p, &mut wbuf)?;
+                    }
+                }
                 Outbound::Disconnect(p) => {
                     tx.encode(&p, &mut wbuf)?;
                     close = true;

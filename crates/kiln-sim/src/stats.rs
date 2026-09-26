@@ -8,6 +8,8 @@ const WINDOW_TICKS: usize = 600; // 30 s at 20 TPS
 #[derive(Default)]
 pub struct TickStats {
     micros: Vec<u32>,
+    /// Accumulated time per named tick phase over the window.
+    phases: Vec<(&'static str, Duration)>,
 }
 
 pub struct Report {
@@ -15,6 +17,8 @@ pub struct Report {
     pub p50_ms: f64,
     pub p99_ms: f64,
     pub max_ms: f64,
+    /// Mean milliseconds per tick for each phase.
+    pub phases: Vec<(&'static str, f64)>,
 }
 
 impl fmt::Display for Report {
@@ -23,11 +27,23 @@ impl fmt::Display for Report {
             f,
             "mspt mean {:.3} p50 {:.3} p99 {:.3} max {:.3}",
             self.mean_ms, self.p50_ms, self.p99_ms, self.max_ms
-        )
+        )?;
+        for (name, ms) in &self.phases {
+            write!(f, " | {name} {ms:.3}")?;
+        }
+        Ok(())
     }
 }
 
 impl TickStats {
+    /// Adds time spent in a phase this tick.
+    pub fn phase(&mut self, name: &'static str, d: Duration) {
+        match self.phases.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, t)) => *t += d,
+            None => self.phases.push((name, d)),
+        }
+    }
+
     /// Records one tick; returns a report when a window completes.
     pub fn record(&mut self, d: Duration) -> Option<Report> {
         self.micros.push(d.as_micros().min(u32::MAX as u128) as u32);
@@ -39,7 +55,18 @@ impl TickStats {
         // Nearest-rank percentile: the smallest value with at least q of the samples at or below it.
         let at = |q: f64| v[((v.len() as f64 * q).ceil() as usize).clamp(1, v.len()) - 1] as f64 / 1000.0;
         let mean = v.iter().map(|&x| x as f64).sum::<f64>() / v.len() as f64 / 1000.0;
-        Some(Report { mean_ms: mean, p50_ms: at(0.5), p99_ms: at(0.99), max_ms: *v.last().unwrap() as f64 / 1000.0 })
+        let ticks = v.len() as f64;
+        let phases = std::mem::take(&mut self.phases)
+            .into_iter()
+            .map(|(n, d)| (n, d.as_secs_f64() * 1e3 / ticks))
+            .collect();
+        Some(Report {
+            mean_ms: mean,
+            p50_ms: at(0.5),
+            p99_ms: at(0.99),
+            max_ms: *v.last().unwrap() as f64 / 1000.0,
+            phases,
+        })
     }
 }
 

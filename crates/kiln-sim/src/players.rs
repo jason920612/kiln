@@ -9,7 +9,6 @@ use kiln_proto::packets::entity::metadata::{HumanoidArm, shared_flags};
 use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, PlayerInfoActions, PlayerInfoEntry};
 use kiln_proto::packets::ProfileProperty;
 use kiln_world::ChunkPos;
-use std::collections::HashSet;
 
 impl Player {
     pub(crate) fn move_state(&self) -> MoveState {
@@ -93,39 +92,64 @@ impl Sim {
             }
         }
         for p in self.players.values_mut() {
-            p.seen_by.remove(&conn);
+            if let Ok(i) = p.seen_by.binary_search(&conn) {
+                p.seen_by.remove(i);
+            }
         }
         self.broadcast(entity::player_info_remove(&[gone.uuid]));
     }
 
-    /// Recomputes who sees whom, then streams movement and metadata changes to viewers.
-    pub(crate) fn update_tracking(&mut self) {
+    /// Recomputes who sees whom.
+    pub(crate) fn update_visibility(&mut self) {
+        struct Snap {
+            conn: ConnId,
+            x: f64,
+            z: f64,
+            chunk: ChunkPos,
+            /// Viewer's tracking radius in blocks and its view distance in chunks.
+            range: f64,
+            view: i32,
+        }
         let range_cap = PLAYER.tracking_range as f64 * 16.0;
-        let ids: Vec<ConnId> = self.players.keys().copied().collect();
+        // Sorted by connection so the wanted viewer lists come out sorted, like `seen_by`.
+        let mut snaps: Vec<Snap> = self
+            .players
+            .iter()
+            .map(|(&conn, p)| Snap {
+                conn,
+                x: p.pos[0],
+                z: p.pos[2],
+                chunk: ChunkPos::of_block(p.pos[0].floor() as i32, p.pos[2].floor() as i32),
+                range: range_cap.min(p.view_distance as f64 * 16.0),
+                view: p.view_distance,
+            })
+            .collect();
+        snaps.sort_unstable_by_key(|s| s.conn);
 
         // Which viewers should see each player (vanilla: within the entity's tracking range
-        // and the viewer's view distance, and in a chunk the viewer has loaded).
+        // and the viewer's view distance, and in a chunk inside the viewer's chunk view).
         let mut changes: Vec<(ConnId, Vec<ConnId>, Vec<ConnId>)> = Vec::new();
-        for &t in &ids {
-            let target = &self.players[&t];
-            let chunk = ChunkPos::of_block(target.pos[0].floor() as i32, target.pos[2].floor() as i32);
-            let mut want = HashSet::new();
-            for &v in &ids {
-                if v == t {
+        let mut want: Vec<ConnId> = Vec::with_capacity(snaps.len());
+        for t in &snaps {
+            want.clear();
+            for v in &snaps {
+                if v.conn == t.conn {
                     continue;
                 }
-                let viewer = &self.players[&v];
-                let r = range_cap.min(viewer.view_distance as f64 * 16.0);
-                let (dx, dz) = (viewer.pos[0] - target.pos[0], viewer.pos[2] - target.pos[2]);
-                if dx * dx + dz * dz <= r * r && viewer.sent_chunks.contains(&chunk) {
-                    want.insert(v);
+                let (dx, dz) = (v.x - t.x, v.z - t.z);
+                if dx * dx + dz * dz <= v.range * v.range
+                    && (t.chunk.x - v.chunk.x).abs() <= v.view
+                    && (t.chunk.z - v.chunk.z).abs() <= v.view
+                {
+                    want.push(v.conn);
                 }
             }
-            let added: Vec<ConnId> = want.difference(&target.seen_by).copied().collect();
-            let removed: Vec<ConnId> = target.seen_by.difference(&want).copied().collect();
-            if !added.is_empty() || !removed.is_empty() {
-                changes.push((t, added, removed));
+            let seen = &self.players[&t.conn].seen_by;
+            if seen[..] == want[..] {
+                continue;
             }
+            let (added, removed) = sorted_diff(&want, seen);
+            changes.push((t.conn, added, removed));
         }
         for (t, added, removed) in changes {
             let (spawn, id) = {
@@ -146,15 +170,15 @@ impl Sim {
                 }
             }
             let target = self.players.get_mut(&t).unwrap();
-            for v in added {
-                target.seen_by.insert(v);
-            }
-            for v in removed {
-                target.seen_by.remove(&v);
-            }
+            target.seen_by.retain(|v| removed.binary_search(v).is_err());
+            target.seen_by.extend(added);
+            target.seen_by.sort_unstable();
         }
+    }
 
-        // Movement and metadata: encoded once per player, shared by all its viewers.
+    /// Streams movement and metadata changes: encoded once per player, shared by its viewers.
+    pub(crate) fn broadcast_movement(&mut self) {
+        let ids: Vec<ConnId> = self.players.keys().copied().collect();
         for &t in &ids {
             let (packets, viewers) = {
                 let target = self.players.get_mut(&t).unwrap();
@@ -188,5 +212,49 @@ impl Sim {
                 }
             }
         }
+    }
+}
+
+/// (in `want` but not `have`, in `have` but not `want`) for two sorted lists.
+fn sorted_diff(want: &[ConnId], have: &[ConnId]) -> (Vec<ConnId>, Vec<ConnId>) {
+    let (mut added, mut removed) = (Vec::new(), Vec::new());
+    let (mut i, mut j) = (0, 0);
+    while i < want.len() || j < have.len() {
+        match (want.get(i), have.get(j)) {
+            (Some(a), Some(b)) if a == b => {
+                i += 1;
+                j += 1;
+            }
+            (Some(a), Some(b)) if a < b => {
+                added.push(*a);
+                i += 1;
+            }
+            (Some(_), Some(b)) => {
+                removed.push(*b);
+                j += 1;
+            }
+            (Some(a), None) => {
+                added.push(*a);
+                i += 1;
+            }
+            (None, Some(b)) => {
+                removed.push(*b);
+                j += 1;
+            }
+            (None, None) => unreachable!(),
+        }
+    }
+    (added, removed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sorted_diff;
+
+    #[test]
+    fn diff_of_sorted_viewer_lists() {
+        assert_eq!(sorted_diff(&[1, 3, 5, 7], &[2, 3, 7, 9]), (vec![1, 5], vec![2, 9]));
+        assert_eq!(sorted_diff(&[], &[4]), (vec![], vec![4]));
+        assert_eq!(sorted_diff(&[4], &[4]), (vec![], vec![]));
     }
 }
