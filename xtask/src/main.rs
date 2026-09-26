@@ -26,7 +26,7 @@ tasks:
       and run its data generator into the work directory
   extract
       run tools/ExtractBlocks.java against the server jar (per-state light, collision,
-      hardness) into <work>/generated/extra; needed by codegen
+      hardness, block entity type) into <work>/generated/extra; needed by codegen
   codegen
       generate crates/kiln-data/src/gen from the work directory
   completeness

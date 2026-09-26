@@ -1,9 +1,10 @@
 //! Packs the extractor's per-state facts (tools/ExtractBlocks.java) into a compact binary
 //! table that kiln-data embeds with `include_bytes!`.
 //!
-//! Layout (little endian): magic "KBP1", state count u32, shape count u32; then per state
-//! light u8 (emission << 4 | dampening), flags u16, full faces u8, hardness f32, shape u16;
-//! then per shape a box count u8 followed by six f32 per box.
+//! Layout (little endian): magic "KBP2", state count u32, shape count u32; then per state
+//! light u8 (emission << 4 | dampening), flags u16, full faces u8, hardness f32, shape u16,
+//! block entity type u8 (protocol id in `minecraft:block_entity_type`, 0xff = none),
+//! keep-block-entity group u8; then per shape a box count u8 followed by six f32 per box.
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -58,14 +59,15 @@ fn collect_jars(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
     Ok(())
 }
 
-pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
+/// `block_entity_types` maps `minecraft:block_entity_type` entries to their protocol ids.
+pub fn pack(json: &Value, state_count: usize, block_entity_types: &HashMap<String, u8>) -> Result<Vec<u8>> {
     let states = json.as_array().context("block_states.json")?;
     if states.len() != state_count {
         bail!("extractor saw {} states, blocks.json has {state_count}", states.len());
     }
     let mut shapes: Vec<Vec<[f32; 6]>> = Vec::new();
     let mut shape_ids: HashMap<String, u16> = HashMap::new();
-    let mut body = Vec::with_capacity(states.len() * 10);
+    let mut body = Vec::with_capacity(states.len() * 12);
     for (i, s) in states.iter().enumerate() {
         if s["id"].as_u64() != Some(i as u64) {
             bail!("state {i} out of order");
@@ -89,6 +91,12 @@ pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
                 [v[0], v[1], v[2], v[3], v[4], v[5]]
             })
             .collect();
+        let block_entity = match &s["block_entity_type"] {
+            Value::Null => 0xff,
+            Value::String(t) => *block_entity_types.get(t).with_context(|| format!("unknown block entity type {t}"))?,
+            _ => bail!("state {i}: block_entity_type"),
+        };
+        let keep_group = s["keep_block_entity_group"].as_u64().context("keep_block_entity_group")? as u8;
         let key = format!("{boxes:?}");
         let shape = *shape_ids.entry(key).or_insert_with(|| {
             shapes.push(boxes);
@@ -99,8 +107,10 @@ pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
         body.push(faces);
         body.extend_from_slice(&hardness.to_le_bytes());
         body.extend_from_slice(&shape.to_le_bytes());
+        body.push(block_entity);
+        body.push(keep_group);
     }
-    let mut out = b"KBP1".to_vec();
+    let mut out = b"KBP2".to_vec();
     out.extend_from_slice(&(states.len() as u32).to_le_bytes());
     out.extend_from_slice(&(shapes.len() as u32).to_le_bytes());
     out.extend_from_slice(&body);
