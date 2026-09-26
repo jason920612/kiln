@@ -9,9 +9,14 @@ use kiln_proto::{DecodeError, Reader, WriteExt};
 
 /// Entries in insertion order (vanilla's `Reference2ObjectArrayMap`, whose order is the
 /// network order): a value, or `None` for a removed component type.
+///
+/// A patch read from NBT also keeps the entries it could not decode (unknown component types,
+/// values that don't match the schema) verbatim, so that saving it again loses nothing. They
+/// are not sent to clients.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DataComponentPatch {
     entries: Vec<(ComponentId, Option<Component>)>,
+    unparsed: Vec<(String, Value)>,
 }
 
 impl DataComponentPatch {
@@ -20,9 +25,10 @@ impl DataComponentPatch {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.entries.is_empty() && self.unparsed.is_empty()
     }
 
+    /// Number of decoded entries (set or removed).
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -45,6 +51,8 @@ impl DataComponentPatch {
     /// Drops the entry for `id` (neither set nor removed afterwards).
     pub fn forget(&mut self, id: ComponentId) {
         self.entries.retain(|(t, _)| *t != id);
+        let name = component::name(id);
+        self.unparsed.retain(|(k, _)| k.strip_prefix('!').unwrap_or(k) != name);
     }
 
     fn put(&mut self, id: ComponentId, value: Option<Component>) {
@@ -66,9 +74,17 @@ impl DataComponentPatch {
         self.entries.iter().filter(|(_, v)| v.is_none()).map(|(t, _)| *t)
     }
 
+    /// Entries from NBT that could not be decoded, as (key, value) (`"!name"` for removals).
+    pub fn unparsed(&self) -> &[(String, Value)] {
+        &self.unparsed
+    }
+
     /// Equality as maps (vanilla's `DataComponentPatch.equals`), ignoring entry order.
     pub fn same_entries(&self, other: &DataComponentPatch) -> bool {
-        self.len() == other.len() && self.entries.iter().all(|(t, v)| other.get(*t) == Some(v.as_ref()))
+        self.len() == other.len()
+            && self.unparsed.len() == other.unparsed.len()
+            && self.entries.iter().all(|(t, v)| other.get(*t) == Some(v.as_ref()))
+            && self.unparsed.iter().all(|e| other.unparsed.contains(e))
     }
 
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(ComponentId, Option<&Component>) -> bool) {
@@ -95,13 +111,12 @@ impl DataComponentPatch {
         if adds.saturating_add(removes) > r.remaining() {
             return Err(DecodeError::Eof);
         }
-        let mut patch = DataComponentPatch { entries: Vec::with_capacity(adds + removes) };
+        let mut patch = DataComponentPatch { entries: Vec::with_capacity(adds + removes), unparsed: Vec::new() };
         for _ in 0..adds {
             let id = read_type(r)?;
             let value = if delimited {
                 let len = r.len()?;
-                let mut sub = Reader::new(r.bytes(len)?);
-                Component::read(id, &mut sub)?
+                Component::read(id, &mut Reader::new(r.bytes(len)?))?
             } else {
                 Component::read(id, r)?
             };
@@ -144,41 +159,117 @@ impl DataComponentPatch {
     /// `DataComponentPatch.CODEC`: `{"minecraft:type": value, "!minecraft:removed": {}}`;
     /// transient components are left out.
     pub fn to_value(&self) -> Value {
-        Value::Map(
-            self.entries
-                .iter()
-                .filter(|(t, _)| component::is_persistent(*t))
-                .map(|(t, v)| match v {
-                    Some(c) => (Value::str(component::name(*t)), c.to_value().unwrap_or(Value::Empty)),
-                    None => (Value::String(format!("!{}", component::name(*t))), Value::empty_map()),
-                })
-                .collect(),
-        )
+        let mut entries: Vec<(Value, Value)> = self
+            .entries
+            .iter()
+            .filter(|(t, _)| component::is_persistent(*t))
+            .map(|(t, v)| match v {
+                Some(c) => (Value::str(component::name(*t)), c.to_value().unwrap_or(Value::Empty)),
+                None => (Value::String(format!("!{}", component::name(*t))), Value::empty_map()),
+            })
+            .collect();
+        entries.extend(self.unparsed.iter().map(|(k, v)| (Value::str(k.as_str()), v.clone())));
+        Value::Map(entries)
     }
 
+    /// Decodes the persistent form, keeping entries that fail to decode (see
+    /// [`DataComponentPatch::unparsed`]).
     pub fn from_value(v: &Value) -> DataResult<Self> {
         let mut patch = DataComponentPatch::new();
         for (k, v) in v.as_map()?.entries() {
             let key = k.as_str()?;
-            let (removed, name) = match key.strip_prefix('!') {
-                Some(n) => (true, n),
-                None => (false, key),
-            };
-            let id = component::by_name(name).ok_or_else(|| DataError(format!("unknown component type {key:?}")))?;
-            if !component::is_persistent(id) {
-                return Err(DataError(format!("component type {key:?} is not persistent")));
-            }
-            if removed {
-                patch.put(id, None);
-            } else {
-                let c = Component::from_value(id, v).map_err(|e| DataError(format!("{name}: {e}")))?;
-                patch.put(id, Some(c));
+            match Self::decode_entry(key, v) {
+                Ok((id, value)) => patch.put(id, value),
+                Err(_) => {
+                    patch.unparsed.retain(|(existing, _)| existing != key);
+                    patch.unparsed.push((key.to_owned(), v.clone()));
+                }
             }
         }
         Ok(patch)
+    }
+
+    /// Decodes the persistent form like vanilla does: any invalid entry is an error.
+    pub fn from_value_strict(v: &Value) -> DataResult<Self> {
+        let mut patch = DataComponentPatch::new();
+        for (k, v) in v.as_map()?.entries() {
+            let (id, value) = Self::decode_entry(k.as_str()?, v)?;
+            patch.put(id, value);
+        }
+        Ok(patch)
+    }
+
+    fn decode_entry(key: &str, v: &Value) -> DataResult<(ComponentId, Option<Component>)> {
+        let (removed, name) = match key.strip_prefix('!') {
+            Some(n) => (true, n),
+            None => (false, key),
+        };
+        let id = component::by_name(name).ok_or_else(|| DataError(format!("unknown component type {key:?}")))?;
+        if !component::is_persistent(id) {
+            return Err(DataError(format!("component type {key:?} is not persistent")));
+        }
+        if removed {
+            return Ok((id, None));
+        }
+        let c = Component::from_value(id, v).map_err(|e| DataError(format!("{name}: {e}")))?;
+        Ok((id, Some(c)))
     }
 }
 
 fn read_type(r: &mut Reader<'_>) -> WireResult<ComponentId> {
     registry::DATA_COMPONENT_TYPE.read_id(r).map(|i| i as ComponentId)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::component::{ids, keys};
+
+    #[test]
+    fn wire_keeps_insertion_order_and_puts_removals_last() {
+        let mut p = DataComponentPatch::new();
+        p.remove(ids::LORE);
+        p.set(keys::DAMAGE.wrap(3));
+        p.set(keys::MAX_STACK_SIZE.wrap(16));
+        p.set(keys::DAMAGE.wrap(4)); // replaces in place
+        let mut out = BytesMut::new();
+        p.write(&mut out);
+        let expected =
+            [2, 1, ids::DAMAGE as u8, 4, ids::MAX_STACK_SIZE as u8, 16, ids::LORE as u8];
+        assert_eq!(&out[..], &expected);
+        let back = DataComponentPatch::read(&mut Reader::new(&out)).unwrap();
+        assert!(back.same_entries(&p));
+        assert!(DataComponentPatch::read(&mut Reader::new(&[0, 0])).unwrap().is_empty());
+    }
+
+    #[test]
+    fn delimited_values_carry_their_length() {
+        let mut p = DataComponentPatch::new();
+        p.set(keys::DAMAGE.wrap(300));
+        let mut out = BytesMut::new();
+        p.write_delimited(&mut out);
+        assert_eq!(&out[..], &[1, 0, ids::DAMAGE as u8, 2, 0xac, 0x02]);
+        assert_eq!(DataComponentPatch::read_delimited(&mut Reader::new(&out)).unwrap(), p);
+    }
+
+    #[test]
+    fn keeps_undecodable_entries_for_saving() {
+        let v = Value::Map(vec![
+            (Value::str("minecraft:damage"), Value::Int(2)),
+            (Value::str("minecraft:max_damage"), Value::str("not a number")),
+            (Value::str("kiln:unknown"), Value::Byte(1)),
+            (Value::str("!minecraft:lore"), Value::empty_map()),
+        ]);
+        let p = DataComponentPatch::from_value(&v).unwrap();
+        assert_eq!(p.len(), 2);
+        assert_eq!(p.unparsed().len(), 2);
+        assert!(DataComponentPatch::from_value_strict(&v).is_err());
+        let back = p.to_value();
+        let mut got: Vec<_> = back.as_map().unwrap().entries().to_vec();
+        let mut want: Vec<_> = v.as_map().unwrap().entries().to_vec();
+        let key = |e: &(Value, Value)| e.0.as_str().unwrap().to_owned();
+        got.sort_by_key(key);
+        want.sort_by_key(key);
+        assert_eq!(got, want);
+    }
 }

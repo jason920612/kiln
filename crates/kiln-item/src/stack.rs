@@ -293,11 +293,54 @@ impl ItemStack {
         ItemStack::from_value(&Value::from_nbt(tag))
     }
 
+    /// Decodes a stack that kiln-proto read with `read_untrusted_slot` (component values still
+    /// raw, as the untrusted codec delimits them).
+    pub fn from_untrusted(slot: &kiln_proto::packets::ItemStack) -> WireResult<ItemStack> {
+        if slot.count <= 0 {
+            return Ok(ItemStack::empty());
+        }
+        let item = registry::ITEM.name(slot.item).map(|_| slot.item).ok_or(DecodeError::Invalid("item id out of range"))?;
+        let mut patch = DataComponentPatch::new();
+        for (ty, bytes) in &slot.added {
+            let id = component_id(*ty)?;
+            patch.set(Component::read(id, &mut Reader::new(bytes))?);
+        }
+        for &ty in &slot.removed {
+            patch.remove(component_id(ty)?);
+        }
+        Ok(ItemStack::from_parts(item, slot.count, patch))
+    }
+
+    /// The same stack in kiln-proto's raw form (each value encoded, as the untrusted codec sends it).
+    pub fn to_untrusted(&self) -> Option<kiln_proto::packets::ItemStack> {
+        if self.is_empty() {
+            return None;
+        }
+        let added = self
+            .patch
+            .added()
+            .map(|c| {
+                let mut buf = BytesMut::new();
+                c.write(&mut buf);
+                (c.id() as i32, buf.freeze())
+            })
+            .collect();
+        let removed = self.patch.removed().map(|id| id as i32).collect();
+        Some(kiln_proto::packets::ItemStack { item: self.item, count: self.count, added, removed })
+    }
+
     // ---- hashing ----
 
     /// The `container_click` hash of every added persistent component, in patch order.
     pub fn component_hashes(&self) -> Vec<(ComponentId, i32)> {
         self.patch.added().filter_map(|c| c.to_value().map(|v| (c.id(), hash::hash(&v)))).collect()
+    }
+}
+
+fn component_id(ty: i32) -> WireResult<ComponentId> {
+    match u16::try_from(ty) {
+        Ok(id) if (id as usize) < crate::component::count() => Ok(id),
+        _ => Err(DecodeError::Invalid("unknown data component type")),
     }
 }
 
@@ -370,5 +413,104 @@ impl ItemStackTemplate {
             return Err(DataError("item must be non-empty".into()));
         }
         Ok(ItemStackTemplate { item, count, patch })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::text::Text;
+
+    fn stack(name: &str, count: i32) -> ItemStack {
+        ItemStack::of(name, count).unwrap()
+    }
+
+    #[test]
+    fn empty_stacks() {
+        assert!(ItemStack::empty().is_empty());
+        assert!(stack("stone", 0).is_empty());
+        assert!(stack("air", 5).is_empty());
+        assert_eq!(stack("stone", -3).count(), 0);
+        let mut out = BytesMut::new();
+        stack("air", 5).write_optional(&mut out);
+        assert_eq!(&out[..], &[0]);
+        assert!(ItemStack::read(&mut Reader::new(&[0])).is_err());
+    }
+
+    #[test]
+    fn components_come_from_defaults_and_patch() {
+        let mut sword = stack("diamond_sword", 1);
+        assert_eq!(sword.max_stack_size(), 1);
+        assert_eq!(sword.max_damage(), 1561);
+        assert!(sword.is_damageable_item() && !sword.is_damaged());
+        assert_eq!(stack("stone", 1).max_stack_size(), 64);
+
+        sword.insert(keys::DAMAGE, 10);
+        assert_eq!(sword.damage(), 10);
+        assert!(sword.is_damaged());
+        // Setting the default value again clears the patch entry.
+        sword.insert(keys::DAMAGE, 0);
+        assert!(sword.patch().is_empty());
+        // Removing a default records a removal; removing a non-default forgets it.
+        sword.remove(ids::MAX_DAMAGE);
+        assert_eq!(sword.patch().get(ids::MAX_DAMAGE), Some(None));
+        assert_eq!(sword.max_damage(), 0);
+        sword.insert(keys::CUSTOM_NAME, Text::literal("x"));
+        sword.remove(ids::CUSTOM_NAME);
+        assert_eq!(sword.patch().get(ids::CUSTOM_NAME), None);
+    }
+
+    #[test]
+    fn from_parts_drops_redundant_entries() {
+        let mut p = DataComponentPatch::new();
+        p.set(keys::MAX_STACK_SIZE.wrap(64)); // stone's default
+        p.remove(ids::DAMAGE); // stone has no damage
+        p.set(keys::MAX_STACK_SIZE.wrap(64));
+        p.set(keys::REPAIR_COST.wrap(3));
+        let s = ItemStack::from_parts(stack("stone", 1).item(), 1, p);
+        assert_eq!(s.patch().len(), 1);
+        assert_eq!(s.get(keys::REPAIR_COST), Some(&3));
+    }
+
+    #[test]
+    fn split_and_compare() {
+        let mut a = stack("stone", 10);
+        let b = a.split(4);
+        assert_eq!((a.count(), b.count()), (6, 4));
+        assert!(a.is_same_item_same_components(&b));
+        let c = a.split(100);
+        assert_eq!((a.count(), c.count()), (0, 6));
+        assert!(a.is_empty());
+        let mut named = b.clone();
+        named.insert(keys::CUSTOM_NAME, Text::literal("n"));
+        assert!(named.is_same_item(&b) && !named.is_same_item_same_components(&b));
+        assert!(!stack("dirt", 1).is_same_item(&b));
+    }
+
+    #[test]
+    fn untrusted_conversion_round_trips() {
+        let mut s = stack("diamond_sword", 1);
+        s.insert(keys::DAMAGE, 300);
+        s.remove(ids::MAX_DAMAGE);
+        let raw = s.to_untrusted().unwrap();
+        assert_eq!(raw.added, vec![(ids::DAMAGE as i32, bytes::Bytes::from_static(&[0xac, 0x02]))]);
+        assert_eq!(ItemStack::from_untrusted(&raw).unwrap(), s);
+        let mut out = BytesMut::new();
+        s.write_untrusted_optional(&mut out);
+        let parsed = kiln_proto::packets::read_untrusted_slot(&mut Reader::new(&out)).unwrap().unwrap();
+        assert_eq!(parsed, raw);
+    }
+
+    #[test]
+    fn nbt_form() {
+        let mut s = stack("stone", 3);
+        s.insert(keys::REPAIR_COST, 2);
+        let Tag::Compound(fields) = s.to_nbt() else { panic!() };
+        let names: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+        assert_eq!(names, ["components", "count", "id"]);
+        assert_eq!(ItemStack::from_nbt(&Tag::Compound(fields)).unwrap(), s);
+        // count defaults to 1; the id may omit the namespace.
+        let short = Tag::Compound(vec![("id".into(), Tag::String("stone".into()))]);
+        assert_eq!(ItemStack::from_nbt(&short).unwrap(), stack("stone", 1));
     }
 }

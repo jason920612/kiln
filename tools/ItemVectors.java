@@ -242,8 +242,17 @@ public class ItemVectors {
                 first = false;
             }
         }
-        b.append("], \"r\": [").append(String.join(", ", removed)).append("]}");
-        w.println(b);
+        b.append("], \"r\": [").append(String.join(", ", removed)).append(']');
+        // What a client would send for this stack in container_click (absent when a transient
+        // component makes vanilla's hash generator fail).
+        try {
+            net.minecraft.network.HashedPatchMap.HashGenerator hashes = c -> c.encodeValue(hashOps).getOrThrow().asInt();
+            String hashed = wire(net.minecraft.network.HashedStack.STREAM_CODEC, net.minecraft.network.HashedStack.create(stack, hashes));
+            b.append(", \"h\": \"").append(hashed).append('"');
+        } catch (RuntimeException e) {
+            // no hashed form
+        }
+        w.println(b.append('}'));
         records++;
     }
 

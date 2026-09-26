@@ -95,3 +95,40 @@ impl HashedStack {
 fn read_type(r: &mut Reader<'_>) -> WireResult<ComponentId> {
     registry::DATA_COMPONENT_TYPE.read_id(r).map(|i| i as ComponentId)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::component::{ids, keys};
+
+    #[test]
+    fn describes_and_matches_stacks() {
+        let mut sword = ItemStack::of("diamond_sword", 1).unwrap();
+        sword.insert(keys::DAMAGE, 5);
+        sword.remove(ids::MAX_DAMAGE);
+        let hashed = HashedStack::of(&sword).unwrap();
+        // The damage hash vanilla computed for damage=5.
+        let expected = HashedStack::Item { item: sword.item(), count: 1, added: vec![(ids::DAMAGE, 645064431)], removed: vec![ids::MAX_DAMAGE] };
+        assert_eq!(hashed, expected);
+        assert!(hashed.matches(&sword));
+        assert!(!hashed.matches(&sword.with_count(2)));
+        let mut other = sword.clone();
+        other.insert(keys::DAMAGE, 6);
+        assert!(!hashed.matches(&other));
+
+        let mut out = BytesMut::new();
+        hashed.write(&mut out);
+        let mut r = Reader::new(&out);
+        assert_eq!(HashedStack::read(&mut r).unwrap(), hashed);
+        assert_eq!(r.remaining(), 0);
+        assert_eq!(HashedStack::read(&mut Reader::new(&[0])).unwrap(), HashedStack::Empty);
+        assert!(HashedStack::Empty.matches(&ItemStack::empty()));
+    }
+
+    #[test]
+    fn transient_components_cannot_be_hashed() {
+        let mut s = ItemStack::of("stone", 1).unwrap();
+        s.insert(keys::CREATIVE_SLOT_LOCK, ());
+        assert_eq!(HashedStack::of(&s), None);
+    }
+}

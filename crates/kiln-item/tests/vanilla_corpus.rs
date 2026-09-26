@@ -8,7 +8,7 @@
 //! three network codecs round-trip, and the NBT form matches vanilla's both ways.
 
 use bytes::BytesMut;
-use kiln_item::{Component, ComponentId, ItemStack, Value, component, hash};
+use kiln_item::{Component, ComponentId, HashedStack, ItemStack, Value, component, hash};
 use kiln_proto::Reader;
 use kiln_proto::nbt::{self, Tag};
 use std::collections::BTreeMap;
@@ -46,6 +46,18 @@ fn read_nbt(hexstr: &str) -> Tag {
     let (tag, used) = nbt::read_network(&bytes).unwrap();
     assert_eq!(used, bytes.len());
     tag
+}
+
+/// Vanilla sends the hashed components in `IdentityHashMap` order; compare as sets.
+fn sorted(h: &HashedStack) -> HashedStack {
+    match h.clone() {
+        HashedStack::Item { item, count, mut added, mut removed } => {
+            added.sort_unstable();
+            removed.sort_unstable();
+            HashedStack::Item { item, count, added, removed }
+        }
+        empty => empty,
+    }
 }
 
 #[derive(Default)]
@@ -139,6 +151,16 @@ fn vanilla_item_corpus() {
                 stacks.check("stack wire", out[..] == wire[..] && r.remaining() == 0, || {
                     format!("{desc}:\n  vanilla {}\n  kiln    {}", hex(&wire), hex(&out))
                 });
+                if let Some(h) = rec["h"].as_str() {
+                    let bytes = unhex(h);
+                    let theirs = HashedStack::read(&mut Reader::new(&bytes));
+                    let ours = HashedStack::of(&stack);
+                    let same = match (&theirs, &ours) {
+                        (Ok(t), Some(o)) => sorted(t) == sorted(o) && t.matches(&stack),
+                        _ => false,
+                    };
+                    stacks.check("hashed stack", same, || format!("{desc}:\n  vanilla {theirs:?}\n  kiln    {ours:?}"));
+                }
                 if let Some(nbt_hex) = rec["n"].as_str().filter(|s| !s.starts_with('!')) {
                     let tag = read_nbt(nbt_hex);
                     let ours = stack.to_nbt();
