@@ -526,3 +526,20 @@ fn player_slots_cap_concurrent_logins() {
     let _again = super::PlayerSlot::reserve(&shared).expect("a closed connection frees its slot");
     assert!(super::PlayerSlot::reserve(&shared).is_none());
 }
+
+#[test]
+fn a_client_that_falls_behind_is_cut_off() {
+    use kiln_link::Sink;
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let sink = super::ChannelSink { tx, queued: Arc::new(std::sync::atomic::AtomicUsize::new(0)) };
+    let mib = Bytes::from(vec![0u8; 1 << 20]);
+    for _ in 0..65 {
+        sink.send(mib.clone());
+    }
+    let mut got = Vec::new();
+    while let Ok(m) = rx.try_recv() {
+        got.push(m);
+    }
+    assert_eq!(got.iter().filter(|m| matches!(m, super::Outbound::Packet(_))).count(), 64);
+    assert!(matches!(got.last(), Some(super::Outbound::Overflow)));
+}

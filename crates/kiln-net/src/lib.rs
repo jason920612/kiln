@@ -218,19 +218,47 @@ enum Outbound {
     Batch(Vec<Bytes>),
     /// Send this packet, then close the connection.
     Disconnect(Bytes),
+    /// The client fell too far behind; close without sending more.
+    Overflow,
 }
 
-struct ChannelSink(mpsc::UnboundedSender<Outbound>);
+impl Outbound {
+    fn len(&self) -> usize {
+        match self {
+            Outbound::Packet(p) | Outbound::Disconnect(p) => p.len(),
+            Outbound::Batch(ps) => ps.iter().map(Bytes::len).sum(),
+            Outbound::Overflow => 0,
+        }
+    }
+}
+
+/// Unsent packet bytes a connection may have queued before it is closed as too slow. Chunks,
+/// the bulk of the traffic, are already paced by the client's chunk batch acknowledgements.
+const EGRESS_LIMIT: usize = 64 << 20;
+
+struct ChannelSink {
+    tx: mpsc::UnboundedSender<Outbound>,
+    /// Bytes handed to the writer and not yet encoded.
+    queued: Arc<AtomicUsize>,
+}
+
+impl ChannelSink {
+    fn push(&self, msg: Outbound) {
+        let n = msg.len();
+        let msg = if self.queued.fetch_add(n, Ordering::Relaxed) + n > EGRESS_LIMIT { Outbound::Overflow } else { msg };
+        let _ = self.tx.send(msg);
+    }
+}
 
 impl Sink for ChannelSink {
     fn send(&self, packet: Bytes) {
-        let _ = self.0.send(Outbound::Packet(packet));
+        self.push(Outbound::Packet(packet));
     }
     fn send_batch(&self, packets: Vec<Bytes>) {
-        let _ = self.0.send(Outbound::Batch(packets));
+        self.push(Outbound::Batch(packets));
     }
     fn disconnect(&self, packet: Bytes) {
-        let _ = self.0.send(Outbound::Disconnect(packet));
+        self.push(Outbound::Disconnect(packet));
     }
 }
 
@@ -611,6 +639,7 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
     let Conn { stream, mut rbuf, mut rx, tx, wbuf, encrypt, mut decrypt } = conn;
     let (reader, writer) = stream.into_split();
     let (out_tx, out_rx) = mpsc::unbounded_channel();
+    let queued = Arc::new(AtomicUsize::new(0));
     let name = profile.name.clone();
 
     let joined = shared
@@ -621,13 +650,17 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
             uuid: profile.uuid,
             properties: profile.properties,
             client,
-            sink: Box::new(ChannelSink(out_tx)),
+            sink: Box::new(ChannelSink { tx: out_tx, queued: queued.clone() }),
         }))
         .is_ok();
 
-    let writer_task = tokio::spawn(write_loop(writer, tx, wbuf, encrypt, out_rx));
+    let mut writer_task = tokio::spawn(write_loop(writer, tx, wbuf, encrypt, out_rx, queued));
     let result = if joined {
-        read_loop(reader, &mut rbuf, &mut rx, decrypt.as_mut(), conn_id, &shared.to_sim).await
+        // The writer ends after a kick (disconnect packet sent) or when the client falls behind.
+        tokio::select! {
+            r = read_loop(reader, &mut rbuf, &mut rx, decrypt.as_mut(), conn_id, &shared.to_sim) => r,
+            w = &mut writer_task => w.map_err(|e| anyhow!("writer: {e}")).and_then(|r| r),
+        }
     } else {
         Err(anyhow!("simulation is not running"))
     };
@@ -679,12 +712,14 @@ async fn write_loop(
     mut wbuf: BytesMut,
     mut encrypt: Option<Encryptor>,
     mut out: mpsc::UnboundedReceiver<Outbound>,
+    queued: Arc<AtomicUsize>,
 ) -> Result<()> {
     while let Some(msg) = out.recv().await {
         let mut close = false;
         let mut next = Some(msg);
         // Coalesce everything queued so far into one write.
         while let Some(msg) = next {
+            queued.fetch_sub(msg.len(), Ordering::Relaxed);
             match msg {
                 Outbound::Packet(p) => tx.encode(&p, &mut wbuf)?,
                 Outbound::Batch(ps) => {
@@ -697,6 +732,7 @@ async fn write_loop(
                     close = true;
                     break;
                 }
+                Outbound::Overflow => bail!("more than {} MiB of packets waiting to be sent", EGRESS_LIMIT >> 20),
             }
             next = out.try_recv().ok();
         }
