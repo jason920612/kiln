@@ -2,6 +2,9 @@
 //! `tools/worldgen_vectors.py`. Skips (with a message) when the vectors or the datapack are
 //! absent: both are Mojang-derived and live in the untracked work directory.
 //!
+//! It compares millions of values, so it only runs when `KILN_PARITY=1` (best with
+//! `--release`): `KILN_PARITY=1 cargo test -p kiln-worldgen --release --test parity`.
+//!
 //! Environment: `KILN_WORK` (default `<workspace>/work`), `KILN_WORLDGEN_VECTORS` (default
 //! `<work>/wp2-worldgen/vectors`).
 
@@ -21,6 +24,10 @@ fn work_dir() -> PathBuf {
 }
 
 fn inputs() -> Option<(Datapack, PathBuf)> {
+    if std::env::var_os("KILN_PARITY").is_none_or(|v| v != "1") {
+        eprintln!("skipping worldgen parity: set KILN_PARITY=1 to run it");
+        return None;
+    }
     let work = work_dir();
     let vectors = std::env::var_os("KILN_WORLDGEN_VECTORS")
         .map(PathBuf::from)

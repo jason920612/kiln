@@ -68,6 +68,8 @@ python tools/load_test.py --count 1000 --groups 20    # server + kiln-bot, tick 
 cargo run --release -p kiln-sim --example sim_load -- --players 1000 --groups 20
                                      # the simulation alone with scripted in-process players
 python tools/vanilla_baseline.py     # the same bot workload against the vanilla server
+KILN_PARITY=1 cargo test -p kiln-worldgen --release --test parity
+                                     # worldgen bit parity (vectors from tools/worldgen_vectors.py)
 ```
 
 Packets Kiln encodes are checked by decoding them with vanilla's own codecs
