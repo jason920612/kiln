@@ -366,6 +366,28 @@ fn fused_region_still_splits_off_unrelated_components() {
     assert_eq!(w.owner(20, 0), Some(id(1)), "the pinned pair stays together");
 }
 
+/// A fused region spanning a huge bounding box routes split elements by search.
+#[test]
+fn split_of_widely_fused_region_routes_elements() {
+    let mut w = World::new();
+    w.occupy(&[(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)]).occupy(&[(100_000, -7)]).step();
+    w.push(TopologyEvent::Fuse(FusePin::new(c(0, 0), c(100_000, -7), FuseReason::Operator, 10_000)));
+    w.step();
+    {
+        let tl = &mut w.regions.get_mut(id(1)).unwrap().part_mut().0;
+        for (s, cell) in [(1, c(4, 0)), (2, c(100_000, -7)), (3, c(0, 0)), (4, c(4, 0))] {
+            tl.insert(s, cell, 0);
+        }
+    }
+    w.run_to(4);
+    w.vacate(&[(1, 0), (2, 0), (3, 0)]).step();
+    let d = w.run_to(121);
+    assert_eq!(splits(&d), [(121, TopologyDelta::Split { from: id(1), into: smallvec![id(3)] })]);
+    let seqs = |r| w.regions.get(id(r)).unwrap().part().0.iter().map(|e| e.seq).collect::<Vec<_>>();
+    assert_eq!(seqs(1), [2, 3]);
+    assert_eq!(seqs(3), [1, 4]);
+}
+
 #[test]
 fn split_moves_payload_pointers_and_partitions_parts() {
     let mut w = World::new();

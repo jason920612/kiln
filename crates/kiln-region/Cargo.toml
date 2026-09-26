@@ -8,4 +8,5 @@ publish.workspace = true
 smallvec.workspace = true
 
 [dev-dependencies]
+mimalloc.workspace = true
 proptest.workspace = true

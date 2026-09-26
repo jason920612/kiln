@@ -247,9 +247,8 @@ impl<C, P: RegionPart> Region<C, P> {
         let n = new_ids.len() + 1;
         let part = std::mem::take(&mut self.part);
         let mut parts = {
-            let cells = &self.cells;
-            let owner_of = |c: CellPos| cells.index_of(c).map_or(0, |i| piece_of[i]);
-            part.split(&owner_of, n).into_iter()
+            let lookup = PieceLookup::new(&self.cells, piece_of);
+            part.split(&|c| lookup.get(c), n).into_iter()
         };
         assert_eq!(parts.len(), n, "RegionPart::split returned the wrong number of parts");
         let mut pin_piece: SmallVec<[usize; 2]> = SmallVec::new();
@@ -272,6 +271,41 @@ impl<C, P: RegionPart> Region<C, P> {
             if p == 0 { self.pins.push(pin) } else { out[p - 1].pins.push(pin) }
         }
         out
+    }
+}
+
+/// Cell → split piece for `RegionPart::split`, called once per element: a dense table over
+/// the bounding box when that is compact, binary search otherwise. Unknown cells map to 0.
+enum PieceLookup<'a, C> {
+    Dense { x0: i32, z0: i32, w: usize, h: usize, piece: Vec<u32> },
+    Search { cells: &'a CellSet<C>, piece_of: &'a [usize] },
+}
+
+impl<'a, C> PieceLookup<'a, C> {
+    fn new(cells: &'a CellSet<C>, piece_of: &'a [usize]) -> Self {
+        let (mut x0, mut z0, mut x1, mut z1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+        for p in cells.positions() {
+            (x0, z0, x1, z1) = (x0.min(p.x), z0.min(p.z), x1.max(p.x), z1.max(p.z));
+        }
+        let (w, h) = (x1.abs_diff(x0) as usize + 1, z1.abs_diff(z0) as usize + 1);
+        if w.saturating_mul(h) > (16 * cells.len()).max(4096) {
+            return Self::Search { cells, piece_of };
+        }
+        let mut piece = vec![0; w * h];
+        for (p, &i) in cells.positions().zip(piece_of) {
+            piece[(p.z - z0) as usize * w + (p.x - x0) as usize] = i as u32;
+        }
+        Self::Dense { x0, z0, w, h, piece }
+    }
+
+    fn get(&self, c: CellPos) -> usize {
+        match self {
+            Self::Dense { x0, z0, w, h, piece } => {
+                let (dx, dz) = (c.x.wrapping_sub(*x0) as u32 as usize, c.z.wrapping_sub(*z0) as u32 as usize);
+                if dx < *w && dz < *h { piece[dz * w + dx] as usize } else { 0 }
+            }
+            Self::Search { cells, piece_of } => cells.index_of(c).map_or(0, |i| piece_of[i]),
+        }
     }
 }
 
