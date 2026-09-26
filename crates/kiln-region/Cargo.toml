@@ -1,0 +1,12 @@
+[package]
+name = "kiln-region"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+
+[dependencies]
+smallvec.workspace = true
+
+[dev-dependencies]
+mimalloc.workspace = true
+proptest.workspace = true
