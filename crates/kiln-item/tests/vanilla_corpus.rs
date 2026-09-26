@@ -87,6 +87,7 @@ fn vanilla_item_corpus() {
     let mut stacks = Tally::default();
     let mut records = 0;
     let mut values = 0;
+    let (mut reordered_values, mut reordered_stacks, mut unsaveable) = (0, 0, 0);
     for line in text.lines() {
         let rec: serde_json::Value = serde_json::from_str(line).unwrap();
         records += 1;
@@ -117,8 +118,10 @@ fn vanilla_item_corpus() {
             t.check("wire re-encode", out[..] == wire[..], || format!("{desc}:\n  vanilla {}\n  kiln    {}", hex(&wire), hex(&out)));
             let value = typed.to_value();
             if let Some(nbt_hex) = c[2].as_str() {
-                if let Some(msg) = nbt_hex.strip_prefix('!') {
-                    t.check("vanilla NBT error", false, || format!("{desc}: {msg}"));
+                if nbt_hex.starts_with('!') {
+                    // Vanilla cannot save this value (e.g. an inline holder whose persistent codec
+                    // only takes registry names); there is nothing to compare.
+                    unsaveable += 1;
                 } else {
                     let tag = read_nbt(nbt_hex);
                     let ours = value.as_ref().map(Value::to_nbt);
@@ -127,7 +130,17 @@ fn vanilla_item_corpus() {
                         Ok(back) => {
                             let mut out2 = BytesMut::new();
                             back.write(&mut out2);
-                            t.check("NBT -> wire", out2[..] == wire[..], || format!("{desc}:\n  vanilla {}\n  kiln    {}", hex(&wire), hex(&out2)));
+                            // NBT compounds do not keep map entry order, so the network form of
+                            // a value read from NBT may list map entries in another order.
+                            let reordered = out2.len() == wire.len()
+                                && back.to_value().map(|v| hash(&v)) == value.as_ref().map(hash)
+                                && back.to_value().map(|v| v.to_nbt()).as_ref() == Some(&tag);
+                            if out2[..] != wire[..] && reordered {
+                                reordered_values += 1;
+                            }
+                            t.check("NBT -> wire", out2[..] == wire[..] || reordered, || {
+                                format!("{desc}:\n  vanilla {}\n  kiln    {}", hex(&wire), hex(&out2))
+                            });
                         }
                         Err(e) => t.check("from NBT", false, || format!("{desc}: {e}\n  {tag:?}")),
                     }
@@ -161,16 +174,24 @@ fn vanilla_item_corpus() {
                     };
                     stacks.check("hashed stack", same, || format!("{desc}:\n  vanilla {theirs:?}\n  kiln    {ours:?}"));
                 }
+                // Transient components are not saved, so such stacks don't survive NBT.
+                let transient = stack.patch().iter().any(|(id, _)| !component::is_persistent(id));
                 if let Some(nbt_hex) = rec["n"].as_str().filter(|s| !s.starts_with('!')) {
                     let tag = read_nbt(nbt_hex);
                     let ours = stack.to_nbt();
                     stacks.check("stack to NBT", ours == tag, || format!("{desc}:\n  vanilla {tag:?}\n  kiln    {ours:?}"));
                     match ItemStack::from_nbt(&tag) {
+                        _ if transient => {}
                         Ok(back) => {
                             stacks.check("stack NBT round trip", back.to_nbt() == tag, || desc.clone());
                             let mut out = BytesMut::new();
                             back.write_optional(&mut out);
-                            stacks.check("stack NBT -> wire", out[..] == wire[..], || {
+                            let reordered = out.len() == wire.len()
+                                && HashedStack::of(&back).map(|h| sorted(&h)) == HashedStack::of(&stack).map(|h| sorted(&h));
+                            if out[..] != wire[..] && reordered {
+                                reordered_stacks += 1;
+                            }
+                            stacks.check("stack NBT -> wire", out[..] == wire[..] || reordered, || {
                                 format!("{desc}:\n  vanilla {}\n  kiln    {}", hex(&wire), hex(&out))
                             });
                         }
@@ -195,6 +216,8 @@ fn vanilla_item_corpus() {
     }
 
     println!("{records} stacks, {values} component values");
+    println!("NBT -> wire with map entries reordered: {reordered_values} values, {reordered_stacks} stacks");
+    println!("values vanilla cannot save (network-only forms): {unsaveable}");
     let mut failed = 0;
     for (id, t) in &per_type {
         let bad: usize = t.fail.values().map(|(n, _)| n).sum();

@@ -217,7 +217,13 @@ public class ItemVectors {
         return value.getClass().getName().equals("net.minecraft.core.component.Removed");
     }
 
-    static void emit(PrintWriter w, String desc, ItemStack stack) throws Exception {
+    static void emit(PrintWriter w, String desc, ItemStack original) throws Exception {
+        // A patch built in memory can interleave additions and removals; the network form
+        // lists additions first. Use the stack as a server would hold it after receiving it,
+        // so that every form below derives from the same patch order.
+        var buf = new RegistryFriendlyByteBuf(Unpooled.buffer(), access);
+        ItemStack.OPTIONAL_STREAM_CODEC.encode(buf, original);
+        ItemStack stack = ItemStack.OPTIONAL_STREAM_CODEC.decode(buf);
         StringBuilder b = new StringBuilder();
         b.append("{\"d\": ").append(json(desc));
         b.append(", \"w\": \"").append(wire(ItemStack.OPTIONAL_STREAM_CODEC, stack)).append('"');
@@ -325,6 +331,27 @@ public class ItemVectors {
                     }
                 }
             }
+            // Transient components have no command syntax.
+            Holder<Item> stick = items.wrapAsHolder(net.minecraft.world.item.Items.STICK);
+            List<DataComponentPatch> transients = List.of(
+                    DataComponentPatch.builder().set(DataComponents.CREATIVE_SLOT_LOCK, net.minecraft.util.Unit.INSTANCE).build(),
+                    DataComponentPatch.builder().set(DataComponents.ADDITIONAL_TRADE_COST, 7).build(),
+                    DataComponentPatch.builder().set(DataComponents.ADDITIONAL_TRADE_COST, -300).build(),
+                    DataComponentPatch.builder().set(DataComponents.MAP_POST_PROCESSING, net.minecraft.world.item.component.MapPostProcessing.LOCK).build(),
+                    DataComponentPatch.builder().set(DataComponents.MAP_POST_PROCESSING, net.minecraft.world.item.component.MapPostProcessing.SCALE)
+                            .set(DataComponents.DAMAGE, 2).remove(DataComponents.LORE).build());
+            for (int i = 0; i < transients.size(); i++) {
+                emit(w, "transient " + i, stack(stick, 1, transients.get(i)));
+            }
+            // Inline definitions that only the network codecs accept.
+            var sound = Holder.direct(net.minecraft.sounds.SoundEvent.createFixedRangeEvent(net.minecraft.resources.Identifier.parse("kiln:song"), 24.0f));
+            var song = new net.minecraft.world.item.JukeboxSong(sound, net.minecraft.network.chat.Component.literal("Song"), 12.5f, 7);
+            var painting = new net.minecraft.world.entity.decoration.painting.PaintingVariant(2, 3, net.minecraft.resources.Identifier.parse("kiln:art"),
+                    java.util.Optional.of(net.minecraft.network.chat.Component.literal("Title")), java.util.Optional.empty());
+            emit(w, "inline jukebox song", stack(stick, 1, DataComponentPatch.builder()
+                    .set(DataComponents.JUKEBOX_PLAYABLE, new net.minecraft.world.item.JukeboxPlayable(Holder.direct(song))).build()));
+            emit(w, "inline painting variant", stack(stick, 1, DataComponentPatch.builder()
+                    .set(DataComponents.PAINTING_VARIANT, Holder.direct(painting)).build()));
             // Random combinations of known values, with removals.
             List<TypedDataComponent<?>> values = new ArrayList<>(pool);
             List<Item> all = items.stream().filter(i -> i != net.minecraft.world.item.Items.AIR).toList();
