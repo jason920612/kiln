@@ -10,6 +10,7 @@ mod completeness;
 mod entities;
 mod fetch;
 mod http;
+mod items;
 mod report;
 mod zip;
 
@@ -24,11 +25,13 @@ tasks:
   fetch [--version <id> | --latest | --snapshot] [--no-spec] [--force]
       download a vanilla server (default: the version kiln-data is pinned to), verify it
       and run its data generator into the work directory
-  extract
-      run tools/ExtractBlocks.java against the server jar (per-state light, collision,
-      hardness, block entity type) into <work>/generated/extra; needed by codegen
+  extract [blocks | items]
+      run tools/ExtractBlocks.java and tools/ExtractGameRules.java (per-state light, collision,
+      hardness, block entity type; game rule defaults) and tools/ItemVectors.java (component
+      types, default item components) against the server jar into <work>/generated/extra;
+      needed by codegen
   codegen
-      generate crates/kiln-data/src/gen from the work directory
+      generate crates/kiln-data/src/gen and crates/kiln-item/src/gen from the work directory
   completeness
       check crates/kiln-proto/protocol.toml against the generated packet list
   snapshot-report [<version>]
@@ -46,8 +49,16 @@ fn main() -> Result<()> {
     match task.as_str() {
         "fetch" => fetch::run(&work, args),
         "extract" => {
+            let which = args.positional();
             args.finish()?;
-            block_props::extract(&root, &work, &fetch::server_jar(&work)?)
+            let jar = fetch::server_jar(&work)?;
+            if which.as_deref() != Some("items") {
+                block_props::extract(&root, &work, &jar)?;
+            }
+            if which.as_deref() != Some("blocks") {
+                items::extract(&root, &work, &jar)?;
+            }
+            Ok(())
         }
         "codegen" => {
             args.finish()?;

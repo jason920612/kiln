@@ -49,7 +49,7 @@ pub fn extract(root: &Path, work: &Path, server_jar: &Path) -> Result<()> {
     Ok(())
 }
 
-fn collect_jars(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
+pub fn collect_jars(dir: &Path, out: &mut Vec<std::path::PathBuf>) -> Result<()> {
     for e in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
         let p = e?.path();
         if p.is_dir() {

@@ -46,6 +46,12 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
     let rules = read_json(&input.generated.join("extra/game_rules.json")).context("run `cargo xtask extract` first")?;
     fs::write(out.join("game_rules.rs"), gen_game_rules(&rules)?)?;
     println!("codegen: wrote {}", out.display());
+
+    let items = read_json(&input.generated.join("extra/item_components.json")).context("run `cargo xtask extract items` first")?;
+    let item_out = root.join("crates/kiln-item/src/gen");
+    fs::create_dir_all(&item_out)?;
+    crate::items::generate(&items, &item_out)?;
+    println!("codegen: wrote {}", item_out.display());
     Ok(())
 }
 

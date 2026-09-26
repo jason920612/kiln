@@ -367,6 +367,17 @@ pub fn block_entity_data(pos: [i32; 3], kind: i32, tag: &Tag) -> Bytes {
     b.freeze()
 }
 
+/// Set Container Slot with a stack already encoded with `ItemStack.OPTIONAL_STREAM_CODEC`
+/// (kiln-item's `ItemStack::write_optional`).
+pub fn container_set_slot_encoded(window: i32, state: i32, slot: i16, stack: &[u8]) -> Bytes {
+    let mut b = packet(ids::play::clientbound::CONTAINER_SET_SLOT);
+    b.put_varint(window);
+    b.put_varint(state);
+    b.put_i16(slot);
+    b.put_slice(stack);
+    b.freeze()
+}
+
 pub fn play_disconnect(reason: &str) -> Bytes {
     let mut b = packet(ids::play::clientbound::DISCONNECT);
     crate::nbt::text(reason).write_network(&mut b);
@@ -707,6 +718,12 @@ mod tests {
             b.put_position(pos[0], pos[1], pos[2]);
             assert_eq!(read_position(&mut Reader::new(&b)).unwrap(), pos);
         }
+    }
+
+    #[test]
+    fn encoded_slot_matches_plain_slot() {
+        assert_eq!(container_set_slot(0, 3, 36, Some((42, 5))), container_set_slot_encoded(0, 3, 36, &[5, 42, 0, 0]));
+        assert_eq!(container_set_slot(0, 3, 36, None), container_set_slot_encoded(0, 3, 36, &[0]));
     }
 
     #[test]
