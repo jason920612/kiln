@@ -10,8 +10,9 @@
 //   functions_<seed>.bin  every overworld density function registry entry, same modes, 4 chunks.
 //   noise_<seed>.bin      every noise instance: get(x,y,z), get(x,z) and addToVolume.
 //
-// usage: java -cp <server jar + libraries> tools/WorldgenVectors.java <out dir> [seed or "random"...]
-//        (default seeds: 0 1 12345 -4172144997902289642 and one random seed)
+// usage: java -cp <server jar + libraries> tools/WorldgenVectors.java <out dir> [bench] [seed or "random"...]
+//        (default seeds: 0 1 12345 -4172144997902289642 and one random seed; "bench" alone only
+//        measures single-threaded throughput)
 
 import java.io.BufferedOutputStream;
 import java.io.FileDescriptor;
@@ -69,9 +70,12 @@ public class WorldgenVectors {
         net.minecraft.server.Bootstrap.bootStrap();
         Path out = Path.of(args[0]);
         Files.createDirectories(out);
+        boolean benchOnly = args.length > 1 && args[1].equals("bench");
         List<Long> seeds = new ArrayList<>();
-        for (int i = 1; i < args.length; i++) seeds.add(args[i].equals("random") ? new Random().nextLong() : Long.parseLong(args[i]));
-        if (seeds.isEmpty()) {
+        for (int i = benchOnly ? 2 : 1; i < args.length; i++) {
+            seeds.add(args[i].equals("random") ? new Random().nextLong() : Long.parseLong(args[i]));
+        }
+        if (seeds.isEmpty() && !benchOnly) {
             seeds.addAll(List.of(0L, 1L, 12345L, -4172144997902289642L, new Random().nextLong()));
         }
 
@@ -105,7 +109,7 @@ public class WorldgenVectors {
             writeNoises(out.resolve("noise_" + seed + ".bin"), seed, rs, noises);
             OUT.printf("seed %d: router %.1fs, total %.1fs%n", seed, (t1 - t0) / 1e9, (System.nanoTime() - t0) / 1e9);
         }
-        benchmark(RandomState.create(noises, 0, settings), settings.noiseRouter().finalDensity(), "final_density");
+        benchmark(RandomState.create(noises, 0, settings), settings);
     }
 
     static RegistryAccess.Frozen loadWorldgen() {
@@ -268,23 +272,47 @@ public class WorldgenVectors {
         };
     }
 
-    static void benchmark(RandomState rs, DensityFunction f, String name) {
-        DensitySampler sampler = rs.getSampler(f);
+    /** Best-of-5 single-threaded rates on the corner grid of 32x32 chunks. */
+    static void benchmark(RandomState rs, NoiseGeneratorSettings settings) {
+        DensitySampler finalDensity = rs.getSampler(settings.noiseRouter().finalDensity());
+        List<DensitySampler> router = routerOutputs(settings).entrySet().stream()
+            .filter(e -> !e.getKey().startsWith("aquifers/"))
+            .map(e -> rs.getSampler(e.getValue()))
+            .toList();
+        OUT.printf("java final_density volume, uncached:  %.0f positions/s%n", rate(List.of(finalDensity), false, 32));
+        OUT.printf("java final_density volume, caching:   %.0f positions/s%n", rate(List.of(finalDensity), true, 32));
+        OUT.printf("java router (8 fields) volume, caching: %.0f positions/s%n", rate(router, true, 32));
+        double best = 0;
+        for (int round = 0; round < 5; round++) {
+            long start = System.nanoTime();
+            long positions = 0;
+            for (int c = 0; c < 64; c++) {
+                DensityVolume v = cornerVolume(new int[] {c, c});
+                sample(finalDensity, v, 'P');
+                positions += v.size();
+            }
+            best = Math.max(best, positions / ((System.nanoTime() - start) / 1e9));
+        }
+        OUT.printf("java final_density point:             %.0f positions/s%n", best);
+    }
+
+    static double rate(List<DensitySampler> samplers, boolean caching, int chunks) {
         DensityBuffer buf = DensityBuffer.createUnpooled(CORNERS);
-        long positions = 0;
-        long start = System.nanoTime();
-        for (int round = 0; round < 3; round++) {
-            positions = 0;
-            start = System.nanoTime();
-            for (int cx = 0; cx < 32; cx++) {
-                for (int cz = 0; cz < 32; cz++) {
-                    sampler.sampleVolume(SamplerContext.EMPTY_UNCACHED, buf, cornerVolume(new int[] {cx, cz}));
+        double best = 0;
+        for (int round = 0; round < 5; round++) {
+            long positions = 0;
+            long start = System.nanoTime();
+            for (int cx = 0; cx < chunks; cx++) {
+                for (int cz = 0; cz < chunks; cz++) {
+                    DensityVolume v = cornerVolume(new int[] {cx, cz});
+                    SamplerContext ctx = caching ? SamplerContext.builder().enableCaches().build() : SamplerContext.EMPTY_UNCACHED;
+                    for (DensitySampler s : samplers) s.sampleVolume(ctx, buf, v);
                     positions += CORNERS;
                 }
             }
+            best = Math.max(best, positions / ((System.nanoTime() - start) / 1e9));
         }
-        double secs = (System.nanoTime() - start) / 1e9;
-        OUT.printf("java %s volume: %.0f positions/s single-threaded%n", name, positions / secs);
+        return best;
     }
 
     static final class Writer implements AutoCloseable {

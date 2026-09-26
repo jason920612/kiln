@@ -38,11 +38,12 @@ pub struct Compiler<'a, S: NoiseSource> {
     source: &'a mut S,
     built: HashMap<NodeId, SamplerRef>,
     caches: HashMap<NodeId, SamplerRef>,
+    next_cache_id: u32,
 }
 
 impl<'a, S: NoiseSource> Compiler<'a, S> {
     pub fn new(graph: &'a Graph, source: &'a mut S) -> Self {
-        Self { graph, source, built: HashMap::new(), caches: HashMap::new() }
+        Self { graph, source, built: HashMap::new(), caches: HashMap::new(), next_cache_id: 0 }
     }
 
     /// Compiles a top-level function (`DensityFunctionCompiler.getSampler`).
@@ -92,7 +93,9 @@ impl<'a, S: NoiseSource> Compiler<'a, S> {
                     return Ok(s.clone());
                 }
                 let inner = self.rewrite(input, ALL_AXES)?;
-                let s = self.compile_rewritten(&inner)?;
+                let id = self.next_cache_id;
+                self.next_cache_id += 1;
+                let s = Arc::new(Sampler::Cache { id, input: self.compile_rewritten(&inner)? });
                 self.caches.insert(input, s.clone());
                 Ok(s)
             }

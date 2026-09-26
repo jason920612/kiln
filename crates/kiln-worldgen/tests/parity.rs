@@ -162,14 +162,26 @@ fn check_functions(path: &Path, pack: &Datapack, compile: impl Fn(&mut RandomSta
     let mut state = RandomState::new(seed, settings.legacy_random_source);
     let samplers = compile(&mut state, &names);
     let mut strict_bad = 0;
+    // Vanilla's own point values, to count where its volume modes round differently.
+    let mut vanilla_point: Vec<Vec<f32>> = Vec::new();
+    let mut mode_differences: BTreeMap<String, Tally> = BTreeMap::new();
     for _ in 0..r.i32() {
         let mode = char::from_u32(r.u32()).unwrap();
         let mut tallies = BTreeMap::new();
-        for (name, sampler) in names.iter().zip(&samplers) {
+        for (k, (name, sampler)) in names.iter().zip(&samplers).enumerate() {
             let actual = evaluate(sampler, &chunks, mode == 'P');
             let t: &mut Tally = tallies.entry(name.clone()).or_default();
+            if mode == 'P' {
+                vanilla_point.push(Vec::with_capacity(actual.len()));
+            }
             for (i, a) in actual.iter().enumerate() {
                 let expected = r.f32();
+                if mode == 'P' {
+                    vanilla_point[k].push(expected);
+                } else if !vanilla_point.is_empty() {
+                    let d = mode_differences.entry(format!("{name} (P vs {mode})")).or_default();
+                    d.check(vanilla_point[k][i], expected, || format!("index {i}"));
+                }
                 t.check(expected, *a, || {
                     let (cx, cz) = chunks[i / CORNERS];
                     let p = corner_volume(cx, cz).positions().nth(i % CORNERS).unwrap();
@@ -187,6 +199,8 @@ fn check_functions(path: &Path, pack: &Datapack, compile: impl Fn(&mut RandomSta
             strict_bad += bad;
         }
     }
+    let file = path.file_name().unwrap().to_string_lossy();
+    report(&format!("{file} seed {seed}: where vanilla's volume modes differ from its point mode (informational)"), &mode_differences);
     strict_bad
 }
 

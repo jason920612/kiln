@@ -58,6 +58,10 @@ impl Gradient {
 #[derive(Debug)]
 pub enum Sampler {
     Const(f32),
+    /// A prepared `cache`, shared by every use of the same function (`id` is unique within
+    /// one compilation). A volume evaluates it once and reuses the buffer, as vanilla's
+    /// caching contexts do; functions are pure, so this never changes a value.
+    Cache { id: u32, input: SamplerRef },
     Add(SamplerRef, SamplerRef),
     ConstAdd(SamplerRef, f32),
     Sub(SamplerRef, SamplerRef),
@@ -103,10 +107,13 @@ pub enum Sampler {
     DistanceToPoint { point: [i32; 3], metric: DistanceMetric },
 }
 
-/// Recycled scratch buffers for volume evaluation.
+/// Recycled buffers for volume evaluation, plus the cache buffers of the evaluation in
+/// progress (released when the outermost `fill` returns).
 #[derive(Default)]
 pub struct Scratch {
     free: Vec<Vec<f32>>,
+    depth: u32,
+    cached: Vec<(u32, Volume, Vec<f32>)>,
 }
 
 impl Scratch {
@@ -128,6 +135,7 @@ impl Sampler {
         use Sampler::*;
         match self {
             Const(v) => *v,
+            Cache { input, .. } => input.point(s, x, y, z),
             Add(l, r) => l.point(s, x, y, z) + r.point(s, x, y, z),
             ConstAdd(i, c) => i.point(s, x, y, z) + c,
             Sub(l, r) => l.point(s, x, y, z) - r.point(s, x, y, z),
@@ -246,10 +254,30 @@ impl Sampler {
 
     /// Values for every position of `vol`, written to `out` in the volume's buffer order.
     pub fn fill(&self, s: &mut Scratch, vol: &Volume, out: &mut [f32]) {
-        use Sampler::*;
         debug_assert_eq!(out.len(), vol.len());
+        s.depth += 1;
+        self.fill_node(s, vol, out);
+        s.depth -= 1;
+        if s.depth == 0 {
+            let cached = std::mem::take(&mut s.cached);
+            s.free.extend(cached.into_iter().map(|(_, _, buf)| buf));
+        }
+    }
+
+    fn fill_node(&self, s: &mut Scratch, vol: &Volume, out: &mut [f32]) {
+        use Sampler::*;
         match self {
             Const(v) => out.fill(*v),
+            Cache { id, input } => {
+                if let Some((_, _, buf)) = s.cached.iter().find(|(i, v, _)| i == id && v == vol) {
+                    out.copy_from_slice(buf);
+                    return;
+                }
+                input.fill(s, vol, out);
+                let mut buf = s.take(0);
+                buf.extend_from_slice(out);
+                s.cached.push((*id, *vol, buf));
+            }
             Add(l, r) => binary(s, vol, out, l, r, |a, b| a + b),
             ConstAdd(i, c) => map(s, vol, out, i, |a| a + c),
             Sub(l, r) => binary(s, vol, out, l, r, |a, b| a + -b),

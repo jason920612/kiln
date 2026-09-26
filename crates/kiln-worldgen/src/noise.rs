@@ -165,6 +165,21 @@ impl LayerNoise {
             LayerNoise::Smeared { fudge_y_scale, .. } => Some(*fudge_y_scale),
             LayerNoise::Perlin(_) => None,
         };
+        // Everything y-dependent is the same for every column: lattice cell, gradient-space
+        // offset (smeared noise shifts it) and fade.
+        let rows: Vec<(i32, f32, f32)> = (0..vol.size[1])
+            .map(|yi| {
+                let y_raw = vol.block_y(yi) as f64 * y_scale;
+                let yw = wrap(y_raw) + l.offset[1];
+                let iy = floor(yw);
+                let fyd = yw - iy as f64;
+                let fy = match smear {
+                    Some(scale) => (fyd - Self::fudge_y(scale, y_raw, fyd)) as f32,
+                    None => fyd as f32,
+                };
+                (iy, fy, smoothstep(fyd as f32))
+            })
+            .collect();
         let mut i = 0;
         for zi in 0..vol.size[2] {
             let zw = wrap(vol.block_z(zi) as f64 * xz_scale) + l.offset[2];
@@ -182,12 +197,7 @@ impl LayerNoise {
                 let mut last_y = i32::MIN;
                 let mut dxz = [0f32; 8];
                 let mut gy = [0f32; 8];
-                for yi in 0..vol.size[1] {
-                    let y_raw = vol.block_y(yi) as f64 * y_scale;
-                    let yw = wrap(y_raw) + l.offset[1];
-                    let iy = floor(yw);
-                    let fyd = yw - iy as f64;
-                    let sy = smoothstep(fyd as f32);
+                for &(iy, fy, sy) in &rows {
                     if last_y != iy {
                         let aa = l.permute(a.wrapping_add(iy));
                         let ab = l.permute(a.wrapping_add(iy).wrapping_add(1));
@@ -210,10 +220,6 @@ impl LayerNoise {
                         }
                         last_y = iy;
                     }
-                    let fy = match smear {
-                        Some(scale) => (fyd - Self::fudge_y(scale, y_raw, fyd)) as f32,
-                        None => fyd as f32,
-                    };
                     let fy1 = fy - 1.0;
                     let v = lerp3(
                         sx,
