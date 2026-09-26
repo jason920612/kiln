@@ -294,7 +294,14 @@ pub enum PlayIn {
     KeepAlive { id: i64 },
     Move { pos: Option<[f64; 3]>, rot: Option<[f32; 2]>, on_ground: bool },
     ChunkBatchReceived { chunks_per_tick: f32 },
-    ClientInformation { view_distance: u8 },
+    ClientInformation(ClientInfo),
+    /// Movement keys; bit 0x20 is sneak (shift), 0x40 sprint.
+    PlayerInput { flags: u8 },
+    /// `player_command` action (1 start sprinting, 2 stop sprinting, ...).
+    PlayerCommand { action: i32 },
+    /// A command without its leading `/` (signed commands arrive here too; signatures are ignored).
+    ChatCommand { command: String },
+    CommandSuggestion { id: i32, text: String },
     Chat { message: String },
     PlayerLoaded,
     PlayerAction { action: i32, pos: [i32; 3], face: u8, sequence: i32 },
@@ -409,9 +416,19 @@ pub fn decode_play(id: i32, r: &mut Reader) -> Result<Option<PlayIn>, DecodeErro
         }
         sb::MOVE_PLAYER_STATUS_ONLY => PlayIn::Move { pos: None, rot: None, on_ground: r.u8()? & 1 != 0 },
         sb::CHUNK_BATCH_RECEIVED => PlayIn::ChunkBatchReceived { chunks_per_tick: r.f32()? },
-        sb::CLIENT_INFORMATION => {
-            let info = read_client_information(r)?;
-            PlayIn::ClientInformation { view_distance: info }
+        sb::CLIENT_INFORMATION => PlayIn::ClientInformation(read_client_information(r)?),
+        sb::PLAYER_INPUT => PlayIn::PlayerInput { flags: r.u8()? },
+        sb::PLAYER_COMMAND => {
+            let _entity = r.varint()?;
+            let action = r.varint()?;
+            let _data = r.varint()?;
+            PlayIn::PlayerCommand { action }
+        }
+        sb::CHAT_COMMAND => PlayIn::ChatCommand { command: commands::decode_chat_command(r)? },
+        sb::CHAT_COMMAND_SIGNED => PlayIn::ChatCommand { command: commands::decode_chat_command_signed(r)?.command },
+        sb::COMMAND_SUGGESTION => {
+            let req = commands::decode_command_suggestion(r)?;
+            PlayIn::CommandSuggestion { id: req.id, text: req.command }
         }
         sb::CHAT => {
             let message = r.string(256)?.to_owned();
@@ -448,18 +465,34 @@ pub fn decode_play(id: i32, r: &mut Reader) -> Result<Option<PlayIn>, DecodeErro
     Ok(Some(pkt))
 }
 
-/// Client Information (configuration and play); returns the view distance.
-pub fn read_client_information(r: &mut Reader) -> Result<u8, DecodeError> {
+/// Client settings that affect what the server sends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientInfo {
+    pub view_distance: u8,
+    /// Displayed skin layers (bit mask; 0x7f is all layers).
+    pub skin_parts: u8,
+    /// 0 left, 1 right.
+    pub main_hand: i32,
+}
+
+impl Default for ClientInfo {
+    fn default() -> Self {
+        Self { view_distance: 8, skin_parts: 0x7f, main_hand: 1 }
+    }
+}
+
+/// Client Information (configuration and play).
+pub fn read_client_information(r: &mut Reader) -> Result<ClientInfo, DecodeError> {
     let _locale = r.string(16)?;
     let view_distance = r.i8()?.max(2) as u8;
     let _chat_mode = r.varint()?;
     let _chat_colors = r.bool()?;
-    let _skin_parts = r.u8()?;
-    let _main_hand = r.varint()?;
+    let skin_parts = r.u8()?;
+    let main_hand = r.varint()?;
     let _text_filtering = r.bool()?;
     let _allow_listing = r.bool()?;
     let _particles = r.varint()?;
-    Ok(view_distance)
+    Ok(ClientInfo { view_distance, skin_parts, main_hand })
 }
 
 #[cfg(test)]

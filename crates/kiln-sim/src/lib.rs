@@ -2,11 +2,12 @@
 //! It never awaits; connections talk to it through channels.
 
 mod interact;
+mod players;
 mod stats;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
-use kiln_link::{ConnId, JoinInfo, PlayIn, Sink, ToSim};
+use kiln_link::{ClientInfo, ConnId, JoinInfo, PlayIn, Property, Sink, ToSim};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
 use kiln_world::{ChunkPos, OVERWORLD as OVERWORLD_DIM, Terrain, World};
@@ -38,10 +39,11 @@ const INVENTORY_SLOTS: usize = 46;
 
 struct Player {
     name: String,
-    #[allow(dead_code)]
     uuid: Uuid,
-    #[allow(dead_code)]
     entity_id: i32,
+    properties: Vec<Property>,
+    client: ClientInfo,
+    game_mode: u8,
     sink: Box<dyn Sink>,
     /// Packets queued this tick; flushed in the egress phase.
     outbox: Vec<Bytes>,
@@ -59,6 +61,16 @@ struct Player {
     /// Item id and count per inventory container slot.
     inventory: [Option<(i32, i32)>; INVENTORY_SLOTS],
     selected: usize,
+    /// Movement packets for this player's viewers.
+    tracker: packets::entity::MovementTracker,
+    /// Players currently seeing this one.
+    seen_by: HashSet<ConnId>,
+    sneaking: bool,
+    sprinting: bool,
+    /// Shared flags or pose changed since the last broadcast.
+    meta_dirty: bool,
+    /// Arm swung this tick.
+    swung: bool,
 }
 
 impl Player {
@@ -166,6 +178,7 @@ impl Sim {
             ToSim::Join(j) => self.join(j),
             ToSim::Leave(conn) => {
                 if let Some(p) = self.players.remove(&conn) {
+                    self.announce_leave(&p, conn);
                     self.broadcast_system(yellow(&format!("{} left the game", p.name)));
                 }
             }
@@ -194,13 +207,17 @@ impl Sim {
         let entity_id = self.next_entity_id;
         self.next_entity_id += 1;
         let spawn = self.spawn_position();
-        let view_distance = (j.view_distance as i32).min(self.config.view_distance as i32);
+        let view_distance = (j.client.view_distance as i32).min(self.config.view_distance as i32);
+        let move_state = packets::entity::MoveState { pos: spawn, yaw: 0.0, pitch: 0.0, head_yaw: 0.0, on_ground: true };
         let dimension_type =
             kiln_data::synced_id("minecraft:dimension_type", OVERWORLD).expect("overworld dimension type");
         let mut player = Player {
             name: j.name,
             uuid: j.uuid,
             entity_id,
+            properties: j.properties,
+            client: j.client,
+            game_mode: 1,
             sink: j.sink,
             outbox: Vec::new(),
             pos: spawn,
@@ -216,6 +233,16 @@ impl Sim {
             unacked_batches: 0,
             inventory: [None; INVENTORY_SLOTS],
             selected: 0,
+            tracker: packets::entity::MovementTracker::new(
+                entity_id,
+                kiln_data::entities::types::PLAYER.update_interval,
+                &move_state,
+            ),
+            seen_by: HashSet::new(),
+            sneaking: false,
+            sprinting: false,
+            meta_dirty: false,
+            swung: false,
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -226,7 +253,7 @@ impl Sim {
             simulation_distance: self.config.simulation_distance as i32,
             dimension_type,
             dimension: OVERWORLD,
-            game_mode: 1,
+            game_mode: player.game_mode,
             is_flat: self.config.world.is_none(),
             sea_level: 63,
             online_mode: self.config.online_mode,
@@ -239,6 +266,7 @@ impl Sim {
 
         let msg = yellow(&format!("{} joined the game", player.name));
         self.players.insert(j.conn, player);
+        self.announce_join(j.conn);
         self.broadcast_system(msg);
     }
 
@@ -267,7 +295,8 @@ impl Sim {
                     return;
                 }
                 if let Some(pos) = pos {
-                    p.pos = pos;
+                    // Vanilla clamps accepted positions to the world's coordinate limits.
+                    p.pos = [pos[0].clamp(-3.0e7, 3.0e7), pos[1].clamp(-2.0e7, 2.0e7), pos[2].clamp(-3.0e7, 3.0e7)];
                 }
                 if let Some(rot) = rot {
                     p.rot = rot;
@@ -280,9 +309,32 @@ impl Sim {
                     p.chunks_per_tick = chunks_per_tick.clamp(0.01, 64.0);
                 }
             }
-            PlayIn::ClientInformation { view_distance } => {
-                p.view_distance = (view_distance as i32).min(self.config.view_distance as i32);
+            PlayIn::ClientInformation(info) => {
+                p.view_distance = (info.view_distance as i32).min(self.config.view_distance as i32);
+                p.client = info;
             }
+            PlayIn::PlayerInput { flags } => {
+                let sneaking = flags & 0x20 != 0;
+                if sneaking != p.sneaking {
+                    p.sneaking = sneaking;
+                    p.meta_dirty = true;
+                }
+            }
+            PlayIn::PlayerCommand { action } => {
+                const START_SPRINTING: i32 = 1;
+                const STOP_SPRINTING: i32 = 2;
+                let sprinting = match action {
+                    START_SPRINTING => true,
+                    STOP_SPRINTING => false,
+                    _ => p.sprinting,
+                };
+                if sprinting != p.sprinting {
+                    p.sprinting = sprinting;
+                    p.meta_dirty = true;
+                }
+            }
+            PlayIn::ChatCommand { command } => self.run_command(conn, &command),
+            PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
             PlayIn::Chat { message } => {
                 let line = format!("<{}> {}", p.name, message);
                 info!("{line}");
@@ -312,7 +364,7 @@ impl Sim {
                 self.use_item_on(conn, hand, pos, face);
                 self.ack(conn, sequence);
             }
-            PlayIn::Punch => {}
+            PlayIn::Punch => p.swung = true,
         }
     }
 
@@ -438,7 +490,15 @@ impl Sim {
             }
             update_chunks(p, world);
         }
+        self.update_tracking();
     }
+
+    /// Placeholder until the command system is wired in.
+    fn run_command(&mut self, conn: ConnId, command: &str) {
+        info!("command from {conn}: /{command}");
+    }
+
+    fn suggest(&mut self, _conn: ConnId, _id: i32, _text: String) {}
 }
 
 /// Recenters the player's chunk view and streams missing chunks, nearest first.

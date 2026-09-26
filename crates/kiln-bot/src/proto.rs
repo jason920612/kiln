@@ -277,7 +277,7 @@ mod tests {
         let b = built(|b| chat(b, "hello", 1_700_000_000_000, 42));
         assert!(matches!(server_decode(&b), PlayIn::Chat { message } if message == "hello"));
         let b = built(|b| client_information(b, ids::play::serverbound::CLIENT_INFORMATION, 5));
-        assert!(matches!(server_decode(&b), PlayIn::ClientInformation { view_distance: 5 }));
+        assert!(matches!(server_decode(&b), PlayIn::ClientInformation(i) if i.view_distance == 5));
     }
 
     #[test]
@@ -285,7 +285,7 @@ mod tests {
         let b = built(|b| client_information(b, ids::configuration::serverbound::CLIENT_INFORMATION, 2));
         let mut r = Reader::new(&b);
         assert_eq!(r.varint().unwrap(), ids::configuration::serverbound::CLIENT_INFORMATION);
-        assert_eq!(server::read_client_information(&mut r).unwrap(), 2);
+        assert_eq!(server::read_client_information(&mut r).unwrap().view_distance, 2);
         r.finish().unwrap();
     }
 

@@ -434,14 +434,14 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
         bail!("expected login acknowledged, got packet {id}");
     }
 
-    let view_distance = configure(&mut conn, shared).await?;
+    let client = configure(&mut conn, shared).await?;
     info!(
         "{} ({}) joined from {remote}{via}, {} profile properties",
         profile.name,
         profile.uuid,
         profile.properties.len()
     );
-    play(conn, shared, profile, remote, view_distance).await
+    play(conn, shared, profile, remote, client).await
 }
 
 /// Velocity modern forwarding: ask for the player's details on `velocity:player_info` and
@@ -540,7 +540,7 @@ async fn authenticate(
 }
 
 /// Configuration phase; returns the client's view distance.
-async fn configure(conn: &mut Conn, shared: &Shared) -> Result<u8> {
+async fn configure(conn: &mut Conn, shared: &Shared) -> Result<packets::ClientInfo> {
     use ids::configuration::serverbound as sb;
     let core = ("minecraft", "core", version::NAME);
     conn.queue(&packets::config_brand("kiln"))?;
@@ -548,13 +548,13 @@ async fn configure(conn: &mut Conn, shared: &Shared) -> Result<u8> {
     conn.queue(&packets::select_known_packs(&[core]))?;
     conn.flush().await?;
 
-    let mut view_distance = shared.config.view_distance;
+    let mut client = packets::ClientInfo { view_distance: shared.config.view_distance, ..Default::default() };
     let mut registries_sent = false;
     loop {
         let pkt = conn.read().await?;
         let (id, mut r) = split_id(&pkt)?;
         match id {
-            sb::CLIENT_INFORMATION => view_distance = packets::read_client_information(&mut r)?,
+            sb::CLIENT_INFORMATION => client = packets::read_client_information(&mut r)?,
             sb::SELECT_KNOWN_PACKS if !registries_sent => {
                 let n = r.len()?;
                 let mut knows_core = false;
@@ -575,14 +575,14 @@ async fn configure(conn: &mut Conn, shared: &Shared) -> Result<u8> {
                 conn.flush().await?;
                 registries_sent = true;
             }
-            sb::FINISH_CONFIGURATION if registries_sent => return Ok(view_distance),
+            sb::FINISH_CONFIGURATION if registries_sent => return Ok(client),
             sb::CUSTOM_PAYLOAD | sb::KEEP_ALIVE | sb::PONG | sb::RESOURCE_PACK => {}
             other => debug!("ignoring configuration packet {other}"),
         }
     }
 }
 
-async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr, view_distance: u8) -> Result<()> {
+async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr, client: packets::ClientInfo) -> Result<()> {
     let conn_id = shared.next_conn.fetch_add(1, Ordering::Relaxed);
     let Conn { stream, mut rbuf, mut rx, tx, wbuf, encrypt, mut decrypt } = conn;
     let (reader, writer) = stream.into_split();
@@ -597,7 +597,7 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
             name: profile.name,
             uuid: profile.uuid,
             properties: profile.properties,
-            view_distance,
+            client,
             sink: Box::new(ChannelSink(out_tx)),
         }))
         .is_ok();

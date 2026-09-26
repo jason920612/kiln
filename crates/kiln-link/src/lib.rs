@@ -4,7 +4,7 @@
 //! and it answers through `Sink`s, which the network layer implements.
 
 use bytes::Bytes;
-pub use kiln_proto::packets::PlayIn;
+pub use kiln_proto::packets::{ClientInfo, PlayIn};
 use uuid::Uuid;
 
 pub type ConnId = u64;
@@ -37,7 +37,8 @@ pub struct JoinInfo {
     pub uuid: Uuid,
     /// Profile properties from authentication or proxy forwarding (e.g. skin textures).
     pub properties: Vec<Property>,
-    pub view_distance: u8,
+    /// Settings from the configuration phase (view distance, skin layers, main hand).
+    pub client: ClientInfo,
     pub sink: Box<dyn Sink>,
 }
 

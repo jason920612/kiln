@@ -102,7 +102,7 @@ async fn serve(stream: TcpStream, port: u16, seen: Arc<Mutex<Vec<Seen>>>) {
     let brand = c.expect(csb::CUSTOM_PAYLOAD).await;
     s.brand = Reader::new(&brand).string(32767).unwrap() == "minecraft:brand";
     let info = c.expect(csb::CLIENT_INFORMATION).await;
-    s.view_distance = pk::read_client_information(&mut Reader::new(&info)).unwrap();
+    s.view_distance = pk::read_client_information(&mut Reader::new(&info)).unwrap().view_distance;
 
     let offer = pk::select_known_packs(&[("minecraft", "core", "26.3"), ("minecraft", "extra", "1")]);
     c.send(&offer).await;
