@@ -739,6 +739,25 @@ public class FeatureVectors {
         w.write(v);
     }
 
+    String near;
+
+    /** Region origins placing a structure-chunk of set `set` (random spread) at a target chunk. */
+    List<int[]> nearOrigins(String set, int count, int size) {
+        var holder = registries.lookupOrThrow(Registries.STRUCTURE_SET).getOrThrow(net.minecraft.resources.ResourceKey.create(Registries.STRUCTURE_SET, Identifier.parse(set)));
+        var placement = (net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement) holder.value().placement();
+        var state = level.getChunkSource().getGeneratorState();
+        List<int[]> out = new ArrayList<>();
+        Random r = new Random(seed ^ set.hashCode());
+        for (int tries = 0; out.size() < count && tries < 100000; tries++) {
+            int x = r.nextInt(60000) - 30000, z = r.nextInt(60000) - 30000;
+            ChunkPos p = placement.getPotentialStructureChunk(seed, x, z);
+            if (!placement.isStructureChunk(state, p.x(), p.z())) continue;
+            if (out.stream().anyMatch(o -> Math.abs(o[0] - p.x()) < 40 && Math.abs(o[1] - p.z()) < 40)) continue;
+            out.add(new int[] {p.x() - size / 2, p.z() - size / 2});
+        }
+        return out;
+    }
+
     void write(Path path, int regions, int size, boolean check) throws Exception {
         Registry<PlacedFeature> placed = registries.lookupOrThrow(Registries.PLACED_FEATURE);
         int threads = Math.max(1, Runtime.getRuntime().availableProcessors() - 2);
@@ -761,7 +780,7 @@ public class FeatureVectors {
                     str(w, key.map(k -> k.identifier().toString()).orElse("#" + step + ":" + i));
                 }
             }
-            List<int[]> origins = regionOrigins(seed, regions);
+            List<int[]> origins = near == null ? regionOrigins(seed, regions) : nearOrigins(near, regions, size);
             w.writeInt(Integer.reverseBytes(origins.size()));
             long t0 = System.nanoTime();
             for (int i = 0; i < origins.size(); i++) {
@@ -857,6 +876,7 @@ public class FeatureVectors {
         int size = 4;
         int bench = 0;
         int heights = 0;
+        String near = null;
         boolean check = false;
         for (int i = 2; i < args.length; i++) {
             switch (args[i]) {
@@ -865,6 +885,7 @@ public class FeatureVectors {
                 case "--bench" -> bench = Integer.parseInt(args[++i]);
                 case "--check" -> check = true;
                 case "--heights" -> heights = Integer.parseInt(args[++i]);
+                case "--near" -> near = args[++i];
                 default -> throw new IllegalArgumentException(args[i]);
             }
         }
@@ -876,7 +897,9 @@ public class FeatureVectors {
         if (fv.seed != seedArg) throw new IllegalStateException("server seed " + fv.seed + " != " + seedArg);
         OUT.printf("server ready, seed %d, structures %b%n", fv.seed, fv.structures);
         try {
-            if (regions > 0) fv.write(out.resolve("features_" + seedArg + (fv.structures ? "_s" : "") + ".bin"), regions, size, check);
+            fv.near = near;
+            String suffix = (fv.structures ? "_s" : "") + (near == null ? "" : "_" + near.replace("minecraft:", ""));
+            if (regions > 0) fv.write(out.resolve("features_" + seedArg + suffix + ".bin"), regions, size, check);
             if (bench > 0) fv.bench(bench);
             if (heights > 0) fv.heights(out.resolve("heights_" + seedArg + ".bin"), heights);
         } catch (Throwable e) {
