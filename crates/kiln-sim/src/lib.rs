@@ -39,6 +39,9 @@ mod stats;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
+mod enchant;
+#[cfg(test)]
+mod enchant_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -184,6 +187,15 @@ struct Player {
     applied_view: i32,
     /// The player's random source (item throws), seeded from its UUID.
     rng: rng::Rng,
+    /// `Entity.random` for enchantment effects (thorns damage), Java-exact.
+    entity_rng: kiln_javamath::random::LegacyRandom,
+    /// The player's stand-in for the level's random (enchantment requirements, unbreaking);
+    /// see [`enchant`].
+    level_rng: kiln_javamath::random::LegacyRandom,
+    /// Enchantment definitions (the loot data of the enabled datapacks).
+    loot: Option<std::sync::Arc<kiln_loot::LootData>>,
+    /// `remainingFireTicks` (set by fire aspect; nothing burns yet).
+    fire_ticks: i32,
     health: f32,
     food: i32,
     saturation: f32,
@@ -1328,6 +1340,10 @@ impl Sim {
             ack_block_changes: -1,
             applied_view: view_distance,
             rng: rng::Rng::new(j.uuid.as_u64_pair().0 ^ j.uuid.as_u64_pair().1),
+            entity_rng: kiln_javamath::random::LegacyRandom::new(j.uuid.as_u64_pair().0 as i64),
+            level_rng: kiln_javamath::random::LegacyRandom::new(j.uuid.as_u64_pair().1 as i64),
+            loot: self.loot.clone(),
+            fire_ticks: 0,
             health: joining.health,
             food: joining.food,
             saturation: joining.saturation,

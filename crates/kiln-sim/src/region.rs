@@ -238,7 +238,7 @@ pub(crate) fn damage_ctx<'a>(
     spawns: &'a mut Vec<Spawn>,
     deaths: &'a mut Vec<crate::health::Death>,
 ) -> crate::health::DamageCtx<'a> {
-    crate::health::DamageCtx { rules: env.blocks.damage, game_time: env.game_time, spawns, deaths }
+    crate::health::DamageCtx { rules: env.blocks.damage, game_time: env.game_time, spawns, deaths, level_rng: None }
 }
 
 /// Whether a packet needs the whole server (chat, commands): it and everything its region

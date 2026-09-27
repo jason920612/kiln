@@ -514,7 +514,7 @@ impl Host for Sim {
         let (rules, game_time) = (self.damage_rules(), self.game_time);
         let Some(p) = self.players.get_mut(&entity.conn) else { return };
         let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
-        let mut ctx = crate::health::DamageCtx { rules, game_time, spawns: &mut spawns, deaths: &mut deaths };
+        let mut ctx = crate::health::DamageCtx { rules, game_time, spawns: &mut spawns, deaths: &mut deaths, level_rng: None };
         p.hurt(f32::MAX, &crate::health::Cause::Kill.into(), &mut ctx);
         self.dim.spawns.extend(spawns);
         self.announce_deaths(deaths);

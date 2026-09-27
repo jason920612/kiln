@@ -1,11 +1,14 @@
 """Differential tests of Kiln's player combat against vanilla 26.3.
 
-1. Runs tools/CombatVectors.java: a vanilla dedicated server started in-process (in
-   <work>/m6-combat/server, port 25594) where mock players attack each other; every attack's
-   setup and outcome goes to <work>/m6-combat/vectors.jsonl.
-2. Runs `cargo test -p kiln-sim combat_parity` with KILN_COMBAT_VECTORS set, which replays each
-   scenario through the simulation (an Attack packet) and compares health, absorption,
-   exhaustion, item and armor durability, the knockback motion packet and death messages.
+1. Runs tools/CombatVectors.java: a vanilla dedicated server started in-process (in a
+   `server` directory next to the output, port 25594) where mock players attack each other;
+   every attack's setup and outcome goes to <work>/m6-combat/vectors.jsonl, and
+   EnchantmentHelper-level vectors (modifyDamage, getDamageProtection, processDurabilityChange,
+   forEachModifier, getDestroySpeed...) to enchant_helpers.jsonl beside it.
+2. Runs `cargo test -p kiln-sim _parity` with KILN_COMBAT_VECTORS and KILN_ENCHANT_VECTORS set:
+   combat_parity replays each scenario through the simulation (an Attack packet) and compares
+   health, absorption, exhaustion, fire ticks, item and armor durability, the knockback motion
+   packet and death messages; enchant_parity checks the helper vectors.
 
 usage: python tools/combat_vectors.py [--filter NAME] [--skip-java] [--out FILE]
 """
@@ -28,7 +31,7 @@ def main():
     args = ap.parse_args()
     out = Path(args.out).resolve()
     if not args.skip_java:
-        server_dir = WORK / "m6-combat" / "server"
+        server_dir = out.parent / "server"
         server_dir.mkdir(parents=True, exist_ok=True)
         cmd = ["java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-cp", classpath(),
                str(ROOT / "tools" / "CombatVectors.java"), str(out)]
@@ -41,11 +44,12 @@ def main():
         print("\n".join(lines[-60:]))
         if p.returncode != 0:
             sys.exit(f"CombatVectors failed ({p.returncode})")
-    env = dict(os.environ, KILN_COMBAT_VECTORS=str(out))
+    env = dict(os.environ, KILN_COMBAT_VECTORS=str(out),
+               KILN_ENCHANT_VECTORS=str(out.with_name("enchant_helpers.jsonl")))
     if args.filter:
         env["KILN_PARITY_FILTER"] = args.filter
-    sys.exit(subprocess.call(["cargo", "test", "-p", "kiln-sim", "--lib", "combat_parity", "--", "--nocapture"],
-                             cwd=ROOT, env=env))
+    sys.exit(subprocess.call(["cargo", "test", "-p", "kiln-sim", "--lib", "_parity", "--", "--nocapture",
+                              "--test-threads=1"], cwd=ROOT, env=env))
 
 
 if __name__ == "__main__":

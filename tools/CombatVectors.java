@@ -44,6 +44,7 @@ import net.minecraft.server.network.CommonListenerCookie;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.phys.Vec3;
 
@@ -69,11 +70,27 @@ public class CombatVectors {
         int hurtCooldown;
         float lastHurt;
         double kmx, kmz; // known movement
+        // Enchantments (id -> level) on the main hand item and on each armor piece.
+        Map<String, Integer> mainEnch = new LinkedHashMap<>();
+        List<Map<String, Integer>> armorEnch = new ArrayList<>(List.of(
+                new LinkedHashMap<>(), new LinkedHashMap<>(), new LinkedHashMap<>(), new LinkedHashMap<>()));
+
+        Side ench(String id, int level) {
+            mainEnch.put(id, level);
+            return this;
+        }
+
+        Side armorEnch(int slot, String id, int level) {
+            armorEnch.get(slot).put(id, level);
+            return this;
+        }
 
         Map<String, Object> json() {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("main_hand", mainHand);
             m.put("main_hand_damage", mainHandDamage);
+            m.put("main_hand_enchantments", mainEnch);
+            m.put("armor_enchantments", armorEnch);
             m.put("custom_name", customName);
             m.put("armor", armor);
             m.put("armor_damage", armorDamage);
@@ -99,12 +116,163 @@ public class CombatVectors {
         Side bystander;
         boolean pvp = true;
         String difficulty = "normal";
+        // The level's random and each player's entity random are reseeded before the attack.
+        long levelSeed;
 
         Scenario(String name) {
             this.name = name;
             target.dz = 2.0;
             target.yaw = 180f;
+            levelSeed = name.hashCode();
         }
+    }
+
+    /** Enchanted-combat scenarios (sharpness, knockback, fire aspect, protection, unbreaking...). */
+    static void enchantedScenarios(List<Scenario> out) {
+        Scenario s;
+        for (int l : new int[] {1, 3, 5}) {
+            s = new Scenario("ench_sharpness_" + l);
+            s.attacker.mainHand = "minecraft:diamond_sword";
+            s.attacker.ench("minecraft:sharpness", l);
+            out.add(s);
+        }
+        s = new Scenario("ench_sharpness_partial");
+        s.attacker.mainHand = "minecraft:iron_axe";
+        s.attacker.ench("minecraft:sharpness", 4);
+        s.attacker.ticker = 7;
+        out.add(s);
+        s = new Scenario("ench_sharpness_fist_weak");
+        s.attacker.mainHand = "minecraft:stick";
+        s.attacker.ench("minecraft:sharpness", 2);
+        s.attacker.ticker = 1;
+        out.add(s);
+        s = new Scenario("ench_sharpness_crit");
+        s.attacker.mainHand = "minecraft:netherite_sword";
+        s.attacker.ench("minecraft:sharpness", 5);
+        s.attacker.onGround = false;
+        s.attacker.fallDistance = 1.0;
+        out.add(s);
+        s = new Scenario("ench_smite_vs_player");
+        s.attacker.mainHand = "minecraft:diamond_sword";
+        s.attacker.ench("minecraft:smite", 5);
+        out.add(s);
+        s = new Scenario("ench_bane_vs_player");
+        s.attacker.mainHand = "minecraft:diamond_sword";
+        s.attacker.ench("minecraft:bane_of_arthropods", 5);
+        out.add(s);
+        s = new Scenario("ench_knockback_2");
+        s.attacker.mainHand = "minecraft:diamond_sword";
+        s.attacker.ench("minecraft:knockback", 2);
+        out.add(s);
+        s = new Scenario("ench_knockback_1_sprint_yaw");
+        s.attacker.mainHand = "minecraft:stone_sword";
+        s.attacker.ench("minecraft:knockback", 1);
+        s.attacker.sprinting = true;
+        s.attacker.yaw = 30f;
+        s.target.dx = -1.0;
+        s.target.dz = 1.7;
+        out.add(s);
+        s = new Scenario("ench_fire_aspect_2");
+        s.attacker.mainHand = "minecraft:diamond_sword";
+        s.attacker.ench("minecraft:fire_aspect", 2);
+        out.add(s);
+        s = new Scenario("ench_fire_aspect_vs_fire_protection");
+        s.attacker.mainHand = "minecraft:golden_sword";
+        s.attacker.ench("minecraft:fire_aspect", 1).ench("minecraft:sharpness", 2);
+        s.target.armor = new String[] {null, "minecraft:iron_leggings", "minecraft:iron_chestplate", null};
+        s.target.armorEnch(2, "minecraft:fire_protection", 4).armorEnch(1, "minecraft:fire_protection", 2);
+        out.add(s);
+        s = new Scenario("ench_fire_aspect_no_weapon_component");
+        s.attacker.mainHand = "minecraft:stick";
+        s.attacker.ench("minecraft:fire_aspect", 2);
+        out.add(s);
+        s = new Scenario("ench_protection_4_full");
+        s.attacker.mainHand = "minecraft:netherite_sword";
+        s.target.armor = new String[] {"minecraft:diamond_boots", "minecraft:diamond_leggings",
+                "minecraft:diamond_chestplate", "minecraft:diamond_helmet"};
+        for (int i = 0; i < 4; i++) s.target.armorEnch(i, "minecraft:protection", 4);
+        out.add(s);
+        s = new Scenario("ench_protection_mixed");
+        s.attacker.mainHand = "minecraft:iron_sword";
+        s.attacker.ench("minecraft:sharpness", 3);
+        s.target.armor = new String[] {"minecraft:leather_boots", null, "minecraft:chainmail_chestplate", "minecraft:iron_helmet"};
+        s.target.armorEnch(0, "minecraft:feather_falling", 4).armorEnch(0, "minecraft:protection", 1)
+                .armorEnch(2, "minecraft:protection", 3).armorEnch(3, "minecraft:projectile_protection", 4);
+        out.add(s);
+        s = new Scenario("ench_protection_cap");
+        s.attacker.mainHand = "minecraft:diamond_axe";
+        s.target.armor = new String[] {"minecraft:iron_boots", "minecraft:iron_leggings", "minecraft:iron_chestplate", "minecraft:iron_helmet"};
+        for (int i = 0; i < 4; i++) s.target.armorEnch(i, "minecraft:protection", 10);
+        out.add(s);
+        for (int l : new int[] {1, 4}) {
+            s = new Scenario("ench_breach_" + l);
+            s.attacker.mainHand = "minecraft:diamond_sword";
+            s.attacker.ench("minecraft:breach", l);
+            s.target.armor = new String[] {"minecraft:diamond_boots", "minecraft:diamond_leggings",
+                    "minecraft:diamond_chestplate", "minecraft:diamond_helmet"};
+            out.add(s);
+        }
+        s = new Scenario("ench_sweeping_edge_3");
+        s.attacker.mainHand = "minecraft:diamond_sword";
+        s.attacker.ench("minecraft:sweeping_edge", 3);
+        s.bystander = new Side();
+        s.bystander.dx = 1.0;
+        s.bystander.dz = 2.2;
+        out.add(s);
+        s = new Scenario("ench_sweep_sharpness_fire");
+        s.attacker.mainHand = "minecraft:iron_sword";
+        s.attacker.ench("minecraft:sweeping_edge", 1).ench("minecraft:sharpness", 5).ench("minecraft:fire_aspect", 1);
+        s.bystander = new Side();
+        s.bystander.dx = -0.9;
+        s.bystander.dz = 2.0;
+        s.bystander.armor = new String[] {null, null, "minecraft:golden_chestplate", null};
+        s.bystander.armorEnch(2, "minecraft:protection", 2);
+        out.add(s);
+        for (long seed : new long[] {1, 2, 3, 4, 5, 6, 7, 8, 12345}) {
+            s = new Scenario("ench_unbreaking_sword_" + seed);
+            s.attacker.mainHand = "minecraft:diamond_sword";
+            s.attacker.mainHandDamage = 100;
+            s.attacker.ench("minecraft:unbreaking", 3);
+            s.levelSeed = seed;
+            out.add(s);
+        }
+        s = new Scenario("ench_unbreaking_sword_breaks");
+        s.attacker.mainHand = "minecraft:wooden_sword";
+        s.attacker.mainHandDamage = 58;
+        s.attacker.ench("minecraft:unbreaking", 1);
+        s.levelSeed = 7;
+        out.add(s);
+        for (long seed : new long[] {5, 99, 2024}) {
+            s = new Scenario("ench_unbreaking_armor_" + seed);
+            s.attacker.mainHand = "minecraft:netherite_axe";
+            s.attacker.ench("minecraft:unbreaking", 2);
+            s.target.armor = new String[] {"minecraft:iron_boots", "minecraft:iron_leggings", "minecraft:iron_chestplate", "minecraft:iron_helmet"};
+            for (int i = 0; i < 4; i++) s.target.armorEnch(i, "minecraft:unbreaking", 3);
+            s.levelSeed = seed;
+            out.add(s);
+        }
+        for (long seed : new long[] {1, 4, 8, 31, 2, 3, 5, 6, 7, 9, 10}) {
+            s = new Scenario("ench_thorns_" + seed);
+            s.attacker.mainHand = "minecraft:iron_sword";
+            s.target.armor = new String[] {null, null, "minecraft:diamond_chestplate", "minecraft:iron_helmet"};
+            s.target.armorEnch(2, "minecraft:thorns", 3).armorEnch(3, "minecraft:thorns", 1);
+            s.levelSeed = seed;
+            out.add(s);
+        }
+        for (long seed : new long[] {1, 2, 3, 4, 5}) {
+            s = new Scenario("ench_thorns_fist_" + seed);
+            s.target.armor = new String[] {null, null, "minecraft:diamond_chestplate", null};
+            s.target.armorEnch(2, "minecraft:thorns", 3).armorEnch(2, "minecraft:unbreaking", 1);
+            s.levelSeed = seed;
+            out.add(s);
+        }
+        s = new Scenario("ench_thorns_kills_attacker");
+        s.attacker.mainHand = "minecraft:wooden_sword";
+        s.attacker.health = 1.0f;
+        s.target.armor = new String[] {"minecraft:iron_boots", "minecraft:iron_leggings", "minecraft:iron_chestplate", "minecraft:iron_helmet"};
+        for (int i = 0; i < 4; i++) s.target.armorEnch(i, "minecraft:thorns", 3);
+        s.levelSeed = 1;
+        out.add(s);
     }
 
     static List<Scenario> scenarios() {
@@ -298,6 +466,7 @@ public class CombatVectors {
         s.attacker.mainHand = "minecraft:wooden_sword";
         s.attacker.mainHandDamage = 58;
         out.add(s);
+        enchantedScenarios(out);
         return out;
     }
 
@@ -355,6 +524,20 @@ public class CombatVectors {
             for (String l : lines) w.println(l);
         }
         System.out.println("CombatVectors: wrote " + lines.size() + " scenarios to " + outPath);
+        List<String> helperLines = new ArrayList<>();
+        server.submit(() -> {
+            try {
+                EnchantHelperVectors.run(server, helperLines);
+            } catch (Throwable t) {
+                t.printStackTrace();
+                helperLines.add("{\"kind\":\"error\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");
+            }
+        }).get();
+        Path helperPath = outPath.resolveSibling("enchant_helpers.jsonl");
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(helperPath))) {
+            for (String l : helperLines) w.println(l);
+        }
+        System.out.println("CombatVectors: wrote " + helperLines.size() + " EnchantmentHelper vectors to " + helperPath);
         server.halt(false);
         System.exit(0);
     }
@@ -459,6 +642,7 @@ public class CombatVectors {
             main = new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(side.mainHand)));
             if (side.mainHandDamage > 0) main.setDamageValue(side.mainHandDamage);
             if (side.customName != null) main.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME, Component.literal(side.customName));
+            enchant(server, main, side.mainEnch);
         }
         p.getInventory().clearContent();
         p.getInventory().setSelectedSlot(0);
@@ -469,6 +653,7 @@ public class CombatVectors {
             if (side.armor[i] != null) {
                 a = new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(side.armor[i])));
                 if (side.armorDamage[i] > 0) a.setDamageValue(side.armorDamage[i]);
+                enchant(server, a, side.armorEnch.get(i));
             }
             p.setItemSlot(slots[i], a);
         }
@@ -485,6 +670,16 @@ public class CombatVectors {
         p.getFoodData().setSaturation(0f);
         set(p.getFoodData(), "exhaustionLevel", 0f);
         p.getCombatTracker().recheckStatus();
+        p.setRemainingFireTicks(0);
+    }
+
+    static net.minecraft.core.Holder<net.minecraft.world.item.enchantment.Enchantment> enchantment(MinecraftServer server, String id) {
+        return server.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.ENCHANTMENT)
+                .getOrThrow(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.ENCHANTMENT, Identifier.parse(id)));
+    }
+
+    static void enchant(MinecraftServer server, ItemStack stack, Map<String, Integer> enchantments) {
+        for (var e : enchantments.entrySet()) stack.enchant(enchantment(server, e.getKey()), e.getValue());
     }
 
     static String run(MinecraftServer server, Scenario s) throws Exception {
@@ -501,11 +696,20 @@ public class CombatVectors {
         drain(attacker);
         drain(target);
         if (bystander != null) drain(bystander);
+        // Enchantment requirements and unbreaking draw from the level's random, thorns damage
+        // from the attacker's.
+        server.overworld().getRandom().setSeed(s.levelSeed);
+        attacker.getRandom().setSeed(s.levelSeed + 1);
+        target.getRandom().setSeed(s.levelSeed + 2);
+        if (bystander != null) bystander.getRandom().setSeed(s.levelSeed + 3);
 
         attacker.attack(target);
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("attacker", outcome(attacker, target));
+        Map<String, Object> a = outcome(attacker, target);
+        // Thorns hurts the attacker: its motion goes out when the server entity syncs.
+        a.put("pending_motion", attacker.syncVelocity ? vec(attacker.getDeltaMovement()) : null);
+        result.put("attacker", a);
         result.put("target", outcome(target, target));
         if (bystander != null) {
             // Swept players get their motion when the server entity syncs (end of tick).
@@ -517,6 +721,7 @@ public class CombatVectors {
         line.put("name", s.name);
         line.put("pvp", s.pvp);
         line.put("difficulty", s.difficulty);
+        line.put("level_seed", s.levelSeed);
         line.put("attacker", s.attacker.json());
         line.put("target", s.target.json());
         line.put("bystander", s.bystander != null ? s.bystander.json() : null);
@@ -535,6 +740,7 @@ public class CombatVectors {
         m.put("hurt_cooldown", p.damageCooldownTime);
         m.put("last_hurt", (Float) get(p, "lastHurt"));
         m.put("sprinting", p.isSprinting());
+        m.put("fire_ticks", p.getRemainingFireTicks());
         m.put("ticker", (Integer) get(p, "attackStrengthTicker"));
         ItemStack main = p.getMainHandItem();
         m.put("main_hand", main.isEmpty() ? null : BuiltInRegistries.ITEM.getKey(main.getItem()).toString());
@@ -608,7 +814,7 @@ public class CombatVectors {
     static String toJson(Object o) {
         if (o == null) return "null";
         if (o instanceof String s) return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
-        if (o instanceof Boolean || o instanceof Integer) return o.toString();
+        if (o instanceof Boolean || o instanceof Integer || o instanceof Long) return o.toString();
         if (o instanceof Float f) return Float.toString(f);
         if (o instanceof Double d) return Double.toString(d);
         if (o instanceof double[] a) {
@@ -637,5 +843,228 @@ public class CombatVectors {
             return b.append("}").toString();
         }
         return toJson(String.format(Locale.ROOT, "%s", o));
+    }
+}
+
+// EnchantmentHelper-level vectors: modifyDamage, modifyKnockback, modifyArmorEffectiveness,
+// getDamageProtection / isImmuneToDamage, processDurabilityChange (seeded level random),
+// forEachModifier and Player.getDestroySpeed, each as one JSON line with its inputs.
+class EnchantHelperVectors {
+    static final String[] TARGETS = {"minecraft:player", "minecraft:zombie", "minecraft:skeleton", "minecraft:spider",
+            "minecraft:cave_spider", "minecraft:cow", "minecraft:drowned", "minecraft:guardian", "minecraft:wither_skeleton"};
+
+    static Map<String, Object> line(String kind) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", kind);
+        return m;
+    }
+
+    static ItemStack stack(MinecraftServer server, String item, Map<String, Integer> ench) {
+        ItemStack s = new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)));
+        CombatVectors.enchant(server, s, ench);
+        return s;
+    }
+
+    static Map<String, Integer> ench(Object... kv) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (int i = 0; i < kv.length; i += 2) m.put((String) kv[i], (Integer) kv[i + 1]);
+        return m;
+    }
+
+    static net.minecraft.world.entity.Entity entity(MinecraftServer server, ServerPlayer player, String type) {
+        if (type.equals("minecraft:player")) return player;
+        var e = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(type))
+                .create(server.overworld(), net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+        e.setPos(0.5, 100.0, 2.5);
+        return e;
+    }
+
+    static net.minecraft.world.damagesource.DamageSource source(ServerLevel level, ServerPlayer attacker, String name) {
+        var d = level.damageSources();
+        return switch (name) {
+            case "player_attack" -> d.playerAttack(attacker);
+            case "fall" -> d.fall();
+            case "in_fire" -> d.inFire();
+            case "hot_floor" -> d.hotFloor();
+            case "explosion" -> d.explosion(null, null);
+            case "thrown" -> d.thrown(null, null);
+            case "magic" -> d.magic();
+            case "out_of_world" -> d.fellOutOfWorld();
+            default -> d.generic();
+        };
+    }
+
+    static void run(MinecraftServer server, List<String> out) throws Exception {
+        ServerLevel level = server.overworld();
+        ServerPlayer attacker = CombatVectors.mockPlayer(server, "EnchHelperA");
+        ServerPlayer wearer = CombatVectors.mockPlayer(server, "EnchHelperB");
+        attacker.setPos(0.5, 100.0, 0.5);
+        wearer.setPos(0.5, 100.0, 2.5);
+        var melee = level.damageSources().playerAttack(attacker);
+
+        // modifyDamage / modifyKnockback / modifyArmorEffectiveness.
+        List<Map<String, Integer>> weapons = new ArrayList<>();
+        for (String e : new String[] {"minecraft:sharpness", "minecraft:smite", "minecraft:bane_of_arthropods", "minecraft:impaling"})
+            for (int l = 1; l <= 5; l++) weapons.add(ench(e, l));
+        weapons.add(ench("minecraft:sharpness", 5, "minecraft:smite", 3));
+        weapons.add(ench("minecraft:knockback", 2, "minecraft:sharpness", 1));
+        weapons.add(ench("minecraft:sharpness", 255));
+        weapons.add(ench("minecraft:fire_aspect", 2));
+        for (Map<String, Integer> w : weapons) {
+            ItemStack stack = stack(server, "minecraft:diamond_sword", w);
+            for (String t : TARGETS) {
+                var target = entity(server, wearer, t);
+                for (float base : new float[] {1.0f, 7.0f, 0.3f}) {
+                    Map<String, Object> m = line("damage");
+                    m.put("item", "minecraft:diamond_sword");
+                    m.put("enchantments", w);
+                    m.put("target", t);
+                    m.put("base", base);
+                    m.put("result", EnchantmentHelper.modifyDamage(level, stack, target, melee, base));
+                    out.add(CombatVectors.toJson(m));
+                }
+            }
+        }
+        for (Map<String, Integer> w : List.of(ench("minecraft:knockback", 1), ench("minecraft:knockback", 2), ench("minecraft:knockback", 7),
+                ench("minecraft:sharpness", 3))) {
+            ItemStack stack = stack(server, "minecraft:stone_sword", w);
+            for (float base : new float[] {0.0f, 1.0f, 2.5f}) {
+                Map<String, Object> m = line("knockback");
+                m.put("item", "minecraft:stone_sword");
+                m.put("enchantments", w);
+                m.put("target", "minecraft:player");
+                m.put("base", base);
+                m.put("result", EnchantmentHelper.modifyKnockback(level, stack, wearer, melee, base));
+                out.add(CombatVectors.toJson(m));
+            }
+        }
+        for (int l = 0; l <= 5; l++) {
+            ItemStack stack = stack(server, "minecraft:mace", l == 0 ? ench() : ench("minecraft:breach", l));
+            for (float h : new float[] {0.008f, 0.2f, 0.5f, 0.8f}) {
+                Map<String, Object> m = line("armor_effectiveness");
+                m.put("item", "minecraft:mace");
+                m.put("enchantments", l == 0 ? ench() : ench("minecraft:breach", l));
+                m.put("target", "minecraft:player");
+                m.put("base", h);
+                m.put("result", EnchantmentHelper.modifyArmorEffectiveness(level, stack, wearer, melee, h));
+                out.add(CombatVectors.toJson(m));
+            }
+        }
+
+        // getDamageProtection / isImmuneToDamage for armor sets.
+        String[] armorItems = {"minecraft:iron_boots", "minecraft:iron_leggings", "minecraft:iron_chestplate", "minecraft:iron_helmet"};
+        EquipmentSlot[] armorSlots = {EquipmentSlot.FEET, EquipmentSlot.LEGS, EquipmentSlot.CHEST, EquipmentSlot.HEAD};
+        List<List<Map<String, Integer>>> sets = List.of(
+                List.of(ench("minecraft:protection", 4), ench("minecraft:protection", 4), ench("minecraft:protection", 4), ench("minecraft:protection", 4)),
+                List.of(ench("minecraft:feather_falling", 4, "minecraft:frost_walker", 2), ench(), ench("minecraft:fire_protection", 3), ench("minecraft:blast_protection", 2)),
+                List.of(ench("minecraft:protection", 2), ench("minecraft:projectile_protection", 4), ench("minecraft:protection", 1, "minecraft:thorns", 3), ench()),
+                List.of(ench("minecraft:protection", 30), ench(), ench(), ench()),
+                List.of(ench("minecraft:depth_strider", 3), ench("minecraft:swift_sneak", 3), ench("minecraft:unbreaking", 3), ench("minecraft:respiration", 3, "minecraft:aqua_affinity", 1)));
+        String[] sources = {"player_attack", "fall", "in_fire", "hot_floor", "explosion", "thrown", "magic", "out_of_world", "generic"};
+        for (List<Map<String, Integer>> set : sets) {
+            for (int i = 0; i < 4; i++) wearer.setItemSlot(armorSlots[i], stack(server, armorItems[i], set.get(i)));
+            for (String src : sources) {
+                var source = source(level, attacker, src);
+                Map<String, Object> m = line("protection");
+                m.put("armor", armorItems);
+                m.put("armor_enchantments", set);
+                m.put("source", src);
+                m.put("result", EnchantmentHelper.getDamageProtection(level, wearer, source));
+                m.put("immune", EnchantmentHelper.isImmuneToDamage(level, wearer, source));
+                out.add(CombatVectors.toJson(m));
+            }
+        }
+        for (EquipmentSlot s : armorSlots) wearer.setItemSlot(s, ItemStack.EMPTY);
+
+        // processDurabilityChange with a seeded level random.
+        String[][] durabilityItems = {{"minecraft:diamond_sword", "minecraft:unbreaking"}, {"minecraft:diamond_chestplate", "minecraft:unbreaking"},
+                {"minecraft:elytra", "minecraft:unbreaking"}, {"minecraft:iron_pickaxe", "minecraft:efficiency"}};
+        for (String[] di : durabilityItems) {
+            for (int l = 1; l <= 3; l++) {
+                ItemStack stack = stack(server, di[0], ench(di[1], l));
+                for (int amount : new int[] {1, 2, 5, 13, 40}) {
+                    for (long seed : new long[] {0, 1, 42, 1234567, -99}) {
+                        level.getRandom().setSeed(seed);
+                        Map<String, Object> m = line("durability");
+                        m.put("item", di[0]);
+                        m.put("enchantments", ench(di[1], l));
+                        m.put("amount", amount);
+                        m.put("seed", seed);
+                        m.put("result", EnchantmentHelper.processDurabilityChange(level, stack, amount));
+                        m.put("next_int", level.getRandom().nextInt());
+                        out.add(CombatVectors.toJson(m));
+                    }
+                }
+            }
+        }
+
+        // forEachModifier per slot.
+        Object[][] modItems = {
+                {"minecraft:diamond_pickaxe", ench("minecraft:efficiency", 1)}, {"minecraft:diamond_pickaxe", ench("minecraft:efficiency", 5)},
+                {"minecraft:diamond_sword", ench("minecraft:sweeping_edge", 1)}, {"minecraft:diamond_sword", ench("minecraft:sweeping_edge", 2)},
+                {"minecraft:diamond_sword", ench("minecraft:sweeping_edge", 3)}, {"minecraft:iron_helmet", ench("minecraft:aqua_affinity", 1, "minecraft:respiration", 3)},
+                {"minecraft:iron_chestplate", ench("minecraft:fire_protection", 4, "minecraft:blast_protection", 3)},
+                {"minecraft:iron_boots", ench("minecraft:depth_strider", 3, "minecraft:soul_speed", 2)},
+                {"minecraft:iron_leggings", ench("minecraft:swift_sneak", 3)}};
+        for (Object[] mi : modItems) {
+            @SuppressWarnings("unchecked")
+            Map<String, Integer> e = (Map<String, Integer>) mi[1];
+            ItemStack stack = stack(server, (String) mi[0], e);
+            for (EquipmentSlot slot : EquipmentSlot.values()) {
+                List<Object> mods = new ArrayList<>();
+                EnchantmentHelper.forEachModifier(stack, slot, (attr, mod) -> mods.add(List.of(
+                        attr.unwrapKey().orElseThrow().identifier().toString(), mod.id().toString(), mod.amount(),
+                        mod.operation().getSerializedName())));
+                Map<String, Object> m = line("modifiers");
+                m.put("item", mi[0]);
+                m.put("enchantments", e);
+                m.put("slot", slot.getSerializedName());
+                m.put("result", mods);
+                out.add(CombatVectors.toJson(m));
+            }
+        }
+
+        // Player.getDestroySpeed with efficiency and aqua affinity.
+        String[] blocks = {"minecraft:stone", "minecraft:dirt", "minecraft:obsidian", "minecraft:oak_log", "minecraft:cobweb"};
+        Object[][] tools = {{null, ench()}, {"minecraft:wooden_pickaxe", ench()}, {"minecraft:iron_pickaxe", ench("minecraft:efficiency", 1)},
+                {"minecraft:diamond_pickaxe", ench("minecraft:efficiency", 5)}, {"minecraft:diamond_shovel", ench("minecraft:efficiency", 3)},
+                {"minecraft:golden_axe", ench("minecraft:efficiency", 2)}, {"minecraft:shears", ench("minecraft:efficiency", 4)}};
+        net.minecraft.core.BlockPos base = net.minecraft.core.BlockPos.containing(8.5, 100, 8.5);
+        for (boolean water : new boolean[] {false, true}) {
+            var fill = water ? net.minecraft.world.level.block.Blocks.WATER.defaultBlockState() : net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+            for (int dy = 0; dy < 3; dy++) level.setBlock(base.above(dy), fill, 2);
+            for (boolean helmet : new boolean[] {false, true}) {
+                wearer.setItemSlot(EquipmentSlot.HEAD, helmet ? stack(server, "minecraft:turtle_helmet", ench("minecraft:aqua_affinity", 1)) : ItemStack.EMPTY);
+                for (Object[] tool : tools) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Integer> e = (Map<String, Integer>) tool[1];
+                    wearer.getInventory().setSelectedSlot(0);
+                    wearer.setItemSlot(EquipmentSlot.MAINHAND, tool[0] == null ? ItemStack.EMPTY : stack(server, (String) tool[0], e));
+                    CombatVectors.call(wearer, "detectEquipmentUpdates");
+                    for (boolean onGround : new boolean[] {true, false}) {
+                        wearer.setPos(8.5, 100.0, 8.5);
+                        wearer.setOnGround(onGround);
+                        CombatVectors.call(wearer, "updateFluidInteraction");
+                        for (String b : blocks) {
+                            var state = BuiltInRegistries.BLOCK.getValue(Identifier.parse(b)).defaultBlockState();
+                            Map<String, Object> m = line("destroy_speed");
+                            m.put("item", tool[0]);
+                            m.put("enchantments", e);
+                            m.put("helmet_aqua_affinity", helmet);
+                            m.put("on_ground", onGround);
+                            m.put("eye_in_water", wearer.isEyeInFluid(net.minecraft.tags.FluidTags.WATER));
+                            m.put("block", b);
+                            m.put("mining_efficiency", wearer.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.MINING_EFFICIENCY));
+                            m.put("submerged_mining_speed", wearer.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.SUBMERGED_MINING_SPEED));
+                            m.put("result", wearer.getDestroySpeed(state));
+                            out.add(CombatVectors.toJson(m));
+                        }
+                    }
+                }
+            }
+        }
+        for (int dy = 0; dy < 3; dy++) level.setBlock(base.above(dy), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 2);
+        server.getPlayerList().remove(attacker);
+        server.getPlayerList().remove(wearer);
     }
 }

@@ -1,10 +1,12 @@
 //! Breaking blocks (`ServerPlayerGameMode.handleBlockBreakAction`, `destroyBlock`, `tick`):
 //! creative players break at once; in survival the client reports when it starts and stops
 //! digging, and the server accepts the break once the held tool had time to break the block
-//! (or a little later, on its own clock). Efficiency, Haste, Mining Fatigue and underwater
-//! digging do not change the speed yet.
+//! (or a little later, on its own clock). The speed follows `Player.getDestroySpeed`: the
+//! tool's speed plus the `mining_efficiency` attribute (efficiency) for tools faster than the
+//! hand, times `block_break_speed`, times `submerged_mining_speed` with the eyes in water (aqua
+//! affinity raises it), a fifth in the air. Haste and Mining Fatigue do not exist yet.
 
-use crate::Player;
+use crate::{Player, combat};
 use crate::blocks::RegionLevel;
 use kiln_blocks::interact::{self, Actor};
 use kiln_blocks::{BlockPos, Level};
@@ -77,18 +79,44 @@ impl Player {
         d2 < range * range
     }
 
+    /// `Player.getDestroySpeed` (no mob effects).
+    pub(crate) fn destroy_speed(&self, state: u16, eye_in_water: bool) -> f32 {
+        let mut speed = tool_speed(self.inv.selected_item(), state);
+        if speed > 1.0 {
+            speed += self.attribute(combat::MINING_EFFICIENCY) as f32;
+        }
+        speed *= self.attribute(combat::BLOCK_BREAK_SPEED) as f32;
+        if eye_in_water {
+            speed *= self.attribute(combat::SUBMERGED_MINING_SPEED) as f32;
+        }
+        if !self.on_ground {
+            speed /= 5.0;
+        }
+        speed
+    }
+
     /// `BlockBehaviour.getDestroyProgress`: the share of the block broken per tick.
-    fn destroy_progress(&self, state: u16) -> f32 {
+    fn destroy_progress(&self, level: &RegionLevel, state: u16) -> f32 {
         let hardness = block_props::hardness(state);
         if hardness < 0.0 {
             return 0.0;
         }
-        let stack = self.inv.selected_item();
-        let mut speed = tool_speed(stack, state);
-        if !self.on_ground {
-            speed /= 5.0;
+        let speed = self.destroy_speed(state, self.eye_in_water(level));
+        speed / hardness / if has_correct_tool(self.inv.selected_item(), state) { 30.0 } else { 100.0 }
+    }
+
+    /// `isEyeInFluid(WATER)`: the water at the eyes (less 1/9, as `updateFluidOnEyes`
+    /// measures) reaches above them.
+    fn eye_in_water(&self, level: &RegionLevel) -> bool {
+        let eye = self.pos[1] + self.eye_height() - 0.1111111119389534;
+        let pos = BlockPos::new(self.pos[0].floor() as i32, eye.floor() as i32, self.pos[2].floor() as i32);
+        let fluid = kiln_data::block_logic::fluid(level.block(pos));
+        if fluid.kind != kiln_data::block_logic::FluidKind::Water {
+            return false;
         }
-        speed / hardness / if has_correct_tool(stack, state) { 30.0 } else { 100.0 }
+        let above = kiln_data::block_logic::fluid(level.block(pos.above()));
+        let height = if above.kind == fluid.kind { 1.0 } else { fluid.amount as f32 / 9.0 };
+        pos.y as f64 + height as f64 > eye
     }
 
     fn actor(&self) -> Actor {
@@ -125,7 +153,7 @@ pub(crate) fn player_action(p: &mut Player, level: &mut RegionLevel, action: i32
                 return;
             }
             let state = level.block(bp);
-            let progress = if is_air(state) { 1.0 } else { p.destroy_progress(state) };
+            let progress = if is_air(state) { 1.0 } else { p.destroy_progress(level, state) };
             if !is_air(state) && progress >= 1.0 {
                 destroy_or_resend(p, level, pos);
                 return;
@@ -143,7 +171,7 @@ pub(crate) fn player_action(p: &mut Player, level: &mut RegionLevel, action: i32
             if is_air(state) {
                 return;
             }
-            let progress = p.destroy_progress(state) * (now - dig.start + 1) as f32;
+            let progress = p.destroy_progress(level, state) * (now - dig.start + 1) as f32;
             if progress >= 0.7 {
                 p.digging = None;
                 level.out.destruction.push((p.entity_id, pos, -1));
@@ -175,7 +203,7 @@ pub(crate) fn tick(p: &mut Player, level: &mut RegionLevel) {
         let state = level.block(block_pos(dig.pos));
         if is_air(state) {
             p.delayed_destroy = None;
-        } else if p.destroy_progress(state) * (now - dig.start + 1) as f32 >= 1.0 {
+        } else if p.destroy_progress(level, state) * (now - dig.start + 1) as f32 >= 1.0 {
             p.delayed_destroy = None;
             destroy_block(p, level, dig.pos);
         }
@@ -188,7 +216,7 @@ pub(crate) fn tick(p: &mut Player, level: &mut RegionLevel) {
         }
         let progress = {
             let dig = *dig;
-            p.destroy_progress(state) * (now - dig.start + 1) as f32
+            p.destroy_progress(level, state) * (now - dig.start + 1) as f32
         };
         let dig = p.digging.as_mut().unwrap();
         let stage = (progress * 10.0) as i32;
@@ -227,7 +255,7 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     if removed && !actor.creative {
         let per_block = p.inv.selected_item().get(keys::TOOL).map_or(0, |t| t.damage_per_block);
         if per_block > 0 && block_props::hardness(state) != 0.0 {
-            p.hurt_and_break(kiln_item::component::EquipmentSlot::MainHand, per_block);
+            p.hurt_and_break(kiln_item::component::EquipmentSlot::MainHand, per_block, None);
         }
     }
     // `Block.playerDestroy`, which runs when the player can harvest the block.
