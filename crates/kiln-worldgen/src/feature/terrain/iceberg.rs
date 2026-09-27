@@ -8,6 +8,7 @@ use crate::pos::BlockPos;
 use crate::random::WorldgenRandom;
 use crate::region::Region;
 use kiln_javamath::math::clamp;
+use kiln_javamath::trig::{cos, sin};
 use kiln_javamath::random::RandomSource;
 use std::f64::consts::PI;
 
@@ -176,8 +177,8 @@ fn signed_distance_circle(x: i32, z: i32, center: BlockPos, radius: i32, random:
 
 fn signed_distance_ellipse(x: i32, z: i32, center: BlockPos, a: i32, c: i32, angle: f64) -> f64 {
     let (dx, dz) = ((x - center.x) as f64, (z - center.z) as f64);
-    let u = (dx * angle.cos() - dz * angle.sin()) / a as f64;
-    let v = (dx * angle.sin() + dz * angle.cos()) / c as f64;
+    let u = (dx * cos(angle) - dz * sin(angle)) / a as f64;
+    let v = (dx * sin(angle) + dz * cos(angle)) / c as f64;
     u * u + v * v - 1.0
 }
 

@@ -153,8 +153,8 @@ fn spikes_for_seed(seed: i64) -> Vec<EndSpike> {
             let angle = 2.0 * (-PI + 0.314_159_265_358_979_3 * i as f64);
             let n = order[i];
             EndSpike {
-                center_x: floor(42.0 * angle.cos()),
-                center_z: floor(42.0 * angle.sin()),
+                center_x: floor(42.0 * kiln_javamath::trig::cos(angle)),
+                center_z: floor(42.0 * kiln_javamath::trig::sin(angle)),
                 radius: 2 + n / 3,
                 height: 76 + n * 3,
                 guarded: n == 1 || n == 2,
