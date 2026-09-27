@@ -15,7 +15,7 @@
               {"type": "minecraft:set_components", "components": {"minecraft:repair_cost": 3, "minecraft:rarity": "epic", "!minecraft:tool": {}}},
               {"type": "minecraft:set_name", "name": {"text": "Blade", "color": "gold"}},
               {"type": "minecraft:set_name", "name": "Item name", "target": "item_name"},
-              {"type": "minecraft:set_lore", "lore": ["one", "two"], "mode": "append"},
+              {"type": "minecraft:set_lore", "lore": ["one", "two", {"text": "plain"}, ["a", "b"], {"text": "t", "extra": ["x", {"text": "y"}]}, {"translate": "item.minecraft.stick", "with": [{"text": "w"}]}, {"text": "", "color": "red"}], "mode": "append"},
               {"type": "minecraft:set_lore", "lore": ["zero"], "mode": "insert", "offset": 0},
               {"type": "minecraft:set_lore", "lore": ["middle"], "mode": "replace_section", "offset": 1, "size": 1},
               {"type": "minecraft:toggle_tooltips", "toggles": {"minecraft:enchantments": false, "minecraft:attribute_modifiers": false}},

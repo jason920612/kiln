@@ -32,15 +32,15 @@ pub enum Condition {
     AllOf(Vec<Ref<Condition>>),
     RandomChance(Ref<FloatProvider>),
     RandomChanceWithEnchantedBonus { unenchanted_chance: f32, enchanted_chance: LevelBasedValue, enchantment: i32 },
-    EntityProperties { target: EntityTarget, predicate: Option<EntityPredicate> },
+    EntityProperties { target: EntityTarget, predicate: Option<Box<EntityPredicate>> },
     KilledByPlayer,
     EntityScores { target: EntityTarget, scores: Vec<(String, IntRange)> },
-    MatchBlock(BlockPredicate),
-    MatchTool(Option<ItemPredicate>),
+    MatchBlock(Box<BlockPredicate>),
+    MatchTool(Option<Box<ItemPredicate>>),
     TableBonus { enchantment: i32, chances: Vec<f32> },
     SurvivesExplosion,
-    DamageSourceProperties(Option<DamageSourcePredicate>),
-    LocationCheck { predicate: Option<LocationPredicate>, offset: [i32; 3] },
+    DamageSourceProperties(Option<Box<DamageSourcePredicate>>),
+    LocationCheck { predicate: Option<Box<LocationPredicate>>, offset: [i32; 3] },
     WeatherCheck { raining: Option<bool>, thundering: Option<bool> },
     TimeCheck { clock: Identifier, period: Option<i64>, value: IntRange },
     IntValueCheck { value: Ref<IntProvider>, range: IntRange },
@@ -116,7 +116,7 @@ impl Condition {
             }
             "minecraft:entity_properties" => Condition::EntityProperties {
                 target: req(j, "entity", entity_target)?,
-                predicate: opt(j, "predicate", |v| EntityPredicate::parse(p, v))?,
+                predicate: opt(j, "predicate", |v| EntityPredicate::parse(p, v).map(Box::new))?,
             },
             "minecraft:killed_by_player" => Condition::KilledByPlayer,
             "minecraft:entity_scores" => Condition::EntityScores {
@@ -125,8 +125,8 @@ impl Condition {
                     obj(v)?.iter().map(|(k, r)| Ok((k.clone(), IntRange::parse(p, r).map_err(|e| e.at(k))?))).collect()
                 })?,
             },
-            "minecraft:match_block" => Condition::MatchBlock(BlockPredicate::parse(p, j)?),
-            "minecraft:match_tool" => Condition::MatchTool(opt(j, "predicate", predicate::item_predicate)?),
+            "minecraft:match_block" => Condition::MatchBlock(Box::new(BlockPredicate::parse(p, j)?)),
+            "minecraft:match_tool" => Condition::MatchTool(opt(j, "predicate", |v| predicate::item_predicate(v).map(Box::new))?),
             "minecraft:table_bonus" => Condition::TableBonus {
                 enchantment: req(j, "enchantment", |v| p.id(v, registry::ENCHANTMENT))?,
                 chances: req(j, "chances", |v| {
@@ -139,12 +139,12 @@ impl Condition {
             },
             "minecraft:survives_explosion" => Condition::SurvivesExplosion,
             "minecraft:damage_source_properties" => {
-                Condition::DamageSourceProperties(opt(j, "predicate", |v| DamageSourcePredicate::parse(p, v))?)
+                Condition::DamageSourceProperties(opt(j, "predicate", |v| DamageSourcePredicate::parse(p, v).map(Box::new))?)
             }
             "minecraft:location_check" => {
                 let off = |k: &str| opt_or(j, k, 0, crate::parse::int);
                 Condition::LocationCheck {
-                    predicate: opt(j, "predicate", |v| LocationPredicate::parse(p, v))?,
+                    predicate: opt(j, "predicate", |v| LocationPredicate::parse(p, v).map(Box::new))?,
                     offset: [off("offsetX")?, off("offsetY")?, off("offsetZ")?],
                 }
             }
@@ -308,13 +308,13 @@ impl Eval<'_> {
             FloatRange::Line { min, max } => {
                 if let Some(min) = min {
                     let m = self.float(min);
-                    if !(v >= m) {
+                    if !matches!(v.partial_cmp(&m), Some(std::cmp::Ordering::Greater | std::cmp::Ordering::Equal)) {
                         return false;
                     }
                 }
                 if let Some(max) = max {
                     let m = self.float(max);
-                    if !(v <= m) {
+                    if !matches!(v.partial_cmp(&m), Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)) {
                         return false;
                     }
                 }

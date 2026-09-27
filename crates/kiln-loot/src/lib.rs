@@ -31,6 +31,7 @@ pub mod slot;
 pub mod stack;
 pub mod table;
 pub mod tags;
+pub mod text;
 
 pub use condition::Condition;
 pub use context::{EmptyContext, EntityTarget, LootContext, Source};

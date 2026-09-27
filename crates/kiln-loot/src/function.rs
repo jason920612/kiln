@@ -227,7 +227,7 @@ fn container_kind(j: &Json) -> PResult<ContainerKind> {
 }
 
 fn text(j: &Json) -> PResult<Text> {
-    value(j, Text::from_value)
+    crate::text::parse(j)
 }
 
 /// `ListOperation.StandAlone`: `{values, mode...}`.
