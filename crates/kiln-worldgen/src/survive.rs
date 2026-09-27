@@ -141,6 +141,14 @@ fn class_can_survive(class: &str, state: u16, r: &mut Region, p: BlockPos) -> Op
         "BaseCoralPlantTypeBlock" => is_face_sturdy(r.get(p.below()), Dir::Up, Support::Full),
         "LeafLitterBlock" => is_face_sturdy(r.get(p.below()), Dir::Up, Support::Full),
         "CarpetBlock" => !crate::blocks::is_air(r.get(p.below())),
+        "MossyCarpetBlock" => {
+            let below = r.get(p.below());
+            if prop(state, "bottom") == Some("true") {
+                !crate::blocks::is_air(below)
+            } else {
+                same_block(below, state) && prop(below, "bottom") == Some("true")
+            }
+        }
         "ShelfMushroomBlock" => {
             let facing = prop(state, "facing").and_then(Dir::by_name).unwrap_or(Dir::North);
             is_face_sturdy(r.get(p.relative(facing.opposite())), facing, Support::Full)

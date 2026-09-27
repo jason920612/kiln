@@ -94,6 +94,14 @@ fn class_update_shape(class: &str, r: &mut Region, s: u16, p: BlockPos, d: Dir, 
             let below = r.get(p.below());
             Some(with_prop(s, "tip", if same_block(below, s) { "false" } else { "true" }))
         }
+        "MossyCarpetBlock" => {
+            if !survives(r) {
+                return Some(state::AIR);
+            }
+            let updated = mossy_carpet_updated_state(r, s, p, false);
+            let faces = prop(updated, "bottom") == Some("true") || Dir::HORIZONTAL.iter().any(|d| prop(updated, d.name()) != Some("none"));
+            Some(if faces { updated } else { state::AIR })
+        }
         "SnowyBlock" => (d == Dir::Up).then(|| with_prop(s, "snowy", if vtags::is(ns, "snow") { "true" } else { "false" })),
         "CocoaBlock" => (prop(s, "facing") == Some(d.name()) && !survives(r)).then_some(state::AIR),
         "ShelfMushroomBlock" => (prop(s, "facing") == Some(d.opposite().name()) && !survives(r)).then_some(state::AIR),
@@ -158,6 +166,36 @@ fn collision_face_full(s: u16, face: Dir) -> bool {
         }
     }
     true
+}
+
+/// `MossyCarpetBlock.getUpdatedState`.
+fn mossy_carpet_updated_state(r: &mut Region, s: u16, p: BlockPos, create_sides: bool) -> u16 {
+    let mut s = s;
+    let base = prop(s, "bottom") == Some("true");
+    let create = create_sides || base;
+    let (mut above, mut below): (Option<u16>, Option<u16>) = (None, None);
+    for d in Dir::HORIZONTAL {
+        let face = d.name();
+        let mut side = if d != Dir::Up && acceptable_neighbour(r, p.relative(d), d) {
+            if create { "low" } else { prop(s, face).unwrap_or("none") }
+        } else {
+            "none"
+        };
+        if side == "low" {
+            let a = *above.get_or_insert_with(|| r.get(p.above()));
+            if same_block(a, state::PALE_MOSS_CARPET) && prop(a, face) != Some("none") && prop(a, "bottom") != Some("true") {
+                side = "tall";
+            }
+            if !base {
+                let b = *below.get_or_insert_with(|| r.get(p.below()));
+                if same_block(b, state::PALE_MOSS_CARPET) && prop(b, face) == Some("none") {
+                    side = "none";
+                }
+            }
+        }
+        s = with_prop(s, face, side);
+    }
+    s
 }
 
 /// `VineBlock.isAcceptableNeighbour`.

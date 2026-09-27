@@ -58,6 +58,8 @@ impl JHashSet {
         self.bins[i].push(p);
         if self.bins[i].len() > TREEIFY_THRESHOLD && self.bins.len() < MIN_TREEIFY_CAPACITY {
             self.resize();
+        } else if self.bins[i].len() > TREEIFY_THRESHOLD {
+            eprintln!("JHASHSET TREEIFY {p:?}");
         }
         self.len += 1;
         if self.len > self.bins.len() * 3 / 4 {
@@ -101,6 +103,38 @@ impl JHashSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dump_order() {
+        use kiln_javamath::random::{LegacyRandom, RandomSource};
+        let mut r = LegacyRandom::new(42);
+        let mut s = JHashSet::new();
+        for _ in 0..300 {
+            let x = r.next_int_bounded(20) - 10;
+            let y = 60 + r.next_int_bounded(12);
+            let z = r.next_int_bounded(20) - 10;
+            s.insert(BlockPos::new(x, y, z));
+        }
+        for i in 0..12 {
+            s.insert(BlockPos::new(-500 + 31 * i, 100 - i, 7));
+        }
+        let mut out = String::new();
+        for p in s.iter() {
+            out += &format!("{},{},{};", p.x, p.y, p.z);
+        }
+        println!("ORDER {out}");
+        for _ in 0..5 {
+            s.pop_first();
+        }
+        let mut out = String::new();
+        for p in s.iter() {
+            out += &format!("{},{},{};", p.x, p.y, p.z);
+            if out.len() > 200 {
+                break;
+            }
+        }
+        println!("ORDER {out}");
+    }
 
     #[test]
     fn iterates_like_java() {
