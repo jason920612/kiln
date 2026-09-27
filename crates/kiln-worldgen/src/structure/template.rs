@@ -130,6 +130,9 @@ pub struct PlaceSettings<'a> {
     pub liquid: LiquidSettings,
     /// `setRandom`: when unset, each use seeds a fresh legacy source from the position.
     pub random: Option<WorldgenRandom>,
+    /// The settings' random is the one `placeInWorld` is given (`setRandom(random)` with the
+    /// same source): every draw of the placement goes to `random` above.
+    pub shared_random: bool,
     pub processors: Vec<&'a Processor>,
     pub known_shape: bool,
     pub finalize_entities: bool,
@@ -146,6 +149,7 @@ impl Default for PlaceSettings<'_> {
             bbox: None,
             liquid: LiquidSettings::ApplyWaterlogging,
             random: None,
+            shared_random: false,
             processors: Vec::new(),
             known_shape: false,
             finalize_entities: false,
@@ -281,6 +285,25 @@ impl Template {
         out
     }
 
+    /// `placeInWorld` with `settings.setRandom(random)` on the same source (features).
+    pub fn place_with_shared_random(
+        &self,
+        r: &mut Region,
+        p: BlockPos,
+        pivot: BlockPos,
+        settings: &mut PlaceSettings,
+        random: &mut WorldgenRandom,
+        flags: i32,
+    ) -> bool {
+        settings.random = Some(random.clone());
+        settings.shared_random = true;
+        let placed = self.place_in_world(r, p, pivot, settings, &mut WorldgenRandom::legacy(0), flags);
+        if let Some(back) = settings.random.take() {
+            *random = back;
+        }
+        placed
+    }
+
     /// `placeInWorld(level, pos, pivot, settings, random, flags)`.
     #[allow(clippy::too_many_arguments)]
     pub fn place_in_world(
@@ -334,7 +357,11 @@ impl Template {
                     _ => Vec::new(),
                 };
                 if is_randomizable_container(r.get(at)) {
-                    put(&mut fields, "LootTableSeed", Tag::Long(random.next_long()));
+                    let seed = match (settings.shared_random, settings.random.as_mut()) {
+                        (true, Some(shared)) => shared.next_long(),
+                        _ => random.next_long(),
+                    };
+                    put(&mut fields, "LootTableSeed", Tag::Long(seed));
                 }
                 load_block_entity(r, at, fields);
             }

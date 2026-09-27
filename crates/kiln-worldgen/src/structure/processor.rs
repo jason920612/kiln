@@ -516,6 +516,7 @@ pub fn parse_state_string(text: &str) -> Option<u16> {
 pub type ProcessorList = Arc<Vec<Processor>>;
 
 /// Processor lists by id, and the inline ones pool elements define.
+#[derive(Debug)]
 pub struct ProcessorLists {
     by_id: HashMap<String, ProcessorList>,
 }

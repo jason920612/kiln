@@ -84,7 +84,7 @@ impl RootSystem {
         if self.level_test_distance > 0 {
             for i in 0..4 {
                 let q = p.relative_n(Dir::from_2d(i), self.level_test_distance);
-                if !is_air(r.get(q.below_n(self.max_level_deviation))) || !is_air(r.get(q.above_n(self.max_level_deviation))) {
+                if is_air(r.get(q.below_n(self.max_level_deviation))) || !is_air(r.get(q.above_n(self.max_level_deviation))) {
                     return false;
                 }
             }

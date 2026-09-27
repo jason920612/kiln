@@ -76,6 +76,9 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if logic::is_instance(s, C::LeavesBlock) {
         return misc::leaves_update_shape(level, s, pos, neighbor_state);
     }
+    if logic::is_instance(s, C::SpeleothemBlock) {
+        return speleothem_update_shape(level, s, pos, dir);
+    }
     if logic::is_instance(s, C::FallingBlock) {
         misc::falling_schedule(level, s, pos);
         return s;
@@ -90,6 +93,48 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         return new;
     }
     s
+}
+
+/// `isSpeleothemWithDirection`: in `#speleothems` with this tip direction.
+fn speleothem_toward(s: u16, dir: Direction) -> bool {
+    crate::tags::is(s, "minecraft:speleothems") && state::get_dir(s, "vertical_direction") == Some(dir)
+}
+
+/// `SpeleothemBlock.updateShape` (pointed dripstone, sulfur spikes): thickness follows the
+/// column; a tip that lost its support schedules its fall.
+fn speleothem_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Direction) -> u16 {
+    if dir != Direction::Up && dir != Direction::Down {
+        return s;
+    }
+    let tip = state::get_dir(s, "vertical_direction").unwrap_or(Direction::Up);
+    let id = BlockId::of(s);
+    if tip == Direction::Down && level.block_ticks().has_scheduled_tick(pos, id) {
+        return s;
+    }
+    if dir == tip.opposite() {
+        let behind = pos.relative(tip.opposite());
+        let b = level.block(behind);
+        let valid = sturdy(b, tip, Support::Full) || (speleothem_toward(b, tip) && state::same_block(b, s));
+        if !valid {
+            let delay = if tip == Direction::Down { 2 } else { 1 };
+            crate::level::schedule_block_tick(level, pos, id, delay, crate::ticks::TickPriority::Normal);
+            return s;
+        }
+    }
+    let merge = state::get(s, "thickness") == Some("tip_merge");
+    let ahead = level.block(pos.relative(tip));
+    let thickness = if speleothem_toward(ahead, tip.opposite()) && state::same_block(ahead, s) {
+        if merge || state::get(ahead, "thickness") == Some("tip_merge") { "tip_merge" } else { "tip" }
+    } else if !speleothem_toward(ahead, tip) {
+        "tip"
+    } else if matches!(state::get(ahead, "thickness"), Some("tip" | "tip_merge")) {
+        "frustum"
+    } else if !speleothem_toward(level.block(pos.relative(tip.opposite())), tip) {
+        "base"
+    } else {
+        "middle"
+    };
+    state::set(s, "thickness", thickness)
 }
 
 /// `updateIndirectNeighbourShapes` (only redstone wire has any).

@@ -6,6 +6,7 @@
 pub mod cuboid;
 pub mod ore;
 pub mod simple;
+pub mod template;
 pub mod terrain;
 pub mod trees;
 pub mod vegetation;
@@ -36,6 +37,8 @@ pub enum Feature {
     Trees(trees::Kind),
     Terrain(terrain::Kind),
     Vegetation(vegetation::Kind),
+    Template(template::TemplateFeature),
+    Fossil(template::Fossil),
     /// A type Kiln does not implement: places nothing. Index into [`Features::gaps`].
     Unsupported(usize),
 }
@@ -57,6 +60,10 @@ pub struct Features {
     biome_features: Vec<HashSet<usize>>,
     /// Unimplemented feature types and how many placements of each were skipped.
     gaps: Vec<(String, AtomicU64)>,
+    /// Structure templates, for template and fossil features.
+    templates: std::sync::Arc<crate::structure::template::TemplateManager>,
+    /// Processor lists, while features are parsed.
+    lists: Option<crate::structure::processor::ProcessorLists>,
 }
 
 impl Features {
@@ -69,6 +76,8 @@ impl Features {
             placed_ids: HashMap::new(),
             biome_features: Vec::new(),
             gaps: Vec::new(),
+            templates: template::manager(l),
+            lists: Some(crate::structure::processor::ProcessorLists::load(l)?),
         };
         for (id, _) in &l.pack.features {
             f.ids.insert(id.clone(), f.configured.len());
@@ -87,6 +96,7 @@ impl Features {
             f.placed[i].feature = feature;
             f.placed[i].placement = placement;
         }
+        f.lists = None;
         Ok(f)
     }
 
@@ -201,6 +211,17 @@ impl Features {
             },
             "sequence" => Feature::Sequence(self.placed_list(field("features")?, l)?),
             "overlay" => Feature::Overlay(self.placed_list(field("features")?, l)?),
+            "template" | "fossil" => {
+                let lists = match &self.lists {
+                    Some(lists) => lists,
+                    None => &crate::structure::processor::ProcessorLists::load(l)?,
+                };
+                if ty == "template" {
+                    Feature::Template(template::TemplateFeature::parse(json, lists, l)?)
+                } else {
+                    Feature::Fossil(template::Fossil::parse(json, lists, l)?)
+                }
+            }
             other => {
                 if let Some(k) = trees::parse(other, json, self, l) {
                     return Ok(Feature::Trees(k?));
@@ -270,6 +291,8 @@ impl Features {
             Feature::Trees(k) => k.place(self, r, random, p),
             Feature::Terrain(k) => k.place(self, r, random, p),
             Feature::Vegetation(k) => k.place(self, r, random, p),
+            Feature::Template(f) => f.place(&self.templates, r, random, p),
+            Feature::Fossil(f) => f.place(&self.templates, r, random, p),
             Feature::Unsupported(i) => {
                 self.gaps[*i].1.fetch_add(1, Ordering::Relaxed);
                 false
@@ -319,6 +342,8 @@ impl Features {
             Feature::Trees(k) => k.type_name(),
             Feature::Terrain(k) => k.type_name(),
             Feature::Vegetation(k) => k.type_name(),
+            Feature::Template(_) => "minecraft:template",
+            Feature::Fossil(_) => "minecraft:fossil",
             Feature::Unsupported(i) => &self.gaps[*i].0,
         }
     }
