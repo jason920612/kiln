@@ -12,6 +12,7 @@ pub mod behaviour;
 pub mod block_events;
 pub mod commands;
 pub mod fluid;
+pub mod interact;
 mod java_map;
 pub mod level;
 pub mod placement;

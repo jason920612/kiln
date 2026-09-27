@@ -119,13 +119,19 @@ pub fn note_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         return;
     }
     if powered {
-        let index = state::value_index(s, "instrument").unwrap_or(0) as u8;
-        if works_above(index) || is_air(level.block(pos.above())) {
-            block_event(level, pos, BlockId::of(s), 0, 0);
-            level.effect(Effect::GameEvent { pos, event: "minecraft:note_block_play" });
-        }
+        play_note(level, s, pos);
     }
     set_block_and_update(level, pos, state::set_bool(s, "powered", powered));
+}
+
+/// `NoteBlock.playNote`: the note sounds (through a block event) unless a block on top
+/// muffles it.
+pub fn play_note<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let index = state::value_index(s, "instrument").unwrap_or(0) as u8;
+    if works_above(index) || is_air(level.block(pos.above())) {
+        block_event(level, pos, BlockId::of(s), 0, 0);
+        level.effect(Effect::GameEvent { pos, event: "minecraft:note_block_play" });
+    }
 }
 
 /// `NoteBlock.triggerEvent`: the note sounds for everyone nearby.

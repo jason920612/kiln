@@ -159,6 +159,24 @@ impl MovingPistons {
         self.entities.remove(&pos)
     }
 
+    /// Removes every moving piston, in ticker order (to move them to another level; insert
+    /// them there in the same order).
+    pub fn take_all(&mut self) -> Vec<(BlockPos, MovingPiston)> {
+        let mut out = Vec::with_capacity(self.entities.len());
+        for &slot in self.order.iter().chain(&self.pending) {
+            if let Some(pos) = self.slots[slot]
+                && let Some(m) = self.entities.remove(&pos)
+            {
+                out.push((pos, m));
+            }
+        }
+        let mut rest: Vec<_> = self.entities.drain().collect();
+        rest.sort_by_key(|(p, _)| *p);
+        out.extend(rest);
+        *self = Self::default();
+        out
+    }
+
     /// All moving pistons (for saving), in no particular order.
     pub fn iter(&self) -> impl Iterator<Item = (BlockPos, &MovingPiston)> {
         self.entities.iter().map(|(p, m)| (*p, m))

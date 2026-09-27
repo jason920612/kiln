@@ -4,7 +4,7 @@
 //! coordinates, validate, call the host for the effect and send vanilla's feedback; the host
 //! only mutates game state.
 
-use crate::blocks::UpdateFlags;
+use crate::blocks::{BlockInput, UpdateFlags};
 use crate::coords::{Coordinates, wrap_degrees};
 use crate::error::CommandError;
 use crate::nbt_path::CommandStorage;
@@ -483,6 +483,13 @@ pub trait Host: SelectorWorld {
     /// into the block's entity; hosts without block entity storage ignore it (so re-applying
     /// data to an unchanged block reports no change).
     fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool;
+    /// `BlockInput.place`: without [`UpdateFlags::KNOWN_SHAPE`] vanilla shapes the state by its
+    /// neighbours, then re-applies the properties the input names, and sets it with `flags`.
+    /// Hosts without shape updates place the input's state as given.
+    fn place_block(&mut self, dimension: &str, pos: [i32; 3], block: &BlockInput, flags: UpdateFlags) -> bool {
+        let state = block.overwrite_defined(block.state);
+        self.set_block(dimension, pos, state, block.nbt.as_ref(), flags)
+    }
     /// `Level.updateNeighboursOnBlockSet`: neighbour reactions to a change made without
     /// `strict`.
     fn update_neighbours(&mut self, _dimension: &str, _pos: [i32; 3], _old: u16) {}

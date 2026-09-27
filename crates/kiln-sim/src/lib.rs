@@ -17,14 +17,15 @@
 //!   arrival order, with access to everything.
 //! - **G** (serial): console commands, world time, autosave; players teleported into another
 //!   region's loaded cells move there.
-//! - **L** (parallel): each region streams chunks, tracks entities, sends movement and light,
-//!   and flushes its players' packets.
+//! - **L** (parallel): each region streams chunks, runs block ticks, random ticks and block
+//!   events, tracks entities, sends movement and light, and flushes its players' packets.
 
+mod blocks;
 mod commands;
+mod digging;
 mod entities;
 mod generation;
 mod health;
-mod interact;
 mod movement;
 mod persist;
 mod players;
@@ -186,6 +187,10 @@ struct Player {
     /// Damage type of a hit this tick, for viewers' damage effect.
     damaged: Option<i32>,
     death_location: Option<[i32; 3]>,
+    /// The block being broken in survival.
+    digging: Option<digging::Dig>,
+    /// A break the client finished before the server's clock agreed.
+    delayed_destroy: Option<digging::Dig>,
 }
 
 impl Player {
@@ -314,7 +319,7 @@ impl Player {
 /// A dimension's chunks: loaded cells grouped into regions, and where chunks come from.
 struct Dim {
     provider: ChunkProvider,
-    regions: Regions<Cell, entities::Entities>,
+    regions: Regions<Cell, (entities::Entities, blocks::RegionBlocks)>,
     regionizer: Regionizer,
     /// Chunks loaded for cells without an owner yet; installed once the regionizer ran.
     pending: HashMap<ChunkPos, Chunk>,
@@ -329,6 +334,8 @@ struct Dim {
     emptied: Vec<kiln_world::CellPos>,
     /// Generation threads, when missing chunks come from an expensive generator.
     generation: Option<generation::GenPool>,
+    /// World age, for the scheduled ticks of chunks that load or unload.
+    game_time: i64,
 }
 
 /// Serial access that loads chunks on demand: into their region if the cell has an owner,
@@ -360,13 +367,26 @@ impl Dim {
     /// Puts a loaded chunk in its region, or pending until its cell gets one. Returns whether
     /// it went straight into a region.
     fn install(&mut self, pos: ChunkPos, chunk: Chunk) -> bool {
-        if let Some(cell) = self.regions.cell_mut(pos.cell()) {
-            cell.insert(pos, chunk);
-            return true;
+        match self.put(pos, chunk) {
+            Ok(()) => true,
+            Err(chunk) => {
+                self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
+                self.pending.insert(pos, chunk);
+                false
+            }
         }
-        self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
-        self.pending.insert(pos, chunk);
-        false
+    }
+
+    /// Puts a chunk into the region owning its cell, whose block machinery takes its
+    /// scheduled ticks; gives the chunk back if the cell has no region.
+    #[allow(clippy::result_large_err)]
+    fn put(&mut self, pos: ChunkPos, mut chunk: Chunk) -> Result<(), Chunk> {
+        let Some(region) = self.regions.at_mut(pos.cell()) else { return Err(chunk) };
+        let (cells, part) = region.cells_and_part_mut();
+        let Some(cell) = cells.get_mut(pos.cell()) else { return Err(chunk) };
+        part.1.chunk_loaded(pos, &mut chunk, self.game_time);
+        cell.insert(pos, chunk);
+        Ok(())
     }
 
     /// Loads `pos` from storage now, or queues it for generation off the tick thread.
@@ -410,12 +430,15 @@ impl Dim {
                 continue;
             }
             let stores = self.provider.stores();
-            let Some(cell) = self.regions.cell_mut(pos.cell()) else { continue };
+            let Some(region) = self.regions.at_mut(pos.cell()) else { continue };
+            let (cells, part) = region.cells_and_part_mut();
+            let Some(cell) = cells.get_mut(pos.cell()) else { continue };
             // Without storage, changed chunks stay loaded or the changes would be lost.
             if !stores && cell.chunk(pos).is_some_and(Chunk::modified) {
                 continue;
             }
             if let Some(mut chunk) = cell.remove(pos) {
+                part.1.chunk_unloaded(pos, &mut chunk, self.game_time);
                 self.provider.unload(pos, &mut chunk);
                 unloaded += 1;
             }
@@ -436,14 +459,9 @@ impl Dim {
         }
         let deltas = self.regionizer.apply(&mut self.regions, tick, &mut DefaultCells);
         for (pos, chunk) in std::mem::take(&mut self.pending) {
-            match self.regions.cell_mut(pos.cell()) {
-                Some(cell) => {
-                    cell.insert(pos, chunk);
-                }
-                None => {
-                    self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
-                    self.pending.insert(pos, chunk);
-                }
+            if let Err(chunk) = self.put(pos, chunk) {
+                self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
+                self.pending.insert(pos, chunk);
             }
         }
         for d in &deltas {
@@ -578,6 +596,7 @@ impl Sim {
                 spawns: Vec::new(),
                 emptied: Vec::new(),
                 generation,
+                game_time: level.as_ref().map_or(0, |l| l.game_time),
             },
             spawn,
             spawn_rot: level.as_ref().map_or([0.0; 2], |l| [l.spawn.yaw, l.spawn.pitch]),
@@ -740,7 +759,7 @@ impl Sim {
 
     /// Positions of the non-player entities, by type name (for tests and tools).
     pub fn entities(&self) -> Vec<(&'static str, [f64; 3])> {
-        let mut out: Vec<_> = self.dim.regions.iter().flat_map(|r| r.part().list.iter()).map(|e| (e.id, e.kind.name, e.pos)).collect();
+        let mut out: Vec<_> = self.dim.regions.iter().flat_map(|r| r.part().0.list.iter()).map(|e| (e.id, e.kind.name, e.pos)).collect();
         out.sort_by_key(|&(id, ..)| id);
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
     }
@@ -770,7 +789,51 @@ impl Sim {
             biome_count: self.dim.provider.biome_count,
             now: Instant::now(),
             keep_alive_id: self.started.elapsed().as_millis() as i64,
+            blocks: self.block_env(),
         }
+    }
+
+    fn block_env(&self) -> blocks::BlockEnv {
+        let d = self.dim.provider.dimension;
+        blocks::BlockEnv {
+            game_time: self.game_time,
+            rules: kiln_blocks::Rules {
+                water_source_conversion: self.rule_bool("minecraft:water_source_conversion"),
+                lava_source_conversion: self.rule_bool("minecraft:lava_source_conversion"),
+                fast_lava: false,
+                water_evaporates: false,
+                tnt_explodes: self.rule_bool("minecraft:tnt_explodes"),
+            },
+            min_y: d.min_y,
+            height: d.height,
+            random_tick_speed: self.rule_int("minecraft:random_tick_speed"),
+            drops: self.rule_bool("minecraft:block_drops"),
+            simulation_distance: self.config.simulation_distance as i32,
+            seed: self.config.noise.as_ref().map_or(0, |n| n.seed),
+        }
+    }
+
+    /// Runs block work at `pos` in the region that owns it (serial phases), then sends what
+    /// changed to everyone who has the chunk and carries out the effects. `None` if the
+    /// position's cell has no region (its chunk is not loaded).
+    pub(crate) fn with_level<R>(&mut self, pos: [i32; 3], f: impl FnOnce(&mut blocks::RegionLevel) -> R) -> Option<R> {
+        let env = self.block_env();
+        let Sim { dim, players, .. } = self;
+        let region = dim.regions.at_mut(ChunkPos::of_block(pos[0], pos[2]).cell())?;
+        let id = region.id();
+        let (cells, part) = region.cells_and_part_mut();
+        let bodies = blocks::entity_boxes(players.values().filter(|p| p.region == id), &part.0);
+        let mut out = blocks::BlockOut::default();
+        let result = {
+            let mut level =
+                blocks::RegionLevel { cells: &mut *cells, blocks: &mut part.1, env: &env, out: &mut out, bodies: &bodies, actor: None };
+            let result = f(&mut level);
+            level.settle();
+            result
+        };
+        let mut everyone: Vec<&mut Player> = players.values_mut().collect();
+        blocks::finish(cells, out, &mut everyone, &mut dim.spawns, &env);
+        Some(result)
     }
 
     /// Hands every region its cells, its players (sorted by connection) and its packets, and
@@ -792,8 +855,8 @@ impl Sim {
                 let mut players = buckets.remove(&id).unwrap_or_default();
                 players.sort_unstable_by_key(|p| p.conn);
                 let packets = packets.remove(&id).unwrap_or_default();
-                let (cells, entities) = r.cells_and_part_mut();
-                RegionWork { cells, entities, players, packets, out: RegionOut::default() }
+                let (cells, (entities, blocks)) = r.cells_and_part_mut();
+                RegionWork { cells, entities, blocks, players, packets, out: RegionOut::default() }
             })
             .collect();
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
@@ -904,7 +967,7 @@ impl Sim {
             let Some(region) = self.dim.regions.at_mut(entities::chunk_of(spawn.pos).cell()) else { continue };
             let id = self.next_entity_id;
             self.next_entity_id += 1;
-            region.part_mut().list.push(entities::Entity::new(id, spawn));
+            region.part_mut().0.list.push(entities::Entity::new(id, spawn));
         }
     }
 
@@ -987,13 +1050,20 @@ impl Sim {
                 let pkt = players::chat_player(&p.name, &message);
                 self.broadcast(pkt);
             }
+            // A region packet queued behind a serial one: it runs here, in the player's region.
             pkt => {
                 let env = self.env();
-                let Some(p) = self.players.get_mut(&conn) else { return };
-                let (mut changes, mut deaths) = (Vec::new(), Vec::new());
-                let mut fx = region::Fx { changes: &mut changes, spawns: &mut self.dim.spawns, deaths: &mut deaths };
-                region::local_packet(p, &mut self.dim.regions, &env, pkt, &mut fx);
-                region::notify_block_changes(self.players.values_mut(), &changes);
+                let Some(id) = self.players.get(&conn).map(|p| p.region) else { return };
+                let Some(region) = self.dim.regions.get_mut(id) else { return };
+                let (cells, part) = region.cells_and_part_mut();
+                let bodies = blocks::entity_boxes(self.players.values().filter(|p| p.region == id), &part.0);
+                let (mut out, mut deaths) = (blocks::BlockOut::default(), Vec::new());
+                let p = self.players.get_mut(&conn).unwrap();
+                let mut world = region::World { cells: &mut *cells, blocks: &mut part.1 };
+                let mut fx = region::Fx { blocks: &mut out, bodies: &bodies, spawns: &mut self.dim.spawns, deaths: &mut deaths };
+                region::local_packet(p, &mut world, &env, pkt, &mut fx);
+                let mut everyone: Vec<&mut Player> = self.players.values_mut().collect();
+                blocks::finish(cells, out, &mut everyone, &mut self.dim.spawns, &env.blocks);
                 self.announce_deaths(deaths);
             }
         }
@@ -1016,6 +1086,15 @@ impl Sim {
 
     fn save(&mut self) {
         let start = Instant::now();
+        // Scheduled ticks and moving pistons go onto their chunks first.
+        for r in self.dim.regions.iter_mut() {
+            let (cells, part) = r.cells_and_part_mut();
+            for (cell_pos, cell) in cells.iter_mut() {
+                for (pos, chunk) in cell.chunks_mut(cell_pos) {
+                    part.1.store(pos, chunk, self.game_time);
+                }
+            }
+        }
         match self.dim.provider.save_all(&mut self.dim.regions) {
             Ok(0) => {}
             Ok(n) => info!("saved {n} chunks in {:.1} ms", start.elapsed().as_secs_f64() * 1e3),
@@ -1096,6 +1175,8 @@ impl Sim {
             died: false,
             damaged: None,
             death_location: None,
+            digging: None,
+            delayed_destroy: None,
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -1136,16 +1217,6 @@ impl Sim {
         packets::set_time(self.game_time, &[clock])
     }
 
-    /// Changes a block anywhere (serial phases): light follows, players with the chunk hear
-    /// about it. Returns whether the chunk was loaded.
-    #[allow(dead_code)]
-    fn set_block(&mut self, pos: [i32; 3], state: u16) -> bool {
-        let mut changes = Vec::new();
-        let loaded = region::set_block(&mut self.dim.regions, pos, state, &mut changes);
-        region::notify_block_changes(self.players.values_mut(), &changes);
-        loaded
-    }
-
     fn broadcast_system(&mut self, text: Tag) {
         self.broadcast(packets::system_chat(text, false));
     }
@@ -1160,6 +1231,7 @@ impl Sim {
     /// G: world age and time, autosave.
     fn tick_global(&mut self) {
         self.game_time += 1;
+        self.dim.game_time = self.game_time;
         if self.game_time % AUTOSAVE_TICKS == 0 {
             self.save();
         }

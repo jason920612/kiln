@@ -2,6 +2,7 @@
 //! in-memory layout matches the wire format, so encoding is a byte swap plus a header.
 
 use bytes::{BufMut, BytesMut};
+use kiln_data::block_props::randomly_ticks;
 use kiln_data::blocks_types::{has_fluid, is_air};
 use kiln_proto::WriteExt;
 
@@ -258,6 +259,8 @@ pub struct Section {
     pub biomes: Biomes,
     non_air: u16,
     fluids: u16,
+    /// Blocks that tick randomly (`LevelChunkSection.tickingBlockCount` plus fluids).
+    ticking: u16,
 }
 
 impl Section {
@@ -266,14 +269,17 @@ impl Section {
     }
 
     pub fn new(blocks: BlockContainer, biomes: Biomes) -> Self {
-        let (non_air, fluids) = match &blocks {
-            BlockContainer::Single(s) => (if is_air(*s) { 0 } else { 4096 }, if has_fluid(*s) { 4096 } else { 0 }),
-            _ => (0..4096).fold((0u16, 0u16), |(n, f), i| {
+        let (non_air, fluids, ticking) = match &blocks {
+            BlockContainer::Single(s) => {
+                let all = |b: bool| if b { 4096 } else { 0 };
+                (all(!is_air(*s)), all(has_fluid(*s)), all(randomly_ticks(*s)))
+            }
+            _ => (0..4096).fold((0u16, 0u16, 0u16), |(n, f, t), i| {
                 let s = blocks.get(i);
-                (n + !is_air(s) as u16, f + has_fluid(s) as u16)
+                (n + !is_air(s) as u16, f + has_fluid(s) as u16, t + randomly_ticks(s) as u16)
             }),
         };
-        Self { blocks, biomes, non_air, fluids }
+        Self { blocks, biomes, non_air, fluids, ticking }
     }
 
     pub fn get(&self, x: usize, y: usize, z: usize) -> u16 {
@@ -286,12 +292,19 @@ impl Section {
         if old != state {
             self.non_air = self.non_air + !is_air(state) as u16 - !is_air(old) as u16;
             self.fluids = self.fluids + has_fluid(state) as u16 - has_fluid(old) as u16;
+            self.ticking = self.ticking + randomly_ticks(state) as u16 - randomly_ticks(old) as u16;
         }
         old
     }
 
     pub fn is_empty(&self) -> bool {
         self.non_air == 0
+    }
+
+    /// Whether any block (or fluid) in the section ticks randomly
+    /// (`LevelChunkSection.isRandomlyTicking`).
+    pub fn is_randomly_ticking(&self) -> bool {
+        self.ticking > 0
     }
 
     pub fn encode(&self, b: &mut BytesMut, biome_count: usize) {
@@ -354,6 +367,12 @@ mod tests {
         assert_eq!((s.non_air, s.fluids), (2, 1));
         s.set(0, 0, 0, d::AIR);
         assert_eq!((s.non_air, s.fluids), (1, 1));
+        // Still water does not tick randomly; grass does.
+        assert!(!s.is_randomly_ticking());
+        s.set(2, 0, 0, d::GRASS_BLOCK);
+        assert!(s.is_randomly_ticking());
+        s.set(2, 0, 0, d::DIRT);
+        assert!(!s.is_randomly_ticking());
     }
 
     #[test]

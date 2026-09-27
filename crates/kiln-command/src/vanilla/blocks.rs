@@ -108,8 +108,7 @@ pub(super) fn test_block<S: Host>(s: &mut S, dimension: &str, pos: [i32; 3], pre
 /// `BlockInput.place`: the host adapts the state to its neighbours unless the flags say
 /// `KNOWN_SHAPE`, then vanilla re-applies the explicitly given properties.
 fn place<S: Host>(s: &mut S, dimension: &str, pos: [i32; 3], block: &BlockInput, flags: UpdateFlags) -> bool {
-    let state = block.overwrite_defined(block.state);
-    s.set_block(dimension, pos, state, block.nbt.as_ref(), flags)
+    s.place_block(dimension, pos, block, flags)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

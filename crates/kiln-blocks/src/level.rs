@@ -68,6 +68,12 @@ pub enum Effect {
     LevelEvent { id: i32, pos: BlockPos, data: i32 },
     /// A sound event (`minecraft:block.lever.click`, ...) at the block's center.
     Sound { pos: BlockPos, sound: &'static str, volume: f32, pitch: f32 },
+    /// A sound the acting player's client plays itself (`level.playSound(player, ...)`):
+    /// everyone else hears it.
+    ActorSound { pos: BlockPos, sound: &'static str, volume: f32, pitch: f32 },
+    /// A level event the acting player's client shows itself (`levelEvent(player, ...)`, such
+    /// as 2001 for a block the player broke): everyone else sees it.
+    ActorLevelEvent { id: i32, pos: BlockPos, data: i32 },
     /// A vibration game event (`minecraft:block_activate`, ...).
     GameEvent { pos: BlockPos, event: &'static str },
     /// `FallingBlockEntity.fall`: the block left `pos` as a falling entity (already removed).

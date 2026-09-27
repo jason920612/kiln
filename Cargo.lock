@@ -677,10 +677,12 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "crossbeam-channel",
+ "kiln-blocks",
  "kiln-command",
  "kiln-data",
  "kiln-inventory",
  "kiln-item",
+ "kiln-javamath",
  "kiln-link",
  "kiln-proto",
  "kiln-region",

@@ -195,6 +195,21 @@ impl Sim {
         matches!(Host::game_rule(self, rule), GameRuleValue::Bool(true))
     }
 
+    pub(crate) fn rule_int(&self, rule: &str) -> i32 {
+        match Host::game_rule(self, rule) {
+            GameRuleValue::Int(v) => v,
+            GameRuleValue::Bool(_) => 0,
+        }
+    }
+
+    /// Loads block entity data given with a block (`BlockInput.place`); whether it changed.
+    fn load_nbt(&mut self, pos: [i32; 3], nbt: Option<&Tag>) -> bool {
+        match nbt {
+            Some(Tag::Compound(fields)) => self.load_block_entity(pos, fields),
+            _ => false,
+        }
+    }
+
     pub(crate) fn permission_level_of(&self, conn: ConnId) -> u8 {
         match self.players.get(&conn) {
             Some(p) if self.commands.is_op(&p.name) => 4,
@@ -663,26 +678,36 @@ impl Host for Sim {
         chunk.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| be.saved(pos))
     }
 
-    /// Places the state as given (Kiln has no neighbour shape updates yet); block entity data
-    /// replaces the block entity's contents. Like vanilla's `BlockInput.place`, it succeeds if
-    /// the state or the block entity's data changed.
-    fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, _: UpdateFlags) -> bool {
-        let state_changed = self.block_state(dimension, pos) != state;
-        if state_changed && !Sim::set_block(self, pos, state) {
-            return false;
-        }
-        let data_changed = match nbt {
-            Some(Tag::Compound(fields)) => self.load_block_entity(pos, fields),
-            _ => false,
-        };
-        state_changed || data_changed
+    /// `Level.setBlock` with the given flags; block entity data then replaces the block
+    /// entity's contents. Succeeds if the state or the block entity's data changed.
+    fn set_block(&mut self, _dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool {
+        let at = block_pos(pos);
+        let state_changed = self.with_level(pos, |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or(false);
+        self.load_nbt(pos, nbt) || state_changed
     }
 
-    fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], _drop: bool) -> bool {
-        if kiln_data::blocks_types::is_air(self.block_state(dimension, pos)) {
-            return false;
-        }
-        Sim::set_block(self, pos, kiln_data::blocks::default_state::AIR)
+    /// `BlockInput.place`: the state shaped by its neighbours except for the properties the
+    /// command names.
+    fn place_block(&mut self, _dimension: &str, pos: [i32; 3], block: &kiln_command::BlockInput, flags: UpdateFlags) -> bool {
+        let at = block_pos(pos);
+        let defined = block
+            .properties
+            .iter()
+            .map(|&p| (p.to_owned(), kiln_blocks::state::get(block.state, p).unwrap_or_default().to_owned()))
+            .collect();
+        let input = kiln_blocks::commands::BlockInput { state: block.state, defined };
+        let state_changed = self.with_level(pos, |level| input.place(level, at, flags.0)).unwrap_or(false);
+        self.load_nbt(pos, block.nbt.as_ref()) || state_changed
+    }
+
+    fn update_neighbours(&mut self, _dimension: &str, pos: [i32; 3], old: u16) {
+        let at = block_pos(pos);
+        self.with_level(pos, |level| kiln_blocks::commands::update_neighbours_on_block_set(level, at, old));
+    }
+
+    fn destroy_block(&mut self, _dimension: &str, pos: [i32; 3], drop: bool) -> bool {
+        let at = block_pos(pos);
+        self.with_level(pos, |level| kiln_blocks::destroy_block(level, at, drop, kiln_blocks::flags::LIMIT)).unwrap_or(false)
     }
 
     fn height(&mut self, _dimension: &str, heightmap: Heightmap, x: i32, z: i32) -> i32 {
@@ -719,4 +744,8 @@ impl Host for Sim {
     fn storage_mut(&mut self) -> Option<&mut kiln_command::CommandStorage> {
         Some(&mut self.commands.storage)
     }
+}
+
+fn block_pos(p: [i32; 3]) -> kiln_blocks::BlockPos {
+    kiln_blocks::BlockPos::new(p[0], p[1], p[2])
 }

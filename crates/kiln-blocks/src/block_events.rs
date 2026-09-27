@@ -44,6 +44,12 @@ impl BlockEvents {
         self.queue.len()
     }
 
+    /// Removes and returns every queued event, in queue order.
+    pub fn take_all(&mut self) -> Vec<BlockEvent> {
+        self.queued.clear();
+        self.queue.drain(..).collect()
+    }
+
     /// Drops the events inside the box (inclusive), as structure placement does.
     pub fn clear_area(&mut self, min: BlockPos, max: BlockPos) {
         let inside = |p: BlockPos| (min.x..=max.x).contains(&p.x) && (min.y..=max.y).contains(&p.y) && (min.z..=max.z).contains(&p.z);

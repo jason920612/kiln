@@ -149,7 +149,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
 }
 
 /// `ComparatorBlock.refreshOutputState`.
-fn refresh_comparator<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
+pub(crate) fn refresh_comparator<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
     let out = comparator_output(level, pos, s);
     let old = level.comparator_output(pos);
     level.set_comparator_output(pos, out);

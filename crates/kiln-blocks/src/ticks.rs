@@ -253,6 +253,12 @@ impl<T: Copy + Eq + Hash> LevelTicks<T> {
         self.containers.get_mut(&chunk)
     }
 
+    /// Chunks with a container, in no particular order (for moving containers between
+    /// levels).
+    pub fn chunks(&self) -> impl Iterator<Item = ChunkKey> + '_ {
+        self.containers.keys().copied()
+    }
+
     /// Unpacks a chunk's loaded ticks and makes it eligible for ticking.
     pub fn unpack(&mut self, chunk: ChunkKey, game_time: i64) {
         if let Some(c) = self.containers.get_mut(&chunk) {

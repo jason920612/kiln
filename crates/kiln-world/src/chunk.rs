@@ -69,6 +69,16 @@ pub struct Chunk {
     light_dirty: [u64; 2],
     /// By [`Chunk::block_index`].
     block_entities: BTreeMap<u32, BlockEntity>,
+    /// Scheduled ticks in their saved form: read from the save, taken by the simulation when
+    /// the chunk loads, and put back before the chunk is saved.
+    pub saved_ticks: Option<Box<SavedTicks>>,
+}
+
+/// A chunk's `block_ticks` and `fluid_ticks` lists as chunk NBT stores them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SavedTicks {
+    pub block: kiln_proto::nbt::Tag,
+    pub fluid: kiln_proto::nbt::Tag,
 }
 
 impl Chunk {
@@ -93,6 +103,7 @@ impl Chunk {
             cached: None,
             light_dirty: [0, 0],
             block_entities: BTreeMap::new(),
+            saved_ticks: None,
         };
         for x in 0..16 {
             for z in 0..16 {

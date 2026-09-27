@@ -5,10 +5,12 @@
 //! here can reach another region's cells or players; effects outside the region go through
 //! the outputs the serial phases pick up (chunk requests and unloads).
 
+use crate::blocks::{self, BlockOut, EntityBox, RegionBlocks, RegionLevel, Ticking};
 use crate::entities::{self, Entities, Spawn};
-use crate::movement;
-use crate::{KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEOUT, MAX_UNACKED_BATCHES, Player, interact};
-use bytes::Bytes;
+use crate::{KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEOUT, MAX_UNACKED_BATCHES, Player, digging, movement};
+use kiln_blocks::interact::{self, Actor};
+use kiln_blocks::placement::{self, BlockItem, PlaceContext};
+use kiln_blocks::{BlockPos, Level};
 use kiln_link::{ConnId, PlayIn};
 use kiln_proto::packets;
 use kiln_region::CellSet;
@@ -32,15 +34,7 @@ pub(crate) struct Env {
     pub now: Instant,
     /// Id for keep-alives sent this tick.
     pub keep_alive_id: i64,
-}
-
-/// A block a packet changed; players with its chunk hear about it once the region's
-/// packets are applied.
-pub(crate) struct BlockChange {
-    pub pos: [i32; 3],
-    pub state: u16,
-    /// Block Entity Data vanilla sends after the change, if any.
-    pub data: Option<Bytes>,
+    pub blocks: blocks::BlockEnv,
 }
 
 /// What a region leaves for the next serial phase.
@@ -59,11 +53,12 @@ pub(crate) struct RegionOut {
     pub times: [Duration; SUB_PHASES.len()],
 }
 
-pub(crate) const SUB_PHASES: [&str; 6] = ["connections", "entities", "visibility", "movement", "light", "egress"];
+pub(crate) const SUB_PHASES: [&str; 7] = ["connections", "blocks", "entities", "visibility", "movement", "light", "egress"];
 
 pub(crate) struct RegionWork<'a> {
     pub cells: &'a mut CellSet<Cell>,
     pub entities: &'a mut Entities,
+    pub blocks: &'a mut RegionBlocks,
     /// Sorted by connection id.
     pub players: Vec<&'a mut Player>,
     /// This region's packets for the tick, in arrival order.
@@ -78,13 +73,15 @@ impl RegionWork<'_> {
 
     /// P1: applies the region's packets in arrival order.
     pub fn apply_packets(&mut self, env: &Env) {
-        let mut changes = Vec::new();
+        let mut out = BlockOut::default();
+        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         for (conn, pkt) in std::mem::take(&mut self.packets) {
             let Some(i) = self.index_of(conn) else { continue };
-            let mut fx = Fx { changes: &mut changes, spawns: &mut self.out.spawns, deaths: &mut self.out.deaths };
-            local_packet(self.players[i], &mut *self.cells, env, pkt, &mut fx);
+            let mut world = World { cells: &mut *self.cells, blocks: &mut *self.blocks };
+            let mut fx = Fx { blocks: &mut out, bodies: &bodies, spawns: &mut self.out.spawns, deaths: &mut self.out.deaths };
+            local_packet(self.players[i], &mut world, env, pkt, &mut fx);
         }
-        notify_block_changes(self.players.iter_mut().map(|p| &mut **p), &changes);
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
 
     /// L: connection upkeep, chunk streaming, tracking, light, then egress.
@@ -109,20 +106,47 @@ impl RegionWork<'_> {
             self.find_unloads();
         }
         mark(&mut self.out.times, 0);
+        self.tick_blocks(env);
+        mark(&mut self.out.times, 1);
         entities::tick(self.entities, &*self.cells);
         entities::pickups(self.entities, &mut self.players);
-        mark(&mut self.out.times, 1);
-        let movers = crate::players::update_visibility(&mut self.players);
         mark(&mut self.out.times, 2);
+        let movers = crate::players::update_visibility(&mut self.players);
+        mark(&mut self.out.times, 3);
         crate::players::broadcast_movement(&mut self.players);
         entities::track(self.entities, &mut self.players, &movers);
-        mark(&mut self.out.times, 3);
-        self.send_light_updates();
         mark(&mut self.out.times, 4);
+        self.send_light_updates();
+        mark(&mut self.out.times, 5);
         for p in self.players.iter_mut() {
             p.flush();
         }
-        mark(&mut self.out.times, 5);
+        mark(&mut self.out.times, 6);
+    }
+
+    /// The block phases: players' digging, pressure plates under bodies, then scheduled
+    /// ticks, random ticks, block events and moving pistons in chunks near players.
+    fn tick_blocks(&mut self, env: &Env) {
+        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let mut out = BlockOut::default();
+        {
+            let mut level = RegionLevel {
+                cells: &mut *self.cells,
+                blocks: &mut *self.blocks,
+                env: &env.blocks,
+                out: &mut out,
+                bodies: &bodies,
+                actor: None,
+            };
+            for p in self.players.iter_mut().filter(|p| p.digging.is_some() || p.delayed_destroy.is_some()) {
+                digging::tick(p, &mut level);
+            }
+            blocks::press_plates(&mut level);
+            blocks::tick_blocks(&mut level, &ticking);
+            blocks::tick_pistons(&mut level, &ticking);
+        }
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
 
     /// Chunks outside every player's view (plus one chunk of margin) can go.
@@ -160,27 +184,6 @@ impl RegionWork<'_> {
     }
 }
 
-/// Sends Block Update for each change to the players that have the chunk.
-pub(crate) fn notify_block_changes<'p>(players: impl Iterator<Item = &'p mut Player>, changes: &[BlockChange]) {
-    if changes.is_empty() {
-        return;
-    }
-    let changes: Vec<_> = changes
-        .iter()
-        .map(|c| (ChunkPos::of_block(c.pos[0], c.pos[2]), packets::block_update(c.pos, c.state), &c.data))
-        .collect();
-    for p in players {
-        for (chunk, pkt, data) in &changes {
-            if p.sent_chunks.contains(chunk) {
-                p.send(pkt.clone());
-                if let Some(d) = data {
-                    p.send(d.clone());
-                }
-            }
-        }
-    }
-}
-
 /// Whether a packet needs the whole server (chat, commands): it and everything its region
 /// receives after it this tick run in the serial PX phase.
 pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
@@ -194,17 +197,30 @@ pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
     )
 }
 
+/// A region's cells and block machinery, which a packet may change.
+pub(crate) struct World<'a> {
+    pub cells: &'a mut CellSet<Cell>,
+    pub blocks: &'a mut RegionBlocks,
+}
+
 /// Where a packet's side effects go.
 pub(crate) struct Fx<'a> {
-    pub changes: &'a mut Vec<BlockChange>,
+    pub blocks: &'a mut BlockOut,
+    /// Entity boxes at the start of the phase (placement must not overlap them).
+    pub bodies: &'a [EntityBox],
     pub spawns: &'a mut Vec<Spawn>,
     pub deaths: &'a mut Vec<crate::health::Death>,
 }
 
+impl World<'_> {
+    /// The world as block behaviour sees it, with `actor` acting.
+    fn level<'l>(&'l mut self, env: &'l Env, out: &'l mut BlockOut, bodies: &'l [EntityBox], actor: ConnId) -> RegionLevel<'l> {
+        RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out, bodies, actor: Some(actor) }
+    }
+}
+
 /// A packet that touches only its player and the world around it.
-pub(crate) fn local_packet<W: Blocks + ?Sized>(p: &mut Player, world: &mut W, env: &Env, pkt: PlayIn, fx: &mut Fx) {
-    let Fx { changes, spawns, deaths } = fx;
-    let (changes, spawns): (&mut Vec<BlockChange>, &mut Vec<Spawn>) = (changes, spawns);
+pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: PlayIn, fx: &mut Fx) {
     if p.dead && !matches!(pkt, PlayIn::KeepAlive { .. } | PlayIn::ChunkBatchReceived { .. } | PlayIn::ClientTickEnd) {
         return;
     }
@@ -221,11 +237,11 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(p: &mut Player, world: &mut W, en
         }
         PlayIn::Move { pos, rot, on_ground } => {
             let y0 = p.pos[1];
-            if handle_move(p, world, env, pos, rot, on_ground) {
+            if handle_move(p, &*world.cells, env, pos, rot, on_ground) {
                 let feet = p.pos.map(|c| c.floor() as i32);
-                let in_fluid = world.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
-                if let Some(death) = p.check_fall(p.pos[1] - y0, on_ground, in_fluid, spawns) {
-                    deaths.push(death);
+                let in_fluid = world.cells.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
+                if let Some(death) = p.check_fall(p.pos[1] - y0, on_ground, in_fluid, fx.spawns) {
+                    fx.deaths.push(death);
                 }
             }
         }
@@ -277,7 +293,7 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(p: &mut Player, world: &mut W, en
                 return;
             };
             // Creative slots always address the inventory menu, even with another one open.
-            p.with_menu(&env.rules, spawns, |menu, inventory_menu, env| {
+            p.with_menu(&env.rules, fx.spawns, |menu, inventory_menu, env| {
                 kiln_inventory::handle_set_creative_slot(inventory_menu.unwrap_or(menu), env, slot, stack, true)
             });
         }
@@ -286,7 +302,7 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(p: &mut Player, world: &mut W, en
                 p.disconnect("Invalid container click");
                 return;
             };
-            let crashed = p.with_menu(&env.rules, spawns, |menu, _, env| {
+            let crashed = p.with_menu(&env.rules, fx.spawns, |menu, _, env| {
                 kiln_inventory::handle_container_click(menu, env, &click, true).is_err()
             });
             if crashed {
@@ -295,41 +311,41 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(p: &mut Player, world: &mut W, en
         }
         PlayIn::ContainerClose { .. } => {
             if p.open_menu.is_some() {
-                p.with_menu(&env.rules, spawns, |open, inventory_menu, env| {
+                p.with_menu(&env.rules, fx.spawns, |open, inventory_menu, env| {
                     kiln_inventory::click::close_container(open, inventory_menu, env)
                 });
                 p.open_menu = None;
             } else {
-                p.with_menu(&env.rules, spawns, |menu, _, env| kiln_inventory::click::close_container(menu, None, env));
+                p.with_menu(&env.rules, fx.spawns, |menu, _, env| kiln_inventory::click::close_container(menu, None, env));
             }
         }
         PlayIn::ContainerButtonClick { container_id, button_id } => {
-            p.with_menu(&env.rules, spawns, |menu, _, env| {
+            p.with_menu(&env.rules, fx.spawns, |menu, _, env| {
                 kiln_inventory::click::handle_container_button_click(menu, env, container_id, button_id, true)
             });
         }
         PlayIn::PlayerAction { action, pos, sequence, .. } => {
             // `ServerboundPlayerActionPacket.Action` ordinals.
-            const START_DIGGING: i32 = 0;
             const DROP_ALL_ITEMS: i32 = 4;
             const DROP_ITEM: i32 = 5;
             match action {
-                // Creative mode: starting to dig breaks the block instantly.
-                START_DIGGING if within_reach(p, pos) => {
-                    set_block(world, pos, kiln_data::blocks::default_state::AIR, changes);
-                }
                 DROP_ITEM | DROP_ALL_ITEMS => {
                     if let Some(spawn) = p.drop_held(action == DROP_ALL_ITEMS) {
-                        spawns.push(spawn);
+                        fx.spawns.push(spawn);
                     }
                     return;
+                }
+                digging::START_DESTROY_BLOCK | digging::STOP_DESTROY_BLOCK | digging::ABORT_DESTROY_BLOCK => {
+                    let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                    digging::player_action(p, &mut level, action, pos);
                 }
                 _ => {}
             }
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
-        PlayIn::UseItemOn { hand, pos, face, sequence, .. } => {
-            use_item_on(p, world, hand, pos, face, changes);
+        PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            use_item_on(p, &mut level, hand, pos, face, cursor);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         PlayIn::Punch => p.swung = true,
@@ -338,51 +354,93 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(p: &mut Player, world: &mut W, en
     }
 }
 
-/// Changes a block in a loaded chunk; returns whether the chunk was loaded.
-pub(crate) fn set_block<W: Blocks + ?Sized>(world: &mut W, pos: [i32; 3], state: u16, changes: &mut Vec<BlockChange>) -> bool {
-    let Some(old) = world.set_block(pos[0], pos[1], pos[2], state) else { return false };
-    if old != state {
-        let data = world.block_entity_data(pos[0], pos[1], pos[2]);
-        let data = data.map(|(kind, tag)| packets::block_entity_data(pos, kind as i32, &tag));
-        changes.push(BlockChange { pos, state, data });
-    }
-    true
-}
-
-fn within_reach(p: &Player, pos: [i32; 3]) -> bool {
-    let d: f64 = (0..3).map(|i| (pos[i] as f64 + 0.5 - p.pos[i]).powi(2)).sum();
-    d <= 12.0 * 12.0
-}
-
-fn use_item_on<W: Blocks + ?Sized>(
-    p: &Player,
-    world: &mut W,
-    hand: i32,
-    pos: [i32; 3],
-    face: i32,
-    changes: &mut Vec<BlockChange>,
-) {
-    let stack = if hand == 0 { p.inv.selected_item() } else { p.inv.equipped(kiln_item::component::EquipmentSlot::OffHand) };
-    if stack.is_empty() {
+/// `ServerGamePacketListenerImpl.handleUseItemOn` and `ServerPlayerGameMode.useItemOn`: the
+/// clicked block reacts (levers, doors, ...) unless the player sneaks with something in hand;
+/// otherwise a held block item is placed. The player always gets the clicked block and the
+/// one next to it back, to settle its prediction.
+fn use_item_on(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3], face: i32, cursor: [f32; 3]) {
+    let Some(dir) = blocks::direction(face) else { return };
+    if !p.can_reach_block(pos, 1.0) || cursor.iter().any(|&c| (c as f64 - 0.5).abs() >= 1.0000001) {
         return;
     }
-    let item = stack.item();
-    let Some(block) = interact::block_for_item(item) else { return };
-    let Some(off) = interact::offset(face) else { return };
-    // Place into the clicked block if it is replaceable, otherwise next to it.
-    let clicked = world.get_block(pos[0], pos[1], pos[2]);
-    let target =
-        if clicked.is_some_and(interact::replaceable) { pos } else { [pos[0] + off[0], pos[1] + off[1], pos[2] + off[2]] };
-    if !within_reach(p, target) || !world.get_block(target[0], target[1], target[2]).is_some_and(interact::replaceable) {
+    let step = dir.step();
+    let next = [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]];
+    let top = level.env.min_y + level.env.height - 1;
+    if pos[1] <= top && p.awaiting_teleport.is_none() && p.game_mode != 3 {
+        use_on_block(p, level, hand, pos, dir, cursor);
+    }
+    p.resend_block(level, pos);
+    p.resend_block(level, next);
+}
+
+fn use_on_block(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3], dir: kiln_blocks::Direction, cursor: [f32; 3]) {
+    use kiln_item::component::EquipmentSlot;
+    let main_hand = hand == 0;
+    let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
+    let have_something = !p.inv.selected_item().is_empty() || !p.inv.equipped(EquipmentSlot::OffHand).is_empty();
+    let bp = BlockPos::new(pos[0], pos[1], pos[2]);
+    let item_name = if held.is_empty() {
+        None
+    } else {
+        kiln_data::builtin_entries("minecraft:item").and_then(|e| e.get(held.item() as usize).copied())
+    };
+    let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
+    if !(p.sneaking && have_something) && main_hand && !interact::passes_to_item(level.block(bp), item_name, dir) {
+        let used = interact::use_without_item(level, bp, &actor);
+        level.settle();
+        if used {
+            return;
+        }
+    }
+    // `ItemStack.useOn` for block items (adventure players cannot place).
+    let Some(item) = item_name.and_then(BlockItem::of_item) else { return };
+    if !actor.may_build {
         return;
     }
-    set_block(world, target, interact::placement_state(block, face, p.rot[0]), changes);
+    let click = [pos[0] as f64 + cursor[0] as f64, pos[1] as f64 + cursor[1] as f64, pos[2] as f64 + cursor[2] as f64];
+    let ctx = PlaceContext { hit: bp, face: dir, click, yaw: p.rot[0], pitch: p.rot[1], sneaking: p.sneaking };
+    let Some((at, state)) = placement::placement(level, &item, &ctx) else { return };
+    if obstructed(p, level.bodies, at, state) {
+        return;
+    }
+    if placement::place(level, &item, &ctx).is_none() {
+        return;
+    }
+    level.settle();
+    if p.game_mode != 1 {
+        let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
+        kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
+    }
+}
+
+/// `Level.isUnobstructed`: the placed block's collision boxes would overlap a player (this one
+/// where it is now, others where they were at the start of the phase).
+fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> bool {
+    let boxes = kiln_data::block_props::collision(state);
+    if boxes.is_empty() {
+        return false;
+    }
+    let h = if p.sneaking { 1.5 } else { 1.8 };
+    let me = EntityBox {
+        min: [p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3],
+        max: [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3],
+        living: true,
+        blocks_building: p.game_mode != 3,
+        conn: Some(p.conn),
+    };
+    let origin = [at.x as f64, at.y as f64, at.z as f64];
+    let others = bodies.iter().filter(|b| b.conn != Some(p.conn));
+    std::iter::once(&me).chain(others).filter(|b| b.blocks_building).any(|b| {
+        boxes.iter().any(|a| {
+            (0..3).all(|i| b.min[i] < origin[i] + a[i + 3] as f64 && b.max[i] > origin[i] + a[i] as f64)
+        })
+    })
 }
 
 /// Returns whether the move was accepted.
-fn handle_move<W: Blocks + ?Sized>(
+fn handle_move(
     p: &mut Player,
-    world: &W,
+    world: &CellSet<Cell>,
     env: &Env,
     pos: Option<[f64; 3]>,
     rot: Option<[f32; 2]>,

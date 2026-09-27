@@ -1,6 +1,8 @@
 //! The simulation is a function of its inputs: the same scripted players, block edits and
 //! console commands give the same state hashes, tick for tick, however the world is split
-//! into regions and however many workers tick them in whatever order (design DT-R1).
+//! into regions and however many workers tick them in whatever order (design DT-R1). Block
+//! behaviour takes part: fences reshape their neighbours, water spreads through scheduled
+//! ticks, and random ticks run in every chunk near a player.
 
 use kiln_link::{PlayIn, ToSim};
 use kiln_proto::packets::ItemStack;
@@ -27,7 +29,7 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     config.pool.chaos = chaos;
     config.unified_regions = unified;
     let mut sim = Sim::new(config);
-    let stone = kiln_data::builtin_id("minecraft:item", "minecraft:stone").unwrap();
+    let items = ["minecraft:stone", "minecraft:oak_fence", "minecraft:redstone_torch"].map(|n| kiln_data::builtin_id("minecraft:item", n).unwrap());
     let mut walkers = Vec::new();
     let mut inbox = Vec::new();
     let mut hashes = Vec::new();
@@ -44,7 +46,7 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
             let center = [8.5 + ox, 8.5 + oz];
             inbox.push(msg);
             inbox.push(ToSim::Console(format!("tp {name} {} {SURFACE_Y} {}", center[0], center[1])));
-            let item = ItemStack { item: stone, count: 64, added: Vec::new(), removed: Vec::new() };
+            let item = ItemStack { item: items[i % items.len()], count: 64, added: Vec::new(), removed: Vec::new() };
             inbox.push(ToSim::Packet(conn, PlayIn::SetCreativeSlot { slot: 36, item: Some(item) }));
             walkers.push(Walker::new(Client::new(conn, stats), center, conn));
         }
@@ -66,6 +68,13 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
         if tick == 150 {
             inbox.push(ToSim::Console("time set 13000".into()));
         }
+        // A spring beside each group: water spreads over the next ticks.
+        if tick == 60 {
+            for g in 0..GROUPS {
+                let [ox, oz] = group_offset(g, GROUPS, GROUP_SPACING);
+                inbox.push(ToSim::Console(format!("setblock {} {} {} minecraft:water", 14.0 + ox, SURFACE_Y, 3.0 + oz)));
+            }
+        }
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
         max_regions = max_regions.max(sim.region_count());
         if tick % 100 == 99 {
@@ -75,9 +84,15 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
         }
     }
     assert_eq!(sim.player_count(), PLAYERS);
-    let stone_block = kiln_data::blocks::default_state::STONE;
-    let built = placed.iter().filter(|p| sim.block_at(p[0], p[1], p[2]) == Some(stone_block)).count();
-    assert!(built > 10, "only {built} of {} edits left stone", placed.len());
+    let air = kiln_data::blocks::default_state::AIR;
+    let built = placed.iter().filter(|p| sim.block_at(p[0], p[1], p[2]).is_some_and(|s| s != air)).count();
+    assert!(built > 10, "only {built} of {} edits left a block", placed.len());
+    let [ox, oz] = group_offset(0, GROUPS, GROUP_SPACING);
+    let (wx, wz) = ((14.0 + ox) as i32, (3.0 + oz) as i32);
+    let flowing = (-3..=3).flat_map(|dx| (-3..=3).map(move |dz| (dx, dz))).filter(|(dx, dz)| {
+        sim.block_at(wx + dx, SURFACE_Y as i32, wz + dz).is_some_and(|s| kiln_data::blocks_types::has_fluid(s))
+    });
+    assert!(flowing.count() > 9, "the water spread");
     assert!(walkers.iter().all(|w| !w.client.stats.disconnected.load(std::sync::atomic::Ordering::Relaxed)));
     Run { hashes, traffic, max_regions }
 }

@@ -30,5 +30,8 @@ public class VanillaDecode {
             System.exit(1);
         }
         System.out.println("OK: decoded " + data.length + " bytes as " + packet.getClass().getSimpleName());
+        if (packet instanceof net.minecraft.network.protocol.game.ClientboundSectionBlocksUpdatePacket u) {
+            u.runUpdates((pos, state) -> System.out.println("  " + pos.toShortString() + " " + state));
+        }
     }
 }

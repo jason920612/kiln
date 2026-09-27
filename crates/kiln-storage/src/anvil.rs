@@ -140,6 +140,15 @@ impl AnvilSource {
         for entry in root.get("block_entities").and_then(Tag::as_list).unwrap_or(&[]) {
             load_block_entity(&mut chunk, entry, origin);
         }
+        let ticks = |key| root.get(key).filter(|t| t.as_list().is_some_and(|l| !l.is_empty())).cloned();
+        let (block_ticks, fluid_ticks) = (ticks("block_ticks"), ticks("fluid_ticks"));
+        if block_ticks.is_some() || fluid_ticks.is_some() {
+            let empty = || Tag::List(Vec::new());
+            chunk.saved_ticks = Some(Box::new(kiln_world::chunk::SavedTicks {
+                block: block_ticks.unwrap_or_else(empty),
+                fluid: fluid_ticks.unwrap_or_else(empty),
+            }));
+        }
         Ok(chunk)
     }
 
@@ -290,6 +299,10 @@ pub fn encode_chunk(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Ta
     let (bx, bz) = (pos.x * 16, pos.z * 16);
     let block_entities = chunk.block_entities().map(|((x, y, z), be)| be.saved([bx + x as i32, y, bz + z as i32])).collect();
     set(&mut fields, "block_entities", Tag::List(block_entities));
+    if let Some(ticks) = &chunk.saved_ticks {
+        set(&mut fields, "block_ticks", ticks.block.clone());
+        set(&mut fields, "fluid_ticks", ticks.fluid.clone());
+    }
     Tag::Compound(fields)
 }
 
