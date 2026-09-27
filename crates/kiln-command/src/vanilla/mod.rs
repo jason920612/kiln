@@ -4,6 +4,7 @@
 mod blocks;
 mod bossbar;
 mod chat;
+mod effect;
 mod execute;
 mod function;
 pub use function::{run_as_server, run_function};
@@ -45,6 +46,7 @@ pub const COMMANDS: &[&str] = &[
     "weather",
     "gamerule",
     "give",
+    "effect",
     "seed",
     "stop",
     "kick",
@@ -89,6 +91,7 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     server::weather(d);
     server::gamerule(d);
     players::give(d);
+    effect::effect(d);
     server::seed(d);
     server::stop(d);
     players::kick(d);

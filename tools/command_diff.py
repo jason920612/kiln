@@ -610,6 +610,39 @@ title Diff0 times 1x 2 3
 title Diff0 title
 title Diff0 bogus
 
+# effects
+effect give Diff0 minecraft:speed
+effect give Diff0 speed 10 1
+effect give Diff0 speed 10 1
+effect give Diff0 speed 5 0
+effect give Diff0 speed 20 1 true
+effect give @a minecraft:haste infinite
+effect give @a minecraft:haste infinite
+effect give @a haste infinite 2 true
+effect give Other0 minecraft:instant_health
+effect give Other0 minecraft:saturation 2
+effect give Diff0 luck 1000000 255
+effect give Diff0 luck 1000001
+effect give Diff0 luck 0
+effect give Diff0 luck 10 256
+effect give Diff0 luck 10 -1
+effect give Diff0 luck 10 0 maybe
+effect give Diff0 minecraft:not_an_effect
+effect give Diff0 speed infinite 1 false extra
+effect give Nobody speed
+effect give @e[type=minecraft:pig] speed
+effect give Diff0
+effect clear Diff0 minecraft:jump_boost
+effect clear Diff0 minecraft:speed
+effect clear Diff0 minecraft:speed
+effect clear @a minecraft:haste
+effect clear @a
+effect clear @a
+effect clear
+effect clear Nobody
+effect clear Diff0 bogus:thing
+effect
+
 # bossbar
 bossbar list
 bossbar add kiln:b "Boss"

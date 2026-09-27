@@ -163,3 +163,83 @@ fn stew_is_eaten_only_when_hungry_and_leaves_a_bowl() {
     assert_eq!(sim.inventory(1).unwrap()[36], Some((bowl, 1)));
     assert_eq!(sim.food(1).unwrap().0, 20);
 }
+
+#[test]
+fn effects_from_commands_and_golden_apples_and_milk_clears_them() {
+    let (mut sim, _client) = joined();
+    assert!(sim.step([ToSim::Console("effect give Faller minecraft:poison 10 1".into())]));
+    let effects = sim.effects(1).unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!((effects[0].0, effects[0].1), ("minecraft:poison", 1));
+    // Poison II hurts every 12 ticks.
+    for _ in 0..30 {
+        assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+    }
+    assert!(sim.health(1).unwrap().0 < 20.0);
+    hold(&mut sim, "minecraft:golden_apple", 1);
+    eat(&mut sim, 34);
+    let names: Vec<&str> = sim.effects(1).unwrap().iter().map(|e| e.0).collect();
+    assert_eq!(names, ["minecraft:regeneration", "minecraft:poison", "minecraft:absorption"]);
+    hold(&mut sim, "minecraft:milk_bucket", 1);
+    eat(&mut sim, 34);
+    assert_eq!(sim.effects(1).unwrap(), []);
+    let bucket = kiln_data::builtin_id("minecraft:item", "minecraft:bucket").unwrap();
+    assert_eq!(sim.inventory(1).unwrap()[36], Some((bucket, 1)));
+}
+
+#[test]
+fn fire_burns_and_water_puts_it_out() {
+    let (mut sim, client) = joined();
+    let [x, y, z] = client.pos.map(|c| c.floor() as i32);
+    assert_eq!(sim.fire_and_air(1), Some((-20, 300)));
+    assert!(sim.step([ToSim::Console(format!("setblock {x} {y} {z} minecraft:fire"))]));
+    for _ in 0..30 {
+        assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+    }
+    let (fire, _) = sim.fire_and_air(1).unwrap();
+    assert!(fire > 150, "burning for 8 seconds after 20 ticks in the fire ({fire})");
+    assert!(sim.health(1).unwrap().0 < 20.0);
+    assert!(sim.step([ToSim::Console(format!("setblock {x} {y} {z} minecraft:water"))]));
+    assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+    assert_eq!(sim.fire_and_air(1).unwrap().0, -20, "water puts the fire out");
+}
+
+#[test]
+fn players_drown_with_their_head_under_water() {
+    let (mut sim, client) = joined();
+    let [x, y, z] = client.pos.map(|c| c.floor() as i32);
+    let glass = format!("fill {} {} {} {} {} {} minecraft:glass", x - 1, y, z - 1, x + 1, y + 2, z + 1);
+    assert!(sim.step([ToSim::Console(glass)]));
+    assert!(sim.step([ToSim::Console(format!("fill {x} {y} {z} {x} {} {z} minecraft:water", y + 2))]));
+    for _ in 0..300 {
+        assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+    }
+    let (_, air) = sim.fire_and_air(1).unwrap();
+    assert!((-20..=0).contains(&air), "air {air}");
+    let before = sim.health(1).unwrap().0;
+    let mut ticks = 0;
+    while sim.health(1).unwrap().0 == before {
+        assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+        ticks += 1;
+        assert!(ticks <= 21, "no drowning damage");
+    }
+    // At -20 the air resets to 0 with 2 drowning damage.
+    assert_eq!(sim.health(1).unwrap().0, before - 2.0);
+    assert_eq!(sim.fire_and_air(1).unwrap().1, 0);
+    assert!(sim.step([ToSim::Console("effect give Faller minecraft:water_breathing 10".into())]));
+    let (_, air) = sim.fire_and_air(1).unwrap();
+    for _ in 0..10 {
+        assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+    }
+    assert_eq!(sim.fire_and_air(1).unwrap().1, (air + 40).min(300), "water breathing refills the air");
+}
+
+#[test]
+fn chorus_fruit_teleports() {
+    let (mut sim, client) = joined();
+    hold(&mut sim, "minecraft:chorus_fruit", 1);
+    eat(&mut sim, 34);
+    let tp = client.stats.teleport.lock().unwrap().unwrap().1;
+    let d = ((tp[0] - client.pos[0]).powi(2) + (tp[2] - client.pos[2]).powi(2)).sqrt();
+    assert!(d > 0.0 && d < 12.0, "teleported {d} blocks to {tp:?}");
+}

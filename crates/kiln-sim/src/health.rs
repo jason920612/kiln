@@ -7,8 +7,9 @@
 //! the last hit" rule, armor and toughness from equipment attributes (`CombatRules`), armor
 //! durability, absorption and the damage type's exhaustion. Enchantments take part through
 //! `EnchantmentHelper` (see [`crate::enchant`]): damage immunity (frost walker), protection,
-//! armor effectiveness (breach) and unbreaking on armor. Not modelled yet: effects (resistance,
-//! fire resistance), shields, totems.
+//! armor effectiveness (breach) and unbreaking on armor. Mob effects take part too: fire
+//! resistance makes fire damage miss, resistance takes 20% per level after armor. Not modelled
+//! yet: shields, totems.
 //!
 //! Food follows `FoodData`: exhaustion from sprinting, jumping, fighting and breaking blocks
 //! uses up saturation then food; a well-fed player heals, a starving one takes damage.
@@ -19,6 +20,7 @@ use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
 use kiln_proto::packets::entity;
 
+/// A new player's health (`Attributes.MAX_HEALTH`'s base).
 pub(crate) const MAX_HEALTH: f32 = 20.0;
 /// `LivingEntity.onBelowWorld`: damage per tick below the world.
 const VOID_DAMAGE: f32 = 4.0;
@@ -466,6 +468,9 @@ impl Player {
         if self.dead {
             return false;
         }
+        if source.is("minecraft:is_fire") && self.has_effect("minecraft:fire_resistance") {
+            return false;
+        }
         let mut amount = amount;
         if source.scales_with_difficulty() {
             amount = match rules.difficulty {
@@ -554,7 +559,7 @@ impl Player {
             _ => self.fall_distance as f32,
         };
         self.combat.record(source, fall, ctx.game_time, self.health > 0.0);
-        self.health = (self.health - damage).clamp(0.0, MAX_HEALTH);
+        self.health = (self.health - damage).clamp(0.0, self.max_health());
     }
 
     /// `LivingEntity.getDamageAfterArmorAbsorb`: armor takes durability damage and reduces the
@@ -580,11 +585,19 @@ impl Player {
         })
     }
 
-    /// `LivingEntity.getDamageAfterMagicAbsorb` without effects: never negative, then the
-    /// equipment's enchantment protection unless the type bypasses enchantments.
+    /// `LivingEntity.getDamageAfterMagicAbsorb`: resistance takes 20% per level (unless the type
+    /// bypasses it), never negative, then the equipment's enchantment protection unless the type
+    /// bypasses enchantments.
     fn damage_after_magic(&mut self, source: &Source, damage: f32, ctx: &mut DamageCtx) -> f32 {
         if source.is("minecraft:bypasses_effects") {
             return damage;
+        }
+        let mut damage = damage;
+        if let Some(amplifier) = self.effect_amplifier("minecraft:resistance")
+            && !source.is("minecraft:bypasses_resistance")
+        {
+            let factor = 25 - (amplifier + 1) * 5;
+            damage = (damage * factor as f32 / 25.0).max(0.0);
         }
         if damage <= 0.0 {
             return 0.0;
@@ -627,6 +640,9 @@ impl Player {
         let message = self.combat.death_message(&self.name, credit.as_deref());
         self.fall_distance = 0.0;
         self.send(packets::player::player_combat_kill(self.entity_id, &message));
+        // `ServerPlayer.die`: the fire goes out.
+        self.clear_fire();
+        self.sync_on_fire_flag();
         self.death_location = Some(self.pos.map(|c| c.floor() as i32));
         for i in 0..self.inv.items.len() {
             let stack = std::mem::replace(&mut self.inv.items[i], kiln_item::ItemStack::empty());
@@ -642,6 +658,8 @@ impl Player {
         }
         self.inv.times_changed += 1;
         self.died = true;
+        // `broadcastEntityEvent(DEATH)` reaches the player too.
+        self.send(entity::entity_event(self.entity_id, 3));
         Death { conn: self.conn, message }
     }
 
@@ -650,10 +668,6 @@ impl Player {
     pub(crate) fn tick_damage(&mut self, game_time: i64) {
         if self.hurt_cooldown > 0 {
             self.hurt_cooldown -= 1;
-        }
-        // Fire (from fire aspect) only counts down: nothing burns yet.
-        if self.fire_ticks > 0 {
-            self.fire_ticks -= 1;
         }
         if let Some((_, ticks)) = &mut self.kill_credit {
             if *ticks > 0 {
@@ -676,9 +690,9 @@ impl Player {
     }
 
     /// `LivingEntity.heal`.
-    fn heal(&mut self, amount: f32) {
+    pub(crate) fn heal(&mut self, amount: f32) {
         if self.health > 0.0 {
-            self.health = (self.health + amount).min(MAX_HEALTH);
+            self.health = (self.health + amount).min(self.max_health());
         }
     }
 
@@ -697,12 +711,9 @@ impl Player {
     /// `FoodData.tick` and the peaceful regeneration of `Player.aiStep`. `difficulty` is 0
     /// (peaceful) to 3 (hard).
     pub(crate) fn tick_food(&mut self, natural_regen: bool, ctx: &mut DamageCtx) {
-        if self.dead {
-            return;
-        }
         let difficulty = ctx.rules.difficulty;
         if difficulty == 0 && natural_regen {
-            if self.health < MAX_HEALTH && ctx.game_time % 20 == 0 {
+            if self.health < self.max_health() && ctx.game_time % 20 == 0 {
                 self.heal(1.0);
             }
             if self.food < 20 && ctx.game_time % 10 == 0 {
@@ -717,7 +728,7 @@ impl Player {
                 self.food = (self.food - 1).max(0);
             }
         }
-        let hurt = self.health > 0.0 && self.health < MAX_HEALTH;
+        let hurt = self.health > 0.0 && self.health < self.max_health();
         if natural_regen && self.saturation > 0.0 && hurt && self.food >= 20 {
             self.food_timer += 1;
             if self.food_timer >= 10 {

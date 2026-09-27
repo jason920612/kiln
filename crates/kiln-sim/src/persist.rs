@@ -47,6 +47,11 @@ pub(crate) struct Joining {
     pub saturation: f32,
     pub exhaustion: f32,
     pub food_timer: i32,
+    /// `Fire`, `Air`, `AbsorptionAmount` and `active_effects`.
+    pub fire_ticks: i32,
+    pub air: i32,
+    pub absorption: f32,
+    pub effects: std::collections::BTreeMap<i32, crate::effects::Effect>,
     pub respawn: Option<[i32; 3]>,
     pub saved: PlayerData,
 }
@@ -82,6 +87,10 @@ impl Sim {
             saturation: saved.raw().get("foodSaturationLevel").and_then(Tag::as_f64).map_or(5.0, |s| s as f32),
             exhaustion: saved.raw().get("foodExhaustionLevel").and_then(Tag::as_f64).map_or(0.0, |e| e as f32),
             food_timer: saved.raw().get("foodTickTimer").and_then(Tag::as_i64).map_or(0, |t| t as i32),
+            fire_ticks: saved.raw().get("Fire").and_then(Tag::as_i64).map_or(-crate::hazards::FIRE_IMMUNE_TICKS, |f| f as i32),
+            air: saved.raw().get("Air").and_then(Tag::as_i64).map_or(crate::hazards::MAX_AIR, |a| a as i32),
+            absorption: saved.raw().get("AbsorptionAmount").and_then(Tag::as_f64).map_or(0.0, |a| a as f32),
+            effects: saved.raw().get("active_effects").map(crate::effects::load_effects).unwrap_or_default(),
             respawn: saved.respawn,
             saved,
         }
@@ -122,11 +131,19 @@ impl Sim {
                 ("foodSaturationLevel", Tag::Float(p.saturation)),
                 ("foodExhaustionLevel", Tag::Float(p.exhaustion)),
                 ("foodTickTimer", Tag::Int(p.food_timer)),
+                // `Entity.saveWithoutId` and `LivingEntity.addAdditionalSaveData`.
+                ("Fire", Tag::Short(p.fire_ticks as i16)),
+                ("Air", Tag::Short(p.air as i16)),
+                ("AbsorptionAmount", Tag::Float(p.absorption)),
             ] {
                 match fields.iter_mut().find(|(k, _)| k == key) {
                     Some((_, v)) => *v = value,
                     None => fields.push((key.to_owned(), value)),
                 }
+            }
+            fields.retain(|(k, _)| k != "active_effects");
+            if let Some(list) = p.effects_nbt() {
+                fields.push(("active_effects".to_owned(), list));
             }
         }
         if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {

@@ -9,9 +9,9 @@
 //!
 //! Enchantments act through `EnchantmentHelper` ([`crate::enchant`]): `damage` effects
 //! (sharpness, smite and bane of arthropods by the target's entity type tag) on the main
-//! target and on swept ones, `knockback`, `post_attack` effects (fire aspect sets fire ticks,
-//! thorns hurts the attacker and wears the armor; no fire damage or mob effects exist yet) and
-//! unbreaking on the weapon.
+//! target and on swept ones, `knockback`, `post_attack` effects (fire aspect sets the target on
+//! fire, thorns hurts the attacker and wears the armor, bane of arthropods' slowness) and
+//! unbreaking on the weapon. Strength and weakness change the attack damage attribute.
 //!
 //! A player can hit the players of its own region (regions are far apart, reach is short), so
 //! the outcome does not depend on how the world is split.
@@ -47,6 +47,22 @@ pub(crate) const MINING_EFFICIENCY: Attr = Attr { name: "minecraft:mining_effici
 pub(crate) const SUBMERGED_MINING_SPEED: Attr = Attr { name: "minecraft:submerged_mining_speed", base: 0.2, min: 0.0, max: 20.0 };
 pub(crate) const BLOCK_BREAK_SPEED: Attr = Attr { name: "minecraft:block_break_speed", base: 1.0, min: 0.0, max: 1024.0 };
 pub(crate) const BURNING_TIME: Attr = Attr { name: "minecraft:burning_time", base: 1.0, min: 0.0, max: 1024.0 };
+pub(crate) const MAX_HEALTH: Attr = Attr { name: "minecraft:max_health", base: 20.0, min: 1.0, max: 1024.0 };
+pub(crate) const MAX_ABSORPTION: Attr = Attr { name: "minecraft:max_absorption", base: 0.0, min: 0.0, max: 2048.0 };
+pub(crate) const LUCK: Attr = Attr { name: "minecraft:luck", base: 0.0, min: -1024.0, max: 1024.0 };
+pub(crate) const SAFE_FALL_DISTANCE: Attr = Attr { name: "minecraft:safe_fall_distance", base: 3.0, min: -1024.0, max: 1024.0 };
+pub(crate) const OXYGEN_BONUS: Attr = Attr { name: "minecraft:oxygen_bonus", base: 0.0, min: 0.0, max: 1024.0 };
+pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =
+    Attr { name: "minecraft:waypoint_transmit_range", base: 6.0e7, min: 0.0, max: 6.0e7 };
+
+/// The attributes effects change that clients are told about (`Attribute.isClientSyncable`).
+pub(crate) const EFFECT_SYNCED: [Attr; 6] = [MOVEMENT_SPEED, ATTACK_SPEED, SAFE_FALL_DISTANCE, MAX_HEALTH, MAX_ABSORPTION, LUCK];
+
+impl Attr {
+    pub(crate) fn name(&self) -> &'static str {
+        self.name
+    }
+}
 
 /// `Player.CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER_VALUE`.
 const CREATIVE_ENTITY_RANGE: f64 = 2.0;
@@ -149,7 +165,52 @@ pub(crate) fn slot_modifiers(
     }
 }
 
-/// `AttributeInstance.calculateValue` for `base` and `mods` (in insertion order).
+/// `String.hashCode`.
+fn java_string_hash(s: &str) -> i32 {
+    s.encode_utf16().fold(0i32, |h, c| h.wrapping_mul(31).wrapping_add(c as i32))
+}
+
+/// Orders modifiers the way `AttributeInstance` iterates them: one fastutil
+/// `Object2ObjectOpenHashMap` per operation, keyed by the modifier id (`Identifier.hashCode`,
+/// mixed, linear probing in a 32-slot table), walked from the last slot down. Built from the
+/// current modifiers in insertion order, which matches vanilla unless removals reshuffled
+/// colliding slots.
+fn sort_like_open_hash_map(mods: &mut [(String, f64, AttributeOperation)]) {
+    const SLOTS: usize = 32;
+    let slot_of = |id: &str| -> i32 {
+        let (ns, path) = id.split_once(':').unwrap_or(("minecraft", id));
+        let h = java_string_hash(ns).wrapping_mul(31).wrapping_add(java_string_hash(path));
+        let h = h.wrapping_mul(0x9E37_79B9_u32 as i32);
+        h ^ ((h as u32) >> 16) as i32
+    };
+    let mut order = vec![0usize; mods.len()];
+    for op in [AttributeOperation::AddValue, AttributeOperation::AddMultipliedBase, AttributeOperation::AddMultipliedTotal] {
+        let mut table: [Option<usize>; SLOTS] = [None; SLOTS];
+        let members: Vec<usize> = (0..mods.len()).filter(|&i| mods[i].2 == op).collect();
+        if members.len() > 24 {
+            continue;
+        }
+        for &i in &members {
+            let mut pos = (slot_of(&mods[i].0) as usize) & (SLOTS - 1);
+            while table[pos].is_some() {
+                pos = (pos + 1) & (SLOTS - 1);
+            }
+            table[pos] = Some(i);
+        }
+        for (pos, entry) in table.iter().enumerate() {
+            if let Some(i) = entry {
+                order[*i] = SLOTS - 1 - pos;
+            }
+        }
+    }
+    let mut indexed: Vec<(usize, (String, f64, AttributeOperation))> = mods.iter().cloned().enumerate().collect();
+    indexed.sort_by_key(|(i, _)| order[*i]);
+    for (slot, (_, m)) in mods.iter_mut().zip(indexed) {
+        *slot = m;
+    }
+}
+
+/// `AttributeInstance.calculateValue` for `base` and `mods` (in iteration order).
 fn attribute_value(attr: Attr, mods: impl Iterator<Item = (f64, AttributeOperation)> + Clone) -> f64 {
     let mut base = attr.base;
     for (amount, op) in mods.clone() {
@@ -208,18 +269,60 @@ impl Player {
         out
     }
 
-    /// `getAttributeValue`.
-    pub(crate) fn attribute(&self, attr: Attr) -> f64 {
-        let Some(id) = kiln_item::registry::ATTRIBUTE.id(attr.name) else { return attr.base };
-        let mut mods: Vec<(f64, AttributeOperation)> =
-            self.equipment_modifiers().into_iter().filter(|m| m.0 == id).map(|m| (m.2, m.3)).collect();
+    /// The modifiers on `attr`: the equipment's, the creative reach and sprint speed ones, then
+    /// the active effects' (id, amount, operation).
+    pub(crate) fn attribute_modifiers(&self, attr: Attr) -> Vec<(String, f64, AttributeOperation)> {
+        let Some(id) = kiln_item::registry::ATTRIBUTE.id(attr.name) else { return Vec::new() };
+        let mut mods: Vec<(String, f64, AttributeOperation)> =
+            self.equipment_modifiers().into_iter().filter(|m| m.0 == id).map(|m| (m.1, m.2, m.3)).collect();
         if attr.name == ENTITY_INTERACTION_RANGE.name && self.game_mode == 1 {
-            mods.push((CREATIVE_ENTITY_RANGE, AttributeOperation::AddValue));
+            mods.push(("minecraft:creative_mode_entity_range".into(), CREATIVE_ENTITY_RANGE, AttributeOperation::AddValue));
         }
         if attr.name == MOVEMENT_SPEED.name && self.sprinting {
-            mods.push((SPRINT_SPEED, AttributeOperation::AddMultipliedTotal));
+            mods.push(("minecraft:sprinting".into(), SPRINT_SPEED, AttributeOperation::AddMultipliedTotal));
         }
-        attribute_value(attr, mods.iter().copied())
+        // `ServerPlayer.updatePlayerAttributes`: crouching hides the player's waypoint.
+        if attr.name == WAYPOINT_TRANSMIT_RANGE.name && self.sneaking {
+            mods.push(("minecraft:waypoint_transmit_range_crouch".into(), -1.0, AttributeOperation::AddMultipliedTotal));
+        }
+        for (id, amount, op) in self.effect_modifiers(attr.name) {
+            mods.retain(|m| m.0 != id);
+            mods.push((id.to_owned(), amount, op));
+        }
+        mods
+    }
+
+    /// `getAttributeValue`: the modifiers of each operation in the order vanilla's per-operation
+    /// hash maps hold them.
+    pub(crate) fn attribute(&self, attr: Attr) -> f64 {
+        let mut mods = self.attribute_modifiers(attr);
+        sort_like_open_hash_map(&mut mods);
+        attribute_value(attr, mods.iter().map(|m| (m.1, m.2)))
+    }
+
+    /// `ClientboundUpdateAttributesPacket` for the attributes effects change.
+    pub(crate) fn effect_attributes_packet(&self) -> bytes::Bytes {
+        use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
+        type Listed = (i32, f64, Vec<(String, f64, AttributeOperation)>);
+        let lists: Vec<Listed> = EFFECT_SYNCED
+            .iter()
+            .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, a.base, self.attribute_modifiers(*a))))
+            .collect();
+        let op = |o: AttributeOperation| match o {
+            AttributeOperation::AddValue => ModifierOperation::AddValue,
+            AttributeOperation::AddMultipliedBase => ModifierOperation::AddMultipliedBase,
+            AttributeOperation::AddMultipliedTotal => ModifierOperation::AddMultipliedTotal,
+        };
+        let mods: Vec<Vec<AttributeModifier>> = lists
+            .iter()
+            .map(|(_, _, l)| l.iter().map(|(id, amount, o)| AttributeModifier { id, amount: *amount, operation: op(*o) }).collect())
+            .collect();
+        let snapshots: Vec<AttributeSnapshot> = lists
+            .iter()
+            .zip(&mods)
+            .map(|((attribute, base, _), modifiers)| AttributeSnapshot { attribute: *attribute, base: *base, modifiers })
+            .collect();
+        kiln_proto::packets::entity::update_attributes(self.entity_id, &snapshots)
     }
 
     /// Remembers the equipment for attributes and resets the attack strength when the main

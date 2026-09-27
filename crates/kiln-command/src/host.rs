@@ -516,6 +516,20 @@ pub trait Host: SelectorWorld {
         64
     }
     fn kick(&mut self, player: &Self::Entity, reason: Text);
+    /// `LivingEntity.addEffect(new MobEffectInstance(effect, duration, amplifier, false,
+    /// showParticles), source)`: whether it changed anything; `None` for entities that are not
+    /// living.
+    fn add_effect(&mut self, _entity: &Self::Entity, _effect: &Identifier, _duration: i32, _amplifier: i32, _show_particles: bool) -> Option<bool> {
+        None
+    }
+    /// `LivingEntity.removeEffect`; `None` for entities that are not living.
+    fn remove_effect(&mut self, _entity: &Self::Entity, _effect: &Identifier) -> Option<bool> {
+        None
+    }
+    /// `LivingEntity.removeAllEffects`; `None` for entities that are not living.
+    fn clear_effects(&mut self, _entity: &Self::Entity) -> Option<bool> {
+        None
+    }
     fn max_players(&self) -> usize;
     /// Profile lookup by name (online players, then the profile cache).
     fn find_profile(&mut self, name: &str) -> Option<Profile>;

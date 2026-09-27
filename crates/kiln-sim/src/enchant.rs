@@ -246,15 +246,33 @@ fn apply_entity_effect(
                 owner.hurt_and_break(e.slot, amount.calculate(e.level) as i32, ctx.level_rng.as_mut());
             }
         }
-        // No mob effects exist yet (bane of arthropods' slowness).
-        EntityEffect::ApplyMobEffect { .. } | EntityEffect::Other(_) => {}
+        // `ApplyMobEffect.apply` (bane of arthropods' slowness): a random entry of the list,
+        // duration and amplifier from the affected entity's random.
+        EntityEffect::ApplyMobEffect { to_apply, min_duration, max_duration, min_amplifier, max_amplifier } => {
+            use kiln_javamath::random::RandomSource;
+            let p = &mut *players[affected];
+            if to_apply.is_empty() {
+                return;
+            }
+            let pick = &to_apply[p.entity_rng.next_int_bounded(to_apply.len() as i32) as usize];
+            let between = |r: &mut kiln_javamath::random::LegacyRandom, min: f32, max: f32| r.next_float() * (max - min) + min;
+            let round = |v: f32| (v as f64 + 0.5).floor() as i32;
+            let (lo, hi) = (min_duration.calculate(e.level), max_duration.calculate(e.level));
+            let duration = round(between(&mut p.entity_rng, lo, hi) * 20.0);
+            let (lo, hi) = (min_amplifier.calculate(e.level), max_amplifier.calculate(e.level));
+            let amplifier = round(between(&mut p.entity_rng, lo, hi)).max(0);
+            if let Some(id) = crate::effects::effect_id(pick.as_str()) {
+                p.add_effect(crate::effects::Effect::simple(id, duration, amplifier));
+            }
+        }
+        EntityEffect::Other(_) => {}
     }
 }
 
 impl Player {
     /// `Entity.igniteForSeconds`: `igniteForTicks(floor(seconds * 20))`, scaled by the
-    /// `burning_time` attribute (fire protection), capped at 1 tick for invulnerable players.
-    /// Kiln has no fire yet: the ticks are counted down but nothing burns.
+    /// `burning_time` attribute (fire protection), capped at 1 tick for invulnerable players
+    /// (see [`crate::hazards`] for the burning).
     pub(crate) fn ignite_for_seconds(&mut self, seconds: f32) {
         let ticks = crate::combat::floor_f32(seconds * 20.0);
         let scaled = (ticks as f64 * self.attribute(crate::combat::BURNING_TIME)).ceil() as i32;
