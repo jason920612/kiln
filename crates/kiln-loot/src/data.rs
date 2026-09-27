@@ -303,6 +303,19 @@ impl LootData {
         self.table_index(id).and_then(|i| self.tables.get(i))
     }
 
+    /// The loot table a block drops from (`BlockBehaviour.getLootTable`): `blocks/<name>`, or for
+    /// wall-mounted variants (torches, signs, banners, heads, coral fans), the table of the
+    /// standing block they drop like. `None` for blocks without one (air, fluids, portals...).
+    pub fn block_table(&self, block: &str) -> Option<Identifier> {
+        let (ns, path) = block.split_once(':').unwrap_or(("minecraft", block));
+        let own = Identifier::new_unchecked(format!("{ns}:blocks/{path}"));
+        if self.table_index(&own).is_some() {
+            return Some(own);
+        }
+        let standing = Identifier::new_unchecked(format!("{ns}:blocks/{}", path.replacen("wall_", "", 1)));
+        self.table_index(&standing).map(|_| standing)
+    }
+
     /// Ids of every loot table, in registry order.
     pub fn table_ids(&self) -> &[Identifier] {
         self.names.names(Kind::Table)
