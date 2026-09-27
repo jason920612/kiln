@@ -259,10 +259,8 @@ impl Entity {
                 let name = crate::blocks::block_name(state);
                 if (name == "minecraft:redstone_ore" || name == "minecraft:deepslate_redstone_ore") && !self.shift_key_down {
                     let info = kiln_data::blocks_types::block_of(state);
-                    if info.property(state, "lit") == Some("false") {
-                        if let Some(lit) = info.with_property(state, "lit", "true") {
-                            level.set_block(pos, lit, 3);
-                        }
+                    if let (Some("false"), Some(lit)) = (info.property(state, "lit"), info.with_property(state, "lit", "true")) {
+                        level.set_block(pos, lit, 3);
                     }
                 }
             }

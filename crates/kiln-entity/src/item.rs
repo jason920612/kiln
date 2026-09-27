@@ -34,7 +34,7 @@ impl ItemData {
 /// and yaw), with `stack`.
 pub fn new(id: i32, uuid: u128, stack: ItemStack, random_seed: i64) -> Entity {
     let mut e = Entity::new("minecraft:item", id, uuid, EntityKind::Item(ItemData::new(stack)), random_seed);
-    let bob = e.random.next_float() * 3.1415927 * 2.0;
+    let bob = e.random.next_float() * std::f32::consts::PI * 2.0;
     e.y_rot = e.random.next_float() * 360.0;
     if let EntityKind::Item(d) = &mut e.kind {
         d.bob_offset = bob;

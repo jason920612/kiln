@@ -42,11 +42,9 @@ pub fn fall(id: i32, uuid: u128, pos: BlockPos, state: u16, seed: i64) -> Entity
     let mut e = Entity::new("minecraft:falling_block", id, uuid, EntityKind::FallingBlock(FallingBlockData::new(state)), seed);
     e.set_pos(Vec3::new(pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5));
     e.set_old_pos_and_rot();
-    if matches!(kind(state), Kind::Anvil) {
-        if let EntityKind::FallingBlock(d) = &mut e.kind {
-            d.hurt_entities = true;
-            d.fall_damage_per_distance = 2.0;
-        }
+    if let (Kind::Anvil, EntityKind::FallingBlock(d)) = (kind(state), &mut e.kind) {
+        d.hurt_entities = true;
+        d.fall_damage_per_distance = 2.0;
     }
     e
 }
@@ -164,12 +162,10 @@ fn on_land(e: &mut Entity, level: &mut dyn EntityLevel, pos: BlockPos, state: u1
                 level.emit(Event::LevelEvent { event: 1031, pos, data: 0 });
             }
         }
-        Kind::ConcretePowder => {
-            if physics::fluid_state(replaced).kind.is_water() || touches_water(level, pos) {
-                let concrete = block_name(state).trim_end_matches("_powder").to_string();
-                if let Some(b) = kiln_data::blocks_types::block_by_name(&concrete) {
-                    level.set_block(pos, b.default, 3);
-                }
+        Kind::ConcretePowder if physics::fluid_state(replaced).kind.is_water() || touches_water(level, pos) => {
+            let concrete = block_name(state).trim_end_matches("_powder").to_string();
+            if let Some(b) = kiln_data::blocks_types::block_by_name(&concrete) {
+                level.set_block(pos, b.default, 3);
             }
         }
         _ => {}
