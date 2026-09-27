@@ -729,7 +729,9 @@ impl Eval<'_> {
                     return stack;
                 }
                 let f = level as f32 * self.float(count);
-                stack.grow(crate::number::java_round(f));
+                // `ItemStack.grow`: `setCount(getCount() + n)`, where an empty stack (count <= 0)
+                // counts as 0.
+                stack.set_count(stack.count().wrapping_add(crate::number::java_round(f)));
                 if *limit > 0 {
                     stack::limit_size(&mut stack, *limit);
                 }
