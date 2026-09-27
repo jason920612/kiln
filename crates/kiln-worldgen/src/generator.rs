@@ -4,14 +4,16 @@
 use crate::Error;
 use crate::aquifer::{Aquifer, AquiferFunctions, FluidPicker, NoiseAquifer};
 use crate::biome::{BiomeInfo, LastResult, ParameterList, target};
-use crate::blocks::{has_fluid, is_air, is_block, state};
+use crate::blocks::{has_fluid, is_block, state};
 use crate::carver::{Carver, CarvingMask, GenContext};
+pub use crate::proto::ProtoChunk;
+use crate::proto::stored_biome;
 use crate::datapack::Datapack;
 use crate::sampler::{SamplerRef, Scratch};
 use crate::state::RandomState;
 use crate::surface::{self, BiomeClimate, MaterialInputs, MaterialSystem};
 use crate::volume::Volume;
-use kiln_javamath::random::{LegacyRandom, RandomSource};
+use kiln_javamath::random::{LegacyRandom, PositionalRandomFactory, RandomSource};
 use std::collections::{HashMap, HashSet};
 
 /// The router fields a `Climate.Sampler` reads, in `Climate.target` order.
@@ -23,89 +25,6 @@ pub enum Step {
     Fill,
     Surface,
     Carvers,
-}
-
-/// A chunk being generated: block states and biomes of every section, plus the
-/// `WORLD_SURFACE_WG` heightmap generation reads.
-#[derive(Clone)]
-pub struct ProtoChunk {
-    pub x: i32,
-    pub z: i32,
-    pub min_y: i32,
-    /// Block states, section by section from the bottom; within a section `y << 8 | z << 4 | x`.
-    pub blocks: Vec<u16>,
-    /// Biome indices ([`Generator::biomes`]) per quart, section by section; within a section
-    /// `y << 4 | z << 2 | x`.
-    pub biomes: Vec<u16>,
-    /// Per column (`z << 4 | x`): the lowest y above every non-air block.
-    pub surface: [i32; 256],
-}
-
-impl ProtoChunk {
-    pub fn sections(&self) -> usize {
-        self.biomes.len() / 64
-    }
-
-    pub fn max_y(&self) -> i32 {
-        self.min_y + (self.sections() as i32) * 16 - 1
-    }
-
-    #[inline]
-    pub fn index(&self, x: usize, y: i32, z: usize) -> usize {
-        let ry = (y - self.min_y) as usize;
-        ((ry >> 4) << 12) | ((ry & 15) << 8) | (z << 4) | x
-    }
-
-    /// The block at a column-local position; `VOID_AIR` outside the build height.
-    #[inline]
-    pub fn get(&self, x: usize, y: i32, z: usize) -> u16 {
-        if y < self.min_y || y > self.max_y() { state::VOID_AIR } else { self.blocks[self.index(x, y, z)] }
-    }
-
-    /// `ChunkAccess.getHeight(WORLD_SURFACE_WG, x, z) + 1`.
-    #[inline]
-    pub fn surface_height(&self, x: usize, z: usize) -> i32 {
-        self.surface[(z << 4) | x]
-    }
-
-    /// `ProtoChunk.setBlockState`: sets a block and updates the heightmap (`Heightmap.update`).
-    pub fn set(&mut self, x: usize, y: i32, z: usize, s: u16) {
-        if y < self.min_y || y > self.max_y() {
-            return;
-        }
-        let i = self.index(x, y, z);
-        self.blocks[i] = s;
-        let first = self.surface[(z << 4) | x];
-        if y <= first - 2 {
-            return;
-        }
-        if !is_air(s) {
-            if y >= first {
-                self.surface[(z << 4) | x] = y + 1;
-            }
-        } else if first - 1 == y {
-            let mut h = self.min_y;
-            for yy in (self.min_y..y).rev() {
-                if !is_air(self.blocks[self.index(x, yy, z)]) {
-                    h = yy + 1;
-                    break;
-                }
-            }
-            self.surface[(z << 4) | x] = h;
-        }
-    }
-
-    /// The biome stored for a quart of this chunk (clamped to the build height).
-    pub fn quart_biome(&self, qx: i32, qy: i32, qz: i32) -> u16 {
-        stored_biome(&self.biomes, self.min_y, qx, qy, qz)
-    }
-}
-
-/// A chunk's stored biome at a quart (`ChunkAccess.getNoiseBiome`: y clamped to the chunk).
-fn stored_biome(biomes: &[u16], min_y: i32, qx: i32, qy: i32, qz: i32) -> u16 {
-    let sections = (biomes.len() / 64) as i32;
-    let ry = (qy - (min_y >> 2)).clamp(0, sections * 4 - 1);
-    biomes[((ry >> 2) * 64 + (((ry & 3) << 4) | ((qz & 3) << 2) | (qx & 3))) as usize]
 }
 
 /// Per-thread working memory: sampling contexts and the biomes of recently generated chunks
@@ -125,6 +44,18 @@ impl Default for GenScratch {
             biomes: BiomeCache { context: Scratch::caching(), chunks: HashMap::new() },
             density: Vec::new(),
         }
+    }
+}
+
+impl GenScratch {
+    /// The biome a chunk stores for a quart (computed if the chunk is not cached).
+    pub fn noise_biome(&mut self, generator: &Generator, qx: i32, qy: i32, qz: i32) -> u16 {
+        stored_biome(self.biomes.get(generator, qx >> 2, qz >> 2), generator.min_y, qx, qy, qz)
+    }
+
+    /// The stored biomes of a chunk (BIOMES status), from the per-thread cache.
+    pub fn chunk_biomes(&mut self, generator: &Generator, cx: i32, cz: i32) -> &[u16] {
+        self.biomes.get(generator, cx, cz)
     }
 }
 
@@ -228,13 +159,15 @@ pub struct Generator {
     pub biomes: Vec<BiomeInfo>,
     parameters: ParameterList<u16>,
     climate: Vec<SamplerRef>,
-    zoom_seed: i64,
+    pub zoom_seed: i64,
     final_density: SamplerRef,
     default_block: u16,
     fluid_picker: FluidPicker,
     aquifer: Option<AquiferFunctions>,
     material: MaterialSystem,
-    seed: i64,
+    pub seed: i64,
+    /// `RandomState.getOrCreateRandomFactory(worldgen_region_random)`: `WorldGenRegion.random`.
+    pub region_random: PositionalRandomFactory,
     carvers: Vec<Carver>,
     /// Carver indices per biome.
     biome_carvers: Vec<Vec<usize>>,
@@ -295,6 +228,7 @@ impl Generator {
             })
         };
         let densities: HashMap<_, _> = rule_densities.iter().copied().zip(compiled).collect();
+        let region_random = state.factory().from_hash_of("minecraft:worldgen_region_random").fork_positional();
         let default_block = s.default_block.resolve()?;
         let default_fluid = s.default_fluid.resolve()?;
         let biome_names: Vec<String> = biomes.iter().map(|b| b.name.clone()).collect();
@@ -358,6 +292,7 @@ impl Generator {
             climate,
             zoom_seed: obfuscate_seed(seed),
             seed,
+            region_random,
             carvers,
             biome_carvers,
             uniform_carvers,
@@ -413,13 +348,14 @@ impl Generator {
     /// Generates a chunk through the BIOMES status.
     pub fn new_chunk(&self, gs: &mut GenScratch, cx: i32, cz: i32) -> ProtoChunk {
         let biomes = gs.biomes.get(self, cx, cz).to_vec();
-        ProtoChunk { x: cx, z: cz, min_y: self.min_y, blocks: vec![state::AIR; self.sections() * 4096], biomes, surface: [self.min_y; 256] }
+        ProtoChunk::new(cx, cz, self.min_y, self.sections(), biomes)
     }
 
     /// Generates a chunk through BIOMES and TERRAIN.
     pub fn generate(&self, gs: &mut GenScratch, cx: i32, cz: i32) -> ProtoChunk {
         let mut chunk = self.new_chunk(gs, cx, cz);
         self.run_steps(gs, &mut chunk, &mut |_, _| {});
+        chunk.finish_terrain();
         chunk
     }
 

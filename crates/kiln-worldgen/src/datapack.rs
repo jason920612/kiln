@@ -50,6 +50,18 @@ pub struct Datapack {
     pub parameter_lists: HashMap<String, Vec<(ParameterSpace, String)>>,
     /// `tags/block` entries as raw lists (`#tag` entries unexpanded).
     pub block_tags: HashMap<String, Vec<String>>,
+    /// Other tag registries by directory (`fluid`, `worldgen/biome`, `worldgen/structure`...),
+    /// entries as raw lists.
+    pub tags: HashMap<String, HashMap<String, Vec<String>>>,
+    /// `worldgen/feature` (configured features), sorted by id.
+    pub features: Vec<(String, Json)>,
+    /// `worldgen/placed_feature`, sorted by id.
+    pub placed_features: Vec<(String, Json)>,
+    /// `worldgen/block_state_provider`.
+    pub state_providers: HashMap<String, Json>,
+    /// Other `worldgen/*` registries loaded as raw JSON by directory (`structure`,
+    /// `structure_set`, `template_pool`, `processor_list`), entries sorted by id.
+    pub registries: HashMap<String, Vec<(String, Json)>>,
 }
 
 impl Datapack {
@@ -63,6 +75,11 @@ impl Datapack {
         let mut carvers = HashMap::new();
         let mut parameter_lists = HashMap::new();
         let mut block_tags = HashMap::new();
+        let mut tags: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
+        let mut features = Vec::new();
+        let mut placed_features = Vec::new();
+        let mut state_providers = HashMap::new();
+        let mut registries: HashMap<String, Vec<(String, Json)>> = HashMap::new();
         let data = root.join("data");
         let mut namespaces: Vec<_> = fs::read_dir(&data)
             .map_err(|e| Error::from(e).context(data.display().to_string()))?
@@ -107,18 +124,42 @@ impl Datapack {
                     parameter_lists.insert(id.clone(), parse_parameter_list(&json).map_err(|e| e.context(&id))?);
                 }
             }
+            features.extend(entries(&worldgen.join("feature"), &ns)?);
+            placed_features.extend(entries(&worldgen.join("placed_feature"), &ns)?);
+            state_providers.extend(entries(&worldgen.join("block_state_provider"), &ns)?);
+            for dir in ["structure", "structure_set", "template_pool", "processor_list"] {
+                registries.entry(dir.to_string()).or_default().extend(entries(&worldgen.join(dir), &ns)?);
+            }
             for (id, json) in entries(&ns_dir.join("tags").join("block"), &ns)? {
-                let values = field(&json, "values")?
-                    .as_array()
-                    .ok_or_else(|| Error::Invalid("tag values must be a list".into()))?
-                    .iter()
-                    .filter_map(|v| v.as_str().or_else(|| v.get("id").and_then(Json::as_str)).map(str::to_string))
-                    .collect();
-                block_tags.insert(id, values);
+                block_tags.insert(id, tag_values(&json)?);
+            }
+            for dir in ["fluid", "worldgen/biome", "worldgen/structure"] {
+                for (id, json) in entries(&ns_dir.join("tags").join(dir), &ns)? {
+                    tags.entry(dir.to_string()).or_default().insert(id, tag_values(&json)?);
+                }
             }
         }
         biomes.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(Datapack { graph, settings, rules, conditions, biomes, carvers, parameter_lists, block_tags })
+        features.sort_by(|a, b| a.0.cmp(&b.0));
+        placed_features.sort_by(|a, b| a.0.cmp(&b.0));
+        for list in registries.values_mut() {
+            list.sort_by(|a, b| a.0.cmp(&b.0));
+        }
+        Ok(Datapack {
+            graph,
+            settings,
+            rules,
+            conditions,
+            biomes,
+            carvers,
+            parameter_lists,
+            block_tags,
+            tags,
+            features,
+            placed_features,
+            state_providers,
+            registries,
+        })
     }
 
     pub fn settings(&self, id: &str) -> Result<&NoiseSettings, Error> {
@@ -127,24 +168,74 @@ impl Datapack {
 
     /// Block names in a block tag, with nested tags expanded.
     pub fn block_tag(&self, id: &str) -> Result<Vec<String>, Error> {
-        let mut out = Vec::new();
-        let mut stack = vec![qualify(id.trim_start_matches('#'))];
-        let mut seen = Vec::new();
-        while let Some(tag) = stack.pop() {
-            if seen.contains(&tag) {
-                continue;
+        expand(&self.block_tags, "block", id)
+    }
+
+    /// Entry names in a tag of the registry directory `dir` (`fluid`, `worldgen/biome`...),
+    /// with nested tags expanded.
+    pub fn tag(&self, dir: &str, id: &str) -> Result<Vec<String>, Error> {
+        let empty = HashMap::new();
+        expand(self.tags.get(dir).unwrap_or(&empty), dir, id)
+    }
+}
+
+impl Datapack {
+    /// Block names of a block tag in vanilla's element order (`TagLoader`: entries in file
+    /// order, nested tags expanded in place, duplicates dropped).
+    pub fn block_tag_ordered(&self, id: &str) -> Result<Vec<String>, Error> {
+        fn walk(tags: &HashMap<String, Vec<String>>, tag: &str, out: &mut Vec<String>, depth: usize) -> Result<(), Error> {
+            let values = tags.get(tag).ok_or_else(|| Error::Invalid(format!("unknown block tag {tag}")))?;
+            if depth > 32 {
+                return Err(Error::Invalid(format!("block tag cycle at {tag}")));
             }
-            let values = self.block_tags.get(&tag).ok_or_else(|| Error::Invalid(format!("unknown block tag {tag}")))?;
             for v in values {
                 match v.strip_prefix('#') {
-                    Some(t) => stack.push(qualify(t)),
-                    None => out.push(qualify(v)),
+                    Some(t) => walk(tags, &qualify(t), out, depth + 1)?,
+                    None => {
+                        let v = qualify(v);
+                        if !out.contains(&v) {
+                            out.push(v);
+                        }
+                    }
                 }
             }
-            seen.push(tag);
+            Ok(())
         }
+        let mut out = Vec::new();
+        walk(&self.block_tags, &qualify(id.trim_start_matches('#')), &mut out, 0)?;
         Ok(out)
     }
+}
+
+/// A tag's `values`: plain ids or `{"id", "required"}` entries.
+fn tag_values(json: &Json) -> Result<Vec<String>, Error> {
+    Ok(field(json, "values")?
+        .as_array()
+        .ok_or_else(|| Error::Invalid("tag values must be a list".into()))?
+        .iter()
+        .filter_map(|v| v.as_str().or_else(|| v.get("id").and_then(Json::as_str)).map(str::to_string))
+        .collect())
+}
+
+/// Entries of tag `id`, nested tags expanded.
+fn expand(tags: &HashMap<String, Vec<String>>, dir: &str, id: &str) -> Result<Vec<String>, Error> {
+    let mut out = Vec::new();
+    let mut stack = vec![qualify(id.trim_start_matches('#'))];
+    let mut seen = Vec::new();
+    while let Some(tag) = stack.pop() {
+        if seen.contains(&tag) {
+            continue;
+        }
+        let values = tags.get(&tag).ok_or_else(|| Error::Invalid(format!("unknown {dir} tag {tag}")))?;
+        for v in values {
+            match v.strip_prefix('#') {
+                Some(t) => stack.push(qualify(t)),
+                None => out.push(qualify(v)),
+            }
+        }
+        seen.push(tag);
+    }
+    Ok(out)
 }
 
 /// `(namespace:path, json)` for every `.json` below `dir`, sorted by id.
@@ -179,7 +270,7 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Error> {
 }
 
 /// `NormalNoise.Parameters.CODEC`.
-fn parse_noise(json: &Json) -> Result<NormalNoiseParams, Error> {
+pub(crate) fn parse_noise(json: &Json) -> Result<NormalNoiseParams, Error> {
     let base_amplitude = match json.get("base_amplitude") {
         Some(v) => v.as_f64().ok_or_else(|| Error::Invalid("base_amplitude must be a number".into()))?,
         None => 1.0,
