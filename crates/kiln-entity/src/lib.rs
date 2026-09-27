@@ -20,6 +20,7 @@ pub mod math;
 pub mod memory;
 pub mod physics;
 pub mod player;
+pub mod projectile;
 pub mod shape;
 pub mod tnt;
 pub mod xp_orb;

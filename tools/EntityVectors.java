@@ -127,6 +127,7 @@ public class EntityVectors {
         Scenarios.tnt(out);
         Scenarios.orbs(out);
         Scenarios.players(out);
+        Scenarios.throwables(out);
         return out;
     }
 
@@ -381,6 +382,8 @@ public class EntityVectors {
                 }
                 e = f;
             }
+            case "snowball" -> e = new net.minecraft.world.entity.projectile.throwableitemprojectile.Snowball(EntityTypes.SNOWBALL, level);
+            case "ender_pearl" -> e = new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl(EntityTypes.ENDER_PEARL, level);
             case "player" -> {
                 var profile = new com.mojang.authlib.GameProfile(java.util.UUID.nameUUIDFromBytes(new byte[] {1}), "Kiln");
                 var player = new net.minecraft.server.level.ServerPlayer(level.getServer(), level, profile,
@@ -919,6 +922,26 @@ class Scenarios {
             }
             s.entity("player", 0.5, 1.0, 0.5, 0, 0, 0, r.nextLong()).with("shift", shift).with("on_ground", true).with("moves", moves);
             s.ticks(ticks);
+            out.add(s);
+        }
+    }
+
+    static void throwables(List<EntityVectors.Scenario> out) {
+        Random r = new Random(12);
+        for (int k = 0; k < 60; k++) {
+            var s = new EntityVectors.Scenario("throwable/" + k, r.nextLong());
+            s.fill(-10, 0, -10, 10, 0, 10, "minecraft:stone");
+            int n = 6 + r.nextInt(10);
+            for (int i = 0; i < n; i++) s.block(r.nextInt(13) - 6, 1 + r.nextInt(3), r.nextInt(13) - 6, SHAPES[r.nextInt(SHAPES.length)]);
+            if (k % 4 == 1) s.fill(-6, 1, -6, 6, 2, 6, "minecraft:water");
+            if (k % 5 == 3) {
+                for (int y = 1; y <= 4; y++) s.block(2, y, 0, "minecraft:bubble_column[drag=false]");
+                s.block(2, 0, 0, "minecraft:soul_sand");
+            }
+            if (k % 6 == 2) s.entity("tnt", rnd(r, -3, 4), 1, rnd(r, -3, 4), 0, 0, 0, r.nextLong()).with("fuse", 200);
+            String kind = k % 3 == 2 ? "ender_pearl" : "snowball";
+            s.entity(kind, rnd(r, -2, 3), rnd(r, 1.5, 5), rnd(r, -2, 3), rnd(r, -0.5, 0.5), rnd(r, -0.3, 0.6), rnd(r, -0.5, 0.5), r.nextLong());
+            s.ticks(60);
             out.add(s);
         }
     }

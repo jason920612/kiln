@@ -48,6 +48,8 @@ pub enum EntityKind {
     ExperienceOrb(crate::xp_orb::OrbData),
     FallingBlock(crate::falling_block::FallingBlockData),
     Tnt(crate::tnt::TntData),
+    /// Snowballs, eggs, ender pearls, thrown potions and experience bottles.
+    Throwable(crate::projectile::ThrowableData),
     /// A player, for the server's movement check (`player::server_move`); not ticked here.
     Player(crate::player::PlayerData),
     /// An entity simulated elsewhere (mobs, players), present so behaviours can see it.
@@ -255,6 +257,7 @@ impl Entity {
             EntityKind::Item(_) | EntityKind::FallingBlock(_) | EntityKind::Tnt(_) => 0.04,
             EntityKind::ExperienceOrb(_) => 0.03,
             EntityKind::Player(_) => 0.08,
+            EntityKind::Throwable(ref d) => crate::projectile::gravity(d),
             EntityKind::Other { .. } => 0.0,
         }
     }
@@ -342,6 +345,7 @@ impl Entity {
             EntityKind::ExperienceOrb(_) => crate::xp_orb::tick(self, level),
             EntityKind::FallingBlock(_) => crate::falling_block::tick(self, level),
             EntityKind::Tnt(_) => crate::tnt::tick(self, level),
+            EntityKind::Throwable(_) => crate::projectile::tick(self, level),
             EntityKind::Player(_) => {}
             EntityKind::Other { .. } => self.base_tick(level),
         }
@@ -422,7 +426,7 @@ impl Entity {
         match self.kind {
             EntityKind::Item(_) => crate::item::hurt(self, level, kind, amount, attacker),
             EntityKind::ExperienceOrb(_) => crate::xp_orb::hurt(self, level, kind, amount),
-            EntityKind::FallingBlock(_) | EntityKind::Tnt(_) => false,
+            EntityKind::FallingBlock(_) | EntityKind::Tnt(_) | EntityKind::Throwable(_) => false,
             EntityKind::Player(_) | EntityKind::Other { .. } => {
                 level.emit(Event::Hurt { target: self.id, amount, kind, attacker });
                 true

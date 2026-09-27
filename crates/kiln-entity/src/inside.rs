@@ -403,14 +403,7 @@ impl Entity {
             }
             Kind::BubbleColumn => {
                 if intersects {
-                    let above = level.block(pos.above());
-                    let drag_down =
-                        kiln_data::blocks_types::block_of(state).property(state, "drag") == Some("true");
-                    if physics::collision_shape(above).is_empty() && physics::fluid_state(above).is_empty() {
-                        self.on_above_bubble_column(drag_down);
-                    } else {
-                        self.on_inside_bubble_column(drag_down);
-                    }
+                    self.bubble_column_inside(level, pos, state);
                 }
             }
             Kind::HoneyBlock => {
@@ -435,6 +428,17 @@ impl Entity {
                 self.inside.run_after(EffectType::LavaIgnite, Action::LavaHurt);
             }
             _ => {}
+        }
+    }
+
+    /// `BubbleColumnBlock.entityInside` with the box inside the column.
+    pub(crate) fn bubble_column_inside(&mut self, level: &dyn EntityLevel, pos: BlockPos, state: u16) {
+        let above = level.block(pos.above());
+        let drag_down = kiln_data::blocks_types::block_of(state).property(state, "drag") == Some("true");
+        if physics::collision_shape(above).is_empty() && physics::fluid_state(above).is_empty() {
+            self.on_above_bubble_column(drag_down);
+        } else {
+            self.on_inside_bubble_column(drag_down);
         }
     }
 

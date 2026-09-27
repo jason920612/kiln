@@ -62,6 +62,9 @@ pub enum Event {
     /// Vanilla block side effects of an entity inside a block that this crate does not
     /// simulate (hoppers, pressure plates, tripwires, portals, detector rails).
     EntityInsideBlock { pos: BlockPos, state: u16, entity: i32 },
+    /// A projectile hit a block (`Block.onProjectileHit`) or an entity: damage, egg hatching,
+    /// pearl teleports and potion splashes are the simulation's.
+    ProjectileHit { projectile: i32, projectile_type: &'static str, owner: Option<i32>, hit: crate::projectile::Hit },
     /// An explosion at `pos`; `blocks` were destroyed (for the explode packet).
     Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, source: Option<i32> },
 }

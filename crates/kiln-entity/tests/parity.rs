@@ -9,7 +9,7 @@ use kiln_entity::entity::{Entity, EntityKind};
 use kiln_entity::level::EntityLevel;
 use kiln_entity::math::BlockPos;
 use kiln_entity::memory::MemoryLevel;
-use kiln_entity::{falling_block, item, player, tnt, xp_orb};
+use kiln_entity::{falling_block, item, player, projectile, tnt, xp_orb};
 use kiln_item::ItemStack;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -69,6 +69,14 @@ fn spawn(spec: &Value) -> Entity {
             EntityKind::ExperienceOrb(xp_orb::OrbData { count: int("count", 1), age: int("age", 0), ..xp_orb::OrbData::new(int("value", 1)) }),
             seed,
         ),
+        "snowball" | "egg" | "ender_pearl" => {
+            let kind = match kind {
+                "snowball" => projectile::Throwable::Snowball,
+                "egg" => projectile::Throwable::Egg,
+                _ => projectile::Throwable::EnderPearl,
+            };
+            projectile::new(id, 0, kind, vec3(&spec["pos"]), vec3(&spec["motion"]), None, seed)
+        }
         "player" => {
             let shift = spec.get("shift").and_then(Value::as_bool).unwrap_or(false);
             let mut p = player::new(id, 0, vec3(&spec["pos"]), if shift { 1.5 } else { 1.8 }, 0.6);
@@ -123,7 +131,7 @@ fn state(e: &Entity) -> Vec<f64> {
         EntityKind::Tnt(d) => out.push(d.fuse as f64),
         EntityKind::FallingBlock(d) => out.extend([d.time as f64, d.state as f64]),
         EntityKind::ExperienceOrb(d) => out.extend([d.value as f64, d.count as f64, d.age as f64]),
-        EntityKind::Player(_) | EntityKind::Other { .. } => {}
+        EntityKind::Player(_) | EntityKind::Throwable(_) | EntityKind::Other { .. } => {}
     }
     out
 }
