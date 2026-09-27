@@ -10,7 +10,7 @@
 //! `<work>/wp3-worldgen/chunks`), `KILN_CHUNK_LIMIT` (compare only the first N chunks per seed).
 
 use kiln_worldgen::generator::Step;
-use kiln_worldgen::{Datapack, GenScratch, Generator};
+use kiln_worldgen::{Datapack, GenScratch, Generator, ProtoChunk};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::Read;
@@ -163,6 +163,63 @@ fn state_name(s: u16) -> String {
 
 const LAYERS: [&str; 4] = ["biomes", "fill", "surface", "carvers"];
 
+/// Counts of the features each step exercised (identical in vanilla when the step matches),
+/// to show what the comparison covered.
+fn count_features(out: &mut BTreeMap<&'static str, u64>, step: Step, chunk: &ProtoChunk, surface: &mut Vec<u16>, min_y: i32) {
+    use kiln_data::blocks::default_state as d;
+    let mut add = |k: &'static str, n: u64| *out.entry(k).or_default() += n;
+    match step {
+        Step::Fill => {
+            let lava_above = chunk
+                .blocks
+                .iter()
+                .enumerate()
+                .filter(|&(i, &b)| b == d::LAVA && min_y + ((i >> 12) * 16 + ((i >> 8) & 15)) as i32 >= -54)
+                .count();
+            add("aquifer lava blocks", lava_above as u64);
+            add("fill water blocks", chunk.blocks.iter().filter(|&&b| b == d::WATER).count() as u64);
+        }
+        Step::Surface => {
+            let name = |b: u16| kiln_data::blocks_types::block_of(b).name;
+            let mut terracotta = 0;
+            let mut ores = 0;
+            let mut ice = 0;
+            for &b in &chunk.blocks {
+                if b == d::STONE || b == d::AIR || b == d::WATER || b == d::DEEPSLATE {
+                    continue;
+                }
+                let n = name(b);
+                if n.ends_with("terracotta") {
+                    terracotta += 1;
+                } else if matches!(n, "minecraft:copper_ore" | "minecraft:raw_copper_block" | "minecraft:deepslate_iron_ore" | "minecraft:raw_iron_block") {
+                    ores += 1;
+                } else if matches!(n, "minecraft:packed_ice" | "minecraft:snow_block") {
+                    ice += 1;
+                }
+            }
+            add("band terracotta blocks", terracotta);
+            add("ore vein ore blocks", ores);
+            add("packed ice/snow blocks", ice);
+            surface.clear();
+            surface.extend_from_slice(&chunk.blocks);
+        }
+        Step::Carvers => {
+            let mut carved = 0;
+            let mut top = 0;
+            for (&a, &b) in surface.iter().zip(&chunk.blocks) {
+                if a != b {
+                    carved += 1;
+                    if a == d::DIRT && !kiln_data::blocks_types::is_air(b) && !kiln_data::blocks_types::has_fluid(b) {
+                        top += 1;
+                    }
+                }
+            }
+            add("carved blocks", carved);
+            add("top material fixes", top);
+        }
+    }
+}
+
 #[test]
 fn chunks_match_vanilla() {
     let Some((pack, files)) = inputs() else { return };
@@ -193,15 +250,19 @@ fn chunks_match_vanilla() {
             .collect();
 
         let tallies: Mutex<Vec<Tally>> = Mutex::new((0..LAYERS.len()).map(|_| Tally::default()).collect());
+        let coverage: Mutex<BTreeMap<&'static str, u64>> = Mutex::new(BTreeMap::new());
         let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
         let per = dump.chunks.len().div_ceil(threads).max(1);
         let sections = generator.sections();
         std::thread::scope(|scope| {
             for group in dump.chunks.chunks(per) {
                 let (generator, biome_map, tallies, names) = (&generator, &biome_map, &tallies, &dump.biome_names);
+                let coverage = &coverage;
                 scope.spawn(move || {
                     let mut gs = GenScratch::default();
                     let mut local: Vec<Tally> = (0..LAYERS.len()).map(|_| Tally::default()).collect();
+                    let mut features: BTreeMap<&'static str, u64> = BTreeMap::new();
+                    let mut surface_blocks: Vec<u16> = Vec::new();
                     for c in group {
                         let quarts = sections * 64;
                         let vanilla_biomes = &c.data[..quarts];
@@ -260,6 +321,7 @@ fn chunks_match_vanilla() {
                                     }
                                 }
                             }
+                            count_features(&mut features, step, chunk, &mut surface_blocks, generator.min_y);
                             let t = &mut local[layer];
                             t.chunks += 1;
                             t.compared += blocks;
@@ -271,14 +333,14 @@ fn chunks_match_vanilla() {
                     for (a, l) in all.iter_mut().zip(local) {
                         a.merge(l);
                     }
+                    let mut cov = coverage.lock().unwrap();
+                    for (k, v) in features {
+                        *cov.entry(k).or_default() += v;
+                    }
                 });
             }
         });
         let tallies = tallies.into_inner().unwrap();
-        let mut report = BTreeMap::new();
-        for (name, t) in LAYERS.iter().zip(&tallies) {
-            report.insert(*name, (t.chunks, t.bad_chunks, t.compared, t.mismatched));
-        }
         eprintln!("{}: seed {}", path.file_name().unwrap().to_string_lossy(), dump.seed);
         for (name, t) in LAYERS.iter().zip(&tallies) {
             eprintln!(
@@ -290,6 +352,8 @@ fn chunks_match_vanilla() {
             }
             total_bad += t.mismatched;
         }
+        let cov = coverage.into_inner().unwrap();
+        eprintln!("  coverage: {}", cov.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", "));
     }
     assert_eq!(total_bad, 0, "chunks differ from vanilla");
 }
