@@ -320,14 +320,20 @@ impl Conn {
     }
 
     async fn read(&mut self) -> Result<BytesMut> {
+        self.read_within(PRE_PLAY_TIMEOUT).await?.context("timed out")
+    }
+
+    /// The next packet, or `None` if none arrives within `limit` (partial data is kept).
+    async fn read_within(&mut self, limit: Duration) -> Result<Option<BytesMut>> {
         loop {
             if let Some(p) = self.rx.decode(&mut self.rbuf)? {
-                return Ok(p);
+                return Ok(Some(p));
             }
             let start = self.rbuf.len();
-            let n = tokio::time::timeout(PRE_PLAY_TIMEOUT, self.stream.read_buf(&mut self.rbuf))
-                .await
-                .context("timed out")??;
+            let Ok(n) = tokio::time::timeout(limit, self.stream.read_buf(&mut self.rbuf)).await else {
+                return Ok(None);
+            };
+            let n = n?;
             if n == 0 {
                 bail!("connection closed");
             }
@@ -624,10 +630,38 @@ async fn configure(conn: &mut Conn, shared: &Shared, name: &str) -> Result<packe
     let mut language = String::from("en_us");
     let mut registries_sent = false;
     let mut tasks: Vec<ConfigTask> = Vec::new();
+    // `keepConnectionAlive`: a player may read the code of conduct or download the pack for
+    // as long as the client keeps answering keep-alives.
+    let mut keep_alive: Option<i64> = None;
     loop {
-        let pkt = conn.read().await?;
+        let Some(pkt) = conn.read_within(KEEP_ALIVE_INTERVAL).await? else {
+            if keep_alive.is_some() || tasks.is_empty() {
+                let reason = kiln_proto::nbt::Tag::Compound(vec![(
+                    "translate".into(),
+                    kiln_proto::nbt::Tag::String("disconnect.timeout".into()),
+                )]);
+                conn.send(&packets::config_disconnect_text(&reason)).await?;
+                bail!("timed out while configuring");
+            }
+            let id = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.as_millis() as i64);
+            conn.send(&common::keep_alive_configuration(id)).await?;
+            keep_alive = Some(id);
+            continue;
+        };
         let (id, mut r) = split_id(&pkt)?;
         match id {
+            sb::KEEP_ALIVE => {
+                let answer = r.i64()?;
+                if keep_alive != Some(answer) {
+                    let reason = kiln_proto::nbt::Tag::Compound(vec![(
+                        "translate".into(),
+                        kiln_proto::nbt::Tag::String("disconnect.timeout".into()),
+                    )]);
+                    conn.send(&packets::config_disconnect_text(&reason)).await?;
+                    bail!("wrong keep-alive answer while configuring");
+                }
+                keep_alive = None;
+            }
             sb::CLIENT_INFORMATION => {
                 let mut peek = r;
                 language = peek.string(16).map(str::to_owned).unwrap_or(language);
@@ -695,11 +729,14 @@ async fn configure(conn: &mut Conn, shared: &Shared, name: &str) -> Result<packe
                 }
             }
             sb::FINISH_CONFIGURATION if registries_sent && tasks.is_empty() => return Ok(client),
-            sb::CUSTOM_PAYLOAD | sb::KEEP_ALIVE | sb::PONG => {}
+            sb::CUSTOM_PAYLOAD | sb::PONG => {}
             other => debug!("ignoring configuration packet {other}"),
         }
     }
 }
+
+/// Vanilla's keep-alive period (`ServerCommonPacketListenerImpl.LATENCY_CHECK_INTERVAL`).
+const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Starts the first pending configuration task, or ends configuration when none is left
 /// (`JoinWorldTask` sends `finish_configuration`). Returns whether configuration is over for
