@@ -280,7 +280,12 @@ impl Player {
         }
         let dropped = if all { std::mem::replace(slot, kiln_item::ItemStack::empty()) } else { slot.split(1) };
         self.inv.times_changed += 1;
-        Some(self.throw(dropped))
+        // `drop(stack, false, true)`: the thrower is kept.
+        let mut spawn = self.throw(dropped);
+        if let entities::Body::Item { thrower, .. } = &mut spawn.body {
+            *thrower = Some(self.uuid.as_u128());
+        }
+        Some(spawn)
     }
 
     /// Item id per inventory menu slot, as the client numbers them (tests and tools).
@@ -310,7 +315,7 @@ impl Player {
             kind: &kiln_data::entities::types::ITEM,
             pos: [self.pos[0], eye_y - 0.3, self.pos[2]],
             vel,
-            body: entities::Body::Item { stack, pickup_delay: entities::DROP_PICKUP_DELAY },
+            body: entities::Body::Item { stack, pickup_delay: entities::DROP_PICKUP_DELAY, thrower: None },
         }
     }
 

@@ -255,7 +255,7 @@ impl Player {
             kind: &kiln_data::entities::types::ITEM,
             pos: [self.pos[0], self.pos[1] + 1.62 - 0.3, self.pos[2]],
             vel,
-            body: entities::Body::Item { stack, pickup_delay: entities::DROP_PICKUP_DELAY },
+            body: entities::Body::Item { stack, pickup_delay: entities::DROP_PICKUP_DELAY, thrower: None },
         }
     }
 }

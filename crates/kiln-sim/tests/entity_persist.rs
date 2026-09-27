@@ -74,6 +74,11 @@ fn dropped_items(dir: &std::path::Path) -> (Sim, Client, [i32; 3]) {
     for e in sim.entities() {
         assert!((e.1[1] - y as f64).abs() < 1e-6, "items rest on the floor: {e:?}");
     }
+    // Dropped with the drop key: the player is the thrower.
+    let player = uuid::Uuid::from_u64_pair(0x6b69_6c6e, 1).as_u128();
+    for t in sim.entity_nbt() {
+        assert_eq!(t.get("Thrower").and_then(kiln_entity::persist::uuid_from_tag), Some(player), "{t:?}");
+    }
     (sim, client, [x, y, z])
 }
 

@@ -671,7 +671,7 @@ fn pop_resource(pos: BlockPos, stack: kiln_item::ItemStack, h: u64) -> Spawn {
         kind: &kiln_data::entities::types::ITEM,
         pos: at,
         vel: [unit(48) * 0.2 - 0.1, 0.2, unit(8) * 0.2 - 0.1],
-        body: entities::Body::Item { stack, pickup_delay: 10 },
+        body: entities::Body::Item { stack, pickup_delay: 10, thrower: None },
     }
 }
 
@@ -691,7 +691,7 @@ fn drop_stand_in(pos: BlockPos, state: u16, env: &BlockEnv, i: usize) -> Option<
         kind: &kiln_data::entities::types::ITEM,
         pos: at,
         vel: [unit(48) * 0.2 - 0.1, 0.2, unit(8) * 0.2 - 0.1],
-        body: entities::Body::Item { stack, pickup_delay: 10 },
+        body: entities::Body::Item { stack, pickup_delay: 10, thrower: None },
     })
 }
 

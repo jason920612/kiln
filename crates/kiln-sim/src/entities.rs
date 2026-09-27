@@ -25,7 +25,8 @@ pub(crate) const DROP_PICKUP_DELAY: i32 = 40;
 
 /// What a spawn becomes.
 pub(crate) enum Body {
-    Item { stack: kiln_item::ItemStack, pickup_delay: i32 },
+    /// `thrower`: the player who dropped it with the drop key (`ItemEntity.setThrower`).
+    Item { stack: kiln_item::ItemStack, pickup_delay: i32, thrower: Option<u128> },
     /// `FallingBlockEntity.fall` of `state` from the block at the spawn position.
     FallingBlock { state: u16 },
     /// `TntBlock.prime`: a primed TNT with vanilla's random hop.
@@ -134,13 +135,14 @@ impl Entity {
         };
         let (u, seed, pos) = (uuid.as_u128(), seed_for(id), vec3(spawn.pos));
         let phys = match spawn.body {
-            Body::Item { stack, pickup_delay } => {
+            Body::Item { stack, pickup_delay, thrower } => {
                 let mut e = kiln_entity::item::new(id, u, stack, seed);
                 e.set_pos(pos);
                 e.set_old_pos_and_rot();
                 e.delta = vec3(spawn.vel);
                 if let EntityKind::Item(d) = &mut e.kind {
                     d.pickup_delay = pickup_delay;
+                    d.thrower = thrower;
                 }
                 e
             }
