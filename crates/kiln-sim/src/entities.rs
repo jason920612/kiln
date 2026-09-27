@@ -527,11 +527,13 @@ fn carry_out(
         }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
         Event::BlockExploded { pos, state, .. } => level.effect(Effect::Drop { pos: kb(pos), state }),
-        Event::Hurt { target, amount, kind, .. } => {
-            if let Some(p) = players.iter_mut().find(|p| p.entity_id == target)
-                && let Some(death) = p.hurt(amount, health::Cause::Entity(kind), spawns)
-            {
-                deaths.push(death);
+        Event::Hurt { target, amount, kind, attacker } => {
+            if let Some(p) = players.iter_mut().find(|p| p.entity_id == target) {
+                // kiln-entity's attacker is the entity that dealt the damage (TNT, a falling
+                // block); none of them is a player.
+                let source = health::Source { cause: health::Cause::Entity(kind), attacker: None, direct: attacker };
+                let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths };
+                p.hurt(amount, &source, &mut ctx);
             }
         }
         Event::EntityEvent { entity: id, event } => {

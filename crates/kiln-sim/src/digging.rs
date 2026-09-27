@@ -222,6 +222,14 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     let previous = level.actor.replace(p.conn);
     let removed = interact::player_destroy(level, bp, &actor, drops);
     level.actor = previous;
+    // `ItemStack.mineBlock` (survival only): a tool loses `damage_per_block` durability for
+    // blocks that are not instantly broken.
+    if removed && !actor.creative {
+        let per_block = p.inv.selected_item().get(keys::TOOL).map_or(0, |t| t.damage_per_block);
+        if per_block > 0 && block_props::hardness(state) != 0.0 {
+            p.hurt_and_break(kiln_item::component::EquipmentSlot::MainHand, per_block);
+        }
+    }
     // `Block.playerDestroy`, which runs when the player can harvest the block.
     if removed && drops {
         p.exhaust(0.005);

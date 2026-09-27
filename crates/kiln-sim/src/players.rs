@@ -280,8 +280,18 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player]) {
             d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(target.living_flags()));
             packets.push(entity::set_entity_data(target.entity_id, &d));
         }
-        if let Some(damage_type) = target.damaged.take() {
-            packets.push(entity::damage_event(target.entity_id, damage_type, None, None, None));
+        if let Some((damage_type, cause, direct)) = target.damaged.take() {
+            packets.push(entity::damage_event(target.entity_id, damage_type, cause, direct, None));
+        }
+        for event in std::mem::take(&mut target.entity_events) {
+            packets.push(entity::entity_event(target.entity_id, event));
+        }
+        // `ServerEntity.sendChanges` for a hit that was not answered by the attack itself
+        // (swept players): the velocity goes to viewers and the player.
+        if std::mem::take(&mut target.sync_velocity) {
+            let motion = entity::set_entity_motion(target.entity_id, target.vel);
+            target.send(motion.clone());
+            packets.push(motion);
         }
         if std::mem::take(&mut target.died) {
             // `EntityEvent.DEATH`: the death animation and sound.
