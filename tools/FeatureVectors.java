@@ -20,7 +20,11 @@
 //   header   "KWGF", version, seed, structures flag, block state count, min y, height,
 //            feature steps: count, per step the placed feature ids in FeatureSorter order
 //            (inline features are "#<step>:<index>"), then regions
-//   region   target count + (x, z)..., decoration count, then per decorated chunk in order:
+//   region   target count + (x, z)...; with structures: chunks with structure starts (x, z,
+//            start count, per start the structure id and its saved NBT as length + bytes),
+//            chunks with references (x, z, structure count, per structure id, count, packed
+//            chunk positions as i64) and the post-TERRAIN blocks of each decorated chunk (x, z,
+//            deflated blocks); then decoration count and per decorated chunk in order:
 //            x, z, deflated record: invocation count, per invocation kind (0 feature,
 //            1 structure), step, index, far reads, change count, changes (dx+16, dz+16 as u8,
 //            y as i16, state as u16; dx, dz relative to the chunk's origin);
@@ -254,19 +258,24 @@ public class FeatureVectors {
 
     ProtoChunk terrain(int cx, int cz) throws Exception {
         ProtoChunk chunk = new ProtoChunk(new ChunkPos(cx, cz), UpgradeData.EMPTY, level, containers, null);
-        Holder<Biome>[] b = chunkBiomes(cx, cz);
+        terrain(chunk, Beardifier.EMPTY);
+        return chunk;
+    }
+
+    /** BIOMES and TERRAIN on a chunk (with the structures' beardifier, if any). */
+    void terrain(ProtoChunk chunk, Beardifier beardifier) throws Exception {
+        ChunkPos pos = chunk.getPos();
+        Holder<Biome>[] b = chunkBiomes(pos.x(), pos.z());
         int minQy = minY() >> 2;
         chunk.fillBiomesFromNoise((x, y, z) -> b[((y - minQy) >> 2) * 64 + (((y - minQy) & 3) << 4 | (z & 3) << 2 | (x & 3))]);
         chunk.setPersistedStatus(ChunkStatus.BIOMES);
-        ChunkPos pos = chunk.getPos();
         DensityVolume volume = new DensityVolume(16, level.getHeight(), 16, pos.getMinBlockX(), minY(), pos.getMinBlockZ());
-        try (NoiseChunk noise = new NoiseChunk(random, Beardifier.EMPTY, settings, fluidPicker, Blender.empty(), volume)) {
+        try (NoiseChunk noise = new NoiseChunk(random, beardifier, settings, fluidPicker, Blender.empty(), volume)) {
             doFill.invoke(generator, noise, chunk);
             buildSurface.invoke(generator, chunk, noise, random, biomeManager, biomeSource.possibleBiomes(), settings.materialRule().value());
             generateCarvers.invoke(generator, chunk, Blender.empty(), noise, random, biomeManager, null, settings.materialRule().value());
         }
         chunk.setPersistedStatus(ChunkStatus.TERRAIN);
-        return chunk;
     }
 
     // ---- FEATURES -----------------------------------------------------------------------
@@ -323,11 +332,15 @@ public class FeatureVectors {
     }
 
     HarnessRegion region(ProtoChunk center, Map<Long, ProtoChunk> chunks) throws Exception {
+        return region(center, chunks, ChunkStatus.FEATURES);
+    }
+
+    HarnessRegion region(ProtoChunk center, Map<Long, ProtoChunk> chunks, ChunkStatus status) throws Exception {
         HarnessRegion r = (HarnessRegion) UNSAFE.allocateInstance(HarnessRegion.class);
         ChunkPos c = center.getPos();
         r.cx = c.x();
         r.cz = c.z();
-        var step = ChunkPyramid.GENERATION_PYRAMID.getStepTo(ChunkStatus.FEATURES);
+        var step = ChunkPyramid.GENERATION_PYRAMID.getStepTo(status);
         int radius = step.directDependencies().size() - 1;
         StaticCache2D<ChunkAccess> cache = StaticCache2D.create(c.x(), c.z(), radius, (x, z) -> {
             ProtoChunk p = chunks.get(ChunkPos.pack(x, z));
@@ -534,16 +547,109 @@ public class FeatureVectors {
         return out;
     }
 
-    Map<Long, ProtoChunk> terrainFor(List<long[]> order, ExecutorService pool) throws Exception {
-        Set<Long> need = new HashSet<>();
-        for (long[] d : order) {
-            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) need.add(ChunkPos.pack((int) d[1] + dx, (int) d[2] + dz));
+    /** Chunks within `r` of any of `centers`. */
+    static Set<Long> around(Iterable<Long> centers, int r) {
+        Set<Long> out = new HashSet<>();
+        for (long p : centers) {
+            for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) out.add(ChunkPos.pack(ChunkPos.getX(p) + dx, ChunkPos.getZ(p) + dz));
         }
-        Map<Long, Future<ProtoChunk>> futures = new HashMap<>();
-        for (long p : need) futures.put(p, pool.submit(() -> terrain(ChunkPos.getX(p), ChunkPos.getZ(p))));
-        Map<Long, ProtoChunk> chunks = new HashMap<>();
-        for (var e : futures.entrySet()) chunks.put(e.getKey(), e.getValue().get());
+        return out;
+    }
+
+    static <T> void await(List<Future<T>> futures) throws Exception {
+        for (Future<T> f : futures) f.get();
+    }
+
+    /**
+     * TERRAIN for the decorated chunks and their neighbours. With structures: STRUCTURE_STARTS
+     * for every chunk within 8 of those, STRUCTURE_REFERENCES, and the beardifier in TERRAIN.
+     */
+    Map<Long, ProtoChunk> terrainFor(List<long[]> order, ExecutorService pool) throws Exception {
+        List<Long> decorated = new ArrayList<>();
+        for (long[] d : order) decorated.add(ChunkPos.pack((int) d[1], (int) d[2]));
+        Set<Long> need = around(decorated, 1);
+        Map<Long, ProtoChunk> chunks = new ConcurrentHashMap<>();
+        if (!structures) {
+            List<Future<ProtoChunk>> futures = new ArrayList<>();
+            for (long p : need) futures.add(pool.submit(() -> {
+                ProtoChunk c = terrain(ChunkPos.getX(p), ChunkPos.getZ(p));
+                chunks.put(p, c);
+                return c;
+            }));
+            await(futures);
+            return chunks;
+        }
+        for (long p : around(need, 8)) chunks.put(p, new ProtoChunk(new ChunkPos(ChunkPos.getX(p), ChunkPos.getZ(p)), UpgradeData.EMPTY, level, containers, null));
+        // One thread: template palettes cache lazily in plain HashMaps.
+        for (ProtoChunk c : chunks.values()) {
+            generator.createStructures(registries, level.getChunkSource().getGeneratorState(), level.structureManager(), c,
+                server.getStructureTemplateManager(), level.dimension());
+            c.setPersistedStatus(ChunkStatus.STRUCTURE_STARTS);
+        }
+        List<Future<Object>> futures = new ArrayList<>();
+        for (long p : need) futures.add(pool.submit(() -> {
+            ProtoChunk c = chunks.get(p);
+            HarnessRegion region = region(c, chunks, ChunkStatus.STRUCTURE_REFERENCES);
+            generator.createReferences(region, level.structureManager().forWorldGenRegion(region), c);
+            c.setPersistedStatus(ChunkStatus.STRUCTURE_REFERENCES);
+            return null;
+        }));
+        await(futures);
+        futures.clear();
+        for (long p : need) futures.add(pool.submit(() -> {
+            ProtoChunk c = chunks.get(p);
+            HarnessRegion region = region(c, chunks, ChunkStatus.TERRAIN);
+            terrain(c, Beardifier.forStructuresInChunk(level.structureManager().forWorldGenRegion(region), c.getPos()));
+            return null;
+        }));
+        await(futures);
         return chunks;
+    }
+
+    /** Structure starts (with their saved NBT), references and post-TERRAIN blocks. */
+    void writeStructures(DataOutputStream w, Map<Long, ProtoChunk> chunks, List<long[]> order) throws Exception {
+        var context = net.minecraft.world.level.levelgen.structure.pieces.StructurePieceSerializationContext.fromLevel(level);
+        Registry<Structure> structureRegistry = registries.lookupOrThrow(Registries.STRUCTURE);
+        List<Long> keys = new ArrayList<>(chunks.keySet());
+        keys.sort(null);
+        List<ProtoChunk> withStarts = new ArrayList<>();
+        for (long k : keys) if (!chunks.get(k).getAllStarts().isEmpty()) withStarts.add(chunks.get(k));
+        w.writeInt(Integer.reverseBytes(withStarts.size()));
+        for (ProtoChunk c : withStarts) {
+            w.writeInt(Integer.reverseBytes(c.getPos().x()));
+            w.writeInt(Integer.reverseBytes(c.getPos().z()));
+            w.writeInt(Integer.reverseBytes(c.getAllStarts().size()));
+            for (var e : c.getAllStarts().entrySet()) {
+                str(w, structureRegistry.getKey(e.getKey()).toString());
+                ByteArrayOutputStream nbt = new ByteArrayOutputStream();
+                net.minecraft.nbt.NbtIo.write(e.getValue().createTag(context, c.getPos()), new DataOutputStream(nbt));
+                w.writeInt(Integer.reverseBytes(nbt.size()));
+                w.write(nbt.toByteArray());
+            }
+        }
+        List<ProtoChunk> withRefs = new ArrayList<>();
+        for (long k : keys) if (!chunks.get(k).getAllReferences().isEmpty()) withRefs.add(chunks.get(k));
+        w.writeInt(Integer.reverseBytes(withRefs.size()));
+        for (ProtoChunk c : withRefs) {
+            w.writeInt(Integer.reverseBytes(c.getPos().x()));
+            w.writeInt(Integer.reverseBytes(c.getPos().z()));
+            w.writeInt(Integer.reverseBytes(c.getAllReferences().size()));
+            for (var e : c.getAllReferences().entrySet()) {
+                str(w, structureRegistry.getKey(e.getKey()).toString());
+                long[] refs = e.getValue().toLongArray();
+                Arrays.sort(refs);
+                w.writeInt(Integer.reverseBytes(refs.length));
+                for (long r : refs) w.writeLong(Long.reverseBytes(r));
+            }
+        }
+        w.writeInt(Integer.reverseBytes(order.size()));
+        for (long[] d : order) {
+            byte[] z = deflate(blocks(chunks.get(ChunkPos.pack((int) d[1], (int) d[2]))));
+            w.writeInt(Integer.reverseBytes((int) d[1]));
+            w.writeInt(Integer.reverseBytes((int) d[2]));
+            w.writeInt(Integer.reverseBytes(z.length));
+            w.write(z);
+        }
     }
 
     void writeRegion(DataOutputStream w, List<int[]> targets, ExecutorService pool, boolean check) throws Exception {
@@ -556,8 +662,8 @@ public class FeatureVectors {
             w.writeInt(Integer.reverseBytes(t[0]));
             w.writeInt(Integer.reverseBytes(t[1]));
         }
+        if (structures) writeStructures(w, chunks, order);
         w.writeInt(Integer.reverseBytes(order.size()));
-        long far = 0;
         for (long[] d : order) {
             ProtoChunk chunk = chunks.get(ChunkPos.pack((int) d[1], (int) d[2]));
             HarnessRegion region = region(chunk, chunks);

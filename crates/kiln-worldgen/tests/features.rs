@@ -103,7 +103,7 @@ fn read_dump(path: &Path) -> Dump {
     assert_eq!(r.take(4), b"KWGF", "bad magic");
     assert_eq!(r.i32(), 1, "unsupported dump version");
     let seed = r.i64();
-    let _structures = r.i32();
+    let structures = r.i32() != 0;
     assert_eq!(r.i32() as u32, kiln_data::blocks::STATE_COUNT, "block state count differs from kiln-data");
     let (_min_y, _height) = (r.i32(), r.i32());
     let steps = (0..r.i32()).map(|_| (0..r.i32()).map(|_| r.str()).collect()).collect();
@@ -112,6 +112,31 @@ fn read_dump(path: &Path) -> Dump {
     let mut regions = Vec::new();
     for _ in 0..count.min(limit) {
         let targets: Vec<(i32, i32)> = (0..r.i32()).map(|_| (r.i32(), r.i32())).collect();
+        if structures {
+            // Starts, references and post-TERRAIN blocks: compared by the structure tests.
+            for _ in 0..r.i32() {
+                let _ = (r.i32(), r.i32());
+                for _ in 0..r.i32() {
+                    let _ = r.str();
+                    let n = r.i32() as usize;
+                    r.take(n);
+                }
+            }
+            for _ in 0..r.i32() {
+                let _ = (r.i32(), r.i32());
+                for _ in 0..r.i32() {
+                    let _ = r.str();
+                    for _ in 0..r.i32() {
+                        r.i64();
+                    }
+                }
+            }
+            for _ in 0..r.i32() {
+                let _ = (r.i32(), r.i32());
+                let n = r.i32() as usize;
+                r.take(n);
+            }
+        }
         let mut decorations = Vec::new();
         for _ in 0..r.i32() {
             let (x, z) = (r.i32(), r.i32());
