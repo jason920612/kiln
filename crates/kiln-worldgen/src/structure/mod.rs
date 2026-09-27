@@ -16,6 +16,7 @@ pub mod piece;
 pub mod placement;
 pub mod processor;
 pub mod shapes;
+pub mod shape;
 pub mod template;
 pub mod templated;
 pub mod transform;

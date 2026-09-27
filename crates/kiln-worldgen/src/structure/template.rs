@@ -404,8 +404,8 @@ impl Template {
             });
         }
         if min[0] <= max[0] && !settings.known_shape {
-            let positions: Vec<BlockPos> = placed.iter().map(|(p, _)| *p).collect();
-            super::shapes::update_shapes(r, &positions, min, max, flags);
+            let placed: Vec<BlockPos> = placed.iter().map(|(p, _)| *p).collect();
+            super::shape::update_placed_shapes(r, flags, &placed, min, max);
         }
         true
     }
