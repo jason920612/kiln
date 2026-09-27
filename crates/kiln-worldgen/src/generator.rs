@@ -111,7 +111,7 @@ fn stored_biome(biomes: &[u16], min_y: i32, qx: i32, qy: i32, qz: i32) -> u16 {
 /// Per-thread working memory: sampling contexts and the biomes of recently generated chunks
 /// (vanilla reads neighbour biomes from chunks that already passed BIOMES).
 pub struct GenScratch {
-    pub(crate) noise_context: Scratch,
+    noise_context: Scratch,
     point_context: Scratch,
     biomes: BiomeCache,
     density: Vec<f32>,
