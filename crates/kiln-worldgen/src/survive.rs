@@ -139,6 +139,15 @@ fn class_can_survive(class: &str, state: u16, r: &mut Region, p: BlockPos) -> Op
         "HangingRootsBlock" => is_face_sturdy(r.get(p.above()), Dir::Down, Support::Full),
         "BambooStalkBlock" | "BambooSaplingBlock" => vtags::is(r.get(p.below()), "supports_bamboo"),
         "BaseCoralPlantTypeBlock" => is_face_sturdy(r.get(p.below()), Dir::Up, Support::Full),
+        "LeafLitterBlock" => is_face_sturdy(r.get(p.below()), Dir::Up, Support::Full),
+        "CarpetBlock" => !crate::blocks::is_air(r.get(p.below())),
+        "ShelfMushroomBlock" => {
+            let facing = prop(state, "facing").and_then(Dir::by_name).unwrap_or(Dir::North);
+            is_face_sturdy(r.get(p.relative(facing.opposite())), facing, Support::Full)
+        }
+        "MangrovePropaguleBlock" if prop(state, "hanging") == Some("true") => {
+            vtags::is(r.get(p.above()), "supports_hanging_mangrove_propagule")
+        }
         "BaseCoralWallFanBlock" => {
             let facing = prop(state, "facing").and_then(Dir::by_name).unwrap_or(Dir::North);
             is_face_sturdy(r.get(p.relative(facing.opposite())), facing, Support::Full)
@@ -166,6 +175,7 @@ fn may_place_on(state: u16, below: u16, r: &mut Region, below_pos: BlockPos) -> 
             "WitherRoseBlock" => vtags::is(below, "supports_wither_rose"),
             "DryVegetationBlock" => vtags::is(below, "supports_dry_vegetation"),
             "AzaleaBlock" => vtags::is(below, "supports_azalea"),
+            "MangrovePropaguleBlock" => vtags::is(below, "supports_mangrove_propagule"),
             "CactusFlowerBlock" => {
                 vtags::is(below, "support_override_cactus_flower") || is_face_sturdy(below, Dir::Up, Support::Center)
             }

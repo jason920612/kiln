@@ -89,6 +89,11 @@ fn class_update_shape(class: &str, r: &mut Region, s: u16, p: BlockPos, d: Dir, 
             }
             None
         }
+        "MangrovePropaguleBlock" => (d == Dir::Up && !survives(r)).then_some(state::AIR),
+        "HangingMossBlock" => {
+            let below = r.get(p.below());
+            Some(with_prop(s, "tip", if same_block(below, s) { "false" } else { "true" }))
+        }
         "SnowyBlock" => (d == Dir::Up).then(|| with_prop(s, "snowy", if vtags::is(ns, "snow") { "true" } else { "false" })),
         "CocoaBlock" => (prop(s, "facing") == Some(d.name()) && !survives(r)).then_some(state::AIR),
         "ShelfMushroomBlock" => (prop(s, "facing") == Some(d.opposite().name()) && !survives(r)).then_some(state::AIR),
