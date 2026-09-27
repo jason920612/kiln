@@ -658,9 +658,10 @@ public class InventoryVectors {
             w.println("{\"order\": [" + String.join(", ", order) + "]}");
             for (RecipeHolder<?> h : recipes.getRecipes()) {
                 if (!(h.value() instanceof CraftingRecipe recipe)) continue;
-                for (int k = 0; k < perRecipe; k++) {
+                boolean special = recipe.placementInfo().isImpossibleToPlace() || recipe.getClass().getSimpleName().matches("DyeRecipe|ImbueRecipe");
+                for (int k = 0; k < (special ? perRecipe * 6 : perRecipe); k++) {
                     for (int size : new int[] {3, 2}) {
-                        List<ItemStack> grid = gridFor(recipe, size, rng);
+                        List<ItemStack> grid = gridFor(recipe, h.id().identifier().getPath(), size, rng);
                         if (grid == null) continue;
                         w.println(craftRecord(h.id().identifier().toString(), size, grid));
                         grids++;
@@ -711,8 +712,10 @@ public class InventoryVectors {
         return g;
     }
 
-    static List<ItemStack> gridFor(CraftingRecipe recipe, int size, Random rng) {
+    static List<ItemStack> gridFor(CraftingRecipe recipe, String id, int size, Random rng) {
         List<ItemStack> g = emptyGrid(size);
+        List<ItemStack> special = specialGrid(recipe, id, size, rng);
+        if (special != null) return special;
         if (recipe instanceof ShapedRecipe shaped) {
             int w = shaped.getWidth(), h = shaped.getHeight();
             if (w > size || h > size) return null;
@@ -741,7 +744,7 @@ public class InventoryVectors {
             for (int i = 0; i < ings.size(); i++) g.set(cells.get(i), pick(ings.get(i), rng));
             return g;
         }
-        return specialGrid(recipe, size, rng);
+        return null;
     }
 
     static final String[] DYES = {"white_dye", "orange_dye", "red_dye", "blue_dye", "black_dye", "lime_dye", "purple_dye", "brown_dye"};
@@ -756,7 +759,7 @@ public class InventoryVectors {
         return g;
     }
 
-    static List<ItemStack> specialGrid(CraftingRecipe recipe, int size, Random rng) {
+    static List<ItemStack> specialGrid(CraftingRecipe recipe, String id, int size, Random rng) {
         String name = recipe.getClass().getSimpleName();
         List<ItemStack> items = new ArrayList<>();
         String color = DYES[rng.nextInt(DYES.length)].replace("_dye", "");
@@ -765,8 +768,9 @@ public class InventoryVectors {
                 int layers = 1 + rng.nextInt(7);
                 StringBuilder pat = new StringBuilder();
                 for (int i = 0; i < layers; i++) pat.append(i == 0 ? "" : ",").append("{pattern:\"minecraft:stripe_top\",color:\"red\"}");
-                items.add(parse(color + "_banner[banner_patterns=[" + pat + "]]", 1));
-                items.add(parse((rng.nextInt(5) == 0 ? "white" : color) + "_banner", 1));
+                String own = id.replace("_banner_duplicate", "");
+                items.add(parse(own + "_banner[banner_patterns=[" + pat + "]]", 1));
+                items.add(parse((rng.nextInt(5) == 0 ? color : own) + "_banner", 1));
             }
             case "BookCloningRecipe" -> {
                 items.add(parse("written_book[written_book_content={title:\"t\",author:\"a\",generation:" + rng.nextInt(4) + ",pages:[\"x\"]}]", 1));
@@ -782,7 +786,8 @@ public class InventoryVectors {
             }
             case "DyeRecipe" -> {
                 String[] armor = {"leather_chestplate", "leather_helmet[dyed_color=65280]", "leather_boots", "wolf_armor"};
-                items.add(parse(armor[rng.nextInt(armor.length)], 1));
+                String own = id.replace("_dyed", "");
+                items.add(parse(rng.nextInt(3) > 0 ? own + (rng.nextBoolean() ? "[dyed_color=4660]" : "") : armor[rng.nextInt(armor.length)], 1));
                 int n = 1 + rng.nextInt(Math.min(8, size * size - 1));
                 for (int i = 0; i < n; i++) items.add(parse(DYES[rng.nextInt(DYES.length)], 1));
             }

@@ -123,6 +123,62 @@ impl SmithingTrim {
     }
 }
 
+/// `PotionIngredient`: an item ingredient and, optionally, the potions its `potion_contents`
+/// must hold (`PotionsPredicate`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct PotionIngredient {
+    pub item: Ingredient,
+    /// `minecraft:potion` ids.
+    pub potions: Option<Vec<i32>>,
+}
+
+impl PotionIngredient {
+    pub fn from_json(v: &Json) -> Result<Self, String> {
+        let item = ing(v, "item")?;
+        let potions = match v.get("potion_contents").and_then(|p| p.get("potions")) {
+            None => None,
+            Some(set) => {
+                let set = kiln_item::HolderSet::from_value(kiln_item::registry::POTION, &super::json_value(set)).map_err(|e| e.0)?;
+                Some(match set {
+                    kiln_item::HolderSet::Direct(ids) => ids,
+                    kiln_item::HolderSet::Tag(t) => crate::tags::entries("minecraft:potion", t.as_str()).unwrap_or(&[]).to_vec(),
+                })
+            }
+        };
+        Ok(PotionIngredient { item, potions })
+    }
+
+    pub fn test(&self, stack: &ItemStack) -> bool {
+        self.item.test(stack)
+            && self.potions.as_ref().is_none_or(|set| {
+                stack.get(kiln_item::keys::POTION_CONTENTS).and_then(|c| c.potion).is_some_and(|p| set.contains(&p))
+            })
+    }
+}
+
+/// `BrewingRecipe` (26.x data-driven brewing): `input` + `reagent` make `output`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Brewing {
+    pub input: PotionIngredient,
+    pub reagent: PotionIngredient,
+    pub output: ItemStackTemplate,
+}
+
+impl Brewing {
+    pub fn from_json(v: &Json) -> Result<Self, String> {
+        let part = |f: &str| PotionIngredient::from_json(v.get(f).ok_or_else(|| format!("missing {f}"))?);
+        Ok(Brewing {
+            input: part("input")?,
+            reagent: part("reagent")?,
+            output: template_from_json(v.get("output").ok_or("missing output")?)?,
+        })
+    }
+
+    pub fn matches(&self, input: &ItemStack, reagent: &ItemStack) -> bool {
+        self.input.test(input) && self.reagent.test(reagent)
+    }
+}
+
 /// `Ingredient.testOptionalIngredient`: no ingredient means an empty slot.
 pub fn test_optional(ing: &Option<Ingredient>, stack: &ItemStack) -> bool {
     match ing {

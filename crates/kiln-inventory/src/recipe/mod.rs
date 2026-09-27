@@ -10,7 +10,7 @@ pub mod special;
 pub use crafting::{Shaped, Shapeless, Transmute, TransmuteResult};
 pub use ingredient::Ingredient;
 pub use input::CraftingInput;
-pub use other::{Cooking, CookingKind, SmithingTransform, SmithingTrim, Stonecutting};
+pub use other::{Brewing, Cooking, CookingKind, PotionIngredient, SmithingTransform, SmithingTrim, Stonecutting};
 pub use special::Special;
 
 use crate::menu::World;
@@ -32,6 +32,7 @@ pub enum Recipe {
     Stonecutting(Stonecutting),
     SmithingTransform(SmithingTransform),
     SmithingTrim(SmithingTrim),
+    Brewing(Brewing),
 }
 
 impl Recipe {
@@ -256,6 +257,7 @@ pub fn parse_recipe(v: &Json) -> Result<Option<Recipe>, String> {
         "stonecutting" => Recipe::Stonecutting(Stonecutting::from_json(v)?),
         "smithing_transform" => Recipe::SmithingTransform(SmithingTransform::from_json(v)?),
         "smithing_trim" => Recipe::SmithingTrim(SmithingTrim::from_json(v)?),
+        "brewing" => Recipe::Brewing(Brewing::from_json(v)?),
         other => match Special::from_json(other, v)? {
             Some(s) => Recipe::Special(s),
             None => return Err(format!("unknown recipe type {other}")),
