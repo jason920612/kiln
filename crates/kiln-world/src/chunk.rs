@@ -210,6 +210,11 @@ impl Chunk {
         self.saved_version = u32::MAX;
     }
 
+    /// Generated here and never saved (not read from a save).
+    pub fn is_new(&self) -> bool {
+        self.saved_version == u32::MAX
+    }
+
     /// Sky light of light section `li` (0 = below the world) from the surface heights.
     fn section_sky(&self, li: usize) -> Light {
         let base = (li as i32 - 1) * 16;

@@ -456,7 +456,13 @@ impl Dim {
         let (cells, part) = region.cells_and_part_mut();
         let Some(cell) = cells.get_mut(pos.cell()) else { return Err(chunk) };
         part.1.chunk_loaded(pos, &mut chunk, self.game_time);
+        let new = chunk.is_new();
         cell.insert(pos, chunk);
+        // A generated chunk gets its light from its blocks and loaded neighbours (vanilla's
+        // LIGHT status).
+        if new {
+            kiln_world::light::light_new_chunk(cells, pos);
+        }
         self.load_entities(pos);
         Ok(())
     }
@@ -614,11 +620,12 @@ impl Sim {
             let pack = kiln_worldgen::Datapack::load(&n.datapack)
                 .map_err(|e| warn!("cannot load the datapack at {}: {e}", n.datapack.display()))
                 .ok()?;
-            let g = kiln_worldgen::generator::Generator::new(&pack, OVERWORLD, OVERWORLD, n.seed)
+            let world = kiln_worldgen::Worldgen::overworld(&pack, n.seed, true)
                 .map_err(|e| warn!("cannot set up overworld generation: {e}"))
                 .ok()?;
-            info!("overworld generation: seed {}, {} threads", n.seed, n.threads);
-            Some(kiln_worldgen::world::NoiseChunks::new(std::sync::Arc::new(g)))
+            info!("overworld generation: seed {}, {} threads, features and structures", n.seed, n.threads);
+            let pipeline = std::sync::Arc::new(kiln_worldgen::Pipeline::new(std::sync::Arc::new(world)));
+            Some(kiln_worldgen::FullChunks::new(pipeline))
         });
         let (provider, spawn) = match &config.world {
             Some(dir) => {
@@ -634,8 +641,8 @@ impl Sim {
             }
             None => match generator {
                 Some(g) => {
-                    let mut provider = ChunkProvider::flat(OVERWORLD_DIM, plains as u16, biome_count).with_generator(Box::new(g));
-                    let spawn = land_spawn(&mut provider);
+                    let spawn = initial_spawn(g.pipeline());
+                    let provider = ChunkProvider::flat(OVERWORLD_DIM, plains as u16, biome_count).with_generator(Box::new(g));
                     info!("world spawn {spawn:?}");
                     (provider, spawn)
                 }
@@ -1446,25 +1453,14 @@ impl Sim {
     }
 }
 
-/// A world spawn for a new generated world: the first chunk, spiralling out from the origin,
-/// whose centre column is dry land. An approximation of vanilla's climate-based
-/// `findSpawnPosition`, which targets land biomes near the origin.
-fn land_spawn(provider: &mut ChunkProvider) -> [i32; 3] {
-    const RADIUS: i32 = 32;
-    let mut rings = vec![(0, 0)];
-    for r in 1..=RADIUS {
-        for i in -r..r {
-            rings.extend([(i, -r), (r, i), (-i, r), (-r, -i)]);
-        }
-    }
-    for (cx, cz) in rings {
-        let chunk = provider.load_or_generate(ChunkPos::new(cx, cz));
-        let top = chunk.column_height(8, 8, kiln_data::block_props::motion_blocking);
-        if top > chunk.min_y() && !kiln_data::blocks_types::has_fluid(chunk.get(8, top - 1, 8)) {
-            return [cx * 16 + 8, top, cz * 16 + 8];
-        }
-    }
-    [0, 64, 0]
+/// The world spawn of a new generated world (`MinecraftServer.setInitialSpawn`): the
+/// generator's origin chunk (`NoiseSpawnFinder`), then the first standable column spiralling
+/// over the chunks around it.
+fn initial_spawn(pipeline: &kiln_worldgen::Pipeline) -> [i32; 3] {
+    let mut gs = kiln_worldgen::GenScratch::default();
+    let origin = pipeline.world().generator.spawn_origin(&mut gs);
+    let p = kiln_worldgen::spawn::initial_spawn(origin, |x, z| kiln_worldgen::spawn::spawn_pos_in_chunk(&pipeline.full(&mut gs, x, z)));
+    [p.x, p.y, p.z]
 }
 
 /// The built-in data: the datapack at `path`, `KILN_DATAPACK` or `work/generated`.

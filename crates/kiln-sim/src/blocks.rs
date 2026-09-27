@@ -42,6 +42,9 @@ pub(crate) struct RegionBlocks {
     pub data: LevelData,
     pub random: LegacyRandom,
     sub_tick: i64,
+    /// Generation's post-processing and ticks of new chunks, applied once the chunks around
+    /// them are loaded (`LevelChunk.postProcessGeneration`, `unpackTicks`).
+    generated: Vec<(ChunkPos, kiln_world::chunk::PendingUpdates)>,
 }
 
 impl Default for RegionBlocks {
@@ -52,6 +55,7 @@ impl Default for RegionBlocks {
             data: LevelData::new(MAX_CHAINED_NEIGHBOR_UPDATES, 0),
             random: LegacyRandom::new(0),
             sub_tick: 0,
+            generated: Vec::new(),
         }
     }
 }
@@ -77,6 +81,9 @@ impl RegionBlocks {
         self.block_ticks.unpack(k, game_time);
         self.fluid_ticks.add_container(k, ChunkTicks::from_saved(fluid));
         self.fluid_ticks.unpack(k, game_time);
+        if let Some(pending) = chunk.take_pending_updates() {
+            self.generated.push((pos, pending));
+        }
         let moving = kiln_data::blocks::default_state::MOVING_PISTON;
         for ((x, y, z), be) in chunk.block_entities() {
             if chunk.get(x, y, z) == moving {
@@ -91,6 +98,8 @@ impl RegionBlocks {
         self.store(pos, chunk, game_time);
         self.block_ticks.remove_container(key(pos));
         self.fluid_ticks.remove_container(key(pos));
+        // Not applied yet (its neighbours never loaded): generation's updates are dropped.
+        self.generated.retain(|(p, _)| *p != pos);
         let gone: Vec<BlockPos> = self.data.pistons.iter().map(|(p, _)| p).filter(|&p| chunk_of(p) == pos).collect();
         for p in gone {
             self.data.pistons.remove(p);
@@ -144,6 +153,7 @@ impl RegionPart for RegionBlocks {
             into.data.block_events.push(e);
         }
         into.data.torch_toggles.append(&mut from.data.torch_toggles);
+        into.generated.append(&mut from.generated);
         into.sub_tick = into.sub_tick.max(from.sub_tick);
     }
 
@@ -173,6 +183,9 @@ impl RegionPart for RegionBlocks {
         }
         for t in self.data.torch_toggles.drain(..) {
             parts[at(t.pos)].data.torch_toggles.push(t);
+        }
+        for (c, pending) in self.generated.drain(..) {
+            parts[owner((c.x, c.z))].generated.push((c, pending));
         }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
@@ -430,6 +443,7 @@ fn chunk_random(seed: i64, game_time: i64, c: ChunkPos) -> (LegacyRandom, i32) {
 /// fluid ticks, random ticks in ticking chunks, then block events. Moving pistons tick
 /// later, after the entities ([`tick_pistons`]).
 pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
+    apply_generated(level);
     let can_tick = |k: ChunkKey| ticking.contains(ChunkPos::new(k.0, k.1));
     kiln_blocks::tick::run_block_ticks(level, can_tick);
     kiln_blocks::tick::run_fluid_ticks(level, can_tick);
@@ -455,6 +469,45 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
         }
     }
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
+}
+
+/// Generation's leftovers for new chunks whose neighbours are all loaded, in chunk order:
+/// blocks marked for post-processing take their shape from their neighbours, and the
+/// scheduled block and fluid ticks start. Vanilla sets them with flags 20 before any player
+/// has the chunk; Kiln may have sent it already, so clients hear about the change.
+fn apply_generated(level: &mut RegionLevel) {
+    if level.blocks.generated.is_empty() {
+        return;
+    }
+    let mut pending = std::mem::take(&mut level.blocks.generated);
+    pending.sort_by_key(|(c, _)| *c);
+    let mut later = Vec::new();
+    for (c, updates) in pending {
+        let ready = (-1..=1).all(|dx| (-1..=1).all(|dz| level.cells.chunk(ChunkPos::new(c.x + dx, c.z + dz)).is_some()));
+        if !ready {
+            later.push((c, updates));
+            continue;
+        }
+        for p in updates.post_process {
+            let pos = BlockPos::new(p[0], p[1], p[2]);
+            let s = level.block(pos);
+            let shaped = kiln_blocks::update::update_from_neighbour_shapes(level, s, pos);
+            if shaped != s {
+                kiln_blocks::set_block(level, pos, shaped, flags::KNOWN_SHAPE | flags::CLIENTS);
+            }
+        }
+        for (p, name, delay) in updates.block_ticks {
+            if let Some(block) = BlockId::by_name(name) {
+                kiln_blocks::schedule_block_tick(level, BlockPos::new(p[0], p[1], p[2]), block, delay, kiln_blocks::TickPriority::Normal);
+            }
+        }
+        for (p, name, delay) in updates.fluid_ticks {
+            if let Some(fluid) = FluidType::from_name(name) {
+                kiln_blocks::schedule_fluid_tick(level, BlockPos::new(p[0], p[1], p[2]), fluid, delay);
+            }
+        }
+    }
+    level.blocks.generated = later;
 }
 
 /// `Level.tickBlockEntities` for moving pistons.
