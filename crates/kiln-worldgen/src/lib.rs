@@ -29,6 +29,7 @@ pub mod json;
 pub mod material;
 pub mod noise;
 pub mod order;
+pub mod pipeline;
 pub mod placement;
 pub mod pos;
 pub mod postprocess;
@@ -54,7 +55,8 @@ pub use generator::{GenScratch, Generator, ProtoChunk};
 pub use sampler::{Sampler, SamplerRef, Scratch};
 pub use state::{NoiseRouter, RandomState};
 pub use volume::Volume;
-pub use world::NoiseChunks;
+pub use pipeline::{Pipeline, Worldgen};
+pub use world::{FullChunks, NoiseChunks};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
