@@ -718,6 +718,7 @@ dependencies = [
  "kiln-storage",
  "kiln-world",
  "kiln-worldgen",
+ "serde_json",
  "smallvec",
  "tracing",
  "uuid",

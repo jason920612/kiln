@@ -21,6 +21,7 @@
 //!   events, tracks entities, sends movement and light, and flushes its players' packets.
 
 mod blocks;
+mod combat;
 mod commands;
 mod consume;
 mod datapacks;
@@ -36,6 +37,8 @@ mod region;
 mod rng;
 mod stats;
 pub mod testing;
+#[cfg(test)]
+mod combat_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -192,8 +195,29 @@ struct Player {
     dead: bool,
     /// Died this tick: viewers see the death animation.
     died: bool,
-    /// Damage type of a hit this tick, for viewers' damage effect.
-    damaged: Option<i32>,
+    /// A hit this tick for viewers' damage effect: damage type, attacker, direct entity.
+    damaged: Option<(i32, Option<i32>, Option<i32>)>,
+    /// Entity events for viewers this tick (item breaks).
+    entity_events: Vec<u8>,
+    /// `LivingEntity.damageCooldownTime` and `lastHurt`.
+    hurt_cooldown: i32,
+    last_hurt: f32,
+    /// `getAbsorptionAmount`.
+    absorption: f32,
+    /// The last player that hurt this one and ticks left of its kill credit.
+    kill_credit: Option<(String, i32)>,
+    combat: health::CombatTracker,
+    /// `attackStrengthTicker`: ticks since the last swing or item change.
+    attack_ticker: i32,
+    /// Equipment at the last player tick ([`combat::SLOTS`] order): attributes come from it.
+    equipment_seen: Vec<kiln_item::ItemStack>,
+    /// The server's view of the player's velocity (knockback builds on it).
+    vel: [f64; 3],
+    /// `syncVelocity`: a hit this tick; the velocity goes to the client and its viewers.
+    sync_velocity: bool,
+    /// `lastKnownClientMovement`: the last accepted move, zero after a tick without one.
+    known_movement: [f64; 3],
+    moved_this_tick: bool,
     death_location: Option<[i32; 3]>,
     /// `FoodData.exhaustionLevel` and `tickTimer`.
     exhaustion: f32,
@@ -786,6 +810,9 @@ impl Sim {
             p.pos.map(f64::to_bits).hash(&mut h);
             p.rot.map(f32::to_bits).hash(&mut h);
             (p.game_mode, p.inv.selected, p.menu_view(), p.sneaking, p.sprinting).hash(&mut h);
+            (p.health.to_bits(), p.dead, p.food, p.saturation.to_bits(), p.exhaustion.to_bits()).hash(&mut h);
+            (p.hurt_cooldown, p.last_hurt.to_bits(), p.absorption.to_bits(), p.attack_ticker).hash(&mut h);
+            p.vel.map(f64::to_bits).hash(&mut h);
         }
         h.finish()
     }
@@ -819,6 +846,29 @@ impl Sim {
         self.players.get(&conn).map(|p| (p.health, p.dead))
     }
 
+    /// Durability damage of the item in an inventory menu slot (5-8 armor from the head down,
+    /// 9-35 main, 36-44 hotbar, 45 offhand), for tests and tools.
+    pub fn item_damage(&self, conn: ConnId, menu_slot: usize) -> Option<i32> {
+        use kiln_item::component::EquipmentSlot as S;
+        let p = self.players.get(&conn)?;
+        let stack = match menu_slot {
+            5 => p.inv.equipped(S::Head),
+            6 => p.inv.equipped(S::Chest),
+            7 => p.inv.equipped(S::Legs),
+            8 => p.inv.equipped(S::Feet),
+            9..=35 => &p.inv.items[menu_slot],
+            36..=44 => &p.inv.items[menu_slot - HOTBAR_START],
+            45 => p.inv.equipped(S::OffHand),
+            _ => return None,
+        };
+        (!stack.is_empty()).then(|| stack.damage())
+    }
+
+    /// A player's entity id (for tests and tools that attack or interact with it).
+    pub fn entity_id(&self, conn: ConnId) -> Option<i32> {
+        self.players.get(&conn).map(|p| p.entity_id)
+    }
+
     /// A player's food level and saturation (for tests and tools).
     pub fn food(&self, conn: ConnId) -> Option<(i32, f32)> {
         self.players.get(&conn).map(|p| (p.food, p.saturation))
@@ -841,7 +891,6 @@ impl Sim {
             game_time: self.game_time,
             max_view: self.config.view_distance as i32,
             movement_check: self.rule_bool("minecraft:player_movement_check"),
-            difficulty: self.commands.difficulty as u8,
             natural_regen: self.rule_bool("minecraft:natural_health_regeneration"),
             biome_count: self.dim.provider.biome_count,
             now: Instant::now(),
@@ -868,6 +917,18 @@ impl Sim {
             simulation_distance: self.config.simulation_distance as i32,
             seed: self.config.noise.as_ref().map_or(0, |n| n.seed),
             loot: self.loot.clone(),
+            damage: self.damage_rules(),
+        }
+    }
+
+    pub(crate) fn damage_rules(&self) -> health::DamageRules {
+        health::DamageRules {
+            pvp: self.rule_bool("minecraft:pvp"),
+            fall: self.rule_bool("minecraft:fall_damage"),
+            fire: self.rule_bool("minecraft:fire_damage"),
+            freeze: self.rule_bool("minecraft:freeze_damage"),
+            drowning: self.rule_bool("minecraft:drowning_damage"),
+            difficulty: self.commands.difficulty as u8,
         }
     }
 
@@ -1092,6 +1153,15 @@ impl Sim {
         p.food_timer = 0;
         p.using = None;
         p.fall_distance = 0.0;
+        // A fresh `ServerPlayer`: no cooldowns, credit or tracked hits carry over.
+        p.hurt_cooldown = 0;
+        p.last_hurt = 0.0;
+        p.absorption = 0.0;
+        p.kill_credit = None;
+        p.combat = health::CombatTracker::default();
+        p.attack_ticker = 0;
+        p.vel = [0.0; 3];
+        p.sync_velocity = false;
         p.sent_chunks.clear();
         p.unacked_batches = 0;
         p.teleport(pos, [0.0, 0.0], now);
@@ -1264,6 +1334,18 @@ impl Sim {
             dead: joining.health <= 0.0,
             died: false,
             damaged: None,
+            entity_events: Vec::new(),
+            hurt_cooldown: 0,
+            last_hurt: 0.0,
+            absorption: 0.0,
+            kill_credit: None,
+            combat: health::CombatTracker::default(),
+            attack_ticker: 0,
+            equipment_seen: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
+            vel: [0.0; 3],
+            sync_velocity: false,
+            known_movement: [0.0; 3],
+            moved_this_tick: false,
             death_location: None,
             exhaustion: joining.exhaustion,
             food_timer: joining.food_timer,

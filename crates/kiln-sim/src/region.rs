@@ -30,8 +30,6 @@ pub(crate) struct Env {
     pub max_view: i32,
     /// `minecraft:player_movement_check`.
     pub movement_check: bool,
-    /// 0 (peaceful) to 3 (hard).
-    pub difficulty: u8,
     /// `minecraft:natural_health_regeneration`.
     pub natural_regen: bool,
     pub biome_count: usize,
@@ -82,6 +80,14 @@ impl RegionWork<'_> {
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         for (conn, pkt) in std::mem::take(&mut self.packets) {
             let Some(i) = self.index_of(conn) else { continue };
+            if let PlayIn::Attack { entity_id } = pkt {
+                if !self.players[i].dead {
+                    let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
+                    let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
+                    crate::combat::handle_attack(&mut self.players, i, entity_id, self.entities, &attack_env, &mut ctx);
+                }
+                continue;
+            }
             let mut world = World { cells: &mut *self.cells, blocks: &mut *self.blocks };
             let mut fx = Fx { blocks: &mut out, bodies: &bodies, spawns: &mut self.out.spawns, deaths: &mut self.out.deaths };
             local_packet(self.players[i], &mut world, env, pkt, &mut fx);
@@ -104,13 +110,13 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 0);
         for p in self.players.iter_mut() {
             tick_connection(p, env);
-            if let Some(death) = p.check_void(env.min_y, &mut self.out.spawns) {
-                self.out.deaths.push(death);
-            }
+            p.tick_damage(env.game_time);
+            p.tick_combat();
+            let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
+            p.check_void(env.min_y, &mut ctx);
             p.tick_using(&mut self.out.spawns);
-            if let Some(death) = p.tick_food(env.difficulty, env.natural_regen, env.game_time, &mut self.out.spawns) {
-                self.out.deaths.push(death);
-            }
+            let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
+            p.tick_food(env.natural_regen, &mut ctx);
             p.sync_health();
         }
         mark(&mut self.out.times, 1);
@@ -130,6 +136,9 @@ impl RegionWork<'_> {
         let movers = crate::players::update_visibility(&mut self.players);
         mark(&mut self.out.times, 5);
         crate::players::broadcast_movement(&mut self.players);
+        for p in self.players.iter_mut() {
+            p.decay_velocity();
+        }
         entities::track(self.entities, &mut self.players, &movers);
         mark(&mut self.out.times, 6);
         self.send_light_updates();
@@ -223,6 +232,15 @@ impl RegionWork<'_> {
     }
 }
 
+/// Damage context for region work.
+pub(crate) fn damage_ctx<'a>(
+    env: &Env,
+    spawns: &'a mut Vec<Spawn>,
+    deaths: &'a mut Vec<crate::health::Death>,
+) -> crate::health::DamageCtx<'a> {
+    crate::health::DamageCtx { rules: env.blocks.damage, game_time: env.game_time, spawns, deaths }
+}
+
 /// Whether a packet needs the whole server (chat, commands): it and everything its region
 /// receives after it this tick run in the serial PX phase.
 pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
@@ -284,10 +302,16 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 let feet = p.pos.map(|c| c.floor() as i32);
                 let in_fluid = world.cells.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
                 let d = [p.pos[0] - from[0], p.pos[1] - from[1], p.pos[2] - from[2]];
-                p.exhaust_for_move(d, was_on_ground, in_fluid);
-                if let Some(death) = p.check_fall(p.pos[1] - y0, on_ground, in_fluid, fx.spawns) {
-                    fx.deaths.push(death);
+                // `handlePlayerKnownMovement`.
+                p.known_movement = d;
+                p.moved_this_tick = true;
+                // `Block.updateEntityMovementAfterFallOn`: landing stops the fall.
+                if on_ground {
+                    p.vel[1] = 0.0;
                 }
+                p.exhaust_for_move(d, was_on_ground, in_fluid);
+                let mut ctx = damage_ctx(env, fx.spawns, fx.deaths);
+                p.check_fall(p.pos[1] - y0, on_ground, in_fluid, &mut ctx);
             }
         }
         PlayIn::PlayerAbilities { flying } => p.flying = flying && matches!(p.game_mode, 1 | 3),
@@ -379,6 +403,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 DROP_ITEM | DROP_ALL_ITEMS => {
                     if let Some(spawn) = p.drop_held(action == DROP_ALL_ITEMS) {
                         fx.spawns.push(spawn);
+                        // `ServerPlayer.drop(boolean)`.
+                        p.attack_ticker = 0;
                     }
                     return;
                 }
@@ -399,8 +425,25 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             use_item_on(p, &mut level, hand, pos, face, cursor);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
-        PlayIn::Punch => p.swung = true,
-        PlayIn::ClientTickEnd => p.position_this_tick = false,
+        // `handlePunch`: the swing resets the attack strength.
+        PlayIn::Punch => {
+            p.swung = true;
+            p.attack_ticker = 0;
+        }
+        // `handleInteract`: nothing Kiln simulates reacts to a right click on an entity yet
+        // (players, items and projectiles pass); the reach check still applies.
+        PlayIn::Interact { sneaking, .. } => {
+            if sneaking != p.sneaking {
+                p.sneaking = sneaking;
+                p.meta_dirty = true;
+            }
+        }
+        PlayIn::ClientTickEnd => {
+            p.position_this_tick = false;
+            if !std::mem::take(&mut p.moved_this_tick) {
+                p.known_movement = [0.0; 3];
+            }
+        }
         _ => {}
     }
 }

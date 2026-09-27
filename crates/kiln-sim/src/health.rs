@@ -1,11 +1,18 @@
-//! Player health, damage, death and respawn (vanilla `LivingEntity.hurt`/`die`,
+//! Player health, damage, death and respawn (vanilla `ServerPlayer.hurtServer`,
+//! `Player.hurtServer`/`actuallyHurt`, `LivingEntity.hurtServer`, `CombatTracker`,
 //! `ServerPlayer.die`, `PlayerList.respawn`).
 //!
-//! Food follows `FoodData`: exhaustion from sprinting, jumping and breaking blocks uses up
-//! saturation then food; a well-fed player heals, a starving one takes damage. Damage is not
-//! reduced by armor, enchantments or effects yet, and eating is not implemented yet.
+//! Damage goes through vanilla's pipeline: invulnerability (game mode, damage type tags, the
+//! game rules), difficulty scaling, the 20-tick hurt cooldown with its "only the excess over
+//! the last hit" rule, armor and toughness from equipment attributes (`CombatRules`), armor
+//! durability, absorption and the damage type's exhaustion. Not modelled yet: effects
+//! (resistance, fire resistance), enchantments (protection, unbreaking), shields, totems.
+//!
+//! Food follows `FoodData`: exhaustion from sprinting, jumping, fighting and breaking blocks
+//! uses up saturation then food; a well-fed player heals, a starving one takes damage.
 
-use crate::{Player, entities};
+use crate::{Player, combat, entities};
+use kiln_entity::level::DamageKind;
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
 use kiln_proto::packets::entity;
@@ -19,8 +26,43 @@ pub(crate) const VOID_DEPTH: f64 = 64.0;
 const SAFE_FALL_DISTANCE: f64 = 3.0;
 /// `FoodData.addExhaustion` cap.
 const MAX_EXHAUSTION: f32 = 40.0;
+/// `LivingEntity.damageCooldownTime` after a full hit; hits while it is above half only deal
+/// what exceeds the last one.
+const HURT_COOLDOWN: i32 = 20;
+/// `Player.getLastHurtByPlayerMemoryTime`: ticks a player attacker gets the kill credit.
+const KILL_CREDIT_TICKS: i32 = 100;
 
-/// What hurt a player (a damage type in `minecraft:damage_type`).
+/// The game rules and difficulty damage depends on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DamageRules {
+    /// `minecraft:pvp`.
+    pub pvp: bool,
+    /// `minecraft:fall_damage`, `fire_damage`, `freeze_damage`, `drowning_damage`.
+    pub fall: bool,
+    pub fire: bool,
+    pub freeze: bool,
+    pub drowning: bool,
+    /// 0 (peaceful) to 3 (hard).
+    pub difficulty: u8,
+}
+
+impl Default for DamageRules {
+    fn default() -> Self {
+        DamageRules { pvp: true, fall: true, fire: true, freeze: true, drowning: true, difficulty: 2 }
+    }
+}
+
+/// Where damage's side effects go.
+pub(crate) struct DamageCtx<'a> {
+    pub rules: DamageRules,
+    pub game_time: i64,
+    /// Items dropped by players that died.
+    pub spawns: &'a mut Vec<entities::Spawn>,
+    /// Deaths to announce in a serial phase.
+    pub deaths: &'a mut Vec<Death>,
+}
+
+/// What hurt a player: a damage type in `minecraft:damage_type`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Cause {
     /// `/kill`: bypasses invulnerability.
@@ -29,42 +71,322 @@ pub(crate) enum Cause {
     /// Landing after falling this far.
     Fall(f64),
     Starve,
-    /// Damage from an entity's behaviour (explosions, falling blocks, ...).
-    Entity(kiln_entity::level::DamageKind),
+    /// Damage from an entity's behaviour (explosions, falling blocks, arrows, ...).
+    Entity(DamageKind),
+    /// A player's melee hit (`player_attack`).
+    PlayerAttack,
+}
+
+/// The entity responsible for damage (`DamageSource.getEntity`), as the victim needs it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Attacker {
+    pub id: i32,
+    pub name: String,
+    pub pos: [f64; 3],
+    /// A creative player (`DamageSource.isCreativePlayer`).
+    pub creative: bool,
+    /// The display name of a custom-named main hand item, for the `.item` death messages.
+    pub weapon: Option<Tag>,
+}
+
+/// `DamageSource`: a damage type, who caused it and what dealt it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Source {
+    pub cause: Cause,
+    pub attacker: Option<Attacker>,
+    /// Network id of the entity that dealt the damage when it is not the attacker (an arrow).
+    pub direct: Option<i32>,
+}
+
+impl From<Cause> for Source {
+    fn from(cause: Cause) -> Self {
+        Source { cause, attacker: None, direct: None }
+    }
 }
 
 impl Cause {
-    fn damage_type(self) -> &'static str {
+    pub(crate) fn damage_type(self) -> &'static str {
         match self {
             Cause::Kill => "minecraft:generic_kill",
             Cause::OutOfWorld => "minecraft:out_of_world",
             Cause::Fall(_) => "minecraft:fall",
             Cause::Starve => "minecraft:starve",
             Cause::Entity(kind) => entities::damage_type(kind).0,
+            Cause::PlayerAttack => "minecraft:player_attack",
+        }
+    }
+}
+
+impl Source {
+    pub(crate) fn melee(attacker: Attacker) -> Source {
+        Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None }
+    }
+
+    fn type_name(&self) -> &'static str {
+        self.cause.damage_type()
+    }
+
+    /// Network id of the damage type.
+    pub(crate) fn type_id(&self) -> i32 {
+        kiln_data::synced_id("minecraft:damage_type", self.type_name()).unwrap_or(0)
+    }
+
+    /// A `minecraft:damage_type` tag such as `minecraft:bypasses_armor`.
+    pub(crate) fn is(&self, tag: &str) -> bool {
+        damage_type_tag(self.type_id(), tag)
+    }
+
+    fn info(&self) -> &'static DamageTypeInfo {
+        damage_type_info(self.type_name())
+    }
+
+    /// `DamageSource.scalesWithDifficulty`: players hurt by these take more on hard and less on
+    /// easy. No living non-player entity (mob) deals damage yet.
+    fn scales_with_difficulty(&self) -> bool {
+        self.info().scaling == Scaling::Always
+    }
+
+    /// `DamageSource.getLocalizedDeathMessage`, with the victim's kill credit (the last player
+    /// that hurt it) for sources without an attacker.
+    fn death_message(&self, victim: &str, kill_credit: Option<&str>) -> Tag {
+        let key = format!("death.attack.{}", self.info().message_id);
+        if let Some(a) = &self.attacker {
+            return match &a.weapon {
+                Some(item) => translate(&format!("{key}.item"), vec![text(victim), text(&a.name), item.clone()]),
+                None => translate(&key, vec![text(victim), text(&a.name)]),
+            };
+        }
+        match kill_credit {
+            Some(killer) => translate(&format!("{key}.player"), vec![text(victim), text(killer)]),
+            None => translate(&key, vec![text(victim)]),
+        }
+    }
+}
+
+/// A plain string component.
+fn text(s: &str) -> Tag {
+    Tag::String(s.into())
+}
+
+/// `Component.translatable(key, with...)`, keys in the order vanilla writes them (its
+/// compounds are hash maps). NBT lists hold one type: with a styled argument, plain ones
+/// become `{"text": ...}` compounds.
+fn translate(key: &str, with: Vec<Tag>) -> Tag {
+    let mixed = with.iter().any(|t| matches!(t, Tag::Compound(_)));
+    let with = if mixed {
+        with.into_iter()
+            .map(|t| match t {
+                Tag::String(s) => Tag::Compound(vec![("text".into(), Tag::String(s))]),
+                other => other,
+            })
+            .collect()
+    } else {
+        with
+    };
+    Tag::Compound(vec![("with".into(), Tag::List(with)), ("translate".into(), Tag::String(key.into()))])
+}
+
+fn translate_plain(key: &str) -> Tag {
+    Tag::Compound(vec![("translate".into(), Tag::String(key.into()))])
+}
+
+/// Whether a `minecraft:damage_type` network id is in a damage type tag.
+pub(crate) fn damage_type_tag(id: i32, tag: &str) -> bool {
+    kiln_data::registries::TAGS
+        .iter()
+        .find(|(r, _)| *r == "minecraft:damage_type")
+        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+        .is_some_and(|(_, ids)| ids.contains(&id))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Scaling {
+    #[allow(dead_code)]
+    Never,
+    WhenCausedByLivingNonPlayer,
+    Always,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DeathMessageType {
+    Default,
+    FallVariants,
+    IntentionalGameDesign,
+}
+
+/// A damage type's definition (`DamageType`, from the vanilla datapack).
+struct DamageTypeInfo {
+    name: &'static str,
+    message_id: &'static str,
+    exhaustion: f32,
+    scaling: Scaling,
+    death_message: DeathMessageType,
+}
+
+macro_rules! damage_types {
+    ($($name:literal $msg:literal $exh:literal $scaling:ident $death:ident;)*) => {
+        &[$(DamageTypeInfo {
+            name: concat!("minecraft:", $name),
+            message_id: $msg,
+            exhaustion: $exh,
+            scaling: Scaling::$scaling,
+            death_message: DeathMessageType::$death,
+        },)*]
+    };
+}
+
+/// `data/minecraft/damage_type/*.json` of the 26.3 datapack (checked against the extracted
+/// datapack by a test when it is present).
+const DAMAGE_TYPES: &[DamageTypeInfo] = damage_types! {
+    "arrow" "arrow" 0.1 WhenCausedByLivingNonPlayer Default;
+    "bad_respawn_point" "badRespawnPoint" 0.1 Always IntentionalGameDesign;
+    "cactus" "cactus" 0.1 WhenCausedByLivingNonPlayer Default;
+    "campfire" "inFire" 0.1 WhenCausedByLivingNonPlayer Default;
+    "cramming" "cramming" 0.0 WhenCausedByLivingNonPlayer Default;
+    "dragon_breath" "dragonBreath" 0.0 WhenCausedByLivingNonPlayer Default;
+    "drown" "drown" 0.0 WhenCausedByLivingNonPlayer Default;
+    "dry_out" "dryout" 0.1 WhenCausedByLivingNonPlayer Default;
+    "ender_pearl" "fall" 0.0 WhenCausedByLivingNonPlayer FallVariants;
+    "explosion" "explosion" 0.1 Always Default;
+    "fall" "fall" 0.0 WhenCausedByLivingNonPlayer FallVariants;
+    "falling_anvil" "anvil" 0.1 WhenCausedByLivingNonPlayer Default;
+    "falling_block" "fallingBlock" 0.1 WhenCausedByLivingNonPlayer Default;
+    "falling_stalactite" "fallingStalactite" 0.1 WhenCausedByLivingNonPlayer Default;
+    "fireball" "fireball" 0.1 WhenCausedByLivingNonPlayer Default;
+    "fireworks" "fireworks" 0.1 WhenCausedByLivingNonPlayer Default;
+    "fly_into_wall" "flyIntoWall" 0.0 WhenCausedByLivingNonPlayer Default;
+    "freeze" "freeze" 0.0 WhenCausedByLivingNonPlayer Default;
+    "generic" "generic" 0.0 WhenCausedByLivingNonPlayer Default;
+    "generic_kill" "genericKill" 0.0 WhenCausedByLivingNonPlayer Default;
+    "hot_floor" "hotFloor" 0.1 WhenCausedByLivingNonPlayer Default;
+    "in_fire" "inFire" 0.1 WhenCausedByLivingNonPlayer Default;
+    "in_wall" "inWall" 0.0 WhenCausedByLivingNonPlayer Default;
+    "indirect_magic" "indirectMagic" 0.0 WhenCausedByLivingNonPlayer Default;
+    "lava" "lava" 0.1 WhenCausedByLivingNonPlayer Default;
+    "lightning_bolt" "lightningBolt" 0.1 WhenCausedByLivingNonPlayer Default;
+    "mace_smash" "mace_smash" 0.1 WhenCausedByLivingNonPlayer Default;
+    "magic" "magic" 0.0 WhenCausedByLivingNonPlayer Default;
+    "mob_attack" "mob" 0.1 WhenCausedByLivingNonPlayer Default;
+    "mob_attack_no_aggro" "mob" 0.1 WhenCausedByLivingNonPlayer Default;
+    "mob_projectile" "mob" 0.1 WhenCausedByLivingNonPlayer Default;
+    "on_fire" "onFire" 0.0 WhenCausedByLivingNonPlayer Default;
+    "out_of_world" "outOfWorld" 0.0 WhenCausedByLivingNonPlayer Default;
+    "outside_border" "outsideBorder" 0.0 WhenCausedByLivingNonPlayer Default;
+    "player_attack" "player" 0.1 WhenCausedByLivingNonPlayer Default;
+    "player_explosion" "explosion.player" 0.1 Always Default;
+    "sonic_boom" "sonic_boom" 0.0 Always Default;
+    "spear" "spear" 0.1 WhenCausedByLivingNonPlayer Default;
+    "spit" "mob" 0.1 WhenCausedByLivingNonPlayer Default;
+    "stalagmite" "stalagmite" 0.0 WhenCausedByLivingNonPlayer Default;
+    "starve" "starve" 0.0 WhenCausedByLivingNonPlayer Default;
+    "sting" "sting" 0.1 WhenCausedByLivingNonPlayer Default;
+    "sulfur_cube_hot" "sulfurCubeHot" 0.1 WhenCausedByLivingNonPlayer Default;
+    "sweet_berry_bush" "sweetBerryBush" 0.1 WhenCausedByLivingNonPlayer Default;
+    "thorns" "thorns" 0.1 WhenCausedByLivingNonPlayer Default;
+    "thrown" "thrown" 0.1 WhenCausedByLivingNonPlayer Default;
+    "trident" "trident" 0.1 WhenCausedByLivingNonPlayer Default;
+    "unattributed_fireball" "onFire" 0.1 WhenCausedByLivingNonPlayer Default;
+    "wind_charge" "mob" 0.1 WhenCausedByLivingNonPlayer Default;
+    "wither" "wither" 0.0 WhenCausedByLivingNonPlayer Default;
+    "wither_skull" "witherSkull" 0.1 WhenCausedByLivingNonPlayer Default;
+};
+
+fn damage_type_info(name: &str) -> &'static DamageTypeInfo {
+    DAMAGE_TYPES.iter().find(|t| t.name == name).unwrap_or_else(|| damage_type_info("minecraft:generic"))
+}
+
+/// `CombatEntry`: one hit the combat tracker remembers.
+#[derive(Debug, Clone)]
+pub(crate) struct CombatEntry {
+    source: Source,
+    /// The victim's fall distance when it was hit.
+    fall_distance: f32,
+}
+
+/// `CombatTracker`: recent hits, for the death message. Entries are forgotten 100 ticks (300 in
+/// combat, i.e. after a hit from an entity) after the last hit.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CombatTracker {
+    entries: Vec<CombatEntry>,
+    last_damage_time: i64,
+    taking_damage: bool,
+    in_combat: bool,
+}
+
+impl CombatTracker {
+    /// `recheckStatus`.
+    pub(crate) fn recheck(&mut self, now: i64, alive: bool) {
+        let limit = if self.in_combat { 300 } else { 100 };
+        if self.taking_damage && (!alive || now - self.last_damage_time > limit) {
+            self.taking_damage = false;
+            self.in_combat = false;
+            self.entries.clear();
         }
     }
 
-    /// Both bypass invulnerability (the `bypasses_invulnerability` damage type tag).
-    fn bypasses_invulnerability(self) -> bool {
-        matches!(self, Cause::Kill | Cause::OutOfWorld)
+    fn record(&mut self, source: &Source, fall_distance: f32, now: i64, alive: bool) {
+        self.recheck(now, alive);
+        self.entries.push(CombatEntry { source: source.clone(), fall_distance });
+        self.last_damage_time = now;
+        self.taking_damage = true;
+        // `shouldEnterCombat`: the attacker is a living entity.
+        if !self.in_combat && alive && source.attacker.is_some() {
+            self.in_combat = true;
+        }
     }
 
-    /// The death message (`CombatTracker.getDeathMessage` without an attacker).
-    fn death_message(self, name: &str) -> Tag {
-        let key = match self {
-            Cause::Kill => "death.attack.genericKill",
-            Cause::OutOfWorld => "death.attack.outOfWorld",
-            // A long fall reads "fell from a high place"; a short one "hit the ground too hard".
-            Cause::Fall(d) if d > 5.0 => "death.fell.accident.generic",
-            Cause::Fall(_) => "death.attack.fall",
-            Cause::Starve => "death.attack.starve",
-            Cause::Entity(kind) => entities::damage_type(kind).1,
+    /// `getMostSignificantFall`: the hit that led to the longest fall (over 5 blocks). Fall
+    /// locations (ladders, vines, water) are not tracked, so only the fall rule applies.
+    fn most_significant_fall(&self) -> Option<&CombatEntry> {
+        let (mut best, mut best_distance) = (None, 0.0f32);
+        for (i, e) in self.entries.iter().enumerate() {
+            let always = e.source.is("minecraft:always_most_significant_fall");
+            let distance = if always { f32::MAX } else { e.fall_distance };
+            if (e.source.is("minecraft:is_fall") || always) && distance > 0.0 && (best.is_none() || distance > best_distance) {
+                best = Some(if i > 0 { &self.entries[i - 1] } else { e });
+                best_distance = distance;
+            }
+        }
+        best.filter(|_| best_distance > 5.0)
+    }
+
+    /// `getDeathMessage`.
+    fn death_message(&self, victim: &str, kill_credit: Option<&str>) -> Tag {
+        let Some(last) = self.entries.last() else {
+            return translate("death.attack.generic", vec![text(victim)]);
         };
-        // Keys in the order vanilla writes them (its compounds are hash maps).
-        Tag::Compound(vec![
-            ("with".into(), Tag::List(vec![Tag::String(name.into())])),
-            ("translate".into(), Tag::String(key.into())),
-        ])
+        let info = last.source.info();
+        if info.death_message == DeathMessageType::FallVariants
+            && let Some(fall) = self.most_significant_fall()
+        {
+            return fall_message(fall, last.source.attacker.as_ref(), victim);
+        }
+        if info.death_message == DeathMessageType::IntentionalGameDesign {
+            let key = format!("death.attack.{}", info.message_id);
+            let link = translate(
+                "chat.square_brackets",
+                vec![translate_plain(&format!("{key}.link"))],
+            );
+            return translate(&format!("{key}.message"), vec![text(victim), link]);
+        }
+        last.source.death_message(victim, kill_credit)
+    }
+}
+
+/// `CombatTracker.getFallMessage`: a fall after a hit credits whoever hit.
+fn fall_message(fall: &CombatEntry, killer: Option<&Attacker>, victim: &str) -> Tag {
+    let source = &fall.source;
+    if source.is("minecraft:is_fall") || source.is("minecraft:always_most_significant_fall") {
+        return translate("death.fell.accident.generic", vec![text(victim)]);
+    }
+    let assisted = |a: &Attacker, item: &str, plain: &str| match &a.weapon {
+        Some(w) => translate(item, vec![text(victim), text(&a.name), w.clone()]),
+        None => translate(plain, vec![text(victim), text(&a.name)]),
+    };
+    match (&source.attacker, killer) {
+        (Some(a), k) if k.is_none_or(|k| k.name != a.name) => assisted(a, "death.fell.assist.item", "death.fell.assist"),
+        (_, Some(k)) => assisted(k, "death.fell.finish.item", "death.fell.finish"),
+        _ => translate("death.fell.killer", vec![text(victim)]),
     }
 }
 
@@ -76,50 +398,209 @@ pub(crate) struct Death {
 
 impl Player {
     /// Creative and spectator players are invulnerable (`Abilities.invulnerable`).
-    fn invulnerable(&self) -> bool {
+    pub(crate) fn invulnerable(&self) -> bool {
         matches!(self.game_mode, 1 | 3)
+    }
+
+    /// `ServerGamePacketListenerImpl.hasClientLoaded`: the client reported it finished loading
+    /// terrain, or the timeout ran out.
+    pub(crate) fn client_loaded(&self) -> bool {
+        self.load_timeout == 0
     }
 
     pub(crate) fn health_packet(&self) -> bytes::Bytes {
         packets::player::set_health(self.health, self.food, self.saturation)
     }
 
-    /// Damages the player; returns the death to announce if it died. Dropped items go to
-    /// `spawns`.
-    pub(crate) fn hurt(&mut self, amount: f32, cause: Cause, spawns: &mut Vec<entities::Spawn>) -> Option<Death> {
-        if self.dead || (self.invulnerable() && !cause.bypasses_invulnerability()) || amount <= 0.0 {
-            return None;
+    /// `ServerPlayer.isInvulnerableTo` and `Player.isInvulnerableTo`.
+    fn invulnerable_to(&self, source: &Source, rules: &DamageRules) -> bool {
+        !self.client_loaded()
+            || (source.is("minecraft:is_drowning") && !rules.drowning)
+            || (source.is("minecraft:is_fall") && !rules.fall)
+            || (source.is("minecraft:is_fire") && !rules.fire)
+            || (source.is("minecraft:is_freezing") && !rules.freeze)
+    }
+
+    /// `ServerPlayer.hurtServer` down to `LivingEntity.hurtServer`: damages the player and
+    /// returns whether the hit landed (it may deal only the excess over the last hit while the
+    /// hurt cooldown runs). A death goes to `ctx.deaths`.
+    pub(crate) fn hurt(&mut self, amount: f32, source: &Source, ctx: &mut DamageCtx) -> bool {
+        let rules = ctx.rules;
+        if self.invulnerable_to(source, &rules) {
+            return false;
         }
-        self.health = (self.health - amount).max(0.0);
-        let damage_type = kiln_data::synced_id("minecraft:damage_type", cause.damage_type()).unwrap_or(0);
-        self.send(entity::damage_event(self.entity_id, damage_type, None, None, None));
-        self.damaged = Some(damage_type);
-        (self.health <= 0.0).then(|| self.die(cause, spawns))
+        // `canHarmPlayer`: player attackers (melee or their arrows) need PvP on.
+        if source.attacker.is_some() && !rules.pvp && self.hurt_by_player(source) {
+            return false;
+        }
+        if self.invulnerable() && !source.is("minecraft:bypasses_invulnerability") {
+            return false;
+        }
+        if self.dead {
+            return false;
+        }
+        let mut amount = amount;
+        if source.scales_with_difficulty() {
+            amount = match rules.difficulty {
+                0 => 0.0,
+                1 => (amount / 2.0 + 1.0).min(amount),
+                3 => amount * 3.0 / 2.0,
+                _ => amount,
+            };
+        }
+        if amount == 0.0 {
+            return false;
+        }
+        // `LivingEntity.hurtServer`.
+        amount = amount.max(0.0);
+        if source.is("minecraft:damages_helmet") && !self.inv.equipped(kiln_item::component::EquipmentSlot::Head).is_empty() {
+            self.hurt_equipment(source, amount, &[kiln_item::component::EquipmentSlot::Head]);
+            amount *= 0.75;
+        }
+        if !amount.is_finite() {
+            amount = f32::MAX;
+        }
+        let full = if self.hurt_cooldown as f32 > 10.0 && !source.is("minecraft:bypasses_cooldown") {
+            if amount <= self.last_hurt {
+                return false;
+            }
+            self.actually_hurt(amount - self.last_hurt, source, ctx);
+            self.last_hurt = amount;
+            false
+        } else {
+            self.last_hurt = amount;
+            self.hurt_cooldown = HURT_COOLDOWN;
+            self.actually_hurt(amount, source, ctx);
+            true
+        };
+        // `resolvePlayerResponsibleForDamage`.
+        if let Some(a) = &source.attacker
+            && self.hurt_by_player(source)
+        {
+            self.kill_credit = Some((a.name.clone(), KILL_CREDIT_TICKS));
+        }
+        if full {
+            // `broadcastDamageEvent` (to viewers in the movement phase) and `markHurt`.
+            let damage_event = (source.type_id(), source.attacker.as_ref().map(|a| a.id), source.direct.or(source.attacker.as_ref().map(|a| a.id)));
+            self.send(entity::damage_event(self.entity_id, damage_event.0, damage_event.1, damage_event.2, None));
+            self.damaged = Some(damage_event);
+            if !source.is("minecraft:no_impact") {
+                self.sync_velocity = true;
+            }
+            // `dealDefaultKnockback` from the source's position (melee: the attacker's).
+            if !source.is("minecraft:no_knockback")
+                && source.cause == Cause::PlayerAttack
+                && let Some(a) = &source.attacker
+            {
+                let (dx, dz) = (a.pos[0] - self.pos[0], a.pos[2] - self.pos[2]);
+                self.knockback(0.4000000059604645, dx, dz);
+            }
+        }
+        if self.health <= 0.0 {
+            let death = self.die(ctx);
+            ctx.deaths.push(death);
+        }
+        true
+    }
+
+    /// Whether the damage's attacker is a player (every attacker is, until mobs fight).
+    fn hurt_by_player(&self, source: &Source) -> bool {
+        source.attacker.is_some()
+    }
+
+    /// `Player.actuallyHurt`: armor, absorption, exhaustion and the combat tracker.
+    fn actually_hurt(&mut self, amount: f32, source: &Source, ctx: &mut DamageCtx) {
+        if self.invulnerable_to(source, &ctx.rules) {
+            return;
+        }
+        let mut damage = self.damage_after_armor(source, amount);
+        damage = damage_after_magic(source, damage);
+        let before = damage;
+        damage = (damage - self.absorption).max(0.0);
+        self.absorption = (self.absorption - (before - damage)).max(0.0);
+        if damage == 0.0 {
+            return;
+        }
+        self.exhaust(source.info().exhaustion);
+        let fall = match source.cause {
+            Cause::Fall(d) => d as f32,
+            _ => self.fall_distance as f32,
+        };
+        self.combat.record(source, fall, ctx.game_time, self.health > 0.0);
+        self.health = (self.health - damage).clamp(0.0, MAX_HEALTH);
+    }
+
+    /// `LivingEntity.getDamageAfterArmorAbsorb`: armor takes durability damage and reduces the
+    /// damage unless the type bypasses armor.
+    fn damage_after_armor(&mut self, source: &Source, amount: f32) -> f32 {
+        if source.is("minecraft:bypasses_armor") {
+            return amount;
+        }
+        use kiln_item::component::EquipmentSlot as S;
+        self.hurt_equipment(source, amount, &[S::Feet, S::Legs, S::Chest, S::Head]);
+        let armor = combat::floor(self.attribute(combat::ARMOR)) as f32;
+        let toughness = self.attribute(combat::ARMOR_TOUGHNESS) as f32;
+        combat::damage_after_absorb(amount, armor, toughness)
+    }
+
+    /// `LivingEntity.doHurtEquipment`: armor worn in `slots` loses `max(1, damage / 4)`
+    /// durability.
+    fn hurt_equipment(&mut self, source: &Source, damage: f32, slots: &[kiln_item::component::EquipmentSlot]) {
+        if damage <= 0.0 {
+            return;
+        }
+        let amount = (damage / 4.0).max(1.0) as i32;
+        for &slot in slots {
+            let stack = self.inv.equipped(slot);
+            let hurts = stack.get(kiln_item::keys::EQUIPPABLE).is_some_and(|e| e.damage_on_hurt)
+                && stack.is_damageable_item()
+                && can_be_hurt_by(stack, source);
+            if hurts {
+                self.hurt_and_break(slot, amount);
+            }
+        }
     }
 
     /// `ServerPlayer.die`: the death screen, the inventory scattered (no `keepInventory` yet),
     /// the death animation for viewers.
-    fn die(&mut self, cause: Cause, spawns: &mut Vec<entities::Spawn>) -> Death {
+    fn die(&mut self, ctx: &mut DamageCtx) -> Death {
         self.dead = true;
+        let credit = self.kill_credit.as_ref().map(|(name, _)| name.clone());
+        let message = self.combat.death_message(&self.name, credit.as_deref());
         self.fall_distance = 0.0;
-        let message = cause.death_message(&self.name);
         self.send(packets::player::player_combat_kill(self.entity_id, &message));
         self.death_location = Some(self.pos.map(|c| c.floor() as i32));
         for i in 0..self.inv.items.len() {
             let stack = std::mem::replace(&mut self.inv.items[i], kiln_item::ItemStack::empty());
             if !stack.is_empty() {
-                spawns.push(self.throw_randomly(stack));
+                ctx.spawns.push(self.throw_randomly(stack));
             }
         }
         for i in 0..self.inv.equipment.len() {
             let stack = std::mem::replace(&mut self.inv.equipment[i], kiln_item::ItemStack::empty());
             if !stack.is_empty() {
-                spawns.push(self.throw_randomly(stack));
+                ctx.spawns.push(self.throw_randomly(stack));
             }
         }
         self.inv.times_changed += 1;
         self.died = true;
         Death { conn: self.conn, message }
+    }
+
+    /// Per-tick damage bookkeeping (`ServerPlayer.tick`'s cooldown, `LivingEntity.baseTick`'s
+    /// kill credit expiry and combat tracker check).
+    pub(crate) fn tick_damage(&mut self, game_time: i64) {
+        if self.hurt_cooldown > 0 {
+            self.hurt_cooldown -= 1;
+        }
+        if let Some((_, ticks)) = &mut self.kill_credit {
+            if *ticks > 0 {
+                *ticks -= 1;
+            } else {
+                self.kill_credit = None;
+            }
+        }
+        self.combat.recheck(game_time, !self.dead && self.health > 0.0);
     }
 
     /// Sends Set Health when health, food or whether saturation is zero changed since the last
@@ -151,17 +632,18 @@ impl Player {
         self.exhaustion = (self.exhaustion + amount).min(MAX_EXHAUSTION);
     }
 
-    /// `FoodData.tick` and the peaceful regeneration of `Player.aiStep`; returns a starvation
-    /// death. `difficulty` is 0 (peaceful) to 3 (hard).
-    pub(crate) fn tick_food(&mut self, difficulty: u8, natural_regen: bool, game_time: i64, spawns: &mut Vec<entities::Spawn>) -> Option<Death> {
+    /// `FoodData.tick` and the peaceful regeneration of `Player.aiStep`. `difficulty` is 0
+    /// (peaceful) to 3 (hard).
+    pub(crate) fn tick_food(&mut self, natural_regen: bool, ctx: &mut DamageCtx) {
         if self.dead {
-            return None;
+            return;
         }
+        let difficulty = ctx.rules.difficulty;
         if difficulty == 0 && natural_regen {
-            if self.health < MAX_HEALTH && game_time % 20 == 0 {
+            if self.health < MAX_HEALTH && ctx.game_time % 20 == 0 {
                 self.heal(1.0);
             }
-            if self.food < 20 && game_time % 10 == 0 {
+            if self.food < 20 && ctx.game_time % 10 == 0 {
                 self.food += 1;
             }
         }
@@ -194,13 +676,12 @@ impl Player {
             if self.food_timer >= 80 {
                 self.food_timer = 0;
                 if self.health > 10.0 || difficulty == 3 || (self.health > 1.0 && difficulty == 2) {
-                    return self.hurt(1.0, Cause::Starve, spawns);
+                    self.hurt(1.0, &Cause::Starve.into(), ctx);
                 }
             }
         } else {
             self.food_timer = 0;
         }
-        None
     }
 
     /// Exhaustion from a move by `d` (`Player.checkMovementStatistics`) and from jumping
@@ -221,29 +702,32 @@ impl Player {
     }
 
     /// Vanilla `Entity.checkFallDamage` for a reported move by `dy` ending `on_ground`.
-    pub(crate) fn check_fall(&mut self, dy: f64, on_ground: bool, in_fluid: bool, spawns: &mut Vec<entities::Spawn>) -> Option<Death> {
+    pub(crate) fn check_fall(&mut self, dy: f64, on_ground: bool, in_fluid: bool, ctx: &mut DamageCtx) {
         if in_fluid || self.game_mode == 3 || self.flying {
             self.fall_distance = 0.0;
-            return None;
+            return;
         }
         // The move itself counts, landing included.
         if dy < 0.0 {
             self.fall_distance -= dy;
         }
         if on_ground {
-            let fell = std::mem::take(&mut self.fall_distance);
+            let fell = self.fall_distance;
             // `LivingEntity.calculateFallDamage`; creative players (`mayfly`) take none.
             let damage = (fell - SAFE_FALL_DISTANCE).floor();
             if damage > 0.0 && self.game_mode != 1 {
-                return self.hurt(damage as f32, Cause::Fall(fell), spawns);
+                self.hurt(damage as f32, &Cause::Fall(fell).into(), ctx);
             }
+            // `resetFallDistance` after the damage, which the combat tracker records it with.
+            self.fall_distance = 0.0;
         }
-        None
     }
 
     /// Void damage every tick below the world (`Entity.checkBelowWorld`).
-    pub(crate) fn check_void(&mut self, min_y: i32, spawns: &mut Vec<entities::Spawn>) -> Option<Death> {
-        (self.pos[1] < min_y as f64 - VOID_DEPTH).then(|| self.hurt(VOID_DAMAGE, Cause::OutOfWorld, spawns)).flatten()
+    pub(crate) fn check_void(&mut self, min_y: i32, ctx: &mut DamageCtx) {
+        if self.pos[1] < min_y as f64 - VOID_DEPTH {
+            self.hurt(VOID_DAMAGE, &Cause::OutOfWorld.into(), ctx);
+        }
     }
 
     /// An item flung in a random direction (`Player.drop(stack, throwRandomly = true)`).
@@ -257,5 +741,75 @@ impl Player {
             vel,
             body: entities::Body::Item { stack, pickup_delay: entities::DROP_PICKUP_DELAY, thrower: None },
         }
+    }
+}
+
+/// `LivingEntity.getDamageAfterMagicAbsorb` without effects or enchantments: never negative.
+fn damage_after_magic(source: &Source, damage: f32) -> f32 {
+    if source.is("minecraft:bypasses_effects") {
+        return damage;
+    }
+    if damage <= 0.0 {
+        return 0.0;
+    }
+    damage
+}
+
+/// `ItemStack.canBeHurtBy`: false when the `damage_resistant` component covers the source.
+fn can_be_hurt_by(stack: &kiln_item::ItemStack, source: &Source) -> bool {
+    let Some(resistant) = stack.get(kiln_item::keys::DAMAGE_RESISTANT) else { return true };
+    match &resistant.types {
+        kiln_item::HolderSet::Tag(t) => !source.is(t.as_str()),
+        kiln_item::HolderSet::Direct(ids) => !ids.contains(&source.type_id()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damage_type_table_matches_the_datapack() {
+        let Some(dir) = std::env::var_os("KILN_WORK")
+            .map(std::path::PathBuf::from)
+            .or_else(|| Some(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../work")))
+            .map(|w| w.join("generated/data/minecraft/damage_type"))
+            .filter(|d| d.is_dir())
+        else {
+            eprintln!("skipped: no extracted datapack");
+            return;
+        };
+        let mut seen = 0;
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let name = format!("minecraft:{}", path.file_stem().unwrap().to_str().unwrap());
+            let t = DAMAGE_TYPES.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("{name} missing"));
+            assert_eq!(t.message_id, v["message_id"].as_str().unwrap(), "{name}");
+            assert_eq!(t.exhaustion, v["exhaustion"].as_f64().unwrap() as f32, "{name}");
+            let scaling = match v["scaling"].as_str().unwrap() {
+                "never" => Scaling::Never,
+                "always" => Scaling::Always,
+                _ => Scaling::WhenCausedByLivingNonPlayer,
+            };
+            assert_eq!(t.scaling, scaling, "{name}");
+            let death = match v.get("death_message_type").and_then(|d| d.as_str()) {
+                Some("fall_variants") => DeathMessageType::FallVariants,
+                Some("intentional_game_design") => DeathMessageType::IntentionalGameDesign,
+                _ => DeathMessageType::Default,
+            };
+            assert_eq!(t.death_message, death, "{name}");
+            seen += 1;
+        }
+        assert_eq!(seen, DAMAGE_TYPES.len());
+    }
+
+    #[test]
+    fn damage_type_tags() {
+        let id = |n: &str| kiln_data::synced_id("minecraft:damage_type", n).unwrap();
+        assert!(damage_type_tag(id("minecraft:fall"), "minecraft:bypasses_armor"));
+        assert!(!damage_type_tag(id("minecraft:player_attack"), "minecraft:bypasses_armor"));
+        assert!(damage_type_tag(id("minecraft:out_of_world"), "minecraft:bypasses_invulnerability"));
+        assert!(damage_type_tag(id("minecraft:generic_kill"), "minecraft:bypasses_invulnerability"));
     }
 }

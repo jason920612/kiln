@@ -511,11 +511,13 @@ impl Host for Sim {
     }
 
     fn kill(&mut self, entity: &PlayerRef) {
+        let (rules, game_time) = (self.damage_rules(), self.game_time);
         let Some(p) = self.players.get_mut(&entity.conn) else { return };
-        let mut spawns = Vec::new();
-        let death = p.hurt(f32::MAX, crate::health::Cause::Kill, &mut spawns);
+        let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
+        let mut ctx = crate::health::DamageCtx { rules, game_time, spawns: &mut spawns, deaths: &mut deaths };
+        p.hurt(f32::MAX, &crate::health::Cause::Kill.into(), &mut ctx);
         self.dim.spawns.extend(spawns);
-        self.announce_deaths(death.into_iter().collect());
+        self.announce_deaths(deaths);
     }
 
     fn give(&mut self, player: &PlayerRef, item: &ItemInput, count: i32) {

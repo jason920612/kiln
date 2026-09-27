@@ -21,6 +21,8 @@ pub struct SinkStats {
     /// per packet).
     pub by_id: Mutex<std::collections::BTreeMap<i32, (u64, u64)>>,
     pub count_ids: AtomicBool,
+    /// Every packet sent, once set to `Some` (tests that inspect packets).
+    pub log: Mutex<Option<Vec<Bytes>>>,
 }
 
 fn track_ids() -> bool {
@@ -30,6 +32,9 @@ fn track_ids() -> bool {
 
 impl SinkStats {
     fn record(&self, p: &Bytes) {
+        if let Some(log) = self.log.lock().unwrap().as_mut() {
+            log.push(p.clone());
+        }
         self.packets.fetch_add(1, Relaxed);
         self.bytes.fetch_add(p.len() as u64, Relaxed);
         let mut r = Reader::new(p);
