@@ -3,3 +3,4 @@
 /work
 # Claude Code worktrees and local state
 /.claude/
+__pycache__/
