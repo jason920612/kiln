@@ -5,7 +5,7 @@
 //! vanilla sees in an unlit proto-chunk.
 
 use crate::block_facts::{Dir, Support, class_chain, collision_top_full, fluid, is_face_sturdy, is_solid};
-use crate::blocks::{prop, same_block};
+use crate::blocks::{is_block, prop, same_block};
 use crate::pos::BlockPos;
 use crate::region::Region;
 use crate::vtags;
@@ -98,6 +98,44 @@ fn class_can_survive(class: &str, state: u16, r: &mut Region, p: BlockPos) -> Op
             let facing = prop(state, "facing").and_then(Dir::by_name).unwrap_or(Dir::North);
             vtags::is(r.get(p.relative(facing)), "supports_cocoa")
         }
+        "BigDripleafBlock" => {
+            let below = r.get(p.below());
+            same_block(below, state) || is_block(below, "minecraft:big_dripleaf_stem") || vtags::is(below, "supports_big_dripleaf")
+        }
+        "BigDripleafStemBlock" => {
+            let below = r.get(p.below());
+            let above = r.get(p.above());
+            (same_block(below, state) || vtags::is(below, "supports_big_dripleaf"))
+                && (same_block(above, state) || is_block(above, "minecraft:big_dripleaf"))
+        }
+        "GrowingPlantBlock" => {
+            let name = kiln_data::blocks_types::block_of(state).name;
+            let head = name.strip_suffix("_plant").unwrap_or(name);
+            let grows = if matches!(head, "minecraft:kelp" | "minecraft:twisting_vines") { Dir::Up } else { Dir::Down };
+            let q = p.relative(grows.opposite());
+            let support = r.get(q);
+            if head == "minecraft:kelp" && vtags::is(support, "cannot_support_kelp") {
+                return Some(false);
+            }
+            let support_name = kiln_data::blocks_types::block_of(support).name;
+            support_name == head
+                || support_name.strip_suffix("_plant") == Some(head)
+                || is_face_sturdy(support, grows, Support::Full)
+        }
+        "LeafLitterBlock" => is_face_sturdy(r.get(p.below()), Dir::Up, Support::Full),
+        "MangrovePropaguleBlock" if prop(state, "hanging") == Some("true") => {
+            vtags::is(r.get(p.above()), "supports_hanging_mangrove_propagule")
+        }
+        "SporeBlossomBlock" => is_face_sturdy(r.get(p.above()), Dir::Down, Support::Center) && !r.fluid(p).is_water(),
+        "CarpetBlock" => !crate::blocks::is_air(r.get(p.below())),
+        "MossyCarpetBlock" => {
+            let below = r.get(p.below());
+            if prop(state, "base") == Some("true") {
+                !crate::blocks::is_air(below)
+            } else {
+                same_block(below, state) && prop(below, "base") == Some("true")
+            }
+        }
         "HangingRootsBlock" => is_face_sturdy(r.get(p.above()), Dir::Down, Support::Full),
         "BambooStalkBlock" | "BambooSaplingBlock" => vtags::is(r.get(p.below()), "supports_bamboo"),
         "BaseCoralPlantTypeBlock" => is_face_sturdy(r.get(p.below()), Dir::Up, Support::Full),
@@ -119,6 +157,13 @@ fn may_place_on(state: u16, below: u16, r: &mut Region, below_pos: BlockPos) -> 
                 vtags::is(below, "supports_small_dripleaf")
                     || (fluid(r.get(below_pos.above())).is_water_source() && vtags::is(below, "supports_vegetation"))
             }
+            "MangrovePropaguleBlock" => vtags::is(below, "supports_mangrove_propagule"),
+            "NetherFungusBlock" | "NetherRootsBlock" => {
+                let name = kiln_data::blocks_types::block_of(state).name.trim_start_matches("minecraft:");
+                vtags::is(below, &format!("supports_{name}"))
+            }
+            "NetherSproutsBlock" => vtags::is(below, "supports_nether_sprouts"),
+            "WitherRoseBlock" => vtags::is(below, "supports_wither_rose"),
             "DryVegetationBlock" => vtags::is(below, "supports_dry_vegetation"),
             "AzaleaBlock" => vtags::is(below, "supports_azalea"),
             "CactusFlowerBlock" => {

@@ -2,7 +2,7 @@
 
 use crate::Error;
 use crate::block_facts::{fluid, is_instance};
-use crate::blocks::{has_prop, is_air, with_prop};
+use crate::blocks::{has_prop, is_air, is_block, prop, with_prop};
 use crate::json::Json;
 use crate::pos::BlockPos;
 use crate::random::WorldgenRandom;
@@ -37,9 +37,7 @@ impl SimpleBlock {
             }
             place_double_plant(r, s, p, 2);
         } else if is_instance(s, "MossyCarpetBlock") {
-            // MossyCarpetBlock.placeAt (pale moss carpets with side toppers) is not
-            // implemented; the carpet alone is placed.
-            r.set(p, s, 2);
+            place_mossy_carpet(r, random, p, 2);
         } else {
             r.set(p, s, 2);
         }
@@ -67,4 +65,68 @@ pub fn copy_waterlogged(r: &mut Region, p: BlockPos, s: u16) -> u16 {
     } else {
         s
     }
+}
+
+/// `MossyCarpetBlock.placeAt`: a pale moss carpet with wall sides where it can attach, and
+/// sometimes a side-only carpet above it.
+pub fn place_mossy_carpet(r: &mut Region, random: &mut WorldgenRandom, p: BlockPos, flags: i32) {
+    let carpet = updated_carpet(r, crate::blocks::state::PALE_MOSS_CARPET, p, true);
+    r.set(p, carpet, flags);
+    let topper = carpet_topper(r, random, p);
+    if !is_air(topper) {
+        r.set(p.above(), topper, flags);
+        let carpet = updated_carpet(r, carpet, p, true);
+        r.set(p, carpet, flags);
+    }
+}
+
+/// `MossyCarpetBlock.getUpdatedState`.
+fn updated_carpet(r: &mut Region, mut s: u16, p: BlockPos, tall_sides: bool) -> u16 {
+    use crate::block_facts::Dir;
+    let base = prop(s, "base") == Some("true");
+    let low_sides = tall_sides || base;
+    let mut above = None;
+    let mut below = None;
+    for d in Dir::HORIZONTAL {
+        let supported = crate::feature::vegetation::shape::can_attach_to(r.get(p.relative(d)), d);
+        let mut side = if supported {
+            if low_sides { "low" } else { prop(s, d.name()).unwrap_or("none") }
+        } else {
+            "none"
+        };
+        if side == "low" {
+            let a = *above.get_or_insert_with(|| r.get(p.above()));
+            if is_block(a, "minecraft:pale_moss_carpet") && prop(a, d.name()) != Some("none") && prop(a, "base") != Some("true") {
+                side = "tall";
+            }
+            if !base {
+                let b = *below.get_or_insert_with(|| r.get(p.below()));
+                if is_block(b, "minecraft:pale_moss_carpet") && prop(b, d.name()) == Some("none") {
+                    side = "none";
+                }
+            }
+        }
+        s = with_prop(s, d.name(), side);
+    }
+    s
+}
+
+/// `MossyCarpetBlock.createTopperWithSideChance`.
+fn carpet_topper(r: &mut Region, random: &mut WorldgenRandom, p: BlockPos) -> u16 {
+    use crate::block_facts::Dir;
+    use kiln_javamath::random::RandomSource;
+    let above = r.get(p.above());
+    let is_carpet = is_block(above, "minecraft:pale_moss_carpet");
+    if (is_carpet && prop(above, "base") == Some("true")) || (!is_carpet && !replaceable(above)) {
+        return crate::blocks::state::AIR;
+    }
+    let top = with_prop(crate::blocks::state::PALE_MOSS_CARPET, "base", "false");
+    let mut top = updated_carpet(r, top, p.above(), true);
+    for d in Dir::HORIZONTAL {
+        if prop(top, d.name()) != Some("none") && !random.next_bool() {
+            top = with_prop(top, d.name(), "none");
+        }
+    }
+    let has_faces = prop(top, "base") == Some("true") || Dir::HORIZONTAL.iter().any(|d| prop(top, d.name()) != Some("none"));
+    if has_faces && top != above { top } else { crate::blocks::state::AIR }
 }
