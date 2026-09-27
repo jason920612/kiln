@@ -5,6 +5,7 @@
 //! here can reach another region's cells or players; effects outside the region go through
 //! the outputs the serial phases pick up (chunk requests and unloads).
 
+use crate::entities::{self, Entities, Spawn};
 use crate::movement;
 use crate::{HOTBAR_START, INVENTORY_SLOTS, KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEOUT, MAX_UNACKED_BATCHES, Player, interact};
 use bytes::Bytes;
@@ -47,14 +48,17 @@ pub(crate) struct RegionOut {
     pub wanted: Vec<(u32, ConnId, ChunkPos)>,
     /// Loaded chunks no player of the region is near any more.
     pub unload: Vec<ChunkPos>,
+    /// Entities spawned this phase; ids are assigned afterwards in canonical order.
+    pub spawns: Vec<Spawn>,
     /// CPU time per sub-phase, for the statistics.
     pub times: [Duration; SUB_PHASES.len()],
 }
 
-pub(crate) const SUB_PHASES: [&str; 5] = ["connections", "visibility", "movement", "light", "egress"];
+pub(crate) const SUB_PHASES: [&str; 6] = ["connections", "entities", "visibility", "movement", "light", "egress"];
 
 pub(crate) struct RegionWork<'a> {
     pub cells: &'a mut CellSet<Cell>,
+    pub entities: &'a mut Entities,
     /// Sorted by connection id.
     pub players: Vec<&'a mut Player>,
     /// This region's packets for the tick, in arrival order.
@@ -72,7 +76,7 @@ impl RegionWork<'_> {
         let mut changes = Vec::new();
         for (conn, pkt) in std::mem::take(&mut self.packets) {
             let Some(i) = self.index_of(conn) else { continue };
-            local_packet(self.players[i], &mut *self.cells, env, pkt, &mut changes);
+            local_packet(self.players[i], &mut *self.cells, env, pkt, &mut changes, &mut self.out.spawns);
         }
         notify_block_changes(self.players.iter_mut().map(|p| &mut **p), &changes);
     }
@@ -80,7 +84,7 @@ impl RegionWork<'_> {
     /// L: connection upkeep, chunk streaming, tracking, light, then egress.
     pub fn tick(&mut self, env: &Env) {
         let mut lap = Instant::now();
-        let mut mark = |times: &mut [Duration; 5], i: usize| {
+        let mut mark = |times: &mut [Duration; SUB_PHASES.len()], i: usize| {
             let now = Instant::now();
             times[i] += now - lap;
             lap = now;
@@ -96,16 +100,20 @@ impl RegionWork<'_> {
             self.find_unloads();
         }
         mark(&mut self.out.times, 0);
-        crate::players::update_visibility(&mut self.players);
+        entities::tick(self.entities, &*self.cells);
+        entities::pickups(self.entities, &mut self.players);
         mark(&mut self.out.times, 1);
-        crate::players::broadcast_movement(&mut self.players);
+        let movers = crate::players::update_visibility(&mut self.players);
         mark(&mut self.out.times, 2);
-        self.send_light_updates();
+        crate::players::broadcast_movement(&mut self.players);
+        entities::track(self.entities, &mut self.players, &movers);
         mark(&mut self.out.times, 3);
+        self.send_light_updates();
+        mark(&mut self.out.times, 4);
         for p in self.players.iter_mut() {
             p.flush();
         }
-        mark(&mut self.out.times, 4);
+        mark(&mut self.out.times, 5);
     }
 
     /// Chunks outside every player's view (plus one chunk of margin) can go.
@@ -177,6 +185,7 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(
     env: &Env,
     pkt: PlayIn,
     changes: &mut Vec<BlockChange>,
+    spawns: &mut Vec<Spawn>,
 ) {
     match pkt {
         PlayIn::AcceptTeleport { id } => {
@@ -234,13 +243,30 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(
         PlayIn::SetCreativeSlot { slot, item } => {
             if let Some(s) = usize::try_from(slot).ok().filter(|&s| s < INVENTORY_SLOTS) {
                 p.inventory[s] = item.map(|i| (i.item, i.count));
+            } else if slot == -1
+                && let Some(item) = item
+            {
+                // Dropped out of the creative inventory.
+                spawns.push(p.throw(item.item, item.count));
             }
         }
         PlayIn::PlayerAction { action, pos, sequence, .. } => {
-            // Creative mode: starting to dig breaks the block instantly.
+            // `ServerboundPlayerActionPacket.Action` ordinals.
             const START_DIGGING: i32 = 0;
-            if action == START_DIGGING && within_reach(p, pos) {
-                set_block(world, pos, kiln_data::blocks::default_state::AIR, changes);
+            const DROP_ALL_ITEMS: i32 = 4;
+            const DROP_ITEM: i32 = 5;
+            match action {
+                // Creative mode: starting to dig breaks the block instantly.
+                START_DIGGING if within_reach(p, pos) => {
+                    set_block(world, pos, kiln_data::blocks::default_state::AIR, changes);
+                }
+                DROP_ITEM | DROP_ALL_ITEMS => {
+                    if let Some(spawn) = p.drop_held(action == DROP_ALL_ITEMS) {
+                        spawns.push(spawn);
+                    }
+                    return;
+                }
+                _ => {}
             }
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }

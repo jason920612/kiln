@@ -151,7 +151,7 @@ impl Sim {
 /// viewers re-evaluated against everyone, and every player re-evaluates its pairing with
 /// the viewers whose section changed. Nothing else changes who sees whom. Players of other
 /// regions are too far away to track.
-pub(crate) fn update_visibility(players: &mut [&mut Player]) {
+pub(crate) fn update_visibility(players: &mut [&mut Player]) -> Vec<ConnId> {
     struct Snap {
         conn: ConnId,
         x: f64,
@@ -181,10 +181,11 @@ pub(crate) fn update_visibility(players: &mut [&mut Player]) {
             }
         })
         .collect();
-    if !snaps.iter().any(|s| s.moved) {
-        return;
-    }
     let movers: Vec<&Snap> = snaps.iter().filter(|s| s.moved).collect();
+    let mover_conns: Vec<ConnId> = movers.iter().map(|s| s.conn).collect();
+    if movers.is_empty() {
+        return mover_conns;
+    }
 
     // Vanilla `updatePlayer`: within the entity's tracking range and the viewer's view
     // distance, and in a chunk inside the viewer's chunk view.
@@ -243,6 +244,7 @@ pub(crate) fn update_visibility(players: &mut [&mut Player]) {
         target.seen_by.extend(added);
         target.seen_by.sort_unstable();
     }
+    mover_conns
 }
 
 /// Streams movement and metadata changes of one region's players (sorted by connection):

@@ -21,12 +21,14 @@
 //!   and flushes its players' packets.
 
 mod commands;
+mod entities;
 mod generation;
 mod interact;
 mod movement;
 mod persist;
 mod players;
 mod region;
+mod rng;
 mod stats;
 pub mod testing;
 
@@ -164,6 +166,8 @@ struct Player {
     ack_block_changes: i32,
     /// View distance the sent chunks were last trimmed to.
     applied_view: i32,
+    /// The player's random source (item throws), seeded from its UUID.
+    rng: rng::Rng,
 }
 
 impl Player {
@@ -180,6 +184,90 @@ impl Player {
         self.sink.disconnect(packets::play_disconnect(reason));
         self.disconnected = true;
     }
+    /// Adds items to the inventory like vanilla's `Inventory.add`: onto a matching stack with
+    /// room (selected slot, offhand, then the inventory in order), then into free slots.
+    /// Returns how many were taken; sends the changed slots.
+    fn add_to_inventory(&mut self, item: i32, mut count: i32) -> i32 {
+        let max = kiln_item::ItemStack::new(item, 1).max_stack_size();
+        let before = count;
+        // Inventory indices 0-8 are the hotbar (container slots 36-44), 9-35 the rest, 40 the
+        // offhand (slot 45).
+        let slot_of = |i: usize| match i {
+            0..=8 => 36 + i,
+            40 => 45,
+            i => i,
+        };
+        let order: Vec<usize> = std::iter::once(self.selected).chain([40]).chain(0..36).collect();
+        for &i in &order {
+            let s = slot_of(i);
+            if let Some((id, n)) = &mut self.inventory[s]
+                && *id == item
+                && *n < max
+            {
+                let add = (max - *n).min(count);
+                *n += add;
+                count -= add;
+                self.slot_changed(s);
+                if count == 0 {
+                    return before;
+                }
+            }
+        }
+        for i in 0..36 {
+            let s = slot_of(i);
+            if self.inventory[s].is_none() {
+                let add = max.min(count);
+                self.inventory[s] = Some((item, add));
+                count -= add;
+                self.slot_changed(s);
+                if count == 0 {
+                    break;
+                }
+            }
+        }
+        before - count
+    }
+
+    fn slot_changed(&mut self, slot: usize) {
+        self.inventory_state += 1;
+        let pkt = packets::container_set_slot(0, self.inventory_state, slot as i16, self.inventory[slot]);
+        self.send(pkt);
+    }
+
+    /// Drops one item (or the whole stack) from the selected hotbar slot.
+    fn drop_held(&mut self, all: bool) -> Option<entities::Spawn> {
+        let slot = HOTBAR_START + self.selected;
+        let (item, count) = self.inventory[slot]?;
+        let n = if all { count } else { 1 };
+        self.inventory[slot] = (count > n).then_some((item, count - n));
+        self.slot_changed(slot);
+        Some(self.throw(item, n))
+    }
+
+    /// An item thrown from the eyes in the look direction (`LivingEntity.createItemStackToDrop`
+    /// with `throwRandomly` false).
+    fn throw(&mut self, item: i32, count: i32) -> entities::Spawn {
+        let (yaw, pitch) = (self.rot[0].to_radians(), self.rot[1].to_radians());
+        let f = 0.3f32;
+        let angle = self.rng.next_f32() * std::f32::consts::TAU;
+        let spread = 0.02 * self.rng.next_f32();
+        let vel = [
+            (-yaw.sin() * pitch.cos() * f + angle.cos() * spread) as f64,
+            (-pitch.sin() * f + 0.1 + (self.rng.next_f32() - self.rng.next_f32()) * 0.1) as f64,
+            (yaw.cos() * pitch.cos() * f + angle.sin() * spread) as f64,
+        ];
+        let eye_y = self.pos[1] + if self.sneaking { 1.27 } else { 1.62 };
+        entities::Spawn {
+            kind: &kiln_data::entities::types::ITEM,
+            pos: [self.pos[0], eye_y - 0.3, self.pos[2]],
+            vel,
+            body: entities::Body::Item {
+                stack: kiln_proto::packets::ItemStack { item, count, added: Vec::new(), removed: Vec::new() },
+                pickup_delay: entities::DROP_PICKUP_DELAY,
+            },
+        }
+    }
+
     /// Moves the player and waits for the client to confirm (`ServerGamePacketListenerImpl.teleport`).
     fn teleport(&mut self, pos: [f64; 3], rot: [f32; 2], now: i64) {
         self.pos = pos;
@@ -195,7 +283,7 @@ impl Player {
 /// A dimension's chunks: loaded cells grouped into regions, and where chunks come from.
 struct Dim {
     provider: ChunkProvider,
-    regions: Regions<Cell, ()>,
+    regions: Regions<Cell, entities::Entities>,
     regionizer: Regionizer,
     /// Chunks loaded for cells without an owner yet; installed once the regionizer ran.
     pending: HashMap<ChunkPos, Chunk>,
@@ -204,6 +292,8 @@ struct Dim {
     requests: Vec<(u32, ConnId, ChunkPos)>,
     /// Chunks the regions no longer need.
     unloads: Vec<ChunkPos>,
+    /// Entities spawned in a serial phase, waiting for ids.
+    spawns: Vec<entities::Spawn>,
     /// Cells emptied by unloads; vacated when the regionizer runs, unless refilled first.
     emptied: Vec<kiln_world::CellPos>,
     /// Generation threads, when missing chunks come from an expensive generator.
@@ -450,6 +540,7 @@ impl Sim {
                 pending: HashMap::new(),
                 requests: Vec::new(),
                 unloads: Vec::new(),
+                spawns: Vec::new(),
                 emptied: Vec::new(),
                 generation,
             },
@@ -512,7 +603,8 @@ impl Sim {
         // P: region-local packets in parallel.
         let (local, exclusive) = self.route(packets);
         let env = self.env();
-        self.run_regions(local, |w, env| w.apply_packets(env), env);
+        let outs = self.run_regions(local, |w, env| w.apply_packets(env), env);
+        self.dim.spawns.extend(outs.into_iter().flat_map(|o| o.spawns));
         lap(&mut self.stats, "packets");
 
         // PX: chat, commands and what followed them, in arrival order.
@@ -524,6 +616,7 @@ impl Sim {
         for conn in leaves {
             self.leave(conn);
         }
+        self.materialize_spawns();
         lap(&mut self.stats, "px");
 
         // G: console, time, autosave.
@@ -542,10 +635,12 @@ impl Sim {
         for out in outs {
             self.dim.requests.extend(out.wanted);
             self.dim.unloads.extend(out.unload);
+            self.dim.spawns.extend(out.spawns);
             for (t, d) in times.iter_mut().zip(out.times) {
                 *t += d;
             }
         }
+        self.materialize_spawns();
         lap(&mut self.stats, "regions");
         // CPU time summed over regions (the "regions" phase is wall time).
         for (name, d) in region::SUB_PHASES.iter().zip(times) {
@@ -604,6 +699,18 @@ impl Sim {
         self.dim.regions.len()
     }
 
+    /// Positions of the non-player entities, by type name (for tests and tools).
+    pub fn entities(&self) -> Vec<(&'static str, [f64; 3])> {
+        let mut out: Vec<_> = self.dim.regions.iter().flat_map(|r| r.part().list.iter()).map(|e| (e.id, e.kind.name, e.pos)).collect();
+        out.sort_by_key(|&(id, ..)| id);
+        out.into_iter().map(|(_, k, p)| (k, p)).collect()
+    }
+
+    /// A player's inventory as (item id, count) per container slot.
+    pub fn inventory(&self, conn: ConnId) -> Option<Vec<Option<(i32, i32)>>> {
+        self.players.get(&conn).map(|p| p.inventory.to_vec())
+    }
+
     /// Timing of the last completed statistics window.
     pub fn last_report(&self) -> Option<&str> {
         self.commands.last_report.as_deref()
@@ -639,12 +746,15 @@ impl Sim {
                 let mut players = buckets.remove(&id).unwrap_or_default();
                 players.sort_unstable_by_key(|p| p.conn);
                 let packets = packets.remove(&id).unwrap_or_default();
-                RegionWork { cells: r.cells_mut(), players, packets, out: RegionOut::default() }
+                let (cells, entities) = r.cells_and_part_mut();
+                RegionWork { cells, entities, players, packets, out: RegionOut::default() }
             })
             .collect();
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
         // Rough estimate for the pool's start order: players dominate a region's cost.
-        let cost = |w: &RegionWork| 20_000 + w.players.len() as u64 * 5_000 + w.packets.len() as u64 * 500;
+        let cost = |w: &RegionWork| {
+            20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
+        };
         self.pool.run_units(&mut work, cost, |w, _ctx| f(w, &env));
         work.into_iter().map(|w| w.out).collect()
     }
@@ -740,6 +850,18 @@ impl Sim {
         self.update_membership(changed);
     }
 
+    /// Gives the entities spawned since the last call their ids, in an order that does not
+    /// depend on the regions, and puts each in the region owning its cell (spawns in unloaded
+    /// chunks are dropped, as vanilla would not add them).
+    fn materialize_spawns(&mut self) {
+        for spawn in entities::canonical(std::mem::take(&mut self.dim.spawns)) {
+            let Some(region) = self.dim.regions.at_mut(entities::chunk_of(spawn.pos).cell()) else { continue };
+            let id = self.next_entity_id;
+            self.next_entity_id += 1;
+            region.part_mut().list.push(entities::Entity::new(id, spawn));
+        }
+    }
+
     /// A packet from the serial PX stream.
     fn exclusive_packet(&mut self, conn: ConnId, pkt: PlayIn) {
         match pkt {
@@ -759,7 +881,7 @@ impl Sim {
                 let env = self.env();
                 let Some(p) = self.players.get_mut(&conn) else { return };
                 let mut changes = Vec::new();
-                region::local_packet(p, &mut self.dim.regions, &env, pkt, &mut changes);
+                region::local_packet(p, &mut self.dim.regions, &env, pkt, &mut changes, &mut self.dim.spawns);
                 region::notify_block_changes(self.players.values_mut(), &changes);
             }
         }
@@ -851,6 +973,7 @@ impl Sim {
             position_this_tick: false,
             ack_block_changes: -1,
             applied_view: view_distance,
+            rng: rng::Rng::new(j.uuid.as_u64_pair().0 ^ j.uuid.as_u64_pair().1),
         };
 
         player.send(packets::play_login(&packets::Login {
