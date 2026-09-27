@@ -88,6 +88,49 @@ pub fn same_item_same_components(a: &ItemStack, b: &ItemStack) -> bool {
     (a.is_empty() && b.is_empty()) || a.patch().same_entries(b.patch())
 }
 
+/// `ItemStack.validateStrict`: no damageable stack of more than one, nested stacks and the stack
+/// itself within their maximum sizes.
+pub fn is_valid_strict(s: &ItemStack) -> bool {
+    use kiln_item::component::ids;
+    use kiln_item::keys;
+    let within = |t: &kiln_item::ItemStackTemplate| t.count <= t.create_unchecked_max();
+    if s.has(ids::MAX_DAMAGE) && s.max_stack_size() > 1 {
+        return false;
+    }
+    if let Some(c) = s.get(keys::CONTAINER)
+        && !c.0.iter().flatten().all(within)
+    {
+        return false;
+    }
+    if let Some(b) = s.get(keys::BUNDLE_CONTENTS)
+        && !b.0.iter().all(within)
+    {
+        return false;
+    }
+    if let Some(p) = s.get(keys::CHARGED_PROJECTILES)
+        && !p.0.iter().all(within)
+    {
+        return false;
+    }
+    s.count() <= s.max_stack_size()
+}
+
+trait TemplateMax {
+    fn create_unchecked_max(&self) -> i32;
+}
+
+impl TemplateMax for kiln_item::ItemStackTemplate {
+    fn create_unchecked_max(&self) -> i32 {
+        self.create().max_stack_size()
+    }
+}
+
+/// `ItemStackTemplate.create`: an invalid stack comes out empty (vanilla logs a warning).
+pub fn create_checked(t: &kiln_item::ItemStackTemplate) -> ItemStack {
+    let s = t.create();
+    if is_valid_strict(&s) { s } else { ItemStack::empty() }
+}
+
 /// `ItemStack.matches`: same count, item and components.
 pub fn matches(a: &ItemStack, b: &ItemStack) -> bool {
     a.count() == b.count() && same_item_same_components(a, b)

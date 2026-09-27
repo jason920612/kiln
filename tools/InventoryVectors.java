@@ -182,6 +182,7 @@ public class InventoryVectors {
         set(SERVER, MinecraftServer.class, "resources", ctor.newInstance(null, resources));
         LEVEL = (FakeLevel) U.allocateInstance(FakeLevel.class);
         set(LEVEL, net.minecraft.world.level.Level.class, "registryAccess", access);
+        set(LEVEL, net.minecraft.world.level.Level.class, "random", net.minecraft.util.RandomSource.create(0));
         RULES = new GameRules(FeatureFlags.DEFAULT_FLAGS);
     }
 
@@ -246,6 +247,9 @@ public class InventoryVectors {
 
         @Override
         public void onEquipItem(EquipmentSlot slot, ItemStack old, ItemStack now) {}
+
+        @Override
+        public void playSound(net.minecraft.sounds.SoundEvent sound, float volume, float pitch) {}
 
         @Override
         public void awardStat(Stat<?> stat, int amount) {}
@@ -367,6 +371,8 @@ public class InventoryVectors {
         "diamond_sword[damage=100]", "shulker_box", "red_shulker_box", "coal", "charcoal", "raw_iron", "beef", "lava_bucket",
         "oak_log", "iron_ingot", "sugar", "wheat", "milk_bucket", "honey_bottle", "paper", "gunpowder", "red_dye", "blue_dye",
         "bamboo", "blaze_rod", "stone[repair_cost=3]", "ender_pearl[!max_stack_size]", "player_head", "potion",
+        "bundle", "bundle", "bundle[bundle_contents=[{id:\"stone\",count:10}]]", "red_bundle[bundle_contents=[{id:\"ender_pearl\",count:4},{id:\"diamond_sword\"}]]",
+        "blue_bundle[bundle_contents=[{id:\"bundle\",components:{\"minecraft:bundle_contents\":[{id:\"dirt\",count:3}]}}]]", "bundle[bundle_contents=[{id:\"oak_planks\",count:64}]]",
     };
 
     static final String[] CRAFT_POOL = {
@@ -377,7 +383,8 @@ public class InventoryVectors {
         "shield", "shulker_box", "writable_book", "written_book[written_book_content={title:\"t\",author:\"a\",generation:1,pages:[\"x\"]}]",
         "arrow", "lingering_potion[potion_contents={potion:\"minecraft:swiftness\"}]", "brick", "angler_pottery_sherd",
         "wooden_pickaxe[damage=10]", "wooden_pickaxe[damage=40]", "stone_sword", "book", "ink_sac", "feather", "slime_ball",
-        "iron_nugget", "coal", "blaze_powder", "ender_pearl", "glowstone_dust", "fire_charge", "gold_nugget",
+        "iron_nugget", "coal", "blaze_powder", "ender_pearl", "glowstone_dust", "fire_charge", "gold_nugget", "bundle",
+        "bundle[bundle_contents=[{id:\"stick\",count:7}]]",
     };
 
     static ItemStack randomStack(Random rng, String[] pool) {
@@ -498,6 +505,25 @@ public class InventoryVectors {
                 List<ItemStack> block0 = new ArrayList<>();
                 for (ItemStack b : s.block.getItems()) block0.add(b.copy());
                 s.menu = createMenu(s, id);
+                s.player.containerMenu = s.menu;
+                List<ItemStack> grid = new ArrayList<>();
+                int gridSize = kind.equals("crafting") ? 3 : kind.equals("inventory") ? 2 : 0;
+                if (gridSize > 0 && rng.nextInt(5) < 3) {
+                    List<ItemStack> g = null;
+                    for (int tries = 0; g == null && tries < 20; tries++) {
+                        RecipeHolder<?> h = craftingRecipes().get(rng.nextInt(craftingRecipes().size()));
+                        g = gridFor((CraftingRecipe) h.value(), h.id().identifier().getPath(), gridSize, rng);
+                    }
+                    if (g != null) {
+                        for (ItemStack st : g) {
+                            if (!st.isEmpty() && rng.nextInt(3) > 0) st.setCount(1 + rng.nextInt(st.getMaxStackSize()));
+                        }
+                        grid = g;
+                    }
+                }
+                for (int i = 0; i < grid.size(); i++) {
+                    if (!grid.get(i).isEmpty()) s.menu.getSlot(1 + i).set(grid.get(i).copy());
+                }
                 // Deterministic drag order (a HashSet of slots in vanilla iterates in identity-hash order).
                 set(s.menu, AbstractContainerMenu.class, "quickcraftSlots", new LinkedHashSet<>());
                 s.menu.addSlotListener(NO_LISTENER);
@@ -505,7 +531,7 @@ public class InventoryVectors {
                 StringBuilder b = new StringBuilder();
                 b.append("{\"kind\": \"").append(kind).append("\", \"container_id\": ").append(id).append(", \"creative\": ").append(creative)
                         .append(", \"selected\": ").append(s.inv.getSelectedSlot()).append(", \"inv\": ").append(hexList(inv0))
-                        .append(", \"block\": ").append(hexList(block0)).append(", \"data\": [").append(s.data.get(0)).append(", ").append(s.data.get(1))
+                        .append(", \"block\": ").append(hexList(block0)).append(", \"grid\": ").append(hexList(grid)).append(", \"data\": [").append(s.data.get(0)).append(", ").append(s.data.get(1))
                         .append(", ").append(s.data.get(2)).append(", ").append(s.data.get(3)).append("], \"open\": ").append(drain(s)).append(", \"steps\": [");
                 int steps = 5 + rng.nextInt(40);
                 int drag = -1;
@@ -546,6 +572,7 @@ public class InventoryVectors {
             return new int[] {rng.nextInt(size), AbstractContainerMenu.getQuickcraftMask(1, drag), 5, drag};
         }
         int slot = rng.nextInt(20) == 0 ? -999 : rng.nextInt(size);
+        if ((s.kind.equals("crafting") || s.kind.equals("inventory")) && rng.nextInt(5) == 0) slot = rng.nextInt(3) == 0 ? 1 + rng.nextInt(4) : 0;
         if (rng.nextInt(200) == 0) slot = size + rng.nextInt(3);
         if (rng.nextInt(300) == 0) slot = -1 - rng.nextInt(3);
         int r = rng.nextInt(100);
@@ -584,6 +611,12 @@ public class InventoryVectors {
                 m.clicked(slot, button, input, s.player);
             } catch (RuntimeException e) {
                 crash = true;
+                if (System.getenv("KILN_TRACE") != null) {
+                    Throwable t = e;
+                    while (t.getCause() != null) t = t.getCause();
+                    OUT.println("crash: " + t);
+                    for (StackTraceElement el : t.getStackTrace()) OUT.println("  at " + el);
+                }
             }
             if (!crash) {
                 List<ItemStack> after = m.getItems();
@@ -745,6 +778,18 @@ public class InventoryVectors {
             return g;
         }
         return null;
+    }
+
+    static List<RecipeHolder<?>> crafting;
+
+    static List<RecipeHolder<?>> craftingRecipes() {
+        if (crafting == null) {
+            crafting = new ArrayList<>();
+            for (RecipeHolder<?> h : recipes.getRecipes()) {
+                if (h.value() instanceof CraftingRecipe && !h.id().identifier().getPath().contains("map")) crafting.add(h);
+            }
+        }
+        return crafting;
     }
 
     static final String[] DYES = {"white_dye", "orange_dye", "red_dye", "blue_dye", "black_dye", "lime_dye", "purple_dye", "brown_dye"};

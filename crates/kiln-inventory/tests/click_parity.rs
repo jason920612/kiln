@@ -190,6 +190,11 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
             }
         };
     }
+    for (i, s) in seq.get("grid").map(stacks).unwrap_or_default().into_iter().enumerate() {
+        if !s.is_empty() {
+            menu.set_slot(&mut env!(), 1 + i, s);
+        }
+    }
     menu.open(&mut env!());
     compare_out(&seq["open"], &out).map_err(|e| format!("open: {e}"))?;
     for (k, step) in seq["steps"].as_array().unwrap().iter().enumerate() {

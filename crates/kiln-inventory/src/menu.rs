@@ -238,7 +238,7 @@ impl Menu {
         self.container(env, s.source).item(s.index)
     }
 
-    fn item_mut<'s>(&'s mut self, env: &'s mut Env, i: usize) -> &'s mut ItemStack {
+    pub(crate) fn item_mut<'s>(&'s mut self, env: &'s mut Env, i: usize) -> &'s mut ItemStack {
         let s = self.slots[i];
         self.container_mut(env, s.source).item_mut(s.index)
     }
@@ -262,7 +262,7 @@ impl Menu {
     }
 
     /// `Slot.allowModification`.
-    fn allow_modification(&self, env: &Env, i: usize) -> bool {
+    pub(crate) fn allow_modification(&self, env: &Env, i: usize) -> bool {
         self.may_pickup(env, i) && self.may_place(env, i, self.item(env, i))
     }
 
@@ -274,6 +274,11 @@ impl Menu {
             self.slots_changed(env);
         }
         self.set_changed(env, i);
+    }
+
+    /// `Slot.set` from outside a click (a crafting grid recomputes and sends its result).
+    pub fn set_slot(&mut self, env: &mut Env, i: usize, stack: ItemStack) {
+        self.set(env, i, stack);
     }
 
     /// `Slot.setByPlayer(stack)`.
@@ -328,7 +333,7 @@ impl Menu {
     }
 
     /// `Slot.safeTake`.
-    fn safe_take(&mut self, env: &mut Env, i: usize, count: i32, max: i32) -> ItemStack {
+    pub(crate) fn safe_take(&mut self, env: &mut Env, i: usize, count: i32, max: i32) -> ItemStack {
         match self.try_remove(env, i, count, max) {
             Some(mut taken) => {
                 self.on_take(env, i, &mut taken);
@@ -339,7 +344,7 @@ impl Menu {
     }
 
     /// `Slot.safeInsert(stack, count)`: returns what is left of `stack`.
-    fn safe_insert(&mut self, env: &mut Env, i: usize, mut stack: ItemStack, count: i32) -> ItemStack {
+    pub(crate) fn safe_insert(&mut self, env: &mut Env, i: usize, mut stack: ItemStack, count: i32) -> ItemStack {
         if stack.is_empty() || !self.may_place(env, i, &stack) {
             return stack;
         }
@@ -474,12 +479,13 @@ impl Menu {
         }
     }
 
-    /// `slotsChanged` of the crafting grid.
-    fn slots_changed(&mut self, env: &mut Env) {
+    /// `slotsChanged`: crafting menus recompute their result, others broadcast changes.
+    pub(crate) fn slots_changed(&mut self, env: &mut Env) {
         match self.kind {
             MenuKind::Inventory => self.slot_changed_crafting_grid(env, None),
             MenuKind::Crafting if !self.placing_recipe => self.slot_changed_crafting_grid(env, None),
-            _ => {}
+            MenuKind::Crafting => {}
+            _ => self.broadcast_changes(env),
         }
     }
 
@@ -683,7 +689,7 @@ impl Menu {
                         return Ok(());
                     }
                     let i = self.index(slot)?;
-                    self.pickup(env, i, action);
+                    self.pickup(env, i, action)?;
                 }
             }
             ContainerInput::Swap if (0..9).contains(&button) || button == 40 => {
@@ -786,8 +792,8 @@ impl Menu {
         Ok(())
     }
 
-    fn pickup(&mut self, env: &mut Env, i: usize, action: ClickAction) {
-        if !crate::bundle::click_override(self, env, i, action) {
+    fn pickup(&mut self, env: &mut Env, i: usize, action: ClickAction) -> Result<(), ClickCrash> {
+        if !crate::bundle::click_override(self, env, i, action)? {
             let slot_empty = self.item(env, i).is_empty();
             if slot_empty {
                 if !self.carried.is_empty() {
@@ -826,6 +832,7 @@ impl Menu {
             }
         }
         self.set_changed(env, i);
+        Ok(())
     }
 
     fn swap(&mut self, env: &mut Env, i: usize, button: usize) {
