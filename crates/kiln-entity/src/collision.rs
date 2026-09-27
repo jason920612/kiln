@@ -6,6 +6,7 @@ use crate::level::EntityLevel;
 use crate::math::{Aabb, Axis, BlockPos, Vec3, floor};
 use crate::physics;
 use crate::shape::{Collider, Shape, collide_all, intersects};
+use std::borrow::Cow;
 
 /// `EntityCollisionContext`: what context-dependent collision shapes look at.
 #[derive(Clone, Copy, Debug)]
@@ -45,11 +46,20 @@ impl CollisionContext {
 }
 
 /// The collision shape of `state` at `pos` for `ctx`, and whether it is `Shapes.block()`.
-pub fn collision_shape(state: u16, pos: BlockPos, ctx: &CollisionContext) -> (&'static Shape, bool) {
+pub fn collision_shape(state: u16, pos: BlockPos, ctx: &CollisionContext) -> (Cow<'static, Shape>, bool) {
     match kind(state) {
-        Kind::Scaffolding => (scaffolding_shape(state, pos, ctx), false),
-        Kind::PowderSnow => powder_snow_shape(pos, ctx),
-        _ => (physics::collision_shape(state), physics::is_full_cube(state)),
+        Kind::Scaffolding => (Cow::Borrowed(scaffolding_shape(state, pos, ctx)), false),
+        Kind::PowderSnow => {
+            let (s, cube) = powder_snow_shape(pos, ctx);
+            (Cow::Borrowed(s), cube)
+        }
+        _ => {
+            let shape = physics::collision_shape(state);
+            match physics::collision_offset(state, pos.x, pos.z) {
+                Some((ox, oz)) => (Cow::Owned(shape.moved(ox, 0.0, oz)), false),
+                None => (Cow::Borrowed(shape), physics::is_full_cube(state)),
+            }
+        }
     }
 }
 
@@ -93,7 +103,7 @@ pub fn for_each_block_collision(
     level: &dyn EntityLevel,
     ctx: &CollisionContext,
     area: &Aabb,
-    mut visit: impl FnMut(BlockPos, &'static Shape, bool) -> bool,
+    mut visit: impl FnMut(BlockPos, Cow<'static, Shape>, bool) -> bool,
 ) {
     let x0 = floor(area.min_x - 1.0e-7) - 1;
     let x1 = floor(area.max_x + 1.0e-7) + 1;
@@ -127,7 +137,7 @@ pub fn for_each_block_collision(
                     area.intersects_raw(px, py, pz, px + 1.0, py + 1.0, pz + 1.0)
                 } else {
                     !shape.is_empty()
-                        && entity_shape.as_ref().is_some_and(|e| intersects(shape, [px, py, pz], e, [0.0; 3]))
+                        && entity_shape.as_ref().is_some_and(|e| intersects(&shape, [px, py, pz], e, [0.0; 3]))
                 };
                 if hit && !visit(pos, shape, cube) {
                     return;
@@ -140,7 +150,7 @@ pub fn for_each_block_collision(
 /// `getBlockCollisions` as placed colliders.
 pub fn block_colliders(level: &dyn EntityLevel, ctx: &CollisionContext, area: &Aabb, out: &mut Vec<Collider>) {
     for_each_block_collision(level, ctx, area, |pos, shape, _| {
-        out.push(Collider::at(shape, pos.x as f64, pos.y as f64, pos.z as f64));
+        out.push(Collider { shape, offset: [pos.x as f64, pos.y as f64, pos.z as f64] });
         true
     });
 }

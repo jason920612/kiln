@@ -373,7 +373,10 @@ impl Entity {
     fn inside_shape(&self, state: u16) -> Option<&'static crate::shape::Shape> {
         if kind(state) == Kind::PowderSnow {
             let (shape, _) = crate::collision::collision_shape(state, self.block_position(), &self.collision_context());
-            return if shape.is_empty() { None } else { Some(shape) };
+            return match shape {
+                std::borrow::Cow::Borrowed(s) if !s.is_empty() => Some(s),
+                _ => None,
+            };
         }
         physics::inside_shape(state)
     }

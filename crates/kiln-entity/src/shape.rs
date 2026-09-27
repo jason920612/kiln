@@ -95,6 +95,16 @@ impl Shape {
         Some(s)
     }
 
+    /// `VoxelShape.move(x, y, z)` as a new shape (coordinates shifted like `OffsetDoubleList`).
+    pub fn moved(&self, x: f64, y: f64, z: f64) -> Shape {
+        let mut s = self.clone();
+        for (a, off) in [x, y, z].into_iter().enumerate() {
+            s.coords[a] = s.coords[a].iter().map(|c| c + off).collect();
+        }
+        s.cube = false;
+        s
+    }
+
     pub fn is_empty(&self) -> bool {
         self.first_full[0] >= self.size[0]
     }

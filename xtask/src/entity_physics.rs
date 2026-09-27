@@ -8,7 +8,9 @@
 //! sturdy faces u8 (bit = 3D data value), flags u16 (see `STATE_FLAGS`);
 //! per block (registry order): friction, speed factor, jump factor, bounce restitution and
 //! fall distance reduction and explosion resistance as f32; then named shapes (context-dependent blocks' shapes): count u8,
-//! per entry a name (length u8, UTF-8) and a shape u16.
+//! per entry a name (length u8, UTF-8) and a shape u16; then the offset blocks with collision
+//! (whose collision shape is stored unshifted): count u16, per entry state u16 and maximum
+//! horizontal offset f32.
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -89,6 +91,19 @@ pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
         out.push(u8::try_from(name.len())?);
         out.extend_from_slice(name.as_bytes());
         out.extend_from_slice(&u16::try_from(id.as_u64().context("named shape")?)?.to_le_bytes());
+    }
+    let offsets: Vec<(usize, f32)> = states
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            let v: f32 = s["max_offset"].to_string().parse().ok()?;
+            (v != 0.0).then_some((i, v))
+        })
+        .collect();
+    out.extend_from_slice(&u16::try_from(offsets.len())?.to_le_bytes());
+    for (i, v) in offsets {
+        out.extend_from_slice(&u16::try_from(i)?.to_le_bytes());
+        out.extend_from_slice(&v.to_le_bytes());
     }
     Ok(out)
 }

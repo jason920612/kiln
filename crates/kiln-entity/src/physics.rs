@@ -93,6 +93,7 @@ struct Table {
     shapes: Vec<Shape>,
     blocks: Vec<BlockFactors>,
     named: HashMap<String, u16>,
+    offsets: HashMap<u16, f32>,
 }
 
 fn table() -> &'static Table {
@@ -129,8 +130,13 @@ fn table() -> &'static Table {
             let name = String::from_utf8(r.bytes(len).to_vec()).expect("physics.bin: shape name");
             named.insert(name, r.u16());
         }
+        let mut offsets = HashMap::new();
+        for _ in 0..r.u16() {
+            let state = r.u16();
+            offsets.insert(state, r.f32());
+        }
         assert_eq!(r.pos, RAW.len(), "physics.bin: trailing data");
-        Table { states, shapes, blocks, named }
+        Table { states, shapes, blocks, named, offsets }
     })
 }
 
@@ -249,6 +255,20 @@ pub fn has_offset(state: u16) -> bool {
 /// `BlockState.isSuffocating` in an empty world.
 pub fn is_suffocating(state: u16) -> bool {
     entry(state).flags & SUFFOCATING != 0
+}
+
+/// `BlockState.getOffset(pos)` for offset blocks with collision (bamboo, pointed dripstone;
+/// all horizontal): their collision shape is stored unshifted.
+pub fn collision_offset(state: u16, x: i32, z: i32) -> Option<(f64, f64)> {
+    let max = *table().offsets.get(&state)?;
+    let seed = kiln_javamath::math::get_seed(x, 0, z);
+    let clamp = |v: f64| {
+        let lo = -max as f64;
+        if v < lo { lo } else { crate::math::jmin(v, max as f64) }
+    };
+    let ox = clamp((((seed & 15) as f32 / 15.0) as f64 - 0.5) * 0.5);
+    let oz = clamp((((seed >> 8 & 15) as f32 / 15.0) as f64 - 0.5) * 0.5);
+    Some((ox, oz))
 }
 
 /// Friction, speed, jump and bounce factors of the state's block.

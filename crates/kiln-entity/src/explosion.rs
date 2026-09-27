@@ -248,7 +248,7 @@ pub fn seen_percent(level: &dyn EntityLevel, center: Vec3, e: &Entity) -> f32 {
                 let p = Vec3::new(lerp(x, bb.min_x, bb.max_x) + ox, lerp(y, bb.min_y, bb.max_y), lerp(z, bb.min_z, bb.max_z) + oz);
                 let blocked = clip::traverse_blocks(p, center, |pos| {
                     let (shape, _) = collision::collision_shape(level.block(pos), pos, &ctx);
-                    clip::shape_clips(shape, p, center, pos).then_some(())
+                    clip::shape_clips(&shape, p, center, pos).then_some(())
                 });
                 if blocked.is_none() {
                     hits += 1;

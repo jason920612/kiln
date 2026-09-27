@@ -531,6 +531,8 @@ class Scenarios {
         "minecraft:chest[facing=south]", "minecraft:ender_chest[facing=west]", "minecraft:conduit",
         "minecraft:ladder[facing=north]", "minecraft:vine[north=true]", "minecraft:moss_carpet",
         "minecraft:stone", "minecraft:glass", "minecraft:oak_leaves",
+        "minecraft:bamboo[age=1,leaves=large,stage=0]", "minecraft:pointed_dripstone[thickness=tip,vertical_direction=up]",
+        "minecraft:pointed_dripstone[thickness=base,vertical_direction=up]",
     };
 
     static final String[] ITEMS = {
@@ -543,12 +545,33 @@ class Scenarios {
     }
 
     static void items(List<EntityVectors.Scenario> out) {
+        offsets(out);
         floors(out);
         clutter(out);
         fluids(out);
         effects(out);
         merges(out);
         misc(out);
+    }
+
+    /** Bamboo and pointed dripstone: collision shapes shifted per position. */
+    static void offsets(List<EntityVectors.Scenario> out) {
+        Random r = new Random(11);
+        String[] blocks = {"minecraft:bamboo[age=0,leaves=none,stage=0]", "minecraft:bamboo[age=1,leaves=small,stage=1]",
+            "minecraft:pointed_dripstone[thickness=tip,vertical_direction=up]", "minecraft:pointed_dripstone[thickness=frustum,vertical_direction=up]"};
+        for (int k = 0; k < 24; k++) {
+            var s = new EntityVectors.Scenario("item_offset/" + k, r.nextLong());
+            s.fill(-3, 0, -3, 3, 0, 3, "minecraft:stone");
+            for (int x = -2; x <= 2; x++)
+                for (int z = -2; z <= 2; z++)
+                    if (r.nextInt(3) > 0) s.block(x, 1, z, blocks[k % blocks.length]);
+            for (int i = 0; i < 3; i++) {
+                s.entity("item", rnd(r, -2, 3), rnd(r, 2.2, 3.5), rnd(r, -2, 3), rnd(r, -0.15, 0.15), 0, rnd(r, -0.15, 0.15), r.nextLong())
+                        .with("pickup_delay", 32767);
+            }
+            s.ticks(80);
+            out.add(s);
+        }
     }
 
     /** Items dropped onto a 7x7 floor of each surface, from rest and with random velocities. */
