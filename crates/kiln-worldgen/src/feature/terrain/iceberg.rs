@@ -107,7 +107,8 @@ fn carve(r: &mut Region, radius: i32, y: i32, origin: BlockPos, underwater: bool
     let c = (radius - 3).min(3) + ellipse_c / 2 - 1;
     for x in -a..a {
         for z in -a..a {
-            if signed_distance_ellipse(x, z, center, a, c, angle) >= 0.0 {
+            // NaN (a zero semi-axis) counts as outside, like the bytecode's `dcmpg`.
+            if !(signed_distance_ellipse(x, z, center, a, c, angle) < 0.0) {
                 continue;
             }
             let p = origin.offset(x, y, z);
@@ -133,7 +134,7 @@ fn generate_block(r: &mut Region, random: &mut WorldgenRandom, origin: BlockPos,
     } else {
         signed_distance_circle(x, z, BlockPos::default(), radius, random)
     };
-    if dist >= 0.0 {
+    if !(dist < 0.0) {
         return;
     }
     let p = origin.offset(x, y, z);

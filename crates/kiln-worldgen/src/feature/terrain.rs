@@ -1,14 +1,19 @@
-//! Features that reshape terrain: lakes, springs, disks, underwater magma, snow and ice, icebergs, blue ice, geodes, monster rooms, block blobs.
+//! Features that reshape terrain: lakes, springs, disks, underwater magma, snow and ice,
+//! icebergs, blue ice, ice spikes, geodes, monster rooms, block blobs, and the nether's blobs,
+//! deltas and basalt columns.
 
 mod blob;
 mod disk;
+mod end;
 mod geode;
 mod ice;
 mod iceberg;
 mod lake;
 mod magma;
 mod monster_room;
+mod nether;
 mod spring;
+mod spike;
 
 use crate::Error;
 use crate::biome::BiomeInfo;
@@ -34,6 +39,16 @@ pub enum Kind {
     Iceberg(u16),
     BlueIce,
     BlockBlob(blob::BlockBlob),
+    Spike(spike::Spike),
+    NetherrackReplaceBlobs(nether::ReplaceBlobs),
+    Delta(nether::Delta),
+    SteppedColumnCluster(nether::SteppedColumnCluster),
+    EndIsland,
+    EndPlatform,
+    VoidStartPlatform,
+    ChorusPlant,
+    EndGateway(end::EndGateway),
+    EndSpike(end::EndSpikes),
 }
 
 /// Parses a feature of this family (`ty` without the `minecraft:` prefix); `None` if the
@@ -50,6 +65,16 @@ pub fn parse(ty: &str, json: &Json, _f: &mut Features, l: &Loader) -> Option<Res
         "iceberg" => field(json, "state").and_then(crate::blocks::block_state).map(Kind::Iceberg),
         "blue_ice" => Ok(Kind::BlueIce),
         "block_blob" => blob::BlockBlob::parse(json, l).map(Kind::BlockBlob),
+        "spike" => spike::Spike::parse(json, l).map(Kind::Spike),
+        "netherrack_replace_blobs" => nether::ReplaceBlobs::parse(json).map(Kind::NetherrackReplaceBlobs),
+        "delta_feature" => nether::Delta::parse(json).map(Kind::Delta),
+        "stepped_column_cluster" => nether::SteppedColumnCluster::parse(json, l).map(Kind::SteppedColumnCluster),
+        "end_island" => Ok(Kind::EndIsland),
+        "end_platform" => Ok(Kind::EndPlatform),
+        "void_start_platform" => Ok(Kind::VoidStartPlatform),
+        "chorus_plant" => Ok(Kind::ChorusPlant),
+        "end_gateway" => end::EndGateway::parse(json).map(Kind::EndGateway),
+        "end_spike" => end::EndSpikes::parse(json).map(Kind::EndSpike),
         _ => return None,
     })
 }
@@ -67,6 +92,16 @@ impl Kind {
             Kind::Iceberg(s) => iceberg::place(*s, r, random, p),
             Kind::BlueIce => ice::blue_ice(r, random, p),
             Kind::BlockBlob(f) => f.place(r, random, p),
+            Kind::Spike(f) => f.place(r, random, p),
+            Kind::NetherrackReplaceBlobs(f) => f.place(r, random, p),
+            Kind::Delta(f) => f.place(r, random, p),
+            Kind::SteppedColumnCluster(f) => f.place(r, random, p),
+            Kind::EndIsland => end::end_island(r, random, p),
+            Kind::EndPlatform => end::end_platform(r, p),
+            Kind::VoidStartPlatform => end::void_start_platform(r, p),
+            Kind::ChorusPlant => end::chorus_plant(r, random, p),
+            Kind::EndGateway(f) => f.place(r, p),
+            Kind::EndSpike(f) => f.place(r, random, p),
         }
     }
 
@@ -82,6 +117,16 @@ impl Kind {
             Kind::Iceberg(_) => "minecraft:iceberg",
             Kind::BlueIce => "minecraft:blue_ice",
             Kind::BlockBlob(_) => "minecraft:block_blob",
+            Kind::Spike(_) => "minecraft:spike",
+            Kind::NetherrackReplaceBlobs(_) => "minecraft:netherrack_replace_blobs",
+            Kind::Delta(_) => "minecraft:delta_feature",
+            Kind::SteppedColumnCluster(_) => "minecraft:stepped_column_cluster",
+            Kind::EndIsland => "minecraft:end_island",
+            Kind::EndPlatform => "minecraft:end_platform",
+            Kind::VoidStartPlatform => "minecraft:void_start_platform",
+            Kind::ChorusPlant => "minecraft:chorus_plant",
+            Kind::EndGateway(_) => "minecraft:end_gateway",
+            Kind::EndSpike(_) => "minecraft:end_spike",
         }
     }
 
@@ -116,6 +161,24 @@ fn between_closed(a: BlockPos, b: BlockPos) -> impl Iterator<Item = BlockPos> {
     (z0..=z1).flat_map(move |z| (y0..=y1).flat_map(move |y| (x0..=x1).map(move |x| BlockPos::new(x, y, z))))
 }
 
+/// `BlockPos.withinBoxByManhattanDistance(center, rx, ry, rz)`: positions by increasing
+/// Manhattan distance, x then y ascending, `+z` before `-z`.
+fn within_manhattan(c: BlockPos, rx: i32, ry: i32, rz: i32) -> impl Iterator<Item = BlockPos> {
+    (0..=rx + ry + rz).flat_map(move |depth| {
+        let mx = rx.min(depth);
+        (-mx..=mx).flat_map(move |x| {
+            let my = ry.min(depth - x.abs());
+            (-my..=my).flat_map(move |y| {
+                let z = depth - x.abs() - y.abs();
+                let at = move |z| c.offset(x, y, z);
+                let first = (z <= rz).then(|| at(z));
+                let mirror = (z <= rz && z != 0).then(|| at(-z));
+                first.into_iter().chain(mirror)
+            })
+        })
+    })
+}
+
 /// `Feature.markAboveForPostProcessing`: the (up to two) non-air blocks above `p`.
 fn mark_above_for_post_processing(r: &mut Region, p: BlockPos) {
     let mut q = p;
@@ -140,7 +203,7 @@ fn biome_info<'r>(r: &'r mut Region, p: BlockPos) -> &'r BiomeInfo {
     &r.generator.biomes[b as usize]
 }
 
-/// `Biome.getTemperature(pos, seaLevel) >= 0.15` (`warmEnoughToRain`) for the biome at `at`.
+/// `Biome.warmEnoughToRain(pos, seaLevel)`: temperature at `p` at least 0.15.
 fn warm_enough_to_rain(b: &BiomeInfo, sea_level: i32, p: BlockPos) -> bool {
     biome_temperature(b.temperature, b.frozen, sea_level, p.x, p.y, p.z) >= 0.15
 }

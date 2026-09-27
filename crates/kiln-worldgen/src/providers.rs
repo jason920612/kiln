@@ -237,6 +237,7 @@ impl FloatProvider {
 pub struct GenContext {
     pub min_y: i32,
     pub height: i32,
+    pub sea_level: i32,
 }
 
 /// `VerticalAnchor`.
@@ -245,6 +246,7 @@ pub enum Anchor {
     Absolute(i32),
     AboveBottom(i32),
     BelowTop(i32),
+    RelativeToSeaLevel(i32),
 }
 
 impl Anchor {
@@ -255,6 +257,8 @@ impl Anchor {
             Ok(Anchor::AboveBottom(v))
         } else if let Some(v) = json.get("below_top").and_then(Json::as_i32) {
             Ok(Anchor::BelowTop(v))
+        } else if let Some(v) = json.get("relative_to_sea_level").and_then(Json::as_i32) {
+            Ok(Anchor::RelativeToSeaLevel(v))
         } else {
             Err(bad("vertical anchor", json))
         }
@@ -265,6 +269,7 @@ impl Anchor {
             Anchor::Absolute(y) => y,
             Anchor::AboveBottom(o) => g.min_y + o,
             Anchor::BelowTop(o) => g.height - 1 + g.min_y - o,
+            Anchor::RelativeToSeaLevel(o) => g.sea_level + o,
         }
     }
 }

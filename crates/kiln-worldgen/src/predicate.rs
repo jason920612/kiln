@@ -110,7 +110,7 @@ impl BlockPredicate {
             BlockPredicate::WouldSurvive { offset, state } => crate::survive::can_survive(*state, r, at(*offset)),
             BlockPredicate::InsideWorldBounds { offset } => !r.is_outside_build_height(at(*offset).y),
             BlockPredicate::HeightRange { min, max } => {
-                let g = GenContext { min_y: r.min_y(), height: r.height() };
+                let g = GenContext { min_y: r.min_y(), height: r.height(), sea_level: r.sea_level() };
                 p.y >= min.resolve(g) && p.y <= max.resolve(g)
             }
             BlockPredicate::MatchingBiomes(set) => set.contains(r.biome(p)),
