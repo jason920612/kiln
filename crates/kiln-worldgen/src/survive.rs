@@ -59,6 +59,8 @@ fn class_can_survive(class: &str, state: u16, r: &mut Region, p: BlockPos) -> Op
             // getRawBrightness is 0 in an unlit proto-chunk.
             may_place_on(state, below, r, p.below())
         }
+        // CropBlock.hasSufficientLight: getRawBrightness >= 8, never true while unlit.
+        "CropBlock" => false,
         "CactusBlock" => {
             for d in Dir::HORIZONTAL {
                 let n = r.get(p.relative(d));
