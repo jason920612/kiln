@@ -76,7 +76,7 @@ impl RootSystem {
     fn space_for_tree(&self, r: &mut Region, p: BlockPos) -> bool {
         for i in 1..=self.required_vertical_space {
             let s = r.get(p.above_n(i));
-            let allowed = is_air(s) || (i + 1 <= self.allowed_vertical_water && fluid(s).is_water());
+            let allowed = is_air(s) || (i < self.allowed_vertical_water && fluid(s).is_water());
             if !allowed {
                 return false;
             }
