@@ -23,8 +23,9 @@
 //   region   target count + (x, z)...; with structures: chunks with structure starts (x, z,
 //            start count, per start the structure id and its saved NBT as length + bytes),
 //            chunks with references (x, z, structure count, per structure id, count, packed
-//            chunk positions as i64) and the post-TERRAIN blocks of each decorated chunk (x, z,
-//            deflated blocks); then decoration count and per decorated chunk in order:
+//            chunk positions as i64, sorted) and the post-TERRAIN blocks of the decorated chunks and
+//            their neighbours (x, z, deflated blocks); then decoration count and per decorated
+//            chunk in order:
 //            x, z, deflated record: invocation count, per invocation kind (0 feature,
 //            1 structure), step, index, far reads, change count, changes (dx+16, dz+16 as u8,
 //            y as i16, state as u16; dx, dz relative to the chunk's origin);
@@ -643,11 +644,15 @@ public class FeatureVectors {
                 for (long r : refs) w.writeLong(Long.reverseBytes(r));
             }
         }
-        w.writeInt(Integer.reverseBytes(order.size()));
-        for (long[] d : order) {
-            byte[] z = deflate(blocks(chunks.get(ChunkPos.pack((int) d[1], (int) d[2]))));
-            w.writeInt(Integer.reverseBytes((int) d[1]));
-            w.writeInt(Integer.reverseBytes((int) d[2]));
+        List<Long> decorated = new ArrayList<>();
+        for (long[] d : order) decorated.add(ChunkPos.pack((int) d[1], (int) d[2]));
+        List<Long> terrain = new ArrayList<>(around(decorated, 1));
+        terrain.sort(null);
+        w.writeInt(Integer.reverseBytes(terrain.size()));
+        for (long p : terrain) {
+            byte[] z = deflate(blocks(chunks.get(p)));
+            w.writeInt(Integer.reverseBytes(ChunkPos.getX(p)));
+            w.writeInt(Integer.reverseBytes(ChunkPos.getZ(p)));
             w.writeInt(Integer.reverseBytes(z.length));
             w.write(z);
         }

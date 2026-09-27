@@ -44,6 +44,7 @@ pub mod simplex;
 pub mod spline;
 pub mod state;
 pub mod state_provider;
+pub mod structure;
 pub mod surface;
 pub mod survive;
 pub mod volume;

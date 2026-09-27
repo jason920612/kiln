@@ -31,6 +31,7 @@ use crate::order;
 use crate::proto::{ProtoChunk, Status};
 use crate::region::Region;
 use crate::sets::Loader;
+use crate::structure::{ChunkStarts, StartCache, Structures};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -38,15 +39,19 @@ use std::sync::{Arc, Condvar, Mutex};
 pub struct Worldgen {
     pub generator: Generator,
     pub decorator: Decorator,
+    pub structures: Structures,
+    /// `WorldOptions.generateStructures`.
+    pub generate_structures: bool,
 }
 
 impl Worldgen {
     /// The overworld of `pack` for `seed` (noise settings and biome source `minecraft:overworld`).
-    pub fn overworld(pack: &Datapack, seed: i64) -> Result<Worldgen, Error> {
+    pub fn overworld(pack: &Datapack, seed: i64, generate_structures: bool) -> Result<Worldgen, Error> {
         let generator = Generator::new(pack, "minecraft:overworld", "minecraft:overworld", seed)?;
         let loader = Loader::new(pack, generator.biomes.iter().map(|b| b.name.clone()).collect());
         let decorator = Decorator::new(&generator, &loader)?;
-        Ok(Worldgen { generator, decorator })
+        let structures = Structures::load(&generator, &loader)?;
+        Ok(Worldgen { generator, decorator, structures, generate_structures })
     }
 }
 
@@ -80,12 +85,14 @@ pub struct PipelineStats {
 pub struct Pipeline {
     world: Arc<Worldgen>,
     state: Mutex<State>,
+    /// Structure starts by chunk (STRUCTURE_STARTS), shared by all threads.
+    starts: StartCache,
     wake: Condvar,
 }
 
 impl Pipeline {
     pub fn new(world: Arc<Worldgen>) -> Self {
-        Self { world, state: Mutex::new(State::default()), wake: Condvar::new() }
+        Self { world, state: Mutex::new(State::default()), starts: StartCache::default(), wake: Condvar::new() }
     }
 
     pub fn world(&self) -> &Arc<Worldgen> {
@@ -180,8 +187,12 @@ impl Pipeline {
                 })
                 .collect::<Vec<_>>()
         };
+        let starts = self.world.generate_structures.then(|| {
+            ChunkStarts::new(&self.world.structures, &self.world.generator, &self.starts, &mut gs.structures, x, z)
+        });
         let mut region = Region::new(window, x, z, &self.world.generator, gs);
-        self.world.decorator.decorate(&mut region, &mut ());
+        let structures = starts.as_ref().map(|s| (&self.world.structures, s));
+        self.world.decorator.decorate(&mut region, structures, &mut ());
         let chunks = region.into_chunks();
         let mut s = self.state.lock().unwrap();
         for (i, mut c) in chunks.into_iter().enumerate() {

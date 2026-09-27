@@ -9,21 +9,32 @@ use crate::json::Json;
 use crate::random::WorldgenRandom;
 use crate::region::Region;
 use crate::sets::Loader;
+use crate::structure::bbox::BoundingBox;
+use crate::structure::piece::PlaceContext;
+use crate::structure::{ChunkStarts, Structures};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// `GenerationStep.Decoration` count.
 pub const STEPS: usize = 11;
 
+/// One placement of a decoration run: a structure's pieces or a placed feature.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Invocation {
+    /// Step `step`'s structure `index` (`index` into `Structures::by_step[step]`), structure id.
+    Structure { step: usize, index: usize, structure: usize },
+    /// Step `step`'s feature `index` (feature seed index), placed feature id.
+    Feature { step: usize, index: usize, placed: usize },
+}
+
 /// What a decoration run reports to an observer (the parity test replays and compares).
 pub trait Observer {
-    /// Before placing step `step`'s feature `index` (placed feature `placed`); returning false
-    /// skips it.
-    fn before(&mut self, _step: usize, _index: usize, _placed: usize, _region: &mut Region) -> bool {
+    /// Before a placement; returning false skips it.
+    fn before(&mut self, _inv: Invocation, _region: &mut Region) -> bool {
         true
     }
 
     /// After the placement (or the skip).
-    fn after(&mut self, _step: usize, _index: usize, _placed: usize, _region: &mut Region) {}
+    fn after(&mut self, _inv: Invocation, _region: &mut Region) {}
 }
 
 impl Observer for () {}
@@ -91,8 +102,9 @@ impl Decorator {
         Ok(Decorator { features, steps, biome_steps, possible })
     }
 
-    /// `applyBiomeDecoration` for the region's center chunk (structures not yet included).
-    pub fn decorate(&self, r: &mut Region, observer: &mut dyn Observer) {
+    /// `applyBiomeDecoration` for the region's center chunk: per step, the pieces of the
+    /// structures referencing the chunk (if `structures` is given), then the features.
+    pub fn decorate(&self, r: &mut Region, structures: Option<(&Structures, &ChunkStarts)>, observer: &mut dyn Observer) {
         let (x, z) = (r.cx << 4, r.cz << 4);
         let origin = crate::pos::BlockPos::new(x, r.min_y(), z);
         let mut random = WorldgenRandom::xoroshiro(0);
@@ -104,7 +116,21 @@ impl Decorator {
         present.retain(|&b| self.possible[b as usize]);
         let total = STEPS.max(self.steps.len());
         let mut indices: Vec<usize> = Vec::new();
+        let chunk_box = BoundingBox::new(x, r.min_y() + 1, z, x + 15, r.max_y(), z + 15);
         for step in 0..total {
+            if let Some((structures, starts)) = structures {
+                let cx = PlaceContext { structures, generator: r.generator };
+                for (j, &st) in structures.by_step.get(step).map_or(&[][..], |v| &v[..]).iter().enumerate() {
+                    random.set_feature_seed(seed, j as i32, step as i32);
+                    let inv = Invocation::Structure { step, index: j, structure: st };
+                    if observer.before(inv, r) {
+                        for start in starts.of(st) {
+                            start.place_in_chunk(&cx, r, &mut random, &chunk_box, (r.cx, r.cz));
+                        }
+                    }
+                    observer.after(inv, r);
+                }
+            }
             if step >= self.steps.len() {
                 continue;
             }
@@ -119,10 +145,11 @@ impl Decorator {
             for &i in &indices {
                 let placed = self.steps[step][i];
                 random.set_feature_seed(seed, i as i32, step as i32);
-                if observer.before(step, i, placed, r) {
+                let inv = Invocation::Feature { step, index: i, placed };
+                if observer.before(inv, r) {
                     self.features.place_placed(placed, r, &mut random, origin, true);
                 }
-                observer.after(step, i, placed, r);
+                observer.after(inv, r);
             }
         }
     }

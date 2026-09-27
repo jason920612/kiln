@@ -34,6 +34,8 @@ pub struct GenScratch {
     point_context: Scratch,
     biomes: BiomeCache,
     density: Vec<f32>,
+    /// Structure starts: climate sampler and base heights.
+    pub structures: crate::structure::StructureScratch,
 }
 
 impl Default for GenScratch {
@@ -43,6 +45,7 @@ impl Default for GenScratch {
             point_context: Scratch::default(),
             biomes: BiomeCache { context: Scratch::caching(), chunks: HashMap::new() },
             density: Vec::new(),
+            structures: Default::default(),
         }
     }
 }
@@ -421,8 +424,26 @@ impl Generator {
             .map_or(self.min_y, |i| self.min_y + i as i32 + 1)
     }
 
-    /// The biome of a quart from point-sampled climate (`createUncachedResolver`).
-    fn point_biome(&self, s: &mut Scratch, last: &mut LastResult, qx: i32, qy: i32, qz: i32) -> u16 {
+    /// `MultiNoiseBiomeSource.createResolverForChunk`'s sampling: the six climate values on a
+    /// volume of quarts (`size` quarts from quart `q`), in volume order.
+    pub fn climate_volume(&self, s: &mut Scratch, q: [i32; 3], size: [i32; 3]) -> (Volume, [Vec<f32>; 6]) {
+        let vol = Volume::new(size, [q[0] << 2, q[1] << 2, q[2] << 2], [4, 4, 4]);
+        let climate = std::array::from_fn(|i| {
+            let mut b = vec![0f32; vol.len()];
+            self.climate[i].fill(s, &vol, &mut b);
+            b
+        });
+        (vol, climate)
+    }
+
+    /// The biome for six climate values (`Climate.target`, then the parameter list search).
+    pub fn biome_for(&self, c: [f32; 6], last: &mut LastResult) -> u16 {
+        *self.parameters.find(&target(c[0], c[1], c[2], c[3], c[4], c[5]), last)
+    }
+
+    /// The biome of a quart from point-sampled climate (`createResolver`/
+    /// `createUncachedResolver`).
+    pub fn point_biome(&self, s: &mut Scratch, last: &mut LastResult, qx: i32, qy: i32, qz: i32) -> u16 {
         let (x, y, z) = (qx << 2, qy << 2, qz << 2);
         let c: Vec<f32> = self.climate.iter().map(|f| f.point(s, x, y, z)).collect();
         *self.parameters.find(&target(c[0], c[1], c[2], c[3], c[4], c[5]), last)

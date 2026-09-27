@@ -66,8 +66,18 @@ pub fn to_chunk(p: &ProtoChunk, biome_ids: &[u16]) -> Chunk {
         let (x, y, z) = ((key & 15) as usize, (key >> 8) as i32 + p.min_y, ((key >> 4) & 15) as usize);
         let state = p.get(x, y, z);
         let Some(kind) = kiln_data::block_props::block_entity_type(state) else { continue };
+        // Generation leaves `id: DUMMY` placeholders (as vanilla's WorldGenRegion does), possibly
+        // with fields features and structures set (loot tables...).
         let placeholder = tag.get("id").and_then(|t| t.as_str()) == Some("DUMMY");
-        let be = if placeholder { Some(BlockEntity::new(kind)) } else { BlockEntity::from_saved(tag.clone()) };
+        let be = if placeholder {
+            let mut be = BlockEntity::new(kind);
+            if let (kiln_proto::nbt::Tag::Compound(dst), kiln_proto::nbt::Tag::Compound(src)) = (&mut be.nbt, tag) {
+                dst.extend(src.iter().filter(|(k, _)| k != "id").cloned());
+            }
+            Some(be)
+        } else {
+            BlockEntity::from_saved(tag.clone())
+        };
         if let Some(be) = be {
             chunk.load_block_entity(x, y, z, be);
         }

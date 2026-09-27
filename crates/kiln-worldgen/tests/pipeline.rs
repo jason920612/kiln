@@ -18,7 +18,7 @@ fn world(seed: i64) -> Option<Arc<Worldgen>> {
         return None;
     }
     let pack = Datapack::load(&generated).expect("load datapack");
-    Some(Arc::new(Worldgen::overworld(&pack, seed).expect("worldgen")))
+    Some(Arc::new(Worldgen::overworld(&pack, seed, true).expect("worldgen")))
 }
 
 #[test]
