@@ -178,9 +178,147 @@ fn map_rail(s: u16, f: impl Fn(Dir) -> Dir) -> u16 {
     with_prop(s, "shape", rail_shape(f(a), f(b), up))
 }
 
+/// Block classes overriding `BlockBehaviour.rotate` (the others ignore rotation).
+const ROTATES: [&str; 65] = [
+    "AbstractFurnaceBlock",
+    "AmethystClusterBlock",
+    "AnvilBlock",
+    "AttachedStemBlock",
+    "BannerBlock",
+    "BarrelBlock",
+    "BaseCoralWallFanBlock",
+    "BeehiveBlock",
+    "BellBlock",
+    "CalibratedSculkSensorBlock",
+    "CampfireBlock",
+    "CeilingHangingSignBlock",
+    "ChestBlock",
+    "ChiseledBookShelfBlock",
+    "CommandBlock",
+    "CopperGolemStatueBlock",
+    "CrafterBlock",
+    "CreakingHeartBlock",
+    "CrossCollisionBlock",
+    "DecoratedPotBlock",
+    "DetectorRailBlock",
+    "DispenserBlock",
+    "DoorBlock",
+    "EndPortalFrameBlock",
+    "EnderChestBlock",
+    "FlowerBedBlock",
+    "GrindstoneBlock",
+    "HopperBlock",
+    "HorizontalDirectionalBlock",
+    "HugeMushroomBlock",
+    "InfestedRotatedPillarBlock",
+    "JigsawBlock",
+    "LadderBlock",
+    "LeafLitterBlock",
+    "LecternBlock",
+    "MossyCarpetBlock",
+    "MultifaceBlock",
+    "NetherPortalBlock",
+    "ObserverBlock",
+    "PoweredRailBlock",
+    "RailBlock",
+    "RedstoneWallTorchBlock",
+    "RedstoneWireBlock",
+    "RodBlock",
+    "RotatedPillarBlock",
+    "ShelfBlock",
+    "ShulkerBoxBlock",
+    "SkullBlock",
+    "SmallDripleafBlock",
+    "StairBlock",
+    "StandingSignBlock",
+    "StonecutterBlock",
+    "TripWireBlock",
+    "TripWireHookBlock",
+    "VaultBlock",
+    "VineBlock",
+    "WallBannerBlock",
+    "WallBlock",
+    "WallHangingSignBlock",
+    "WallSignBlock",
+    "WallSkullBlock",
+    "WallTorchBlock",
+    "PistonBaseBlock",
+    "PistonHeadBlock",
+    "MovingPistonBlock",
+];
+
+/// Block classes overriding `BlockBehaviour.mirror` (the others ignore mirroring).
+const MIRRORS: [&str; 60] = [
+    "AbstractFurnaceBlock",
+    "AmethystClusterBlock",
+    "AttachedStemBlock",
+    "BannerBlock",
+    "BarrelBlock",
+    "BaseCoralWallFanBlock",
+    "BeehiveBlock",
+    "BellBlock",
+    "CalibratedSculkSensorBlock",
+    "CampfireBlock",
+    "CeilingHangingSignBlock",
+    "ChestBlock",
+    "ChiseledBookShelfBlock",
+    "CommandBlock",
+    "CopperGolemStatueBlock",
+    "CrafterBlock",
+    "CrossCollisionBlock",
+    "DecoratedPotBlock",
+    "DetectorRailBlock",
+    "DispenserBlock",
+    "DoorBlock",
+    "EndPortalFrameBlock",
+    "EnderChestBlock",
+    "FlowerBedBlock",
+    "GrindstoneBlock",
+    "HopperBlock",
+    "HorizontalDirectionalBlock",
+    "HugeMushroomBlock",
+    "JigsawBlock",
+    "LadderBlock",
+    "LeafLitterBlock",
+    "LecternBlock",
+    "MossyCarpetBlock",
+    "MultifaceBlock",
+    "ObserverBlock",
+    "PoweredRailBlock",
+    "RailBlock",
+    "RedstoneWallTorchBlock",
+    "RedstoneWireBlock",
+    "RodBlock",
+    "ShelfBlock",
+    "ShulkerBoxBlock",
+    "SkullBlock",
+    "SmallDripleafBlock",
+    "StairBlock",
+    "StandingSignBlock",
+    "StonecutterBlock",
+    "TripWireBlock",
+    "TripWireHookBlock",
+    "VaultBlock",
+    "VineBlock",
+    "WallBannerBlock",
+    "WallBlock",
+    "WallHangingSignBlock",
+    "WallSignBlock",
+    "WallSkullBlock",
+    "WallTorchBlock",
+    "PistonBaseBlock",
+    "PistonHeadBlock",
+    "MovingPistonBlock",
+];
+
+/// Whether a state's class chain includes one of `classes`.
+fn overrides(s: u16, classes: &[&str]) -> bool {
+    crate::block_facts::class_chain(s).split('<').any(|c| classes.contains(&c))
+}
+
 /// `BlockState.rotate(rotation)`.
 pub fn rotate(s: u16, r: Rotation) -> u16 {
-    if r == Rotation::None {
+    if r == Rotation::None || !overrides(s, &ROTATES) {
         return s;
     }
     let class = block_class(s);
@@ -215,7 +353,7 @@ pub fn rotate(s: u16, r: Rotation) -> u16 {
 
 /// `BlockState.mirror(mirror)`.
 pub fn mirror(s: u16, m: Mirror) -> u16 {
-    if m == Mirror::None {
+    if m == Mirror::None || !overrides(s, &MIRRORS) {
         return s;
     }
     let class = block_class(s);

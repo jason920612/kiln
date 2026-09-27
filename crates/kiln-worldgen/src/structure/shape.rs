@@ -82,6 +82,11 @@ impl kb::Level for ShapeLevel<'_, '_> {
         &self.rules
     }
 
+    /// Chunks being generated are unlit.
+    fn raw_brightness(&self, _pos: kb::BlockPos, _sky_darken: i32) -> i32 {
+        0
+    }
+
     fn effect(&mut self, _effect: kb::Effect) {}
 
     fn comparator_output(&self, _pos: kb::BlockPos) -> i32 {
@@ -104,8 +109,51 @@ impl ShapeLevel<'_, '_> {
     }
 
     fn update_shape_with(&mut self, s: u16, p: BlockPos, d: Dir, ns: u16) -> u16 {
+        if crate::blocks::is_block(s, "minecraft:pale_moss_carpet") {
+            return self.mossy_carpet_update_shape(s, p);
+        }
         let s = chest_update_shape(s, d, ns);
         kb::behaviour::update_shape(self, s, to_kb(p), dir_kb(d), to_kb(p.relative(d)), ns)
+    }
+}
+
+impl ShapeLevel<'_, '_> {
+    /// `MossyCarpetBlock.updateShape`: gone when unsupported or without faces, else
+    /// `getUpdatedState(state, level, pos, false)`.
+    fn mossy_carpet_update_shape(&self, s: u16, p: BlockPos) -> u16 {
+        use crate::blocks::{is_block, prop, with_prop};
+        let carpet = |s: u16| is_block(s, "minecraft:pale_moss_carpet");
+        let base = |s: u16| prop(s, "bottom") == Some("true");
+        let below = self.get(p.below());
+        let survives = if base(s) { !crate::blocks::is_air(below) } else { carpet(below) && base(below) };
+        if !survives {
+            return state::AIR;
+        }
+        let create = base(s);
+        let mut out = s;
+        for d in Dir::HORIZONTAL {
+            let key = d.name();
+            let supported = crate::feature::vegetation::shape::can_attach_to(self.get(p.relative(d)), d);
+            let mut side = if !supported {
+                "none"
+            } else if create {
+                "low"
+            } else {
+                prop(s, key).unwrap_or("none")
+            };
+            if side == "low" {
+                let above = self.get(p.above());
+                if carpet(above) && prop(above, key) != Some("none") && !base(above) {
+                    side = "tall";
+                }
+                if !base(s) && carpet(below) && prop(below, key) == Some("none") {
+                    side = "none";
+                }
+            }
+            out = with_prop(out, key, side);
+        }
+        let faces = base(out) || Dir::HORIZONTAL.iter().any(|d| prop(out, d.name()) != Some("none"));
+        if faces { out } else { state::AIR }
     }
 }
 
