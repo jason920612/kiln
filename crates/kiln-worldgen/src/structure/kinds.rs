@@ -55,6 +55,7 @@ pub fn parse(ty: &str, json: &Json, l: &Loader) -> Result<Option<Box<dyn Kind>>,
         "jungle_temple" => Some(Box::new(legacy::scattered::JungleTemple)),
         "swamp_hut" => Some(Box::new(legacy::scattered::SwampHut)),
         "stronghold" => Some(Box::new(legacy::stronghold::Stronghold)),
+        "woodland_mansion" => Some(Box::new(legacy::mansion::Mansion)),
         "ocean_monument" => Some(Box::new(legacy::monument::OceanMonument::parse(json, l)?)),
         "igloo" => Some(Box::new(super::templated::igloo::Igloo)),
         "shipwreck" => Some(Box::new(super::templated::shipwreck::Shipwreck {
