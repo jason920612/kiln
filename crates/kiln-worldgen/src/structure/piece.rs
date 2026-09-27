@@ -19,6 +19,8 @@ use kiln_proto::nbt::Tag;
 pub struct PlaceContext<'a> {
     pub structures: &'a super::Structures,
     pub generator: &'a crate::generator::Generator,
+    /// Placed features, for feature pool elements.
+    pub features: Option<&'a crate::feature::Features>,
 }
 
 /// A structure piece.
@@ -57,6 +59,11 @@ pub trait Piece: Send + Sync + std::fmt::Debug {
     /// `StructurePiece.move`.
     fn shift(&mut self, dx: i32, dy: i32, dz: i32) {
         self.base_mut().bbox.shift(dx, dy, dz);
+    }
+
+    /// The piece as a `PoolElementStructurePiece` (jigsaw pieces), for the beardifier.
+    fn as_pool_element(&self) -> Option<&super::jigsaw::piece::PoolElementPiece> {
+        None
     }
 }
 

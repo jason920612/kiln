@@ -387,6 +387,31 @@ impl Observer for Compare<'_> {
     }
 }
 
+/// NBT with compound keys sorted (vanilla writes `CompoundTag`s in hash order).
+fn canonical(t: kiln_proto::nbt::Tag) -> kiln_proto::nbt::Tag {
+    use kiln_proto::nbt::Tag;
+    match t {
+        Tag::Compound(mut f) => {
+            f.sort_by(|a, b| a.0.cmp(&b.0));
+            Tag::Compound(f.into_iter().map(|(k, v)| (k, canonical(v))).collect())
+        }
+        Tag::List(l) => Tag::List(l.into_iter().map(canonical).collect()),
+        t => t,
+    }
+}
+
+/// The first differing piece (or field) of two saved starts.
+fn first_difference(vanilla: &kiln_proto::nbt::Tag, kiln: &kiln_proto::nbt::Tag) -> String {
+    let children = |t: &kiln_proto::nbt::Tag| t.get("Children").and_then(|c| c.as_list()).map(|l| l.to_vec()).unwrap_or_default();
+    let (a, b) = (children(vanilla), children(kiln));
+    for i in 0..a.len().max(b.len()) {
+        if a.get(i) != b.get(i) {
+            return format!("{} vanilla / {} kiln pieces; piece {i}\n        vanilla {:?}\n        kiln    {:?}", a.len(), b.len(), a.get(i), b.get(i));
+        }
+    }
+    format!("\n        vanilla {vanilla:?}\n        kiln    {kiln:?}")
+}
+
 /// Structure start parity per structure: vanilla starts, Kiln starts, identical NBT.
 #[derive(Default)]
 struct StartTally {
@@ -424,12 +449,12 @@ fn compare_starts(
         for (id, nbt) in vanilla {
             let t = tallies.entry(id.clone()).or_default();
             t.vanilla += 1;
-            let theirs = kiln_proto::nbt::read_named(nbt).expect("vanilla start NBT").1;
+            let theirs = canonical(kiln_proto::nbt::read_named(nbt).expect("vanilla start NBT").1);
             match mine.iter().find(|s| structures.structures[s.structure].name == *id) {
-                Some(s) if s.save(structures) == theirs => t.same += 1,
+                Some(s) if canonical(s.save(structures)) == theirs => t.same += 1,
                 Some(s) => {
                     if t.first.len() < 2 {
-                        t.first.push(format!("chunk {x},{z}: NBT differs\n        vanilla {theirs:?}\n        kiln    {:?}", s.save(structures)));
+                        t.first.push(format!("chunk {x},{z}: NBT differs: {}", first_difference(&theirs, &canonical(s.save(structures)))));
                     }
                 }
                 None => {

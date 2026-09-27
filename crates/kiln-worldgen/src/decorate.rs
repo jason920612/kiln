@@ -119,7 +119,7 @@ impl Decorator {
         let chunk_box = BoundingBox::new(x, r.min_y() + 1, z, x + 15, r.max_y(), z + 15);
         for step in 0..total {
             if let Some((structures, starts)) = structures {
-                let cx = PlaceContext { structures, generator: r.generator };
+                let cx = PlaceContext { structures, generator: r.generator, features: Some(&self.features) };
                 for (j, &st) in structures.by_step.get(step).map_or(&[][..], |v| &v[..]).iter().enumerate() {
                     random.set_feature_seed(seed, j as i32, step as i32);
                     let inv = Invocation::Structure { step, index: j, structure: st };

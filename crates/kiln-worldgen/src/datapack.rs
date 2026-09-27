@@ -65,6 +65,8 @@ pub struct Datapack {
     /// Other `worldgen/*` registries loaded as raw JSON by directory (`structure`,
     /// `structure_set`, `template_pool`, `processor_list`), entries sorted by id.
     pub registries: HashMap<String, Vec<(String, Json)>>,
+    /// The directory the pack was loaded from (structure templates are looked up near it).
+    pub root: PathBuf,
 }
 
 impl Datapack {
@@ -149,6 +151,7 @@ impl Datapack {
             list.sort_by(|a, b| a.0.cmp(&b.0));
         }
         Ok(Datapack {
+            root: root.to_path_buf(),
             graph,
             settings,
             rules,

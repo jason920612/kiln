@@ -46,8 +46,8 @@ impl Kind for Unsupported {
 /// The structure type named `ty` (without `minecraft:`) configured by `json`; `None` if Kiln
 /// does not implement it.
 pub fn parse(ty: &str, json: &Json, l: &Loader) -> Result<Option<Box<dyn Kind>>, Error> {
-    let _ = (json, l);
     Ok(match ty {
+        "jigsaw" => Some(Box::new(super::jigsaw::parse(json, l)?)),
         _ => None,
     })
 }

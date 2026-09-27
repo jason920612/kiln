@@ -7,10 +7,13 @@
 //! does not implement generate nothing and are counted.
 
 pub mod bbox;
+pub mod jigsaw;
 pub mod kinds;
 pub mod longset;
 pub mod piece;
 pub mod placement;
+pub mod processor;
+pub mod template;
 pub mod transform;
 
 use crate::Error;
@@ -129,6 +132,8 @@ pub struct Structures {
     /// Unimplemented structure types: attempts skipped.
     gaps: Vec<(String, AtomicU64)>,
     rings: placement::Rings,
+    /// `StructureTemplateManager`.
+    pub templates: Arc<template::TemplateManager>,
 }
 
 impl Structures {
@@ -138,11 +143,13 @@ impl Structures {
         let mut gaps: Vec<(String, AtomicU64)> = Vec::new();
         let mut structures = Vec::new();
         let mut ids = HashMap::new();
+        let jigsaw_pools = jigsaw::LoadScope::new(l)?;
         for (id, json) in structure_json {
             let def = parse_structure(id, json, l, &mut gaps).map_err(|e| e.context(id))?;
             ids.insert(id.clone(), structures.len());
             structures.push(def);
         }
+        drop(jigsaw_pools);
         let set_json = l.pack.registries.get("structure_set").unwrap_or(&empty);
         let set_ids: HashMap<&str, usize> = set_json.iter().enumerate().map(|(i, (id, _))| (id.as_str(), i)).collect();
         let mut sets = Vec::new();
@@ -177,7 +184,8 @@ impl Structures {
             by_step[s.step].push(i);
         }
         let rings = placement::Rings::new(&sets, &structures, &possible_biomes);
-        Ok(Structures { structures, ids, sets, possible, by_step, seed: generator.seed, gaps, rings })
+        let templates = Arc::new(template::TemplateManager::near(&l.pack.root));
+        Ok(Structures { structures, ids, sets, possible, by_step, seed: generator.seed, gaps, rings, templates })
     }
 
     pub fn id(&self, name: &str) -> Option<usize> {

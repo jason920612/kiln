@@ -166,6 +166,13 @@ fn rail_shape(a: Dir, b: Dir, ascending: bool) -> &'static str {
     }
 }
 
+/// Remaps a `FrontAndTop` `orientation` (jigsaws, crafters).
+fn map_orientation(s: u16, f: impl Fn(Dir) -> Dir) -> u16 {
+    let Some((front, top)) = prop(s, "orientation").and_then(|v| v.split_once('_')) else { return s };
+    let (Some(front), Some(top)) = (Dir::by_name(front), Dir::by_name(top)) else { return s };
+    with_prop(s, "orientation", &format!("{}_{}", f(front).name(), f(top).name()))
+}
+
 fn map_rail(s: u16, f: impl Fn(Dir) -> Dir) -> u16 {
     let Some((a, b, up)) = prop(s, "shape").and_then(rail_ends) else { return s };
     with_prop(s, "shape", rail_shape(f(a), f(b), up))
@@ -197,6 +204,7 @@ pub fn rotate(s: u16, r: Rotation) -> u16 {
     if class.ends_with("RailBlock") && has_prop(s, "shape") {
         out = map_rail(out, |d| r.rotate(d));
     }
+    out = map_orientation(out, |d| r.rotate(d));
     if has_prop(s, "up") && has_prop(s, "down") {
         out = map_all_sides(out, |d| r.rotate(d));
     } else {
@@ -257,6 +265,7 @@ pub fn mirror(s: u16, m: Mirror) -> u16 {
     if class.ends_with("RailBlock") && has_prop(s, "shape") {
         out = map_rail(out, |d| m.mirror(d));
     }
+    out = map_orientation(out, |d| m.mirror(d));
     if has_prop(s, "up") && has_prop(s, "down") {
         out = map_all_sides(out, |d| m.mirror(d));
     } else {
