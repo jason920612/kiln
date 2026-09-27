@@ -33,7 +33,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::LiquidBlock => fluid::liquid_block_changed(level, s, pos),
         C::RedstoneWireBlock => wire::neighbor_changed(level, s, pos),
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::neighbor_changed(level, s, pos),
-        C::RepeaterBlock => diode::neighbor_changed(level, s, pos),
+        C::RepeaterBlock | C::ComparatorBlock => diode::neighbor_changed(level, s, pos),
         C::RedstoneLampBlock => components::lamp_neighbor_changed(level, s, pos),
         C::NoteBlock => devices::note_neighbor_changed(level, s, pos),
         C::TntBlock => devices::tnt_neighbor_changed(level, pos),
@@ -59,7 +59,7 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     }
     match class {
         C::RedstoneWireBlock => return wire::update_shape(level, s, pos, dir, neighbor_state),
-        C::RepeaterBlock => return diode::update_shape(level, s, pos, dir, neighbor_state),
+        C::RepeaterBlock | C::ComparatorBlock => return diode::update_shape(level, s, pos, dir, neighbor_state),
         C::StairBlock | C::WeatheringCopperStairBlock if dir.is_horizontal() => {
             return state::set(s, "shape", connect::stairs_shape(level, s, pos));
         }
@@ -106,7 +106,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::LiquidBlock => fluid::liquid_block_changed(level, s, pos),
         C::RedstoneWireBlock => wire::on_place(level, s, pos, old),
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::on_place(level, s, pos),
-        C::RepeaterBlock => diode::on_place(level, s, pos),
+        C::RepeaterBlock | C::ComparatorBlock => diode::on_place(level, s, pos),
         C::ObserverBlock => devices::observer_on_place(level, s, pos, old),
         C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_schedule(level, s, pos),
@@ -121,7 +121,7 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
     match logic::block_class(s) {
         C::RedstoneWireBlock => wire::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
-        C::RepeaterBlock => diode::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
+        C::RepeaterBlock | C::ComparatorBlock => diode::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         C::LeverBlock | C::ButtonBlock => components::attached_removed(level, s, pos, moved_by_piston),
         C::ObserverBlock => devices::observer_removed(level, s, pos),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_removed(level, s, pos, moved_by_piston),
@@ -135,7 +135,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     use BlockClass as C;
     match logic::block_class(s) {
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::tick(level, s, pos),
-        C::RepeaterBlock => diode::tick(level, s, pos),
+        C::RepeaterBlock | C::ComparatorBlock => diode::tick(level, s, pos),
         C::ButtonBlock => components::button_tick(level, s, pos),
         C::RedstoneLampBlock => components::lamp_tick(level, s, pos),
         C::ObserverBlock => devices::observer_tick(level, s, pos),

@@ -1,7 +1,8 @@
-//! Diodes (`DiodeBlock`): repeaters with delay and locking. Comparators need their block
-//! entity's output and are not simulated yet.
+//! Diodes (`DiodeBlock`): repeaters with delay and locking, comparators (`ComparatorBlock`)
+//! with compare/subtract modes reading analog outputs. A comparator's output lives in its
+//! block entity, kept by the level ([`Level::comparator_output`]).
 
-use super::{control_input, signal};
+use super::{analog, control_input, signal};
 use crate::behaviour::support::can_support_rigid;
 use crate::level::{Level, flags, schedule_block_tick};
 use crate::pos::{BlockPos, Direction};
@@ -19,20 +20,41 @@ pub fn is_diode(s: u16) -> bool {
     logic::is_instance(s, BlockClass::DiodeBlock)
 }
 
-fn delay(s: u16) -> i32 {
-    state::get_int(s, "delay") * 2
+fn is_comparator(s: u16) -> bool {
+    logic::block_class(s) == BlockClass::ComparatorBlock
 }
 
-/// `getInputSignal`: from the block behind (toward `facing`).
+fn delay(s: u16) -> i32 {
+    if is_comparator(s) { 2 } else { state::get_int(s, "delay") * 2 }
+}
+
+/// `DiodeBlock.getInputSignal`, with `ComparatorBlock`'s analog reading.
 fn input_signal<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> i32 {
     let f = facing(s);
     let n = pos.relative(f);
-    let i = signal(level, n, f);
-    if i >= 15 {
+    let mut i = signal(level, n, f);
+    if i < 15 {
+        let ns = level.block(n);
+        i = i.max(if state::is(ns, d::REDSTONE_WIRE) { state::get_int(ns, "power") } else { 0 });
+    }
+    if !is_comparator(s) {
         return i;
     }
     let ns = level.block(n);
-    i.max(if state::is(ns, d::REDSTONE_WIRE) { state::get_int(ns, "power") } else { 0 })
+    if logic::has_analog_output(ns) {
+        return analog::output(level, ns, n, f.opposite());
+    }
+    if i < 15 && logic::is_redstone_conductor(ns) {
+        let far = n.relative(f);
+        let fs = level.block(far);
+        let frame = level.item_frame_analog(far, f).unwrap_or(i32::MIN);
+        let block = if logic::has_analog_output(fs) { analog::output(level, fs, far, f.opposite()) } else { i32::MIN };
+        let best = frame.max(block);
+        if best != i32::MIN {
+            i = best;
+        }
+    }
+    i
 }
 
 /// `getAlternateSignal`: side inputs (repeaters only listen to diodes there).
@@ -48,8 +70,44 @@ pub fn is_locked<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> bool {
     logic::block_class(s) == BlockClass::RepeaterBlock && side_signal(level, pos, s) > 0
 }
 
+fn subtract(s: u16) -> bool {
+    state::get(s, "mode") == Some("subtract")
+}
+
 fn should_turn_on<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> bool {
-    input_signal(level, pos, s) > 0
+    let input = input_signal(level, pos, s);
+    if !is_comparator(s) {
+        return input > 0;
+    }
+    if input == 0 {
+        return false;
+    }
+    let side = side_signal(level, pos, s);
+    input > side || input == side && !subtract(s)
+}
+
+/// `ComparatorBlock.calculateOutputSignal`.
+fn comparator_output<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> i32 {
+    let input = input_signal(level, pos, s);
+    if input == 0 {
+        return 0;
+    }
+    let side = side_signal(level, pos, s);
+    if side > input {
+        0
+    } else if subtract(s) {
+        input - side
+    } else {
+        input
+    }
+}
+
+/// The diode's output toward its front (`DiodeBlock.getSignal` for `dir == facing`).
+pub fn output_signal<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction) -> i32 {
+    if facing(s) != dir || !state::get_bool(s, "powered") {
+        return 0;
+    }
+    if is_comparator(s) { level.comparator_output(pos) } else { 15 }
 }
 
 /// `shouldPrioritize`: the block in front is a diode not facing back into this one.
@@ -59,7 +117,7 @@ fn should_prioritize<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> boo
     is_diode(front) && facing(front) != front_dir
 }
 
-/// `RepeaterBlock.updateShape`.
+/// `RepeaterBlock` / `ComparatorBlock` `updateShape`.
 pub fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction, neighbor: u16) -> u16 {
     if dir == Direction::Down && !can_support_rigid(neighbor) {
         return d::AIR;
@@ -71,6 +129,10 @@ pub fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Di
 }
 
 pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    if is_comparator(s) {
+        refresh_comparator(level, pos, s);
+        return;
+    }
     if is_locked(level, pos, s) {
         return;
     }
@@ -86,12 +148,41 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     }
 }
 
+/// `ComparatorBlock.refreshOutputState`.
+fn refresh_comparator<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
+    let out = comparator_output(level, pos, s);
+    let old = level.comparator_output(pos);
+    level.set_comparator_output(pos, out);
+    if old == out && subtract(s) {
+        return;
+    }
+    let on = should_turn_on(level, pos, s);
+    let powered = state::get_bool(s, "powered");
+    if powered && !on {
+        set_block(level, pos, state::set_bool(s, "powered", false), flags::CLIENTS);
+    } else if !powered && on {
+        set_block(level, pos, state::set_bool(s, "powered", true), flags::CLIENTS);
+    }
+    update_front(level, pos, s);
+}
+
 fn check_tick_on_neighbor<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
+    let block = BlockId::of(s);
+    if is_comparator(s) {
+        if level.block_ticks().will_tick_this_tick(pos, block) {
+            return;
+        }
+        let out = comparator_output(level, pos, s);
+        if out != level.comparator_output(pos) || state::get_bool(s, "powered") != should_turn_on(level, pos, s) {
+            let priority = if should_prioritize(level, pos, s) { TickPriority::High } else { TickPriority::Normal };
+            schedule_block_tick(level, pos, block, 2, priority);
+        }
+        return;
+    }
     if is_locked(level, pos, s) {
         return;
     }
     let powered = state::get_bool(s, "powered");
-    let block = BlockId::of(s);
     if powered != should_turn_on(level, pos, s) && !level.block_ticks().will_tick_this_tick(pos, block) {
         let priority = if should_prioritize(level, pos, s) {
             TickPriority::ExtremelyHigh

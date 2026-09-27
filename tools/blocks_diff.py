@@ -511,6 +511,34 @@ def _(b, f, at):
     at(12, lambda b, f: b(15, 1, 2, "minecraft:redstone_block"))
 
 
+@scenario("comparators", (16, 6, 12))
+def _(b, f, at):
+    b(1, 0, 2, "minecraft:water_cauldron[level=2]")
+    b(2, 0, 2, "minecraft:comparator[facing=west]")
+    f(3, 0, 2, 6, 0, 2, "minecraft:redstone_wire")
+    b(1, 0, 5, "minecraft:cake[bites=3]")
+    b(2, 0, 5, "minecraft:stone")
+    b(3, 0, 5, "minecraft:comparator[facing=west]")
+    f(4, 0, 5, 7, 0, 5, "minecraft:redstone_wire")
+    b(1, 0, 8, "minecraft:composter[level=6]")
+    b(2, 0, 8, "minecraft:comparator[facing=west,mode=subtract]")
+    b(2, 0, 9, "minecraft:redstone_wire")
+    b(3, 0, 9, "minecraft:comparator[facing=east]")
+    b(4, 0, 9, "minecraft:water_cauldron[level=1]")
+    f(3, 0, 8, 6, 0, 8, "minecraft:redstone_wire")
+    b(10, 0, 2, "minecraft:comparator[facing=west,mode=subtract]")
+    b(11, 0, 2, "minecraft:redstone_wire")
+    b(11, 0, 3, "minecraft:redstone_wire")
+    b(10, 0, 3, "minecraft:redstone_wire")
+    at(2, lambda b, f: b(9, 0, 2, "minecraft:redstone_block"))
+    at(3, lambda b, f: b(1, 0, 2, "minecraft:water_cauldron[level=3]"))
+    at(6, lambda b, f: b(1, 0, 5, "minecraft:cake[bites=0]"))
+    at(9, lambda b, f: b(4, 0, 9, "minecraft:water_cauldron[level=3]"))
+    at(12, lambda b, f: b(1, 0, 2, "minecraft:end_portal_frame[eye=true]"))
+    at(15, lambda b, f: b(1, 0, 8, "minecraft:air"))
+    at(40, lambda b, f: b(9, 0, 2, "minecraft:air"))
+
+
 def build(only):
     """Lays scenarios out on a grid and returns the timeline description."""
     scenarios = []

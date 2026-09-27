@@ -1,6 +1,7 @@
-//! Redstone: signal queries (`SignalGetter`), wire, torches, diodes, levers, buttons, lamps
-//! and the doors they open.
+//! Redstone: signal queries (`SignalGetter`), wire, torches, repeaters and comparators,
+//! levers, buttons, plates, observers, note blocks, TNT, lamps and the doors they open.
 
+pub mod analog;
 pub mod components;
 pub mod devices;
 pub mod diode;
@@ -25,6 +26,7 @@ pub fn weak<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction,
                 0
             }
         }
+        BlockClass::ComparatorBlock => diode::output_signal(level, s, pos, dir),
         _ => logic::weak_signal(s, dir as u8) as i32,
     }
 }
@@ -39,6 +41,7 @@ pub fn strong<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Directio
                 0
             }
         }
+        BlockClass::ComparatorBlock => diode::output_signal(level, s, pos, dir),
         _ => logic::strong_signal(s, dir as u8) as i32,
     }
 }

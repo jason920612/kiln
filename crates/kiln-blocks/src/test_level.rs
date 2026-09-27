@@ -29,6 +29,8 @@ pub struct TestLevel {
     pub effects: Vec<Effect>,
     /// When set, every update run is recorded here in order.
     pub trace: Option<Vec<UpdateTrace>>,
+    /// Comparator block entities' output signals.
+    pub comparator_outputs: HashMap<BlockPos, i32>,
 }
 
 impl TestLevel {
@@ -49,6 +51,7 @@ impl TestLevel {
             rules: Rules::default(),
             effects: Vec::new(),
             trace: None,
+            comparator_outputs: HashMap::new(),
         }
     }
 
@@ -146,6 +149,9 @@ impl Level for TestLevel {
             self.sections.insert(key, blocks);
         }
         self.load_chunk(pos.chunk());
+        if !crate::state::same_block(old, state) {
+            self.comparator_outputs.remove(&pos);
+        }
         self.sections.get_mut(&key).unwrap()[index(pos)] = state;
         Some(old)
     }
@@ -185,6 +191,14 @@ impl Level for TestLevel {
 
     fn effect(&mut self, effect: Effect) {
         self.effects.push(effect);
+    }
+
+    fn comparator_output(&self, pos: BlockPos) -> i32 {
+        self.comparator_outputs.get(&pos).copied().unwrap_or(0)
+    }
+
+    fn set_comparator_output(&mut self, pos: BlockPos, value: i32) {
+        self.comparator_outputs.insert(pos, value);
     }
 
     fn trace_update(&mut self, update: UpdateTrace) {

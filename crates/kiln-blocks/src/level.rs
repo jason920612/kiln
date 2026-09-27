@@ -9,7 +9,7 @@
 use crate::block_events::BlockEvents;
 use crate::redstone::torch::Toggle;
 use crate::fluid::FluidType;
-use crate::pos::BlockPos;
+use crate::pos::{BlockPos, Direction};
 use crate::state::BlockId;
 use crate::ticks::{LevelTicks, ScheduledTick, TickPriority};
 use crate::update::NeighborUpdater;
@@ -122,6 +122,24 @@ pub trait Level {
     }
 
     fn effect(&mut self, effect: Effect);
+
+    /// The output signal stored in the comparator's block entity at `pos` (0 if none).
+    fn comparator_output(&self, pos: BlockPos) -> i32;
+
+    /// Stores a comparator's output in its block entity.
+    fn set_comparator_output(&mut self, pos: BlockPos, value: i32);
+
+    /// `getAnalogOutputSignal` of blocks whose output lives in a block entity or depends on
+    /// entities (containers, lecterns, jukeboxes, sculk sensors, command blocks, detector
+    /// rails with minecarts, ...), read from side `dir`.
+    fn block_entity_analog(&self, _pos: BlockPos, _state: u16, _dir: Direction) -> i32 {
+        0
+    }
+
+    /// The analog output of the single item frame at `pos` facing `facing`, if exactly one.
+    fn item_frame_analog(&self, _pos: BlockPos, _facing: Direction) -> Option<i32> {
+        None
+    }
 
     /// Entities of the kind intersecting the box (pressure plates: not spectators, not
     /// ignoring block triggers; detector rails: minecarts).
