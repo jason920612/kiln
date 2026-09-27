@@ -215,3 +215,23 @@ fn survival_hits_and_mining_wear_tools() {
     assert_eq!(w.sim.block_at(stone[0], stone[1], stone[2]), Some(kiln_data::blocks::default_state::AIR));
     assert_eq!(w.sim.item_damage(1, 36), Some(3));
 }
+
+#[test]
+fn viewers_see_held_items_and_armor() {
+    let mut w = World::new(&["Holder", "Watcher"]);
+    w.console("gamemode creative Holder");
+    w.ticks(2);
+    let equipment = kiln_data::packets::play::clientbound::SET_EQUIPMENT;
+    let watcher = w.clients[1].stats.clone();
+    watcher.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+    let count = || watcher.by_id.lock().unwrap().get(&equipment).map_or(0, |e| e.0);
+    let before = count();
+    w.give(1, 36, "minecraft:diamond_sword");
+    w.give(1, 5, "minecraft:iron_helmet");
+    w.ticks(2);
+    assert!(count() > before, "the watcher got Set Equipment");
+    // Nothing changes, nothing more is sent.
+    let settled = count();
+    w.ticks(5);
+    assert_eq!(count(), settled);
+}

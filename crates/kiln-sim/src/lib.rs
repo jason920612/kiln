@@ -211,6 +211,8 @@ struct Player {
     attack_ticker: i32,
     /// Equipment at the last player tick ([`combat::SLOTS`] order): attributes come from it.
     equipment_seen: Vec<kiln_item::ItemStack>,
+    /// Equipment as viewers last got it (Set Equipment).
+    equipment_sent: Vec<kiln_item::ItemStack>,
     /// The server's view of the player's velocity (knockback builds on it).
     vel: [f64; 3],
     /// `syncVelocity`: a hit this tick; the velocity goes to the client and its viewers.
@@ -1342,6 +1344,7 @@ impl Sim {
             combat: health::CombatTracker::default(),
             attack_ticker: 0,
             equipment_seen: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
+            equipment_sent: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             vel: [0.0; 3],
             sync_velocity: false,
             known_movement: [0.0; 3],

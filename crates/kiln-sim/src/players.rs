@@ -78,13 +78,38 @@ impl Player {
             .collect()
     }
 
-    fn spawn_packets(&self) -> [Bytes; 4] {
-        [
+    fn spawn_packets(&self) -> Vec<Bytes> {
+        let mut out = vec![
             entity::bundle_delimiter(),
             self.tracker.spawn(self.uuid, PLAYER.id, [0.0; 3], 0),
             entity::set_entity_data(self.entity_id, &self.spawn_metadata()),
-            entity::bundle_delimiter(),
-        ]
+        ];
+        // `ServerEntity.sendPairingData`: the equipment that is not empty.
+        let worn: Vec<(u8, &kiln_item::ItemStack)> =
+            (0..SHOWN_SLOTS).map(|i| (i as u8, self.inv.equipped(crate::combat::SLOTS[i]))).filter(|(_, s)| !s.is_empty()).collect();
+        if !worn.is_empty() {
+            out.push(set_equipment(self.entity_id, &worn));
+        }
+        out.push(entity::bundle_delimiter());
+        out
+    }
+
+    /// `LivingEntity.detectEquipmentUpdates`: the slots whose stack changed since the last
+    /// broadcast, as a Set Equipment packet for viewers.
+    fn equipment_changes(&mut self) -> Option<Bytes> {
+        let mut changed = Vec::new();
+        for i in 0..SHOWN_SLOTS {
+            let now = self.inv.equipped(crate::combat::SLOTS[i]);
+            if !kiln_inventory::stack::matches(&self.equipment_sent[i], now) {
+                self.equipment_sent[i] = now.clone();
+                changed.push(i);
+            }
+        }
+        if changed.is_empty() {
+            return None;
+        }
+        let slots: Vec<(u8, &kiln_item::ItemStack)> = changed.iter().map(|&i| (i as u8, &self.equipment_sent[i])).collect();
+        Some(set_equipment(self.entity_id, &slots))
     }
 }
 
@@ -272,6 +297,7 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player]) {
         let target = &mut players[ti];
         let state = target.move_state();
         let mut packets = target.tracker.tick(&state);
+        packets.extend(target.equipment_changes());
         if target.meta_dirty {
             target.meta_dirty = false;
             let mut d = EntityData::new();
@@ -361,4 +387,22 @@ mod tests {
         assert_eq!(sorted_diff(&[], &[4]), (vec![], vec![4]));
         assert_eq!(sorted_diff(&[4], &[4]), (vec![], vec![]));
     }
+}
+
+/// Main hand, off hand and the four armor slots (players have no body or saddle slot).
+const SHOWN_SLOTS: usize = 6;
+
+/// `ClientboundSetEquipmentPacket`: (slot ordinal, stack) pairs, each slot byte flagged 0x80
+/// when another follows.
+fn set_equipment(entity_id: i32, slots: &[(u8, &kiln_item::ItemStack)]) -> Bytes {
+    use bytes::BufMut;
+    use kiln_proto::WriteExt;
+    let mut b = bytes::BytesMut::new();
+    b.put_varint(kiln_data::packets::play::clientbound::SET_EQUIPMENT);
+    b.put_varint(entity_id);
+    for (i, (slot, stack)) in slots.iter().enumerate() {
+        b.put_u8(if i + 1 < slots.len() { slot | 0x80 } else { *slot });
+        stack.write_optional(&mut b);
+    }
+    b.freeze()
 }
