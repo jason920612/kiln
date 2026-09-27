@@ -1,7 +1,7 @@
 //! Replays click sequences recorded from vanilla 26.3 (`tools/InventoryVectors.java clicks`) and
 //! compares every clientbound packet, dropped item and resulting slot.
 //!
-//! Vectors: `$KILN_WORK/wp3-inventory/clicks.jsonl` (skipped when absent). Without
+//! Vectors: `$KILN_WORK/wp3-inventory/clicks*.jsonl` (skipped when absent). Without
 //! `KILN_PARITY=1` only the first 300 sequences run.
 
 mod common;
@@ -137,18 +137,25 @@ fn compare_state(state: &Json, menu: &Menu, inv: &PlayerInventory, block: &Simpl
 
 #[test]
 fn click_sequences_match_vanilla() {
-    let path = common::work().join("wp3-inventory/clicks.jsonl");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        eprintln!("skipping: {} not found", path.display());
+    let dir = common::work().join("wp3-inventory");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .map(|d| d.flatten().map(|e| e.path()).collect())
+        .unwrap_or_default();
+    files.retain(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("clicks") && n.ends_with(".jsonl")));
+    files.sort();
+    if files.is_empty() {
+        eprintln!("skipping: no {}/clicks*.jsonl", dir.display());
         return;
-    };
+    }
+    let text: String = files.iter().map(|f| std::fs::read_to_string(f).unwrap()).collect::<Vec<_>>().join("
+");
     let Some(rules) = common::rules() else {
         eprintln!("skipping: vanilla datapack not found");
         return;
     };
     let limit = if common::full_parity() { usize::MAX } else { 300 };
     let (mut sequences, mut steps, mut failures) = (0, 0, Vec::new());
-    for (n, line) in text.lines().take(limit).enumerate() {
+    for (n, line) in text.lines().filter(|l| !l.is_empty()).take(limit).enumerate() {
         let seq: Json = serde_json::from_str(line).unwrap();
         sequences += 1;
         if let Err(e) = replay(&seq, rules, &mut steps) {
