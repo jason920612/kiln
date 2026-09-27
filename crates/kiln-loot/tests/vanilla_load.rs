@@ -76,6 +76,35 @@ fn stone_drops_cobblestone_and_silk_touch_keeps_it() {
     assert_eq!(items[0].item_name(), "minecraft:stone");
 }
 
+/// Evaluation throughput (`cargo test --release -p kiln-loot --test vanilla_load -- --ignored
+/// --nocapture`).
+#[test]
+#[ignore]
+fn throughput() {
+    let Some(data) = data() else { return };
+    let ore = kiln_data::blocks_types::block_by_name("minecraft:diamond_ore").unwrap().default;
+    let mut pick = ItemStack::of("minecraft:diamond_pickaxe", 1).unwrap();
+    kiln_loot::enchant::enchant(&mut pick, kiln_item::registry::ENCHANTMENT.id("minecraft:fortune").unwrap(), 3);
+    let ctx = Mining { tool: pick, state: ore };
+    let mut seqs = RandomSequences::new(7);
+    let mut level = seeded(0);
+    for (table, n) in [("minecraft:blocks/diamond_ore", 200_000), ("minecraft:chests/simple_dungeon", 50_000), ("minecraft:entities/zombie", 200_000)] {
+        let table = id(table);
+        let start = std::time::Instant::now();
+        let mut items = 0usize;
+        for _ in 0..n {
+            let mut rng = data.table(&table).unwrap().random(0, &mut seqs, &mut level);
+            items += data.random_items(&table, &ctx, rng.source()).len();
+        }
+        let per = start.elapsed().as_secs_f64() / n as f64;
+        eprintln!("{table}: {:.2} µs per evaluation ({items} stacks)", per * 1e6);
+    }
+    let start = std::time::Instant::now();
+    let dir = work().join("generated");
+    let _ = LootData::load(&dir).unwrap();
+    eprintln!("load: {:.0} ms", start.elapsed().as_secs_f64() * 1e3);
+}
+
 #[test]
 fn chests_fill_containers() {
     let Some(data) = data() else { return };
