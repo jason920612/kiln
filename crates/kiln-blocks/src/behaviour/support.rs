@@ -48,7 +48,9 @@ fn may_place_on<L: Level + ?Sized>(level: &L, plant: u16, below: u16, below_pos:
             C::NetherWartBlock => tag("minecraft:supports_nether_wart"),
             C::NetherSproutsBlock => tag("minecraft:supports_nether_sprouts"),
             C::MangrovePropaguleBlock => tag("minecraft:supports_mangrove_propagule"),
-            C::SeagrassBlock => sturdy(below, Direction::Up, Support::Full) && !tag("minecraft:cannot_support_seagrass"),
+            C::SeagrassBlock | C::TallSeagrassBlock => {
+                sturdy(below, Direction::Up, Support::Full) && !tag("minecraft:cannot_support_seagrass")
+            }
             C::CactusFlowerBlock => {
                 tag("minecraft:support_override_cactus_flower") || sturdy(below, Direction::Up, Support::Center)
             }

@@ -76,6 +76,14 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if logic::is_instance(s, C::LeavesBlock) {
         return misc::leaves_update_shape(level, s, pos, neighbor_state);
     }
+    if logic::is_instance(s, C::SpeleothemBlock) {
+        return speleothem_update_shape(level, s, pos, dir);
+    }
+    if class == C::BrushableBlock {
+        // `BrushableBlock.updateShape`: re-check the fall in 2 ticks.
+        crate::level::schedule_block_tick(level, pos, BlockId::of(s), 2, crate::ticks::TickPriority::Normal);
+        return s;
+    }
     if logic::is_instance(s, C::FallingBlock) {
         misc::falling_schedule(level, s, pos);
         return s;
@@ -86,10 +94,94 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if logic::is_instance(s, C::SnowyBlock) && dir == Direction::Up {
         return state::set_bool(s, "snowy", connect::snowy_setting(neighbor_state));
     }
+    if matches!(class, C::KelpBlock | C::KelpPlantBlock) {
+        return kelp_update_shape(level, s, pos, dir, neighbor_state);
+    }
+    if class == C::SeagrassBlock {
+        // `SeagrassBlock.updateShape`: the water around it flows again while it stays.
+        let new = support::pop_off(level, s, pos, dir, neighbor_state).unwrap_or(s);
+        if !kiln_data::blocks_types::is_air(new) {
+            crate::level::schedule_fluid_tick(level, pos, crate::FluidType::Water, 5);
+        }
+        return new;
+    }
     if let Some(new) = support::pop_off(level, s, pos, dir, neighbor_state) {
         return new;
     }
     s
+}
+
+/// `GrowingPlantHeadBlock.updateShape` / `GrowingPlantBodyBlock.updateShape` of kelp
+/// (grows up, keeps its water flowing).
+fn kelp_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Direction, neighbor: u16) -> u16 {
+    use kiln_data::blocks::default_state as d;
+    let is_kelp = |b: u16| state::is(b, d::KELP) || state::is(b, d::KELP_PLANT);
+    let head = state::is(s, d::KELP);
+    if dir == Direction::Down {
+        let below = level.block(pos.below());
+        let survives = !state::is(below, d::MAGMA_BLOCK) && (is_kelp(below) || sturdy(below, Direction::Up, Support::Full));
+        if !survives {
+            crate::level::schedule_block_tick(level, pos, BlockId::of(s), 1, crate::ticks::TickPriority::Normal);
+        }
+        if head && is_kelp(level.block(pos.above())) {
+            return d::KELP_PLANT;
+        }
+    }
+    if dir == Direction::Up {
+        if head && is_kelp(neighbor) {
+            return d::KELP_PLANT;
+        }
+        if !head && !is_kelp(neighbor) {
+            // `getHeadBlock().getStateForPlacement(random)`: a random age from the level random.
+            use kiln_javamath::random::RandomSource;
+            let age = level.random().next_int_bounded(25);
+            return state::set(d::KELP, "age", &age.to_string());
+        }
+    }
+    crate::level::schedule_fluid_tick(level, pos, crate::FluidType::Water, 5);
+    s
+}
+
+/// `isSpeleothemWithDirection`: in `#speleothems` with this tip direction.
+fn speleothem_toward(s: u16, dir: Direction) -> bool {
+    crate::tags::is(s, "minecraft:speleothems") && state::get_dir(s, "vertical_direction") == Some(dir)
+}
+
+/// `SpeleothemBlock.updateShape` (pointed dripstone, sulfur spikes): thickness follows the
+/// column; a tip that lost its support schedules its fall.
+fn speleothem_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Direction) -> u16 {
+    if dir != Direction::Up && dir != Direction::Down {
+        return s;
+    }
+    let tip = state::get_dir(s, "vertical_direction").unwrap_or(Direction::Up);
+    let id = BlockId::of(s);
+    if tip == Direction::Down && level.block_ticks().has_scheduled_tick(pos, id) {
+        return s;
+    }
+    if dir == tip.opposite() {
+        let behind = pos.relative(tip.opposite());
+        let b = level.block(behind);
+        let valid = sturdy(b, tip, Support::Full) || (speleothem_toward(b, tip) && state::same_block(b, s));
+        if !valid {
+            let delay = if tip == Direction::Down { 2 } else { 1 };
+            crate::level::schedule_block_tick(level, pos, id, delay, crate::ticks::TickPriority::Normal);
+            return s;
+        }
+    }
+    let merge = state::get(s, "thickness") == Some("tip_merge");
+    let ahead = level.block(pos.relative(tip));
+    let thickness = if speleothem_toward(ahead, tip.opposite()) && state::same_block(ahead, s) {
+        if merge || state::get(ahead, "thickness") == Some("tip_merge") { "tip_merge" } else { "tip" }
+    } else if !speleothem_toward(ahead, tip) {
+        "tip"
+    } else if matches!(state::get(ahead, "thickness"), Some("tip" | "tip_merge")) {
+        "frustum"
+    } else if !speleothem_toward(level.block(pos.relative(tip.opposite())), tip) {
+        "base"
+    } else {
+        "middle"
+    };
+    state::set(s, "thickness", thickness)
 }
 
 /// `updateIndirectNeighbourShapes` (only redstone wire has any).

@@ -388,6 +388,24 @@ impl NormalNoiseParams {
         (octaves, norm, range)
     }
 
+    /// `NormalNoise.createParity(firstOctave, amplitudes)`: normalized so the stack's
+    /// amplitude matches the legacy parity factor.
+    pub fn parity(base_octave: i32, amplitudes: &[f64]) -> NormalNoiseParams {
+        let octave_count = amplitudes.len() as i32;
+        let unit = NormalNoiseParams {
+            base_amplitude: 1.0,
+            base_octave,
+            octave_count,
+            normalize: Normalization::Enabled,
+            amplitude_modifiers: amplitudes.to_vec(),
+        };
+        let octaves = unit.octaves();
+        let norm = Self::normalization_factor(java_stream_sum(octaves.iter().map(|o| o.amplitude.abs())), &octaves);
+        let base_amplitude = if norm == 0.0 { 1.0 } else { unit.parity_normalization_factor(1.0) / norm };
+        let amplitude_modifiers = if amplitudes.iter().all(|&a| a == 1.0) { Vec::new() } else { amplitudes.to_vec() };
+        NormalNoiseParams { base_amplitude, base_octave, octave_count, normalize: Normalization::Enabled, amplitude_modifiers }
+    }
+
     /// The value range `NoiseFunction` and shift functions declare for this noise.
     pub fn range(&self) -> Interval {
         self.setup().2

@@ -15,22 +15,41 @@
 
 pub mod aquifer;
 pub mod biome;
+pub mod block_facts;
 pub mod blocks;
 pub mod carver;
 pub mod compile;
 pub mod datapack;
+pub mod decorate;
+pub mod feature;
 pub mod function;
 pub mod generator;
 pub mod interval;
 pub mod json;
 pub mod material;
 pub mod noise;
+pub mod order;
+pub mod pipeline;
+pub mod placement;
+pub mod pos;
+pub mod postprocess;
+pub mod predicate;
+pub mod proto;
+pub mod providers;
+pub mod random;
+pub mod region;
 pub mod sampler;
+pub mod sets;
 pub mod simplex;
+pub mod spawn;
 pub mod spline;
 pub mod state;
+pub mod state_provider;
+pub mod structure;
 pub mod surface;
+pub mod survive;
 pub mod volume;
+pub mod vtags;
 pub mod world;
 
 pub use datapack::{Datapack, NoiseSettings};
@@ -38,7 +57,8 @@ pub use generator::{GenScratch, Generator, ProtoChunk};
 pub use sampler::{Sampler, SamplerRef, Scratch};
 pub use state::{NoiseRouter, RandomState};
 pub use volume::Volume;
-pub use world::NoiseChunks;
+pub use pipeline::{Pipeline, Worldgen};
+pub use world::{FullChunks, NoiseChunks};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

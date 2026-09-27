@@ -74,6 +74,31 @@ pub struct Chunk {
     /// Scheduled ticks in their saved form: read from the save, taken by the simulation when
     /// the chunk loads, and put back before the chunk is saved.
     pub saved_ticks: Option<Box<SavedTicks>>,
+    /// Structure starts and references (chunk NBT `structures`) of a generated chunk; a
+    /// loaded chunk keeps its own among the preserved save fields.
+    pub structures: Option<Box<kiln_proto::nbt::Tag>>,
+    /// Updates owed since generation, handed to the simulation when the chunk becomes full.
+    pending: Option<Box<PendingUpdates>>,
+}
+
+/// Work a freshly generated chunk leaves for the simulation, to run once the chunk (and its
+/// neighbours) tick: vanilla's `ProtoChunk.postProcessing` positions (a fluid there starts
+/// flowing — `FluidState.tick` — and other blocks update their shape from their neighbours,
+/// `Block.updateFromNeighbourShapes`) and the block and fluid ticks scheduled during
+/// generation (e.g. springs, lakes). Positions are absolute.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PendingUpdates {
+    pub post_process: Vec<[i32; 3]>,
+    /// Block ticks: position, block name, delay in ticks.
+    pub block_ticks: Vec<([i32; 3], &'static str, i32)>,
+    /// Fluid ticks: position, fluid name, delay in ticks.
+    pub fluid_ticks: Vec<([i32; 3], &'static str, i32)>,
+}
+
+impl PendingUpdates {
+    pub fn is_empty(&self) -> bool {
+        self.post_process.is_empty() && self.block_ticks.is_empty() && self.fluid_ticks.is_empty()
+    }
 }
 
 /// A chunk's `block_ticks` and `fluid_ticks` lists as chunk NBT stores them.
@@ -107,6 +132,8 @@ impl Chunk {
             light_dirty: [0, 0],
             block_entities: BTreeMap::new(),
             saved_ticks: None,
+            structures: None,
+            pending: None,
         };
         for x in 0..16 {
             for z in 0..16 {
@@ -126,6 +153,20 @@ impl Chunk {
 
     pub fn min_y(&self) -> i32 {
         self.min_y
+    }
+
+    /// Updates owed since generation ([`PendingUpdates`]), if any.
+    pub fn pending_updates(&self) -> Option<&PendingUpdates> {
+        self.pending.as_deref()
+    }
+
+    pub fn set_pending_updates(&mut self, updates: PendingUpdates) {
+        self.pending = (!updates.is_empty()).then(|| Box::new(updates));
+    }
+
+    /// Takes the owed updates, e.g. when the chunk starts ticking.
+    pub fn take_pending_updates(&mut self) -> Option<PendingUpdates> {
+        self.pending.take().map(|p| *p)
     }
 
     /// Sky light per section, index 0 being the section below the world.

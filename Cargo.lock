@@ -754,8 +754,10 @@ name = "kiln-worldgen"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "kiln-blocks",
  "kiln-data",
  "kiln-javamath",
+ "kiln-proto",
  "kiln-world",
  "sha2",
  "thiserror",

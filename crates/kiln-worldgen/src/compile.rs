@@ -273,7 +273,8 @@ impl<'a, S: NoiseSource> Compiler<'a, S> {
                 Sampler::Lerp(alpha, noise(min, xz_mul, y_mul), noise(max, xz_mul, y_mul))
             }
             Node::BlendAlpha => Sampler::Const(1.0),
-            Node::BlendOffset | Node::Beardifier => Sampler::Const(0.0),
+            Node::BlendOffset => Sampler::Const(0.0),
+            Node::Beardifier => Sampler::Beardifier,
             Node::BlendDensity(input) => return self.child(id, *input),
             Node::DistanceToPoint { point, metric } => Sampler::DistanceToPoint { point: *point, metric: *metric },
             Node::Unsupported(ty) => return Err(Error::UnsupportedFunction(ty.clone())),

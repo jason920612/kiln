@@ -83,6 +83,9 @@ fn from_grid_y(g: i32, offset: i32) -> i32 {
     g * 12 + offset
 }
 
+/// `FLOWING_UPDATE_SIMULARITY` = `similarity(10², 12²)`.
+const FLOWING_UPDATE_SIMILARITY: f64 = 1.0 - (144 - 100) as f64 / 25.0;
+
 #[inline]
 fn similarity(a: i32, b: i32) -> f64 {
     1.0 - (b - a) as f64 / 25.0
@@ -114,6 +117,15 @@ impl Aquifer<'_> {
             Aquifer::Noise(a) => a.compute_substance(s, x, y, z, density),
         }
     }
+
+    /// `Aquifer.shouldScheduleFluidUpdate`: whether the last computed fluid borders a
+    /// different aquifer and must flow once the chunk is loaded.
+    pub fn should_schedule_fluid_update(&self) -> bool {
+        match self {
+            Aquifer::Disabled(_) => false,
+            Aquifer::Noise(a) => a.schedule,
+        }
+    }
 }
 
 pub struct NoiseAquifer<'a> {
@@ -126,6 +138,7 @@ pub struct NoiseAquifer<'a> {
     location: Vec<Option<[i32; 3]>>,
     skip_sampling_above_y: i32,
     surface_levels: HashMap<(i32, i32), i32>,
+    schedule: bool,
 }
 
 impl<'a> NoiseAquifer<'a> {
@@ -152,6 +165,7 @@ impl<'a> NoiseAquifer<'a> {
             location: vec![None; n],
             skip_sampling_above_y: 0,
             surface_levels: HashMap::new(),
+            schedule: false,
         };
         let max_surface = a.max_surface_level(
             s,
@@ -201,15 +215,22 @@ impl<'a> NoiseAquifer<'a> {
     }
 
     fn compute_substance(&mut self, s: &mut Scratch, x: i32, y: i32, z: i32, density: f64) -> Option<u16> {
+        let (block, schedule) = self.substance(s, x, y, z, density);
+        self.schedule = schedule;
+        block
+    }
+
+    /// `computeSubstance` proper: the substance plus the new `shouldScheduleFluidUpdate`.
+    fn substance(&mut self, s: &mut Scratch, x: i32, y: i32, z: i32, density: f64) -> (Option<u16>, bool) {
         if density > 0.0 {
-            return None;
+            return (None, false);
         }
         let global = self.picker.compute(x, y, z);
         if y > self.skip_sampling_above_y {
-            return Some(global.at(y));
+            return (Some(global.at(y)), false);
         }
         if global.at(y) == state::LAVA {
-            return Some(state::LAVA);
+            return (Some(state::LAVA), false);
         }
         let (gx, gy, gz) = (grid_x(x - 5), grid_y(y + 1), grid_x(z - 5));
         let mut dist = [i32::MAX; 4];
@@ -256,33 +277,41 @@ impl<'a> NoiseAquifer<'a> {
         let sim12 = similarity(dist[0], dist[1]);
         let block = status1.at(y);
         if sim12 <= 0.0 {
-            return Some(block);
+            let schedule = sim12 >= FLOWING_UPDATE_SIMILARITY && status1 != self.status_at(s, closest[1]);
+            return (Some(block), schedule);
         }
         if block == state::WATER && self.picker.compute(x, y - 1, z).at(y - 1) == state::LAVA {
-            return Some(block);
+            return (Some(block), true);
         }
         let mut barrier = f64::NAN;
         let status2 = self.status_at(s, closest[1]);
         let p = sim12 * self.pressure(s, x, y, z, &mut barrier, status1, status2);
         if density + p > 0.0 {
-            return None;
+            return (None, false);
         }
         let status3 = self.status_at(s, closest[2]);
         let sim13 = similarity(dist[0], dist[2]);
         if sim13 > 0.0 {
             let p = sim12 * sim13 * self.pressure(s, x, y, z, &mut barrier, status1, status3);
             if density + p > 0.0 {
-                return None;
+                return (None, false);
             }
         }
         let sim23 = similarity(dist[1], dist[2]);
         if sim23 > 0.0 {
             let p = sim12 * sim23 * self.pressure(s, x, y, z, &mut barrier, status2, status3);
             if density + p > 0.0 {
-                return None;
+                return (None, false);
             }
         }
-        Some(block)
+        let flowing = |sim: f64| sim >= FLOWING_UPDATE_SIMILARITY;
+        let schedule = status1 != status2
+            || (flowing(sim23) && status2 != status3)
+            || (flowing(sim13) && status1 != status3)
+            || (flowing(sim13)
+                && flowing(similarity(dist[0], dist[3]))
+                && status1 != self.status_at(s, closest[3]));
+        (Some(block), schedule)
     }
 
     /// `calculatePressure`.
