@@ -28,6 +28,9 @@ pub struct LevelState {
     /// Total ticks of the overworld clock: the time of day.
     pub day_time: i64,
     pub spawn: WorldSpawn,
+    /// `Data.DataPacks`: enabled packs in load order and disabled ones; `None` keeps the
+    /// saved lists.
+    pub data_packs: Option<(Vec<String>, Vec<String>)>,
 }
 
 pub struct LevelStore {
@@ -98,7 +101,17 @@ impl LevelStore {
                 yaw: float("yaw"),
                 pitch: float("pitch"),
             },
+            data_packs: self.data_packs(),
         }
+    }
+
+    /// `Data.DataPacks` (`Enabled`, `Disabled`), if saved.
+    pub fn data_packs(&self) -> Option<(Vec<String>, Vec<String>)> {
+        let packs = self.data()?.get("DataPacks")?;
+        let list = |k: &str| {
+            packs.get(k).and_then(Tag::as_list).unwrap_or(&[]).iter().filter_map(|t| t.as_str().map(str::to_owned)).collect()
+        };
+        Some((list("Enabled"), list("Disabled")))
     }
 
     /// The default game mode for new players (`Data.GameType`), if the world has one.
@@ -140,6 +153,12 @@ fn update_level(data: &mut Tag, state: &LevelState) {
     put(spawn, "yaw", Tag::Float(state.spawn.yaw));
     put(spawn, "pitch", Tag::Float(state.spawn.pitch));
 
+    if let Some((enabled, disabled)) = &state.data_packs {
+        let strings = |v: &[String]| Tag::List(v.iter().cloned().map(Tag::String).collect());
+        let packs = child(data, "DataPacks");
+        put(packs, "Enabled", strings(enabled));
+        put(packs, "Disabled", strings(disabled));
+    }
     put(data, "DataVersion", Tag::Int(DATA_VERSION as i32));
     let version = child(data, "Version");
     put(version, "Id", Tag::Int(DATA_VERSION as i32));
@@ -207,6 +226,7 @@ mod tests {
             game_time: 1200,
             day_time: 7000,
             spawn: WorldSpawn { dimension: "minecraft:overworld".into(), pos: [8, 64, 8], yaw: 90.0, pitch: 0.0 },
+            data_packs: Some((vec!["vanilla".into(), "file/p".into()], vec!["trade_rebalance".into()])),
         };
         store.save(&state).unwrap();
         let back = LevelStore::open(&dir);

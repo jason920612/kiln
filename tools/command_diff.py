@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parent.parent
 WORK = Path(os.environ.get("KILN_WORK", ROOT / "work"))
 SCRATCH = Path(os.environ.get("KILN_DIFF_SCRATCH", WORK / "wp2-commands" / "diff"))
 VERSION = "26.3"
+DATAPACK = ROOT / "tools" / "datapacks" / "kilndiff"
 UNKNOWN = "Unknown or incomplete command. See below for error"
 
 # Test area: chunks -1..1 around 0,0, y 100..170, cleared to air first. Vanilla's flat world
@@ -664,6 +665,125 @@ bossbar list
 bossbar remove minecraft:a
 bossbar list
 
+# functions
+datapack list
+datapack list enabled
+datapack list available
+scoreboard players get #loads loaded
+execute if score #ticks loaded matches 1..
+function kilndiff:setup
+function kilndiff:hello
+function kilndiff:ret
+function kilndiff:retfail
+function kilndiff:count
+scoreboard players get #n fn
+function kilndiff:nested
+function kilndiff:retrun
+function kilndiff:retrun_cmd
+function kilndiff:retrun_none
+function kilndiff:recurse
+scoreboard players get #r fn
+function kilndiff:continued
+scoreboard players get #n fn
+function kilndiff:feedback
+scoreboard players get #f fn
+function kilndiff:asall
+function kilndiff:bad
+function kilndiff:sub/deep
+function kilndiff:nope
+function nope
+function #kilndiff:all
+function #kilndiff:rets
+function #kilndiff:empty
+function #kilndiff:nope
+function kilndiff:macro
+function kilndiff:macro {msg:"hi",v:5}
+scoreboard players get #m fn
+function kilndiff:macro {msg:"hi"}
+function kilndiff:macro {msg:1.5f,v:2b}
+function kilndiff:macro {msg:[1,2],v:1L}
+function kilndiff:macro {msg:"a b",v:"x"}
+function kilndiff:macroret {v:9}
+function kilndiff:hello {x:1}
+function kilndiff:hello [1]
+function kilndiff:hello {x:
+execute store result storage kiln:m v int 1 run scoreboard players get #n fn
+function kilndiff:macroret with storage kiln:m
+function kilndiff:macro with storage kiln:m
+function kilndiff:macro with storage kiln:m nope
+function kilndiff:macroret with storage kiln:m v
+function kilndiff:macro with block 0 100 0
+function kilndiff:macro with block 100000 100 0
+execute store result score #x fn run function kilndiff:ret
+scoreboard players get #x fn
+execute store result score #y fn run function kilndiff:hello
+scoreboard players get #y fn
+execute store success score #z fn run function kilndiff:retfail
+scoreboard players get #z fn
+execute store result score #t fn run function #kilndiff:rets
+scoreboard players get #t fn
+execute if function kilndiff:ret
+execute if function kilndiff:ret run say yes
+execute if function kilndiff:retfail run say no
+execute unless function kilndiff:retfail run say unless
+execute if function kilndiff:hello run say never
+execute unless function kilndiff:hello run say never2
+execute if function #kilndiff:rets run say tagged
+execute if function kilndiff:nope run say x
+execute if function #kilndiff:nope run say x
+execute as @a run function kilndiff:ret
+execute as @a run function kilndiff:hello
+execute as Diff0 run function kilndiff:asall
+return 5
+return fail
+return run say hi
+return run function kilndiff:ret
+return run function kilndiff:hello
+return run execute if entity @e[type=minecraft:pig]
+return
+execute store result score #q fn run return 8
+scoreboard players get #q fn
+execute store success score #q fn run return fail
+scoreboard players get #q fn
+! schedule function kilndiff:sched 100000t
+! schedule function kilndiff:sched 200000t append
+schedule clear kilndiff:sched
+schedule clear kilndiff:sched
+! schedule function #kilndiff:all 100000t
+schedule clear #kilndiff:all
+schedule function kilndiff:sched 0
+schedule function kilndiff:macro 1t
+schedule function kilndiff:nope 1t
+schedule function kilndiff:sched -1
+schedule function kilndiff:sched 1t bogus
+! schedule function kilndiff:sched 1t
+scoreboard players get #n fn
+scoreboard players get #s fn
+datapack disable "file/kilndiff"
+datapack disable "file/kilndiff"
+datapack list
+function kilndiff:hello
+datapack enable "file/kilndiff"
+datapack enable "file/kilndiff"
+datapack enable "file/nope"
+datapack enable minecart_improvements
+datapack disable minecart_improvements
+datapack enable file/kilndiff
+datapack enable "file/kilndiff" first
+datapack disable "file/kilndiff"
+datapack enable "file/kilndiff" before "file/nope"
+datapack enable "file/kilndiff" before vanilla
+datapack disable vanilla
+datapack list
+datapack enable vanilla first
+datapack list
+reload
+function kilndiff:hello
+scoreboard players get #loads loaded
+datapack create kilndiff2 "x"
+scoreboard objectives remove fn
+scoreboard objectives remove loaded
+
 # coordinates, shapes and block entities
 setblock 2 100 0 chest[facing=north]{CustomName:"y"}
 setblock 2 100 0 chest[facing=north]{CustomName:"y"}
@@ -819,6 +939,8 @@ def start_vanilla(port: int) -> Server:
     base = SCRATCH / "vanilla"
     base.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(base / "world", ignore_errors=True)
+    # The test functions: a world pack, found and enabled when the world is created.
+    shutil.copytree(DATAPACK, base / "world" / "datapacks" / DATAPACK.name)
     (base / "eula.txt").write_text("eula=true\n", encoding="utf-8")
     props = [
         f"server-port={port}",
@@ -852,6 +974,10 @@ def start_kiln(port: int, exe: Path, lang: Path) -> Server:
     env = os.environ.copy()
     env.update({"KILN_PORT": str(port), "KILN_LANG": str(lang), "RUST_LOG": "info", "NO_COLOR": "1"})
     env.pop("KILN_WORLD", None)
+    packs = SCRATCH / "kiln-datapacks"
+    shutil.rmtree(packs, ignore_errors=True)
+    shutil.copytree(DATAPACK, packs / DATAPACK.name)
+    env["KILN_DATAPACKS"] = str(packs)
     env.pop("KILN_OPS", None)
     return Server("kiln", [str(copy)], base, env, KILN_LINE, SCRATCH / "kiln.log")
 

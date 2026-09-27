@@ -167,6 +167,7 @@ impl Sim {
             game_time: self.game_time,
             day_time: self.day_time,
             spawn: WorldSpawn { dimension: OVERWORLD.to_owned(), pos: self.spawn, yaw: self.spawn_rot[0], pitch: self.spawn_rot[1] },
+            data_packs: Some((self.commands.packs.selected.clone(), self.commands.packs.disabled.clone())),
         };
         let Some(storage) = &mut self.storage else { return };
         if let Err(e) = storage.level.save(&state) {

@@ -25,6 +25,7 @@ pub mod component;
 pub mod coords;
 pub mod dispatcher;
 pub mod error;
+pub mod functions;
 pub mod host;
 pub mod nbt_path;
 pub mod range;

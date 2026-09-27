@@ -143,6 +143,19 @@ fn io(path: &Path) -> impl FnOnce(std::io::Error) -> LoadError + '_ {
 }
 
 /// `(id, file)` of every JSON file under `data/<namespace>/<dir>/`.
+/// Files of `dir` across packs: a later pack's file replaces an earlier one with the same id.
+fn list_pack_files(packs: &[&Path], dir: &str) -> Result<Vec<(Identifier, std::path::PathBuf)>, LoadError> {
+    let mut by_id: std::collections::HashMap<Identifier, std::path::PathBuf> = std::collections::HashMap::new();
+    for pack in packs {
+        for (id, path) in list_files(pack, dir)? {
+            by_id.insert(id, path);
+        }
+    }
+    let mut out: Vec<(Identifier, std::path::PathBuf)> = by_id.into_iter().collect();
+    out.sort_by(|a, b| (a.0.path(), a.0.namespace()).cmp(&(b.0.path(), b.0.namespace())));
+    Ok(out)
+}
+
 fn list_files(datapack: &Path, dir: &str) -> Result<Vec<(Identifier, std::path::PathBuf)>, LoadError> {
     let data = datapack.join("data");
     let mut out = Vec::new();
@@ -177,6 +190,12 @@ impl LootData {
     /// Loads `datapack`, keeping the files that decode and listing the others in `errors`
     /// (references to them resolve to nothing).
     pub fn load_lenient(datapack: &Path) -> Result<LootData, LoadError> {
+        LootData::load_lenient_packs(&[datapack])
+    }
+
+    /// [`load_lenient`](Self::load_lenient) over several packs in order: later packs replace
+    /// files with the same id and add to (or, with `replace`, replace) tags.
+    pub fn load_lenient_packs(packs: &[&Path]) -> Result<LootData, LoadError> {
         let known = |registry: &str, id: &Identifier| {
             if tags::has_id_table(registry) {
                 kiln_data::builtin_entries(registry)
@@ -186,11 +205,11 @@ impl LootData {
                 true
             }
         };
-        let tags = Tags::load(datapack, known).map_err(LoadError::Tags)?;
+        let tags = Tags::load_packs(packs, known).map_err(LoadError::Tags)?;
         let mut names = Names::default();
         let mut files: Vec<(Kind, Identifier, std::path::PathBuf)> = Vec::new();
         for kind in Kind::ALL {
-            for (id, path) in list_files(datapack, kind.dir())? {
+            for (id, path) in list_pack_files(packs, kind.dir())? {
                 names.add(kind, id.clone());
                 files.push((kind, id, path));
             }
@@ -209,7 +228,7 @@ impl LootData {
         }
 
         // Enchantment definitions.
-        let enchantment_files = list_files(datapack, "enchantment")?;
+        let enchantment_files = list_pack_files(packs, "enchantment")?;
         let mut enchantments: Vec<Option<Enchantment>> = vec![None; registry::ENCHANTMENT.len()];
         let mut errors = Vec::new();
         {

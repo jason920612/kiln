@@ -14,11 +14,42 @@ pub struct CommandError(Box<Inner>);
 struct Inner {
     message: Text,
     context: Option<(String, usize)>,
+    kind: Kind,
+}
+
+/// How the dispatcher treats an error besides showing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kind {
+    Normal,
+    /// A failure with nothing to show (`return fail`): result callbacks see a failure.
+    Quiet,
+    /// Not a failure: the command reports its result itself (`function`, whose result is
+    /// what its functions return, if anything).
+    Deferred,
 }
 
 impl CommandError {
     pub fn new(message: Text) -> Self {
-        CommandError(Box::new(Inner { message, context: None }))
+        CommandError(Box::new(Inner { message, context: None, kind: Kind::Normal }))
+    }
+
+    /// A failure without a message.
+    pub fn quiet() -> Self {
+        CommandError(Box::new(Inner { message: Text::empty(), context: None, kind: Kind::Quiet }))
+    }
+
+    /// The command handled its result callbacks itself (custom command executors).
+    pub fn deferred() -> Self {
+        CommandError(Box::new(Inner { message: Text::empty(), context: None, kind: Kind::Deferred }))
+    }
+
+    pub fn is_deferred(&self) -> bool {
+        self.0.kind == Kind::Deferred
+    }
+
+    /// Whether there is anything to show.
+    pub fn is_silent(&self) -> bool {
+        self.0.kind != Kind::Normal
     }
 
     /// Attaches the reader's input and cursor (`createWithContext`).
@@ -62,6 +93,9 @@ impl CommandError {
     /// message, then for parse errors the last ten characters before the cursor, the rest
     /// underlined, and `<--[HERE]` (`Commands.finishParsing`).
     pub fn chat_lines(&self, command: &str) -> Vec<Text> {
+        if self.is_silent() {
+            return Vec::new();
+        }
         let mut lines = vec![Text::empty().append(self.0.message.clone()).color("red")];
         if let Some((input, cursor)) = &self.0.context {
             let cursor = (*cursor).min(input.len());

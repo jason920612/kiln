@@ -72,6 +72,8 @@ pub(super) struct Mock {
     pub(super) scoreboard: Scoreboard,
     pub(super) storage: crate::CommandStorage,
     pub(super) bossbars: crate::BossBars,
+    pub(super) functions: crate::functions::FunctionLibrary,
+    pub(super) timers: crate::functions::TimerQueue,
     /// Packets sent to single players: (name, packet id).
     pub(super) packets: Vec<(String, i32)>,
 }
@@ -115,6 +117,8 @@ impl Mock {
             scoreboard: Scoreboard::default(),
             storage: crate::CommandStorage::default(),
             bossbars: crate::BossBars::default(),
+            functions: crate::functions::FunctionLibrary::default(),
+            timers: crate::functions::TimerQueue::default(),
             packets: Vec::new(),
         }
     }
@@ -182,6 +186,9 @@ impl SelectorWorld for Mock {
 
 impl Host for Mock {
     fn send_success(&mut self, text: Text, broadcast: bool) {
+        if self.stack.silent {
+            return;
+        }
         self.feedback.push((text.to_plain(), broadcast));
     }
     fn send_system(&mut self, player: &Ent, text: Text) {
@@ -336,6 +343,22 @@ impl Host for Mock {
 
     fn storage_mut(&mut self) -> Option<&mut crate::CommandStorage> {
         Some(&mut self.storage)
+    }
+
+    fn functions(&self) -> Option<&crate::functions::FunctionLibrary> {
+        Some(&self.functions)
+    }
+
+    fn timers(&self) -> Option<&crate::functions::TimerQueue> {
+        Some(&self.timers)
+    }
+
+    fn timers_mut(&mut self) -> Option<&mut crate::functions::TimerQueue> {
+        Some(&mut self.timers)
+    }
+
+    fn game_time(&self) -> i64 {
+        100
     }
 
     fn bossbars(&self) -> Option<&crate::BossBars> {
@@ -987,13 +1010,15 @@ fn commands_packet_flags() {
     let (n4, lit4, ask4, res4) = decode(4);
     assert!(n4 > n0 + 100);
     assert!(lit4.contains(&"kiln".to_owned()));
-    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective", "members"];
+    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective", "members", "name", "function", "existing"];
     ask4.iter().for_each(|a| assert!(allowed.contains(&a.as_str()), "{a}"));
     // op, deop, time's markers/timelines at both levels, execute's score holders (if and
     // unless: target + 5 sources each; store result and success: targets) and boss bars, and
     // scoreboard's 11 score holders plus `players enable`'s trigger objectives, trigger's
     // objective, team's join and leave members and bossbar's remove, set and get ids.
-    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3);
+    // Functions: function, schedule function/clear, datapack enable/after/before/disable,
+    // execute if/unless function.
+    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2);
     assert!(res4.contains(&"stop".to_owned()) && res4.contains(&"tp".to_owned()) && !res4.contains(&"msg".to_owned()));
 }
 

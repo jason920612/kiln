@@ -104,6 +104,8 @@ pub enum ArgumentType {
     Style,
     /// `minecraft:team`: a team name (looked up when used).
     Team,
+    /// `minecraft:nbt_compound_tag`: an SNBT compound.
+    NbtCompound,
     /// `minecraft:team_color`: one of the sixteen [`TEAM_COLORS`].
     TeamColor,
 }
@@ -220,6 +222,7 @@ impl ArgumentType {
             ArgumentType::Component => Parser::Plain("minecraft:component"),
             ArgumentType::Style => Parser::Plain("minecraft:style"),
             ArgumentType::Team => Parser::Plain("minecraft:team"),
+            ArgumentType::NbtCompound => Parser::Plain("minecraft:nbt_compound_tag"),
             ArgumentType::TeamColor => Parser::Plain("minecraft:team_color"),
         }
     }
@@ -374,6 +377,13 @@ impl ArgumentType {
             ArgumentType::Objective | ArgumentType::Team => {
                 ArgumentValue::String(reader.read_unquoted_string().to_owned())
             }
+            ArgumentType::NbtCompound => {
+                let tag = snbt::parse_tag(reader)?;
+                if !matches!(tag, Tag::Compound(_)) {
+                    return Err(CommandError::new(tr!("argument.nbt.expected.compound")).at(reader));
+                }
+                ArgumentValue::Nbt(tag)
+            }
             ArgumentType::TeamColor => {
                 let s = reader.read_unquoted_string();
                 if !TEAM_COLORS.contains(&s) {
@@ -472,7 +482,7 @@ impl ArgumentType {
 
     /// Server-side suggestions (the client computes most of these itself).
     pub fn suggest<S: Source>(&self, builder: &mut SuggestionsBuilder, source: &S) {
-        let allow = source.permission_level() >= SELECTOR_PERMISSION;
+        let allow = source.permission() >= SELECTOR_PERMISSION;
         match self {
             ArgumentType::Bool => {
                 for v in ["true", "false"] {
@@ -1008,7 +1018,7 @@ impl MessageArg {
 
     /// `Message.toComponent`: selectors become the names of the entities they find.
     pub fn resolve<W: SelectorWorld>(&self, world: &mut W) -> Result<Text> {
-        if self.parts.is_empty() || world.permission_level() < SELECTOR_PERMISSION {
+        if self.parts.is_empty() || world.permission() < SELECTOR_PERMISSION {
             return Ok(Text::literal(&self.text));
         }
         let mut out = Text::literal(&self.text[..self.parts[0].0]);

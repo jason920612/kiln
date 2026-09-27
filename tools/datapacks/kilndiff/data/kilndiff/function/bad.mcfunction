@@ -1,0 +1,2 @@
+say fine
+notacommand here

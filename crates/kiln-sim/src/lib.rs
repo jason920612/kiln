@@ -23,6 +23,7 @@
 mod blocks;
 mod commands;
 mod consume;
+mod datapacks;
 mod digging;
 mod entities;
 mod generation;
@@ -607,6 +608,7 @@ impl Sim {
             if config.unified_regions { "unified" } else { "split" }
         );
         let datapack = config.noise.as_ref().map(|n| n.datapack.as_path());
+        let vanilla_pack = datapack_dir(datapack);
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
         let mut sim = Sim {
@@ -644,6 +646,7 @@ impl Sim {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.load_scoreboard();
+        sim.init_packs(vanilla_pack);
         sim
     }
 
@@ -1176,6 +1179,7 @@ impl Sim {
         }
         self.save_level();
         self.save_scoreboard();
+        self.save_timers();
     }
 
     fn join(&mut self, j: JoinInfo, joining: persist::Joining) {
@@ -1314,6 +1318,7 @@ impl Sim {
     fn tick_global(&mut self) {
         self.game_time += 1;
         self.dim.game_time = self.game_time;
+        self.tick_functions();
         if self.game_time % AUTOSAVE_TICKS == 0 {
             self.save();
         }
@@ -1346,10 +1351,15 @@ fn land_spawn(provider: &mut ChunkProvider) -> [i32; 3] {
     [0, 64, 0]
 }
 
+/// The built-in data: the datapack at `path`, `KILN_DATAPACK` or `work/generated`.
+fn datapack_dir(path: Option<&std::path::Path>) -> std::path::PathBuf {
+    let dir = path.map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("KILN_DATAPACK").map(Into::into));
+    dir.unwrap_or_else(|| "work/generated".into())
+}
+
 /// Recipes from the datapack at `path`, `KILN_DATAPACK` or `work/generated`; none if absent.
 fn load_rules(path: Option<&std::path::Path>) -> kiln_inventory::Rules {
-    let dir = path.map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("KILN_DATAPACK").map(Into::into));
-    let dir = dir.unwrap_or_else(|| "work/generated".into());
+    let dir = datapack_dir(path);
     match kiln_inventory::Rules::load(&dir) {
         Ok(rules) => rules,
         Err(e) => {
