@@ -6,7 +6,8 @@
 //! - [`click`]: the serverbound menu packets and their handlers (`container_click` with its
 //!   desync handling, creative mode slots, closing, buttons).
 //! - [`PlayerInventory`], [`SimpleContainer`], the [`Container`] trait for block entities.
-//! - [`recipe`]: recipes loaded at runtime from a datapack, and crafting-grid matching.
+//! - [`recipe`]: recipes loaded at runtime from a datapack; crafting, stonecutting, smithing,
+//!   cooking and brewing lookups; the `update_recipes` packet.
 //! - [`persist`]: playerdata and container block entity item lists.
 //!
 //! Menu operations take an [`Env`] (the player's inventory, the block container, rules and
