@@ -56,6 +56,21 @@ impl Worldgen {
         let structures = Structures::load(&generator, &loader)?;
         Ok(Worldgen { generator, decorator, structures, generate_structures })
     }
+
+    /// The Nether of `pack` for `seed` (noise settings and multi-noise biome source
+    /// `minecraft:nether`).
+    pub fn nether(pack: &Datapack, seed: i64, generate_structures: bool) -> Result<Worldgen, Error> {
+        let generator = Generator::new(pack, "minecraft:nether", "minecraft:nether", seed)?;
+        let loader = Loader::new(pack, generator.biomes.iter().map(|b| b.name.clone()).collect());
+        let decorator = Decorator::new(&generator, &loader)?;
+        let structures = Structures::load(&generator, &loader)?;
+        Ok(Worldgen { generator, decorator, structures, generate_structures })
+    }
+
+    /// The End of `pack` for `seed` (noise settings `minecraft:end`, the end biome source).
+    pub fn end(_pack: &Datapack, _seed: i64, _generate_structures: bool) -> Result<Worldgen, Error> {
+        Err(Error::Invalid("end generation is not implemented yet".into()))
+    }
 }
 
 enum Slot {
