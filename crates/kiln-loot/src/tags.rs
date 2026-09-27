@@ -13,9 +13,9 @@ use std::path::Path;
 #[derive(Debug, Default, Clone)]
 pub struct Tags {
     /// (registry, tag) → entry names (`namespace:path`) in vanilla order.
-    resolved: HashMap<(String, Identifier), Vec<Identifier>>,
+    resolved: HashMap<String, HashMap<Identifier, Vec<Identifier>>>,
     /// The same tags as network ids, for registries kiln has id tables for.
-    ids: HashMap<(String, Identifier), IdSet>,
+    ids: HashMap<String, HashMap<Identifier, IdSet>>,
 }
 
 #[derive(Debug, Clone)]
@@ -56,33 +56,36 @@ impl Tags {
                 slot.extend(entries);
             }
         }
-        let mut resolved = HashMap::new();
+        let mut resolved: HashMap<String, HashMap<Identifier, Vec<Identifier>>> = HashMap::new();
         let keys: Vec<(String, Identifier)> = raw.keys().cloned().collect();
         for key in keys {
             let mut out = Vec::new();
             resolve(&key, &raw, &known, &mut out, &mut Vec::new())?;
-            resolved.insert(key, out);
+            resolved.entry(key.0).or_default().insert(key.1, out);
         }
-        let mut ids = HashMap::new();
-        for ((registry, tag), names) in &resolved {
+        let mut ids: HashMap<String, HashMap<Identifier, IdSet>> = HashMap::new();
+        for (registry, tags) in &resolved {
             if !has_id_table(registry) {
                 continue;
             }
             let reg = Registry(static_name(registry));
-            let list: Vec<i32> = names.iter().filter_map(|n| reg.id(n.as_str())).collect();
-            ids.insert((registry.clone(), tag.clone()), IdSet::new(Some(tag.clone()), list));
+            let slot = ids.entry(registry.clone()).or_default();
+            for (tag, names) in tags {
+                let list: Vec<i32> = names.iter().filter_map(|n| reg.id(n.as_str())).collect();
+                slot.insert(tag.clone(), IdSet::new(Some(tag.clone()), list));
+            }
         }
         Ok(Tags { resolved, ids })
     }
 
     /// The tag as network ids of `registry` (a registry kiln-data has an id table for).
     pub fn ids(&self, registry: Registry, tag: &Identifier) -> Option<&IdSet> {
-        self.ids.get(&(registry.0.to_owned(), tag.clone()))
+        self.ids.get(registry.0).and_then(|m| m.get(tag))
     }
 
     /// Entries of `tag` in `registry` (such as `minecraft:item`), in vanilla order.
     pub fn get(&self, registry: &str, tag: &Identifier) -> Option<&[Identifier]> {
-        self.resolved.get(&(registry.to_owned(), tag.clone())).map(Vec::as_slice)
+        self.resolved.get(registry).and_then(|m| m.get(tag)).map(Vec::as_slice)
     }
 
     pub fn contains(&self, registry: &str, tag: &Identifier, entry: &Identifier) -> bool {
@@ -90,11 +93,11 @@ impl Tags {
     }
 
     pub fn len(&self) -> usize {
-        self.resolved.len()
+        self.resolved.values().map(HashMap::len).sum()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.resolved.is_empty()
+        self.resolved.values().all(HashMap::is_empty)
     }
 }
 

@@ -48,13 +48,13 @@ impl Kind {
 /// Entry names of every loot registry, for resolving references while decoding.
 #[derive(Debug, Default, Clone)]
 pub struct Names {
-    index: HashMap<(Kind, Identifier), usize>,
+    index: HashMap<Kind, HashMap<Identifier, usize>>,
     names: HashMap<Kind, Vec<Identifier>>,
 }
 
 impl Names {
     pub fn index(&self, kind: Kind, id: &Identifier) -> Option<usize> {
-        self.index.get(&(kind, id.clone())).copied()
+        self.index.get(&kind).and_then(|m| m.get(id)).copied()
     }
 
     pub fn names(&self, kind: Kind) -> &[Identifier] {
@@ -65,7 +65,7 @@ impl Names {
         let list = self.names.entry(kind).or_default();
         let i = list.len();
         list.push(id.clone());
-        self.index.insert((kind, id), i);
+        self.index.entry(kind).or_default().insert(id, i);
         i
     }
 }
