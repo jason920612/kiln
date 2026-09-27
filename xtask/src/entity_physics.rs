@@ -1,13 +1,13 @@
 //! Packs tools/ExtractEntityPhysics.java's output into the binary table kiln-entity embeds.
 //!
-//! Layout (little endian): magic "KEP1", state count u32, shape count u32, block count u32;
+//! Layout (little endian): magic "KEP2", state count u32, shape count u32, block count u32;
 //! per shape: coordinate counts u8 ×3 (x, y, z), the coordinates as f64, then the full-cell
 //! bits (x-major, then y, then z; LSB first), padded to a byte;
 //! per state: collision shape u16, entity-inside shape u16 (0xffff = the full block),
 //! fluid u8 (0 none, 1 flowing water, 2 water, 3 flowing lava, 4 lava), amount u8,
 //! sturdy faces u8 (bit = 3D data value), flags u16 (see `STATE_FLAGS`);
 //! per block (registry order): friction, speed factor, jump factor, bounce restitution and
-//! fall distance reduction as f32; then named shapes (context-dependent blocks' shapes): count u8,
+//! fall distance reduction and explosion resistance as f32; then named shapes (context-dependent blocks' shapes): count u8,
 //! per entry a name (length u8, UTF-8) and a shape u16.
 
 use anyhow::{Context, Result, bail};
@@ -28,7 +28,7 @@ pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
     if states.len() != state_count {
         bail!("extractor saw {} states, blocks.json has {state_count}", states.len());
     }
-    let mut out = b"KEP1".to_vec();
+    let mut out = b"KEP2".to_vec();
     for n in [states.len(), shapes.len(), blocks.len()] {
         out.extend_from_slice(&(n as u32).to_le_bytes());
     }
@@ -77,7 +77,7 @@ pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
         out.extend_from_slice(&flags.to_le_bytes());
     }
     for b in blocks {
-        for key in ["friction", "speed", "jump", "bounce", "fall_reduction"] {
+        for key in ["friction", "speed", "jump", "bounce", "fall_reduction", "resistance"] {
             // Printed with Float.toString: parsing as f32 recovers the exact value.
             let v: f32 = b[key].to_string().parse().with_context(|| format!("{key} of {}", b["name"]))?;
             out.extend_from_slice(&v.to_le_bytes());

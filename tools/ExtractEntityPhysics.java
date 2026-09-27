@@ -73,10 +73,11 @@ public class ExtractEntityPhysics {
         List<String> blocks = new ArrayList<>();
         for (Block b : BuiltInRegistries.BLOCK) {
             blocks.add(String.format(Locale.ROOT,
-                    "{\"name\":\"%s\",\"friction\":%s,\"speed\":%s,\"jump\":%s,\"bounce\":%s,\"fall_reduction\":%s}",
+                    "{\"name\":\"%s\",\"friction\":%s,\"speed\":%s,\"jump\":%s,\"bounce\":%s,\"fall_reduction\":%s,"
+                            + "\"resistance\":%s}",
                     BuiltInRegistries.BLOCK.getKey(b), Float.toString(b.getFriction()), Float.toString(b.getSpeedFactor()),
                     Float.toString(b.getJumpFactor()), Float.toString(b.getBounceRestitution()),
-                    Float.toString(b.getFallDistanceReduction())));
+                    Float.toString(b.getFallDistanceReduction()), Float.toString(b.getExplosionResistance())));
         }
         // Shapes that context-dependent blocks return, which the per-state table cannot hold.
         List<String> named = new ArrayList<>();

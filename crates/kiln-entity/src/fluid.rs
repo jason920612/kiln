@@ -252,6 +252,10 @@ impl Entity {
 
     /// `doWaterSplashEffect`: a splash sound and particles; only the random draws matter here.
     fn do_water_splash_effect(&mut self, level: &mut dyn EntityLevel) {
+        // ExperienceOrb overrides it with nothing.
+        if matches!(self.kind, crate::entity::EntityKind::ExperienceOrb(_)) {
+            return;
+        }
         let d = self.delta;
         let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.2);
         let sound = if volume < 0.25 { "minecraft:entity.generic.splash" } else { "minecraft:entity.generic.swim" };

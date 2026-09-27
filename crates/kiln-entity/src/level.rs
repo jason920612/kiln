@@ -56,6 +56,12 @@ pub enum Event {
     Hurt { target: i32, amount: f32, kind: DamageKind, attacker: Option<i32> },
     /// `Level.broadcastEntityEvent`.
     EntityEvent { entity: i32, event: u8 },
+    /// A block an explosion destroyed: the simulation drops its loot (`decay`: the
+    /// `explosion_radius` loot parameter applies) before this crate sets it to air.
+    BlockExploded { pos: BlockPos, state: u16, decay: bool, source: Option<i32> },
+    /// Vanilla block side effects of an entity inside a block that this crate does not
+    /// simulate (hoppers, pressure plates, tripwires, portals, detector rails).
+    EntityInsideBlock { pos: BlockPos, state: u16, entity: i32 },
     /// An explosion at `pos`; `blocks` were destroyed (for the explode packet).
     Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, source: Option<i32> },
 }
@@ -90,6 +96,11 @@ pub trait EntityLevel {
 
     /// Lowest block y of the dimension.
     fn min_y(&self) -> i32;
+
+    /// Highest block y of the dimension.
+    fn max_y(&self) -> i32 {
+        self.min_y() + 383
+    }
 
     fn is_raining_at(&self, pos: BlockPos) -> bool {
         let _ = pos;
@@ -126,6 +137,10 @@ pub trait EntityLevel {
 
     /// A fresh network id for a new entity.
     fn next_entity_id(&mut self) -> i32;
+
+    /// A seed for a new entity's own random source (vanilla seeds each from a global
+    /// uniquifier and the clock).
+    fn fresh_seed(&mut self) -> i64;
 
     /// Players (for experience orbs); empty by default.
     fn players(&self) -> Vec<PlayerView> {

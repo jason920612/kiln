@@ -247,7 +247,26 @@ impl Entity {
 
     /// `Block.stepOn` for the blocks that react to non-player entities.
     fn step_on(&mut self, level: &mut dyn EntityLevel, pos: BlockPos, state: u16) {
-        let _ = (level, pos, state);
+        match kind(state) {
+            Kind::Slime => {
+                let d = self.delta.y.abs();
+                if d < 0.1 && !self.shift_key_down {
+                    let e = 0.4 + d * 0.2;
+                    self.delta = self.delta.multiply(e, 1.0, e);
+                }
+            }
+            _ => {
+                let name = crate::blocks::block_name(state);
+                if (name == "minecraft:redstone_ore" || name == "minecraft:deepslate_redstone_ore") && !self.shift_key_down {
+                    let info = kiln_data::blocks_types::block_of(state);
+                    if info.property(state, "lit") == Some("false") {
+                        if let Some(lit) = info.with_property(state, "lit", "true") {
+                            level.set_block(pos, lit, 3);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// `checkInsideBlocks(movements, collector)`.

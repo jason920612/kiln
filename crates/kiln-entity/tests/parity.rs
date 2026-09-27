@@ -132,6 +132,10 @@ impl EntityLevel for TestLevel {
         self.spawned.push(entity);
     }
 
+    fn fresh_seed(&mut self) -> i64 {
+        self.next_id as i64 * 0x5DEE_CE66
+    }
+
     fn next_entity_id(&mut self) -> i32 {
         self.next_id += 1;
         self.next_id
@@ -168,7 +172,7 @@ fn spawn(spec: &Value) -> Entity {
             "minecraft:tnt",
             id,
             0,
-            EntityKind::Tnt(tnt::TntData { fuse: int("fuse", 80), block_state: 0, explosion_power: 4.0, owner: None }),
+            EntityKind::Tnt(tnt::TntData { fuse: int("fuse", 80), ..tnt::TntData::new() }),
             seed,
         ),
         "falling_block" => {
@@ -193,7 +197,7 @@ fn spawn(spec: &Value) -> Entity {
             "minecraft:experience_orb",
             id,
             0,
-            EntityKind::ExperienceOrb(xp_orb::OrbData { value: int("value", 1), count: int("count", 1), age: int("age", 0), health: 5 }),
+            EntityKind::ExperienceOrb(xp_orb::OrbData { count: int("count", 1), age: int("age", 0), ..xp_orb::OrbData::new(int("value", 1)) }),
             seed,
         ),
         other => panic!("unknown kind {other}"),
@@ -261,6 +265,8 @@ fn replay(s: &Value) -> Result<(), String> {
         level.insert(spawn(spec));
     }
     let trace = s["trace"].as_array().unwrap();
+    let initial = level.slots.len();
+    let mut seen_spawned: Vec<usize> = Vec::new();
     for (tick, expected) in trace.iter().enumerate() {
         let order: Vec<usize> = (0..level.slots.len()).collect();
         for i in order {
@@ -282,10 +288,22 @@ fn replay(s: &Value) -> Result<(), String> {
                 return Err(format!("tick {tick}: vanilla has entity #{k} ({want:?}), kiln has none"));
             };
             let got = state(slot.entity.as_ref().unwrap());
+            // Entities spawned during the run (drops, primed TNT) get fresh ids and, in vanilla,
+            // velocities from an unseeded random: compare where and what they are when they appear.
+            let spawned = k >= initial;
+            if spawned && seen_spawned.contains(&k) {
+                continue;
+            }
+            if spawned {
+                seen_spawned.push(k);
+            }
             if got.len() != want.len() {
                 return Err(format!("tick {tick}: entity {k} state length {} vs {}", got.len(), want.len()));
             }
             for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                if spawned && matches!(i, 0 | 4 | 5 | 6) {
+                    continue;
+                }
                 if g.to_bits() != w.to_bits() {
                     return Err(format!(
                         "tick {tick} entity {} field {}: kiln {g:?} vanilla {w:?}\n  kiln    {got:?}\n  vanilla {want:?}",

@@ -123,6 +123,9 @@ public class EntityVectors {
     static List<Scenario> scenarios() {
         List<Scenario> out = new ArrayList<>();
         Scenarios.items(out);
+        Scenarios.fallingBlocks(out);
+        Scenarios.tnt(out);
+        Scenarios.orbs(out);
         return out;
     }
 
@@ -235,6 +238,8 @@ public class EntityVectors {
     static void prepare(MinecraftServer server) {
         ServerLevel level = server.overworld();
         level.tickRateManager().setFrozen(true);
+        // Explosion loot is not simulated by kiln-entity (it reports destroyed blocks instead).
+        server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), "gamerule minecraft:block_drops false");
         for (int cx = (BX >> 4) - 3; cx <= (BX >> 4) + 3; cx++) {
             for (int cz = (BZ >> 4) - 3; cz <= (BZ >> 4) + 3; cz++) {
                 level.setChunkForced(cx, cz, true);
@@ -268,7 +273,7 @@ public class EntityVectors {
     }
 
     static AABB box() {
-        return new AABB(BX - 40, BY - 40, BZ - 40, BX + 40, BY + 60, BZ + 40);
+        return new AABB(BX - 40, BY - 250, BZ - 40, BX + 40, BY + 60, BZ + 40);
     }
 
     static String run(ServerLevel level, Scenario s) throws Exception {
@@ -351,7 +356,9 @@ public class EntityVectors {
                 FallingBlockEntity f = new FallingBlockEntity(EntityTypes.FALLING_BLOCK, level);
                 Field bs = FallingBlockEntity.class.getDeclaredField("blockState");
                 bs.setAccessible(true);
-                bs.set(f, parseState((String) spec.extra.get("block")));
+                BlockState falling = parseState((String) spec.extra.get("block"));
+                bs.set(f, falling);
+                spec.with("block_id", Block.getId(falling));
                 f.time = (Integer) spec.extra.getOrDefault("time", 0);
                 if (Boolean.TRUE.equals(spec.extra.get("cancel_drop"))) {
                     Field cd = FallingBlockEntity.class.getDeclaredField("cancelDrop");
@@ -716,5 +723,113 @@ class Scenarios {
         s.entity("item", 0.5, -60 - EntityVectors.BY, 0.5, 0, -3, 0, r.nextLong());
         s.ticks(30);
         out.add(s);
+    }
+
+    static void fallingBlocks(List<EntityVectors.Scenario> out) {
+        Random r = new Random(7);
+        String[] falling = {"minecraft:sand", "minecraft:gravel", "minecraft:red_sand", "minecraft:white_concrete_powder",
+            "minecraft:anvil[facing=east]", "minecraft:suspicious_sand", "minecraft:dragon_egg"};
+        String[] targets = {"minecraft:stone", "minecraft:oak_slab[type=bottom]", "minecraft:oak_slab[type=top]", "minecraft:torch",
+            "minecraft:white_carpet", "minecraft:snow[layers=1]", "minecraft:snow[layers=3]", "minecraft:water", "minecraft:lava",
+            "minecraft:oak_fence", "minecraft:short_grass", "minecraft:cobweb", "minecraft:rail", "minecraft:chest[facing=north]",
+            "minecraft:water[level=3]", "minecraft:oak_trapdoor[half=bottom]", "minecraft:hopper", "minecraft:fire",
+            "minecraft:glow_lichen[down=true]", "minecraft:oak_leaves", "minecraft:soul_sand", "minecraft:honey_block",
+            "minecraft:powder_snow", "minecraft:scaffolding[distance=0,bottom=false]", "minecraft:cactus"};
+        for (int k = 0; k < 100; k++) {
+            String f = falling[k % falling.length];
+            String t = targets[r.nextInt(targets.length)];
+            var s = new EntityVectors.Scenario("falling/" + k, r.nextLong());
+            s.fill(-2, 0, -2, 2, 0, 2, "minecraft:stone");
+            s.block(0, 1, 0, t);
+            if (t.contains("torch") || t.contains("rail") || t.contains("carpet") || t.contains("grass")) s.block(0, 0, 0, "minecraft:stone");
+            if (r.nextInt(4) == 0) s.block(0, 2, 0, t.contains("water") ? "minecraft:water" : "minecraft:air");
+            double h = 2 + r.nextInt(8);
+            double dx = r.nextInt(3) == 0 ? rnd(r, -0.1, 0.1) : 0;
+            s.entity("falling_block", 0.5, h, 0.5, dx, 0, 0, r.nextLong()).with("block", f).with("time", r.nextInt(4) == 0 ? 1 : 0);
+            s.region = new int[] {-3, 0, -3, 3, 12, 3};
+            s.ticks(60);
+            out.add(s);
+        }
+        // Long falls (drop after 600 ticks is too long; out of world after 100 below min y).
+        var s = new EntityVectors.Scenario("falling/void", r.nextLong());
+        s.entity("falling_block", 0.5, -EntityVectors.BY - 120, 0.5, 0, -2, 0, r.nextLong()).with("block", "minecraft:sand").with("time", 95);
+        s.ticks(20);
+        out.add(s);
+    }
+
+    static void tnt(List<EntityVectors.Scenario> out) {
+        Random r = new Random(8);
+        String[] floors = {"minecraft:stone", "minecraft:ice", "minecraft:slime_block", "minecraft:honey_block", "minecraft:soul_sand"};
+        // Fuses and movement without explosions reaching anything interesting.
+        for (int k = 0; k < 20; k++) {
+            var s = new EntityVectors.Scenario("tnt/move/" + k, r.nextLong());
+            s.fill(-4, 0, -4, 4, 0, 4, floors[k % floors.length]);
+            if (k % 4 == 3) s.fill(-4, 1, -4, 4, 2, 4, "minecraft:water");
+            s.entity("tnt", rnd(r, -1, 1), rnd(r, 1, 4), rnd(r, -1, 1), rnd(r, -0.1, 0.1), rnd(r, 0, 0.3), rnd(r, -0.1, 0.1), r.nextLong())
+                    .with("fuse", 30 + r.nextInt(40));
+            s.ticks(25);
+            out.add(s);
+        }
+        // Explosions over terrain with items and TNT around (no loot, no chained TNT blocks).
+        String[] terrain = {"minecraft:stone", "minecraft:dirt", "minecraft:obsidian", "minecraft:oak_planks", "minecraft:glass",
+            "minecraft:sand", "minecraft:water"};
+        for (int k = 0; k < 40; k++) {
+            var s = new EntityVectors.Scenario("tnt/explode/" + k, r.nextLong());
+            s.fill(-5, -3, -5, 5, 0, 5, terrain[r.nextInt(terrain.length)]);
+            for (int i = 0; i < 12; i++) s.block(r.nextInt(11) - 5, 1 + r.nextInt(2), r.nextInt(11) - 5, terrain[r.nextInt(terrain.length)]);
+            if (k % 3 == 0) s.fill(-2, 1, 2, 2, 3, 2, "minecraft:obsidian");
+            s.entity("tnt", rnd(r, 0, 1), 1.0, rnd(r, 0, 1), 0, 0, 0, r.nextLong()).with("fuse", 1 + r.nextInt(3));
+            int n = r.nextInt(5);
+            for (int i = 0; i < n; i++) {
+                if (r.nextBoolean()) {
+                    s.entity("tnt", rnd(r, -4, 5), rnd(r, 1, 3), rnd(r, -4, 5), 0, 0, 0, r.nextLong()).with("fuse", 20 + r.nextInt(30));
+                } else {
+                    s.entity("item", rnd(r, -4, 5), rnd(r, 1, 3), rnd(r, -4, 5), 0, 0, 0, r.nextLong())
+                            .with("item", r.nextBoolean() ? "minecraft:nether_star" : "minecraft:cobblestone").with("pickup_delay", 32767);
+                }
+            }
+            s.region = new int[] {-6, -4, -6, 6, 4, 6};
+            s.ticks(12);
+            out.add(s);
+        }
+    }
+
+    static void orbs(List<EntityVectors.Scenario> out) {
+        Random r = new Random(9);
+        String[] floors = {"minecraft:stone", "minecraft:ice", "minecraft:soul_sand", "minecraft:water", "minecraft:lava",
+            "minecraft:slime_block", "minecraft:honey_block", "minecraft:cobweb"};
+        for (int k = 0; k < 40; k++) {
+            var s = new EntityVectors.Scenario("orb/" + k, r.nextLong());
+            String f = floors[k % floors.length];
+            s.fill(-3, 0, -3, 3, 0, 3, "minecraft:stone");
+            if (f.contains("water") || f.contains("lava") || f.contains("cobweb")) s.fill(-2, 1, -2, 2, 2, 2, f);
+            else s.fill(-3, 0, -3, 3, 0, 3, f);
+            int n = 1 + r.nextInt(3);
+            for (int i = 0; i < n; i++) {
+                s.entity("experience_orb", rnd(r, -1, 2), rnd(r, 1.2, 4), rnd(r, -1, 2), rnd(r, -0.2, 0.2), rnd(r, 0, 0.3),
+                        rnd(r, -0.2, 0.2), r.nextLong()).with("value", 1 + r.nextInt(3));
+            }
+            s.ticks(100);
+            out.add(s);
+        }
+        // Enough orbs that ids differ by 40 and merge.
+        for (int k = 0; k < 3; k++) {
+            var s = new EntityVectors.Scenario("orb/merge/" + k, r.nextLong());
+            s.fill(-3, 0, -3, 3, 0, 3, "minecraft:stone");
+            for (int i = 0; i < 45; i++) {
+                s.entity("experience_orb", rnd(r, 0, 1), rnd(r, 1.1, 1.5), rnd(r, 0, 1), 0, 0, 0, r.nextLong()).with("value", 1 + k % 2);
+            }
+            s.ticks(45);
+            out.add(s);
+        }
+        // Stuck inside blocks.
+        for (int k = 0; k < 6; k++) {
+            var s = new EntityVectors.Scenario("orb/stuck/" + k, r.nextLong());
+            s.fill(-1, 0, -1, 1, 2, 1, "minecraft:stone");
+            s.block(k % 3 - 1, 1, 0, "minecraft:air");
+            s.entity("experience_orb", rnd(r, 0.3, 0.7), rnd(r, 1.2, 1.7), rnd(r, 0.3, 0.7), 0, 0, 0, r.nextLong());
+            s.ticks(40);
+            out.add(s);
+        }
     }
 }

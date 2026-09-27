@@ -85,6 +85,7 @@ pub struct BlockFactors {
     pub jump: f32,
     pub bounce: f32,
     pub fall_reduction: f32,
+    pub explosion_resistance: f32,
 }
 
 struct Table {
@@ -98,7 +99,7 @@ fn table() -> &'static Table {
     static TABLE: OnceLock<Table> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut r = Reader { data: RAW, pos: 0 };
-        assert_eq!(r.bytes(4), b"KEP1", "physics.bin: bad magic");
+        assert_eq!(r.bytes(4), b"KEP2", "physics.bin: bad magic");
         let (n_states, n_shapes, n_blocks) = (r.u32() as usize, r.u32() as usize, r.u32() as usize);
         let mut shapes = Vec::with_capacity(n_shapes);
         for _ in 0..n_shapes {
@@ -120,7 +121,7 @@ fn table() -> &'static Table {
             })
             .collect();
         let blocks = (0..n_blocks)
-            .map(|_| BlockFactors { friction: r.f32(), speed: r.f32(), jump: r.f32(), bounce: r.f32(), fall_reduction: r.f32() })
+            .map(|_| BlockFactors { friction: r.f32(), speed: r.f32(), jump: r.f32(), bounce: r.f32(), fall_reduction: r.f32(), explosion_resistance: r.f32() })
             .collect();
         let mut named = HashMap::new();
         for _ in 0..r.u8() {

@@ -107,6 +107,7 @@ pub enum Tag {
     FallDamageResetting = 1 << 4,
     BlocksFluidFlow = 1 << 5,
     Fire = 1 << 6,
+    Anvil = 1 << 7,
 }
 
 const TAGS: &[(Tag, &str)] = &[
@@ -117,6 +118,7 @@ const TAGS: &[(Tag, &str)] = &[
     (Tag::FallDamageResetting, "minecraft:fall_damage_resetting"),
     (Tag::BlocksFluidFlow, "minecraft:blocks_fluid_flow"),
     (Tag::Fire, "minecraft:fire"),
+    (Tag::Anvil, "minecraft:anvil"),
 ];
 
 pub fn has_tag(state: u16, tag: Tag) -> bool {
