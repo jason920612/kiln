@@ -438,7 +438,15 @@ impl Generator {
         after(Step::Fill, chunk);
 
         let biomes = &mut gs.biomes;
-        self.material.build_surface(s, &mut |x, y, z| biomes.zoomed(self, x, y, z), chunk);
+        let mut possible = vec![false; self.biomes.len()];
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                for &b in biomes.get(self, chunk.x + dx, chunk.z + dz) {
+                    possible[b as usize] = true;
+                }
+            }
+        }
+        self.material.build_surface(s, &mut |x, y, z| biomes.zoomed(self, x, y, z), &possible, chunk);
         after(Step::Surface, chunk);
 
         self.carve(s, &mut gs.point_context, &mut aquifer, chunk);

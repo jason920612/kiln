@@ -221,8 +221,16 @@ impl MaterialSystem {
         self.clay_bands[((y.wrapping_add(offset).wrapping_add(n)) % n) as usize]
     }
 
-    /// `MaterialSystem.buildSurface`.
-    pub fn build_surface(&self, s: &mut Scratch, biome: &mut dyn FnMut(i32, i32, i32) -> u16, chunk: &mut ProtoChunk) {
+    /// `MaterialSystem.buildSurface`. `possible` flags every biome stored in the chunk and its
+    /// neighbours (`ChunkStatusTasks.collectPossibleBiomes`): biome conditions that cannot
+    /// differ within that set are decided without a lookup (`BiomeCondition.compile`).
+    pub fn build_surface(
+        &self,
+        s: &mut Scratch,
+        biome: &mut dyn FnMut(i32, i32, i32) -> u16,
+        possible: &[bool],
+        chunk: &mut ProtoChunk,
+    ) {
         let (min_x, min_z) = (chunk.x << 4, chunk.z << 4);
         let highest = (0..chunk.sections()).rev().find(|&i| chunk.blocks[i << 12..(i + 1) << 12].iter().any(|&b| !is_air(b)));
         let top = match highest {
@@ -231,6 +239,7 @@ impl MaterialSystem {
         };
         let expected = Volume::blocks([16, (top - chunk.min_y + 1).max(1), 16], [min_x, chunk.min_y, min_z]);
         let mut ctx = Context::new(self, s, biome, expected);
+        ctx.possible = Some((possible, possible.iter().filter(|&&p| p).count()));
         for x in 0..16usize {
             for z in 0..16usize {
                 let (bx, bz) = (min_x + x as i32, min_z + z as i32);
@@ -578,6 +587,8 @@ impl RuleCompiler<'_> {
 /// sampled at compile time, memoized noises).
 struct Context<'a, 'b> {
     sys: &'a MaterialSystem,
+    /// Possible biomes and their count, if known.
+    possible: Option<(&'b [bool], usize)>,
     s: &'b mut Scratch,
     biome: &'b mut dyn FnMut(i32, i32, i32) -> u16,
     expected: Volume,
@@ -620,6 +631,7 @@ impl<'a, 'b> Context<'a, 'b> {
         let preliminary_volume = Volume::blocks([expected.size[0], 1, expected.size[2]], [expected.min[0], 0, expected.min[2]]);
         Context {
             sys,
+            possible: None,
             s,
             biome,
             expected,
@@ -716,6 +728,15 @@ impl<'a, 'b> Context<'a, 'b> {
     fn test(&mut self, c: &Cond) -> bool {
         match c {
             Cond::Biome(list) => {
+                if let Some((possible, count)) = self.possible {
+                    let hits = list.iter().filter(|&&b| possible[b as usize]).count();
+                    if hits == 0 {
+                        return false;
+                    }
+                    if hits == count {
+                        return true;
+                    }
+                }
                 let b = self.biome();
                 list.contains(&b)
             }
