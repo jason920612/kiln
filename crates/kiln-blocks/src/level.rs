@@ -67,6 +67,8 @@ pub enum Effect {
     Sound { pos: BlockPos, sound: &'static str, volume: f32, pitch: f32 },
     /// A vibration game event (`minecraft:block_activate`, ...).
     GameEvent { pos: BlockPos, event: &'static str },
+    /// `FallingBlockEntity.fall`: the block left `pos` as a falling entity (already removed).
+    FallingBlock { pos: BlockPos, state: u16 },
     /// A block event that ran and must reach clients (`ClientboundBlockEventPacket`).
     BlockEvent { pos: BlockPos, block: BlockId, a: i32, b: i32 },
 }

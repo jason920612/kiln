@@ -74,6 +74,7 @@ const SKY_DOWN: u16 = 1 << 0;
 const SHAPE_OCCLUDES: u16 = 1 << 1;
 const CAN_OCCLUDE: u16 = 1 << 2;
 const SOLID_RENDER: u16 = 1 << 3;
+const LIQUID: u16 = 1 << 5;
 const REPLACEABLE: u16 = 1 << 6;
 const RANDOM_TICKS: u16 = 1 << 7;
 const BLOCK_ENTITY: u16 = 1 << 8;
@@ -111,6 +112,11 @@ pub fn can_occlude(state: u16) -> bool {
 
 pub fn solid_render(state: u16) -> bool {
     entry(state).flags & SOLID_RENDER != 0
+}
+
+/// `BlockState.liquid`: water and lava blocks.
+pub fn liquid(state: u16) -> bool {
+    entry(state).flags & LIQUID != 0
 }
 
 /// Replaced when a block is placed into it (air, water, tall grass, ...).

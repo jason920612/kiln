@@ -5,6 +5,7 @@
 //! their water on shape updates, as almost every `SimpleWaterloggedBlock` does.
 
 pub mod connect;
+pub mod misc;
 pub mod support;
 
 use crate::fluid;
@@ -33,6 +34,8 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::neighbor_changed(level, s, pos),
         C::RepeaterBlock => diode::neighbor_changed(level, s, pos),
         C::RedstoneLampBlock => components::lamp_neighbor_changed(level, s, pos),
+        C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
+        _ if logic::is_instance(s, C::TrapDoorBlock) => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::DoorBlock) => components::door_neighbor_changed(level, s, pos, source),
         _ => {}
     }
@@ -57,7 +60,15 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
             return state::set(s, "shape", connect::stairs_shape(level, s, pos));
         }
         C::WallBlock if dir != Direction::Down => return connect::wall_update(level, s, pos, dir, neighbor_state),
+        C::FenceGateBlock => return misc::gate_update_shape(level, s, pos, dir, neighbor_state),
         _ => {}
+    }
+    if logic::is_instance(s, C::LeavesBlock) {
+        return misc::leaves_update_shape(level, s, pos, neighbor_state);
+    }
+    if logic::is_instance(s, C::FallingBlock) {
+        misc::falling_schedule(level, s, pos);
+        return s;
     }
     if (logic::is_instance(s, C::FenceBlock) || logic::is_instance(s, C::IronBarsBlock)) && dir.is_horizontal() {
         return connect::cross_update(s, dir, neighbor_state);
@@ -90,6 +101,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, _moved
         C::RedstoneWireBlock => wire::on_place(level, s, pos, old),
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::on_place(level, s, pos),
         C::RepeaterBlock => diode::on_place(level, s, pos),
+        _ if logic::is_instance(s, C::FallingBlock) => misc::falling_schedule(level, s, pos),
         _ => {}
     }
 }
@@ -114,13 +126,20 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::RepeaterBlock => diode::tick(level, s, pos),
         C::ButtonBlock => components::button_tick(level, s, pos),
         C::RedstoneLampBlock => components::lamp_tick(level, s, pos),
+        _ if logic::is_instance(s, C::LeavesBlock) => misc::leaves_tick(level, s, pos),
+        _ if logic::is_instance(s, C::FallingBlock) => misc::falling_tick(level, s, pos),
         _ => {}
     }
 }
 
-/// `randomTick`. No random-tick behaviour is simulated yet (crop growth, grass spread, lava
-/// fire, ...); the positions are still drawn so the random-tick sequence stays aligned.
-pub fn random_tick<L: Level>(_level: &mut L, _s: u16, _pos: BlockPos) {}
+/// `randomTick`: leaf decay. Other random-tick behaviour (crop growth, grass spread, lava
+/// fire, ...) is not simulated yet; the positions are still drawn so the random-tick
+/// sequence stays aligned.
+pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    if logic::is_instance(s, BlockClass::LeavesBlock) {
+        misc::leaves_random_tick(level, s, pos);
+    }
+}
 
 /// `triggerEvent` for a block event; true if it should reach clients.
 pub fn trigger_event<L: Level>(_level: &mut L, _s: u16, _pos: BlockPos, _a: i32, _b: i32) -> bool {

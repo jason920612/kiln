@@ -9,6 +9,7 @@
 
 pub mod behaviour;
 pub mod block_events;
+pub mod commands;
 pub mod fluid;
 pub mod level;
 pub mod pos;

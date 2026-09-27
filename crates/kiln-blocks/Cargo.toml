@@ -11,5 +11,6 @@ kiln-javamath.workspace = true
 kiln-proto.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 kiln-storage.workspace = true
 kiln-world.workspace = true
