@@ -77,7 +77,30 @@ pub fn update_shape(r: &mut Region, s: u16, p: BlockPos, d: Dir, np: BlockPos, n
 /// The `updateShape` override of one class, if it decides (`None` defers to the superclass).
 fn class_update_shape(class: &str, r: &mut Region, s: u16, p: BlockPos, d: Dir, _np: BlockPos, ns: u16) -> Option<u16> {
     let survives = |r: &mut Region| crate::survive::can_survive(s, r, p);
+    let name = kiln_data::blocks_types::block_of(s).name;
+    if matches!(class, "LeavesBlock" | "MangroveRootsBlock" | "MangrovePropaguleBlock") && prop(s, "waterlogged") == Some("true") {
+        r.schedule_fluid_tick(p, "minecraft:water", WATER_TICK_DELAY);
+    }
     match class {
+        "LeavesBlock" => {
+            let d = leaf_distance(ns) + 1;
+            if d != 1 || prop(s, "distance") != Some(&d.to_string()) {
+                r.schedule_block_tick(p, name, 1);
+            }
+            Some(s)
+        }
+        "LiquidBlock" => {
+            let f = crate::block_facts::fluid(s);
+            if f.source || crate::block_facts::fluid(ns).source {
+                let delay = if f.is_lava() { LAVA_TICK_DELAY } else { WATER_TICK_DELAY };
+                r.schedule_fluid_tick(p, f.name(), delay);
+            }
+            None
+        }
+        "CreakingHeartBlock" => {
+            r.schedule_block_tick(p, name, 1);
+            None
+        }
         "VegetationBlock" | "CarpetBlock" | "SnowLayerBlock" => (!survives(r)).then_some(state::AIR),
         "DoublePlantBlock" => {
             let half = prop(s, "half");
@@ -91,6 +114,10 @@ fn class_update_shape(class: &str, r: &mut Region, s: u16, p: BlockPos, d: Dir, 
         }
         "MangrovePropaguleBlock" => (d == Dir::Up && !survives(r)).then_some(state::AIR),
         "HangingMossBlock" => {
+            let above = r.get(p.above());
+            if !(can_attach_to(Dir::Up, above) || same_block(above, s)) {
+                r.schedule_block_tick(p, name, 1);
+            }
             let below = r.get(p.below());
             Some(with_prop(s, "tip", if same_block(below, s) { "false" } else { "true" }))
         }
@@ -114,6 +141,19 @@ fn class_update_shape(class: &str, r: &mut Region, s: u16, p: BlockPos, d: Dir, 
         }
         _ => None,
     }
+}
+
+/// `WaterFluid.getTickDelay`.
+const WATER_TICK_DELAY: i32 = 5;
+/// `LavaFluid.getTickDelay` outside ultra-warm dimensions.
+const LAVA_TICK_DELAY: i32 = 30;
+
+/// `LeavesBlock.getDistanceAt`.
+fn leaf_distance(s: u16) -> i32 {
+    if vtags::is(s, "prevents_nearby_leaf_decay") {
+        return 0;
+    }
+    prop(s, "distance").and_then(|d| d.parse().ok()).unwrap_or(7)
 }
 
 const VINE_FACES: [(Dir, &str); 5] = [(Dir::Up, "up"), (Dir::North, "north"), (Dir::East, "east"), (Dir::South, "south"), (Dir::West, "west")];
