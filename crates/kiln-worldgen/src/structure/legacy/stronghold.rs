@@ -55,7 +55,7 @@ fn generate(ctx: &mut GenCtx) -> Vec<Box<dyn Piece>> {
 
 /// Piece types in `STRONGHOLD_PIECE_WEIGHTS` order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Kind2 {
+enum PieceKind {
     Straight,
     PrisonHall,
     LeftTurn,
@@ -70,35 +70,35 @@ enum Kind2 {
 }
 
 /// (type, weight, max count).
-const WEIGHTS: [(Kind2, i32, i32); 11] = [
-    (Kind2::Straight, 40, 0),
-    (Kind2::PrisonHall, 5, 5),
-    (Kind2::LeftTurn, 20, 0),
-    (Kind2::RightTurn, 20, 0),
-    (Kind2::RoomCrossing, 10, 6),
-    (Kind2::StraightStairsDown, 5, 5),
-    (Kind2::StairsDown, 5, 5),
-    (Kind2::FiveCrossing, 5, 4),
-    (Kind2::ChestCorridor, 5, 4),
-    (Kind2::Library, 10, 2),
-    (Kind2::PortalRoom, 20, 1),
+const WEIGHTS: [(PieceKind, i32, i32); 11] = [
+    (PieceKind::Straight, 40, 0),
+    (PieceKind::PrisonHall, 5, 5),
+    (PieceKind::LeftTurn, 20, 0),
+    (PieceKind::RightTurn, 20, 0),
+    (PieceKind::RoomCrossing, 10, 6),
+    (PieceKind::StraightStairsDown, 5, 5),
+    (PieceKind::StairsDown, 5, 5),
+    (PieceKind::FiveCrossing, 5, 4),
+    (PieceKind::ChestCorridor, 5, 4),
+    (PieceKind::Library, 10, 2),
+    (PieceKind::PortalRoom, 20, 1),
 ];
 
 /// `StrongholdPiece.SmallDoorType`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Door {
     Opening,
-    WoodDoor,
+    Wood,
     Grates,
-    IronDoor,
+    Iron,
 }
 
 impl Door {
     fn random(random: &mut WorldgenRandom) -> Door {
         match random.next_int_bounded(5) {
-            2 => Door::WoodDoor,
+            2 => Door::Wood,
             3 => Door::Grates,
-            4 => Door::IronDoor,
+            4 => Door::Iron,
             _ => Door::Opening,
         }
     }
@@ -136,9 +136,9 @@ struct ShPiece {
 struct Gen {
     list: Vec<ShPiece>,
     /// (type, weight, placed, max).
-    weights: Vec<(Kind2, i32, i32, i32)>,
-    imposed: Option<Kind2>,
-    previous: Option<Kind2>,
+    weights: Vec<(PieceKind, i32, i32, i32)>,
+    imposed: Option<PieceKind>,
+    previous: Option<PieceKind>,
     pending: Vec<usize>,
     portal: bool,
 }
@@ -153,18 +153,18 @@ impl Gen {
     }
 
     /// `PieceWeight.doPlace` with the library and portal room depth limits.
-    fn do_place(w: &(Kind2, i32, i32, i32), depth: i32) -> bool {
+    fn do_place(w: &(PieceKind, i32, i32, i32), depth: i32) -> bool {
         let base = w.3 == 0 || w.2 < w.3;
         match w.0 {
-            Kind2::Library => base && depth > 4,
-            Kind2::PortalRoom => base && depth > 5,
+            PieceKind::Library => base && depth > 4,
+            PieceKind::PortalRoom => base && depth > 5,
             _ => base,
         }
     }
 
     /// `findAndCreatePieceFactory`.
     #[allow(clippy::too_many_arguments)]
-    fn create(&self, kind: Kind2, random: &mut WorldgenRandom, x: i32, y: i32, z: i32, dir: Dir, depth: i32) -> Option<ShPiece> {
+    fn create(&self, kind: PieceKind, random: &mut WorldgenRandom, x: i32, y: i32, z: i32, dir: Dir, depth: i32) -> Option<ShPiece> {
         let boxed = |ox: i32, oy: i32, w: i32, h: i32, d: i32| {
             let b = BoundingBox::orient(x, y, z, ox, oy, 0, w, h, d, dir);
             (is_ok_box(&b) && self.collides(&b).is_none()).then_some(b)
@@ -175,40 +175,40 @@ impl Gen {
             ShPiece { base, door, part }
         };
         Some(match kind {
-            Kind2::Straight => {
+            PieceKind::Straight => {
                 let b = boxed(-1, -1, 5, 5, 7)?;
                 let door = Door::random(random);
                 let left = random.next_int_bounded(2) == 0;
                 let right = random.next_int_bounded(2) == 0;
                 piece("minecraft:shs", b, door, Part::Straight { left, right })
             }
-            Kind2::PrisonHall => {
+            PieceKind::PrisonHall => {
                 let b = boxed(-1, -1, 9, 5, 11)?;
                 piece("minecraft:shph", b, Door::random(random), Part::PrisonHall)
             }
-            Kind2::LeftTurn => {
+            PieceKind::LeftTurn => {
                 let b = boxed(-1, -1, 5, 5, 5)?;
                 piece("minecraft:shlt", b, Door::random(random), Part::LeftTurn)
             }
-            Kind2::RightTurn => {
+            PieceKind::RightTurn => {
                 let b = boxed(-1, -1, 5, 5, 5)?;
                 piece("minecraft:shrt", b, Door::random(random), Part::RightTurn)
             }
-            Kind2::RoomCrossing => {
+            PieceKind::RoomCrossing => {
                 let b = boxed(-4, -1, 11, 7, 11)?;
                 let door = Door::random(random);
                 let ty = random.next_int_bounded(5);
                 piece("minecraft:shrc", b, door, Part::RoomCrossing { ty })
             }
-            Kind2::StraightStairsDown => {
+            PieceKind::StraightStairsDown => {
                 let b = boxed(-1, -7, 5, 11, 8)?;
                 piece("minecraft:shssd", b, Door::random(random), Part::StraightStairsDown)
             }
-            Kind2::StairsDown => {
+            PieceKind::StairsDown => {
                 let b = boxed(-1, -7, 5, 11, 5)?;
                 piece("minecraft:shsd", b, Door::random(random), Part::StairsDown { source: false })
             }
-            Kind2::FiveCrossing => {
+            PieceKind::FiveCrossing => {
                 let b = boxed(-4, -3, 10, 9, 11)?;
                 let door = Door::random(random);
                 let left_low = random.next_bool();
@@ -217,16 +217,16 @@ impl Gen {
                 let right_high = random.next_int_bounded(3) > 0;
                 piece("minecraft:sh5c", b, door, Part::FiveCrossing { left_low, left_high, right_low, right_high })
             }
-            Kind2::ChestCorridor => {
+            PieceKind::ChestCorridor => {
                 let b = boxed(-1, -1, 5, 5, 7)?;
                 piece("minecraft:shcc", b, Door::random(random), Part::ChestCorridor { chest: AtomicBool::new(false) })
             }
-            Kind2::Library => {
+            PieceKind::Library => {
                 let b = boxed(-4, -1, 14, 11, 15).or_else(|| boxed(-4, -1, 14, 6, 15))?;
                 let door = Door::random(random);
                 piece("minecraft:shli", b, door, Part::Library { tall: b.y_span() > 6 })
             }
-            Kind2::PortalRoom => {
+            PieceKind::PortalRoom => {
                 let b = boxed(-4, -1, 11, 8, 16)?;
                 piece("minecraft:shpr", b, Door::Opening, Part::PortalRoom { spawner: AtomicBool::new(false) })
             }
@@ -235,7 +235,7 @@ impl Gen {
 
     /// `generatePieceFromSmallDoor`.
     #[allow(clippy::too_many_arguments)]
-    fn from_small_door(&mut self, random: &mut WorldgenRandom, x: i32, y: i32, z: i32, dir: Dir, depth: i32) -> Option<ShPiece> {
+    fn piece_at_small_door(&mut self, random: &mut WorldgenRandom, x: i32, y: i32, z: i32, dir: Dir, depth: i32) -> Option<ShPiece> {
         let mut any = false;
         for w in &self.weights {
             if w.3 > 0 && w.2 < w.3 {
@@ -303,7 +303,7 @@ impl Gen {
         if depth > 50 || (x - start.min_x).abs() > 112 || (z - start.min_z).abs() > 112 {
             return;
         }
-        if let Some(p) = self.from_small_door(random, x, y, z, dir, depth + 1) {
+        if let Some(p) = self.piece_at_small_door(random, x, y, z, dir, depth + 1) {
             self.list.push(p);
             self.pending.push(self.list.len() - 1);
         }
@@ -349,7 +349,7 @@ impl Gen {
         match self.list[i].part {
             Part::StairsDown { source } => {
                 if source {
-                    self.imposed = Some(Kind2::FiveCrossing);
+                    self.imposed = Some(PieceKind::FiveCrossing);
                 }
                 self.forward(i, random, 1, 1);
             }
@@ -435,7 +435,7 @@ fn small_door(b: &PieceBase, r: &mut Region, cb: &BoundingBox, door: Door, x: i3
     };
     match door {
         Door::Opening => b.generate_box(r, cb, x, y, z, x + 3 - 1, y + 3 - 1, z, CAVE_AIR, CAVE_AIR, false),
-        Door::WoodDoor => {
+        Door::Wood => {
             frame(r);
             b.place_block(r, st("minecraft:oak_door"), x + 1, y, z, cb);
             b.place_block(r, with(st("minecraft:oak_door"), &[("half", "upper")]), x + 1, y + 1, z, cb);
@@ -452,7 +452,7 @@ fn small_door(b: &PieceBase, r: &mut Region, cb: &BoundingBox, door: Door, x: i3
             b.place_block(r, with(bars, &[("east", "true")]), x + 2, y + 1, z, cb);
             b.place_block(r, with(bars, &[("east", "true")]), x + 2, y, z, cb);
         }
-        Door::IronDoor => {
+        Door::Iron => {
             frame(r);
             b.place_block(r, st("minecraft:iron_door"), x + 1, y, z, cb);
             b.place_block(r, with(st("minecraft:iron_door"), &[("half", "upper")]), x + 1, y + 1, z, cb);
