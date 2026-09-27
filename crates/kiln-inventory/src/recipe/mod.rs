@@ -6,6 +6,7 @@ pub mod ingredient;
 pub mod input;
 pub mod other;
 pub mod special;
+pub mod sync;
 
 pub use crafting::{Shaped, Shapeless, Transmute, TransmuteResult};
 pub use ingredient::Ingredient;

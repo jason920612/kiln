@@ -2,6 +2,7 @@
 
 usage: python tools/inventory_vectors.py clicks <out.jsonl> <sequences> <seed>
        python tools/inventory_vectors.py crafting <out.jsonl> <grids per recipe> <seed>
+       python tools/inventory_vectors.py sync <out.json>
        python tools/inventory_vectors.py            (both, into <work>/wp3-inventory)
 """
 
@@ -32,5 +33,6 @@ if __name__ == "__main__":
         out.mkdir(exist_ok=True)
         code = run(["clicks", str(out / "clicks.jsonl"), "5000", "1"])
         code = code or run(["crafting", str(out / "crafting.jsonl"), "8", "2"])
+        code = code or run(["sync", str(out / "sync.json")])
         sys.exit(code)
     sys.exit(run(args))

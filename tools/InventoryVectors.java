@@ -140,6 +140,7 @@ public class InventoryVectors {
         switch (args[0]) {
             case "clicks" -> clicks(Path.of(args[1]), Integer.parseInt(args[2]), Long.parseLong(args[3]));
             case "crafting" -> crafting(Path.of(args[1]), Integer.parseInt(args[2]), Long.parseLong(args[3]));
+            case "sync" -> sync(Path.of(args[1]));
             default -> throw new IllegalArgumentException("unknown mode " + args[0]);
         }
     }
@@ -677,6 +678,17 @@ public class InventoryVectors {
             }
         }
         return "{\"creative\": [" + slot + ", \"" + encoded + "\"], \"out\": " + drain(s) + ", \"state\": " + state(s) + "}";
+    }
+
+    // ---- recipe sync ----------------------------------------------------------------------------
+
+    static void sync(Path out) throws Exception {
+        var packet = new net.minecraft.network.protocol.game.ClientboundUpdateRecipesPacket(recipes.getSynchronizedItemProperties(),
+                recipes.getSynchronizedStonecutterRecipes());
+        var buf = new RegistryFriendlyByteBuf(Unpooled.buffer(), access);
+        net.minecraft.network.protocol.game.ClientboundUpdateRecipesPacket.STREAM_CODEC.encode(buf, packet);
+        Files.writeString(out, "{\"update_recipes\": \"" + ByteBufUtil.hexDump(buf) + "\"}\n", StandardCharsets.UTF_8);
+        OUT.println("wrote " + out);
     }
 
     // ---- crafting -------------------------------------------------------------------------------
