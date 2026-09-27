@@ -176,6 +176,10 @@ fn chest_update_shape(s: u16, d: Dir, ns: u16) -> u16 {
     s
 }
 
+/// One `forAllAxisFaces` pass: the faces' directions, the outer and main axis sizes, and the
+/// cell at `(a, b, k)`.
+type FaceAxis = (Dir, Dir, i32, i32, i32, fn(i32, i32, i32) -> (i32, i32, i32));
+
 /// `Block.UPDATE_SHAPE_ORDER`.
 const UPDATE_SHAPE_ORDER: [Dir; 6] = [Dir::West, Dir::East, Dir::North, Dir::South, Dir::Down, Dir::Up];
 
@@ -214,7 +218,7 @@ pub fn update_placed_shapes(r: &mut Region, flags: i32, placed: &[BlockPos], min
         }
     };
     // (main axis, its size, the two outer axes' sizes, coordinates from (a, b, k))
-    let axes: [(Dir, Dir, i32, i32, i32, fn(i32, i32, i32) -> (i32, i32, i32)); 3] = [
+    let axes: [FaceAxis; 3] = [
         (Dir::North, Dir::South, size[0], size[1], size[2], |a, b, k| (a, b, k)),
         (Dir::Down, Dir::Up, size[2], size[0], size[1], |a, b, k| (b, k, a)),
         (Dir::West, Dir::East, size[1], size[2], size[0], |a, b, k| (k, a, b)),
