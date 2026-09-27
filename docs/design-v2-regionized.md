@@ -794,6 +794,15 @@ Starlight 式引擎，依公開演算法 clean-room 實作：FIFO BFS、增加�
 
 原版光照本來就與遊戲非同步，發佈晚至多一 tick 為 I 類；光照抑制（light suppression）是已記錄的差異（GAP-01）。
 
+### 8.6 M5 地形 parity（BIOMES 與 TERRAIN，2026-09-27）
+（以 javap 驗證；不含結構、feature、SPAWN。）
+- **BIOMES**：`MultiNoiseBiomeSource.createResolverForChunk` 在 chunk 的 quart 格（4×高/4×4，step 4）以 volume 模式取樣六個 climate 欄位（caching context），再逐 quart 查 R-tree（section 由下而上、x、y、z）。overworld 參數表在程式碼裡建，資料只從 `reports/biome_parameters` 取得（7,594 項，量化後與 vanilla 完全相同）。R-tree 搜尋以 thread-local 的 `lastResult` 為起點，等距時先找到的葉子勝，所以 vanilla 自己的 biome 取決於 worker 執行緒先前生成過哪些 chunk；Kiln 與 harness 一律每個 chunk 從空的 lastResult 開始（標準順序）。carver 的 biome 與 `topMaterial` 用 point 模式的 uncached resolver；overworld 所有 biome 的 carver 列表相同，因此不查。
+- **caching context 可觀察**：每個 prepared cache 保留最後取樣的 volume 與最後一個 point；point 查詢落在最後 volume 的格點上時回傳 volume 值（可能與 point 值差最後一位）。一個 NoiseChunk 的 context 依序經過 aquifer 建構（surface level volume）、doFill、material rule compile（礦脈 volume）、lazy 的 preliminary surface、carver 步驟的 aquifer 查詢；`Scratch::caching` 逐步模擬 cache cell 的狀態。
+- **TERRAIN = doFill → buildSurface → generateCarvers**：doFill 對整個 chunk 做 final density volume，再逐格呼叫新版 `NoiseBasedAquifer`（surface level cache、`skipSamplingAboveY`、13 個 surface 取樣偏移）。buildSurface 由 **material rules** 取代 surface rules，礦脈是 `ore_vein` rule（density、richness 在 compile 時對 chunk volume 取樣，gap 為 point），`noise_settings` 沒有 `ore_veins`；BiomeCondition 以 chunk 與鄰居出現過的 biome 在 compile 時直接判定（精確的最佳化）。carver 只標記 `CarvingMask`（y 從 minY+1 到 maxY−8），`applyCarvingMask` 以 `aquifer.computeSubstance(…, 0)` 填入，跳過 `#uncarvable`，挖開草地下的泥土時呼叫 `topMaterial`。
+- **Harness**：`tools/ChunkVectors.java` 在 process 內以反射執行 vanilla 的 doFill/buildSurface/generateCarvers（`Beardifier.EMPTY`、`Blender.empty()`），必須套用 static registry 的 pending tags（否則 `#uncarvable` 為空，vanilla 會把基岩挖掉）。
+- **結果**：5 個 seed（含隨機一個）× 2,560 chunk（含 ±1,874,938 chunk 的世界邊界與 2²⁰ wrap 附近），biome、fill、surface、carvers 四層 **0 mismatch**（每層每 seed 2.5 億方塊、393 萬 quart）。單執行緒吞吐（同一批 chunk，機器負載下有波動）：Kiln 約 10 ms/chunk（~95 chunk/s），vanilla 27–34 ms/chunk（30–36 chunk/s），約 2.5–3×；surface 與 fill 各約 4.5 ms。
+- **缺口**：aquifer 的 `shouldScheduleFluidUpdate`（fluid post-processing 標記）未產生；只支援 multi-noise biome source（無 End 的 biome source，nether 的 legacy biome noise 未實作）；blending 與舊世界升級（`BelowZeroRetrogen`）不支援。
+
 ---
 
 ## 9. 持久化
