@@ -686,6 +686,19 @@ fn features_match_vanilla() {
                     terrain_post_vanilla += v.terrain_post.iter().map(Vec::len).sum::<usize>();
                     if terrain_post[&(*x, *z)] != v.terrain_post {
                         terrain_post_bad += 1;
+                        if terrain_post_bad <= 3 {
+                            let mine = &terrain_post[&(*x, *z)];
+                            let pos = |sec: usize, p: u16| (x * 16 + (p & 15) as i32, -64 + sec as i32 * 16 + ((p >> 4) & 15) as i32, z * 16 + (p >> 8) as i32);
+                            let mut only_v = Vec::new();
+                            let mut only_k = Vec::new();
+                            for (sec, (a, b)) in v.terrain_post.iter().zip(mine).enumerate() {
+                                only_v.extend(a.iter().filter(|p| !b.contains(p)).map(|&p| pos(sec, p)));
+                                only_k.extend(b.iter().filter(|p| !a.contains(p)).map(|&p| pos(sec, p)));
+                            }
+                            only_v.truncate(6);
+                            only_k.truncate(6);
+                            eprintln!("    post-TERRAIN post-processing differs in {x},{z}: only vanilla {only_v:?}, only kiln {only_k:?}");
+                        }
                     }
                     post_vanilla += v.post.iter().map(Vec::len).sum::<usize>();
                     ticks_vanilla += v.block_ticks.len() + v.fluid_ticks.len();

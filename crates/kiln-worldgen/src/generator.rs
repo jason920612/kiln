@@ -539,6 +539,9 @@ impl Generator {
                     );
                     if let Some(top) = top {
                         chunk.set(lx, y - 1, lz, top);
+                        if has_fluid(top) {
+                            chunk.mark_post_processing(bx, y - 1, bz);
+                        }
                     }
                 }
             }
