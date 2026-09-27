@@ -159,6 +159,11 @@ impl Shape {
         from as i32 - 1
     }
 
+    /// Whether the (unmoved) shape's cell containing the local point is full (`VoxelShape.clip`).
+    pub fn contains_point(&self, x: f64, y: f64, z: f64) -> bool {
+        self.is_full_wide(self.find_index(Axis::X, x, 0.0), self.find_index(Axis::Y, y, 0.0), self.find_index(Axis::Z, z, 0.0))
+    }
+
     /// `VoxelShape.collide(axis, box, distance)` for this shape moved by `off`: how far `bx` can
     /// move along `axis` (up to `distance`) before hitting it.
     pub fn collide(&self, axis: Axis, bx: &Aabb, mut distance: f64, off: [f64; 3]) -> f64 {

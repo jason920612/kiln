@@ -170,6 +170,16 @@ pub fn collision_shape(state: u16) -> &'static Shape {
     &table().shapes[entry(state).collision as usize]
 }
 
+/// `Shapes.empty()`.
+pub fn empty_shape() -> &'static Shape {
+    &table().shapes[0]
+}
+
+/// `Shapes.block()`.
+pub fn block_shape() -> &'static Shape {
+    &table().shapes[1]
+}
+
 /// Whether the collision shape is vanilla's `Shapes.block()` singleton (collision fast path).
 pub fn is_full_cube(state: u16) -> bool {
     entry(state).flags & CUBE != 0
