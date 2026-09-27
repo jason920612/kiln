@@ -7,7 +7,6 @@ publish.workspace = true
 [dependencies]
 kiln-blocks.workspace = true
 kiln-data.workspace = true
-kiln-blocks.workspace = true
 kiln-javamath.workspace = true
 kiln-world.workspace = true
 kiln-proto.workspace = true
