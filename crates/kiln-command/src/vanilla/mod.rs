@@ -7,6 +7,7 @@ mod chat;
 mod execute;
 pub mod gamerules;
 mod players;
+mod protocol;
 mod scoreboard;
 mod server;
 mod team;
@@ -55,6 +56,8 @@ pub const COMMANDS: &[&str] = &[
     "fill",
     "clone",
     "tellraw",
+    "transfer",
+    "dialog",
     "teammsg",
     "tm",
     "scoreboard",
@@ -92,6 +95,8 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     blocks::fill(d);
     blocks::clone(d);
     chat::tellraw(d);
+    protocol::transfer(d);
+    protocol::dialog(d);
     chat::teammsg(d);
     scoreboard::scoreboard(d);
     scoreboard::trigger(d);

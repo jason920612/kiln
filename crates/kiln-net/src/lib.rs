@@ -3,9 +3,11 @@
 
 mod auth;
 mod cipher;
+pub mod lobby;
 mod profile;
 pub mod proxy;
 
+pub use lobby::LobbyConfig;
 pub use profile::GameProfile;
 pub use proxy::ProxyMode;
 
@@ -132,6 +134,8 @@ struct Authenticator {
 pub struct Shared {
     pub config: Config,
     pub login: LoginConfig,
+    /// Resource pack, transfers, code of conduct and links.
+    pub lobby: LobbyConfig,
     /// Players in the game or past the login capacity check.
     pub online: AtomicUsize,
     pub to_sim: crossbeam_channel::Sender<ToSim>,
@@ -146,7 +150,18 @@ impl Shared {
     /// they are invalid: silently falling back to offline mode would let anyone in.
     pub fn new(config: Config, to_sim: crossbeam_channel::Sender<ToSim>) -> Self {
         let login = LoginConfig::from_env().unwrap_or_else(|e| panic!("invalid login settings: {e:#}"));
-        Self::with_login(config, login, to_sim)
+        let lobby = LobbyConfig::from_env().unwrap_or_else(|e| panic!("invalid server settings: {e:#}"));
+        Self::with_login(config, login, to_sim).with_lobby(lobby)
+    }
+
+    pub fn with_lobby(mut self, lobby: LobbyConfig) -> Self {
+        self.lobby = lobby;
+        self
+    }
+
+    /// `MinecraftServer.isResourcePackRequired`.
+    pub fn resource_pack_required(&self) -> bool {
+        self.lobby.resource_pack.as_ref().is_some_and(|p| p.required)
     }
 
     pub fn with_login(config: Config, login: LoginConfig, to_sim: crossbeam_channel::Sender<ToSim>) -> Self {
@@ -164,6 +179,7 @@ impl Shared {
         Self {
             config,
             login,
+            lobby: LobbyConfig::default(),
             online: AtomicUsize::new(0),
             to_sim,
             next_conn: AtomicU64::new(1),
@@ -377,7 +393,13 @@ async fn handle(stream: TcpStream, addr: SocketAddr, shared: Arc<Shared>) -> Res
 
     match intent {
         1 => status(&mut conn, &shared, protocol).await,
-        2 | 3 => login(conn, addr, &shared, protocol, &host).await,
+        2 => login(conn, addr, &shared, protocol, &host).await,
+        // `ServerHandshakePacketListenerImpl`: refused before login when transfers are off.
+        3 if !shared.lobby.accepts_transfers => {
+            conn.send(&login_ext::login_disconnect_translated("multiplayer.disconnect.transfers_disabled")).await?;
+            bail!("transfer refused: accepts-transfers is off")
+        }
+        3 => login(conn, addr, &shared, protocol, &host).await,
         n => bail!("unknown handshake intent {n}"),
     }
 }
@@ -469,7 +491,7 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
         bail!("expected login acknowledged, got packet {id}");
     }
 
-    let client = configure(&mut conn, shared).await?;
+    let client = configure(&mut conn, shared, &profile.name).await?;
     info!(
         "{} ({}) joined from {remote}{via}, {} profile properties",
         profile.name,
@@ -574,22 +596,77 @@ async fn authenticate(
     Err(reason)
 }
 
-/// Configuration phase; returns the client's view distance.
-async fn configure(conn: &mut Conn, shared: &Shared) -> Result<packets::ClientInfo> {
+/// The configuration tasks after the registries (`ServerConfigurationPacketListenerImpl`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConfigTask {
+    /// Sent the code of conduct; waiting for `accept_code_of_conduct`.
+    CodeOfConduct,
+    /// Pushed the server resource pack; waiting for a terminal status.
+    ResourcePack,
+}
+
+/// Configuration phase (`startConfiguration`): brand, server links, features and the known
+/// packs, then the tasks in vanilla's order: registries, code of conduct, resource pack.
+/// Returns the client's settings.
+async fn configure(conn: &mut Conn, shared: &Shared, name: &str) -> Result<packets::ClientInfo> {
     use ids::configuration::serverbound as sb;
+    use packets::common::{self, Phase};
     let core = ("minecraft", "core", version::NAME);
     conn.queue(&packets::config_brand("kiln"))?;
+    if !shared.lobby.links.is_empty() {
+        conn.queue(&server_links(Phase::Configuration, &shared.lobby))?;
+    }
     conn.queue(&packets::update_enabled_features(&["minecraft:vanilla"]))?;
     conn.queue(&packets::select_known_packs(&[core]))?;
     conn.flush().await?;
 
     let mut client = packets::ClientInfo { view_distance: shared.config.view_distance, ..Default::default() };
+    let mut language = String::from("en_us");
     let mut registries_sent = false;
+    let mut tasks: Vec<ConfigTask> = Vec::new();
     loop {
         let pkt = conn.read().await?;
         let (id, mut r) = split_id(&pkt)?;
         match id {
-            sb::CLIENT_INFORMATION => client = packets::read_client_information(&mut r)?,
+            sb::CLIENT_INFORMATION => {
+                let mut peek = r;
+                language = peek.string(16).map(str::to_owned).unwrap_or(language);
+                client = packets::read_client_information(&mut r)?;
+            }
+            sb::ACCEPT_CODE_OF_CONDUCT if tasks.first() == Some(&ConfigTask::CodeOfConduct) => {
+                tasks.remove(0);
+                if next_task(conn, shared, &tasks, &language).await? {
+                    return Ok(client);
+                }
+            }
+            sb::RESOURCE_PACK => {
+                let (pack, action) = common::read_resource_pack_response(&mut r)?;
+                // `ServerCommonPacketListenerImpl.handleResourcePackResponse`.
+                if action == common::ResourcePackAction::Declined && shared.resource_pack_required() {
+                    info!("Disconnecting {name} due to resource pack {pack} rejection");
+                    let reason = kiln_proto::nbt::Tag::Compound(vec![(
+                        "translate".into(),
+                        kiln_proto::nbt::Tag::String("multiplayer.requiredTexturePrompt.disconnect".into()),
+                    )]);
+                    conn.send(&packets::config_disconnect_text(&reason)).await?;
+                    bail!("declined the required resource pack");
+                }
+                if action.is_terminal() && tasks.first() == Some(&ConfigTask::ResourcePack) {
+                    tasks.remove(0);
+                    if next_task(conn, shared, &tasks, &language).await? {
+                        return Ok(client);
+                    }
+                }
+            }
+            sb::COOKIE_RESPONSE => {
+                // Kiln asks for no cookies while configuring (`handleCookieResponse`).
+                let reason = kiln_proto::nbt::Tag::Compound(vec![(
+                    "translate".into(),
+                    kiln_proto::nbt::Tag::String("multiplayer.disconnect.unexpected_query_response".into()),
+                )]);
+                conn.send(&packets::config_disconnect_text(&reason)).await?;
+                bail!("unexpected cookie response");
+            }
             sb::SELECT_KNOWN_PACKS if !registries_sent => {
                 let n = r.len()?;
                 let mut knows_core = false;
@@ -606,15 +683,97 @@ async fn configure(conn: &mut Conn, shared: &Shared) -> Result<packets::ClientIn
                     conn.queue(p)?;
                 }
                 conn.queue(&shared.tags_packet)?;
-                conn.queue(&packets::finish_configuration())?;
-                conn.flush().await?;
                 registries_sent = true;
+                if shared.lobby.code_of_conduct_for(&language).is_some() {
+                    tasks.push(ConfigTask::CodeOfConduct);
+                }
+                if shared.lobby.resource_pack.is_some() {
+                    tasks.push(ConfigTask::ResourcePack);
+                }
+                if next_task(conn, shared, &tasks, &language).await? {
+                    return Ok(client);
+                }
             }
-            sb::FINISH_CONFIGURATION if registries_sent => return Ok(client),
-            sb::CUSTOM_PAYLOAD | sb::KEEP_ALIVE | sb::PONG | sb::RESOURCE_PACK => {}
+            sb::FINISH_CONFIGURATION if registries_sent && tasks.is_empty() => return Ok(client),
+            sb::CUSTOM_PAYLOAD | sb::KEEP_ALIVE | sb::PONG => {}
             other => debug!("ignoring configuration packet {other}"),
         }
     }
+}
+
+/// Starts the first pending configuration task, or ends configuration when none is left
+/// (`JoinWorldTask` sends `finish_configuration`). Returns whether configuration is over for
+/// the server; the client still answers with `finish_configuration`.
+async fn next_task(conn: &mut Conn, shared: &Shared, tasks: &[ConfigTask], language: &str) -> Result<bool> {
+    use packets::common::{self, Phase};
+    match tasks.first() {
+        Some(ConfigTask::CodeOfConduct) => {
+            let text = shared.lobby.code_of_conduct_for(language).unwrap_or_default();
+            conn.send(&common::code_of_conduct(text)).await?;
+        }
+        Some(ConfigTask::ResourcePack) => {
+            let pack = shared.lobby.resource_pack.as_ref().expect("resource pack task without a pack");
+            conn.send(&resource_pack_push(Phase::Configuration, pack)).await?;
+        }
+        None => {
+            conn.send(&packets::finish_configuration()).await?;
+            // The client's `finish_configuration` answer is read by the caller's loop.
+            return wait_finish(conn).await;
+        }
+    }
+    Ok(false)
+}
+
+/// After `finish_configuration`: reads until the client acknowledges it.
+async fn wait_finish(conn: &mut Conn) -> Result<bool> {
+    use ids::configuration::serverbound as sb;
+    loop {
+        let pkt = conn.read().await?;
+        let (id, _) = split_id(&pkt)?;
+        match id {
+            sb::FINISH_CONFIGURATION => return Ok(true),
+            sb::CUSTOM_PAYLOAD | sb::KEEP_ALIVE | sb::PONG | sb::CLIENT_INFORMATION | sb::RESOURCE_PACK => {}
+            other => debug!("ignoring configuration packet {other}"),
+        }
+    }
+}
+
+/// The server resource pack push (`ServerResourcePackConfigurationTask`).
+pub fn resource_pack_push(phase: packets::common::Phase, pack: &lobby::ServerResourcePack) -> Bytes {
+    use packets::common::{self, ResourcePack};
+    common::resource_pack_push(
+        phase,
+        &ResourcePack { id: pack.id, url: &pack.url, hash: &pack.hash, required: pack.required, prompt: pack.prompt.as_ref() },
+    )
+}
+
+/// `ClientboundServerLinksPacket` for the configured links.
+pub fn server_links(phase: packets::common::Phase, lobby: &LobbyConfig) -> Bytes {
+    use packets::common::{self, KnownLink, LinkLabel};
+    const KNOWN: [KnownLink; 10] = [
+        KnownLink::BugReport,
+        KnownLink::CommunityGuidelines,
+        KnownLink::Support,
+        KnownLink::Status,
+        KnownLink::Feedback,
+        KnownLink::Community,
+        KnownLink::Website,
+        KnownLink::Forums,
+        KnownLink::News,
+        KnownLink::Announcements,
+    ];
+    let links: Vec<(LinkLabel, &str)> = lobby
+        .links
+        .iter()
+        .map(|(kind, url)| {
+            let label = match kind {
+                lobby::LinkKind::Known(i) => LinkLabel::Known(KNOWN[*i as usize]),
+                lobby::LinkKind::Custom(t) => LinkLabel::Custom(t),
+            };
+            (label, url.as_str())
+        })
+        .collect();
+    common::server_links(phase, &links)
 }
 
 /// One of `max_players` places, held from login until the connection closes.

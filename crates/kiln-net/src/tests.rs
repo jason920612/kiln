@@ -543,3 +543,127 @@ fn a_client_that_falls_behind_is_cut_off() {
     assert_eq!(got.iter().filter(|m| matches!(m, super::Outbound::Packet(_))).count(), 64);
     assert!(matches!(got.last(), Some(super::Outbound::Overflow)));
 }
+
+// ---- lobby: configuration tasks and transfers ---------------------------------------------
+
+fn lobby_shared(lobby: LobbyConfig) -> (Arc<Shared>, crossbeam_channel::Receiver<ToSim>) {
+    let (shared, rx) = shared(LoginConfig::default(), None);
+    let shared = Arc::try_unwrap(shared).ok().expect("unshared").with_lobby(lobby);
+    (Arc::new(shared), rx)
+}
+
+fn pack(required: bool) -> lobby::ServerResourcePack {
+    lobby::ServerResourcePack {
+        id: Uuid::from_u128(7),
+        url: "http://127.0.0.1:1/pack.zip".into(),
+        hash: String::new(),
+        required,
+        prompt: Some(kiln_proto::nbt::Tag::String("please".into())),
+    }
+}
+
+/// Sends the known packs and returns the configuration packets up to (not including) the
+/// first one `stop` matches.
+async fn config_until(c: &mut Conn, stop: i32) -> Vec<i32> {
+    use ids::configuration::{clientbound as cb, serverbound as sb};
+    let mut seen = Vec::new();
+    loop {
+        let (id, body) = recv(c).await;
+        if id == cb::SELECT_KNOWN_PACKS {
+            c.send(&packet(sb::SELECT_KNOWN_PACKS, |b| b.put_slice(&body))).await.unwrap();
+        }
+        if id == stop {
+            return seen;
+        }
+        seen.push(id);
+    }
+}
+
+#[tokio::test]
+async fn configuration_runs_code_of_conduct_then_resource_pack() {
+    use ids::configuration::{clientbound as cb, serverbound as sb};
+    let mut conduct = std::collections::BTreeMap::new();
+    conduct.insert("en_us".to_owned(), "Be nice".to_owned());
+    let lobby = LobbyConfig {
+        resource_pack: Some(pack(false)),
+        code_of_conduct: conduct,
+        links: vec![(lobby::LinkKind::Known(0), "https://bugs".into())],
+        ..Default::default()
+    };
+    let (shared, sim) = lobby_shared(lobby);
+    let (addr, _done) = serve(shared).await;
+    let mut c = connect(addr, "localhost", "Alex").await;
+    finish_login(&mut c).await;
+    let before = config_until(&mut c, cb::CODE_OF_CONDUCT).await;
+    assert_eq!(before[..2], [cb::CUSTOM_PAYLOAD, cb::SERVER_LINKS], "brand, then the links");
+    assert!(!before.contains(&cb::FINISH_CONFIGURATION));
+    c.send(&packet(sb::ACCEPT_CODE_OF_CONDUCT, |_| {})).await.unwrap();
+    let (id, body) = recv(&mut c).await;
+    assert_eq!(id, cb::RESOURCE_PACK_PUSH);
+    assert_eq!(Reader::new(&body).uuid().unwrap(), Uuid::from_u128(7));
+    let status = |action: i32| {
+        packet(sb::RESOURCE_PACK, move |b| {
+            b.put_uuid(Uuid::from_u128(7));
+            b.put_varint(action);
+        })
+    };
+    c.send(&status(3)).await.unwrap(); // accepted: not terminal, keep waiting
+    c.send(&status(1)).await.unwrap(); // declined, but the pack is optional
+    let (id, _) = recv(&mut c).await;
+    assert_eq!(id, cb::FINISH_CONFIGURATION);
+    c.send(&packet(sb::FINISH_CONFIGURATION, |_| {})).await.unwrap();
+    assert_eq!(joined(&sim).await.name, "Alex");
+}
+
+#[tokio::test]
+async fn declining_a_required_pack_disconnects() {
+    use ids::configuration::{clientbound as cb, serverbound as sb};
+    let (shared, _sim) = lobby_shared(LobbyConfig { resource_pack: Some(pack(true)), ..Default::default() });
+    let (addr, done) = serve(shared).await;
+    let mut c = connect(addr, "localhost", "Alex").await;
+    finish_login(&mut c).await;
+    config_until(&mut c, cb::RESOURCE_PACK_PUSH).await;
+    c.send(&packet(sb::RESOURCE_PACK, |b| {
+        b.put_uuid(Uuid::from_u128(7));
+        b.put_varint(1);
+    }))
+    .await
+    .unwrap();
+    let (id, body) = recv(&mut c).await;
+    assert_eq!(id, cb::DISCONNECT);
+    let (reason, _) = kiln_proto::nbt::read_network(&body).unwrap();
+    assert_eq!(reason.get("translate").and_then(kiln_proto::nbt::Tag::as_str), Some("multiplayer.requiredTexturePrompt.disconnect"));
+    assert!(done.await.unwrap().is_err());
+}
+
+#[tokio::test]
+async fn transfers_are_refused_unless_accepted() {
+    let transfer_hello = |addr| async move {
+        let mut c = Conn::new(TcpStream::connect(addr).await.unwrap());
+        c.send(&packet(ids::handshake::serverbound::INTENTION, |b| {
+            b.put_varint(version::PROTOCOL);
+            b.put_string("localhost");
+            b.put_u16(25565);
+            b.put_varint(3);
+        }))
+        .await
+        .unwrap();
+        c.send(&packet(ids::login::serverbound::HELLO, |b| {
+            b.put_string("Alex");
+            b.put_uuid(Uuid::nil());
+        }))
+        .await
+        .unwrap();
+        c
+    };
+    let (shared, _) = lobby_shared(LobbyConfig::default());
+    let (addr, _) = serve(shared).await;
+    let mut c = transfer_hello(addr).await;
+    let (id, body) = recv(&mut c).await;
+    assert!(disconnect_reason(id, &body).contains("multiplayer.disconnect.transfers_disabled"));
+
+    let (shared, _) = lobby_shared(LobbyConfig { accepts_transfers: true, ..Default::default() });
+    let (addr, _) = serve(shared).await;
+    let mut c = transfer_hello(addr).await;
+    assert_eq!(finish_login(&mut c).await.name, "Alex");
+}

@@ -664,6 +664,31 @@ bossbar list
 bossbar remove minecraft:a
 bossbar list
 
+# protocol
+transfer example.com
+transfer example.com 25566
+transfer example.com 25566 Diff0
+transfer example.com 25566 @a
+transfer "a host" 1 Other0
+transfer example.com 0 Diff0
+transfer example.com 65536 Diff0
+transfer example.com 25566 Nobody
+transfer example.com 25566 @e[type=minecraft:pig]
+execute as Diff0 run transfer example.com
+execute as Diff0 run transfer example.com 25570
+dialog show Diff0 minecraft:server_links
+dialog show @a minecraft:custom_options
+dialog show Diff0 quick_actions
+dialog show Diff0 minecraft:nope
+dialog show Diff0 {type:"minecraft:notice",title:"Hello"}
+dialog show @a {type:"minecraft:confirmation",title:"Sure?",yes:{label:"Yes"},no:{label:"No"}}
+dialog show Nobody minecraft:server_links
+dialog show Diff0
+dialog clear Diff0
+dialog clear @a
+dialog clear Nobody
+dialog bogus
+
 # coordinates, shapes and block entities
 setblock 2 100 0 chest[facing=north]{CustomName:"y"}
 setblock 2 100 0 chest[facing=north]{CustomName:"y"}
