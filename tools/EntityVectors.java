@@ -128,7 +128,16 @@ public class EntityVectors {
 
     // ---------------------------------------------------------------- runner
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
+        try {
+            run(args);
+        } catch (Throwable t) {
+            t.printStackTrace();
+            System.exit(1);
+        }
+    }
+
+    static void run(String[] args) throws Exception {
         Path outPath = Path.of(args[0]).toAbsolutePath();
         String filter = args.length > 1 ? args[1] : null;
         writeServerFiles();
@@ -240,13 +249,22 @@ public class EntityVectors {
     static void cleanup(ServerLevel level, Scenario s) {
         for (Entity e : level.getEntities((Entity) null, box(), e -> true)) e.discard();
         BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
-        for (BlockPos p : s.blocks.keySet()) level.setBlock(p, air, FLAGS);
+        for (BlockPos p : s.blocks.keySet()) {
+            level.removeBlockEntity(p);
+            level.setBlock(p, air, FLAGS);
+        }
         if (s.region != null) {
             int[] r = s.region;
             for (int x = r[0]; x <= r[3]; x++)
                 for (int y = r[1]; y <= r[4]; y++)
-                    for (int z = r[2]; z <= r[5]; z++) level.setBlock(new BlockPos(BX + x, BY + y, BZ + z), air, FLAGS);
+                    for (int z = r[2]; z <= r[5]; z++) {
+                        BlockPos p = new BlockPos(BX + x, BY + y, BZ + z);
+                        level.removeBlockEntity(p);
+                        level.setBlock(p, air, FLAGS);
+                    }
         }
+        // Containers may have dropped their contents.
+        for (Entity e : level.getEntities((Entity) null, box(), e -> true)) e.discard();
     }
 
     static AABB box() {
@@ -437,28 +455,266 @@ class Scenarios {
         "minecraft:soul_sand", "minecraft:honey_block", "minecraft:grass_block", "minecraft:mud", "minecraft:farmland",
         "minecraft:dirt_path", "minecraft:snow[layers=1]", "minecraft:snow[layers=3]", "minecraft:snow[layers=7]",
         "minecraft:oak_slab[type=bottom]", "minecraft:oak_slab[type=top]", "minecraft:white_carpet",
-        "minecraft:red_bed[part=foot,facing=north]", "minecraft:hopper", "minecraft:cauldron",
+        "minecraft:red_bed[part=foot,facing=north]", "minecraft:cauldron",
         "minecraft:soul_soil", "minecraft:magma_block", "minecraft:glass", "minecraft:oak_leaves",
         "minecraft:chest[facing=north]", "minecraft:enchanting_table", "minecraft:daylight_detector",
         "minecraft:stonecutter[facing=north]", "minecraft:lectern[facing=north]", "minecraft:composter[level=3]",
+        "minecraft:hay_block",
     };
 
+    /** Blocks with non-cube collision shapes, for cluttered terrain. */
+    static final String[] SHAPES = {
+        "minecraft:oak_stairs[facing=north,half=bottom,shape=straight]",
+        "minecraft:oak_stairs[facing=east,half=bottom,shape=straight]",
+        "minecraft:oak_stairs[facing=south,half=top,shape=straight]",
+        "minecraft:stone_stairs[facing=west,half=bottom,shape=inner_left]",
+        "minecraft:stone_stairs[facing=north,half=bottom,shape=outer_right]",
+        "minecraft:oak_slab[type=bottom]", "minecraft:oak_slab[type=top]", "minecraft:stone_slab[type=double]",
+        "minecraft:oak_fence[north=true,south=true]", "minecraft:oak_fence[east=true]", "minecraft:oak_fence",
+        "minecraft:cobblestone_wall[up=true,north=low,south=tall]", "minecraft:cobblestone_wall[up=false,east=low,west=low]",
+        "minecraft:glass_pane[north=true,south=true]", "minecraft:iron_bars[east=true,west=true]",
+        "minecraft:oak_trapdoor[half=bottom,open=false]", "minecraft:oak_trapdoor[half=top,open=false]",
+        "minecraft:oak_trapdoor[facing=north,open=true]", "minecraft:oak_door[facing=east,half=lower,open=false]",
+        "minecraft:white_carpet", "minecraft:snow[layers=2]", "minecraft:snow[layers=5]", "minecraft:snow[layers=8]",
+        "minecraft:lantern[hanging=false]", "minecraft:iron_chain[axis=y]", "minecraft:anvil[facing=north]",
+        "minecraft:cauldron", "minecraft:composter[level=0]", "minecraft:bell[attachment=floor,facing=north]",
+        "minecraft:grindstone[face=floor,facing=north]", "minecraft:lectern[facing=east]",
+        "minecraft:red_bed[part=head,facing=south]", "minecraft:cake[bites=3]", "minecraft:candle[candles=3]",
+        "minecraft:skeleton_skull", "minecraft:flower_pot", "minecraft:end_rod[facing=up]",
+        "minecraft:lightning_rod[facing=east]", "minecraft:oak_fence_gate[facing=north,open=false]",
+        "minecraft:oak_fence_gate[facing=north,open=true]", "minecraft:brewing_stand",
+        "minecraft:enchanting_table", "minecraft:dirt_path", "minecraft:farmland", "minecraft:soul_sand",
+        "minecraft:honey_block", "minecraft:mud", "minecraft:azalea", "minecraft:sea_pickle[pickles=2,waterlogged=false]",
+        "minecraft:turtle_egg[eggs=2]", "minecraft:decorated_pot", "minecraft:big_dripleaf[tilt=none]",
+        "minecraft:stonecutter[facing=north]", "minecraft:campfire[lit=false]", "minecraft:daylight_detector",
+        "minecraft:chest[facing=south]", "minecraft:ender_chest[facing=west]", "minecraft:conduit",
+        "minecraft:ladder[facing=north]", "minecraft:vine[north=true]", "minecraft:moss_carpet",
+        "minecraft:stone", "minecraft:glass", "minecraft:oak_leaves",
+    };
+
+    static final String[] ITEMS = {
+        "minecraft:cobblestone", "minecraft:diamond", "minecraft:oak_log", "minecraft:iron_sword", "minecraft:ender_pearl",
+        "minecraft:netherite_ingot", "minecraft:egg", "minecraft:snowball",
+    };
+
+    static double rnd(Random r, double lo, double hi) {
+        return lo + r.nextDouble() * (hi - lo);
+    }
+
     static void items(List<EntityVectors.Scenario> out) {
+        floors(out);
+        clutter(out);
+        fluids(out);
+        effects(out);
+        merges(out);
+        misc(out);
+    }
+
+    /** Items dropped onto a 7x7 floor of each surface, from rest and with random velocities. */
+    static void floors(List<EntityVectors.Scenario> out) {
         Random r = new Random(1);
-        // Items dropped onto a 5x5 floor of each surface, from rest and with random velocities.
         for (String surface : SURFACES) {
             for (int k = 0; k < 4; k++) {
                 var s = new EntityVectors.Scenario("item_floor/" + surface + "/" + k, r.nextLong());
-                s.fill(-2, 0, -2, 2, 0, 2, surface);
-                double x = 0.2 + r.nextDouble() * 0.6, z = 0.2 + r.nextDouble() * 0.6;
-                double h = 1.0 + r.nextDouble() * 3;
-                double dx = k == 0 ? 0 : (r.nextDouble() - 0.5) * 0.4;
-                double dz = k == 0 ? 0 : (r.nextDouble() - 0.5) * 0.4;
-                double dy = k == 0 ? 0 : r.nextDouble() * 0.3;
+                s.fill(-3, 0, -3, 3, 0, 3, surface);
+                double x = rnd(r, 0.2, 0.8), z = rnd(r, 0.2, 0.8), h = rnd(r, 1.0, 4.0);
+                double dx = k == 0 ? 0 : rnd(r, -0.2, 0.2), dz = k == 0 ? 0 : rnd(r, -0.2, 0.2), dy = k == 0 ? 0 : rnd(r, 0, 0.3);
                 s.entity("item", x, h, z, dx, dy, dz, r.nextLong()).with("item", "minecraft:cobblestone");
-                s.ticks(80);
+                s.ticks(100);
                 out.add(s);
             }
         }
+    }
+
+    /** A 7x7 floor with random shaped blocks on it; several items thrown across. */
+    static void clutter(List<EntityVectors.Scenario> out) {
+        Random r = new Random(2);
+        for (int k = 0; k < 120; k++) {
+            var s = new EntityVectors.Scenario("item_clutter/" + k, r.nextLong());
+            s.fill(-3, 0, -3, 3, 0, 3, "minecraft:stone");
+            int n = 6 + r.nextInt(14);
+            for (int i = 0; i < n; i++) {
+                int x = r.nextInt(7) - 3, z = r.nextInt(7) - 3, y = 1 + (r.nextInt(4) == 0 ? 1 : 0);
+                s.block(x, y, z, SHAPES[r.nextInt(SHAPES.length)]);
+            }
+            int items = 1 + r.nextInt(4);
+            for (int i = 0; i < items; i++) {
+                s.entity("item", rnd(r, -2, 3), rnd(r, 1.5, 4.5), rnd(r, -2, 3), rnd(r, -0.25, 0.25), rnd(r, -0.1, 0.35),
+                        rnd(r, -0.25, 0.25), r.nextLong()).with("item", ITEMS[r.nextInt(ITEMS.length)]).with("pickup_delay", 32767);
+            }
+            s.ticks(120);
+            out.add(s);
+        }
+    }
+
+    static void fluids(List<EntityVectors.Scenario> out) {
+        Random r = new Random(3);
+        // Pools of sources and random flowing levels, water and lava.
+        for (int k = 0; k < 50; k++) {
+            boolean lava = k % 5 == 4;
+            String fluid = lava ? "minecraft:lava" : "minecraft:water";
+            var s = new EntityVectors.Scenario("item_fluid/pool/" + k, r.nextLong());
+            s.fill(-3, 0, -3, 3, 0, 3, "minecraft:stone");
+            int depth = 1 + r.nextInt(3);
+            for (int x = -2; x <= 2; x++)
+                for (int z = -2; z <= 2; z++)
+                    for (int y = 1; y <= depth; y++) {
+                        int level = r.nextInt(3) == 0 ? 1 + r.nextInt(7) : 0;
+                        if (r.nextInt(6) == 0) level = 8 + r.nextInt(8);
+                        s.block(x, y, z, fluid + "[level=" + level + "]");
+                    }
+            for (int x = -3; x <= 3; x++)
+                for (int y = 1; y <= depth; y++) {
+                    s.block(x, y, -3, "minecraft:stone");
+                    s.block(x, y, 3, "minecraft:stone");
+                    s.block(-3, y, x, "minecraft:stone");
+                    s.block(3, y, x, "minecraft:stone");
+                }
+            int items = 1 + r.nextInt(3);
+            for (int i = 0; i < items; i++) {
+                s.entity("item", rnd(r, -1.5, 2.5), rnd(r, 0.8, depth + 2.5), rnd(r, -1.5, 2.5), rnd(r, -0.2, 0.2),
+                        rnd(r, -0.3, 0.3), rnd(r, -0.2, 0.2), r.nextLong())
+                        .with("item", ITEMS[r.nextInt(ITEMS.length)]).with("pickup_delay", 32767);
+            }
+            s.ticks(120);
+            out.add(s);
+        }
+        // Water currents along a channel.
+        for (int k = 0; k < 16; k++) {
+            var s = new EntityVectors.Scenario("item_fluid/current/" + k, r.nextLong());
+            s.fill(-6, 0, -1, 6, 0, 1, "minecraft:stone");
+            for (int x = -5; x <= 5; x++) {
+                int level = Math.min(7, Math.abs(x - (k % 3 == 0 ? -5 : 0)));
+                s.block(x, 1, 0, "minecraft:water[level=" + (x == -5 ? 0 : level) + "]");
+                s.block(x, 1, -1, "minecraft:stone");
+                s.block(x, 1, 1, "minecraft:stone");
+            }
+            if (k % 4 == 1) {
+                s.block(2, 2, 0, "minecraft:water[level=8]");
+            }
+            s.entity("item", rnd(r, -4, 3), rnd(r, 1.2, 2.2), rnd(r, 0.3, 0.7), rnd(r, -0.1, 0.1), 0, 0, r.nextLong())
+                    .with("pickup_delay", 32767);
+            s.ticks(150);
+            out.add(s);
+        }
+        // Bubble columns over soul sand (up) and magma (down).
+        for (int k = 0; k < 12; k++) {
+            boolean down = k % 2 == 1;
+            var s = new EntityVectors.Scenario("item_fluid/bubble/" + k, r.nextLong());
+            s.block(0, 0, 0, down ? "minecraft:magma_block" : "minecraft:soul_sand");
+            int h = 2 + r.nextInt(4);
+            for (int y = 1; y <= h; y++) s.block(0, y, 0, "minecraft:bubble_column[drag=" + down + "]");
+            if (k % 3 == 0) s.block(0, h + 1, 0, "minecraft:water[level=0]");
+            s.entity("item", rnd(r, 0.3, 0.7), rnd(r, 1.0, h + 2.0), rnd(r, 0.3, 0.7), 0, rnd(r, -0.2, 0.2), 0, r.nextLong())
+                    .with("pickup_delay", 32767);
+            s.ticks(100);
+            out.add(s);
+        }
+        // Waterlogged blocks and water plants.
+        String[] logged = {"minecraft:oak_slab[type=bottom,waterlogged=true]", "minecraft:oak_stairs[waterlogged=true]",
+            "minecraft:seagrass", "minecraft:kelp[age=3]", "minecraft:kelp_plant", "minecraft:oak_fence[waterlogged=true]",
+            "minecraft:glass_pane[waterlogged=true,east=true]", "minecraft:oak_trapdoor[half=top,waterlogged=true]"};
+        for (int k = 0; k < 16; k++) {
+            var s = new EntityVectors.Scenario("item_fluid/logged/" + k, r.nextLong());
+            s.fill(-2, 0, -2, 2, 0, 2, "minecraft:stone");
+            for (int x = -1; x <= 1; x++)
+                for (int z = -1; z <= 1; z++) s.block(x, 1, z, r.nextBoolean() ? logged[r.nextInt(logged.length)] : "minecraft:water");
+            s.entity("item", rnd(r, -0.5, 1.5), rnd(r, 1.2, 3), rnd(r, -0.5, 1.5), rnd(r, -0.1, 0.1), 0, rnd(r, -0.1, 0.1),
+                    r.nextLong()).with("pickup_delay", 32767);
+            s.ticks(100);
+            out.add(s);
+        }
+    }
+
+    static void effects(List<EntityVectors.Scenario> out) {
+        Random r = new Random(4);
+        String[] blocks = {"minecraft:cobweb", "minecraft:sweet_berry_bush[age=3]", "minecraft:powder_snow",
+            "minecraft:fire", "minecraft:soul_fire", "minecraft:campfire[lit=true]", "minecraft:cactus", "minecraft:honey_block",
+            "minecraft:water_cauldron[level=2]", "minecraft:lava_cauldron", "minecraft:powder_snow_cauldron[level=3]",
+            "minecraft:scaffolding[distance=0,bottom=false]", "minecraft:scaffolding[distance=2,bottom=true]"};
+        for (int k = 0; k < 52; k++) {
+            String b = blocks[k % blocks.length];
+            var s = new EntityVectors.Scenario("item_effect/" + b + "/" + k / blocks.length, r.nextLong());
+            s.fill(-2, 0, -2, 2, 0, 2, b.contains("fire") && !b.contains("campfire") ? "minecraft:netherrack" : "minecraft:stone");
+            for (int y = 1; y <= 2; y++) s.block(0, y, 0, b);
+            if (b.contains("honey")) s.block(0, 2, 0, "minecraft:air");
+            double x = k / blocks.length == 3 ? rnd(r, 1.02, 1.2) : rnd(r, 0.2, 0.8);
+            s.entity("item", x, rnd(r, 1.2, 4), rnd(r, 0.2, 0.8), rnd(r, -0.1, 0.1), rnd(r, -0.1, 0.2), rnd(r, -0.1, 0.1), r.nextLong())
+                    .with("item", k % 7 == 3 ? "minecraft:netherite_ingot" : "minecraft:cobblestone").with("pickup_delay", 32767);
+            s.ticks(120);
+            out.add(s);
+        }
+        // Burning items.
+        for (int k = 0; k < 6; k++) {
+            var s = new EntityVectors.Scenario("item_effect/burning/" + k, r.nextLong());
+            s.fill(-2, 0, -2, 2, 0, 2, "minecraft:stone");
+            if (k % 2 == 1) s.block(0, 1, 0, "minecraft:water");
+            s.entity("item", rnd(r, 0.2, 0.8), 1.5, rnd(r, 0.2, 0.8), 0, 0, 0, r.nextLong()).with("fire", 30 + k * 20)
+                    .with("pickup_delay", 32767);
+            s.ticks(120);
+            out.add(s);
+        }
+    }
+
+    static void merges(List<EntityVectors.Scenario> out) {
+        Random r = new Random(5);
+        String[][] kinds = {{"minecraft:cobblestone"}, {"minecraft:cobblestone", "minecraft:diamond"},
+            {"minecraft:ender_pearl"}, {"minecraft:iron_sword"}, {"minecraft:egg", "minecraft:snowball"}};
+        for (int k = 0; k < 40; k++) {
+            var s = new EntityVectors.Scenario("item_merge/" + k, r.nextLong());
+            s.fill(-3, 0, -3, 3, 0, 3, k % 5 == 2 ? "minecraft:ice" : "minecraft:stone");
+            String[] names = kinds[k % kinds.length];
+            int n = 2 + r.nextInt(5);
+            for (int i = 0; i < n; i++) {
+                String name = names[r.nextInt(names.length)];
+                int max = name.contains("sword") ? 1 : name.contains("pearl") || name.contains("egg") || name.contains("snowball") ? 16 : 64;
+                s.entity("item", rnd(r, -0.5, 1.5), rnd(r, 1.0, 2.0), rnd(r, -0.5, 1.5), rnd(r, -0.05, 0.05), 0,
+                        rnd(r, -0.05, 0.05), r.nextLong()).with("item", name).with("count", 1 + r.nextInt(max))
+                        .with("pickup_delay", r.nextInt(3) == 0 ? 0 : 40).with("age", r.nextInt(4) == 0 ? 5950 : r.nextInt(100));
+            }
+            s.ticks(200);
+            out.add(s);
+        }
+    }
+
+    static void misc(List<EntityVectors.Scenario> out) {
+        Random r = new Random(6);
+        // Spawned inside blocks: pushed out toward the nearest free side.
+        for (int k = 0; k < 20; k++) {
+            var s = new EntityVectors.Scenario("item_stuck/" + k, r.nextLong());
+            s.fill(-2, 0, -2, 2, 3, 2, "minecraft:stone");
+            int open = r.nextInt(5);
+            int[][] sides = {{0, 2, -1}, {0, 2, 1}, {-1, 2, 0}, {1, 2, 0}, {0, 3, 0}};
+            for (int i = 0; i <= open; i++) s.block(sides[i][0], sides[i][1], sides[i][2], "minecraft:air");
+            s.block(0, 4, 0, "minecraft:air");
+            s.entity("item", rnd(r, 0.3, 0.7), rnd(r, 2.1, 2.6), rnd(r, 0.3, 0.7), 0, 0, 0, r.nextLong()).with("pickup_delay", 32767);
+            s.ticks(60);
+            out.add(s);
+        }
+        // Fast items: long falls onto slime, hay and into water (fall distance clip), thrown into walls.
+        for (int k = 0; k < 20; k++) {
+            var s = new EntityVectors.Scenario("item_fast/" + k, r.nextLong());
+            String floor = k % 3 == 0 ? "minecraft:slime_block" : k % 3 == 1 ? "minecraft:stone" : "minecraft:hay_block";
+            s.fill(-4, 0, -4, 4, 0, 4, floor);
+            if (k % 4 == 1) s.fill(-4, 1, -4, 4, 2, 4, "minecraft:water");
+            if (k % 5 == 2) s.fill(3, 1, -4, 3, 6, 4, "minecraft:stone");
+            s.entity("item", rnd(r, -1, 1), rnd(r, 15, 22), rnd(r, -1, 1), rnd(r, -1.2, 1.2), rnd(r, -1.5, 0.5), rnd(r, -1.2, 1.2),
+                    r.nextLong()).with("pickup_delay", 32767).with("fall_distance", 3.0);
+            s.ticks(100);
+            out.add(s);
+        }
+        // Despawn at age 6000 and the infinite lifetime marker.
+        for (int k = 0; k < 4; k++) {
+            var s = new EntityVectors.Scenario("item_age/" + k, r.nextLong());
+            s.fill(-1, 0, -1, 1, 0, 1, "minecraft:stone");
+            s.entity("item", 0.5, 1.0, 0.5, 0, 0, 0, r.nextLong()).with("age", k == 3 ? -32768 : 5980 + k).with("pickup_delay", k == 2 ? 32767 : 5);
+            s.ticks(40);
+            out.add(s);
+        }
+        // Falling out of the world.
+        var s = new EntityVectors.Scenario("item_void/0", r.nextLong());
+        s.entity("item", 0.5, -60 - EntityVectors.BY, 0.5, 0, -3, 0, r.nextLong());
+        s.ticks(30);
+        out.add(s);
     }
 }

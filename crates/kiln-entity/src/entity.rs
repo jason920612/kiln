@@ -136,7 +136,7 @@ impl Entity {
             minor_horizontal_collision: false,
             fall_distance: 0.0,
             tick_count: 0,
-            remaining_fire_ticks: -1,
+            remaining_fire_ticks: 0,
             air_supply: 300,
             ticks_frozen: 0,
             is_in_powder_snow: false,
