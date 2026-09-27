@@ -5,6 +5,7 @@
 //! The simulation implements [`EntityLevel`] over its world and ticks entities with
 //! [`Entity::common_tick`] then [`Entity::tick`].
 
+pub mod arrow;
 pub mod blocks;
 pub mod clip;
 pub mod collision;

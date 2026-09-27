@@ -102,10 +102,8 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
     check_left_owner(e, level);
     e.base_tick(level);
     data(e).left_owner_checked = false;
-    if let Some(hit) = hit {
-        if e.is_alive() {
-            on_hit(e, level, hit);
-        }
+    if let (Some(hit), true) = (hit, e.is_alive()) {
+        on_hit(e, level, hit);
     }
 }
 
@@ -170,7 +168,7 @@ fn entity_hit(e: &Entity, level: &dyn EntityLevel, from: Vec3, to: Vec3, area: &
 }
 
 /// `canBeHitByProjectile`: alive and pickable.
-fn can_be_hit_by_projectile(e: &Entity) -> bool {
+pub(crate) fn can_be_hit_by_projectile(e: &Entity) -> bool {
     e.is_alive() && matches!(e.kind, EntityKind::Tnt(_) | EntityKind::FallingBlock(_) | EntityKind::Player(_) | EntityKind::Other { .. })
 }
 
@@ -198,7 +196,7 @@ fn update_rotation(e: &mut Entity) {
     e.y_rot = lerp_rotation(e.y_rot_o, (mth_atan2(v.x, v.z) * 57.2957763671875) as f32);
 }
 
-fn lerp_rotation(mut current: f32, target: f32) -> f32 {
+pub(crate) fn lerp_rotation(mut current: f32, target: f32) -> f32 {
     while target - current < -180.0 {
         current -= 360.0;
     }
@@ -254,7 +252,7 @@ pub fn mth_atan2(mut y: f64, mut x: f64) -> f64 {
     let f = (6.0 + s * s) * s * 0.16666666666666666;
     let mut r = asin + f;
     if swap {
-        r = 1.5707963267948966 - r;
+        r = std::f64::consts::FRAC_PI_2 - r;
     }
     if neg_x {
         r = std::f64::consts::PI - r;

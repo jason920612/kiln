@@ -128,6 +128,7 @@ public class EntityVectors {
         Scenarios.orbs(out);
         Scenarios.players(out);
         Scenarios.throwables(out);
+        Scenarios.arrows(out);
         return out;
     }
 
@@ -382,6 +383,7 @@ public class EntityVectors {
                 }
                 e = f;
             }
+            case "arrow" -> e = new net.minecraft.world.entity.projectile.arrow.Arrow(EntityTypes.ARROW, level);
             case "snowball" -> e = new net.minecraft.world.entity.projectile.throwableitemprojectile.Snowball(EntityTypes.SNOWBALL, level);
             case "ender_pearl" -> e = new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl(EntityTypes.ENDER_PEARL, level);
             case "player" -> {
@@ -484,6 +486,17 @@ public class EntityVectors {
             sb.append(',').append(tnt.getFuse());
         } else if (e instanceof FallingBlockEntity f) {
             sb.append(',').append(f.time).append(',').append(Block.getId(f.getBlockState()));
+        } else if (e instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow arrow) {
+            boolean inGround;
+            try {
+                var m = net.minecraft.world.entity.projectile.arrow.AbstractArrow.class.getDeclaredMethod("isInGround");
+                m.setAccessible(true);
+                inGround = (Boolean) m.invoke(arrow);
+            } catch (Exception ex) {
+                throw new RuntimeException(ex);
+            }
+            sb.append(',').append(inGround ? 1 : 0).append(',').append(arrow.shakeTime)
+                    .append(',').append(getInt(net.minecraft.world.entity.projectile.arrow.AbstractArrow.class, arrow, "life"));
         } else if (e instanceof ExperienceOrb orb) {
             sb.append(',').append(orb.getValue()).append(',').append(getInt(ExperienceOrb.class, orb, "count"))
                     .append(',').append(getInt(ExperienceOrb.class, orb, "age"));
@@ -941,6 +954,24 @@ class Scenarios {
             if (k % 6 == 2) s.entity("tnt", rnd(r, -3, 4), 1, rnd(r, -3, 4), 0, 0, 0, r.nextLong()).with("fuse", 200);
             String kind = k % 3 == 2 ? "ender_pearl" : "snowball";
             s.entity(kind, rnd(r, -2, 3), rnd(r, 1.5, 5), rnd(r, -2, 3), rnd(r, -0.5, 0.5), rnd(r, -0.3, 0.6), rnd(r, -0.5, 0.5), r.nextLong());
+            s.ticks(60);
+            out.add(s);
+        }
+    }
+
+    static void arrows(List<EntityVectors.Scenario> out) {
+        Random r = new Random(13);
+        for (int k = 0; k < 60; k++) {
+            var s = new EntityVectors.Scenario("arrow/" + k, r.nextLong());
+            s.fill(-10, 0, -10, 10, 0, 10, "minecraft:stone");
+            s.fill(6, 1, -10, 6, 6, 10, k % 2 == 0 ? "minecraft:oak_planks" : "minecraft:glass");
+            int n = 6 + r.nextInt(10);
+            for (int i = 0; i < n; i++) s.block(r.nextInt(21) - 10, 1 + r.nextInt(3), r.nextInt(21) - 10, SHAPES[r.nextInt(SHAPES.length)]);
+            if (k % 4 == 1) s.fill(-10, 1, -10, 5, 2, 10, "minecraft:water");
+            double speed = rnd(r, 0.5, 3.0);
+            double yaw = rnd(r, -0.8, 0.8), pitch = rnd(r, -0.6, 0.4);
+            s.entity("arrow", rnd(r, -3, 0), rnd(r, 1.5, 4), rnd(r, -3, 3), Math.cos(yaw) * Math.cos(pitch) * speed,
+                    Math.sin(pitch) * speed, Math.sin(yaw) * Math.cos(pitch) * speed, r.nextLong());
             s.ticks(60);
             out.add(s);
         }

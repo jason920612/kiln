@@ -50,6 +50,8 @@ pub enum EntityKind {
     Tnt(crate::tnt::TntData),
     /// Snowballs, eggs, ender pearls, thrown potions and experience bottles.
     Throwable(crate::projectile::ThrowableData),
+    /// Arrows and spectral arrows.
+    Arrow(crate::arrow::ArrowData),
     /// A player, for the server's movement check (`player::server_move`); not ticked here.
     Player(crate::player::PlayerData),
     /// An entity simulated elsewhere (mobs, players), present so behaviours can see it.
@@ -258,6 +260,7 @@ impl Entity {
             EntityKind::ExperienceOrb(_) => 0.03,
             EntityKind::Player(_) => 0.08,
             EntityKind::Throwable(ref d) => crate::projectile::gravity(d),
+            EntityKind::Arrow(_) => 0.05,
             EntityKind::Other { .. } => 0.0,
         }
     }
@@ -280,7 +283,7 @@ impl Entity {
     }
 
     pub fn is_pushed_by_fluid(&self) -> bool {
-        true
+        !matches!(&self.kind, EntityKind::Arrow(a) if a.in_ground)
     }
 
     pub fn is_suppressing_bounce(&self) -> bool {
@@ -346,6 +349,7 @@ impl Entity {
             EntityKind::FallingBlock(_) => crate::falling_block::tick(self, level),
             EntityKind::Tnt(_) => crate::tnt::tick(self, level),
             EntityKind::Throwable(_) => crate::projectile::tick(self, level),
+            EntityKind::Arrow(_) => crate::arrow::tick(self, level),
             EntityKind::Player(_) => {}
             EntityKind::Other { .. } => self.base_tick(level),
         }
@@ -426,7 +430,7 @@ impl Entity {
         match self.kind {
             EntityKind::Item(_) => crate::item::hurt(self, level, kind, amount, attacker),
             EntityKind::ExperienceOrb(_) => crate::xp_orb::hurt(self, level, kind, amount),
-            EntityKind::FallingBlock(_) | EntityKind::Tnt(_) | EntityKind::Throwable(_) => false,
+            EntityKind::FallingBlock(_) | EntityKind::Tnt(_) | EntityKind::Throwable(_) | EntityKind::Arrow(_) => false,
             EntityKind::Player(_) | EntityKind::Other { .. } => {
                 level.emit(Event::Hurt { target: self.id, amount, kind, attacker });
                 true

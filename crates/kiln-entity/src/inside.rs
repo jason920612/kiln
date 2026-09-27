@@ -433,6 +433,10 @@ impl Entity {
 
     /// `BubbleColumnBlock.entityInside` with the box inside the column.
     pub(crate) fn bubble_column_inside(&mut self, level: &dyn EntityLevel, pos: BlockPos, state: u16) {
+        // AbstractArrow ignores bubble columns while stuck.
+        if matches!(&self.kind, EntityKind::Arrow(a) if a.in_ground) {
+            return;
+        }
         let above = level.block(pos.above());
         let drag_down = kiln_data::blocks_types::block_of(state).property(state, "drag") == Some("true");
         if physics::collision_shape(above).is_empty() && physics::fluid_state(above).is_empty() {
