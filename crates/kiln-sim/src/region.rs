@@ -124,7 +124,7 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 2);
         self.tick_blocks(env);
         mark(&mut self.out.times, 3);
-        entities::tick(self.entities, &*self.cells);
+        self.tick_entities(env);
         entities::pickups(self.entities, &mut self.players);
         mark(&mut self.out.times, 4);
         let movers = crate::players::update_visibility(&mut self.players);
@@ -161,6 +161,29 @@ impl RegionWork<'_> {
             blocks::press_plates(&mut level);
             blocks::tick_blocks(&mut level, &ticking);
             blocks::tick_pistons(&mut level, &ticking);
+        }
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+    }
+
+    /// The entity phase: the region's entities tick against its blocks; what they change
+    /// goes out like block work.
+    fn tick_entities(&mut self, env: &Env) {
+        if self.entities.list.is_empty() {
+            return;
+        }
+        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let mut out = BlockOut::default();
+        {
+            let mut level = RegionLevel {
+                cells: &mut *self.cells,
+                blocks: &mut *self.blocks,
+                env: &env.blocks,
+                out: &mut out,
+                bodies: &bodies,
+                actor: None,
+            };
+            entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
@@ -412,7 +435,6 @@ fn use_on_block(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3
     let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
     if !(p.sneaking && have_something) && main_hand && !interact::passes_to_item(level.block(bp), item_name, dir) {
         let used = interact::use_without_item(level, bp, &actor);
-        level.settle();
         if used {
             return;
         }
@@ -431,7 +453,6 @@ fn use_on_block(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3
     if placement::place(level, &item, &ctx).is_none() {
         return;
     }
-    level.settle();
     if p.game_mode != 1 {
         let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
         kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
