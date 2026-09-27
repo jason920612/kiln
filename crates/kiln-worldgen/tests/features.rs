@@ -699,14 +699,17 @@ fn features_match_vanilla() {
                     if k.block_ticks != v.block_ticks || k.fluid_ticks != v.fluid_ticks {
                         ticks_bad += 1;
                         if ticks_bad <= 3 {
+                            let only = |a: &[Tick], b: &[Tick]| a.iter().filter(|t| !b.contains(t)).take(4).cloned().collect::<Vec<_>>();
                             eprintln!(
-                                "    ticks differ in {x},{z}: vanilla {}+{}, kiln {}+{}; first vanilla {:?}, kiln {:?}",
+                                "    ticks differ in {x},{z}: vanilla {}+{}, kiln {}+{}; only vanilla {:?} {:?}, only kiln {:?} {:?}",
                                 v.block_ticks.len(),
                                 v.fluid_ticks.len(),
                                 k.block_ticks.len(),
                                 k.fluid_ticks.len(),
-                                v.block_ticks.first().or(v.fluid_ticks.first()),
-                                k.block_ticks.first().or(k.fluid_ticks.first())
+                                only(&v.block_ticks, &k.block_ticks),
+                                only(&v.fluid_ticks, &k.fluid_ticks),
+                                only(&k.block_ticks, &v.block_ticks),
+                                only(&k.fluid_ticks, &v.fluid_ticks)
                             );
                         }
                     }

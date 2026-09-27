@@ -79,6 +79,11 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if logic::is_instance(s, C::SpeleothemBlock) {
         return speleothem_update_shape(level, s, pos, dir);
     }
+    if class == C::BrushableBlock {
+        // `BrushableBlock.updateShape`: re-check the fall in 2 ticks.
+        crate::level::schedule_block_tick(level, pos, BlockId::of(s), 2, crate::ticks::TickPriority::Normal);
+        return s;
+    }
     if logic::is_instance(s, C::FallingBlock) {
         misc::falling_schedule(level, s, pos);
         return s;
@@ -88,6 +93,14 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     }
     if logic::is_instance(s, C::SnowyBlock) && dir == Direction::Up {
         return state::set_bool(s, "snowy", connect::snowy_setting(neighbor_state));
+    }
+    if class == C::SeagrassBlock {
+        // `SeagrassBlock.updateShape`: the water around it flows again while it stays.
+        let new = support::pop_off(level, s, pos, dir, neighbor_state).unwrap_or(s);
+        if !kiln_data::blocks_types::is_air(new) {
+            crate::level::schedule_fluid_tick(level, pos, crate::FluidType::Water, 5);
+        }
+        return new;
     }
     if let Some(new) = support::pop_off(level, s, pos, dir, neighbor_state) {
         return new;
