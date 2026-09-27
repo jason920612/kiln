@@ -1,6 +1,6 @@
 """Block behaviour seen by the real 26.3 client: start a release server, join it with the
 client, build a scene from the console (redstone line lit by a lever, a sticky piston pushed
-by a redstone block, flowing water, connected fences, falling sand), then take a screenshot
+by a redstone block, flowing water, connected fences, falling sand, a TNT crater), then take a screenshot
 of the game window (work/blocks-view.png) and report client decode errors.
 
 usage: python tools/blocks_view.py [--port 25570] [--keep]
@@ -32,6 +32,8 @@ setblock 5 -60 8 redstone_block
 setblock 14 -60 4 water
 fill 0 -60 2 6 -60 2 oak_fence
 fill 12 -55 10 12 -52 10 sand
+setblock 16 -61 14 tnt
+setblock 17 -61 14 redstone_block
 tp KilnView 8 -58 22 180 25
 execute if block 11 -60 12 minecraft:redstone_lamp[lit=true]
 execute if block 3 -60 12 minecraft:redstone_wire[power=15]
