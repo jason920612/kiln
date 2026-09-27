@@ -11,7 +11,8 @@ use crate::data::Kind;
 use crate::eval::Eval;
 use crate::json::Json;
 use crate::parse::{PResult, Parser, Ref, fail, float, ident, int, list, obj, opt_or, req, string};
-use crate::random::Rng;
+use crate::random::RngExt;
+use kiln_javamath::random::RandomSource;
 use crate::context::EntityTarget;
 use kiln_command::nbt_path::NbtPath;
 use kiln_item::Identifier;
@@ -391,9 +392,9 @@ fn pow_exact(base: i32, exponent: i32) -> ArithResult<i32> {
 
 /// A pick from a `WeightedList` (`getRandomOrThrow`): `nextInt(total)` then the entry whose
 /// cumulative weight passes it.
-fn pick_weighted<'a, T>(entries: &'a [(T, i32)], rng: &mut Rng) -> &'a T {
+fn pick_weighted<'a, T>(entries: &'a [(T, i32)], rng: &mut dyn RandomSource) -> &'a T {
     let total: i32 = entries.iter().map(|(_, w)| *w).sum();
-    let mut r = rng.next_int(total);
+    let mut r = rng.bounded(total);
     for (v, w) in entries {
         r -= w;
         if r < 0 {
@@ -550,7 +551,7 @@ impl Eval<'_> {
                 self.int_unsafe(default)
             }
             IntProvider::WeightedList(entries) => {
-                let v = pick_weighted(entries, &mut self.rng).clone();
+                let v = pick_weighted(entries, self.rng).clone();
                 self.int_unsafe(&v)
             }
         }
@@ -672,7 +673,7 @@ impl Eval<'_> {
                 self.float_unsafe(default)
             }
             FloatProvider::WeightedList(entries) => {
-                let v = pick_weighted(entries, &mut self.rng).clone();
+                let v = pick_weighted(entries, self.rng).clone();
                 self.float_unsafe(&v)
             }
         }

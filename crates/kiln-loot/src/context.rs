@@ -272,8 +272,9 @@ pub trait LootContext {
         text.clone()
     }
 
-    /// Items of a slot range (`SlotRange`, as indices into the owner's `SlotProvider`).
-    fn slot_items(&self, _owner: SlotOwner, _slots: &[i32]) -> Vec<ItemStack> {
+    /// Items of a named slot range (`SlotRanges`, such as `container.*` or `armor.head`) of the
+    /// owner's `SlotProvider`; empty when the owner is not one.
+    fn slot_items(&self, _owner: SlotOwner, _range: &str) -> Vec<ItemStack> {
         Vec::new()
     }
 

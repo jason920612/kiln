@@ -3,7 +3,9 @@
 //! first occurrence kept), which loot depends on wherever it picks by index.
 
 use crate::json::Json;
+use crate::parse::IdSet;
 use kiln_item::Identifier;
+use kiln_item::registry::Registry;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -12,6 +14,8 @@ use std::path::Path;
 pub struct Tags {
     /// (registry, tag) → entry names (`namespace:path`) in vanilla order.
     resolved: HashMap<(String, Identifier), Vec<Identifier>>,
+    /// The same tags as network ids, for registries kiln has id tables for.
+    ids: HashMap<(String, Identifier), IdSet>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +63,21 @@ impl Tags {
             resolve(&key, &raw, &known, &mut out, &mut Vec::new())?;
             resolved.insert(key, out);
         }
-        Ok(Tags { resolved })
+        let mut ids = HashMap::new();
+        for ((registry, tag), names) in &resolved {
+            if !has_id_table(registry) {
+                continue;
+            }
+            let reg = Registry(static_name(registry));
+            let list: Vec<i32> = names.iter().filter_map(|n| reg.id(n.as_str())).collect();
+            ids.insert((registry.clone(), tag.clone()), IdSet::new(Some(tag.clone()), list));
+        }
+        Ok(Tags { resolved, ids })
+    }
+
+    /// The tag as network ids of `registry` (a registry kiln-data has an id table for).
+    pub fn ids(&self, registry: Registry, tag: &Identifier) -> Option<&IdSet> {
+        self.ids.get(&(registry.0.to_owned(), tag.clone()))
     }
 
     /// Entries of `tag` in `registry` (such as `minecraft:item`), in vanilla order.
@@ -78,6 +96,22 @@ impl Tags {
     pub fn is_empty(&self) -> bool {
         self.resolved.is_empty()
     }
+}
+
+/// Whether kiln-data has network ids for `registry`.
+pub fn has_id_table(registry: &str) -> bool {
+    kiln_data::builtin_entries(registry).is_some()
+        || kiln_data::registries::SYNCHRONIZED.iter().any(|(r, _)| *r == registry)
+}
+
+/// The `'static` registry name kiln-data uses (so a [`Registry`] can be built at runtime).
+fn static_name(registry: &str) -> &'static str {
+    kiln_data::registries::BUILTIN
+        .iter()
+        .chain(kiln_data::registries::SYNCHRONIZED)
+        .find(|(r, _)| *r == registry)
+        .map(|(r, _)| *r)
+        .expect("registry with an id table")
 }
 
 /// Tag registries whose directories are nested (`tags/worldgen/biome/...`).

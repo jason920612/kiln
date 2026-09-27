@@ -9,7 +9,7 @@ use std::collections::HashMap;
 /// The `Mth` random helpers loot uses.
 pub trait RngExt: RandomSource {
     /// `RandomSource.nextInt(bound)`.
-    fn next_int(&mut self, bound: i32) -> i32 {
+    fn bounded(&mut self, bound: i32) -> i32 {
         self.next_int_bounded(bound)
     }
 
