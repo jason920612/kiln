@@ -67,6 +67,11 @@ impl Heightmap {
 const FINAL: [Heightmap; 4] =
     [Heightmap::WorldSurface, Heightmap::OceanFloor, Heightmap::MotionBlocking, Heightmap::MotionBlockingNoLeaves];
 
+/// The [`heightmap_flags`] bit a block needs to count for `map`.
+pub fn heightmap_bit(map: Heightmap) -> u8 {
+    map.bit()
+}
+
 const NOT_AIR: u8 = 1;
 const MOTION: u8 = 2;
 const MOTION_OR_FLUID: u8 = 4;

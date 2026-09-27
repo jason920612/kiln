@@ -389,6 +389,38 @@ impl Generator {
         after(Step::Carvers, chunk);
     }
 
+    /// `NoiseBasedChunkGenerator.iterateNoiseColumn`: the terrain of one column as TERRAIN's
+    /// fill step would place it (final density over a 1×height×1 volume, then the aquifer),
+    /// before surface rules, carvers and structures. States from `min_y` up.
+    pub fn base_column(&self, s: &mut Scratch, x: i32, z: i32) -> Vec<u16> {
+        let vol = Volume::blocks([1, self.height, 1], [x, self.min_y, z]);
+        s.reset_caches();
+        let mut aquifer = match &self.aquifer {
+            Some(f) => Aquifer::Noise(Box::new(NoiseAquifer::new(f, self.fluid_picker, s, &vol))),
+            None => Aquifer::Disabled(self.fluid_picker),
+        };
+        let mut density = vec![0f32; vol.len()];
+        self.final_density.fill(s, &vol, &mut density);
+        let mut out = vec![state::AIR; self.height as usize];
+        for yi in (0..vol.size[1]).rev() {
+            let y = vol.block_y(yi);
+            out[yi as usize] = aquifer.compute_substance(s, x, y, z, density[vol.index(0, yi, 0)] as f64).unwrap_or(self.default_block);
+        }
+        out
+    }
+
+    /// `ChunkGenerator.getBaseHeight`: one above the highest block of [`Self::base_column`]
+    /// counting for the heightmap (`min_y` if none). Vanilla samples the column top down and
+    /// stops at the first match; the values sampled are the same.
+    pub fn base_height(&self, s: &mut Scratch, x: i32, z: i32, map: crate::proto::Heightmap) -> i32 {
+        let column = self.base_column(s, x, z);
+        let bit = crate::proto::heightmap_bit(map);
+        column
+            .iter()
+            .rposition(|&b| crate::proto::heightmap_flags(b) & bit != 0)
+            .map_or(self.min_y, |i| self.min_y + i as i32 + 1)
+    }
+
     /// The biome of a quart from point-sampled climate (`createUncachedResolver`).
     fn point_biome(&self, s: &mut Scratch, last: &mut LastResult, qx: i32, qy: i32, qz: i32) -> u16 {
         let (x, y, z) = (qx << 2, qy << 2, qz << 2);

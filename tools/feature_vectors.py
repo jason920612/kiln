@@ -5,7 +5,7 @@ harness starts a dedicated server in-process for its generation context; it bind
 port in 25591-25593 on 127.0.0.1). Dumps (Mojang-derived: never commit) go to
 <work>/wp4-features/vectors unless --out is given.
 
-usage: python tools/feature_vectors.py [--out DIR] [--structures] [--regions N] [--size S]
+usage: python tools/feature_vectors.py [--out DIR] [--structures] [--regions N] [--size S] [--heights N]
                                        [--check] [--bench N] [seed...]
        (default seeds 0 1 12345 -4172144997902289642 and one random seed)
 """
@@ -48,6 +48,7 @@ def main():
     ap.add_argument("--size", type=int)
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--bench", type=int)
+    ap.add_argument("--heights", type=int)
     ap.add_argument("seeds", nargs="*")
     a = ap.parse_args()
     seeds = a.seeds or ["0", "1", "12345", "-4172144997902289642", "random"]
@@ -83,6 +84,8 @@ def main():
             args.append("--check")
         if a.bench:
             args += ["--bench", str(a.bench)]
+        if a.heights:
+            args += ["--heights", str(a.heights)]
         cmd = ["java", "-Xmx10g", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-cp", classpath(),
                str(ROOT / "tools" / "FeatureVectors.java"), *args]
         print(f"seed {seed}: {run}", flush=True)

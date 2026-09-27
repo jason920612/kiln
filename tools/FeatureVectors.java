@@ -85,6 +85,7 @@ import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.util.StaticCache2D;
 import net.minecraft.world.attribute.EnvironmentAttributeSystem;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.StructureManager;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeGenerationSettings;
@@ -795,6 +796,35 @@ public class FeatureVectors {
             structures ? "with" : "without", best, order.size());
     }
 
+    /**
+     * heights_<seed>.bin: "KWGH", count, then per column x, z, getBaseHeight for WORLD_SURFACE_WG
+     * and OCEAN_FLOOR_WG, and the base column (state ids from the lowest y) as i16 count + u16s.
+     */
+    void heights(Path path, int n) throws Exception {
+        Random r = new Random(seed ^ 0x48454947L);
+        var h = LevelHeightAccessor.create(minY(), level.getHeight());
+        try (OutputStream file = new BufferedOutputStream(Files.newOutputStream(path), 1 << 20)) {
+            DataOutputStream w = new DataOutputStream(file);
+            w.write("KWGH".getBytes(StandardCharsets.US_ASCII));
+            w.writeInt(Integer.reverseBytes(n));
+            for (int i = 0; i < n; i++) {
+                int x = i % 4 == 0 ? r.nextInt(60_000_000) - 30_000_000 : r.nextInt(8000) - 4000;
+                int z = i % 4 == 0 ? r.nextInt(60_000_000) - 30_000_000 : r.nextInt(8000) - 4000;
+                w.writeInt(Integer.reverseBytes(x));
+                w.writeInt(Integer.reverseBytes(z));
+                w.writeInt(Integer.reverseBytes(generator.getBaseHeight(x, z, net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE_WG, h, random)));
+                w.writeInt(Integer.reverseBytes(generator.getBaseHeight(x, z, net.minecraft.world.level.levelgen.Heightmap.Types.OCEAN_FLOOR_WG, h, random)));
+                var column = generator.getBaseColumn(x, z, h, random);
+                w.writeShort(Short.reverseBytes((short) level.getHeight()));
+                for (int y = minY(); y < minY() + level.getHeight(); y++) {
+                    w.writeShort(Short.reverseBytes((short) Block.BLOCK_STATE_REGISTRY.getId(column.getBlock(y))));
+                }
+            }
+            w.flush();
+        }
+        OUT.printf("seed %d: %d base heights%n", seed, n);
+    }
+
     static MinecraftServer findServer() throws Exception {
         for (int attempt = 0; attempt < 600; attempt++) {
             for (Thread t : Thread.getAllStackTraces().keySet()) {
@@ -821,6 +851,7 @@ public class FeatureVectors {
         int regions = FIXED_REGIONS.length + 4;
         int size = 4;
         int bench = 0;
+        int heights = 0;
         boolean check = false;
         for (int i = 2; i < args.length; i++) {
             switch (args[i]) {
@@ -828,6 +859,7 @@ public class FeatureVectors {
                 case "--size" -> size = Integer.parseInt(args[++i]);
                 case "--bench" -> bench = Integer.parseInt(args[++i]);
                 case "--check" -> check = true;
+                case "--heights" -> heights = Integer.parseInt(args[++i]);
                 default -> throw new IllegalArgumentException(args[i]);
             }
         }
@@ -841,6 +873,7 @@ public class FeatureVectors {
         try {
             if (regions > 0) fv.write(out.resolve("features_" + seedArg + (fv.structures ? "_s" : "") + ".bin"), regions, size, check);
             if (bench > 0) fv.bench(bench);
+            if (heights > 0) fv.heights(out.resolve("heights_" + seedArg + ".bin"), heights);
         } catch (Throwable e) {
             e.printStackTrace(OUT);
             Runtime.getRuntime().halt(1);
