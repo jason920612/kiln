@@ -2,7 +2,7 @@
 //! `knownShape == false`): `StructureTemplate.updateShapeAtEdge` over the placed blocks, then
 //! `Block.updateFromNeighbourShapes` for each of them, with `kiln-blocks`' `updateShape`.
 //!
-//! Ticks the updates would schedule are dropped (the region's chunks do not take them here).
+//! Ticks the updates schedule go to the region's proto-chunks in scheduling order.
 
 use crate::block_facts::Dir;
 use crate::blocks::state;
@@ -31,6 +31,58 @@ fn from_kb(p: kb::BlockPos) -> BlockPos {
 
 fn dir_kb(d: Dir) -> kb::Direction {
     kb::Direction::from_index(d as usize)
+}
+
+impl<'r, 'a> ShapeLevel<'r, 'a> {
+    /// Tick containers for the region's nine chunks, so scheduling reaches them.
+    fn new(r: &'r mut Region<'a>) -> Self {
+        let mut level = ShapeLevel {
+            block_ticks: kb::LevelTicks::new(),
+            fluid_ticks: kb::LevelTicks::new(),
+            data: kb::LevelData::new(kb::flags::LIMIT, 0),
+            rules: kb::Rules::default(),
+            sub_tick: 0,
+            r,
+        };
+        for dz in -1..=1 {
+            for dx in -1..=1 {
+                let key = (level.r.cx + dx, level.r.cz + dz);
+                level.block_ticks.add_container(key, kb::ChunkTicks::new());
+                level.fluid_ticks.add_container(key, kb::ChunkTicks::new());
+            }
+        }
+        level
+    }
+
+    /// Moves the scheduled ticks to the region (`ProtoChunkTicks`), oldest first.
+    fn flush_ticks(&mut self) {
+        let mut blocks: Vec<kb::ScheduledTick<kb::BlockId>> = Vec::new();
+        let mut fluids: Vec<kb::ScheduledTick<kb::FluidType>> = Vec::new();
+        let keys: Vec<_> = self.block_ticks.chunks().collect();
+        for key in keys {
+            if let Some(c) = self.block_ticks.remove_container(key) {
+                blocks.extend(c.iter().copied());
+                self.block_ticks.add_container(key, kb::ChunkTicks::new());
+            }
+            if let Some(c) = self.fluid_ticks.remove_container(key) {
+                fluids.extend(c.iter().copied());
+                self.fluid_ticks.add_container(key, kb::ChunkTicks::new());
+            }
+        }
+        let mut all: Vec<(i64, bool, BlockPos, &'static str)> = blocks
+            .iter()
+            .map(|t| (t.sub, true, from_kb(t.pos), t.kind.name()))
+            .chain(fluids.iter().map(|t| (t.sub, false, from_kb(t.pos), t.kind.name())))
+            .collect();
+        all.sort_by_key(|t| t.0);
+        for (_, block, p, name) in all {
+            if block {
+                self.r.schedule_block_tick(p, name, 0);
+            } else {
+                self.r.schedule_fluid_tick(p, name, 0);
+            }
+        }
+    }
 }
 
 impl kb::Level for ShapeLevel<'_, '_> {
@@ -236,30 +288,18 @@ type FaceAxis = (Dir, Dir, i32, i32, i32, fn(i32, i32, i32) -> (i32, i32, i32));
 const UPDATE_SHAPE_ORDER: [Dir; 6] = [Dir::West, Dir::East, Dir::North, Dir::South, Dir::Down, Dir::Up];
 
 /// `BlockState.updateShape` of `s` at `p` toward `d` (neighbour `ns`) with `kiln-blocks`'
-/// behaviour over the region; scheduled ticks are dropped.
+/// behaviour over the region.
 pub fn update_shape(r: &mut Region, s: u16, p: BlockPos, d: Dir, ns: u16) -> u16 {
-    let mut level = ShapeLevel {
-        r,
-        block_ticks: kb::LevelTicks::new(),
-        fluid_ticks: kb::LevelTicks::new(),
-        data: kb::LevelData::new(kb::flags::LIMIT, 0),
-        rules: kb::Rules::default(),
-        sub_tick: 0,
-    };
-    level.update_shape_with(s, p, d, ns)
+    let mut level = ShapeLevel::new(r);
+    let out = level.update_shape_with(s, p, d, ns);
+    level.flush_ticks();
+    out
 }
 
 /// The end of `StructureTemplate.placeInWorld` for an unknown shape: `placed` are the blocks
 /// set (in placement order) within `min..=max`.
 pub fn update_placed_shapes(r: &mut Region, flags: i32, placed: &[BlockPos], min: [i32; 3], max: [i32; 3]) {
-    let mut level = ShapeLevel {
-        r,
-        block_ticks: kb::LevelTicks::new(),
-        fluid_ticks: kb::LevelTicks::new(),
-        data: kb::LevelData::new(kb::flags::LIMIT, 0),
-        rules: kb::Rules::default(),
-        sub_tick: 0,
-    };
+    let mut level = ShapeLevel::new(r);
     let size = [max[0] - min[0] + 1, max[1] - min[1] + 1, max[2] - min[2] + 1];
     let mut filled = vec![false; (size[0] * size[1] * size[2]) as usize];
     let index = |x: i32, y: i32, z: i32| ((x * size[1] + y) * size[2] + z) as usize;
@@ -322,4 +362,5 @@ pub fn update_placed_shapes(r: &mut Region, flags: i32, placed: &[BlockPos], min
             level.r.set(p, new, known);
         }
     }
+    level.flush_ticks();
 }
