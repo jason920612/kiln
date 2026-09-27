@@ -844,15 +844,32 @@ impl MansionPiece {
             create_chest_at(r, cb, random, p, "minecraft:chests/woodland_mansion", Some(s));
             return;
         }
-        // Mobs are not spawned; their markers are cleared as vanilla does once it adds them.
-        match marker {
-            "Mage" | "Warrior" => {}
-            "Group of Allays" => {
-                r.level_random().next_int_bounded(3);
-            }
+        // Mobs are not spawned, but their `finalizeSpawn` draws from the region's random are
+        // made, and their markers are cleared as vanilla does once it adds them.
+        let (mobs, weapon) = match marker {
+            "Mage" => (1, false),
+            "Warrior" => (1, true),
+            "Group of Allays" => (r.level_random().next_int_bounded(3) + 1, false),
             _ => return,
+        };
+        for _ in 0..mobs {
+            finalize_spawn_draws(r.level_random(), weapon);
         }
         r.set(p, crate::blocks::state::AIR, 2);
+    }
+}
+
+/// The region-random draws of `Mob.finalizeSpawn` for a freshly created mob spawned by a
+/// structure: the follow-range spawn bonus (`triangle`) and left-handedness; a vindicator
+/// (`weapon`) also rolls to enchant its iron axe (`enchantSpawnedEquipment`, chance
+/// `0.25 * specialMultiplier`). Kiln assumes a special multiplier of 0 (effective difficulty
+/// below 2: easy, or normal early on), so the enchantment itself is never rolled.
+fn finalize_spawn_draws(random: &mut impl RandomSource, weapon: bool) {
+    random.next_double();
+    random.next_double();
+    random.next_float();
+    if weapon {
+        random.next_float();
     }
 }
 
