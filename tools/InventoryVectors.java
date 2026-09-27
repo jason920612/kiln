@@ -103,6 +103,7 @@ import net.minecraft.world.inventory.SmithingMenu;
 import net.minecraft.world.inventory.SmokerMenu;
 import net.minecraft.world.inventory.StonecutterMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CraftingRecipe;
 import net.minecraft.world.item.crafting.Ingredient;
@@ -143,6 +144,7 @@ public class InventoryVectors {
             case "clicks" -> clicks(Path.of(args[1]), Integer.parseInt(args[2]), Long.parseLong(args[3]));
             case "crafting" -> crafting(Path.of(args[1]), Integer.parseInt(args[2]), Long.parseLong(args[3]));
             case "sync" -> sync(Path.of(args[1]));
+            case "single" -> single(Path.of(args[1]));
             default -> throw new IllegalArgumentException("unknown mode " + args[0]);
         }
     }
@@ -726,6 +728,58 @@ public class InventoryVectors {
             }
         }
         return "{\"creative\": [" + slot + ", \"" + encoded + "\"], \"out\": " + drain(s) + ", \"state\": " + state(s) + "}";
+    }
+
+    // ---- single-input recipes -------------------------------------------------------------------
+
+    /** Cooking lookups for every item and brewing lookups for every potion against every reagent. */
+    static void single(Path out) throws Exception {
+        List<Holder.Reference<net.minecraft.world.item.Item>> items = access.lookupOrThrow(Registries.ITEM).listElements()
+                .sorted(java.util.Comparator.comparing(h -> h.key().identifier().toString())).toList();
+        String[] names = {"smelting", "blasting", "smoking", "campfire_cooking"};
+        List<net.minecraft.world.item.crafting.RecipeType<? extends net.minecraft.world.item.crafting.AbstractCookingRecipe>> types = List.of(
+                net.minecraft.world.item.crafting.RecipeType.SMELTING, net.minecraft.world.item.crafting.RecipeType.BLASTING,
+                net.minecraft.world.item.crafting.RecipeType.SMOKING, net.minecraft.world.item.crafting.RecipeType.CAMPFIRE_COOKING);
+        int records = 0;
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out, StandardCharsets.UTF_8))) {
+            for (var item : items) {
+                ItemStack stack = new ItemStack(item, 1);
+                if (stack.isEmpty()) continue;
+                for (int t = 0; t < types.size(); t++) {
+                    var found = recipes.getRecipeFor(types.get(t), new net.minecraft.world.item.crafting.SingleRecipeInput(stack), LEVEL);
+                    String rec = found.map(h -> "\"" + h.id().identifier() + "\", \"result\": \"" + hex(h.value().assemble(new net.minecraft.world.item.crafting.SingleRecipeInput(stack)))
+                            + "\", \"time\": " + h.value().cookingTime() + ", \"xp\": " + h.value().experience()).orElse("null");
+                    w.println("{\"cook\": \"" + names[t] + "\", \"input\": \"" + hex(stack) + "\", \"recipe\": " + rec + "}");
+                    records++;
+                }
+            }
+            List<ItemStack> inputs = new ArrayList<>();
+            var potions = access.lookupOrThrow(Registries.POTION).listElements().sorted(java.util.Comparator.comparing(h -> h.key().identifier().toString())).toList();
+            for (var base : List.of(Items.POTION, Items.SPLASH_POTION, Items.LINGERING_POTION)) {
+                for (var p : potions) inputs.add(net.minecraft.world.item.alchemy.PotionContents.createItemStack(base, p));
+                inputs.add(new ItemStack(base));
+            }
+            inputs.add(new ItemStack(Items.GLASS_BOTTLE));
+            inputs.add(ItemStack.EMPTY);
+            var reagentSet = recipes.propertySet(net.minecraft.world.item.crafting.RecipePropertySet.BREWING_REAGENTS);
+            List<ItemStack> reagents = new ArrayList<>();
+            for (var item : items) {
+                ItemStack s = new ItemStack(item, 1);
+                if (!s.isEmpty() && reagentSet.test(s)) reagents.add(s);
+            }
+            reagents.add(new ItemStack(Items.STONE));
+            reagents.add(ItemStack.EMPTY);
+            for (ItemStack in : inputs) {
+                for (ItemStack re : reagents) {
+                    var bi = new net.minecraft.world.item.crafting.BrewingInput(in, re);
+                    var found = recipes.getRecipeFor(net.minecraft.world.item.crafting.RecipeType.BREWING, bi, LEVEL);
+                    String rec = found.map(h -> "\"" + h.id().identifier() + "\", \"result\": \"" + hex(h.value().assemble(bi)) + "\"").orElse("null");
+                    w.println("{\"brew\": [\"" + hex(in) + "\", \"" + hex(re) + "\"], \"recipe\": " + rec + "}");
+                    records++;
+                }
+            }
+        }
+        OUT.println("wrote " + records + " records to " + out);
     }
 
     // ---- recipe sync ----------------------------------------------------------------------------

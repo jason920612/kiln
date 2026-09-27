@@ -262,6 +262,36 @@ impl RecipeManager {
         }
     }
 
+    /// `CachedCheck.getRecipeFor` for furnaces and campfires: the first `kind` recipe taking
+    /// the stack, trying `hint` (the check's last recipe) first.
+    pub fn find_cooking(&self, kind: CookingKind, input: &ItemStack, hint: Option<usize>) -> Option<usize> {
+        let fits = |h: &RecipeHolder| matches!(&h.recipe, Recipe::Cooking(c) if c.kind == kind && c.matches(input));
+        self.find_single(!input.is_empty(), hint, fits)
+    }
+
+    /// `CachedCheck.getRecipeFor(BrewingInput)` for brewing stands.
+    pub fn find_brewing(&self, input: &ItemStack, reagent: &ItemStack, hint: Option<usize>) -> Option<usize> {
+        let fits = |h: &RecipeHolder| matches!(&h.recipe, Recipe::Brewing(b) if b.matches(input, reagent));
+        self.find_single(!(input.is_empty() && reagent.is_empty()), hint, fits)
+    }
+
+    fn find_single(&self, has_input: bool, hint: Option<usize>, fits: impl Fn(&RecipeHolder) -> bool) -> Option<usize> {
+        if !has_input {
+            return None;
+        }
+        hint.filter(|&h| self.recipes.get(h).is_some_and(&fits)).or_else(|| self.recipes.iter().position(fits))
+    }
+
+    /// `assemble` of a cooking, stonecutting or brewing recipe (their results ignore the input).
+    pub fn assemble_single(&self, index: usize) -> ItemStack {
+        match &self.recipes[index].recipe {
+            Recipe::Cooking(c) => create_checked(&c.result),
+            Recipe::Stonecutting(s) => s.assemble(),
+            Recipe::Brewing(b) => create_checked(&b.output),
+            _ => ItemStack::empty(),
+        }
+    }
+
     /// Whether a recipe property set (`minecraft:smithing_base`, ...) holds the stack's item.
     pub fn property_set_accepts(&self, key: &str, stack: &ItemStack) -> bool {
         let item = stack.effective_item();
