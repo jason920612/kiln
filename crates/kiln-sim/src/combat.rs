@@ -9,9 +9,9 @@
 //!
 //! Enchantments act through `EnchantmentHelper` ([`crate::enchant`]): `damage` effects
 //! (sharpness, smite and bane of arthropods by the target's entity type tag) on the main
-//! target and on swept ones, `knockback`, `post_attack` effects (fire aspect sets fire ticks,
-//! thorns hurts the attacker and wears the armor; no fire damage or mob effects exist yet) and
-//! unbreaking on the weapon.
+//! target and on swept ones, `knockback`, `post_attack` effects (fire aspect sets the target on
+//! fire, thorns hurts the attacker and wears the armor, bane of arthropods' slowness) and
+//! unbreaking on the weapon. Strength and weakness change the attack damage attribute.
 //!
 //! A player can hit the players of its own region (regions are far apart, reach is short), so
 //! the outcome does not depend on how the world is split.

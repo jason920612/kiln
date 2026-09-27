@@ -542,6 +542,21 @@ impl Host for Sim {
         self.dim.spawns.extend(spawns);
     }
 
+    fn add_effect(&mut self, entity: &PlayerRef, effect: &Identifier, duration: i32, amplifier: i32, show_particles: bool) -> Option<bool> {
+        let id = crate::effects::effect_id(effect.as_str())?;
+        let p = self.players.get_mut(&entity.conn)?;
+        Some(p.add_effect(crate::effects::Effect::new(id, duration, amplifier, false, show_particles, show_particles)))
+    }
+
+    fn remove_effect(&mut self, entity: &PlayerRef, effect: &Identifier) -> Option<bool> {
+        let id = crate::effects::effect_id(effect.as_str())?;
+        Some(self.players.get_mut(&entity.conn)?.remove_effect(id))
+    }
+
+    fn clear_effects(&mut self, entity: &PlayerRef) -> Option<bool> {
+        Some(self.players.get_mut(&entity.conn)?.remove_all_effects())
+    }
+
     fn kick(&mut self, player: &PlayerRef, reason: Text) {
         if let Some(p) = self.players.get_mut(&player.conn) {
             p.flush();
