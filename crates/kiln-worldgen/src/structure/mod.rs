@@ -17,6 +17,7 @@ pub mod placement;
 pub mod processor;
 pub mod shapes;
 pub mod template;
+pub mod templated;
 pub mod transform;
 
 use crate::Error;

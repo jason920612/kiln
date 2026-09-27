@@ -246,6 +246,23 @@ impl Template {
             .collect()
     }
 
+    /// `filterBlocks(pos, settings, block)`: the named block's infos at world positions.
+    pub fn filter_blocks(&self, p: BlockPos, settings: &mut PlaceSettings, name: &str) -> Vec<BlockInfo> {
+        if self.palettes.is_empty() {
+            return Vec::new();
+        }
+        let palette = &self.palettes[settings.palette_index(self.palettes.len(), p)];
+        let mut out = Vec::new();
+        for b in palette.blocks.iter().filter(|b| block_of(b.state).name == name) {
+            let pos = transform(b.pos, settings.mirror, settings.rotation, settings.pivot).offset(p.x, p.y, p.z);
+            if settings.bbox.is_some_and(|bb| !bb.is_inside(pos)) {
+                continue;
+            }
+            out.push(BlockInfo { pos, state: rotate(b.state, settings.rotation), nbt: b.nbt.clone() });
+        }
+        out
+    }
+
     /// `filterBlocks(pos, settings, STRUCTURE_BLOCK, relative)`: the data markers.
     pub fn markers(&self, p: BlockPos, settings: &mut PlaceSettings, relative: bool) -> Vec<BlockInfo> {
         if self.palettes.is_empty() {

@@ -56,6 +56,12 @@ pub fn parse(ty: &str, json: &Json, l: &Loader) -> Result<Option<Box<dyn Kind>>,
         "swamp_hut" => Some(Box::new(legacy::scattered::SwampHut)),
         "stronghold" => Some(Box::new(legacy::stronghold::Stronghold)),
         "ocean_monument" => Some(Box::new(legacy::monument::OceanMonument::parse(json, l)?)),
+        "igloo" => Some(Box::new(super::templated::igloo::Igloo)),
+        "shipwreck" => Some(Box::new(super::templated::shipwreck::Shipwreck {
+            beached: json.get("is_beached").and_then(Json::as_bool).unwrap_or(false),
+        })),
+        "ocean_ruin" => Some(Box::new(super::templated::ocean_ruin::parse(json, l)?)),
+        "ruined_portal" => Some(Box::new(super::templated::ruined_portal::parse(json, l)?)),
         _ => None,
     })
 }

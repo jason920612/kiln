@@ -142,6 +142,14 @@ pub struct ProcessorRule {
     modifier: BlockEntityModifier,
 }
 
+impl ProcessorRule {
+    /// `new ProcessorRule(input, location, output)`, with `AppendLoot(table)` when given.
+    pub fn new(input: RuleTest, location: RuleTest, output: u16, loot: Option<String>) -> Self {
+        let modifier = loot.map_or(BlockEntityModifier::Passthrough, BlockEntityModifier::AppendLoot);
+        Self { input, location, position: PosRuleTest::AlwaysTrue, output, modifier }
+    }
+}
+
 /// `StructureProcessor`.
 #[derive(Clone, Debug)]
 pub enum Processor {
