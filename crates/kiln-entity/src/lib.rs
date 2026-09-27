@@ -18,6 +18,7 @@ pub mod item;
 pub mod level;
 pub mod math;
 pub mod physics;
+pub mod player;
 pub mod shape;
 pub mod tnt;
 pub mod xp_orb;

@@ -126,6 +126,7 @@ public class EntityVectors {
         Scenarios.fallingBlocks(out);
         Scenarios.tnt(out);
         Scenarios.orbs(out);
+        Scenarios.players(out);
         return out;
     }
 
@@ -283,6 +284,7 @@ public class EntityVectors {
         StringBuilder spawnJson = new StringBuilder();
         for (Spec spec : s.entities) {
             Entity e = spawn(level, spec);
+            if (e instanceof net.minecraft.server.level.ServerPlayer player) PLAYER_MOVES.put(player, (double[][]) spec.extra.get("moves"));
             tracked.add(e);
             if (spawnJson.length() > 0) spawnJson.append(',');
             spawnJson.append(specJson(spec, e));
@@ -291,7 +293,14 @@ public class EntityVectors {
         StringBuilder spawned = new StringBuilder();
         for (int tick = 0; tick < s.ticks; tick++) {
             for (Entity e : new ArrayList<>(tracked)) {
-                if (!e.isRemoved()) level.tickNonPassenger(e);
+                if (e instanceof net.minecraft.server.level.ServerPlayer player) {
+                    double[] m = PLAYER_MOVES.get(player)[tick];
+                    Vec3 move = new Vec3(m[0], m[1], m[2]);
+                    player.setDeltaMovement(move);
+                    player.move(net.minecraft.world.entity.MoverType.PLAYER, move);
+                } else if (!e.isRemoved()) {
+                    level.tickNonPassenger(e);
+                }
             }
             for (Entity e : level.getEntities((Entity) null, box(), e -> true)) {
                 if (!tracked.contains(e)) {
@@ -372,6 +381,20 @@ public class EntityVectors {
                 }
                 e = f;
             }
+            case "player" -> {
+                var profile = new com.mojang.authlib.GameProfile(java.util.UUID.nameUUIDFromBytes(new byte[] {1}), "Kiln");
+                var player = new net.minecraft.server.level.ServerPlayer(level.getServer(), level, profile,
+                        net.minecraft.server.level.ClientInformation.createDefault());
+                if (Boolean.TRUE.equals(spec.extra.get("shift"))) {
+                    player.setShiftKeyDown(true);
+                    player.setPose(net.minecraft.world.entity.Pose.CROUCHING);
+                }
+                if (Boolean.TRUE.equals(spec.extra.get("flying"))) player.getAbilities().flying = true;
+                player.setPos(spec.x, spec.y, spec.z);
+                player.setDeltaMovement(spec.dx, spec.dy, spec.dz);
+                if (Boolean.TRUE.equals(spec.extra.get("on_ground"))) player.setOnGround(true);
+                return player;
+            }
             case "experience_orb" -> {
                 ExperienceOrb orb = new ExperienceOrb(EntityTypes.EXPERIENCE_ORB, level);
                 var setValue = ExperienceOrb.class.getDeclaredMethod("setValue", int.class);
@@ -416,12 +439,23 @@ public class EntityVectors {
         for (var kv : spec.extra.entrySet()) {
             extra.append(",\"").append(kv.getKey()).append("\":");
             Object v = kv.getValue();
-            extra.append(v instanceof String str ? "\"" + str + "\"" : String.valueOf(v));
+            extra.append(v instanceof String str ? "\"" + str + "\"" : v instanceof double[][] a ? movesJson(a) : String.valueOf(v));
         }
         return String.format(Locale.ROOT,
                 "{\"kind\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s],\"yaw\":%s%s}",
                 spec.kind, e.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), d(spec.dx), d(spec.dy), d(spec.dz),
                 Float.toString(e.getYRot()), extra);
+    }
+
+    static final Map<Entity, double[][]> PLAYER_MOVES = new HashMap<>();
+
+    static String movesJson(double[][] a) {
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < a.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append('[').append(d(a[i][0])).append(',').append(d(a[i][1])).append(',').append(d(a[i][2])).append(']');
+        }
+        return sb.append(']').toString();
     }
 
     static String d(double v) {
@@ -829,6 +863,39 @@ class Scenarios {
             s.block(k % 3 - 1, 1, 0, "minecraft:air");
             s.entity("experience_orb", rnd(r, 0.3, 0.7), rnd(r, 1.2, 1.7), rnd(r, 0.3, 0.7), 0, 0, 0, r.nextLong());
             s.ticks(40);
+            out.add(s);
+        }
+    }
+
+    /** Server-side player.move(PLAYER, delta) calls: step-up, collisions, sneaking at edges. */
+    static void players(List<EntityVectors.Scenario> out) {
+        Random r = new Random(10);
+        for (int k = 0; k < 120; k++) {
+            var s = new EntityVectors.Scenario("player/" + k, r.nextLong());
+            boolean edge = k % 3 == 0;
+            if (edge) {
+                s.fill(-1, 0, -1, 1, 0, 1, "minecraft:stone");
+                if (k % 2 == 0) s.block(1, 0, 1, "minecraft:oak_slab[type=bottom]");
+            } else {
+                s.fill(-4, 0, -4, 4, 0, 4, "minecraft:stone");
+                int n = 8 + r.nextInt(12);
+                for (int i = 0; i < n; i++) s.block(r.nextInt(9) - 4, 1 + (r.nextInt(5) == 0 ? 1 : 0), r.nextInt(9) - 4, SHAPES[r.nextInt(SHAPES.length)]);
+                s.block(0, 1, 0, "minecraft:air");
+                s.block(0, 2, 0, "minecraft:air");
+                s.block(0, 3, 0, "minecraft:air");
+            }
+            boolean shift = edge || r.nextInt(4) == 0;
+            int ticks = 40;
+            double[][] moves = new double[ticks][];
+            double speed = shift ? 0.08 : 0.22;
+            double yaw = r.nextDouble() * Math.PI * 2;
+            for (int t = 0; t < ticks; t++) {
+                if (r.nextInt(8) == 0) yaw = r.nextDouble() * Math.PI * 2;
+                double dy = r.nextInt(12) == 0 ? 0.42 : -0.0784000015258789;
+                moves[t] = new double[] {Math.cos(yaw) * speed * (0.5 + r.nextDouble()), dy, Math.sin(yaw) * speed * (0.5 + r.nextDouble())};
+            }
+            s.entity("player", 0.5, 1.0, 0.5, 0, 0, 0, r.nextLong()).with("shift", shift).with("on_ground", true).with("moves", moves);
+            s.ticks(ticks);
             out.add(s);
         }
     }

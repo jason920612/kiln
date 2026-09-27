@@ -48,6 +48,8 @@ pub enum EntityKind {
     ExperienceOrb(crate::xp_orb::OrbData),
     FallingBlock(crate::falling_block::FallingBlockData),
     Tnt(crate::tnt::TntData),
+    /// A player, for the server's movement check (`player::server_move`); not ticked here.
+    Player(crate::player::PlayerData),
     /// An entity simulated elsewhere (mobs, players), present so behaviours can see it.
     Other { type_name: &'static str },
 }
@@ -252,6 +254,7 @@ impl Entity {
         match self.kind {
             EntityKind::Item(_) | EntityKind::FallingBlock(_) | EntityKind::Tnt(_) => 0.04,
             EntityKind::ExperienceOrb(_) => 0.03,
+            EntityKind::Player(_) => 0.08,
             EntityKind::Other { .. } => 0.0,
         }
     }
@@ -261,7 +264,7 @@ impl Entity {
     }
 
     fn is_living(&self) -> bool {
-        false
+        matches!(self.kind, EntityKind::Player(_))
     }
 
     /// `fireImmune`.
@@ -317,7 +320,7 @@ impl Entity {
             has_entity: true,
             fall_distance: self.fall_distance,
             falling_block: matches!(self.kind, EntityKind::FallingBlock(_)),
-            walks_on_powder_snow: false,
+            walks_on_powder_snow: matches!(&self.kind, EntityKind::Player(p) if p.walks_on_powder_snow),
         }
     }
 
@@ -339,6 +342,7 @@ impl Entity {
             EntityKind::ExperienceOrb(_) => crate::xp_orb::tick(self, level),
             EntityKind::FallingBlock(_) => crate::falling_block::tick(self, level),
             EntityKind::Tnt(_) => crate::tnt::tick(self, level),
+            EntityKind::Player(_) => {}
             EntityKind::Other { .. } => self.base_tick(level),
         }
     }
@@ -419,7 +423,7 @@ impl Entity {
             EntityKind::Item(_) => crate::item::hurt(self, level, kind, amount, attacker),
             EntityKind::ExperienceOrb(_) => crate::xp_orb::hurt(self, level, kind, amount),
             EntityKind::FallingBlock(_) | EntityKind::Tnt(_) => false,
-            EntityKind::Other { .. } => {
+            EntityKind::Player(_) | EntityKind::Other { .. } => {
                 level.emit(Event::Hurt { target: self.id, amount, kind, attacker });
                 true
             }
@@ -588,8 +592,9 @@ impl Entity {
         self.delta = self.delta.multiply(f, 1.0, f);
     }
 
+    /// Server side: false for players, whose client is authoritative.
     fn is_local_instance_authoritative(&self) -> bool {
-        true
+        !matches!(self.kind, EntityKind::Player(_))
     }
 
     fn can_simulate_movement(&self) -> bool {
@@ -597,8 +602,8 @@ impl Entity {
     }
 
     /// `maybeBackOffFromEdge`: only players override it.
-    fn maybe_back_off_from_edge(&self, _level: &dyn EntityLevel, movement: Vec3, _mover: MoverType) -> Vec3 {
-        movement
+    fn maybe_back_off_from_edge(&self, level: &dyn EntityLevel, movement: Vec3, mover: MoverType) -> Vec3 {
+        crate::player::back_off_from_edge(self, level, movement, mover)
     }
 
     fn add_movement_this_tick(&mut self, m: Movement) {

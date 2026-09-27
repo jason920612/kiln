@@ -8,7 +8,7 @@
 use kiln_entity::entity::{Entity, EntityKind};
 use kiln_entity::level::{EntityFilter, EntityLevel, Event};
 use kiln_entity::math::{Aabb, BlockPos};
-use kiln_entity::{falling_block, item, tnt, xp_orb};
+use kiln_entity::{falling_block, item, player, tnt, xp_orb};
 use kiln_item::ItemStack;
 use kiln_javamath::random::LegacyRandom;
 use serde_json::Value;
@@ -200,6 +200,15 @@ fn spawn(spec: &Value) -> Entity {
             EntityKind::ExperienceOrb(xp_orb::OrbData { count: int("count", 1), age: int("age", 0), ..xp_orb::OrbData::new(int("value", 1)) }),
             seed,
         ),
+        "player" => {
+            let shift = spec.get("shift").and_then(Value::as_bool).unwrap_or(false);
+            let mut p = player::new(id, 0, vec3(&spec["pos"]), if shift { 1.5 } else { 1.8 }, 0.6);
+            p.shift_key_down = shift;
+            if let EntityKind::Player(d) = &mut p.kind {
+                d.flying = spec.get("flying").and_then(Value::as_bool).unwrap_or(false);
+            }
+            p
+        }
         other => panic!("unknown kind {other}"),
     };
     e.set_pos(vec3(&spec["pos"]));
@@ -245,7 +254,7 @@ fn state(e: &Entity) -> Vec<f64> {
         EntityKind::Tnt(d) => out.push(d.fuse as f64),
         EntityKind::FallingBlock(d) => out.extend([d.time as f64, d.state as f64]),
         EntityKind::ExperienceOrb(d) => out.extend([d.value as f64, d.count as f64, d.age as f64]),
-        EntityKind::Other { .. } => {}
+        EntityKind::Player(_) | EntityKind::Other { .. } => {}
     }
     out
 }
@@ -261,8 +270,16 @@ fn replay(s: &Value) -> Result<(), String> {
         let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
         level.blocks.insert(p, b[3].as_u64().unwrap() as u16);
     }
+    let mut moves: HashMap<i32, Vec<kiln_entity::math::Vec3>> = HashMap::new();
     for spec in s["entities"].as_array().unwrap() {
-        level.insert(spawn(spec));
+        let mut e = spawn(spec);
+        if let Some(m) = spec.get("moves").and_then(Value::as_array) {
+            moves.insert(e.id, m.iter().map(vec3).collect());
+            if spec.get("on_ground").and_then(Value::as_bool).unwrap_or(false) {
+                e.set_on_ground(&level, true);
+            }
+        }
+        level.insert(e);
     }
     let trace = s["trace"].as_array().unwrap();
     let initial = level.slots.len();
@@ -271,7 +288,10 @@ fn replay(s: &Value) -> Result<(), String> {
         let order: Vec<usize> = (0..level.slots.len()).collect();
         for i in order {
             let Some(mut e) = level.slots[i].entity.take() else { continue };
-            if !e.is_removed() {
+            if let Some(m) = moves.get(&e.id) {
+                e.delta = m[tick];
+                player::server_move(&mut level, &mut e, m[tick]);
+            } else if !e.is_removed() {
                 e.common_tick();
                 e.tick(&mut level);
             }
