@@ -34,6 +34,13 @@ fn main() -> Result<()> {
         sim_config.pool.workers = n;
     }
     sim_config.unified_regions = std::env::var("KILN_REGIONS").is_ok_and(|v| v == "unified");
+    // KILN_GENERATOR=noise: vanilla overworld terrain (KILN_SEED, KILN_DATAPACK = the data
+    // generator output, default work/generated).
+    if std::env::var("KILN_GENERATOR").is_ok_and(|v| v == "noise") {
+        let seed = std::env::var("KILN_SEED").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        let datapack = std::env::var_os("KILN_DATAPACK").map_or_else(|| "work/generated".into(), Into::into);
+        sim_config.noise = Some(kiln_sim::NoiseConfig { seed, datapack, threads: 3 });
+    }
 
     // The simulation also ends on its own after /stop; that ends the process.
     let (sim_done_tx, sim_done_rx) = tokio::sync::oneshot::channel::<()>();

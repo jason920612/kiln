@@ -661,6 +661,7 @@ dependencies = [
  "kiln-sched",
  "kiln-storage",
  "kiln-world",
+ "kiln-worldgen",
  "tracing",
  "uuid",
 ]

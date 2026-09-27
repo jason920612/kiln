@@ -72,4 +72,8 @@ impl ChunkGenerator for NoiseChunks {
         let p = self.generator.generate(&mut self.scratch, pos.x, pos.z);
         self.to_chunk(&p)
     }
+
+    fn fork(&self) -> Box<dyn ChunkGenerator> {
+        Box::new(NoiseChunks::new(self.generator.clone()))
+    }
 }

@@ -151,6 +151,10 @@ pub trait ChunkSource: Send {
 /// returned blocks.
 pub trait ChunkGenerator: Send {
     fn generate(&mut self, pos: ChunkPos, dimension: Dimension) -> Chunk;
+
+    /// An independent instance for another thread (same world, its own scratch space), for
+    /// generating off the tick thread.
+    fn fork(&self) -> Box<dyn ChunkGenerator>;
 }
 
 /// What to create where the chunk source has nothing (unless a [`ChunkGenerator`] is set).
@@ -217,13 +221,23 @@ impl ChunkProvider {
     }
 
     pub fn load_or_generate(&mut self, pos: ChunkPos) -> Chunk {
-        let dim = self.dimension;
-        let loaded = self.source.as_mut().and_then(|s| s.load(pos, dim));
-        loaded.unwrap_or_else(|| {
+        self.load(pos).unwrap_or_else(|| {
             let mut c = self.generate(pos);
             c.mark_new();
             c
         })
+    }
+
+    /// The stored chunk at `pos`, if the source has one.
+    pub fn load(&mut self, pos: ChunkPos) -> Option<Chunk> {
+        let dim = self.dimension;
+        self.source.as_mut().and_then(|s| s.load(pos, dim))
+    }
+
+    /// A generator instance for another thread, when missing chunks come from a generator
+    /// (not the cheap superflat or void fill).
+    pub fn fork_generator(&self) -> Option<Box<dyn ChunkGenerator>> {
+        self.generator.as_ref().map(|g| g.fork())
     }
 
     /// Queues `chunk` for writing if it changed (or was generated) since it was last saved.
@@ -594,6 +608,9 @@ mod tests {
                 let state = if (pos.x + pos.z) & 1 == 0 { block::STONE } else { block::DIRT };
                 sections[4].set(1, 2, 3, state);
                 Chunk::new(sections, dimension.min_y)
+            }
+            fn fork(&self) -> Box<dyn ChunkGenerator> {
+                Box::new(Checker)
             }
         }
         let mut w = World::new(ChunkProvider::flat(OVERWORLD, 0, 67).with_generator(Box::new(Checker)));

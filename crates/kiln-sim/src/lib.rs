@@ -21,6 +21,7 @@
 //!   and flushes its players' packets.
 
 mod commands;
+mod generation;
 mod interact;
 mod movement;
 mod persist;
@@ -56,6 +57,17 @@ pub struct SimConfig {
     pub pool: kiln_sched::PoolConfig,
     /// One region per dimension (the vanilla profile) instead of regions around players.
     pub unified_regions: bool,
+    /// Vanilla noise terrain for chunks the world does not have (superflat or void otherwise).
+    pub noise: Option<NoiseConfig>,
+}
+
+/// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
+/// generator's output, holding `data/minecraft/worldgen`).
+pub struct NoiseConfig {
+    pub seed: i64,
+    pub datapack: std::path::PathBuf,
+    /// Generation threads.
+    pub threads: usize,
 }
 
 impl SimConfig {
@@ -70,6 +82,7 @@ impl SimConfig {
             online_mode: false,
             pool: kiln_sched::PoolConfig::new(cores.saturating_sub(1).clamp(1, 7)),
             unified_regions: false,
+            noise: None,
         }
     }
 }
@@ -193,6 +206,8 @@ struct Dim {
     unloads: Vec<ChunkPos>,
     /// Cells emptied by unloads; vacated when the regionizer runs, unless refilled first.
     emptied: Vec<kiln_world::CellPos>,
+    /// Generation threads, when missing chunks come from an expensive generator.
+    generation: Option<generation::GenPool>,
 }
 
 /// Serial access that loads chunks on demand: into their region if the cell has an owner,
@@ -208,12 +223,9 @@ impl LoadChunks for Dim {
         }
         if !self.pending.contains_key(&pos) {
             let chunk = self.provider.load_or_generate(pos);
-            if let Some(cell) = self.regions.cell_mut(pos.cell()) {
-                cell.insert(pos, chunk);
+            if self.install(pos, chunk) {
                 return self.regions.chunk_mut(pos).unwrap();
             }
-            self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
-            self.pending.insert(pos, chunk);
         }
         self.pending.get_mut(&pos).unwrap()
     }
@@ -222,6 +234,51 @@ impl LoadChunks for Dim {
 impl Dim {
     fn is_loaded(&self, pos: ChunkPos) -> bool {
         self.regions.chunk(pos).is_some() || self.pending.contains_key(&pos)
+    }
+
+    /// Puts a loaded chunk in its region, or pending until its cell gets one. Returns whether
+    /// it went straight into a region.
+    fn install(&mut self, pos: ChunkPos, chunk: Chunk) -> bool {
+        if let Some(cell) = self.regions.cell_mut(pos.cell()) {
+            cell.insert(pos, chunk);
+            return true;
+        }
+        self.regionizer.push(TopologyEvent::Occupied(pos.cell()));
+        self.pending.insert(pos, chunk);
+        false
+    }
+
+    /// Loads `pos` from storage now, or queues it for generation off the tick thread.
+    /// Returns `false` if it could not even be queued (try again next tick).
+    fn request(&mut self, pos: ChunkPos) -> bool {
+        let Some(pool) = &mut self.generation else {
+            self.load_chunk(pos);
+            return true;
+        };
+        if pool.is_queued(pos) {
+            return true;
+        }
+        match self.provider.load(pos) {
+            Some(chunk) => {
+                self.install(pos, chunk);
+                true
+            }
+            None => pool.request(pos),
+        }
+    }
+
+    /// Installs the chunks generation finished since the last tick.
+    fn install_generated(&mut self) -> usize {
+        let Some(pool) = &mut self.generation else { return 0 };
+        let done = pool.finished();
+        let n = done.len();
+        for (pos, chunk) in done {
+            // Loaded synchronously in the meantime (a join or teleport needed it).
+            if !self.is_loaded(pos) {
+                self.install(pos, chunk);
+            }
+        }
+        n
     }
 
     /// Saves and drops chunks the regions released; cells left empty are vacated.
@@ -337,22 +394,45 @@ impl Sim {
             .iter()
             .find(|(r, _)| *r == "minecraft:worldgen/biome")
             .map_or(0, |(_, e)| e.len());
+        let generator = config.noise.as_ref().and_then(|n| {
+            let pack = kiln_worldgen::Datapack::load(&n.datapack)
+                .map_err(|e| warn!("cannot load the datapack at {}: {e}", n.datapack.display()))
+                .ok()?;
+            let g = kiln_worldgen::generator::Generator::new(&pack, OVERWORLD, OVERWORLD, n.seed)
+                .map_err(|e| warn!("cannot set up overworld generation: {e}"))
+                .ok()?;
+            info!("overworld generation: seed {}, {} threads", n.seed, n.threads);
+            Some(kiln_worldgen::world::NoiseChunks::new(std::sync::Arc::new(g)))
+        });
         let (provider, spawn) = match &config.world {
             Some(dir) => {
                 let source = kiln_storage::AnvilSource::new(dir.join("dimensions/minecraft/overworld/region"));
-                let provider =
+                let mut provider =
                     ChunkProvider::with_source(OVERWORLD_DIM, Box::new(source), Terrain::Void, plains as u16, biome_count);
+                if let Some(g) = generator {
+                    provider = provider.with_generator(Box::new(g));
+                }
                 let spawn = kiln_storage::read_spawn(dir).unwrap_or([0, 64, 0]);
                 info!("loaded world {} (spawn {spawn:?})", dir.display());
                 (provider, spawn)
             }
-            None => {
-                let provider = ChunkProvider::flat(OVERWORLD_DIM, plains as u16, biome_count);
-                let surface = provider.flat_surface_y() as i32;
-                (provider, [8, surface, 8])
-            }
+            None => match generator {
+                Some(g) => {
+                    let mut provider = ChunkProvider::flat(OVERWORLD_DIM, plains as u16, biome_count).with_generator(Box::new(g));
+                    let spawn = land_spawn(&mut provider);
+                    info!("world spawn {spawn:?}");
+                    (provider, spawn)
+                }
+                None => {
+                    let provider = ChunkProvider::flat(OVERWORLD_DIM, plains as u16, biome_count);
+                    let surface = provider.flat_surface_y() as i32;
+                    (provider, [8, surface, 8])
+                }
+            },
         };
         let policy = if config.unified_regions { RegionPolicy::unified() } else { RegionPolicy::default() };
+        let threads = config.noise.as_ref().map_or(1, |n| n.threads);
+        let generation = provider.fork_generator().map(|g| generation::GenPool::new(g.as_ref(), OVERWORLD_DIM, threads));
         let storage = config.world.as_deref().map(persist::Storage::open);
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
         info!(
@@ -371,6 +451,7 @@ impl Sim {
                 requests: Vec::new(),
                 unloads: Vec::new(),
                 emptied: Vec::new(),
+                generation,
             },
             spawn,
             spawn_rot: level.as_ref().map_or([0.0; 2], |l| [l.spawn.yaw, l.spawn.pitch]),
@@ -598,6 +679,7 @@ impl Sim {
         if unloaded > 0 {
             debug!("unloaded {unloaded} chunks");
         }
+        self.dim.install_generated();
         // Every player's own chunk, uncapped: each player must stand in an owned cell.
         let mut own: Vec<ChunkPos> = keep.into_iter().collect();
         own.sort_unstable();
@@ -615,10 +697,9 @@ impl Sim {
             if self.dim.is_loaded(pos) {
                 continue;
             }
-            if loads == CHUNK_LOADS_PER_TICK {
+            if loads == CHUNK_LOADS_PER_TICK || !self.dim.request(pos) {
                 break;
             }
-            self.dim.load_chunk(pos);
             loads += 1;
         }
     }
@@ -845,6 +926,27 @@ impl Sim {
             self.broadcast(pkt);
         }
     }
+}
+
+/// A world spawn for a new generated world: the first chunk, spiralling out from the origin,
+/// whose centre column is dry land. An approximation of vanilla's climate-based
+/// `findSpawnPosition`, which targets land biomes near the origin.
+fn land_spawn(provider: &mut ChunkProvider) -> [i32; 3] {
+    const RADIUS: i32 = 32;
+    let mut rings = vec![(0, 0)];
+    for r in 1..=RADIUS {
+        for i in -r..r {
+            rings.extend([(i, -r), (r, i), (-i, r), (-r, -i)]);
+        }
+    }
+    for (cx, cz) in rings {
+        let chunk = provider.load_or_generate(ChunkPos::new(cx, cz));
+        let top = chunk.column_height(8, 8, kiln_data::block_props::motion_blocking);
+        if top > chunk.min_y() && !kiln_data::blocks_types::has_fluid(chunk.get(8, top - 1, 8)) {
+            return [cx * 16 + 8, top, cz * 16 + 8];
+        }
+    }
+    [0, 64, 0]
 }
 
 fn player_chunk(pos: [f64; 3]) -> ChunkPos {
