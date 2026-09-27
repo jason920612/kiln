@@ -28,6 +28,7 @@ are in [docs/design-v2-regionized.md](docs/design-v2-regionized.md) §14.
 | `kiln-sched` | the tick pool: region fork-join and phase windows without priority inversion |
 | `kiln-world` | paletted sections, chunks grouped in 8×8-chunk cells, light engine, spawn finder |
 | `kiln-item` | item stacks with every data component (wire, NBT, hashed) |
+| `kiln-loot` | loot tables, predicates and item modifiers loaded from the datapack, vanilla-exact |
 | `kiln-worldgen`, `kiln-javamath` | 26.3 density functions and noise, bit-exact with vanilla |
 | `kiln-storage` | Anvil region files and chunk NBT |
 | `kiln-command` | Brigadier-compatible commands and the vanilla command set |
@@ -80,6 +81,8 @@ cargo run --release -p kiln-sim --example sim_load -- --players 1000 --groups 20
 python tools/vanilla_baseline.py     # the same bot workload against the vanilla server
 KILN_PARITY=1 cargo test -p kiln-worldgen --release --test parity
                                      # worldgen bit parity (vectors from tools/worldgen_vectors.py)
+KILN_PARITY=1 cargo test -p kiln-loot --test vanilla_parity
+                                     # loot parity (vectors from tools/loot_vectors.py)
 ```
 
 Packets Kiln encodes are checked by decoding them with vanilla's own codecs

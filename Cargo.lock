@@ -598,6 +598,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiln-loot"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "kiln-command",
+ "kiln-data",
+ "kiln-inventory",
+ "kiln-item",
+ "kiln-javamath",
+ "kiln-proto",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "kiln-net"
 version = "0.1.0"
 dependencies = [
@@ -684,6 +699,7 @@ dependencies = [
  "kiln-item",
  "kiln-javamath",
  "kiln-link",
+ "kiln-loot",
  "kiln-proto",
  "kiln-region",
  "kiln-sched",

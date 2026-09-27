@@ -13,6 +13,7 @@ kiln-data = { path = "crates/kiln-data" }
 kiln-blocks = { path = "crates/kiln-blocks" }
 kiln-item = { path = "crates/kiln-item" }
 kiln-inventory = { path = "crates/kiln-inventory" }
+kiln-loot = { path = "crates/kiln-loot" }
 kiln-link = { path = "crates/kiln-link" }
 kiln-net = { path = "crates/kiln-net" }
 kiln-sim = { path = "crates/kiln-sim" }

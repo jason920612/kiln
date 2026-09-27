@@ -205,6 +205,10 @@ pub(crate) struct BlockEnv {
     pub simulation_distance: i32,
     /// Seeds the per-chunk random-tick randoms.
     pub seed: i64,
+    /// Loot tables for block drops (`None`: blocks drop their own item).
+    pub loot: Option<std::sync::Arc<kiln_loot::LootData>>,
+    /// The server's loot random sequences.
+    pub loot_sequences: std::sync::Arc<std::sync::Mutex<kiln_loot::RandomSequences>>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -529,7 +533,12 @@ pub(crate) fn finish(cells: &CellSet<Cell>, out: BlockOut, players: &mut [&mut P
         match effect {
             Effect::Drop { pos, state } => {
                 if env.drops {
-                    spawns.extend(drop_stand_in(pos, state, env, i));
+                    // The breaking player's held item is the tool; other breaks use an empty hand.
+                    let tool = actor.and_then(|c| players.iter().find(|p| p.conn == c)).map(|p| p.inv.selected_item().clone());
+                    match &env.loot {
+                        Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, env, i)),
+                        None => spawns.extend(drop_stand_in(pos, state, env, i)),
+                    }
                 }
             }
             Effect::LevelEvent { id, pos, data } => {
@@ -612,6 +621,76 @@ fn note_sound(instrument: &str, note: i32) -> (&'static str, f32) {
     (sound, 2f32.powf((note - 12) as f32 / 12.0))
 }
 
+/// What a broken block drops (`Block.getDrops` with the block loot table), each stack popped
+/// like `Block.popResource`.
+fn block_drops(
+    loot: &kiln_loot::LootData,
+    pos: BlockPos,
+    state: u16,
+    tool: Option<kiln_item::ItemStack>,
+    env: &BlockEnv,
+    i: usize,
+) -> Vec<Spawn> {
+    let Some(table_id) = loot.block_table(BlockId::of(state).name()) else { return Vec::new() };
+    let Some(table) = loot.table(&table_id) else { return Vec::new() };
+    // A player break also sets `this_entity` (the player).
+    let player = tool.is_some();
+    let ctx = BreakContext {
+        tool: tool.unwrap_or_else(kiln_item::ItemStack::empty),
+        player,
+        state,
+        origin: [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5],
+    };
+    let items = {
+        let mut sequences = env.loot_sequences.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut level = kiln_javamath::random::LegacyRandom::new(effect_hash(env, pos, i) as i64);
+        let mut rng = table.random(0, &mut sequences, &mut level);
+        loot.random_items(&table_id, &ctx, rng.source())
+    };
+    items
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .enumerate()
+        .map(|(k, stack)| pop_resource(pos, stack, effect_hash(env, pos, i.wrapping_mul(64).wrapping_add(k))))
+        .collect()
+}
+
+/// The loot context of a block broken at `origin` (`LootContextParamSets.BLOCK`).
+struct BreakContext {
+    tool: kiln_item::ItemStack,
+    player: bool,
+    state: u16,
+    origin: [f64; 3],
+}
+
+impl kiln_loot::LootContext for BreakContext {
+    fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
+        self.player && target == kiln_loot::EntityTarget::This
+    }
+    fn origin(&self) -> Option<[f64; 3]> {
+        Some(self.origin)
+    }
+    fn block_state(&self) -> Option<u16> {
+        Some(self.state)
+    }
+    fn tool(&self) -> Option<&kiln_item::ItemStack> {
+        Some(&self.tool)
+    }
+}
+
+/// `Block.popResource`: an item entity jittered around the block centre, half an item's
+/// height lower, with a pickup delay of 10.
+fn pop_resource(pos: BlockPos, stack: kiln_item::ItemStack, h: u64) -> Spawn {
+    let unit = |shift: u32| ((h >> shift) & 0xFFFF) as f64 / 65536.0;
+    let at = [pos.x as f64 + 0.25 + unit(0) * 0.5, pos.y as f64 + 0.25 + unit(16) * 0.5 - 0.125, pos.z as f64 + 0.25 + unit(32) * 0.5];
+    Spawn {
+        kind: &kiln_data::entities::types::ITEM,
+        pos: at,
+        vel: [unit(48) * 0.2 - 0.1, 0.2, unit(8) * 0.2 - 0.1],
+        body: entities::Body::Item { stack, pickup_delay: 10 },
+    }
+}
+
 /// Stand-in for loot tables: the block's own item, from a whole block (not the upper half
 /// of a door or plant, nor a bed's head).
 fn drop_stand_in(pos: BlockPos, state: u16, env: &BlockEnv, i: usize) -> Option<Spawn> {
@@ -691,6 +770,51 @@ mod tests {
             assert!(b.block_ticks.schedule(tick));
         }
         b
+    }
+
+    #[test]
+    fn block_drops_come_from_loot_tables() {
+        use kiln_data::blocks::default_state as d;
+        let work = std::env::var_os("KILN_WORK")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work"));
+        let dir = work.join("generated");
+        if !dir.join("data").is_dir() {
+            return;
+        }
+        let loot = kiln_loot::LootData::load(&dir).unwrap();
+        let env = BlockEnv {
+            game_time: 0,
+            rules: kiln_blocks::Rules {
+                water_source_conversion: true,
+                lava_source_conversion: false,
+                fast_lava: false,
+                water_evaporates: false,
+                tnt_explodes: true,
+            },
+            min_y: -64,
+            height: 384,
+            random_tick_speed: 3,
+            drops: true,
+            simulation_distance: 10,
+            seed: 0,
+            loot: None,
+            loot_sequences: std::sync::Arc::new(std::sync::Mutex::new(kiln_loot::RandomSequences::new(0))),
+        };
+        let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
+        let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {
+            block_drops(&loot, BlockPos::new(0, 64, 0), state, tool, &env, 0)
+                .into_iter()
+                .map(|s| {
+                    let entities::Body::Item { stack, .. } = s.body;
+                    stack.item_name()
+                })
+                .collect()
+        };
+        assert_eq!(drops(d::STONE, pick.clone()), ["minecraft:cobblestone"]);
+        assert_eq!(drops(d::WALL_TORCH, None), ["minecraft:torch"]);
+        assert!(drops(d::GLASS, pick).is_empty());
+        assert!(drops(d::WATER, None).is_empty());
     }
 
     #[test]

@@ -475,6 +475,11 @@ pub struct Sim {
     config: SimConfig,
     /// Recipes and item rules from the vanilla datapack.
     rules: std::sync::Arc<kiln_inventory::Rules>,
+    /// Loot tables from the vanilla datapack (block drops), if it was found.
+    loot: Option<std::sync::Arc<kiln_loot::LootData>>,
+    /// The server's loot random sequences (`MinecraftServer.getRandomSequence`), shared by
+    /// the regions (drops in parallel regions take them in completion order).
+    loot_sequences: std::sync::Arc<std::sync::Mutex<kiln_loot::RandomSequences>>,
     dim: Dim,
     pool: kiln_sched::TickPool,
     /// World spawn block; players appear around it.
@@ -581,9 +586,14 @@ impl Sim {
             config.pool.workers,
             if config.unified_regions { "unified" } else { "split" }
         );
-        let rules = std::sync::Arc::new(load_rules(config.noise.as_ref().map(|n| n.datapack.as_path())));
+        let datapack = config.noise.as_ref().map(|n| n.datapack.as_path());
+        let rules = std::sync::Arc::new(load_rules(datapack));
+        let loot = load_loot(datapack);
+        let world_seed = config.noise.as_ref().map_or(0, |n| n.seed);
         Sim {
             rules,
+            loot,
+            loot_sequences: std::sync::Arc::new(std::sync::Mutex::new(kiln_loot::RandomSequences::new(world_seed))),
             pool: kiln_sched::TickPool::with_config(config.pool.clone()),
             config,
             dim: Dim {
@@ -810,6 +820,8 @@ impl Sim {
             drops: self.rule_bool("minecraft:block_drops"),
             simulation_distance: self.config.simulation_distance as i32,
             seed: self.config.noise.as_ref().map_or(0, |n| n.seed),
+            loot: self.loot.clone(),
+            loot_sequences: self.loot_sequences.clone(),
         }
     }
 
@@ -1273,6 +1285,30 @@ fn load_rules(path: Option<&std::path::Path>) -> kiln_inventory::Rules {
         Err(e) => {
             warn!("no recipes ({}: {e})", dir.display());
             kiln_inventory::Rules::with_recipes(Default::default())
+        }
+    }
+}
+
+/// Loot tables from the datapack at `path`, `KILN_DATAPACK` or `work/generated`; none if absent
+/// (blocks then drop their own item).
+fn load_loot(path: Option<&std::path::Path>) -> Option<std::sync::Arc<kiln_loot::LootData>> {
+    let dir = path.map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("KILN_DATAPACK").map(Into::into));
+    let dir = dir.unwrap_or_else(|| "work/generated".into());
+    if !dir.join("data").is_dir() {
+        warn!("no loot tables ({} has no data/)", dir.display());
+        return None;
+    }
+    match kiln_loot::LootData::load_lenient(&dir) {
+        Ok(data) => {
+            for e in data.errors.iter().take(10) {
+                warn!("loot: {e}");
+            }
+            info!("loot: {} tables", data.table_ids().len());
+            Some(std::sync::Arc::new(data))
+        }
+        Err(e) => {
+            warn!("no loot tables ({}: {e})", dir.display());
+            None
         }
     }
 }
