@@ -64,6 +64,8 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
     fs::create_dir_all(&item_out)?;
     crate::items::generate(&items, &item_out)?;
     println!("codegen: wrote {}", item_out.display());
+
+    crate::entity_physics::write(root, &input.generated.join("extra/entity_physics.json"), state_count)?;
     Ok(())
 }
 

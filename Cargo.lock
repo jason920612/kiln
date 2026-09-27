@@ -558,6 +558,16 @@ name = "kiln-data"
 version = "0.1.0"
 
 [[package]]
+name = "kiln-entity"
+version = "0.1.0"
+dependencies = [
+ "kiln-data",
+ "kiln-item",
+ "kiln-javamath",
+ "serde_json",
+]
+
+[[package]]
 name = "kiln-inventory"
 version = "0.1.0"
 dependencies = [

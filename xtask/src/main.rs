@@ -9,6 +9,7 @@ mod bytecode;
 mod codegen;
 mod completeness;
 mod entities;
+mod entity_physics;
 mod fetch;
 mod http;
 mod items;
@@ -33,7 +34,11 @@ tasks:
       types, default item components) against the server jar into <work>/generated/extra;
       needed by codegen
   codegen
-      generate crates/kiln-data/src/gen and crates/kiln-item/src/gen from the work directory
+      generate crates/kiln-data/src/gen, crates/kiln-item/src/gen and crates/kiln-entity/src/gen
+      from the work directory
+  entity-physics [--input <entity_physics.json>]
+      regenerate only crates/kiln-entity/src/gen/physics.bin (default input:
+      <work>/generated/extra/entity_physics.json)
   completeness
       check crates/kiln-proto/protocol.toml against the generated packet list
   snapshot-report [<version>]
@@ -67,6 +72,12 @@ fn main() -> Result<()> {
             args.finish()?;
             codegen::run(&root, &work)
         }
+        "entity-physics" => {
+            let input = args.value("--input")?.map(PathBuf::from);
+            args.finish()?;
+            let input = input.unwrap_or_else(|| work.join("generated/extra/entity_physics.json"));
+            entity_physics::write(&root, &input, kiln_state_count(&work)?)
+        }
         "completeness" => {
             args.finish()?;
             completeness::run(&root, &work)
@@ -89,6 +100,12 @@ fn work_dir(root: &Path) -> Result<PathBuf> {
         Some(dir) if !dir.is_empty() => Ok(std::path::absolute(dir)?),
         _ => Ok(root.join("work")),
     }
+}
+
+/// Number of block states in the data generator's blocks report.
+pub(crate) fn kiln_state_count(work: &Path) -> Result<usize> {
+    let blocks = read_json(&work.join("generated/reports/blocks.json"))?;
+    Ok(blocks.as_object().context("blocks")?.values().map(|b| b["states"].as_array().map_or(0, Vec::len)).sum())
 }
 
 pub(crate) fn read_json(path: &Path) -> Result<Value> {

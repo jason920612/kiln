@@ -33,7 +33,11 @@ pub fn extract(root: &Path, work: &Path, server_jar: &Path) -> Result<()> {
     let cp = std::env::join_paths(&cp)?;
     let out = work.join("generated/extra");
     std::fs::create_dir_all(&out)?;
-    for (tool, file) in [("ExtractBlocks.java", "block_states.json"), ("ExtractGameRules.java", "game_rules.json")] {
+    for (tool, file) in [
+        ("ExtractBlocks.java", "block_states.json"),
+        ("ExtractGameRules.java", "game_rules.json"),
+        ("ExtractEntityPhysics.java", "entity_physics.json"),
+    ] {
         let status = Command::new("java")
             .arg("-cp")
             .arg(&cp)

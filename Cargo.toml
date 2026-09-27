@@ -11,6 +11,7 @@ publish = false
 kiln-proto = { path = "crates/kiln-proto" }
 kiln-data = { path = "crates/kiln-data" }
 kiln-blocks = { path = "crates/kiln-blocks" }
+kiln-entity = { path = "crates/kiln-entity" }
 kiln-item = { path = "crates/kiln-item" }
 kiln-inventory = { path = "crates/kiln-inventory" }
 kiln-loot = { path = "crates/kiln-loot" }
