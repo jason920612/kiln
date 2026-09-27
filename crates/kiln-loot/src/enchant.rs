@@ -26,8 +26,8 @@ impl Cost {
     }
 }
 
-/// `Enchantment` (its definition and exclusive set; effects are not modelled).
-#[derive(Debug, Clone, PartialEq)]
+/// `Enchantment`: its definition, exclusive set and effect components.
+#[derive(Debug, Clone)]
 pub struct Enchantment {
     /// `minecraft:enchantment` network id.
     pub id: i32,
@@ -40,6 +40,7 @@ pub struct Enchantment {
     pub anvil_cost: i32,
     pub slots: Vec<EquipmentSlotGroup>,
     pub exclusive_set: IdSet,
+    pub effects: crate::effects::Effects,
 }
 
 impl Enchantment {
@@ -65,6 +66,7 @@ impl Enchantment {
             slots: req(j, "slots", |v| list(v, |s| value(s, EquipmentSlotGroup::from_value)))?,
             exclusive_set: opt(j, "exclusive_set", |v| p.id_set(v, registry::ENCHANTMENT))?
                 .unwrap_or_else(|| IdSet::new(None, Vec::new())),
+            effects: opt(j, "effects", |v| crate::effects::Effects::parse(p, v))?.unwrap_or_default(),
         })
     }
 
