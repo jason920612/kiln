@@ -252,7 +252,7 @@ fn on_ground_y(r: &mut Region, x: i32, top: i32, z: i32, target: i32) -> i32 {
     let mut layer = 0;
     let mut above = r.get(BlockPos::new(x, top, z));
     let mut y = top;
-    while y >= r.min_y() + 1 {
+    while y > r.min_y() {
         let below = r.get(BlockPos::new(x, y - 1, z));
         if !empty(below) && empty(above) && !crate::blocks::is_block(below, "minecraft:bedrock") {
             if layer == target {

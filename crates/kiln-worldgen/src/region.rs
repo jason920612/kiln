@@ -24,6 +24,8 @@ pub struct RegionStats {
 
 /// `WorldGenRegion` over nine owned proto-chunks.
 pub struct Region<'a> {
+    // Boxed: chunks move between the pipeline and regions without copying their arrays.
+    #[allow(clippy::vec_box)]
     chunks: Vec<Box<ProtoChunk>>,
     pub cx: i32,
     pub cz: i32,

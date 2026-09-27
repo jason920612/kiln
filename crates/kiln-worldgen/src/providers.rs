@@ -326,7 +326,7 @@ impl HeightProvider {
             }
             HeightProvider::BiasedToBottom { min, max, inner } => {
                 let (lo, hi) = (min.resolve(g), max.resolve(g));
-                if hi - lo - inner + 1 <= 0 {
+                if hi - lo - inner < 0 {
                     return lo;
                 }
                 let n = r.next_int_bounded(hi - lo - inner + 1);
@@ -334,7 +334,7 @@ impl HeightProvider {
             }
             HeightProvider::VeryBiasedToBottom { min, max, inner } => {
                 let (lo, hi) = (min.resolve(g), max.resolve(g));
-                if hi - lo - inner + 1 <= 0 {
+                if hi - lo - inner < 0 {
                     return lo;
                 }
                 let a = next_int(r, lo + inner, hi);
