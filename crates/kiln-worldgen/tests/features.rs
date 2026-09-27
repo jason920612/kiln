@@ -95,12 +95,15 @@ struct Decoration {
     invocations: Vec<Invocation>,
 }
 
+type NamedBytes = (String, Vec<u8>);
+type NamedLongs = (String, Vec<i64>);
+
 struct RegionDump {
     targets: Vec<(i32, i32)>,
     /// Structure starts per chunk: (structure id, saved NBT).
-    starts: HashMap<(i32, i32), Vec<(String, Vec<u8>)>>,
+    starts: HashMap<(i32, i32), Vec<NamedBytes>>,
     /// Structure references per chunk: (structure id, sorted packed start chunks).
-    refs: HashMap<(i32, i32), Vec<(String, Vec<i64>)>>,
+    refs: HashMap<(i32, i32), Vec<NamedLongs>>,
     terrain: HashMap<(i32, i32), Vec<u16>>,
     decorations: Vec<Decoration>,
     finals: Vec<(i32, i32, Vec<u16>)>,

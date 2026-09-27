@@ -94,7 +94,7 @@ fn main() {
         starts_time.as_secs_f64() * 1e3 / n
     );
     let mut rows: Vec<_> = timer.spent.into_iter().collect();
-    rows.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    rows.sort_by_key(|r| std::cmp::Reverse(r.1.0));
     for (name, (t, count)) in rows.iter().take(25) {
         println!("  {name:55} {:>8.3} ms/chunk  {count:>7} calls", t.as_secs_f64() * 1e3 / n);
     }

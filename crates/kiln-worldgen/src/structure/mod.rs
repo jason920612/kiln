@@ -489,9 +489,12 @@ fn parse_structure(id: &str, json: &Json, l: &Loader, gaps: &mut Vec<(String, At
 }
 
 /// Starts of each chunk, computed on demand and kept (a pure function of the position).
+/// A chunk's starts, shared between the cache and the chunks referencing them.
+pub type SharedStarts = Arc<Vec<Start>>;
+
 #[derive(Default)]
 pub struct StartCache {
-    starts: Mutex<HashMap<(i32, i32), Arc<Vec<Start>>>>,
+    starts: Mutex<HashMap<(i32, i32), SharedStarts>>,
 }
 
 impl StartCache {
@@ -516,7 +519,7 @@ impl StartCache {
 /// (`StructureManager.startsForStructure`).
 #[derive(Default, Clone)]
 pub struct ChunkStarts {
-    by_structure: Vec<(usize, Vec<(Arc<Vec<Start>>, usize)>)>,
+    by_structure: Vec<(usize, Vec<(SharedStarts, usize)>)>,
 }
 
 impl ChunkStarts {

@@ -119,6 +119,7 @@ mod tests {
     /// Bits from `Math.sin`/`Math.cos` on JDK 25; the first cosine is one ulp off in the
     /// Windows C library.
     #[test]
+    #[allow(clippy::excessive_precision)] // inputs as Java printed them
     fn matches_java() {
         let cases: [(f64, u64, u64); 4] = [
             (2.702_454_318_956_087_2, 0x3fdb35d116a86f8c, 0xbfecf6babf20251a),

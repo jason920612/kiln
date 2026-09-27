@@ -172,12 +172,15 @@ impl Placement {
     }
 }
 
+/// One set's ring chunk positions, computed once.
+type RingSlot = OnceLock<Vec<(i32, i32)>>;
+
 /// Ring positions of concentric-rings sets, computed on first use
 /// (`ChunkGeneratorStructureState.generateRingPositions`).
 pub struct Rings {
     /// Per set: whether it gets ring positions (a structure of it can generate), and the
     /// positions once computed.
-    slots: Vec<Option<OnceLock<Vec<(i32, i32)>>>>,
+    slots: Vec<Option<RingSlot>>,
 }
 
 impl Rings {
