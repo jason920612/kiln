@@ -15,6 +15,7 @@
 
 pub mod aquifer;
 pub mod biome;
+pub mod block_facts;
 pub mod blocks;
 pub mod carver;
 pub mod compile;
