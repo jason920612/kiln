@@ -71,7 +71,8 @@ pub fn update_shape(r: &mut Region, s: u16, p: BlockPos, d: Dir, np: BlockPos, n
             return v;
         }
     }
-    s
+    // Blocks not mirrored here (walls, fences, panes, ...): kiln-blocks' behaviour.
+    crate::structure::shape::update_shape(r, s, p, d, ns)
 }
 
 /// The `updateShape` override of one class, if it decides (`None` defers to the superclass).

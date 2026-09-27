@@ -235,6 +235,20 @@ type FaceAxis = (Dir, Dir, i32, i32, i32, fn(i32, i32, i32) -> (i32, i32, i32));
 /// `Block.UPDATE_SHAPE_ORDER`.
 const UPDATE_SHAPE_ORDER: [Dir; 6] = [Dir::West, Dir::East, Dir::North, Dir::South, Dir::Down, Dir::Up];
 
+/// `BlockState.updateShape` of `s` at `p` toward `d` (neighbour `ns`) with `kiln-blocks`'
+/// behaviour over the region; scheduled ticks are dropped.
+pub fn update_shape(r: &mut Region, s: u16, p: BlockPos, d: Dir, ns: u16) -> u16 {
+    let mut level = ShapeLevel {
+        r,
+        block_ticks: kb::LevelTicks::new(),
+        fluid_ticks: kb::LevelTicks::new(),
+        data: kb::LevelData::new(kb::flags::LIMIT, 0),
+        rules: kb::Rules::default(),
+        sub_tick: 0,
+    };
+    level.update_shape_with(s, p, d, ns)
+}
+
 /// The end of `StructureTemplate.placeInWorld` for an unknown shape: `placed` are the blocks
 /// set (in placement order) within `min..=max`.
 pub fn update_placed_shapes(r: &mut Region, flags: i32, placed: &[BlockPos], min: [i32; 3], max: [i32; 3]) {
