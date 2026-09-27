@@ -14,7 +14,7 @@ use kiln_command::{
 use kiln_link::ConnId;
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets;
-use kiln_world::ChunkPos;
+use kiln_world::{Blocks, ChunkPos};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 use tracing::info;
@@ -166,6 +166,31 @@ impl CommandState {
 }
 
 impl Sim {
+    /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
+    /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
+    /// the contents changed.
+    fn load_block_entity(&mut self, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
+        let [x, y, z] = pos;
+        let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
+        let chunk_pos = ChunkPos::of_block(x, z);
+        let Some(chunk) = self.dim.regions.chunk_mut(chunk_pos) else { return false };
+        let Some(old) = chunk.block_entity(lx, y, lz).cloned() else { return false };
+        let mut be = kiln_world::block_entity::BlockEntity::new(old.kind);
+        if let Tag::Compound(out) = &mut be.nbt {
+            out.extend(fields.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")).cloned());
+        }
+        if be == old {
+            return false;
+        }
+        chunk.set_block_entity(lx, y, lz, be);
+        let Some((kind, tag)) = self.dim.regions.block_entity_data(x, y, z) else { return true };
+        let pkt = packets::block_entity_data(pos, kind as i32, &tag);
+        for p in self.players.values_mut().filter(|p| p.sent_chunks.contains(&chunk_pos)) {
+            p.send(pkt.clone());
+        }
+        true
+    }
+
     pub(crate) fn rule_bool(&self, rule: &str) -> bool {
         matches!(Host::game_rule(self, rule), GameRuleValue::Bool(true))
     }
@@ -590,53 +615,76 @@ impl Host for Sim {
     }
 
     fn kiln_regions(&mut self) -> Vec<Text> {
-        vec![Text::literal("1 region (the regionizer is not enabled yet)")]
+        let mut players: std::collections::BTreeMap<kiln_region::RegionId, usize> = Default::default();
+        for p in self.players.values() {
+            *players.entry(p.region).or_default() += 1;
+        }
+        let mut lines = vec![Text::literal(format!("{} regions", self.dim.regions.len()))];
+        for r in self.dim.regions.iter() {
+            let chunks: usize = r.cells().iter().map(|(_, c)| c.len()).sum();
+            let anchor = r.anchor();
+            lines.push(Text::literal(format!(
+                "#{}: anchor cell {},{} (block {},{}), {} cells, {} chunks, {} players",
+                r.id().0,
+                anchor.x,
+                anchor.z,
+                anchor.x * kiln_region::CELL_BLOCKS,
+                anchor.z * kiln_region::CELL_BLOCKS,
+                r.len(),
+                chunks,
+                players.get(&r.id()).copied().unwrap_or(0)
+            )));
+        }
+        lines
     }
 
     fn is_chunk_loaded(&self, dimension: &str, cx: i32, cz: i32) -> bool {
-        dimension == OVERWORLD && self.world.chunk(ChunkPos::new(cx, cz)).is_some()
+        dimension == OVERWORLD && self.dim.regions.chunk(ChunkPos::new(cx, cz)).is_some()
     }
 
     fn build_height(&self, _dimension: &str) -> (i32, i32) {
-        let d = self.world.dimension;
+        let d = self.dim.provider.dimension;
         (d.min_y, d.min_y + d.height)
     }
 
+    /// Unloaded positions read as void air (commands check loadedness first).
     fn block_state(&mut self, _dimension: &str, pos: [i32; 3]) -> u16 {
         let [x, y, z] = pos;
-        self.world.chunk_mut(ChunkPos::of_block(x, z)).get((x & 15) as usize, y, (z & 15) as usize)
+        self.dim.regions.get_block(x, y, z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR)
     }
 
-    /// Block entities are not stored yet: blocks that have one report only the position
-    /// fields of `BlockEntity.saveWithFullMetadata` (no `id`, no contents).
-    fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
-        let state = self.block_state(dimension, pos);
-        kiln_data::block_props::has_block_entity(state).then(|| {
-            Tag::Compound(["x", "y", "z"].into_iter().zip(pos).map(|(k, v)| (k.to_owned(), Tag::Int(v))).collect())
-        })
+    /// `BlockEntity.saveWithFullMetadata`.
+    fn block_entity(&mut self, _dimension: &str, pos: [i32; 3]) -> Option<Tag> {
+        let [x, y, z] = pos;
+        let chunk = self.dim.regions.chunk(ChunkPos::of_block(x, z))?;
+        chunk.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| be.saved(pos))
     }
 
-    /// Places the state as given: Kiln has no neighbour shape updates yet, and block entity
-    /// data (`nbt`) is ignored until block entities are stored.
-    fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, _nbt: Option<&Tag>, _: UpdateFlags) -> bool {
-        if self.block_state(dimension, pos) == state {
+    /// Places the state as given (Kiln has no neighbour shape updates yet); block entity data
+    /// replaces the block entity's contents. Like vanilla's `BlockInput.place`, it succeeds if
+    /// the state or the block entity's data changed.
+    fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, _: UpdateFlags) -> bool {
+        let state_changed = self.block_state(dimension, pos) != state;
+        if state_changed && !Sim::set_block(self, pos, state) {
             return false;
         }
-        Sim::set_block(self, pos, state);
-        true
+        let data_changed = match nbt {
+            Some(Tag::Compound(fields)) => self.load_block_entity(pos, fields),
+            _ => false,
+        };
+        state_changed || data_changed
     }
 
     fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], _drop: bool) -> bool {
         if kiln_data::blocks_types::is_air(self.block_state(dimension, pos)) {
             return false;
         }
-        Sim::set_block(self, pos, kiln_data::blocks::default_state::AIR);
-        true
+        Sim::set_block(self, pos, kiln_data::blocks::default_state::AIR)
     }
 
     fn height(&mut self, _dimension: &str, heightmap: Heightmap, x: i32, z: i32) -> i32 {
         let (min_y, max_y) = Host::build_height(self, OVERWORLD);
-        let chunk = self.world.chunk_mut(ChunkPos::of_block(x, z));
+        let Some(chunk) = self.dim.regions.chunk(ChunkPos::of_block(x, z)) else { return min_y };
         (min_y..max_y)
             .rev()
             .find(|&y| heightmap.counts(chunk.get((x & 15) as usize, y, (z & 15) as usize)))
@@ -647,11 +695,11 @@ impl Host for Sim {
     /// neighbouring cells, which only matters at biome borders).
     fn biome(&mut self, _dimension: &str, pos: [i32; 3]) -> Option<String> {
         let [x, y, z] = pos;
-        let chunk = self.world.chunk(ChunkPos::of_block(x, z))?;
+        let chunk = self.dim.regions.chunk(ChunkPos::of_block(x, z))?;
         let rel = y - chunk.min_y();
         let section = chunk.sections.get(usize::try_from(rel >> 4).ok()?)?;
         let id = match &section.biomes {
-            kiln_world::section::Biomes::Single(b) => *b,
+            kiln_world::section::Biomes::Single(b) => b.to_owned(),
             kiln_world::section::Biomes::Cells(cells) => {
                 cells[((((rel & 15) >> 2) << 4) | (((z & 15) >> 2) << 2) | ((x & 15) >> 2)) as usize]
             }

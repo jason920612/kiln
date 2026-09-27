@@ -346,7 +346,11 @@ impl Sim {
                 info!("loaded world {} (spawn {spawn:?})", dir.display());
                 (provider, spawn)
             }
-            None => (ChunkProvider::flat(OVERWORLD_DIM, plains as u16, biome_count), [8, 0, 8]),
+            None => {
+                let provider = ChunkProvider::flat(OVERWORLD_DIM, plains as u16, biome_count);
+                let surface = provider.flat_surface_y() as i32;
+                (provider, [8, surface, 8])
+            }
         };
         let policy = if config.unified_regions { RegionPolicy::unified() } else { RegionPolicy::default() };
         let storage = config.world.as_deref().map(persist::Storage::open);
