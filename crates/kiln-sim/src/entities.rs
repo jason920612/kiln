@@ -32,6 +32,8 @@ pub(crate) enum Body {
     Tnt,
     /// An entity kiln-entity built during a tick (its id is replaced by the assigned one).
     Ready(Box<kiln_entity::Entity>),
+    /// An entity loaded from its chunk's saved data; keeps its UUID (unless it had none).
+    Loaded(Box<kiln_entity::Entity>),
 }
 
 pub(crate) struct Entity {
@@ -66,10 +68,40 @@ pub(crate) struct Spawn {
 }
 
 impl Spawn {
-    /// Order of spawns from different regions: by position, then type (never by region).
-    fn key(&self) -> ([u64; 3], i32) {
-        (self.pos.map(f64::to_bits), self.kind.id)
+    /// Order of spawns from different regions: by position, then type, then the UUID of a
+    /// loaded entity (never by region or load order).
+    fn key(&self) -> ([u64; 3], i32, u128) {
+        let uuid = match &self.body {
+            Body::Loaded(e) => e.uuid,
+            _ => 0,
+        };
+        (self.pos.map(f64::to_bits), self.kind.id, uuid)
     }
+
+    /// A spawn for an entity loaded from its chunk.
+    pub fn loaded(e: kiln_entity::Entity) -> Option<Spawn> {
+        let kind = kiln_data::entities::by_name(e.type_name)?;
+        Some(Spawn { kind, pos: arr(e.position()), vel: arr(e.delta), body: Body::Loaded(Box::new(e)) })
+    }
+}
+
+/// A fresh entity UUID (version 4 layout), from the world seed, the world age and the network
+/// id: unique across restarts of the same world, and the same however regions split it.
+pub(crate) fn fresh_uuid(world_seed: i64, game_time: i64, id: i32) -> Uuid {
+    let mix = |mut h: u64, v: u64| {
+        h = (h ^ v).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^ (h >> 31)
+    };
+    let a = mix(mix(mix(0x6b69_6c6e_656e_7469, world_seed as u64), game_time as u64), id as u64);
+    let b = mix(mix(a, 0x9E37_79B9_7F4A_7C15), id as u64);
+    let hi = (a & !0xF000) | 0x4000;
+    let lo = (b & !(0xC000 << 48)) | (0x8000 << 48);
+    Uuid::from_u64_pair(hi, lo)
+}
+
+/// A seed for a loaded entity's own random, from its UUID.
+pub(crate) fn seed_for_uuid(uuid: u128) -> i64 {
+    seed_for((uuid as u64 ^ (uuid >> 64) as u64) as i32) ^ (uuid >> 64) as i64
 }
 
 /// Puts spawns in the order ids are assigned in.
@@ -94,8 +126,12 @@ fn arr(v: Vec3) -> [f64; 3] {
 }
 
 impl Entity {
-    pub fn new(id: i32, spawn: Spawn) -> Self {
-        let uuid = Uuid::from_u64_pair(0x6b69_6c6e_656e_7469, id as u64);
+    /// The entity of `spawn` with network id `id`; `uuid` unless it was loaded with one.
+    pub fn new(id: i32, uuid: Uuid, spawn: Spawn) -> Self {
+        let uuid = match &spawn.body {
+            Body::Loaded(e) if e.uuid != 0 => Uuid::from_u128(e.uuid),
+            _ => uuid,
+        };
         let (u, seed, pos) = (uuid.as_u128(), seed_for(id), vec3(spawn.pos));
         let phys = match spawn.body {
             Body::Item { stack, pickup_delay } => {
@@ -112,15 +148,15 @@ impl Entity {
                 kiln_entity::falling_block::fall(id, u, BlockPos::containing(pos.x, pos.y, pos.z), state, seed)
             }
             Body::Tnt => kiln_entity::tnt::ignite(id, u, pos, None, seed),
-            Body::Ready(e) => {
+            Body::Ready(e) | Body::Loaded(e) => {
                 let mut e = *e;
                 e.id = id;
                 e.uuid = u;
                 e
             }
         };
-        let (pos, vel) = (arr(phys.position()), arr(phys.delta));
-        let state = MoveState { pos, yaw: phys.y_rot, pitch: phys.x_rot, head_yaw: phys.y_rot, on_ground: false };
+        let (pos, vel, on_ground) = (arr(phys.position()), arr(phys.delta), phys.on_ground);
+        let state = MoveState { pos, yaw: phys.y_rot, pitch: phys.x_rot, head_yaw: phys.y_rot, on_ground };
         Self {
             id,
             uuid,
@@ -128,7 +164,7 @@ impl Entity {
             cell: chunk_of(pos).cell(),
             pos,
             vel,
-            on_ground: false,
+            on_ground,
             age: 0,
             removed: false,
             phys: Some(phys),
@@ -137,6 +173,12 @@ impl Entity {
             seen_by: Vec::new(),
             section: None,
         }
+    }
+
+    /// The entity as saved in its chunk (`Entity.save`); `owners` resolves the network ids
+    /// of owners to UUIDs.
+    pub fn save(&self, owners: &dyn Fn(i32) -> Option<u128>) -> kiln_proto::nbt::Tag {
+        kiln_entity::persist::save(self.phys(), owners)
     }
 
     fn phys(&self) -> &kiln_entity::Entity {

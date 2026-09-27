@@ -1,9 +1,13 @@
-//! Players and level data in the world save: loaded on startup and join, saved on leave,
-//! autosave and shutdown.
+//! Players, level data and entity chunks in the world save: loaded on startup, join and
+//! chunk load, saved on leave, chunk unload, autosave and shutdown.
 
-use crate::{Player, Sim};
+use crate::{Player, Sim, entities};
+use kiln_entity::persist::{self, LoadError};
+use kiln_link::ConnId;
 use kiln_proto::nbt::Tag;
 use kiln_storage::{LevelState, LevelStore, PlayerData, PlayerStore, WorldSpawn};
+use kiln_world::{Blocks, ChunkPos};
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tracing::warn;
 use uuid::Uuid;
@@ -135,5 +139,149 @@ impl Sim {
         if let Err(e) = storage.level.save(&state) {
             warn!("failed to save level data: {e}");
         }
+    }
+
+    /// Network ids of possible entity owners (players) to their UUIDs.
+    pub(crate) fn owner_uuids(&self) -> HashMap<i32, u128> {
+        self.players.values().map(|p| (p.entity_id, p.uuid.as_u128())).collect()
+    }
+
+    /// Viewers forget entities that left the simulation with their chunk.
+    pub(crate) fn forget_entities(&mut self, gone: Vec<(i32, Vec<ConnId>)>) {
+        for (id, viewers) in gone {
+            let pkt = kiln_proto::packets::entity::remove_entities(&[id]);
+            for v in viewers {
+                if let Some(p) = self.players.get_mut(&v) {
+                    p.send(pkt.clone());
+                }
+            }
+        }
+    }
+
+    /// Saved data of every simulated entity, in id order (for tests and tools).
+    pub fn entity_nbt(&self) -> Vec<Tag> {
+        let owners = self.owner_uuids();
+        let owner = |id: i32| owners.get(&id).copied();
+        let mut all: Vec<&entities::Entity> =
+            self.dim.regions.iter().flat_map(|r| r.part().0.list.iter()).filter(|e| !e.removed).collect();
+        all.sort_by_key(|e| e.id);
+        all.into_iter().map(|e| e.save(&owner)).collect()
+    }
+
+    /// How many entities of loaded chunks are kept as saved without being simulated.
+    pub fn kept_entity_count(&self) -> usize {
+        self.dim.raw_entities.values().map(Vec::len).sum()
+    }
+}
+
+// ---------------------------------------------------------------------------- entity chunks
+
+impl crate::Dim {
+    /// `EntityStorage.loadEntities` for a chunk that just went into its region: simulated
+    /// entities become spawns (ids are assigned with the tick's other spawns, in canonical
+    /// order); others are kept as saved until the chunk is written again.
+    pub(crate) fn load_entities(&mut self, pos: ChunkPos) {
+        let Some(store) = &mut self.entity_store else { return };
+        let mut raw = Vec::new();
+        for tag in store.load(pos) {
+            let uuid = tag.get("UUID").and_then(persist::uuid_from_tag).unwrap_or(0);
+            match persist::load(&tag, 0, entities::seed_for_uuid(uuid)) {
+                Ok(e) => match entities::Spawn::loaded(e) {
+                    Some(spawn) => self.spawns.push(spawn),
+                    None => raw.push(tag),
+                },
+                Err(LoadError::Discarded) => {}
+                Err(LoadError::NotSimulated) => raw.push(tag),
+                Err(LoadError::Invalid(why)) => {
+                    warn!("entity in chunk {pos:?} kept as saved: {why}");
+                    raw.push(tag);
+                }
+            }
+        }
+        if !raw.is_empty() {
+            self.raw_entities.insert(pos, raw);
+        }
+    }
+
+    /// Adds saved entities to a chunk that is not in a region (merging with what it has
+    /// stored; an entity already stored there under the same UUID is replaced).
+    pub(crate) fn stash_entities(&mut self, pos: ChunkPos, tags: Vec<Tag>) {
+        let Some(store) = &mut self.entity_store else { return };
+        let uuid = |t: &Tag| t.get("UUID").and_then(persist::uuid_from_tag);
+        let mut stored = store.load(pos);
+        stored.retain(|s| uuid(s).is_none_or(|u| !tags.iter().any(|t| uuid(t) == Some(u))));
+        stored.extend(tags);
+        store.store(pos, stored);
+    }
+
+    /// `EntityStorage.storeEntities`. With `all` (autosave, shutdown) every loaded chunk is
+    /// written with its entities; otherwise (after unloads) the chunks in `unloaded` and those
+    /// of entities no longer in a loaded chunk. Entities outside loaded chunks leave the
+    /// simulation; returns their ids and viewers, who must forget them.
+    pub(crate) fn store_entities(&mut self, unloaded: &[ChunkPos], all: bool, owners: &HashMap<i32, u128>) -> Vec<(i32, Vec<ConnId>)> {
+        if self.entity_store.is_none() {
+            return Vec::new();
+        }
+        let owner = |id: i32| owners.get(&id).copied();
+        let mut groups: HashMap<ChunkPos, Vec<Tag>> = HashMap::new();
+        let mut leaving: HashSet<i32> = HashSet::new();
+        for r in self.regions.iter() {
+            for e in r.part().0.list.iter().filter(|e| !e.removed) {
+                let c = entities::chunk_of(e.pos);
+                let loaded = self.regions.chunk(c).is_some();
+                if all || !loaded {
+                    groups.entry(c).or_default().push(e.save(&owner));
+                }
+                if !loaded {
+                    leaving.insert(e.id);
+                }
+            }
+        }
+        let mut gone = Vec::new();
+        if !leaving.is_empty() {
+            for r in self.regions.iter_mut() {
+                r.part_mut().0.list.retain_mut(|e| {
+                    if !leaving.contains(&e.id) {
+                        return true;
+                    }
+                    gone.push((e.id, std::mem::take(&mut e.seen_by)));
+                    false
+                });
+            }
+        }
+        let mut chunks: Vec<ChunkPos> = groups.keys().copied().chain(unloaded.iter().copied()).collect();
+        if all {
+            for r in self.regions.iter() {
+                for (cell_pos, cell) in r.cells().iter() {
+                    chunks.extend(cell.chunks(cell_pos).map(|(p, _)| p));
+                }
+            }
+        }
+        chunks.sort_unstable_by_key(|c| (c.x, c.z));
+        chunks.dedup();
+        for c in chunks {
+            let mut list = groups.remove(&c).unwrap_or_default();
+            let was_unloaded = unloaded.contains(&c);
+            if self.regions.chunk(c).is_some() {
+                list.extend(self.raw_entities.get(&c).into_iter().flatten().cloned());
+            } else if was_unloaded {
+                list.extend(self.raw_entities.remove(&c).unwrap_or_default());
+            } else {
+                // Entities that moved into a chunk not in a region join what it has stored
+                // (a chunk still waiting for its region loads them with it).
+                self.stash_entities(c, list);
+                continue;
+            }
+            let store = self.entity_store.as_mut().expect("checked above");
+            store.store(c, list);
+            if was_unloaded {
+                store.unloaded(c);
+            }
+        }
+        gone
+    }
+
+    pub(crate) fn flush_entities(&mut self) -> std::io::Result<usize> {
+        self.entity_store.as_mut().map_or(Ok(0), |s| s.flush())
     }
 }

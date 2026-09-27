@@ -19,6 +19,7 @@ pub mod item;
 pub mod level;
 pub mod math;
 pub mod memory;
+pub mod persist;
 pub mod physics;
 pub mod player;
 pub mod projectile;
