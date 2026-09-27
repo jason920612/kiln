@@ -251,6 +251,8 @@ pub struct BiomeInfo {
     pub temperature: f32,
     /// `TemperatureModifier.FROZEN` (else `NONE`).
     pub frozen: bool,
+    /// `ClimateSettings.hasPrecipitation`.
+    pub has_precipitation: bool,
     /// Configured carver ids, in order.
     pub carvers: Vec<String>,
 }
@@ -263,6 +265,7 @@ impl BiomeInfo {
             Some("frozen") => true,
             Some(m) => return Err(Error::Invalid(format!("unknown temperature modifier {m}"))),
         };
+        let has_precipitation = json.get("has_precipitation").and_then(Json::as_bool).unwrap_or(false);
         let carvers = match json.get("carvers") {
             None => Vec::new(),
             Some(Json::String(s)) => vec![crate::function::qualify(s)],
@@ -272,7 +275,7 @@ impl BiomeInfo {
                 .collect::<Result<_, _>>()?,
             Some(_) => return Err(Error::Invalid("bad carvers".into())),
         };
-        Ok(BiomeInfo { name: name.to_string(), temperature, frozen, carvers })
+        Ok(BiomeInfo { name: name.to_string(), temperature, frozen, has_precipitation, carvers })
     }
 }
 
