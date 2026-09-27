@@ -108,14 +108,18 @@ impl RegionWork<'_> {
             p.with_menu(&env.rules, &mut self.out.spawns, |menu, _, env| menu.broadcast_changes(env));
         }
         mark(&mut self.out.times, 0);
+        // The player tick in vanilla's order: base tick (fire, void, air, effects), using an
+        // item, equipment, the blocks the player is in, then food.
+        let cells = &*self.cells;
+        let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
         for p in self.players.iter_mut() {
             tick_connection(p, env);
             p.tick_damage(env.game_time);
+            let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
+            p.base_tick(&block, env.min_y, &mut ctx);
+            p.tick_using(&block, &mut ctx);
             p.tick_combat();
-            let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
-            p.check_void(env.min_y, &mut ctx);
-            p.tick_using(&mut self.out.spawns);
-            let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
+            p.block_effects(&block, &mut ctx);
             p.tick_food(env.natural_regen, &mut ctx);
             p.sync_health();
         }
@@ -417,7 +421,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         PlayIn::UseItem { hand, sequence, .. } => {
-            p.use_item(hand == kiln_proto::packets::serverbound::Hand::Off, fx.spawns);
+            let cells = &*world.cells;
+            let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
+            let mut ctx = damage_ctx(env, fx.spawns, fx.deaths);
+            p.use_item(hand == kiln_proto::packets::serverbound::Hand::Off, &block, &mut ctx);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {

@@ -36,6 +36,16 @@ impl Player {
 
     fn shared_flags(&self) -> i8 {
         let mut f = 0;
+        if self.on_fire_flag {
+            f |= shared_flags::ON_FIRE;
+        }
+        // `updateInvisibilityStatus` and `updateGlowingStatus`.
+        if self.has_effect("minecraft:invisibility") {
+            f |= shared_flags::INVISIBLE;
+        }
+        if self.has_effect("minecraft:glowing") {
+            f |= shared_flags::GLOWING;
+        }
         if self.sneaking {
             f |= shared_flags::CROUCHING;
         }
@@ -64,7 +74,19 @@ impl Player {
         if self.living_flags() != 0 {
             d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(self.living_flags()));
         }
+        if self.air != crate::hazards::MAX_AIR {
+            d.set(data::entity::AIR_SUPPLY, &DataValue::Int(self.air));
+        }
+        if !self.effects.is_empty() {
+            self.effect_data(&mut d);
+        }
         d
+    }
+
+    /// `DATA_EFFECT_PARTICLES` and `DATA_EFFECT_AMBIENCE_ID`.
+    fn effect_data(&self, d: &mut EntityData) {
+        d.set(data::living_entity::EFFECT_PARTICLES, &DataValue::Particles(self.effect_particles()));
+        d.set(data::living_entity::EFFECT_AMBIENCE, &DataValue::Boolean(!self.effects.is_empty() && self.effects_ambient()));
     }
 
     fn info_entry<'a>(&'a self, props: &'a [ProfileProperty<'a>]) -> PlayerInfoEntry<'a> {
@@ -298,14 +320,45 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player]) {
         let state = target.move_state();
         let mut packets = target.tracker.tick(&state);
         packets.extend(target.equipment_changes());
+        // `updateDataBeforeSync`: effect particles, ambience and the flags effects set.
+        let effects_dirty = std::mem::take(&mut target.effects_dirty);
+        if effects_dirty {
+            target.meta_dirty = true;
+            target.self_meta_dirty = true;
+        }
         if target.meta_dirty {
             target.meta_dirty = false;
             let mut d = EntityData::new();
             d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
             d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
             d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(target.living_flags()));
+            if effects_dirty {
+                target.effect_data(&mut d);
+            }
             packets.push(entity::set_entity_data(target.entity_id, &d));
         }
+        // What the player's own client needs of its entity data: burning, invisibility and
+        // effect particles, and the air supply (`ServerEntity.sendDirtyEntityData` sends to the
+        // player too).
+        let air_changed = target.air != target.air_sent;
+        if std::mem::take(&mut target.self_meta_dirty) || air_changed {
+            let mut d = EntityData::new();
+            d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
+            if air_changed {
+                target.air_sent = target.air;
+                d.set(data::entity::AIR_SUPPLY, &DataValue::Int(target.air));
+            }
+            if effects_dirty {
+                target.effect_data(&mut d);
+            }
+            target.send(entity::set_entity_data(target.entity_id, &d));
+        }
+        if std::mem::take(&mut target.attributes_dirty) {
+            let pkt = target.effect_attributes_packet();
+            target.send(pkt.clone());
+            packets.push(pkt);
+        }
+        packets.append(&mut target.pending_sounds);
         if let Some((damage_type, cause, direct)) = target.damaged.take() {
             packets.push(entity::damage_event(target.entity_id, damage_type, cause, direct, None));
         }

@@ -27,8 +27,10 @@ mod consume;
 mod datapacks;
 pub mod lobby;
 mod digging;
+mod effects;
 mod entities;
 mod generation;
+mod hazards;
 mod health;
 mod movement;
 mod persist;
@@ -42,6 +44,8 @@ mod combat_parity;
 mod enchant;
 #[cfg(test)]
 mod enchant_parity;
+#[cfg(test)]
+mod effect_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -194,8 +198,30 @@ struct Player {
     level_rng: kiln_javamath::random::LegacyRandom,
     /// Enchantment definitions (the loot data of the enabled datapacks).
     loot: Option<std::sync::Arc<kiln_loot::LootData>>,
-    /// `remainingFireTicks` (set by fire aspect; nothing burns yet).
+    /// `remainingFireTicks`: burning while positive, -20 at rest (see [`hazards`]).
     fire_ticks: i32,
+    /// The on-fire shared flag as viewers last got it.
+    on_fire_flag: bool,
+    /// `getAirSupply`.
+    air: i32,
+    /// Air supply as the player's client last got it.
+    air_sent: i32,
+    /// `tickCount`: ticks since joining (infinite effects tick on it).
+    tick_count: i32,
+    /// Active mob effects by `minecraft:mob_effect` id.
+    effects: std::collections::BTreeMap<i32, effects::Effect>,
+    /// Effects changed: particles, ambience and the invisible and glowing flags go out.
+    effects_dirty: bool,
+    /// An effect attribute modifier changed: Update Attributes goes out.
+    attributes_dirty: bool,
+    /// Shared flags changed in a way the player's own client must see (burning, invisible).
+    self_meta_dirty: bool,
+    /// Where the last block effects pass left the player (`applyEffectsFromBlocks`).
+    block_effects_from: [f64; 3],
+    /// Sounds the player made this tick, for its viewers.
+    pending_sounds: Vec<Bytes>,
+    /// `Level.soundSeedGenerator` stand-in for this player's sounds.
+    sound_seed: kiln_javamath::random::LegacyRandom,
     health: f32,
     food: i32,
     saturation: f32,
@@ -374,6 +400,7 @@ impl Player {
     fn teleport(&mut self, pos: [f64; 3], rot: [f32; 2], now: i64) {
         self.pos = pos;
         self.rot = rot;
+        self.block_effects_from = pos;
         self.teleport_id += 1;
         self.awaiting_teleport = Some(self.teleport_id);
         self.teleport_sent = now;
@@ -1178,6 +1205,13 @@ impl Sim {
         p.hurt_cooldown = 0;
         p.last_hurt = 0.0;
         p.absorption = 0.0;
+        // A fresh `ServerPlayer`: no effects, fire or lost air.
+        p.effects.clear();
+        p.effects_dirty = true;
+        p.attributes_dirty = true;
+        p.fire_ticks = -hazards::FIRE_IMMUNE_TICKS;
+        p.air = hazards::MAX_AIR;
+        p.self_meta_dirty = true;
         p.kill_credit = None;
         p.combat = health::CombatTracker::default();
         p.attack_ticker = 0;
@@ -1186,6 +1220,7 @@ impl Sim {
         p.sent_chunks.clear();
         p.unacked_batches = 0;
         p.teleport(pos, [0.0, 0.0], now);
+        p.block_effects_from = pos;
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
@@ -1350,7 +1385,18 @@ impl Sim {
             entity_rng: kiln_javamath::random::LegacyRandom::new(j.uuid.as_u64_pair().0 as i64),
             level_rng: kiln_javamath::random::LegacyRandom::new(j.uuid.as_u64_pair().1 as i64),
             loot: self.loot.clone(),
-            fire_ticks: 0,
+            fire_ticks: joining.fire_ticks,
+            on_fire_flag: false,
+            air: joining.air,
+            air_sent: hazards::MAX_AIR,
+            tick_count: 0,
+            effects: joining.effects,
+            effects_dirty: true,
+            attributes_dirty: true,
+            self_meta_dirty: true,
+            block_effects_from: spawn,
+            pending_sounds: Vec::new(),
+            sound_seed: kiln_javamath::random::LegacyRandom::new(!(j.uuid.as_u64_pair().0 as i64)),
             health: joining.health,
             food: joining.food,
             saturation: joining.saturation,
@@ -1362,7 +1408,7 @@ impl Sim {
             entity_events: Vec::new(),
             hurt_cooldown: 0,
             last_hurt: 0.0,
-            absorption: 0.0,
+            absorption: joining.absorption,
             kill_credit: None,
             combat: health::CombatTracker::default(),
             attack_ticker: 0,
@@ -1403,6 +1449,8 @@ impl Sim {
         player.send(self.time_packet());
         player.send(packets::set_held_slot(player.inv.selected as i32));
         player.sync_health();
+        // `PlayerList.placeNewPlayer`: the saved effects.
+        player.send_all_effects();
         player.send(kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes));
         let rules = self.rules.clone();
         let mut spawns = Vec::new();

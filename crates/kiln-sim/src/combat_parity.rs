@@ -193,9 +193,11 @@ fn check_side(sim: &Sim, conn: u64, stats: &SinkStats, want: &Value, errors: &mu
     let cooldown = want["hurt_cooldown"].as_i64().unwrap() as i32;
     eq("hurt_cooldown", format!("{}", p.hurt_cooldown), format!("{}", (cooldown - 1).max(0)));
     eq("sprinting", format!("{}", p.sprinting), format!("{}", want["sprinting"].as_bool().unwrap()));
-    // Like the hurt cooldown, fire counted down once in the tick after the attack.
+    // Like the hurt cooldown, fire counted down once in the tick after the attack; a player
+    // that does not burn rests at -20 (`applyEffectsFromBlocks`).
     let fire = want["fire_ticks"].as_i64().unwrap_or(0) as i32;
-    eq("fire_ticks", format!("{}", p.fire_ticks), format!("{}", (fire - 1).max(0)));
+    let fire = if fire > 0 { fire - 1 } else { -crate::hazards::FIRE_IMMUNE_TICKS };
+    eq("fire_ticks", format!("{}", p.fire_ticks), format!("{fire}"));
     let main = p.inv.selected_item();
     let main_name = (!main.is_empty()).then(|| main.item_name().to_owned());
     eq("main_hand", format!("{main_name:?}"), format!("{:?}", want["main_hand"].as_str().map(str::to_owned)));

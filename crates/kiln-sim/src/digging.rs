@@ -79,11 +79,22 @@ impl Player {
         d2 < range * range
     }
 
-    /// `Player.getDestroySpeed` (no mob effects).
+    /// `Player.getDestroySpeed`: the tool, efficiency, haste or conduit power (20% a level),
+    /// mining fatigue (0.3 to the power of the level), the break speed attribute, water and air.
     pub(crate) fn destroy_speed(&self, state: u16, eye_in_water: bool) -> f32 {
         let mut speed = tool_speed(self.inv.selected_item(), state);
         if speed > 1.0 {
             speed += self.attribute(combat::MINING_EFFICIENCY) as f32;
+        }
+        // `MobEffectUtil.hasDigSpeed` / `getDigSpeedAmplification`.
+        let haste = self.effect_amplifier("minecraft:haste");
+        let conduit = self.effect_amplifier("minecraft:conduit_power");
+        if haste.is_some() || conduit.is_some() {
+            let amplifier = haste.unwrap_or(0).max(conduit.unwrap_or(0));
+            speed *= 1.0 + (amplifier + 1) as f32 * 0.2;
+        }
+        if let Some(amplifier) = self.effect_amplifier("minecraft:mining_fatigue") {
+            speed *= 0.3f64.powf((amplifier + 1) as f64) as f32;
         }
         speed *= self.attribute(combat::BLOCK_BREAK_SPEED) as f32;
         if eye_in_water {
@@ -105,18 +116,10 @@ impl Player {
         speed / hardness / if has_correct_tool(self.inv.selected_item(), state) { 30.0 } else { 100.0 }
     }
 
-    /// `isEyeInFluid(WATER)`: the water at the eyes (less 1/9, as `updateFluidOnEyes`
-    /// measures) reaches above them.
+    /// `isEyeInFluid(WATER)` ([`Player::fluids`]).
     fn eye_in_water(&self, level: &RegionLevel) -> bool {
-        let eye = self.pos[1] + self.eye_height() - 0.1111111119389534;
-        let pos = BlockPos::new(self.pos[0].floor() as i32, eye.floor() as i32, self.pos[2].floor() as i32);
-        let fluid = kiln_data::block_logic::fluid(level.block(pos));
-        if fluid.kind != kiln_data::block_logic::FluidKind::Water {
-            return false;
-        }
-        let above = kiln_data::block_logic::fluid(level.block(pos.above()));
-        let height = if above.kind == fluid.kind { 1.0 } else { fluid.amount as f32 / 9.0 };
-        pos.y as f64 + height as f64 > eye
+        let block = |p: kiln_entity::math::BlockPos| level.block(BlockPos::new(p.x, p.y, p.z));
+        self.fluids(&block).eye_in_water
     }
 
     fn actor(&self) -> Actor {
