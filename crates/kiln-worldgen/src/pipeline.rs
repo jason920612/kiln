@@ -31,6 +31,7 @@ use crate::order;
 use crate::proto::{ProtoChunk, Status};
 use crate::region::Region;
 use crate::sets::Loader;
+use crate::structure::beard::Beardifier;
 use crate::structure::{ChunkStarts, StartCache, Structures};
 use kiln_proto::nbt::Tag;
 use std::collections::{HashMap, HashSet};
@@ -184,7 +185,11 @@ impl Pipeline {
         }
         s.chunks.insert((x, z), Slot::Generating);
         drop(s);
-        let chunk = Box::new(self.world.generator.generate(gs, x, z));
+        let beard = self.world.generate_structures.then(|| {
+            let starts = ChunkStarts::new(&self.world.structures, &self.world.generator, &self.starts, &mut gs.structures, x, z);
+            Beardifier::for_chunk(&self.world.structures, &starts, x, z)
+        });
+        let chunk = Box::new(self.world.generator.generate_with(gs, x, z, beard.flatten()));
         let mut s = self.state.lock().unwrap();
         s.chunks.insert((x, z), Slot::Ready(chunk));
         self.wake.notify_all();

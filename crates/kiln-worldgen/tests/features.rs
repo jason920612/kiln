@@ -23,6 +23,7 @@ use kiln_worldgen::pos::BlockPos;
 use kiln_worldgen::proto::{GenTick, ProtoChunk, Status};
 use kiln_worldgen::region::Region;
 use kiln_worldgen::sets::Loader;
+use kiln_worldgen::structure::beard::Beardifier;
 use kiln_worldgen::structure::{ChunkStarts, StartCache, StructureScratch, Structures};
 use kiln_worldgen::{Datapack, order};
 use std::collections::{BTreeMap, HashMap};
@@ -587,10 +588,21 @@ fn features_match_vanilla() {
                 let handles: Vec<_> = need
                     .chunks(need.len().div_ceil(threads))
                     .map(|part| {
-                        let generator = &generator;
+                        let (generator, structures, cache) = (&generator, &structures, &cache);
+                        let with_structures = dump.structures;
                         s.spawn(move || {
                             let mut gs = GenScratch::default();
-                            part.iter().map(|&(x, z)| ((x, z), Box::new(generator.generate(&mut gs, x, z)))).collect::<Vec<_>>()
+                            part.iter()
+                                .map(|&(x, z)| {
+                                    let beard = with_structures
+                                        .then(|| {
+                                            let starts = ChunkStarts::new(structures, generator, cache, &mut gs.structures, x, z);
+                                            Beardifier::for_chunk(structures, &starts, x, z)
+                                        })
+                                        .flatten();
+                                    ((x, z), Box::new(generator.generate_with(&mut gs, x, z, beard)))
+                                })
+                                .collect::<Vec<_>>()
                         })
                     })
                     .collect();

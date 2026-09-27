@@ -105,6 +105,9 @@ pub enum Sampler {
     ShiftB(Arc<NoiseStack>),
     Gradient(Gradient),
     DistanceToPoint { point: [i32; 3], metric: DistanceMetric },
+    /// `minecraft:beardifier`: the context's [`Beardifier`](crate::structure::beard::Beardifier),
+    /// 0 without one.
+    Beardifier,
 }
 
 /// Recycled buffers for volume evaluation, plus the sampling context.
@@ -122,6 +125,8 @@ pub struct Scratch {
     depth: u32,
     cached: Vec<(u32, Volume, Vec<f32>)>,
     cells: Option<Vec<CacheCell>>,
+    /// The chunk's beardifier (`Beardifier.CONTEXT_KEY`), set while TERRAIN fills a chunk.
+    pub beard: Option<std::sync::Arc<crate::structure::beard::Beardifier>>,
 }
 
 /// `SamplerContext.CacheCell`.
@@ -339,6 +344,7 @@ impl Sampler {
             }
             ShiftB(noise) => noise.get3(z as f64 * 0.25, x as f64 * 0.25, 0.0) * 4.0,
             Gradient(g) => g.compute(g.axis.choose(x, y, z)),
+            Beardifier => s.beard.as_ref().map_or(0.0, |b| b.sample(x, y, z)),
             DistanceToPoint { point, metric } => metric.compute(
                 point[0].wrapping_sub(x) as f32,
                 point[1].wrapping_sub(y) as f32,
@@ -363,6 +369,10 @@ impl Sampler {
         use Sampler::*;
         match self {
             Const(v) => out.fill(*v),
+            Beardifier => match &s.beard {
+                Some(b) => b.fill(vol, out),
+                None => out.fill(0.0),
+            },
             Cache { id, input } => {
                 if s.cells.is_some() {
                     return s.fill_cached(*id, input, vol, out);

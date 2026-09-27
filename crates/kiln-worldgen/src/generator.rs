@@ -368,10 +368,24 @@ impl Generator {
         ProtoChunk::new(cx, cz, self.min_y, self.sections(), biomes)
     }
 
-    /// Generates a chunk through BIOMES and TERRAIN.
+    /// Generates a chunk through BIOMES and TERRAIN, without structures.
     pub fn generate(&self, gs: &mut GenScratch, cx: i32, cz: i32) -> ProtoChunk {
+        self.generate_with(gs, cx, cz, None)
+    }
+
+    /// Generates a chunk through BIOMES and TERRAIN, its terrain adapted to nearby structures
+    /// by `beard` (`Beardifier.forStructuresInChunk`; `None` is `Beardifier.EMPTY`).
+    pub fn generate_with(
+        &self,
+        gs: &mut GenScratch,
+        cx: i32,
+        cz: i32,
+        beard: Option<std::sync::Arc<crate::structure::beard::Beardifier>>,
+    ) -> ProtoChunk {
         let mut chunk = self.new_chunk(gs, cx, cz);
+        gs.noise_context.beard = beard;
         self.run_steps(gs, &mut chunk, &mut |_, _| {});
+        gs.noise_context.beard = None;
         chunk.finish_terrain();
         chunk
     }

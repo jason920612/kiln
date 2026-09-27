@@ -7,6 +7,7 @@
 //! does not implement generate nothing and are counted.
 
 pub mod bbox;
+pub mod beard;
 pub mod jigsaw;
 pub mod kinds;
 pub mod longset;
