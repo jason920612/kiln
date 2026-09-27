@@ -303,6 +303,9 @@ pub fn encode_chunk(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Ta
         set(&mut fields, "block_ticks", ticks.block.clone());
         set(&mut fields, "fluid_ticks", ticks.fluid.clone());
     }
+    if let Some(structures) = &chunk.structures {
+        set(&mut fields, "structures", (**structures).clone());
+    }
     Tag::Compound(fields)
 }
 

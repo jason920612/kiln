@@ -119,7 +119,9 @@ impl ChunkGenerator for FullChunks {
         let g = &self.pipeline.world().generator;
         debug_assert_eq!((dimension.min_y, dimension.height), (g.min_y, g.height));
         let p = self.pipeline.full(&mut self.scratch, pos.x, pos.z);
-        to_chunk(&p, &self.biome_ids)
+        let mut chunk = to_chunk(&p, &self.biome_ids);
+        chunk.structures = Some(Box::new(self.pipeline.structure_data(&mut self.scratch, pos.x, pos.z)));
+        chunk
     }
 
     fn fork(&self) -> Box<dyn ChunkGenerator> {

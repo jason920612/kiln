@@ -98,6 +98,8 @@ struct RegionDump {
     targets: Vec<(i32, i32)>,
     /// Structure starts per chunk: (structure id, saved NBT).
     starts: HashMap<(i32, i32), Vec<(String, Vec<u8>)>>,
+    /// Structure references per chunk: (structure id, sorted packed start chunks).
+    refs: HashMap<(i32, i32), Vec<(String, Vec<i64>)>>,
     terrain: HashMap<(i32, i32), Vec<u16>>,
     decorations: Vec<Decoration>,
     finals: Vec<(i32, i32, Vec<u16>)>,
@@ -147,6 +149,7 @@ fn read_dump(path: &Path) -> Dump {
     for _ in 0..count.min(limit) {
         let targets: Vec<(i32, i32)> = (0..r.i32()).map(|_| (r.i32(), r.i32())).collect();
         let mut starts = HashMap::new();
+        let mut refs = HashMap::new();
         let mut terrain = HashMap::new();
         if structures {
             for _ in 0..r.i32() {
@@ -161,13 +164,14 @@ fn read_dump(path: &Path) -> Dump {
                 starts.insert(pos, list);
             }
             for _ in 0..r.i32() {
-                let _ = (r.i32(), r.i32());
-                for _ in 0..r.i32() {
-                    let _ = r.str();
-                    for _ in 0..r.i32() {
-                        r.i64();
-                    }
-                }
+                let pos = (r.i32(), r.i32());
+                let list = (0..r.i32())
+                    .map(|_| {
+                        let id = r.str();
+                        (id, (0..r.i32()).map(|_| r.i64()).collect())
+                    })
+                    .collect();
+                refs.insert(pos, list);
             }
             for _ in 0..r.i32() {
                 let pos = (r.i32(), r.i32());
@@ -213,7 +217,7 @@ fn read_dump(path: &Path) -> Dump {
                 Pending { terrain_post, post, block_ticks, fluid_ticks }
             }));
         }
-        regions.push(RegionDump { targets, starts, terrain, decorations, finals, pending });
+        regions.push(RegionDump { targets, starts, refs, terrain, decorations, finals, pending });
     }
     Dump { seed, structures, steps, regions }
 }
@@ -389,6 +393,9 @@ struct StartTally {
     vanilla: u64,
     kiln: u64,
     same: u64,
+    /// (chunk, structure) reference lists: in vanilla, identical in Kiln.
+    refs: u64,
+    refs_same: u64,
     first: Vec<String>,
 }
 
@@ -438,6 +445,34 @@ fn compare_starts(
             t.kiln += 1;
             if !vanilla.iter().any(|(v, _)| v == id) && t.first.len() < 2 {
                 t.first.push(format!("chunk {x},{z}: extra start"));
+            }
+        }
+    }
+    // References (`structures.References`) of the chunks that reached TERRAIN.
+    for &(x, z) in need {
+        let mut mine = ChunkStarts::new(structures, generator, cache, scratch, x, z).references(structures);
+        for (_, l) in &mut mine {
+            l.sort();
+        }
+        let vanilla = region.refs.get(&(x, z)).map_or(&[][..], |v| &v[..]);
+        for (id, list) in vanilla {
+            let t = tallies.entry(id.clone()).or_default();
+            t.refs += 1;
+            match mine.iter().find(|(m, _)| m == id) {
+                Some((_, l)) if l == list => t.refs_same += 1,
+                other => {
+                    if t.first.len() < 3 && structures.structures[structures.id(id).unwrap()].kind.gap().is_none() {
+                        t.first.push(format!("chunk {x},{z}: references differ: vanilla {list:?}, kiln {:?}", other.map(|o| &o.1)));
+                    }
+                }
+            }
+        }
+        for (id, _) in &mine {
+            if !vanilla.iter().any(|(v, _)| v == id) {
+                let t = tallies.entry(id.clone()).or_default();
+                if t.first.len() < 3 {
+                    t.first.push(format!("chunk {x},{z}: extra references"));
+                }
             }
         }
     }
@@ -650,9 +685,9 @@ fn features_match_vanilla() {
         total_bad += list_errors + final_bad;
     }
     if !starts_all.is_empty() {
-        eprintln!("structure starts: vanilla / kiln / identical NBT");
+        eprintln!("structure starts: vanilla / kiln / identical NBT; chunk references: vanilla / identical");
         for (id, t) in &starts_all {
-            eprintln!("  {id:45} {:>6} {:>6} {:>6}", t.vanilla, t.kiln, t.same);
+            eprintln!("  {id:45} {:>6} {:>6} {:>6}   {:>6} {:>6}", t.vanilla, t.kiln, t.same, t.refs, t.refs_same);
             for f in &t.first {
                 eprintln!("      {f}");
             }

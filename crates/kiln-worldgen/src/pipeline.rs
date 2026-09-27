@@ -32,6 +32,7 @@ use crate::proto::{ProtoChunk, Status};
 use crate::region::Region;
 use crate::sets::Loader;
 use crate::structure::{ChunkStarts, StartCache, Structures};
+use kiln_proto::nbt::Tag;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -133,6 +134,23 @@ impl Pipeline {
                 None => unreachable!("decorated neighbourhood without the chunk"),
             }
         }
+    }
+
+    /// The chunk's `structures` NBT (`SerializableChunkData.packStructureData`): the starts
+    /// placed at this chunk by their `StructureStart.createTag`, and per structure the start
+    /// chunks whose pieces reach it (`References`).
+    pub fn structure_data(&self, gs: &mut GenScratch, x: i32, z: i32) -> Tag {
+        let (mut starts, mut references) = (Vec::new(), Vec::new());
+        if self.world.generate_structures {
+            let (w, s) = (&self.world, &mut gs.structures);
+            for start in self.starts.get(&w.structures, &w.generator, s, x, z).iter() {
+                starts.push((w.structures.structures[start.structure].name.clone(), start.save(&w.structures)));
+            }
+            for (id, list) in ChunkStarts::new(&w.structures, &w.generator, &self.starts, s, x, z).references(&w.structures) {
+                references.push((id, Tag::LongArray(list)));
+            }
+        }
+        Tag::Compound(vec![("References".into(), Tag::Compound(references)), ("starts".into(), Tag::Compound(starts))])
     }
 
     /// Makes sure the chunk is at TERRAIN or later.

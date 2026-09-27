@@ -74,6 +74,9 @@ pub struct Chunk {
     /// Scheduled ticks in their saved form: read from the save, taken by the simulation when
     /// the chunk loads, and put back before the chunk is saved.
     pub saved_ticks: Option<Box<SavedTicks>>,
+    /// Structure starts and references (chunk NBT `structures`) of a generated chunk; a
+    /// loaded chunk keeps its own among the preserved save fields.
+    pub structures: Option<Box<kiln_proto::nbt::Tag>>,
     /// Updates owed since generation, handed to the simulation when the chunk becomes full.
     pending: Option<Box<PendingUpdates>>,
 }
@@ -129,6 +132,7 @@ impl Chunk {
             light_dirty: [0, 0],
             block_entities: BTreeMap::new(),
             saved_ticks: None,
+            structures: None,
             pending: None,
         };
         for x in 0..16 {
