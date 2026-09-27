@@ -1,10 +1,13 @@
 //! Plant and cave features: block columns, vegetation patches, vines, multiface growth, root systems, dripstone, sculk, block piles, bamboo, huge mushrooms and fungi, coral.
 
 pub mod column;
+pub mod coral;
 pub mod dripstone;
 pub mod jhash;
 pub mod multiface;
+pub mod mushroom;
 pub mod patch;
+pub mod pile;
 pub mod roots;
 pub mod sculk;
 pub mod shape;
@@ -37,6 +40,12 @@ pub enum Kind {
     SpeleothemCluster(dripstone::Cluster),
     LargeDripstone(dripstone::Large),
     SculkPatch(sculk::SculkPatch),
+    Bamboo(pile::Bamboo),
+    BlockPile(pile::BlockPile),
+    HugeBrownMushroom(mushroom::HugeMushroom),
+    HugeRedMushroom(mushroom::HugeMushroom),
+    CoralTree(coral::Coral),
+    CoralClaw(coral::Coral),
 }
 
 /// Parses a feature of this family (`ty` without the `minecraft:` prefix); `None` if the
@@ -56,6 +65,12 @@ pub fn parse(ty: &str, json: &Json, f: &mut Features, l: &Loader) -> Option<Resu
         "speleothem_cluster" => dripstone::Cluster::parse(json, l).map(Kind::SpeleothemCluster),
         "large_dripstone" => dripstone::Large::parse(json, l).map(Kind::LargeDripstone),
         "sculk_patch" => sculk::SculkPatch::parse(json).map(Kind::SculkPatch),
+        "bamboo" => pile::Bamboo::parse(json).map(Kind::Bamboo),
+        "block_pile" => pile::BlockPile::parse(json, l).map(Kind::BlockPile),
+        "huge_brown_mushroom" => mushroom::HugeMushroom::parse(json, l, false).map(Kind::HugeBrownMushroom),
+        "huge_red_mushroom" => mushroom::HugeMushroom::parse(json, l, true).map(Kind::HugeRedMushroom),
+        "coral_tree" => coral::Coral::parse(json, f, l, false).map(Kind::CoralTree),
+        "coral_claw" => coral::Coral::parse(json, f, l, true).map(Kind::CoralClaw),
         _ => return None,
     })
 }
@@ -75,6 +90,10 @@ impl Kind {
             Kind::SpeleothemCluster(k) => k.place(r, random, p),
             Kind::LargeDripstone(k) => k.place(r, random, p),
             Kind::SculkPatch(k) => k.place(r, random, p),
+            Kind::Bamboo(k) => k.place(r, random, p),
+            Kind::BlockPile(k) => k.place(r, random, p),
+            Kind::HugeBrownMushroom(k) | Kind::HugeRedMushroom(k) => k.place(r, random, p),
+            Kind::CoralTree(k) | Kind::CoralClaw(k) => k.place(f, r, random, p),
         }
     }
 
@@ -93,6 +112,12 @@ impl Kind {
             Kind::SpeleothemCluster(_) => "minecraft:speleothem_cluster",
             Kind::LargeDripstone(_) => "minecraft:large_dripstone",
             Kind::SculkPatch(_) => "minecraft:sculk_patch",
+            Kind::Bamboo(_) => "minecraft:bamboo",
+            Kind::BlockPile(_) => "minecraft:block_pile",
+            Kind::HugeBrownMushroom(_) => "minecraft:huge_brown_mushroom",
+            Kind::HugeRedMushroom(_) => "minecraft:huge_red_mushroom",
+            Kind::CoralTree(_) => "minecraft:coral_tree",
+            Kind::CoralClaw(_) => "minecraft:coral_claw",
         }
     }
 
@@ -101,6 +126,7 @@ impl Kind {
         match self {
             Kind::SingleBlockPillar(k) => k.nested(),
             Kind::RootSystem(k) => k.nested(),
+            Kind::CoralTree(k) | Kind::CoralClaw(k) => k.nested(),
             Kind::VegetationPatch(k) | Kind::WaterloggedVegetationPatch(k) => k.nested(),
             _ => Vec::new(),
         }
