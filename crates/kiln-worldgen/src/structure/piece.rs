@@ -77,6 +77,8 @@ pub struct PieceBase {
     orientation: Option<Dir>,
     pub mirror: Mirror,
     pub rotation: Rotation,
+    /// `canBeReplaced` override: whether `placeBlock` may replace the state there.
+    pub can_replace: Option<fn(u16) -> bool>,
 }
 
 /// Blocks whose shape depends on neighbours: placing one marks it for post-processing.
@@ -97,7 +99,7 @@ const SHAPE_CHECK_BLOCKS: [&str; 12] = [
 
 impl PieceBase {
     pub fn new(kind: &'static str, gen_depth: i32, bbox: BoundingBox) -> Self {
-        Self { kind, gen_depth, bbox, orientation: None, mirror: Mirror::None, rotation: Rotation::None }
+        Self { kind, gen_depth, bbox, orientation: None, mirror: Mirror::None, rotation: Rotation::None, can_replace: None }
     }
 
     pub fn orientation(&self) -> Option<Dir> {
@@ -160,6 +162,11 @@ impl PieceBase {
     pub fn place_block(&self, r: &mut Region, s: u16, x: i32, y: i32, z: i32, bbox: &BoundingBox) {
         let p = self.world_pos(x, y, z);
         if !bbox.is_inside(p) {
+            return;
+        }
+        if let Some(can_replace) = self.can_replace
+            && !can_replace(r.get(p))
+        {
             return;
         }
         let mut s = s;

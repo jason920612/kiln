@@ -10,6 +10,7 @@ pub mod bbox;
 pub mod beard;
 pub mod jigsaw;
 pub mod kinds;
+pub mod legacy;
 pub mod longset;
 pub mod piece;
 pub mod placement;
