@@ -6,6 +6,9 @@
 pub mod cuboid;
 pub mod ore;
 pub mod simple;
+pub mod terrain;
+pub mod trees;
+pub mod vegetation;
 
 use crate::Error;
 use crate::json::Json;
@@ -30,6 +33,9 @@ pub enum Feature {
     RandomBooleanSelector { if_true: usize, if_false: usize },
     Sequence(Vec<usize>),
     Overlay(Vec<usize>),
+    Trees(trees::Kind),
+    Terrain(terrain::Kind),
+    Vegetation(vegetation::Kind),
     /// A type Kiln does not implement: places nothing. Index into [`Features::gaps`].
     Unsupported(usize),
 }
@@ -196,6 +202,15 @@ impl Features {
             "sequence" => Feature::Sequence(self.placed_list(field("features")?, l)?),
             "overlay" => Feature::Overlay(self.placed_list(field("features")?, l)?),
             other => {
+                if let Some(k) = trees::parse(other, json, self, l) {
+                    return Ok(Feature::Trees(k?));
+                }
+                if let Some(k) = terrain::parse(other, json, self, l) {
+                    return Ok(Feature::Terrain(k?));
+                }
+                if let Some(k) = vegetation::parse(other, json, self, l) {
+                    return Ok(Feature::Vegetation(k?));
+                }
                 let name = format!("minecraft:{other}");
                 let i = match self.gaps.iter().position(|(n, _)| *n == name) {
                     Some(i) => i,
@@ -252,6 +267,9 @@ impl Features {
                 }
                 any
             }
+            Feature::Trees(k) => k.place(self, r, random, p),
+            Feature::Terrain(k) => k.place(self, r, random, p),
+            Feature::Vegetation(k) => k.place(self, r, random, p),
             Feature::Unsupported(i) => {
                 self.gaps[*i].1.fetch_add(1, Ordering::Relaxed);
                 false
@@ -278,6 +296,9 @@ impl Features {
             Feature::SimpleRandomSelector(l) | Feature::Sequence(l) | Feature::Overlay(l) => l.iter().all(|f| placed(*f, seen)),
             Feature::WeightedRandomSelector(w) => w.entries.iter().all(|(f, _)| placed(*f, seen)),
             Feature::RandomBooleanSelector { if_true, if_false } => placed(*if_true, seen) && placed(*if_false, seen),
+            Feature::Trees(k) => k.nested().into_iter().all(|f| placed(f, seen)),
+            Feature::Terrain(k) => k.nested().into_iter().all(|f| placed(f, seen)),
+            Feature::Vegetation(k) => k.nested().into_iter().all(|f| placed(f, seen)),
             _ => true,
         }
     }
@@ -295,6 +316,9 @@ impl Features {
             Feature::RandomBooleanSelector { .. } => "minecraft:random_boolean_selector",
             Feature::Sequence(_) => "minecraft:sequence",
             Feature::Overlay(_) => "minecraft:overlay",
+            Feature::Trees(k) => k.type_name(),
+            Feature::Terrain(k) => k.type_name(),
+            Feature::Vegetation(k) => k.type_name(),
             Feature::Unsupported(i) => &self.gaps[*i].0,
         }
     }
