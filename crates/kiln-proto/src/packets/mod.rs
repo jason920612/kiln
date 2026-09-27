@@ -415,6 +415,9 @@ pub enum PlayIn {
     Attack { entity_id: i32 },
     UseItem { hand: serverbound::Hand, sequence: i32, yaw: f32, pitch: f32 },
     ContainerClose { container_id: i32 },
+    /// `container_click`, undecoded: its predicted slots are hashed item stacks, which
+    /// `kiln_inventory::ContainerClick::decode` reads (it needs the item registries).
+    ContainerClick { body: Bytes },
     ContainerButtonClick { container_id: i32, button_id: i32 },
     /// A crafter slot toggled.
     ContainerSlotStateChanged { slot: i32, container_id: i32, enabled: bool },
@@ -618,6 +621,7 @@ pub fn decode_play(id: i32, r: &mut Reader) -> Result<Option<PlayIn>, DecodeErro
         sb::ATTACK => PlayIn::Attack { entity_id: r.varint()? },
         sb::USE_ITEM => serverbound::read_use_item(r)?,
         sb::CONTAINER_CLOSE => PlayIn::ContainerClose { container_id: r.varint()? },
+        sb::CONTAINER_CLICK => PlayIn::ContainerClick { body: Bytes::copy_from_slice(r.rest()) },
         sb::CONTAINER_BUTTON_CLICK => PlayIn::ContainerButtonClick { container_id: r.varint()?, button_id: r.varint()? },
         sb::CONTAINER_SLOT_STATE_CHANGED => {
             PlayIn::ContainerSlotStateChanged { slot: r.varint()?, container_id: r.varint()?, enabled: r.bool()? }
