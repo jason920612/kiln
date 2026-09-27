@@ -159,7 +159,7 @@ impl PoolElement {
             ElementKind::Single { template, .. } => {
                 let mut list = tm.get(template).jigsaws(p, r);
                 shuffle(&mut list, random);
-                list.sort_by(|a, b| b.selection_priority.cmp(&a.selection_priority));
+                list.sort_by_key(|j| std::cmp::Reverse(j.selection_priority));
                 list
             }
             ElementKind::List(es) => es[0].shuffled_jigsaws(tm, p, r, random),
