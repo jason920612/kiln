@@ -109,8 +109,17 @@ impl ShapeLevel<'_, '_> {
     }
 
     fn update_shape_with(&mut self, s: u16, p: BlockPos, d: Dir, ns: u16) -> u16 {
+        if let Some(new) = attached_stem_update_shape(s, d, ns) {
+            return new;
+        }
+        if let Some(new) = multiface_update_shape(s, d, ns) {
+            return new;
+        }
         if crate::blocks::is_block(s, "minecraft:pale_moss_carpet") {
             return self.mossy_carpet_update_shape(s, p);
+        }
+        if let Some(new) = self.banner_update_shape(s, p, d) {
+            return new;
         }
         let s = chest_update_shape(s, d, ns);
         kb::behaviour::update_shape(self, s, to_kb(p), dir_kb(d), to_kb(p.relative(d)), ns)
@@ -118,6 +127,18 @@ impl ShapeLevel<'_, '_> {
 }
 
 impl ShapeLevel<'_, '_> {
+    /// `WallBannerBlock` / `BannerBlock.updateShape`: gone without a (legacy) solid block
+    /// behind or below.
+    fn banner_update_shape(&self, s: u16, p: BlockPos, d: Dir) -> Option<u16> {
+        use crate::block_facts::{block_class, is_solid};
+        let support = match block_class(s) {
+            "WallBannerBlock" => crate::blocks::prop(s, "facing").and_then(Dir::by_name)?.opposite(),
+            "BannerBlock" => Dir::Down,
+            _ => return None,
+        };
+        (d == support && !is_solid(self.get(p.relative(support)))).then_some(state::AIR)
+    }
+
     /// `MossyCarpetBlock.updateShape`: gone when unsupported or without faces, else
     /// `getUpdatedState(state, level, pos, false)`.
     fn mossy_carpet_update_shape(&self, s: u16, p: BlockPos) -> u16 {
@@ -155,6 +176,37 @@ impl ShapeLevel<'_, '_> {
         let faces = base(out) || Dir::HORIZONTAL.iter().any(|d| prop(out, d.name()) != Some("none"));
         if faces { out } else { state::AIR }
     }
+}
+
+/// `AttachedStemBlock.updateShape`: without its fruit in front it is a grown stem again.
+fn attached_stem_update_shape(s: u16, d: Dir, ns: u16) -> Option<u16> {
+    use crate::blocks::{is_block, prop, with_prop};
+    let (fruit, stem) = match kiln_data::blocks_types::block_of(s).name {
+        "minecraft:attached_pumpkin_stem" => ("minecraft:pumpkin", "minecraft:pumpkin_stem"),
+        "minecraft:attached_melon_stem" => ("minecraft:melon", "minecraft:melon_stem"),
+        _ => return None,
+    };
+    let facing = prop(s, "facing").and_then(Dir::by_name)?;
+    (d == facing && !is_block(ns, fruit)).then(|| with_prop(super::legacy::st(stem), "age", "7"))
+}
+
+/// `MultifaceBlock.updateShape` (glow lichen, sculk veins, resin clumps): a face loses its
+/// support and goes; no faces left leaves air (water when waterlogged).
+fn multiface_update_shape(s: u16, d: Dir, ns: u16) -> Option<u16> {
+    use crate::blocks::{prop, with_prop};
+    if !crate::block_facts::is_instance(s, "MultifaceBlock") {
+        return None;
+    }
+    let empty = |s: u16| if prop(s, "waterlogged") == Some("true") { state::WATER } else { state::AIR };
+    let has = |s: u16, d: Dir| prop(s, d.name()) == Some("true");
+    if !Dir::ALL.iter().any(|&f| has(s, f)) {
+        return Some(state::AIR);
+    }
+    if has(s, d) && !crate::feature::vegetation::shape::can_attach_to(ns, d) {
+        let out = with_prop(s, d.name(), "false");
+        return Some(if Dir::ALL.iter().any(|&f| has(out, f)) { out } else { empty(s) });
+    }
+    Some(s)
 }
 
 /// `ChestBlock.updateShape`: halves of a double chest pair up or fall back to single.
