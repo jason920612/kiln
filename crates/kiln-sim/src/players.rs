@@ -61,6 +61,9 @@ impl Player {
             d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(self.shared_flags()));
             d.set(data::entity::POSE, &DataValue::Pose(self.pose()));
         }
+        if self.living_flags() != 0 {
+            d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(self.living_flags()));
+        }
         d
     }
 
@@ -274,6 +277,7 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player]) {
             let mut d = EntityData::new();
             d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
             d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
+            d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(target.living_flags()));
             packets.push(entity::set_entity_data(target.entity_id, &d));
         }
         if let Some(damage_type) = target.damaged.take() {

@@ -22,6 +22,7 @@
 
 mod blocks;
 mod commands;
+mod consume;
 mod digging;
 mod entities;
 mod generation;
@@ -192,6 +193,8 @@ struct Player {
     food_timer: i32,
     /// Health, food and whether saturation was zero in the last Set Health.
     sent_health: Option<(u32, i32, bool)>,
+    /// An item being used (eaten).
+    using: Option<consume::Using>,
     /// The block being broken in survival.
     digging: Option<digging::Dig>,
     /// A break the client finished before the server's clock agreed.
@@ -1037,6 +1040,7 @@ impl Sim {
         p.saturation = 5.0;
         p.exhaustion = 0.0;
         p.food_timer = 0;
+        p.using = None;
         p.fall_distance = 0.0;
         p.sent_chunks.clear();
         p.unacked_batches = 0;
@@ -1199,6 +1203,7 @@ impl Sim {
             exhaustion: joining.exhaustion,
             food_timer: joining.food_timer,
             sent_health: None,
+            using: None,
             digging: None,
             delayed_destroy: None,
         };

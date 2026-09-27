@@ -107,6 +107,7 @@ impl RegionWork<'_> {
             if let Some(death) = p.check_void(env.min_y, &mut self.out.spawns) {
                 self.out.deaths.push(death);
             }
+            p.tick_using(&mut self.out.spawns);
             if let Some(death) = p.tick_food(env.difficulty, env.natural_regen, env.game_time, &mut self.out.spawns) {
                 self.out.deaths.push(death);
             }
@@ -346,7 +347,9 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             // `ServerboundPlayerActionPacket.Action` ordinals.
             const DROP_ALL_ITEMS: i32 = 4;
             const DROP_ITEM: i32 = 5;
+            const RELEASE_USE_ITEM: i32 = 6;
             match action {
+                RELEASE_USE_ITEM => p.stop_using(),
                 DROP_ITEM | DROP_ALL_ITEMS => {
                     if let Some(spawn) = p.drop_held(action == DROP_ALL_ITEMS) {
                         fx.spawns.push(spawn);
@@ -359,6 +362,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 }
                 _ => {}
             }
+            p.ack_block_changes = p.ack_block_changes.max(sequence);
+        }
+        PlayIn::UseItem { hand, sequence, .. } => {
+            p.use_item(hand == kiln_proto::packets::serverbound::Hand::Off, fx.spawns);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {
