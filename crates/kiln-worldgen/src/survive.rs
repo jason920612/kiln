@@ -130,10 +130,10 @@ fn class_can_survive(class: &str, state: u16, r: &mut Region, p: BlockPos) -> Op
         "CarpetBlock" => !crate::blocks::is_air(r.get(p.below())),
         "MossyCarpetBlock" => {
             let below = r.get(p.below());
-            if prop(state, "base") == Some("true") {
+            if prop(state, "bottom") == Some("true") {
                 !crate::blocks::is_air(below)
             } else {
-                same_block(below, state) && prop(below, "base") == Some("true")
+                same_block(below, state) && prop(below, "bottom") == Some("true")
             }
         }
         "HangingRootsBlock" => is_face_sturdy(r.get(p.above()), Dir::Down, Support::Full),
