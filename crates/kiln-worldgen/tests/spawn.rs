@@ -52,7 +52,7 @@ fn initial_spawn_matches_vanilla() {
             bad += 1;
         } else if kiln != vanilla {
             exact_bad += 1;
-            eprintln!("  same chunk, different column/height (unimplemented features change the heightmaps)");
+            eprintln!("  same chunk, different column/height (vanilla decorated its spawn chunks in its own order, MC-55596)");
         }
     }
     eprintln!("{} seeds: spawn chunk differs in {bad}, exact position differs in {exact_bad} more", VANILLA.len());
