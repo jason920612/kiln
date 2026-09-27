@@ -98,6 +98,7 @@ fn class_can_survive(class: &str, state: u16, r: &mut Region, p: BlockPos) -> Op
             let facing = prop(state, "facing").and_then(Dir::by_name).unwrap_or(Dir::North);
             vtags::is(r.get(p.relative(facing)), "supports_cocoa")
         }
+        "HangingRootsBlock" => is_face_sturdy(r.get(p.above()), Dir::Down, Support::Full),
         "BambooStalkBlock" | "BambooSaplingBlock" => vtags::is(r.get(p.below()), "supports_bamboo"),
         "BaseCoralPlantTypeBlock" => is_face_sturdy(r.get(p.below()), Dir::Up, Support::Full),
         "BaseCoralWallFanBlock" => {

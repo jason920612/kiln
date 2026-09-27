@@ -1,9 +1,11 @@
 //! Plant and cave features: block columns, vegetation patches, vines, multiface growth, root systems, dripstone, sculk, block piles, bamboo, huge mushrooms and fungi, coral.
 
 pub mod column;
+pub mod dripstone;
 pub mod jhash;
 pub mod multiface;
 pub mod patch;
+pub mod roots;
 pub mod shape;
 pub mod vines;
 
@@ -29,6 +31,10 @@ pub enum Kind {
     WaterloggedVegetationPatch(patch::VegetationPatch),
     Vines,
     MultifaceGrowth(vines::MultifaceGrowth),
+    RootSystem(roots::RootSystem),
+    Speleothem(dripstone::Speleothem),
+    SpeleothemCluster(dripstone::Cluster),
+    LargeDripstone(dripstone::Large),
 }
 
 /// Parses a feature of this family (`ty` without the `minecraft:` prefix); `None` if the
@@ -43,6 +49,10 @@ pub fn parse(ty: &str, json: &Json, f: &mut Features, l: &Loader) -> Option<Resu
         "waterlogged_vegetation_patch" => patch::VegetationPatch::parse(json, f, l, true).map(Kind::WaterloggedVegetationPatch),
         "vines" => Ok(Kind::Vines),
         "multiface_growth" => vines::MultifaceGrowth::parse(json, l).map(Kind::MultifaceGrowth),
+        "root_system" => roots::RootSystem::parse(json, f, l).map(Kind::RootSystem),
+        "speleothem" => dripstone::Speleothem::parse(json, l).map(Kind::Speleothem),
+        "speleothem_cluster" => dripstone::Cluster::parse(json, l).map(Kind::SpeleothemCluster),
+        "large_dripstone" => dripstone::Large::parse(json, l).map(Kind::LargeDripstone),
         _ => return None,
     })
 }
@@ -57,6 +67,10 @@ impl Kind {
             Kind::VegetationPatch(k) | Kind::WaterloggedVegetationPatch(k) => k.place(f, r, random, p),
             Kind::Vines => vines::place_vine(r, p),
             Kind::MultifaceGrowth(k) => k.place(r, random, p),
+            Kind::RootSystem(k) => k.place(f, r, random, p),
+            Kind::Speleothem(k) => k.place(r, random, p),
+            Kind::SpeleothemCluster(k) => k.place(r, random, p),
+            Kind::LargeDripstone(k) => k.place(r, random, p),
         }
     }
 
@@ -70,6 +84,10 @@ impl Kind {
             Kind::WaterloggedVegetationPatch(_) => "minecraft:waterlogged_vegetation_patch",
             Kind::Vines => "minecraft:vines",
             Kind::MultifaceGrowth(_) => "minecraft:multiface_growth",
+            Kind::RootSystem(_) => "minecraft:root_system",
+            Kind::Speleothem(_) => "minecraft:speleothem",
+            Kind::SpeleothemCluster(_) => "minecraft:speleothem_cluster",
+            Kind::LargeDripstone(_) => "minecraft:large_dripstone",
         }
     }
 
@@ -77,6 +95,7 @@ impl Kind {
     pub fn nested(&self) -> Vec<usize> {
         match self {
             Kind::SingleBlockPillar(k) => k.nested(),
+            Kind::RootSystem(k) => k.nested(),
             Kind::VegetationPatch(k) | Kind::WaterloggedVegetationPatch(k) => k.nested(),
             _ => Vec::new(),
         }
