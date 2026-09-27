@@ -2,6 +2,7 @@
 //! autosave and shutdown.
 
 use crate::{Player, Sim};
+use kiln_proto::nbt::Tag;
 use kiln_storage::{LevelState, LevelStore, PlayerData, PlayerStore, WorldSpawn};
 use std::path::Path;
 use tracing::warn;
@@ -32,6 +33,9 @@ pub(crate) struct Joining {
     pub game_mode: u8,
     pub inv: kiln_inventory::PlayerInventory,
     pub inv_extra: kiln_inventory::persist::PlayerItemsExtra,
+    pub health: f32,
+    pub food: i32,
+    pub saturation: f32,
     pub respawn: Option<[i32; 3]>,
     pub saved: PlayerData,
 }
@@ -62,6 +66,9 @@ impl Sim {
             game_mode: saved.game_mode.unwrap_or_else(|| self.default_game_mode()),
             inv,
             inv_extra,
+            health: saved.raw().get("Health").and_then(Tag::as_f64).map_or(crate::health::MAX_HEALTH, |h| h as f32),
+            food: saved.raw().get("foodLevel").and_then(Tag::as_i64).map_or(20, |f| f as i32),
+            saturation: saved.raw().get("foodSaturationLevel").and_then(Tag::as_f64).map_or(5.0, |s| s as f32),
             respawn: saved.respawn,
             saved,
         }
@@ -95,6 +102,18 @@ impl Sim {
         data.respawn = p.respawn;
         let mut nbt = data.to_nbt(p.uuid);
         kiln_inventory::persist::save_player_inventory(&p.inv, &p.inv_extra, &mut nbt);
+        if let Tag::Compound(fields) = &mut nbt {
+            for (key, value) in [
+                ("Health", Tag::Float(p.health)),
+                ("foodLevel", Tag::Int(p.food)),
+                ("foodSaturationLevel", Tag::Float(p.saturation)),
+            ] {
+                match fields.iter_mut().find(|(k, _)| k == key) {
+                    Some((_, v)) => *v = value,
+                    None => fields.push((key.to_owned(), value)),
+                }
+            }
+        }
         if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
             warn!("failed to save player data for {}: {e}", p.name);
         }

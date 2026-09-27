@@ -28,6 +28,13 @@ pub fn player(c: &mut Cases) {
 
     let e = vec![is("health", 13.5), is("food", 17), is("saturation", 2.5)];
     c.play("set_health", "ClientboundSetHealthPacket", "set_health", set_health(13.5, 17, 2.5), e);
+    // Keys in the order vanilla's compound (a hash map) writes them.
+    let msg = kiln_proto::nbt::Tag::Compound(vec![
+        ("with".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::String("Steve".into())])),
+        ("translate".into(), kiln_proto::nbt::Tag::String("death.attack.genericKill".into())),
+    ]);
+    let e = vec![is("playerId", 42)];
+    c.play("player_combat_kill", "ClientboundPlayerCombatKillPacket", "player_combat_kill", player_combat_kill(42, &msg), e);
     let e = vec![is("experienceProgress", 0.25), is("experienceLevel", 30), is("totalExperience", 1395)];
     c.play("set_experience", "ClientboundSetExperiencePacket", "set_experience", set_experience(0.25, 30, 1395), e);
 

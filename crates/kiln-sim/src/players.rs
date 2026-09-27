@@ -120,6 +120,21 @@ impl Sim {
         self.broadcast(entity::player_info_remove(&[gone.uuid]));
     }
 
+    /// Ends every pairing of `conn` with other players (it respawned): viewers forget it and
+    /// tracking starts over.
+    pub(crate) fn untrack_everywhere(&mut self, conn: ConnId) {
+        let Some(p) = self.players.get_mut(&conn) else { return };
+        let (id, viewers) = (p.entity_id, std::mem::take(&mut p.seen_by));
+        p.section = None;
+        let despawn = entity::remove_entities(&[id]);
+        for v in viewers {
+            if let Some(q) = self.players.get_mut(&v) {
+                q.send(despawn.clone());
+                q.section = None;
+            }
+        }
+    }
+
     /// Ends pairings between players now in different regions (one was teleported away):
     /// tracking only runs within a region, so the viewer forgets the entity.
     pub(crate) fn drop_cross_region_pairs(&mut self) {
@@ -260,6 +275,13 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player]) {
             d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
             d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
             packets.push(entity::set_entity_data(target.entity_id, &d));
+        }
+        if let Some(damage_type) = target.damaged.take() {
+            packets.push(entity::damage_event(target.entity_id, damage_type, None, None, None));
+        }
+        if std::mem::take(&mut target.died) {
+            // `EntityEvent.DEATH`: the death animation and sound.
+            packets.push(entity::entity_event(target.entity_id, 3));
         }
         if std::mem::take(&mut target.swung) {
             packets.push(entity::swing_animation(

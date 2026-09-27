@@ -455,17 +455,11 @@ impl Host for Sim {
     }
 
     fn kill(&mut self, entity: &PlayerRef) {
-        // No health or respawn yet: send the player back to spawn instead.
-        let spawn = self.spawn_position();
-        let to = Teleport {
-            dimension: OVERWORLD.to_owned(),
-            pos: spawn,
-            relative: [false; 3],
-            rotation: None,
-            relative_rotation: [false; 2],
-            facing: None,
-        };
-        let _ = self.teleport(entity, &to);
+        let Some(p) = self.players.get_mut(&entity.conn) else { return };
+        let mut spawns = Vec::new();
+        let death = p.hurt(f32::MAX, crate::health::Cause::Kill, &mut spawns);
+        self.dim.spawns.extend(spawns);
+        self.announce_deaths(death.into_iter().collect());
     }
 
     fn give(&mut self, player: &PlayerRef, item: &ItemInput, count: i32) {

@@ -23,6 +23,7 @@
 mod commands;
 mod entities;
 mod generation;
+mod health;
 mod interact;
 mod movement;
 mod persist;
@@ -171,6 +172,20 @@ struct Player {
     applied_view: i32,
     /// The player's random source (item throws), seeded from its UUID.
     rng: rng::Rng,
+    health: f32,
+    food: i32,
+    saturation: f32,
+    /// Distance fallen since last on the ground.
+    fall_distance: f64,
+    /// Flying (creative or spectator), from the client's abilities packet.
+    flying: bool,
+    /// Dead until the client asks to respawn.
+    dead: bool,
+    /// Died this tick: viewers see the death animation.
+    died: bool,
+    /// Damage type of a hit this tick, for viewers' damage effect.
+    damaged: Option<i32>,
+    death_location: Option<[i32; 3]>,
 }
 
 impl Player {
@@ -624,7 +639,10 @@ impl Sim {
         let (local, exclusive) = self.route(packets);
         let env = self.env();
         let outs = self.run_regions(local, |w, env| w.apply_packets(env), env);
-        self.dim.spawns.extend(outs.into_iter().flat_map(|o| o.spawns));
+        for out in outs {
+            self.dim.spawns.extend(out.spawns);
+            self.announce_deaths(out.deaths);
+        }
         lap(&mut self.stats, "packets");
 
         // PX: chat, commands and what followed them, in arrival order.
@@ -656,6 +674,7 @@ impl Sim {
             self.dim.requests.extend(out.wanted);
             self.dim.unloads.extend(out.unload);
             self.dim.spawns.extend(out.spawns);
+            self.announce_deaths(out.deaths);
             for (t, d) in times.iter_mut().zip(out.times) {
                 *t += d;
             }
@@ -726,6 +745,11 @@ impl Sim {
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
     }
 
+    /// A player's health, and whether it is dead (for tests and tools).
+    pub fn health(&self, conn: ConnId) -> Option<(f32, bool)> {
+        self.players.get(&conn).map(|p| (p.health, p.dead))
+    }
+
     /// A player's inventory as (item id, count) per container slot.
     pub fn inventory(&self, conn: ConnId) -> Option<Vec<Option<(i32, i32)>>> {
         self.players.get(&conn).map(Player::menu_view)
@@ -739,6 +763,7 @@ impl Sim {
     fn env(&self) -> Env {
         Env {
             rules: self.rules.clone(),
+            min_y: self.dim.provider.dimension.min_y,
             game_time: self.game_time,
             max_view: self.config.view_distance as i32,
             movement_check: self.rule_bool("minecraft:player_movement_check"),
@@ -883,9 +908,73 @@ impl Sim {
         }
     }
 
+    /// Death messages to everyone (`show_death_messages`), in the order the deaths happened.
+    fn announce_deaths(&mut self, deaths: Vec<health::Death>) {
+        if deaths.is_empty() || !self.rule_bool("minecraft:show_death_messages") {
+            return;
+        }
+        for d in deaths {
+            info!("{} died", self.players.get(&d.conn).map_or("?", |p| p.name.as_str()));
+            self.broadcast(packets::system_chat(d.message, false));
+        }
+    }
+
+    /// `PlayerList.respawn` after death: back at the respawn point with full health, the
+    /// client rebuilding its world view from a Respawn packet.
+    fn respawn(&mut self, conn: ConnId) {
+        let Some(p) = self.players.get(&conn) else { return };
+        if !p.dead {
+            return;
+        }
+        let pos = match p.respawn {
+            Some(r) => kiln_world::spawn::free_spawn_at(&mut self.dim, r),
+            None => self.new_player_position(p.uuid),
+        };
+        let dimension_type =
+            kiln_data::synced_id("minecraft:dimension_type", OVERWORLD).expect("overworld dimension type");
+        let is_flat = self.config.world.is_none() && self.config.noise.is_none();
+        let (spawn, spawn_rot, now) = (self.spawn, self.spawn_rot, self.game_time);
+        let time = self.time_packet();
+        let rules = self.rules.clone();
+        let p = self.players.get_mut(&conn).unwrap();
+        let info = packets::player::SpawnInfo {
+            dimension_type,
+            dimension: OVERWORLD,
+            hashed_seed: 0,
+            game_mode: p.game_mode,
+            previous_game_mode: None,
+            is_debug: false,
+            is_flat,
+            death_location: p.death_location.map(|d| (OVERWORLD, d)),
+            portal_cooldown: 0,
+            sea_level: 63,
+        };
+        p.send(packets::player::respawn(&info, packets::player::respawn_keep::NOTHING));
+        p.dead = false;
+        p.health = health::MAX_HEALTH;
+        p.food = 20;
+        p.saturation = 5.0;
+        p.fall_distance = 0.0;
+        p.sent_chunks.clear();
+        p.unacked_batches = 0;
+        p.teleport(pos, [0.0, 0.0], now);
+        p.center = player_chunk(pos);
+        p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
+        p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
+        p.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
+        p.send(time);
+        p.send(p.health_packet());
+        let mut spawns = Vec::new();
+        p.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
+        self.dim.spawns.extend(spawns);
+        // Viewers saw the death: they get the entity again once tracking re-evaluates it.
+        self.untrack_everywhere(conn);
+    }
+
     /// A packet from the serial PX stream.
     fn exclusive_packet(&mut self, conn: ConnId, pkt: PlayIn) {
         match pkt {
+            PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn) => self.respawn(conn),
             PlayIn::ChatCommand { command } => self.run_command(conn, &command),
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
             PlayIn::Chat { message } => {
@@ -901,9 +990,11 @@ impl Sim {
             pkt => {
                 let env = self.env();
                 let Some(p) = self.players.get_mut(&conn) else { return };
-                let mut changes = Vec::new();
-                region::local_packet(p, &mut self.dim.regions, &env, pkt, &mut changes, &mut self.dim.spawns);
+                let (mut changes, mut deaths) = (Vec::new(), Vec::new());
+                let mut fx = region::Fx { changes: &mut changes, spawns: &mut self.dim.spawns, deaths: &mut deaths };
+                region::local_packet(p, &mut self.dim.regions, &env, pkt, &mut fx);
                 region::notify_block_changes(self.players.values_mut(), &changes);
+                self.announce_deaths(deaths);
             }
         }
     }
@@ -996,6 +1087,15 @@ impl Sim {
             ack_block_changes: -1,
             applied_view: view_distance,
             rng: rng::Rng::new(j.uuid.as_u64_pair().0 ^ j.uuid.as_u64_pair().1),
+            health: joining.health,
+            food: joining.food,
+            saturation: joining.saturation,
+            fall_distance: 0.0,
+            flying: false,
+            dead: joining.health <= 0.0,
+            died: false,
+            damaged: None,
+            death_location: None,
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -1018,6 +1118,7 @@ impl Sim {
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
         player.send(self.time_packet());
         player.send(packets::set_held_slot(player.inv.selected as i32));
+        player.send(player.health_packet());
         player.send(kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes));
         let rules = self.rules.clone();
         let mut spawns = Vec::new();
@@ -1028,12 +1129,6 @@ impl Sim {
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);
-    }
-
-    /// A spawn point around the world spawn, as vanilla finds one for players without a
-    /// respawn point.
-    fn spawn_position(&mut self) -> [f64; 3] {
-        self.new_player_position(Uuid::nil())
     }
 
     fn time_packet(&self) -> Bytes {

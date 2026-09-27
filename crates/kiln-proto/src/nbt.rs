@@ -293,6 +293,15 @@ impl Tag {
         }
     }
 
+    /// Any numeric tag as a double (vanilla reads numbers leniently, e.g. `getFloatOr`).
+    pub fn as_f64(&self) -> Option<f64> {
+        match *self {
+            Tag::Float(v) => Some(v as f64),
+            Tag::Double(v) => Some(v),
+            _ => self.as_i64().map(|v| v as f64),
+        }
+    }
+
     pub fn as_list(&self) -> Option<&[Tag]> {
         match self {
             Tag::List(v) => Some(v),

@@ -21,6 +21,8 @@ use tracing::{info, warn};
 #[derive(Clone)]
 pub(crate) struct Env {
     pub rules: std::sync::Arc<kiln_inventory::Rules>,
+    /// Bottom of the dimension (void damage starts 64 blocks below).
+    pub min_y: i32,
     pub game_time: i64,
     /// The server's view distance: clients may ask for less.
     pub max_view: i32,
@@ -51,6 +53,8 @@ pub(crate) struct RegionOut {
     pub unload: Vec<ChunkPos>,
     /// Entities spawned this phase; ids are assigned afterwards in canonical order.
     pub spawns: Vec<Spawn>,
+    /// Players that died this phase (the messages go to everyone afterwards).
+    pub deaths: Vec<crate::health::Death>,
     /// CPU time per sub-phase, for the statistics.
     pub times: [Duration; SUB_PHASES.len()],
 }
@@ -77,7 +81,8 @@ impl RegionWork<'_> {
         let mut changes = Vec::new();
         for (conn, pkt) in std::mem::take(&mut self.packets) {
             let Some(i) = self.index_of(conn) else { continue };
-            local_packet(self.players[i], &mut *self.cells, env, pkt, &mut changes, &mut self.out.spawns);
+            let mut fx = Fx { changes: &mut changes, spawns: &mut self.out.spawns, deaths: &mut self.out.deaths };
+            local_packet(self.players[i], &mut *self.cells, env, pkt, &mut fx);
         }
         notify_block_changes(self.players.iter_mut().map(|p| &mut **p), &changes);
     }
@@ -92,6 +97,9 @@ impl RegionWork<'_> {
         };
         for p in self.players.iter_mut() {
             tick_connection(p, env, &mut self.out.spawns);
+            if let Some(death) = p.check_void(env.min_y, &mut self.out.spawns) {
+                self.out.deaths.push(death);
+            }
             if !p.disconnected {
                 update_chunks(p, &mut *self.cells, env, &mut self.out.wanted);
             }
@@ -176,18 +184,30 @@ pub(crate) fn notify_block_changes<'p>(players: impl Iterator<Item = &'p mut Pla
 /// Whether a packet needs the whole server (chat, commands): it and everything its region
 /// receives after it this tick run in the serial PX phase.
 pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
-    matches!(pkt, PlayIn::ChatCommand { .. } | PlayIn::CommandSuggestion { .. } | PlayIn::Chat { .. })
+    matches!(
+        pkt,
+        PlayIn::ChatCommand { .. }
+            | PlayIn::CommandSuggestion { .. }
+            | PlayIn::Chat { .. }
+            // Respawning finds a spawn point anywhere and restarts tracking.
+            | PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn)
+    )
+}
+
+/// Where a packet's side effects go.
+pub(crate) struct Fx<'a> {
+    pub changes: &'a mut Vec<BlockChange>,
+    pub spawns: &'a mut Vec<Spawn>,
+    pub deaths: &'a mut Vec<crate::health::Death>,
 }
 
 /// A packet that touches only its player and the world around it.
-pub(crate) fn local_packet<W: Blocks + ?Sized>(
-    p: &mut Player,
-    world: &mut W,
-    env: &Env,
-    pkt: PlayIn,
-    changes: &mut Vec<BlockChange>,
-    spawns: &mut Vec<Spawn>,
-) {
+pub(crate) fn local_packet<W: Blocks + ?Sized>(p: &mut Player, world: &mut W, env: &Env, pkt: PlayIn, fx: &mut Fx) {
+    let Fx { changes, spawns, deaths } = fx;
+    let (changes, spawns): (&mut Vec<BlockChange>, &mut Vec<Spawn>) = (changes, spawns);
+    if p.dead && !matches!(pkt, PlayIn::KeepAlive { .. } | PlayIn::ChunkBatchReceived { .. } | PlayIn::ClientTickEnd) {
+        return;
+    }
     match pkt {
         PlayIn::AcceptTeleport { id } => {
             if p.awaiting_teleport == Some(id) {
@@ -199,7 +219,17 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(
                 p.keep_alive = None;
             }
         }
-        PlayIn::Move { pos, rot, on_ground } => handle_move(p, world, env, pos, rot, on_ground),
+        PlayIn::Move { pos, rot, on_ground } => {
+            let y0 = p.pos[1];
+            if handle_move(p, world, env, pos, rot, on_ground) {
+                let feet = p.pos.map(|c| c.floor() as i32);
+                let in_fluid = world.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
+                if let Some(death) = p.check_fall(p.pos[1] - y0, on_ground, in_fluid, spawns) {
+                    deaths.push(death);
+                }
+            }
+        }
+        PlayIn::PlayerAbilities { flying } => p.flying = flying && matches!(p.game_mode, 1 | 3),
         PlayIn::ChunkBatchReceived { chunks_per_tick } => {
             p.unacked_batches = p.unacked_batches.saturating_sub(1);
             if chunks_per_tick.is_finite() {
@@ -349,6 +379,7 @@ fn use_item_on<W: Blocks + ?Sized>(
     set_block(world, target, interact::placement_state(block, face, p.rot[0]), changes);
 }
 
+/// Returns whether the move was accepted.
 fn handle_move<W: Blocks + ?Sized>(
     p: &mut Player,
     world: &W,
@@ -356,22 +387,22 @@ fn handle_move<W: Blocks + ?Sized>(
     pos: Option<[f64; 3]>,
     rot: Option<[f32; 2]>,
     on_ground: bool,
-) {
+) -> bool {
     let now = env.game_time;
     if movement::invalid(pos, rot) {
         p.disconnect("Invalid movement");
-        return;
+        return false;
     }
     if pos.is_some() {
         // The 26.3 client sends at most one position per client tick.
         if p.position_this_tick {
             p.disconnect("Invalid movement");
-            return;
+            return false;
         }
         p.position_this_tick = true;
     }
     if p.load_timeout > 0 {
-        return;
+        return false;
     }
     let rot = rot.map_or(p.rot, movement::normalize_rotation);
     if p.awaiting_teleport.is_some() {
@@ -380,7 +411,7 @@ fn handle_move<W: Blocks + ?Sized>(
         if now - p.teleport_sent > movement::TELEPORT_RESEND_TICKS {
             p.teleport(p.pos, rot, now);
         }
-        return;
+        return false;
     }
     let to = pos.map_or(p.pos, movement::clamp_position);
     p.move_packets += 1;
@@ -388,7 +419,7 @@ fn handle_move<W: Blocks + ?Sized>(
         let d = [to[0] - p.first_good[0], to[1] - p.first_good[1], to[2] - p.first_good[2]];
         warn!("{} moved too quickly! {d:?}", p.name);
         p.teleport(p.pos, p.rot, now);
-        return;
+        return false;
     }
     // Spectators have no physics.
     if p.game_mode != 3 && to != p.pos {
@@ -396,12 +427,13 @@ fn handle_move<W: Blocks + ?Sized>(
         let new = movement::Aabb::player(to, movement::MIN_POSE_HEIGHT);
         if movement::collides_with_anything_new(world, old, new) {
             p.teleport(p.pos, rot, now);
-            return;
+            return false;
         }
     }
     p.pos = to;
     p.rot = rot;
     p.on_ground = on_ground;
+    true
 }
 
 /// Start of a connection's tick: block change acks (after the block updates they

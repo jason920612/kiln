@@ -141,7 +141,7 @@ player_abilities = { status = "implemented", note = "player::player_abilities" }
 player_chat = { status = "deferred", note = "signed chat (not planned for chat v1)" }
 player_combat_end = { status = "deferred", note = "combat tracking" }
 player_combat_enter = { status = "deferred", note = "combat tracking" }
-player_combat_kill = { status = "deferred", note = "death screen" }
+player_combat_kill = { status = "implemented", note = "player::player_combat_kill: death screen with the death message" }
 player_info_remove = { status = "implemented", note = "entity::player_info_remove on leave" }
 player_info_update = { status = "implemented", note = "entity::player_info_update: join (INITIALIZE), game mode changes" }
 player_look_at = { status = "deferred", note = "commands (/tp facing)" }

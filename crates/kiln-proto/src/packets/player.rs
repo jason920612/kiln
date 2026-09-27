@@ -28,6 +28,15 @@ pub fn player_abilities(a: &Abilities) -> Bytes {
     b.freeze()
 }
 
+/// The death screen for the receiving player, with its death message
+/// (`ClientboundPlayerCombatKillPacket`).
+pub fn player_combat_kill(player_id: i32, message: &crate::nbt::Tag) -> Bytes {
+    let mut b = packet(ids::PLAYER_COMBAT_KILL);
+    b.put_varint(player_id);
+    message.write_network(&mut b);
+    b.freeze()
+}
+
 /// Health (0 or less shows the death screen), food 0..=20, saturation.
 pub fn set_health(health: f32, food: i32, saturation: f32) -> Bytes {
     let mut b = packet(ids::SET_HEALTH);
