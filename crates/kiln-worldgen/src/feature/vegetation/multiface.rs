@@ -60,6 +60,8 @@ pub struct Spreader {
     /// The block's default state.
     pub block: u16,
     sculk: bool,
+    /// Only `SAME_POSITION` spreading (a sculk vein's `sameSpaceSpreader`).
+    same_space: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -70,7 +72,12 @@ struct SpreadPos {
 
 impl Spreader {
     pub fn of(block: u16) -> Self {
-        Self { block, sculk: is_block(block, "minecraft:sculk_vein") }
+        Self { block, sculk: is_block(block, "minecraft:sculk_vein"), same_space: false }
+    }
+
+    /// `SculkVeinBlock.getSameSpaceSpreader`.
+    pub fn sculk_same_space() -> Self {
+        Self { block: crate::blocks::state::SCULK_VEIN, sculk: true, same_space: true }
     }
 
     /// `SpreadConfig.isOtherBlockValidAsSource`.
@@ -125,7 +132,8 @@ impl Spreader {
             SpreadPos { pos: p.relative(to), face: from },
             SpreadPos { pos: p.relative(to).relative(from), face: to.opposite() },
         ];
-        candidates.into_iter().find(|&sp| self.can_spread_into(r, p, sp))
+        let n = if self.same_space { 1 } else { 3 };
+        candidates.into_iter().take(n).find(|&sp| self.can_spread_into(r, p, sp))
     }
 
     /// `spreadToFace` (`SpreadConfig.placeBlock`).
@@ -136,6 +144,24 @@ impl Spreader {
             r.mark_post_processing(sp.pos);
         }
         r.set(sp.pos, new, 2)
+    }
+
+    /// `spreadAll`: spreads from every face toward every direction; the number of spreads.
+    pub fn spread_all(&self, r: &mut Region, s: u16, p: BlockPos, mark: bool) -> i64 {
+        let mut n = 0;
+        for from in Dir::ALL {
+            if !(self.other_valid_as_source(s) || has_face(s, from)) {
+                continue;
+            }
+            for to in Dir::ALL {
+                if let Some(sp) = self.spread_target(r, s, p, from, to)
+                    && self.spread_to_face(r, sp, mark)
+                {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 
     /// `spreadFromFaceTowardRandomDirection`: whether it spread.

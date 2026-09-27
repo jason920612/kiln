@@ -6,6 +6,7 @@ pub mod jhash;
 pub mod multiface;
 pub mod patch;
 pub mod roots;
+pub mod sculk;
 pub mod shape;
 pub mod vines;
 
@@ -35,6 +36,7 @@ pub enum Kind {
     Speleothem(dripstone::Speleothem),
     SpeleothemCluster(dripstone::Cluster),
     LargeDripstone(dripstone::Large),
+    SculkPatch(sculk::SculkPatch),
 }
 
 /// Parses a feature of this family (`ty` without the `minecraft:` prefix); `None` if the
@@ -53,6 +55,7 @@ pub fn parse(ty: &str, json: &Json, f: &mut Features, l: &Loader) -> Option<Resu
         "speleothem" => dripstone::Speleothem::parse(json, l).map(Kind::Speleothem),
         "speleothem_cluster" => dripstone::Cluster::parse(json, l).map(Kind::SpeleothemCluster),
         "large_dripstone" => dripstone::Large::parse(json, l).map(Kind::LargeDripstone),
+        "sculk_patch" => sculk::SculkPatch::parse(json).map(Kind::SculkPatch),
         _ => return None,
     })
 }
@@ -71,6 +74,7 @@ impl Kind {
             Kind::Speleothem(k) => k.place(r, random, p),
             Kind::SpeleothemCluster(k) => k.place(r, random, p),
             Kind::LargeDripstone(k) => k.place(r, random, p),
+            Kind::SculkPatch(k) => k.place(r, random, p),
         }
     }
 
@@ -88,6 +92,7 @@ impl Kind {
             Kind::Speleothem(_) => "minecraft:speleothem",
             Kind::SpeleothemCluster(_) => "minecraft:speleothem_cluster",
             Kind::LargeDripstone(_) => "minecraft:large_dripstone",
+            Kind::SculkPatch(_) => "minecraft:sculk_patch",
         }
     }
 
