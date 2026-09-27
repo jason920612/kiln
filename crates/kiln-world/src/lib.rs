@@ -146,7 +146,14 @@ pub trait ChunkSource: Send {
     }
 }
 
-/// What to create where the chunk source has nothing.
+/// Generates chunks, e.g. vanilla's noise-based generation (`kiln-worldgen`). Called for
+/// every chunk the chunk source does not have; heightmaps and light are derived from the
+/// returned blocks.
+pub trait ChunkGenerator: Send {
+    fn generate(&mut self, pos: ChunkPos, dimension: Dimension) -> Chunk;
+}
+
+/// What to create where the chunk source has nothing (unless a [`ChunkGenerator`] is set).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Terrain {
     Flat,
@@ -157,6 +164,7 @@ pub enum Terrain {
 pub struct ChunkProvider {
     pub dimension: Dimension,
     source: Option<Box<dyn ChunkSource>>,
+    generator: Option<Box<dyn ChunkGenerator>>,
     terrain: Terrain,
     biome: u16,
     /// Size of the biome registry (the width of direct biome palettes on the wire).
@@ -165,7 +173,7 @@ pub struct ChunkProvider {
 
 impl ChunkProvider {
     pub fn flat(dimension: Dimension, biome: u16, biome_count: usize) -> Self {
-        Self { dimension, source: None, terrain: Terrain::Flat, biome, biome_count }
+        Self { dimension, source: None, generator: None, terrain: Terrain::Flat, biome, biome_count }
     }
 
     /// Stored chunks, with `fallback` terrain where the source has none.
@@ -176,7 +184,13 @@ impl ChunkProvider {
         biome: u16,
         biome_count: usize,
     ) -> Self {
-        Self { dimension, source: Some(source), terrain: fallback, biome, biome_count }
+        Self { dimension, source: Some(source), generator: None, terrain: fallback, biome, biome_count }
+    }
+
+    /// Generates missing chunks with `generator` instead of the fallback terrain.
+    pub fn with_generator(mut self, generator: Box<dyn ChunkGenerator>) -> Self {
+        self.generator = Some(generator);
+        self
     }
 
     /// Y coordinate a player stands at on top of the flat terrain.
@@ -184,7 +198,10 @@ impl ChunkProvider {
         (self.dimension.min_y + FLAT_LAYERS.len() as i32) as f64
     }
 
-    fn generate(&self) -> Chunk {
+    fn generate(&mut self, pos: ChunkPos) -> Chunk {
+        if let Some(g) = &mut self.generator {
+            return g.generate(pos, self.dimension);
+        }
         let n = (self.dimension.height / 16) as usize;
         let mut sections = vec![Section::filled(block::AIR, self.biome); n];
         if self.terrain == Terrain::Flat {
@@ -201,8 +218,9 @@ impl ChunkProvider {
 
     pub fn load_or_generate(&mut self, pos: ChunkPos) -> Chunk {
         let dim = self.dimension;
-        self.source.as_mut().and_then(|s| s.load(pos, dim)).unwrap_or_else(|| {
-            let mut c = self.generate();
+        let loaded = self.source.as_mut().and_then(|s| s.load(pos, dim));
+        loaded.unwrap_or_else(|| {
+            let mut c = self.generate(pos);
             c.mark_new();
             c
         })
@@ -564,6 +582,26 @@ mod tests {
         w.set_block(3, 5, 3, block::STONE);
         let c = w.chunk_body(p);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn generator_fills_missing_chunks() {
+        struct Checker;
+        impl ChunkGenerator for Checker {
+            fn generate(&mut self, pos: ChunkPos, dimension: Dimension) -> Chunk {
+                let n = (dimension.height / 16) as usize;
+                let mut sections = vec![Section::filled(block::AIR, 0); n];
+                let state = if (pos.x + pos.z) & 1 == 0 { block::STONE } else { block::DIRT };
+                sections[4].set(1, 2, 3, state);
+                Chunk::new(sections, dimension.min_y)
+            }
+        }
+        let mut w = World::new(ChunkProvider::flat(OVERWORLD, 0, 67).with_generator(Box::new(Checker)));
+        w.load_chunk(ChunkPos::new(0, 0));
+        w.load_chunk(ChunkPos::new(-3, 0));
+        assert_eq!(w.get_block(1, 2, 3), Some(block::STONE));
+        assert_eq!(w.get_block(-47, 2, 3), Some(block::DIRT));
+        assert_eq!(w.get_block(0, -64, 0), Some(block::AIR), "no flat layers under a generator");
     }
 
     #[test]
