@@ -357,3 +357,33 @@ fn chunks_match_vanilla() {
     }
     assert_eq!(total_bad, 0, "chunks differ from vanilla");
 }
+
+/// The `kiln_world::ChunkGenerator` adapter: missing chunks of a `World` come from the
+/// generator, block for block and with network biome ids. Needs only the datapack.
+#[test]
+fn noise_chunks_fill_a_world() {
+    let generated = work_dir().join("generated");
+    if !generated.join("reports/biome_parameters").is_dir() {
+        eprintln!("skipping: need {} (cargo xtask data)", generated.display());
+        return;
+    }
+    let pack = Datapack::load(&generated).expect("load datapack");
+    let generator = std::sync::Arc::new(Generator::new(&pack, "minecraft:overworld", "minecraft:overworld", 12345).unwrap());
+    let provider = kiln_world::ChunkProvider::flat(kiln_world::OVERWORLD, 0, 67)
+        .with_generator(Box::new(kiln_worldgen::NoiseChunks::new(generator.clone())));
+    let mut world = kiln_world::World::new(provider);
+    let mut gs = GenScratch::default();
+    for (cx, cz) in [(0, 0), (-1, 5)] {
+        let expected = generator.generate(&mut gs, cx, cz);
+        let chunk = world.load_chunk(kiln_world::ChunkPos::new(cx, cz));
+        for y in (generator.min_y..generator.min_y + generator.height).step_by(3) {
+            for z in 0..16 {
+                for x in 0..16 {
+                    assert_eq!(chunk.get(x, y, z), expected.get(x, y, z), "block {x},{y},{z} of chunk {cx},{cz}");
+                }
+            }
+        }
+        let body = chunk.packet_body(67);
+        assert!(!body.is_empty());
+    }
+}

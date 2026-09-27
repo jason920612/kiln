@@ -27,12 +27,14 @@ pub mod spline;
 pub mod state;
 pub mod surface;
 pub mod volume;
+pub mod world;
 
 pub use datapack::{Datapack, NoiseSettings};
 pub use generator::{GenScratch, Generator, ProtoChunk};
 pub use sampler::{Sampler, SamplerRef, Scratch};
 pub use state::{NoiseRouter, RandomState};
 pub use volume::Volume;
+pub use world::NoiseChunks;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
