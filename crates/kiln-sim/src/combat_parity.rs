@@ -1,8 +1,10 @@
 //! Replays the vanilla combat vectors of `tools/CombatVectors.java` (`KILN_COMBAT_VECTORS`,
 //! written by `tools/combat_vectors.py`) through the simulation: each scenario's players are
 //! set up as recorded, the attacker sends an Attack packet, and health, absorption, hurt
-//! cooldown, exhaustion, item and armor durability, knockback motion packets and death
-//! messages must match vanilla's bit for bit. Skipped when the vectors are not there.
+//! cooldown, exhaustion, fire ticks, item and armor durability, knockback motion packets and
+//! death messages must match vanilla's bit for bit. Enchanted scenarios reseed the randoms the
+//! way the Java side does (the level random becomes the attacker's level random). Skipped when
+//! the vectors are not there.
 
 use crate::testing::{Client, SinkStats, join};
 use crate::{Sim, SimConfig};
@@ -20,7 +22,7 @@ fn vec_of(v: &Value) -> [f64; 3] {
     [a[0].as_f64().unwrap(), a[1].as_f64().unwrap(), a[2].as_f64().unwrap()]
 }
 
-fn stack(name: &Value, damage: i64, custom_name: &Value) -> kiln_item::ItemStack {
+fn stack(name: &Value, damage: i64, custom_name: &Value, enchantments: &Value) -> kiln_item::ItemStack {
     let Some(name) = name.as_str() else { return kiln_item::ItemStack::empty() };
     let mut s = kiln_item::ItemStack::of(name, 1).unwrap_or_else(|| panic!("unknown item {name}"));
     if damage > 0 {
@@ -29,7 +31,35 @@ fn stack(name: &Value, damage: i64, custom_name: &Value) -> kiln_item::ItemStack
     if let Some(n) = custom_name.as_str() {
         s.insert(kiln_item::keys::CUSTOM_NAME, kiln_item::Text::literal(n));
     }
+    enchant(&mut s, enchantments);
     s
+}
+
+/// Adds `{"minecraft:sharpness": 5, ...}` to the stack's `enchantments`, in the listed order.
+pub(crate) fn enchant(s: &mut kiln_item::ItemStack, enchantments: &Value) {
+    let Some(map) = enchantments.as_object() else { return };
+    if map.is_empty() {
+        return;
+    }
+    let mut e = s.get(kiln_item::keys::ENCHANTMENTS).cloned().unwrap_or_default();
+    for (id, level) in map {
+        let id = kiln_item::registry::ENCHANTMENT.id(id).unwrap_or_else(|| panic!("unknown enchantment {id}"));
+        e.set(id, level.as_i64().unwrap() as i32);
+    }
+    s.insert(kiln_item::keys::ENCHANTMENTS, e);
+}
+
+/// The vanilla datapack's loot data (enchantment definitions), loaded once.
+pub(crate) fn vanilla_loot() -> Option<Arc<kiln_loot::LootData>> {
+    static LOOT: std::sync::OnceLock<Option<Arc<kiln_loot::LootData>>> = std::sync::OnceLock::new();
+    LOOT.get_or_init(|| {
+        let work = std::env::var_os("KILN_WORK")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work"));
+        let dir = work.join("generated");
+        dir.join("data").is_dir().then(|| Arc::new(kiln_loot::LootData::load(&dir).expect("vanilla datapack")))
+    })
+    .clone()
 }
 
 /// Puts a player in the recorded state (`CombatVectors.setup`), `base` being the attacker's
@@ -59,13 +89,21 @@ fn setup(sim: &mut Sim, conn: u64, side: &Value, base: [f64; 3]) {
     p.saturation = 0.0;
     p.exhaustion = 0.0;
     p.food_timer = 0;
+    p.fire_ticks = 0;
+    p.loot = vanilla_loot();
     p.inv = kiln_inventory::PlayerInventory::new();
-    p.inv.items[0] = stack(&side["main_hand"], side["main_hand_damage"].as_i64().unwrap(), &side["custom_name"]);
+    p.inv.items[0] = stack(
+        &side["main_hand"],
+        side["main_hand_damage"].as_i64().unwrap(),
+        &side["custom_name"],
+        &side["main_hand_enchantments"],
+    );
     let armor = side["armor"].as_array().unwrap();
     let armor_damage = side["armor_damage"].as_array().unwrap();
     for i in 0..4 {
         // Equipment order: feet, legs, chest, head.
-        p.inv.equipment[i] = stack(&armor[i], armor_damage[i].as_i64().unwrap(), &Value::Null);
+        p.inv.equipment[i] =
+            stack(&armor[i], armor_damage[i].as_i64().unwrap(), &Value::Null, &side["armor_enchantments"][i]);
     }
     // `detectEquipmentUpdates`: attributes follow the equipment.
     for (i, slot) in crate::combat::SLOTS.iter().enumerate() {
@@ -155,6 +193,9 @@ fn check_side(sim: &Sim, conn: u64, stats: &SinkStats, want: &Value, errors: &mu
     let cooldown = want["hurt_cooldown"].as_i64().unwrap() as i32;
     eq("hurt_cooldown", format!("{}", p.hurt_cooldown), format!("{}", (cooldown - 1).max(0)));
     eq("sprinting", format!("{}", p.sprinting), format!("{}", want["sprinting"].as_bool().unwrap()));
+    // Like the hurt cooldown, fire counted down once in the tick after the attack.
+    let fire = want["fire_ticks"].as_i64().unwrap_or(0) as i32;
+    eq("fire_ticks", format!("{}", p.fire_ticks), format!("{}", (fire - 1).max(0)));
     let main = p.inv.selected_item();
     let main_name = (!main.is_empty()).then(|| main.item_name().to_owned());
     eq("main_hand", format!("{main_name:?}"), format!("{:?}", want["main_hand"].as_str().map(str::to_owned)));
@@ -210,6 +251,14 @@ fn run_scenario(line: &Value) -> Vec<String> {
     if with_bystander {
         setup(&mut sim, 3, &line["bystander"], base);
     }
+    // `CombatVectors.run` reseeds the level's random and each player's entity random.
+    let seed = line["level_seed"].as_i64().unwrap_or(0);
+    for (conn, offset) in [(1u64, 1i64), (2, 2), (3, 3)] {
+        if let Some(p) = sim.players.get_mut(&conn) {
+            p.entity_rng = kiln_javamath::random::LegacyRandom::new(seed.wrapping_add(offset));
+        }
+    }
+    sim.players.get_mut(&1).unwrap().level_rng = kiln_javamath::random::LegacyRandom::new(seed);
     for s in &stats {
         *s.log.lock().unwrap() = Some(Vec::new());
     }
@@ -227,11 +276,15 @@ fn run_scenario(line: &Value) -> Vec<String> {
 
 /// The number vanilla appended to the players' names (from the recorded death message).
 fn death_suffix(line: &Value) -> String {
-    let args = &line["result"]["target"]["death_args"];
-    args.as_array()
-        .and_then(|a| a.first())
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim_start_matches("Target").to_owned())
+    // The target's death message, or the attacker's (killed by thorns).
+    ["target", "attacker"]
+        .iter()
+        .find_map(|who| {
+            let args = &line["result"][who]["death_args"];
+            args.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()).map(|s| {
+                s.trim_start_matches(|c: char| c.is_ascii_alphabetic()).to_owned()
+            })
+        })
         .unwrap_or_default()
 }
 

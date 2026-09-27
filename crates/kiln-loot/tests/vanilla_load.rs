@@ -114,3 +114,24 @@ fn chests_fill_containers() {
     data.fill(&table, &EmptyContext, &mut rng, &mut container);
     assert!(container.iter().any(|s| !s.is_empty()));
 }
+
+#[test]
+fn enchantment_effects_decode() {
+    use kiln_loot::effects::ValueComponent;
+    let Some(data) = data() else { return };
+    let e = |name: &str| data.enchantment(kiln_item::registry::ENCHANTMENT.id(name).unwrap()).unwrap();
+    assert_eq!(e("minecraft:sharpness").effects.value(ValueComponent::Damage).len(), 1);
+    assert!(e("minecraft:smite").effects.value(ValueComponent::Damage)[0].requirements.is_some());
+    assert_eq!(e("minecraft:unbreaking").effects.value(ValueComponent::ItemDamage).len(), 2);
+    assert_eq!(e("minecraft:efficiency").effects.attributes.len(), 1);
+    assert_eq!(e("minecraft:thorns").effects.post_attack.len(), 1);
+    assert_eq!(e("minecraft:frost_walker").effects.damage_immunity.len(), 1);
+    assert!(e("minecraft:frost_walker").effects.other.iter().any(|c| c.as_str() == "minecraft:location_changed"));
+    // Sharpness V on a sword: 1 + 0.5 * 4 more damage, whatever the target.
+    let mut sword = ItemStack::of("minecraft:diamond_sword", 1).unwrap();
+    let mut list = kiln_item::component::Enchantments::default();
+    list.set(kiln_item::registry::ENCHANTMENT.id("minecraft:sharpness").unwrap(), 5);
+    sword.insert(kiln_item::keys::ENCHANTMENTS, list);
+    let mut rng = seeded(0);
+    assert_eq!(data.modify_damage(&sword, &mut rng, 7.0, |_| EmptyContext), 10.0);
+}

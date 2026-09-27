@@ -531,8 +531,8 @@ fn carry_out(
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == target) {
                 // kiln-entity's attacker is the entity that dealt the damage (TNT, a falling
                 // block); none of them is a player.
-                let source = health::Source { cause: health::Cause::Entity(kind), attacker: None, direct: attacker };
-                let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths };
+                let source = health::Source { cause: health::Cause::Entity(kind), attacker: None, direct: attacker, weapon: None };
+                let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
             }
         }

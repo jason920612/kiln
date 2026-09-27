@@ -328,6 +328,10 @@ impl Sim {
                     Err(e) => warn!("loot tables not reloaded: {e}"),
                 }
             }
+            // Players read enchantment definitions from the loot data.
+            for p in self.players.values_mut() {
+                p.loot = self.loot.clone();
+            }
         }
         self.commands.packs.library = self.load_functions(&roots);
         self.commands.packs.load_pending = true;

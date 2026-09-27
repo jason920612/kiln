@@ -5,8 +5,10 @@
 //! Damage goes through vanilla's pipeline: invulnerability (game mode, damage type tags, the
 //! game rules), difficulty scaling, the 20-tick hurt cooldown with its "only the excess over
 //! the last hit" rule, armor and toughness from equipment attributes (`CombatRules`), armor
-//! durability, absorption and the damage type's exhaustion. Not modelled yet: effects
-//! (resistance, fire resistance), enchantments (protection, unbreaking), shields, totems.
+//! durability, absorption and the damage type's exhaustion. Enchantments take part through
+//! `EnchantmentHelper` (see [`crate::enchant`]): damage immunity (frost walker), protection,
+//! armor effectiveness (breach) and unbreaking on armor. Not modelled yet: effects (resistance,
+//! fire resistance), shields, totems.
 //!
 //! Food follows `FoodData`: exhaustion from sprinting, jumping, fighting and breaking blocks
 //! uses up saturation then food; a well-fed player heals, a starving one takes damage.
@@ -60,6 +62,9 @@ pub(crate) struct DamageCtx<'a> {
     pub spawns: &'a mut Vec<entities::Spawn>,
     /// Deaths to announce in a serial phase.
     pub deaths: &'a mut Vec<Death>,
+    /// The random enchantment effects draw from while an attack is carried out (the
+    /// attacker's; see [`crate::enchant`]); `None` uses the hurt player's own.
+    pub level_rng: Option<kiln_javamath::random::LegacyRandom>,
 }
 
 /// What hurt a player: a damage type in `minecraft:damage_type`.
@@ -75,6 +80,8 @@ pub(crate) enum Cause {
     Entity(DamageKind),
     /// A player's melee hit (`player_attack`).
     PlayerAttack,
+    /// Any other damage type caused by an entity (`thorns` from an enchantment effect).
+    Other(&'static str),
 }
 
 /// The entity responsible for damage (`DamageSource.getEntity`), as the victim needs it.
@@ -87,6 +94,8 @@ pub(crate) struct Attacker {
     pub creative: bool,
     /// The display name of a custom-named main hand item, for the `.item` death messages.
     pub weapon: Option<Tag>,
+    /// The attacker as enchantment requirements see it.
+    pub view: crate::enchant::EntityView,
 }
 
 /// `DamageSource`: a damage type, who caused it and what dealt it.
@@ -96,11 +105,13 @@ pub(crate) struct Source {
     pub attacker: Option<Attacker>,
     /// Network id of the entity that dealt the damage when it is not the attacker (an arrow).
     pub direct: Option<i32>,
+    /// `getWeaponItem`: the attacker's main hand item for melee hits.
+    pub weapon: Option<kiln_item::ItemStack>,
 }
 
 impl From<Cause> for Source {
     fn from(cause: Cause) -> Self {
-        Source { cause, attacker: None, direct: None }
+        Source { cause, attacker: None, direct: None, weapon: None }
     }
 }
 
@@ -113,13 +124,14 @@ impl Cause {
             Cause::Starve => "minecraft:starve",
             Cause::Entity(kind) => entities::damage_type(kind).0,
             Cause::PlayerAttack => "minecraft:player_attack",
+            Cause::Other(name) => name,
         }
     }
 }
 
 impl Source {
-    pub(crate) fn melee(attacker: Attacker) -> Source {
-        Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None }
+    pub(crate) fn melee(attacker: Attacker, weapon: kiln_item::ItemStack) -> Source {
+        Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: Some(weapon) }
     }
 
     fn type_name(&self) -> &'static str {
@@ -291,6 +303,11 @@ const DAMAGE_TYPES: &[DamageTypeInfo] = damage_types! {
     "wither_skull" "witherSkull" 0.1 WhenCausedByLivingNonPlayer Default;
 };
 
+/// The `'static` name of a vanilla damage type (`generic` for unknown ones).
+pub(crate) fn static_damage_type(name: &str) -> &'static str {
+    damage_type_info(name).name
+}
+
 fn damage_type_info(name: &str) -> &'static DamageTypeInfo {
     DAMAGE_TYPES.iter().find(|t| t.name == name).unwrap_or_else(|| damage_type_info("minecraft:generic"))
 }
@@ -412,13 +429,23 @@ impl Player {
         packets::player::set_health(self.health, self.food, self.saturation)
     }
 
-    /// `ServerPlayer.isInvulnerableTo` and `Player.isInvulnerableTo`.
-    fn invulnerable_to(&self, source: &Source, rules: &DamageRules) -> bool {
-        !self.client_loaded()
+    /// `ServerPlayer.isInvulnerableTo`, `Player.isInvulnerableTo` and
+    /// `LivingEntity.isInvulnerableTo` (enchantment damage immunity: frost walker).
+    fn invulnerable_to(&mut self, source: &Source, ctx: &mut DamageCtx) -> bool {
+        let rules = &ctx.rules;
+        if !self.client_loaded()
             || (source.is("minecraft:is_drowning") && !rules.drowning)
             || (source.is("minecraft:is_fall") && !rules.fall)
             || (source.is("minecraft:is_fire") && !rules.fire)
             || (source.is("minecraft:is_freezing") && !rules.freeze)
+        {
+            return true;
+        }
+        let Some(loot) = self.loot.clone() else { return false };
+        let view = self.view();
+        let rng = ctx.level_rng.as_mut().unwrap_or(&mut self.level_rng);
+        let equipment: Vec<_> = combat::SLOTS.iter().map(|s| (*s, self.inv.equipped(*s))).collect();
+        loot.is_immune_to_damage(&equipment, rng, |level| crate::enchant::DamageContext { level, this: &view, source })
     }
 
     /// `ServerPlayer.hurtServer` down to `LivingEntity.hurtServer`: damages the player and
@@ -426,7 +453,7 @@ impl Player {
     /// hurt cooldown runs). A death goes to `ctx.deaths`.
     pub(crate) fn hurt(&mut self, amount: f32, source: &Source, ctx: &mut DamageCtx) -> bool {
         let rules = ctx.rules;
-        if self.invulnerable_to(source, &rules) {
+        if self.invulnerable_to(source, ctx) {
             return false;
         }
         // `canHarmPlayer`: player attackers (melee or their arrows) need PvP on.
@@ -454,7 +481,7 @@ impl Player {
         // `LivingEntity.hurtServer`.
         amount = amount.max(0.0);
         if source.is("minecraft:damages_helmet") && !self.inv.equipped(kiln_item::component::EquipmentSlot::Head).is_empty() {
-            self.hurt_equipment(source, amount, &[kiln_item::component::EquipmentSlot::Head]);
+            self.hurt_equipment(source, amount, &[kiln_item::component::EquipmentSlot::Head], ctx);
             amount *= 0.75;
         }
         if !amount.is_finite() {
@@ -489,7 +516,7 @@ impl Player {
             }
             // `dealDefaultKnockback` from the source's position (melee: the attacker's).
             if !source.is("minecraft:no_knockback")
-                && source.cause == Cause::PlayerAttack
+                && matches!(source.cause, Cause::PlayerAttack | Cause::Other(_))
                 && let Some(a) = &source.attacker
             {
                 let (dx, dz) = (a.pos[0] - self.pos[0], a.pos[2] - self.pos[2]);
@@ -510,11 +537,11 @@ impl Player {
 
     /// `Player.actuallyHurt`: armor, absorption, exhaustion and the combat tracker.
     fn actually_hurt(&mut self, amount: f32, source: &Source, ctx: &mut DamageCtx) {
-        if self.invulnerable_to(source, &ctx.rules) {
+        if self.invulnerable_to(source, ctx) {
             return;
         }
-        let mut damage = self.damage_after_armor(source, amount);
-        damage = damage_after_magic(source, damage);
+        let mut damage = self.damage_after_armor(source, amount, ctx);
+        damage = self.damage_after_magic(source, damage, ctx);
         let before = damage;
         damage = (damage - self.absorption).max(0.0);
         self.absorption = (self.absorption - (before - damage)).max(0.0);
@@ -532,20 +559,51 @@ impl Player {
 
     /// `LivingEntity.getDamageAfterArmorAbsorb`: armor takes durability damage and reduces the
     /// damage unless the type bypasses armor.
-    fn damage_after_armor(&mut self, source: &Source, amount: f32) -> f32 {
+    fn damage_after_armor(&mut self, source: &Source, amount: f32, ctx: &mut DamageCtx) -> f32 {
         if source.is("minecraft:bypasses_armor") {
             return amount;
         }
         use kiln_item::component::EquipmentSlot as S;
-        self.hurt_equipment(source, amount, &[S::Feet, S::Legs, S::Chest, S::Head]);
+        self.hurt_equipment(source, amount, &[S::Feet, S::Legs, S::Chest, S::Head], ctx);
         let armor = combat::floor(self.attribute(combat::ARMOR)) as f32;
         let toughness = self.attribute(combat::ARMOR_TOUGHNESS) as f32;
-        combat::damage_after_absorb(amount, armor, toughness)
+        // `CombatRules.getDamageAfterAbsorb`: the weapon's enchantments change how much the
+        // armor counts (breach).
+        let loot = self.loot.clone();
+        let view = self.view();
+        let rng = ctx.level_rng.as_mut().unwrap_or(&mut self.level_rng);
+        combat::damage_after_absorb(amount, armor, toughness, |h| match (&source.weapon, &loot) {
+            (Some(weapon), Some(loot)) => loot
+                .modify_armor_effectiveness(weapon, rng, h, |level| crate::enchant::DamageContext { level, this: &view, source })
+                .clamp(0.0, 1.0),
+            _ => h,
+        })
+    }
+
+    /// `LivingEntity.getDamageAfterMagicAbsorb` without effects: never negative, then the
+    /// equipment's enchantment protection unless the type bypasses enchantments.
+    fn damage_after_magic(&mut self, source: &Source, damage: f32, ctx: &mut DamageCtx) -> f32 {
+        if source.is("minecraft:bypasses_effects") {
+            return damage;
+        }
+        if damage <= 0.0 {
+            return 0.0;
+        }
+        if source.is("minecraft:bypasses_enchantments") {
+            return damage;
+        }
+        let Some(loot) = self.loot.clone() else { return damage };
+        let view = self.view();
+        let rng = ctx.level_rng.as_mut().unwrap_or(&mut self.level_rng);
+        let equipment: Vec<_> = combat::SLOTS.iter().map(|s| (*s, self.inv.equipped(*s))).collect();
+        let protection =
+            loot.damage_protection(&equipment, rng, |level| crate::enchant::DamageContext { level, this: &view, source });
+        if protection > 0.0 { damage_after_magic_absorb(damage, protection) } else { damage }
     }
 
     /// `LivingEntity.doHurtEquipment`: armor worn in `slots` loses `max(1, damage / 4)`
     /// durability.
-    fn hurt_equipment(&mut self, source: &Source, damage: f32, slots: &[kiln_item::component::EquipmentSlot]) {
+    fn hurt_equipment(&mut self, source: &Source, damage: f32, slots: &[kiln_item::component::EquipmentSlot], ctx: &mut DamageCtx) {
         if damage <= 0.0 {
             return;
         }
@@ -556,7 +614,7 @@ impl Player {
                 && stack.is_damageable_item()
                 && can_be_hurt_by(stack, source);
             if hurts {
-                self.hurt_and_break(slot, amount);
+                self.hurt_and_break(slot, amount, ctx.level_rng.as_mut());
             }
         }
     }
@@ -592,6 +650,10 @@ impl Player {
     pub(crate) fn tick_damage(&mut self, game_time: i64) {
         if self.hurt_cooldown > 0 {
             self.hurt_cooldown -= 1;
+        }
+        // Fire (from fire aspect) only counts down: nothing burns yet.
+        if self.fire_ticks > 0 {
+            self.fire_ticks -= 1;
         }
         if let Some((_, ticks)) = &mut self.kill_credit {
             if *ticks > 0 {
@@ -744,15 +806,10 @@ impl Player {
     }
 }
 
-/// `LivingEntity.getDamageAfterMagicAbsorb` without effects or enchantments: never negative.
-fn damage_after_magic(source: &Source, damage: f32) -> f32 {
-    if source.is("minecraft:bypasses_effects") {
-        return damage;
-    }
-    if damage <= 0.0 {
-        return 0.0;
-    }
-    damage
+/// `CombatRules.getDamageAfterMagicAbsorb`: protection points (up to 20) take 4% each.
+pub(crate) fn damage_after_magic_absorb(damage: f32, protection: f32) -> f32 {
+    let p = protection.clamp(0.0, 20.0);
+    damage * (1.0 - p / 25.0)
 }
 
 /// `ItemStack.canBeHurtBy`: false when the `damage_resistant` component covers the source.

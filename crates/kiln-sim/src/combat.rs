@@ -3,10 +3,15 @@
 //! modifiers, critical hits, sprint knockback, sweeping, knockback and weapon durability.
 //!
 //! Attributes follow `AttributeInstance`: the player's base value, then the modifiers of the
-//! equipment it wore at its last tick (`LivingEntity.collectEquipmentChanges`) plus the
-//! creative reach and sprint speed modifiers. Enchantments (sharpness, sweeping edge,
-//! knockback, unbreaking, ...) are not applied: their effects need the enchantment registry's
-//! effect components, which Kiln does not evaluate yet.
+//! equipment it wore at its last tick (`LivingEntity.collectEquipmentChanges`, enchantment
+//! attribute effects such as sweeping edge included) plus the creative reach and sprint speed
+//! modifiers.
+//!
+//! Enchantments act through `EnchantmentHelper` ([`crate::enchant`]): `damage` effects
+//! (sharpness, smite and bane of arthropods by the target's entity type tag) on the main
+//! target and on swept ones, `knockback`, `post_attack` effects (fire aspect sets fire ticks,
+//! thorns hurts the attacker and wears the armor; no fire damage or mob effects exist yet) and
+//! unbreaking on the weapon.
 //!
 //! A player can hit the players of its own region (regions are far apart, reach is short), so
 //! the outcome does not depend on how the world is split.
@@ -38,6 +43,10 @@ pub(crate) const ENTITY_INTERACTION_RANGE: Attr =
     Attr { name: "minecraft:entity_interaction_range", base: 3.0, min: 0.0, max: 64.0 };
 pub(crate) const MOVEMENT_SPEED: Attr = Attr { name: "minecraft:movement_speed", base: 0.10000000149011612, min: 0.0, max: 1024.0 };
 pub(crate) const SWEEPING_DAMAGE_RATIO: Attr = Attr { name: "minecraft:sweeping_damage_ratio", base: 0.0, min: 0.0, max: 1.0 };
+pub(crate) const MINING_EFFICIENCY: Attr = Attr { name: "minecraft:mining_efficiency", base: 0.0, min: 0.0, max: 1024.0 };
+pub(crate) const SUBMERGED_MINING_SPEED: Attr = Attr { name: "minecraft:submerged_mining_speed", base: 0.2, min: 0.0, max: 20.0 };
+pub(crate) const BLOCK_BREAK_SPEED: Attr = Attr { name: "minecraft:block_break_speed", base: 1.0, min: 0.0, max: 1024.0 };
+pub(crate) const BURNING_TIME: Attr = Attr { name: "minecraft:burning_time", base: 1.0, min: 0.0, max: 1024.0 };
 
 /// `Player.CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER_VALUE`.
 const CREATIVE_ENTITY_RANGE: f64 = 2.0;
@@ -83,6 +92,12 @@ pub(crate) fn floor(x: f64) -> i32 {
     if x < i as f64 { i - 1 } else { i }
 }
 
+/// `Mth.floor(float)`.
+pub(crate) fn floor_f32(x: f32) -> i32 {
+    let i = x as i32;
+    if x < i as f32 { i - 1 } else { i }
+}
+
 /// `Mth.sin` / `Mth.cos`: the 65536-entry table.
 fn sin_table() -> &'static [f32] {
     static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
@@ -97,27 +112,40 @@ pub(crate) fn mth_cos(v: f64) -> f32 {
     sin_table()[((v * 10430.378350470453 + 16384.0) as i64 & 0xffff) as usize]
 }
 
-/// `CombatRules.getDamageAfterAbsorb` (no armor-piercing enchantments).
-pub(crate) fn damage_after_absorb(damage: f32, armor: f32, toughness: f32) -> f32 {
+/// `CombatRules.getDamageAfterAbsorb`: `effectiveness` maps the armor's share of the damage
+/// (the weapon's `armor_effectiveness` enchantments, clamped to [0, 1]).
+pub(crate) fn damage_after_absorb(damage: f32, armor: f32, toughness: f32, effectiveness: impl FnOnce(f32) -> f32) -> f32 {
     let f = 2.0 + toughness / 4.0;
     let g = (armor - damage / f).clamp(armor * 0.2, 20.0);
-    let h = g / 25.0;
+    let h = effectiveness(g / 25.0);
     damage * (1.0 - h)
 }
 
-/// The modifiers `stack` gives in `slot` (`ItemStack.forEachModifier`, enchantments aside):
-/// (attribute network id, modifier id, amount, operation).
-fn slot_modifiers(stack: &ItemStack, slot: EquipmentSlot, out: &mut Vec<(i32, String, f64, AttributeOperation)>) {
+/// The modifiers `stack` gives in `slot` (`ItemStack.forEachModifier`: its attribute
+/// modifiers, then its enchantments' attribute effects): (attribute network id, modifier id,
+/// amount, operation).
+pub(crate) fn slot_modifiers(
+    loot: Option<&kiln_loot::LootData>,
+    stack: &ItemStack,
+    slot: EquipmentSlot,
+    out: &mut Vec<(i32, String, f64, AttributeOperation)>,
+) {
     // `collectEquipmentChanges` skips empty and broken items.
     if stack.is_empty() || (stack.is_damageable_item() && stack.damage() >= stack.max_damage()) {
         return;
     }
-    let Some(mods) = stack.get(keys::ATTRIBUTE_MODIFIERS) else { return };
-    for m in mods.0.iter().filter(|m| group_has(m.slot, slot)) {
-        let id = m.id.as_str().to_owned();
-        // `addTransientAttributeModifiers` replaces a modifier with the same id.
-        out.retain(|(a, i, _, _)| !(*a == m.attribute && *i == id));
-        out.push((m.attribute, id, m.amount, m.operation));
+    // `addTransientAttributeModifiers` replaces a modifier with the same id.
+    let mut add = |attribute: i32, id: String, amount: f64, op: AttributeOperation| {
+        out.retain(|(a, i, _, _)| !(*a == attribute && *i == id));
+        out.push((attribute, id, amount, op));
+    };
+    if let Some(mods) = stack.get(keys::ATTRIBUTE_MODIFIERS) {
+        for m in mods.0.iter().filter(|m| group_has(m.slot, slot)) {
+            add(m.attribute, m.id.as_str().to_owned(), m.amount, m.operation);
+        }
+    }
+    if let Some(loot) = loot {
+        loot.enchantment_modifiers(stack, slot, &mut add);
     }
 }
 
@@ -146,8 +174,8 @@ fn attribute_value(attr: Attr, mods: impl Iterator<Item = (f64, AttributeOperati
 /// A projection of the target of an attack.
 enum Target {
     Player(usize),
-    /// A kiln-entity entity: its bounding box and what it is.
-    Entity { bb: kiln_entity::math::Aabb, kind: EntityClass },
+    /// A kiln-entity entity: its bounding box, what it is and its entity type id.
+    Entity { bb: kiln_entity::math::Aabb, kind: EntityClass, type_id: i32, pos: [f64; 3] },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -175,7 +203,7 @@ impl Player {
     fn equipment_modifiers(&self) -> Vec<(i32, String, f64, AttributeOperation)> {
         let mut out = Vec::new();
         for (stack, slot) in self.equipment_seen.iter().zip(SLOTS) {
-            slot_modifiers(stack, slot, &mut out);
+            slot_modifiers(self.loot.as_deref(), stack, slot, &mut out);
         }
         out
     }
@@ -284,17 +312,27 @@ impl Player {
         self.vel = [x, y, z];
     }
 
-    /// `ItemStack.hurtAndBreak` on an equipped item: loses `amount` durability (none for
-    /// creative players; unbreaking is not applied), breaking with the break animation.
-    pub(crate) fn hurt_and_break(&mut self, slot: EquipmentSlot, amount: i32) {
-        if self.game_mode == 1 || amount <= 0 {
-            return;
-        }
+    /// `ItemStack.hurtAndBreak` on an equipped item: loses `amount` durability less what its
+    /// `item_damage` enchantments (unbreaking) take off (`processDurabilityChange`; none for
+    /// creative players), breaking with the break animation. `level_rng` is the random the
+    /// enchantments draw from (the player's own when `None`).
+    pub(crate) fn hurt_and_break(&mut self, slot: EquipmentSlot, amount: i32, level_rng: Option<&mut kiln_javamath::random::LegacyRandom>) {
         let index = kiln_inventory::inventory::equipment_index(slot, self.inv.selected);
-        let stack = kiln_inventory::Container::item_mut(&mut self.inv, index);
-        if !stack.is_damageable_item() {
+        let stack = kiln_inventory::Container::item(&self.inv, index);
+        if !stack.is_damageable_item() || self.game_mode == 1 {
             return;
         }
+        let amount = match (&self.loot, amount > 0) {
+            (Some(loot), true) => {
+                let rng = level_rng.unwrap_or(&mut self.level_rng);
+                loot.process_durability_change(stack, rng, amount)
+            }
+            _ => amount,
+        };
+        if amount == 0 {
+            return;
+        }
+        let stack = kiln_inventory::Container::item_mut(&mut self.inv, index);
         let damage = stack.damage() + amount;
         stack.insert(keys::DAMAGE, damage.clamp(0, stack.max_damage()));
         if damage >= stack.max_damage() {
@@ -321,10 +359,10 @@ impl Player {
     }
 
     /// The attacker as its victims see it.
-    fn as_attacker(&self) -> Attacker {
+    pub(crate) fn as_attacker(&self) -> Attacker {
         let held = self.inv.selected_item();
         let weapon = held.get(keys::CUSTOM_NAME).map(|name| item_display_name(held, name.nbt().clone()));
-        Attacker { id: self.entity_id, name: self.name.clone(), pos: self.pos, creative: self.game_mode == 1, weapon }
+        Attacker { id: self.entity_id, name: self.name.clone(), pos: self.pos, creative: self.game_mode == 1, weapon, view: self.view() }
     }
 
     /// `Player.canCriticalAttack`: falling, in the air, not climbing, in water, riding or
@@ -415,7 +453,12 @@ pub(crate) fn handle_attack(
             .iter()
             .find(|e| e.id == target_id && !e.removed)
             .and_then(|e| e.phys.as_ref())
-            .map(|e| Target::Entity { bb: e.bounding_box(), kind: classify(e) })
+            .map(|e| Target::Entity {
+                bb: e.bounding_box(),
+                kind: classify(e),
+                type_id: kiln_item::registry::ENTITY_TYPE.id(e.type_name).unwrap_or(-1),
+                pos: { let v = e.position(); [v.x, v.y, v.z] },
+            })
     };
     // `handleAttack` disconnects for attacking itself.
     if target_id == attacker.entity_id {
@@ -444,7 +487,50 @@ pub(crate) fn handle_attack(
     if attacker.cannot_attack_with_item(held, 5) {
         return;
     }
+    // The whole attack draws enchantment randomness from the attacker's level random.
+    let lent = std::mem::replace(&mut players[a].level_rng, kiln_javamath::random::LegacyRandom::new(0));
+    let outer = ctx.level_rng.replace(lent);
     attack(players, a, target, target_id, env, ctx);
+    if let Some(r) = std::mem::replace(&mut ctx.level_rng, outer) {
+        players[a].level_rng = r;
+    }
+}
+
+impl Player {
+    /// `ServerPlayer.getEnchantedDamage`: `EnchantmentHelper.modifyDamage` with the main hand
+    /// item against `target`.
+    fn enchanted_damage(&self, target: &crate::enchant::EntityView, damage: f32, source: &Source, rng: &mut kiln_javamath::random::LegacyRandom) -> f32 {
+        let (Some(loot), Some(weapon)) = (&self.loot, &source.weapon) else { return damage };
+        loot.modify_damage(weapon, rng, damage, |level| crate::enchant::DamageContext { level, this: target, source })
+    }
+
+    /// `LivingEntity.getKnockback`: the attack knockback attribute through the weapon's
+    /// `knockback` enchantments, halved.
+    fn attack_knockback(&self, target: &crate::enchant::EntityView, source: &Source, rng: &mut kiln_javamath::random::LegacyRandom) -> f32 {
+        let base = self.attribute(ATTACK_KNOCKBACK) as f32;
+        let value = match (&self.loot, &source.weapon) {
+            (Some(loot), Some(weapon)) => {
+                loot.modify_knockback(weapon, rng, base, |level| crate::enchant::DamageContext { level, this: target, source })
+            }
+            _ => base,
+        };
+        value / 2.0
+    }
+}
+
+/// The level random lent to an attack (see [`handle_attack`]).
+fn attack_rng<'c>(ctx: &'c mut DamageCtx) -> &'c mut kiln_javamath::random::LegacyRandom {
+    ctx.level_rng.as_mut().expect("attack random")
+}
+
+/// `EnchantmentHelper.doPostAttackEffectsWithItemSource` for player `victim` hit by player
+/// `a`, then the effects carried out.
+fn post_attack(players: &mut [&mut Player], a: usize, victim: usize, source: &Source, ctx: &mut DamageCtx) {
+    let Some(loot) = players[victim].loot.clone() else { return };
+    let effects = crate::enchant::post_attack_effects(&loot, players, victim, Some(a), source, attack_rng(ctx));
+    for e in &effects {
+        crate::enchant::apply_post_attack(players, victim, Some(a), e, ctx);
+    }
 }
 
 fn translatable(key: &str) -> kiln_proto::nbt::Tag {
@@ -458,12 +544,24 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
         Target::Entity { kind: EntityClass::NotAttackable, .. } => return,
         Target::Entity { .. } => false,
     };
+    let target_view = match &target {
+        Target::Player(t) => players[*t].view(),
+        Target::Entity { type_id, pos, .. } => crate::enchant::EntityView {
+            type_id: *type_id,
+            pos: *pos,
+            on_ground: false,
+            on_fire: false,
+            sneaking: false,
+            sprinting: false,
+            flying: false,
+        },
+    };
     let p = &mut *players[a];
     let mut damage = p.attribute(ATTACK_DAMAGE) as f32;
-    let source = Source::melee(p.as_attacker());
+    let source = Source::melee(p.as_attacker(), p.inv.selected_item().clone());
     let scale = p.attack_strength_scale(0.5);
-    // `scale * (getEnchantedDamage - damage)`: no enchantments are modelled, so no bonus.
-    let enchant_bonus = 0.0f32;
+    // `scale * (getEnchantedDamage(target, damage, source) - damage)`.
+    let enchant_bonus = scale * (p.enchanted_damage(&target_view, damage, &source, attack_rng(ctx)) - damage);
     damage *= 0.2 + scale * scale * 0.8;
     p.attack_ticker = 0;
     if !(damage > 0.0 || enchant_bonus > 0.0) {
@@ -500,8 +598,9 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
         play_sounds(players, a, &sounds, env);
         return;
     }
-    // `causeExtraKnockback`.
-    let strength = (players[a].attribute(ATTACK_KNOCKBACK) as f32) / 2.0 + if sprint_knockback { 0.5 } else { 0.0 };
+    // `causeExtraKnockback` with `getKnockback(target, source)`.
+    let strength =
+        players[a].attack_knockback(&target_view, &source, attack_rng(ctx)) + if sprint_knockback { 0.5 } else { 0.0 };
     let rad = (yaw * 0.017453292) as f64;
     if strength > 0.0 {
         players[t].knockback(strength as f64, mth_sin(rad) as f64, -mth_cos(rad) as f64);
@@ -530,12 +629,14 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     if !crit && !sweep {
         sounds.push(if full { "minecraft:entity.player.attack.strong" } else { "minecraft:entity.player.attack.weak" });
     }
-    // `itemAttackInteraction`: weapons (items with the `weapon` component) lose durability.
+    // `itemAttackInteraction`: the post-attack enchantment effects (any held item, even
+    // none), then a weapon (the `weapon` component, `hurtEnemy`) loses durability.
     let per_attack = players[a].inv.selected_item().get(keys::WEAPON).map(|w| w.item_damage_per_attack);
+    post_attack(players, a, t, &source, ctx);
     if let Some(n) = per_attack
         && !players[a].inv.selected_item().is_empty()
     {
-        players[a].hurt_and_break(EquipmentSlot::MainHand, n);
+        players[a].hurt_and_break(EquipmentSlot::MainHand, n, ctx.level_rng.as_mut());
     }
     // `damageStatsAndHearts`: heart particles for more than a heart of damage.
     let dealt = health_before - players[t].health;
@@ -577,8 +678,13 @@ fn sweep_attack(
         if d2 >= 9.0 {
             continue;
         }
-        if players[i].hurt(sweep * scale, source, ctx) {
+        // `getEnchantedDamage(entity, sweep, source) * scale`.
+        let view = players[i].view();
+        let amount = players[a].enchanted_damage(&view, sweep, source, attack_rng(ctx)) * scale;
+        if players[i].hurt(amount, source, ctx) {
             players[i].knockback(0.4000000059604645, mth_sin(rad) as f64, -mth_cos(rad) as f64);
+            // `doPostAttackEffects`: the source's attacker is a living entity, so its weapon too.
+            post_attack(players, a, i, source, ctx);
         }
     }
     let (dx, dz) = (-mth_sin(rad) as f64, mth_cos(rad) as f64);
@@ -655,9 +761,9 @@ mod tests {
     #[test]
     fn armor_formula() {
         // Full diamond (20 armor, 8 toughness) against a 7-damage hit.
-        let d = damage_after_absorb(7.0, 20.0, 8.0);
+        let d = damage_after_absorb(7.0, 20.0, 8.0, |h| h);
         assert_eq!(d, 7.0 * (1.0 - ((20.0f32 - 7.0 / 4.0).clamp(4.0, 20.0) / 25.0)));
-        assert_eq!(damage_after_absorb(5.0, 0.0, 0.0), 5.0);
+        assert_eq!(damage_after_absorb(5.0, 0.0, 0.0, |h| h), 5.0);
     }
 
     #[test]

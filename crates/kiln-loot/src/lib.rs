@@ -18,6 +18,7 @@
 pub mod condition;
 pub mod context;
 pub mod data;
+pub mod effects;
 pub mod enchant;
 pub mod entry;
 pub mod eval;
