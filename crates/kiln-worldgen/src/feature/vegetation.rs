@@ -3,9 +3,11 @@
 pub mod column;
 pub mod coral;
 pub mod dripstone;
+pub mod fungus;
 pub mod jhash;
 pub mod multiface;
 pub mod mushroom;
+pub mod nether;
 pub mod patch;
 pub mod pile;
 pub mod roots;
@@ -46,6 +48,9 @@ pub enum Kind {
     HugeRedMushroom(mushroom::HugeMushroom),
     CoralTree(coral::Coral),
     CoralClaw(coral::Coral),
+    HugeFungus(fungus::HugeFungus),
+    SteppedColumnCluster(nether::SteppedColumns),
+    ChorusPlant,
 }
 
 /// Parses a feature of this family (`ty` without the `minecraft:` prefix); `None` if the
@@ -71,6 +76,9 @@ pub fn parse(ty: &str, json: &Json, f: &mut Features, l: &Loader) -> Option<Resu
         "huge_red_mushroom" => mushroom::HugeMushroom::parse(json, l, true).map(Kind::HugeRedMushroom),
         "coral_tree" => coral::Coral::parse(json, f, l, false).map(Kind::CoralTree),
         "coral_claw" => coral::Coral::parse(json, f, l, true).map(Kind::CoralClaw),
+        "huge_fungus" => fungus::HugeFungus::parse(json, l).map(Kind::HugeFungus),
+        "stepped_column_cluster" => nether::SteppedColumns::parse(json, l).map(Kind::SteppedColumnCluster),
+        "chorus_plant" => Ok(Kind::ChorusPlant),
         _ => return None,
     })
 }
@@ -94,6 +102,9 @@ impl Kind {
             Kind::BlockPile(k) => k.place(r, random, p),
             Kind::HugeBrownMushroom(k) | Kind::HugeRedMushroom(k) => k.place(r, random, p),
             Kind::CoralTree(k) | Kind::CoralClaw(k) => k.place(f, r, random, p),
+            Kind::HugeFungus(k) => k.place(r, random, p),
+            Kind::SteppedColumnCluster(k) => k.place(r, random, p),
+            Kind::ChorusPlant => nether::place_chorus(r, random, p),
         }
     }
 
@@ -118,6 +129,9 @@ impl Kind {
             Kind::HugeRedMushroom(_) => "minecraft:huge_red_mushroom",
             Kind::CoralTree(_) => "minecraft:coral_tree",
             Kind::CoralClaw(_) => "minecraft:coral_claw",
+            Kind::HugeFungus(_) => "minecraft:huge_fungus",
+            Kind::SteppedColumnCluster(_) => "minecraft:stepped_column_cluster",
+            Kind::ChorusPlant => "minecraft:chorus_plant",
         }
     }
 
