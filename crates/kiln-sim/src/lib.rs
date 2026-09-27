@@ -477,9 +477,6 @@ pub struct Sim {
     rules: std::sync::Arc<kiln_inventory::Rules>,
     /// Loot tables from the vanilla datapack (block drops), if it was found.
     loot: Option<std::sync::Arc<kiln_loot::LootData>>,
-    /// The server's loot random sequences (`MinecraftServer.getRandomSequence`), shared by
-    /// the regions (drops in parallel regions take them in completion order).
-    loot_sequences: std::sync::Arc<std::sync::Mutex<kiln_loot::RandomSequences>>,
     dim: Dim,
     pool: kiln_sched::TickPool,
     /// World spawn block; players appear around it.
@@ -589,11 +586,9 @@ impl Sim {
         let datapack = config.noise.as_ref().map(|n| n.datapack.as_path());
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
-        let world_seed = config.noise.as_ref().map_or(0, |n| n.seed);
         Sim {
             rules,
             loot,
-            loot_sequences: std::sync::Arc::new(std::sync::Mutex::new(kiln_loot::RandomSequences::new(world_seed))),
             pool: kiln_sched::TickPool::with_config(config.pool.clone()),
             config,
             dim: Dim {
@@ -821,7 +816,6 @@ impl Sim {
             simulation_distance: self.config.simulation_distance as i32,
             seed: self.config.noise.as_ref().map_or(0, |n| n.seed),
             loot: self.loot.clone(),
-            loot_sequences: self.loot_sequences.clone(),
         }
     }
 

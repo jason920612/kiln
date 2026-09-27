@@ -207,8 +207,6 @@ pub(crate) struct BlockEnv {
     pub seed: i64,
     /// Loot tables for block drops (`None`: blocks drop their own item).
     pub loot: Option<std::sync::Arc<kiln_loot::LootData>>,
-    /// The server's loot random sequences.
-    pub loot_sequences: std::sync::Arc<std::sync::Mutex<kiln_loot::RandomSequences>>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -641,10 +639,13 @@ fn block_drops(
         state,
         origin: [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5],
     };
+    // Vanilla draws block drops from the server-wide random sequence of the table; parallel
+    // regions cannot share one without the order depending on the partition, so each drop gets
+    // its own seed from the position and tick (an approximation, I class).
     let items = {
-        let mut sequences = env.loot_sequences.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut level = kiln_javamath::random::LegacyRandom::new(effect_hash(env, pos, i) as i64);
-        let mut rng = table.random(0, &mut sequences, &mut level);
+        let seed = (effect_hash(env, pos, i) | 1) as i64;
+        let (mut sequences, mut level) = (kiln_loot::RandomSequences::new(0), kiln_javamath::random::LegacyRandom::new(seed));
+        let mut rng = table.random(seed, &mut sequences, &mut level);
         loot.random_items(&table_id, &ctx, rng.source())
     };
     items
@@ -799,7 +800,6 @@ mod tests {
             simulation_distance: 10,
             seed: 0,
             loot: None,
-            loot_sequences: std::sync::Arc::new(std::sync::Mutex::new(kiln_loot::RandomSequences::new(0))),
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {
