@@ -53,7 +53,8 @@ pub(crate) struct RegionOut {
     pub times: [Duration; SUB_PHASES.len()],
 }
 
-pub(crate) const SUB_PHASES: [&str; 7] = ["connections", "blocks", "entities", "visibility", "movement", "light", "egress"];
+pub(crate) const SUB_PHASES: [&str; 9] =
+    ["menus", "connections", "chunks", "blocks", "entities", "visibility", "movement", "light", "egress"];
 
 pub(crate) struct RegionWork<'a> {
     pub cells: &'a mut CellSet<Cell>,
@@ -92,36 +93,42 @@ impl RegionWork<'_> {
             times[i] += now - lap;
             lap = now;
         };
+        // Menu changes first, like vanilla's container broadcast at the start of a player tick.
         for p in self.players.iter_mut() {
-            tick_connection(p, env, &mut self.out.spawns);
+            p.with_menu(&env.rules, &mut self.out.spawns, |menu, _, env| menu.broadcast_changes(env));
+        }
+        mark(&mut self.out.times, 0);
+        for p in self.players.iter_mut() {
+            tick_connection(p, env);
             if let Some(death) = p.check_void(env.min_y, &mut self.out.spawns) {
                 self.out.deaths.push(death);
             }
-            if !p.disconnected {
-                update_chunks(p, &mut *self.cells, env, &mut self.out.wanted);
-            }
+        }
+        mark(&mut self.out.times, 1);
+        for p in self.players.iter_mut().filter(|p| !p.disconnected) {
+            update_chunks(p, &mut *self.cells, env, &mut self.out.wanted);
         }
         // The same tick everywhere, so when chunks unload does not depend on the regions.
         if env.game_time % 20 == 0 {
             self.find_unloads();
         }
-        mark(&mut self.out.times, 0);
+        mark(&mut self.out.times, 2);
         self.tick_blocks(env);
-        mark(&mut self.out.times, 1);
+        mark(&mut self.out.times, 3);
         entities::tick(self.entities, &*self.cells);
         entities::pickups(self.entities, &mut self.players);
-        mark(&mut self.out.times, 2);
+        mark(&mut self.out.times, 4);
         let movers = crate::players::update_visibility(&mut self.players);
-        mark(&mut self.out.times, 3);
+        mark(&mut self.out.times, 5);
         crate::players::broadcast_movement(&mut self.players);
         entities::track(self.entities, &mut self.players, &movers);
-        mark(&mut self.out.times, 4);
+        mark(&mut self.out.times, 6);
         self.send_light_updates();
-        mark(&mut self.out.times, 5);
+        mark(&mut self.out.times, 7);
         for p in self.players.iter_mut() {
             p.flush();
         }
-        mark(&mut self.out.times, 6);
+        mark(&mut self.out.times, 8);
     }
 
     /// The block phases: players' digging, pressure plates under bodies, then scheduled
@@ -495,10 +502,8 @@ fn handle_move(
 }
 
 /// Start of a connection's tick: block change acks (after the block updates they
-/// acknowledge, like vanilla's connection tick), menu changes, movement bookkeeping and
-/// keep-alives.
-fn tick_connection(p: &mut Player, env: &Env, spawns: &mut Vec<Spawn>) {
-    p.with_menu(&env.rules, spawns, |menu, _, env| menu.broadcast_changes(env));
+/// acknowledge, like vanilla's connection tick), movement bookkeeping and keep-alives.
+fn tick_connection(p: &mut Player, env: &Env) {
     if p.ack_block_changes >= 0 {
         p.send(packets::block_changed_ack(p.ack_block_changes));
         p.ack_block_changes = -1;

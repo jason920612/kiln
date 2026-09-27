@@ -133,7 +133,14 @@ pub fn create_checked(t: &kiln_item::ItemStackTemplate) -> ItemStack {
 
 /// `ItemStack.matches`: same count, item and components.
 pub fn matches(a: &ItemStack, b: &ItemStack) -> bool {
-    a.count() == b.count() && same_item_same_components(a, b)
+    if a.count() != b.count() {
+        return false;
+    }
+    // The common case: the same item without component changes.
+    if a.item() == b.item() && a.patch().is_empty() && b.patch().is_empty() {
+        return true;
+    }
+    same_item_same_components(a, b)
 }
 
 #[cfg(test)]

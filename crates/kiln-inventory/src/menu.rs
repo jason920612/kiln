@@ -122,6 +122,9 @@ pub struct Menu {
     pub(crate) carried: ItemStack,
     state_id: i32,
     last_slots: Vec<ItemStack>,
+    /// Slots whose last-seen stack and remote stack both equal the stack at the last
+    /// broadcast, and whose remote nothing touched since: an unchanged stack needs no work.
+    settled: Vec<bool>,
     remote: Vec<RemoteSlot>,
     remote_carried: RemoteSlot,
     remote_data: Vec<i32>,
@@ -160,6 +163,7 @@ impl Menu {
             carried: ItemStack::empty(),
             state_id: 0,
             last_slots: vec![ItemStack::empty(); n],
+            settled: vec![false; n],
             remote: vec![RemoteSlot::default(); n],
             remote_carried: RemoteSlot::default(),
             remote_data: vec![0; data_count],
@@ -548,6 +552,7 @@ impl Menu {
         self.broadcast_changes(env);
         self.synchronized = true;
         self.remote = vec![RemoteSlot::default(); self.slots.len()];
+        self.settled.fill(false);
         self.remote_carried = RemoteSlot::default();
         self.send_all_data_to_remote(env);
     }
@@ -558,6 +563,7 @@ impl Menu {
             return;
         }
         let items = self.items(env);
+        self.settled.fill(false);
         for (r, s) in self.remote.iter_mut().zip(&items) {
             r.force(s);
         }
@@ -596,6 +602,9 @@ impl Menu {
     /// does not have yet.
     pub fn broadcast_changes(&mut self, env: &mut Env) {
         for i in 0..self.slots.len() {
+            if self.settled[i] && matches(&self.last_slots[i], self.item(env, i)) {
+                continue;
+            }
             self.trigger_slot_listeners(env, i);
             if self.suppress_remote || !self.synchronized {
                 continue;
@@ -606,6 +615,7 @@ impl Menu {
                 let state_id = self.increment_state_id();
                 env.out.push(Effect::SetSlot { container_id: self.container_id, state_id, slot: i as i16, stack: item.copy() });
             }
+            self.settled[i] = true;
         }
         if !self.suppress_remote && self.synchronized && !self.remote_carried.matches(&self.carried) {
             self.remote_carried.force(&self.carried);
@@ -635,6 +645,7 @@ impl Menu {
     pub fn set_remote_slot(&mut self, i: usize, stack: &ItemStack) {
         if self.synchronized {
             self.remote[i].force(stack);
+            self.settled[i] = false;
         }
     }
 
@@ -644,6 +655,7 @@ impl Menu {
             && let Some(r) = usize::try_from(slot).ok().and_then(|i| self.remote.get_mut(i))
         {
             r.receive(hash);
+            self.settled[slot as usize] = false;
         }
     }
 
@@ -656,15 +668,18 @@ impl Menu {
 
     pub fn suppress_remote_updates(&mut self) {
         self.suppress_remote = true;
+        self.settled.fill(false);
     }
 
     pub fn resume_remote_updates(&mut self) {
         self.suppress_remote = false;
+        self.settled.fill(false);
     }
 
     /// `transferState(from)`: the client's view of slots over the same (container, index),
     /// kept when switching menus (closing a chest back to the inventory menu).
     pub fn transfer_state(&mut self, from: &Menu) {
+        self.settled.fill(false);
         for (i, s) in self.slots.iter().enumerate() {
             if s.source != Source::Player {
                 continue;
