@@ -108,6 +108,9 @@ pub enum ArgumentType {
     NbtCompound,
     /// `minecraft:team_color`: one of the sixteen [`TEAM_COLORS`].
     TeamColor,
+    /// `minecraft:dialog`: a `minecraft:dialog` registry id ([`ArgumentValue::Identifier`]) or
+    /// an inline definition ([`ArgumentValue::Nbt`]).
+    Dialog,
 }
 
 impl ArgumentType {
@@ -224,6 +227,7 @@ impl ArgumentType {
             ArgumentType::Team => Parser::Plain("minecraft:team"),
             ArgumentType::NbtCompound => Parser::Plain("minecraft:nbt_compound_tag"),
             ArgumentType::TeamColor => Parser::Plain("minecraft:team_color"),
+            ArgumentType::Dialog => Parser::Plain("minecraft:dialog"),
         }
     }
 
@@ -459,6 +463,22 @@ impl ArgumentType {
                         "minecraft:predicate"
                     ))
                     .at(reader));
+                }
+            }
+            ArgumentType::Dialog => {
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    let tag = snbt::parse_tag(reader)?;
+                    if let Err(message) = check_dialog(&tag) {
+                        return Err(CommandError::new(tr!("argument.resource_or_id.failed_to_parse", message)).at(reader));
+                    }
+                    ArgumentValue::Nbt(tag)
+                } else {
+                    let id = Identifier::read(reader)?;
+                    if kiln_data::synced_id("minecraft:dialog", id.as_str()).is_none() {
+                        let e = tr!("argument.resource_or_id.no_such_element", id.to_string(), "minecraft:dialog");
+                        return Err(CommandError::new(e).at(reader));
+                    }
+                    ArgumentValue::Identifier(id)
                 }
             }
             ArgumentType::Component => ArgumentValue::Component(Box::new(component::parse(reader)?)),
@@ -703,6 +723,21 @@ pub const TEAM_COLORS: [&str; 16] = [
     "yellow",
     "white",
 ];
+
+/// A light check of an inline dialog (`Dialog.DIRECT_CODEC`): a compound whose `type` is a
+/// `minecraft:dialog_type` and which has a `title`. The client decodes the rest.
+fn check_dialog(tag: &Tag) -> std::result::Result<(), String> {
+    let Tag::Compound(_) = tag else { return Err(format!("Not a map: {}", snbt::to_snbt(tag))) };
+    let Some(ty) = tag.get("type").and_then(Tag::as_str) else { return Err("No key type in MapLike".into()) };
+    let ty = Identifier::parse(ty).map(|i| i.to_string()).unwrap_or_default();
+    if types::registry_entries("minecraft:dialog_type").is_some_and(|e| !e.contains(&ty.as_str())) {
+        return Err(format!("Unknown registry key in ResourceKey[minecraft:root / minecraft:dialog_type]: {ty}"));
+    }
+    if tag.get("title").is_none() {
+        return Err("No key title in MapLike".into());
+    }
+    Ok(())
+}
 
 /// `ObjectiveCriteria.CUSTOM_CRITERIA` apart from the team ones.
 pub const CUSTOM_CRITERIA: [&str; 11] =

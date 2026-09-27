@@ -231,6 +231,9 @@ pub(crate) fn is_exclusive(pkt: &PlayIn) -> bool {
         PlayIn::ChatCommand { .. }
             | PlayIn::CommandSuggestion { .. }
             | PlayIn::Chat { .. }
+            // Disconnects and per-player protocol state.
+            | PlayIn::ResourcePack { .. }
+            | PlayIn::CookieResponse(_)
             // Respawning finds a spawn point anywhere and restarts tracking.
             | PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn)
     )

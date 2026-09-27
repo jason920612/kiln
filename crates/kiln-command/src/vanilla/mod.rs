@@ -9,6 +9,7 @@ mod function;
 pub use function::{run_as_server, run_function};
 pub mod gamerules;
 mod players;
+mod protocol;
 mod scoreboard;
 mod server;
 mod team;
@@ -62,6 +63,8 @@ pub const COMMANDS: &[&str] = &[
     "schedule",
     "reload",
     "datapack",
+    "transfer",
+    "dialog",
     "teammsg",
     "tm",
     "scoreboard",
@@ -104,6 +107,8 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     function::schedule(d);
     function::reload(d);
     function::datapack(d);
+    protocol::transfer(d);
+    protocol::dialog(d);
     chat::teammsg(d);
     scoreboard::scoreboard(d);
     scoreboard::trigger(d);

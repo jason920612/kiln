@@ -24,6 +24,7 @@ mod blocks;
 mod commands;
 mod consume;
 mod datapacks;
+pub mod lobby;
 mod digging;
 mod entities;
 mod generation;
@@ -65,6 +66,8 @@ pub struct SimConfig {
     pub unified_regions: bool,
     /// Vanilla noise terrain for chunks the world does not have (superflat or void otherwise).
     pub noise: Option<NoiseConfig>,
+    /// `require-resource-pack` with a server pack set: declining any pack disconnects.
+    pub require_resource_pack: bool,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -89,6 +92,7 @@ impl SimConfig {
             pool: kiln_sched::PoolConfig::new(cores.saturating_sub(1).clamp(1, 7)),
             unified_regions: false,
             noise: None,
+            require_resource_pack: false,
         }
     }
 }
@@ -202,6 +206,8 @@ struct Player {
     digging: Option<digging::Dig>,
     /// A break the client finished before the server's clock agreed.
     delayed_destroy: Option<digging::Dig>,
+    /// Cookies and resource pack statuses.
+    lobby: lobby::PlayerLobby,
 }
 
 impl Player {
@@ -216,6 +222,12 @@ impl Player {
     fn disconnect(&mut self, reason: &str) {
         self.flush();
         self.sink.disconnect(packets::play_disconnect(reason));
+        self.disconnected = true;
+    }
+    /// Disconnects with a text component (network NBT), e.g. a translation.
+    fn disconnect_text(&mut self, reason: kiln_proto::nbt::Tag) {
+        self.flush();
+        self.sink.disconnect(packets::play_disconnect_text(reason));
         self.disconnected = true;
     }
     /// Adds a stack to the inventory (`Inventory.add`); returns how many items were taken. The
@@ -1103,6 +1115,8 @@ impl Sim {
             PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn) => self.respawn(conn),
             PlayIn::ChatCommand { command } => self.run_command(conn, &command),
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
+            PlayIn::ResourcePack { id, action } => self.resource_pack_response(conn, id, action),
+            PlayIn::CookieResponse(response) => self.cookie_response(conn, response),
             PlayIn::Chat { message } => {
                 let Some(p) = self.players.get_mut(&conn) else { return };
                 if commands::has_illegal_chars(&message) {
@@ -1257,6 +1271,7 @@ impl Sim {
             using: None,
             digging: None,
             delayed_destroy: None,
+            lobby: lobby::PlayerLobby::default(),
         };
 
         player.send(packets::play_login(&packets::Login {
