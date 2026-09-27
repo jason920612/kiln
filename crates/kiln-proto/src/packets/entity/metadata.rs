@@ -95,6 +95,9 @@ pub enum DataValue {
     Component(Tag),
     OptionalComponent(Option<Tag>),
     ItemStack(Option<ItemStack>),
+    /// `ITEM_STACK` already encoded with `ItemStack.OPTIONAL_STREAM_CODEC` (stacks with data
+    /// components, encoded by kiln-item).
+    EncodedItemStack(bytes::Bytes),
     Boolean(bool),
     Rotations([f32; 3]),
     BlockPos([i32; 3]),
@@ -168,7 +171,7 @@ impl DataValue {
                         V::String(_) => s::STRING,
                         V::Component(_) => s::COMPONENT,
                         V::OptionalComponent(_) => s::OPTIONAL_COMPONENT,
-                        V::ItemStack(_) => s::ITEM_STACK,
+                        V::ItemStack(_) | V::EncodedItemStack(_) => s::ITEM_STACK,
                         V::Boolean(_) => s::BOOLEAN,
                         V::Rotations(_) => s::ROTATIONS,
                         V::BlockPos(_) => s::BLOCK_POS,
@@ -216,6 +219,7 @@ impl DataValue {
                 b.put_varint(0); // component patch: nothing added
                 b.put_varint(0); // nothing removed
             }
+            V::EncodedItemStack(bytes) => b.put_slice(bytes),
             V::Boolean(v) => b.put_bool(*v),
             V::Rotations(v) | V::Vector3(v) => v.iter().for_each(|f| b.put_f32(*f)),
             V::Quaternion(v) => v.iter().for_each(|f| b.put_f32(*f)),

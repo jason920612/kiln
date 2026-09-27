@@ -151,6 +151,11 @@ impl PlayerData {
         }
     }
 
+    /// The loaded compound, for code that reads fields Kiln's model does not have.
+    pub fn raw(&self) -> &Tag {
+        &self.raw
+    }
+
     /// Kiln's view of the inventory: item id and count per menu slot (unknown items read as
     /// empty; they are kept on save while the slot stays empty).
     pub fn slots(&self) -> Vec<Option<(i32, i32)>> {
@@ -281,7 +286,13 @@ impl PlayerStore {
 
     /// Saves atomically, keeping the previous file as `<uuid>.dat_old`.
     pub fn save(&self, uuid: Uuid, data: &PlayerData) -> std::io::Result<()> {
-        write_nbt_file(&self.file(uuid, ".dat"), &data.to_nbt(uuid), Some(&self.file(uuid, ".dat_old")))
+        self.save_nbt(uuid, &data.to_nbt(uuid))
+    }
+
+    /// Writes a complete player compound (e.g. [`PlayerData::to_nbt`] with items written by a
+    /// full item model).
+    pub fn save_nbt(&self, uuid: Uuid, nbt: &Tag) -> std::io::Result<()> {
+        write_nbt_file(&self.file(uuid, ".dat"), nbt, Some(&self.file(uuid, ".dat_old")))
     }
 }
 

@@ -1,7 +1,7 @@
 //! Players and level data in the world save: loaded on startup and join, saved on leave,
 //! autosave and shutdown.
 
-use crate::{INVENTORY_SLOTS, Player, Sim};
+use crate::{Player, Sim};
 use kiln_storage::{LevelState, LevelStore, PlayerData, PlayerStore, WorldSpawn};
 use std::path::Path;
 use tracing::warn;
@@ -30,8 +30,8 @@ pub(crate) struct Joining {
     pub pos: [f64; 3],
     pub rot: [f32; 2],
     pub game_mode: u8,
-    pub inventory: [Option<(i32, i32)>; INVENTORY_SLOTS],
-    pub selected: usize,
+    pub inv: kiln_inventory::PlayerInventory,
+    pub inv_extra: kiln_inventory::persist::PlayerItemsExtra,
     pub respawn: Option<[i32; 3]>,
     pub saved: PlayerData,
 }
@@ -54,16 +54,14 @@ impl Sim {
             Some(p) => p,
             None => self.new_player_position(uuid),
         };
-        let mut inventory = [None; INVENTORY_SLOTS];
-        for (dst, src) in inventory.iter_mut().zip(saved.slots()) {
-            *dst = src;
-        }
+        let (mut inv, inv_extra) = kiln_inventory::persist::load_player_inventory(saved.raw());
+        inv.selected = saved.selected_slot as usize;
         Joining {
             pos,
             rot: saved.rot.unwrap_or(self.spawn_rot),
             game_mode: saved.game_mode.unwrap_or_else(|| self.default_game_mode()),
-            inventory,
-            selected: saved.selected_slot as usize,
+            inv,
+            inv_extra,
             respawn: saved.respawn,
             saved,
         }
@@ -93,10 +91,11 @@ impl Sim {
         data.on_ground = p.on_ground;
         data.game_mode = Some(p.game_mode);
         data.dimension = Some(OVERWORLD.to_owned());
-        data.selected_slot = p.selected as u8;
-        data.set_slots(&p.inventory);
+        data.selected_slot = p.inv.selected as u8;
         data.respawn = p.respawn;
-        if let Err(e) = storage.players.save(p.uuid, &data) {
+        let mut nbt = data.to_nbt(p.uuid);
+        kiln_inventory::persist::save_player_inventory(&p.inv, &p.inv_extra, &mut nbt);
+        if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
             warn!("failed to save player data for {}: {e}", p.name);
         }
     }

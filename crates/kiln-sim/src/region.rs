@@ -7,7 +7,7 @@
 
 use crate::entities::{self, Entities, Spawn};
 use crate::movement;
-use crate::{HOTBAR_START, INVENTORY_SLOTS, KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEOUT, MAX_UNACKED_BATCHES, Player, interact};
+use crate::{KEEP_ALIVE_INTERVAL, KEEP_ALIVE_TIMEOUT, MAX_UNACKED_BATCHES, Player, interact};
 use bytes::Bytes;
 use kiln_link::{ConnId, PlayIn};
 use kiln_proto::packets;
@@ -18,8 +18,9 @@ use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
 /// Read-only values of the global state that region work needs.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Env {
+    pub rules: std::sync::Arc<kiln_inventory::Rules>,
     pub game_time: i64,
     /// The server's view distance: clients may ask for less.
     pub max_view: i32,
@@ -90,7 +91,7 @@ impl RegionWork<'_> {
             lap = now;
         };
         for p in self.players.iter_mut() {
-            tick_connection(p, env);
+            tick_connection(p, env, &mut self.out.spawns);
             if !p.disconnected {
                 update_chunks(p, &mut *self.cells, env, &mut self.out.wanted);
             }
@@ -237,18 +238,45 @@ pub(crate) fn local_packet<W: Blocks + ?Sized>(
         }
         PlayIn::SetCarriedItem { slot } => {
             if (0..9).contains(&slot) {
-                p.selected = slot as usize;
+                p.inv.selected = slot as usize;
             }
         }
         PlayIn::SetCreativeSlot { slot, item } => {
-            if let Some(s) = usize::try_from(slot).ok().filter(|&s| s < INVENTORY_SLOTS) {
-                p.inventory[s] = item.map(|i| (i.item, i.count));
-            } else if slot == -1
-                && let Some(item) = item
-            {
-                // Dropped out of the creative inventory.
-                spawns.push(p.throw(item.item, item.count));
+            let Ok(stack) = kiln_inventory::click::creative_stack(item.as_ref()) else {
+                p.disconnect("Invalid item");
+                return;
+            };
+            // Creative slots always address the inventory menu, even with another one open.
+            p.with_menu(&env.rules, spawns, |menu, inventory_menu, env| {
+                kiln_inventory::handle_set_creative_slot(inventory_menu.unwrap_or(menu), env, slot, stack, true)
+            });
+        }
+        PlayIn::ContainerClick { body } => {
+            let Ok(click) = kiln_inventory::ContainerClick::decode(&body) else {
+                p.disconnect("Invalid container click");
+                return;
+            };
+            let crashed = p.with_menu(&env.rules, spawns, |menu, _, env| {
+                kiln_inventory::handle_container_click(menu, env, &click, true).is_err()
+            });
+            if crashed {
+                p.disconnect("Invalid container click");
             }
+        }
+        PlayIn::ContainerClose { .. } => {
+            if p.open_menu.is_some() {
+                p.with_menu(&env.rules, spawns, |open, inventory_menu, env| {
+                    kiln_inventory::click::close_container(open, inventory_menu, env)
+                });
+                p.open_menu = None;
+            } else {
+                p.with_menu(&env.rules, spawns, |menu, _, env| kiln_inventory::click::close_container(menu, None, env));
+            }
+        }
+        PlayIn::ContainerButtonClick { container_id, button_id } => {
+            p.with_menu(&env.rules, spawns, |menu, _, env| {
+                kiln_inventory::click::handle_container_button_click(menu, env, container_id, button_id, true)
+            });
         }
         PlayIn::PlayerAction { action, pos, sequence, .. } => {
             // `ServerboundPlayerActionPacket.Action` ordinals.
@@ -304,8 +332,11 @@ fn use_item_on<W: Blocks + ?Sized>(
     face: i32,
     changes: &mut Vec<BlockChange>,
 ) {
-    let item = if hand == 0 { p.inventory[HOTBAR_START + p.selected] } else { p.inventory[45] };
-    let Some((item, _)) = item else { return };
+    let stack = if hand == 0 { p.inv.selected_item() } else { p.inv.equipped(kiln_item::component::EquipmentSlot::OffHand) };
+    if stack.is_empty() {
+        return;
+    }
+    let item = stack.item();
     let Some(block) = interact::block_for_item(item) else { return };
     let Some(off) = interact::offset(face) else { return };
     // Place into the clicked block if it is replaceable, otherwise next to it.
@@ -374,8 +405,10 @@ fn handle_move<W: Blocks + ?Sized>(
 }
 
 /// Start of a connection's tick: block change acks (after the block updates they
-/// acknowledge, like vanilla's connection tick), movement bookkeeping and keep-alives.
-fn tick_connection(p: &mut Player, env: &Env) {
+/// acknowledge, like vanilla's connection tick), menu changes, movement bookkeeping and
+/// keep-alives.
+fn tick_connection(p: &mut Player, env: &Env, spawns: &mut Vec<Spawn>) {
+    p.with_menu(&env.rules, spawns, |menu, _, env| menu.broadcast_changes(env));
     if p.ack_block_changes >= 0 {
         p.send(packets::block_changed_ack(p.ack_block_changes));
         p.ack_block_changes = -1;

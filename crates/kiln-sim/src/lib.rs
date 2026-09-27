@@ -128,9 +128,14 @@ struct Player {
     last_keep_alive: Instant,
     chunks_per_tick: f32,
     unacked_batches: u32,
-    /// Item id and count per inventory container slot.
-    inventory: [Option<(i32, i32)>; INVENTORY_SLOTS],
-    selected: usize,
+    /// Main slots, equipment and the selected hotbar slot.
+    inv: kiln_inventory::PlayerInventory,
+    /// Saved inventory entries Kiln could not decode, written back unchanged.
+    inv_extra: kiln_inventory::persist::PlayerItemsExtra,
+    /// The inventory menu (container 0), always open underneath.
+    menu: kiln_inventory::Menu,
+    /// A block or entity menu the player has open.
+    open_menu: Option<kiln_inventory::Menu>,
     /// Movement packets for this player's viewers.
     tracker: packets::entity::MovementTracker,
     /// Players currently seeing this one (sorted).
@@ -146,8 +151,6 @@ struct Player {
     /// Latest tab-completion request, answered once per tick.
     pending_suggestion: Option<(i32, String)>,
     teleport_id: i32,
-    /// Player inventory container state id (incremented on server-side changes).
-    inventory_state: i32,
     respawn: Option<[i32; 3]>,
     /// Saved player data this player was loaded from: tags Kiln does not model are written
     /// back from here.
@@ -184,69 +187,85 @@ impl Player {
         self.sink.disconnect(packets::play_disconnect(reason));
         self.disconnected = true;
     }
-    /// Adds items to the inventory like vanilla's `Inventory.add`: onto a matching stack with
-    /// room (selected slot, offhand, then the inventory in order), then into free slots.
-    /// Returns how many were taken; sends the changed slots.
-    fn add_to_inventory(&mut self, item: i32, mut count: i32) -> i32 {
-        let max = kiln_item::ItemStack::new(item, 1).max_stack_size();
-        let before = count;
-        // Inventory indices 0-8 are the hotbar (container slots 36-44), 9-35 the rest, 40 the
-        // offhand (slot 45).
-        let slot_of = |i: usize| match i {
-            0..=8 => 36 + i,
-            40 => 45,
-            i => i,
+    /// Adds a stack to the inventory (`Inventory.add`); returns how many items were taken. The
+    /// menus send the changed slots on their next broadcast.
+    fn add_to_inventory(&mut self, stack: &mut kiln_item::ItemStack) -> i32 {
+        let before = stack.count();
+        let infinite = self.game_mode == 1;
+        self.inv.add(None, stack, infinite);
+        before - stack.count()
+    }
+
+    fn player_flags(&self) -> kiln_inventory::PlayerFlags {
+        kiln_inventory::PlayerFlags {
+            creative: self.game_mode == 1,
+            infinite_materials: self.game_mode == 1,
+            spectator: self.game_mode == 3,
+            dead: false,
+            removed: self.disconnected,
+        }
+    }
+
+    /// Runs `f` on the open menu (or the inventory menu) and carries out its effects: packets
+    /// to the client, dropped items to `spawns`.
+    fn with_menu<R>(
+        &mut self,
+        rules: &kiln_inventory::Rules,
+        spawns: &mut Vec<entities::Spawn>,
+        f: impl FnOnce(&mut kiln_inventory::Menu, Option<&mut kiln_inventory::Menu>, &mut kiln_inventory::Env) -> R,
+    ) -> R {
+        let mut out = Vec::new();
+        let player = self.player_flags();
+        let result = {
+            let Player { inv, menu, open_menu, .. } = self;
+            let mut env = kiln_inventory::Env {
+                inventory: inv,
+                block: None,
+                player,
+                rules,
+                world: &mut kiln_inventory::NoWorld,
+                out: &mut out,
+            };
+            match open_menu {
+                Some(open) => f(open, Some(menu), &mut env),
+                None => f(menu, None, &mut env),
+            }
         };
-        let order: Vec<usize> = std::iter::once(self.selected).chain([40]).chain(0..36).collect();
-        for &i in &order {
-            let s = slot_of(i);
-            if let Some((id, n)) = &mut self.inventory[s]
-                && *id == item
-                && *n < max
-            {
-                let add = (max - *n).min(count);
-                *n += add;
-                count -= add;
-                self.slot_changed(s);
-                if count == 0 {
-                    return before;
-                }
+        for effect in out {
+            if let Some(pkt) = effect.encode() {
+                self.send(pkt);
+            }
+            if let kiln_inventory::Effect::Drop { stack, .. } = effect {
+                spawns.push(self.throw(stack));
             }
         }
-        for i in 0..36 {
-            let s = slot_of(i);
-            if self.inventory[s].is_none() {
-                let add = max.min(count);
-                self.inventory[s] = Some((item, add));
-                count -= add;
-                self.slot_changed(s);
-                if count == 0 {
-                    break;
-                }
-            }
-        }
-        before - count
+        result
     }
 
-    fn slot_changed(&mut self, slot: usize) {
-        self.inventory_state += 1;
-        let pkt = packets::container_set_slot(0, self.inventory_state, slot as i16, self.inventory[slot]);
-        self.send(pkt);
-    }
-
-    /// Drops one item (or the whole stack) from the selected hotbar slot.
+    /// Drops one item (or the whole stack) from the selected hotbar slot (`ServerPlayer.drop`).
     fn drop_held(&mut self, all: bool) -> Option<entities::Spawn> {
-        let slot = HOTBAR_START + self.selected;
-        let (item, count) = self.inventory[slot]?;
-        let n = if all { count } else { 1 };
-        self.inventory[slot] = (count > n).then_some((item, count - n));
-        self.slot_changed(slot);
-        Some(self.throw(item, n))
+        let slot = &mut self.inv.items[self.inv.selected];
+        if slot.is_empty() {
+            return None;
+        }
+        let dropped = if all { std::mem::replace(slot, kiln_item::ItemStack::empty()) } else { slot.split(1) };
+        self.inv.times_changed += 1;
+        Some(self.throw(dropped))
+    }
+
+    /// Item id per inventory menu slot, as the client numbers them (tests and tools).
+    fn menu_view(&self) -> Vec<Option<(i32, i32)>> {
+        let mut out = vec![None; INVENTORY_SLOTS];
+        let view = |s: &kiln_item::ItemStack| (!s.is_empty()).then(|| (s.item(), s.count()));
+        for (i, s) in self.inv.items.iter().enumerate() {
+            out[if i < 9 { HOTBAR_START + i } else { i }] = view(s);
+        }
+        out
     }
 
     /// An item thrown from the eyes in the look direction (`LivingEntity.createItemStackToDrop`
     /// with `throwRandomly` false).
-    fn throw(&mut self, item: i32, count: i32) -> entities::Spawn {
+    fn throw(&mut self, stack: kiln_item::ItemStack) -> entities::Spawn {
         let (yaw, pitch) = (self.rot[0].to_radians(), self.rot[1].to_radians());
         let f = 0.3f32;
         let angle = self.rng.next_f32() * std::f32::consts::TAU;
@@ -261,10 +280,7 @@ impl Player {
             kind: &kiln_data::entities::types::ITEM,
             pos: [self.pos[0], eye_y - 0.3, self.pos[2]],
             vel,
-            body: entities::Body::Item {
-                stack: kiln_proto::packets::ItemStack { item, count, added: Vec::new(), removed: Vec::new() },
-                pickup_delay: entities::DROP_PICKUP_DELAY,
-            },
+            body: entities::Body::Item { stack, pickup_delay: entities::DROP_PICKUP_DELAY },
         }
     }
 
@@ -424,6 +440,8 @@ impl Dim {
 
 pub struct Sim {
     config: SimConfig,
+    /// Recipes and item rules from the vanilla datapack.
+    rules: std::sync::Arc<kiln_inventory::Rules>,
     dim: Dim,
     pool: kiln_sched::TickPool,
     /// World spawn block; players appear around it.
@@ -530,7 +548,9 @@ impl Sim {
             config.pool.workers,
             if config.unified_regions { "unified" } else { "split" }
         );
+        let rules = std::sync::Arc::new(load_rules(config.noise.as_ref().map(|n| n.datapack.as_path())));
         Sim {
+            rules,
             pool: kiln_sched::TickPool::with_config(config.pool.clone()),
             config,
             dim: Dim {
@@ -677,7 +697,7 @@ impl Sim {
             p.uuid.hash(&mut h);
             p.pos.map(f64::to_bits).hash(&mut h);
             p.rot.map(f32::to_bits).hash(&mut h);
-            (p.game_mode, p.selected, p.inventory, p.sneaking, p.sprinting).hash(&mut h);
+            (p.game_mode, p.inv.selected, p.menu_view(), p.sneaking, p.sprinting).hash(&mut h);
         }
         h.finish()
     }
@@ -708,7 +728,7 @@ impl Sim {
 
     /// A player's inventory as (item id, count) per container slot.
     pub fn inventory(&self, conn: ConnId) -> Option<Vec<Option<(i32, i32)>>> {
-        self.players.get(&conn).map(|p| p.inventory.to_vec())
+        self.players.get(&conn).map(Player::menu_view)
     }
 
     /// Timing of the last completed statistics window.
@@ -718,6 +738,7 @@ impl Sim {
 
     fn env(&self) -> Env {
         Env {
+            rules: self.rules.clone(),
             game_time: self.game_time,
             max_view: self.config.view_distance as i32,
             movement_check: self.rule_bool("minecraft:player_movement_check"),
@@ -948,8 +969,10 @@ impl Sim {
             last_keep_alive: Instant::now(),
             chunks_per_tick: 9.0,
             unacked_batches: 0,
-            inventory: joining.inventory,
-            selected: joining.selected,
+            inv: joining.inv,
+            inv_extra: joining.inv_extra,
+            menu: kiln_inventory::Menu::inventory(),
+            open_menu: None,
             tracker: packets::entity::MovementTracker::new(
                 entity_id,
                 kiln_data::entities::types::PLAYER.update_interval,
@@ -963,7 +986,6 @@ impl Sim {
             swung: false,
             pending_suggestion: None,
             teleport_id: 1,
-            inventory_state: 0,
             respawn: joining.respawn,
             saved: joining.saved,
             first_good: spawn,
@@ -995,8 +1017,11 @@ impl Sim {
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
         player.send(self.time_packet());
-        player.send(packets::set_held_slot(player.selected as i32));
-        player.send(packets::container_set_content(0, player.inventory_state, &player.inventory, None));
+        player.send(packets::set_held_slot(player.inv.selected as i32));
+        player.send(kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes));
+        let rules = self.rules.clone();
+        let mut spawns = Vec::new();
+        player.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
 
         let msg = yellow(&format!("{} joined the game", player.name));
         self.players.insert(j.conn, player);
@@ -1070,6 +1095,19 @@ fn land_spawn(provider: &mut ChunkProvider) -> [i32; 3] {
         }
     }
     [0, 64, 0]
+}
+
+/// Recipes from the datapack at `path`, `KILN_DATAPACK` or `work/generated`; none if absent.
+fn load_rules(path: Option<&std::path::Path>) -> kiln_inventory::Rules {
+    let dir = path.map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("KILN_DATAPACK").map(Into::into));
+    let dir = dir.unwrap_or_else(|| "work/generated".into());
+    match kiln_inventory::Rules::load(&dir) {
+        Ok(rules) => rules,
+        Err(e) => {
+            warn!("no recipes ({}: {e})", dir.display());
+            kiln_inventory::Rules::with_recipes(Default::default())
+        }
+    }
 }
 
 fn player_chunk(pos: [f64; 3]) -> ChunkPos {

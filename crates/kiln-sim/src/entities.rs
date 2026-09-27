@@ -9,8 +9,7 @@ use crate::Player;
 use bytes::Bytes;
 use kiln_data::entities::{EntityType, data};
 use kiln_link::ConnId;
-use kiln_proto::packets::ItemStack;
-use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, MovementTracker, metadata};
+use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, MovementTracker};
 use kiln_region::{CellPos, RegionPart};
 use kiln_world::{Blocks, ChunkPos};
 use smallvec::SmallVec;
@@ -23,7 +22,7 @@ const ITEM_LIFETIME: i32 = 6000;
 const GRAVITY: f64 = 0.04;
 
 pub(crate) enum Body {
-    Item { stack: ItemStack, pickup_delay: i32 },
+    Item { stack: kiln_item::ItemStack, pickup_delay: i32 },
 }
 
 pub(crate) struct Entity {
@@ -99,8 +98,9 @@ impl Entity {
         let mut d = EntityData::new();
         match &self.body {
             Body::Item { stack, .. } => {
-                let shown = metadata::ItemStack { item: stack.item, count: stack.count };
-                d.set(data::item_entity::ITEM, &DataValue::ItemStack(Some(shown)));
+                let mut bytes = bytes::BytesMut::new();
+                stack.write_optional(&mut bytes);
+                d.set(data::item_entity::ITEM, &DataValue::EncodedItemStack(bytes.freeze()));
             }
         }
         d
@@ -268,7 +268,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
         let Some(i) = players.iter().position(|p| !p.disconnected && p.game_mode != 3 && touching(p)) else {
             continue;
         };
-        let taken = players[i].add_to_inventory(stack.item, stack.count);
+        let taken = players[i].add_to_inventory(stack);
         if taken == 0 {
             continue;
         }
@@ -281,8 +281,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
                 players[j].send(pkt.clone());
             }
         }
-        stack.count -= taken;
-        if stack.count <= 0 {
+        if stack.is_empty() {
             e.removed = true;
         }
     }

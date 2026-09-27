@@ -471,14 +471,23 @@ impl Host for Sim {
     fn give(&mut self, player: &PlayerRef, item: &ItemInput, count: i32) {
         let Some(id) = kiln_data::builtin_id("minecraft:item", item.item.as_str()) else { return };
         let Some(p) = self.players.get_mut(&player.conn) else { return };
-        // First empty slot: hotbar, then the main inventory.
-        let slot = (36..45).chain(9..36).find(|&s| p.inventory[s].is_none());
-        if let Some(slot) = slot {
-            p.inventory[slot] = Some((id, count));
-            p.inventory_state += 1;
-            let pkt = packets::container_set_slot(0, p.inventory_state, slot as i16, Some((id, count)));
-            p.send(pkt);
+        // Stacks of at most the item's size; what does not fit is thrown (`GiveCommand`).
+        let mut left = count;
+        let max = kiln_item::ItemStack::new(id, 1).max_stack_size();
+        while left > 0 {
+            let n = left.min(max);
+            left -= n;
+            let mut stack = kiln_item::ItemStack::new(id, n);
+            p.add_to_inventory(&mut stack);
+            if !stack.is_empty() {
+                let spawn = p.throw(stack);
+                self.dim.spawns.push(spawn);
+            }
         }
+        let rules = self.rules.clone();
+        let mut spawns = Vec::new();
+        p.with_menu(&rules, &mut spawns, |menu, _, env| menu.broadcast_changes(env));
+        self.dim.spawns.extend(spawns);
     }
 
     fn kick(&mut self, player: &PlayerRef, reason: Text) {
