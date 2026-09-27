@@ -37,6 +37,10 @@ fn class_can_survive(class: &str, state: u16, r: &mut Region, p: BlockPos) -> Op
                 may_place_on(state, below, r, p.below())
             }
         }
+        "SmallDripleafBlock" if prop(state, "half") != Some("upper") => {
+            let below = r.get(p.below());
+            may_place_on(state, below, r, p.below())
+        }
         "TallSeagrassBlock" => {
             if prop(state, "half") == Some("upper") {
                 let below = r.get(p.below());
@@ -110,6 +114,10 @@ fn may_place_on(state: u16, below: u16, r: &mut Region, below_pos: BlockPos) -> 
         let v = match class {
             "VegetationBlock" => vtags::is(below, "supports_vegetation"),
             "MushroomBlock" => solid_render(below),
+            "SmallDripleafBlock" => {
+                vtags::is(below, "supports_small_dripleaf")
+                    || (fluid(r.get(below_pos.above())).is_water_source() && vtags::is(below, "supports_vegetation"))
+            }
             "DryVegetationBlock" => vtags::is(below, "supports_dry_vegetation"),
             "AzaleaBlock" => vtags::is(below, "supports_azalea"),
             "CactusFlowerBlock" => {
