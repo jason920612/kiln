@@ -51,6 +51,9 @@ pub fn parse(ty: &str, json: &Json, l: &Loader) -> Result<Option<Box<dyn Kind>>,
         "jigsaw" => Some(Box::new(super::jigsaw::parse(json, l)?)),
         "buried_treasure" => Some(Box::new(legacy::buried_treasure::BuriedTreasure)),
         "mineshaft" => Some(Box::new(legacy::mineshaft::Mineshaft::parse(json, l)?)),
+        "desert_pyramid" => Some(Box::new(legacy::scattered::DesertPyramid)),
+        "jungle_temple" => Some(Box::new(legacy::scattered::JungleTemple)),
+        "swamp_hut" => Some(Box::new(legacy::scattered::SwampHut)),
         _ => None,
     })
 }

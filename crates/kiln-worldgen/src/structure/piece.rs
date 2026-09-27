@@ -65,6 +65,16 @@ pub trait Piece: Send + Sync + std::fmt::Debug {
     fn as_pool_element(&self) -> Option<&super::jigsaw::piece::PoolElementPiece> {
         None
     }
+
+    /// The box now: pieces that settle onto the ground while placed move theirs.
+    fn bbox_now(&self) -> BoundingBox {
+        self.base().bbox
+    }
+
+    /// For structures whose `afterPlace` looks at their own piece types.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }
 
 /// `StructurePiece`'s own fields.

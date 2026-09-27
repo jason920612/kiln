@@ -793,6 +793,15 @@ public class FeatureVectors {
             int x = r.nextInt(60000) - 30000, z = r.nextInt(60000) - 30000;
             ChunkPos p = placement.getPotentialStructureChunk(seed, x, z);
             if (!placement.isStructureChunk(state, p.x(), p.z())) continue;
+            // Some structure of the set must be able to start there: a valid biome in the
+            // chunk's center column.
+            boolean valid = false;
+            for (var e : holder.value().structures()) {
+                for (int qy = -16; qy <= 80 && !valid; qy += 2) {
+                    valid = e.structure().value().biomes().contains(level.getUncachedNoiseBiome((p.x() << 2) + 2, qy, (p.z() << 2) + 2));
+                }
+            }
+            if (!valid) continue;
             if (out.stream().anyMatch(o -> Math.abs(o[0] - p.x()) < 40 && Math.abs(o[1] - p.z()) < 40)) continue;
             out.add(new int[] {p.x() - size / 2, p.z() - size / 2});
         }
