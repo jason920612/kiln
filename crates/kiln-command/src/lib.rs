@@ -20,6 +20,7 @@
 
 pub mod arguments;
 pub mod blocks;
+pub mod bossbar;
 pub mod component;
 pub mod coords;
 pub mod dispatcher;
@@ -51,7 +52,8 @@ pub use host::{
 };
 pub use reader::StringReader;
 pub use nbt_path::CommandStorage;
-pub use scoreboard::{Objective, Scoreboard};
+pub use bossbar::{BossBar, BossBars};
+pub use scoreboard::{NumberFormat, Objective, ScoreAccess, Scoreboard, Team};
 pub use selector::{Aabb, EntitySelector, NoEntity, SelectorTarget, SelectorWorld};
 pub use suggestion::{Suggestion, Suggestions, SuggestionsBuilder};
 pub use text::{Arg, Language, Text};

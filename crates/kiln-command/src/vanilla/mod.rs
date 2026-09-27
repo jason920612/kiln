@@ -2,12 +2,15 @@
 //! `commands.json`) and feedback, plus Kiln's `/kiln`.
 
 mod blocks;
+mod bossbar;
 mod chat;
 mod execute;
 pub mod gamerules;
 mod players;
 mod scoreboard;
 mod server;
+mod team;
+mod title;
 
 use crate::arguments::GameProfileArg;
 use crate::dispatcher::Dispatcher;
@@ -52,7 +55,13 @@ pub const COMMANDS: &[&str] = &[
     "fill",
     "clone",
     "tellraw",
+    "teammsg",
+    "tm",
     "scoreboard",
+    "trigger",
+    "team",
+    "bossbar",
+    "title",
     "kiln",
 ];
 
@@ -83,7 +92,12 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     blocks::fill(d);
     blocks::clone(d);
     chat::tellraw(d);
+    chat::teammsg(d);
     scoreboard::scoreboard(d);
+    scoreboard::trigger(d);
+    team::team(d);
+    bossbar::bossbar(d);
+    title::title(d);
     server::kiln(d);
 }
 

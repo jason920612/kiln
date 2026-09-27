@@ -102,6 +102,10 @@ pub enum ArgumentType {
     Component,
     /// `minecraft:style`: text style fields.
     Style,
+    /// `minecraft:team`: a team name (looked up when used).
+    Team,
+    /// `minecraft:team_color`: one of the sixteen [`TEAM_COLORS`].
+    TeamColor,
 }
 
 impl ArgumentType {
@@ -215,6 +219,8 @@ impl ArgumentType {
             ArgumentType::LootPredicate => Parser::Plain("minecraft:loot_predicate"),
             ArgumentType::Component => Parser::Plain("minecraft:component"),
             ArgumentType::Style => Parser::Plain("minecraft:style"),
+            ArgumentType::Team => Parser::Plain("minecraft:team"),
+            ArgumentType::TeamColor => Parser::Plain("minecraft:team_color"),
         }
     }
 
@@ -365,7 +371,16 @@ impl ArgumentType {
             ArgumentType::ScoreHolder { multiple } => {
                 ArgumentValue::ScoreHolder(ScoreHolderArg::parse(reader, allow_selectors, multiple)?)
             }
-            ArgumentType::Objective => ArgumentValue::String(reader.read_unquoted_string().to_owned()),
+            ArgumentType::Objective | ArgumentType::Team => {
+                ArgumentValue::String(reader.read_unquoted_string().to_owned())
+            }
+            ArgumentType::TeamColor => {
+                let s = reader.read_unquoted_string();
+                if !TEAM_COLORS.contains(&s) {
+                    return Err(CommandError::new(tr!("argument.color.invalid", s)).at(reader));
+                }
+                ArgumentValue::String(s.to_owned())
+            }
             ArgumentType::ObjectiveCriteria => {
                 let s = read_until_space(reader);
                 if !criterion_exists(s) {
@@ -498,6 +513,7 @@ impl ArgumentType {
                 selector::suggest(builder, allow, &names);
             }
             ArgumentType::Operation => builder.suggest_matching(Operation::ALL.map(Operation::symbol)),
+            ArgumentType::TeamColor => builder.suggest_matching(TEAM_COLORS),
             ArgumentType::ScoreboardSlot => {
                 let mut slots = vec!["list".to_owned(), "sidebar".to_owned(), "below_name".to_owned()];
                 slots.extend(TEAM_COLORS.iter().map(|c| format!("sidebar.team.{c}")));

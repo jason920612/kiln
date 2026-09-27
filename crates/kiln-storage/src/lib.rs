@@ -6,6 +6,7 @@ pub mod entities;
 pub mod level;
 pub mod player;
 pub mod region;
+pub mod saved_data;
 
 pub use anvil::AnvilSource;
 pub use entities::EntityStore;

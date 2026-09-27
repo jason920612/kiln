@@ -22,13 +22,18 @@ const ADVENTURE: u8 = 2;
 pub(crate) struct Storage {
     pub level: LevelStore,
     pub players: PlayerStore,
+    pub dir: std::path::PathBuf,
 }
 
 impl Storage {
     pub fn open(world_dir: &Path) -> Self {
-        Self { level: LevelStore::open(world_dir), players: PlayerStore::new(world_dir) }
+        Self { level: LevelStore::open(world_dir), players: PlayerStore::new(world_dir), dir: world_dir.to_owned() }
     }
 }
+
+/// Saved data ids (`data/minecraft/<id>.dat`).
+const SCOREBOARD: &str = "scoreboard";
+const BOSS_EVENTS: &str = "custom_boss_events";
 
 /// How a joining player starts: their saved state, or vanilla's defaults for a new player.
 pub(crate) struct Joining {
@@ -126,6 +131,34 @@ impl Sim {
         }
         if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
             warn!("failed to save player data for {}: {e}", p.name);
+        }
+    }
+
+    /// Loads the scoreboard and custom boss bars (`data/minecraft/scoreboard.dat`,
+    /// `custom_boss_events.dat`) when the world has them.
+    pub(crate) fn load_scoreboard(&mut self) {
+        let Some(storage) = &self.storage else { return };
+        if let Some(data) = kiln_storage::saved_data::read(&storage.dir, SCOREBOARD) {
+            self.commands.scoreboard.load_nbt(&data);
+        }
+        if let Some(data) = kiln_storage::saved_data::read(&storage.dir, BOSS_EVENTS) {
+            self.commands.bossbars.load_nbt(&data);
+        }
+    }
+
+    /// Writes the scoreboard and boss bars if they changed (vanilla saves dirty saved data).
+    pub(crate) fn save_scoreboard(&mut self) {
+        let Some(storage) = &self.storage else { return };
+        let dir = storage.dir.clone();
+        if self.commands.scoreboard.take_dirty()
+            && let Err(e) = kiln_storage::saved_data::write(&dir, SCOREBOARD, self.commands.scoreboard.to_nbt())
+        {
+            warn!("failed to save the scoreboard: {e}");
+        }
+        if self.commands.bossbars.take_dirty()
+            && let Err(e) = kiln_storage::saved_data::write(&dir, BOSS_EVENTS, self.commands.bossbars.to_nbt())
+        {
+            warn!("failed to save boss bars: {e}");
         }
     }
 
