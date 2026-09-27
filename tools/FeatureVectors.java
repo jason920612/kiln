@@ -844,6 +844,15 @@ public class FeatureVectors {
         for (int dz = 0; dz < size; dz++) for (int dx = 0; dx < size; dx++) targets.add(new int[] {5000 + dx, -7000 + dz});
         List<long[]> order = decorationOrder(targets);
         ExecutorService pool = Executors.newFixedThreadPool(Math.max(1, Runtime.getRuntime().availableProcessors() - 2));
+        ExecutorService single = Executors.newSingleThreadExecutor();
+        for (var p : List.of(single, pool)) {
+            long t = System.nanoTime();
+            int count = terrainFor(order, p).size();
+            OUT.printf("vanilla STRUCTURE_STARTS..TERRAIN (%s structures), %s: %.2f ms/chunk over %d chunks%n",
+                structures ? "with" : "without", p == single ? "1 thread" : (Runtime.getRuntime().availableProcessors() - 2) + " threads",
+                (System.nanoTime() - t) / 1e6 / count, count);
+        }
+        single.shutdown();
         double best = Double.MAX_VALUE;
         for (int round = 0; round < 3; round++) {
             Map<Long, ProtoChunk> chunks = terrainFor(order, pool);
