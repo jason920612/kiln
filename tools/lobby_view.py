@@ -22,11 +22,10 @@ import e2e  # noqa: E402
 
 BOT = "LobbyBot0"
 
-# Superflat: grass at y -61. The client looks north at the bot from z 21.
+# The bot stands where the client joined; the client steps 4 blocks south and looks north at it.
 SCENE = f"""
 gamemode creative KilnView
 time set 6000
-fill 2 -60 10 14 -55 24 air
 scoreboard objectives add lobby dummy {{"text":"Kiln Lobby","color":"gold","bold":true}}
 scoreboard objectives setdisplay sidebar lobby
 scoreboard players set KilnView lobby 12
@@ -47,16 +46,16 @@ bossbar set kiln:lobby color purple
 bossbar set kiln:lobby style notched_10
 bossbar set kiln:lobby value 70
 bossbar set kiln:lobby players @a
-tp {BOT} 8 -60 17 0 0
-tp KilnView 8 -60 21 180 5
+tp {BOT} KilnView
+execute as KilnView at @s run tp @s ~ ~ ~4 180 5
 title KilnView times 10 400 20
 title KilnView subtitle {{"text":"scoreboard, teams, boss bars, titles","color":"gray"}}
 title KilnView title {{"text":"Kiln M3","color":"gold","bold":true}}
 """
 
 AFTER_RESTART = f"""
-tp {BOT} 8 -60 17 0 0
-tp KilnView 8 -60 21 180 5
+tp {BOT} KilnView
+execute as KilnView at @s run tp @s ~ ~ ~4 180 5
 title KilnView actionbar {{"text":"loaded from the world save","color":"green"}}
 """
 
