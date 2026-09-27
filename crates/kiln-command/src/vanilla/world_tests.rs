@@ -10,13 +10,7 @@ use kiln_data::blocks_types::block_by_name;
 use kiln_proto::nbt::Tag;
 
 fn objective(name: &str) -> Objective {
-    Objective {
-        name: name.into(),
-        criterion: "dummy".into(),
-        display_name: Text::literal(name),
-        render_type: "integer",
-        display_auto_update: false,
-    }
+    Objective::new(name, "dummy", Text::literal(name))
 }
 
 #[test]
@@ -232,4 +226,44 @@ fn tellraw_resolves_per_recipient() {
     assert_eq!(s.chat, ["to Bob: score: 7"]);
     assert_eq!(err_key(s.run(&d, "tellraw @a {bold:1b}")), "argument.component.invalid");
     assert_eq!(err_key(s.run(&d, "tellraw Nobody \"x\"")), "argument.entity.notfound.player");
+}
+
+#[test]
+fn teams_bossbars_titles_and_triggers() {
+    let d = dispatcher();
+    let s = &mut Mock::console(4);
+    assert_eq!(s.run(&d, "team add red"), Ok(1));
+    assert_eq!(err_key(s.run(&d, "team add red")), "commands.team.add.duplicate");
+    assert_eq!(s.run(&d, "team join red @a"), Ok(3), "Alice, Bob and Carol");
+    s.run(&d, "team modify red prefix \"[R] \"").unwrap();
+    assert_eq!(s.scoreboard.player_display_name("Bob").to_plain(), "[R] Bob");
+    assert_eq!(err_key(s.run(&d, "team modify red color reset")), "commands.team.option.color.unchanged");
+    assert_eq!(err_key(s.run(&d, "team modify nope color red")), "team.notFound");
+    assert_eq!(s.run(&d, "team leave Bob"), Ok(1));
+    assert_eq!(s.run(&d, "team empty red"), Ok(2));
+    assert_eq!(s.feedback.pop().unwrap().0, "commands.team.empty.success[2, [red]]");
+    // Add, change (display name), 3 joins, change (prefix), leave, 2 leaves.
+    assert_eq!(s.scoreboard.take_packets().len(), 9);
+
+    assert_eq!(s.run(&d, "bossbar add kiln:b \"B\""), Ok(1));
+    assert_eq!(s.run(&d, "bossbar set kiln:b max 10"), Ok(10));
+    s.run(&d, "execute store result bossbar kiln:b value run bossbar get kiln:b max").unwrap();
+    assert_eq!(s.bossbars.get(&crate::Identifier::parse("kiln:b").unwrap()).unwrap().progress, 1.0);
+    assert_eq!(err_key(s.run(&d, "bossbar set kiln:b value 10")), "commands.bossbar.set.value.unchanged");
+    assert_eq!(s.run(&d, "bossbar set kiln:b players @a[name=!Carol]"), Ok(2));
+    assert_eq!(s.bossbars.take_packets().len(), 2, "Alice and Bob see it");
+
+    assert_eq!(s.run(&d, "title @a[name=!Carol] times 1 2 3"), Ok(2));
+    assert_eq!(s.packets.len(), 2);
+    assert_eq!(s.feedback.pop().unwrap().0, "commands.title.times.multiple[2]");
+
+    s.run(&d, "scoreboard objectives add t trigger").unwrap();
+    assert_eq!(err_key(s.run(&d, "trigger t")), "permissions.requires.player");
+    let p = &mut Mock::new(0);
+    p.scoreboard = s.scoreboard.clone();
+    assert_eq!(err_key(p.run(&d, "trigger t")), "commands.trigger.failed.unprimed");
+    let mut a = p.scoreboard.access("Alice", "t");
+    p.scoreboard.set_locked(&mut a, false);
+    assert_eq!(p.run(&d, "trigger t add 4"), Ok(4));
+    assert_eq!(err_key(p.run(&d, "trigger t")), "commands.trigger.failed.unprimed", "locked again");
 }

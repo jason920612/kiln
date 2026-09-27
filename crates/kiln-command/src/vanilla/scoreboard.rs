@@ -1,14 +1,13 @@
-//! `/scoreboard` (`ScoreboardCommand`) on the host's [`Scoreboard`]. Per-score display
-//! names and number formats (`players display ...`, `objectives modify ... numberformat`)
-//! are parsed and reported like vanilla but not stored.
+//! `/scoreboard` (`ScoreboardCommand`) and `/trigger` (`TriggerCommand`) on the host's
+//! [`Scoreboard`].
 
-use super::LEVEL_GAMEMASTERS;
 use super::execute::score_holder_arg;
+use super::{LEVEL_GAMEMASTERS, source_player};
 use crate::arguments::{ArgumentType, Operation, ScoreHolderArg};
 use crate::dispatcher::{Builder, CommandContext, Dispatcher, argument, literal};
 use crate::error::CommandError;
 use crate::host::Host;
-use crate::scoreboard::{Objective, Scoreboard};
+use crate::scoreboard::{NumberFormat, Objective, ScoreAccess, Scoreboard};
 use crate::selector::SelectorTarget;
 use crate::text::Text;
 use crate::tr;
@@ -109,27 +108,29 @@ pub fn scoreboard<S: Host + 'static>(d: &mut Dispatcher<S>) {
     d.register(literal("scoreboard").requires(LEVEL_GAMEMASTERS).then(objectives).then(players));
 }
 
-/// A number format as the commands see it: set (`blank`, `fixed`, `styled`) or cleared.
-type FormatFn<S> = fn(&CommandContext<S>, &mut S, bool) -> Result<i32>;
+/// A number format as the commands give it: set (`blank`, `fixed`, `styled`) or cleared.
+type FormatFn<S> = fn(&CommandContext<S>, &mut S, Option<NumberFormat>) -> Result<i32>;
 
 /// `addNumberFormats`: `blank`, `fixed <contents>`, `styled <style>`, or nothing to clear.
 fn number_formats<S: Host + 'static>(b: Builder<S>, run: FormatFn<S>) -> Builder<S> {
-    b.then(literal("blank").executes(move |c, s: &mut S| run(c, s, true)))
+    b.then(literal("blank").executes(move |c, s: &mut S| run(c, s, Some(NumberFormat::Blank))))
         .then(literal("fixed").then(argument("contents", ArgumentType::Component).executes(move |c, s: &mut S| {
-            resolved(c, s, "contents")?;
-            run(c, s, true)
+            let contents = resolved(c, s, "contents")?;
+            run(c, s, Some(NumberFormat::Fixed(contents.to_nbt())))
         })))
-        .then(literal("styled").then(argument("style", ArgumentType::Style).executes(move |c, s: &mut S| run(c, s, true))))
-        .executes(move |c, s: &mut S| run(c, s, false))
+        .then(literal("styled").then(argument("style", ArgumentType::Style).executes(move |c, s: &mut S| {
+            run(c, s, Some(NumberFormat::Styled(c.nbt("style").clone())))
+        })))
+        .executes(move |c, s: &mut S| run(c, s, None))
 }
 
 /// `ComponentArgument.getResolvedComponent`.
-fn resolved<S: Host>(c: &CommandContext<S>, s: &mut S, name: &str) -> Result<Text> {
+pub(super) fn resolved<S: Host>(c: &CommandContext<S>, s: &mut S, name: &str) -> Result<Text> {
     let me = s.source_entity();
     Ok(c.component(name).resolve(s, me.as_ref())?.to_text())
 }
 
-fn board<S: Host>(s: &mut S) -> Result<&mut Scoreboard> {
+pub(super) fn board<S: Host>(s: &mut S) -> Result<&mut Scoreboard> {
     s.scoreboard_mut().ok_or_else(|| CommandError::unsupported("The scoreboard"))
 }
 
@@ -149,29 +150,36 @@ fn writable_objective<S: Host>(c: &CommandContext<S>, s: &mut S, arg: &str) -> R
 }
 
 /// `ScoreHolderArgument.getNamesWithDefaultWildcard`.
-fn holders<S: Host>(c: &CommandContext<S>, s: &mut S, arg: &str) -> Result<Vec<String>> {
+pub(super) fn holders<S: Host>(c: &CommandContext<S>, s: &mut S, arg: &str) -> Result<Vec<String>> {
     let tracked = s.scoreboard().map(Scoreboard::holders);
     c.score_holder(arg).names(s, tracked)
 }
 
 /// `ScoreHolder.getFeedbackDisplayName`: a player's display name, else the name.
-fn feedback_name<S: Host>(s: &S, holder: &str) -> Text {
+pub(super) fn feedback_name<S: Host>(s: &S, holder: &str) -> Text {
     s.players().iter().find(|p| p.scoreboard_name() == holder).map_or_else(|| Text::literal(holder), |p| p.display_name())
+}
+
+/// `getOrCreatePlayerScore(holder, objective)`; online players bring their display name for
+/// `displayautoupdate` objectives.
+fn access<S: Host>(s: &mut S, holder: &str, objective: &str) -> Result<ScoreAccess> {
+    let display = s.players().iter().find(|p| p.scoreboard_name() == holder).map(SelectorTarget::display_name);
+    Ok(board(s)?.access_as(holder, display, objective))
 }
 
 /// `CommandResponseTracker`: the total of the tracked values and the only (non-zero)
 /// holder, which picks between the single- and multiple-holder messages.
 #[derive(Default)]
-struct Tracker {
+pub(super) struct Tracker {
     total: i32,
     count: i32,
     only: Option<String>,
-    non_zero: i32,
+    pub(super) non_zero: i32,
     only_non_zero: Option<String>,
 }
 
 impl Tracker {
-    fn track(&mut self, holder: &str, value: i32) {
+    pub(super) fn track(&mut self, holder: &str, value: i32) {
         self.total = self.total.wrapping_add(value);
         self.count += 1;
         self.only = (self.count == 1).then(|| holder.to_owned());
@@ -182,7 +190,7 @@ impl Tracker {
     }
 
     /// `sendFeedback`: `any` is `ElementType.ANY`, else `NON_ZERO`; returns the total.
-    fn send<S: Host>(
+    pub(super) fn send<S: Host>(
         &self,
         s: &mut S,
         any: bool,
@@ -213,13 +221,7 @@ fn list_objectives<S: Host>(s: &mut S) -> Result<i32> {
 
 fn add_objective<S: Host>(s: &mut S, name: &str, criterion: &str, display_name: Text) -> Result<i32> {
     let board = board(s)?;
-    let objective = Objective {
-        name: name.to_owned(),
-        criterion: criterion.to_owned(),
-        display_name,
-        render_type: if criterion == "health" { "hearts" } else { "integer" },
-        display_auto_update: false,
-    };
+    let objective = Objective::new(name, criterion, display_name);
     let formatted = objective.formatted_display_name();
     if !board.add_objective(objective) {
         return Err(CommandError::new(tr!("commands.scoreboard.objectives.add.duplicate")));
@@ -238,11 +240,18 @@ fn remove_objective<S: Host>(c: &CommandContext<S>, s: &mut S) -> Result<i32> {
     Ok(n)
 }
 
-/// Applies `f` to the objective named by the `objective` argument; returns the changed copy.
+/// Applies `f` to the objective named by the `objective` argument; returns the changed copy
+/// after telling clients (`onObjectiveChanged`).
 fn modify<S: Host>(c: &CommandContext<S>, s: &mut S, f: impl FnOnce(&mut Objective) -> bool) -> Result<Option<Objective>> {
     let name = objective(c, s, "objective")?.name;
-    let objective = board(s)?.objective_mut(&name).expect("objective exists");
-    Ok(f(objective).then(|| objective.clone()))
+    let board = board(s)?;
+    let objective = board.objective_mut(&name).expect("objective exists");
+    if !f(objective) {
+        return Ok(None);
+    }
+    let copy = objective.clone();
+    board.changed_objective(&name);
+    Ok(Some(copy))
 }
 
 fn set_display_name<S: Host>(c: &CommandContext<S>, s: &mut S, display: Text) -> Result<i32> {
@@ -277,11 +286,15 @@ fn set_display_auto_update<S: Host>(c: &CommandContext<S>, s: &mut S, value: boo
     Ok(0)
 }
 
-fn set_objective_format<S: Host>(c: &CommandContext<S>, s: &mut S, set: bool) -> Result<i32> {
-    let name = objective(c, s, "objective")?.name;
-    let key = if set { "set" } else { "clear" };
+fn set_objective_format<S: Host>(c: &CommandContext<S>, s: &mut S, format: Option<NumberFormat>) -> Result<i32> {
+    let key = if format.is_some() { "set" } else { "clear" };
+    let o = modify(c, s, |o| {
+        o.number_format = format;
+        true
+    })?
+    .expect("always changed");
     let key = format!("commands.scoreboard.objectives.modify.objectiveFormat.{key}");
-    s.send_success(Text::translate(key, vec![name.into()]), true);
+    s.send_success(Text::translate(key, vec![o.name.into()]), true);
     Ok(0)
 }
 
@@ -355,9 +368,9 @@ fn set_score<S: Host>(c: &CommandContext<S>, s: &mut S, value: i32) -> Result<i3
     let holders = holders(c, s, "targets")?;
     let objective = writable_objective(c, s, "objective")?;
     let mut tracker = Tracker::default();
-    let board = board(s)?;
     for holder in &holders {
-        board.set_score(holder, &objective.name, value);
+        let mut a = access(s, holder, &objective.name)?;
+        board(s)?.set(&mut a, value);
         tracker.track(holder, value);
     }
     let o = objective.formatted_display_name();
@@ -376,11 +389,10 @@ fn add_score<S: Host>(c: &CommandContext<S>, s: &mut S, remove: bool) -> Result<
     let holders = holders(c, s, "targets")?;
     let objective = writable_objective(c, s, "objective")?;
     let mut tracker = Tracker::default();
-    let board = board(s)?;
     for holder in &holders {
-        let score = board.score_mut(holder, &objective.name);
-        score.value = score.value.wrapping_add(delta);
-        tracker.track(holder, score.value);
+        let mut a = access(s, holder, &objective.name)?;
+        let value = board(s)?.add(&mut a, delta);
+        tracker.track(holder, value);
     }
     let o = objective.formatted_display_name();
     let kind = if remove { "remove" } else { "add" };
@@ -433,11 +445,11 @@ fn enable_trigger<S: Host>(c: &CommandContext<S>, s: &mut S) -> Result<i32> {
         return Err(CommandError::new(tr!("commands.scoreboard.players.enable.invalid")));
     }
     let mut tracker = Tracker::default();
-    let board = board(s)?;
     for holder in &holders {
-        let score = board.score_mut(holder, &objective.name);
-        if score.locked {
-            score.locked = false;
+        let mut a = access(s, holder, &objective.name)?;
+        let board = board(s)?;
+        if board.score_info(holder, &objective.name).is_some_and(|i| i.locked) {
+            board.set_locked(&mut a, false);
             tracker.track(holder, 1);
         }
     }
@@ -476,9 +488,9 @@ fn set_score_display<S: Host>(c: &CommandContext<S>, s: &mut S, name: Option<Tex
     let holders = holders(c, s, "targets")?;
     let objective = objective(c, s, "objective")?;
     let mut tracker = Tracker::default();
-    let board = board(s)?;
     for holder in &holders {
-        board.score_mut(holder, &objective.name);
+        let mut a = access(s, holder, &objective.name)?;
+        board(s)?.set_score_display(&mut a, name.clone());
         tracker.track(holder, 1);
     }
     let o = objective.formatted_display_name();
@@ -498,17 +510,17 @@ fn set_score_display<S: Host>(c: &CommandContext<S>, s: &mut S, name: Option<Tex
     })
 }
 
-fn set_score_format<S: Host>(c: &CommandContext<S>, s: &mut S, set: bool) -> Result<i32> {
+fn set_score_format<S: Host>(c: &CommandContext<S>, s: &mut S, format: Option<NumberFormat>) -> Result<i32> {
     let holders = holders(c, s, "targets")?;
     let objective = objective(c, s, "objective")?;
+    let kind = if format.is_some() { "set" } else { "clear" };
     let mut tracker = Tracker::default();
-    let board = board(s)?;
     for holder in &holders {
-        board.score_mut(holder, &objective.name);
+        let mut a = access(s, holder, &objective.name)?;
+        board(s)?.set_score_number_format(&mut a, format.clone());
         tracker.track(holder, 1);
     }
     let o = objective.formatted_display_name();
-    let kind = if set { "set" } else { "clear" };
     Ok(tracker.send(
         s,
         false,
@@ -531,17 +543,23 @@ fn operation<S: Host>(c: &CommandContext<S>, s: &mut S) -> Result<i32> {
     let sources = holders(c, s, "source")?;
     let source_objective = objective(c, s, "sourceObjective")?;
     let mut tracker = Tracker::default();
-    let board = board(s)?;
     for target in &targets {
-        board.score_mut(target, &target_objective.name);
+        let mut t = access(s, target, &target_objective.name)?;
         for source in &sources {
-            let b = board.score_mut(source, &source_objective.name).value;
-            let a = board.score_mut(target, &target_objective.name).value;
-            let (a, b) = apply(op, a, b)?;
-            board.score_mut(source, &source_objective.name).value = b;
-            board.score_mut(target, &target_objective.name).value = a;
+            let mut src = access(s, source, &source_objective.name)?;
+            let board = board(s)?;
+            let (a, b) = (board.get(&t), board.get(&src));
+            let (a2, b2) = apply(op, a, b)?;
+            // `Operation.apply` writes the source only when swapping.
+            if op == Operation::Swap {
+                board.set(&mut t, a2);
+                board.set(&mut src, b2);
+            } else {
+                board.set(&mut t, a2);
+            }
         }
-        tracker.track(target, board.score_mut(target, &target_objective.name).value);
+        let value = board(s)?.get(&t);
+        tracker.track(target, value);
     }
     let o = target_objective.formatted_display_name();
     Ok(tracker.send(
@@ -575,6 +593,77 @@ fn apply(op: Operation, a: i32, b: i32) -> Result<(i32, i32)> {
         Operation::Max => (a.max(b), b),
         Operation::Swap => (b, a),
     })
+}
+
+/// `TriggerCommand`: players change their own unlocked `trigger` scores, which locks them.
+pub fn trigger<S: Host + 'static>(d: &mut Dispatcher<S>) {
+    let objective = argument("objective", ArgumentType::Objective).suggests_server(|_, s: &S, b| {
+        // `suggestObjectives`: the source's unlocked trigger scores.
+        let (Some(me), Some(board)) = (s.source_entity(), s.scoreboard()) else { return };
+        let holder = me.scoreboard_name();
+        let names: Vec<&str> = board
+            .objectives()
+            .into_iter()
+            .filter(|o| o.criterion == "trigger" && board.score_info(&holder, &o.name).is_some_and(|i| !i.locked))
+            .map(|o| o.name.as_str())
+            .collect();
+        b.suggest_matching(names);
+    });
+    d.register(
+        literal("trigger").then(
+            objective
+                .executes(|c, s: &mut S| trigger_score(c, s, |_| 1, None))
+                .then(literal("add").then(argument("value", ArgumentType::integer()).executes(|c, s: &mut S| {
+                    let v = c.integer("value");
+                    trigger_score(c, s, move |_| v, Some(("commands.trigger.add.success", v)))
+                })))
+                .then(literal("set").then(argument("value", ArgumentType::integer()).executes(|c, s: &mut S| {
+                    let v = c.integer("value");
+                    trigger_score(c, s, move |_| v, Some(("commands.trigger.set.success", v)))
+                }))),
+        ),
+    );
+}
+
+/// `getScore` then `simpleTrigger` / `addValue` / `setValue`: `feedback` is `None` for the
+/// plain `+1`, else the message key and the value given; `set` uses the value as-is.
+fn trigger_score<S: Host>(
+    c: &CommandContext<S>,
+    s: &mut S,
+    delta: impl Fn(i32) -> i32,
+    feedback: Option<(&str, i32)>,
+) -> Result<i32> {
+    let player = source_player(s)?;
+    let objective = objective(c, s, "objective")?;
+    if objective.criterion != "trigger" {
+        return Err(CommandError::new(tr!("commands.trigger.failed.invalid")));
+    }
+    let holder = player.scoreboard_name();
+    if board(s)?.score_info(&holder, &objective.name).is_none_or(|i| i.locked) {
+        return Err(CommandError::new(tr!("commands.trigger.failed.unprimed")));
+    }
+    let mut a = access(s, &holder, &objective.name)?;
+    let board = board(s)?;
+    board.set_locked(&mut a, true);
+    let o = objective.formatted_display_name();
+    let result = match feedback {
+        Some(("commands.trigger.set.success", v)) => {
+            board.set(&mut a, v);
+            s.send_success(tr!("commands.trigger.set.success", o, v), true);
+            v
+        }
+        Some((key, v)) => {
+            let total = board.add(&mut a, delta(v));
+            s.send_success(Text::translate(key, vec![o.into(), v.into()]), true);
+            total
+        }
+        None => {
+            let total = board.add(&mut a, delta(0));
+            s.send_success(tr!("commands.trigger.simple.success", o), true);
+            total
+        }
+    };
+    Ok(result)
 }
 
 #[cfg(test)]

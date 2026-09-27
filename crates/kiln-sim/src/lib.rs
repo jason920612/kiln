@@ -609,7 +609,7 @@ impl Sim {
         let datapack = config.noise.as_ref().map(|n| n.datapack.as_path());
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
-        Sim {
+        let mut sim = Sim {
             rules,
             loot,
             pool: kiln_sched::TickPool::with_config(config.pool.clone()),
@@ -639,7 +639,12 @@ impl Sim {
             day_time: level.as_ref().map_or(1000, |l| l.day_time),
             overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
             commands: commands::CommandState::new(ops_from_env()),
-        }
+        };
+        // Boss bar ids are random per server run, as vanilla draws them from the level random.
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+        sim.commands.bossbars.seed(now.as_nanos() as u64);
+        sim.load_scoreboard();
+        sim
     }
 
     /// Runs one tick: applies the connection events received since the last tick, then
@@ -1126,6 +1131,7 @@ impl Sim {
 
     fn leave(&mut self, conn: ConnId) {
         if let Some(p) = self.players.remove(&conn) {
+            self.commands.bossbars.player_left(p.uuid);
             self.save_player(&p);
             self.announce_leave(&p, conn);
             self.broadcast_system(yellow(&format!("{} left the game", p.name)));
@@ -1169,6 +1175,7 @@ impl Sim {
             self.save_player(p);
         }
         self.save_level();
+        self.save_scoreboard();
     }
 
     fn join(&mut self, j: JoinInfo, joining: persist::Joining) {
@@ -1275,10 +1282,16 @@ impl Sim {
         player.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
 
         let msg = yellow(&format!("{} joined the game", player.name));
+        let uuid = player.uuid;
+        for pkt in self.commands.scoreboard.join_packets() {
+            player.send(pkt);
+        }
         self.players.insert(j.conn, player);
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);
+        self.commands.bossbars.player_joined(uuid);
+        self.flush_scoreboard();
     }
 
     fn time_packet(&self) -> Bytes {

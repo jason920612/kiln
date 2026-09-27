@@ -5,6 +5,8 @@
 //! only mutates game state.
 
 use crate::blocks::{BlockInput, UpdateFlags};
+use crate::bossbar::BossBars;
+use bytes::Bytes;
 use crate::coords::{Coordinates, wrap_degrees};
 use crate::error::CommandError;
 use crate::nbt_path::CommandStorage;
@@ -340,13 +342,15 @@ impl GameRuleValue {
     }
 }
 
-/// The chat types of `say`, `me` and `msg`.
+/// The chat types of `say`, `me`, `msg` and `teammsg`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatKind {
     Say,
     Emote,
     MsgIncoming,
     MsgOutgoing,
+    TeamMsgIncoming,
+    TeamMsgOutgoing,
 }
 
 impl ChatKind {
@@ -357,12 +361,14 @@ impl ChatKind {
             ChatKind::Emote => "minecraft:emote_command",
             ChatKind::MsgIncoming => "minecraft:msg_command_incoming",
             ChatKind::MsgOutgoing => "minecraft:msg_command_outgoing",
+            ChatKind::TeamMsgIncoming => "minecraft:team_msg_command_incoming",
+            ChatKind::TeamMsgOutgoing => "minecraft:team_msg_command_outgoing",
         }
     }
 }
 
 /// A chat message sent through a chat type: `sender` is the source's name and `target` the
-/// recipient's name for outgoing whispers.
+/// recipient's name for outgoing whispers (the team's name for team messages).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChatMessage {
     pub kind: ChatKind,
@@ -384,6 +390,11 @@ impl ChatMessage {
             ChatKind::MsgOutgoing => {
                 let target = self.target.clone().unwrap_or_default();
                 tr!("commands.message.display.outgoing", target, content).color("gray").italic()
+            }
+            ChatKind::TeamMsgIncoming | ChatKind::TeamMsgOutgoing => {
+                let key = if self.kind == ChatKind::TeamMsgIncoming { "chat.type.team.text" } else { "chat.type.team.sent" };
+                let target = self.target.clone().unwrap_or_default();
+                Text::translate(key, vec![target.into(), self.sender.clone().into(), content])
             }
         }
     }
@@ -515,15 +526,30 @@ pub trait Host: SelectorWorld {
     fn storage_mut(&mut self) -> Option<&mut CommandStorage> {
         None
     }
+    /// Custom boss bars, if the host keeps them; hosts send what
+    /// [`BossBars::take_packets`] queues.
+    fn bossbars(&self) -> Option<&BossBars> {
+        None
+    }
+    fn bossbars_mut(&mut self) -> Option<&mut BossBars> {
+        None
+    }
     /// Sets the value (or `max`) of custom boss bar `id` (`execute store ... bossbar`).
     /// Hosts without boss bars have none, like a fresh vanilla server.
-    fn set_bossbar(&mut self, id: &Identifier, _max: bool, _value: i32) -> Result<(), CommandError> {
-        Err(CommandError::new(tr!("commands.bossbar.unknown", id.to_string())))
+    fn set_bossbar(&mut self, id: &Identifier, max: bool, value: i32) -> Result<(), CommandError> {
+        match self.bossbars_mut().filter(|b| b.get(id).is_some()) {
+            Some(bars) if max => bars.set_max(id, value),
+            Some(bars) => bars.set_value(id, value),
+            None => return Err(CommandError::new(tr!("commands.bossbar.unknown", id.to_string()))),
+        }
+        Ok(())
     }
     /// Whether custom boss bar `id` exists.
-    fn has_bossbar(&self, _id: &Identifier) -> bool {
-        false
+    fn has_bossbar(&self, id: &Identifier) -> bool {
+        self.bossbars().is_some_and(|b| b.get(id).is_some())
     }
+    /// Sends a play packet to one player (titles and the action bar).
+    fn send_packet(&mut self, _player: &Self::Entity, _packet: Bytes) {}
 }
 
 #[cfg(test)]

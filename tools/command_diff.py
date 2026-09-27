@@ -3,7 +3,8 @@ and on Kiln, and compare the console feedback line by line.
 
 usage: python tools/command_diff.py [--kiln-port 25587] [--vanilla-port 25591] [-k TEXT] [-v]
 
-Needs KILN_WORK (default <repo>/work) with the vanilla server.jar and versions/26.3/, and
+Needs KILN_WORK (default <repo>/work) with the vanilla server.jar and versions/26.3/ (scratch
+files go to KILN_DIFF_SCRATCH, default $KILN_WORK/wp2-commands/diff), and
 built executables (cargo build -p kiln-server -p kiln-bot). Both servers get a flat world and
 two idle kiln-bots ("Diff0", then "Other0") for selectors. Kiln prints English on its
 console through KILN_LANG (en_us.json extracted from the vanilla jar into the scratch dir).
@@ -27,14 +28,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORK = Path(os.environ.get("KILN_WORK", ROOT / "work"))
-SCRATCH = WORK / "wp2-commands" / "diff"
+SCRATCH = Path(os.environ.get("KILN_DIFF_SCRATCH", WORK / "wp2-commands" / "diff"))
 VERSION = "26.3"
 UNKNOWN = "Unknown or incomplete command. See below for error"
 
 # Test area: chunks -1..1 around 0,0, y 100..170, cleared to air first. Vanilla's flat world
 # spawns animals as chunks generate and drops items for `destroy`; they are killed before the
-# sections that select entities (Kiln has neither).
+# sections that select entities (Kiln has neither). Periodic animal spawns are turned off.
 CASES = r"""
+!v gamerule spawn_mobs false
 !v forceload add -32 -32 47 47
 !v kill @e[type=!minecraft:player]
 ! fill -16 100 -16 31 113 31 air
@@ -450,6 +452,217 @@ scoreboard objectives remove kills
 scoreboard objectives remove hp
 scoreboard objectives remove t
 scoreboard players list
+
+# scoreboard display
+scoreboard objectives add disp dummy
+scoreboard players set Diff0 disp 1
+scoreboard players display name Diff0 disp {"text":"Named","color":"gold"}
+scoreboard players display name Diff0 disp
+scoreboard players display name @a disp "x"
+scoreboard players display name #fake disp "fake"
+scoreboard players display numberformat Diff0 disp fixed "N"
+scoreboard players display numberformat @a disp styled {bold:true}
+scoreboard players display numberformat Diff0 disp blank
+scoreboard players display numberformat Diff0 disp
+scoreboard players display numberformat Diff0 nope blank
+scoreboard players display numberformat Diff0 disp styled {color:"nocolor"}
+scoreboard objectives modify disp numberformat fixed {"text":"F"}
+scoreboard objectives modify disp numberformat styled {italic:true}
+scoreboard objectives setdisplay sidebar disp
+scoreboard objectives setdisplay list disp
+scoreboard objectives modify disp displayautoupdate true
+scoreboard players add Diff0 disp 1
+scoreboard players get Diff0 disp
+scoreboard objectives setdisplay sidebar
+scoreboard objectives remove disp
+scoreboard objectives setdisplay list
+
+# trigger
+scoreboard objectives add trig trigger
+scoreboard objectives add notrig dummy
+trigger trig
+execute as Diff0 run trigger trig
+scoreboard players enable Diff0 trig
+execute as Diff0 run trigger trig
+execute as Diff0 run trigger trig
+scoreboard players enable Diff0 trig
+execute as Diff0 run trigger trig add 5
+execute as Diff0 run trigger trig add 5
+scoreboard players enable @a trig
+execute as Diff0 run trigger trig set -3
+scoreboard players get Diff0 trig
+execute as Other0 run trigger trig set 7
+scoreboard players get Other0 trig
+execute as Diff0 run trigger notrig
+execute as Diff0 run trigger nope
+execute as Diff0 run trigger trig bogus 1
+scoreboard objectives remove trig
+scoreboard objectives remove notrig
+
+# teams
+team list
+team add red
+team add red
+team add blue {"text":"Blue Team","color":"blue"}
+team add green "Green"
+team add 1234567890123456789
+team add a b
+team list
+team list red
+team list nope
+team join red Diff0
+team list red
+team join red #fake
+team join red Other0
+team list red
+team join red
+team join nope Diff0
+team join blue @a
+team list blue
+team list red
+team leave Diff0
+team leave Diff0
+team leave @a
+team leave #fake
+team join red @a
+team join green #a
+team join green #b
+team join green #c
+team join green zz
+team list green
+team empty red
+team empty red
+team empty blue
+team modify red color red
+team modify red color red
+team modify red color reset
+team modify red color reset
+team modify red color nocolor
+team modify red color yellow
+team modify red displayName {"text":"Reds"}
+team modify red displayName {"text":"Reds"}
+team modify red friendlyFire false
+team modify red friendlyFire false
+team modify red friendlyFire true
+team modify red friendlyFire true
+team modify red seeFriendlyInvisibles false
+team modify red seeFriendlyInvisibles false
+team modify red seeFriendlyInvisibles true
+team modify red nametagVisibility hideForOtherTeams
+team modify red nametagVisibility hideForOtherTeams
+team modify red nametagVisibility never
+team modify red nametagVisibility hideForOwnTeam
+team modify red nametagVisibility always
+team modify red deathMessageVisibility hideForOwnTeam
+team modify red deathMessageVisibility always
+team modify red deathMessageVisibility always
+team modify red collisionRule pushOwnTeam
+team modify red collisionRule pushOwnTeam
+team modify red collisionRule pushOtherTeams
+team modify red collisionRule never
+team modify red collisionRule always
+team modify red prefix {"text":"[R] ","color":"red"}
+team modify red suffix " *"
+team modify red prefix {"text":"[R] ","color":"red"}
+team modify nope prefix "x"
+team modify red bogus
+team join red Diff0
+team list red
+execute as Diff0 run teammsg hello team
+execute as Diff0 run tm hi
+execute as Other0 run teammsg nobody
+teammsg from the console
+scoreboard objectives add tk dummy
+scoreboard players set Diff0 tk 1
+scoreboard players set @a tk 2
+scoreboard players get Diff0 tk
+scoreboard objectives remove tk
+execute if entity @a[team=red]
+execute if entity @a[team=blue]
+execute if entity @a[team=!red]
+execute if entity @a[team=]
+execute as @a[team=red] run say in red
+team list
+team remove blue
+team remove blue
+team remove green
+team remove 1234567890123456789
+team list
+team remove red
+team list
+
+# titles
+title Diff0 title "Hi"
+title @a subtitle {"text":"sub"}
+title Diff0 actionbar "bar"
+title @a actionbar {"selector":"@s"}
+title @a times 10 70 20
+title Diff0 times 1s 2s 0.5s
+title Diff0 times 1d 0 0
+title @a clear
+title Diff0 reset
+title @a reset
+title Nobody title "x"
+title @e[type=minecraft:pig] title "x"
+title Diff0 times -1 2 3
+title Diff0 times 1x 2 3
+title Diff0 title
+title Diff0 bogus
+
+# bossbar
+bossbar list
+bossbar add kiln:b "Boss"
+bossbar add kiln:b "Boss"
+bossbar add minecraft:a {"text":"A","color":"gold"}
+bossbar add x:y "XY"
+bossbar add Bad:Id "x"
+bossbar list
+bossbar get kiln:b value
+bossbar get kiln:b max
+bossbar get kiln:b visible
+bossbar get kiln:b players
+bossbar get nope:x value
+bossbar set kiln:b value 30
+bossbar set kiln:b value 30
+bossbar set kiln:b value -1
+bossbar set kiln:b max 60
+bossbar set kiln:b max 60
+bossbar set kiln:b max 0
+bossbar set kiln:b color red
+bossbar set kiln:b color red
+bossbar set kiln:b color pink
+bossbar set kiln:b style notched_10
+bossbar set kiln:b style notched_10
+bossbar set kiln:b name "Renamed"
+bossbar set kiln:b name "Renamed"
+bossbar set kiln:b visible false
+bossbar set kiln:b visible false
+bossbar get kiln:b visible
+bossbar set kiln:b visible true
+bossbar set kiln:b visible true
+bossbar set kiln:b players Diff0
+bossbar set kiln:b players Diff0
+bossbar get kiln:b players
+bossbar set kiln:b players Other0
+bossbar get kiln:b players
+bossbar set kiln:b players
+bossbar set kiln:b players
+bossbar set kiln:b players Nobody
+bossbar set kiln:b players @e[type=minecraft:pig]
+bossbar set nope:x players Diff0
+bossbar set kiln:b bogus
+execute store result bossbar kiln:b value run bossbar get kiln:b max
+bossbar get kiln:b value
+execute store result bossbar kiln:b max run bossbar list
+bossbar get kiln:b max
+execute store success bossbar minecraft:a value run bossbar get kiln:b max
+bossbar get minecraft:a value
+bossbar remove kiln:b
+bossbar remove kiln:b
+bossbar remove x:y
+bossbar list
+bossbar remove minecraft:a
+bossbar list
 
 # coordinates, shapes and block entities
 setblock 2 100 0 chest[facing=north]{CustomName:"y"}

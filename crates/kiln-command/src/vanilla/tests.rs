@@ -71,6 +71,9 @@ pub(super) struct Mock {
     pub(super) blocks: HashMap<[i32; 3], u16>,
     pub(super) scoreboard: Scoreboard,
     pub(super) storage: crate::CommandStorage,
+    pub(super) bossbars: crate::BossBars,
+    /// Packets sent to single players: (name, packet id).
+    pub(super) packets: Vec<(String, i32)>,
 }
 
 impl Mock {
@@ -111,6 +114,8 @@ impl Mock {
             blocks: HashMap::new(),
             scoreboard: Scoreboard::default(),
             storage: crate::CommandStorage::default(),
+            bossbars: crate::BossBars::default(),
+            packets: Vec::new(),
         }
     }
 
@@ -331,6 +336,19 @@ impl Host for Mock {
 
     fn storage_mut(&mut self) -> Option<&mut crate::CommandStorage> {
         Some(&mut self.storage)
+    }
+
+    fn bossbars(&self) -> Option<&crate::BossBars> {
+        Some(&self.bossbars)
+    }
+
+    fn bossbars_mut(&mut self) -> Option<&mut crate::BossBars> {
+        Some(&mut self.bossbars)
+    }
+
+    fn send_packet(&mut self, player: &Ent, packet: bytes::Bytes) {
+        let id = kiln_proto::Reader::new(&packet).varint().unwrap();
+        self.packets.push((player.name.clone(), id));
     }
 }
 
@@ -635,7 +653,7 @@ fn suggestions() {
     let d = dispatcher();
     let s = &Mock::new(0);
     let root = d.complete("/", s).texts().into_iter().map(str::to_owned).collect::<Vec<_>>();
-    assert_eq!(root, ["help", "list", "me", "msg", "tell", "w"]);
+    assert_eq!(root, ["help", "list", "me", "msg", "teammsg", "tell", "tm", "trigger", "w"]);
     let s4 = &Mock::new(4);
     assert_eq!(d.complete("/", s4).list.len(), COMMANDS.len());
     assert_eq!(d.complete("/gamemode ", s4).texts(), ["adventure", "creative", "spectator", "survival"]);
@@ -965,16 +983,17 @@ fn commands_packet_flags() {
     };
     let (n0, lit0, ask0, res0) = decode(0);
     assert!(lit0.contains(&"msg".to_owned()) && !lit0.contains(&"gamemode".to_owned()));
-    assert!(ask0.is_empty() && res0.is_empty());
+    assert!(ask0 == ["objective"] && res0.is_empty(), "trigger suggests its objectives");
     let (n4, lit4, ask4, res4) = decode(4);
     assert!(n4 > n0 + 100);
     assert!(lit4.contains(&"kiln".to_owned()));
-    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective"];
+    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective", "members"];
     ask4.iter().for_each(|a| assert!(allowed.contains(&a.as_str()), "{a}"));
     // op, deop, time's markers/timelines at both levels, execute's score holders (if and
     // unless: target + 5 sources each; store result and success: targets) and boss bars, and
-    // scoreboard's 11 score holders plus `players enable`'s trigger objectives.
-    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1);
+    // scoreboard's 11 score holders plus `players enable`'s trigger objectives, trigger's
+    // objective, team's join and leave members and bossbar's remove, set and get ids.
+    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3);
     assert!(res4.contains(&"stop".to_owned()) && res4.contains(&"tp".to_owned()) && !res4.contains(&"msg".to_owned()));
 }
 

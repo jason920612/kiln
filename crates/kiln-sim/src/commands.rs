@@ -8,7 +8,7 @@ use crate::{Player, Sim, players::chat_disguised};
 use bytes::Bytes;
 use kiln_command::selector::{Aabb, SelectorTarget, SelectorWorld};
 use kiln_command::{
-    ChatMessage, CommandError, Difficulty, Dispatcher, GameMode, GameRuleValue, Heightmap, Host, Identifier, ItemInput,
+    BossBars, ChatMessage, CommandError, Difficulty, Dispatcher, GameMode, GameRuleValue, Heightmap, Host, Identifier, ItemInput,
     Language, Profile, Scoreboard, Source, SourceStack, SpawnPoint, Teleport, Text, TimeAction, UpdateFlags, Weather,
 };
 use kiln_link::ConnId;
@@ -63,11 +63,23 @@ pub struct PlayerRef {
     pos: [f64; 3],
     rot: [f32; 2],
     mode: GameMode,
+    /// The player's team, and their name as the team formats it.
+    team: Option<String>,
+    display: Text,
 }
 
 impl PlayerRef {
-    fn of(conn: ConnId, p: &Player) -> Self {
-        Self { conn, uuid: p.uuid, name: p.name.clone(), pos: p.pos, rot: p.rot, mode: game_mode(p.game_mode) }
+    fn of(conn: ConnId, p: &Player, scoreboard: &Scoreboard) -> Self {
+        Self {
+            conn,
+            uuid: p.uuid,
+            name: p.name.clone(),
+            pos: p.pos,
+            rot: p.rot,
+            mode: game_mode(p.game_mode),
+            team: scoreboard.team_of(&p.name).map(|t| t.name.clone()),
+            display: scoreboard.player_display_name(&p.name),
+        }
     }
 }
 
@@ -86,6 +98,12 @@ impl SelectorTarget for PlayerRef {
     }
     fn name(&self) -> String {
         self.name.clone()
+    }
+    fn display_name(&self) -> Text {
+        self.display.clone()
+    }
+    fn team(&self) -> Option<&str> {
+        self.team.as_deref()
     }
     fn entity_type(&self) -> &str {
         "minecraft:player"
@@ -120,6 +138,7 @@ pub(crate) struct CommandState {
     /// Where and as whom it runs (`execute` changes this per fork).
     pub stack: SourceStack<Sim>,
     pub scoreboard: Scoreboard,
+    pub bossbars: BossBars,
     pub storage: kiln_command::CommandStorage,
     /// Operators by name (permission level 4).
     pub ops: std::collections::HashSet<String>,
@@ -151,6 +170,7 @@ impl CommandState {
             source: CommandSource::Console,
             stack: SourceStack::new(Text::literal("Server"), OVERWORLD, [0.0; 3]),
             scoreboard: Scoreboard::default(),
+            bossbars: BossBars::default(),
             storage: kiln_command::CommandStorage::default(),
             ops,
             difficulty: Difficulty::Normal,
@@ -255,6 +275,20 @@ impl Sim {
         }
         self.commands.source = previous;
         self.commands.stack = stack;
+        self.flush_scoreboard();
+    }
+
+    /// Sends the scoreboard and boss bar packets queued by changes (`ServerScoreboard` and
+    /// `ServerBossEvent` send them as they happen). Serial phases only.
+    pub(crate) fn flush_scoreboard(&mut self) {
+        for pkt in self.commands.scoreboard.take_packets() {
+            self.broadcast(pkt);
+        }
+        for (uuid, pkt) in self.commands.bossbars.take_packets() {
+            if let Some(p) = self.players.values_mut().find(|p| p.uuid == uuid) {
+                p.send(pkt);
+            }
+        }
     }
 
     /// The stack a command starts with: the player where they stand, or the console at the
@@ -262,7 +296,7 @@ impl Sim {
     fn source_stack(&self, source: CommandSource) -> SourceStack<Sim> {
         match source {
             CommandSource::Player(conn) => match self.players.get(&conn) {
-                Some(p) => SourceStack::of_entity(PlayerRef::of(conn, p)),
+                Some(p) => SourceStack::of_entity(PlayerRef::of(conn, p, &self.commands.scoreboard)),
                 None => SourceStack::new(Text::literal(""), OVERWORLD, [0.0; 3]),
             },
             CommandSource::Console => {
@@ -371,7 +405,8 @@ impl Source for Sim {
 
 impl SelectorWorld for Sim {
     fn players(&self) -> Vec<PlayerRef> {
-        let mut v: Vec<PlayerRef> = self.players.iter().map(|(&c, p)| PlayerRef::of(c, p)).collect();
+        let sb = &self.commands.scoreboard;
+        let mut v: Vec<PlayerRef> = self.players.iter().map(|(&c, p)| PlayerRef::of(c, p, sb)).collect();
         v.sort_by_key(|p| p.conn); // join order
         v
     }
@@ -738,6 +773,18 @@ impl Host for Sim {
 
     fn scoreboard_mut(&mut self) -> Option<&mut Scoreboard> {
         Some(&mut self.commands.scoreboard)
+    }
+
+    fn bossbars(&self) -> Option<&BossBars> {
+        Some(&self.commands.bossbars)
+    }
+
+    fn bossbars_mut(&mut self) -> Option<&mut BossBars> {
+        Some(&mut self.commands.bossbars)
+    }
+
+    fn send_packet(&mut self, player: &PlayerRef, packet: Bytes) {
+        self.send_to(player.conn, packet);
     }
 
     /// Kept in memory only (not saved with the world yet).
