@@ -845,9 +845,7 @@ impl Sim {
         let result = {
             let mut level =
                 blocks::RegionLevel { cells: &mut *cells, blocks: &mut part.1, env: &env, out: &mut out, bodies: &bodies, actor: None };
-            let result = f(&mut level);
-            level.settle();
-            result
+            f(&mut level)
         };
         let mut everyone: Vec<&mut Player> = players.values_mut().collect();
         blocks::finish(cells, out, &mut everyone, &mut dim.spawns, &env);

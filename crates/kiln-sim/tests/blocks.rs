@@ -106,9 +106,33 @@ fn water_spreads_and_sand_falls() {
 
     let high = w.at(-4, 6, -4);
     w.run(&format!("setblock {} {} {} minecraft:sand", high[0], high[1], high[2]));
+    // A falling block entity: five blocks take about 17 ticks.
     w.ticks(3);
+    assert!(state::is(w.block(high), d::AIR));
+    assert!(w.sim.entities().iter().any(|(kind, _)| *kind == "minecraft:falling_block"), "the sand is falling");
+    w.ticks(30);
+    assert!(w.sim.entities().is_empty(), "{:?}", w.sim.entities());
     assert!(state::is(w.block(w.at(-4, 1, -4)), d::SAND), "the sand landed on the ground");
     assert!(state::is(w.block(high), d::AIR));
+}
+
+#[test]
+fn powered_tnt_primes_and_explodes() {
+    let mut w = World::new("creative");
+    let tnt = w.at(6, 1, 6);
+    let below = w.at(6, 0, 6);
+    let before = w.block(below);
+    assert!(!state::is(before, d::AIR));
+    w.run(&format!("setblock {} {} {} minecraft:tnt", tnt[0], tnt[1], tnt[2]));
+    w.run(&format!("setblock {} {} {} minecraft:redstone_block", tnt[0] + 1, tnt[1], tnt[2]));
+    w.ticks(2);
+    assert!(state::is(w.block(tnt), d::AIR), "the TNT block was primed");
+    assert!(w.sim.entities().iter().any(|(kind, _)| *kind == "minecraft:tnt"), "{:?}", w.sim.entities());
+    // The default fuse is 80 ticks.
+    w.ticks(85);
+    assert!(!w.sim.entities().iter().any(|(kind, _)| *kind == "minecraft:tnt"), "{:?}", w.sim.entities());
+    assert!(state::is(w.block(below), d::AIR), "the explosion blew a crater");
+    assert_eq!(w.sim.health(1), Some((20.0, false)), "creative players take no damage");
 }
 
 #[test]

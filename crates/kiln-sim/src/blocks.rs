@@ -9,8 +9,8 @@
 //! random that scheduled behaviour reads (lava spread delays, piston sound pitch) is kept per
 //! region, an approximation (I class).
 //!
-//! Stand-ins until the entity and loot crates land: a falling block lands at once, primed
-//! TNT is not spawned, a broken block drops its own item.
+//! Falling blocks and primed TNT become kiln-entity entities (spawned from the effects in
+//! [`finish`]); without loot tables a broken block drops its own item.
 
 use crate::Player;
 use crate::entities::{self, Spawn};
@@ -227,7 +227,7 @@ impl EntityBox {
     }
 }
 
-/// The boxes of a region's players (not spectators) and item entities.
+/// The boxes of a region's players (not spectators) and entities.
 pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entities: &entities::Entities) -> Vec<EntityBox> {
     let mut out: Vec<EntityBox> = players
         .filter(|p| p.game_mode != 3 && !p.dead)
@@ -242,9 +242,9 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
             }
         })
         .collect();
-    out.extend(entities.list.iter().filter(|e| !e.removed).map(|e| {
-        let (w, h) = (e.kind.width as f64 / 2.0, e.kind.height as f64);
-        EntityBox { min: [e.pos[0] - w, e.pos[1], e.pos[2] - w], max: [e.pos[0] + w, e.pos[1] + h, e.pos[2] + w], living: false, blocks_building: false, conn: None }
+    out.extend(entities.list.iter().filter(|e| !e.removed && e.phys.is_some()).map(|e| {
+        let (min, max, blocks_building) = e.body();
+        EntityBox { min, max, living: false, blocks_building, conn: None }
     }));
     out
 }
@@ -273,33 +273,6 @@ pub(crate) struct RegionLevel<'a> {
 }
 
 impl RegionLevel<'_> {
-    /// Carries out effects that change blocks (falling blocks land at once for now); run
-    /// before the level is dropped.
-    pub fn settle(&mut self) {
-        let mut i = 0;
-        while i < self.out.effects.len() {
-            if let (_, Effect::FallingBlock { pos, state }) = self.out.effects[i] {
-                self.land(pos, state);
-            }
-            i += 1;
-        }
-    }
-
-    /// Stand-in for `FallingBlockEntity`: the block drops straight down and lands on the
-    /// first block it cannot fall through, or pops off as an item if it cannot be placed.
-    fn land(&mut self, from: BlockPos, state: u16) {
-        let mut pos = from;
-        while pos.y > self.env.min_y && kiln_blocks::behaviour::misc::is_free(self.block(pos.below())) {
-            pos = pos.below();
-        }
-        let here = self.block(pos);
-        if kiln_data::block_props::replaceable(here) && kiln_blocks::behaviour::can_survive(self, state, pos) {
-            kiln_blocks::set_block(self, pos, state, flags::ALL);
-        } else {
-            self.effect(Effect::Drop { pos, state });
-        }
-    }
-
     fn block_entity_int(&self, pos: BlockPos, key: &str) -> Option<i32> {
         let chunk = self.cells.chunk(chunk_of(pos))?;
         let be = chunk.block_entity((pos.x & 15) as usize, pos.y, (pos.z & 15) as usize)?;
@@ -480,7 +453,6 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
         }
     }
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
-    level.settle();
 }
 
 /// `Level.tickBlockEntities` for moving pistons.
@@ -489,7 +461,6 @@ pub(crate) fn tick_pistons(level: &mut RegionLevel, ticking: &Ticking) {
         return;
     }
     kiln_blocks::tick_moving_pistons(level, |p| ticking.contains(chunk_of(p)));
-    level.settle();
 }
 
 /// `Entity.checkInsideBlocks` for pressure plates: every body standing in a plate presses it.
@@ -518,7 +489,7 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
 
 /// Sends what block work changed and carries out its effects: Block Update / Section Blocks
 /// Update (and block entity data) to players with the chunk, particles, sounds and block
-/// events to players near them, drops to `spawns`.
+/// events to players near them, drops, falling blocks and primed TNT to `spawns`.
 pub(crate) fn finish(cells: &CellSet<Cell>, out: BlockOut, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, env: &BlockEnv) {
     send_changes(cells, &out.changed, players);
     for (breaker, pos, stage) in out.destruction {
@@ -567,9 +538,21 @@ pub(crate) fn finish(cells: &CellSet<Cell>, out: BlockOut, players: &mut [&mut P
                 let pkt = world_fx::block_event([pos.x, pos.y, pos.z], a as u8, b as u8, block.0 as i32);
                 send_near(players, pos, 64.0, &pkt, |_| true);
             }
-            // Handled by `RegionLevel::settle`, or waiting for the entity crate (primed TNT,
-            // entities carried by pistons) and vibrations.
-            Effect::FallingBlock { .. } | Effect::PrimedTnt { .. } | Effect::PistonMove { .. } | Effect::GameEvent { .. } => {}
+            // `FallingBlockEntity.fall` (the block is already gone) and `TntBlock.prime`.
+            Effect::FallingBlock { pos, state } => spawns.push(Spawn {
+                kind: &kiln_data::entities::types::FALLING_BLOCK,
+                pos: [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5],
+                vel: [0.0; 3],
+                body: entities::Body::FallingBlock { state },
+            }),
+            Effect::PrimedTnt { pos } => spawns.push(Spawn {
+                kind: &kiln_data::entities::types::TNT,
+                pos: [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5],
+                vel: [0.0; 3],
+                body: entities::Body::Tnt,
+            }),
+            // Entities carried by pistons and vibrations are not simulated yet.
+            Effect::PistonMove { .. } | Effect::GameEvent { .. } => {}
         }
     }
 }
@@ -806,7 +789,7 @@ mod tests {
             block_drops(&loot, BlockPos::new(0, 64, 0), state, tool, &env, 0)
                 .into_iter()
                 .map(|s| {
-                    let entities::Body::Item { stack, .. } = s.body;
+                    let entities::Body::Item { stack, .. } = s.body else { panic!("not an item") };
                     stack.item_name()
                 })
                 .collect()

@@ -705,6 +705,7 @@ dependencies = [
  "kiln-blocks",
  "kiln-command",
  "kiln-data",
+ "kiln-entity",
  "kiln-inventory",
  "kiln-item",
  "kiln-javamath",

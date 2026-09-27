@@ -11,6 +11,7 @@ kiln-item.workspace = true
 kiln-inventory.workspace = true
 kiln-loot.workspace = true
 kiln-blocks.workspace = true
+kiln-entity.workspace = true
 kiln-javamath.workspace = true
 smallvec.workspace = true
 kiln-worldgen.workspace = true

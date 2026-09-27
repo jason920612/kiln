@@ -29,6 +29,8 @@ pub(crate) enum Cause {
     /// Landing after falling this far.
     Fall(f64),
     Starve,
+    /// Damage from an entity's behaviour (explosions, falling blocks, ...).
+    Entity(kiln_entity::level::DamageKind),
 }
 
 impl Cause {
@@ -38,6 +40,7 @@ impl Cause {
             Cause::OutOfWorld => "minecraft:out_of_world",
             Cause::Fall(_) => "minecraft:fall",
             Cause::Starve => "minecraft:starve",
+            Cause::Entity(kind) => entities::damage_type(kind).0,
         }
     }
 
@@ -55,6 +58,7 @@ impl Cause {
             Cause::Fall(d) if d > 5.0 => "death.fell.accident.generic",
             Cause::Fall(_) => "death.attack.fall",
             Cause::Starve => "death.attack.starve",
+            Cause::Entity(kind) => entities::damage_type(kind).1,
         };
         // Keys in the order vanilla writes them (its compounds are hash maps).
         Tag::Compound(vec![
