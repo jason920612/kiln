@@ -47,6 +47,8 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
     fs::write(out.join("block_logic.bin"), crate::block_logic::pack(&logic, state_count)?)?;
     let classes = read_json(&input.generated.join("extra/block_classes.json")).context("run `cargo xtask extract` first")?;
     fs::write(out.join("block_classes.rs"), crate::block_logic::gen_classes(&classes)?)?;
+    let block_items = read_json(&input.generated.join("extra/block_items.json")).context("run `cargo xtask extract` first")?;
+    fs::write(out.join("block_items.rs"), crate::block_logic::gen_block_items(&block_items)?)?;
     let rules = read_json(&input.generated.join("extra/game_rules.json")).context("run `cargo xtask extract` first")?;
     fs::write(out.join("game_rules.rs"), gen_game_rules(&rules)?)?;
     println!("codegen: wrote {}", out.display());

@@ -149,6 +149,20 @@ pub fn pop_off<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Directi
         C::RepeaterBlock => dir == Direction::Down && !can_support_rigid(neighbor),
         C::RedstoneWireBlock => dir == Direction::Down && !wire_can_survive_on(neighbor),
         _ if logic::is_instance(s, C::DoorBlock) => return door_update(level, s, pos, dir, neighbor),
+        _ if logic::is_instance(s, C::AbstractBedBlock) => {
+            // `AbstractBedBlock.updateShape`: the two halves keep each other.
+            let facing = state::get_dir(s, "facing").unwrap_or(Direction::North);
+            let part = state::get(s, "part");
+            let toward = if part == Some("foot") { facing } else { facing.opposite() };
+            if dir != toward {
+                return None;
+            }
+            return Some(if state::same_block(neighbor, s) && state::get(neighbor, "part") != part {
+                state::set_bool(s, "occupied", state::get_bool(neighbor, "occupied"))
+            } else {
+                d::AIR
+            });
+        }
         _ if logic::is_instance(s, C::DoublePlantBlock) => {
             let half = state::get(s, "half");
             let toward_other = (half == Some("lower")) == (dir == Direction::Up);

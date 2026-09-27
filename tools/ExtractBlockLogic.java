@@ -2,7 +2,9 @@
 // per support type, redstone flags and context-free signal strengths, fluid states, piston
 // push reactions, wall "cover" tests, and each block's Java class, ancestry and a few
 // constructor parameters (button press time, block set type flags, stair base state, ...).
-// Run through `cargo xtask extract`; writes block_logic.json and block_classes.json.
+// Also lists block items with the blocks they place (standing and wall variants).
+// Run through `cargo xtask extract`; writes block_logic.json, block_classes.json and
+// block_items.json.
 //
 // usage: java -cp <server jar + libraries> tools/ExtractBlockLogic.java <out dir>
 
@@ -90,6 +92,7 @@ public class ExtractBlockLogic {
             }
             w.println("]");
         }
+        blockItems(out);
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out.resolve("block_classes.json")))) {
             w.println("[");
             int i = 0, count = BuiltInRegistries.BLOCK.size();
@@ -112,6 +115,25 @@ public class ExtractBlockLogic {
             }
             w.println("]");
         }
+    }
+
+    static void blockItems(Path out) throws Exception {
+        Field wallField = net.minecraft.world.item.StandingAndWallBlockItem.class.getDeclaredField("wallBlock");
+        wallField.setAccessible(true);
+        Field attachField = net.minecraft.world.item.StandingAndWallBlockItem.class.getDeclaredField("attachmentDirection");
+        attachField.setAccessible(true);
+        List<String> rows = new ArrayList<>();
+        for (net.minecraft.world.item.Item item : BuiltInRegistries.ITEM) {
+            if (!(item instanceof net.minecraft.world.item.BlockItem bi)) continue;
+            String wall = "null", attach = "null";
+            if (item instanceof net.minecraft.world.item.StandingAndWallBlockItem sw) {
+                wall = "\"" + BuiltInRegistries.BLOCK.getKey((Block) wallField.get(sw)) + "\"";
+                attach = "\"" + ((Direction) attachField.get(sw)).getSerializedName() + "\"";
+            }
+            rows.add(String.format(Locale.ROOT, "{\"item\":\"%s\",\"block\":\"%s\",\"wall\":%s,\"attach\":%s}",
+                    BuiltInRegistries.ITEM.getKey(item), BuiltInRegistries.BLOCK.getKey(bi.getBlock()), wall, attach));
+        }
+        Files.writeString(out.resolve("block_items.json"), "[\n" + String.join(",\n", rows) + "\n]\n");
     }
 
     static boolean covered(VoxelShape test, VoxelShape face) {

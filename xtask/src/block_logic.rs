@@ -212,6 +212,32 @@ pub fn gen_classes(blocks: &Value) -> Result<String> {
     Ok(s)
 }
 
+/// `block_items.rs`: each block item's block and, for standing/wall items, the wall block and
+/// the direction of the standing block's support.
+pub fn gen_block_items(items: &Value) -> Result<String> {
+    let mut rows: Vec<(String, String, Option<(String, String)>)> = Vec::new();
+    for i in items.as_array().context("block_items.json")? {
+        let wall = match (&i["wall"], &i["attach"]) {
+            (Value::String(w), Value::String(a)) => Some((w.clone(), a.clone())),
+            _ => None,
+        };
+        rows.push((i["item"].as_str().context("item")?.into(), i["block"].as_str().context("block")?.into(), wall));
+    }
+    rows.sort();
+    let mut s = String::from(HEADER);
+    s.push_str("//! Block items (sorted by item id): the block placed, and for standing-and-wall items the\n");
+    s.push_str("//! wall block with the direction the standing block attaches toward.\n\n");
+    s.push_str("pub static BLOCK_ITEMS: &[(&str, &str, Option<(&str, &str)>)] = &[\n");
+    for (item, block, wall) in rows {
+        match wall {
+            Some((w, a)) => writeln!(s, "    ({item:?}, {block:?}, Some(({w:?}, {a:?}))),")?,
+            None => writeln!(s, "    ({item:?}, {block:?}, None),")?,
+        }
+    }
+    s.push_str("];\n");
+    Ok(s)
+}
+
 fn screaming(name: &str) -> String {
     let mut out = String::new();
     for (i, ch) in name.chars().enumerate() {

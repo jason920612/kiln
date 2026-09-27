@@ -11,6 +11,17 @@ use std::sync::OnceLock;
 mod classes;
 pub use classes::{BlockClass, BlockClassInfo, BlockParams, interface};
 
+#[path = "gen/block_items.rs"]
+mod items;
+
+/// The block a block item places and, for standing-and-wall items (torches, signs, heads,
+/// banners, fans), the wall block with the direction the standing block attaches toward.
+pub fn block_item(item: &str) -> Option<(&'static str, Option<(&'static str, &'static str)>)> {
+    let i = items::BLOCK_ITEMS.binary_search_by(|(name, _, _)| (*name).cmp(item)).ok()?;
+    let (_, block, wall) = items::BLOCK_ITEMS[i];
+    Some((block, wall))
+}
+
 static RAW: &[u8] = include_bytes!("gen/block_logic.bin");
 
 struct Table {

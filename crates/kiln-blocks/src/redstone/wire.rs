@@ -303,20 +303,19 @@ mod tests {
 
     #[test]
     fn hash_set_order_matches_java() {
-        // java.util.HashSet of pos and its six neighbours for (0, 64, 0), inserted as
-        // pos, down, up, north, south, west, east; buckets from Vec3i.hashCode.
-        let p = BlockPos::new(0, 64, 0);
-        let mut set = vec![p];
-        set.extend(Direction::ALL.iter().map(|&d| p.relative(d)));
-        let order = java_hash_set_order(&set);
-        let buckets: Vec<usize> = order
-            .iter()
-            .map(|p| {
-                let h = p.java_hash();
-                ((h ^ ((h as u32) >> 16) as i32) & 15) as usize
-            })
-            .collect();
-        assert!(buckets.windows(2).all(|w| w[0] <= w[1]));
-        assert_eq!(order.len(), 7);
+        // Iteration order of a java.util.HashSet filled with a position and its six
+        // neighbours in Direction.values() order, printed by a JDK 25 program.
+        let cases: [([i32; 3], [[i32; 3]; 7]); 3] = [
+            ([0, 64, 0], [[0, 64, 0], [0, 63, 0], [0, 64, 1], [1, 64, 0], [0, 65, 0], [0, 64, -1], [-1, 64, 0]]),
+            ([10, -60, 37], [[10, -59, 37], [10, -60, 36], [9, -60, 37], [10, -60, 37], [10, -61, 37], [10, -60, 38], [11, -60, 37]]),
+            ([-123, 5, 999], [[-123, 4, 999], [-123, 5, 1000], [-122, 5, 999], [-123, 6, 999], [-123, 5, 998], [-124, 5, 999], [-123, 5, 999]]),
+        ];
+        for ([x, y, z], expected) in cases {
+            let p = BlockPos::new(x, y, z);
+            let mut set = vec![p];
+            set.extend(Direction::ALL.iter().map(|&d| p.relative(d)));
+            let got: Vec<[i32; 3]> = java_hash_set_order(&set).iter().map(|p| [p.x, p.y, p.z]).collect();
+            assert_eq!(got, expected);
+        }
     }
 }

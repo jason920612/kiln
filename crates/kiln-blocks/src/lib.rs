@@ -12,6 +12,7 @@ pub mod block_events;
 pub mod commands;
 pub mod fluid;
 pub mod level;
+pub mod placement;
 pub mod pos;
 pub mod redstone;
 pub mod state;
