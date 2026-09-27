@@ -6,7 +6,7 @@
 use crate::arguments::{ArgumentType, ArgumentValue, GameProfileArg, MessageArg};
 use crate::coords::Coordinates;
 use crate::error::CommandError;
-use crate::host::{Source, SourceStack};
+use crate::host::{Frame, Source, SourceStack};
 use crate::reader::StringReader;
 use crate::selector::{EntitySelector, SELECTOR_PERMISSION};
 use crate::suggestion::{Suggestions, SuggestionsBuilder};
@@ -14,6 +14,7 @@ use crate::types::{Anchor, GameMode, Identifier, ItemInput};
 use bytes::Bytes;
 use kiln_proto::packets::commands as wire;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 
 pub type Handler<S> = Arc<dyn Fn(&CommandContext<S>, &mut S) -> Result<i32, CommandError> + Send + Sync>;
 pub type SuggestFn<S> = Arc<dyn Fn(&CommandContext<S>, &S, &mut SuggestionsBuilder) + Send + Sync>;
@@ -76,6 +77,8 @@ struct Node<S: Source> {
     redirect: Option<NodeId>,
     modifier: Option<Modifier<S>>,
     forks: bool,
+    /// A custom executor (`function`): runs twice per execution, see [`Builder::custom`].
+    custom: bool,
     permission: u8,
     suggestions: Option<SuggestionProvider<S>>,
 }
@@ -88,6 +91,8 @@ pub struct Builder<S: Source> {
     redirect: Option<NodeId>,
     modifier: Option<Modifier<S>>,
     forks: bool,
+    /// A custom executor (`function`): runs twice per execution, see [`Builder::custom`].
+    custom: bool,
     permission: u8,
     suggestions: Option<SuggestionProvider<S>>,
 }
@@ -109,6 +114,7 @@ impl<S: Source> Builder<S> {
             redirect: None,
             modifier: None,
             forks: false,
+            custom: false,
             permission: 0,
             suggestions: None,
         }
@@ -125,6 +131,15 @@ impl<S: Source> Builder<S> {
         f: impl Fn(&CommandContext<S>, &mut S) -> Result<i32, CommandError> + Send + Sync + 'static,
     ) -> Self {
         self.command = Some(Arc::new(f));
+        self
+    }
+
+    /// Makes the handler a custom executor (`CustomCommandExecutor`), as `function` is:
+    /// it runs for every source with [`SourceStack::preparing`] set (to report and check,
+    /// as vanilla does inline), then again for every source that succeeded to do the work
+    /// (what vanilla queues). It tells result callbacks itself, and costs no command quota.
+    pub fn custom(mut self) -> Self {
+        self.custom = true;
         self
     }
 
@@ -376,6 +391,7 @@ impl<S: Source> Dispatcher<S> {
             redirect: None,
             modifier: None,
             forks: false,
+            custom: false,
             permission: 0,
             suggestions: None,
         };
@@ -409,6 +425,7 @@ impl<S: Source> Dispatcher<S> {
                     redirect: b.redirect,
                     modifier: b.modifier,
                     forks: b.forks,
+                    custom: b.custom,
                     permission: b.permission,
                     suggestions: b.suggestions,
                 });
@@ -483,7 +500,7 @@ impl<S: Source> Dispatcher<S> {
 
 impl<S: Source> Dispatcher<S> {
     fn can_use(&self, id: NodeId, source: &S) -> bool {
-        source.permission_level() >= self.node(id).permission
+        source.permission() >= self.node(id).permission
     }
 
     pub fn parse<'a>(&self, input: &'a str, source: &S) -> ParseResults<'a> {
@@ -533,7 +550,7 @@ impl<S: Source> Dispatcher<S> {
                 }
             }
             NodeKind::Argument { name, ty } => {
-                let value = ty.parse(reader, source.permission_level() >= SELECTOR_PERMISSION)?;
+                let value = ty.parse(reader, source.permission() >= SELECTOR_PERMISSION)?;
                 let end = reader.cursor();
                 ctx.args.push(ParsedArgument { name: name.clone(), start, end, value });
                 ctx.with_node(id, start, end);
@@ -594,6 +611,31 @@ impl<S: Source> Dispatcher<S> {
     /// execution (the source's stack is restored afterwards). After a fork, failures are
     /// silent, as vanilla handles them.
     pub fn execute_parsed(&self, parse: &ParseResults, source: &mut S) -> Result<i32, CommandError> {
+        // A top-level command: its own frame and command quota.
+        let original = source.stack().clone();
+        let limit = source.command_limit().max(1);
+        let stack = source.stack_mut();
+        stack.frame = Frame::new(0);
+        stack.quota = Arc::new(AtomicI32::new(limit));
+        let result = self.execute_in_frame(parse, source);
+        *source.stack_mut() = original;
+        result
+    }
+
+    /// Parses and runs `input` in the current frame and command quota (a function's line).
+    /// The source's stack is restored afterwards.
+    pub fn run_nested(&self, input: &str, source: &mut S) -> Result<i32, CommandError> {
+        let parse = self.parse(input, source);
+        self.execute_in_frame(&parse, source)
+    }
+
+    /// `Commands.validateParseResults` plus `ContextChain.tryFlatten`: the error a parse
+    /// result gives before anything runs, if any.
+    pub fn check_parse(&self, parse: &ParseResults) -> Result<(), CommandError> {
+        self.parsed_chain(parse).map(|_| ())
+    }
+
+    fn parsed_chain<'p>(&self, parse: &'p ParseResults) -> Result<(Vec<&'p ContextBuilder>, NodeId), CommandError> {
         if parse.cursor < parse.input.len() {
             if let [(_, e)] = parse.errors.as_slice() {
                 return Err(e.clone());
@@ -612,6 +654,11 @@ impl<S: Source> Dispatcher<S> {
         let Some(command) = chain[chain.len() - 1].command else {
             return Err(CommandError::unknown_command().with_context(parse.input, parse.cursor));
         };
+        Ok((chain, command))
+    }
+
+    fn execute_in_frame(&self, parse: &ParseResults, source: &mut S) -> Result<i32, CommandError> {
+        let (chain, command) = self.parsed_chain(parse)?;
         let original = source.stack().clone();
         let result = self.run_chain(&chain, command, parse.input, source);
         *source.stack_mut() = original;
@@ -630,15 +677,18 @@ impl<S: Source> Dispatcher<S> {
         source: &mut S,
     ) -> Result<i32, CommandError> {
         let fork_limit = source.fork_limit();
-        let mut quota = source.command_limit().max(1);
+        let quota = source.stack().quota.clone();
+        let frame = source.stack().frame.clone();
         let mut forked = false;
+        let mut returning = false;
         let mut sources = vec![source.stack().clone()];
         for &ctx in &chain[..chain.len() - 1] {
             let Some(&(last, _, _)) = ctx.nodes.last() else { continue };
             let node = self.node(last);
             forked |= node.forks;
             let Some(modifier) = node.modifier.clone() else { continue };
-            quota -= 1;
+            returning |= sources.iter().any(|s| s.returning);
+            quota.fetch_sub(1, Ordering::Relaxed);
             let cctx = CommandContext { dispatcher: self, input, context: ctx };
             let mut next = Vec::new();
             for stack in sources {
@@ -656,16 +706,52 @@ impl<S: Source> Dispatcher<S> {
             }
             sources = next;
         }
+        returning |= sources.iter().any(|s| s.returning);
+        if returning {
+            // `return run`: the first source's result is the frame's return value; with no
+            // source left the frame returns a failure (`FallthroughTask`).
+            if sources.is_empty() {
+                frame.report(false, 0);
+                return Ok(0);
+            }
+            sources.truncate(1);
+        }
         let handler = self.node(command).command.clone().expect("command node has a handler");
         let ctx = CommandContext { dispatcher: self, input, context: chain[chain.len() - 1] };
+        if self.node(command).custom {
+            let mut ready = Vec::new();
+            for mut stack in sources {
+                stack.preparing = true;
+                *source.stack_mut() = stack.clone();
+                match handler(&ctx, source) {
+                    Ok(_) => ready.push(stack),
+                    Err(e) if e.is_deferred() => ready.push(stack),
+                    Err(_) if forked => {}
+                    Err(e) => return Err(e.without_context()),
+                }
+            }
+            for mut stack in ready {
+                stack.preparing = false;
+                *source.stack_mut() = stack;
+                match handler(&ctx, source) {
+                    Ok(_) => {}
+                    Err(e) if e.is_deferred() || forked => {}
+                    Err(e) => return Err(e.without_context()),
+                }
+            }
+            return Ok(0);
+        }
         let mut total = 0i32;
         for stack in sources {
-            if quota <= 0 {
+            if quota.load(Ordering::Relaxed) <= 0 {
                 break;
             }
-            quota -= 1;
+            quota.fetch_sub(1, Ordering::Relaxed);
             *source.stack_mut() = stack;
             let result = handler(&ctx, source);
+            if matches!(&result, Err(e) if e.is_deferred()) {
+                continue;
+            }
             let (success, value) = match &result {
                 Ok(v) => (true, *v),
                 Err(_) => (false, 0),
@@ -673,6 +759,9 @@ impl<S: Source> Dispatcher<S> {
             let callbacks = source.stack().callbacks.clone();
             for callback in &callbacks {
                 callback(source, success, value);
+            }
+            if returning {
+                frame.report(success, value);
             }
             match result {
                 Ok(v) => total = total.wrapping_add(v),

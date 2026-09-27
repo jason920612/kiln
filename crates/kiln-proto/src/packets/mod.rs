@@ -142,6 +142,13 @@ pub fn finish_configuration() -> Bytes {
     packet(ids::configuration::clientbound::FINISH_CONFIGURATION).freeze()
 }
 
+/// Configuration `disconnect` with a text component (network NBT).
+pub fn config_disconnect_text(reason: &Tag) -> Bytes {
+    let mut b = packet(ids::configuration::clientbound::DISCONNECT);
+    reason.write_network(&mut b);
+    b.freeze()
+}
+
 pub fn config_disconnect(reason: &str) -> Bytes {
     let mut b = packet(ids::configuration::clientbound::DISCONNECT);
     crate::nbt::text(reason).write_network(&mut b);

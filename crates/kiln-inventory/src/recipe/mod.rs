@@ -115,16 +115,34 @@ pub struct RecipeManager {
 impl RecipeManager {
     /// Loads `data/<namespace>/recipe/**/*.json` under `datapack`.
     pub fn load(datapack: &Path) -> Result<Self, LoadError> {
-        let mut files = Vec::new();
-        let data = datapack.join("data");
-        let namespaces = std::fs::read_dir(&data).map_err(|e| LoadError::Io { path: data.display().to_string(), source: e })?;
-        for ns in namespaces.flatten() {
-            let Some(namespace) = ns.file_name().to_str().map(str::to_owned) else { continue };
-            let dir = ns.path().join("recipe");
-            if dir.is_dir() {
-                collect_json(&dir, "", &namespace, &mut files)?;
+        Self::load_packs(&[datapack])
+    }
+
+    /// Loads the recipes of several packs in order: a later pack's file replaces an earlier
+    /// one with the same id. The first pack must have a `data` directory.
+    pub fn load_packs(packs: &[&Path]) -> Result<Self, LoadError> {
+        let mut by_id: HashMap<(String, String), std::path::PathBuf> = HashMap::new();
+        for (i, datapack) in packs.iter().enumerate() {
+            let data = datapack.join("data");
+            let namespaces = match std::fs::read_dir(&data) {
+                Ok(n) => n,
+                Err(e) if i == 0 => return Err(LoadError::Io { path: data.display().to_string(), source: e }),
+                Err(_) => continue,
+            };
+            let mut files = Vec::new();
+            for ns in namespaces.flatten() {
+                let Some(namespace) = ns.file_name().to_str().map(str::to_owned) else { continue };
+                let dir = ns.path().join("recipe");
+                if dir.is_dir() {
+                    collect_json(&dir, "", &namespace, &mut files)?;
+                }
+            }
+            for (ns, path, file) in files {
+                by_id.insert((ns, path), file);
             }
         }
+        let mut files: Vec<(String, String, std::path::PathBuf)> =
+            by_id.into_iter().map(|((ns, path), file)| (ns, path, file)).collect();
         // Resource listings are sorted by `Identifier.compareTo` (path first, then namespace),
         // and the recipe registry keeps that order.
         files.sort_by(|a, b| (a.1.as_str(), a.0.as_str()).cmp(&(b.1.as_str(), b.0.as_str())));

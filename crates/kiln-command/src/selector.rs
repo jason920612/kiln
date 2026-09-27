@@ -852,8 +852,8 @@ impl Filter {
 }
 
 impl EntitySelector {
-    fn check_permissions<W: Source + ?Sized>(&self, world: &W) -> Result<()> {
-        if self.uses_selector && world.permission_level() < SELECTOR_PERMISSION {
+    fn check_permissions<W: Source>(&self, world: &W) -> Result<()> {
+        if self.uses_selector && world.permission() < SELECTOR_PERMISSION {
             return Err(CommandError::selectors_not_allowed());
         }
         Ok(())

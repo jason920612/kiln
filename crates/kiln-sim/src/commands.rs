@@ -20,7 +20,7 @@ use std::sync::{Arc, OnceLock};
 use tracing::info;
 use uuid::Uuid;
 
-const OVERWORLD: &str = "minecraft:overworld";
+pub(crate) const OVERWORLD: &str = "minecraft:overworld";
 /// Longest tab-completion request answered for players without command-block rights (vanilla).
 const MAX_SUGGESTION_LEN: usize = 256;
 
@@ -140,6 +140,8 @@ pub(crate) struct CommandState {
     pub scoreboard: Scoreboard,
     pub bossbars: BossBars,
     pub storage: kiln_command::CommandStorage,
+    /// Data packs, their functions and the scheduled functions.
+    pub packs: crate::datapacks::Packs,
     /// Operators by name (permission level 4).
     pub ops: std::collections::HashSet<String>,
     pub difficulty: Difficulty,
@@ -172,6 +174,7 @@ impl CommandState {
             scoreboard: Scoreboard::default(),
             bossbars: BossBars::default(),
             storage: kiln_command::CommandStorage::default(),
+            packs: crate::datapacks::Packs::new(None, "work/generated".into(), None),
             ops,
             difficulty: Difficulty::Normal,
             raining: false,
@@ -436,6 +439,9 @@ impl SelectorWorld for Sim {
 
 impl Host for Sim {
     fn send_success(&mut self, text: Text, broadcast: bool) {
+        if self.commands.stack.silent {
+            return;
+        }
         if broadcast {
             // Other operators see a gray, italic "[Source: message]" (chat.type.admin).
             let admin = kiln_command::tr!("chat.type.admin", self.source_name(), text.clone()).color("gray").italic();
@@ -785,6 +791,38 @@ impl Host for Sim {
 
     fn send_packet(&mut self, player: &PlayerRef, packet: Bytes) {
         self.send_to(player.conn, packet);
+    }
+
+    fn functions(&self) -> Option<&kiln_command::functions::FunctionLibrary> {
+        Some(&self.commands.packs.library)
+    }
+
+    fn timers(&self) -> Option<&kiln_command::functions::TimerQueue> {
+        Some(&self.commands.packs.timers)
+    }
+
+    fn timers_mut(&mut self) -> Option<&mut kiln_command::functions::TimerQueue> {
+        Some(&mut self.commands.packs.timers)
+    }
+
+    fn game_time(&self) -> i64 {
+        self.game_time
+    }
+
+    fn data_packs(&self) -> Option<kiln_command::functions::DataPacks> {
+        Some(self.commands.packs.snapshot())
+    }
+
+    fn refresh_packs(&mut self) {
+        self.commands.packs.discover();
+    }
+
+    fn reload_packs(&mut self, selected: Option<Vec<String>>) {
+        self.reload_data_packs(selected);
+    }
+
+    fn create_pack(&mut self, id: &str, description: &Text) -> Result<(), CommandError> {
+        self.create_data_pack(id, description)
     }
 
     /// Kept in memory only (not saved with the world yet).

@@ -104,8 +104,13 @@ pub enum ArgumentType {
     Style,
     /// `minecraft:team`: a team name (looked up when used).
     Team,
+    /// `minecraft:nbt_compound_tag`: an SNBT compound.
+    NbtCompound,
     /// `minecraft:team_color`: one of the sixteen [`TEAM_COLORS`].
     TeamColor,
+    /// `minecraft:dialog`: a `minecraft:dialog` registry id ([`ArgumentValue::Identifier`]) or
+    /// an inline definition ([`ArgumentValue::Nbt`]).
+    Dialog,
 }
 
 impl ArgumentType {
@@ -220,7 +225,9 @@ impl ArgumentType {
             ArgumentType::Component => Parser::Plain("minecraft:component"),
             ArgumentType::Style => Parser::Plain("minecraft:style"),
             ArgumentType::Team => Parser::Plain("minecraft:team"),
+            ArgumentType::NbtCompound => Parser::Plain("minecraft:nbt_compound_tag"),
             ArgumentType::TeamColor => Parser::Plain("minecraft:team_color"),
+            ArgumentType::Dialog => Parser::Plain("minecraft:dialog"),
         }
     }
 
@@ -374,6 +381,13 @@ impl ArgumentType {
             ArgumentType::Objective | ArgumentType::Team => {
                 ArgumentValue::String(reader.read_unquoted_string().to_owned())
             }
+            ArgumentType::NbtCompound => {
+                let tag = snbt::parse_tag(reader)?;
+                if !matches!(tag, Tag::Compound(_)) {
+                    return Err(CommandError::new(tr!("argument.nbt.expected.compound")).at(reader));
+                }
+                ArgumentValue::Nbt(tag)
+            }
             ArgumentType::TeamColor => {
                 let s = reader.read_unquoted_string();
                 if !TEAM_COLORS.contains(&s) {
@@ -451,6 +465,22 @@ impl ArgumentType {
                     .at(reader));
                 }
             }
+            ArgumentType::Dialog => {
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    let tag = snbt::parse_tag(reader)?;
+                    if let Err(message) = check_dialog(&tag) {
+                        return Err(CommandError::new(tr!("argument.resource_or_id.failed_to_parse", message)).at(reader));
+                    }
+                    ArgumentValue::Nbt(tag)
+                } else {
+                    let id = Identifier::read(reader)?;
+                    if kiln_data::synced_id("minecraft:dialog", id.as_str()).is_none() {
+                        let e = tr!("argument.resource_or_id.no_such_element", id.to_string(), "minecraft:dialog");
+                        return Err(CommandError::new(e).at(reader));
+                    }
+                    ArgumentValue::Identifier(id)
+                }
+            }
             ArgumentType::Component => ArgumentValue::Component(Box::new(component::parse(reader)?)),
             ArgumentType::Style => {
                 let tag = snbt::parse_tag(reader)?;
@@ -472,7 +502,7 @@ impl ArgumentType {
 
     /// Server-side suggestions (the client computes most of these itself).
     pub fn suggest<S: Source>(&self, builder: &mut SuggestionsBuilder, source: &S) {
-        let allow = source.permission_level() >= SELECTOR_PERMISSION;
+        let allow = source.permission() >= SELECTOR_PERMISSION;
         match self {
             ArgumentType::Bool => {
                 for v in ["true", "false"] {
@@ -693,6 +723,21 @@ pub const TEAM_COLORS: [&str; 16] = [
     "yellow",
     "white",
 ];
+
+/// A light check of an inline dialog (`Dialog.DIRECT_CODEC`): a compound whose `type` is a
+/// `minecraft:dialog_type` and which has a `title`. The client decodes the rest.
+fn check_dialog(tag: &Tag) -> std::result::Result<(), String> {
+    let Tag::Compound(_) = tag else { return Err(format!("Not a map: {}", snbt::to_snbt(tag))) };
+    let Some(ty) = tag.get("type").and_then(Tag::as_str) else { return Err("No key type in MapLike".into()) };
+    let ty = Identifier::parse(ty).map(|i| i.to_string()).unwrap_or_default();
+    if types::registry_entries("minecraft:dialog_type").is_some_and(|e| !e.contains(&ty.as_str())) {
+        return Err(format!("Unknown registry key in ResourceKey[minecraft:root / minecraft:dialog_type]: {ty}"));
+    }
+    if tag.get("title").is_none() {
+        return Err("No key title in MapLike".into());
+    }
+    Ok(())
+}
 
 /// `ObjectiveCriteria.CUSTOM_CRITERIA` apart from the team ones.
 pub const CUSTOM_CRITERIA: [&str; 11] =
@@ -1008,7 +1053,7 @@ impl MessageArg {
 
     /// `Message.toComponent`: selectors become the names of the entities they find.
     pub fn resolve<W: SelectorWorld>(&self, world: &mut W) -> Result<Text> {
-        if self.parts.is_empty() || world.permission_level() < SELECTOR_PERMISSION {
+        if self.parts.is_empty() || world.permission() < SELECTOR_PERMISSION {
             return Ok(Text::literal(&self.text));
         }
         let mut out = Text::literal(&self.text[..self.parts[0].0]);

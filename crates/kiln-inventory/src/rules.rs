@@ -22,6 +22,13 @@ impl Rules {
         Ok(Rules { recipes, armor_lock })
     }
 
+    /// [`load`](Self::load) over several packs in order (later packs override files).
+    pub fn load_packs(packs: &[&Path]) -> Result<Rules, crate::recipe::LoadError> {
+        let recipes = RecipeManager::load_packs(packs)?;
+        let armor_lock = packs.iter().rev().find_map(|p| load_armor_lock(p));
+        Ok(Rules { recipes, armor_lock })
+    }
+
     pub fn with_recipes(recipes: RecipeManager) -> Rules {
         Rules { recipes, armor_lock: None }
     }

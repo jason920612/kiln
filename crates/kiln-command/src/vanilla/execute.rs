@@ -5,7 +5,7 @@
 
 use super::LEVEL_GAMEMASTERS;
 use super::blocks::{BlockBox, dimension_arg, loaded_block_pos, test_block};
-use crate::arguments::{ArgumentType, ArgumentValue};
+use crate::arguments::ArgumentType;
 use crate::dispatcher::{Builder, CommandContext, Dispatcher, NodeId, argument, literal};
 use crate::error::CommandError;
 use crate::host::{Host, SourceStack};
@@ -257,18 +257,10 @@ fn conditionals<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool) 
     .then(literal("predicate").then(conditional(exec, argument("predicate", ArgumentType::LootPredicate), positive, |_, _| {
         Err(CommandError::unsupported("Loot predicates"))
     })))
-    .then(literal("function").then(argument("name", ArgumentType::Function).fork(exec, |c, _: &mut S| {
-        // No functions are loaded (no data packs): vanilla's lookup errors.
-        match c.get("name") {
-            Some(ArgumentValue::Function { tag: true, id }) => {
-                Err(CommandError::new(tr!("arguments.function.tag.unknown", id.to_string())))
-            }
-            Some(ArgumentValue::Function { id, .. }) => {
-                Err(CommandError::new(tr!("arguments.function.unknown", id.to_string())))
-            }
-            _ => unreachable!("function argument"),
-        }
-    })))
+    .then(literal("function").then(
+        argument("name", ArgumentType::Function).suggests_server(super::function::suggest_functions)
+            .fork(exec, move |c, s: &mut S| super::function::function_condition(c, s, positive)),
+    ))
     .then(literal("items").then(
         literal("block").then(argument("source", ArgumentType::BlockPos).then(argument("slots", ArgumentType::SlotSource).then(
             numeric_conditional(exec, argument("item_predicate", ArgumentType::ItemPredicate), positive, |_, _| {
@@ -432,7 +424,7 @@ pub(super) fn score_holder_arg<S: Host + 'static>(name: &str, multiple: bool) ->
         let mut names = s.scoreboard().map(Scoreboard::holders).unwrap_or_default();
         names.extend(s.player_names());
         names.push("*".to_owned());
-        crate::selector::suggest(b, s.permission_level() >= crate::selector::SELECTOR_PERMISSION, &names);
+        crate::selector::suggest(b, s.permission() >= crate::selector::SELECTOR_PERMISSION, &names);
     })
 }
 

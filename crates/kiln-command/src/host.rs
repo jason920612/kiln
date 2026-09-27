@@ -6,6 +6,7 @@
 
 use crate::blocks::{BlockInput, UpdateFlags};
 use crate::bossbar::BossBars;
+use crate::functions::{DataPacks, FunctionLibrary, TimerQueue};
 use bytes::Bytes;
 use crate::coords::{Coordinates, wrap_degrees};
 use crate::error::CommandError;
@@ -16,7 +17,8 @@ use crate::text::{Arg, Text};
 use crate::tr;
 use crate::types::{Anchor, Difficulty, GameMode, Heightmap, Identifier, ItemInput};
 use kiln_proto::nbt::Tag;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 /// The executor of a command. The dispatcher replaces the [`stack`](Source::stack) for each
@@ -27,6 +29,14 @@ pub trait Source {
     type Entity: SelectorTarget + Clone;
     /// Permission level 0-4: all, moderators, gamemasters, admins, owners.
     fn permission_level(&self) -> u8;
+    /// The level commands check: [`permission_level`](Self::permission_level) capped by the
+    /// stack (function bodies run with at most level 2).
+    fn permission(&self) -> u8
+    where
+        Self: Sized,
+    {
+        self.permission_level().min(self.stack().max_permission)
+    }
     /// Where, how and as whom the command currently runs.
     fn stack(&self) -> &SourceStack<Self>
     where
@@ -92,6 +102,40 @@ pub trait Source {
 /// `CommandResultCallback`: told the outcome of each execution (`execute store`).
 pub type ResultCallback<S> = Arc<dyn Fn(&mut S, bool, i32) + Send + Sync>;
 
+/// A function call's frame (`Frame`): what `return` reported, and whether the rest of the
+/// function was discarded. Depth 0 is a top-level command.
+#[derive(Debug, Default)]
+pub struct Frame {
+    pub depth: u32,
+    discarded: AtomicBool,
+    /// `(success, value)` per `returnSuccess` / `returnFailure`, in order.
+    outcomes: Mutex<Vec<(bool, i32)>>,
+}
+
+impl Frame {
+    pub fn new(depth: u32) -> Arc<Frame> {
+        Arc::new(Frame { depth, ..Frame::default() })
+    }
+
+    /// `Frame.discard`: the function's remaining lines do not run.
+    pub fn discard(&self) {
+        self.discarded.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_discarded(&self) -> bool {
+        self.discarded.load(Ordering::Relaxed)
+    }
+
+    /// `returnSuccess` (`success`) or `returnFailure`.
+    pub fn report(&self, success: bool, value: i32) {
+        self.outcomes.lock().expect("frame lock").push((success, value));
+    }
+
+    pub fn take_outcomes(&self) -> Vec<(bool, i32)> {
+        std::mem::take(&mut *self.outcomes.lock().expect("frame lock"))
+    }
+}
+
 /// `CommandSourceStack` without the server: the executing entity, position, rotation,
 /// dimension, anchor and result callbacks. Feedback always goes to the original source
 /// (the host's concern); `execute` derives new stacks with the `with_*` methods.
@@ -106,6 +150,19 @@ pub struct SourceStack<S: Source> {
     pub name: Text,
     /// Run in order after each execution (`CommandResultCallback.chain`).
     pub callbacks: Vec<ResultCallback<S>>,
+    /// The function call this runs in.
+    pub frame: Arc<Frame>,
+    /// Commands left in this execution (`ExecutionContext.commandQuota`), shared by every
+    /// source and nested function.
+    pub quota: Arc<AtomicI32>,
+    /// `withSuppressedOutput`: feedback is dropped (function bodies).
+    pub silent: bool,
+    /// `withMaximumPermission`: the permission level is capped at this.
+    pub max_permission: u8,
+    /// Under `return run`: the command's result is the frame's return value.
+    pub returning: bool,
+    /// The first pass of a [custom executor](crate::Builder::custom).
+    pub preparing: bool,
 }
 
 impl<S: Source> Clone for SourceStack<S> {
@@ -118,6 +175,12 @@ impl<S: Source> Clone for SourceStack<S> {
             anchor: self.anchor,
             name: self.name.clone(),
             callbacks: self.callbacks.clone(),
+            frame: self.frame.clone(),
+            quota: self.quota.clone(),
+            silent: self.silent,
+            max_permission: self.max_permission,
+            returning: self.returning,
+            preparing: self.preparing,
         }
     }
 }
@@ -146,6 +209,12 @@ impl<S: Source> SourceStack<S> {
             anchor: Anchor::Feet,
             name,
             callbacks: Vec::new(),
+            frame: Frame::new(0),
+            quota: Arc::new(AtomicI32::new(i32::MAX)),
+            silent: false,
+            max_permission: 4,
+            returning: false,
+            preparing: false,
         }
     }
 
@@ -159,7 +228,26 @@ impl<S: Source> SourceStack<S> {
             entity: Some(entity),
             anchor: Anchor::Feet,
             callbacks: Vec::new(),
+            frame: Frame::new(0),
+            quota: Arc::new(AtomicI32::new(i32::MAX)),
+            silent: false,
+            max_permission: 4,
+            returning: false,
+            preparing: false,
         }
+    }
+
+    /// `FunctionCommand.modifySenderForExecution`: silent, at most permission level 2.
+    pub fn for_function_body(mut self) -> Self {
+        self.silent = true;
+        self.max_permission = self.max_permission.min(2);
+        self
+    }
+
+    /// `clearCallbacks`.
+    pub fn without_callbacks(mut self) -> Self {
+        self.callbacks.clear();
+        self
     }
 
     /// `getDisplayName`: the entity's name once one executes.
@@ -547,6 +635,35 @@ pub trait Host: SelectorWorld {
     /// Whether custom boss bar `id` exists.
     fn has_bossbar(&self, id: &Identifier) -> bool {
         self.bossbars().is_some_and(|b| b.get(id).is_some())
+    }
+    /// Loaded functions and function tags, if the host loads data packs.
+    fn functions(&self) -> Option<&FunctionLibrary> {
+        None
+    }
+    /// Scheduled functions (`/schedule`).
+    fn timers(&self) -> Option<&TimerQueue> {
+        None
+    }
+    fn timers_mut(&mut self) -> Option<&mut TimerQueue> {
+        None
+    }
+    /// The overworld's game time, for `/schedule`.
+    fn game_time(&self) -> i64 {
+        0
+    }
+    /// Available and enabled data packs.
+    fn data_packs(&self) -> Option<DataPacks> {
+        None
+    }
+    /// Looks for packs added or removed since (`PackRepository.reload`).
+    fn refresh_packs(&mut self) {}
+    /// `MinecraftServer.reloadResources`: reloads functions, tags, recipes and loot tables
+    /// from `selected` packs, in order (`None`: the enabled packs plus newly found ones, as
+    /// `/reload` does).
+    fn reload_packs(&mut self, _selected: Option<Vec<String>>) {}
+    /// `/datapack create`: an empty pack in the world's `datapacks` directory.
+    fn create_pack(&mut self, id: &str, _description: &Text) -> Result<(), CommandError> {
+        Err(CommandError::new(tr!("commands.datapack.create.io_failure", id)))
     }
     /// Sends a play packet to one player (titles and the action bar).
     fn send_packet(&mut self, _player: &Self::Entity, _packet: Bytes) {}

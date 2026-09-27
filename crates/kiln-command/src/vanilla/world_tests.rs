@@ -228,6 +228,58 @@ fn tellraw_resolves_per_recipient() {
     assert_eq!(err_key(s.run(&d, "tellraw Nobody \"x\"")), "argument.entity.notfound.player");
 }
 
+fn load(s: &mut Mock, id: &str, lines: &[&str]) {
+    let f = crate::functions::CommandFunction::from_lines(crate::Identifier::parse(id).unwrap(), lines).unwrap();
+    s.functions.insert(f);
+}
+
+#[test]
+fn functions_return_and_schedule() {
+    let d = dispatcher();
+    let s = &mut Mock::console(4);
+    s.scoreboard.add_objective(objective("o"));
+    load(s, "k:ret", &["setblock 1 64 1 gold_block", "return 7", "setblock 2 64 2 gold_block"]);
+    load(s, "k:none", &["scoreboard players add #n o 1"]);
+    load(s, "k:outer", &["function k:ret", "scoreboard players add #n o 10", "return run function k:none"]);
+    load(s, "k:m", &["$scoreboard players set #m o $(v)"]);
+    s.functions.set_tag(crate::Identifier::parse("k:t").unwrap(), vec![
+        crate::Identifier::parse("k:ret").unwrap(),
+        crate::Identifier::parse("k:none").unwrap(),
+    ]);
+    assert_eq!(s.run(&d, "function k:ret"), Ok(0));
+    // Feedback from inside the body is suppressed; the call and its result are not.
+    assert_eq!(s.feedback_keys(), ["commands.function.scheduled.single[k:ret]", "commands.function.result[k:ret, 7]"]);
+    assert_eq!(s.block([1, 64, 1]), b::GOLD_BLOCK);
+    assert_eq!(s.block([2, 64, 2]), b::AIR, "return discards the rest");
+    s.feedback.clear();
+    s.run(&d, "function k:outer").unwrap();
+    assert_eq!(s.scoreboard.score("#n", "o"), Some(11), "a callee's return does not end the caller");
+    // `return run function k:none`: k:none never returns, so k:outer returns failure (0).
+    assert_eq!(s.feedback.pop().unwrap().0, "commands.function.result[k:outer, 0]");
+    s.run(&d, "execute store result score #x o run function #k:t").unwrap();
+    assert_eq!(s.scoreboard.score("#x", "o"), Some(7), "the returned values add up");
+    s.run(&d, "execute store result score #y o run function k:none").unwrap();
+    assert_eq!(s.scoreboard.score("#y", "o"), None, "no return, nothing stored");
+    s.run(&d, "function k:m {v:5}").unwrap();
+    assert_eq!(s.scoreboard.score("#m", "o"), Some(5));
+    assert_eq!(err_key(s.run(&d, "function k:m")), "commands.function.instantiationFailure");
+    assert_eq!(err_key(s.run(&d, "function k:nope")), "arguments.function.unknown");
+    assert_eq!(err_key(s.run(&d, "function #k:nope")), "commands.function.scheduled.no_functions");
+    assert_eq!(s.run(&d, "execute if function k:ret run seed").map(|_| ()), Ok(()));
+    assert_eq!(s.run(&d, "execute if function k:none run seed"), Ok(0), "no source passes, silently");
+    assert_eq!(s.run(&d, "schedule function k:none 5t"), Ok(105));
+    assert_eq!(err_key(s.run(&d, "schedule function k:m 5t")), "commands.schedule.macro");
+    assert_eq!(err_key(s.run(&d, "schedule function k:none 0")), "commands.schedule.same_tick");
+    assert_eq!(s.run(&d, "schedule clear k:none"), Ok(1));
+    assert_eq!(err_key(s.run(&d, "schedule clear k:none")), "commands.schedule.cleared.failure");
+    // The command quota covers nested functions.
+    load(s, "k:loop", &["scoreboard players add #l o 1", "function k:loop"]);
+    s.rules.insert("minecraft:max_command_sequence_length".into(), crate::host::GameRuleValue::Int(20));
+    s.run(&d, "function k:loop").unwrap();
+    let loops = s.scoreboard.score("#l", "o").unwrap();
+    assert!(loops > 1 && loops < 20, "{loops}");
+}
+
 #[test]
 fn teams_bossbars_titles_and_triggers() {
     let d = dispatcher();

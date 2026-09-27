@@ -28,9 +28,22 @@ impl Tags {
     /// Loads every tag directory under `data/*/tags/`. `known` answers whether a registry
     /// entry exists (optional entries naming missing elements are skipped, as vanilla does).
     pub fn load(datapack: &Path, known: impl Fn(&str, &Identifier) -> bool) -> Result<Tags, String> {
+        Tags::load_packs(&[datapack], known)
+    }
+
+    /// Tags of several packs in order (`TagLoader`): entries add up, `replace` drops the
+    /// earlier packs' entries.
+    pub fn load_packs(packs: &[&Path], known: impl Fn(&str, &Identifier) -> bool) -> Result<Tags, String> {
         let mut raw: HashMap<(String, Identifier), Vec<RawEntry>> = HashMap::new();
+        for datapack in packs {
+            Tags::read_pack(datapack, &mut raw)?;
+        }
+        Tags::resolve_all(raw, known)
+    }
+
+    fn read_pack(datapack: &Path, raw: &mut HashMap<(String, Identifier), Vec<RawEntry>>) -> Result<(), String> {
         let data = datapack.join("data");
-        let Ok(namespaces) = std::fs::read_dir(&data) else { return Ok(Tags::default()) };
+        let Ok(namespaces) = std::fs::read_dir(&data) else { return Ok(()) };
         let mut ns_dirs: Vec<_> = namespaces.flatten().collect();
         ns_dirs.sort_by_key(|e| e.file_name());
         for ns in ns_dirs {
@@ -56,6 +69,10 @@ impl Tags {
                 slot.extend(entries);
             }
         }
+        Ok(())
+    }
+
+    fn resolve_all(raw: HashMap<(String, Identifier), Vec<RawEntry>>, known: impl Fn(&str, &Identifier) -> bool) -> Result<Tags, String> {
         let mut resolved: HashMap<String, HashMap<Identifier, Vec<Identifier>>> = HashMap::new();
         let keys: Vec<(String, Identifier)> = raw.keys().cloned().collect();
         for key in keys {
