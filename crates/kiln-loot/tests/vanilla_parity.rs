@@ -11,7 +11,8 @@ use kiln_item::component::EquipmentSlotGroup;
 use kiln_item::{Component, Identifier, ItemStack, Text};
 use kiln_loot::predicate::{DamageSourcePredicate, EntityPredicate, LocationPredicate};
 use kiln_loot::random::{RandomSequences, seeded};
-use kiln_loot::{EntityTarget, LootContext, LootData, Source};
+use kiln_loot::{EntityTarget, LootContext, LootData, LootTable, Source, TableRef};
+use std::sync::Arc;
 use kiln_proto::Reader;
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
@@ -40,6 +41,26 @@ fn data() -> Option<&'static (LootData, RecipeManager)> {
         Some((loot, recipes))
     })
     .as_ref()
+}
+
+/// The hand-written tables of `tests/synthetic.json`, decoded against the vanilla data.
+fn synthetic(data: &LootData) -> &'static HashMap<String, Arc<LootTable>> {
+    static TABLES: OnceLock<HashMap<String, Arc<LootTable>>> = OnceLock::new();
+    TABLES.get_or_init(|| {
+        let text = include_str!("synthetic.json");
+        let all: serde_json::Value = serde_json::from_str(text).unwrap();
+        // Re-read each table from the original text so key order is kept.
+        let json = kiln_loot::Json::parse(text).unwrap();
+        all.as_object()
+            .unwrap()
+            .keys()
+            .map(|k| {
+                let table = json.get(k).unwrap().to_text();
+                let t = data.parse_table(&table).unwrap_or_else(|e| panic!("{k}: {e}"));
+                (k.clone(), Arc::new(t))
+            })
+            .collect()
+    })
 }
 
 fn unhex(s: &str) -> Vec<u8> {
@@ -112,6 +133,7 @@ fn show(s: &ItemStack) -> String {
 
 struct Entity {
     enchantments: HashMap<i32, i32>,
+    profile: Option<kiln_item::component::ResolvableProfile>,
 }
 
 struct BlockEntity {
@@ -202,6 +224,9 @@ impl LootContext for Case<'_> {
             }
         }
     }
+    fn player_profile(&self, target: EntityTarget) -> Option<kiln_item::component::ResolvableProfile> {
+        self.entities.get(&target).and_then(|e| e.profile.clone())
+    }
     fn custom_name(&self, source: Source) -> Option<Option<Text>> {
         match source {
             Source::BlockEntity => self.block_entity.as_ref().and_then(|b| b.name.clone()),
@@ -241,7 +266,18 @@ fn case<'a>(recipes: &'a RecipeManager, c: &serde_json::Value) -> Case<'a> {
         .as_object()
         .map(|m| {
             m.iter()
-                .map(|(k, e)| (EntityTarget::by_name(k).unwrap(), Entity { enchantments: enchantments(&e["enchantments"]) }))
+                .map(|(k, e)| {
+                    let profile = e.get("profile").map(|h| {
+                        let bytes = unhex(h.as_str().unwrap());
+                        let mut r = Reader::new(&bytes);
+                        let id = r.varint().unwrap() as u16;
+                        match Component::read(id, &mut r).unwrap() {
+                            Component::Profile(p) => p,
+                            other => panic!("profile {other:?}"),
+                        }
+                    });
+                    (EntityTarget::by_name(k).unwrap(), Entity { enchantments: enchantments(&e["enchantments"]), profile })
+                })
                 .collect()
         })
         .unwrap_or_default();
@@ -291,7 +327,15 @@ fn case<'a>(recipes: &'a RecipeManager, c: &serde_json::Value) -> Case<'a> {
 fn replay(data: &LootData, recipes: &RecipeManager, c: &serde_json::Value) -> Result<bool, String> {
     let table = Identifier::parse(c["table"].as_str().unwrap()).unwrap();
     let ctx = case(recipes, c);
-    let lt = data.table(&table).ok_or("table not loaded")?;
+    let inline = synthetic(data).get(table.as_str());
+    let lt: &LootTable = match inline {
+        Some(t) => t,
+        None => data.table(&table).ok_or("table not loaded")?,
+    };
+    let which = || match inline {
+        Some(t) => TableRef::Inline(t),
+        None => TableRef::Id(&table),
+    };
     let expected: Vec<Vec<ItemStack>> = c["results"]
         .as_array()
         .unwrap()
@@ -302,23 +346,25 @@ fn replay(data: &LootData, recipes: &RecipeManager, c: &serde_json::Value) -> Re
     let mut got: Vec<Vec<ItemStack>> = Vec::new();
     match c["mode"].as_str().unwrap() {
         "sequence" => {
+            // The level's random (for tables without a sequence) is seeded like the harness does.
+            level = seeded(c["world_seed"].as_i64().unwrap());
             let mut seqs = RandomSequences::new(c["world_seed"].as_i64().unwrap());
             for _ in 0..expected.len() {
                 let mut rng = lt.random(0, &mut seqs, &mut level);
-                got.push(data.random_items(&table, &ctx, rng.source()));
+                got.push(data.random_items(which(), &ctx, rng.source()));
             }
         }
         "seed" => {
             let mut seqs = RandomSequences::new(0);
             let mut rng = lt.random(c["seed"].as_i64().unwrap(), &mut seqs, &mut level);
-            got.push(data.random_items(&table, &ctx, rng.source()));
+            got.push(data.random_items(which(), &ctx, rng.source()));
         }
         "fill" => {
             let mut seqs = RandomSequences::new(0);
             let mut rng = lt.random(c["seed"].as_i64().unwrap(), &mut seqs, &mut level);
             let mut container = vec![ItemStack::empty(); 27];
             container[4] = ItemStack::of("minecraft:stone", 1).unwrap();
-            data.fill(&table, &ctx, rng.source(), &mut container);
+            data.fill(which(), &ctx, rng.source(), &mut container);
             got.push(container);
         }
         other => return Err(format!("unknown mode {other}")),
@@ -350,7 +396,8 @@ fn loot_tables_match_vanilla() {
     files.sort();
     let limit = if full() { usize::MAX } else { 400 };
     let mut report: BTreeMap<String, (usize, usize, usize, usize)> = BTreeMap::new();
-    let mut failures = Vec::new();
+    // First difference and count per failing table.
+    let mut failures: BTreeMap<String, (usize, String)> = BTreeMap::new();
     for f in &files {
         let kind = f.file_stem().unwrap().to_string_lossy().to_string();
         let text = std::fs::read_to_string(f).unwrap();
@@ -364,9 +411,11 @@ fn loot_tables_match_vanilla() {
                 Ok(false) => entry.2 += 1,
                 Err(e) => {
                     entry.1 += 1;
-                    if failures.len() < 40 {
-                        failures.push(format!("{} [{}] {}", c["table"], c["mode"], e));
+                    let slot = failures.entry(c["table"].as_str().unwrap().to_owned()).or_default();
+                    if slot.0 == 0 {
+                        slot.1 = format!("[{}] {}", c["mode"], e);
                     }
+                    slot.0 += 1;
                 }
             }
         }
@@ -375,8 +424,8 @@ fn loot_tables_match_vanilla() {
     for (kind, (pass, fail, skip, tables)) in &report {
         eprintln!("{kind:16} tables {tables:5}  cases {:6}  pass {pass:6}  fail {fail:5}  inconclusive {skip}", pass + fail + skip);
     }
-    for f in &failures {
-        eprintln!("{f}");
+    for (table, (n, first)) in failures.iter().take(30) {
+        eprintln!("{table}: {n} cases differ; first {first}");
     }
     let total_fail: usize = report.values().map(|r| r.1).sum();
     assert_eq!(total_fail, 0, "{total_fail} cases differ from vanilla");

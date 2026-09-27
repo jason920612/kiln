@@ -1,0 +1,357 @@
+{
+  "kiln:chest/components": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": 3,
+        "entries": [
+          {
+            "type": "minecraft:item",
+            "name": "minecraft:stick",
+            "modifier": [
+              {"type": "minecraft:set_item", "item": "minecraft:diamond_sword"},
+              {"type": "minecraft:set_custom_data", "tag": "{kiln:1b,nested:{a:[1,2,3]}}"},
+              {"type": "minecraft:set_custom_data", "tag": {"nested": {"b": "x"}}},
+              {"type": "minecraft:set_components", "components": {"minecraft:repair_cost": 3, "minecraft:rarity": "epic", "!minecraft:tool": {}}},
+              {"type": "minecraft:set_name", "name": {"text": "Blade", "color": "gold"}},
+              {"type": "minecraft:set_name", "name": "Item name", "target": "item_name"},
+              {"type": "minecraft:set_lore", "lore": ["one", "two"], "mode": "append"},
+              {"type": "minecraft:set_lore", "lore": ["zero"], "mode": "insert", "offset": 0},
+              {"type": "minecraft:set_lore", "lore": ["middle"], "mode": "replace_section", "offset": 1, "size": 1},
+              {"type": "minecraft:toggle_tooltips", "toggles": {"minecraft:enchantments": false, "minecraft:attribute_modifiers": false}},
+              {"type": "minecraft:toggle_tooltips", "toggles": {"minecraft:enchantments": true}},
+              {"type": "minecraft:set_damage", "damage": {"type": "minecraft:uniform", "min": 0.2, "max": 0.9}},
+              {"type": "minecraft:set_damage", "damage": -0.1, "add": true}
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "kiln:chest/enchanting": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": {"type": "minecraft:uniform", "min": 2, "max": 5},
+        "entries": [
+          {"type": "minecraft:item", "name": "minecraft:book", "weight": 3, "modifier": {"type": "minecraft:enchant_randomly"}},
+          {"type": "minecraft:item", "name": "minecraft:book", "modifier": {"type": "minecraft:enchant_randomly", "options": ["minecraft:sharpness", "minecraft:mending", "minecraft:fortune"]}},
+          {"type": "minecraft:item", "name": "minecraft:iron_axe", "modifier": {"type": "minecraft:enchant_randomly", "options": "#minecraft:non_treasure"}},
+          {"type": "minecraft:item", "name": "minecraft:carrot", "modifier": {"type": "minecraft:enchant_randomly", "only_compatible": false}},
+          {"type": "minecraft:item", "name": "minecraft:book", "weight": 2, "modifier": {"type": "minecraft:enchant_with_levels", "levels": {"type": "minecraft:uniform", "min": 5, "max": 40}}},
+          {"type": "minecraft:item", "name": "minecraft:diamond_chestplate", "weight": 2, "modifier": {"type": "minecraft:enchant_with_levels", "levels": 30, "options": "#minecraft:on_random_loot"}},
+          {"type": "minecraft:item", "name": "minecraft:golden_helmet", "modifier": [
+            {"type": "minecraft:enchant_with_levels", "levels": {"type": "minecraft:uniform", "min": 10, "max": 20}},
+            {"type": "minecraft:set_enchantments", "enchantments": {"minecraft:unbreaking": 2}, "add": true}
+          ]},
+          {"type": "minecraft:item", "name": "minecraft:book", "modifier": {"type": "minecraft:set_enchantments", "enchantments": {"minecraft:efficiency": {"type": "minecraft:uniform", "min": 1, "max": 5}}}},
+          {"type": "minecraft:item", "name": "minecraft:fishing_rod", "modifier": {"type": "minecraft:enchant_with_levels", "levels": {"type": "minecraft:binomial", "n": 40, "p": 0.5}}}
+        ]
+      }
+    ]
+  },
+  "kiln:chest/attributes": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": 2,
+        "entries": [
+          {"type": "minecraft:item", "name": "minecraft:iron_sword", "modifier": {"type": "minecraft:set_attributes", "modifiers": [
+            {"id": "kiln:speed", "attribute": "minecraft:movement_speed", "operation": "add_multiplied_base", "amount": {"type": "minecraft:uniform", "min": 0.05, "max": 0.2}, "slot": ["mainhand", "offhand", "feet"]},
+            {"id": "kiln:hp", "attribute": "minecraft:max_health", "operation": "add_value", "amount": 4, "slot": "any"}
+          ]}},
+          {"type": "minecraft:item", "name": "minecraft:diamond_axe", "modifier": {"type": "minecraft:set_attributes", "replace": false, "modifiers": [
+            {"id": "minecraft:base_attack_damage", "attribute": "minecraft:attack_damage", "operation": "add_value", "amount": 20, "slot": "mainhand"},
+            {"id": "kiln:armor", "attribute": "minecraft:armor", "operation": "add_multiplied_total", "amount": {"type": "minecraft:mul", "inputs": [2, {"type": "minecraft:uniform", "min": 0, "max": 1}]}, "slot": ["head", "chest"]}
+          ]}}
+        ]
+      }
+    ]
+  },
+  "kiln:chest/fireworks_books": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": 4,
+        "entries": [
+          {"type": "minecraft:item", "name": "minecraft:firework_rocket", "modifier": [
+            {"type": "minecraft:set_fireworks", "flight_duration": 2, "explosions": {"values": [{"shape": "star", "colors": [16711680]}, {"shape": "creeper", "has_trail": true}], "mode": "append"}},
+            {"type": "minecraft:set_fireworks", "explosions": {"values": [{"shape": "burst", "has_twinkle": true}], "mode": "insert", "offset": 1}}
+          ]},
+          {"type": "minecraft:item", "name": "minecraft:firework_star", "modifier": {"type": "minecraft:set_firework_explosion", "shape": "large_ball", "colors": [255, 65280], "fade_colors": [1], "trail": true}},
+          {"type": "minecraft:item", "name": "minecraft:written_book", "modifier": [
+            {"type": "minecraft:set_book_cover", "title": "Kiln", "author": "someone", "generation": 1},
+            {"type": "minecraft:set_written_book_pages", "pages": ["page one", {"text": "page two", "bold": true}], "mode": "replace_all"},
+            {"type": "minecraft:set_written_book_pages", "pages": ["last"], "mode": "append"}
+          ]},
+          {"type": "minecraft:item", "name": "minecraft:writable_book", "modifier": {"type": "minecraft:set_writable_book_pages", "pages": ["a", {"raw": "b", "filtered": "*"}], "mode": "insert", "offset": 0}},
+          {"type": "minecraft:item", "name": "minecraft:paper", "modifier": {"type": "minecraft:set_custom_model_data",
+            "floats": {"values": [1.5, {"type": "minecraft:uniform", "min": 0, "max": 10}], "mode": "replace_all"},
+            "flags": {"values": [true, false], "mode": "append"},
+            "strings": {"values": ["kiln"], "mode": "append"},
+            "colors": {"values": [16711935, [0.5, 1.0, 0.0], {"type": "minecraft:uniform", "min": 0, "max": 255}], "mode": "replace_all"}}}
+        ]
+      }
+    ]
+  },
+  "kiln:chest/misc_functions": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": 6,
+        "entries": [
+          {"type": "minecraft:item", "name": "minecraft:leather_chestplate", "modifier": {"type": "minecraft:set_random_dyes", "number_of_dyes": {"type": "minecraft:uniform", "min": 1, "max": 4}}},
+          {"type": "minecraft:item", "name": "minecraft:potion", "modifier": {"type": "minecraft:set_random_potion", "options": ["minecraft:swiftness", "minecraft:strength", "minecraft:long_invisibility"]}},
+          {"type": "minecraft:item", "name": "minecraft:splash_potion", "modifier": {"type": "minecraft:set_random_potion"}},
+          {"type": "minecraft:item", "name": "minecraft:tipped_arrow", "modifier": [{"type": "minecraft:set_potion", "id": "minecraft:poison"}, {"type": "minecraft:set_count", "count": {"type": "minecraft:binomial", "n": 20, "p": 0.3}}]},
+          {"type": "minecraft:item", "name": "minecraft:suspicious_stew", "modifier": {"type": "minecraft:set_stew_effect", "effects": [{"type": "minecraft:saturation", "duration": 7}, {"type": "minecraft:poison", "duration": {"type": "minecraft:uniform", "min": 3, "max": 9}}]}},
+          {"type": "minecraft:item", "name": "minecraft:goat_horn", "modifier": {"type": "minecraft:set_instrument", "options": "#minecraft:goat_horns"}},
+          {"type": "minecraft:item", "name": "minecraft:ominous_bottle", "modifier": {"type": "minecraft:set_ominous_bottle_amplifier", "amplifier": {"type": "minecraft:uniform", "min": -2, "max": 7}}},
+          {"type": "minecraft:item", "name": "minecraft:white_banner", "modifier": [
+            {"type": "minecraft:set_banner_pattern", "patterns": [{"pattern": "minecraft:creeper", "color": "green"}], "append": false},
+            {"type": "minecraft:set_banner_pattern", "patterns": [{"pattern": "minecraft:border", "color": "black"}], "append": true}
+          ]},
+          {"type": "minecraft:item", "name": "minecraft:chest", "modifier": {"type": "minecraft:set_loot_table", "loot_table_id": "minecraft:chests/simple_dungeon", "seed": 42}},
+          {"type": "minecraft:item", "name": "minecraft:player_head", "modifier": {"type": "minecraft:fill_player_head", "entity": "this"}},
+          {"type": "minecraft:item", "name": "minecraft:raw_iron", "modifier": [{"type": "minecraft:set_count", "count": 5}, {"type": "minecraft:furnace_smelt"}]},
+          {"type": "minecraft:item", "name": "minecraft:raw_gold", "modifier": [{"type": "minecraft:set_count", "count": 5}, {"type": "minecraft:furnace_smelt", "use_input_count": false}]},
+          {"type": "minecraft:item", "name": "minecraft:dirt", "modifier": {"type": "minecraft:furnace_smelt"}},
+          {"type": "minecraft:item", "name": "minecraft:diamond", "modifier": [{"type": "minecraft:set_count", "count": 30}, {"type": "minecraft:limit_count", "limit": {"min": 2, "max": {"type": "minecraft:uniform", "min": 3, "max": 12}}}]},
+          {"type": "minecraft:item", "name": "minecraft:emerald", "modifier": [{"type": "minecraft:set_count", "count": 1}, {"type": "minecraft:limit_count", "limit": {"min": 4}}]},
+          {"type": "minecraft:item", "name": "minecraft:ender_pearl", "modifier": [{"type": "minecraft:set_count", "count": 100}]}
+        ]
+      }
+    ]
+  },
+  "kiln:chest/containers": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": 2,
+        "entries": [
+          {"type": "minecraft:item", "name": "minecraft:shulker_box", "modifier": [
+            {"type": "minecraft:set_contents", "component": "minecraft:container", "entries": [
+              {"type": "minecraft:item", "name": "minecraft:apple", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:uniform", "min": 1, "max": 64}}},
+              {"type": "minecraft:empty"},
+              {"type": "minecraft:item", "name": "minecraft:bread", "condition": {"type": "minecraft:random_chance", "chance": 0.5}},
+              {"type": "minecraft:tag", "name": "minecraft:coals", "items": "#minecraft:coals", "expand": false}
+            ]},
+            {"type": "minecraft:modify_contents", "component": "minecraft:container", "modifier": {"type": "minecraft:set_count", "count": 3, "add": true}}
+          ]},
+          {"type": "minecraft:item", "name": "minecraft:bundle", "modifier": {"type": "minecraft:set_contents", "component": "minecraft:bundle_contents", "entries": [
+            {"type": "minecraft:item", "name": "minecraft:arrow", "modifier": {"type": "minecraft:set_count", "count": 10}},
+            {"type": "minecraft:loot_table", "value": "minecraft:gameplay/fishing/junk"}
+          ]}},
+          {"type": "minecraft:item", "name": "minecraft:crossbow", "modifier": {"type": "minecraft:set_contents", "component": "minecraft:charged_projectiles", "entries": [
+            {"type": "minecraft:item", "name": "minecraft:firework_rocket"}
+          ]}}
+        ]
+      }
+    ]
+  },
+  "kiln:chest/filters": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": 5,
+        "entries": [
+          {"type": "minecraft:item", "name": "minecraft:iron_ingot", "modifier": [
+            {"type": "minecraft:set_count", "count": {"type": "minecraft:uniform", "min": 1, "max": 8}},
+            {"type": "minecraft:filtered", "item_filter": {"count": {"min": 4}}, "on_pass": {"type": "minecraft:set_name", "name": "many"}, "on_fail": {"type": "minecraft:discard"}}
+          ]},
+          {"type": "minecraft:item", "name": "minecraft:gold_ingot", "modifier": [
+            {"type": "minecraft:sequence", "functions": [{"type": "minecraft:set_count", "count": 3}, {"type": "minecraft:set_count", "count": 2, "add": true}]},
+            {"type": "minecraft:sequence", "functions": [{"type": "minecraft:set_count", "count": 9}], "condition": {"type": "minecraft:random_chance", "chance": 0.5}}
+          ]},
+          {"type": "minecraft:item", "name": "minecraft:copper_ingot", "modifier": {"type": "minecraft:set_count", "count": 7, "condition": {"type": "minecraft:inverted", "term": {"type": "minecraft:random_chance", "chance": 0.3}}}}
+        ]
+      }
+    ]
+  },
+  "kiln:chest/numbers": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": 1,
+        "entries": [
+          {"type": "minecraft:group", "children": [
+            {"type": "minecraft:item", "name": "minecraft:stone", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:add", "inputs": [1, {"type": "minecraft:uniform", "min": 0, "max": 5}, {"type": "minecraft:sub", "left": 10, "right": 4}]}}},
+            {"type": "minecraft:item", "name": "minecraft:dirt", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:mul", "inputs": [{"type": "minecraft:uniform", "min": 1, "max": 3}, 3]}}},
+            {"type": "minecraft:item", "name": "minecraft:sand", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:div", "left": {"type": "minecraft:uniform", "min": 0, "max": 60}, "right": 7}}},
+            {"type": "minecraft:item", "name": "minecraft:gravel", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:mod", "left": {"type": "minecraft:uniform", "min": -20, "max": 60}, "right": 9}}},
+            {"type": "minecraft:item", "name": "minecraft:clay_ball", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:floor_mod", "left": {"type": "minecraft:uniform", "min": -20, "max": 20}, "right": 6}}},
+            {"type": "minecraft:item", "name": "minecraft:brick", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:floor_div", "left": {"type": "minecraft:uniform", "min": -20, "max": 20}, "right": 3}}},
+            {"type": "minecraft:item", "name": "minecraft:flint", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:pow", "base": 2, "exponent": {"type": "minecraft:uniform", "min": 0, "max": 5}}}},
+            {"type": "minecraft:item", "name": "minecraft:bone", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:abs", "input": {"type": "minecraft:negate", "input": {"type": "minecraft:uniform", "min": 1, "max": 9}}}}},
+            {"type": "minecraft:item", "name": "minecraft:string", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:max", "inputs": [3, {"type": "minecraft:uniform", "min": 0, "max": 10}]}}},
+            {"type": "minecraft:item", "name": "minecraft:feather", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:min", "inputs": [5, {"type": "minecraft:uniform", "min": 0, "max": 10}]}}},
+            {"type": "minecraft:item", "name": "minecraft:egg", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:avg", "inputs": [{"type": "minecraft:uniform", "min": 0, "max": 10}, 8, 3]}}},
+            {"type": "minecraft:item", "name": "minecraft:wheat", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:weighted_list", "distribution": [{"data": 1, "weight": 5}, {"data": {"type": "minecraft:uniform", "min": 10, "max": 20}, "weight": 2}, {"data": 64, "weight": 1}]}}},
+            {"type": "minecraft:item", "name": "minecraft:carrot", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:conditional", "condition": {"type": "minecraft:random_chance", "chance": 0.5}, "on_true": 7, "on_false": {"type": "minecraft:uniform", "min": 1, "max": 2}}}},
+            {"type": "minecraft:item", "name": "minecraft:potato", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:number_dispatcher", "cases": [{"condition": {"type": "minecraft:random_chance", "chance": 0.2}, "value": 11}, {"condition": {"type": "minecraft:random_chance", "chance": 0.5}, "value": 12}], "default": 13}}},
+            {"type": "minecraft:item", "name": "minecraft:beetroot", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:floor", "input": {"type": "minecraft:uniform", "min": 0.0, "max": 9.9}}}}},
+            {"type": "minecraft:item", "name": "minecraft:melon_slice", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:ceil", "input": {"type": "minecraft:uniform", "min": 0.0, "max": 9.9}}}}},
+            {"type": "minecraft:item", "name": "minecraft:pumpkin_seeds", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:round", "input": {"type": "minecraft:mul", "inputs": [{"type": "minecraft:uniform", "min": -2.0, "max": 9.9}, 1.5]}}}}},
+            {"type": "minecraft:item", "name": "minecraft:melon_seeds", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:truncate", "input": {"type": "minecraft:sub", "left": {"type": "minecraft:uniform", "min": 0.0, "max": 9.9}, "right": 4.5}}}}},
+            {"type": "minecraft:item", "name": "minecraft:cocoa_beans", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:add", "inputs": [{"type": "minecraft:sqrt", "input": {"type": "minecraft:uniform", "min": 1.0, "max": 100.0}}, {"type": "minecraft:length", "inputs": [3.0, 4.0]}]}}}},
+            {"type": "minecraft:item", "name": "minecraft:sugar", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:mul", "inputs": [10.0, {"type": "minecraft:add", "inputs": [1.5, {"type": "minecraft:sin", "input": {"type": "minecraft:uniform", "min": 0.0, "max": 6.28}}, {"type": "minecraft:cos", "input": {"type": "minecraft:uniform", "min": 0.0, "max": 6.28}}]}]}}}},
+            {"type": "minecraft:item", "name": "minecraft:apple", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:pow", "base": {"type": "minecraft:uniform", "min": 1.0, "max": 2.0}, "exponent": {"type": "minecraft:abs", "input": -3.0}}}}},
+            {"type": "minecraft:item", "name": "minecraft:glowstone_dust", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:mod", "left": {"type": "minecraft:uniform", "min": 0.0, "max": 30.0}, "right": {"type": "minecraft:avg", "inputs": [4.0, 6.0]}}}}},
+            {"type": "minecraft:item", "name": "minecraft:redstone", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:div", "left": {"type": "minecraft:max", "inputs": [{"type": "minecraft:uniform", "min": 0.0, "max": 30.0}, 5.0]}, "right": {"type": "minecraft:min", "inputs": [3.0, 4.0]}}}}},
+            {"type": "minecraft:item", "name": "minecraft:lapis_lazuli", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:weighted_list", "distribution": [{"data": 2.5, "weight": 1}, {"data": {"type": "minecraft:negate", "input": -7.5}, "weight": 3}]}}}},
+            {"type": "minecraft:item", "name": "minecraft:quartz", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:conditional", "condition": {"type": "minecraft:random_chance", "chance": {"type": "minecraft:uniform", "min": 0.0, "max": 1.0}}, "on_true": {"type": "minecraft:from_int", "input": {"type": "minecraft:uniform", "min": 1, "max": 4}}}}}},
+            {"type": "minecraft:item", "name": "minecraft:amethyst_shard", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:div", "left": 5, "right": {"type": "minecraft:uniform", "min": 0, "max": 1}}}},
+            {"type": "minecraft:item", "name": "minecraft:prismarine_shard", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:pow", "base": {"type": "minecraft:uniform", "min": 0, "max": 1}, "exponent": {"type": "minecraft:uniform", "min": 0, "max": 1}}}},
+            {"type": "minecraft:item", "name": "minecraft:nautilus_shell", "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:from_float", "input": {"type": "minecraft:div", "left": 1.0, "right": {"type": "minecraft:uniform", "min": -1.0, "max": 1.0}}}}}
+          ]}
+        ]
+      }
+    ]
+  },
+  "kiln:chest/entries": {
+    "type": "minecraft:chest",
+    "pools": [
+      {
+        "rolls": {"type": "minecraft:uniform", "min": 3, "max": 8},
+        "bonus_rolls": {"type": "minecraft:uniform", "min": 0.0, "max": 3.0},
+        "entries": [
+          {"type": "minecraft:empty", "weight": 4, "quality": -2},
+          {"type": "minecraft:item", "name": "minecraft:diamond", "weight": 1, "quality": 5},
+          {"type": "minecraft:tag", "items": "#minecraft:coals", "expand": true, "weight": 3, "quality": 1},
+          {"type": "minecraft:tag", "items": "#minecraft:boats", "expand": false, "weight": 1},
+          {"type": "minecraft:alternatives", "children": [
+            {"type": "minecraft:item", "name": "minecraft:emerald", "condition": {"type": "minecraft:random_chance", "chance": 0.3}},
+            {"type": "minecraft:item", "name": "minecraft:gold_nugget", "weight": 6, "condition": {"type": "minecraft:random_chance", "chance": 0.5}},
+            {"type": "minecraft:item", "name": "minecraft:iron_nugget", "weight": 2}
+          ], "modifier": {"type": "minecraft:set_count", "count": {"type": "minecraft:uniform", "min": 1, "max": 3}}},
+          {"type": "minecraft:sequence", "children": [
+            {"type": "minecraft:item", "name": "minecraft:arrow"},
+            {"type": "minecraft:item", "name": "minecraft:bow", "condition": {"type": "minecraft:random_chance", "chance": 0.5}},
+            {"type": "minecraft:item", "name": "minecraft:spectral_arrow"}
+          ]},
+          {"type": "minecraft:loot_table", "value": "minecraft:gameplay/fishing/treasure", "weight": 2, "modifier": {"type": "minecraft:set_name", "name": "treasure"}},
+          {"type": "minecraft:loot_table", "value": ["minecraft:gameplay/fishing/fish", "minecraft:gameplay/fishing/junk"], "expand": true, "weight": 2},
+          {"type": "minecraft:loot_table", "value": {"pools": [{"rolls": 2, "entries": [{"type": "minecraft:item", "name": "minecraft:cake"}]}]}, "weight": 1},
+          {"type": "minecraft:dynamic", "name": "minecraft:contents", "weight": 1}
+        ]
+      },
+      {
+        "rolls": 2,
+        "condition": {"type": "minecraft:any_of", "terms": [{"type": "minecraft:random_chance", "chance": 0.4}, {"type": "minecraft:all_of", "terms": [{"type": "minecraft:random_chance", "chance": 0.5}, {"type": "minecraft:weather_check", "raining": false}]}]},
+        "modifier": {"type": "minecraft:set_count", "count": 2, "add": true},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:slime_ball"}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:int_value_check", "value": {"type": "minecraft:uniform", "min": 0, "max": 10}, "test": {"min": 3, "max": 7}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:magma_cream"}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:float_value_check", "value": {"type": "minecraft:uniform", "min": 0.0, "max": 1.0}, "test": {"min": 0.25}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:blaze_powder"}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:int_value_check", "value": {"type": "minecraft:uniform", "min": 0, "max": 3}, "test": 2},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:ghast_tear"}]
+      }
+    ],
+    "modifier": [{"type": "minecraft:set_lore", "lore": ["from kiln"], "mode": "append"}]
+  },
+  "kiln:blocks/stone/mining": {
+    "type": "minecraft:block",
+    "pools": [
+      {
+        "rolls": 2,
+        "entries": [
+          {"type": "minecraft:alternatives", "children": [
+            {"type": "minecraft:item", "name": "minecraft:emerald", "condition": {"type": "minecraft:match_tool", "predicate": {"items": "#minecraft:pickaxes", "predicates": {"minecraft:enchantments": [{"enchantments": ["minecraft:fortune", "minecraft:efficiency"], "levels": {"min": 2}}]}}},
+             "modifier": [{"type": "minecraft:apply_bonus", "enchantment": "minecraft:fortune", "formula": "minecraft:uniform_bonus_count", "parameters": {"bonusMultiplier": 2}}, {"type": "minecraft:explosion_decay"}]},
+            {"type": "minecraft:item", "name": "minecraft:redstone", "condition": {"type": "minecraft:match_tool", "predicate": {"predicates": {"minecraft:damage": {"damage": {"max": 0}}}}},
+             "modifier": [{"type": "minecraft:set_count", "count": 4}, {"type": "minecraft:apply_bonus", "enchantment": "minecraft:fortune", "formula": "minecraft:binomial_with_bonus_count", "parameters": {"extra": 3, "probability": 0.5714286}}]},
+            {"type": "minecraft:item", "name": "minecraft:coal", "condition": {"type": "minecraft:table_bonus", "enchantment": "minecraft:silk_touch", "chances": [0.1, 0.9]}},
+            {"type": "minecraft:item", "name": "minecraft:cobblestone", "condition": {"type": "minecraft:survives_explosion"}, "modifier": {"type": "minecraft:copy_components", "source": "tool", "include": ["minecraft:enchantments", "minecraft:custom_name"]}}
+          ]}
+        ]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:match_block", "blocks": ["minecraft:stone", "minecraft:granite"]},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:stone_button", "modifier": {"type": "minecraft:furnace_smelt"}}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:match_tool", "predicate": {"items": "minecraft:shears", "count": 1, "components": {"minecraft:max_damage": 238}}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:vine"}]
+      }
+    ]
+  },
+  "kiln:blocks/chest/named": {
+    "type": "minecraft:block",
+    "pools": [
+      {
+        "rolls": 1,
+        "entries": [{"type": "minecraft:item", "name": "minecraft:chest", "modifier": [
+          {"type": "minecraft:copy_name", "source": "block_entity"},
+          {"type": "minecraft:copy_components", "source": "block_entity", "exclude": ["minecraft:lock"]},
+          {"type": "minecraft:copy_state", "block": "minecraft:chest", "properties": ["facing", "type", "waterlogged"]}
+        ]}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:match_block", "blocks": "minecraft:chest", "state": {"facing": "north", "waterlogged": {"max": "false"}}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:oak_planks", "modifier": {"type": "minecraft:set_count", "count": 3}}]
+      }
+    ]
+  },
+  "kiln:blocks/wheat/crop": {
+    "type": "minecraft:block",
+    "pools": [
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:match_block", "blocks": "minecraft:wheat", "state": {"age": {"min": "3", "max": "6"}}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:wheat_seeds", "modifier": {"type": "minecraft:apply_bonus", "enchantment": "minecraft:fortune", "formula": "minecraft:ore_drops"}}]
+      },
+      {
+        "rolls": 1,
+        "entries": [{"type": "minecraft:item", "name": "minecraft:wheat", "modifier": [{"type": "minecraft:copy_state", "block": "minecraft:wheat", "properties": ["age"]}, {"type": "minecraft:limit_count", "limit": {"max": 1}}]}]
+      }
+    ]
+  },
+  "kiln:entity/zombie/kills": {
+    "type": "minecraft:entity",
+    "pools": [
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:killed_by_player"},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:emerald", "modifier": [{"type": "minecraft:set_count", "count": {"type": "minecraft:uniform", "min": 0, "max": 3}}, {"type": "minecraft:enchanted_count_increase", "enchantment": "minecraft:looting", "count": {"type": "minecraft:uniform", "min": 0.5, "max": 2.5}, "limit": 4}]}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:random_chance_with_enchanted_bonus", "enchantment": "minecraft:looting", "unenchanted_chance": 0.2, "enchanted_chance": {"type": "minecraft:linear", "base": 0.3, "per_level_above_first": 0.2}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:iron_ingot"}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:random_chance_with_enchanted_bonus", "enchantment": "minecraft:looting", "unenchanted_chance": 0.5, "enchanted_chance": {"type": "minecraft:lookup", "values": [0.6, 0.7], "fallback": {"type": "minecraft:clamped", "value": {"type": "minecraft:levels_squared", "added": 0.1}, "min": 0.0, "max": 1.0}}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:carrot"}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:entity_properties", "entity": "attacker", "predicate": {"minecraft:entity_type": "minecraft:zombie"}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:rotten_flesh", "modifier": {"type": "minecraft:set_count", "count": 9}}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:entity_properties", "entity": "this"},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:feather"}]
+      },
+      {
+        "rolls": 1,
+        "condition": {"type": "minecraft:damage_source_properties", "predicate": {"tags": [{"id": "#minecraft:is_lightning", "expected": false}]}},
+        "entries": [{"type": "minecraft:item", "name": "minecraft:bone", "modifier": {"type": "minecraft:furnace_smelt", "condition": {"type": "minecraft:entity_properties", "entity": "this", "predicate": {"minecraft:flags": {"is_on_fire": true}}}}}]
+      }
+    ]
+  }
+}

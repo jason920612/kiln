@@ -115,7 +115,18 @@ impl Json {
         out
     }
 
+    /// Compact form in file order.
+    pub fn to_text(&self) -> String {
+        let mut out = String::new();
+        self.write(&mut out, false);
+        out
+    }
+
     fn write_canonical(&self, out: &mut String) {
+        self.write(out, true);
+    }
+
+    fn write(&self, out: &mut String, sorted: bool) {
         match self {
             Json::Null => out.push_str("null"),
             Json::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
@@ -127,21 +138,23 @@ impl Json {
                     if i > 0 {
                         out.push(',');
                     }
-                    v.write_canonical(out);
+                    v.write(out, sorted);
                 }
                 out.push(']');
             }
             Json::Obj(entries) => {
-                let mut sorted: Vec<&(String, Json)> = entries.iter().collect();
-                sorted.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
+                let mut order: Vec<&(String, Json)> = entries.iter().collect();
+                if sorted {
+                    order.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
+                }
                 out.push('{');
-                for (i, (k, v)) in sorted.into_iter().enumerate() {
+                for (i, (k, v)) in order.into_iter().enumerate() {
                     if i > 0 {
                         out.push(',');
                     }
                     write_str(out, k);
                     out.push(':');
-                    v.write_canonical(out);
+                    v.write(out, sorted);
                 }
                 out.push('}');
             }

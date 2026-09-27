@@ -40,4 +40,4 @@ pub use function::Function;
 pub use json::Json;
 pub use parse::ParseError;
 pub use random::{RandomSequences, Xoroshiro};
-pub use table::{LootPool, LootRandom, LootTable};
+pub use table::{LootPool, LootRandom, LootTable, TableRef};

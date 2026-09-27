@@ -71,14 +71,15 @@ pub fn split_stack(ctx: &dyn LootContext, stack: ItemStack, sink: &mut dyn FnMut
     }
 }
 
-/// The items of a container component (`ContainerComponentManipulator`), slot by slot;
-/// `None` when the stack does not have the component.
-pub fn container_contents(stack: &ItemStack, kind: ContainerKind) -> Option<Vec<Option<ItemStack>>> {
-    let create = |t: &ItemStackTemplate| Some(t.create());
+/// `ContainerComponent.itemCopies()`: the component's items slot by slot (empty stacks for
+/// empty container slots); `None` when the stack does not have the component.
+pub fn container_contents(stack: &ItemStack, kind: ContainerKind) -> Option<Vec<ItemStack>> {
     Some(match kind {
-        ContainerKind::Container => stack.get(keys::CONTAINER)?.0.iter().map(|s| s.as_ref().and_then(create)).collect(),
-        ContainerKind::BundleContents => stack.get(keys::BUNDLE_CONTENTS)?.0.iter().map(create).collect(),
-        ContainerKind::ChargedProjectiles => stack.get(keys::CHARGED_PROJECTILES)?.0.iter().map(create).collect(),
+        ContainerKind::Container => {
+            stack.get(keys::CONTAINER)?.0.iter().map(|s| s.as_ref().map_or_else(ItemStack::empty, ItemStackTemplate::create)).collect()
+        }
+        ContainerKind::BundleContents => stack.get(keys::BUNDLE_CONTENTS)?.0.iter().map(ItemStackTemplate::create).collect(),
+        ContainerKind::ChargedProjectiles => stack.get(keys::CHARGED_PROJECTILES)?.0.iter().map(ItemStackTemplate::create).collect(),
     })
 }
 
@@ -86,17 +87,22 @@ fn template(stack: &ItemStack) -> Option<ItemStackTemplate> {
     (!stack.is_empty()).then(|| ItemStackTemplate::from_stack(stack))
 }
 
-/// `ContainerComponentManipulator.setContents`.
+/// `ContainerComponentManipulator.setContents`: the component rebuilt from `items`
+/// (`copyWithContents`).
 pub fn set_container_contents(stack: &mut ItemStack, kind: ContainerKind, items: Vec<ItemStack>) {
     match kind {
         ContainerKind::Container => {
             // `ItemContainerContents.fromItems`: slots up to the last non-empty one.
             let last = items.iter().rposition(|s| !s.is_empty()).map_or(0, |i| i + 1);
-            let slots = items[..last.min(256)].iter().map(template).collect();
+            let slots = items[..last].iter().map(template).collect();
             stack.insert(keys::CONTAINER, ItemContainerContents(slots));
         }
         ContainerKind::BundleContents => {
-            stack.insert(keys::BUNDLE_CONTENTS, BundleContents(items.iter().filter_map(template).collect()));
+            let mut bundle = BundleBuilder { items: Vec::new(), weight: Frac::ZERO };
+            for mut item in items {
+                bundle.try_insert(&mut item);
+            }
+            stack.insert(keys::BUNDLE_CONTENTS, BundleContents(bundle.items.iter().filter_map(template).collect()));
         }
         ContainerKind::ChargedProjectiles => {
             stack.insert(keys::CHARGED_PROJECTILES, ChargedProjectiles(items.iter().filter_map(template).collect()));
@@ -104,14 +110,99 @@ pub fn set_container_contents(stack: &mut ItemStack, kind: ContainerKind, items:
     }
 }
 
-/// `ContainerComponentManipulator.modifyItems` after the modifier ran on each item.
-pub fn replace_container_contents(stack: &mut ItemStack, kind: ContainerKind, items: Vec<Option<ItemStack>>) {
-    match kind {
-        ContainerKind::Container => {
-            let slots = items.iter().map(|s| s.as_ref().and_then(template)).collect();
-            stack.insert(keys::CONTAINER, ItemContainerContents(slots));
+/// `org.apache.commons.lang3.math.Fraction` in lowest terms (`None`: int overflow, which
+/// vanilla reports as an `ArithmeticException`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Frac {
+    num: i64,
+    den: i64,
+}
+
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 { a.abs() } else { gcd(b, a % b) }
+}
+
+impl Frac {
+    const ZERO: Frac = Frac { num: 0, den: 1 };
+    const ONE: Frac = Frac { num: 1, den: 1 };
+
+    fn new(num: i64, den: i64) -> Option<Frac> {
+        if den == 0 {
+            return None;
         }
-        _ => set_container_contents(stack, kind, items.into_iter().flatten().collect()),
+        let g = gcd(num, den).max(1);
+        let (mut num, mut den) = (num / g, den / g);
+        if den < 0 {
+            num = -num;
+            den = -den;
+        }
+        (i32::try_from(num).is_ok() && i32::try_from(den).is_ok()).then_some(Frac { num, den })
+    }
+
+    fn add(self, o: Frac) -> Option<Frac> {
+        Frac::new(self.num * o.den + o.num * self.den, self.den * o.den)
+    }
+
+    fn sub(self, o: Frac) -> Option<Frac> {
+        Frac::new(self.num * o.den - o.num * self.den, self.den * o.den)
+    }
+
+    fn mul(self, n: i64) -> Option<Frac> {
+        Frac::new(self.num * n, self.den)
+    }
+
+    fn div(self, o: Frac) -> Option<Frac> {
+        Frac::new(self.num * o.den, self.den * o.num)
+    }
+}
+
+/// `BundleContents.getWeight`: a nested bundle weighs its contents plus 1/16, a beehive with bees
+/// a whole bundle, anything else one over its maximum stack size.
+fn bundle_weight(stack: &ItemStack) -> Option<Frac> {
+    if let Some(contents) = stack.get(keys::BUNDLE_CONTENTS) {
+        let inner = contents.0.iter().try_fold(Frac::ZERO, |acc, t| acc.add(bundle_weight(&t.create())?.mul(t.count as i64)?))?;
+        return inner.add(Frac::new(1, 16)?);
+    }
+    if stack.get(keys::BEES).is_some_and(|b| !b.0.is_empty()) {
+        return Some(Frac::ONE);
+    }
+    Frac::new(1, stack.max_stack_size() as i64)
+}
+
+/// `BundleContents.Mutable` started empty, as `copyWithContents` does.
+struct BundleBuilder {
+    items: Vec<ItemStack>,
+    weight: Frac,
+}
+
+impl BundleBuilder {
+    /// `Mutable.tryInsert`: what fits goes in front (merged with an equal stack).
+    fn try_insert(&mut self, stack: &mut ItemStack) {
+        // `canItemBeInBundle` (`Item.canFitInsideContainerItems`: not shulker boxes).
+        if stack.is_empty() || stack.item_name().ends_with("shulker_box") {
+            return;
+        }
+        let Some(w) = bundle_weight(stack) else { return };
+        let max = Frac::ONE.sub(self.weight).and_then(|free| free.div(w)).map_or(0, |f| (f.num / f.den).max(0) as i32);
+        let n = stack.count().min(max);
+        if n == 0 {
+            return;
+        }
+        let Some(new_weight) = w.mul(n as i64).and_then(|a| self.weight.add(a)) else { return };
+        self.weight = new_weight;
+        let found = if stack.is_stackable() { self.items.iter().position(|s| s.is_same_item_same_components(stack)) } else { None };
+        match found {
+            Some(i) => {
+                let old = self.items.remove(i);
+                let merged = old.with_count(old.count() + n);
+                stack.set_count(stack.count() - n);
+                self.items.insert(0, merged);
+            }
+            None => {
+                let part = stack.split(n);
+                self.items.insert(0, part);
+            }
+        }
     }
 }
 

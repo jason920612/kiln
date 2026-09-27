@@ -1,6 +1,6 @@
 """Run tools/LootVectors.java against the server jar and its libraries.
 
-usage: python tools/loot_vectors.py [<out-dir> [<contexts per table> [<seed>]]]
+usage: python tools/loot_vectors.py [<out-dir> [<contexts per table> [<seed> [<synthetic tables .json>]]]]
        (defaults: <work>/wp4-loot, 8 contexts per table, seed 1)
 """
 
@@ -26,4 +26,7 @@ if __name__ == "__main__":
     seed = args[2] if len(args) > 2 else "1"
     datapack = str(WORK / "generated")
     cmd = ["java", "-Xss8m", "-cp", classpath(), str(ROOT / "tools" / "LootVectors.java"), out, contexts, seed, datapack]
+    if len(args) > 3:
+        # Hand-written tables (crates/kiln-loot/tests/synthetic.json) instead of the datapack's.
+        cmd.append(str(Path(args[3]).resolve()))
     sys.exit(subprocess.call(cmd, cwd=WORK))

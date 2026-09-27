@@ -14,6 +14,7 @@ use crate::random::{RandomSequences, RngExt, seeded};
 use crate::stack;
 use kiln_item::{Identifier, ItemStack};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
+use std::sync::Arc;
 
 /// `LootPool`.
 #[derive(Debug, Clone)]
@@ -162,24 +163,55 @@ impl LootTable {
     }
 }
 
+/// A table to evaluate: one of the data's tables by id, or a table decoded on its own (for
+/// example with [`LootData::parse_table`]).
+#[derive(Debug, Clone, Copy)]
+pub enum TableRef<'t> {
+    Id(&'t Identifier),
+    Inline(&'t Arc<LootTable>),
+}
+
+impl<'t> From<&'t Identifier> for TableRef<'t> {
+    fn from(id: &'t Identifier) -> Self {
+        TableRef::Id(id)
+    }
+}
+
+impl<'t> From<&'t Arc<LootTable>> for TableRef<'t> {
+    fn from(t: &'t Arc<LootTable>) -> Self {
+        TableRef::Inline(t)
+    }
+}
+
 impl LootData {
     /// `LootTable.getRandomItemsRaw`: every stack the table produces, unsplit (empty stacks
     /// from `discard` included).
-    pub fn random_items_raw(
+    pub fn random_items_raw<'t>(
         &self,
-        table: &Identifier,
+        table: impl Into<TableRef<'t>>,
         ctx: &dyn LootContext,
         rng: &mut dyn RandomSource,
         sink: &mut dyn FnMut(ItemStack),
     ) {
-        let Some(index) = self.table_index(table) else { return };
+        let r = match table.into() {
+            TableRef::Id(id) => match self.table_index(id) {
+                Some(i) => Ref::Named(i),
+                None => return,
+            },
+            TableRef::Inline(t) => Ref::Direct(t.clone()),
+        };
         let mut ev = Eval::new(self, ctx, rng);
-        ev.table_items_raw(&Ref::Named(index), &mut |_ev: &mut Eval<'_>, s: ItemStack| sink(s));
+        ev.table_items_raw(&r, &mut |_ev: &mut Eval<'_>, s: ItemStack| sink(s));
     }
 
     /// `LootTable.getRandomItems`: the table's stacks, split to their maximum stack size and with
     /// disabled items removed.
-    pub fn random_items(&self, table: &Identifier, ctx: &dyn LootContext, rng: &mut dyn RandomSource) -> Vec<ItemStack> {
+    pub fn random_items<'t>(
+        &self,
+        table: impl Into<TableRef<'t>>,
+        ctx: &dyn LootContext,
+        rng: &mut dyn RandomSource,
+    ) -> Vec<ItemStack> {
         let mut out = Vec::new();
         self.random_items_raw(table, ctx, rng, &mut |s| stack::split_stack(ctx, s, &mut |p| out.push(p)));
         out
@@ -187,7 +219,13 @@ impl LootData {
 
     /// `LootTable.fill`: generates the table's stacks and places them in random empty slots of
     /// `container`, splitting stacks to use the free space (`shuffleAndSplitItems`).
-    pub fn fill(&self, table: &Identifier, ctx: &dyn LootContext, rng: &mut dyn RandomSource, container: &mut [ItemStack]) {
+    pub fn fill<'t>(
+        &self,
+        table: impl Into<TableRef<'t>>,
+        ctx: &dyn LootContext,
+        rng: &mut dyn RandomSource,
+        container: &mut [ItemStack],
+    ) {
         let mut items = self.random_items(table, ctx, rng);
         let mut slots: Vec<usize> = (0..container.len()).filter(|&i| container[i].is_empty()).collect();
         shuffle(&mut slots, rng);

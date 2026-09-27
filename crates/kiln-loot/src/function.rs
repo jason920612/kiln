@@ -230,11 +230,8 @@ fn text(j: &Json) -> PResult<Text> {
     value(j, Text::from_value)
 }
 
-/// `ListOperation.StandAlone`: `{values, mode...}`, or a bare list meaning replace all.
+/// `ListOperation.StandAlone`: `{values, mode...}`.
 fn stand_alone<T>(j: &Json, max: usize, mut f: impl FnMut(&Json) -> PResult<T>) -> PResult<(Vec<T>, ListOperation)> {
-    if j.as_array().is_some() {
-        return Ok((list(j, f)?, ListOperation::ReplaceAll));
-    }
     let values = req(j, "values", |v| list(v, &mut f))?;
     if values.len() > max {
         return fail(format!("too many values: {} > {max}", values.len()));
@@ -561,10 +558,11 @@ impl Function {
                 strings: opt(j, "strings", |v| stand_alone(v, usize::MAX, string))?,
                 colors: opt(j, "colors", |v| {
                     stand_alone(v, usize::MAX, |e| match e {
-                        // `ExtraCodecs.RGB_COLOR_CODEC`'s alternative: `[r, g, b]` floats.
+                        // `ExtraCodecs.RGB_COLOR_CODEC`'s alternative: `[r, g, b]` floats, made
+                        // opaque (`ARGB.colorFromFloat(1, r, g, b)`, channels floored).
                         Json::Arr(c) if c.len() == 3 && c.iter().all(Json::is_number) => {
-                            let ch = |i: usize| ((c[i].as_f32().unwrap_or(0.0) * 255.0) as i32) & 0xFF;
-                            Ok(Ref::direct(IntProvider::Constant(ch(0) << 16 | ch(1) << 8 | ch(2))))
+                            let ch = |i: usize| kiln_javamath::math::floor_f32(c[i].as_f32().unwrap_or(0.0) * 255.0) & 0xFF;
+                            Ok(Ref::direct(IntProvider::Constant((0xFF << 24) | ch(0) << 16 | ch(1) << 8 | ch(2))))
                         }
                         _ => IntProvider::parse_ref(p, e),
                     })
@@ -834,11 +832,21 @@ impl Eval<'_> {
                 if stack.is_empty() {
                     return stack;
                 }
-                let items = stack::container_contents(&stack, *component);
-                let Some(items) = items else { return stack };
-                let modified: Vec<Option<ItemStack>> =
-                    items.into_iter().map(|i| i.map(|s| self.apply_fn(modifier, s))).collect();
-                stack::replace_container_contents(&mut stack, *component, modified);
+                let Some(items) = stack::container_contents(&stack, *component) else { return stack };
+                // `modifyItems`: empty slots stay empty, modified stacks are limited to their size.
+                let modified: Vec<ItemStack> = items
+                    .into_iter()
+                    .map(|i| {
+                        if i.is_empty() {
+                            return i;
+                        }
+                        let mut s = self.apply_fn(modifier, i);
+                        let max = s.max_stack_size();
+                        stack::limit_size(&mut s, max);
+                        s
+                    })
+                    .collect();
+                stack::set_container_contents(&mut stack, *component, modified);
                 stack
             }
             FunctionKind::Filtered { filter, on_pass, on_fail } => {

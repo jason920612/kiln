@@ -143,7 +143,8 @@ public class LootVectors {
         setup();
         collectPredicates();
         Files.createDirectories(out);
-        run(out, contexts, seed);
+        if (args.length > 4) synthetic(Path.of(args[4]), out, contexts, seed);
+        else run(out, contexts, seed);
     }
 
     // ---- loading and fakes ----------------------------------------------------------------------
@@ -526,8 +527,13 @@ public class LootVectors {
                         if (lvl > 0) levels.add(str(h.key().identifier().toString()) + ": " + lvl);
                     });
                 }
+                String profile = "";
+                if (e.getValue() instanceof FakePlayer fp) {
+                    var resolved = net.minecraft.world.item.component.ResolvableProfile.createResolved(fp.getGameProfile());
+                    profile = ", \"profile\": \"" + hex(new TypedDataComponent<>(DataComponents.PROFILE, resolved)) + "\"";
+                }
                 ents.add(str(e.getKey()) + ": {\"type\": " + str(BuiltInRegistries.ENTITY_TYPE.getKey(e.getValue().getType()).toString())
-                        + ", \"enchantments\": {" + String.join(", ", levels) + "}}");
+                        + ", \"enchantments\": {" + String.join(", ", levels) + "}" + profile + "}");
             }
             parts.add("\"entities\": {" + String.join(", ", ents) + "}");
             if (blockEntity != null) {
@@ -614,6 +620,7 @@ public class LootVectors {
     static FakePlayer player() throws Exception {
         FakePlayer p = (FakePlayer) U.allocateInstance(FakePlayer.class);
         set(p, Entity.class, "type", EntityTypes.PLAYER);
+        set(p, net.minecraft.world.entity.player.Player.class, "gameProfile", new com.mojang.authlib.GameProfile(new java.util.UUID(1, 2), "kiln"));
         return p;
     }
 
@@ -631,17 +638,33 @@ public class LootVectors {
     record Case(String mode, long worldSeed, long seed, int runs) {}
 
     static void run(Path out, int contexts, long seed) throws Exception {
-        Random rnd = new Random(seed);
         var lookup = resources.fullRegistries().lookup().lookupOrThrow(Registries.LOOT_TABLE);
         List<ResourceKey<LootTable>> keys = new ArrayList<>(lookup.listElementIds().toList());
         keys.sort((a, b) -> a.identifier().toString().compareTo(b.identifier().toString()));
+        Map<String, LootTable> tables = new LinkedHashMap<>();
+        for (ResourceKey<LootTable> key : keys) tables.put(key.identifier().toString(), resources.fullRegistries().getLootTable(key));
+        run(out, contexts, seed, tables, null);
+    }
+
+    /** Hand-written tables (a JSON object of id to table) decoded with vanilla's codec. */
+    static void synthetic(Path in, Path out, int contexts, long seed) throws Exception {
+        var ops = resources.fullRegistries().lookup().createSerializationContext(JsonOps.INSTANCE);
+        JsonObject all = JsonParser.parseString(Files.readString(in)).getAsJsonObject();
+        walk(all, access.createSerializationContext(JsonOps.INSTANCE));
+        Map<String, LootTable> tables = new LinkedHashMap<>();
+        for (var e : all.entrySet()) tables.put(e.getKey(), LootTable.DIRECT_CODEC.parse(ops, e.getValue()).getOrThrow());
+        run(out, contexts, seed, tables, "synthetic");
+    }
+
+    static void run(Path out, int contexts, long seed, Map<String, LootTable> tables, String file) throws Exception {
+        Random rnd = new Random(seed);
         Map<String, PrintWriter> writers = new HashMap<>();
         Map<String, int[]> counts = new TreeMap<>();
-        for (ResourceKey<LootTable> key : keys) {
-            LootTable table = resources.fullRegistries().getLootTable(key);
+        for (var entry : tables.entrySet()) {
+            LootTable table = entry.getValue();
             String kind = kind(table.getParamSet());
-            String id = key.identifier().toString();
-            PrintWriter w = writers.computeIfAbsent(kind, k -> {
+            String id = entry.getKey();
+            PrintWriter w = writers.computeIfAbsent(file != null ? file : kind, k -> {
                 try {
                     return new PrintWriter(Files.newBufferedWriter(out.resolve(k + ".jsonl")));
                 } catch (Exception ex) {
@@ -704,6 +727,12 @@ public class LootVectors {
             case "sequence" -> {
                 SEQS = new RandomSequences();
                 WORLD_SEED = cs.worldSeed();
+                // Tables without a random sequence draw from the level's random.
+                try {
+                    set(LEVEL, Level.class, "random", RandomSource.create(cs.worldSeed()));
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
                 for (int r = 0; r < cs.runs(); r++) runs.add(list(table.getRandomItems(params)));
             }
             case "seed" -> runs.add(list(table.getRandomItems(params, cs.seed())));
@@ -750,6 +779,7 @@ public class LootVectors {
         switch (kind) {
             case "block" -> {
                 String name = path.startsWith("blocks/") ? path.substring(7) : path;
+                if (id.startsWith("kiln:") && name.contains("/")) name = name.substring(0, name.indexOf('/'));
                 Block block = BuiltInRegistries.BLOCK.getOptional(Identifier.withDefaultNamespace(name)).orElse(Blocks.STONE);
                 List<BlockState> states = block.getStateDefinition().getPossibleStates();
                 c.state = i == 0 ? block.defaultBlockState() : states.get(rnd.nextInt(states.size()));
@@ -770,7 +800,7 @@ public class LootVectors {
                 if (rnd.nextInt(3) == 0) c.entities.put("this", player());
             }
             case "entity" -> {
-                String rest = path.startsWith("entities/") ? path.substring(9) : path;
+                String rest = path.startsWith("entities/") ? path.substring(9) : path.startsWith("entity/") ? path.substring(7) : path;
                 String typeName = rest.contains("/") ? rest.substring(0, rest.indexOf('/')) : rest;
                 EntityType<?> type = BuiltInRegistries.ENTITY_TYPE.getOptional(Identifier.withDefaultNamespace(typeName)).orElse(EntityTypes.PIG);
                 Entity self = create(type);

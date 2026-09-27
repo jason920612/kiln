@@ -116,7 +116,7 @@ impl Eval<'_> {
                 let items = self.slot_items(source);
                 items
                     .iter()
-                    .flat_map(|i| stack::container_contents(i, *component).unwrap_or_default().into_iter().flatten())
+                    .flat_map(|i| stack::container_contents(i, *component).unwrap_or_default())
                     .collect()
             }
             SlotSource::Empty => Vec::new(),
