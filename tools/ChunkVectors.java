@@ -157,7 +157,10 @@ public class ChunkVectors {
         var layers = RegistryLayer.createRegistryAccess();
         var pendingTags = TagLoader.loadTagsForExistingRegistries(resources, layers.getLayer(RegistryLayer.STATIC));
         var lookups = TagLoader.buildUpdatedLookups(layers.getAccessForLoading(RegistryLayer.WORLD), pendingTags);
-        return RegistryDataLoader.load(resources, lookups, RegistryDataLoader.WORLD_REGISTRIES, Runnable::run).join();
+        var worldgen = RegistryDataLoader.load(resources, lookups, RegistryDataLoader.WORLD_REGISTRIES, Runnable::run).join();
+        // Bind block tags (e.g. #uncarvable) the way ReloadableServerResources does.
+        pendingTags.forEach(Registry.PendingTags::apply);
+        return worldgen;
     }
 
     /** Per-seed state: the random state and every chunk's canonical biome fill. */

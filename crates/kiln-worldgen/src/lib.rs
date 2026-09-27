@@ -12,6 +12,7 @@
 pub mod aquifer;
 pub mod biome;
 pub mod blocks;
+pub mod carver;
 pub mod compile;
 pub mod datapack;
 pub mod function;

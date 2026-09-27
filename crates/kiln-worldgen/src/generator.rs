@@ -4,14 +4,15 @@
 use crate::Error;
 use crate::aquifer::{Aquifer, AquiferFunctions, FluidPicker, NoiseAquifer};
 use crate::biome::{BiomeInfo, LastResult, ParameterList, target};
-use crate::blocks::{is_air, state};
+use crate::blocks::{has_fluid, is_air, is_block, state};
+use crate::carver::{Carver, CarvingMask, GenContext};
 use crate::datapack::Datapack;
 use crate::sampler::{SamplerRef, Scratch};
 use crate::state::RandomState;
 use crate::surface::{self, BiomeClimate, MaterialInputs, MaterialSystem};
 use crate::volume::Volume;
-use kiln_javamath::random::RandomSource;
-use std::collections::HashMap;
+use kiln_javamath::random::{LegacyRandom, RandomSource};
+use std::collections::{HashMap, HashSet};
 
 /// The router fields a `Climate.Sampler` reads, in `Climate.target` order.
 const CLIMATE: [&str; 6] = ["temperature", "vegetation", "continents", "erosion", "depth", "ridges"];
@@ -111,6 +112,7 @@ fn stored_biome(biomes: &[u16], min_y: i32, qx: i32, qy: i32, qz: i32) -> u16 {
 /// (vanilla reads neighbour biomes from chunks that already passed BIOMES).
 pub struct GenScratch {
     pub(crate) noise_context: Scratch,
+    point_context: Scratch,
     biomes: BiomeCache,
     density: Vec<f32>,
 }
@@ -119,6 +121,7 @@ impl Default for GenScratch {
     fn default() -> Self {
         Self {
             noise_context: Scratch::caching(),
+            point_context: Scratch::default(),
             biomes: BiomeCache { context: Scratch::caching(), chunks: HashMap::new() },
             density: Vec::new(),
         }
@@ -159,6 +162,14 @@ pub fn obfuscate_seed(seed: i64) -> i64 {
     use sha2::{Digest, Sha256};
     let hash = Sha256::digest(seed.to_le_bytes());
     i64::from_le_bytes(hash[..8].try_into().unwrap())
+}
+
+/// `WorldgenRandom.setLargeFeatureSeed` on a legacy source.
+fn large_feature_random(seed: i64, x: i32, z: i32) -> LegacyRandom {
+    let mut r = LegacyRandom::new(seed);
+    let a = r.next_long();
+    let b = r.next_long();
+    LegacyRandom::new((x as i64).wrapping_mul(a) ^ (z as i64).wrapping_mul(b) ^ seed)
 }
 
 /// `LinearCongruentialGenerator.next`.
@@ -223,6 +234,15 @@ pub struct Generator {
     fluid_picker: FluidPicker,
     aquifer: Option<AquiferFunctions>,
     material: MaterialSystem,
+    seed: i64,
+    carvers: Vec<Carver>,
+    /// Carver indices per biome.
+    biome_carvers: Vec<Vec<usize>>,
+    /// The carvers every biome of the source shares, if they all agree (then no biome lookup
+    /// is needed to find a chunk's carvers).
+    uniform_carvers: Option<Vec<usize>>,
+    /// States of `#minecraft:uncarvable` blocks.
+    uncarvable: HashSet<u16>,
 }
 
 impl Generator {
@@ -293,6 +313,42 @@ impl Generator {
                 climate: biomes.iter().map(|b| BiomeClimate { temperature: b.temperature, frozen: b.frozen }).collect(),
             },
         )?;
+        let mut carver_ids: Vec<String> = Vec::new();
+        let mut biome_carvers = Vec::new();
+        for b in &biomes {
+            let mut list = Vec::new();
+            for id in &b.carvers {
+                let i = match carver_ids.iter().position(|c| c == id) {
+                    Some(i) => i,
+                    None => {
+                        carver_ids.push(id.clone());
+                        carver_ids.len() - 1
+                    }
+                };
+                list.push(i);
+            }
+            biome_carvers.push(list);
+        }
+        let carvers = carver_ids
+            .iter()
+            .map(|id| {
+                let json = pack.carvers.get(id).ok_or_else(|| Error::Invalid(format!("unknown carver {id}")))?;
+                Carver::parse(json).map_err(|e| e.context(id))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut source_biomes: Vec<u16> = parameters.values().iter().map(|(_, b)| *b).collect();
+        source_biomes.sort_unstable();
+        source_biomes.dedup();
+        let uniform_carvers = source_biomes
+            .windows(2)
+            .all(|w| biome_carvers[w[0] as usize] == biome_carvers[w[1] as usize])
+            .then(|| biome_carvers[source_biomes[0] as usize].clone());
+        let mut uncarvable = HashSet::new();
+        for name in pack.block_tag("minecraft:uncarvable").unwrap_or_default() {
+            if let Some(b) = kiln_data::blocks_types::block_by_name(&name) {
+                uncarvable.extend(b.first..=b.last);
+            }
+        }
         Ok(Generator {
             min_y: s.min_y,
             height: s.height,
@@ -301,6 +357,11 @@ impl Generator {
             parameters,
             climate,
             zoom_seed: obfuscate_seed(seed),
+            seed,
+            carvers,
+            biome_carvers,
+            uniform_carvers,
+            uncarvable,
             final_density,
             default_block,
             fluid_picker: FluidPicker::new(s.sea_level, default_fluid),
@@ -379,6 +440,81 @@ impl Generator {
         let biomes = &mut gs.biomes;
         self.material.build_surface(s, &mut |x, y, z| biomes.zoomed(self, x, y, z), chunk);
         after(Step::Surface, chunk);
+
+        self.carve(s, &mut gs.point_context, &mut aquifer, chunk);
+        after(Step::Carvers, chunk);
+    }
+
+    /// The biome of a quart from point-sampled climate (`createUncachedResolver`).
+    fn point_biome(&self, s: &mut Scratch, last: &mut LastResult, qx: i32, qy: i32, qz: i32) -> u16 {
+        let (x, y, z) = (qx << 2, qy << 2, qz << 2);
+        let c: Vec<f32> = self.climate.iter().map(|f| f.point(s, x, y, z)).collect();
+        *self.parameters.find(&target(c[0], c[1], c[2], c[3], c[4], c[5]), last)
+    }
+
+    /// The carvers of the biome at a chunk's origin (`getBiomeGenerationSettingsForCarver`).
+    fn chunk_carvers(&self, s: &mut Scratch, last: &mut LastResult, cx: i32, cz: i32) -> &[usize] {
+        match &self.uniform_carvers {
+            Some(list) => list,
+            None => &self.biome_carvers[self.point_biome(s, last, cx << 2, 0, cz << 2) as usize],
+        }
+    }
+
+    /// `NoiseBasedChunkGenerator.generateCarvers`: carvers started within 8 chunks mark a
+    /// carving mask, whose positions the aquifer then fills.
+    fn carve(&self, s: &mut Scratch, point: &mut Scratch, aquifer: &mut Aquifer, chunk: &mut ProtoChunk) {
+        let g = GenContext { min_y: self.min_y, height: self.height, sea_level: self.sea_level };
+        let mut mask = CarvingMask::new(g.min_y + 1, g.min_y + g.height - 1 - 7);
+        let mut last: LastResult = None;
+        let (cx, cz) = (chunk.x, chunk.z);
+        for dx in -8..=8 {
+            for dz in -8..=8 {
+                let (sx, sz) = (cx + dx, cz + dz);
+                for (index, &c) in self.chunk_carvers(point, &mut last, sx, sz).iter().enumerate() {
+                    let mut r = large_feature_random(self.seed.wrapping_add(index as i64), sx, sz);
+                    let carver = &self.carvers[c];
+                    if carver.is_start_chunk(&mut r) {
+                        carver.carve(&g, &mut r, cx, cz, sx, sz, &mut mask);
+                    }
+                }
+            }
+        }
+        if mask.is_empty() {
+            return;
+        }
+        let mut point_last: LastResult = None;
+        mask.visit(&mut |x, z, y0, y1| {
+            let (lx, lz) = (x as usize, z as usize);
+            let (bx, bz) = ((cx << 4) + x, (cz << 4) + z);
+            let mut exposed_grass = false;
+            for y in (y0..=y1).rev() {
+                let old = chunk.get(lx, y, lz);
+                if self.uncarvable.contains(&old) {
+                    continue;
+                }
+                if is_block(old, "minecraft:grass_block") || is_block(old, "minecraft:mycelium") {
+                    exposed_grass = true;
+                }
+                let Some(new) = aquifer.compute_substance(s, bx, y, bz, 0.0) else { continue };
+                chunk.set(lx, y, lz, new);
+                if exposed_grass && chunk.get(lx, y - 1, lz) == state::DIRT {
+                    let top = self.material.top_material(
+                        s,
+                        &mut |x, y, z| {
+                            zoomed_biome(self.zoom_seed, x, y, z, &mut |qx, qy, qz| self.point_biome(point, &mut point_last, qx, qy, qz))
+                        },
+                        chunk,
+                        bx,
+                        y - 1,
+                        bz,
+                        has_fluid(new),
+                    );
+                    if let Some(top) = top {
+                        chunk.set(lx, y - 1, lz, top);
+                    }
+                }
+            }
+        });
     }
 
     /// `NoiseBasedChunkGenerator.doFill`: final density over the whole chunk, then the
