@@ -756,6 +756,7 @@ dependencies = [
  "flate2",
  "kiln-data",
  "kiln-javamath",
+ "kiln-proto",
  "kiln-world",
  "sha2",
  "thiserror",
