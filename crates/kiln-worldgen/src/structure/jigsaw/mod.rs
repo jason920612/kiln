@@ -39,7 +39,7 @@ pub struct JigsawStructure {
 impl Kind for JigsawStructure {
     /// `JigsawStructure.findGenerationPoint`.
     fn find<'k>(&'k self, ctx: &mut GenCtx) -> Option<Stub<'k>> {
-        let g = GenContext { min_y: ctx.generator.min_y, height: ctx.generator.height };
+        let g = GenContext { min_y: ctx.generator.min_y, height: ctx.generator.height, sea_level: ctx.generator.sea_level };
         let y = self.start_height.sample(&mut ctx.random, g);
         let pos = BlockPos::new(ctx.chunk.0 << 4, y, ctx.chunk.1 << 4);
         placement::add_pieces(self, ctx, pos)

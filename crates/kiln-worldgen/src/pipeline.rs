@@ -185,14 +185,19 @@ impl Pipeline {
         }
         s.chunks.insert((x, z), Slot::Generating);
         drop(s);
+        let chunk = self.generate_terrain(gs, x, z);
+        let mut s = self.state.lock().unwrap();
+        s.chunks.insert((x, z), Slot::Ready(chunk));
+        self.wake.notify_all();
+    }
+
+    /// BIOMES and TERRAIN (with the chunk's beardifier when structures generate).
+    fn generate_terrain(&self, gs: &mut GenScratch, x: i32, z: i32) -> Box<ProtoChunk> {
         let beard = self.world.generate_structures.then(|| {
             let starts = ChunkStarts::new(&self.world.structures, &self.world.generator, &self.starts, &mut gs.structures, x, z);
             Beardifier::for_chunk(&self.world.structures, &starts, x, z)
         });
-        let chunk = Box::new(self.world.generator.generate_with(gs, x, z, beard.flatten()));
-        let mut s = self.state.lock().unwrap();
-        s.chunks.insert((x, z), Slot::Ready(chunk));
-        self.wake.notify_all();
+        Box::new(self.world.generator.generate_with(gs, x, z, beard.flatten()))
     }
 
     /// Instead of idling until another thread makes progress, generates the terrain of a
@@ -204,7 +209,7 @@ impl Pipeline {
             }
             s.chunks.insert(p, Slot::Generating);
             drop(s);
-            let chunk = Box::new(self.world.generator.generate(gs, p.0, p.1));
+            let chunk = self.generate_terrain(gs, p.0, p.1);
             let mut s = self.state.lock().unwrap();
             s.chunks.insert(p, Slot::Ready(chunk));
             self.wake.notify_all();
