@@ -97,6 +97,16 @@ fn class_update_shape(class: &str, r: &mut Region, s: u16, p: BlockPos, d: Dir, 
             }
             None
         }
+        "FallingBlock" => {
+            r.schedule_block_tick(p, name, 2);
+            None
+        }
+        "CactusBlock" | "SugarCaneBlock" => {
+            if !survives(r) {
+                r.schedule_block_tick(p, name, 1);
+            }
+            None
+        }
         "CreakingHeartBlock" => {
             r.schedule_block_tick(p, name, 1);
             None
