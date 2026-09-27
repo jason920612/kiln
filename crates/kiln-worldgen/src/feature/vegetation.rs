@@ -2,7 +2,10 @@
 
 pub mod column;
 pub mod jhash;
+pub mod multiface;
 pub mod patch;
+pub mod shape;
+pub mod vines;
 
 use crate::Error;
 use crate::block_facts::Dir;
@@ -24,6 +27,8 @@ pub enum Kind {
     RandomNeighborSpread(column::NeighborSpread),
     VegetationPatch(patch::VegetationPatch),
     WaterloggedVegetationPatch(patch::VegetationPatch),
+    Vines,
+    MultifaceGrowth(vines::MultifaceGrowth),
 }
 
 /// Parses a feature of this family (`ty` without the `minecraft:` prefix); `None` if the
@@ -36,6 +41,8 @@ pub fn parse(ty: &str, json: &Json, f: &mut Features, l: &Loader) -> Option<Resu
         "random_neighbor_spread" => column::NeighborSpread::parse(json, l).map(Kind::RandomNeighborSpread),
         "vegetation_patch" => patch::VegetationPatch::parse(json, f, l, false).map(Kind::VegetationPatch),
         "waterlogged_vegetation_patch" => patch::VegetationPatch::parse(json, f, l, true).map(Kind::WaterloggedVegetationPatch),
+        "vines" => Ok(Kind::Vines),
+        "multiface_growth" => vines::MultifaceGrowth::parse(json, l).map(Kind::MultifaceGrowth),
         _ => return None,
     })
 }
@@ -48,6 +55,8 @@ impl Kind {
             Kind::ProjectedRandomPatchySquare(k) => k.place(r, random, p),
             Kind::RandomNeighborSpread(k) => k.place(r, random, p),
             Kind::VegetationPatch(k) | Kind::WaterloggedVegetationPatch(k) => k.place(f, r, random, p),
+            Kind::Vines => vines::place_vine(r, p),
+            Kind::MultifaceGrowth(k) => k.place(r, random, p),
         }
     }
 
@@ -59,6 +68,8 @@ impl Kind {
             Kind::RandomNeighborSpread(_) => "minecraft:random_neighbor_spread",
             Kind::VegetationPatch(_) => "minecraft:vegetation_patch",
             Kind::WaterloggedVegetationPatch(_) => "minecraft:waterlogged_vegetation_patch",
+            Kind::Vines => "minecraft:vines",
+            Kind::MultifaceGrowth(_) => "minecraft:multiface_growth",
         }
     }
 
