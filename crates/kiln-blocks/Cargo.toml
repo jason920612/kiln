@@ -1,0 +1,16 @@
+[package]
+name = "kiln-blocks"
+edition.workspace = true
+version.workspace = true
+publish.workspace = true
+description = "Vanilla block behaviour (updates, shapes, scheduled ticks, fluids, redstone) against an abstract level"
+
+[dependencies]
+kiln-data.workspace = true
+kiln-javamath.workspace = true
+kiln-proto.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+kiln-storage.workspace = true
+kiln-world.workspace = true

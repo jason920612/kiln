@@ -3,6 +3,7 @@
 //! All tasks read and write the work directory: `<workspace>/work` unless `KILN_WORK` points
 //! elsewhere. It holds Mojang's jars and generated data and is never committed.
 
+mod block_logic;
 mod block_props;
 mod bytecode;
 mod codegen;
@@ -26,8 +27,9 @@ tasks:
       download a vanilla server (default: the version kiln-data is pinned to), verify it
       and run its data generator into the work directory
   extract [blocks | items]
-      run tools/ExtractBlocks.java and tools/ExtractGameRules.java (per-state light, collision,
-      hardness, block entity type; game rule defaults) and tools/ItemVectors.java (component
+      run tools/ExtractBlocks.java, tools/ExtractBlockLogic.java and tools/ExtractGameRules.java
+      (per-state light, collision, hardness, block entity type, behaviour facts; game rule
+      defaults) and tools/ItemVectors.java (component
       types, default item components) against the server jar into <work>/generated/extra;
       needed by codegen
   codegen
@@ -54,6 +56,7 @@ fn main() -> Result<()> {
             let jar = fetch::server_jar(&work)?;
             if which.as_deref() != Some("items") {
                 block_props::extract(&root, &work, &jar)?;
+                block_logic::extract(&root, &work, &jar)?;
             }
             if which.as_deref() != Some("blocks") {
                 items::extract(&root, &work, &jar)?;

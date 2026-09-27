@@ -10,6 +10,7 @@ pub mod packets;
 pub mod blocks;
 pub mod blocks_types;
 pub mod block_props;
+pub mod block_logic;
 
 #[path = "gen/registries.rs"]
 pub mod registries;

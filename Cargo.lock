@@ -513,6 +513,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kiln-blocks"
+version = "0.1.0"
+dependencies = [
+ "kiln-data",
+ "kiln-javamath",
+ "kiln-proto",
+ "kiln-storage",
+ "kiln-world",
+ "serde_json",
+]
+
+[[package]]
 name = "kiln-bot"
 version = "0.1.0"
 dependencies = [
