@@ -1,19 +1,20 @@
 //! Replays `tools/blocks_diff.py`'s timeline on a `TestLevel` and compares every snapshot
-//! with the vanilla server's saved chunks: block states and pending scheduled ticks inside
-//! each scenario's box.
+//! with the vanilla server's saved chunks: block states, pending scheduled ticks and
+//! moving-piston block entities inside each scenario's box.
 //!
 //! usage: cargo run --release -p kiln-blocks --example vanilla_diff -- <diff dir>
+//! (`DIFF_DUMP=name:dy` prints a scenario layer, `DIFF_BE_DUMP=1` vanilla's piston NBT)
 
 use kiln_blocks::commands::{BlockInput, FillMode, SetMode, fill, setblock};
 use kiln_blocks::state::{BlockId, state_string};
 use kiln_blocks::ticks::{SavedTick, ticks_from_nbt};
-use kiln_blocks::{BlockPos, FluidType, TestLevel};
+use kiln_blocks::{BlockPos, FluidType, MovingPiston, TestLevel};
 use kiln_proto::nbt::{self, Tag};
 use kiln_storage::AnvilSource;
 use kiln_storage::region::RegionFile;
 use kiln_world::chunk::Chunk;
 use serde_json::Value;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 struct Snapshot {
@@ -236,7 +237,53 @@ fn compare(level: &mut TestLevel, snap: &mut Snapshot, min: BlockPos, max: Block
             }
         }
     }
+    let vanilla = vanilla_pistons(snap, min, max);
+    let ours: BTreeMap<(i32, i32, i32), String> = kiln_blocks::Level::data(level)
+        .pistons
+        .iter()
+        .filter(|(p, _)| inside(*p, min, max))
+        .map(|(p, m)| ((p.x, p.y, p.z), describe_piston(&MovingPiston::from_nbt(&m.to_nbt()))))
+        .collect();
+    for (p, v) in &vanilla {
+        match ours.get(p) {
+            Some(o) if o == v => {}
+            o => diffs.push(format!("moving piston at {p:?}: vanilla {v} kiln {o:?}")),
+        }
+    }
+    for (p, o) in &ours {
+        if !vanilla.contains_key(p) {
+            diffs.push(format!("moving piston at {p:?} only in kiln: {o}"));
+        }
+    }
     diffs
+}
+
+/// Moving-piston block entities in the box as vanilla saved them.
+fn vanilla_pistons(snap: &mut Snapshot, min: BlockPos, max: BlockPos) -> BTreeMap<(i32, i32, i32), String> {
+    let mut out = BTreeMap::new();
+    for cx in min.x >> 4..=max.x >> 4 {
+        for cz in min.z >> 4..=max.z >> 4 {
+            let Some((_, tag)) = snap.chunk(cx, cz) else { continue };
+            for be in tag.get("block_entities").and_then(Tag::as_list).unwrap_or(&[]) {
+                if be.get("id").and_then(Tag::as_str) != Some("minecraft:piston") {
+                    continue;
+                }
+                if std::env::var("DIFF_BE_DUMP").is_ok() {
+                    eprintln!("{be:?}");
+                }
+                let c = |k: &str| be.get(k).and_then(Tag::as_i64).unwrap_or(0) as i32;
+                let p = BlockPos::new(c("x"), c("y"), c("z"));
+                if inside(p, min, max) {
+                    out.insert((p.x, p.y, p.z), describe_piston(&MovingPiston::from_nbt(be)));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn describe_piston(m: &MovingPiston) -> String {
+    format!("{} {:?} progress {} extending {} source {}", state_string(m.moved), m.direction, m.progress, m.extending, m.source)
 }
 
 fn report(dir: &Path, outcomes: &[Outcome], command_errors: &[String]) {

@@ -32,8 +32,11 @@ impl Hasher for SectionHasher {
     }
 }
 
+/// Materialised sections by section coordinates.
+type Sections = HashMap<(i32, i32, i32), Box<[u16; 4096]>, BuildHasherDefault<SectionHasher>>;
+
 pub struct TestLevel {
-    sections: HashMap<(i32, i32, i32), Box<[u16; 4096]>, BuildHasherDefault<SectionHasher>>,
+    sections: Sections,
     /// Block of each layer from `min_y` up; above it, air.
     layers: Vec<u16>,
     pub min_y: i32,
@@ -121,7 +124,8 @@ impl TestLevel {
     }
 
     /// Runs one game tick's block phases in vanilla order (time, block ticks, fluid ticks,
-    /// random ticks over loaded chunks in `chunk_order`, block events).
+    /// random ticks over loaded chunks in `chunk_order`, block events, then the block-entity
+    /// phase for moving pistons).
     pub fn tick(&mut self, random_tick_speed: i32, chunk_order: &[ChunkKey]) {
         self.game_time += 1;
         let loaded = self.loaded.clone();
@@ -133,6 +137,7 @@ impl TestLevel {
             crate::tick::tick_chunk_blocks(self, c, &sections, random_tick_speed);
         }
         crate::block_events::run_block_events(self, |p| loaded.contains(&p.chunk()));
+        crate::behaviour::piston::tick_moving_pistons(self, |p| loaded.contains(&p.chunk()));
     }
 }
 

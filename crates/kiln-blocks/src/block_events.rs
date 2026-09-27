@@ -58,7 +58,8 @@ pub fn block_event<L: Level + ?Sized>(level: &mut L, pos: BlockPos, block: Block
 }
 
 /// `ServerLevel.runBlockEvents`: runs queued events, including ones queued while running;
-/// events at positions `can_tick` rejects wait for a later tick.
+/// events at positions `can_tick` rejects wait for a later tick. Ends
+/// `ServerLevel.handlingTick`.
 pub fn run_block_events<L: Level>(level: &mut L, mut can_tick: impl FnMut(BlockPos) -> bool) {
     let mut later = Vec::new();
     while let Some(e) = level.data().block_events.pop() {
@@ -74,4 +75,5 @@ pub fn run_block_events<L: Level>(level: &mut L, mut can_tick: impl FnMut(BlockP
     for e in later {
         level.data().block_events.push(e);
     }
+    level.data().handling_tick = false;
 }

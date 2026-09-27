@@ -1,4 +1,5 @@
-//! Rough throughput of the block tick on a TestLevel: spreading water and toggled wire lines.
+//! Rough throughput of the block tick on a TestLevel: spreading water, toggled wire lines and
+//! pistons moving block lines.
 //!
 //! usage: cargo run --release -p kiln-blocks --example bench
 
@@ -43,7 +44,29 @@ fn main() {
         l.tick(0, &[]);
     }
     let redstone = t.elapsed();
-    println!("redstone block reads: {} ({} per toggle per line)", l.reads.get(), l.reads.get() / (20 * 64));
+    let wire_reads = l.reads.get();
+
+    let mut l = level();
+    let sticky = parse_state("minecraft:sticky_piston[facing=east]").unwrap();
+    for line in 0..64 {
+        set_block(&mut l, BlockPos::new(1, -60, line * 2), sticky, flags::ALL);
+        for x in 2..=12 {
+            set_block(&mut l, BlockPos::new(x, -60, line * 2), d::STONE, flags::ALL);
+        }
+    }
+    let t = Instant::now();
+    for tick in 0..200 {
+        if tick % 10 == 0 {
+            let s = if tick % 20 == 0 { d::REDSTONE_BLOCK } else { d::AIR };
+            for line in 0..64 {
+                set_block(&mut l, BlockPos::new(0, -60, line * 2), s, flags::ALL);
+            }
+        }
+        l.tick(0, &[]);
+    }
+    let pistons = t.elapsed();
+    println!("redstone block reads: {} ({} per toggle per line)", wire_reads, wire_reads / (20 * 64));
     println!("water: 16 sources spreading, 200 ticks: {:.2} ms/tick", water.as_secs_f64() * 1000.0 / 200.0);
     println!("redstone: 64 wire lines toggled every 10 ticks, 200 ticks: {:.2} ms/tick", redstone.as_secs_f64() * 1000.0 / 200.0);
+    println!("pistons: 64 sticky pistons moving 11 blocks, toggled every 10 ticks, 200 ticks: {:.2} ms/tick", pistons.as_secs_f64() * 1000.0 / 200.0);
 }

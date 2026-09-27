@@ -16,7 +16,9 @@ pub const MAX_TICKS: usize = 65536;
 
 /// `LevelTicks.tick` for block ticks with `ServerLevel.tickBlock`: runs the block ticks due
 /// at the current game time in chunks `can_tick` accepts.
+/// Starts `ServerLevel.handlingTick`.
 pub fn run_block_ticks<L: Level>(level: &mut L, can_tick: impl FnMut(ChunkKey) -> bool) {
+    level.data().handling_tick = true;
     let time = level.game_time();
     level.block_ticks().collect(time, MAX_TICKS, can_tick);
     while let Some(t) = level.block_ticks().next_to_run() {

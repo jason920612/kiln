@@ -108,6 +108,7 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
             }
         }
         C::LeafLitterBlock => sturdy(below(), Direction::Up, Support::Full),
+        C::PistonHeadBlock => super::piston::head_can_survive(level, s, pos),
         C::PressurePlateBlock | C::WeightedPressurePlateBlock => {
             let b = below();
             can_support_rigid(b) || can_support_center(b, Direction::Up)

@@ -6,6 +6,7 @@
 //! lives in this crate and runs against the trait, so the same code drives an in-memory test
 //! level and a simulation region.
 
+use crate::behaviour::piston::{MovingPiston, MovingPistons};
 use crate::block_events::BlockEvents;
 use crate::redstone::torch::Toggle;
 use crate::fluid::FluidType;
@@ -77,6 +78,10 @@ pub enum Effect {
     NoteBlock { pos: BlockPos, instrument: &'static str, note: i32 },
     /// A block event that ran and must reach clients (`ClientboundBlockEventPacket`).
     BlockEvent { pos: BlockPos, block: BlockId, a: i32, b: i32 },
+    /// `PistonMovingBlockEntity.tick` before advancing: entities in the moving block's way
+    /// (`moveCollidedEntities`) and stuck to honey or slime (`moveStuckEntities`) are
+    /// carried to `progress`.
+    PistonMove { pos: BlockPos, piston: MovingPiston, progress: f32 },
 }
 
 pub trait Level {
@@ -88,7 +93,8 @@ pub trait Level {
     /// The storage half of `LevelChunk.setBlockState`: writes `state`, maintains heightmaps,
     /// light and block entities, and returns the previous state, or `None` when nothing
     /// changed (same state, or air into an empty section) or `pos` cannot be written.
-    /// Behaviour callbacks (`onPlace`, removal side effects) are the caller's.
+    /// Behaviour callbacks (`onPlace`, removal side effects) are the caller's. Moving-piston
+    /// block entities are kept in [`LevelData::pistons`], not by the level.
     fn set_raw(&mut self, pos: BlockPos, state: u16, flags: u32) -> Option<u16>;
 
     /// `Level.isInValidBounds`: inside the build height and the horizontal world limit.
@@ -174,11 +180,24 @@ pub struct LevelData {
     pub torch_toggles: Vec<Toggle>,
     /// `Level.randValue`: the LCG choosing random-tick positions.
     pub rand_value: i32,
+    /// Moving-piston block entities and their ticker order.
+    pub pistons: MovingPistons,
+    /// `ServerLevel.handlingTick`: true from the block ticks through the block events (set
+    /// by [`crate::tick::run_block_ticks`], cleared by
+    /// [`crate::block_events::run_block_events`]).
+    pub handling_tick: bool,
 }
 
 impl LevelData {
     pub fn new(max_chained_neighbor_updates: i32, rand_value: i32) -> Self {
-        Self { updater: NeighborUpdater::new(max_chained_neighbor_updates), block_events: BlockEvents::default(), torch_toggles: Vec::new(), rand_value }
+        Self {
+            updater: NeighborUpdater::new(max_chained_neighbor_updates),
+            block_events: BlockEvents::default(),
+            torch_toggles: Vec::new(),
+            rand_value,
+            pistons: MovingPistons::default(),
+            handling_tick: false,
+        }
     }
 }
 

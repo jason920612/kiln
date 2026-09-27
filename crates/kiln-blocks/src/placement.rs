@@ -373,6 +373,8 @@ pub fn placed_by<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
         set_block_and_update(level, pos.relative(facing), state::set(s, "part", "head"));
     } else if logic::is_instance(s, C::DiodeBlock) {
         diode::placed(level, s, pos);
+    } else if logic::block_class(s) == C::PistonBaseBlock {
+        crate::behaviour::piston::check_if_extend(level, s, pos);
     }
 }
 

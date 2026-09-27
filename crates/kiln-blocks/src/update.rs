@@ -266,6 +266,11 @@ pub fn set_block_limit<L: Level>(level: &mut L, pos: BlockPos, state: u16, flags
 fn set_block_state<L: Level>(level: &mut L, pos: BlockPos, state: u16, flags: u32) -> Option<u16> {
     let old = level.set_raw(pos, state, flags)?;
     let changed = !same_block(old, state);
+    if changed && crate::state::is(old, d::MOVING_PISTON) {
+        // `preRemoveSideEffects` (`finalTick`) finds the block already replaced: the moving
+        // piston's block entity just goes.
+        level.data().pistons.remove(pos);
+    }
     let moved = flags & flags::MOVE_BY_PISTON != 0;
     if (changed || logic::is_instance(state, BlockClass::BaseRailBlock)) && (flags & flags::NEIGHBORS != 0 || moved) {
         behaviour::affect_neighbors_after_removal(level, old, pos, moved);

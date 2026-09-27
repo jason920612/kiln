@@ -539,6 +539,165 @@ def _(b, f, at):
     at(40, lambda b, f: b(9, 0, 2, "minecraft:air"))
 
 
+
+# Pistons: redstone blocks behind them at t2, gone at t12 unless noted.
+def power(b, at, spots, on=2, off=12):
+    for x, y, z in spots:
+        at(on, lambda b, f, x=x, y=y, z=z: b(x, y, z, "minecraft:redstone_block"))
+        if off is not None:
+            at(off, lambda b, f, x=x, y=y, z=z: b(x, y, z, "minecraft:air"))
+
+
+@scenario("pistons_push", (16, 6, 12))
+def _(b, f, at):
+    b(1, 0, 1, "minecraft:piston[facing=east]")
+    f(2, 0, 1, 4, 0, 1, "minecraft:stone")
+    b(1, 0, 3, "minecraft:sticky_piston[facing=east]")
+    b(2, 0, 3, "minecraft:oak_planks")
+    b(1, 0, 5, "minecraft:piston[facing=east]")
+    f(2, 0, 5, 13, 0, 5, "minecraft:cobblestone")
+    b(1, 0, 7, "minecraft:sticky_piston[facing=east]")
+    f(2, 0, 7, 14, 0, 7, "minecraft:cobblestone")
+    b(1, 0, 9, "minecraft:sticky_piston[facing=up]")
+    f(1, 1, 9, 1, 2, 9, "minecraft:stone")
+    b(10, 0, 9, "minecraft:piston[facing=west]")
+    b(9, 0, 9, "minecraft:iron_block")
+    power(b, at, [(0, 0, 1), (0, 0, 3), (0, 0, 5), (0, 0, 7), (0, 0, 9), (11, 0, 9)])
+
+
+@scenario("piston_reactions", (16, 6, 16))
+def _(b, f, at):
+    b(1, 0, 1, "minecraft:piston[facing=east]")
+    b(2, 0, 1, "minecraft:stone")
+    b(3, 0, 1, "minecraft:torch")
+    b(1, 0, 3, "minecraft:piston[facing=east]")
+    b(2, 0, 3, "minecraft:dandelion")
+    b(1, 0, 5, "minecraft:piston[facing=east]")
+    b(2, 0, 5, "minecraft:obsidian")
+    b(1, 0, 7, "minecraft:sticky_piston[facing=east]")
+    b(2, 0, 7, "minecraft:white_glazed_terracotta")
+    b(1, 0, 9, "minecraft:sticky_piston[facing=east]")
+    b(2, 0, 9, "minecraft:piston[facing=north]")
+    b(1, 0, 11, "minecraft:sticky_piston[facing=east]")
+    b(2, 0, 11, "minecraft:furnace")
+    b(1, 0, 13, "minecraft:piston[facing=east]")
+    b(2, 0, 13, "minecraft:stone")
+    b(3, 0, 13, "minecraft:bedrock")
+    b(8, 0, 1, "minecraft:piston[facing=east]")
+    b(9, 0, 1, "minecraft:stone")
+    f(10, 0, 1, 12, 0, 1, "minecraft:redstone_wire")
+    b(8, 0, 4, "minecraft:piston[facing=east]")
+    b(9, 0, 4, "minecraft:oak_slab[type=top,waterlogged=true]")
+    power(b, at, [(0, 0, z) for z in (1, 3, 5, 7, 9, 11, 13)] + [(7, 0, 1), (7, 0, 4)])
+
+
+@scenario("slime_honey", (16, 10, 16))
+def _(b, f, at):
+    b(1, 3, 1, "minecraft:sticky_piston[facing=east]")
+    b(2, 3, 1, "minecraft:slime_block")
+    b(2, 3, 2, "minecraft:stone")
+    b(2, 4, 1, "minecraft:honey_block")
+    b(2, 5, 1, "minecraft:stone")
+    b(1, 3, 5, "minecraft:sticky_piston[facing=east]")
+    f(2, 3, 5, 3, 3, 5, "minecraft:honey_block")
+    b(2, 4, 5, "minecraft:oak_planks")
+    b(3, 2, 5, "minecraft:glass")
+    b(10, 0, 5, "minecraft:sticky_piston[facing=up]")
+    b(10, 1, 5, "minecraft:slime_block")
+    b(11, 1, 5, "minecraft:stone")
+    b(10, 1, 6, "minecraft:slime_block")
+    b(10, 1, 7, "minecraft:cobblestone")
+    b(1, 3, 9, "minecraft:piston[facing=east]")
+    f(2, 3, 9, 4, 5, 11, "minecraft:slime_block")
+    b(1, 3, 13, "minecraft:sticky_piston[facing=east]")
+    b(2, 3, 13, "minecraft:slime_block")
+    b(3, 3, 13, "minecraft:honey_block")
+    b(3, 3, 14, "minecraft:stone")
+    b(2, 3, 12, "minecraft:stone")
+    power(b, at, [(0, 3, 1), (0, 3, 5), (9, 0, 5), (0, 3, 9), (0, 3, 13)])
+
+
+@scenario("piston_qc_bud", (12, 6, 10))
+def _(b, f, at):
+    b(1, 0, 1, "minecraft:piston[facing=east]")
+    b(2, 0, 1, "minecraft:stone")
+    at(2, lambda b, f: b(0, 1, 1, "minecraft:redstone_block"))
+    at(6, lambda b, f: b(1, 0, 0, "minecraft:stone"))
+    b(1, 0, 4, "minecraft:piston[facing=east]")
+    b(5, 0, 4, "minecraft:piston[facing=up]")
+    b(8, 0, 4, "minecraft:sticky_piston[facing=north]")
+    b(8, 0, 3, "minecraft:stone")
+    power(b, at, [(1, 1, 4), (5, 1, 4), (8, 2, 4)])
+    at(20, lambda b, f: b(0, 1, 1, "minecraft:air"))
+    at(24, lambda b, f: b(2, 1, 1, "minecraft:stone"))
+
+
+@scenario("piston_pulses", (12, 6, 10))
+def _(b, f, at):
+    for z, off in ((1, 3), (3, 4), (5, 5)):
+        b(1, 0, z, "minecraft:sticky_piston[facing=east]")
+        b(2, 0, z, "minecraft:stone")
+        power(b, at, [(0, 0, z)], on=2, off=off)
+    b(1, 0, 7, "minecraft:sticky_piston[facing=east]")
+    b(2, 0, 7, "minecraft:stone")
+    b(0, 0, 7, "minecraft:observer[facing=west]")
+    at(4, lambda b, f: b(-1, 0, 7, "minecraft:oak_planks"))
+    b(7, 0, 7, "minecraft:piston[facing=east]")
+    b(8, 0, 7, "minecraft:stone")
+    b(6, 0, 7, "minecraft:observer[facing=west]")
+    at(4, lambda b, f: b(5, 0, 7, "minecraft:oak_planks"))
+
+
+@scenario("piston_redstone", (16, 6, 12))
+def _(b, f, at):
+    b(1, 0, 1, "minecraft:sticky_piston[facing=east]")
+    b(2, 0, 1, "minecraft:redstone_block")
+    b(4, 0, 1, "minecraft:redstone_lamp")
+    power(b, at, [(0, 0, 1)], on=2, off=10)
+    b(1, 0, 4, "minecraft:piston[facing=south]")
+    f(2, 0, 4, 6, 0, 4, "minecraft:redstone_wire")
+    b(3, 0, 5, "minecraft:piston[facing=south]")
+    power(b, at, [(7, 0, 4)], on=3, off=15)
+    b(1, 0, 8, "minecraft:piston[facing=east]")
+    b(2, 0, 8, "minecraft:observer[facing=east]")
+    b(4, 0, 8, "minecraft:redstone_lamp")
+    power(b, at, [(0, 0, 8)], on=2, off=20)
+
+
+@scenario("piston_heads", (12, 6, 10))
+def _(b, f, at):
+    b(1, 0, 1, "minecraft:piston[facing=east,extended=true]")
+    b(2, 0, 1, "minecraft:piston_head[facing=east]")
+    b(1, 0, 3, "minecraft:piston[facing=east]")
+    b(0, 0, 3, "minecraft:redstone_block")
+    at(8, lambda b, f: b(2, 0, 3, "minecraft:air"))
+    b(1, 0, 5, "minecraft:piston[facing=east]")
+    b(0, 0, 5, "minecraft:redstone_block")
+    at(8, lambda b, f: b(1, 0, 5, "minecraft:air"))
+    b(1, 0, 7, "minecraft:sticky_piston[facing=east]")
+    b(2, 0, 7, "minecraft:stone")
+    b(0, 0, 7, "minecraft:redstone_block")
+    at(1, lambda b, f: b(0, 0, 7, "minecraft:air"))
+    b(7, 0, 3, "minecraft:piston[facing=east]")
+    b(6, 0, 3, "minecraft:redstone_block")
+    at(2, lambda b, f: b(8, 0, 3, "minecraft:air"))
+
+
+@scenario("piston_observers", (10, 8, 10))
+def _(b, f, at):
+    b(2, 3, 3, "minecraft:sticky_piston[facing=east]")
+    b(3, 3, 3, "minecraft:slime_block")
+    for x, y, z in ((3, 3, 2), (3, 3, 4), (3, 4, 3), (3, 2, 3)):
+        b(x, y, z, "minecraft:stone")
+    b(3, 3, 1, "minecraft:observer[facing=south]")
+    b(3, 3, 5, "minecraft:observer[facing=north]")
+    b(3, 5, 3, "minecraft:observer[facing=down]")
+    b(3, 1, 3, "minecraft:observer[facing=up]")
+    b(4, 3, 1, "minecraft:observer[facing=south]")
+    b(4, 5, 3, "minecraft:observer[facing=down]")
+    power(b, at, [(1, 3, 3)], on=2, off=12)
+
+
 def build(only):
     """Lays scenarios out on a grid and returns the timeline description."""
     scenarios = []
