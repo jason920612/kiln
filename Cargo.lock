@@ -667,6 +667,7 @@ dependencies = [
  "crossbeam-channel",
  "kiln-command",
  "kiln-data",
+ "kiln-inventory",
  "kiln-item",
  "kiln-link",
  "kiln-proto",
