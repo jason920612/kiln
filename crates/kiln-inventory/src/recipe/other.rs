@@ -75,7 +75,7 @@ impl Stonecutting {
     }
 
     pub fn assemble(&self) -> ItemStack {
-        self.result.create()
+        crate::stack::create_checked(&self.result)
     }
 }
 
@@ -108,18 +108,37 @@ pub struct SmithingTrim {
     pub template: Ingredient,
     pub base: Ingredient,
     pub addition: Ingredient,
-    /// `minecraft:trim_pattern` entry.
-    pub pattern: String,
+    /// `minecraft:trim_pattern` id.
+    pub pattern: i32,
 }
 
 impl SmithingTrim {
     pub fn from_json(v: &Json) -> Result<Self, String> {
+        let name = v.get("pattern").and_then(Json::as_str).ok_or("missing pattern")?;
         Ok(SmithingTrim {
             template: ing(v, "template")?,
             base: ing(v, "base")?,
             addition: ing(v, "addition")?,
-            pattern: v.get("pattern").and_then(Json::as_str).ok_or("missing pattern")?.to_owned(),
+            pattern: kiln_item::registry::TRIM_PATTERN.id(name).ok_or_else(|| format!("unknown trim pattern {name}"))?,
         })
+    }
+
+    pub fn matches(&self, template: &ItemStack, base: &ItemStack, addition: &ItemStack) -> bool {
+        self.template.test(template) && self.base.test(base) && self.addition.test(addition)
+    }
+
+    /// `SmithingTrimRecipe.applyTrim`: the base with the addition's trim material (nothing if the
+    /// addition provides none or the base already has this trim).
+    pub fn assemble(&self, base: &ItemStack, addition: &ItemStack) -> ItemStack {
+        use kiln_item::keys;
+        let Some(material) = addition.get(keys::PROVIDES_TRIM_MATERIAL) else { return ItemStack::empty() };
+        let trim = kiln_item::component::ArmorTrim { material: material.0.clone(), pattern: kiln_item::Holder::Reference(self.pattern) };
+        if base.get(keys::TRIM) == Some(&trim) {
+            return ItemStack::empty();
+        }
+        let mut out = crate::stack::StackExt::copy_with_count(base, 1);
+        out.insert(keys::TRIM, trim);
+        out
     }
 }
 

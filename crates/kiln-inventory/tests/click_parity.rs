@@ -7,7 +7,7 @@
 mod common;
 
 use common::{same, show, stack, stacks, unhex};
-use kiln_inventory::click::{ContainerClick, handle_container_click, handle_set_creative_slot};
+use kiln_inventory::click::{ContainerClick, handle_container_button_click, handle_container_click, handle_set_creative_slot};
 use kiln_inventory::{Effect, Env, FurnaceKind, Menu, NoWorld, PlayerFlags, PlayerInventory, SimpleContainer};
 use kiln_item::ItemStack;
 use serde_json::Value as Json;
@@ -25,6 +25,8 @@ fn menu_for(kind: &str, id: i32) -> Menu {
         "furnace" => Menu::furnace(id, FurnaceKind::Furnace),
         "blast_furnace" => Menu::furnace(id, FurnaceKind::BlastFurnace),
         "smoker" => Menu::furnace(id, FurnaceKind::Smoker),
+        "stonecutter" => Menu::stonecutter(id),
+        "smithing" => Menu::smithing(id),
         _ => panic!("unknown menu kind {kind}"),
     }
 }
@@ -147,8 +149,7 @@ fn click_sequences_match_vanilla() {
         eprintln!("skipping: no {}/clicks*.jsonl", dir.display());
         return;
     }
-    let text: String = files.iter().map(|f| std::fs::read_to_string(f).unwrap()).collect::<Vec<_>>().join("
-");
+    let text: String = files.iter().map(|f| std::fs::read_to_string(f).unwrap()).collect::<Vec<_>>().join("\n");
     let Some(rules) = common::rules() else {
         eprintln!("skipping: vanilla datapack not found");
         return;
@@ -180,7 +181,7 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
     inv.selected = seq["selected"].as_u64().unwrap() as usize;
     let mut block = SimpleContainer::from_items(stacks(&seq["block"]));
     block.data = seq["data"].as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect();
-    let has_block = !matches!(kind, "inventory" | "crafting");
+    let has_block = !matches!(kind, "inventory" | "crafting" | "stonecutter" | "smithing");
     let mut menu = menu_for(kind, id);
     let flags = PlayerFlags { creative, infinite_materials: creative, ..Default::default() };
     let mut world = NoWorld;
@@ -197,9 +198,11 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
             }
         };
     }
+    // A crafting grid starts at slot 1, station inputs at slot 0.
+    let first = if matches!(kind, "stonecutter" | "smithing") { 0 } else { 1 };
     for (i, s) in seq.get("grid").map(stacks).unwrap_or_default().into_iter().enumerate() {
         if !s.is_empty() {
-            menu.set_slot(&mut env!(), 1 + i, s);
+            menu.set_slot(&mut env!(), first + i, s);
         }
     }
     menu.open(&mut env!());
@@ -219,6 +222,10 @@ fn replay(seq: &Json, rules: &kiln_inventory::Rules, steps: &mut usize) -> Resul
         } else if step.get("close").is_some() {
             what = "close".into();
             menu.removed(&mut env!());
+        } else if let Some(b) = step.get("button") {
+            let (cid, button) = (b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32);
+            what = format!("button {button} (container {cid})");
+            handle_container_button_click(&mut menu, &mut env!(), cid, button, true);
         } else {
             let c = step["creative"].as_array().unwrap();
             let slot = c[0].as_i64().unwrap() as i16;

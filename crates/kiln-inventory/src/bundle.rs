@@ -201,7 +201,7 @@ fn stacked_on_other(menu: &mut Menu, env: &mut Env, slot: usize, action: ClickAc
         _ => return Ok(false),
     }
     menu.carried.set(keys::BUNDLE_CONTENTS.wrap(m.to_component()?));
-    menu.slots_changed(env);
+    menu.slots_changed(env, crate::slot::Source::Player);
     Ok(true)
 }
 
@@ -237,7 +237,7 @@ fn other_stacked_on_me(menu: &mut Menu, env: &mut Env, slot: usize, action: Clic
         }
     }
     menu.item_mut(env, slot).set(keys::BUNDLE_CONTENTS.wrap(m.to_component()?));
-    menu.slots_changed(env);
+    menu.slots_changed(env, crate::slot::Source::Player);
     Ok(true)
 }
 

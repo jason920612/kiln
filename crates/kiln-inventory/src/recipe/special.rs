@@ -399,7 +399,7 @@ impl Special {
                         colors.push(firework_color(s.get(keys::DYE).copied().unwrap_or(DyeColor::White)));
                     }
                 }
-                let mut out = result.create();
+                let mut out = crate::stack::create_checked(result);
                 out.insert(keys::FIREWORK_EXPLOSION, FireworkExplosion { shape, colors, fade_colors: Vec::new(), has_trail, has_twinkle });
                 out
             }
@@ -428,7 +428,7 @@ impl Special {
             }
             Special::Imbue { result, .. } => {
                 let center = input.get_xy(1, 1);
-                let mut out = result.create();
+                let mut out = crate::stack::create_checked(result);
                 match center.get(keys::POTION_CONTENTS) {
                     Some(p) => out.insert(keys::POTION_CONTENTS, p.clone()),
                     None => out.remove(ids::POTION_CONTENTS),

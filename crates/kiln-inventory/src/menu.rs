@@ -139,6 +139,15 @@ pub struct Menu {
     pub(crate) placing_recipe: bool,
     /// `ResultSlot.removeCount` / `FurnaceResultSlot.removeCount`.
     remove_count: i32,
+    /// The input container of stonecutters and smithing tables.
+    pub(crate) input: crate::container::SimpleContainer,
+    /// The menu's own data slots (stonecutter selection, smithing error flag); other menus
+    /// show their block's `ContainerData`.
+    pub(crate) local_data: Vec<i32>,
+    /// `StonecutterMenu.input`: the last input, to notice when its item changes.
+    pub(crate) last_input: ItemStack,
+    /// `StonecutterMenu.recipesForInput` (recipe indices).
+    pub(crate) visible_recipes: Vec<usize>,
 }
 
 impl Menu {
@@ -164,6 +173,10 @@ impl Menu {
             result: ResultBox::default(),
             placing_recipe: false,
             remove_count: 0,
+            input: crate::container::SimpleContainer::new(0),
+            local_data: Vec::new(),
+            last_input: ItemStack::empty(),
+            visible_recipes: Vec::new(),
         }
     }
 
@@ -220,6 +233,7 @@ impl Menu {
             Source::Block => env.block.as_deref().expect("menu without its block container"),
             Source::Craft => &self.craft,
             Source::Result => &self.result,
+            Source::Input => &self.input,
         }
     }
 
@@ -229,6 +243,7 @@ impl Menu {
             Source::Block => env.block.as_deref_mut().expect("menu without its block container"),
             Source::Craft => &mut self.craft,
             Source::Result => &mut self.result,
+            Source::Input => &mut self.input,
         }
     }
 
@@ -270,8 +285,9 @@ impl Menu {
     fn set(&mut self, env: &mut Env, i: usize, stack: ItemStack) {
         let s = self.slots[i];
         self.container_mut(env, s.source).set_item(s.index, stack);
-        if s.source == Source::Craft {
-            self.slots_changed(env);
+        // A crafting grid's setItem, and an input container's own setChanged inside setItem.
+        if matches!(s.source, Source::Craft | Source::Input) {
+            self.slots_changed(env, s.source);
         }
         self.set_changed(env, i);
     }
@@ -296,9 +312,13 @@ impl Menu {
     }
 
     /// `Slot.setChanged`.
-    fn set_changed(&mut self, env: &mut Env, i: usize) {
+    pub(crate) fn set_changed(&mut self, env: &mut Env, i: usize) {
         let s = self.slots[i];
         self.container_mut(env, s.source).set_changed();
+        match (self.kind, s.source) {
+            (_, Source::Input) | (MenuKind::Smithing, Source::Result) => self.slots_changed(env, s.source),
+            _ => {}
+        }
     }
 
     /// `Slot.remove`.
@@ -308,8 +328,8 @@ impl Menu {
             self.remove_count += count.min(self.item(env, i).count());
         }
         let removed = self.container_mut(env, s.source).remove_item(s.index, count);
-        if s.source == Source::Craft && !removed.is_empty() {
-            self.slots_changed(env);
+        if matches!(s.source, Source::Craft | Source::Input) && !removed.is_empty() {
+            self.slots_changed(env, s.source);
         }
         removed
     }
@@ -397,6 +417,10 @@ impl Menu {
                 self.on_crafted_by(env, stack, self.remove_count);
                 self.remove_count = 0;
             }
+            SlotKind::StonecutterResult | SlotKind::SmithingResult => {
+                let n = stack.count();
+                self.on_crafted_by(env, stack, n);
+            }
             _ => {}
         }
     }
@@ -408,7 +432,7 @@ impl Menu {
     }
 
     /// `Slot.onTake`.
-    fn on_take(&mut self, env: &mut Env, i: usize, stack: &mut ItemStack) {
+    pub(crate) fn on_take(&mut self, env: &mut Env, i: usize, stack: &mut ItemStack) {
         self.check_take_achievements(env, i, stack);
         self.on_take_effects(env, i);
     }
@@ -425,6 +449,14 @@ impl Menu {
     fn on_take_effects(&mut self, env: &mut Env, i: usize) {
         match self.slots[i].kind {
             SlotKind::CraftResult => self.consume_crafting_grid(env),
+            SlotKind::StonecutterResult => {
+                if !self.remove(env, 0, 1).is_empty() {
+                    let selected = self.local_data[0];
+                    crate::menus::stonecutter_setup_result(self, env, selected);
+                }
+                self.set_changed(env, i);
+            }
+            SlotKind::SmithingResult => crate::menus::smithing_take(self, env),
             _ => self.set_changed(env, i),
         }
     }
@@ -458,7 +490,7 @@ impl Menu {
                 if !self.craft.items[slot].is_empty() {
                     let removed = crate::container::remove_item(&mut self.craft.items, slot, 1);
                     if !removed.is_empty() {
-                        self.slots_changed(env);
+                        self.slots_changed(env, Source::Craft);
                     }
                 }
                 if rem.is_empty() {
@@ -467,11 +499,11 @@ impl Menu {
                 let current = self.craft.items[slot].clone();
                 if current.is_empty() {
                     self.craft.items[slot] = rem;
-                    self.slots_changed(env);
+                    self.slots_changed(env, Source::Craft);
                 } else if same_item_same_components(&current, &rem) {
                     rem.grow_count(current.count());
                     self.craft.items[slot] = rem;
-                    self.slots_changed(env);
+                    self.slots_changed(env, Source::Craft);
                 } else if !env.inventory.add(None, &mut rem, env.player.infinite_materials) {
                     env.drop_item(rem, false);
                 }
@@ -479,12 +511,15 @@ impl Menu {
         }
     }
 
-    /// `slotsChanged`: crafting menus recompute their result, others broadcast changes.
-    pub(crate) fn slots_changed(&mut self, env: &mut Env) {
+    /// `slotsChanged(container)`: crafting menus recompute their result, workstations react
+    /// to their input, others broadcast changes.
+    pub(crate) fn slots_changed(&mut self, env: &mut Env, source: Source) {
         match self.kind {
             MenuKind::Inventory => self.slot_changed_crafting_grid(env, None),
             MenuKind::Crafting if !self.placing_recipe => self.slot_changed_crafting_grid(env, None),
             MenuKind::Crafting => {}
+            MenuKind::Stonecutter => crate::menus::stonecutter_slots_changed(self, env),
+            MenuKind::Smithing => crate::menus::smithing_slots_changed(self, env, source),
             _ => self.broadcast_changes(env),
         }
     }
@@ -538,7 +573,10 @@ impl Menu {
     }
 
     fn data(&self, env: &Env, i: usize) -> i32 {
-        env.block.as_deref().map_or(0, |b| b.data(i))
+        match self.local_data.get(i) {
+            Some(v) => *v,
+            None => env.block.as_deref().map_or(0, |b| b.data(i)),
+        }
     }
 
     /// The slot listener (`ServerPlayer`'s `containerListener`): inventory change triggers.
@@ -1016,17 +1054,36 @@ impl Menu {
                 self.result.item = ItemStack::empty();
                 for i in 0..self.craft.items.len() {
                     let stack = crate::container::take_item(&mut self.craft.items, i);
-                    drop_or_place_in_inventory(env, stack);
+                    clear_container_item(env, stack);
                 }
             }
             MenuKind::Crafting => {
                 for i in 0..self.craft.items.len() {
                     let stack = crate::container::take_item(&mut self.craft.items, i);
-                    drop_or_place_in_inventory(env, stack);
+                    clear_container_item(env, stack);
+                }
+            }
+            MenuKind::Stonecutter | MenuKind::Smithing => {
+                if self.kind == MenuKind::Stonecutter {
+                    self.result.item = ItemStack::empty();
+                }
+                for i in 0..self.input.items.len() {
+                    let stack = crate::container::take_item(&mut self.input.items, i);
+                    clear_container_item(env, stack);
                 }
             }
             _ => {}
         }
+    }
+}
+
+/// `AbstractContainerMenu.clearContainer` for one stack: dropped for a dead or removed
+/// player.
+fn clear_container_item(env: &mut Env, stack: ItemStack) {
+    if env.player.dead {
+        env.drop_item(stack, false);
+    } else {
+        drop_or_place_in_inventory(env, stack);
     }
 }
 

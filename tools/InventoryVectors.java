@@ -99,7 +99,9 @@ import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.RemoteSlot;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.inventory.SimpleContainerData;
+import net.minecraft.world.inventory.SmithingMenu;
 import net.minecraft.world.inventory.SmokerMenu;
+import net.minecraft.world.inventory.StonecutterMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingInput;
 import net.minecraft.world.item.crafting.CraftingRecipe;
@@ -218,6 +220,17 @@ public class InventoryVectors {
         public MapItemSavedData getMapData(MapId id) {
             return MAPS.get(id.id());
         }
+
+        @Override
+        public long getGameTime() {
+            return 0;
+        }
+
+        @Override
+        public void playSound(net.minecraft.world.entity.Entity e, BlockPos pos, net.minecraft.sounds.SoundEvent sound, net.minecraft.sounds.SoundSource source, float volume, float pitch) {}
+
+        @Override
+        public void levelEvent(net.minecraft.world.entity.Entity e, int type, BlockPos pos, int data) {}
     }
 
     static class FakePlayer extends ServerPlayer {
@@ -388,6 +401,22 @@ public class InventoryVectors {
         "bundle[bundle_contents=[{id:\"stick\",count:7}]]",
     };
 
+    static final String[] STONE_POOL = {
+        "stone", "cobblestone", "granite", "andesite", "diorite", "deepslate", "cobbled_deepslate", "copper_block", "cut_copper",
+        "exposed_copper", "sandstone", "red_sandstone", "quartz_block", "blackstone", "polished_blackstone", "stone_bricks", "tuff",
+        "bricks", "prismarine", "purpur_block", "end_stone", "mud_bricks", "nether_bricks", "oak_planks", "dirt", "iron_ingot",
+        "stone[custom_name=\"A\"]", "stone[max_stack_size=5]", "smooth_stone", "resin_bricks", "bundle", "stone_slab",
+    };
+
+    static final String[] SMITH_POOL = {
+        "netherite_upgrade_smithing_template", "coast_armor_trim_smithing_template", "wild_armor_trim_smithing_template",
+        "sentry_armor_trim_smithing_template", "diamond_sword", "diamond_chestplate", "diamond_helmet", "diamond_pickaxe[damage=100,enchantments={efficiency:3}]",
+        "diamond_helmet[trim={material:\"minecraft:iron\",pattern:\"minecraft:coast\"}]", "iron_chestplate", "leather_boots[dyed_color=255]",
+        "turtle_helmet", "chainmail_leggings", "golden_boots", "netherite_chestplate", "diamond_hoe[custom_name=\"H\"]", "netherite_ingot",
+        "iron_ingot", "gold_ingot", "emerald", "redstone", "amethyst_shard", "quartz", "copper_ingot", "lapis_lazuli", "diamond",
+        "resin_brick", "stone", "diamond_leggings[max_stack_size=4]", "netherite_upgrade_smithing_template[max_stack_size=1]",
+    };
+
     static ItemStack randomStack(Random rng, String[] pool) {
         String text = pool[rng.nextInt(pool.length)];
         ItemStack s = parse(text, 1);
@@ -405,7 +434,7 @@ public class InventoryVectors {
 
     static final String[] KINDS = {
         "inventory", "inventory", "inventory", "crafting", "crafting", "generic_9x3", "generic_9x6", "generic_9x1",
-        "generic_3x3", "hopper", "shulker_box", "furnace", "blast_furnace", "smoker",
+        "generic_3x3", "hopper", "shulker_box", "furnace", "blast_furnace", "smoker", "stonecutter", "stonecutter", "smithing", "smithing",
     };
 
     static int blockSize(String kind) {
@@ -465,6 +494,8 @@ public class InventoryVectors {
             case "furnace" -> new FurnaceMenu(id, s.inv, s.block, s.data);
             case "blast_furnace" -> new BlastFurnaceMenu(id, s.inv, s.block, s.data);
             case "smoker" -> new SmokerMenu(id, s.inv, s.block, s.data);
+            case "stonecutter" -> new StonecutterMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
+            case "smithing" -> new SmithingMenu(id, s.inv, ContainerLevelAccess.create(LEVEL, BlockPos.ZERO));
             default -> throw new IllegalArgumentException(s.kind);
         };
     }
@@ -491,7 +522,8 @@ public class InventoryVectors {
                 boolean creative = rng.nextInt(5) == 0;
                 int id = kind.equals("inventory") ? 0 : 1 + rng.nextInt(100);
                 Session s = session(kind, id, creative);
-                String[] pool = kind.equals("crafting") || (kind.equals("inventory") && rng.nextBoolean()) ? CRAFT_POOL : CLICK_POOL;
+                String[] pool = kind.equals("crafting") || (kind.equals("inventory") && rng.nextBoolean()) ? CRAFT_POOL
+                        : kind.equals("stonecutter") ? STONE_POOL : kind.equals("smithing") ? SMITH_POOL : CLICK_POOL;
                 double fill = rng.nextDouble();
                 for (int i = 0; i < 43; i++) {
                     if (rng.nextDouble() < fill * 0.8) s.inv.setItem(i, randomStack(rng, pool));
@@ -522,8 +554,10 @@ public class InventoryVectors {
                         grid = g;
                     }
                 }
+                boolean station = kind.equals("stonecutter") || kind.equals("smithing");
+                if (station && rng.nextInt(4) < 3) grid = stationInput(kind, rng);
                 for (int i = 0; i < grid.size(); i++) {
-                    if (!grid.get(i).isEmpty()) s.menu.getSlot(1 + i).set(grid.get(i).copy());
+                    if (!grid.get(i).isEmpty()) s.menu.getSlot((station ? 0 : 1) + i).set(grid.get(i).copy());
                 }
                 // Deterministic drag order (a HashSet of slots in vanilla iterates in identity-hash order).
                 set(s.menu, AbstractContainerMenu.class, "quickcraftSlots", new LinkedHashSet<>());
@@ -541,6 +575,8 @@ public class InventoryVectors {
                     String step;
                     if (kind.equals("inventory") && drag < 0 && rng.nextInt(25) == 0) {
                         step = creativeStep(s, rng, pool);
+                    } else if (drag < 0 && rng.nextInt(kind.equals("stonecutter") ? 4 : 60) == 0) {
+                        step = buttonStep(s, rng);
                     } else if (drag < 0 && k == steps - 1 && rng.nextInt(3) == 0) {
                         s.menu.removed(s.player);
                         step = "{\"close\": true, \"out\": " + drain(s) + ", \"state\": " + state(s) + "}";
@@ -574,6 +610,8 @@ public class InventoryVectors {
         }
         int slot = rng.nextInt(20) == 0 ? -999 : rng.nextInt(size);
         if ((s.kind.equals("crafting") || s.kind.equals("inventory")) && rng.nextInt(5) == 0) slot = rng.nextInt(3) == 0 ? 1 + rng.nextInt(4) : 0;
+        if (s.kind.equals("stonecutter") && rng.nextInt(3) == 0) slot = rng.nextInt(2);
+        if (s.kind.equals("smithing") && rng.nextInt(3) == 0) slot = rng.nextInt(4);
         if (rng.nextInt(200) == 0) slot = size + rng.nextInt(3);
         if (rng.nextInt(300) == 0) slot = -1 - rng.nextInt(3);
         int r = rng.nextInt(100);
@@ -657,6 +695,16 @@ public class InventoryVectors {
         }
         if (rng.nextInt(20) == 0) changed.put(m.slots.size() + rng.nextInt(5), HashedStack.EMPTY);
         if (rng.nextInt(30) == 0) changed.put(-1 - rng.nextInt(3), HashedStack.EMPTY);
+    }
+
+    /** A copy of handleContainerButtonClick (the menu is always still valid). */
+    static String buttonStep(Session s, Random rng) {
+        AbstractContainerMenu m = s.menu;
+        int containerId = rng.nextInt(30) == 0 ? m.containerId + 1 : m.containerId;
+        int visible = m instanceof StonecutterMenu sc ? sc.getNumberOfVisibleRecipes() : 2;
+        int button = rng.nextInt(10) == 0 ? rng.nextInt(8) - 3 : rng.nextInt(visible + 2);
+        if (m.containerId == containerId && m.clickMenuButton(s.player, button)) m.broadcastChanges();
+        return "{\"button\": [" + containerId + ", " + button + "], \"out\": " + drain(s) + ", \"state\": " + state(s) + "}";
     }
 
     /** A copy of handleSetCreativeModeSlot on the inventory menu (drops never throttled). */
@@ -744,6 +792,37 @@ public class InventoryVectors {
             b.append(", \"recipe\": null");
         }
         return b.append('}').toString();
+    }
+
+    static List<RecipeHolder<?>> sortedRecipes(Class<?> type) {
+        List<RecipeHolder<?>> out = new ArrayList<>();
+        for (RecipeHolder<?> h : recipes.getRecipes()) {
+            if (type.isInstance(h.value())) out.add(h);
+        }
+        out.sort(java.util.Comparator.comparing(h -> h.id().identifier().toString()));
+        return out;
+    }
+
+    /** Station inputs that some recipe takes: a stonecutter input, or smithing template/base/addition (sometimes one wrong). */
+    static List<ItemStack> stationInput(String kind, Random rng) {
+        List<ItemStack> g = new ArrayList<>();
+        if (kind.equals("stonecutter")) {
+            var list = sortedRecipes(net.minecraft.world.item.crafting.StonecutterRecipe.class);
+            var r = (net.minecraft.world.item.crafting.StonecutterRecipe) list.get(rng.nextInt(list.size())).value();
+            g.add(pick(r.input(), rng));
+        } else {
+            var list = sortedRecipes(net.minecraft.world.item.crafting.SmithingRecipe.class);
+            var r = (net.minecraft.world.item.crafting.SmithingRecipe) list.get(rng.nextInt(list.size())).value();
+            g.add(r.templateIngredient().map(i -> pick(i, rng)).orElse(ItemStack.EMPTY));
+            g.add(pick(r.baseIngredient(), rng));
+            g.add(r.additionIngredient().map(i -> pick(i, rng)).orElse(ItemStack.EMPTY));
+            if (rng.nextInt(5) == 0) g.set(rng.nextInt(3), ItemStack.EMPTY);
+            if (rng.nextInt(6) == 0) g.set(1, randomStack(rng, SMITH_POOL));
+        }
+        for (ItemStack st : g) {
+            if (!st.isEmpty() && rng.nextInt(3) > 0) st.setCount(1 + rng.nextInt(st.getMaxStackSize()));
+        }
+        return g;
     }
 
     static ItemStack pick(Ingredient ing, Random rng) {

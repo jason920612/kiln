@@ -307,17 +307,21 @@ impl Transmute {
 /// with the stack's components, then the template's components applied on top.
 pub fn with_original_components(template: &ItemStackTemplate, source: &ItemStack, extra: i32) -> ItemStack {
     let patch = if source.is_empty() { DataComponentPatch::new() } else { source.patch().clone() };
-    let mut stack = ItemStack::from_parts(template.item, template.count + extra, patch);
-    apply_components(&mut stack, &template.patch);
-    stack
+    apply_with_count(template, template.count + extra, patch)
 }
 
 /// `ItemStackTemplate.apply(patch)`: the template's item and count with `patch`, then the
 /// template's components applied on top.
 pub fn template_apply(template: &ItemStackTemplate, patch: DataComponentPatch) -> ItemStack {
-    let mut stack = ItemStack::from_parts(template.item, template.count, patch);
+    apply_with_count(template, template.count, patch)
+}
+
+/// `ItemStackTemplate.apply(count, patch)`: nothing when the stack is invalid (a stackable
+/// damageable item, a count over the maximum...).
+fn apply_with_count(template: &ItemStackTemplate, count: i32, patch: DataComponentPatch) -> ItemStack {
+    let mut stack = ItemStack::from_parts(template.item, count, patch);
     apply_components(&mut stack, &template.patch);
-    stack
+    if crate::stack::is_valid_strict(&stack) { stack } else { ItemStack::empty() }
 }
 
 /// `ItemStack.applyComponents` (`PatchedDataComponentMap.applyPatch`).

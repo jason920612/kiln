@@ -16,7 +16,7 @@ pub use special::Special;
 
 use crate::menu::World;
 use crate::menus::FurnaceKind;
-use crate::stack::StackExt;
+use crate::stack::{StackExt, create_checked};
 use kiln_item::{ItemStack, ItemStackTemplate};
 use serde_json::Value as Json;
 use std::collections::HashMap;
@@ -63,8 +63,8 @@ impl Recipe {
     /// `CraftingRecipe.assemble`.
     pub fn assemble_crafting(&self, input: &CraftingInput) -> ItemStack {
         match self {
-            Recipe::Shaped(r) => r.result.create(),
-            Recipe::Shapeless(r) => r.result.create(),
+            Recipe::Shaped(r) => create_checked(&r.result),
+            Recipe::Shapeless(r) => create_checked(&r.result),
             Recipe::Transmute(r) => r.assemble(input),
             Recipe::Special(r) => r.assemble(input),
             _ => ItemStack::empty(),
@@ -106,6 +106,8 @@ pub struct RecipeManager {
     recipes: Vec<RecipeHolder>,
     crafting: Vec<usize>,
     by_id: HashMap<String, usize>,
+    /// `RecipeManager.propertySets`, computed on first use.
+    sets: std::sync::OnceLock<Vec<sync::PropertySet>>,
     /// Files that failed to parse.
     pub errors: Vec<RecipeError>,
 }
@@ -155,6 +157,13 @@ impl RecipeManager {
         }
         self.by_id.insert(id.clone(), i);
         self.recipes.push(RecipeHolder { id, recipe });
+        self.sets = std::sync::OnceLock::new();
+    }
+
+    /// The recipe property sets (`RecipePropertySet`s): the items furnaces, smithing tables and
+    /// brewing stands accept.
+    pub fn property_sets(&self) -> &[sync::PropertySet] {
+        self.sets.get_or_init(|| sync::property_sets(self))
     }
 
     pub fn len(&self) -> usize {
@@ -219,16 +228,55 @@ impl RecipeManager {
         }
     }
 
+    /// Stonecutter recipes in order (`RecipeManager.stonecutterRecipes`).
+    pub fn stonecutter(&self) -> impl Iterator<Item = (usize, &Stonecutting)> {
+        self.recipes.iter().enumerate().filter_map(|(i, h)| match &h.recipe {
+            Recipe::Stonecutting(s) => Some((i, s)),
+            _ => None,
+        })
+    }
+
+    /// `SelectableRecipe.SingleInputSet.selectByInput`: the stonecutter recipes taking `input`.
+    pub fn stonecutter_for(&self, input: &ItemStack) -> Vec<usize> {
+        self.stonecutter().filter(|(_, s)| s.ingredient.test(input)).map(|(i, _)| i).collect()
+    }
+
+    /// `getRecipeFor(SMITHING, input)`: the first smithing recipe matching the three slots.
+    pub fn find_smithing(&self, template: &ItemStack, base: &ItemStack, addition: &ItemStack) -> Option<usize> {
+        if template.is_empty() && base.is_empty() && addition.is_empty() {
+            return None;
+        }
+        self.recipes.iter().position(|h| match &h.recipe {
+            Recipe::SmithingTransform(r) => r.matches(template, base, addition),
+            Recipe::SmithingTrim(r) => r.matches(template, base, addition),
+            _ => false,
+        })
+    }
+
+    /// `SmithingRecipe.assemble`.
+    pub fn assemble_smithing(&self, index: usize, base: &ItemStack, addition: &ItemStack) -> ItemStack {
+        match &self.recipes[index].recipe {
+            Recipe::SmithingTransform(r) => r.assemble(base),
+            Recipe::SmithingTrim(r) => r.assemble(base, addition),
+            _ => ItemStack::empty(),
+        }
+    }
+
+    /// Whether a recipe property set (`minecraft:smithing_base`, ...) holds the stack's item.
+    pub fn property_set_accepts(&self, key: &str, stack: &ItemStack) -> bool {
+        let item = stack.effective_item();
+        self.property_sets().iter().any(|s| s.key == key && s.items.binary_search(&item).is_ok())
+    }
+
     /// `AbstractFurnaceMenu.canSmelt`: the furnace's recipe property set (items some recipe of
     /// its type takes).
     pub fn furnace_accepts(&self, kind: FurnaceKind, stack: &ItemStack) -> bool {
-        let wanted = match kind {
-            FurnaceKind::Furnace => CookingKind::Smelting,
-            FurnaceKind::BlastFurnace => CookingKind::Blasting,
-            FurnaceKind::Smoker => CookingKind::Smoking,
+        let key = match kind {
+            FurnaceKind::Furnace => "minecraft:furnace_input",
+            FurnaceKind::BlastFurnace => "minecraft:blast_furnace_input",
+            FurnaceKind::Smoker => "minecraft:smoker_input",
         };
-        let item = stack.effective_item();
-        self.recipes.iter().any(|r| matches!(&r.recipe, Recipe::Cooking(c) if c.kind == wanted && c.ingredient.accepts(item)))
+        self.property_set_accepts(key, stack)
     }
 }
 

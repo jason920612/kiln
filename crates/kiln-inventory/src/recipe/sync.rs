@@ -79,9 +79,9 @@ pub fn write_ingredient(ing: &Ingredient, out: &mut BytesMut) {
 pub fn update_recipes(recipes: &RecipeManager) -> Bytes {
     let mut b = BytesMut::with_capacity(8192);
     b.put_varint(kiln_data::packets::play::clientbound::UPDATE_RECIPES);
-    let sets = property_sets(recipes);
+    let sets = recipes.property_sets();
     b.put_varint(sets.len() as i32);
-    for s in &sets {
+    for s in sets {
         b.put_string(s.key);
         b.put_varint(s.items.len() as i32);
         for &i in &s.items {
