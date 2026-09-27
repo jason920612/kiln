@@ -37,6 +37,8 @@ mod region;
 mod rng;
 mod stats;
 pub mod testing;
+#[cfg(test)]
+mod combat_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -808,6 +810,9 @@ impl Sim {
             p.pos.map(f64::to_bits).hash(&mut h);
             p.rot.map(f32::to_bits).hash(&mut h);
             (p.game_mode, p.inv.selected, p.menu_view(), p.sneaking, p.sprinting).hash(&mut h);
+            (p.health.to_bits(), p.dead, p.food, p.saturation.to_bits(), p.exhaustion.to_bits()).hash(&mut h);
+            (p.hurt_cooldown, p.last_hurt.to_bits(), p.absorption.to_bits(), p.attack_ticker).hash(&mut h);
+            p.vel.map(f64::to_bits).hash(&mut h);
         }
         h.finish()
     }
@@ -839,6 +844,29 @@ impl Sim {
     /// A player's health, and whether it is dead (for tests and tools).
     pub fn health(&self, conn: ConnId) -> Option<(f32, bool)> {
         self.players.get(&conn).map(|p| (p.health, p.dead))
+    }
+
+    /// Durability damage of the item in an inventory menu slot (5-8 armor from the head down,
+    /// 9-35 main, 36-44 hotbar, 45 offhand), for tests and tools.
+    pub fn item_damage(&self, conn: ConnId, menu_slot: usize) -> Option<i32> {
+        use kiln_item::component::EquipmentSlot as S;
+        let p = self.players.get(&conn)?;
+        let stack = match menu_slot {
+            5 => p.inv.equipped(S::Head),
+            6 => p.inv.equipped(S::Chest),
+            7 => p.inv.equipped(S::Legs),
+            8 => p.inv.equipped(S::Feet),
+            9..=35 => &p.inv.items[menu_slot],
+            36..=44 => &p.inv.items[menu_slot - HOTBAR_START],
+            45 => p.inv.equipped(S::OffHand),
+            _ => return None,
+        };
+        (!stack.is_empty()).then(|| stack.damage())
+    }
+
+    /// A player's entity id (for tests and tools that attack or interact with it).
+    pub fn entity_id(&self, conn: ConnId) -> Option<i32> {
+        self.players.get(&conn).map(|p| p.entity_id)
     }
 
     /// A player's food level and saturation (for tests and tools).

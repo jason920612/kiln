@@ -169,8 +169,20 @@ fn text(s: &str) -> Tag {
 }
 
 /// `Component.translatable(key, with...)`, keys in the order vanilla writes them (its
-/// compounds are hash maps).
+/// compounds are hash maps). NBT lists hold one type: with a styled argument, plain ones
+/// become `{"text": ...}` compounds.
 fn translate(key: &str, with: Vec<Tag>) -> Tag {
+    let mixed = with.iter().any(|t| matches!(t, Tag::Compound(_)));
+    let with = if mixed {
+        with.into_iter()
+            .map(|t| match t {
+                Tag::String(s) => Tag::Compound(vec![("text".into(), Tag::String(s))]),
+                other => other,
+            })
+            .collect()
+    } else {
+        with
+    };
     Tag::Compound(vec![("with".into(), Tag::List(with)), ("translate".into(), Tag::String(key.into()))])
 }
 
@@ -485,7 +497,7 @@ impl Player {
             }
         }
         if self.health <= 0.0 {
-            let death = self.die(source, ctx);
+            let death = self.die(ctx);
             ctx.deaths.push(death);
         }
         true
@@ -551,12 +563,11 @@ impl Player {
 
     /// `ServerPlayer.die`: the death screen, the inventory scattered (no `keepInventory` yet),
     /// the death animation for viewers.
-    fn die(&mut self, source: &Source, ctx: &mut DamageCtx) -> Death {
+    fn die(&mut self, ctx: &mut DamageCtx) -> Death {
         self.dead = true;
         let credit = self.kill_credit.as_ref().map(|(name, _)| name.clone());
         let message = self.combat.death_message(&self.name, credit.as_deref());
         self.fall_distance = 0.0;
-        let _ = source;
         self.send(packets::player::player_combat_kill(self.entity_id, &message));
         self.death_location = Some(self.pos.map(|c| c.floor() as i32));
         for i in 0..self.inv.items.len() {

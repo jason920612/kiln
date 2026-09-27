@@ -312,6 +312,10 @@ impl Player {
             };
             self.entity_events.push(event);
             self.send(entity::entity_event(self.entity_id, event));
+            // `stopLocationBasedEffects`: the broken item's modifiers go at once.
+            if let Some(i) = SLOTS.iter().position(|s| *s == slot) {
+                self.equipment_seen[i] = ItemStack::empty();
+            }
         }
         self.inv.times_changed += 1;
     }
@@ -458,8 +462,8 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     let mut damage = p.attribute(ATTACK_DAMAGE) as f32;
     let source = Source::melee(p.as_attacker());
     let scale = p.attack_strength_scale(0.5);
-    // Enchantment damage (`getEnchantedDamage`) is not modelled: no bonus.
-    let enchant_bonus = scale * (damage - damage);
+    // `scale * (getEnchantedDamage - damage)`: no enchantments are modelled, so no bonus.
+    let enchant_bonus = 0.0f32;
     damage *= 0.2 + scale * scale * 0.8;
     p.attack_ticker = 0;
     if !(damage > 0.0 || enchant_bonus > 0.0) {
@@ -478,7 +482,7 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     }
     let total = damage + enchant_bonus;
     let sweep = p.is_sweep_attack(full, crit, sprint_knockback);
-    let (yaw, attacker_pos) = (p.rot[0], p.pos);
+    let yaw = p.rot[0];
     let t = match target {
         Target::Player(t) => t,
         Target::Entity { .. } => {
@@ -542,7 +546,6 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     }
     players[a].exhaust(0.1);
     play_sounds(players, a, &sounds, env);
-    let _ = attacker_pos;
 }
 
 /// `Player.doSweepAttack`: other living entities near the target take `1 + ratio * damage`
@@ -558,7 +561,6 @@ fn sweep_attack(
     env: &AttackEnv,
     ctx: &mut DamageCtx,
 ) {
-    let _ = env;
     let sweep = 1.0 + players[a].attribute(SWEEPING_DAMAGE_RATIO) as f32 * damage;
     let bb = players[t].bounding_box().inflate(1.0, 0.25, 1.0);
     let (attacker_pos, yaw) = (players[a].pos, players[a].rot[0]);

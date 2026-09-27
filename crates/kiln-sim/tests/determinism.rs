@@ -2,7 +2,8 @@
 //! console commands give the same state hashes, tick for tick, however the world is split
 //! into regions and however many workers tick them in whatever order (design DT-R1). Block
 //! behaviour takes part: fences reshape their neighbours, water spreads through scheduled
-//! ticks, and random ticks run in every chunk near a player.
+//! ticks, and random ticks run in every chunk near a player. Players of a group hit each
+//! other: damage, hurt cooldowns and knockback are part of the state.
 
 use kiln_link::{PlayIn, ToSim};
 use kiln_proto::packets::ItemStack;
@@ -36,6 +37,9 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     let mut placed = Vec::new();
     let mut traffic = Vec::new();
     let mut max_regions = 0;
+    let mut hits = 0;
+    // Players in odd rows of the groups can be hurt; the ones in even rows hit them.
+    let victim = |i: usize| (i / GROUPS) % 2 == 1;
     for tick in 0..ticks {
         if walkers.len() < PLAYERS {
             let i = walkers.len();
@@ -68,6 +72,23 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
         if tick == 150 {
             inbox.push(ToSim::Console("time set 13000".into()));
         }
+        if tick == 120 {
+            for i in (0..PLAYERS).filter(|&i| victim(i)) {
+                inbox.push(ToSim::Console(format!("gamemode survival P{i}")));
+            }
+        }
+        // Every so often each attacker hits the player one row further in its group (the
+        // swing follows, as from the real client), sometimes sprinting.
+        if tick > 130 && tick % 15 == 0 {
+            for i in (0..PLAYERS).filter(|&i| !victim(i) && i + GROUPS < PLAYERS) {
+                let (conn, target) = (i as u64 + 1, sim.entity_id((i + GROUPS) as u64 + 1).unwrap());
+                if (tick / 15) % 3 == 0 {
+                    inbox.push(ToSim::Packet(conn, PlayIn::PlayerCommand { action: 1 }));
+                }
+                inbox.push(ToSim::Packet(conn, PlayIn::Attack { entity_id: target }));
+                inbox.push(ToSim::Packet(conn, PlayIn::Punch));
+            }
+        }
         // A spring beside each group: water spreads over the next ticks.
         if tick == 60 {
             for g in 0..GROUPS {
@@ -76,6 +97,7 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
             }
         }
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
+        hits += (0..PLAYERS).filter(|&i| victim(i) && sim.health(i as u64 + 1).is_some_and(|(h, _)| h < 20.0)).count();
         max_regions = max_regions.max(sim.region_count());
         if tick % 100 == 99 {
             hashes.push(sim.state_hash());
@@ -94,6 +116,7 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     });
     assert!(flowing.count() > 9, "the water spread");
     assert!(walkers.iter().all(|w| !w.client.stats.disconnected.load(std::sync::atomic::Ordering::Relaxed)));
+    assert!(hits > 0, "some attacks landed");
     Run { hashes, traffic, max_regions }
 }
 
