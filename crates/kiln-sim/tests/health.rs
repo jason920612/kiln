@@ -1,4 +1,5 @@
-//! Fall damage, death by /kill with the inventory scattered, and respawning.
+//! Fall damage, death by /kill with the inventory scattered, respawning, and food: healing
+//! when well fed and exhaustion from sprinting.
 
 use kiln_link::{PlayIn, ToSim};
 use kiln_proto::packets::ItemStack;
@@ -60,4 +61,52 @@ fn killed_players_drop_their_items_and_respawn() {
     let mut inbox = Vec::new();
     client.tick(None, &mut inbox);
     assert!(sim.step(inbox));
+}
+
+#[test]
+fn well_fed_players_heal() {
+    let (mut sim, mut client) = joined();
+    let ground = client.pos;
+    assert!(sim.step([ToSim::Console(format!("tp Faller {} {} {}", ground[0], ground[1] + 10.0, ground[2]))]));
+    for _ in 0..2 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    for i in 1..=10 {
+        let y = ground[1] + 10.0 - i as f64;
+        assert!(sim.step([
+            ToSim::Packet(1, PlayIn::Move { pos: Some([ground[0], y, ground[2]]), rot: None, on_ground: i == 10 }),
+            ToSim::Packet(1, PlayIn::ClientTickEnd),
+        ]));
+    }
+    assert_eq!(sim.health(1), Some((13.0, false)));
+    // Full food with saturation: saturation / 6 health every 10 ticks, using saturation.
+    for _ in 0..40 {
+        assert!(sim.step([ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+    }
+    let (health, _) = sim.health(1).unwrap();
+    assert!(health > 14.0, "healed to {health}");
+    let (food, saturation) = sim.food(1).unwrap();
+    assert_eq!(food, 20);
+    assert!(saturation < 5.0, "healing used saturation ({saturation})");
+}
+
+#[test]
+fn sprinting_uses_saturation() {
+    let (mut sim, client) = joined();
+    let ground = client.pos;
+    // Sprinting 0.28 blocks a tick for 200 ticks: 56 blocks, 5.6 exhaustion, one saturation point.
+    let (_, before) = sim.food(1).unwrap();
+    assert!(sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 1 })]));
+    let mut x = ground[0];
+    for _ in 0..200 {
+        x += 0.28;
+        assert!(sim.step([
+            ToSim::Packet(1, PlayIn::Move { pos: Some([x, ground[1], ground[2]]), rot: None, on_ground: true }),
+            ToSim::Packet(1, PlayIn::ClientTickEnd),
+        ]));
+    }
+    let (_, after) = sim.food(1).unwrap();
+    assert_eq!((before, after), (5.0, 4.0), "5.6 exhaustion takes one saturation point");
 }

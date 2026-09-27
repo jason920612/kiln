@@ -223,6 +223,10 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     let removed = interact::player_destroy(level, bp, &actor, drops);
     level.settle();
     level.actor = previous;
+    // `Block.playerDestroy`, which runs when the player can harvest the block.
+    if removed && drops {
+        p.exhaust(0.005);
+    }
     actor.creative || removed
 }
 

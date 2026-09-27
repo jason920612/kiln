@@ -1,8 +1,9 @@
 //! Player health, damage, death and respawn (vanilla `LivingEntity.hurt`/`die`,
 //! `ServerPlayer.die`, `PlayerList.respawn`).
 //!
-//! Damage is not reduced by armor, enchantments or effects yet, and food does not deplete or
-//! regenerate health yet.
+//! Food follows `FoodData`: exhaustion from sprinting, jumping and breaking blocks uses up
+//! saturation then food; a well-fed player heals, a starving one takes damage. Damage is not
+//! reduced by armor, enchantments or effects yet, and eating is not implemented yet.
 
 use crate::{Player, entities};
 use kiln_proto::nbt::Tag;
@@ -16,6 +17,8 @@ const VOID_DAMAGE: f32 = 4.0;
 pub(crate) const VOID_DEPTH: f64 = 64.0;
 /// `Attributes.SAFE_FALL_DISTANCE` base value.
 const SAFE_FALL_DISTANCE: f64 = 3.0;
+/// `FoodData.addExhaustion` cap.
+const MAX_EXHAUSTION: f32 = 40.0;
 
 /// What hurt a player (a damage type in `minecraft:damage_type`).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -25,6 +28,7 @@ pub(crate) enum Cause {
     OutOfWorld,
     /// Landing after falling this far.
     Fall(f64),
+    Starve,
 }
 
 impl Cause {
@@ -33,6 +37,7 @@ impl Cause {
             Cause::Kill => "minecraft:generic_kill",
             Cause::OutOfWorld => "minecraft:out_of_world",
             Cause::Fall(_) => "minecraft:fall",
+            Cause::Starve => "minecraft:starve",
         }
     }
 
@@ -49,6 +54,7 @@ impl Cause {
             // A long fall reads "fell from a high place"; a short one "hit the ground too hard".
             Cause::Fall(d) if d > 5.0 => "death.fell.accident.generic",
             Cause::Fall(_) => "death.attack.fall",
+            Cause::Starve => "death.attack.starve",
         };
         // Keys in the order vanilla writes them (its compounds are hash maps).
         Tag::Compound(vec![
@@ -84,7 +90,6 @@ impl Player {
         let damage_type = kiln_data::synced_id("minecraft:damage_type", cause.damage_type()).unwrap_or(0);
         self.send(entity::damage_event(self.entity_id, damage_type, None, None, None));
         self.damaged = Some(damage_type);
-        self.send(self.health_packet());
         (self.health <= 0.0).then(|| self.die(cause, spawns))
     }
 
@@ -111,6 +116,104 @@ impl Player {
         self.inv.times_changed += 1;
         self.died = true;
         Death { conn: self.conn, message }
+    }
+
+    /// Sends Set Health when health, food or whether saturation is zero changed since the last
+    /// one (`ServerPlayer.doTick`).
+    pub(crate) fn sync_health(&mut self) {
+        let now = (self.health.to_bits(), self.food, self.saturation == 0.0);
+        if self.sent_health != Some(now) {
+            self.sent_health = Some(now);
+            self.send(self.health_packet());
+        }
+    }
+
+    /// `LivingEntity.heal`.
+    fn heal(&mut self, amount: f32) {
+        if self.health > 0.0 {
+            self.health = (self.health + amount).min(MAX_HEALTH);
+        }
+    }
+
+    /// `Player.causeFoodExhaustion`: nothing for invulnerable (creative, spectator) players.
+    pub(crate) fn exhaust(&mut self, amount: f32) {
+        if !self.invulnerable() {
+            self.add_exhaustion(amount);
+        }
+    }
+
+    /// `FoodData.addExhaustion`.
+    fn add_exhaustion(&mut self, amount: f32) {
+        self.exhaustion = (self.exhaustion + amount).min(MAX_EXHAUSTION);
+    }
+
+    /// `FoodData.tick` and the peaceful regeneration of `Player.aiStep`; returns a starvation
+    /// death. `difficulty` is 0 (peaceful) to 3 (hard).
+    pub(crate) fn tick_food(&mut self, difficulty: u8, natural_regen: bool, game_time: i64, spawns: &mut Vec<entities::Spawn>) -> Option<Death> {
+        if self.dead {
+            return None;
+        }
+        if difficulty == 0 && natural_regen {
+            if self.health < MAX_HEALTH && game_time % 20 == 0 {
+                self.heal(1.0);
+            }
+            if self.food < 20 && game_time % 10 == 0 {
+                self.food += 1;
+            }
+        }
+        if self.exhaustion > 4.0 {
+            self.exhaustion -= 4.0;
+            if self.saturation > 0.0 {
+                self.saturation = (self.saturation - 1.0).max(0.0);
+            } else if difficulty != 0 {
+                self.food = (self.food - 1).max(0);
+            }
+        }
+        let hurt = self.health > 0.0 && self.health < MAX_HEALTH;
+        if natural_regen && self.saturation > 0.0 && hurt && self.food >= 20 {
+            self.food_timer += 1;
+            if self.food_timer >= 10 {
+                let f = self.saturation.min(6.0);
+                self.heal(f / 6.0);
+                self.add_exhaustion(f);
+                self.food_timer = 0;
+            }
+        } else if natural_regen && self.food >= 18 && hurt {
+            self.food_timer += 1;
+            if self.food_timer >= 80 {
+                self.heal(1.0);
+                self.add_exhaustion(6.0);
+                self.food_timer = 0;
+            }
+        } else if self.food <= 0 {
+            self.food_timer += 1;
+            if self.food_timer >= 80 {
+                self.food_timer = 0;
+                if self.health > 10.0 || difficulty == 3 || (self.health > 1.0 && difficulty == 2) {
+                    return self.hurt(1.0, Cause::Starve, spawns);
+                }
+            }
+        } else {
+            self.food_timer = 0;
+        }
+        None
+    }
+
+    /// Exhaustion from a move by `d` (`Player.checkMovementStatistics`) and from jumping
+    /// (`jumpFromGround`: left the ground going up).
+    pub(crate) fn exhaust_for_move(&mut self, d: [f64; 3], was_on_ground: bool, in_water: bool) {
+        if was_on_ground && !self.on_ground && d[1] > 0.0 {
+            self.exhaust(if self.sprinting { 0.2 } else { 0.05 });
+        }
+        let horizontal = ((d[0] * d[0] + d[2] * d[2]).sqrt() as f32 * 100.0).round();
+        if horizontal <= 0.0 {
+            return;
+        }
+        if in_water {
+            self.exhaust(0.01 * horizontal * 0.01);
+        } else if self.on_ground && self.sprinting {
+            self.exhaust(0.1 * horizontal * 0.01);
+        }
     }
 
     /// Vanilla `Entity.checkFallDamage` for a reported move by `dy` ending `on_ground`.

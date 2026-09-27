@@ -187,6 +187,11 @@ struct Player {
     /// Damage type of a hit this tick, for viewers' damage effect.
     damaged: Option<i32>,
     death_location: Option<[i32; 3]>,
+    /// `FoodData.exhaustionLevel` and `tickTimer`.
+    exhaustion: f32,
+    food_timer: i32,
+    /// Health, food and whether saturation was zero in the last Set Health.
+    sent_health: Option<(u32, i32, bool)>,
     /// The block being broken in survival.
     digging: Option<digging::Dig>,
     /// A break the client finished before the server's clock agreed.
@@ -774,6 +779,11 @@ impl Sim {
         self.players.get(&conn).map(|p| (p.health, p.dead))
     }
 
+    /// A player's food level and saturation (for tests and tools).
+    pub fn food(&self, conn: ConnId) -> Option<(i32, f32)> {
+        self.players.get(&conn).map(|p| (p.food, p.saturation))
+    }
+
     /// A player's inventory as (item id, count) per container slot.
     pub fn inventory(&self, conn: ConnId) -> Option<Vec<Option<(i32, i32)>>> {
         self.players.get(&conn).map(Player::menu_view)
@@ -791,6 +801,8 @@ impl Sim {
             game_time: self.game_time,
             max_view: self.config.view_distance as i32,
             movement_check: self.rule_bool("minecraft:player_movement_check"),
+            difficulty: self.commands.difficulty as u8,
+            natural_regen: self.rule_bool("minecraft:natural_health_regeneration"),
             biome_count: self.dim.provider.biome_count,
             now: Instant::now(),
             keep_alive_id: self.started.elapsed().as_millis() as i64,
@@ -1023,6 +1035,8 @@ impl Sim {
         p.health = health::MAX_HEALTH;
         p.food = 20;
         p.saturation = 5.0;
+        p.exhaustion = 0.0;
+        p.food_timer = 0;
         p.fall_distance = 0.0;
         p.sent_chunks.clear();
         p.unacked_batches = 0;
@@ -1032,7 +1046,8 @@ impl Sim {
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
         p.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         p.send(time);
-        p.send(p.health_packet());
+        p.sent_health = None;
+        p.sync_health();
         let mut spawns = Vec::new();
         p.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
         self.dim.spawns.extend(spawns);
@@ -1181,6 +1196,9 @@ impl Sim {
             died: false,
             damaged: None,
             death_location: None,
+            exhaustion: joining.exhaustion,
+            food_timer: joining.food_timer,
+            sent_health: None,
             digging: None,
             delayed_destroy: None,
         };
@@ -1205,7 +1223,7 @@ impl Sim {
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
         player.send(self.time_packet());
         player.send(packets::set_held_slot(player.inv.selected as i32));
-        player.send(player.health_packet());
+        player.sync_health();
         player.send(kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes));
         let rules = self.rules.clone();
         let mut spawns = Vec::new();

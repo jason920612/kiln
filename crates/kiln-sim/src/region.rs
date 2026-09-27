@@ -30,6 +30,10 @@ pub(crate) struct Env {
     pub max_view: i32,
     /// `minecraft:player_movement_check`.
     pub movement_check: bool,
+    /// 0 (peaceful) to 3 (hard).
+    pub difficulty: u8,
+    /// `minecraft:natural_health_regeneration`.
+    pub natural_regen: bool,
     pub biome_count: usize,
     pub now: Instant,
     /// Id for keep-alives sent this tick.
@@ -103,6 +107,10 @@ impl RegionWork<'_> {
             if let Some(death) = p.check_void(env.min_y, &mut self.out.spawns) {
                 self.out.deaths.push(death);
             }
+            if let Some(death) = p.tick_food(env.difficulty, env.natural_regen, env.game_time, &mut self.out.spawns) {
+                self.out.deaths.push(death);
+            }
+            p.sync_health();
         }
         mark(&mut self.out.times, 1);
         for p in self.players.iter_mut().filter(|p| !p.disconnected) {
@@ -243,10 +251,13 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             }
         }
         PlayIn::Move { pos, rot, on_ground } => {
+            let (from, was_on_ground) = (p.pos, p.on_ground);
             let y0 = p.pos[1];
             if handle_move(p, &*world.cells, env, pos, rot, on_ground) {
                 let feet = p.pos.map(|c| c.floor() as i32);
                 let in_fluid = world.cells.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
+                let d = [p.pos[0] - from[0], p.pos[1] - from[1], p.pos[2] - from[2]];
+                p.exhaust_for_move(d, was_on_ground, in_fluid);
                 if let Some(death) = p.check_fall(p.pos[1] - y0, on_ground, in_fluid, fx.spawns) {
                     fx.deaths.push(death);
                 }

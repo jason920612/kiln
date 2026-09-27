@@ -36,6 +36,8 @@ pub(crate) struct Joining {
     pub health: f32,
     pub food: i32,
     pub saturation: f32,
+    pub exhaustion: f32,
+    pub food_timer: i32,
     pub respawn: Option<[i32; 3]>,
     pub saved: PlayerData,
 }
@@ -69,6 +71,8 @@ impl Sim {
             health: saved.raw().get("Health").and_then(Tag::as_f64).map_or(crate::health::MAX_HEALTH, |h| h as f32),
             food: saved.raw().get("foodLevel").and_then(Tag::as_i64).map_or(20, |f| f as i32),
             saturation: saved.raw().get("foodSaturationLevel").and_then(Tag::as_f64).map_or(5.0, |s| s as f32),
+            exhaustion: saved.raw().get("foodExhaustionLevel").and_then(Tag::as_f64).map_or(0.0, |e| e as f32),
+            food_timer: saved.raw().get("foodTickTimer").and_then(Tag::as_i64).map_or(0, |t| t as i32),
             respawn: saved.respawn,
             saved,
         }
@@ -107,6 +111,8 @@ impl Sim {
                 ("Health", Tag::Float(p.health)),
                 ("foodLevel", Tag::Int(p.food)),
                 ("foodSaturationLevel", Tag::Float(p.saturation)),
+                ("foodExhaustionLevel", Tag::Float(p.exhaustion)),
+                ("foodTickTimer", Tag::Int(p.food_timer)),
             ] {
                 match fields.iter_mut().find(|(k, _)| k == key) {
                     Some((_, v)) => *v = value,
