@@ -1,11 +1,14 @@
-//! World persistence: Anvil region files, vanilla chunk NBT, `level.dat` and player data.
+//! World persistence: Anvil region files, vanilla chunk NBT, entity chunks, `level.dat` and
+//! player data.
 
 pub mod anvil;
+pub mod entities;
 pub mod level;
 pub mod player;
 pub mod region;
 
 pub use anvil::AnvilSource;
+pub use entities::EntityStore;
 pub use level::{LevelState, LevelStore, WorldSpawn};
 pub use player::{PlayerData, PlayerStore};
 

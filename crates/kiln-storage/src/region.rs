@@ -93,8 +93,8 @@ pub fn compress_chunk(nbt: &[u8]) -> Vec<u8> {
 }
 
 /// Rewrites a region file with `updates` (local x, local z, payload from [`compress_chunk`])
-/// replacing or adding chunks; other chunks are copied as stored. Writes a temporary
-/// file and renames it over the old one.
+/// replacing or adding chunks, an empty payload removing one; other chunks are copied as
+/// stored. Writes a temporary file and renames it over the old one.
 pub fn write_region(path: &Path, updates: &[(usize, usize, Vec<u8>)], now: u32) -> Result<(), RegionError> {
     const MAX_SECTORS: usize = 255;
     let mut payloads: Vec<Option<Vec<u8>>> = vec![None; 1024];
@@ -124,6 +124,11 @@ pub fn write_region(path: &Path, updates: &[(usize, usize, Vec<u8>)], now: u32) 
     }
     for (x, z, payload) in updates {
         let i = (z << 5) | x;
+        if payload.is_empty() {
+            payloads[i] = None;
+            stamps[i] = 0;
+            continue;
+        }
         payloads[i] = Some(payload.clone());
         stamps[i] = now;
     }

@@ -14,8 +14,8 @@ use kiln_javamath::random::RandomSource;
 pub struct ArrowData {
     pub owner: Option<i32>,
     pub left_owner: bool,
-    left_owner_checked: bool,
-    has_been_shot: bool,
+    pub(crate) left_owner_checked: bool,
+    pub(crate) has_been_shot: bool,
     pub in_ground: bool,
     pub in_ground_time: i32,
     pub shake_time: i32,

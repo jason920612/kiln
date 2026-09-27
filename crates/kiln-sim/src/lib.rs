@@ -96,6 +96,8 @@ const TICK: Duration = Duration::from_millis(50);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(30);
 const OVERWORLD: &str = "minecraft:overworld";
+/// The overworld's directory in a 26.x world save.
+const OVERWORLD_DIR: &str = "dimensions/minecraft/overworld";
 const MAX_UNACKED_BATCHES: u32 = 10;
 /// Save changed chunks every 5 minutes.
 const AUTOSAVE_TICKS: i64 = 6000;
@@ -278,7 +280,12 @@ impl Player {
         }
         let dropped = if all { std::mem::replace(slot, kiln_item::ItemStack::empty()) } else { slot.split(1) };
         self.inv.times_changed += 1;
-        Some(self.throw(dropped))
+        // `drop(stack, false, true)`: the thrower is kept.
+        let mut spawn = self.throw(dropped);
+        if let entities::Body::Item { thrower, .. } = &mut spawn.body {
+            *thrower = Some(self.uuid.as_u128());
+        }
+        Some(spawn)
     }
 
     /// Item id per inventory menu slot, as the client numbers them (tests and tools).
@@ -308,7 +315,7 @@ impl Player {
             kind: &kiln_data::entities::types::ITEM,
             pos: [self.pos[0], eye_y - 0.3, self.pos[2]],
             vel,
-            body: entities::Body::Item { stack, pickup_delay: entities::DROP_PICKUP_DELAY },
+            body: entities::Body::Item { stack, pickup_delay: entities::DROP_PICKUP_DELAY, thrower: None },
         }
     }
 
@@ -344,6 +351,11 @@ struct Dim {
     generation: Option<generation::GenPool>,
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
+    /// Entity chunks (`entities/`), when the world is saved somewhere.
+    entity_store: Option<kiln_storage::EntityStore>,
+    /// Saved entities of loaded chunks that Kiln does not simulate (mobs, ...), written back
+    /// as they were loaded.
+    raw_entities: HashMap<ChunkPos, Vec<Tag>>,
 }
 
 /// Serial access that loads chunks on demand: into their region if the cell has an owner,
@@ -394,6 +406,7 @@ impl Dim {
         let Some(cell) = cells.get_mut(pos.cell()) else { return Err(chunk) };
         part.1.chunk_loaded(pos, &mut chunk, self.game_time);
         cell.insert(pos, chunk);
+        self.load_entities(pos);
         Ok(())
     }
 
@@ -430,9 +443,10 @@ impl Dim {
         n
     }
 
-    /// Saves and drops chunks the regions released; cells left empty are vacated.
-    fn unload(&mut self, chunks: Vec<ChunkPos>, keep: &HashSet<ChunkPos>) -> usize {
-        let mut unloaded = 0;
+    /// Saves and drops chunks the regions released; cells left empty are vacated. Returns
+    /// the chunks that unloaded.
+    fn unload(&mut self, chunks: Vec<ChunkPos>, keep: &HashSet<ChunkPos>) -> Vec<ChunkPos> {
+        let mut unloaded = Vec::new();
         for pos in chunks {
             if keep.contains(&pos) {
                 continue;
@@ -448,7 +462,7 @@ impl Dim {
             if let Some(mut chunk) = cell.remove(pos) {
                 part.1.chunk_unloaded(pos, &mut chunk, self.game_time);
                 self.provider.unload(pos, &mut chunk);
-                unloaded += 1;
+                unloaded.push(pos);
             }
             if cell.is_empty() {
                 self.emptied.push(pos.cell());
@@ -557,7 +571,7 @@ impl Sim {
         });
         let (provider, spawn) = match &config.world {
             Some(dir) => {
-                let source = kiln_storage::AnvilSource::new(dir.join("dimensions/minecraft/overworld/region"));
+                let source = kiln_storage::AnvilSource::new(dir.join(OVERWORLD_DIR).join("region"));
                 let mut provider =
                     ChunkProvider::with_source(OVERWORLD_DIM, Box::new(source), Terrain::Void, plains as u16, biome_count);
                 if let Some(g) = generator {
@@ -585,6 +599,7 @@ impl Sim {
         let threads = config.noise.as_ref().map_or(1, |n| n.threads);
         let generation = provider.fork_generator().map(|g| generation::GenPool::new(g.as_ref(), OVERWORLD_DIM, threads));
         let storage = config.world.as_deref().map(persist::Storage::open);
+        let entity_store = config.world.as_ref().map(|dir| kiln_storage::EntityStore::new(dir.join(OVERWORLD_DIR).join("entities")));
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
         info!(
             "tick pool: {} workers, {} regions",
@@ -610,6 +625,8 @@ impl Sim {
                 emptied: Vec::new(),
                 generation,
                 game_time: level.as_ref().map_or(0, |l| l.game_time),
+                entity_store,
+                raw_entities: HashMap::new(),
             },
             spawn,
             spawn_rot: level.as_ref().map_or([0.0; 2], |l| [l.spawn.yaw, l.spawn.pitch]),
@@ -913,9 +930,14 @@ impl Sim {
     fn maintain_chunks(&mut self) {
         let keep: HashSet<ChunkPos> = self.players.values().map(|p| player_chunk(p.pos)).collect();
         let unloads = std::mem::take(&mut self.dim.unloads);
+        // Entities loaded with a chunk have their ids before the chunk can leave again.
+        self.materialize_spawns();
         let unloaded = self.dim.unload(unloads, &keep);
-        if unloaded > 0 {
-            debug!("unloaded {unloaded} chunks");
+        if !unloaded.is_empty() {
+            debug!("unloaded {} chunks", unloaded.len());
+            let owners = self.owner_uuids();
+            let gone = self.dim.store_entities(&unloaded, false, &owners);
+            self.forget_entities(gone);
         }
         self.dim.install_generated();
         // Every player's own chunk, uncapped: each player must stand in an owned cell.
@@ -982,11 +1004,21 @@ impl Sim {
     /// depend on the regions, and puts each in the region owning its cell (spawns in unloaded
     /// chunks are dropped, as vanilla would not add them).
     fn materialize_spawns(&mut self) {
+        let world_seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
         for spawn in entities::canonical(std::mem::take(&mut self.dim.spawns)) {
-            let Some(region) = self.dim.regions.at_mut(entities::chunk_of(spawn.pos).cell()) else { continue };
+            let chunk = entities::chunk_of(spawn.pos);
+            let Some(region) = self.dim.regions.at_mut(chunk.cell()) else {
+                // A loaded entity outside its chunk's loaded area goes back to storage.
+                if let entities::Body::Loaded(e) = spawn.body {
+                    let tag = kiln_entity::persist::save(&e, &|_| None);
+                    self.dim.stash_entities(chunk, vec![tag]);
+                }
+                continue;
+            };
             let id = self.next_entity_id;
             self.next_entity_id += 1;
-            region.part_mut().0.list.push(entities::Entity::new(id, spawn));
+            let uuid = entities::fresh_uuid(world_seed, self.game_time, id);
+            region.part_mut().0.list.push(entities::Entity::new(id, uuid, spawn));
         }
     }
 
@@ -1109,6 +1141,8 @@ impl Sim {
 
     fn save(&mut self) {
         let start = Instant::now();
+        // Entities waiting for their ids are saved with the rest.
+        self.materialize_spawns();
         // Scheduled ticks and moving pistons go onto their chunks first.
         for r in self.dim.regions.iter_mut() {
             let (cells, part) = r.cells_and_part_mut();
@@ -1122,6 +1156,14 @@ impl Sim {
             Ok(0) => {}
             Ok(n) => info!("saved {n} chunks in {:.1} ms", start.elapsed().as_secs_f64() * 1e3),
             Err(e) => warn!("saving the world failed: {e}"),
+        }
+        let owners = self.owner_uuids();
+        let gone = self.dim.store_entities(&[], true, &owners);
+        self.forget_entities(gone);
+        match self.dim.flush_entities() {
+            Ok(0) => {}
+            Ok(n) => debug!("saved {n} entity chunks"),
+            Err(e) => warn!("saving entities failed: {e}"),
         }
         for p in self.players.values() {
             self.save_player(p);

@@ -111,6 +111,9 @@ pub struct Entity {
     pub last_known_speed: Vec3,
     pub(crate) inside: InsideCollector,
     pub random: LegacyRandom,
+    /// Saved fields Kiln does not model (custom name, tags, passengers, ...), written back
+    /// unchanged by [`crate::persist::save`].
+    pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
 }
 
 impl Entity {
@@ -169,6 +172,7 @@ impl Entity {
             last_known_speed: Vec3::ZERO,
             inside: InsideCollector::default(),
             random: LegacyRandom::new(random_seed),
+            extra: Vec::new(),
         };
         e.set_pos(Vec3::ZERO);
         e.bb = e.make_bounding_box(e.position);

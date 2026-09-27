@@ -1,0 +1,317 @@
+"""Vanilla acceptance test for Kiln's entity chunks (`entities/r.x.z.mca`).
+
+1. Fixture: a copy of the reference world where the vanilla 26.3 server summons entities on a
+   stone platform (items, an experience orb, an arrow stuck in the floor, a floating falling
+   block, primed TNT, a snowball, and a pig and an armor stand, which Kiln does not simulate)
+   and saves them.
+2. Kiln on that world: a player joins next to them; Kiln must spawn the simulated entities
+   for the client with vanilla's UUIDs (and not the others). The player drops emeralds; Kiln
+   saves on `stop`. The entity chunk Kiln wrote must keep every entity: the unsimulated ones
+   unchanged, the simulated ones with their UUID and state, plus the dropped emeralds.
+3. Vanilla on the world Kiln saved: every entity is there (`data get entity <uuid>`), with the
+   state checked for a few, and the log shows no entity loading errors.
+
+usage: python tools/entity_persist_check.py [--out DIR] [--kiln-port 25586] [--vanilla-port 25592]
+                                            [--skip-build]
+"""
+
+import argparse
+import os
+import re
+import shutil
+import struct
+import subprocess
+import sys
+import time
+import uuid
+import zlib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if not os.environ.get("KILN_WORK") and not (ROOT / "work").exists():
+    # A git worktree under .claude/worktrees shares the main checkout's work/.
+    for parent in ROOT.parents:
+        if (parent / "work" / "server.jar").exists():
+            os.environ["KILN_WORK"] = str(parent / "work")
+            break
+sys.path.insert(0, str(ROOT / "tools"))
+sys.dont_write_bytecode = True
+import persist_check as pc  # noqa: E402
+from persist_check import RESULTS, WORK, Client, Nbt, Server, check, get, offline_uuid, port_free, val, vanilla  # noqa: E402
+from smoke_client import PACKETS, Buf, creative_slot, item_id, position, varint  # noqa: E402
+
+NAME = "EntityBot"
+CHUNK = (8, -3)  # x 128..143, z -48..-33
+PLATFORM_Y = 199
+Y = 200
+PLAYER = (136.5, 200.0, -38.5, 0.0, 0.0)  # more than 8 blocks from the orb
+CUSTOM_DIAMOND = 'Item:{id:"minecraft:diamond",count:5},PickupDelay:32767s,Age:-32768s,CustomName:"Shiny",Tags:["kiln"]'
+
+# (label, summon arguments); all in CHUNK.
+SUMMONS = [
+    ("item", f"item 130.5 {Y} -46.5 {{{CUSTOM_DIAMOND}}}"),
+    ("aging item", f'item 131.5 {Y} -46.5 {{Item:{{id:"minecraft:gold_ingot",count:2}},PickupDelay:32767s,Age:100s}}'),
+    ("orb", f"experience_orb 132.5 {Y} -46.5 {{Value:7s,Count:3}}"),
+    ("arrow", f"arrow 133.5 {Y + 1} -46.5 {{Motion:[0.0,-1.0,0.0],life:-20000s,pickup:1b,damage:3.5d}}"),
+    ("falling block", f'falling_block 134.5 {Y + 2} -46.5 {{BlockState:"minecraft:red_sand",NoGravity:1b,Time:-1000000}}'),
+    ("tnt", f"tnt 135.5 {Y} -46.5 {{fuse:30000s}}"),
+    ("snowball", f"snowball 136.5 {Y + 2} -46.5 {{NoGravity:1b}}"),
+    ("pig", f'pig 138.5 {Y} -46.5 {{NoAI:1b,CustomName:"Porky",Health:7f,Tags:["kiln"]}}'),
+    ("armor stand", f'armor_stand 139.5 {Y} -46.5 {{CustomName:"Stand",ShowArms:1b}}'),
+]
+SIMULATED = {"minecraft:item", "minecraft:experience_orb", "minecraft:arrow", "minecraft:falling_block",
+             "minecraft:tnt", "minecraft:snowball"}
+
+
+def entity_types():
+    import json
+    reg = json.loads((WORK / "generated" / "reports" / "registries.json").read_text())
+    return {v["protocol_id"]: k for k, v in reg["minecraft:entity_type"]["entries"].items()}
+
+
+def region_chunk(world, chunk):
+    """The NBT of an entity chunk as saved, or None."""
+    cx, cz = chunk
+    path = world / "dimensions" / "minecraft" / "overworld" / "entities" / f"r.{cx >> 5}.{cz >> 5}.mca"
+    if not path.exists():
+        return None
+    data = path.read_bytes()
+    i = ((cz & 31) << 5) | (cx & 31)
+    loc = struct.unpack(">I", data[i * 4:i * 4 + 4])[0]
+    if loc == 0:
+        return None
+    off = (loc >> 8) * 4096
+    length, kind = struct.unpack(">IB", data[off:off + 5])
+    body = data[off + 5:off + 4 + length]
+    if kind != 2:
+        raise ValueError(f"compression {kind}")
+    return Nbt(zlib.decompress(body)).named()
+
+
+def uuid_of(tag):
+    ints = val(get(tag, "UUID"))
+    if not ints:
+        return None
+    return uuid.UUID(bytes=struct.pack(">iiii", *ints))
+
+
+def entities(world):
+    root = region_chunk(world, CHUNK)
+    if root is None:
+        return {}
+    out = {}
+    for e in val(get(root, "Entities")) or ():
+        out[uuid_of(e)] = e
+    return out
+
+
+def typ(e):
+    return val(get(e, "id"))
+
+
+class EntityClient(Client):
+    """Also records Add Entity packets: (network id, UUID, type name)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.spawned = []
+        add = pc.pid("play", "clientbound", "add_entity")
+        types = entity_types()
+        recv = self.c.recv
+
+        def spy():
+            i, b = recv()
+            if i == add:
+                s = Buf(b.d)
+                s.i = b.i
+                eid = s.varint()
+                u = uuid.UUID(bytes=s.take(16))
+                self.spawned.append((eid, u, types.get(s.varint())))
+            return i, b
+        self.c.recv = spy
+
+    def drop_all(self, seq):
+        self.send("play", "player_action", varint(4) + position(0, 0, 0) + bytes([0]) + varint(seq))
+
+
+def build_fixture(out, port):
+    fixture = out / "fixture"
+    if fixture.exists():
+        shutil.rmtree(fixture)
+    shutil.copytree(WORK / "vanilla-world", fixture, ignore=shutil.ignore_patterns("session.lock", "logs"))
+    s = vanilla(fixture, port, out / "vanilla-fixture.log")
+    try:
+        cx, cz = CHUNK
+        s.query(f"forceload add {cx * 16} {cz * 16}", r"[Mm]arked chunk|already")
+        time.sleep(2)
+        s.query(f"kill @e[type=!player,x={cx * 16},y=0,z={cz * 16},dx=16,dy=400,dz=16]", r"Killed|No entity was found")
+        s.query(f"fill {cx * 16} {PLATFORM_Y} {cz * 16} {cx * 16 + 15} {PLATFORM_Y} {cz * 16 + 15} minecraft:stone",
+                r"Successfully filled|No blocks were filled|not loaded")
+        s.query(f"fill {cx * 16} {Y} {cz * 16} {cx * 16 + 15} {Y + 6} {cz * 16 + 15} minecraft:air",
+                r"Successfully filled|No blocks were filled|not loaded")
+        for label, args in SUMMONS:
+            line = s.query(f"summon {args}", r"Summoned new|Unable|Unknown|Incorrect|Expected|Invalid|not loaded")
+            if not line or "Summoned new" not in line:
+                sys.exit(f"vanilla refused to summon the {label}: {line}")
+        c = Client("127.0.0.1", port, NAME)
+        c.pump(5, lambda: c.pos is not None)
+        c.loaded()
+        s.cmd(f"gamemode creative {NAME}")
+        s.cmd(f"tp {NAME} {PLAYER[0]} {PLAYER[1]} {PLAYER[2]} {PLAYER[3]} {PLAYER[4]}")
+        c.pump(4)
+        c.close()
+        time.sleep(2)
+        s.query("save-all flush", r"Saved the game", 120)
+    finally:
+        s.stop()
+    return fixture
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default=str(WORK / "entity-persist-check"))
+    ap.add_argument("--kiln-port", type=int, default=25586)
+    ap.add_argument("--vanilla-port", type=int, default=25592)
+    ap.add_argument("--skip-build", action="store_true")
+    a = ap.parse_args()
+    out = Path(a.out).resolve()
+    out.mkdir(parents=True, exist_ok=True)
+    for port in (a.kiln_port, a.vanilla_port):
+        if not port_free(port):
+            sys.exit(f"port {port} is in use")
+    if not a.skip_build and subprocess.run(["cargo", "build", "--release", "--quiet", "-p", "kiln-server"], cwd=ROOT).returncode:
+        sys.exit("build failed")
+
+    print("== vanilla summons and saves the fixture entities", flush=True)
+    fixture = build_fixture(out, a.vanilla_port)
+    before = entities(fixture / "world")
+    kinds = sorted(typ(e) for e in before.values())
+    # Mobs that spawned naturally (bats in the caves below) stay in: more unsimulated entities.
+    if len(before) < len(SUMMONS):
+        sys.exit(f"vanilla saved {len(before)} entities, expected at least {len(SUMMONS)}: {kinds}")
+    print(f"   vanilla saved {kinds}", flush=True)
+    arrow = next(e for e in before.values() if typ(e) == "minecraft:arrow")
+    check("vanilla's arrow is stuck in the floor (fixture sanity)", val(get(arrow, "inGround")) == 1, "")
+
+    # ---- Kiln on the vanilla world ----
+    print("== Kiln on the vanilla-saved world", flush=True)
+    world = out / "kiln-world"
+    if world.exists():
+        shutil.rmtree(world)
+    shutil.copytree(fixture, world)
+    exe = out / ("kiln-entity-persist" + (".exe" if os.name == "nt" else ""))
+    shutil.copy2(ROOT / "target" / "release" / ("kiln.exe" if os.name == "nt" else "kiln"), exe)
+    env = dict(os.environ, KILN_PORT=str(a.kiln_port), KILN_WORLD=str(world / "world"), KILN_OPS=NAME, RUST_LOG="info")
+    k = Server([str(exe)], ROOT, env=env, log=out / "kiln.log")
+    if not k.wait_for("listening on", 30):
+        k.stop()
+        sys.exit("Kiln did not start:\n" + "\n".join(k.lines[-20:]))
+    try:
+        c = EntityClient("127.0.0.1", a.kiln_port, NAME)
+        want = {u for u, e in before.items() if typ(e) in SIMULATED}
+        c.pump(15, lambda: c.pos is not None and want <= {u for _, u, _ in c.spawned})
+        c.loaded()
+        c.pump(2)
+        seen = {u: t for _, u, t in c.spawned}
+        missing = [typ(before[u]) for u in want if u not in seen]
+        check("Kiln spawns the vanilla-saved simulated entities for the client", not missing, f"missing {missing}")
+        wrong = [(t, typ(before[u])) for u, t in seen.items() if u in before and t != typ(before[u])]
+        check("with vanilla's UUIDs and types", not wrong, f"{wrong}")
+        kept = [typ(before[u]) for u in seen if u in before and typ(before[u]) not in SIMULATED]
+        check("and not the entities it keeps unsimulated", not kept, f"{kept}")
+        c.creative(36, "emerald", 4)
+        c.carry(0)
+        c.pump(0.5)
+        c.drop_all(1)
+        c.pump(3)
+        c.close()
+        time.sleep(1)
+        k.cmd("stop")
+        k.p.wait(timeout=60)
+    finally:
+        k.stop()
+    warnings = [l for l in k.lines if "kept as saved" in l or "entity chunk" in l]
+    check("Kiln reads the vanilla entity chunk without warnings", not warnings, "; ".join(warnings[:3]))
+
+    saved = entities(world / "world")
+    lost = [typ(e) for u, e in before.items() if u not in saved]
+    check("Kiln's entity chunk keeps every vanilla entity (by UUID)", not lost, f"lost {lost}")
+    for u, e in before.items():
+        if typ(e) not in SIMULATED:
+            check(f"{typ(e)} (unsimulated) written back unchanged", saved.get(u) == e,
+                  "" if saved.get(u) == e else f"{saved.get(u)}")
+    by_type = {}
+    for e in saved.values():
+        by_type.setdefault(typ(e), []).append(e)
+
+    def one(t, pred=lambda e: True):
+        return next((e for e in by_type.get(t, []) if pred(e)), None)
+
+    diamond = one("minecraft:item", lambda e: val(get(e, "Item", "id")) == "minecraft:diamond")
+    check("item keeps its stack, infinite age and pickup delay, custom name and tags",
+          diamond is not None and val(get(diamond, "Item", "count")) == 5 and val(get(diamond, "Age")) == -32768
+          and val(get(diamond, "PickupDelay")) == 32767 and get(diamond, "CustomName") is not None
+          and get(diamond, "Tags") is not None, f"{diamond}")
+    gold = one("minecraft:item", lambda e: val(get(e, "Item", "id")) == "minecraft:gold_ingot")
+    gold_before = next(e for e in before.values() if val(get(e, "Item", "id")) == "minecraft:gold_ingot")
+    check("item age carries on from vanilla's", gold is not None and val(get(gold, "Age")) >= val(get(gold_before, "Age")),
+          f"{val(get(gold_before, 'Age'))} -> {val(get(gold, 'Age')) if gold else None}")
+    orb = one("minecraft:experience_orb")
+    check("orb keeps value and count", orb is not None and val(get(orb, "Value")) == 7 and val(get(orb, "Count")) == 3, f"{orb}")
+    arr = one("minecraft:arrow")
+    check("arrow stays in the ground with its damage and pickup rule",
+          arr is not None and val(get(arr, "inGround")) == 1 and val(get(arr, "damage")) == 3.5 and val(get(arr, "pickup")) == 1
+          and get(arr, "inBlockState") is not None, f"{arr}")
+    fb = one("minecraft:falling_block")
+    check("falling block keeps its block and NoGravity",
+          fb is not None and get(fb, "BlockState") == ("string", "minecraft:red_sand") and val(get(fb, "NoGravity")) == 1, f"{fb}")
+    tnt = one("minecraft:tnt")
+    check("TNT keeps burning its fuse", tnt is not None and 20000 < val(get(tnt, "fuse")) < 30000, f"{tnt}")
+    snow = one("minecraft:snowball")
+    check("snowball kept", snow is not None and val(get(snow, "NoGravity")) == 1, f"{snow}")
+    emerald = one("minecraft:item", lambda e: val(get(e, "Item", "id")) == "minecraft:emerald")
+    thrower = None
+    if emerald is not None and get(emerald, "Thrower") is not None:
+        thrower = uuid.UUID(bytes=struct.pack(">iiii", *val(get(emerald, "Thrower"))))
+    check("emeralds dropped on Kiln saved with their thrower", emerald is not None and val(get(emerald, "Item", "count")) == 4
+          and thrower == offline_uuid(NAME), f"{emerald}")
+    root = region_chunk(world / "world", CHUNK)
+    check("entity chunk has vanilla's layout (DataVersion 5023, Position)",
+          val(get(root, "DataVersion")) == 5023 and val(get(root, "Position")) == CHUNK, "")
+
+    # ---- vanilla on the world Kiln saved ----
+    print("== vanilla on the Kiln-saved world", flush=True)
+    after = out / "after-world"
+    if after.exists():
+        shutil.rmtree(after)
+    shutil.copytree(world, after)
+    s = vanilla(after, a.vanilla_port, out / "vanilla-after.log")
+    try:
+        cx, cz = CHUNK
+        s.query(f"forceload add {cx * 16} {cz * 16}", r"[Mm]arked chunk|already")
+        time.sleep(4)
+        errors = [l for l in s.lines if re.search(r"Failed to load|Exception|corrupt|entity chunk|Skipping|UUID of added entity", l)]
+        check("vanilla loads Kiln's entity chunk without errors", not errors, "; ".join(errors[:3]))
+        for u, e in saved.items():
+            line = s.query(f"data get entity {u}", r"has the following entity data|No entity was found|Found no elements")
+            check(f"vanilla has the {typ(e)} {u}", line and "has the following entity data" in line, (line or "no answer")[-120:])
+        line = s.query(f"data get entity {emerald_uuid(emerald)} Item" if emerald else "list", r"has the following entity data|No entity")
+        check("vanilla sees Kiln's emeralds", line and "minecraft:emerald" in line and "count: 4" in line, (line or "")[-120:])
+        line = s.query('execute if entity @e[type=pig,name=Porky,tag=kiln]', r"Test passed|Test failed")
+        check("vanilla's pig came back with its name and tag", line and "Test passed" in line, line or "")
+        line = s.query('execute if entity @e[type=item,tag=kiln,nbt={Age:-32768s}]', r"Test passed|Test failed")
+        check("vanilla reads the item's age and tag", line and "Test passed" in line, line or "")
+    finally:
+        s.stop()
+
+    failed = [r for r in RESULTS if not r[1]]
+    print(f"\n{len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed")
+    sys.exit(1 if failed else 0)
+
+
+def emerald_uuid(e):
+    return uuid_of(e)
+
+
+if __name__ == "__main__":
+    main()
