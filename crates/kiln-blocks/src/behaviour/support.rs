@@ -180,14 +180,12 @@ pub fn pop_off<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Directi
 /// `DoorBlock.updateShape`: the halves copy each other; the lower half needs its floor.
 fn door_update<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction, neighbor: u16) -> Option<u16> {
     let half = state::get(s, "half");
-    if dir.axis() == crate::pos::Axis::Y {
-        if (half == Some("lower")) == (dir == Direction::Up) {
-            return Some(if logic::is_instance(neighbor, BlockClass::DoorBlock) && state::get(neighbor, "half") != half {
-                state::set(neighbor, "half", half.unwrap_or("lower"))
-            } else {
-                d::AIR
-            });
-        }
+    if dir.axis() == crate::pos::Axis::Y && (half == Some("lower")) == (dir == Direction::Up) {
+        return Some(if logic::is_instance(neighbor, BlockClass::DoorBlock) && state::get(neighbor, "half") != half {
+            state::set(neighbor, "half", half.unwrap_or("lower"))
+        } else {
+            d::AIR
+        });
     }
     if half == Some("lower") && dir == Direction::Down && !can_survive(level, s, pos) {
         return Some(d::AIR);

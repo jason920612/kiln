@@ -12,6 +12,7 @@ mod classes;
 pub use classes::{BlockClass, BlockClassInfo, BlockParams, interface};
 
 #[path = "gen/block_items.rs"]
+#[allow(clippy::type_complexity)]
 mod items;
 
 /// The block a block item places and, for standing-and-wall items (torches, signs, heads,

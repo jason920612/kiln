@@ -57,6 +57,10 @@ impl BlockInput {
     }
 }
 
+/// The command reported failure ("Could not set the block" / nothing filled).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CommandFailed;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SetMode {
     Replace,
@@ -81,9 +85,9 @@ pub fn update_neighbours_on_block_set<L: Level>(level: &mut L, pos: BlockPos, ol
 }
 
 /// `/setblock`. `Err` when vanilla reports "Could not set the block".
-pub fn setblock<L: Level>(level: &mut L, pos: BlockPos, input: &BlockInput, mode: SetMode, strict: bool) -> Result<(), ()> {
+pub fn setblock<L: Level>(level: &mut L, pos: BlockPos, input: &BlockInput, mode: SetMode, strict: bool) -> Result<(), CommandFailed> {
     if mode == SetMode::Keep && !is_air(level.block(pos)) {
-        return Err(());
+        return Err(CommandFailed);
     }
     let place = if mode == SetMode::Destroy {
         destroy_block(level, pos, true, flags::LIMIT);
@@ -93,7 +97,7 @@ pub fn setblock<L: Level>(level: &mut L, pos: BlockPos, input: &BlockInput, mode
     };
     let old = level.block(pos);
     if place && !input.place(level, pos, place_flags(strict)) {
-        return Err(());
+        return Err(CommandFailed);
     }
     if !strict {
         update_neighbours_on_block_set(level, pos, old);
@@ -112,7 +116,7 @@ pub enum FillMode {
 }
 
 /// `/fill` over the inclusive box. Returns the count vanilla reports, `Err` for zero.
-pub fn fill<L: Level>(level: &mut L, a: BlockPos, b: BlockPos, input: &BlockInput, mode: FillMode, strict: bool) -> Result<usize, ()> {
+pub fn fill<L: Level>(level: &mut L, a: BlockPos, b: BlockPos, input: &BlockInput, mode: FillMode, strict: bool) -> Result<usize, CommandFailed> {
     let min = BlockPos::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z));
     let max = BlockPos::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z));
     let air = BlockInput { state: d::AIR, defined: Vec::new() };
@@ -151,5 +155,5 @@ pub fn fill<L: Level>(level: &mut L, a: BlockPos, b: BlockPos, input: &BlockInpu
     for (pos, old) in placed {
         update_neighbours_on_block_set(level, pos, old);
     }
-    if count == 0 { Err(()) } else { Ok(count) }
+    if count == 0 { Err(CommandFailed) } else { Ok(count) }
 }

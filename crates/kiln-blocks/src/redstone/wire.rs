@@ -10,23 +10,23 @@ use kiln_data::block_logic::{self as logic, BlockClass, Support};
 use kiln_data::blocks::default_state as d;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Side {
+enum RedstoneSide {
     Up,
     Side,
     None,
 }
 
-impl Side {
+impl RedstoneSide {
     fn name(self) -> &'static str {
         match self {
-            Side::Up => "up",
-            Side::Side => "side",
-            Side::None => "none",
+            RedstoneSide::Up => "up",
+            RedstoneSide::Side => "side",
+            RedstoneSide::None => "none",
         }
     }
 
     fn connected(self) -> bool {
-        self != Side::None
+        self != RedstoneSide::None
     }
 }
 
@@ -38,15 +38,15 @@ fn wire_block() -> BlockId {
     BlockId::of(d::REDSTONE_WIRE)
 }
 
-fn side(s: u16, dir: Direction) -> Side {
+fn side(s: u16, dir: Direction) -> RedstoneSide {
     match state::get(s, dir.name()) {
-        Some("up") => Side::Up,
-        Some("side") => Side::Side,
-        _ => Side::None,
+        Some("up") => RedstoneSide::Up,
+        Some("side") => RedstoneSide::Side,
+        _ => RedstoneSide::None,
     }
 }
 
-fn with_side(s: u16, dir: Direction, side: Side) -> u16 {
+fn with_side(s: u16, dir: Direction, side: RedstoneSide) -> u16 {
     state::set(s, dir.name(), side.name())
 }
 
@@ -77,23 +77,23 @@ fn connects_to(s: u16, dir: Option<Direction>) -> bool {
 }
 
 /// `getConnectingSide(level, pos, dir, canClimb)`.
-fn connecting_side_with<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction, climb: bool) -> Side {
+fn connecting_side_with<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction, climb: bool) -> RedstoneSide {
     let n = pos.relative(dir);
     let ns = level.block(n);
     if climb {
         let supports = logic::is_instance(ns, BlockClass::TrapDoorBlock) || wire_can_survive_on(ns);
         if supports && connects_to(level.block(n.above()), None) {
-            return if logic::face_sturdy(ns, dir.opposite() as u8, Support::Full) { Side::Up } else { Side::Side };
+            return if logic::face_sturdy(ns, dir.opposite() as u8, Support::Full) { RedstoneSide::Up } else { RedstoneSide::Side };
         }
     }
     if connects_to(ns, Some(dir)) || !logic::is_redstone_conductor(ns) && connects_to(level.block(n.below()), None) {
-        Side::Side
+        RedstoneSide::Side
     } else {
-        Side::None
+        RedstoneSide::None
     }
 }
 
-fn connecting_side<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction) -> Side {
+fn connecting_side<L: Level + ?Sized>(level: &L, pos: BlockPos, dir: Direction) -> RedstoneSide {
     let climb = !logic::is_redstone_conductor(level.block(pos.above()));
     connecting_side_with(level, pos, dir, climb)
 }
@@ -121,16 +121,16 @@ pub fn connection_state<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> 
     let no_ns = !n && !so;
     let no_ew = !e && !w;
     if !w && no_ns {
-        st = with_side(st, Direction::West, Side::Side);
+        st = with_side(st, Direction::West, RedstoneSide::Side);
     }
     if !e && no_ns {
-        st = with_side(st, Direction::East, Side::Side);
+        st = with_side(st, Direction::East, RedstoneSide::Side);
     }
     if !n && no_ew {
-        st = with_side(st, Direction::North, Side::Side);
+        st = with_side(st, Direction::North, RedstoneSide::Side);
     }
     if !so && no_ew {
-        st = with_side(st, Direction::South, Side::Side);
+        st = with_side(st, Direction::South, RedstoneSide::Side);
     }
     st
 }
@@ -149,7 +149,7 @@ pub fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Di
             }
             let cross = [Direction::North, Direction::East, Direction::South, Direction::West]
                 .into_iter()
-                .fold(state::set_int(d::REDSTONE_WIRE, "power", power(s)), |acc, d| with_side(acc, d, Side::Side));
+                .fold(state::set_int(d::REDSTONE_WIRE, "power", power(s)), |acc, d| with_side(acc, d, RedstoneSide::Side));
             connection_state(level, with_side(cross, dir, new), pos)
         }
     }
@@ -158,7 +158,7 @@ pub fn update_shape<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Di
 /// `RedStoneWireBlock.updateIndirectNeighbourShapes`: wires one step up or down a slope.
 pub fn update_indirect_neighbour_shapes<L: Level>(level: &mut L, s: u16, pos: BlockPos, flags: u32, limit: i32) {
     for dir in Direction::HORIZONTAL {
-        if side(s, dir) == Side::None || is_wire(level.block(pos.relative(dir))) {
+        if side(s, dir) == RedstoneSide::None || is_wire(level.block(pos.relative(dir))) {
             continue;
         }
         for dy in [Direction::Down, Direction::Up] {
@@ -293,7 +293,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
 pub fn placement<L: Level + ?Sized>(level: &L, pos: BlockPos) -> u16 {
     let cross = [Direction::North, Direction::East, Direction::South, Direction::West]
         .into_iter()
-        .fold(d::REDSTONE_WIRE, |acc, d| with_side(acc, d, Side::Side));
+        .fold(d::REDSTONE_WIRE, |acc, d| with_side(acc, d, RedstoneSide::Side));
     connection_state(level, cross, pos)
 }
 

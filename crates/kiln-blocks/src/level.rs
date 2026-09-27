@@ -116,6 +116,16 @@ pub trait Level {
     }
 
     fn effect(&mut self, effect: Effect);
+
+    /// Called before each queued update runs (vanilla's neighbour-update debug listener).
+    fn trace_update(&mut self, _update: UpdateTrace) {}
+}
+
+/// An update about to run: `neighborChanged` or `updateShape` of the block at `pos`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateTrace {
+    Neighbor(BlockPos),
+    Shape(BlockPos),
 }
 
 /// State vanilla keeps on the level object for block behaviour.

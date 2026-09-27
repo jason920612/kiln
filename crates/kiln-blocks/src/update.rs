@@ -8,7 +8,7 @@
 
 use crate::behaviour;
 use crate::fluid;
-use crate::level::{Effect, Level, flags};
+use crate::level::{Effect, Level, UpdateTrace, flags};
 use crate::pos::{BlockPos, Direction};
 use crate::state::{BlockId, same_block};
 use kiln_data::block_logic::{self as logic, BlockClass};
@@ -137,9 +137,11 @@ fn run_updates<L: Level>(level: &mut L) {
 fn execute<L: Level>(level: &mut L, step: Step) {
     match step {
         Step::Shape { dir, neighbor_state, pos, neighbor_pos, flags, limit } => {
+            level.trace_update(UpdateTrace::Shape(pos));
             execute_shape_update(level, dir, pos, neighbor_pos, neighbor_state, flags, limit)
         }
         Step::Neighbor { state, pos, source, moved_by_piston } => {
+            level.trace_update(UpdateTrace::Neighbor(pos));
             let state = state.unwrap_or_else(|| level.block(pos));
             behaviour::neighbor_changed(level, state, pos, source, moved_by_piston);
         }
@@ -331,5 +333,78 @@ pub fn update_neighbour_for_output_signal<L: Level>(level: &mut L, pos: BlockPos
                 neighbor_changed_with(level, s, n, source, false);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_level::TestLevel;
+    use UpdateTrace::{Neighbor as N, Shape as S};
+
+    fn level() -> TestLevel {
+        let mut l = TestLevel::void();
+        l.load_chunks((-2, -2), (2, 2));
+        l
+    }
+
+    fn around(p: BlockPos, order: [Direction; 6]) -> Vec<BlockPos> {
+        order.iter().map(|&d| p.relative(d)).collect()
+    }
+
+    #[test]
+    fn set_block_notifies_then_reshapes_in_vanilla_order() {
+        let mut l = level();
+        let p = BlockPos::new(0, 0, 0);
+        l.trace = Some(Vec::new());
+        set_block(&mut l, p, d::STONE, flags::ALL);
+        let mut want: Vec<UpdateTrace> = around(p, UPDATE_ORDER).into_iter().map(N).collect();
+        want.extend(around(p, UPDATE_SHAPE_ORDER).into_iter().map(S));
+        assert_eq!(l.trace.take().unwrap(), want);
+    }
+
+    #[test]
+    fn updates_triggered_by_an_update_run_before_the_rest_of_its_layer() {
+        // A lamp west of the new redstone block lights up (setBlock with flag 2): its shape
+        // updates run right after its own neighbour update, before the remaining five.
+        let mut l = level();
+        let p = BlockPos::new(0, 0, 0);
+        let lamp = p.relative(Direction::West);
+        set_block(&mut l, lamp, d::REDSTONE_LAMP, flags::ALL);
+        l.trace = Some(Vec::new());
+        set_block(&mut l, p, d::REDSTONE_BLOCK, flags::ALL);
+        let mut want = vec![N(lamp)];
+        want.extend(around(lamp, UPDATE_SHAPE_ORDER).into_iter().map(S));
+        want.extend(around(p, UPDATE_ORDER)[1..].iter().map(|&q| N(q)));
+        want.extend(around(p, UPDATE_SHAPE_ORDER).into_iter().map(S));
+        assert_eq!(l.trace.take().unwrap(), want);
+        assert!(crate::state::get_bool(l.block(lamp), "lit"));
+    }
+
+    #[test]
+    fn chains_stop_at_the_limit() {
+        let mut l = level();
+        l.data().updater = NeighborUpdater::new(3);
+        let p = BlockPos::new(0, 0, 0);
+        set_block(&mut l, p.relative(Direction::West), d::REDSTONE_LAMP, flags::ALL);
+        l.trace = Some(Vec::new());
+        set_block(&mut l, p, d::REDSTONE_BLOCK, flags::ALL);
+        let trace = l.trace.take().unwrap();
+        // The limit counts queued update groups: the six-neighbour group and two of the
+        // lamp's six shape updates fit, four are dropped. The group still notifies all six
+        // neighbours, and each of the new block's shape updates starts a chain of its own.
+        assert_eq!(trace.len(), 1 + 2 + 5 + 6);
+        assert_eq!(l.data().updater.skipped(), 4);
+    }
+
+    #[test]
+    fn known_shape_skips_shape_updates_and_flag_one_is_needed_for_neighbours() {
+        let mut l = level();
+        l.trace = Some(Vec::new());
+        set_block(&mut l, BlockPos::new(0, 0, 0), d::STONE, flags::CLIENTS | flags::KNOWN_SHAPE);
+        assert!(l.trace.take().unwrap().is_empty());
+        l.trace = Some(Vec::new());
+        set_block(&mut l, BlockPos::new(0, 0, 0), d::DIRT, flags::CLIENTS);
+        assert!(l.trace.take().unwrap().iter().all(|u| matches!(u, S(_))));
     }
 }

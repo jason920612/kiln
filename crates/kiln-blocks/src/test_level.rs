@@ -2,7 +2,7 @@
 //! fixed layers, lazily materialised per section, with every touched chunk loaded.
 
 use crate::fluid::FluidType;
-use crate::level::{Effect, Level, LevelData, Rules};
+use crate::level::{Effect, Level, LevelData, Rules, UpdateTrace};
 use crate::pos::BlockPos;
 use crate::state::BlockId;
 use crate::ticks::{ChunkKey, ChunkTicks, LevelTicks};
@@ -27,6 +27,8 @@ pub struct TestLevel {
     pub rules: Rules,
     /// Effects in the order they happened.
     pub effects: Vec<Effect>,
+    /// When set, every update run is recorded here in order.
+    pub trace: Option<Vec<UpdateTrace>>,
 }
 
 impl TestLevel {
@@ -46,6 +48,7 @@ impl TestLevel {
             data: LevelData::new(1_000_000, 0),
             rules: Rules::default(),
             effects: Vec::new(),
+            trace: None,
         }
     }
 
@@ -182,5 +185,11 @@ impl Level for TestLevel {
 
     fn effect(&mut self, effect: Effect) {
         self.effects.push(effect);
+    }
+
+    fn trace_update(&mut self, update: UpdateTrace) {
+        if let Some(t) = &mut self.trace {
+            t.push(update);
+        }
     }
 }

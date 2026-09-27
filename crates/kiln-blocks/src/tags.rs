@@ -31,7 +31,7 @@ fn tag(name: &'static str) -> &'static Tag {
         return t;
     }
     let t: &'static Tag = Box::leak(Box::new(load(name)));
-    *map.write().unwrap().entry(name).or_insert(t)
+    map.write().unwrap().entry(name).or_insert(t)
 }
 
 /// Whether `state`'s block is in the block tag `name` (e.g. `minecraft:fences`).

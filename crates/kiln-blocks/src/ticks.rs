@@ -179,8 +179,8 @@ impl<T: Copy + Eq + Hash> ChunkTicks<T> {
     /// `unpack`: loaded ticks trigger `delay` ticks after `game_time`, numbered -n..-1.
     pub fn unpack(&mut self, game_time: i64) {
         let Some(pending) = self.pending.take() else { return };
-        let mut sub = -(pending.len() as i64);
-        for t in pending {
+        let first = -(pending.len() as i64);
+        for (sub, t) in (first..).zip(pending) {
             self.queue.push(Reverse(Queued(ScheduledTick {
                 kind: t.kind,
                 pos: t.pos,
@@ -188,7 +188,6 @@ impl<T: Copy + Eq + Hash> ChunkTicks<T> {
                 priority: t.priority,
                 sub,
             })));
-            sub += 1;
         }
     }
 }
@@ -448,7 +447,7 @@ mod tests {
         assert!(t.schedule(tick(5, 2, 11, ExtremelyHigh, 4)));
         // Duplicate (kind, pos) is dropped.
         assert!(!t.schedule(tick(1, 0, 12, Normal, 5)));
-        assert!(t.schedule(tick(9, 400, 10, Normal, 6)) == false, "no container");
+        assert!(!t.schedule(tick(9, 400, 10, Normal, 6)), "no container");
         assert_eq!(run_all(&mut t, 9), vec![]);
         assert_eq!(run_all(&mut t, 10), vec![(3, 1), (1, 0), (2, 16), (4, 17)]);
         assert_eq!(run_all(&mut t, 11), vec![(5, 2)]);
