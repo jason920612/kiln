@@ -254,6 +254,8 @@ def check_build(updates, acks):
     for p in PILLAR:
         assert (p, stone) in updates, f"no stone block update at {p}: {updates}"
     log_states = [s for (p, s) in updates if p == LOG]
+    # Like vanilla, the placer also gets the clicked block and the one beside it re-sent.
+    log_states = [s for i, s in enumerate(log_states) if i == 0 or log_states[i - 1] != s]
     assert len(log_states) == 2 and log_states[1] == default_state("air"), f"log place/break: {log_states}"
     assert (TORCH, default_state("torch")) in updates, "torch not placed"
     # Like vanilla, one ack per tick carries the highest sequence so far.
