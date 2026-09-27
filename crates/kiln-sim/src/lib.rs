@@ -861,6 +861,10 @@ impl Sim {
             (p.health.to_bits(), p.dead, p.food, p.saturation.to_bits(), p.exhaustion.to_bits()).hash(&mut h);
             (p.hurt_cooldown, p.last_hurt.to_bits(), p.absorption.to_bits(), p.attack_ticker).hash(&mut h);
             p.vel.map(f64::to_bits).hash(&mut h);
+            (p.fire_ticks, p.air, p.tick_count).hash(&mut h);
+            for e in p.effects.values() {
+                (e.id, e.duration, e.amplifier, e.ambient, e.visible, e.show_icon, e.hidden.is_some()).hash(&mut h);
+            }
         }
         h.finish()
     }
@@ -915,6 +919,18 @@ impl Sim {
     /// A player's entity id (for tests and tools that attack or interact with it).
     pub fn entity_id(&self, conn: ConnId) -> Option<i32> {
         self.players.get(&conn).map(|p| p.entity_id)
+    }
+
+    /// A player's active effects: (effect name, amplifier, duration), in registry order (for
+    /// tests and tools).
+    pub fn effects(&self, conn: ConnId) -> Option<Vec<(&'static str, i32, i32)>> {
+        let p = self.players.get(&conn)?;
+        Some(p.effects.values().map(|e| (kiln_item::registry::MOB_EFFECT.name(e.id).unwrap_or("?"), e.amplifier, e.duration)).collect())
+    }
+
+    /// A player's remaining fire ticks and air supply (for tests and tools).
+    pub fn fire_and_air(&self, conn: ConnId) -> Option<(i32, i32)> {
+        self.players.get(&conn).map(|p| (p.fire_ticks, p.air))
     }
 
     /// A player's food level and saturation (for tests and tools).

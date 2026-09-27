@@ -303,7 +303,8 @@ impl Player {
     /// `ClientboundUpdateAttributesPacket` for the attributes effects change.
     pub(crate) fn effect_attributes_packet(&self) -> bytes::Bytes {
         use kiln_proto::packets::entity::{AttributeModifier, AttributeSnapshot, ModifierOperation};
-        let lists: Vec<(i32, f64, Vec<(String, f64, AttributeOperation)>)> = EFFECT_SYNCED
+        type Listed = (i32, f64, Vec<(String, f64, AttributeOperation)>);
+        let lists: Vec<Listed> = EFFECT_SYNCED
             .iter()
             .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, a.base, self.attribute_modifiers(*a))))
             .collect();

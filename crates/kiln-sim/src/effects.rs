@@ -655,8 +655,11 @@ pub(crate) fn load_effects(tag: &kiln_proto::nbt::Tag) -> std::collections::BTre
     out
 }
 
-/// `minecraft:potion` entries' effects (`Potions`): (effect, duration, amplifier).
-const POTIONS: &[(&str, &[(&str, i32, i32)])] = &[
+/// A potion and its effects: (effect, duration, amplifier).
+pub(crate) type PotionEntry = (&'static str, &'static [(&'static str, i32, i32)]);
+
+/// `minecraft:potion` entries' effects (`Potions`).
+const POTIONS: &[PotionEntry] = &[
     ("water", &[]),
     ("mundane", &[]),
     ("thick", &[]),
@@ -724,7 +727,7 @@ pub(crate) fn potion_effects(contents: &kiln_item::component::PotionContents, sc
 }
 
 #[cfg(test)]
-pub(crate) fn potion_table() -> &'static [(&'static str, &'static [(&'static str, i32, i32)])] {
+pub(crate) fn potion_table() -> &'static [PotionEntry] {
     POTIONS
 }
 
@@ -774,6 +777,20 @@ mod tests {
         assert_eq!((h.amplifier, h.duration), (1, 40));
         let hh = h.hidden.as_deref().unwrap();
         assert_eq!((hh.amplifier, hh.duration), (0, 50));
+    }
+
+    #[test]
+    fn saved_effects_load_back() {
+        let mut e = speed(20, 2);
+        e.update(&speed(100, 0));
+        e.ambient = true;
+        let tag = kiln_proto::nbt::Tag::List(vec![e.to_item().to_value().to_nbt()]);
+        let loaded = load_effects(&tag);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[&e.id], e);
+        let Some(kiln_proto::nbt::Tag::Compound(fields)) = tag.as_list().and_then(|l| l.first()).cloned() else { panic!() };
+        let keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(keys.contains(&"id") && keys.contains(&"hidden_effect") && keys.contains(&"amplifier"), "{keys:?}");
     }
 
     #[test]

@@ -3,7 +3,8 @@
 //! into regions and however many workers tick them in whatever order (design DT-R1). Block
 //! behaviour takes part: fences reshape their neighbours, water spreads through scheduled
 //! ticks, and random ticks run in every chunk near a player. Players of a group hit each
-//! other: damage, hurt cooldowns and knockback are part of the state.
+//! other: damage, hurt cooldowns and knockback are part of the state; so are mob effects
+//! (poison, regeneration, speed) and burning in the fire lit in each group.
 
 use kiln_link::{PlayIn, ToSim};
 use kiln_proto::packets::ItemStack;
@@ -38,6 +39,7 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     let mut traffic = Vec::new();
     let mut max_regions = 0;
     let mut hits = 0;
+    let (mut effects, mut burning) = (0, 0);
     // Players in odd rows of the groups can be hurt; the ones in even rows hit them.
     let victim = |i: usize| (i / GROUPS) % 2 == 1;
     for tick in 0..ticks {
@@ -89,6 +91,24 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
                 inbox.push(ToSim::Packet(conn, PlayIn::Punch));
             }
         }
+        // Effects for everyone, poison and regeneration for the victims, then a fire in the
+        // middle of each group that the walkers pass through.
+        if tick == 125 {
+            inbox.push(ToSim::Console("effect give @a minecraft:speed 30 1".into()));
+            for i in (0..PLAYERS).filter(|&i| victim(i)) {
+                inbox.push(ToSim::Console(format!("effect give P{i} minecraft:poison 6 0")));
+                inbox.push(ToSim::Console(format!("effect give P{i} minecraft:regeneration 12 1")));
+            }
+        }
+        if tick == 140 {
+            for g in 0..GROUPS {
+                let [ox, oz] = group_offset(g, GROUPS, GROUP_SPACING);
+                for (dx, dz) in [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)] {
+                    let (x, z) = (8.0 + ox + dx, 8.0 + oz + dz);
+                    inbox.push(ToSim::Console(format!("setblock {x} {SURFACE_Y} {z} minecraft:fire")));
+                }
+            }
+        }
         // A spring beside each group: water spreads over the next ticks.
         if tick == 60 {
             for g in 0..GROUPS {
@@ -98,6 +118,8 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
         }
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
         hits += (0..PLAYERS).filter(|&i| victim(i) && sim.health(i as u64 + 1).is_some_and(|(h, _)| h < 20.0)).count();
+        effects += (0..PLAYERS).filter(|&i| sim.effects(i as u64 + 1).is_some_and(|e| !e.is_empty())).count();
+        burning += (0..PLAYERS).filter(|&i| sim.fire_and_air(i as u64 + 1).is_some_and(|(f, _)| f > -20)).count();
         max_regions = max_regions.max(sim.region_count());
         if tick % 100 == 99 {
             hashes.push(sim.state_hash());
@@ -117,6 +139,8 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     assert!(flowing.count() > 9, "the water spread");
     assert!(walkers.iter().all(|w| !w.client.stats.disconnected.load(std::sync::atomic::Ordering::Relaxed)));
     assert!(hits > 0, "some attacks landed");
+    assert!(effects > 0, "players had effects");
+    assert!(burning > 0, "someone walked into the fire");
     Run { hashes, traffic, max_regions }
 }
 

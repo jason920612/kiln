@@ -136,7 +136,7 @@ fn effect_json(e: &Effect) -> Value {
 /// Packets of these ids the player got since the last call.
 fn take_packets(stats: &SinkStats, ids: &[i32]) -> Vec<bytes::Bytes> {
     let mut log = stats.log.lock().unwrap();
-    let all = std::mem::replace(log.as_mut().unwrap(), Vec::new());
+    let all = std::mem::take(log.as_mut().unwrap());
     all.into_iter().filter(|p| kiln_proto::codec::Reader::new(p).varint().ok().is_some_and(|id| ids.contains(&id))).collect()
 }
 
