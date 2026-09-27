@@ -5,6 +5,7 @@ pub mod buried_treasure;
 pub mod mineshaft;
 pub mod monument;
 pub mod scattered;
+pub mod stronghold;
 
 use super::bbox::BoundingBox;
 use super::piece::Piece;

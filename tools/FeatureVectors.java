@@ -785,9 +785,17 @@ public class FeatureVectors {
     /** Region origins placing a structure-chunk of set `set` (random spread) at a target chunk. */
     List<int[]> nearOrigins(String set, int count, int size) {
         var holder = registries.lookupOrThrow(Registries.STRUCTURE_SET).getOrThrow(net.minecraft.resources.ResourceKey.create(Registries.STRUCTURE_SET, Identifier.parse(set)));
-        var placement = (net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement) holder.value().placement();
         var state = level.getChunkSource().getGeneratorState();
         List<int[]> out = new ArrayList<>();
+        if (holder.value().placement() instanceof net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement rings) {
+            // The first ring positions (closest to the origin first).
+            for (ChunkPos p : state.getRingPositionsFor(rings)) {
+                if (out.size() >= count) break;
+                out.add(new int[] {p.x() - size / 2, p.z() - size / 2});
+            }
+            return out;
+        }
+        var placement = (net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement) holder.value().placement();
         Random r = new Random(seed ^ set.hashCode());
         for (int tries = 0; out.size() < count && tries < 100000; tries++) {
             int x = r.nextInt(60000) - 30000, z = r.nextInt(60000) - 30000;
