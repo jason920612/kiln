@@ -34,7 +34,8 @@ use crate::sets::Loader;
 use crate::structure::{ChunkStarts, StartCache, Structures};
 use kiln_proto::nbt::Tag;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Condvar, Mutex};
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 
 /// Everything overworld generation needs, shared by all generation threads.
 pub struct Worldgen {
@@ -70,6 +71,8 @@ struct State {
     decorated: HashSet<(i32, i32)>,
     /// Handed out by [`Pipeline::full`].
     finished: HashSet<(i32, i32)>,
+    /// Chunks whose terrain requests will soon need: threads that would wait generate these.
+    wanted: VecDeque<(i32, i32)>,
 }
 
 /// Counts for monitoring.
@@ -80,6 +83,9 @@ pub struct PipelineStats {
     pub decorated: usize,
     pub finished: usize,
 }
+
+/// Terrain prefetch radius around a requested chunk (see [`Pipeline::wait_or_help`]).
+const PREFETCH: i32 = 3;
 
 /// The chunk generation scheduler. `Sync`: share it (`Arc`) between generation threads, each
 /// with its own [`GenScratch`].
@@ -108,8 +114,20 @@ impl Pipeline {
     /// Generates the chunk through FULL: its 3×3 neighbourhood decorated, so nothing will
     /// write to it any more. Blocks until done.
     pub fn full(&self, gs: &mut GenScratch, x: i32, z: i32) -> ProtoChunk {
-        if self.state.lock().unwrap().finished.contains(&(x, z)) {
-            return Pipeline::new(self.world.clone()).full(gs, x, z);
+        {
+            let mut s = self.state.lock().unwrap();
+            if s.finished.contains(&(x, z)) {
+                drop(s);
+                return Pipeline::new(self.world.clone()).full(gs, x, z);
+            }
+            for dz in -PREFETCH..=PREFETCH {
+                for dx in -PREFETCH..=PREFETCH {
+                    let p = (x + dx, z + dz);
+                    if !s.chunks.contains_key(&p) && !s.finished.contains(&p) {
+                        s.wanted.push_back(p);
+                    }
+                }
+            }
         }
         for dz in -1..=1 {
             for dx in -1..=1 {
@@ -129,7 +147,7 @@ impl Pipeline {
                 }
                 Some(other) => {
                     s.chunks.insert((x, z), other);
-                    s = self.wake.wait(s).unwrap();
+                    s = self.wait_or_help(s, gs);
                 }
                 None => unreachable!("decorated neighbourhood without the chunk"),
             }
@@ -160,7 +178,7 @@ impl Pipeline {
             debug_assert!(!s.finished.contains(&(x, z)), "terrain requested for a finished chunk {x},{z}");
             match s.chunks.get(&(x, z)) {
                 Some(Slot::Ready(_) | Slot::Borrowed) => return,
-                Some(Slot::Generating) => s = self.wake.wait(s).unwrap(),
+                Some(Slot::Generating) => s = self.wait_or_help(s, gs),
                 None => break,
             }
         }
@@ -170,6 +188,24 @@ impl Pipeline {
         let mut s = self.state.lock().unwrap();
         s.chunks.insert((x, z), Slot::Ready(chunk));
         self.wake.notify_all();
+    }
+
+    /// Instead of idling until another thread makes progress, generates the terrain of a
+    /// wanted chunk nobody started; waits only when there is none.
+    fn wait_or_help<'a>(&'a self, mut s: MutexGuard<'a, State>, gs: &mut GenScratch) -> MutexGuard<'a, State> {
+        while let Some(p) = s.wanted.pop_front() {
+            if s.chunks.contains_key(&p) || s.finished.contains(&p) {
+                continue;
+            }
+            s.chunks.insert(p, Slot::Generating);
+            drop(s);
+            let chunk = Box::new(self.world.generator.generate(gs, p.0, p.1));
+            let mut s = self.state.lock().unwrap();
+            s.chunks.insert(p, Slot::Ready(chunk));
+            self.wake.notify_all();
+            return s;
+        }
+        self.wake.wait(s).unwrap()
     }
 
     /// FEATURES for one chunk, after the chunks that must precede it in canonical order.
@@ -195,7 +231,7 @@ impl Pipeline {
                 if free {
                     break;
                 }
-                s = self.wake.wait(s).unwrap();
+                s = self.wait_or_help(s, gs);
             }
             debug_assert!(order::predecessors(x, z).all(|p| s.decorated.contains(&p)), "decorating {x},{z} out of order");
             (0..9)
