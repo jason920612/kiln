@@ -9,7 +9,6 @@ use crate::level::{DamageKind, EntityLevel, Event};
 use crate::math::{Aabb, Axis, BlockPos, Vec3, floor};
 use crate::physics::{self, FluidKind};
 use kiln_javamath::random::RandomSource;
-use std::collections::HashSet;
 
 /// `InsideBlockEffectType`, in apply order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,7 +271,7 @@ impl Entity {
         if !self.is_affected_by_blocks() {
             return;
         }
-        let mut visited = HashSet::new();
+        let mut visited = SmallSet::default();
         for m in movements {
             let mut from = m.from;
             let d = m.to - m.from;
@@ -302,7 +301,7 @@ impl Entity {
         level: &mut dyn EntityLevel,
         from: Vec3,
         to: Vec3,
-        visited: &mut HashSet<i64>,
+        visited: &mut SmallSet,
         max_steps: i32,
     ) -> i32 {
         let bb = self.make_bounding_box(to).deflate_all(9.999999747378752e-6);
@@ -486,6 +485,22 @@ impl Entity {
     }
 }
 
+/// A set of packed block positions; entity paths touch few blocks, so a vector is fastest.
+#[derive(Default)]
+pub(crate) struct SmallSet(Vec<i64>);
+
+impl SmallSet {
+    /// `LongSet.add`: true if newly added.
+    fn insert(&mut self, v: i64) -> bool {
+        if self.0.contains(&v) {
+            false
+        } else {
+            self.0.push(v);
+            true
+        }
+    }
+}
+
 /// `BlockGetter.forEachBlockIntersectedBetween`: every block the box `bb` (placed at `to`)
 /// touches on its way from `from`, in vanilla's visiting order, with the step index.
 pub fn for_each_block_intersected_between(from: Vec3, to: Vec3, bb: &Aabb, mut visit: impl FnMut(BlockPos, i32) -> bool) -> bool {
@@ -504,7 +519,7 @@ pub fn for_each_block_intersected_between(from: Vec3, to: Vec3, bb: &Aabb, mut v
         }
         return true;
     }
-    let mut seen: HashSet<i64> = HashSet::new();
+    let mut seen = SmallSet::default();
     for pos in corners_in_direction(&bb.offset_vec(d.scale(-1.0)), d) {
         if !visit(pos, 0) {
             return false;
@@ -609,7 +624,7 @@ fn clamp(v: f64, lo: f64, hi: f64) -> f64 {
 /// `BlockGetter.addCollisionsAlongTravel`: walks the grid along the travel of the box's leading
 /// corner and visits the box-sized slabs it sweeps; returns the step count or -1 on abort.
 fn add_collisions_along_travel(
-    seen: &mut HashSet<i64>,
+    seen: &mut SmallSet,
     d: Vec3,
     bb: &Aabb,
     visit: &mut impl FnMut(BlockPos, i32) -> bool,

@@ -260,6 +260,9 @@ pub fn is_suffocating(state: u16) -> bool {
 /// `BlockState.getOffset(pos)` for offset blocks with collision (bamboo, pointed dripstone;
 /// all horizontal): their collision shape is stored unshifted.
 pub fn collision_offset(state: u16, x: i32, z: i32) -> Option<(f64, f64)> {
+    if entry(state).flags & OFFSET == 0 {
+        return None;
+    }
     let max = *table().offsets.get(&state)?;
     let seed = kiln_javamath::math::get_seed(x, 0, z);
     let clamp = |v: f64| {
@@ -273,10 +276,16 @@ pub fn collision_offset(state: u16, x: i32, z: i32) -> Option<(f64, f64)> {
 
 /// Friction, speed, jump and bounce factors of the state's block.
 pub fn block_factors(state: u16) -> BlockFactors {
-    let t = table();
-    let index = kiln_data::blocks::BLOCKS.partition_point(|b| b.first <= state) - 1;
-    debug_assert_eq!(kiln_data::blocks::BLOCKS[index].name, block_of(state).name);
-    t.blocks[index]
+    static BLOCK_OF_STATE: OnceLock<Vec<u16>> = OnceLock::new();
+    let index = BLOCK_OF_STATE.get_or_init(|| {
+        let mut v = vec![0u16; kiln_data::blocks::STATE_COUNT as usize];
+        for (i, b) in kiln_data::blocks::BLOCKS.iter().enumerate() {
+            v[b.first as usize..=b.last as usize].fill(i as u16);
+        }
+        v
+    })[state as usize];
+    debug_assert_eq!(kiln_data::blocks::BLOCKS[index as usize].name, block_of(state).name);
+    table().blocks[index as usize]
 }
 
 #[cfg(test)]

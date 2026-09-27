@@ -372,25 +372,114 @@ pub fn collide_all(axis: Axis, bx: &Aabb, shapes: &[Collider], mut distance: f64
     distance
 }
 
+/// `Shapes.create(box)` without allocating: the swept box collision tests join against.
+#[derive(Clone, Copy, Debug)]
+pub struct BoxShape {
+    coords: [[f64; 9]; 3],
+    len: [usize; 3],
+    /// Full cells per axis: `lo..hi`.
+    lo: [usize; 3],
+    hi: [usize; 3],
+}
+
+impl BoxShape {
+    /// `None` for vanilla's `Shapes.empty()` (an extent below 1e-7).
+    pub fn new(b: &Aabb) -> Option<BoxShape> {
+        if b.max_x - b.min_x < 1.0e-7 || b.max_y - b.min_y < 1.0e-7 || b.max_z - b.min_z < 1.0e-7 {
+            return None;
+        }
+        let lo_v = [b.min_x, b.min_y, b.min_z];
+        let hi_v = [b.max_x, b.max_y, b.max_z];
+        let bits = [find_bits(b.min_x, b.max_x), find_bits(b.min_y, b.max_y), find_bits(b.min_z, b.max_z)];
+        let mut s = BoxShape { coords: [[0.0; 9]; 3], len: [2; 3], lo: [0; 3], hi: [1; 3] };
+        if bits.iter().any(|&v| v < 0) {
+            for a in 0..3 {
+                s.coords[a][0] = lo_v[a];
+                s.coords[a][1] = hi_v[a];
+            }
+        } else {
+            for a in 0..3 {
+                let n = 1usize << bits[a];
+                for i in 0..=n {
+                    s.coords[a][i] = i as f64 / n as f64;
+                }
+                s.len[a] = n + 1;
+                s.lo[a] = java_round(lo_v[a] * n as f64) as usize;
+                s.hi[a] = java_round(hi_v[a] * n as f64) as usize;
+            }
+        }
+        Some(s)
+    }
+}
+
+/// What `joinIsNotEmpty` reads from a shape.
+trait Voxels {
+    fn coords(&self, axis: usize) -> &[f64];
+    fn offset(&self, axis: usize) -> f64;
+    fn full_wide(&self, x: i32, y: i32, z: i32) -> bool;
+    fn min(&self, axis: usize) -> f64;
+    fn max(&self, axis: usize) -> f64;
+}
+
+struct Placed<'a>(&'a Shape, [f64; 3]);
+
+impl Voxels for Placed<'_> {
+    fn coords(&self, axis: usize) -> &[f64] {
+        &self.0.coords[axis]
+    }
+    fn offset(&self, axis: usize) -> f64 {
+        self.1[axis]
+    }
+    fn full_wide(&self, x: i32, y: i32, z: i32) -> bool {
+        self.0.is_full_wide(x, y, z)
+    }
+    fn min(&self, axis: usize) -> f64 {
+        self.0.min(Axis::ALL[axis], self.1[axis])
+    }
+    fn max(&self, axis: usize) -> f64 {
+        self.0.max(Axis::ALL[axis], self.1[axis])
+    }
+}
+
+impl Voxels for BoxShape {
+    fn coords(&self, axis: usize) -> &[f64] {
+        &self.coords[axis][..self.len[axis]]
+    }
+    fn offset(&self, _axis: usize) -> f64 {
+        0.0
+    }
+    fn full_wide(&self, x: i32, y: i32, z: i32) -> bool {
+        [x, y, z].iter().enumerate().all(|(a, &i)| i >= self.lo[a] as i32 && i < self.hi[a] as i32)
+    }
+    fn min(&self, axis: usize) -> f64 {
+        self.coords[axis][self.lo[axis]]
+    }
+    fn max(&self, axis: usize) -> f64 {
+        self.coords[axis][self.hi[axis]]
+    }
+}
+
 /// `Shapes.joinIsNotEmpty(a, b, BooleanOp.AND)` for two placed shapes.
 pub fn intersects(a: &Shape, a_off: [f64; 3], b: &Shape, b_off: [f64; 3]) -> bool {
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-    for axis in Axis::ALL {
-        let i = axis as usize;
-        if a.max(axis, a_off[i]) < b.min(axis, b_off[i]) - 1.0e-7 || b.max(axis, b_off[i]) < a.min(axis, a_off[i]) - 1.0e-7 {
+    !a.is_empty() && !b.is_empty() && join_and(&Placed(a, a_off), &Placed(b, b_off))
+}
+
+/// `Shapes.joinIsNotEmpty(shape, Shapes.create(box), AND)`.
+pub fn intersects_box(a: &Shape, a_off: [f64; 3], b: &BoxShape) -> bool {
+    !a.is_empty() && join_and(&Placed(a, a_off), b)
+}
+
+fn join_and(a: &impl Voxels, b: &impl Voxels) -> bool {
+    for i in 0..3 {
+        if a.max(i) < b.min(i) - 1.0e-7 || b.max(i) < a.min(i) - 1.0e-7 {
             return false;
         }
     }
-    let mx = merge(a.coords(Axis::X), a_off[0], b.coords(Axis::X), b_off[0]);
-    let my = merge(a.coords(Axis::Y), a_off[1], b.coords(Axis::Y), b_off[1]);
-    let mz = merge(a.coords(Axis::Z), a_off[2], b.coords(Axis::Z), b_off[2]);
-    let (Some(mx), Some(my), Some(mz)) = (mx, my, mz) else { return false };
-    for &(ax, bx) in &mx {
-        for &(ay, by) in &my {
-            for &(az, bz) in &mz {
-                if a.is_full_wide(ax, ay, az) && b.is_full_wide(bx, by, bz) {
+    let (Some(mx), Some(my), Some(mz)) = (merge(a, b, 0), merge(a, b, 1), merge(a, b, 2)) else { return false };
+    for &(ax, bx) in mx.cells() {
+        for &(ay, by) in my.cells() {
+            for &(az, bz) in mz.cells() {
+                if a.full_wide(ax, ay, az) && b.full_wide(bx, by, bz) {
                     return true;
                 }
             }
@@ -399,15 +488,28 @@ pub fn intersects(a: &Shape, a_off: [f64; 3], b: &Shape, b_off: [f64; 3]) -> boo
     false
 }
 
-/// `Shapes.createIndexMerger` for `AND`: the merged cells as (index in a, index in b) pairs, or
-/// `None` when the lists do not overlap (`NonOverlappingMerger`, which never pairs two cells).
-fn merge(a: &[f64], a_off: f64, b: &[f64], b_off: f64) -> Option<Vec<(i32, i32)>> {
+/// Merged cells of one axis: (index in a, index in b).
+struct Merged {
+    cells: [(i32, i32); 48],
+    len: usize,
+}
+
+impl Merged {
+    fn cells(&self) -> &[(i32, i32)] {
+        &self.cells[..self.len]
+    }
+}
+
+/// `Shapes.createIndexMerger` for `AND`: `None` when the lists do not overlap
+/// (`NonOverlappingMerger`, which never pairs two cells); otherwise `IndirectMerger` with
+/// firstOnly = secondOnly = false (`IdenticalMerger` yields the same cells).
+fn merge(sa: &impl Voxels, sb: &impl Voxels, axis: usize) -> Option<Merged> {
+    let (a, a_off, b, b_off) = (sa.coords(axis), sa.offset(axis), sb.coords(axis), sb.offset(axis));
     let (n, m) = (a.len(), b.len());
     if a[n - 1] + a_off < b[0] + b_off - 1.0e-7 || b[m - 1] + b_off < a[0] + a_off - 1.0e-7 {
         return None;
     }
-    // IndirectMerger with firstOnly = secondOnly = false (IdenticalMerger gives the same cells).
-    let mut first = Vec::with_capacity(n + m);
+    let mut out = Merged { cells: [(0, 0); 48], len: 0 };
     let mut last = f64::NAN;
     let (mut i, mut j) = (0usize, 0usize);
     loop {
@@ -428,21 +530,20 @@ fn merge(a: &[f64], a_off: f64, b: &[f64], b_off: f64) -> Option<Vec<(i32, i32)>
                 continue;
             }
         }
-        let (li, uj) = (i as i32 - 1, j as i32 - 1);
+        let cell = (i as i32 - 1, j as i32 - 1);
         let v = if take_lower { a[i - 1] + a_off } else { b[j - 1] + b_off };
         // Java: !(last >= v - 1e-7), NaN included.
         if last >= v - 1.0e-7 {
-            let k = first.len() - 1;
-            first[k] = (li, uj);
+            out.cells[out.len - 1] = cell;
         } else {
-            first.push((li, uj));
+            out.cells[out.len] = cell;
+            out.len += 1;
             last = v;
         }
     }
     // forMergedIndexes visits resultLength - 1 cells.
-    let len = first.len().max(1);
-    first.truncate(len - 1);
-    Some(first)
+    out.len = out.len.max(1) - 1;
+    Some(out)
 }
 
 #[cfg(test)]

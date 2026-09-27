@@ -5,7 +5,7 @@ use crate::blocks::{Kind, kind};
 use crate::level::EntityLevel;
 use crate::math::{Aabb, Axis, BlockPos, Vec3, floor};
 use crate::physics;
-use crate::shape::{Collider, Shape, collide_all, intersects};
+use crate::shape::{BoxShape, Collider, Shape, collide_all, intersects_box};
 use std::borrow::Cow;
 
 /// `EntityCollisionContext`: what context-dependent collision shapes look at.
@@ -111,7 +111,7 @@ pub fn for_each_block_collision(
     let y1 = floor(area.max_y + 1.0e-7) + 1;
     let z0 = floor(area.min_z - 1.0e-7) - 1;
     let z1 = floor(area.max_z + 1.0e-7) + 1;
-    let entity_shape = Shape::from_box(area);
+    let entity_shape = BoxShape::new(area);
     let (w, h, d) = (x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
     for z in 0..d {
         for y in 0..h {
@@ -137,7 +137,7 @@ pub fn for_each_block_collision(
                     area.intersects_raw(px, py, pz, px + 1.0, py + 1.0, pz + 1.0)
                 } else {
                     !shape.is_empty()
-                        && entity_shape.as_ref().is_some_and(|e| intersects(&shape, [px, py, pz], e, [0.0; 3]))
+                        && entity_shape.as_ref().is_some_and(|e| intersects_box(&shape, [px, py, pz], e))
                 };
                 if hit && !visit(pos, shape, cube) {
                     return;

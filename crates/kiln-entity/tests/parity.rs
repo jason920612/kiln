@@ -6,145 +6,14 @@
 //! the test is skipped when they are absent. `KILN_PARITY_FILTER` selects scenarios by name.
 
 use kiln_entity::entity::{Entity, EntityKind};
-use kiln_entity::level::{EntityFilter, EntityLevel, Event};
-use kiln_entity::math::{Aabb, BlockPos};
+use kiln_entity::level::EntityLevel;
+use kiln_entity::math::BlockPos;
+use kiln_entity::memory::MemoryLevel;
 use kiln_entity::{falling_block, item, player, tnt, xp_orb};
 use kiln_item::ItemStack;
-use kiln_javamath::random::LegacyRandom;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
-
-struct Slot {
-    entity: Option<Entity>,
-    /// Section key and insertion sequence, for vanilla's entity iteration order.
-    section: (i32, i64),
-    seq: u64,
-}
-
-struct TestLevel {
-    blocks: HashMap<BlockPos, u16>,
-    slots: Vec<Slot>,
-    index: HashMap<i32, usize>,
-    random: LegacyRandom,
-    next_id: i32,
-    next_seq: u64,
-    events: Vec<Event>,
-    spawned: Vec<Entity>,
-}
-
-fn section_of(e: &Entity) -> (i32, i64) {
-    let p = e.block_position();
-    let (sx, sy, sz) = (p.x >> 4, p.y >> 4, p.z >> 4);
-    // SectionPos.asLong order within one x: z (22 bits), then y (20 bits), unsigned fields.
-    (sx, (((sz as i64) & 0x3F_FFFF) << 20) | ((sy as i64) & 0xF_FFFF))
-}
-
-impl TestLevel {
-    fn new(seed: i64) -> Self {
-        TestLevel {
-            blocks: HashMap::new(),
-            slots: Vec::new(),
-            index: HashMap::new(),
-            random: LegacyRandom::new(seed),
-            next_id: 1_000_000,
-            next_seq: 0,
-            events: Vec::new(),
-            spawned: Vec::new(),
-        }
-    }
-
-    fn insert(&mut self, e: Entity) {
-        let section = section_of(&e);
-        self.index.insert(e.id, self.slots.len());
-        self.slots.push(Slot { entity: Some(e), section, seq: self.next_seq });
-        self.next_seq += 1;
-    }
-
-    fn resection(&mut self, i: usize) {
-        let s = &mut self.slots[i];
-        if let Some(e) = &s.entity {
-            let now = section_of(e);
-            if now != s.section {
-                s.section = now;
-                s.seq = self.next_seq;
-                self.next_seq += 1;
-            }
-        }
-    }
-}
-
-impl EntityLevel for TestLevel {
-    fn block(&self, pos: BlockPos) -> u16 {
-        // The harness world is superflat with one bedrock layer at the bottom.
-        let floor = if pos.y == -64 { kiln_data::blocks::default_state::BEDROCK } else { 0 };
-        self.blocks.get(&pos).copied().unwrap_or(floor)
-    }
-
-    fn set_block(&mut self, pos: BlockPos, state: u16, _flags: u32) -> bool {
-        let old = self.blocks.insert(pos, state).unwrap_or(0);
-        old != state
-    }
-
-    fn random(&mut self) -> &mut LegacyRandom {
-        &mut self.random
-    }
-
-    fn game_time(&self) -> i64 {
-        0
-    }
-
-    fn min_y(&self) -> i32 {
-        -64
-    }
-
-    fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
-        let mut found: Vec<((i32, i64), u64, i32)> = self
-            .slots
-            .iter()
-            .filter_map(|s| {
-                let e = s.entity.as_ref()?;
-                let wanted = match filter {
-                    EntityFilter::Any => true,
-                    EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
-                    EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
-                    EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. }),
-                };
-                (wanted && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area))
-                    .then_some((s.section, s.seq, e.id))
-            })
-            .collect();
-        found.sort();
-        found.into_iter().map(|(_, _, id)| id).collect()
-    }
-
-    fn entity_mut(&mut self, id: i32) -> Option<&mut Entity> {
-        let i = *self.index.get(&id)?;
-        self.slots[i].entity.as_mut()
-    }
-
-    fn entity(&self, id: i32) -> Option<&Entity> {
-        let i = *self.index.get(&id)?;
-        self.slots[i].entity.as_ref()
-    }
-
-    fn add_entity(&mut self, entity: Entity) {
-        self.spawned.push(entity);
-    }
-
-    fn fresh_seed(&mut self) -> i64 {
-        self.next_id as i64 * 0x5DEE_CE66
-    }
-
-    fn next_entity_id(&mut self) -> i32 {
-        self.next_id += 1;
-        self.next_id
-    }
-
-    fn emit(&mut self, event: Event) {
-        self.events.push(event);
-    }
-}
 
 fn f(v: &Value) -> f64 {
     v.as_f64().unwrap_or_else(|| panic!("not a number: {v}"))
@@ -265,7 +134,9 @@ const FIELDS: &[&str] = &[
 
 /// Replays one scenario; `Err` describes the first mismatch.
 fn replay(s: &Value) -> Result<(), String> {
-    let mut level = TestLevel::new(s["level_seed"].as_i64().unwrap());
+    let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
+    // The harness world is superflat with one bedrock layer.
+    level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     for b in s["blocks"].as_array().unwrap() {
         let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
         level.blocks.insert(p, b[3].as_u64().unwrap() as u16);
@@ -282,32 +153,28 @@ fn replay(s: &Value) -> Result<(), String> {
         level.insert(e);
     }
     let trace = s["trace"].as_array().unwrap();
-    let initial = level.slots.len();
+    let initial = level.len();
     let mut seen_spawned: Vec<usize> = Vec::new();
     for (tick, expected) in trace.iter().enumerate() {
-        let order: Vec<usize> = (0..level.slots.len()).collect();
-        for i in order {
-            let Some(mut e) = level.slots[i].entity.take() else { continue };
-            if let Some(m) = moves.get(&e.id) {
-                e.delta = m[tick];
-                player::server_move(&mut level, &mut e, m[tick]);
-            } else if !e.is_removed() {
-                e.common_tick();
-                e.tick(&mut level);
-            }
-            level.slots[i].entity = Some(e);
-            level.resection(i);
+        for i in 0..level.len() {
+            level.tick_one(i, |e, level| {
+                if let Some(m) = moves.get(&e.id) {
+                    e.delta = m[tick];
+                    player::server_move(level, e, m[tick]);
+                } else {
+                    e.common_tick();
+                    e.tick(level);
+                }
+            });
         }
-        for e in std::mem::take(&mut level.spawned) {
-            level.insert(e);
-        }
+        level.flush_spawned();
         let expected = expected.as_array().unwrap();
         for (k, want) in expected.iter().enumerate() {
             let want: Vec<f64> = want.as_array().unwrap().iter().map(f).collect();
-            let Some(slot) = level.slots.get(k) else {
+            let Some(entity) = level.entity_at(k) else {
                 return Err(format!("tick {tick}: vanilla has entity #{k} ({want:?}), kiln has none"));
             };
-            let got = state(slot.entity.as_ref().unwrap());
+            let got = state(entity);
             // Entities spawned during the run (drops, primed TNT) get fresh ids and, in vanilla,
             // velocities from an unseeded random: compare where and what they are when they appear.
             let spawned = k >= initial;
@@ -332,8 +199,8 @@ fn replay(s: &Value) -> Result<(), String> {
                 }
             }
         }
-        if level.slots.len() > expected.len() {
-            return Err(format!("tick {tick}: kiln has {} entities, vanilla {}", level.slots.len(), expected.len()));
+        if level.len() > expected.len() {
+            return Err(format!("tick {tick}: kiln has {} entities, vanilla {}", level.len(), expected.len()));
         }
     }
     if let Some(want) = s["final_blocks"].as_array() {

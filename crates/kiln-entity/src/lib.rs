@@ -17,6 +17,7 @@ pub mod inside;
 pub mod item;
 pub mod level;
 pub mod math;
+pub mod memory;
 pub mod physics;
 pub mod player;
 pub mod shape;
