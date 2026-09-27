@@ -46,12 +46,14 @@ pub struct Rules {
     pub fast_lava: bool,
     /// The dimension's `water_evaporates` environment attribute (the nether).
     pub water_evaporates: bool,
+    /// `minecraft:tnt_explodes`.
+    pub tnt_explodes: bool,
 }
 
 impl Default for Rules {
     /// Overworld with default game rules.
     fn default() -> Self {
-        Self { water_source_conversion: true, lava_source_conversion: false, fast_lava: false, water_evaporates: false }
+        Self { water_source_conversion: true, lava_source_conversion: false, fast_lava: false, water_evaporates: false, tnt_explodes: true }
     }
 }
 
@@ -69,6 +71,10 @@ pub enum Effect {
     GameEvent { pos: BlockPos, event: &'static str },
     /// `FallingBlockEntity.fall`: the block left `pos` as a falling entity (already removed).
     FallingBlock { pos: BlockPos, state: u16 },
+    /// `TntBlock.prime`: spawn a primed TNT at `pos` (the block is removed).
+    PrimedTnt { pos: BlockPos },
+    /// `NoteBlock.triggerEvent`: play `instrument` at `note` (0..=24) with its particle.
+    NoteBlock { pos: BlockPos, instrument: &'static str, note: i32 },
     /// A block event that ran and must reach clients (`ClientboundBlockEventPacket`).
     BlockEvent { pos: BlockPos, block: BlockId, a: i32, b: i32 },
 }
@@ -116,6 +122,12 @@ pub trait Level {
     }
 
     fn effect(&mut self, effect: Effect);
+
+    /// Entities (not spectators, not ignoring block triggers) intersecting the box, counting
+    /// only living ones if `living_only` (`BasePressurePlateBlock.getEntityCount`).
+    fn count_entities(&self, _min: [f64; 3], _max: [f64; 3], _living_only: bool) -> usize {
+        0
+    }
 
     /// Called before each queued update runs (vanilla's neighbour-update debug listener).
     fn trace_update(&mut self, _update: UpdateTrace) {}

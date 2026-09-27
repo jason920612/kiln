@@ -73,6 +73,76 @@ pub fn lamp_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     }
 }
 
+fn is_weighted(s: u16) -> bool {
+    logic::block_class(s) == logic::BlockClass::WeightedPressurePlateBlock
+}
+
+/// `getSignalForState`.
+fn plate_signal(s: u16) -> i32 {
+    if is_weighted(s) { state::get_int(s, "power") } else if state::get_bool(s, "powered") { 15 } else { 0 }
+}
+
+/// `getSignalStrength`: from the entities on the plate.
+fn plate_strength<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> i32 {
+    let (x, y, z) = (pos.x as f64, pos.y as f64, pos.z as f64);
+    let (min, max) = ([x + 0.0625, y, z + 0.0625], [x + 0.9375, y + 0.25, z + 0.9375]);
+    let p = logic::params(s);
+    if is_weighted(s) {
+        let n = (level.count_entities(min, max, false) as i32).min(p.max_weight);
+        if n > 0 { ((n.min(p.max_weight) as f32 / p.max_weight as f32) * 15.0).ceil() as i32 } else { 0 }
+    } else if level.count_entities(min, max, p.plate_mobs_only) > 0 {
+        15
+    } else {
+        0
+    }
+}
+
+fn plate_update_neighbours<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
+    update_neighbors_at(level, pos, BlockId::of(s));
+    update_neighbors_at(level, pos.below(), BlockId::of(s));
+}
+
+/// `BasePressurePlateBlock.checkPressed`.
+fn plate_check<L: Level>(level: &mut L, pos: BlockPos, s: u16, old: i32) {
+    let new = plate_strength(level, pos, s);
+    if old != new {
+        let ns = if is_weighted(s) { state::set_int(s, "power", new) } else { state::set_bool(s, "powered", new > 0) };
+        set_block(level, pos, ns, flags::CLIENTS);
+        plate_update_neighbours(level, pos, s);
+    }
+    if new == 0 && old > 0 {
+        level.effect(Effect::GameEvent { pos, event: "minecraft:block_deactivate" });
+    } else if new > 0 && old == 0 {
+        level.effect(Effect::GameEvent { pos, event: "minecraft:block_activate" });
+    }
+    if new > 0 {
+        let delay = if is_weighted(s) { 10 } else { 20 };
+        schedule_block_tick(level, pos, BlockId::of(s), delay, TickPriority::Normal);
+    }
+}
+
+pub fn plate_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let old = plate_signal(s);
+    if old > 0 {
+        plate_check(level, pos, s, old);
+    }
+}
+
+/// `BasePressurePlateBlock.entityInside`: the level calls this for an entity touching the
+/// plate.
+pub fn plate_entity_inside<L: Level>(level: &mut L, pos: BlockPos) {
+    let s = level.block(pos);
+    if logic::is_instance(s, logic::BlockClass::BasePressurePlateBlock) && plate_signal(s) == 0 {
+        plate_check(level, pos, s, 0);
+    }
+}
+
+pub fn plate_removed<L: Level>(level: &mut L, s: u16, pos: BlockPos, moved_by_piston: bool) {
+    if !moved_by_piston && plate_signal(s) > 0 {
+        plate_update_neighbours(level, pos, s);
+    }
+}
+
 /// `DoorBlock.neighborChanged`: either half powered opens the door.
 pub fn door_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: BlockId) {
     let other = if state::get(s, "half") == Some("lower") { Direction::Up } else { Direction::Down };

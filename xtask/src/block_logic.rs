@@ -4,8 +4,9 @@
 //! `block_logic.bin` (little endian): magic "KBL1", state count u32, signal row count u16;
 //! per state 8 bytes: u32 (sturdy FULL/CENTER/RIGID face masks, 6 bits each, then push
 //! reaction 3 bits, then wall cover tests 5 bits), flags u8, fluid u8 (kind 2 bits, source,
-//! falling, amount 4 bits), signal row u8, reserved u8; then per signal row the weak and the
-//! strong signal toward each direction (12 bytes).
+//! falling, amount 4 bits), signal row u8, note block instrument u8 (index in the note block's
+//! `instrument` values 5 bits, works above a note block, tunable); then per signal row the
+//! weak and the strong signal toward each direction (12 bytes).
 //!
 //! `block_classes.rs` names each block's Java class, its superclasses and interfaces, and the
 //! constructor parameters behaviour needs.
@@ -41,7 +42,9 @@ pub fn extract(root: &Path, work: &Path, server_jar: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn pack(states: &Value, state_count: usize) -> Result<Vec<u8>> {
+/// `instruments` are the note block's `instrument` property values in order.
+pub fn pack(states: &Value, state_count: usize, instruments: &[String]) -> Result<Vec<u8>> {
+    ensure!(instruments.len() <= 32, "more than 32 note block instruments");
     let states = states.as_array().context("block_logic.json")?;
     ensure!(states.len() == state_count, "extractor saw {} states, blocks.json has {state_count}", states.len());
     let mut rows: Vec<[u8; 12]> = vec![[0; 12]];
@@ -87,7 +90,12 @@ pub fn pack(states: &Value, state_count: usize) -> Result<Vec<u8>> {
         });
         ensure!(rows.len() <= 256, "more than 256 distinct signal rows");
         body.extend_from_slice(&word.to_le_bytes());
-        body.extend_from_slice(&[flags, fluid, row, 0]);
+        let name = s["instrument"].as_str().context("instrument")?;
+        let index = instruments.iter().position(|i| i == name).with_context(|| format!("instrument {name}"))? as u8;
+        let instrument = index
+            | (s["works_above_note_block"].as_bool().context("works_above_note_block")? as u8) << 5
+            | (s["tunable"].as_bool().context("tunable")? as u8) << 6;
+        body.extend_from_slice(&[flags, fluid, row, instrument]);
     }
     let mut out = b"KBL1".to_vec();
     out.extend_from_slice(&(states.len() as u32).to_le_bytes());

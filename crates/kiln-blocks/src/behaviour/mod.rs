@@ -11,7 +11,7 @@ pub mod support;
 use crate::fluid;
 use crate::level::Level;
 use crate::pos::{BlockPos, Direction};
-use crate::redstone::{components, diode, torch, wire};
+use crate::redstone::{components, devices, diode, torch, wire};
 use crate::state::{self, BlockId};
 use kiln_data::block_logic::{self as logic, BlockClass, Support, interface};
 
@@ -34,6 +34,8 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::neighbor_changed(level, s, pos),
         C::RepeaterBlock => diode::neighbor_changed(level, s, pos),
         C::RedstoneLampBlock => components::lamp_neighbor_changed(level, s, pos),
+        C::NoteBlock => devices::note_neighbor_changed(level, s, pos),
+        C::TntBlock => devices::tnt_neighbor_changed(level, pos),
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::TrapDoorBlock) => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::DoorBlock) => components::door_neighbor_changed(level, s, pos, source),
@@ -61,6 +63,8 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         }
         C::WallBlock if dir != Direction::Down => return connect::wall_update(level, s, pos, dir, neighbor_state),
         C::FenceGateBlock => return misc::gate_update_shape(level, s, pos, dir, neighbor_state),
+        C::ObserverBlock => return devices::observer_update_shape(level, s, pos, dir),
+        C::NoteBlock => return devices::note_update_shape(level, s, pos, dir),
         _ => {}
     }
     if logic::is_instance(s, C::LeavesBlock) {
@@ -101,6 +105,8 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, _moved
         C::RedstoneWireBlock => wire::on_place(level, s, pos, old),
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::on_place(level, s, pos),
         C::RepeaterBlock => diode::on_place(level, s, pos),
+        C::ObserverBlock => devices::observer_on_place(level, s, pos, old),
+        C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_schedule(level, s, pos),
         _ => {}
     }
@@ -114,6 +120,8 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         C::RepeaterBlock => diode::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         C::LeverBlock | C::ButtonBlock => components::attached_removed(level, s, pos, moved_by_piston),
+        C::ObserverBlock => devices::observer_removed(level, s, pos),
+        _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_removed(level, s, pos, moved_by_piston),
         _ => {}
     }
 }
@@ -126,6 +134,8 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::RepeaterBlock => diode::tick(level, s, pos),
         C::ButtonBlock => components::button_tick(level, s, pos),
         C::RedstoneLampBlock => components::lamp_tick(level, s, pos),
+        C::ObserverBlock => devices::observer_tick(level, s, pos),
+        _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_tick(level, s, pos),
         _ if logic::is_instance(s, C::LeavesBlock) => misc::leaves_tick(level, s, pos),
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_tick(level, s, pos),
         _ => {}
@@ -141,7 +151,11 @@ pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     }
 }
 
-/// `triggerEvent` for a block event; true if it should reach clients.
-pub fn trigger_event<L: Level>(_level: &mut L, _s: u16, _pos: BlockPos, _a: i32, _b: i32) -> bool {
-    false
+/// `triggerEvent` for a block event; true if it should reach clients. Note blocks are the
+/// only block-event users implemented (pistons, chests and bells are not).
+pub fn trigger_event<L: Level>(level: &mut L, s: u16, pos: BlockPos, _a: i32, _b: i32) -> bool {
+    match logic::block_class(s) {
+        BlockClass::NoteBlock => devices::note_trigger(level, s, pos),
+        _ => false,
+    }
 }

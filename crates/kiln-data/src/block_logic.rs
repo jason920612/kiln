@@ -207,6 +207,14 @@ pub fn fluid(state: u16) -> Fluid {
     Fluid { kind, source: b & 4 != 0, falling: b & 8 != 0, amount: b >> 4 }
 }
 
+/// The note block instrument a block gives (`BlockState.instrument`): its index in the
+/// note block's `instrument` values, whether it works above a note block (mob heads), and
+/// whether it is tunable.
+pub fn instrument(state: u16) -> (u8, bool, bool) {
+    let b = (word(state) >> 56) as u8;
+    (b & 31, b & 32 != 0, b & 64 != 0)
+}
+
 fn signals(state: u16) -> &'static [u8; 12] {
     &table().signals[(word(state) >> 48 & 0xff) as usize]
 }

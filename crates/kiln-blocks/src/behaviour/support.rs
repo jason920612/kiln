@@ -106,6 +106,10 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
             }
         }
         C::LeafLitterBlock => sturdy(below(), Direction::Up, Support::Full),
+        C::PressurePlateBlock | C::WeightedPressurePlateBlock => {
+            let b = below();
+            can_support_rigid(b) || can_support_center(b, Direction::Up)
+        }
         C::MushroomBlock => {
             let b = below();
             tags::is(b, "minecraft:overrides_mushroom_light_requirement")
@@ -143,7 +147,9 @@ pub fn pop_off<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Directi
         C::WallTorchBlock | C::RedstoneWallTorchBlock | C::LadderBlock => {
             breaks(state::get_dir(s, "facing").is_some_and(|f| dir.opposite() == f))
         }
-        C::TorchBlock | C::RedstoneTorchBlock => breaks(dir == Direction::Down),
+        C::TorchBlock | C::RedstoneTorchBlock | C::PressurePlateBlock | C::WeightedPressurePlateBlock => {
+            breaks(dir == Direction::Down)
+        }
         C::CarpetBlock | C::WoolCarpetBlock => breaks(true),
         C::LeverBlock | C::ButtonBlock => breaks(attached_direction(s).opposite() == dir),
         C::RepeaterBlock => dir == Direction::Down && !can_support_rigid(neighbor),

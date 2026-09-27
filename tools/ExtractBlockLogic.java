@@ -85,10 +85,13 @@ public class ExtractBlockLogic {
                 w.printf(Locale.ROOT,
                         "{\"id\":%d,\"sturdy\":[%d,%d,%d],\"signal_source\":%b,\"analog\":%b,\"conductor\":%b,"
                                 + "\"solid\":%b,\"lava_ignites\":%b,\"push\":\"%s\",\"wall_cover\":%d,"
-                                + "\"fluid\":\"%s\",\"source\":%b,\"amount\":%d,\"falling\":%b,\"weak\":[%s],\"strong\":[%s]}%s%n",
+                                + "\"fluid\":\"%s\",\"source\":%b,\"amount\":%d,\"falling\":%b,\"weak\":[%s],\"strong\":[%s],"
+                                + "\"instrument\":\"%s\",\"works_above_note_block\":%b,\"tunable\":%b}%s%n",
                         id, sturdy[0], sturdy[1], sturdy[2], s.isSignalSource(), s.hasAnalogOutputSignal(),
                         s.isRedstoneConductor(getter, pos), s.isSolid(), s.ignitedByLava(), s.getPistonPushReaction(),
-                        cover, fluid, f.isSource(), f.getAmount(), falling, weak, strong, id + 1 < n ? "," : "");
+                        cover, fluid, f.isSource(), f.getAmount(), falling, weak, strong,
+                        s.instrument().getSerializedName(), s.instrument().worksAboveNoteBlock(), s.instrument().isTunable(),
+                        id + 1 < n ? "," : "");
             }
             w.println("]");
         }

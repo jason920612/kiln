@@ -521,6 +521,7 @@ dependencies = [
  "kiln-proto",
  "kiln-storage",
  "kiln-world",
+ "serde_json",
 ]
 
 [[package]]

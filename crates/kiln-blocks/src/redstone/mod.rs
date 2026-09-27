@@ -2,6 +2,7 @@
 //! and the doors they open.
 
 pub mod components;
+pub mod devices;
 pub mod diode;
 pub mod torch;
 pub mod wire;

@@ -425,6 +425,58 @@ def _(b, f, at):
     at(12, lambda b, f: b(0, 0, 2, "minecraft:air"))
 
 
+@scenario("observers", (18, 6, 8))
+def _(b, f, at):
+    b(2, 0, 2, "minecraft:observer[facing=west]")
+    b(3, 0, 2, "minecraft:redstone_lamp")
+    b(6, 0, 2, "minecraft:observer[facing=north]")
+    b(6, 0, 3, "minecraft:redstone_wire")
+    b(6, 0, 4, "minecraft:redstone_wire")
+    b(9, 0, 2, "minecraft:observer[facing=up]")
+    b(9, 0, 3, "minecraft:redstone_lamp")
+    b(12, 0, 2, "minecraft:observer[facing=east]")
+    b(13, 0, 2, "minecraft:observer[facing=west]")
+    b(12, 0, 3, "minecraft:redstone_wire")
+    at(3, lambda b, f: b(1, 0, 2, "minecraft:stone"))
+    at(8, lambda b, f: b(6, 0, 1, "minecraft:oak_planks"))
+    at(12, lambda b, f: b(9, 1, 2, "minecraft:redstone_block"))
+    at(20, lambda b, f: b(1, 0, 2, "minecraft:air"))
+
+
+@scenario("note_blocks", (12, 6, 8))
+def _(b, f, at):
+    b(2, 0, 2, "minecraft:note_block")
+    b(4, -1, 2, "minecraft:gold_block")
+    b(4, 0, 2, "minecraft:note_block")
+    b(6, 0, 2, "minecraft:note_block[note=5]")
+    b(6, 1, 2, "minecraft:zombie_head")
+    b(5, 0, 2, "minecraft:redstone_wire")
+    at(3, lambda b, f: b(3, 0, 2, "minecraft:redstone_block"))
+    at(6, lambda b, f: b(4, -1, 2, "minecraft:clay"))
+    at(8, lambda b, f: b(3, 0, 2, "minecraft:air"))
+    at(10, lambda b, f: b(5, 0, 1, "minecraft:redstone_torch"))
+
+
+@scenario("tnt_in_water", (12, 8, 12))
+def _(b, f, at):
+    f(1, 0, 1, 9, 5, 9, "minecraft:glass", "hollow")
+    f(2, 1, 2, 8, 3, 8, "minecraft:water")
+    b(5, 1, 5, "minecraft:tnt")
+    b(5, 2, 5, "minecraft:tnt")
+    at(3, lambda b, f: b(6, 1, 5, "minecraft:redstone_block"))
+
+
+@scenario("pressure_plates", (12, 6, 8))
+def _(b, f, at):
+    b(2, 0, 2, "minecraft:stone_pressure_plate[powered=true]")
+    b(3, 0, 2, "minecraft:redstone_lamp")
+    b(5, 0, 2, "minecraft:heavy_weighted_pressure_plate[power=7]")
+    b(5, 0, 3, "minecraft:redstone_wire")
+    b(8, 0, 2, "minecraft:oak_pressure_plate")
+    at(4, lambda b, f: b(2, -1, 2, "minecraft:glass"))
+    at(6, lambda b, f: b(8, -1, 2, "minecraft:air"))
+
+
 def build(only):
     """Lays scenarios out on a grid and returns the timeline description."""
     scenarios = []
