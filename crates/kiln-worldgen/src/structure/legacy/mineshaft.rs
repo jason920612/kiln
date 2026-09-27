@@ -156,6 +156,7 @@ impl MsPiece {
 }
 
 /// `MineshaftPieces.createRandomShaftPiece`.
+#[allow(clippy::too_many_arguments)]
 fn create_random(list: &[MsPiece], random: &mut WorldgenRandom, cfg: &Cfg, x: i32, y: i32, z: i32, dir: Dir, depth: i32) -> Option<MsPiece> {
     let boxes = || list.iter().map(|p| &p.base.bbox);
     let roll = random.next_int_bounded(100);
@@ -441,6 +442,7 @@ impl MsPiece {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn air_box(&self, r: &mut Region, cb: &BoundingBox, x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32) {
         self.base.generate_box(r, cb, x0, y0, z0, x1, y1, z1, state::CAVE_AIR, state::CAVE_AIR, false);
     }

@@ -3,6 +3,7 @@
 
 pub mod buried_treasure;
 pub mod mineshaft;
+pub mod monument;
 pub mod scattered;
 
 use super::bbox::BoundingBox;
