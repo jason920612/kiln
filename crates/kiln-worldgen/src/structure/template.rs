@@ -360,10 +360,8 @@ impl Template {
             });
         }
         if min[0] <= max[0] && !settings.known_shape {
-            // Neighbour shape updates of unknown-shape placements (`updateShapeAtEdge`,
-            // `Block.updateFromNeighbourShapes`) are not reproduced; worldgen's template users
-            // place with a known shape.
-            let _ = (&placed, min, max);
+            let positions: Vec<BlockPos> = placed.iter().map(|(p, _)| *p).collect();
+            super::shapes::update_shapes(r, &positions, min, max, flags);
         }
         true
     }

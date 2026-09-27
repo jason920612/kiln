@@ -15,6 +15,7 @@ pub mod longset;
 pub mod piece;
 pub mod placement;
 pub mod processor;
+pub mod shapes;
 pub mod template;
 pub mod transform;
 

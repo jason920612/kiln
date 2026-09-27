@@ -153,6 +153,10 @@ pub enum Processor {
     JigsawReplacement,
     ProtectedBlocks(Arc<BlockSet>),
     Capped { delegate: Box<Processor>, limit: IntProvider },
+    /// `BlockAgeProcessor`, with the block tags it tests.
+    BlockAge { mossiness: f32, stairs: Arc<BlockSet>, slabs: Arc<BlockSet>, walls: Arc<BlockSet> },
+    BlackstoneReplace,
+    LavaSubmergedBlock,
     Nop,
 }
 
@@ -225,7 +229,20 @@ impl Processor {
                 limit: IntProvider::parse(field("limit")?)?,
             },
             "nop" => Processor::Nop,
+            "block_age" => Processor::block_age(field("mossiness")?.as_f32().ok_or_else(|| Error::Invalid("bad mossiness".into()))?, l)?,
+            "blackstone_replace" => Processor::BlackstoneReplace,
+            "lava_submerged_block" => Processor::LavaSubmergedBlock,
             t => return Err(Error::Invalid(format!("unsupported structure processor {t}"))),
+        })
+    }
+
+    /// `new BlockAgeProcessor(mossiness)`.
+    pub fn block_age(mossiness: f32, l: &Loader) -> Result<Processor, Error> {
+        Ok(Processor::BlockAge {
+            mossiness,
+            stairs: l.block_tag("minecraft:stairs")?,
+            slabs: l.block_tag("minecraft:slabs")?,
+            walls: l.block_tag("minecraft:walls")?,
         })
     }
 
@@ -288,6 +305,44 @@ impl Processor {
                 Some(BlockInfo { pos: info.pos, state: s, nbt: None })
             }
             Processor::ProtectedBlocks(set) => (!set.contains(r.get(info.pos))).then_some(info),
+            Processor::BlockAge { mossiness, stairs, slabs, walls } => {
+                let random = settings.random_at(info.pos);
+                let s = info.state;
+                let name = kiln_data::blocks_types::block_of(s).name;
+                let new = if matches!(name, "minecraft:stone_bricks" | "minecraft:stone" | "minecraft:chiseled_stone_bricks") {
+                    age_full_stone(random, *mossiness)
+                } else if stairs.contains(s) {
+                    age_stairs(random, s, *mossiness)
+                } else if slabs.contains(s) {
+                    (random.next_float() < *mossiness).then(|| with_properties_of("minecraft:mossy_stone_brick_slab", s))
+                } else if walls.contains(s) {
+                    (random.next_float() < *mossiness).then(|| with_properties_of("minecraft:mossy_stone_brick_wall", s))
+                } else if name == "minecraft:obsidian" {
+                    (random.next_float() < 0.15).then(|| block("minecraft:crying_obsidian").expect("block").default)
+                } else {
+                    None
+                };
+                Some(match new {
+                    Some(state) => BlockInfo { state, ..info },
+                    None => info,
+                })
+            }
+            Processor::BlackstoneReplace => {
+                let Some(to) = blackstone_replacement(kiln_data::blocks_types::block_of(info.state).name) else { return Some(info) };
+                let mut s = block(to).expect("block").default;
+                for p in ["facing", "half", "type"] {
+                    if let Some(v) = crate::blocks::prop(info.state, p) {
+                        s = crate::blocks::with_prop(s, p, v);
+                    }
+                }
+                Some(BlockInfo { state: s, ..info })
+            }
+            Processor::LavaSubmergedBlock => {
+                if crate::blocks::is_lava(r.get(info.pos)) && !kiln_data::block_props::full_collision(info.state) {
+                    return Some(BlockInfo { state: crate::blocks::state::LAVA, ..info });
+                }
+                Some(info)
+            }
             Processor::Capped { .. } | Processor::Nop => Some(info),
         }
     }
@@ -334,6 +389,72 @@ impl Processor {
         }
         processed
     }
+}
+
+/// `Block.withPropertiesOf`: the named block's default state with every property the two
+/// share copied from `from`.
+fn with_properties_of(name: &str, from: u16) -> u16 {
+    let info = kiln_data::blocks_types::block_of(from);
+    let mut s = block(name).expect("block").default;
+    for (p, i) in info.properties.iter().zip(info.property_indices(from)) {
+        s = crate::blocks::with_prop(s, p.name, p.values[i]);
+    }
+    s
+}
+
+/// `BlockAgeProcessor.getRandomFacingStairs`.
+fn random_facing_stairs(random: &mut WorldgenRandom, name: &str) -> u16 {
+    let facing = crate::block_facts::Dir::HORIZONTAL[random.next_int_bounded(4) as usize];
+    let half = ["top", "bottom"][random.next_int_bounded(2) as usize];
+    let s = crate::blocks::with_prop(block(name).expect("block").default, "facing", facing.name());
+    crate::blocks::with_prop(s, "half", half)
+}
+
+/// `BlockAgeProcessor.getRandomBlock(random, nonMossy, mossy)`.
+fn pick_aged(random: &mut WorldgenRandom, mossiness: f32, non_mossy: [u16; 2], mossy: [u16; 2]) -> u16 {
+    let from = if random.next_float() < mossiness { mossy } else { non_mossy };
+    from[random.next_int_bounded(2) as usize]
+}
+
+/// `BlockAgeProcessor.maybeReplaceFullStoneBlock`.
+fn age_full_stone(random: &mut WorldgenRandom, mossiness: f32) -> Option<u16> {
+    if random.next_float() >= 0.5 {
+        return None;
+    }
+    let non_mossy = [block("minecraft:cracked_stone_bricks").expect("block").default, random_facing_stairs(random, "minecraft:stone_brick_stairs")];
+    let mossy = [block("minecraft:mossy_stone_bricks").expect("block").default, random_facing_stairs(random, "minecraft:mossy_stone_brick_stairs")];
+    Some(pick_aged(random, mossiness, non_mossy, mossy))
+}
+
+/// `BlockAgeProcessor.maybeReplaceStairs`.
+fn age_stairs(random: &mut WorldgenRandom, s: u16, mossiness: f32) -> Option<u16> {
+    if random.next_float() >= 0.5 {
+        return None;
+    }
+    let mossy = [with_properties_of("minecraft:mossy_stone_brick_stairs", s), block("minecraft:mossy_stone_brick_slab").expect("block").default];
+    let non_mossy = [block("minecraft:stone_slab").expect("block").default, block("minecraft:stone_brick_slab").expect("block").default];
+    Some(pick_aged(random, mossiness, non_mossy, mossy))
+}
+
+/// `BlackstoneReplaceProcessor.replacements`.
+fn blackstone_replacement(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "minecraft:cobblestone" | "minecraft:mossy_cobblestone" => "minecraft:blackstone",
+        "minecraft:stone" => "minecraft:polished_blackstone",
+        "minecraft:stone_bricks" | "minecraft:mossy_stone_bricks" => "minecraft:polished_blackstone_bricks",
+        "minecraft:cobblestone_stairs" | "minecraft:mossy_cobblestone_stairs" => "minecraft:blackstone_stairs",
+        "minecraft:stone_stairs" => "minecraft:polished_blackstone_stairs",
+        "minecraft:stone_brick_stairs" | "minecraft:mossy_stone_brick_stairs" => "minecraft:polished_blackstone_brick_stairs",
+        "minecraft:cobblestone_slab" | "minecraft:mossy_cobblestone_slab" => "minecraft:blackstone_slab",
+        "minecraft:smooth_stone_slab" | "minecraft:stone_slab" => "minecraft:polished_blackstone_slab",
+        "minecraft:stone_brick_slab" | "minecraft:mossy_stone_brick_slab" => "minecraft:polished_blackstone_brick_slab",
+        "minecraft:stone_brick_wall" | "minecraft:mossy_stone_brick_wall" => "minecraft:polished_blackstone_brick_wall",
+        "minecraft:cobblestone_wall" | "minecraft:mossy_cobblestone_wall" => "minecraft:blackstone_wall",
+        "minecraft:chiseled_stone_bricks" => "minecraft:chiseled_polished_blackstone",
+        "minecraft:cracked_stone_bricks" => "minecraft:cracked_polished_blackstone_bricks",
+        "minecraft:iron_bars" => "minecraft:iron_chain",
+        _ => return None,
+    })
 }
 
 fn parse_modifier(json: &Json) -> Result<BlockEntityModifier, Error> {
