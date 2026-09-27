@@ -198,8 +198,8 @@ fn a_lever_set_powered_by_command_lights_a_wire_line() {
 
 #[test]
 fn powering_by_command_reaches_the_client() {
-    unsafe { std::env::set_var("KILN_SINK_IDS", "1") };
     let mut w = World::new("creative");
+    w.client.stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
     for c in ["fill 3 -60 12 10 -60 12 redstone_wire", "setblock 11 -60 12 redstone_lamp", "setblock 2 -60 12 lever[face=floor,facing=east]"] {
         w.run(c);
     }

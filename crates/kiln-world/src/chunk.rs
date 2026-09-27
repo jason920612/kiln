@@ -65,6 +65,8 @@ pub struct Chunk {
     /// saved without light gets its sky light from the heightmap and no block light.
     light_trusted: bool,
     cached: Option<(u32, Bytes)>,
+    /// The whole Level Chunk With Light packet for the cached body, once one was sent.
+    cached_packet: Option<(u32, Bytes)>,
     /// Light sections changed since the last Update Light, per layer.
     light_dirty: [u64; 2],
     /// By [`Chunk::block_index`].
@@ -101,6 +103,7 @@ impl Chunk {
             edits: 0,
             light_trusted: true,
             cached: None,
+            cached_packet: None,
             light_dirty: [0, 0],
             block_entities: BTreeMap::new(),
             saved_ticks: None,
@@ -270,6 +273,7 @@ impl Chunk {
         if self.section_of(y).is_some() {
             self.block_entities.insert(self.block_index(x, y, z), be);
             self.cached = None;
+            self.cached_packet = None;
         }
     }
 
@@ -361,6 +365,19 @@ impl Chunk {
         let body = self.encode(biome_count);
         self.cached = Some((self.version, body.clone()));
         body
+    }
+
+    /// The Level Chunk With Light packet for this chunk at `(x, z)`, encoded once per version
+    /// and shared by every player it goes to.
+    pub fn packet(&mut self, x: i32, z: i32, biome_count: usize) -> Bytes {
+        if let Some((v, p)) = &self.cached_packet
+            && *v == self.version
+        {
+            return p.clone();
+        }
+        let p = kiln_proto::packets::level_chunk_with_light(x, z, &self.packet_body(biome_count));
+        self.cached_packet = Some((self.version, p.clone()));
+        p
     }
 
     fn encode(&self, biome_count: usize) -> Bytes {

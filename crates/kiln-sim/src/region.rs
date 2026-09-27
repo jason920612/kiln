@@ -604,7 +604,7 @@ fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &
     let mut asked = 0;
     for c in missing {
         match cells.chunk_mut(c) {
-            Some(chunk) if batch.len() < budget => batch.push((c, chunk.packet_body(env.biome_count))),
+            Some(chunk) if batch.len() < budget => batch.push((c, chunk.packet(c.x, c.z, env.biome_count))),
             Some(_) => {}
             None if asked < 2 * budget => {
                 wanted.push((asked as u32, p.conn, c));
@@ -618,7 +618,7 @@ fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &
     }
     p.send(packets::chunk_batch_start());
     for (c, body) in &batch {
-        p.send(packets::level_chunk_with_light(c.x, c.z, body));
+        p.send(body.clone());
         p.sent_chunks.insert(*c);
     }
     p.send(packets::chunk_batch_finished(batch.len() as i32));

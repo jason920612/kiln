@@ -17,8 +17,10 @@ pub struct SinkStats {
     pub disconnected: AtomicBool,
     /// Latest Player Position (teleport) received: id and position.
     pub teleport: Mutex<Option<(i32, [f64; 3])>>,
-    /// Packets and bytes per packet id, when `KILN_SINK_IDS` is set (costs time per packet).
+    /// Packets and bytes per packet id, when `KILN_SINK_IDS` is set or `count_ids` (costs time
+    /// per packet).
     pub by_id: Mutex<std::collections::BTreeMap<i32, (u64, u64)>>,
+    pub count_ids: AtomicBool,
 }
 
 fn track_ids() -> bool {
@@ -32,7 +34,7 @@ impl SinkStats {
         self.bytes.fetch_add(p.len() as u64, Relaxed);
         let mut r = Reader::new(p);
         let id = r.varint().ok();
-        if track_ids() && let Some(id) = id {
+        if (track_ids() || self.count_ids.load(Relaxed)) && let Some(id) = id {
             let mut m = self.by_id.lock().unwrap();
             let e = m.entry(id).or_default();
             e.0 += 1;
