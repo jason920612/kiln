@@ -369,7 +369,14 @@ impl Observer for Compare<'_> {
             }
             for (p, s) in &mine {
                 if !t.contains_key(p) {
-                    diffs.push(format!("{},{},{} vanilla - kiln {}", p.x, p.y, p.z, state_name(*s)));
+                    diffs.push(format!(
+                        "{},{},{} vanilla - kiln {} (was {})",
+                        p.x,
+                        p.y,
+                        p.z,
+                        state_name(*s),
+                        first_old.get(p).map_or("?".into(), |o| state_name(*o))
+                    ));
                 }
             }
             diffs.sort();

@@ -450,9 +450,11 @@ fn is_liquid_container(s: u16) -> bool {
     has_prop(s, "waterlogged") || matches!(block_class(s), "KelpBlock" | "KelpPlantBlock" | "SeagrassBlock" | "TallSeagrassBlock")
 }
 
-/// `LiquidBlockContainer.placeLiquid`: waterloggable blocks take still water.
+/// `LiquidBlockContainer.placeLiquid`: waterloggable blocks take still water (double slabs
+/// do not).
 fn place_liquid(r: &mut Region, at: BlockPos, s: u16, kind: FluidKind) -> bool {
-    if prop(s, "waterlogged") == Some("false") && kind == FluidKind::Water {
+    let double_slab = is_instance(s, "SlabBlock") && prop(s, "type") == Some("double");
+    if prop(s, "waterlogged") == Some("false") && kind == FluidKind::Water && !double_slab {
         r.set(at, with_prop(s, "waterlogged", "true"), 3);
         r.schedule_fluid_tick(at, "minecraft:water", 5);
         return true;
