@@ -86,9 +86,13 @@ pub fn get_bool(state: u16, name: &str) -> bool {
     get(state, name) == Some("true")
 }
 
-/// An integer property; 0 when the block does not have it.
+/// An integer property; 0 when the block does not have it. Integer properties list
+/// consecutive values from their minimum.
 pub fn get_int(state: u16, name: &str) -> i32 {
-    get(state, name).and_then(|v| v.parse().ok()).unwrap_or(0)
+    let Some((b, i, stride)) = locate(state, name) else { return 0 };
+    let p = &b.properties[i];
+    let min: i32 = p.values[0].parse().unwrap_or(0);
+    min + (((state - b.first) / stride) as usize % p.values.len()) as i32
 }
 
 pub fn get_dir(state: u16, name: &str) -> Option<Direction> {
@@ -112,7 +116,11 @@ pub fn set_bool(state: u16, name: &str, value: bool) -> u16 {
 pub fn set_int(state: u16, name: &str, value: i32) -> u16 {
     let Some((b, i, stride)) = locate(state, name) else { return state };
     let p = &b.properties[i];
-    let Some(vi) = p.values.iter().position(|v| v.parse::<i32>().ok() == Some(value)) else { return state };
+    let Ok(min) = p.values[0].parse::<i32>() else { return state };
+    let vi = value - min;
+    if vi < 0 || vi as usize >= p.values.len() {
+        return state;
+    }
     let cur = ((state - b.first) / stride) as usize % p.values.len();
     state - cur as u16 * stride + vi as u16 * stride
 }

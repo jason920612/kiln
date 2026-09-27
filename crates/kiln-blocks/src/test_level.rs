@@ -10,9 +10,30 @@ use kiln_data::blocks::default_state as d;
 use kiln_data::blocks_types::is_air;
 use kiln_javamath::random::LegacyRandom;
 use std::collections::{HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// A multiplicative hasher for section coordinates (the default SipHash dominates block reads).
+#[derive(Default)]
+struct SectionHasher(u64);
+
+impl Hasher for SectionHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(5) ^ b as u64).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+        }
+    }
+
+    fn write_i32(&mut self, v: i32) {
+        self.0 = (self.0.rotate_left(5) ^ v as u32 as u64).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+}
 
 pub struct TestLevel {
-    sections: HashMap<(i32, i32, i32), Box<[u16; 4096]>>,
+    sections: HashMap<(i32, i32, i32), Box<[u16; 4096]>, BuildHasherDefault<SectionHasher>>,
     /// Block of each layer from `min_y` up; above it, air.
     layers: Vec<u16>,
     pub min_y: i32,
@@ -31,13 +52,15 @@ pub struct TestLevel {
     pub trace: Option<Vec<UpdateTrace>>,
     /// Comparator block entities' output signals.
     pub comparator_outputs: HashMap<BlockPos, i32>,
+    /// Block reads so far (for profiling).
+    pub reads: std::cell::Cell<u64>,
 }
 
 impl TestLevel {
     /// A world of `layers` stacked from `min_y` (a superflat preset), air above.
     pub fn flat(min_y: i32, height: i32, layers: &[u16]) -> Self {
         Self {
-            sections: HashMap::new(),
+            sections: HashMap::default(),
             layers: layers.to_vec(),
             min_y,
             height,
@@ -52,6 +75,7 @@ impl TestLevel {
             effects: Vec::new(),
             trace: None,
             comparator_outputs: HashMap::new(),
+            reads: std::cell::Cell::new(0),
         }
     }
 
@@ -120,6 +144,7 @@ impl Level for TestLevel {
     type Random = LegacyRandom;
 
     fn block(&self, pos: BlockPos) -> u16 {
+        self.reads.set(self.reads.get() + 1);
         if pos.y < self.min_y || pos.y >= self.min_y + self.height {
             return d::VOID_AIR;
         }

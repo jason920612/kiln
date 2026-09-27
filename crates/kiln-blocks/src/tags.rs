@@ -1,42 +1,38 @@
-//! Block and fluid tags from the generated registry data (`BlockState.is(TagKey)`).
+//! Block tags from the generated registry data (`BlockState.is(TagKey)`).
 
 use kiln_data::block_logic as logic;
 use kiln_data::blocks::BLOCKS;
 use std::collections::HashMap;
-use std::sync::{OnceLock, RwLock};
+use std::sync::OnceLock;
 
-/// Membership of a block tag, indexed by block index.
-struct Tag(Vec<bool>);
-
-fn load(name: &str) -> Tag {
-    let mut members = vec![false; BLOCKS.len()];
-    let ids = kiln_data::registries::TAGS
-        .iter()
-        .find(|(r, _)| *r == "minecraft:block")
-        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == name))
-        .map_or(&[][..], |(_, ids)| *ids);
-    let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
-    for &id in ids {
-        if let Some(b) = names.get(id as usize).and_then(|n| crate::state::BlockId::by_name(n)) {
-            members[b.0 as usize] = true;
-        }
-    }
-    Tag(members)
+/// Membership of every block tag, indexed by block index; built once.
+fn tags() -> &'static HashMap<&'static str, Box<[bool]>> {
+    static TAGS: OnceLock<HashMap<&'static str, Box<[bool]>>> = OnceLock::new();
+    TAGS.get_or_init(|| {
+        let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
+        let index: Vec<Option<u16>> = names.iter().map(|n| crate::state::BlockId::by_name(n).map(|b| b.0)).collect();
+        kiln_data::registries::TAGS
+            .iter()
+            .find(|(r, _)| *r == "minecraft:block")
+            .map_or(&[][..], |(_, t)| *t)
+            .iter()
+            .map(|&(name, ids)| {
+                let mut members = vec![false; BLOCKS.len()].into_boxed_slice();
+                for &id in ids {
+                    if let Some(Some(b)) = index.get(id as usize) {
+                        members[*b as usize] = true;
+                    }
+                }
+                (name, members)
+            })
+            .collect()
+    })
 }
 
-fn tag(name: &'static str) -> &'static Tag {
-    static TAGS: OnceLock<RwLock<HashMap<&'static str, &'static Tag>>> = OnceLock::new();
-    let map = TAGS.get_or_init(Default::default);
-    if let Some(t) = map.read().unwrap().get(name) {
-        return t;
-    }
-    let t: &'static Tag = Box::leak(Box::new(load(name)));
-    map.write().unwrap().entry(name).or_insert(t)
-}
-
-/// Whether `state`'s block is in the block tag `name` (e.g. `minecraft:fences`).
-pub fn is(state: u16, name: &'static str) -> bool {
-    tag(name).0[logic::block_index(state)]
+/// Whether `state`'s block is in the block tag `name` (e.g. `minecraft:fences`); false for
+/// unknown tags.
+pub fn is(state: u16, name: &str) -> bool {
+    tags().get(name).is_some_and(|t| t[logic::block_index(state)])
 }
 
 pub fn washed_away_by_fluids(state: u16) -> bool {
@@ -45,10 +41,6 @@ pub fn washed_away_by_fluids(state: u16) -> bool {
 
 pub fn enables_bubble_column(state: u16) -> bool {
     is(state, "minecraft:enables_bubble_column_drag_down") || is(state, "minecraft:enables_bubble_column_push_up")
-}
-
-pub fn blocks_lava_fire_spread(state: u16) -> bool {
-    is(state, "minecraft:blocks_lava_fire_spread")
 }
 
 #[cfg(test)]
@@ -61,5 +53,6 @@ mod tests {
         assert!(super::is(d::NETHER_BRICK_FENCE, "minecraft:fences") && !super::is(d::NETHER_BRICK_FENCE, "minecraft:wooden_fences"));
         assert!(super::washed_away_by_fluids(d::AIR) && super::washed_away_by_fluids(d::TORCH));
         assert!(!super::washed_away_by_fluids(d::STONE));
+        assert!(!super::is(d::STONE, "minecraft:no_such_tag"));
     }
 }
