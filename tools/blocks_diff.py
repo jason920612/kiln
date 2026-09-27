@@ -477,6 +477,40 @@ def _(b, f, at):
     at(6, lambda b, f: b(8, -1, 2, "minecraft:air"))
 
 
+@scenario("rails", (16, 6, 16))
+def _(b, f, at):
+    f(1, 0, 1, 6, 0, 1, "minecraft:rail")
+    f(1, 0, 2, 1, 0, 5, "minecraft:rail")
+    b(3, 0, 3, "minecraft:rail")
+    b(4, 0, 3, "minecraft:rail")
+    b(3, 0, 4, "minecraft:rail")
+    b(8, 0, 2, "minecraft:stone")
+    b(8, 1, 2, "minecraft:rail")
+    b(7, 0, 2, "minecraft:rail")
+    b(6, 0, 2, "minecraft:rail")
+    b(10, 0, 5, "minecraft:rail")
+    b(10, 0, 6, "minecraft:rail")
+    b(11, 0, 5, "minecraft:rail")
+    b(9, 0, 5, "minecraft:rail")
+    at(3, lambda b, f: b(8, 0, 2, "minecraft:air"))
+    at(5, lambda b, f: b(1, -1, 3, "minecraft:air"))
+    at(7, lambda b, f: b(10, 0, 4, "minecraft:redstone_block"))
+
+
+@scenario("powered_rails", (20, 6, 8))
+def _(b, f, at):
+    f(1, 0, 2, 12, 0, 2, "minecraft:powered_rail")
+    f(1, 0, 4, 6, 0, 4, "minecraft:activator_rail")
+    b(14, 0, 2, "minecraft:stone")
+    b(14, 1, 2, "minecraft:powered_rail")
+    b(13, 0, 2, "minecraft:powered_rail")
+    b(1, 0, 5, "minecraft:detector_rail")
+    at(2, lambda b, f: b(0, 0, 2, "minecraft:redstone_block"))
+    at(4, lambda b, f: b(0, 0, 4, "minecraft:redstone_torch"))
+    at(10, lambda b, f: b(0, 0, 2, "minecraft:air"))
+    at(12, lambda b, f: b(15, 1, 2, "minecraft:redstone_block"))
+
+
 def build(only):
     """Lays scenarios out on a grid and returns the timeline description."""
     scenarios = []

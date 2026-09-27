@@ -23,7 +23,7 @@ pub mod ticks;
 pub mod update;
 
 pub use fluid::FluidType;
-pub use level::{Effect, Level, LevelData, Rules, flags, schedule_block_tick, schedule_fluid_tick};
+pub use level::{Effect, EntityKind, Level, LevelData, Rules, flags, schedule_block_tick, schedule_fluid_tick};
 pub use pos::{Axis, BlockPos, Direction};
 pub use state::BlockId;
 pub use test_level::TestLevel;

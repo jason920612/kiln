@@ -116,6 +116,7 @@ const PARAMS: &[(&str, &str, Kind)] = &[
     ("plate_mobs_only", "BasePressurePlateBlock.type.pressurePlateSensitivity", Kind::Mobs),
     ("max_weight", "WeightedPressurePlateBlock.maxWeight", Kind::Int),
     ("base_state", "StairBlock.baseState", Kind::Int),
+    ("straight_rail", "BaseRailBlock.isStraight", Kind::Bool),
     ("support_tag", "AttachedStemBlock.supportBlocks", Kind::Str),
     ("support_tag", "StemBlock.stemSupportBlocks", Kind::Str),
     ("support_tag", "NetherFungusBlock.supportBlocks", Kind::Str),

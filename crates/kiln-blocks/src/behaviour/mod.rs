@@ -6,6 +6,7 @@
 
 pub mod connect;
 pub mod misc;
+pub mod rail;
 pub mod support;
 
 use crate::fluid;
@@ -26,7 +27,7 @@ pub(crate) fn params_tag(s: u16) -> Option<&'static str> {
 }
 
 /// `neighborChanged`.
-pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: BlockId, _moved_by_piston: bool) {
+pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: BlockId, moved_by_piston: bool) {
     use BlockClass as C;
     match logic::block_class(s) {
         C::LiquidBlock => fluid::liquid_block_changed(level, s, pos),
@@ -39,6 +40,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::TrapDoorBlock) => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::DoorBlock) => components::door_neighbor_changed(level, s, pos, source),
+        _ if logic::is_instance(s, C::BaseRailBlock) => rail::neighbor_changed(level, s, pos, source, moved_by_piston),
         _ => {}
     }
 }
@@ -98,7 +100,7 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
 }
 
 /// `onPlace`: after `s` replaced `old` at `pos`.
-pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, _moved_by_piston: bool) {
+pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_by_piston: bool) {
     use BlockClass as C;
     match logic::block_class(s) {
         C::LiquidBlock => fluid::liquid_block_changed(level, s, pos),
@@ -108,6 +110,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, _moved
         C::ObserverBlock => devices::observer_on_place(level, s, pos, old),
         C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_schedule(level, s, pos),
+        _ if logic::is_instance(s, C::BaseRailBlock) => rail::on_place(level, s, pos, old, moved_by_piston),
         _ => {}
     }
 }
@@ -122,6 +125,7 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
         C::LeverBlock | C::ButtonBlock => components::attached_removed(level, s, pos, moved_by_piston),
         C::ObserverBlock => devices::observer_removed(level, s, pos),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_removed(level, s, pos, moved_by_piston),
+        _ if logic::is_instance(s, C::BaseRailBlock) => rail::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         _ => {}
     }
 }
@@ -135,6 +139,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::ButtonBlock => components::button_tick(level, s, pos),
         C::RedstoneLampBlock => components::lamp_tick(level, s, pos),
         C::ObserverBlock => devices::observer_tick(level, s, pos),
+        C::DetectorRailBlock => rail::detector_tick(level, s, pos),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_tick(level, s, pos),
         _ if logic::is_instance(s, C::LeavesBlock) => misc::leaves_tick(level, s, pos),
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_tick(level, s, pos),

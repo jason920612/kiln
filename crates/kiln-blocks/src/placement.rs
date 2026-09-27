@@ -246,6 +246,9 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
         C::ObserverBlock => state::set_dir(d, "facing", c.nearest()[0]),
         C::RedstoneLampBlock => state::set_bool(d, "lit", has_neighbor_signal(level, pos)),
         C::NoteBlock => crate::redstone::devices::note_instrument(level, pos, d),
+        C::RailBlock | C::PoweredRailBlock | C::DetectorRailBlock => {
+            crate::behaviour::rail::placement(d, c.horizontal(), c.in_water_source())
+        }
         C::BedBlock | C::StrawBedBlock => {
             let facing = c.horizontal();
             if !block_props::replaceable(level.block(pos.relative(facing))) {

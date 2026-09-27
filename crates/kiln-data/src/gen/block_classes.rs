@@ -345,6 +345,7 @@ pub struct BlockParams {
     pub plate_mobs_only: bool,
     pub max_weight: i32,
     pub base_state: i32,
+    pub straight_rail: bool,
     pub support_tag: Option<&'static str>,
 }
 
@@ -487,8 +488,8 @@ pub static BLOCK_CLASSES: &[BlockClassInfo] = &[
     BlockClassInfo { classes: &[C::BedBlock, C::AbstractBedBlock, C::HorizontalDirectionalBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:red_bed
     BlockClassInfo { classes: &[C::BedBlock, C::AbstractBedBlock, C::HorizontalDirectionalBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:black_bed
     BlockClassInfo { classes: &[C::StrawBedBlock, C::AbstractBedBlock, C::HorizontalDirectionalBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:straw_bed
-    BlockClassInfo { classes: &[C::PoweredRailBlock, C::BaseRailBlock, C::Block], interfaces: 0x10204, params: BlockParams { ..DEFAULT } }, // minecraft:powered_rail
-    BlockClassInfo { classes: &[C::DetectorRailBlock, C::BaseRailBlock, C::Block], interfaces: 0x10204, params: BlockParams { ..DEFAULT } }, // minecraft:detector_rail
+    BlockClassInfo { classes: &[C::PoweredRailBlock, C::BaseRailBlock, C::Block], interfaces: 0x10204, params: BlockParams { straight_rail: true, ..DEFAULT } }, // minecraft:powered_rail
+    BlockClassInfo { classes: &[C::DetectorRailBlock, C::BaseRailBlock, C::Block], interfaces: 0x10204, params: BlockParams { straight_rail: true, ..DEFAULT } }, // minecraft:detector_rail
     BlockClassInfo { classes: &[C::PistonBaseBlock, C::DirectionalBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:sticky_piston
     BlockClassInfo { classes: &[C::WebBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:cobweb
     BlockClassInfo { classes: &[C::TallGrassBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:short_grass
@@ -618,7 +619,7 @@ pub static BLOCK_CLASSES: &[BlockClassInfo] = &[
     BlockClassInfo { classes: &[C::StandingSignBlock, C::SignBlock, C::BaseEntityBlock, C::Block], interfaces: 0x10624, params: BlockParams { ..DEFAULT } }, // minecraft:bamboo_sign
     BlockClassInfo { classes: &[C::DoorBlock, C::Block], interfaces: 0x0, params: BlockParams { open_by_hand: true, ..DEFAULT } }, // minecraft:oak_door
     BlockClassInfo { classes: &[C::LadderBlock, C::Block], interfaces: 0x10204, params: BlockParams { ..DEFAULT } }, // minecraft:ladder
-    BlockClassInfo { classes: &[C::RailBlock, C::BaseRailBlock, C::Block], interfaces: 0x10204, params: BlockParams { ..DEFAULT } }, // minecraft:rail
+    BlockClassInfo { classes: &[C::RailBlock, C::BaseRailBlock, C::Block], interfaces: 0x10204, params: BlockParams { straight_rail: false, ..DEFAULT } }, // minecraft:rail
     BlockClassInfo { classes: &[C::StairBlock, C::Block], interfaces: 0x10204, params: BlockParams { base_state: 14, ..DEFAULT } }, // minecraft:cobblestone_stairs
     BlockClassInfo { classes: &[C::WallSignBlock, C::SignBlock, C::BaseEntityBlock, C::Block], interfaces: 0x10624, params: BlockParams { ..DEFAULT } }, // minecraft:oak_wall_sign
     BlockClassInfo { classes: &[C::WallSignBlock, C::SignBlock, C::BaseEntityBlock, C::Block], interfaces: 0x10624, params: BlockParams { ..DEFAULT } }, // minecraft:spruce_wall_sign
@@ -886,7 +887,7 @@ pub static BLOCK_CLASSES: &[BlockClassInfo] = &[
     BlockClassInfo { classes: &[C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:chiseled_quartz_block
     BlockClassInfo { classes: &[C::RotatedPillarBlock, C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:quartz_pillar
     BlockClassInfo { classes: &[C::StairBlock, C::Block], interfaces: 0x10204, params: BlockParams { base_state: 13090, ..DEFAULT } }, // minecraft:quartz_stairs
-    BlockClassInfo { classes: &[C::PoweredRailBlock, C::BaseRailBlock, C::Block], interfaces: 0x10204, params: BlockParams { ..DEFAULT } }, // minecraft:activator_rail
+    BlockClassInfo { classes: &[C::PoweredRailBlock, C::BaseRailBlock, C::Block], interfaces: 0x10204, params: BlockParams { straight_rail: true, ..DEFAULT } }, // minecraft:activator_rail
     BlockClassInfo { classes: &[C::DropperBlock, C::DispenserBlock, C::BaseEntityBlock, C::Block], interfaces: 0x20, params: BlockParams { ..DEFAULT } }, // minecraft:dropper
     BlockClassInfo { classes: &[C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:white_terracotta
     BlockClassInfo { classes: &[C::Block], interfaces: 0x0, params: BlockParams { ..DEFAULT } }, // minecraft:orange_terracotta
@@ -1639,4 +1640,4 @@ pub static BLOCK_CLASSES: &[BlockClassInfo] = &[
     BlockClassInfo { classes: &[C::FireflyBushBlock, C::VegetationBlock, C::Block], interfaces: 0x2, params: BlockParams { ..DEFAULT } }, // minecraft:firefly_bush
 ];
 
-const DEFAULT: BlockParams = BlockParams { ticks_to_stay_pressed: 0, arrows_press: false, open_by_hand: false, plate_mobs_only: false, max_weight: 0, base_state: 0, support_tag: None, };
+const DEFAULT: BlockParams = BlockParams { ticks_to_stay_pressed: 0, arrows_press: false, open_by_hand: false, plate_mobs_only: false, max_weight: 0, base_state: 0, straight_rail: false, support_tag: None, };

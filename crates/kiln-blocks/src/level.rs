@@ -123,14 +123,22 @@ pub trait Level {
 
     fn effect(&mut self, effect: Effect);
 
-    /// Entities (not spectators, not ignoring block triggers) intersecting the box, counting
-    /// only living ones if `living_only` (`BasePressurePlateBlock.getEntityCount`).
-    fn count_entities(&self, _min: [f64; 3], _max: [f64; 3], _living_only: bool) -> usize {
+    /// Entities of the kind intersecting the box (pressure plates: not spectators, not
+    /// ignoring block triggers; detector rails: minecarts).
+    fn count_entities(&self, _min: [f64; 3], _max: [f64; 3], _kind: EntityKind) -> usize {
         0
     }
 
     /// Called before each queued update runs (vanilla's neighbour-update debug listener).
     fn trace_update(&mut self, _update: UpdateTrace) {}
+}
+
+/// Which entities a block counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntityKind {
+    Any,
+    Living,
+    Minecart,
 }
 
 /// An update about to run: `neighborChanged` or `updateShape` of the block at `pos`.

@@ -3,7 +3,7 @@
 
 use super::has_neighbor_signal;
 use crate::behaviour::support::attached_direction;
-use crate::level::{Effect, Level, flags, schedule_block_tick};
+use crate::level::{Effect, EntityKind, Level, flags, schedule_block_tick};
 use crate::pos::{BlockPos, Direction};
 use crate::state::{self, BlockId};
 use crate::ticks::TickPriority;
@@ -88,9 +88,9 @@ fn plate_strength<L: Level + ?Sized>(level: &L, pos: BlockPos, s: u16) -> i32 {
     let (min, max) = ([x + 0.0625, y, z + 0.0625], [x + 0.9375, y + 0.25, z + 0.9375]);
     let p = logic::params(s);
     if is_weighted(s) {
-        let n = (level.count_entities(min, max, false) as i32).min(p.max_weight);
+        let n = (level.count_entities(min, max, EntityKind::Any) as i32).min(p.max_weight);
         if n > 0 { ((n.min(p.max_weight) as f32 / p.max_weight as f32) * 15.0).ceil() as i32 } else { 0 }
-    } else if level.count_entities(min, max, p.plate_mobs_only) > 0 {
+    } else if level.count_entities(min, max, if p.plate_mobs_only { EntityKind::Living } else { EntityKind::Any }) > 0 {
         15
     } else {
         0

@@ -93,7 +93,9 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
         }
         C::CarpetBlock | C::WoolCarpetBlock => !is_air(below()),
         C::RedstoneWireBlock => wire_can_survive_on(below()),
-        C::RepeaterBlock | C::ComparatorBlock => can_support_rigid(below()),
+        C::RepeaterBlock | C::ComparatorBlock | C::RailBlock | C::PoweredRailBlock | C::DetectorRailBlock => {
+            can_support_rigid(below())
+        }
         C::LeverBlock | C::ButtonBlock => {
             let dir = attached_direction(s).opposite();
             sturdy(level.block(pos.relative(dir)), dir.opposite(), Support::Full)
