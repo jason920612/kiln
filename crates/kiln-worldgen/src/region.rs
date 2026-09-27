@@ -222,17 +222,18 @@ impl<'a> Region<'a> {
         }
     }
 
-    /// `LevelAccessor.scheduleTick(pos, block, delay)`.
-    pub fn schedule_block_tick(&mut self, p: BlockPos, block: &'static str, delay: i32) {
+    /// `LevelAccessor.scheduleTick(pos, block, delay)`. A proto-chunk keeps one tick per
+    /// position and type and drops the delay (`ProtoChunkTicks.schedule` saves 0).
+    pub fn schedule_block_tick(&mut self, p: BlockPos, block: &'static str, _delay: i32) {
         if let Some(i) = self.slot(p.x >> 4, p.z >> 4) {
-            self.chunks[i].block_ticks.push(GenTick { x: p.x, y: p.y, z: p.z, kind: block, delay, priority: 0 });
+            schedule(&mut self.chunks[i].block_ticks, p, block);
         }
     }
 
-    /// `LevelAccessor.scheduleTick(pos, fluid, delay)`.
-    pub fn schedule_fluid_tick(&mut self, p: BlockPos, fluid: &'static str, delay: i32) {
+    /// `LevelAccessor.scheduleTick(pos, fluid, delay)`, like [`Self::schedule_block_tick`].
+    pub fn schedule_fluid_tick(&mut self, p: BlockPos, fluid: &'static str, _delay: i32) {
         if let Some(i) = self.slot(p.x >> 4, p.z >> 4) {
-            self.chunks[i].fluid_ticks.push(GenTick { x: p.x, y: p.y, z: p.z, kind: fluid, delay, priority: 0 });
+            schedule(&mut self.chunks[i].fluid_ticks, p, fluid);
         }
     }
 
@@ -252,5 +253,12 @@ impl<'a> Region<'a> {
         let (x, z) = (self.cx << 4, self.cz << 4);
         let factory = self.generator.region_random;
         self.level_random.get_or_insert_with(|| factory.at(x, 0, z))
+    }
+}
+
+/// `ProtoChunkTicks.schedule`: appends unless the position already has a tick of that type.
+fn schedule(ticks: &mut Vec<GenTick>, p: BlockPos, kind: &'static str) {
+    if !ticks.iter().any(|t| t.x == p.x && t.y == p.y && t.z == p.z && t.kind == kind) {
+        ticks.push(GenTick { x: p.x, y: p.y, z: p.z, kind, delay: 0, priority: 0 });
     }
 }

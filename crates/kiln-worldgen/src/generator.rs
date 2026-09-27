@@ -3,7 +3,7 @@
 
 use crate::Error;
 use crate::aquifer::{Aquifer, AquiferFunctions, FluidPicker, NoiseAquifer};
-use crate::biome::{BiomeInfo, LastResult, ParameterList, target};
+use crate::biome::{BiomeInfo, LastResult, Parameter, ParameterList, target};
 use crate::blocks::{has_fluid, is_block, state};
 use crate::carver::{Carver, CarvingMask, GenContext};
 pub use crate::proto::ProtoChunk;
@@ -54,6 +54,11 @@ impl GenScratch {
     /// The biome a chunk stores for a quart (computed if the chunk is not cached).
     pub fn noise_biome(&mut self, generator: &Generator, qx: i32, qy: i32, qz: i32) -> u16 {
         stored_biome(self.biomes.get(generator, qx >> 2, qz >> 2), generator.min_y, qx, qy, qz)
+    }
+
+    /// The point-sampling context (no caches).
+    pub fn point_context(&mut self) -> &mut Scratch {
+        &mut self.point_context
     }
 
     /// The stored biomes of a chunk (BIOMES status), from the per-thread cache.
@@ -179,6 +184,8 @@ pub struct Generator {
     uniform_carvers: Option<Vec<usize>>,
     /// States of `#minecraft:uncarvable` blocks.
     uncarvable: HashSet<u16>,
+    /// `spawn_target` points: (density function, climate parameter) pairs.
+    pub(crate) spawn_target: Vec<Vec<(SamplerRef, Parameter)>>,
 }
 
 impl Generator {
@@ -212,6 +219,7 @@ impl Generator {
         roots.push(router("chunk_surface_level"));
         roots.extend(s.aquifers.iter().map(|(_, id)| *id));
         roots.extend(&rule_densities);
+        roots.extend(s.spawn_target.iter().flatten().map(|(id, _)| *id));
         let mut compiled = state.compile(&pack.graph, &roots)?.into_iter();
         let climate: Vec<SamplerRef> = compiled.by_ref().take(CLIMATE.len()).collect();
         let final_density = compiled.next().expect("final density");
@@ -230,7 +238,12 @@ impl Generator {
                 random: state.factory().from_hash_of("minecraft:aquifer").fork_positional(),
             })
         };
-        let densities: HashMap<_, _> = rule_densities.iter().copied().zip(compiled).collect();
+        let densities: HashMap<_, _> = rule_densities.iter().copied().zip(compiled.by_ref()).collect();
+        let spawn_target = s
+            .spawn_target
+            .iter()
+            .map(|point| point.iter().map(|(_, p)| (compiled.next().expect("spawn target function"), *p)).collect())
+            .collect();
         let region_random = state.factory().from_hash_of("minecraft:worldgen_region_random").fork_positional();
         let default_block = s.default_block.resolve()?;
         let default_fluid = s.default_fluid.resolve()?;
@@ -300,6 +313,7 @@ impl Generator {
             biome_carvers,
             uniform_carvers,
             uncarvable,
+            spawn_target,
             final_density,
             default_block,
             fluid_picker: FluidPicker::new(s.sea_level, default_fluid),
@@ -494,6 +508,9 @@ impl Generator {
                 }
                 let Some(new) = aquifer.compute_substance(s, bx, y, bz, 0.0) else { continue };
                 chunk.set(lx, y, lz, new);
+                if aquifer.should_schedule_fluid_update() && has_fluid(new) {
+                    chunk.mark_post_processing(bx, y, bz);
+                }
                 if exposed_grass && chunk.get(lx, y - 1, lz) == state::DIRT {
                     let top = self.material.top_material(
                         s,
@@ -530,6 +547,9 @@ impl Generator {
                     let block = aquifer.compute_substance(s, bx, by, bz, d as f64).unwrap_or(self.default_block);
                     if block != state::AIR {
                         chunk.set(xi as usize, by, zi as usize, block);
+                        if aquifer.should_schedule_fluid_update() && has_fluid(block) {
+                            chunk.mark_post_processing(bx, by, bz);
+                        }
                     }
                 }
             }

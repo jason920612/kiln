@@ -20,7 +20,7 @@
 use kiln_worldgen::decorate::{Decorator, Invocation as Inv, Observer};
 use kiln_worldgen::generator::{GenScratch, Generator};
 use kiln_worldgen::pos::BlockPos;
-use kiln_worldgen::proto::{ProtoChunk, Status};
+use kiln_worldgen::proto::{GenTick, ProtoChunk, Status};
 use kiln_worldgen::region::Region;
 use kiln_worldgen::sets::Loader;
 use kiln_worldgen::structure::{ChunkStarts, StartCache, StructureScratch, Structures};
@@ -101,6 +101,26 @@ struct RegionDump {
     terrain: HashMap<(i32, i32), Vec<u16>>,
     decorations: Vec<Decoration>,
     finals: Vec<(i32, i32, Vec<u16>)>,
+    /// Vanilla's post-processing positions and scheduled ticks of the targets (version 2).
+    pending: Vec<Option<Pending>>,
+}
+
+type Tick = (String, i32, i32, i32, i32, i32);
+
+/// A chunk's post-processing lists per section and scheduled (block, fluid) ticks.
+#[derive(PartialEq, Debug)]
+struct Pending {
+    terrain_post: Vec<Vec<u16>>,
+    post: Vec<Vec<u16>>,
+    block_ticks: Vec<Tick>,
+    fluid_ticks: Vec<Tick>,
+}
+
+impl Pending {
+    fn of(c: &ProtoChunk) -> Self {
+        let ticks = |t: &[GenTick]| t.iter().map(|t| (t.kind.to_string(), t.x, t.y, t.z, t.delay, t.priority)).collect();
+        Pending { terrain_post: Vec::new(), post: c.post_processing.clone(), block_ticks: ticks(&c.block_ticks), fluid_ticks: ticks(&c.fluid_ticks) }
+    }
 }
 
 struct Dump {
@@ -114,11 +134,12 @@ fn read_dump(path: &Path) -> Dump {
     let bytes = fs::read(path).unwrap();
     let mut r = Reader { b: &bytes, i: 0 };
     assert_eq!(r.take(4), b"KWGF", "bad magic");
-    assert_eq!(r.i32(), 1, "unsupported dump version");
+    let version = r.i32();
+    assert!(version == 1 || version == 2, "unsupported dump version {version}");
     let seed = r.i64();
     let structures = r.i32() != 0;
     assert_eq!(r.i32() as u32, kiln_data::blocks::STATE_COUNT, "block state count differs from kiln-data");
-    let (_min_y, _height) = (r.i32(), r.i32());
+    let (_min_y, height) = (r.i32(), r.i32());
     let steps = (0..r.i32()).map(|_| (0..r.i32()).map(|_| r.str()).collect()).collect();
     let limit = std::env::var("KILN_FEATURE_REGIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(usize::MAX);
     let count = r.i32() as usize;
@@ -177,14 +198,22 @@ fn read_dump(path: &Path) -> Dump {
                 .collect();
             decorations.push(Decoration { x, z, invocations });
         }
-        let finals = targets
-            .iter()
-            .map(|_| {
-                let (x, z) = (r.i32(), r.i32());
-                (x, z, r.blocks())
-            })
-            .collect();
-        regions.push(RegionDump { targets, starts, terrain, decorations, finals });
+        let mut finals = Vec::new();
+        let mut pending = Vec::new();
+        for _ in &targets {
+            let (x, z) = (r.i32(), r.i32());
+            finals.push((x, z, r.blocks()));
+            pending.push((version >= 2).then(|| {
+                let mut post = || -> Vec<Vec<u16>> { (0..height / 16).map(|_| (0..r.i32()).map(|_| r.u16()).collect()).collect() };
+                let terrain_post = post();
+                let post = post();
+                let mut ticks = || -> Vec<Tick> { (0..r.i32()).map(|_| (r.str(), r.i32(), r.i32(), r.i32(), r.i32(), r.i32())).collect() };
+                let block_ticks = ticks();
+                let fluid_ticks = ticks();
+                Pending { terrain_post, post, block_ticks, fluid_ticks }
+            }));
+        }
+        regions.push(RegionDump { targets, starts, terrain, decorations, finals, pending });
     }
     Dump { seed, structures, steps, regions }
 }
@@ -472,6 +501,8 @@ fn features_match_vanilla() {
         let mut final_bad = 0u64;
         let mut final_chunks_bad = 0;
         let (mut terrain_bad, mut terrain_chunks_bad) = (0u64, 0usize);
+        let (mut pending_checked, mut post_bad, mut ticks_bad, mut post_vanilla, mut ticks_vanilla) = (0, 0, 0, 0, 0);
+        let (mut terrain_post_bad, mut terrain_post_vanilla) = (0, 0);
         for region in &dump.regions {
             let order = order::decoration_order(&region.targets);
             let dumped: Vec<(i32, i32)> = region.decorations.iter().map(|d| (d.x, d.z)).collect();
@@ -527,6 +558,8 @@ fn features_match_vanilla() {
                     }
                 }
             }
+            let terrain_post: HashMap<(i32, i32), Vec<Vec<u16>>> =
+                region.targets.iter().map(|p| (*p, chunks[p].post_processing.clone())).collect();
             let mut gs = GenScratch::default();
             for d in &region.decorations {
                 let chunk_starts = dump.structures.then(|| ChunkStarts::new(&structures, &generator, &cache, &mut sscratch, d.x, d.z));
@@ -560,17 +593,53 @@ fn features_match_vanilla() {
                     chunks.insert((c.x, c.z), c);
                 }
             }
-            for (x, z, vanilla) in &region.finals {
+            for ((x, z, vanilla), pending) in region.finals.iter().zip(&region.pending) {
                 let c = &chunks[&(*x, *z)];
                 let bad = c.blocks.iter().zip(vanilla).filter(|(a, b)| a != b).count() as u64;
                 final_bad += bad;
                 final_chunks_bad += (bad > 0) as usize;
+                if let Some(v) = pending {
+                    let k = Pending::of(c);
+                    pending_checked += 1;
+                    terrain_post_vanilla += v.terrain_post.iter().map(Vec::len).sum::<usize>();
+                    if terrain_post[&(*x, *z)] != v.terrain_post {
+                        terrain_post_bad += 1;
+                    }
+                    post_vanilla += v.post.iter().map(Vec::len).sum::<usize>();
+                    ticks_vanilla += v.block_ticks.len() + v.fluid_ticks.len();
+                    if k.post != v.post {
+                        post_bad += 1;
+                        if post_bad <= 3 {
+                            let count = |p: &[Vec<u16>]| p.iter().map(Vec::len).sum::<usize>();
+                            eprintln!("    post-processing differs in {x},{z}: vanilla {} positions, kiln {}", count(&v.post), count(&k.post));
+                        }
+                    }
+                    if k.block_ticks != v.block_ticks || k.fluid_ticks != v.fluid_ticks {
+                        ticks_bad += 1;
+                        if ticks_bad <= 3 {
+                            eprintln!(
+                                "    ticks differ in {x},{z}: vanilla {}+{}, kiln {}+{}; first vanilla {:?}, kiln {:?}",
+                                v.block_ticks.len(),
+                                v.fluid_ticks.len(),
+                                k.block_ticks.len(),
+                                k.fluid_ticks.len(),
+                                v.block_ticks.first().or(v.fluid_ticks.first()),
+                                k.block_ticks.first().or(k.fluid_ticks.first())
+                            );
+                        }
+                    }
+                }
             }
         }
         eprintln!(
             "  {} regions: invocation list errors {list_errors}, vanilla far reads {far_reads}, final target blocks differing {final_bad} (in {final_chunks_bad} chunks)",
             dump.regions.len()
         );
+        if pending_checked > 0 {
+            eprintln!(
+                "  pending updates of {pending_checked} targets: post-TERRAIN post-processing lists differ in {terrain_post_bad} ({terrain_post_vanilla} vanilla positions); final post-processing lists differ in {post_bad} ({post_vanilla} vanilla positions), scheduled ticks differ in {ticks_bad} ({ticks_vanilla} vanilla ticks)"
+            );
+        }
         if dump.structures {
             eprintln!("  beardified terrain: {terrain_bad} blocks differ in {terrain_chunks_bad} chunks (vanilla's used for FEATURES)");
             let gaps = structures.gaps();

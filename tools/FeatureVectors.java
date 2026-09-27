@@ -29,7 +29,10 @@
 //            x, z, deflated record: invocation count, per invocation kind (0 feature,
 //            1 structure), step, index, far reads, change count, changes (dx+16, dz+16 as u8,
 //            y as i16, state as u16; dx, dz relative to the chunk's origin);
-//            then per target chunk: x, z, deflated final blocks (u16, Kiln section order).
+//            then per target chunk: x, z, deflated final blocks (u16, Kiln section order),
+//            per section the post-processing count + packed positions (u16) after TERRAIN,
+//            the same after FEATURES, then block ticks
+//            and fluid ticks: count, per tick id, x, y, z, delay, priority (version 2).
 //
 // usage (through tools/feature_vectors.py):
 //   java --add-opens java.base/java.lang=ALL-UNNAMED -cp <server jar + libraries>
@@ -669,6 +672,12 @@ public class FeatureVectors {
             w.writeInt(Integer.reverseBytes(t[1]));
         }
         if (structures) writeStructures(w, chunks, order);
+        Map<Long, ByteArrayOutputStream> terrainPost = new HashMap<>();
+        for (int[] t : targets) {
+            ByteArrayOutputStream b = new ByteArrayOutputStream();
+            writePost(new DataOutputStream(b), chunks.get(ChunkPos.pack(t[0], t[1])));
+            terrainPost.put(ChunkPos.pack(t[0], t[1]), b);
+        }
         w.writeInt(Integer.reverseBytes(order.size()));
         for (long[] d : order) {
             ProtoChunk chunk = chunks.get(ChunkPos.pack((int) d[1], (int) d[2]));
@@ -686,6 +695,8 @@ public class FeatureVectors {
             w.writeInt(Integer.reverseBytes(t[1]));
             w.writeInt(Integer.reverseBytes(z.length));
             w.write(z);
+            terrainPost.get(ChunkPos.pack(t[0], t[1])).writeTo(w);
+            writePending(w, chunk);
         }
         OUT.printf("  region at %d,%d: %d targets, %d decorated, %d terrain chunks; terrain %.1fs, features (with diffs) %.1fs%n",
             targets.get(0)[0], targets.get(0)[1], targets.size(), order.size(), chunks.size(), (t1 - t0) / 1e9, (t2 - t1) / 1e9);
@@ -709,6 +720,36 @@ public class FeatureVectors {
         }
         OUT.printf("  check: vanilla applyBiomeDecoration %.2f ms/chunk; %d of %d target chunks differ from the harness loop%n",
             (t1 - t0) / 1e6 / order.size(), bad, targets.size());
+    }
+
+    /** Post-processing positions per section, then scheduled block and fluid ticks. */
+    void writePending(DataOutputStream w, ProtoChunk chunk) throws IOException {
+        writePost(w, chunk);
+        var blockTicks = ((net.minecraft.world.ticks.ProtoChunkTicks<Block>) chunk.getBlockTicks()).scheduledTicks();
+        w.writeInt(Integer.reverseBytes(blockTicks.size()));
+        for (var t : blockTicks) writeTick(w, net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(t.type()).toString(), t);
+        var fluidTicks = ((net.minecraft.world.ticks.ProtoChunkTicks<net.minecraft.world.level.material.Fluid>) chunk.getFluidTicks()).scheduledTicks();
+        w.writeInt(Integer.reverseBytes(fluidTicks.size()));
+        for (var t : fluidTicks) writeTick(w, net.minecraft.core.registries.BuiltInRegistries.FLUID.getKey(t.type()).toString(), t);
+    }
+
+    void writePost(DataOutputStream w, ProtoChunk chunk) throws IOException {
+        var post = chunk.getPostProcessing();
+        for (int s = 0; s < sections(); s++) {
+            var list = post[s];
+            int n = list == null ? 0 : list.size();
+            w.writeInt(Integer.reverseBytes(n));
+            for (int i = 0; i < n; i++) w.writeShort(Short.reverseBytes(list.getShort(i)));
+        }
+    }
+
+    static void writeTick(DataOutputStream w, String type, net.minecraft.world.ticks.SavedTick<?> t) throws IOException {
+        str(w, type);
+        w.writeInt(Integer.reverseBytes(t.pos().getX()));
+        w.writeInt(Integer.reverseBytes(t.pos().getY()));
+        w.writeInt(Integer.reverseBytes(t.pos().getZ()));
+        w.writeInt(Integer.reverseBytes(t.delay()));
+        w.writeInt(Integer.reverseBytes(t.priority().getValue()));
     }
 
     byte[] blocks(ProtoChunk chunk) {
@@ -765,7 +806,7 @@ public class FeatureVectors {
         try (OutputStream file = new BufferedOutputStream(Files.newOutputStream(path), 1 << 20)) {
             DataOutputStream w = new DataOutputStream(file);
             w.write("KWGF".getBytes(StandardCharsets.US_ASCII));
-            w.writeInt(Integer.reverseBytes(1));
+            w.writeInt(Integer.reverseBytes(2));
             w.writeLong(Long.reverseBytes(seed));
             w.writeInt(Integer.reverseBytes(structures ? 1 : 0));
             w.writeInt(Integer.reverseBytes(Block.BLOCK_STATE_REGISTRY.size()));

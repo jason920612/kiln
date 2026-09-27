@@ -5,7 +5,7 @@
 //! built-in multi-noise presets.
 
 use crate::Error;
-use crate::biome::{ParameterSpace, parse_parameter_list};
+use crate::biome::{Parameter, ParameterSpace, parse_parameter, parse_parameter_list};
 use crate::blocks::{BlockSpec, parse_block_state};
 use crate::function::{Graph, NodeId, field, qualify};
 use crate::json::Json;
@@ -29,6 +29,9 @@ pub struct NoiseSettings {
     pub default_block: BlockSpec,
     pub default_fluid: BlockSpec,
     pub material_rule: Ref<RuleDef>,
+    /// `spawn_target`: points of (density function, climate parameter) the world spawn
+    /// search scores columns against (`SpawnTargetPoint`).
+    pub spawn_target: Vec<Vec<(NodeId, Parameter)>>,
 }
 
 pub const ROUTER_FIELDS: [&str; 8] =
@@ -325,7 +328,17 @@ fn parse_settings(graph: &mut Graph, json: &Json) -> Result<NoiseSettings, Error
             aquifers.push((name.to_string(), node));
         }
     }
+    let mut spawn_target = Vec::new();
+    for point in json.get("spawn_target").and_then(Json::as_array).unwrap_or(&[]) {
+        let Json::Object(entries) = point else { return Err(Error::Invalid("bad spawn_target point".into())) };
+        let mut p = Vec::new();
+        for (id, param) in entries {
+            p.push((graph.parse(&Json::String(id.clone())).map_err(|e| e.context(id))?, parse_parameter(param)?));
+        }
+        spawn_target.push(p);
+    }
     Ok(NoiseSettings {
+        spawn_target,
         min_y: int(noise, "min_y")?,
         height: int(noise, "height")?,
         sea_level: int(json, "sea_level")?,

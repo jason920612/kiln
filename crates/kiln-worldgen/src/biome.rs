@@ -277,7 +277,7 @@ impl BiomeInfo {
 }
 
 /// `Climate.Parameter.CODEC`: a single number or a `[min, max]` pair, read as `float`.
-fn parse_parameter(json: &Json) -> Result<Parameter, Error> {
+pub(crate) fn parse_parameter(json: &Json) -> Result<Parameter, Error> {
     let bad = || Error::Invalid(format!("bad climate parameter {json:?}"));
     if let Some(v) = json.as_f32() {
         return Ok(Parameter::span(v, v));

@@ -41,6 +41,7 @@ pub mod region;
 pub mod sampler;
 pub mod sets;
 pub mod simplex;
+pub mod spawn;
 pub mod spline;
 pub mod state;
 pub mod state_provider;
