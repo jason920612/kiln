@@ -1227,6 +1227,11 @@ impl Menu {
                 }
             }
             MenuKind::Merchant => crate::merchant::removed(self, env),
+            // `BeaconMenu.removed`: the payment is dropped.
+            MenuKind::Beacon => {
+                let stack = crate::container::take_item(&mut self.input.items, 0);
+                env.drop_item(stack, false);
+            }
             _ => {}
         }
     }

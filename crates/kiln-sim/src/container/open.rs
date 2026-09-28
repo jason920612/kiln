@@ -372,6 +372,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         BeKind::Dispenser | BeKind::Dropper => single(Menu::generic_3x3),
         BeKind::Furnace(kind) => single(furnace_menu(kind)),
         BeKind::BrewingStand => single(Menu::brewing_stand),
+        BeKind::Beacon => single(Menu::beacon),
         BeKind::EnderChest => return None,
     })
 }
@@ -740,6 +741,21 @@ pub(crate) fn menu_op<R>(
         }
     }
     r
+}
+
+/// `handleSetBeaconPacket` → `BeaconMenu.updateEffects`: with a payment in the open beacon's
+/// menu and powers the pyramid allows, the beacon takes them and the payment is used up.
+pub(crate) fn set_beacon(p: &mut Player, level: &mut RegionLevel, spawns: &mut Vec<Spawn>, primary: Option<i32>, secondary: Option<i32>) {
+    let Some(OpenBlock::Containers { first: (pos, _), second: None }) = p.containers.open else { return };
+    let Some(levels) = level.blocks.containers.get(pos).and_then(|c| c.beacon.as_ref()).map(|b| b.levels) else { return };
+    if !p.open_menu.as_ref().is_some_and(|m| m.has_beacon_payment()) || !super::beacon::valid_powers(primary, secondary, levels) {
+        return;
+    }
+    super::beacon::set_powers(level, pos, primary, secondary);
+    menu_op(p, level, spawns, |menu, _, env| {
+        menu.take_beacon_payment();
+        menu.broadcast_changes(env);
+    });
 }
 
 /// Applies a placed block item's components to the block entity it made

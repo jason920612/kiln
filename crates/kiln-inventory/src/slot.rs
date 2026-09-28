@@ -73,6 +73,8 @@ pub enum SlotKind {
     BrewingIngredient,
     /// Its fuel slot (`FuelSlot`): items with `brewing_fuel`.
     BrewingFuel,
+    /// A beacon's payment slot (`BeaconMenu$PaymentSlot`): one beacon payment item.
+    BeaconPayment,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,6 +121,7 @@ impl Slot {
             SlotKind::BrewingPotion => is_potion_input(stack, rules),
             SlotKind::BrewingIngredient => rules.recipes.property_set_accepts("minecraft:brewing_reagent", stack),
             SlotKind::BrewingFuel => stack.has(kiln_item::component::ids::BREWING_FUEL),
+            SlotKind::BeaconPayment => crate::tags::contains("minecraft:item", "minecraft:beacon_payment_items", crate::stack::StackExt::effective_item(stack)),
             SlotKind::GrindstoneInput => stack.is_damageable_item() || crate::workstation::has_any_enchantments(stack),
             SlotKind::SmithingInput(k) => {
                 let key = ["minecraft:smithing_template", "minecraft:smithing_base", "minecraft:smithing_addition"][k as usize];
@@ -140,7 +143,7 @@ impl Slot {
     /// `getMaxStackSize()`, given the container's.
     pub fn max_stack_size(&self, container_max: i32) -> i32 {
         match self.kind {
-            SlotKind::Armor(_) | SlotKind::EnchantItem | SlotKind::BrewingPotion => 1,
+            SlotKind::Armor(_) | SlotKind::EnchantItem | SlotKind::BrewingPotion | SlotKind::BeaconPayment => 1,
             _ => container_max,
         }
     }

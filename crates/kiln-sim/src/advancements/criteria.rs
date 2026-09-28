@@ -176,6 +176,7 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:player_generates_container_loot",
     "minecraft:brewed_potion",
     "minecraft:fishing_rod_hooked",
+    "minecraft:construct_beacon",
     "minecraft:slept_in_bed",
 ];
 

@@ -788,6 +788,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
             p.place_recipe(&mut level, fx.spawns, container_id, recipe, use_max_items);
         }
+        PlayIn::SetBeacon { primary, secondary } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::container::open::set_beacon(p, &mut level, fx.spawns, primary, secondary);
+        }
         PlayIn::RecipeBookChangeSettings { book, open, filtering } => p.recipe_book_settings(book, open, filtering),
         PlayIn::RecipeBookSeenRecipe { recipe } => p.recipe_seen(&env.rules, recipe),
         // `handleSeenAdvancements`: opening a tab selects it.

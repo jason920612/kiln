@@ -320,6 +320,16 @@ pub(crate) struct BlockOut {
     /// The components of container block entities removed this phase, for the loot of their
     /// block (`copy_components` from the block entity: names, shulker box contents).
     pub removed_components: Vec<(BlockPos, Vec<kiln_item::component::Component>)>,
+    /// What block entities do to the players in a box (beacons).
+    pub player_fx: Vec<PlayerFx>,
+}
+
+/// A block entity's effect on the players whose box meets `min..max`.
+pub(crate) enum PlayerFx {
+    /// A mob effect (a beacon's power).
+    Effect { min: [f64; 3], max: [f64; 3], effect: crate::effects::Effect },
+    /// A beacon lit: `construct_beacon` with its levels.
+    BeaconActivated { min: [f64; 3], max: [f64; 3], levels: i32 },
 }
 
 /// A region's cells and block machinery as kiln-blocks' [`Level`].
@@ -758,6 +768,27 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
 pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, env: &BlockEnv) {
     send_changes(cells, &out.changed, players);
     spawns.append(&mut out.spawns);
+    for fx in std::mem::take(&mut out.player_fx) {
+        let (min, max) = match &fx {
+            PlayerFx::Effect { min, max, .. } | PlayerFx::BeaconActivated { min, max, .. } => (*min, *max),
+        };
+        // The player's box (0.6 wide, 1.8 tall).
+        let inside = |p: &Player| {
+            let (lo, hi) = ([p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3], [p.pos[0] + 0.3, p.pos[1] + 1.8, p.pos[2] + 0.3]);
+            (0..3).all(|i| lo[i] < max[i] && hi[i] > min[i])
+        };
+        for p in players.iter_mut().filter(|p| !p.dead && !p.disconnected && inside(p)) {
+            match &fx {
+                PlayerFx::Effect { effect, .. } => {
+                    p.add_effect(effect.clone());
+                }
+                PlayerFx::BeaconActivated { levels, .. } => {
+                    let levels = *levels;
+                    p.fire_conds("minecraft:construct_beacon", None, |c, _, _| kiln_loot::predicate::item::int_bounds(&c.ints("level"), levels));
+                }
+            }
+        }
+    }
     for (breaker, pos, stage) in out.destruction {
         // `ServerLevel.destroyBlockProgress`: other players within 32 blocks.
         let pkt = world_fx::block_destruction(breaker, pos, u8::try_from(stage).ok());
