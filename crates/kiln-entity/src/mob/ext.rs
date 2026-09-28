@@ -642,6 +642,10 @@ pub trait Kind: Sync + Send {
         let _ = hard;
         None
     }
+    /// `spawnChildFromBreeding` dropping an item instead of a baby (sniffers lay an egg).
+    fn breed_as_item(&self) -> Option<&'static str> {
+        None
+    }
     /// [`Kind::passenger_offset`] for the passenger at `index` (camels seat two).
     fn passenger_offset_at(&self, e: &Entity, m: &MobData, index: usize) -> Option<Vec3> {
         let _ = index;

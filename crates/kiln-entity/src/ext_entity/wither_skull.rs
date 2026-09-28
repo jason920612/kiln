@@ -101,7 +101,7 @@ impl WitherSkull {
         let interaction = if griefing { crate::explosion::Interaction::DestroyWithDecay } else { crate::explosion::Interaction::Keep };
         let resist = |state: u16, r: f32| if wither_can_destroy(state) { r.min(0.8) } else { r };
         let resistance: Option<crate::explosion::Resistance> = if self.dangerous { Some(&resist) } else { None };
-        crate::explosion::explode_with(level, Some(e.id), e.position(), 1.0, false, interaction, resistance);
+        crate::explosion::explode_with(level, Some(e.id), e.position(), 1.0, false, interaction, resistance, true);
         e.discard();
     }
 }

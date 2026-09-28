@@ -2092,6 +2092,7 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         // -- slice 3: common mobs A
 
         // -- slice 3: common mobs B
+        DamageKind::WindCharge => ("minecraft:wind_charge", "death.attack.mob"),
 
     }
 }

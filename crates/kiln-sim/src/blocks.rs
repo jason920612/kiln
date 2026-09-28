@@ -945,6 +945,25 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                 vel: [0.0; 3],
                 body: entities::Body::Tnt,
             }),
+            // `SnifferEggBlock.tick`: a baby sniffer at the egg's center, facing a random way.
+            Effect::HatchSniffer { pos } => {
+                let h = effect_hash(env, pos, 0x736e);
+                let yaw = kiln_entity::mob::mth::wrap_degrees((h >> 40) as f32 / (1u64 << 24) as f32 * 360.0);
+                let mut e = kiln_entity::mob::new(kiln_entity::mob::MobKind::Sniffer, 0, 0, h as i64);
+                if let Some(mut md) = kiln_entity::mob::data(&e).cloned() {
+                    kiln_entity::mob::set_age(&mut e, &mut md, -48000);
+                    md.y_head_rot = yaw;
+                    md.y_body_rot = yaw;
+                    if let Some(slot) = kiln_entity::mob::data_mut(&mut e) {
+                        *slot = md;
+                    }
+                }
+                let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+                e.set_pos(kiln_entity::math::Vec3::new(at[0], at[1], at[2]));
+                e.y_rot = yaw;
+                e.set_old_pos_and_rot();
+                spawns.push(Spawn { kind: &kiln_data::entities::types::SNIFFER, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
+            }
             // Entities carried by pistons are not simulated yet; game events went to their
             // listeners when they happened.
             Effect::PistonMove { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}

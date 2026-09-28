@@ -226,6 +226,8 @@ pub enum DamageKind {
     // -- slice 3: common mobs A
 
     // -- slice 3: common mobs B
+    /// `minecraft:wind_charge` (a wind charge's hit).
+    WindCharge,
 
 }
 

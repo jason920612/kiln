@@ -354,6 +354,13 @@ pub fn on_killed_removal(e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
         match fx.kind() {
             Kind::Oozing => oozing(e, level),
             Kind::Weaving => weaving(e, level),
+            // `WindChargedMobEffect.onMobRemoved`: a wind burst of 3 to 5 at the middle.
+            Kind::WindCharged => {
+                let at = Vec3::new(e.x(), e.y() + (e.height / 2.0) as f64, e.z());
+                let strength = 3.0 + e.random.next_float() * 2.0;
+                crate::explosion::explode_with(level, Some(e.id), at, strength, false, crate::explosion::Interaction::TriggerBlock, None, false);
+                level.emit(Event::Sound { pos: at, sound: "minecraft:entity.breeze.wind_burst", source: "hostile", volume: 1.0, pitch: 1.0 });
+            }
             _ => {}
         }
     }
