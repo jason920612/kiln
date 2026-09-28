@@ -1154,6 +1154,101 @@ impl Host for Sim {
     fn remove_entity_tag(&mut self, entity: &PlayerRef, tag: &str) -> bool {
         self.change_entity_tag(entity, tag, false)
     }
+
+    fn rotate_entity(&mut self, entity: &PlayerRef, rotation: [f32; 2]) {
+        self.rotate_target(entity, rotation);
+    }
+
+    fn swing_arm(&mut self, entity: &PlayerRef, offhand: bool, animation: &str, duration: i32) -> bool {
+        self.swing_target(entity, offhand, animation, duration)
+    }
+
+    fn vehicle_of(&mut self, entity: &PlayerRef) -> Option<PlayerRef> {
+        self.vehicle_of_target(entity)
+    }
+
+    fn self_and_passengers(&mut self, entity: &PlayerRef) -> Vec<PlayerRef> {
+        self.self_and_passengers_of(entity)
+    }
+
+    fn start_riding(&mut self, entity: &PlayerRef, vehicle: &PlayerRef) -> bool {
+        self.start_riding_target(entity, vehicle)
+    }
+
+    fn stop_riding(&mut self, entity: &PlayerRef) {
+        self.stop_riding_target(entity);
+    }
+
+    fn damage_entity(
+        &mut self,
+        entity: &PlayerRef,
+        amount: f32,
+        damage_type: &str,
+        _at: Option<[f64; 3]>,
+        _by: Option<&PlayerRef>,
+        _from: Option<&PlayerRef>,
+    ) -> Result<bool, CommandError> {
+        self.damage_target(entity, amount, damage_type)
+    }
+
+    fn can_spectate(&self, entity: &PlayerRef) -> bool {
+        kiln_data::entities::by_name(entity.kind).is_none_or(|t| t.tracking_range != 0)
+    }
+
+    fn set_camera(&mut self, player: &PlayerRef, target: Option<&PlayerRef>) {
+        self.set_camera_of(player, target);
+    }
+
+    fn slot_item(&mut self, holder: &kiln_command::host::ItemHolder<PlayerRef>, slot: i32) -> Option<Option<Tag>> {
+        self.slot_item_nbt(holder, slot)
+    }
+
+    fn set_slot_item(&mut self, holder: &kiln_command::host::ItemHolder<PlayerRef>, slot: i32, item: Option<&Tag>) -> bool {
+        self.set_slot_item_nbt(holder, slot, item)
+    }
+
+    fn is_container(&mut self, dimension: &str, pos: [i32; 3]) -> bool {
+        self.is_container_at(dimension, pos)
+    }
+
+    /// Main inventory, armor (feet first), off hand, body and saddle; the crafting grid and
+    /// cursor are not modeled here.
+    fn clear_slots(&self, _player: &PlayerRef) -> Vec<i32> {
+        (0..36).chain([100, 101, 102, 103, 99, 105, 106]).collect()
+    }
+
+    fn inventory_changed(&mut self, player: &PlayerRef) {
+        self.broadcast_inventory(player);
+    }
+
+    fn attribute(&mut self, entity: &PlayerRef, attribute: &str) -> Result<Option<kiln_command::host::AttributeState>, ()> {
+        self.attribute_state(entity, attribute)
+    }
+
+    fn set_attribute_base(&mut self, entity: &PlayerRef, attribute: &str, value: f64) {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::Base(Some(value)));
+    }
+
+    fn reset_attribute_base(&mut self, entity: &PlayerRef, attribute: &str) {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::Base(None));
+    }
+
+    fn add_attribute_modifier(&mut self, entity: &PlayerRef, attribute: &str, id: &str, amount: f64, operation: u8) {
+        let change = crate::command_data::AttributeChange::AddModifier(id.to_owned(), amount, operation);
+        self.change_attribute(entity, attribute, change);
+    }
+
+    fn remove_attribute_modifier(&mut self, entity: &PlayerRef, attribute: &str, id: &str) -> bool {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::RemoveModifier(id.to_owned()))
+    }
+
+    fn enchantment_max_level(&self, enchantment: &str) -> Option<i32> {
+        self.enchantment_max(enchantment)
+    }
+
+    fn enchant_held(&mut self, entity: &PlayerRef, enchantment: &str, level: i32) -> kiln_command::host::EnchantOutcome {
+        self.enchant_target(entity, enchantment, level)
+    }
 }
 
 fn block_pos(p: [i32; 3]) -> kiln_blocks::BlockPos {

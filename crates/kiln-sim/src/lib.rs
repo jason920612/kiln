@@ -400,6 +400,8 @@ struct Player {
     recipe_book: recipe_book::RecipeBook,
     /// `PlayerAdvancements`.
     advancements: advancements::progress::PlayerAdvancements,
+    /// Base values and permanent modifiers `/attribute` set.
+    command_attributes: combat::CommandAttributes,
 }
 
 impl Player {
@@ -2154,6 +2156,7 @@ impl Sim {
             stats: self.load_stats(j.uuid),
             recipe_book,
             advancements: self.load_player_advancements(j.uuid),
+            command_attributes: combat::CommandAttributes::default(),
         };
 
         player.send(packets::play_login(&packets::Login {

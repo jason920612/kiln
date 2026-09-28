@@ -1176,6 +1176,101 @@ data get entity Diff0 Tags
 ! tag @a remove a
 ! tag @a remove b
 ! kill @e[type=!minecraft:player]
+
+# rotate, swing, spectate, ride
+! gamemode survival @a
+! summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b,Tags:["p1"]}
+! summon minecraft:pig 7 101 5 {NoAI:1b,Silent:1b,Tags:["p2"]}
+rotate Diff0 90 0
+rotate Diff0 ~10 ~
+rotate Diff0 facing 0 100 0
+rotate Diff0 facing entity Other0
+rotate Diff0 facing entity Other0 eyes
+rotate Nobody 0 0
+rotate @a 0 0
+rotate @e[tag=p1,limit=1] 45 10
+data get entity @e[tag=p1,limit=1] Rotation
+rotate @e[tag=p1,limit=1] facing 5 101 10
+data get entity @e[tag=p1,limit=1] Rotation[0]
+swing Diff0
+swing @a mainhand
+swing @a offhand stab
+swing @a offhand whack 10
+swing @e[type=minecraft:pig]
+swing @e[type=minecraft:pig,limit=1] mainhand none
+swing Diff0 mainhand bogus
+swing Diff0 mainhand whack 0
+swing
+spectate
+spectate Diff0
+spectate Diff0 Other0
+spectate Other0 Other0
+! gamemode spectator Other0
+spectate Diff0 Other0
+spectate Other0 Other0
+spectate @e[tag=p1,limit=1] Other0
+! gamemode survival Other0
+ride Diff0 dismount
+ride Diff0 mount @e[tag=p1,limit=1]
+ride Diff0 mount @e[tag=p1,limit=1]
+ride Diff0 mount @e[tag=p2,limit=1]
+ride Diff0 dismount
+ride Diff0 dismount
+ride @e[tag=p1,limit=1] mount Diff0
+ride @e[tag=p1,limit=1] mount @e[tag=p1,limit=1]
+ride @e[tag=p2,limit=1] mount @e[tag=p1,limit=1]
+ride @e[tag=p1,limit=1] mount @e[tag=p2,limit=1]
+ride @e[tag=p2,limit=1] dismount
+ride Nobody dismount
+ride @e[type=minecraft:pig] dismount
+
+# clear and enchant
+! clear @a
+clear Diff0
+clear @a
+clear Diff0 minecraft:stone
+! give Diff0 minecraft:stone 10
+! give Diff0 minecraft:dirt 5
+! give Other0 minecraft:stone 2
+clear Diff0 minecraft:stone 0
+clear @a minecraft:stone 0
+clear Diff0 minecraft:stone 3
+clear Diff0 minecraft:stone 0
+clear @a minecraft:stone 1
+clear @a minecraft:stone
+clear @a minecraft:stone
+! give Diff0 minecraft:oak_log 2
+clear Diff0 #minecraft:logs 0
+clear Diff0 #minecraft:logs
+clear Diff0 * 0
+clear @a * 0
+clear Diff0
+clear Diff0 minecraft:nonexistent
+clear Diff0 #minecraft:nonexistent
+clear @e[type=minecraft:pig]
+! give Diff0 minecraft:diamond_sword
+enchant Diff0 minecraft:sharpness
+enchant Diff0 minecraft:sharpness 3
+enchant Diff0 minecraft:smite
+enchant Diff0 minecraft:unbreaking 10
+enchant Diff0 minecraft:unbreaking 2
+enchant @a minecraft:mending
+enchant Other0 minecraft:mending
+enchant @e[tag=p1,limit=1] minecraft:mending
+enchant @e[type=minecraft:pig] minecraft:mending
+enchant Diff0 minecraft:nonexistent
+enchant Diff0 minecraft:binding_curse
+enchant Diff0 minecraft:fire_aspect 0
+data get entity Diff0 SelectedItem.components."minecraft:enchantments"."minecraft:sharpness"
+data get entity Diff0 SelectedItem.components."minecraft:enchantments"."minecraft:unbreaking"
+! clear @a
+! give Diff0 minecraft:stick
+enchant Diff0 minecraft:sharpness
+! give Diff0 minecraft:book
+! clear Diff0 minecraft:stick
+enchant Diff0 minecraft:efficiency
+! clear @a
+! kill @e[type=!minecraft:player]
 """
 
 

@@ -214,7 +214,7 @@ pub fn damage<S: Host + 'static>(d: &mut Dispatcher<S>) {
         let location = if at { Some(s.stack().resolve(c.coordinates("location"))) } else { None };
         let by = if by { Some(c.selector("entity").entity(s)?) } else { None };
         let from = if from { Some(c.selector("cause").entity(s)?) } else { None };
-        if !s.damage_entity(&target, amount, &damage_type, location, by.as_ref(), from.as_ref()) {
+        if !s.damage_entity(&target, amount, &damage_type, location, by.as_ref(), from.as_ref())? {
             return Err(CommandError::new(tr!("commands.damage.invulnerable")));
         }
         s.send_success(tr!("commands.damage.success", Arg::Float(amount), target.display_name()), true);

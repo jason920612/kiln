@@ -995,13 +995,11 @@ fn parse_item_predicate(reader: &mut StringReader) -> Result<String> {
         reader.skip();
         let id = Identifier::read(reader)?;
         if blocks::registry_tag("minecraft:item", id.as_str()).is_none() {
-            reader.set_cursor(start);
             return Err(CommandError::new(tr!("arguments.item.tag.unknown", id.to_string())).at(reader));
         }
     } else {
         let id = Identifier::read(reader)?;
         if kiln_data::builtin_id("minecraft:item", id.as_str()).is_none() {
-            reader.set_cursor(start);
             return Err(CommandError::unknown_item(id.as_str()).at(reader));
         }
     }

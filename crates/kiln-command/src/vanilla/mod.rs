@@ -3,6 +3,7 @@
 
 mod advancement;
 mod blocks;
+mod attribute;
 mod bossbar;
 mod chat;
 mod data;
@@ -12,6 +13,7 @@ pub mod experience;
 mod summon;
 mod execute;
 mod function;
+mod items;
 pub use function::{run_as_server, run_function};
 pub mod gamerules;
 mod players;
@@ -96,6 +98,9 @@ pub const COMMANDS: &[&str] = &[
     "swing",
     "ride",
     "damage",
+    "clear",
+    "enchant",
+    "attribute",
 ];
 
 /// Registers every built-in command.
@@ -153,6 +158,9 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     entity::swing(d);
     entity::ride(d);
     entity::damage(d);
+    items::clear(d);
+    items::enchant(d);
+    attribute::attribute(d);
 }
 
 /// `getEntityOrException`.

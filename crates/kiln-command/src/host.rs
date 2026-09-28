@@ -820,8 +820,8 @@ pub trait Host: SelectorWorld {
         _at: Option<[f64; 3]>,
         _by: Option<&Self::Entity>,
         _from: Option<&Self::Entity>,
-    ) -> bool {
-        false
+    ) -> Result<bool, CommandError> {
+        Err(CommandError::unsupported("Damage"))
     }
     /// `EntityType.clientTrackingRange() != 0`: whether a player may spectate it.
     fn can_spectate(&self, _entity: &Self::Entity) -> bool {
@@ -829,6 +829,80 @@ pub trait Host: SelectorWorld {
     }
     /// `ServerPlayer.setCamera` (`None`: back to the player itself).
     fn set_camera(&mut self, _player: &Self::Entity, _target: Option<&Self::Entity>) {}
+    /// The item in `slot` (a [`slots`](crate::slots) id) of a container block or entity, as
+    /// item stack NBT (`None` for an empty slot); `None` when there is no such slot. Callers
+    /// check [`is_container`](Self::is_container) for blocks first.
+    fn slot_item(&mut self, _holder: &ItemHolder<Self::Entity>, _slot: i32) -> Option<Option<Tag>> {
+        None
+    }
+    /// Puts an item (stack NBT, `None` to empty it) into `slot`; false when the slot does not
+    /// exist or refuses the item.
+    fn set_slot_item(&mut self, _holder: &ItemHolder<Self::Entity>, _slot: i32, _item: Option<&Tag>) -> bool {
+        false
+    }
+    /// Whether the block at `pos` is a container (`Container` block entity).
+    fn is_container(&mut self, _dimension: &str, _pos: [i32; 3]) -> bool {
+        false
+    }
+    /// The inventory slots `/clear` goes through for a player, in `Inventory` order (main,
+    /// equipment), then the crafting grid and the cursor.
+    fn clear_slots(&self, _player: &Self::Entity) -> Vec<i32> {
+        Vec::new()
+    }
+    /// Sends inventory changes made by commands (`containerMenu.broadcastChanges`).
+    fn inventory_changed(&mut self, _player: &Self::Entity) {}
+    /// Enchantment definitions: `max_level`; `None` for unknown enchantments.
+    fn enchantment_max_level(&self, _enchantment: &str) -> Option<i32> {
+        None
+    }
+    /// An attribute of a living entity: `Err(())` for entities that are not living, `Ok(None)`
+    /// when it lacks the attribute.
+    #[allow(clippy::result_unit_err)]
+    fn attribute(&mut self, _entity: &Self::Entity, _attribute: &str) -> Result<Option<AttributeState>, ()> {
+        Err(())
+    }
+    /// `AttributeInstance.setBaseValue` (the attribute exists).
+    fn set_attribute_base(&mut self, _entity: &Self::Entity, _attribute: &str, _value: f64) {}
+    /// `AttributeMap.resetBaseValue` to the type's default (the attribute exists).
+    fn reset_attribute_base(&mut self, _entity: &Self::Entity, _attribute: &str) {}
+    /// `addPermanentModifier` (`operation`: 0 add_value, 1 add_multiplied_base, 2
+    /// add_multiplied_total; the id is not present yet).
+    fn add_attribute_modifier(&mut self, _entity: &Self::Entity, _attribute: &str, _id: &str, _amount: f64, _operation: u8) {}
+    /// `removeModifier`: whether it was there.
+    fn remove_attribute_modifier(&mut self, _entity: &Self::Entity, _attribute: &str, _id: &str) -> bool {
+        false
+    }
+    /// `EnchantCommand` on one entity's main hand item.
+    fn enchant_held(&mut self, _entity: &Self::Entity, _enchantment: &str, _level: i32) -> EnchantOutcome {
+        EnchantOutcome::NotLiving
+    }
+}
+
+/// An entity's attribute instance as `/attribute` reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttributeState {
+    pub base: f64,
+    /// `getAttributeValue`.
+    pub value: f64,
+    /// Modifier ids and amounts.
+    pub modifiers: Vec<(String, f64)>,
+}
+
+/// Where `/item` and `/loot` put items: a container block or an entity.
+#[derive(Clone)]
+pub enum ItemHolder<E> {
+    Block { dimension: String, pos: [i32; 3] },
+    Entity(E),
+}
+
+/// What `/enchant` did to one target.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnchantOutcome {
+    NotLiving,
+    NoItem,
+    /// The item cannot take the enchantment (unsupported or incompatible); its hover name.
+    Incompatible(Text),
+    Applied,
 }
 
 #[cfg(test)]
