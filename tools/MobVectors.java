@@ -692,5 +692,49 @@ public class MobVectors {
             s.diverges = true;
             out.add(s);
         }
+        // Piglins and hoglins without AI: attributes, size, health and hurt.
+        String[][] noai = {
+            {"piglin_noai_adult", "minecraft:piglin", "{NoAI:1b}"},
+            {"piglin_noai_baby", "minecraft:piglin", "{NoAI:1b,IsBaby:1b}"},
+            {"hoglin_noai_adult", "minecraft:hoglin", "{NoAI:1b}"},
+            {"hoglin_noai_baby", "minecraft:hoglin", "{NoAI:1b}"},
+        };
+        for (String[] n : noai) {
+            Scenario s = new Scenario(n[0]);
+            floor(s, 8, "minecraft:stone");
+            MobSpec m = new MobSpec(n[1], 0.5, BY, 0.5, 60f, 9300);
+            m.nbt = n[2];
+            if (n[0].equals("hoglin_noai_baby")) m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 4.0});
+            s.hurts.put(40, new double[] {0, 2.5});
+            s.ticks = 120;
+            out.add(s);
+        }
+        // With AI: the brains against Kiln's goals.
+        {
+            Scenario s = new Scenario("piglin_idle");
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:piglin", 0.5, BY, 0.5, 20f, 9401);
+            m.nbt = "{IsImmuneToZombification:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            s.diverges = true;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hoglin_chase");
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:hoglin", 0.5, BY, 0.5, 0f, 9402);
+            m.nbt = "{IsImmuneToZombification:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {5.5, BY, 0.5};
+            s.ticks = 160;
+            s.diverges = true;
+            out.add(s);
+        }
     }
 }

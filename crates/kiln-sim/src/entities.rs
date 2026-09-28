@@ -432,6 +432,10 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 }
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
+    fn piglins_zombify(&self) -> bool {
+        !self.level.env.rules.fast_lava
+    }
+
     fn trade_offers(&mut self, set: &str, merchant: &kiln_entity::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
         let env = self.level.env;
         crate::trading::roll_offers(env.loot.as_deref(), env.seed, env.game_time, set, merchant)
@@ -1084,6 +1088,9 @@ fn view(p: &Player) -> PlayerView {
         armor_cover: armor as f32 / 4.0,
         main_hand: p.inv.selected_item().item(),
         off_hand: p.inv.equipped(S::OffHand).item(),
+        piglin_safe_armor: [S::Feet, S::Legs, S::Chest, S::Head]
+            .iter()
+            .any(|s| kiln_entity::mob::item_tag(p.inv.equipped(*s).item(), "minecraft:piglin_safe_armor")),
     }
 }
 

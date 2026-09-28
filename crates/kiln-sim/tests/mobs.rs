@@ -366,6 +366,66 @@ fn villager_offers_come_from_the_datapack() {
 }
 
 #[test]
+fn piglins_barter_gold_and_zombify_in_the_overworld() {
+    let item = |n: &str| kiln_data::builtin_id("minecraft:item", n).unwrap();
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:gold_ingot", 3);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:piglin", [1.5, 0.0, 0.0], "{IsImmuneToZombification:1b,PersistenceRequired:1b}");
+    let piglin = w.mobs("minecraft:piglin")[0].0;
+    w.interact(piglin);
+    assert_eq!(w.held(), Some((item("minecraft:gold_ingot"), 2)), "the piglin took one ingot");
+    // It admires the ingot for 119 ticks, then barters.
+    w.ticks(60);
+    let items = |w: &World| w.sim.entities().iter().filter(|e| e.0 == "minecraft:item").count();
+    assert_eq!(items(&w), 0, "still admiring");
+    w.ticks(80);
+    if std::env::var_os("KILN_DATAPACK").is_some() {
+        // The loot lands by the player, who may have picked it up already.
+        let other = w.sim.inventory(1).unwrap().iter().flatten().filter(|s| s.0 != item("minecraft:gold_ingot")).count();
+        assert!(items(&w) >= 1 || other >= 1, "bartered items dropped");
+    }
+    // Outside the nether a piglin that is not immune turns into a zombified piglin.
+    w.summon("minecraft:piglin", [-2.5, 0.0, 0.0], "{PersistenceRequired:1b}");
+    w.ticks(310);
+    assert_eq!(w.mobs("minecraft:piglin").len(), 1, "the second piglin converted");
+    assert_eq!(w.mobs("minecraft:zombified_piglin").len(), 1);
+}
+
+#[test]
+fn piglins_attack_players_without_gold() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:piglin", [2.5, 0.0, 0.0], "{IsImmuneToZombification:1b,PersistenceRequired:1b}");
+    w.ticks(120);
+    assert!(w.health() < 20.0, "the piglin attacked");
+}
+
+#[test]
+fn hoglins_attack_and_breed() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:hoglin", [2.5, 0.0, 0.0], "{IsImmuneToZombification:1b,PersistenceRequired:1b}");
+    w.ticks(60);
+    assert!(w.health() < 20.0, "the hoglin attacked");
+    // Creative players are not attacked; crimson fungus makes hoglins breed.
+    w.console("gamemode creative Hunter");
+    w.console("kill @e[type=minecraft:hoglin]");
+    w.ticks(30);
+    w.hold("minecraft:crimson_fungus", 4);
+    w.summon("minecraft:hoglin", [1.5, 0.0, 0.0], "{IsImmuneToZombification:1b}");
+    w.summon("minecraft:hoglin", [-1.5, 0.0, 0.0], "{IsImmuneToZombification:1b}");
+    let hoglins: Vec<i32> = w.mobs("minecraft:hoglin").iter().map(|h| h.0).collect();
+    assert_eq!(hoglins.len(), 2);
+    for &h in &hoglins {
+        w.interact(h);
+    }
+    w.ticks(250);
+    assert_eq!(w.mobs("minecraft:hoglin").len(), 3, "a hoglet was born");
+}
+
+#[test]
 fn every_mob_type_summons_ticks_and_saves() {
     let mut w = World::new();
     w.console("gamemode creative Hunter");
