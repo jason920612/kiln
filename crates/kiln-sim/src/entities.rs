@@ -63,6 +63,8 @@ pub(crate) struct Entity {
     section: Option<[i32; 3]>,
     /// A mob's entity data and equipment as its viewers last got them.
     meta_sent: Vec<u8>,
+    /// Passengers as viewers last got them (Set Passengers).
+    passengers_sent: Vec<i32>,
     equipment_sent: Vec<(u8, kiln_item::ItemStack)>,
 }
 
@@ -205,6 +207,7 @@ impl Entity {
             seen_by: Vec::new(),
             section: None,
             meta_sent: Vec::new(),
+            passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
         }
     }
@@ -257,6 +260,7 @@ impl Entity {
                 d.set(data::experience_orb::VALUE, &DataValue::Int(o.value));
             }
             EntityKind::Mob(m) => return crate::mobs::metadata(self.phys(), m),
+            EntityKind::Ext(x) => x.entity_data(self.phys(), &mut d),
             _ => {}
         }
         d
@@ -267,6 +271,7 @@ impl Entity {
         // A falling block's spawn data is its block state (`Block.getId`).
         let spawn_data = match &self.phys().kind {
             EntityKind::FallingBlock(f) => f.state as i32,
+            EntityKind::Ext(x) => x.spawn_data(),
             _ => 0,
         };
         let mut out = vec![
@@ -281,6 +286,9 @@ impl Entity {
                 let slots: Vec<(u8, &kiln_item::ItemStack)> = worn.iter().map(|(i, s)| (*i, s)).collect();
                 out.push(crate::players::set_equipment(self.id, &slots));
             }
+        }
+        if !self.phys().passengers.is_empty() {
+            out.push(entity::set_passengers(self.id, &self.phys().passengers));
         }
         out.push(entity::bundle_delimiter());
         out
@@ -430,6 +438,15 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 }
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
+    fn piglins_zombify(&self) -> bool {
+        !self.level.env.rules.fast_lava
+    }
+
+    fn trade_offers(&mut self, set: &str, merchant: &kiln_entity::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
+        let env = self.level.env;
+        crate::trading::roll_offers(env.loot.as_deref(), env.seed, env.game_time, set, merchant)
+    }
+
     fn block(&self, pos: BlockPos) -> u16 {
         self.level.block(kb(pos))
     }
@@ -589,7 +606,17 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None };
         let env = self.level.env;
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
-        p.hurt(amount, &source, &mut ctx)
+        let hurt = p.hurt(amount, &source, &mut ctx);
+        if hurt && let Some(a) = source.attacker.as_ref().map(|a| a.id) {
+            p.last_hurt_by_mob = Some((a, env.game_time));
+        }
+        hurt
+    }
+
+    fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, _source: Option<i32>) -> bool {
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
+        let Some(e) = crate::effects::effect_id(effect) else { return false };
+        p.add_effect(crate::effects::Effect::simple(e, duration, amplifier))
     }
 
     fn ignite(&mut self, id: i32, seconds: f32) {
@@ -632,12 +659,12 @@ pub(crate) fn tick(
     deaths: &mut Vec<health::Death>,
     any_player: bool,
 ) {
-    if entities.list.is_empty() {
+    if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) {
         return;
     }
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
-    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let mut sim = SimLevel {
         level,
         list: &mut entities.list,
@@ -655,36 +682,50 @@ pub(crate) fn tick(
     };
     sim.grid = Grid::build(sim.list);
     for i in 0..sim.list.len() {
-        let e = &mut sim.list[i];
-        if e.removed || !ticking.contains(chunk_of(e.pos)) {
+        // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
+        let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
+        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
             continue;
         }
-        e.age += 1;
-        let Some(mut phys) = e.phys.take() else { continue };
-        (sim.current, sim.seeds) = (phys.id, 0);
-        sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
-        // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
-        // farther apart than the despawn distance, so the region's players decide).
-        if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
-            let p = phys.position();
-            let nearest = sim.views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b));
-            kiln_entity::mob::check_despawn(&mut phys, &sim, nearest.or(any_player.then_some(f64::MAX)));
+        let me = sim.list[i].id;
+        if let Some(phys) = sim.list[i].phys.as_mut()
+            && let Some(v) = phys.vehicle.take()
+            && let Some(j) = sim.index(v)
+            && let Some(vp) = sim.list[j].phys.as_mut()
+        {
+            kiln_entity::ride::remove_passenger(vp, me);
         }
-        if !phys.is_removed() {
-            phys.common_tick();
-            phys.tick(&mut sim);
-        }
-        let e = &mut sim.list[i];
-        e.phys = Some(phys);
-        e.sync();
-        let pos = e.pos;
-        sim.grid.moved(i, pos);
-        let e = &mut sim.list[i];
-        let cell = chunk_of(e.pos).cell();
-        if sim.level.cells.cell(cell).is_some() {
-            e.cell = cell;
+        tick_entity(&mut sim, i, ticking, any_player, None);
+        let passengers = sim.list[i].phys.as_ref().map(|p| p.passengers.clone()).unwrap_or_default();
+        for id in passengers {
+            if let Some(j) = sim.index(id) {
+                tick_entity(&mut sim, j, ticking, any_player, Some(i));
+            }
         }
     }
+    // `Player.aiStep` → `touch`: mobs in the player's box inflated by (1, 0.5, 1) (slimes and
+    // magma cubes hurt the player). Vanilla runs it in the player's tick; here after the
+    // entities'.
+    let touchers: Vec<(i32, Aabb)> = sim
+        .views
+        .iter()
+        .filter(|v| v.alive && !v.spectator)
+        .map(|v| {
+            let h = if v.sneaking { 1.5 } else { 1.8 };
+            (v.id, Aabb::new(v.pos.x - 0.3, v.pos.y, v.pos.z - 0.3, v.pos.x + 0.3, v.pos.y + h, v.pos.z + 0.3).inflate(1.0, 0.5, 1.0))
+        })
+        .collect();
+    for (pid, area) in touchers {
+        for id in sim.entities_in(&area, EntityFilter::Living, pid) {
+            let Some(i) = sim.index(id) else { continue };
+            let Some(mut phys) = sim.list[i].phys.take() else { continue };
+            if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
+                kiln_entity::mob::player_touch(&mut phys, &mut sim, pid);
+            }
+            sim.list[i].phys = Some(phys);
+        }
+    }
+    ride_players(&mut sim);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     // Explosion knockback reaches the pushed player's client (it owns its movement).
     for pr in proxies.iter().filter(|e| e.delta != Vec3::ZERO) {
@@ -694,8 +735,145 @@ pub(crate) fn tick(
             p.send(entity::set_entity_motion(p.entity_id, arr(pr.delta)));
         }
     }
-    for (n, event) in events.into_iter().enumerate() {
+    for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
+/// One entity's tick in the entity phase (`tickNonPassenger`, or `tickPassenger` on the
+/// vehicle at index `vehicle`, which has just ticked).
+fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bool, vehicle: Option<usize>) {
+    let e = &mut sim.list[i];
+    if e.removed || !ticking.contains(chunk_of(e.pos)) {
+        return;
+    }
+    e.age += 1;
+    let Some(mut phys) = e.phys.take() else { return };
+    (sim.current, sim.seeds) = (phys.id, 0);
+    sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
+    // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
+    // farther apart than the despawn distance, so the region's players decide).
+    if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
+        let p = phys.position();
+        let nearest = sim.views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b));
+        kiln_entity::mob::check_despawn(&mut phys, &*sim, nearest.or(any_player.then_some(f64::MAX)));
+    }
+    if !phys.is_removed() {
+        phys.common_tick();
+        match vehicle.and_then(|v| sim.list[v].phys.clone()) {
+            Some(v) => kiln_entity::ride::ride_tick(&mut phys, sim, &v),
+            None => phys.tick(sim),
+        }
+    }
+    let e = &mut sim.list[i];
+    e.phys = Some(phys);
+    e.sync();
+    let pos = e.pos;
+    sim.grid.moved(i, pos);
+    let e = &mut sim.list[i];
+    let cell = chunk_of(e.pos).cell();
+    if sim.level.cells.cell(cell).is_some() {
+        e.cell = cell;
+    }
+}
+
+/// `Player.rideTick` for the region's riding players, after the entities ticked: a sneaking
+/// player (or one whose mount is gone or threw it off) gets off at the mount's dismount
+/// location; the others sit where the mount carries them.
+fn ride_players(sim: &mut SimLevel) {
+    let now = sim.level.env.game_time;
+    for k in 0..sim.players.len() {
+        let Some(v) = sim.players[k].vehicle else { continue };
+        let pid = sim.players[k].entity_id;
+        let idx = sim.index(v).filter(|&j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.is_alive()));
+        let seated = idx.is_some_and(|j| sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&pid)));
+        let p = &*sim.players[k];
+        let leave = !seated || p.sneaking || p.dead || p.disconnected;
+        if !leave {
+            let vp = sim.list[idx.unwrap()].phys.as_ref().expect("vehicle state");
+            let at = vp.passengers.iter().position(|&x| x == pid).unwrap_or(0);
+            let pos = kiln_entity::ride::rider_position(vp, at, "minecraft:player", 1.0);
+            let p = &mut *sim.players[k];
+            p.pos = arr(pos);
+            p.fall_distance = 0.0;
+            p.vel = [0.0; 3];
+            continue;
+        }
+        // `stopRiding` → `dismountVehicle`.
+        let mut to = sim.players[k].pos;
+        if let Some(j) = idx {
+            if let Some(vp) = sim.list[j].phys.as_mut() {
+                kiln_entity::ride::remove_passenger(vp, pid);
+            }
+            let vp = sim.list[j].phys.clone().expect("vehicle state");
+            let height = if sim.players[k].sneaking { 1.5 } else { 1.8 };
+            to = arr(kiln_entity::ride::dismount_location(&*sim, &vp, 0.6, height));
+        }
+        let p = &mut *sim.players[k];
+        p.vehicle = None;
+        if !p.disconnected {
+            let rot = p.rot;
+            p.teleport(to, rot, now);
+        }
+    }
+}
+
+/// `ServerGamePacketListenerImpl.handleMoveVehicle`: player `i` moves the mount it steers to
+/// where its client put it (the mount's own tick leaves it still).
+pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player], i: usize, pos: [f64; 3], rot: [f32; 2], on_ground: bool, now: i64) {
+    let p = &*players[i];
+    let Some(v) = p.vehicle else { return };
+    if pos.iter().any(|c| c.is_nan()) || rot.iter().any(|r| !r.is_finite()) {
+        return;
+    }
+    let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
+    let view = view(p, now);
+    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let steers = phys.passengers.first() == Some(&p.entity_id)
+        && kiln_entity::mob::data(phys).is_some_and(|m| m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)));
+    if !steers {
+        return;
+    }
+    // `moved too quickly`: more than 10 blocks from where the mount was.
+    let old = phys.position();
+    let to = Vec3::new(pos[0].clamp(-3.0e7, 3.0e7), pos[1].clamp(-2.0e7, 2.0e7), pos[2].clamp(-3.0e7, 3.0e7));
+    if to.distance_to_sqr(old) - phys.delta.length_sqr() > 100.0 {
+        return;
+    }
+    phys.set_pos(to);
+    phys.y_rot = kiln_entity::mob::mth::wrap_degrees(rot[0]);
+    phys.x_rot = kiln_entity::mob::mth::wrap_degrees(rot[1]);
+    phys.on_ground = on_ground;
+    let yaw = phys.y_rot;
+    if let Some(m) = kiln_entity::mob::data_mut(phys) {
+        m.y_body_rot = yaw;
+        m.y_head_rot = yaw;
+    }
+    let seat = kiln_entity::ride::rider_position(phys, 0, "minecraft:player", 1.0);
+    entities.list[idx].sync();
+    let p = &mut *players[i];
+    p.pos = arr(seat);
+}
+
+/// `handlePlayerCommand(START_RIDING_JUMP)`: the steered mount rears with its jump sound.
+pub(crate) fn riding_jump(entities: &mut Entities, players: &mut [&mut Player], i: usize, data: i32, env: &blocks::BlockEnv) {
+    let Some(v) = players[i].vehicle else { return };
+    if data <= 0 {
+        return;
+    }
+    let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
+    let pid = players[i].entity_id;
+    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    if phys.passengers.first() != Some(&pid) {
+        return;
+    }
+    let at = arr(phys.position());
+    let silent = phys.silent;
+    let Some(m) = kiln_entity::mob::data_mut(phys) else { return };
+    if let Some(sound) = kiln_entity::mob::kinds::horse::start_jump(m)
+        && !silent
+    {
+        send_sound(players, env, 0, at, sound, world_fx::SoundSource::Neutral, 0.4, 1.0);
     }
 }
 
@@ -713,7 +891,7 @@ pub(crate) fn hit_mob(
     let Ok(i) = entities.list.binary_search_by_key(&hit.target, |e| e.id) else { return };
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
-    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x6869_74, hit.target);
     let mut sim = SimLevel {
         level,
@@ -754,9 +932,235 @@ pub(crate) fn hit_mob(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
-    for (n, event) in events.into_iter().enumerate() {
+    if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == hit.attacker) {
+        p.last_hurt_mob = Some((hit.target, level.env.game_time));
+    }
+    for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
+}
+
+/// `ServerGamePacketListenerImpl.handleInteract` on a mob, then `Player.interactOn`: player
+/// `i` of the region's players right-clicks entity `target` with the item in `hand` (0 main,
+/// 1 off). The held item changes as the mob says; sheared wool drops.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn interact_mob(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    i: usize,
+    target: i32,
+    off_hand: bool,
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+) {
+    use kiln_item::component::EquipmentSlot;
+    let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
+    {
+        let p = &*players[i];
+        if p.dead || p.game_mode == 3 || entities.list[idx].removed {
+            return;
+        }
+        let Some(phys) = entities.list[idx].phys.as_ref() else { return };
+        if kiln_entity::mob::data(phys).is_none() {
+            return;
+        }
+        // `canInteractWithEntity(box, 3.0)`: the box within the interaction range plus 3.
+        let bb = phys.bounding_box();
+        let eye = p.eye_position();
+        let d = |v: f64, lo: f64, hi: f64| if v < lo { lo - v } else if v > hi { v - hi } else { 0.0 };
+        let (dx, dy, dz) = (d(eye[0], bb.min_x, bb.max_x), d(eye[1], bb.min_y, bb.max_y), d(eye[2], bb.min_z, bb.max_z));
+        let range = p.attribute(crate::combat::ENTITY_INTERACTION_RANGE) + 3.0;
+        if dx * dx + dy * dy + dz * dz >= range * range {
+            return;
+        }
+    }
+    let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
+    let stack = players[i].inv.equipped(slot).clone();
+    let who = kiln_entity::mob::interact::Interactor { id: players[i].entity_id, creative: players[i].game_mode == 1, sneaking: players[i].sneaking };
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x696e_74, target);
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: target,
+        seeds: 0x696e_7400,
+        rng,
+        grid: Grid::default(),
+    };
+    sim.grid = Grid::build(sim.list);
+    let Some(mut phys) = sim.list[idx].phys.take() else { return };
+    let out = kiln_entity::mob::interact::interact(&mut phys, &mut sim, &who, &stack);
+    // Sheared wool: each item on its own, thrown up from the sheep with a push from its random.
+    if let Some(table) = &out.shear
+        && let Some(loot) = sim.level.env.loot.clone()
+    {
+        let env = sim.level.env;
+        let ctx = crate::mobs::DeathContext {
+            type_name: phys.type_name,
+            origin: arr(phys.position()),
+            on_fire: false,
+            baby: false,
+            killed_by_player: false,
+            damage_type: "minecraft:generic",
+            weapon: Some(stack.clone()),
+        };
+        let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
+        let mut k = 0u64;
+        for drop in crate::mobs::roll(&loot, table, &ctx, seed) {
+            for _ in 0..drop.count() {
+                let mut one = drop.clone();
+                one.set_count(1);
+                let push = kiln_entity::mob::species::shear_drop_motion(&mut phys);
+                let h = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_0000 | k) as u64;
+                k += 1;
+                let p = phys.position();
+                let mut s = crate::mobs::drop_item(one, [p.x, p.y + 1.0, p.z], h);
+                s.vel = [s.vel[0] + push.x, s.vel[1] + push.y, s.vel[2] + push.z];
+                sim.spawns.push(s);
+            }
+        }
+    }
+    // `startRiding` (`Entity.canRide`: not sneaking), then `ServerPlayer.startRiding`: the
+    // rider takes the mount's facing and goes to its seat.
+    if out.ride && sim.players[i].vehicle.is_none() && !sim.players[i].sneaking {
+        let pid = sim.players[i].entity_id;
+        let first_is_player = phys.passengers.first().is_some_and(|f| sim.views.iter().any(|v| v.id == *f));
+        kiln_entity::ride::add_passenger(&mut phys, pid, true, first_is_player);
+        let at = phys.passengers.iter().position(|&x| x == pid).unwrap_or(0);
+        let seat = kiln_entity::ride::rider_position(&phys, at, "minecraft:player", 1.0);
+        let now = sim.level.env.game_time;
+        let p = &mut *sim.players[i];
+        p.vehicle = Some(target);
+        p.teleport(arr(seat), [phys.y_rot, phys.x_rot], now);
+    }
+    let e = &mut sim.list[idx];
+    e.phys = Some(phys);
+    e.sync();
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let p = &mut *players[i];
+    let index = kiln_inventory::inventory::equipment_index(slot, p.inv.selected);
+    use kiln_entity::mob::interact::HeldChange;
+    match &out.held {
+        HeldChange::None => {}
+        HeldChange::Consume(n) => {
+            if p.game_mode != 1 {
+                kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
+            }
+        }
+        HeldChange::Damage(n) => p.hurt_and_break(slot, *n, None),
+        HeldChange::Fill(filled) => {
+            // `ItemUtils.createFilledResult`: creative players keep the empty item and get the
+            // filled one if they have none; others trade one of the held items for it.
+            let mut filled = filled.clone();
+            if p.game_mode == 1 {
+                let has = (0..kiln_inventory::Container::size(&p.inv))
+                    .any(|j| kiln_inventory::stack::matches(kiln_inventory::Container::item(&p.inv, j), &filled));
+                if !has {
+                    p.add_to_inventory(&mut filled);
+                }
+            } else {
+                let held = kiln_inventory::Container::item_mut(&mut p.inv, index);
+                held.shrink(1);
+                if held.is_empty() {
+                    *held = filled;
+                } else if p.add_to_inventory(&mut filled) == 0 {
+                    spawns.push(crate::mobs::drop_item(filled, p.pos, p.entity_id as u64));
+                }
+            }
+        }
+    }
+    if let Some(sound) = out.player_sound
+        && let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound)
+    {
+        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, p.pos, 1.0, 1.0, level.env.game_time);
+        p.send(pkt);
+    }
+    for (n, event) in keyed(events) {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
+/// Runs `f` on entity `target` with the region as its level (outside the entity tick: menu
+/// actions reaching a villager), then carries out what it did.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_entity<R>(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    target: i32,
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    salt: u64,
+    f: impl FnOnce(&mut kiln_entity::Entity, &mut dyn EntityLevel) -> R,
+) -> Option<R> {
+    let idx = entities.list.binary_search_by_key(&target, |e| e.id).ok()?;
+    if entities.list[idx].removed {
+        return None;
+    }
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, target);
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: target,
+        seeds: salt << 8,
+        rng,
+        grid: Grid::default(),
+    };
+    sim.grid = Grid::build(sim.list);
+    let mut phys = sim.list[idx].phys.take()?;
+    let r = f(&mut phys, &mut sim);
+    let e = &mut sim.list[idx];
+    e.phys = Some(phys);
+    e.sync();
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    for (n, event) in keyed(events) {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+    Some(r)
+}
+
+/// Events with the index each gets for its seeds (sounds, loot): counted per source (the
+/// entity, or the position), so they do not depend on what else the region's entities did.
+fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
+    let mut seen: std::collections::HashMap<(u8, u64), usize> = std::collections::HashMap::new();
+    let pos_key = |p: Vec3| p.x.to_bits() ^ p.y.to_bits().rotate_left(21) ^ p.z.to_bits().rotate_left(42);
+    events
+        .into_iter()
+        .map(|ev| {
+            let key = match &ev {
+                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } => (0, *entity as u32 as u64),
+                Event::EntityEvent { entity, .. } | Event::MobHurt { entity, .. } => (1, *entity as u32 as u64),
+                Event::Sound { pos, .. } => (2, pos_key(*pos)),
+                Event::Explosion { pos, .. } => (3, pos_key(*pos)),
+                Event::Hurt { target, .. } => (4, *target as u32 as u64),
+                _ => (5, 0),
+            };
+            let n = seen.entry(key).or_insert(0);
+            let i = *n;
+            *n += 1;
+            (i, ev)
+        })
+        .collect()
 }
 
 fn carry_out(
@@ -841,10 +1245,36 @@ fn carry_out(
                 weapon,
             };
             let _ = attacker;
-            let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, n as u64);
+            let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
             for (k, stack) in crate::mobs::roll(&loot, &table, &ctx, seed).into_iter().enumerate() {
-                let h = crate::mobs::loot_seed(env.seed, env.game_time, id, (n as u64) << 8 | k as u64) as u64;
+                let h = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174_00 | k as u64) as u64;
                 spawns.push(crate::mobs::drop_item(stack, arr(pos), h));
+            }
+        }
+        Event::PotionSplash { target, potion, scale, owner: _ } => {
+            // `ThrownSplashPotion.onHitAsPotion` on a player: instant effects scaled by the
+            // distance, the others with scaled durations (dropped at 20 ticks or less).
+            let Some(p) = players.iter_mut().find(|p| p.entity_id == target && !p.dead) else { return };
+            let contents = kiln_item::component::PotionContents { potion: kiln_item::registry::POTION.id(potion), ..Default::default() };
+            for e in crate::effects::potion_effects(&contents, 1.0) {
+                match e.kind() {
+                    crate::effects::Kind::HealOrHarm { harm: false } => p.heal((scale * (4i32.wrapping_shl(e.amplifier as u32)) as f64 + 0.5) as i32 as f32),
+                    crate::effects::Kind::HealOrHarm { harm: true } => {
+                        let amount = (scale * (6i32.wrapping_shl(e.amplifier as u32)) as f64 + 0.5) as i32 as f32;
+                        let source = health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker: None, direct: None, weapon: None };
+                        let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
+                        p.hurt(amount, &source, &mut ctx);
+                    }
+                    _ => {
+                        let mut e = e;
+                        if e.duration != crate::effects::INFINITE && e.duration != 0 {
+                            e.duration = (scale * e.duration as f64 + 0.5) as i32;
+                        }
+                        if e.duration == crate::effects::INFINITE || e.duration > 20 {
+                            p.add_effect(e);
+                        }
+                    }
+                }
             }
         }
         Event::GiftLoot { entity: id, table, pos } => loot_drop(env, spawns, id, table, pos, n, 0.0),
@@ -874,12 +1304,13 @@ fn loot_drop(env: &blocks::BlockEnv, spawns: &mut Vec<Spawn>, id: i32, table: &s
     }
 }
 
-/// A player as the entities see it.
-fn view(p: &Player) -> PlayerView {
+/// A player as the entities see it (`now`: the game time).
+fn view(p: &Player, now: i64) -> PlayerView {
     use kiln_item::component::EquipmentSlot as S;
     let armor = [S::Feet, S::Legs, S::Chest, S::Head].iter().filter(|s| !p.inv.equipped(**s).is_empty()).count();
     PlayerView {
         id: p.entity_id,
+        uuid: p.uuid.as_u128(),
         pos: vec3(p.pos),
         eye_height: if p.sneaking { 1.27 } else { 1.62 },
         spectator: p.game_mode == 3,
@@ -890,6 +1321,21 @@ fn view(p: &Player) -> PlayerView {
         armor_cover: armor as f32 / 4.0,
         main_hand: p.inv.selected_item().item(),
         off_hand: p.inv.equipped(S::OffHand).item(),
+        piglin_safe_armor: [S::Feet, S::Legs, S::Chest, S::Head]
+            .iter()
+            .any(|s| kiln_entity::mob::item_tag(p.inv.equipped(*s).item(), "minecraft:piglin_safe_armor")),
+        in_water: None,
+        head: p.inv.equipped(S::Head).item(),
+        yaw: p.rot[0],
+        pitch: p.rot[1],
+        health: p.health,
+        effects: p.effects.keys().filter(|&&id| (0..64).contains(&id)).fold(0u64, |b, &id| b | 1 << id),
+        last_hurt_by_mob: p.last_hurt_by_mob.filter(|&(_, t)| now - t <= 100).map(|(id, _)| id),
+        last_hurt_by_mob_time: p.last_hurt_by_mob.map_or(0, |(_, t)| t as i32),
+        last_hurt_mob: p.last_hurt_mob.map(|(id, _)| id),
+        last_hurt_mob_time: p.last_hurt_mob.map_or(0, |(_, t)| t as i32),
+        hurt_recently: p.last_hurt_by_mob.is_some_and(|(_, t)| now - t <= 100),
+        vehicle: p.vehicle,
     }
 }
 
@@ -1081,6 +1527,12 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
                 e.equipment_sent = worn;
             }
         }
+        if let Some(phys) = e.phys.as_ref()
+            && phys.passengers != e.passengers_sent
+        {
+            e.passengers_sent = phys.passengers.clone();
+            packets.push(entity::set_passengers(e.id, &e.passengers_sent));
+        }
         // `ServerEntity.sendChanges`: velocity on update ticks when it changed, or at once
         // after an impulse (explosion knockback).
         let impulse = e.phys.as_mut().is_some_and(|p| std::mem::take(&mut p.needs_sync));
@@ -1127,5 +1579,10 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::Kill => ("minecraft:generic_kill", "death.attack.genericKill"),
         DamageKind::Cramming => ("minecraft:cramming", "death.attack.cramming"),
         DamageKind::PlayerExplosion => ("minecraft:player_explosion", "death.attack.explosion.player"),
+        DamageKind::Fireball => ("minecraft:fireball", "death.attack.fireball"),
+        DamageKind::Trident => ("minecraft:trident", "death.attack.trident"),
+        DamageKind::MobProjectile => ("minecraft:mob_projectile", "death.attack.mob"),
+        DamageKind::Magic => ("minecraft:magic", "death.attack.magic"),
+        DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),
     }
 }

@@ -24,6 +24,9 @@ pub struct ArrowData {
     pub last_state: Option<u16>,
     pub crit: bool,
     pub base_damage: f64,
+    /// `Arrow` potion effects (`minecraft:mob_effect` name, duration, amplifier): a stray's
+    /// slowness. Not saved yet.
+    pub effects: Vec<(&'static str, i32, i32)>,
 }
 
 /// A flying arrow (`minecraft:arrow` or `minecraft:spectral_arrow`).
@@ -40,6 +43,7 @@ pub fn new(id: i32, uuid: u128, type_name: &'static str, pos: Vec3, delta: Vec3,
         last_state: None,
         crit: false,
         base_damage: 2.0,
+        effects: Vec::new(),
     };
     let mut e = Entity::new(type_name, id, uuid, EntityKind::Arrow(data), seed);
     e.set_pos(pos);
@@ -222,6 +226,11 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
         r
     };
     if hurt {
+        // `Arrow.doPostHurtEffects`: an eighth of each effect's duration.
+        let effects = data(e).effects.clone();
+        for (effect, duration, amplifier) in effects {
+            level.add_effect(id, effect, (duration / 8).max(1), amplifier, owner.or(Some(e.id)));
+        }
         let pitch = 1.2 / (e.random.next_float() * 0.2 + 0.9);
         e.play_sound(level, "minecraft:entity.arrow.hit", 1.0, pitch);
         e.discard();

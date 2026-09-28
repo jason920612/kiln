@@ -8,7 +8,7 @@ use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 use std::time::{Duration, Instant};
 
-fn run(mobs: usize, ticks: usize) -> (Duration, Duration, usize) {
+fn run(mobs: usize, ticks: usize, kinds: &[&str]) -> (Duration, Duration, usize) {
     let mut sim = Sim::new(SimConfig::new(8, 6, None));
     let (msg, stats) = join(1, "Bench", 6);
     assert!(sim.step([msg]));
@@ -23,13 +23,12 @@ fn run(mobs: usize, ticks: usize) -> (Duration, Duration, usize) {
     }
     let setup = ["gamerule minecraft:spawn_mobs false", "time set 18000", "gamemode creative Bench"];
     step(&mut sim, &mut client, setup.iter().map(|c| ToSim::Console((*c).into())).collect());
-    let kinds = ["zombie", "skeleton", "creeper", "spider", "pig", "cow", "sheep", "chicken"];
     let p = client.pos;
     let mut cmds = Vec::new();
     for i in 0..mobs {
         let (a, r) = (i as f64 * 2.399, 6.0 + (i % 40) as f64);
         let (x, z) = (p[0] + r * a.cos(), p[2] + r * a.sin());
-        cmds.push(ToSim::Console(format!("summon minecraft:{} {x} {} {z} {{PersistenceRequired:1b}}", kinds[i % kinds.len()], p[1])));
+        cmds.push(ToSim::Console(format!("summon {} {x} {} {z} {{PersistenceRequired:1b}}", kinds[i % kinds.len()], p[1])));
     }
     step(&mut sim, &mut client, cmds);
     for _ in 0..40 {
@@ -49,9 +48,32 @@ fn run(mobs: usize, ticks: usize) -> (Duration, Duration, usize) {
 #[test]
 #[ignore = "benchmark"]
 fn five_hundred_mobs() {
-    let (base, base_worst, _) = run(0, 200);
-    let (with, with_worst, n) = run(500, 200);
+    let (base, base_worst, _) = run(0, 200, &FIRST);
+    let (with, with_worst, n) = run(500, 200, &FIRST);
     eprintln!("no mobs:  mean {base:?}, worst {base_worst:?}");
     eprintln!("{n} mobs: mean {with:?}, worst {with_worst:?}");
+    eprintln!("per mob:  {:?}", (with.saturating_sub(base)) / n.max(1) as u32);
+}
+
+const FIRST: [&str; 8] = [
+    "minecraft:zombie",
+    "minecraft:skeleton",
+    "minecraft:creeper",
+    "minecraft:spider",
+    "minecraft:pig",
+    "minecraft:cow",
+    "minecraft:sheep",
+    "minecraft:chicken",
+];
+
+/// 500 mobs of all 33 types Kiln simulates, round robin.
+#[test]
+#[ignore = "benchmark"]
+fn five_hundred_mixed_mobs() {
+    let all: Vec<&str> = kiln_entity::mob::ALL_KINDS.iter().map(|k| k.type_name()).collect();
+    let (base, base_worst, _) = run(0, 200, &all);
+    let (with, with_worst, n) = run(500, 200, &all);
+    eprintln!("no mobs:  mean {base:?}, worst {base_worst:?}");
+    eprintln!("{n} mobs (33 types): mean {with:?}, worst {with_worst:?}");
     eprintln!("per mob:  {:?}", (with.saturating_sub(base)) / n.max(1) as u32);
 }

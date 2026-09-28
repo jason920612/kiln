@@ -173,6 +173,10 @@ impl Player {
             }
             result
         };
+        if let Some(st) = self.open_menu.as_mut().and_then(|m| m.merchant_state_mut()) {
+            let v = st.merchant;
+            self.merchant_events.extend(st.drain().into_iter().map(|e| (v, e)));
+        }
         let mut took_result = false;
         for effect in out {
             if let Some(pkt) = effect.encode() {

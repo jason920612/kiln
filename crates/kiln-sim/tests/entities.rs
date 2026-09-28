@@ -9,7 +9,8 @@ use kiln_sim::{Sim, SimConfig};
 fn a_dropped_item_falls_and_is_picked_up_again() {
     let mut sim = Sim::new(SimConfig::new(4, 4, None));
     let (msg, stats) = join(1, "Thrower", 2);
-    assert!(sim.step([msg]));
+    // No natural mobs (slimes spawn in the superflat world's slime chunks).
+    assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
     let mut client = Client::new(1, stats);
     for _ in 0..5 {
         let mut inbox = Vec::new();

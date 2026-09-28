@@ -43,6 +43,7 @@ pub(crate) mod portal;
 mod region;
 mod rng;
 mod stats;
+mod trading;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
@@ -197,6 +198,8 @@ struct Player {
     menu: kiln_inventory::Menu,
     /// A block or entity menu the player has open.
     open_menu: Option<kiln_inventory::Menu>,
+    /// What an open merchant screen told its villager, for [`trading::apply_events`].
+    merchant_events: Vec<(i32, kiln_inventory::merchant::MerchantEvent)>,
     /// What the open menu is on, the menu counter and the ender chest items.
     containers: container::open::PlayerContainers,
     /// Movement packets for this player's viewers.
@@ -337,6 +340,12 @@ struct Player {
     seen_credits: bool,
     /// A trip noticed while touching blocks (the End's exit portal), for the serial phase.
     pending_travel: Option<portal::Travel>,
+    /// The entity the player rides (see [`entities::ride_players`]).
+    vehicle: Option<i32>,
+    /// `getLastHurtByMob` and `getLastHurtMob` with the game time (tamed animals take their
+    /// owner's side).
+    last_hurt_by_mob: Option<(i32, i64)>,
+    last_hurt_mob: Option<(i32, i64)>,
 }
 
 impl Player {
@@ -1152,6 +1161,14 @@ impl Sim {
         self.players.get(&conn).map(Player::menu_view)
     }
 
+    /// A player's open merchant screen: container id, the villager, and (item id, count) of the
+    /// payment and result slots.
+    pub fn merchant_screen(&self, conn: ConnId) -> Option<(i32, i32, Vec<Option<(i32, i32)>>)> {
+        let menu = self.players.get(&conn)?.open_menu.as_ref()?;
+        let st = menu.merchant_state()?;
+        Some((menu.container_id, st.merchant, st.items.iter().map(|s| (!s.is_empty()).then(|| (s.item(), s.count()))).collect()))
+    }
+
     /// The contents of the container block entity at an overworld position: (slot, item name,
     /// count) of each non-empty slot, and the furnace values (lit time, lit total, cook
     /// progress, cook total) for furnaces (for tests and tools).
@@ -1560,6 +1577,8 @@ impl Sim {
             p.combat = health::CombatTracker::default();
             p.attack_ticker = 0;
             p.portal_cooldown = 0;
+            // Its tick count too (phantoms' insomnia counts from it).
+            p.tick_count = 0;
         }
         p.effects_dirty = true;
         p.attributes_dirty = true;
@@ -1733,6 +1752,7 @@ impl Sim {
             inv_extra: joining.inv_extra,
             menu: kiln_inventory::Menu::inventory(),
             open_menu: None,
+            merchant_events: Vec::new(),
             containers: container::open::PlayerContainers::load(joining.saved.raw()),
             tracker: packets::entity::MovementTracker::new(
                 entity_id,
@@ -1813,6 +1833,9 @@ impl Sim {
             won_game: false,
             seen_credits: joining.seen_credits,
             pending_travel: None,
+            vehicle: None,
+            last_hurt_by_mob: None,
+            last_hurt_mob: None,
         };
 
         player.send(packets::play_login(&packets::Login {

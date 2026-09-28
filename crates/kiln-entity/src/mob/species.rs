@@ -10,6 +10,14 @@ use kiln_javamath::random::RandomSource;
 
 /// Before `LivingEntity.tick` (`Creeper.tick` swells first).
 pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    if let Some(k) = m.kind.ext() {
+        k.pre_tick(e, m, level);
+        return;
+    }
+    if m.kind == MobKind::Skeleton {
+        super::kinds::skeleton::tick_freezing(e, m, level);
+        return;
+    }
     let alive = super::is_alive(e, m);
     if let Species::Creeper { swell, old_swell, swell_dir, max_swell, radius, powered, ignited } = &mut m.species {
         if !alive {
@@ -44,6 +52,14 @@ pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 
 /// After `LivingEntity.tick` (`Spider.tick` records its climbing).
 pub fn post_tick(e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+    if let Some(k) = m.kind.ext() {
+        k.post_tick(e, m, _level);
+        return;
+    }
+    if m.kind == MobKind::Zombie {
+        super::kinds::zombie::tick_drowning(e, m, _level);
+        return;
+    }
     if let Species::Spider { climbing } = &mut m.species {
         *climbing = e.horizontal_collision;
     }
@@ -51,9 +67,12 @@ pub fn post_tick(e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) 
 
 /// The types' `aiStep` additions (after `Mob.aiStep`).
 pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-    // `AgeableMob.aiStep`: babies grow up.
-    if m.kind.is_animal() && super::is_alive(e, m) && m.age != 0 {
-        m.age += if m.age < 0 { 1 } else { -1 };
+    if super::breed::is_ageable(m.kind) {
+        super::breed::ai_step(e, m);
+    }
+    if let Some(k) = m.kind.ext() {
+        k.ai_step(e, m, level);
+        return;
     }
     let alive = super::is_alive(e, m);
     let baby = m.baby();
@@ -76,14 +95,13 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
 }
 
-/// `Sheep.ate`: the wool grows back.
-pub fn ate(_e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+/// `Sheep.ate`: the wool grows back and a lamb grows up a minute sooner.
+pub fn ate(e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
     if let Species::Sheep { sheared, .. } = &mut m.species {
         *sheared = false;
     }
-    if m.age < 0 {
-        // `ageUp(60)`: 60 seconds closer to adulthood.
-        m.age = (m.age + 60 * 20).min(0);
+    if m.age < 0 && !m.age_locked {
+        super::age_up(e, m, 60, false);
     }
 }
 
@@ -97,6 +115,9 @@ pub fn perform_ranged_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn En
     let damage = (power * 2.0) as f64 + super::mth::triangle(&mut arrow.random, difficulty * 0.11, 0.57425);
     if let crate::entity::EntityKind::Arrow(a) = &mut arrow.kind {
         a.base_damage = damage;
+    }
+    if let Some(k) = m.kind.ext() {
+        k.ranged_arrow(e, m, &mut arrow);
     }
     let dx = t.pos.x - e.x();
     let dy = t.pos.y + (t.bb.max_y - t.bb.min_y) * 0.3333333333333333 - arrow.y();
@@ -130,24 +151,58 @@ pub fn shoot(p: &mut Entity, x: f64, y: f64, z: f64, velocity: f32, inaccuracy: 
     p.x_rot_o = p.x_rot;
 }
 
-/// `SheepColorSpawnRules` for a temperate biome: black, gray, light gray, brown or the common
-/// white (with a rare pink).
-pub fn sheep_color(r: &mut dyn RandomSource) -> u8 {
+/// The farm animal climate of a biome (`#spawns_warm_variant_farm_animals`, then
+/// `#spawns_cold_variant_farm_animals`, else temperate).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Climate {
+    Temperate,
+    Warm,
+    Cold,
+}
+
+pub fn climate(biome: Option<i32>) -> Climate {
+    let Some(b) = biome else { return Climate::Temperate };
+    if biome_tag(b, "minecraft:spawns_warm_variant_farm_animals") {
+        Climate::Warm
+    } else if biome_tag(b, "minecraft:spawns_cold_variant_farm_animals") {
+        Climate::Cold
+    } else {
+        Climate::Temperate
+    }
+}
+
+/// Whether biome id `biome` is in the `minecraft:worldgen/biome` tag `tag`.
+pub fn biome_tag(biome: i32, tag: &str) -> bool {
+    kiln_data::registries::TAGS
+        .iter()
+        .find(|(r, _)| *r == "minecraft:worldgen/biome")
+        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+        .is_some_and(|(_, ids)| ids.contains(&biome))
+}
+
+/// `SheepColorSpawnRules`: by climate, four rare colors (5, 5, 5, 3 in 100) or the climate's
+/// common color, which is pink one time in 500.
+pub fn sheep_color(r: &mut dyn RandomSource, climate: Climate) -> u8 {
     const WHITE: u8 = 0;
     const PINK: u8 = 6;
     const GRAY: u8 = 7;
     const LIGHT_GRAY: u8 = 8;
     const BROWN: u8 = 12;
     const BLACK: u8 = 15;
+    let (rare, common) = match climate {
+        Climate::Temperate => ([BLACK, GRAY, LIGHT_GRAY, BROWN], WHITE),
+        Climate::Warm => ([GRAY, LIGHT_GRAY, WHITE, BLACK], BROWN),
+        Climate::Cold => ([LIGHT_GRAY, GRAY, WHITE, BROWN], BLACK),
+    };
     let i = r.next_int_bounded(100);
     match i {
-        0..5 => BLACK,
-        5..10 => GRAY,
-        10..15 => LIGHT_GRAY,
-        15..18 => BROWN,
+        0..5 => rare[0],
+        5..10 => rare[1],
+        10..15 => rare[2],
+        15..18 => rare[3],
         _ => {
             if r.next_int_bounded(500) < 499 {
-                WHITE
+                common
             } else {
                 PINK
             }
@@ -165,23 +220,54 @@ pub fn spider_effect(r: &mut dyn RandomSource) -> &'static str {
     }
 }
 
-/// Shearing a sheep (`Sheep.shear`): the wool drops come from the shearing loot table.
-pub fn shear(e: &mut Entity, level: &mut dyn EntityLevel) -> bool {
-    let Some(m) = super::data_mut(e) else { return false };
-    let Species::Sheep { color, sheared } = &mut m.species else { return false };
-    if *sheared || m.health <= 0.0 || m.age < 0 {
-        return false;
-    }
+/// `Sheep.shear`: the sheep is sheared; returns the shearing loot table of its color, which
+/// the simulation rolls, dropping each item with [`shear_drop_motion`].
+pub fn shear_table(m: &mut MobData) -> Option<String> {
+    let Species::Sheep { color, sheared } = &mut m.species else { return None };
     *sheared = true;
-    let color = *color;
-    let names = [
+    const NAMES: [&str; 16] = [
         "white", "orange", "magenta", "light_blue", "yellow", "lime", "pink", "gray", "light_gray", "cyan", "purple", "blue", "brown", "green",
         "red", "black",
     ];
-    let table = format!("minecraft:shearing/sheep/{}", names[color as usize & 15]);
-    level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.sheep.shear", source: "players", volume: 1.0, pitch: 1.0 });
-    level.emit(Event::ShearLoot { entity: e.id, table, pos: e.position() });
-    true
+    Some(format!("minecraft:shearing/sheep/{}", NAMES[*color as usize & 15]))
+}
+
+/// The push a sheared wool item gets on top of its throw (`Sheep.shear`, one per item, from the
+/// sheep's random).
+pub fn shear_drop_motion(e: &mut Entity) -> Vec3 {
+    let r = &mut e.random;
+    let x = (r.next_float() - r.next_float()) * 0.1;
+    let y = r.next_float() * 0.05;
+    let z = (r.next_float() - r.next_float()) * 0.1;
+    Vec3::new(x as f64, y as f64, z as f64)
+}
+
+/// `getDefaultDimensions` of the type: `base` (width, height, eye height) for adults; for babies
+/// the type's `BABY_DIMENSIONS`, else `base` scaled by `getAgeScale` (0.5).
+pub fn dimensions(m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {
+    if let Some(k) = m.kind.ext() {
+        return k.dimensions(m, base);
+    }
+    let (w, h, eye) = base;
+    if m.baby() {
+        if let Some(d) = baby_dimensions(m.kind) {
+            return d;
+        }
+        return (w * 0.5, h * 0.5, eye * 0.5);
+    }
+    (w, h, eye)
+}
+
+/// The types' `BABY_DIMENSIONS` (`EntityDimensions.scalable(w, h).withEyeHeight(eye)`).
+fn baby_dimensions(kind: MobKind) -> Option<(f32, f32, f32)> {
+    Some(match kind {
+        MobKind::Pig => (0.45, 0.45, 0.40625),
+        MobKind::Cow => (0.45, 0.7, 0.69),
+        MobKind::Sheep => (0.45, 0.65, 0.65625),
+        MobKind::Chicken => (0.3, 0.4, 0.28125),
+        MobKind::Zombie => super::kinds::zombie::baby_dimensions(kind),
+        _ => return None,
+    })
 }
 
 /// Whether `kind` is hurt by `damage` at all (`fireImmune` types are not simulated).

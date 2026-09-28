@@ -29,6 +29,22 @@ fn op_of(name: &str) -> Option<Op> {
 pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     let mut m = MobData::new(kind, &mut e.random);
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
+    read_fields(e, &mut m, r);
+    e.kind = EntityKind::Mob(Box::new(m));
+}
+
+/// `readAdditionalSaveData` on an existing mob from a compound of saved fields (the parity
+/// harness sets scenario mobs up this way, as vanilla's harness does).
+pub fn apply_nbt(e: &mut Entity, tag: &Tag) {
+    let Tag::Compound(fields) = tag else { return };
+    let mut r = Input { fields, used: Vec::new() };
+    let mut m = super::take(e);
+    read_fields(e, &mut m, &mut r);
+    super::put(e, m);
+}
+
+fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
+    let kind = m.kind;
     // `LivingEntity.readAdditionalSaveData`.
     m.absorption = r.float_or("AbsorptionAmount", 0.0);
     if let Some(Tag::List(list)) = r.get("attributes") {
@@ -83,9 +99,14 @@ pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     }
     m.left_handed = r.bool_or("LeftHanded", false);
     m.no_ai = r.bool_or("NoAI", false);
-    // `AgeableMob`.
-    if kind.is_animal() {
+    // `AgeableMob` and `Animal`.
+    if super::breed::is_ageable(kind) {
         m.age = r.int_or("Age", 0);
+        m.forced_age = r.int_or("ForcedAge", 0);
+        m.age_locked = r.bool_or("AgeLocked", false);
+    }
+    if super::breed::is_animal(kind) {
+        m.in_love = r.int_or("InLove", 0);
     }
     match &mut m.species {
         Species::Sheep { color, sheared } => {
@@ -97,10 +118,12 @@ pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
                 *egg_time = t as i32;
             }
         }
-        Species::Zombie { can_break_doors } => {
+        Species::Zombie { can_break_doors, drowning } => {
             *can_break_doors = r.bool_or("CanBreakDoors", false);
             m.zombie_baby = r.bool_or("IsBaby", false);
+            drowning.load(r, "InWaterTime", "DrownedConversionTime");
         }
+        Species::Skeleton { freezing } => freezing.load(r, "FreezingTime", "StrayConversionTime"),
         Species::Creeper { powered, max_swell, radius, ignited, .. } => {
             *powered = r.bool_or("powered", false);
             if let Some(f) = r.num("Fuse") {
@@ -116,8 +139,11 @@ pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     if m.zombie_baby {
         m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
-    super::reassess_weapon_goal(&mut m, false);
-    e.kind = EntityKind::Mob(Box::new(m));
+    super::reassess_weapon_goal(m, false);
+    if let Some(k) = kind.ext() {
+        k.load(e, m, r);
+    }
+    super::refresh_dimensions(e, m);
 }
 
 /// Writes the mob's fields.
@@ -177,10 +203,13 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     if m.no_ai {
         o.put("NoAI", Tag::Byte(1));
     }
-    if m.kind.is_animal() {
+    if super::breed::is_ageable(m.kind) {
         o.put("Age", Tag::Int(m.age));
-        o.put("ForcedAge", Tag::Int(0));
-        o.put("InLove", Tag::Int(0));
+        o.put("ForcedAge", Tag::Int(m.forced_age));
+        o.put("AgeLocked", Tag::Byte(m.age_locked as i8));
+    }
+    if super::breed::is_animal(m.kind) {
+        o.put("InLove", Tag::Int(m.in_love));
     }
     match &m.species {
         Species::Sheep { color, sheared } => {
@@ -191,11 +220,10 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
             o.put("IsChickenJockey", Tag::Byte(0));
             o.put("EggLayTime", Tag::Int(*egg_time));
         }
-        Species::Zombie { can_break_doors } => {
+        Species::Zombie { can_break_doors, drowning } => {
             o.put("IsBaby", Tag::Byte(m.zombie_baby as i8));
             o.put("CanBreakDoors", Tag::Byte(*can_break_doors as i8));
-            o.put("InWaterTime", Tag::Int(-1));
-            o.put("DrownedConversionTime", Tag::Int(-1));
+            drowning.save(o, e.fluid.is_eye_in_water(), "InWaterTime", "DrownedConversionTime");
         }
         Species::Creeper { powered, max_swell, radius, ignited, .. } => {
             if *powered {
@@ -205,8 +233,11 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
             o.put("ExplosionRadius", Tag::Byte(*radius as i8));
             o.put("ignited", Tag::Byte(*ignited as i8));
         }
-        Species::Skeleton => o.put("StrayConversionTime", Tag::Int(-1)),
+        Species::Skeleton { freezing } => freezing.save(o, e.is_in_powder_snow, "FreezingTime", "StrayConversionTime"),
         _ => {}
+    }
+    if let Some(k) = m.kind.ext() {
+        k.save(e, m, o);
     }
     if !e.extra.iter().any(|(k, _)| k == "Brain") {
         o.put("Brain", Tag::Compound(vec![("memories".into(), Tag::Compound(vec![]))]));

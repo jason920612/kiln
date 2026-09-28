@@ -60,6 +60,8 @@ pub enum EntityKind {
     MobTicking { gravity: f64 },
     /// An entity simulated elsewhere (players), present so behaviours can see it.
     Other { type_name: &'static str },
+    /// An entity type with its behaviour in its own module (see [`crate::ext_entity`]).
+    Ext(Box<dyn crate::ext_entity::EntityExt>),
 }
 
 #[derive(Clone, Debug)]
@@ -103,6 +105,10 @@ pub struct Entity {
     /// Set when the velocity changed enough that trackers must resend it (`hasImpulse`/`needsSync`).
     pub needs_sync: bool,
     pub max_up_step: f32,
+    /// `moveDist`, `flyDist`, `nextStep`: step and swim sound pacing (`applyMovementEmissionAndPlaySound`).
+    pub move_dist: f32,
+    pub fly_dist: f32,
+    pub next_step: f32,
     pub stuck_speed_multiplier: Vec3,
     pub main_supporting_block_pos: Option<BlockPos>,
     on_ground_no_blocks: bool,
@@ -115,6 +121,12 @@ pub struct Entity {
     pub last_known_speed: Vec3,
     pub(crate) inside: InsideCollector,
     pub random: LegacyRandom,
+    /// The entity this one rides (`Entity.vehicle`) and the ones riding it, first the
+    /// controlling one (`passengers`); players by their network id.
+    pub vehicle: Option<i32>,
+    pub passengers: Vec<i32>,
+    /// `canStandOnFluid(lava)`: lava sources hold the entity up (striders).
+    pub stands_on_lava: bool,
     /// Saved fields Kiln does not model (custom name, tags, passengers, ...), written back
     /// unchanged by [`crate::persist::save`].
     pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
@@ -164,6 +176,9 @@ impl Entity {
             invulnerable_time: 0,
             needs_sync: false,
             max_up_step: 0.0,
+            move_dist: 0.0,
+            fly_dist: 0.0,
+            next_step: 1.0,
             stuck_speed_multiplier: Vec3::ZERO,
             main_supporting_block_pos: None,
             on_ground_no_blocks: false,
@@ -176,6 +191,9 @@ impl Entity {
             last_known_speed: Vec3::ZERO,
             inside: InsideCollector::default(),
             random: LegacyRandom::new(random_seed),
+            vehicle: None,
+            passengers: Vec::new(),
+            stands_on_lava: false,
             extra: Vec::new(),
         };
         e.set_pos(Vec3::ZERO);
@@ -271,6 +289,7 @@ impl Entity {
             EntityKind::Arrow(_) => 0.05,
             EntityKind::Mob(ref m) => m.attrs.value(crate::mob::attributes::Attr::Gravity),
             EntityKind::MobTicking { gravity } => gravity,
+            EntityKind::Ext(ref x) => x.gravity(),
             EntityKind::Other { .. } => 0.0,
         }
     }
@@ -288,6 +307,9 @@ impl Entity {
         match &self.kind {
             EntityKind::Item(item) => crate::item::fire_immune(item),
             EntityKind::Tnt(_) => true,
+            EntityKind::Mob(m) => m.kind.fire_immune(),
+            // A mob in its own tick (striders walking through lava).
+            EntityKind::MobTicking { .. } => crate::mob::MobKind::by_name(self.type_name).is_some_and(|k| k.fire_immune()),
             _ => false,
         }
     }
@@ -337,6 +359,7 @@ impl Entity {
             fall_distance: self.fall_distance,
             falling_block: matches!(self.kind, EntityKind::FallingBlock(_)),
             walks_on_powder_snow: matches!(&self.kind, EntityKind::Player(p) if p.walks_on_powder_snow),
+            stands_on_lava: self.stands_on_lava,
         }
     }
 
@@ -363,6 +386,7 @@ impl Entity {
             EntityKind::Player(_) | EntityKind::MobTicking { .. } => {}
             EntityKind::Mob(_) => crate::mob::tick(self, level),
             EntityKind::Other { .. } => self.base_tick(level),
+            EntityKind::Ext(_) => crate::ext_entity::tick(self, level),
         }
     }
 
@@ -448,6 +472,15 @@ impl Entity {
                 crate::mob::hurt_entity(self, level, source, amount)
             }
             EntityKind::MobTicking { .. } => false,
+            EntityKind::Ext(_) => {
+                let placeholder = EntityKind::Other { type_name: self.type_name };
+                let EntityKind::Ext(mut x) = std::mem::replace(&mut self.kind, placeholder) else { unreachable!() };
+                let r = x.hurt(self, level, kind, amount, attacker);
+                if matches!(self.kind, EntityKind::Other { .. }) {
+                    self.kind = EntityKind::Ext(x);
+                }
+                r
+            }
             EntityKind::Player(_) | EntityKind::Other { .. } => {
                 level.emit(Event::Hurt { target: self.id, amount, kind, attacker });
                 true
@@ -613,8 +646,47 @@ impl Entity {
         if self.can_simulate_movement() && ((vertical_move && self.vertical_collision) || self.horizontal_collision) {
             self.restitute_movement_after_collisions(level, on_state, x_collision, z_collision, collided);
         }
+        if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) {
+            self.apply_movement_emission(level, collided, on_pos, on_state);
+        }
         let f = self.block_speed_factor(level) as f64;
         self.delta = self.delta.multiply(f, 1.0, f);
+    }
+
+    /// `applyMovementEmissionAndPlaySound` (`MovementEmission.ALL`, not riding): walking step
+    /// sounds and, in water, swim sounds (their pitch draws from the random).
+    fn apply_movement_emission(&mut self, level: &mut dyn EntityLevel, movement: Vec3, pos: BlockPos, state: u16) {
+        let len = (movement.length() * 0.6000000238418579) as f32;
+        let horizontal = (movement.horizontal_distance() * 0.6000000238418579) as f32;
+        let on_pos = self.on_pos(level, 1.0e-5);
+        let on_state = level.block(on_pos);
+        let climbable = |s: u16| has_tag(s, Tag::Climbable);
+        self.move_dist += if climbable(on_state) { len } else { horizontal };
+        self.fly_dist += len;
+        if !(self.move_dist > self.next_step) || kiln_data::blocks_types::is_air(on_state) {
+            return;
+        }
+        // `vibrationAndSoundEffectsFromBlock`: a step on the ground or a climbable block (the step
+        // sound draws nothing).
+        let stepped = |e: &Entity, s: u16| !kiln_data::blocks_types::is_air(s) && (e.on_ground || climbable(s));
+        let mut ok = stepped(self, state);
+        if on_pos != pos {
+            ok |= stepped(self, on_state);
+        }
+        if ok {
+            self.next_step = (self.move_dist as i32 + 1) as f32;
+        } else if self.is_in_water() {
+            self.next_step = (self.move_dist as i32 + 1) as f32;
+            let d = self.delta;
+            let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.35);
+            let pitch = 1.0 + (self.random_next_float_pub() - self.random_next_float_pub()) * 0.4;
+            self.play_sound(level, "minecraft:entity.generic.swim", volume, pitch);
+            level.emit(Event::GameEvent { event: "minecraft:swim", pos: self.position, entity: Some(self.id) });
+        }
+    }
+
+    fn random_next_float_pub(&mut self) -> f32 {
+        kiln_javamath::random::RandomSource::next_float(&mut self.random)
     }
 
     /// Server side: false for players, whose client is authoritative.
@@ -676,6 +748,19 @@ impl Entity {
 
     /// `checkFallDamage`.
     fn check_fall_damage(&mut self, level: &mut dyn EntityLevel, y: f64, on_ground: bool, state: u16, pos: BlockPos) {
+        // `LivingEntity.checkFallDamage`: out of water, the fluid state is refreshed after the move
+        // (a mob falling into water splashes in the same tick).
+        if matches!(self.kind, EntityKind::MobTicking { .. } | EntityKind::Mob(_)) && !crate::mob::checks_fall_damage(self.type_name) {
+            return;
+        }
+        // `Strider.checkFallDamage`: no falling in lava.
+        if self.type_name == "minecraft:strider" && self.is_in_lava() {
+            self.fall_distance = 0.0;
+            return;
+        }
+        if self.is_living() && !self.is_in_water() {
+            self.update_fluid_interaction(level);
+        }
         if !self.is_in_water() && y < 0.0 {
             self.fall_distance -= y as f32 as f64;
         }

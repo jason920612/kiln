@@ -19,6 +19,8 @@ pub enum EntityFilter {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerView {
     pub id: i32,
+    /// The player's UUID (tamed animals remember their owner by it).
+    pub uuid: u128,
     pub pos: Vec3,
     pub eye_height: f32,
     pub spectator: bool,
@@ -32,6 +34,29 @@ pub struct PlayerView {
     /// Item ids in the hands (`minecraft:item` protocol ids, 0 for none).
     pub main_hand: i32,
     pub off_hand: i32,
+    /// Wears a piece of `#minecraft:piglin_safe_armor` (piglins leave the player alone).
+    pub piglin_safe_armor: bool,
+    /// `isInWater` when known (`None`: from the blocks around the player, as its own tick
+    /// would find).
+    pub in_water: Option<bool>,
+    /// The item id on the head (`EquipmentSlot.HEAD`; 0 for none).
+    pub head: i32,
+    /// Rotations: `yHeadRot` (a player's head turns with its body) and `xRot`, in degrees.
+    pub yaw: f32,
+    pub pitch: f32,
+    pub health: f32,
+    /// Active effects: bit `id` for `minecraft:mob_effect` network id `id` (below 64).
+    pub effects: u64,
+    /// `getLastHurtByMob` and `getLastHurtByMobTimestamp` (tamed animals defend their owner).
+    pub last_hurt_by_mob: Option<i32>,
+    pub last_hurt_by_mob_time: i32,
+    /// `getLastHurtMob` and `getLastHurtMobTimestamp` (tamed animals join their owner's fight).
+    pub last_hurt_mob: Option<i32>,
+    pub last_hurt_mob_time: i32,
+    /// `getLastDamageSource(100)` is set and not in `no_wolf_retaliation`.
+    pub hurt_recently: bool,
+    /// The entity the player rides.
+    pub vehicle: Option<i32>,
 }
 
 impl PlayerView {
@@ -39,6 +64,7 @@ impl PlayerView {
     pub fn new(id: i32, pos: Vec3) -> PlayerView {
         PlayerView {
             id,
+            uuid: 0,
             pos,
             eye_height: 1.62,
             spectator: false,
@@ -49,7 +75,25 @@ impl PlayerView {
             armor_cover: 0.0,
             main_hand: 0,
             off_hand: 0,
+            piglin_safe_armor: false,
+            in_water: None,
+            head: 0,
+            yaw: 0.0,
+            pitch: 0.0,
+            health: 20.0,
+            effects: 0,
+            last_hurt_by_mob: None,
+            last_hurt_by_mob_time: 0,
+            last_hurt_mob: None,
+            last_hurt_mob_time: 0,
+            hurt_recently: false,
+            vehicle: None,
         }
+    }
+
+    /// `hasEffect` for a `minecraft:` effect id.
+    pub fn has_effect(&self, effect: &str) -> bool {
+        kiln_data::builtin_id("minecraft:mob_effect", effect).is_some_and(|id| (0..64).contains(&id) && self.effects & (1 << id) != 0)
     }
 }
 
@@ -79,6 +123,14 @@ pub enum DamageKind {
     Kill,
     Cramming,
     PlayerExplosion,
+    /// A ghast's or blaze's fireball (`DamageSources.fireball`).
+    Fireball,
+    /// `minecraft:trident` (a thrown trident).
+    Trident,
+    /// `mobProjectile` (shulker bullets, llama spit).
+    MobProjectile,
+    Magic,
+    IndirectMagic,
 }
 
 /// Side effects the simulation carries out or broadcasts.
@@ -121,6 +173,9 @@ pub enum Event {
     },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
+    /// A splash potion (`minecraft:` potion id) reached player `target` at `scale` of its full
+    /// strength (`ThrownSplashPotion.onHitAsPotion`); `owner` threw it.
+    PotionSplash { target: i32, potion: &'static str, scale: f64, owner: Option<i32> },
     /// `dropFromShearingLootTable` (a sheep's wool).
     ShearLoot { entity: i32, table: String, pos: Vec3 },
 }
@@ -155,6 +210,11 @@ pub trait EntityLevel {
 
     /// Lowest block y of the dimension.
     fn min_y(&self) -> i32;
+
+    /// `Level.getSeaLevel` (63 in the overworld, 32 in the nether, -63 in a superflat world).
+    fn sea_level(&self) -> i32 {
+        63
+    }
 
     /// Highest block y of the dimension.
     fn max_y(&self) -> i32 {
@@ -273,10 +333,39 @@ pub trait EntityLevel {
         true
     }
 
+    /// `LivingEntity.addEffect` on player or entity `id` (`effect`: a `minecraft:mob_effect`
+    /// name; `source`: the entity responsible). Returns whether it took (mobs have no effects
+    /// yet).
+    fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32>) -> bool {
+        let _ = (id, effect, duration, amplifier, source);
+        false
+    }
+
     /// Sets entity or player `id` on fire for `seconds`.
     fn ignite(&mut self, id: i32, seconds: f32) {
         if let Some(e) = self.entity_mut(id) {
             e.ignite_for_seconds(seconds);
         }
     }
+
+    /// The `minecraft:gameplay/piglins_zombify` environment attribute (false in the nether).
+    fn piglins_zombify(&self) -> bool {
+        !self.fast_lava()
+    }
+
+    /// `AbstractVillager.addOffersFromTradeSet`: the offers the datapack trade set `set` (a
+    /// `minecraft:trade_set` id) rolls for `merchant`; none without trade data.
+    fn trade_offers(&mut self, set: &str, merchant: &TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
+        let _ = (set, merchant);
+        Vec::new()
+    }
+}
+
+/// The merchant a trade set is rolled for (the loot context's `this` entity and origin).
+#[derive(Clone, Copy, Debug)]
+pub struct TradeMerchant {
+    pub entity: i32,
+    pub pos: Vec3,
+    /// The villager's `minecraft:villager_type` (for type-restricted trades).
+    pub villager_type: &'static str,
 }

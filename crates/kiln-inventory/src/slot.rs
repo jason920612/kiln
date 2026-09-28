@@ -18,6 +18,8 @@ pub enum Source {
     /// The menu's own input container (stonecutter, smithing table): a `SimpleContainer` whose
     /// changes make the menu update its result.
     Input,
+    /// The merchant menu's trade container (`MerchantContainer`, see [`crate::merchant`]).
+    Merchant,
 }
 
 /// The slot subclass: placement, pickup and stack size rules.
@@ -44,6 +46,8 @@ pub enum SlotKind {
     SmithingInput(u8),
     /// The smithing table's result slot (`ItemCombinerMenu$3`).
     SmithingResult,
+    /// `MerchantResultSlot`: taking the result makes the trade.
+    MerchantResult,
     /// A grindstone input: damageable or enchanted items (`GrindstoneMenu$2`, `$3`).
     GrindstoneInput,
     /// The grindstone's result slot (`GrindstoneMenu$4`).
@@ -90,7 +94,8 @@ impl Slot {
             | SlotKind::GrindstoneResult
             | SlotKind::AnvilResult
             | SlotKind::LoomResult
-            | SlotKind::CartographyResult => false,
+            | SlotKind::CartographyResult
+            | SlotKind::MerchantResult => false,
             SlotKind::LoomBanner => crate::stations::is_banner(stack),
             SlotKind::LoomDye => crate::stations::is_loom_dye(stack),
             SlotKind::LoomPattern => crate::stations::is_loom_pattern(stack),

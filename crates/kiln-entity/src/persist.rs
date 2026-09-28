@@ -41,6 +41,7 @@ pub fn is_simulated(type_name: &str) -> bool {
         type_name,
         "minecraft:item" | "minecraft:experience_orb" | "minecraft:falling_block" | "minecraft:tnt" | "minecraft:arrow" | "minecraft:spectral_arrow"
     ) || THROWABLES.iter().any(|t| t.type_name() == type_name)
+        || crate::ext_entity::TYPES.contains(&type_name)
         || crate::mob::MobKind::by_name(type_name).is_some()
 }
 
@@ -96,48 +97,48 @@ pub fn state_from_tag(tag: &Tag) -> Option<u16> {
 }
 
 /// A compound being read: remembers which keys the reader used, so the rest can be kept.
-pub(crate) struct Input<'a> {
-    fields: &'a [(String, Tag)],
-    used: Vec<&'static str>,
+pub struct Input<'a> {
+    pub(crate) fields: &'a [(String, Tag)],
+    pub(crate) used: Vec<&'static str>,
 }
 
 impl<'a> Input<'a> {
-    pub(crate) fn get(&mut self, key: &'static str) -> Option<&'a Tag> {
+    pub fn get(&mut self, key: &'static str) -> Option<&'a Tag> {
         self.used.push(key);
         self.fields.iter().find(|(k, _)| k == key).map(|(_, v)| v)
     }
 
     /// `getDoubleOr` and friends: any numeric tag.
-    pub(crate) fn num(&mut self, key: &'static str) -> Option<f64> {
+    pub fn num(&mut self, key: &'static str) -> Option<f64> {
         self.get(key).and_then(Tag::as_f64)
     }
 
-    pub(crate) fn int_or(&mut self, key: &'static str, default: i32) -> i32 {
+    pub fn int_or(&mut self, key: &'static str, default: i32) -> i32 {
         self.num(key).map_or(default, |v| v as i64 as i32)
     }
 
     /// `getShortOr`: the value truncated to a short.
-    pub(crate) fn short_or(&mut self, key: &'static str, default: i16) -> i32 {
+    pub fn short_or(&mut self, key: &'static str, default: i16) -> i32 {
         self.num(key).map_or(default, |v| v as i64 as i16) as i32
     }
 
-    pub(crate) fn byte_or(&mut self, key: &'static str, default: i8) -> i8 {
+    pub fn byte_or(&mut self, key: &'static str, default: i8) -> i8 {
         self.num(key).map_or(default, |v| v as i64 as i8)
     }
 
-    pub(crate) fn bool_or(&mut self, key: &'static str, default: bool) -> bool {
+    pub fn bool_or(&mut self, key: &'static str, default: bool) -> bool {
         self.num(key).map_or(default, |v| v != 0.0)
     }
 
-    pub(crate) fn float_or(&mut self, key: &'static str, default: f32) -> f32 {
+    pub fn float_or(&mut self, key: &'static str, default: f32) -> f32 {
         self.num(key).map_or(default, |v| v as f32)
     }
 
-    pub(crate) fn uuid(&mut self, key: &'static str) -> Option<u128> {
+    pub fn uuid(&mut self, key: &'static str) -> Option<u128> {
         self.get(key).and_then(uuid_from_tag)
     }
 
-    pub(crate) fn vec3(&mut self, key: &'static str) -> Option<[f64; 3]> {
+    pub fn vec3(&mut self, key: &'static str) -> Option<[f64; 3]> {
         let list = self.get(key)?.as_list()?;
         if list.len() != 3 {
             return None;
@@ -150,7 +151,7 @@ impl<'a> Input<'a> {
     }
 
     /// Fields no reader used.
-    pub(crate) fn rest(&self) -> Vec<(String, Tag)> {
+    pub fn rest(&self) -> Vec<(String, Tag)> {
         self.fields.iter().filter(|(k, _)| !self.used.contains(&k.as_str())).cloned().collect()
     }
 }
@@ -277,13 +278,15 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
                 last_state,
                 crit,
                 base_damage,
+                effects: Vec::new(),
             })
         }
         name if crate::mob::MobKind::by_name(name).is_some() => EntityKind::MobTicking { gravity: 0.08 },
+        name if crate::ext_entity::TYPES.contains(&name) => EntityKind::Ext(crate::ext_entity::load(name, r).ok_or(LoadError::NotSimulated)?),
         name => {
             let kind = THROWABLES.into_iter().find(|t| t.type_name() == name).ok_or(LoadError::NotSimulated)?;
             let (left_owner, has_been_shot) = read_projectile(r);
-            EntityKind::Throwable(ThrowableData { kind, owner: None, left_owner, left_owner_checked: false, has_been_shot })
+            EntityKind::Throwable(ThrowableData { kind, owner: None, left_owner, left_owner_checked: false, has_been_shot, item: None })
         }
     })
 }
@@ -294,14 +297,14 @@ fn read_projectile(r: &mut Input) -> (bool, bool) {
 }
 
 /// A compound being written.
-pub(crate) struct Output(pub(crate) Vec<(String, Tag)>);
+pub struct Output(pub Vec<(String, Tag)>);
 
 impl Output {
-    pub(crate) fn put(&mut self, key: &str, value: Tag) {
+    pub fn put(&mut self, key: &str, value: Tag) {
         self.0.push((key.to_owned(), value));
     }
 
-    pub(crate) fn has(&self, key: &str) -> bool {
+    pub fn has(&self, key: &str) -> bool {
         self.0.iter().any(|(k, _)| k == key)
     }
 }
@@ -414,6 +417,7 @@ pub fn save(e: &Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>) -> Tag {
             }
         }
         EntityKind::Mob(m) => crate::mob::persist::save(e, m, &mut o),
+        EntityKind::Ext(x) => x.save(e, &mut o),
         EntityKind::Player(_) | EntityKind::MobTicking { .. } | EntityKind::Other { .. } => {}
     }
     // Everything else as it was loaded (custom name, tags, passengers, an unresolved owner).

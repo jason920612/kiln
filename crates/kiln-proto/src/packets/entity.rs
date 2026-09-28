@@ -167,6 +167,17 @@ pub fn remove_entities(entity_ids: &[i32]) -> Bytes {
     b.freeze()
 }
 
+/// `set_passengers`: who rides `vehicle`, the controlling passenger first.
+pub fn set_passengers(vehicle: i32, passengers: &[i32]) -> Bytes {
+    let mut b = packet(ids::SET_PASSENGERS);
+    b.put_varint(vehicle);
+    b.put_varint(passengers.len() as i32);
+    for id in passengers {
+        b.put_varint(*id);
+    }
+    b.freeze()
+}
+
 /// Flags VarInt of `move_entity_pos*`: on-ground bit, then the step count.
 fn move_properties(on_ground: bool, delta: &PosDelta) -> i32 {
     on_ground as i32 | delta.step_count() << 1

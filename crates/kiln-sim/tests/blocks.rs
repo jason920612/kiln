@@ -20,7 +20,8 @@ impl World {
     fn new(mode: &str) -> Self {
         let mut sim = Sim::new(SimConfig::new(4, 4, None));
         let (msg, stats) = join(1, "Builder", 2);
-        assert!(sim.step([msg, ToSim::Console(format!("gamemode {mode} Builder"))]));
+        // No natural mobs (slimes spawn in the superflat world's slime chunks).
+        assert!(sim.step([msg, ToSim::Console(format!("gamemode {mode} Builder")), ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
         let mut client = Client::new(1, stats);
         for _ in 0..5 {
             let mut inbox = Vec::new();

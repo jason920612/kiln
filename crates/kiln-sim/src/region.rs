@@ -108,9 +108,34 @@ impl RegionWork<'_> {
                 }
                 continue;
             }
+            // Riding: the steered mount moves, the jump key makes it rear.
+            if let PlayIn::MoveVehicle { pos, rot, on_ground } = pkt {
+                entities::move_vehicle(self.entities, &mut self.players, i, pos, rot, on_ground, env.game_time);
+                continue;
+            }
+            if let PlayIn::RidingJump { data } = pkt {
+                entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
+                continue;
+            }
+            if let PlayIn::Interact { entity_id, hand, sneaking, .. } = pkt {
+                let p = &mut *self.players[i];
+                if sneaking != p.sneaking {
+                    p.sneaking = sneaking;
+                    p.meta_dirty = true;
+                }
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+                entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, &mut self.out.spawns, &mut self.out.deaths);
+                crate::trading::open_if_requested(self.entities, self.players[i], entity_id, &env.rules, &mut self.out.spawns);
+                continue;
+            }
             let mut world = World { cells: &mut *self.cells, blocks: &mut *self.blocks };
             let mut fx = Fx { blocks: &mut out, bodies: &bodies, spawns: &mut self.out.spawns, deaths: &mut self.out.deaths };
             local_packet(self.players[i], &mut world, env, pkt, &mut fx);
+            if !self.players[i].merchant_events.is_empty() {
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                crate::trading::apply_events(self.entities, &mut level, &mut self.players, i, &mut self.out.spawns, &mut self.out.deaths);
+            }
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
@@ -182,6 +207,7 @@ impl RegionWork<'_> {
         self.tick_blocks(env);
         mark(&mut self.out.times, 3);
         self.tick_entities(env);
+        crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
         mark(&mut self.out.times, 4);
@@ -380,6 +406,12 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.keep_alive = None;
             }
         }
+        // A passenger's moves only turn it (`handlePlayerPositionChange` while riding).
+        PlayIn::Move { rot, .. } if p.vehicle.is_some() => {
+            if let Some(r) = rot.filter(|r| r.iter().all(|a| a.is_finite())) {
+                p.rot = crate::movement::normalize_rotation(r);
+            }
+        }
         PlayIn::Move { pos, rot, on_ground } => {
             let (from, was_on_ground) = (p.pos, p.on_ground);
             let y0 = p.pos[1];
@@ -472,6 +504,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.with_menu(&env.rules, fx.spawns, |menu, _, env| kiln_inventory::click::close_container(menu, None, env));
             }
         }
+        // `handleSelectTrade`: only a merchant screen reacts.
+        PlayIn::SelectTrade { offer } => p.with_menu(&env.rules, fx.spawns, |menu, _, env| menu.select_trade(env, offer)),
         PlayIn::RenameItem { name } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
             crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {

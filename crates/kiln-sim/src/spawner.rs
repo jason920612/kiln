@@ -174,6 +174,9 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     }
     let spawn_enemies = rules.difficulty != 0 && rules.spawn_monsters;
     let spawn_persistent = env.game_time % 400 == 0;
+    if spawn_enemies {
+        phantoms(level, players, spawns);
+    }
     let players: Vec<[f64; 3]> =
         players.iter().filter(|p| !p.disconnected && !p.dead && p.game_mode != 3).map(|p| p.pos).collect();
     if players.is_empty() {
@@ -264,6 +267,54 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     }
 }
 
+/// `PhantomSpawner.tick`, per region. Approximations: the pass comes every 1200 ticks with a
+/// chance of 2 in 3 from a random seeded by the world and the time (vanilla waits 1200 to 2379
+/// ticks, 1790 on average: here 1800), and the insomnia statistic `time_since_rest` is the
+/// player's ticks since joining or respawning (Kiln has no beds to rest in).
+fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn>) {
+    let env = level.env;
+    if env.game_time % 1200 != 0 {
+        return;
+    }
+    let mut r = chunk_random(env.seed ^ 0x7068_616e_746f_6d, env.game_time, ChunkPos::new(0, 0));
+    if r.next_int_bounded(3) == 0 {
+        return;
+    }
+    let skylight = env.dim == crate::OVERWORLD_ID;
+    if env.mobs.sky_darken < 5 && skylight {
+        return;
+    }
+    for p in players.iter().filter(|p| !p.disconnected && !p.dead && p.game_mode != 3) {
+        let pos = KBlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
+        let sky = kiln_world::light::light_at(&*level.cells, kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z).map_or(15, i32::from);
+        if skylight && (pos.y < 63 || sky < 15) {
+            continue;
+        }
+        let ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, moon_brightness(env.mobs.day_time));
+        if !(ctx.effective_difficulty > r.next_float() * 3.0) {
+            continue;
+        }
+        let since_rest = p.tick_count.max(1);
+        if r.next_int_bounded(since_rest) < 72000 {
+            continue;
+        }
+        let up = 20 + r.next_int_bounded(15);
+        let east = -10 + r.next_int_bounded(21);
+        let south = -10 + r.next_int_bounded(21);
+        let at = KBlockPos::new(pos.x + east, pos.y + up, pos.z + south);
+        let state = level.block(at);
+        if !kiln_entity::mob::path::valid_empty_spawn(state, false) || !kiln_entity::physics::fluid_state(state).is_empty() {
+            continue;
+        }
+        let count = 1 + r.next_int_bounded(env.mobs.difficulty as i32 + 1);
+        for _ in 0..count {
+            let seed = r.next_long();
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false };
+            spawns.push(crate::mobs::spawn(MobKind::Phantom, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(0.0), Some(fin)));
+        }
+    }
+}
+
 /// `spawnCategoryForChunk` + `spawnCategoryForPosition`.
 fn spawn_category_for_chunk(
     level: &mut RegionLevel,
@@ -340,7 +391,7 @@ fn spawn_category_for_chunk(
             if !s.table.list(biome, cat).iter().any(|e| *e == d_) {
                 continue;
             }
-            if !spawn_position_ok(level, pos, kind.is_animal()) || !check_spawn_rules(level, pos, kind, r) {
+            if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {
                 continue;
             }
             let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
@@ -355,18 +406,21 @@ fn spawn_category_for_chunk(
             } else {
                 -(magic - 0.5)
             };
-            if walk < 0.0 || contains_liquid(level, [fx, y as f64, fz], t.width, t.height) {
+            let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
+            let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
+            if (walk < 0.0 && !ignores_light) || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)) {
                 continue;
             }
             // `finalizeSpawn` draws from the chunk's random.
-            let ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, 1.0);
+            let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, moon_brightness(env.mobs.day_time));
+            ctx.biome = Some(biome as i32);
             let seed = r.next_long();
             let _ = &mut group;
             spawns.push(crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(crate::mobs::Finalize { ctx, seed, persistent: false })));
             s.add(pc, cat);
             spawned += 1;
             in_group += 1;
-            if spawned >= 4 {
+            if spawned >= kind.ext().map_or(4, |k| k.max_spawn_cluster()) {
                 return;
             }
             let _ = in_group;
@@ -388,6 +442,64 @@ fn biome_at(level: &RegionLevel, pos: KBlockPos) -> u16 {
     }
 }
 
+/// `DimensionType.moonBrightness` for the moon phase of `day_time`.
+pub(crate) fn moon_brightness(day_time: i64) -> f32 {
+    const PHASES: [f32; 8] = [1.0, 0.75, 0.5, 0.25, 0.0, 0.25, 0.5, 0.75];
+    PHASES[(day_time.div_euclid(24000)).rem_euclid(8) as usize]
+}
+
+/// The type's `SpawnPlacementType.isSpawnPositionOk`.
+fn placement_ok(level: &RegionLevel, pos: KBlockPos, kind: MobKind) -> bool {
+    use kiln_entity::mob::ext::Placement;
+    let Some(k) = kind.ext() else { return spawn_position_ok(level, pos, kind.is_animal()) };
+    let fluid = |p: KBlockPos| kiln_entity::physics::fluid_state(level.block(p));
+    match k.placement() {
+        Placement::OnGround => spawn_position_ok(level, pos, kind.is_animal()),
+        Placement::InWater => fluid(pos).kind.is_water() && !kiln_data::block_logic::is_redstone_conductor(level.block(pos.above())),
+        Placement::InLava => fluid(pos).kind.is_lava(),
+        Placement::NoRestrictions => true,
+    }
+}
+
+/// What a type's own spawn rules see of the region.
+struct View<'a, 'l>(&'a RegionLevel<'l>);
+
+impl kiln_entity::mob::ext::SpawnView for View<'_, '_> {
+    fn block(&self, pos: kiln_entity::math::BlockPos) -> u16 {
+        self.0.block(KBlockPos::new(pos.x, pos.y, pos.z))
+    }
+    fn raw_brightness(&self, pos: kiln_entity::math::BlockPos, sky_darken: i32) -> i32 {
+        self.0.raw_brightness(KBlockPos::new(pos.x, pos.y, pos.z), sky_darken)
+    }
+    fn sky_darken(&self) -> i32 {
+        self.0.env.mobs.sky_darken
+    }
+    fn sky_light(&self, pos: kiln_entity::math::BlockPos) -> i32 {
+        kiln_world::light::light_at(&*self.0.cells, kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z).map_or(15, i32::from)
+    }
+    fn block_light(&self, pos: kiln_entity::math::BlockPos) -> i32 {
+        kiln_world::light::light_at(&*self.0.cells, kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
+    }
+    fn biome(&self, pos: kiln_entity::math::BlockPos) -> i32 {
+        biome_at(self.0, KBlockPos::new(pos.x, pos.y, pos.z)) as i32
+    }
+    fn difficulty(&self) -> u8 {
+        self.0.env.mobs.difficulty
+    }
+    fn world_seed(&self) -> i64 {
+        self.0.env.seed
+    }
+    fn moon_brightness(&self) -> f32 {
+        moon_brightness(self.0.env.mobs.day_time)
+    }
+    fn min_y(&self) -> i32 {
+        self.0.env.min_y
+    }
+    fn sea_level(&self) -> i32 {
+        63
+    }
+}
+
 /// `SpawnPlacementTypes.ON_GROUND.isSpawnPositionOk`.
 fn spawn_position_ok(level: &RegionLevel, pos: KBlockPos, animal: bool) -> bool {
     let below = level.block(pos.below());
@@ -400,6 +512,14 @@ fn spawn_position_ok(level: &RegionLevel, pos: KBlockPos, animal: bool) -> bool 
 /// spawnable block below, monsters darkness (`Monster.isDarkEnoughToSpawn`) and a valid spawn
 /// block below.
 fn check_spawn_rules(level: &RegionLevel, pos: KBlockPos, kind: MobKind, r: &mut LegacyRandom) -> bool {
+    if let Some(k) = kind.ext() {
+        if let Some(ok) = k.check_spawn_rules(&View(level), kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z), r) {
+            return ok;
+        }
+        if kind.category() == kiln_entity::mob::Category::Misc {
+            return false;
+        }
+    }
     let below = level.block(pos.below());
     if kind.is_animal() {
         let bright = level.raw_brightness(pos, 0) > 8;
