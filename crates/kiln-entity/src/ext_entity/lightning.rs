@@ -1,7 +1,9 @@
 //! Lightning bolts (`LightningBolt`): on their first tick they set fire around the strike (on
 //! normal and hard), power a lightning rod they hit, then flash one to three times, each flash
 //! striking every entity within 3 blocks (`Entity.thunderHit`) and lighting the block again.
-//! The thunder and impact sounds are the client's. Weathered copper is not cleaned.
+//! The thunder and impact sounds are the client's; the struck block (rods, copper) is the
+//! level's (`lightning_strike_block`). When it ends, players within 256 blocks get
+//! `lightning_strike`.
 
 use crate::entity::{Entity, EntityKind};
 use crate::entity_ext_boilerplate;
@@ -41,6 +43,9 @@ impl LightningBolt {
             return;
         }
         let at = e.block_position();
+        if !level.can_spread_fire_around(at) {
+            return;
+        }
         if level.place_lightning_fire(at) {
             self.blocks_set_on_fire += 1;
         }
@@ -51,6 +56,35 @@ impl LightningBolt {
             if level.place_lightning_fire(BlockPos::new(at.x + dx, at.y + dy, at.z + dz)) {
                 self.blocks_set_on_fire += 1;
             }
+        }
+    }
+}
+
+impl LightningBolt {
+    /// `LightningStrikeTrigger` for every player within 256 blocks: the bolt and the living
+    /// entities around it that it did not strike.
+    fn strike_criteria(&self, e: &Entity, level: &mut dyn EntityLevel) {
+        let p = e.position();
+        let area = Aabb::new(p.x - 15.0, p.y - 15.0, p.z - 15.0, p.x + 15.0, p.y + 6.0 + 15.0, p.z + 15.0);
+        let near: Vec<crate::level::Seen> = level
+            .entities_in(&area, EntityFilter::Any, e.id)
+            .into_iter()
+            .filter(|id| !self.hit.contains(id))
+            .filter_map(|id| level.entity(id).filter(|o| o.is_alive()).map(crate::level::Seen::of))
+            .collect();
+        let bolt = crate::level::Seen { lightning_fires: Some(self.blocks_set_on_fire), ..crate::level::Seen::of(e) };
+        let players: Vec<i32> = level
+            .players()
+            .iter()
+            .filter(|v| {
+                let (dx, dy, dz) = ((v.pos.x - p.x) as f32, (v.pos.y - p.y) as f32, (v.pos.z - p.z) as f32);
+                (dx * dx + dy * dy + dz * dz).sqrt() < 256.0
+            })
+            .map(|v| v.id)
+            .collect();
+        for player in players {
+            let criterion = crate::level::Criterion::LightningStrike { lightning: bolt.clone(), victims: near.clone(), blocks_set_on_fire: self.blocks_set_on_fire };
+            level.emit(Event::Criterion { player, criterion });
         }
     }
 }
@@ -72,6 +106,7 @@ impl EntityExt for LightningBolt {
         self.life -= 1;
         if self.life < 0 {
             if self.flashes == 0 {
+                self.strike_criteria(e, level);
                 e.discard();
             } else if self.life < -e.random.next_int_bounded(10) {
                 self.flashes -= 1;

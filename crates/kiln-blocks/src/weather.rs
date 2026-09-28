@@ -181,8 +181,88 @@ pub fn handle_precipitation<L: Level>(level: &mut L, s: u16, pos: BlockPos, p: P
     }
 }
 
-/// `LightningRodBlock.onLightningStrike`: powered for 8 ticks, with the spark particles.
+/// What a lightning bolt does to the block it strikes (`LightningBolt.powerLightningRod`, then
+/// `clearCopperOnLightningStrike`).
 pub fn lightning_strike<L: Level>(level: &mut L, pos: BlockPos) {
+    power_rod(level, pos);
+    clear_copper(level, pos);
+}
+
+/// The block name one oxidation stage back (`WeatheringCopper.getPrevious`), or all the way
+/// back (`getFirst`).
+fn copper_stage(name: &str, first: bool) -> Option<String> {
+    let path = name.strip_prefix("minecraft:").unwrap_or(name);
+    let (prefix, rest) = ["exposed_", "weathered_", "oxidized_"].iter().find_map(|p| path.strip_prefix(p).map(|r| (*p, r)))?;
+    let back = if first { "" } else { match prefix { "oxidized_" => "weathered_", "weathered_" => "exposed_", _ => "" } };
+    // `exposed_copper` goes back to `copper_block`.
+    let rest = if back.is_empty() && rest == "copper" { "copper_block" } else { rest };
+    Some(format!("minecraft:{back}{rest}"))
+}
+
+/// `state` as the block `name`, keeping the properties both have.
+fn with_block(state: u16, name: &str) -> Option<u16> {
+    let target = state::BlockId::by_name(name)?.default_state();
+    let from = &kiln_data::blocks::BLOCKS[logic::block_index(state)];
+    Some(from.properties.iter().fold(target, |s, p| state::get(state, p.name).map_or(s, |v| state::set(s, p.name, v))))
+}
+
+fn is_weathering(s: u16) -> bool {
+    logic::implements(s, kiln_data::block_logic::interface::WEATHERING_COPPER)
+}
+
+/// `LightningBolt.clearCopperOnLightningStrike`: struck weathering copper goes back to its
+/// first stage (waxed copper stays), then three to five random walks of 1 to 8 steps each take
+/// oxidation off the copper they step on, with the scrape particles.
+fn clear_copper<L: Level>(level: &mut L, pos: BlockPos) {
+    let s = level.block(pos);
+    let name = kiln_data::blocks::BLOCKS[logic::block_index(s)].name;
+    let waxed = name.contains("waxed_") && !name.contains("unwaxed");
+    let weathering = is_weathering(s);
+    if !weathering && !waxed {
+        return;
+    }
+    level.reseed_random(pos);
+    if weathering
+        && let Some(first) = copper_stage(name, true).and_then(|n| with_block(s, &n))
+    {
+        crate::set_block_and_update(level, pos, first);
+    }
+    let walks = level.random().next_int_bounded(3) + 3;
+    for _ in 0..walks {
+        let steps = level.random().next_int_bounded(8) + 1;
+        let mut at = pos;
+        for _ in 0..steps {
+            match random_step_cleaning_copper(level, at) {
+                Some(next) => at = next,
+                None => break,
+            }
+        }
+    }
+}
+
+/// `randomStepCleaningCopper`: up to 10 random blocks of the cube around `pos`; the first
+/// weathering copper one loses a stage of oxidation.
+fn random_step_cleaning_copper<L: Level>(level: &mut L, pos: BlockPos) -> Option<BlockPos> {
+    for _ in 0..10 {
+        let dx = level.random().next_int_bounded(3);
+        let dy = level.random().next_int_bounded(3);
+        let dz = level.random().next_int_bounded(3);
+        let at = BlockPos::new(pos.x - 1 + dx, pos.y - 1 + dy, pos.z - 1 + dz);
+        let s = level.block(at);
+        if is_weathering(s) {
+            let name = kiln_data::blocks::BLOCKS[logic::block_index(s)].name;
+            if let Some(prev) = copper_stage(name, false).and_then(|n| with_block(s, &n)) {
+                crate::set_block_and_update(level, at, prev);
+            }
+            level.effect(crate::Effect::LevelEvent { id: 3002, pos: at, data: -1 });
+            return Some(at);
+        }
+    }
+    None
+}
+
+/// `LightningRodBlock.onLightningStrike`: powered for 8 ticks, with the spark particles.
+fn power_rod<L: Level>(level: &mut L, pos: BlockPos) {
     let s = level.block(pos);
     if !logic::is_instance(s, BlockClass::LightningRodBlock) {
         return;

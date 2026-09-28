@@ -182,6 +182,27 @@ fn lightning_charges_creepers_converts_pigs_and_lights_fire() {
     assert!(!state::is(w.sim.block_at(at[0], at[1], at[2]).unwrap(), d::FIRE), "the fire burnt out");
 }
 
+/// A bolt striking oxidized copper takes the oxidation off; where fire may not spread it sets
+/// nothing alight, so a villager watching nearby completes `lightning_rod_with_villager_no_fire`.
+#[test]
+fn lightning_cleans_copper_and_fires_lightning_strike() {
+    let mut w = World::new("creative");
+    // (Later flashes set fire on any difficulty: no fire spreads without a player close enough.)
+    w.run("gamerule minecraft:fire_spread_radius_around_player 0");
+    let at = w.at(5, 0, 5);
+    w.run(&format!("setblock {} {} {} minecraft:oxidized_cut_copper", at[0], at[1], at[2]));
+    let v = w.at(-6, 1, 5);
+    w.run(&format!("summon minecraft:villager {} {} {} {{NoAI:1b}}", v[0] as f64 + 0.5, v[1], v[2] as f64 + 0.5));
+    w.ticks(2);
+    w.run(&format!("summon minecraft:lightning_bolt {} {} {}", at[0] as f64 + 0.5, at[1] + 1, at[2] as f64 + 0.5));
+    w.ticks(40);
+    let s = w.sim.block_at(at[0], at[1], at[2]).unwrap();
+    assert!(state::is(s, d::CUT_COPPER), "back to cut copper: {}", state::state_string(s));
+    if let Some(done) = w.sim.criterion_done(1, "minecraft:adventure/lightning_rod_with_villager_no_fire", "lightning_rod_with_villager_no_fire") {
+        assert!(done, "a villager saw a bolt that lit nothing");
+    }
+}
+
 /// A field of wool with fire in the middle: with `fire_spread_radius_around_player 0` the
 /// fire does nothing (not even age); near the player it spreads and burns wool away; on
 /// netherrack it never burns out.

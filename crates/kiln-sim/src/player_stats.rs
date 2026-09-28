@@ -556,6 +556,7 @@ impl Sim {
                     components: Default::default(),
                     effects: Vec::new(),
                     vehicle: None,
+                    lightning_fires: None,
                 };
                 k.killed("minecraft:player_killed_entity", &s, "minecraft:player_attack", true);
             }

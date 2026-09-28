@@ -125,6 +125,7 @@ impl Player {
             components: Default::default(),
             effects: self.effects.values().map(|e| (e.id, e.amplifier, e.duration, e.ambient, e.visible)).collect(),
             vehicle: self.vehicle_type,
+            lightning_fires: None,
         }
     }
 
@@ -601,6 +602,7 @@ pub(crate) fn seen_subject(s: &kiln_entity::level::Seen, dim: &'static str) -> S
         components: std::borrow::Cow::Owned(s.components.clone()),
         effects: Vec::new(),
         vehicle: None,
+        lightning_fires: s.lightning_fires,
     }
 }
 

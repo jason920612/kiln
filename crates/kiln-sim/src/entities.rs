@@ -633,6 +633,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         crate::weather::is_raining_at(self.level.cells, self.level.env, kb(pos))
     }
 
+    fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
+        kiln_blocks::Level::can_spread_fire_around(&*self.level, kb(pos))
+    }
+
     fn place_lightning_fire(&mut self, pos: BlockPos) -> bool {
         crate::weather::place_lightning_fire(&mut *self.level, kb(pos))
     }

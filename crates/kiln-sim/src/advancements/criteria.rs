@@ -171,6 +171,7 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:fall_from_height",
     "minecraft:nether_travel",
     "minecraft:ride_entity_in_lava",
+    "minecraft:lightning_strike",
     "minecraft:slept_in_bed",
 ];
 
@@ -330,6 +331,8 @@ pub(crate) struct Subject<'a> {
     pub effects: Vec<(i32, i32, i32, bool, bool)>,
     /// The type of the entity it rides.
     pub vehicle: Option<&'static str>,
+    /// A lightning bolt's `blocksSetOnFire` (`type_specific/lightning`).
+    pub lightning_fires: Option<i32>,
 }
 
 /// World queries for location predicates.
@@ -385,6 +388,13 @@ impl Subject<'_> {
             EntitySubPredicate::Other(id, j) => match id.as_str() {
                 "minecraft:distance" => distance_matches(j, origin, self.pos),
                 "minecraft:effects" => effects_match(j, &self.effects),
+                // `LightningBoltPredicate`: blocks set on fire (struck entities are not known).
+                "minecraft:type_specific/lightning" => {
+                    self.lightning_fires.is_some_and(|n| {
+                        let b = j.get("blocks_set_on_fire").and_then(|v| IntBounds::from_value(&v.to_value()).ok()).unwrap_or(IntBounds::ANY);
+                        predicate::item::int_bounds(&b, n)
+                    }) && j.get("entity_struck").is_none()
+                }
                 _ => false,
             },
             _ => false,

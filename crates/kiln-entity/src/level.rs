@@ -27,6 +27,8 @@ pub struct Seen {
     pub baby: bool,
     /// Entity data components predicates can match exactly (the variant).
     pub components: Vec<kiln_item::Component>,
+    /// A lightning bolt's `blocksSetOnFire`.
+    pub lightning_fires: Option<i32>,
 }
 
 impl Seen {
@@ -40,6 +42,7 @@ impl Seen {
             on_fire: e.is_on_fire(),
             baby: m.is_some_and(|m| m.baby()),
             components: m.map(crate::mob::variant_components).unwrap_or_default(),
+            lightning_fires: None,
         }
     }
 
@@ -291,6 +294,12 @@ pub trait EntityLevel {
 
     /// `LightningBolt.spawnFire` at one position: fire (or soul fire) where the block is air
     /// and fire survives. Returns whether fire was placed.
+    /// `ServerLevel.canSpreadFireAround`.
+    fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
+        let _ = pos;
+        true
+    }
+
     fn place_lightning_fire(&mut self, pos: BlockPos) -> bool {
         let _ = pos;
         false

@@ -583,6 +583,7 @@ impl Player {
             components: Default::default(),
             effects: Vec::new(),
             vehicle: None,
+            lightning_fires: None,
         });
         self.hurt_trigger("minecraft:entity_hurt_player", killer.as_ref(), amount, taken, source.cause.damage_type());
         if self.health <= 0.0 && !self.check_totem_death_protection(source) {
