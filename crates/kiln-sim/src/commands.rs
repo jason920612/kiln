@@ -774,6 +774,8 @@ impl Host for Sim {
         if let Some(p) = self.players.get_mut(&player.conn) {
             p.respawn = Some(spawn.pos);
             p.respawn_dim = crate::dim_id(&spawn.dimension).unwrap_or(crate::OVERWORLD_ID);
+            p.respawn_forced = true;
+            p.respawn_angle = spawn.yaw;
         }
     }
 

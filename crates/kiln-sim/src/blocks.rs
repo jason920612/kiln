@@ -255,6 +255,8 @@ pub(crate) struct EntityBox {
     pub blocks_building: bool,
     /// The player's connection, for a player.
     pub conn: Option<ConnId>,
+    /// A monster that keeps players from sleeping nearby (`Monster.isPreventingPlayerRest`).
+    pub prevents_rest: bool,
 }
 
 impl EntityBox {
@@ -275,12 +277,13 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
                 living: true,
                 blocks_building: true,
                 conn: Some(p.conn),
+                prevents_rest: false,
             }
         })
         .collect();
     out.extend(entities.list.iter().filter(|e| !e.removed && e.phys.is_some()).map(|e| {
         let (min, max, blocks_building) = e.body();
-        EntityBox { min, max, living: false, blocks_building, conn: None }
+        EntityBox { min, max, living: false, blocks_building, conn: None, prevents_rest: e.prevents_rest() }
     }));
     out
 }
@@ -520,10 +523,17 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     kiln_blocks::tick::run_block_ticks(level, can_tick);
     kiln_blocks::tick::run_fluid_ticks(level, can_tick);
     let speed = level.env.random_tick_speed;
+    // Every ticking chunk rolls for precipitation while it rains (and freezes water in any
+    // weather); otherwise only chunks with randomly ticking sections have work.
+    let precipitation = level.env.weather.climates.is_some();
     if speed > 0 {
         let mut chunks: Vec<ChunkPos> = Vec::new();
         level.cells.for_each_cell(&mut |pos, cell| {
-            chunks.extend(cell.chunks(pos).filter(|(c, chunk)| ticking.contains(*c) && chunk.sections.iter().any(|s| s.is_randomly_ticking())).map(|(c, _)| c));
+            chunks.extend(
+                cell.chunks(pos)
+                    .filter(|(c, chunk)| ticking.contains(*c) && (precipitation || chunk.sections.iter().any(|s| s.is_randomly_ticking())))
+                    .map(|(c, _)| c),
+            );
         });
         chunks.sort_unstable();
         let mut sections = Vec::new();

@@ -1077,6 +1077,8 @@ impl Sim {
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info);
         p.send(difficulty);
+        self.sleep_status[p.dim].dirty = true;
+        self.sleep_status[dim].dirty = true;
         p.dim = dim;
         p.using = None;
         p.digging = None;

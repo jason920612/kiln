@@ -296,6 +296,15 @@ impl Entity {
 
     /// The bounding box, and whether it keeps blocks from being placed into it
     /// (`Entity.blocksBuilding`: primed TNT and falling blocks).
+    /// `Monster.isPreventingPlayerRest`: monsters do, zombified piglins only while angry.
+    pub fn prevents_rest(&self) -> bool {
+        let Some(m) = self.phys.as_ref().and_then(kiln_entity::mob::data) else { return false };
+        if m.health <= 0.0 || m.kind.category() != kiln_entity::mob::Category::Monster {
+            return false;
+        }
+        m.kind != kiln_entity::mob::MobKind::ZombifiedPiglin || m.target.is_some()
+    }
+
     pub fn body(&self) -> ([f64; 3], [f64; 3], bool) {
         let p = self.phys();
         let bb = p.bounding_box();
@@ -1141,6 +1150,49 @@ pub(crate) fn with_entity<R>(
         carry_out(event, n, level, list, players, spawns, deaths);
     }
     Some(r)
+}
+
+/// Runs `f` with the region as an entity level (block work that affects entities: bed and
+/// respawn anchor explosions), then carries out what it did.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_level<R>(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    salt: u64,
+    f: impl FnOnce(&mut dyn EntityLevel) -> R,
+) -> R {
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, 0);
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: 0,
+        seeds: salt << 8,
+        rng,
+        grid: Grid::default(),
+    };
+    sim.grid = Grid::build(sim.list);
+    let r = f(&mut sim);
+    for e in sim.list.iter_mut() {
+        e.sync();
+    }
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    for (n, event) in keyed(events) {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+    r
 }
 
 /// Events with the index each gets for its seeds (sounds, loot): counted per source (the

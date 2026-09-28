@@ -57,6 +57,11 @@ pub(crate) struct Joining {
     pub effects: std::collections::BTreeMap<i32, crate::effects::Effect>,
     pub respawn: Option<[i32; 3]>,
     pub respawn_dim: crate::DimId,
+    /// `respawn.yaw` and `respawn.forced`.
+    pub respawn_angle: f32,
+    pub respawn_forced: bool,
+    /// `minecraft:time_since_rest` from the statistics file.
+    pub time_since_rest: i32,
     /// The saved level (`Dimension`).
     pub dim: crate::DimId,
     /// `PortalCooldown` and `seenCredits`.
@@ -116,6 +121,12 @@ impl Sim {
             effects: saved.raw().get("active_effects").map(crate::effects::load_effects).unwrap_or_default(),
             respawn: saved.respawn,
             respawn_dim,
+            respawn_angle: match saved.raw().get("respawn").and_then(|r| r.get("yaw")) {
+                Some(Tag::Float(y)) => *y,
+                _ => 0.0,
+            },
+            respawn_forced: saved.raw().get("respawn").and_then(|r| r.get("forced")).and_then(Tag::as_i64).is_some_and(|f| f != 0),
+            time_since_rest: self.storage.as_ref().map_or(0, |s| crate::sleep::load_time_since_rest(&s.dir, uuid)),
             dim,
             portal_cooldown: saved.raw().get("PortalCooldown").and_then(Tag::as_i64).map_or(0, |c| c as i32),
             seen_credits: saved.raw().get("seenCredits").and_then(Tag::as_i64) == Some(1),
@@ -151,6 +162,23 @@ impl Sim {
         data.respawn = p.respawn;
         data.respawn_dimension = Some(crate::DIMENSIONS[p.respawn_dim].0.to_owned());
         let mut nbt = data.to_nbt(p.uuid);
+        // `ServerPlayer.RespawnConfig`: the facing and whether the point is forced.
+        if let (Some(pos), Tag::Compound(fields)) = (p.respawn, &mut nbt) {
+            let r = Tag::Compound(vec![
+                ("dimension".into(), Tag::String(crate::DIMENSIONS[p.respawn_dim].0.into())),
+                ("pos".into(), Tag::IntArray(pos.to_vec())),
+                ("yaw".into(), Tag::Float(p.respawn_angle)),
+                ("pitch".into(), Tag::Float(0.0)),
+                ("forced".into(), Tag::Byte(p.respawn_forced as i8)),
+            ]);
+            match fields.iter_mut().find(|(k, _)| k == "respawn") {
+                Some((_, v)) => *v = r,
+                None => fields.push(("respawn".into(), r)),
+            }
+        }
+        if let Err(e) = crate::sleep::save_time_since_rest(&storage.dir, p.uuid, p.sleep.time_since_rest) {
+            warn!("failed to save statistics for {}: {e}", p.name);
+        }
         kiln_inventory::persist::save_player_inventory(&p.inv, &p.inv_extra, &mut nbt);
         p.containers.save_into(&mut nbt);
         if let Tag::Compound(fields) = &mut nbt {

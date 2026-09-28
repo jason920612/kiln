@@ -129,6 +129,17 @@ impl RegionWork<'_> {
                 crate::trading::open_if_requested(self.entities, self.players[i], entity_id, &env.rules, &mut self.out.spawns);
                 continue;
             }
+            // Beds and respawn anchors need the region's entities (monsters nearby, explosions).
+            if let PlayIn::UseItemOn { hand: 0, pos, face, cursor, sequence, .. } = pkt
+                && crate::sleep::intercepts(self.players[i], &*self.cells, &env.blocks, pos, face, cursor)
+            {
+                let mut level =
+                    RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(conn) };
+                crate::sleep::use_item_on(self.entities, &mut level, &mut self.players, i, pos, face, &mut self.out.spawns, &mut self.out.deaths);
+                let p = &mut *self.players[i];
+                p.ack_block_changes = p.ack_block_changes.max(sequence);
+                continue;
+            }
             let mut world = World { cells: &mut *self.cells, blocks: &mut *self.blocks };
             let mut fx = Fx { blocks: &mut out, bodies: &bodies, spawns: &mut self.out.spawns, deaths: &mut self.out.deaths };
             local_packet(self.players[i], &mut world, env, pkt, &mut fx);
@@ -246,6 +257,10 @@ impl RegionWork<'_> {
             };
             for p in self.players.iter_mut().filter(|p| p.digging.is_some() || p.delayed_destroy.is_some()) {
                 digging::tick(p, &mut level);
+            }
+            // `Player.tick`'s sleeping part and the insomnia statistic.
+            for p in self.players.iter_mut().filter(|p| !p.disconnected) {
+                crate::sleep::tick_player(p, &mut level);
             }
             blocks::press_plates(&mut level);
             blocks::tick_blocks(&mut level, &ticking);
@@ -455,6 +470,13 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         PlayIn::PlayerCommand { action } => {
             const START_SPRINTING: i32 = 1;
             const STOP_SPRINTING: i32 = 2;
+            const STOP_SLEEPING: i32 = 0;
+            if action == STOP_SLEEPING {
+                // `handlePlayerCommand`: the "Leave Bed" button.
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::sleep::stop_sleep_in_bed(p, &mut level, false, true);
+                return;
+            }
             let sprinting = match action {
                 START_SPRINTING => true,
                 STOP_SPRINTING => false,
@@ -710,6 +732,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         living: true,
         blocks_building: p.game_mode != 3,
         conn: Some(p.conn),
+        prevents_rest: false,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];
     let others = bodies.iter().filter(|b| b.conn != Some(p.conn));
