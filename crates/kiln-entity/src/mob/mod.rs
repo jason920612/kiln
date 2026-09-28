@@ -1452,7 +1452,7 @@ fn play_sound(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'sta
 }
 
 /// `LivingEntity.makeSound`: volume 1, the voice pitch.
-fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'static str) {
+pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'static str) {
     let pitch = if m.baby() {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.5
     } else {

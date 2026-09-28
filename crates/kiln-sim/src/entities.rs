@@ -432,6 +432,15 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 }
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
+    fn piglins_zombify(&self) -> bool {
+        !self.level.env.rules.fast_lava
+    }
+
+    fn trade_offers(&mut self, set: &str, merchant: &kiln_entity::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
+        let env = self.level.env;
+        crate::trading::roll_offers(env.loot.as_deref(), env.seed, env.game_time, set, merchant)
+    }
+
     fn block(&self, pos: BlockPos) -> u16 {
         self.level.block(kb(pos))
     }
@@ -898,6 +907,55 @@ pub(crate) fn interact_mob(
     }
 }
 
+/// Runs `f` on entity `target` with the region as its level (outside the entity tick: menu
+/// actions reaching a villager), then carries out what it did.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_entity<R>(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    target: i32,
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    salt: u64,
+    f: impl FnOnce(&mut kiln_entity::Entity, &mut dyn EntityLevel) -> R,
+) -> Option<R> {
+    let idx = entities.list.binary_search_by_key(&target, |e| e.id).ok()?;
+    if entities.list[idx].removed {
+        return None;
+    }
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, target);
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: target,
+        seeds: salt << 8,
+        rng,
+        grid: Grid::default(),
+    };
+    sim.grid = Grid::build(sim.list);
+    let mut phys = sim.list[idx].phys.take()?;
+    let r = f(&mut phys, &mut sim);
+    let e = &mut sim.list[idx];
+    e.phys = Some(phys);
+    e.sync();
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    for (n, event) in events.into_iter().enumerate() {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+    Some(r)
+}
+
 fn carry_out(
     event: Event,
     n: usize,
@@ -1030,6 +1088,9 @@ fn view(p: &Player) -> PlayerView {
         armor_cover: armor as f32 / 4.0,
         main_hand: p.inv.selected_item().item(),
         off_hand: p.inv.equipped(S::OffHand).item(),
+        piglin_safe_armor: [S::Feet, S::Legs, S::Chest, S::Head]
+            .iter()
+            .any(|s| kiln_entity::mob::item_tag(p.inv.equipped(*s).item(), "minecraft:piglin_safe_armor")),
     }
 }
 

@@ -76,6 +76,9 @@ public class MobVectors {
         long dayTime = 1000;
         long levelSeed = 1;
         int ticks = 200;
+        /// Brain-driven mobs Kiln approximates with goals: the replay reports where Kiln
+        /// diverges instead of failing.
+        boolean diverges;
         // tick -> [mob index, amount]; the player (or nobody) hurts the mob.
         final Map<Integer, double[]> hurts = new HashMap<>();
         Scenario(String name) { this.name = name; }
@@ -393,9 +396,9 @@ public class MobVectors {
                 : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"");
         return String.format(Locale.ROOT,
-                "{\"name\":\"%s\",\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
+                "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"trace\":[%s]}",
-                s.name, s.levelSeed, s.ticks, startTime, skyDarken, blocks, specs, playerJson, hurts, hits, spawned, trace);
+                s.name, s.diverges, s.levelSeed, s.ticks, startTime, skyDarken, blocks, specs, playerJson, hurts, hits, spawned, trace);
     }
 
     /// NBT as typed JSON: {"b":1}, {"i":2}, {"s":..}, {"L":"n"}, {"f":x}, {"d":x}, {"str":".."},
@@ -658,6 +661,80 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        scenariosVillagers(out);
         return out;
+    }
+
+    // ---------------------------------------------------------- m6s2: villagers, piglins, hoglins
+    static void scenariosVillagers(List<Scenario> out) {
+        // Without AI the brain does not run: health, hurt and the ambient sound clock compare.
+        for (boolean baby : new boolean[] {false, true}) {
+            Scenario s = new Scenario("villager_noai_" + (baby ? "baby" : "adult"));
+            floor(s, 8, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9100);
+            m.nbt = "{NoAI:1b,VillagerData:{type:\"minecraft:desert\",profession:\"minecraft:farmer\",level:2}}";
+            if (baby) m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 3.0});
+            s.ticks = 120;
+            out.add(s);
+        }
+        // With AI: the brain against Kiln's goals.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("villager_idle_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:villager", 0.5, BY, 0.5, 40f * seed, 9200L + seed));
+            s.player = new double[] {4.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 200;
+            s.diverges = true;
+            out.add(s);
+        }
+        // Piglins and hoglins without AI: attributes, size, health and hurt.
+        String[][] noai = {
+            {"piglin_noai_adult", "minecraft:piglin", "{NoAI:1b}"},
+            {"piglin_noai_baby", "minecraft:piglin", "{NoAI:1b,IsBaby:1b}"},
+            {"hoglin_noai_adult", "minecraft:hoglin", "{NoAI:1b}"},
+            {"hoglin_noai_baby", "minecraft:hoglin", "{NoAI:1b}"},
+        };
+        for (String[] n : noai) {
+            Scenario s = new Scenario(n[0]);
+            floor(s, 8, "minecraft:stone");
+            MobSpec m = new MobSpec(n[1], 0.5, BY, 0.5, 60f, 9300);
+            m.nbt = n[2];
+            if (n[0].equals("hoglin_noai_baby")) m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 4.0});
+            s.hurts.put(40, new double[] {0, 2.5});
+            s.ticks = 120;
+            out.add(s);
+        }
+        // With AI: the brains against Kiln's goals.
+        {
+            Scenario s = new Scenario("piglin_idle");
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:piglin", 0.5, BY, 0.5, 20f, 9401);
+            m.nbt = "{IsImmuneToZombification:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            s.diverges = true;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hoglin_chase");
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:hoglin", 0.5, BY, 0.5, 0f, 9402);
+            m.nbt = "{IsImmuneToZombification:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {5.5, BY, 0.5};
+            s.ticks = 160;
+            s.diverges = true;
+            out.add(s);
+        }
     }
 }

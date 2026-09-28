@@ -34,6 +34,8 @@ pub struct PlayerView {
     /// Item ids in the hands (`minecraft:item` protocol ids, 0 for none).
     pub main_hand: i32,
     pub off_hand: i32,
+    /// Wears a piece of `#minecraft:piglin_safe_armor` (piglins leave the player alone).
+    pub piglin_safe_armor: bool,
 }
 
 impl PlayerView {
@@ -52,6 +54,7 @@ impl PlayerView {
             armor_cover: 0.0,
             main_hand: 0,
             off_hand: 0,
+            piglin_safe_armor: false,
         }
     }
 }
@@ -282,4 +285,25 @@ pub trait EntityLevel {
             e.ignite_for_seconds(seconds);
         }
     }
+
+    /// The `minecraft:gameplay/piglins_zombify` environment attribute (false in the nether).
+    fn piglins_zombify(&self) -> bool {
+        !self.fast_lava()
+    }
+
+    /// `AbstractVillager.addOffersFromTradeSet`: the offers the datapack trade set `set` (a
+    /// `minecraft:trade_set` id) rolls for `merchant`; none without trade data.
+    fn trade_offers(&mut self, set: &str, merchant: &TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
+        let _ = (set, merchant);
+        Vec::new()
+    }
+}
+
+/// The merchant a trade set is rolled for (the loot context's `this` entity and origin).
+#[derive(Clone, Copy, Debug)]
+pub struct TradeMerchant {
+    pub entity: i32,
+    pub pos: Vec3,
+    /// The villager's `minecraft:villager_type` (for type-restricted trades).
+    pub villager_type: &'static str,
 }
