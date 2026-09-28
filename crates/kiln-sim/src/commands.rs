@@ -235,6 +235,18 @@ impl CommandState {
 }
 
 impl Sim {
+    /// Runs `f` on the data of the mob a command targets (`None`: not a live mob).
+    fn with_mob<R>(&mut self, entity: &PlayerRef, f: impl FnOnce(&mut kiln_entity::mob::MobData) -> R) -> Option<R> {
+        let id = entity.entity?;
+        let dim = crate::dim_id(entity.dim)?;
+        for r in self.dims[dim].regions.iter_mut() {
+            if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == id) {
+                return e.phys.as_mut().and_then(kiln_entity::mob::data_mut).map(f);
+            }
+        }
+        None
+    }
+
     /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
     /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
     /// the contents changed.
@@ -651,16 +663,26 @@ impl Host for Sim {
 
     fn add_effect(&mut self, entity: &PlayerRef, effect: &Identifier, duration: i32, amplifier: i32, show_particles: bool) -> Option<bool> {
         let id = crate::effects::effect_id(effect.as_str())?;
+        let fx = crate::effects::Effect::new(id, duration, amplifier, false, show_particles, show_particles);
+        if entity.entity.is_some() {
+            return self.with_mob(entity, |m| kiln_entity::mob::effects::add_quiet(m, fx));
+        }
         let p = self.players.get_mut(&entity.conn)?;
-        Some(p.add_effect(crate::effects::Effect::new(id, duration, amplifier, false, show_particles, show_particles)))
+        Some(p.add_effect(fx))
     }
 
     fn remove_effect(&mut self, entity: &PlayerRef, effect: &Identifier) -> Option<bool> {
         let id = crate::effects::effect_id(effect.as_str())?;
+        if entity.entity.is_some() {
+            return self.with_mob(entity, |m| kiln_entity::mob::effects::remove(m, id));
+        }
         Some(self.players.get_mut(&entity.conn)?.remove_effect(id))
     }
 
     fn clear_effects(&mut self, entity: &PlayerRef) -> Option<bool> {
+        if entity.entity.is_some() {
+            return self.with_mob(entity, kiln_entity::mob::effects::remove_all);
+        }
         Some(self.players.get_mut(&entity.conn)?.remove_all_effects())
     }
 

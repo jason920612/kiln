@@ -15,6 +15,7 @@ pub mod breed;
 pub mod ext;
 pub mod control;
 pub mod convert;
+pub mod effects;
 pub mod goals;
 pub mod interact;
 pub mod kinds;
@@ -471,6 +472,8 @@ pub struct MobData {
     pub hurt_by: Option<(DamageKind, Option<i32>, Option<i32>)>,
     /// The attribute modifiers the equipment added (`collectEquipmentChanges`).
     pub equip_mods: Vec<(Attr, String)>,
+    /// `activeEffects` (see [`effects`]).
+    pub effects: crate::effect::Effects,
 }
 
 impl MobData {
@@ -558,6 +561,7 @@ impl MobData {
             air_supply_max: 300,
             hurt_by: None,
             equip_mods: Vec::new(),
+            effects: crate::effect::Effects::new(),
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -652,6 +656,12 @@ impl MobData {
         v.extend(self.targets.running_names());
         v
     }
+}
+
+/// `getArmorCoverPercentage`: the share of the four armor slots that hold something.
+pub fn armor_cover(m: &MobData) -> f32 {
+    let worn = [FEET, LEGS, CHEST, HEAD].iter().filter(|&&i| !m.equipment[i].is_empty()).count();
+    worn as f32 / 4.0
 }
 
 /// A `minecraft:sound_event` id as a static name (the generic hurt sound if unknown).
@@ -1113,13 +1123,15 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let eye = BlockPos::containing(e.x(), e.eye_y(), e.z());
         let bubble = crate::blocks::block_name(level.block(eye)) == "minecraft:bubble_column";
         if e.fluid.is_eye_in_water() && !bubble {
-            if !m.kind.breathes_under_water() {
+            if !m.kind.breathes_under_water() && !effects::has_water_breathing(m) {
                 e.air_supply -= 1;
                 if e.air_supply <= -20 {
                     e.air_supply = 0;
                     level.emit(Event::EntityEvent { entity: e.id, event: 67 });
                     hurt(e, m, level, DamageSource::of(DamageKind::Drown), 2.0);
                 }
+            } else if e.air_supply < m.air_supply_max && effects::effects_refill_air(m) {
+                e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
             }
         } else if e.air_supply < m.air_supply_max {
             e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
@@ -1136,6 +1148,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if m.death_time >= 20 && !e.is_removed() {
             level.emit(Event::EntityEvent { entity: e.id, event: 60 });
             e.removed = Some(crate::entity::RemovalReason::Killed);
+            effects::on_killed_removal(e, m, level);
             if let Some(k) = m.kind.ext() {
                 k.on_killed_removal(e, m, level);
             }
@@ -1156,6 +1169,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             m.last_hurt_by_mob = None;
         }
     }
+    effects::tick(e, m, level);
     if let Some(k) = m.kind.ext() {
         k.tick_effects(e, m, level);
     }
@@ -1214,6 +1228,10 @@ pub fn is_alive(e: &Entity, m: &MobData) -> bool {
 fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if let Some(k) = m.kind.ext() {
         k.ai_step_before(e, m, level);
+        k.update_no_action_time(e, m, &*level);
+    } else if m.kind.category() == Category::Monster && light_magic_value(e, level) > 0.5 {
+        // `Monster.updateNoActionTime` (zombies, skeletons, creepers, spiders).
+        m.no_action_time += 2;
     }
     if m.no_jump_delay > 0 {
         m.no_jump_delay -= 1;
@@ -1269,6 +1287,9 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.no_jump_delay = 0;
     }
     let input = Vec3::new(m.xxa as f64, m.yya as f64, m.zza as f64);
+    if effects::has(m, crate::effect::ids::slow_falling()) || effects::has(m, crate::effect::ids::levitation()) {
+        e.fall_distance = 0.0;
+    }
     if let Some(r) = rider {
         // `travelRidden`: the rider turns the mount; the move comes from the rider's client.
         if let Some(k) = m.kind.ext() {
@@ -1277,6 +1298,9 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         e.delta = Vec3::ZERO;
     } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
         travel(e, m, level, input);
+    }
+    if let Some((distance, multiplier)) = e.pending_fall.take() {
+        cause_fall_damage(e, m, level, distance, multiplier);
     }
     e.apply_effects_from_blocks(level);
     // Freezing.
@@ -1385,9 +1409,31 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     control::tick_jump(m);
 }
 
+/// `LivingEntity.causeFallDamage` (the landing happened in the move just done): the fall
+/// power above the safe fall distance, scaled by the multiplier attribute, as fall damage
+/// with the small or big fall sound. Approximation: the landing block's fall sound is not
+/// played.
+fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, distance: f64, multiplier: f32) {
+    if entity_type_tag(e.type_name, "minecraft:fall_damage_immune") {
+        return;
+    }
+    let power = distance + 1.0e-6 - m.attrs.value(Attr::SafeFallDistance);
+    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier));
+    if dmg <= 0 {
+        return;
+    }
+    let (small, big) = if m.kind.category() == Category::Monster {
+        ("minecraft:entity.hostile.small_fall", "minecraft:entity.hostile.big_fall")
+    } else {
+        ("minecraft:entity.generic.small_fall", "minecraft:entity.generic.big_fall")
+    };
+    play_sound(e, m, level, if dmg > 4 { big } else { small }, 1.0, 1.0);
+    hurt(e, m, level, DamageSource::of(DamageKind::Fall), dmg as f32);
+}
+
 /// `LivingEntity.jumpFromGround`.
 fn jump_from_ground(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
-    let power = (m.attrs.value(Attr::JumpStrength) as f32) * e.block_jump_factor(level);
+    let power = (m.attrs.value(Attr::JumpStrength) as f32) * e.block_jump_factor(level) + effects::jump_boost_power(m);
     if power <= 1.0e-5 {
         return;
     }
@@ -1408,6 +1454,12 @@ fn gravity(e: &Entity, m: &MobData) -> f64 {
     if e.no_gravity { 0.0 } else { m.attrs.value(Attr::Gravity) }
 }
 
+/// `getEffectiveGravity`: slow falling caps it at 0.01 while falling.
+pub fn effective_gravity(e: &Entity, m: &MobData) -> f64 {
+    let g = gravity(e, m);
+    if e.delta.y <= 0.0 && effects::has(m, crate::effect::ids::slow_falling()) { g.min(0.01) } else { g }
+}
+
 /// `computeModifiedFriction`.
 fn modified_friction(f: f32, modifier: f32) -> f32 {
     mth::clamp(1.0 - (1.0 - f) * modifier, 0.0, 1.0)
@@ -1422,8 +1474,10 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
     };
     let v = relative_friction_movement(e, m, level, input, friction);
     let mut y = v.y;
-    if level.is_loaded(below) {
-        y -= gravity(e, m);
+    if let Some(a) = effects::amplifier(m, crate::effect::ids::levitation()) {
+        y += (0.05 * (a + 1) as f64 - v.y) * 0.2;
+    } else if level.is_loaded(below) {
+        y -= effective_gravity(e, m);
     } else if e.y() > level.min_y() as f64 {
         y = -0.1;
     } else {
@@ -1486,7 +1540,7 @@ fn handle_on_climbable(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, v: 
 fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
     let falling = e.delta.y <= 0.0;
     let y0 = e.y();
-    let g = if e.delta.y <= 0.0 { gravity(e, m) } else { gravity(e, m) };
+    let g = effective_gravity(e, m);
     if e.is_in_water() {
         let mut slow = 0.8f32;
         let mut speed = 0.02f32;
@@ -1497,6 +1551,9 @@ fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         if eff > 0.0 {
             slow += (0.54600006 - slow) * eff;
             speed += (m.speed - speed) * eff;
+        }
+        if effects::has(m, crate::effect::ids::dolphins_grace()) {
+            slow = 0.96;
         }
         move_relative(e, speed, input);
         let d = e.delta;
@@ -1728,6 +1785,9 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     if e.is_removed() || (e.invulnerable && !kind.is_tag("minecraft:bypasses_invulnerability")) || m.is_dead_or_dying() {
         return false;
     }
+    if kind.is_tag("minecraft:is_fire") && effects::has(m, crate::effect::ids::fire_resistance()) {
+        return false;
+    }
     m.no_action_time = 0;
     let mut amount = amount.max(0.0);
     if kind.is_tag("minecraft:damages_helmet") && !m.equipment[HEAD].is_empty() {
@@ -1788,6 +1848,7 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     m.last_damage_source = Some(source);
     m.last_damage_stamp = level.game_time();
+    effects::on_hurt(e, m, level, &source, amount);
     if m.kind == MobKind::Zombie {
         kinds::zombie::reinforcements(e, m, level, &source);
     }
@@ -1804,6 +1865,8 @@ fn actually_hurt(id: i32, m: &mut MobData, source: DamageSource, amount: f32) {
         let g = mth::clamp(armor - amount / f, armor * 0.2, 20.0);
         amount *= 1.0 - g / 25.0;
     }
+    // `getDamageAfterMagicAbsorb`: resistance, then the type's additions.
+    amount = effects::resist(m, &source, amount);
     if let Some(k) = m.kind.ext() {
         amount = k.damage_after_magic_absorb(id, m, &source, amount);
     }
@@ -2256,6 +2319,7 @@ impl DamageKind {
             DamageKind::IndirectMagic => "minecraft:indirect_magic",
             DamageKind::LightningBolt => "minecraft:lightning_bolt",
             // -- slice 3: mob effects
+            DamageKind::Wither => "minecraft:wither",
 
             // -- slice 3: raids
 

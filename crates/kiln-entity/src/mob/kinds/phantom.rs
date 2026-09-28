@@ -20,7 +20,7 @@ pub struct Phantom;
 
 pub static KIND: Phantom = Phantom;
 
-static INFO: Info = Info { burns_in_daylight: true, breathes_under_water: true, ..Info::monster("minecraft:phantom", &[]) };
+static INFO: Info = Info { burns_in_daylight: true, breathes_under_water: true, extends_monster: false, ..Info::monster("minecraft:phantom", &[]) };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AttackPhase {

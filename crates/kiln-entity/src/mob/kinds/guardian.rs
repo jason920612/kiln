@@ -164,7 +164,7 @@ impl Kind for GuardianKind {
 
     /// `Guardian.aiStep` before `super.aiStep()`: air in the water, flopping on land, facing
     /// the beam's target.
-    fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
         if mob::is_alive(e, m) {
             if e.is_in_water() {
                 e.air_supply = 300;
@@ -179,10 +179,6 @@ impl Kind for GuardianKind {
             if st(m).attack_target != 0 {
                 e.y_rot = m.y_head_rot;
             }
-        }
-        // `Monster.aiStep`: `updateNoActionTime`.
-        if mob::light_magic_value(e, level) > 0.5 {
-            m.no_action_time += 2;
         }
     }
 

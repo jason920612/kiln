@@ -252,10 +252,6 @@ impl Kind for Wither {
         if dm.x * dm.x + dm.z * dm.z > 0.05 {
             e.y_rot = (mth::atan2(dm.z, dm.x) as f32) * DEG_F - 90.0;
         }
-        // `Monster.aiStep`: `updateNoActionTime`.
-        if mob::light_magic_value(e, level) > 0.5 {
-            m.no_action_time += 2;
-        }
     }
 
     /// `WitherBoss.aiStep` after `super.aiStep()`: the side heads turn toward their targets;
@@ -483,6 +479,11 @@ impl Kind for Wither {
         }
         item.set_old_pos_and_rot();
         level.add_entity(item);
+    }
+
+    /// `WitherBoss.addEffect` always refuses (and `canBeAffected` excludes wither).
+    fn can_be_affected(&self, _m: &MobData, _effect: &crate::effect::Effect, _base: bool) -> bool {
+        false
     }
 
     fn experience(&self, _e: &mut Entity, _m: &MobData) -> Option<i32> {

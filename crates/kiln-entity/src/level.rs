@@ -194,6 +194,8 @@ pub enum DamageKind {
     LightningBolt,
     // Slice 3 work packages add damage types below their own marker.
     // -- slice 3: mob effects
+    /// `minecraft:wither` (the wither effect).
+    Wither,
 
     // -- slice 3: raids
 
@@ -447,10 +449,19 @@ pub trait EntityLevel {
     }
 
     /// `LivingEntity.addEffect` on player or entity `id` (`effect`: a `minecraft:mob_effect`
-    /// name; `source`: the entity responsible). Returns whether it took (mobs have no effects
-    /// yet).
+    /// name; `source`: the entity responsible). Returns whether it took. The default reaches
+    /// the level's mobs; implementations handle players first.
     fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32>) -> bool {
-        let _ = (id, effect, duration, amplifier, source);
+        match crate::effect::Effect::named(effect, duration, amplifier) {
+            Some(fx) => self.add_effect_instance(id, fx, source),
+            None => false,
+        }
+    }
+
+    /// `LivingEntity.addEffect` with a full instance (flags, hidden effects) on player or entity
+    /// `id`. Implementations reach mobs through [`crate::mob::effects::add_to_entity`].
+    fn add_effect_instance(&mut self, id: i32, effect: crate::effect::Effect, source: Option<i32>) -> bool {
+        let _ = (id, effect, source);
         false
     }
 
@@ -458,6 +469,19 @@ pub trait EntityLevel {
     fn player_effect(&self, id: i32, effect: &str) -> Option<(i32, i32)> {
         let _ = (id, effect);
         None
+    }
+
+    /// `MobEffect.applyInstantaneousEffect` on player or entity `id` (a splash potion's or a
+    /// cloud's instant health or harm at `scale`; `source`: the potion or cloud and its
+    /// position, `owner`: who threw it). Implementations reach mobs through
+    /// [`crate::mob::effects::apply_instantaneous_to_entity`].
+    fn apply_instantaneous_effect(&mut self, id: i32, effect: &crate::effect::Effect, source: Option<(i32, Vec3)>, owner: Option<i32>, scale: f64) {
+        let _ = (id, effect, source, owner, scale);
+    }
+
+    /// `minecraft:max_entity_cramming`.
+    fn max_entity_cramming(&self) -> i32 {
+        24
     }
 
     /// Sets entity or player `id` on fire for `seconds`.
