@@ -208,7 +208,7 @@ impl RegionWork<'_> {
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
     fn tick_entities(&mut self, env: &Env) {
-        if self.entities.list.is_empty() {
+        if self.entities.list.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
             return;
         }
         let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
@@ -224,6 +224,7 @@ impl RegionWork<'_> {
                 actor: None,
             };
             let any_player = !self.players.is_empty();
+            crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns);
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);

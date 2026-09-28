@@ -33,6 +33,7 @@ mod generation;
 mod hazards;
 mod health;
 mod mobs;
+mod spawner;
 mod movement;
 mod persist;
 mod players;
@@ -669,6 +670,8 @@ pub struct Sim {
     rules: std::sync::Arc<kiln_inventory::Rules>,
     /// Loot tables from the vanilla datapack (block drops), if it was found.
     loot: Option<std::sync::Arc<kiln_loot::LootData>>,
+    /// Biome spawn lists from the vanilla datapack (natural mob spawning).
+    spawn_table: Option<std::sync::Arc<spawner::SpawnTable>>,
     /// The levels, by [`DimId`].
     dims: Vec<Dim>,
     pool: kiln_sched::TickPool,
@@ -815,9 +818,11 @@ impl Sim {
         let vanilla_pack = datapack_dir(datapack);
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
+        let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
         let mut sim = Sim {
             rules,
             loot,
+            spawn_table,
             pool: kiln_sched::TickPool::with_config(config.pool.clone()),
             config,
             dims,
@@ -1167,7 +1172,9 @@ impl Sim {
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
+                spawn_point: self.spawn,
             },
+            spawn_table: self.spawn_table.clone(),
         }
     }
 

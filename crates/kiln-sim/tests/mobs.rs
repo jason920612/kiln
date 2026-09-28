@@ -21,6 +21,8 @@ impl World {
         let mut w = World { sim, clients: vec![Client::new(1, stats)] };
         w.ticks(5);
         w.console("gamerule minecraft:natural_health_regeneration false");
+        // Only the mobs a test summons (natural spawning has its own test).
+        w.console("gamerule minecraft:spawn_mobs false");
         w
     }
 
@@ -159,4 +161,29 @@ fn monsters_far_from_players_despawn() {
     w.console("difficulty peaceful");
     w.ticks(2);
     assert!(w.mobs("minecraft:zombie").is_empty(), "peaceful removes monsters");
+}
+
+#[test]
+fn monsters_spawn_naturally_at_night_within_the_cap() {
+    if std::env::var_os("KILN_DATAPACK").is_none() {
+        eprintln!("natural spawning needs the vanilla datapack (KILN_DATAPACK); skipped");
+        return;
+    }
+    let mut w = World::new();
+    w.console("gamerule minecraft:spawn_mobs true");
+    w.console("gamemode creative Hunter");
+    w.console("time set 18000");
+    // Freshly spawned: at least 24 blocks from the player.
+    w.ticks(20);
+    let p = w.pos();
+    for m in w.sim.mobs() {
+        let d = ((m.2[0] - p[0]).powi(2) + (m.2[1] - p[1]).powi(2) + (m.2[2] - p[2]).powi(2)).sqrt();
+        assert!(d > 23.0, "{} spawned {d:.1} blocks from the player", m.1);
+    }
+    w.ticks(280);
+    let all = w.sim.mobs();
+    let monsters = all.iter().filter(|m| matches!(m.1, "minecraft:zombie" | "minecraft:skeleton" | "minecraft:creeper" | "minecraft:spider")).count();
+    assert!(monsters > 0, "no monsters spawned: {all:?}");
+    // The cap is checked before each chunk; a chunk may add up to its cluster size (4) past it.
+    assert!(monsters < 70 + 4, "{monsters} monsters exceed the cap");
 }

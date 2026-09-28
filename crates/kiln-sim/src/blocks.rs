@@ -226,6 +226,8 @@ pub(crate) struct BlockEnv {
     pub damage: crate::health::DamageRules,
     /// Time of day and game rules for mobs.
     pub mobs: crate::mobs::MobRules,
+    /// Biome spawn lists for natural spawning (`None`: no datapack, no natural spawning).
+    pub spawn_table: Option<std::sync::Arc<crate::spawner::SpawnTable>>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -853,6 +855,7 @@ mod tests {
             loot: None,
             damage: crate::health::DamageRules::default(),
             mobs: Default::default(),
+            spawn_table: None,
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

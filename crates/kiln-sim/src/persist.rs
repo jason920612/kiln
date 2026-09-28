@@ -304,9 +304,8 @@ impl crate::Dim {
     /// of entities no longer in a loaded chunk. Entities outside loaded chunks leave the
     /// simulation; returns their ids and viewers, who must forget them.
     pub(crate) fn store_entities(&mut self, unloaded: &[ChunkPos], all: bool, owners: &HashMap<i32, u128>) -> Vec<(i32, Vec<ConnId>)> {
-        if self.entity_store.is_none() {
-            return Vec::new();
-        }
+        // Without storage, entities outside loaded chunks are lost (their cells may go away).
+        let storing = self.entity_store.is_some();
         let owner = |id: i32| owners.get(&id).copied();
         let mut groups: HashMap<ChunkPos, Vec<Tag>> = HashMap::new();
         let mut leaving: HashSet<i32> = HashSet::new();
@@ -314,7 +313,7 @@ impl crate::Dim {
             for e in r.part().0.list.iter().filter(|e| !e.removed) {
                 let c = entities::chunk_of(e.pos);
                 let loaded = self.regions.chunk(c).is_some();
-                if all || !loaded {
+                if storing && (all || !loaded) {
                     groups.entry(c).or_default().push(e.save(&owner));
                 }
                 if !loaded {
@@ -333,6 +332,9 @@ impl crate::Dim {
                     false
                 });
             }
+        }
+        if !storing {
+            return gone;
         }
         let mut chunks: Vec<ChunkPos> = groups.keys().copied().chain(unloaded.iter().copied()).collect();
         if all {

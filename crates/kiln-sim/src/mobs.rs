@@ -23,6 +23,8 @@ pub(crate) struct MobRules {
     pub spawn_monsters: bool,
     pub cramming: i32,
     pub difficulty: u8,
+    /// The world spawn (no natural spawns within 24 blocks).
+    pub spawn_point: [i32; 3],
 }
 
 impl Default for MobRules {
@@ -37,6 +39,7 @@ impl Default for MobRules {
             spawn_monsters: true,
             cramming: 24,
             difficulty: 2,
+            spawn_point: [0, 64, 0],
         }
     }
 }
