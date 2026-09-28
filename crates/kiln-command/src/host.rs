@@ -624,6 +624,11 @@ pub trait Host: SelectorWorld {
     fn block_entity(&mut self, _dimension: &str, _pos: [i32; 3]) -> Option<Tag> {
         None
     }
+    /// An entity's data (`EntityDataAccessor.getData`: `saveWithoutId`, with a player's held
+    /// item as `SelectedItem`). Hosts without entity data return `None`.
+    fn entity_data(&mut self, _entity: &Self::Entity) -> Option<Tag> {
+        None
+    }
     /// `Level.setBlock` (`BlockInput.place` when `nbt` is given): returns whether the state
     /// changed, or (with `nbt`) whether the block entity's saved data changed. Without
     /// [`UpdateFlags::KNOWN_SHAPE`] vanilla first adapts `state` to its neighbours' shapes

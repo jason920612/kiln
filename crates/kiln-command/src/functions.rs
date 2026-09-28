@@ -226,7 +226,14 @@ fn decimal(v: f64) -> String {
             s.pop();
         }
     }
-    if s == "-0" { "-0".into() } else { s }
+    // No minimum integer digits: `0.5` is `.5`.
+    if let Some(rest) = s.strip_prefix("0.") {
+        return format!(".{rest}");
+    }
+    if let Some(rest) = s.strip_prefix("-0.") {
+        return format!("-.{rest}");
+    }
+    s
 }
 
 /// Loaded functions and function tags (`ServerFunctionLibrary`).
@@ -481,7 +488,9 @@ mod tests {
         assert!(CommandFunction::from_lines(id("k:e"), &["say \\"]).is_err());
         assert!(CommandFunction::from_lines(id("k:e"), &["$say no vars"]).unwrap_err().contains("No variables"));
         assert!(CommandFunction::from_lines(id("k:e"), &["/say"]).unwrap_err().contains("did you mean 'say'"));
-        assert_eq!(decimal(0.1f32 as f64), "0.100000001490116");
+        assert_eq!(decimal(0.1f32 as f64), ".100000001490116");
+        assert_eq!(decimal(-0.5), "-.5");
+        assert_eq!(decimal(0.0), "0");
         assert_eq!(decimal(2.0), "2");
     }
 

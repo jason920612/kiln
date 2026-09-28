@@ -138,6 +138,24 @@ pub fn update_tags(id: i32, tags: &[(&str, &[(&str, &[i32])])]) -> Bytes {
     b.freeze()
 }
 
+/// Update Tags from owned lists (data pack tags).
+pub fn update_tags_owned(id: i32, tags: &[(String, Vec<(String, Vec<i32>)>)]) -> Bytes {
+    let mut b = packet(id);
+    b.put_varint(tags.len() as i32);
+    for (registry, list) in tags {
+        b.put_string(registry);
+        b.put_varint(list.len() as i32);
+        for (tag, entries) in list {
+            b.put_string(tag);
+            b.put_varint(entries.len() as i32);
+            for e in entries {
+                b.put_varint(*e);
+            }
+        }
+    }
+    b.freeze()
+}
+
 pub fn finish_configuration() -> Bytes {
     packet(ids::configuration::clientbound::FINISH_CONFIGURATION).freeze()
 }

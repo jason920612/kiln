@@ -142,6 +142,8 @@ pub struct Shared {
     next_conn: AtomicU64,
     registry_packets: Vec<Bytes>,
     tags_packet: Bytes,
+    /// Feature flags and data pack tags from the simulation.
+    pub data_sync: Arc<kiln_link::DataSync>,
     auth: Option<Authenticator>,
 }
 
@@ -185,6 +187,7 @@ impl Shared {
             next_conn: AtomicU64::new(1),
             registry_packets,
             tags_packet,
+            data_sync: Arc::default(),
             auth,
         }
     }
@@ -622,7 +625,8 @@ async fn configure(conn: &mut Conn, shared: &Shared, name: &str) -> Result<packe
     if !shared.lobby.links.is_empty() {
         conn.queue(&server_links(Phase::Configuration, &shared.lobby))?;
     }
-    conn.queue(&packets::update_enabled_features(&["minecraft:vanilla"]))?;
+    let features = shared.data_sync.features();
+    conn.queue(&packets::update_enabled_features(&features.iter().map(String::as_str).collect::<Vec<_>>()))?;
     conn.queue(&packets::select_known_packs(&[core]))?;
     conn.flush().await?;
 
@@ -716,7 +720,10 @@ async fn configure(conn: &mut Conn, shared: &Shared, name: &str) -> Result<packe
                 for p in &shared.registry_packets {
                     conn.queue(p)?;
                 }
-                conn.queue(&shared.tags_packet)?;
+                match shared.data_sync.config_tags() {
+                    Some(tags) => conn.queue(&tags)?,
+                    None => conn.queue(&shared.tags_packet)?,
+                }
                 registries_sent = true;
                 if shared.lobby.code_of_conduct_for(&language).is_some() {
                     tasks.push(ConfigTask::CodeOfConduct);

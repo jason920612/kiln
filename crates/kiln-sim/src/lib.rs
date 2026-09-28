@@ -28,6 +28,8 @@ mod consume;
 mod xp;
 mod container;
 mod datapacks;
+mod tags;
+mod zip_pack;
 pub mod lobby;
 mod digging;
 mod effects;
@@ -117,6 +119,8 @@ pub struct SimConfig {
     /// Storage format of a new world (an existing world keeps its own: Anvil unless marked
     /// native, see `kiln_storage::WorldFormat`).
     pub world_format: kiln_storage::WorldFormat,
+    /// Where the data packs publish the feature flags and tags that logins send.
+    pub data_sync: std::sync::Arc<kiln_link::DataSync>,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -146,6 +150,7 @@ impl SimConfig {
             schedule: ScheduleMode::Lockstep,
             inject_delay: None,
             world_format: kiln_storage::WorldFormat::Anvil,
+            data_sync: Default::default(),
         }
     }
 }
