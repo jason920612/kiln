@@ -381,6 +381,12 @@ pub trait Kind: Sync + Send {
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, partner, child, level);
     }
+    /// `playAmbientSound`: the sound (`default`: the type's ambient sound), `None` for silence
+    /// (then no pitch is drawn either).
+    fn ambient_sound(&self, m: &MobData, default: Option<&'static str>) -> Option<&'static str> {
+        let _ = m;
+        default
+    }
     /// `removeWhenFarAway` for a type that despawns differently from its category.
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         let _ = m;

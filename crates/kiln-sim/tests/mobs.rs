@@ -295,6 +295,39 @@ fn staring_at_an_enderman_angers_it() {
 }
 
 #[test]
+fn shulker_bullets_hurt_and_levitate() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:shulker", [0.0, 0.0, 5.0], "");
+    let mut levitated = false;
+    for _ in 0..300 {
+        w.ticks(1);
+        let fx = w.sim.effects(1).unwrap();
+        levitated |= fx.iter().any(|e| e.0 == "minecraft:levitation");
+    }
+    assert!(w.health() < 20.0, "a bullet hit (health {})", w.health());
+    assert!(levitated, "the hit made the player levitate");
+}
+
+#[test]
+fn end_city_sentries_load_as_shulkers() {
+    use kiln_proto::nbt::Tag;
+    // The compound end city generation leaves for a sentry.
+    let tag = Tag::Compound(vec![
+        ("id".into(), Tag::String("minecraft:shulker".into())),
+        ("Pos".into(), Tag::List(vec![Tag::Double(3.5), Tag::Double(70.0), Tag::Double(4.5)])),
+        ("Rotation".into(), Tag::List(vec![Tag::Float(0.0), Tag::Float(0.0)])),
+        ("AttachFace".into(), Tag::Byte(1)),
+        ("Peek".into(), Tag::Byte(0)),
+        ("Color".into(), Tag::Byte(16)),
+    ]);
+    let e = kiln_entity::persist::load(&tag, 7, 1).expect("loads");
+    let m = kiln_entity::mob::data(&e).expect("a mob");
+    assert_eq!(m.kind, kiln_entity::mob::MobKind::Shulker);
+    assert_eq!(kiln_entity::mob::kinds::shulker::st(m).attach, kiln_entity::math::Direction::Up);
+}
+
+#[test]
 fn every_mob_type_summons_ticks_and_saves() {
     let mut w = World::new();
     w.console("gamemode creative Hunter");

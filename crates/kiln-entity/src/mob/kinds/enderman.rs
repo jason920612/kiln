@@ -156,6 +156,10 @@ impl Kind for Enderman {
         }
     }
 
+    fn ambient_sound(&self, m: &MobData, default: Option<&'static str>) -> Option<&'static str> {
+        if st(m).creepy { Some(mob::sound_event("minecraft:entity.enderman.scream")) } else { default }
+    }
+
     fn walk_target_value(&self, _m: &MobData, _level: &dyn EntityLevel, _p: BlockPos) -> Option<f32> {
         Some(0.0)
     }

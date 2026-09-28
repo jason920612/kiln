@@ -783,6 +783,56 @@ public class MobVectors {
             s.ticks = 100;
             out.add(s);
         }
+        // Shulkers: peeking, shooting bullets, teleporting when hurt, on a wall.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_shulker_" + seed);
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:shulker", 0.5, BY, 0.5, 0f, 3200L * seed + 19);
+            if (seed == 2) m.nbt = "{Color:5b}";
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (int dist : new int[] {5, 12}) {
+            Scenario s = new Scenario("attack_shulker_" + dist);
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:shulker", 0.5, BY, 0.5, 0f, 5450 + dist));
+            s.player = new double[] {0.5 + dist, BY, 2.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_shulker");
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:shulker", 0.5, BY, 0.5, 0f, 3601));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.hurts.put(5, new double[] {0, 16.0});
+            s.hurts.put(30, new double[] {0, 2.0});
+            s.hurts.put(55, new double[] {0, 2.0});
+            s.hurts.put(80, new double[] {0, 2.0});
+            s.hurts.put(105, new double[] {0, 2.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("wall_shulker");
+            floor(s, 16, "minecraft:stone");
+            for (int y = BY; y <= BY + 2; y++)
+                for (int z = -2; z <= 2; z++) block(s, -1, y, z, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:shulker", 0.5, BY + 1, 0.5, 0f, 3701);
+            m.nbt = "{AttachFace:4b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 3.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
         // Water hurts it and makes it teleport.
         {
             Scenario s = new Scenario("water_enderman");

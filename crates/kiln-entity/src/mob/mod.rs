@@ -1034,7 +1034,8 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.ambient_sound_time += 1;
         if e.random.next_int_bounded(1000) < t {
             m.ambient_sound_time = -m.kind.ambient_sound_interval();
-            if let Some(s) = m.kind.ambient_sound() {
+            let sound = m.kind.ambient_sound();
+            if let Some(s) = m.kind.ext().map_or(sound, |k| k.ambient_sound(m, sound)) {
                 make_sound(e, m, level, s);
             }
         }
@@ -2069,6 +2070,9 @@ impl DamageKind {
             DamageKind::Kill => "minecraft:generic_kill",
             DamageKind::Cramming => "minecraft:cramming",
             DamageKind::PlayerExplosion => "minecraft:player_explosion",
+            DamageKind::MobProjectile => "minecraft:mob_projectile",
+            DamageKind::Magic => "minecraft:magic",
+            DamageKind::IndirectMagic => "minecraft:indirect_magic",
         }
     }
 

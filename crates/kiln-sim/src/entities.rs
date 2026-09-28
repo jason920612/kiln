@@ -986,6 +986,13 @@ fn carry_out(
                 spawns.push(crate::mobs::drop_item(stack, arr(pos), h));
             }
         }
+        Event::MobEffect { target, effect, duration, amplifier, source: _ } => {
+            if let Some(p) = players.iter_mut().find(|p| p.entity_id == target && !p.dead)
+                && let Some(id) = crate::effects::effect_id(effect)
+            {
+                p.add_effect(crate::effects::Effect::simple(id, duration, amplifier));
+            }
+        }
         Event::GiftLoot { entity: id, table, pos } => loot_drop(env, spawns, id, table, pos, n, 0.0),
         Event::ShearLoot { entity: id, table, pos } => loot_drop(env, spawns, id, &table, pos, n, 1.0),
         // Vibrations, other projectile hits and the block effects of entities inside blocks
@@ -1270,5 +1277,8 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::Kill => ("minecraft:generic_kill", "death.attack.genericKill"),
         DamageKind::Cramming => ("minecraft:cramming", "death.attack.cramming"),
         DamageKind::PlayerExplosion => ("minecraft:player_explosion", "death.attack.explosion.player"),
+        DamageKind::MobProjectile => ("minecraft:mob_projectile", "death.attack.mob"),
+        DamageKind::Magic => ("minecraft:magic", "death.attack.magic"),
+        DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),
     }
 }

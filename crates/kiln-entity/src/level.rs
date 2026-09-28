@@ -90,6 +90,10 @@ pub enum DamageKind {
     Kill,
     Cramming,
     PlayerExplosion,
+    /// `mobProjectile` (shulker bullets, llama spit).
+    MobProjectile,
+    Magic,
+    IndirectMagic,
 }
 
 /// Side effects the simulation carries out or broadcasts.
@@ -132,6 +136,9 @@ pub enum Event {
     },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
+    /// `addEffect` on player `target` (a `minecraft:mob_effect` id) from `source`. Mobs have no
+    /// effects in Kiln.
+    MobEffect { target: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32> },
     /// `dropFromShearingLootTable` (a sheep's wool).
     ShearLoot { entity: i32, table: String, pos: Vec3 },
 }
