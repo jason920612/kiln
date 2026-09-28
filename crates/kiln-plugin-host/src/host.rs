@@ -211,7 +211,7 @@ pub(crate) fn new_store(
     data_dir: Option<&std::path::Path>,
 ) -> Store<HostState> {
     let mut wasi = wasmtime_wasi::WasiCtxBuilder::new();
-    wasi.inherit_stderr();
+    // No stdio: a guest panic shows up as a trap in the host log.
     if let Some(dir) = data_dir {
         let _ = std::fs::create_dir_all(dir);
         if let Err(e) = wasi.preopened_dir(dir, "/data", wasmtime_wasi::filesystem::FsPerms::ReadWrite) {

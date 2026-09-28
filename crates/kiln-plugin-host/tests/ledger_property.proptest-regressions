@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 74f3d706d50dbdc35b8695ea09743fb87c9797d731dd62d692fbd366f8e912a7 # shrinks to steps = [Step { topology: None, moves: [], txs: [Tx { from: 0, to: 0, amount: 1, kind: 1 }], sweeps: [], relog: None }], case = 254805319877
