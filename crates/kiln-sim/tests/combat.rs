@@ -220,6 +220,16 @@ fn survival_hits_and_mining_wear_tools() {
 /// player gets any; what the repair does not use goes to the player.
 #[test]
 fn mending_spends_orb_points_on_repairs() {
+    // Enchantment effects come from the vanilla datapack: the repository's when KILN_DATAPACK
+    // is not set (the simulation looks relative to the working directory, the crate here).
+    if std::env::var_os("KILN_DATAPACK").is_none() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work/generated");
+        if !dir.join("data/minecraft/enchantment").is_dir() {
+            eprintln!("skipped: no datapack (KILN_DATAPACK)");
+            return;
+        }
+        unsafe { std::env::set_var("KILN_DATAPACK", dir) };
+    }
     let mut w = World::new(&["Mender"]);
     w.console("gamemode survival Mender");
     w.console("give Mender minecraft:diamond_pickaxe[minecraft:damage=25,minecraft:enchantments={\"minecraft:mending\":1}]");
