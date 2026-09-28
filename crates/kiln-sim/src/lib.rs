@@ -31,6 +31,7 @@ mod ranged;
 mod crossbow;
 mod trident;
 mod shield;
+mod tools;
 mod xp;
 mod container;
 mod datapacks;

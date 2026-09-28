@@ -319,3 +319,121 @@ fn tridents_throw() {
     assert_eq!(w.count("minecraft:trident"), 1);
     assert_eq!(w.held(), None, "thrown out of the hand");
 }
+
+/// Whether the vanilla datapack is available (context providers for composting). The
+/// repository's `work/generated` is used when `KILN_DATAPACK` is not set.
+fn have_datapack() -> bool {
+    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| {
+        if let Some(dir) = std::env::var_os("KILN_DATAPACK") {
+            return std::path::Path::new(&dir).join("data/minecraft/recipe").is_dir();
+        }
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work/generated");
+        let found = dir.join("data/minecraft/recipe").is_dir();
+        if found {
+            // Set once, before any simulation in this test binary reads it.
+            unsafe { std::env::set_var("KILN_DATAPACK", dir) };
+        }
+        found
+    })
+}
+
+#[test]
+fn tools_till_flatten_strip_and_wax() {
+    let mut w = World::new("survival");
+    let a = w.at(2, 0, 0);
+    w.set(a, "minecraft:grass_block");
+    w.hold("minecraft:wooden_hoe", 1);
+    w.use_on_top(a);
+    assert!(state::is(w.block(a), d::FARMLAND), "{}", state::state_string(w.block(a)));
+    assert_eq!(w.sim.item_damage(1, 36), Some(1));
+
+    w.set(a, "minecraft:dirt");
+    w.hold("minecraft:stone_shovel", 1);
+    w.use_on_top(a);
+    assert!(state::is(w.block(a), d::DIRT_PATH));
+
+    w.set(a, "minecraft:oak_log[axis=x]");
+    w.hold("minecraft:iron_axe", 1);
+    w.use_on_top(a);
+    let log = w.block(a);
+    assert!(state::same_block(log, d::STRIPPED_OAK_LOG) && state::get(log, "axis") == Some("x"), "{}", state::state_string(log));
+
+    w.set(a, "minecraft:weathered_cut_copper");
+    w.use_on_top(a);
+    assert!(state::same_block(w.block(a), d::EXPOSED_CUT_COPPER), "scraped: {}", state::state_string(w.block(a)));
+
+    w.hold("minecraft:honeycomb", 2);
+    w.use_on_top(a);
+    assert!(state::same_block(w.block(a), d::WAXED_EXPOSED_CUT_COPPER));
+    assert_eq!(w.held(), Some(("minecraft:honeycomb".into(), 1)));
+    w.hold("minecraft:iron_axe", 1);
+    w.use_on_top(a);
+    assert!(state::same_block(w.block(a), d::EXPOSED_CUT_COPPER), "wax off");
+
+    // Shears carve a pumpkin toward the player for four seeds.
+    w.set(a, "minecraft:pumpkin");
+    w.hold("minecraft:shears", 1);
+    w.use_on_top(a);
+    assert!(state::same_block(w.block(a), d::CARVED_PUMPKIN));
+    w.ticks(1);
+    assert_eq!(w.count("minecraft:item"), 1);
+}
+
+#[test]
+fn bone_meal_grows_crops() {
+    let mut w = World::new("survival");
+    let farm = w.at(2, 0, 0);
+    let crop = w.at(2, 1, 0);
+    w.set(farm, "minecraft:farmland");
+    w.set(crop, "minecraft:wheat[age=0]");
+    w.hold("minecraft:bone_meal", 3);
+    w.use_on_top(farm);
+    // The click on the farmland's top does nothing; on the wheat it grows 2 to 5 stages.
+    assert_eq!(state::get_int(w.block(crop), "age"), 0);
+    w.use_on_top(crop);
+    let age = state::get_int(w.block(crop), "age");
+    assert!((2..=5).contains(&age), "age {age}");
+    assert_eq!(w.held(), Some(("minecraft:bone_meal".into(), 2)));
+    // Grass spreads short grass around.
+    let g = w.at(-3, 0, -3);
+    for dx in -3..=3 {
+        for dz in -3..=3 {
+            w.set([g[0] + dx, g[1], g[2] + dz], "minecraft:grass_block");
+        }
+    }
+    w.use_on_top(g);
+    let grass = (-3..=3).flat_map(|dx| (-3..=3).map(move |dz| (dx, dz))).filter(|&(dx, dz)| {
+        let s = w.block([g[0] + dx, g[1] + 1, g[2] + dz]);
+        state::same_block(s, d::SHORT_GRASS) || state::same_block(s, d::TALL_GRASS)
+    });
+    assert!(grass.count() > 3);
+}
+
+#[test]
+fn composters_fill_and_give_bone_meal() {
+    if !have_datapack() {
+        eprintln!("skipped: no vanilla datapack (set KILN_DATAPACK)");
+        return;
+    }
+    let mut w = World::new("survival");
+    let c = w.at(1, 1, 0);
+    w.set(c, "minecraft:composter");
+    // Pumpkin pies always add a layer.
+    w.hold("minecraft:pumpkin_pie", 16);
+    for _ in 0..7 {
+        w.use_on_top(c);
+    }
+    assert_eq!(state::get_int(w.block(c), "level"), 7);
+    assert_eq!(w.held(), Some(("minecraft:pumpkin_pie".into(), 9)));
+    // A second later the bone meal is ready; an empty hand takes it.
+    w.ticks(25);
+    assert_eq!(state::get_int(w.block(c), "level"), 8);
+    w.run("gamemode creative User");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 36, item: None })]));
+    w.run("gamemode survival User");
+    w.use_on_top(c);
+    assert_eq!(state::get_int(w.block(c), "level"), 0);
+    w.ticks(1);
+    assert_eq!(w.count("minecraft:item"), 1, "the bone meal");
+}

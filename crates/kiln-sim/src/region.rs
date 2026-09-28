@@ -871,9 +871,9 @@ fn use_on_block(
     let bp = BlockPos::new(pos[0], pos[1], pos[2]);
     let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
     // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
-    if !(p.sneaking && have_something) {
+    if !(p.sneaking && have_something) && !held.is_empty() && actor.may_build {
         let used = held.clone();
-        if let Some(true) = crate::buckets::use_cauldron(p, level, bp, !main_hand, spawns) {
+        if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, !main_hand, spawns) {
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
             p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &used, &probe);
             return;
@@ -890,9 +890,14 @@ fn use_on_block(
             if consumed {
                 return;
             }
-        } else if interact::use_without_item(level, bp, &actor) {
+        } else if crate::tools::block_use_without_item(level, bp, spawns) || interact::use_without_item(level, bp, &actor) {
             return;
         }
+    }
+    // `Item.useOn` of tools (hoes, shovels, axes, shears, honeycomb, bone meal, fire charges,
+    // flint and steel on campfires and candles).
+    if actor.may_build && crate::tools::item_use_on(p, level, bp, dir, !main_hand, spawns) {
+        return;
     }
     if item_name == Some("minecraft:flint_and_steel") && actor.may_build {
         light_fire(p, level, main_hand, pos, dir);
