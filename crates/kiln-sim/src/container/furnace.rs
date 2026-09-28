@@ -241,7 +241,8 @@ pub(crate) fn server_tick(level: &mut RegionLevel, pos: BlockPos, spawns: &mut V
     }
     if let Some(rem) = out.drop {
         let at = [pos.x as f64, pos.y as f64, pos.z as f64];
-        super::drop_item_stack(at, rem, &mut level.blocks.random, spawns);
+        let mut rng = super::pos_random(level, pos, 2);
+        super::drop_item_stack(at, rem, &mut rng, spawns);
     }
     if let Some(lit) = out.lit {
         kiln_blocks::set_block(level, pos, state::set_bool(s, "lit", lit), kiln_blocks::flags::ALL);

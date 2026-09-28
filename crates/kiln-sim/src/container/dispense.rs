@@ -11,7 +11,7 @@ use crate::blocks::RegionLevel;
 use kiln_blocks::{BlockPos, Direction, Effect, Level, state};
 use kiln_inventory::stack::StackExt;
 use kiln_item::ItemStack;
-use kiln_javamath::random::RandomSource;
+use kiln_javamath::random::{LegacyRandom, RandomSource};
 
 /// `DispenserBlockEntity.getRandomSlot`: each non-empty slot replaces the pick with chance
 /// 1/(its rank).
@@ -37,9 +37,8 @@ fn dispense_position(pos: BlockPos, facing: Direction) -> [f64; 3] {
 }
 
 /// `DefaultDispenseItemBehavior.spawnItem`.
-fn spawn_item(level: &mut RegionLevel, stack: ItemStack, accuracy: i32, facing: Direction, at: [f64; 3]) {
+fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack: ItemStack, accuracy: i32, facing: Direction, at: [f64; 3]) {
     let y = at[1] - if facing.axis() == kiln_blocks::Axis::Y { 0.125 } else { 0.15625 };
-    let rng = &mut level.blocks.random;
     // The `ItemEntity` constructor's random throw, replaced below.
     rng.next_double();
     rng.next_double();
@@ -57,9 +56,9 @@ fn spawn_item(level: &mut RegionLevel, stack: ItemStack, accuracy: i32, facing: 
 
 /// `DefaultDispenseItemBehavior.dispense`: one item flies out, with the click sound (level
 /// event 1000) and smoke (2000).
-fn default_dispense(level: &mut RegionLevel, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
+fn default_dispense(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
     let one = stack.split_count(1);
-    spawn_item(level, one, 6, facing, dispense_position(pos, facing));
+    spawn_item(level, rng, one, 6, facing, dispense_position(pos, facing));
     level.effect(Effect::LevelEvent { id: 1000, pos, data: 0 });
     level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
     stack
@@ -73,7 +72,8 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
     let Some(c) = level.blocks.containers.get_mut(pos) else { return };
     super::unpack_loot(c, pos, loot.as_deref(), false, game_time, seed);
     let items = c.items.clone();
-    let Some(slot) = random_slot(&items, &mut level.blocks.random) else {
+    let mut rng = super::pos_random(level, pos, 4);
+    let Some(slot) = random_slot(&items, &mut rng) else {
         level.effect(Effect::LevelEvent { id: 1001, pos, data: 0 });
         if !dropper {
             level.effect(Effect::GameEvent { pos, event: "minecraft:block_activate" });
@@ -102,10 +102,10 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
                     _ => stack.copy(),
                 }
             }
-            None => default_dispense(level, pos, facing, stack),
+            None => default_dispense(level, &mut rng, pos, facing, stack),
         }
     } else {
-        dispense_behaviour(level, pos, facing, stack)
+        dispense_behaviour(level, &mut rng, pos, facing, stack)
     };
     if let Some(c) = level.blocks.containers.get_mut(pos) {
         kiln_inventory::Container::set_item(c, slot, result);
@@ -115,7 +115,7 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
 }
 
 /// The dispenser's behaviour for an item (`DispenserBlock.getDispenseMethod`).
-fn dispense_behaviour(level: &mut RegionLevel, pos: BlockPos, facing: Direction, stack: ItemStack) -> ItemStack {
+fn dispense_behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, stack: ItemStack) -> ItemStack {
     let target = pos.relative(facing);
     match stack.item_name() {
         "minecraft:water_bucket" | "minecraft:lava_bucket" => {
@@ -133,7 +133,7 @@ fn dispense_behaviour(level: &mut RegionLevel, pos: BlockPos, facing: Direction,
                 kiln_blocks::set_block(level, target, fluid, kiln_blocks::flags::ALL_IMMEDIATE);
                 return ItemStack::of("minecraft:bucket", 1).unwrap_or_default();
             }
-            default_dispense(level, pos, facing, stack)
+            default_dispense(level, rng, pos, facing, stack)
         }
         "minecraft:bucket" => {
             // Picks up a fluid source in front (`BucketPickup`).
@@ -154,15 +154,15 @@ fn dispense_behaviour(level: &mut RegionLevel, pos: BlockPos, facing: Direction,
                     let mut view = View::one(c);
                     left = add_item(&mut view, left, None, None);
                     if !left.is_empty() {
-                        spawn_item(level, left, 6, facing, dispense_position(pos, facing));
+                        spawn_item(level, rng, left, 6, facing, dispense_position(pos, facing));
                         level.effect(Effect::LevelEvent { id: 1000, pos, data: 0 });
                         level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
                     }
                 }
                 return rest;
             }
-            default_dispense(level, pos, facing, stack)
+            default_dispense(level, rng, pos, facing, stack)
         }
-        _ => default_dispense(level, pos, facing, stack),
+        _ => default_dispense(level, rng, pos, facing, stack),
     }
 }

@@ -281,23 +281,111 @@ fn workstations_open_their_menus_and_the_anvil_renames() {
         ("minecraft:stonecutter", "minecraft:stonecutter"),
         ("minecraft:smithing_table", "minecraft:smithing"),
         ("minecraft:grindstone[face=floor]", "minecraft:grindstone"),
+        ("minecraft:loom", "minecraft:loom"),
+        ("minecraft:cartography_table", "minecraft:cartography_table"),
+        ("minecraft:enchanting_table", "minecraft:enchantment"),
         ("minecraft:anvil", "minecraft:anvil"),
     ];
     for (i, (block, menu)) in stations.iter().enumerate() {
-        let pos = w.at(-2 + i as i32, 1, 2);
+        let pos = w.at(-4 + i as i32, 1, 2);
         w.setblock(pos, block);
         w.use_on(pos);
         assert_eq!(w.sim.open_menu(1).map(|m| m.0), Some(*menu), "{block}");
     }
     // The anvil is open: an iron pickaxe gets a new name.
     w.hold(36, "minecraft:iron_pickaxe", 1);
-    w.click(5, 30, 0, ContainerInput::QuickMove);
+    w.click(8, 30, 0, ContainerInput::QuickMove);
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::RenameItem { name: "Digger".into() })]));
     let (_, slots) = w.sim.open_menu(1).unwrap();
     assert_eq!(slots[2], Some(("minecraft:iron_pickaxe", 1)));
     // Breaking the anvil closes the menu (its block is gone).
-    let anvil = w.at(2, 1, 2);
+    let anvil = w.at(3, 1, 2);
     w.setblock(anvil, "minecraft:air");
     w.ticks(1);
     assert!(w.sim.open_menu(1).is_none());
+}
+
+#[test]
+fn enchanting_tables_enchant_for_creative_players() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("creative");
+    let table = w.at(3, 1, -3);
+    w.setblock(table, "minecraft:enchanting_table");
+    // A ring of bookshelves two blocks out.
+    for (dx, dz) in [(-2, -2), (-2, 0), (-2, 2), (0, -2), (0, 2), (2, -2), (2, 0), (2, 2)] {
+        w.setblock([table[0] + dx, table[1], table[2] + dz], "minecraft:bookshelf");
+    }
+    w.hold(36, "minecraft:book", 1);
+    w.use_on(table);
+    assert_eq!(w.sim.open_menu(1).map(|m| m.0), Some("minecraft:enchantment"));
+    w.click(1, 29, 0, ContainerInput::QuickMove);
+    let (_, slots) = w.sim.open_menu(1).unwrap();
+    assert_eq!(slots[0], Some(("minecraft:book", 1)));
+    // The third option (creative players need no lapis or levels).
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::ContainerButtonClick { container_id: 1, button_id: 2 })]));
+    let (_, slots) = w.sim.open_menu(1).unwrap();
+    assert_eq!(slots[0], Some(("minecraft:enchanted_book", 1)), "the book got enchanted");
+}
+
+fn saved_world(name: &str) -> std::path::PathBuf {
+    let dir = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+impl World {
+    fn in_world(dir: &std::path::Path) -> Self {
+        let mut sim = Sim::new(SimConfig::new(4, 4, Some(dir.to_owned())));
+        let (msg, stats) = join(1, "Keeper", 2);
+        assert!(sim.step([msg, ToSim::Console("gamemode survival Keeper".into())]));
+        let mut client = Client::new(1, stats);
+        for _ in 0..5 {
+            let mut inbox = Vec::new();
+            client.tick(None, &mut inbox);
+            assert!(sim.step(inbox));
+        }
+        let p = client.pos;
+        let ground = [p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32];
+        World { sim, client, ground, sequence: 0 }
+    }
+}
+
+#[test]
+fn containers_and_ender_items_survive_unloading_and_a_restart() {
+    let dir = saved_world("containers-persist");
+    let mut w = World::in_world(&dir);
+    let chest = w.at(2, 1, 0);
+    let ender = w.at(-2, 1, 0);
+    w.setblock(chest, "minecraft:chest");
+    w.setblock(ender, "minecraft:ender_chest");
+    // Items that got into the chest through the menu (live state only, not yet in the chunk).
+    w.run("give Keeper minecraft:cobblestone 20");
+    w.use_on(chest);
+    w.click(1, 54, 0, ContainerInput::QuickMove);
+    w.close(1);
+    w.run("give Keeper minecraft:emerald 4");
+    w.use_on(ender);
+    w.click(2, 54, 0, ContainerInput::QuickMove);
+    w.close(2);
+    assert_eq!(w.items(chest), vec![(0, "minecraft:cobblestone", 20)]);
+    // Away far enough for the chunk to unload, then back.
+    let home = w.client.pos;
+    w.run(&format!("tp Keeper {} {} {}", home[0] + 5000.0, home[1], home[2]));
+    w.ticks(60);
+    assert!(w.sim.container_at(chest).is_none(), "the chunk unloaded");
+    w.run(&format!("tp Keeper {} {} {}", home[0], home[1], home[2]));
+    w.ticks(5);
+    assert_eq!(w.items(chest), vec![(0, "minecraft:cobblestone", 20)]);
+    // A restart.
+    let (done, _wait) = std::sync::mpsc::channel();
+    assert!(!w.sim.step([ToSim::Shutdown { done }]));
+    drop(w);
+    let mut w = World::in_world(&dir);
+    assert_eq!(w.items(chest), vec![(0, "minecraft:cobblestone", 20)]);
+    w.use_on(ender);
+    let (_, slots) = w.sim.open_menu(1).expect("the ender chest opens");
+    assert_eq!(slots[0], Some(("minecraft:emerald", 4)), "the player's ender items came back");
 }

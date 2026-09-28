@@ -26,6 +26,7 @@ pub mod recipe;
 pub mod remote;
 pub mod rules;
 pub mod slot;
+pub mod stations;
 pub mod stack;
 pub mod tags;
 pub mod workstation;

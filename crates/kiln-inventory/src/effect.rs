@@ -36,6 +36,12 @@ pub enum Effect {
     /// The anvil's result was taken: the player loses `levels` experience levels, and the anvil
     /// wears (`AnvilMenu.onTake`'s block part: level events 1030 and 1029).
     AnvilUsed { levels: i32 },
+    /// The loom's result was taken (its take sound, once a tick).
+    LoomUsed,
+    /// The enchanting table enchanted an item: the player loses `levels` experience levels and
+    /// its enchantment seed becomes `seed` (`Player.onEnchantmentPerformed`); the table plays its
+    /// sound.
+    Enchanted { levels: i32, seed: i32 },
 }
 
 impl Effect {

@@ -21,7 +21,12 @@ fn lang() -> &'static HashMap<String, String> {
 /// A player's menus in the running simulation.
 pub(crate) struct SimWorld<'a> {
     pub loot: Option<&'a kiln_loot::LootData>,
+    /// The player's stand-in for the level random.
     pub rng: &'a mut kiln_javamath::random::LegacyRandom,
+    /// The player's own random (`Entity.random`).
+    pub player_rng: &'a mut kiln_javamath::random::LegacyRandom,
+    /// Bookshelves around the open enchanting table.
+    pub bookshelves: i32,
 }
 
 impl SimWorld<'_> {
@@ -62,4 +67,44 @@ impl kiln_inventory::World for SimWorld<'_> {
         use kiln_javamath::random::RandomSource;
         if bound <= 0 { 0 } else { self.rng.next_int_bounded(bound) }
     }
+
+    fn select_enchantments(&self, rng: &mut dyn kiln_javamath::random::RandomSource, stack: &kiln_item::ItemStack, cost: i32) -> Vec<(i32, i32)> {
+        let Some(loot) = self.loot else { return Vec::new() };
+        let Some(ids) = kiln_inventory::tags::entries("minecraft:enchantment", "minecraft:in_enchanting_table") else { return Vec::new() };
+        let candidates: Vec<&kiln_loot::enchant::Enchantment> = ids.iter().filter_map(|&id| loot.enchantment(id)).collect();
+        kiln_loot::enchant::select(rng, stack, cost, &candidates)
+    }
+
+    fn enchanting_bookshelves(&self) -> i32 {
+        self.bookshelves
+    }
+
+    fn next_player_int(&mut self) -> i32 {
+        use kiln_javamath::random::RandomSource;
+        self.player_rng.next_int()
+    }
+}
+
+/// `EnchantingTableBlock.BOOKSHELF_OFFSETS` with `isValidBookShelf`: bookshelves two blocks out
+/// (on the table's level and the one above) with nothing solid-ish between.
+pub(crate) fn count_bookshelves(level: &crate::blocks::RegionLevel, pos: kiln_blocks::BlockPos) -> i32 {
+    use kiln_blocks::Level;
+    let mut n = 0;
+    for dx in -2..=2 {
+        for dy in 0..=1 {
+            for dz in -2..=2 {
+                if dx != -2 && dx != 2 && dz != -2 && dz != 2 {
+                    continue;
+                }
+                let shelf = level.block(pos.offset(dx, dy, dz));
+                let between = level.block(pos.offset(dx / 2, dy, dz / 2));
+                if kiln_blocks::tags::is(shelf, "minecraft:enchantment_power_provider")
+                    && kiln_blocks::tags::is(between, "minecraft:enchantment_power_transmitter")
+                {
+                    n += 1;
+                }
+            }
+        }
+    }
+    n
 }

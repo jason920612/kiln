@@ -46,22 +46,39 @@ pub(crate) struct PlayerContainers {
     /// Workstation effects of the last menu operation (grindstone and anvil use), for the
     /// region to carry out at the workstation.
     pub pending: Vec<kiln_inventory::Effect>,
+    /// `Player.enchantmentSeed` (saved as `XpSeed`).
+    pub enchantment_seed: i32,
+    /// Bookshelves around the open enchanting table, counted before each menu operation.
+    pub bookshelves: i32,
+    /// `LoomMenu.lastSoundTime`.
+    pub last_loom_sound: i64,
 }
 
 impl PlayerContainers {
     /// From saved player data (`EnderItems`).
     pub fn load(player: &Tag) -> PlayerContainers {
         let list = ItemList::load(player.get("EnderItems"), 27);
-        PlayerContainers { counter: 0, open: None, ender: SimpleContainer::from_items(list.stacks), ender_undecoded: list.undecoded, pending: Vec::new() }
+        PlayerContainers {
+            counter: 0,
+            open: None,
+            ender: SimpleContainer::from_items(list.stacks),
+            ender_undecoded: list.undecoded,
+            pending: Vec::new(),
+            enchantment_seed: player.get("XpSeed").and_then(Tag::as_i64).unwrap_or(0) as i32,
+            bookshelves: 0,
+            last_loom_sound: i64::MIN,
+        }
     }
 
     /// Writes `EnderItems` into saved player data.
     pub fn save_into(&self, player: &mut Tag) {
         let Tag::Compound(fields) = player else { return };
         let list = ItemList { stacks: self.ender.items.clone(), undecoded: self.ender_undecoded.clone() }.save();
-        match fields.iter_mut().find(|(k, _)| k == "EnderItems") {
-            Some((_, v)) => *v = list,
-            None => fields.push(("EnderItems".into(), list)),
+        for (key, value) in [("EnderItems", list), ("XpSeed", Tag::Int(self.enchantment_seed))] {
+            match fields.iter_mut().find(|(k, _)| k == key) {
+                Some((_, v)) => *v = value,
+                None => fields.push((key.into(), value)),
+            }
         }
     }
 }
@@ -120,9 +137,9 @@ impl Player {
         let mut out = Vec::new();
         let player = self.player_flags();
         let result = {
-            let Player { inv, menu, open_menu, containers: pc, loot, level_rng, .. } = self;
-            let PlayerContainers { open, ender, .. } = pc;
-            let mut world = super::world::SimWorld { loot: loot.as_deref(), rng: level_rng };
+            let Player { inv, menu, open_menu, containers: pc, loot, level_rng, entity_rng, .. } = self;
+            let PlayerContainers { open, ender, bookshelves, .. } = pc;
+            let mut world = super::world::SimWorld { loot: loot.as_deref(), rng: level_rng, player_rng: entity_rng, bookshelves: *bookshelves };
             // A double chest's second half is taken out while the menu works on both.
             let mut second_taken: Option<(BlockPos, ContainerBe)> = None;
             if let (Some(OpenBlock::Containers { second: Some((p, _)), .. }), Some(cs)) = (&*open, containers.as_deref_mut()) {
@@ -164,7 +181,10 @@ impl Player {
             match effect {
                 kiln_inventory::Effect::Drop { stack, .. } => spawns.push(self.throw(stack)),
                 kiln_inventory::Effect::Crafted { .. } => took_result = true,
-                e @ (kiln_inventory::Effect::GrindstoneUsed { .. } | kiln_inventory::Effect::AnvilUsed { .. }) => self.containers.pending.push(e),
+                e @ (kiln_inventory::Effect::GrindstoneUsed { .. }
+                | kiln_inventory::Effect::AnvilUsed { .. }
+                | kiln_inventory::Effect::LoomUsed
+                | kiln_inventory::Effect::Enchanted { .. }) => self.containers.pending.push(e),
                 _ => {}
             }
         }
@@ -324,6 +344,10 @@ fn workstation_provider(s: u16, pos: BlockPos) -> Option<Provider> {
         C::CraftingTableBlock => (Menu::crafting, "container.crafting"),
         C::GrindstoneBlock => (Menu::grindstone, "container.grindstone_title"),
         C::AnvilBlock => (Menu::anvil, "container.repair"),
+        C::LoomBlock => (Menu::loom, "container.loom"),
+        C::CartographyTableBlock => (Menu::cartography_table, "container.cartography_table"),
+        // The seed is the player's (set when the menu opens).
+        C::EnchantingTableBlock => (|id| Menu::enchantment(id, 0), "container.enchant"),
         C::StonecutterBlock => (Menu::stonecutter, "container.stonecutter"),
         C::SmithingTableBlock => (Menu::smithing, "container.upgrade"),
         _ => return None,
@@ -406,6 +430,12 @@ fn open_menu(p: &mut Player, level: &mut RegionLevel, provider: Provider, spawns
     p.containers.counter = p.containers.counter % 100 + 1;
     let id = p.containers.counter;
     let mut menu = (provider.make)(id);
+    if menu.kind == kiln_inventory::MenuKind::Enchantment {
+        menu = Menu::enchantment(id, p.containers.enchantment_seed);
+    }
+    if let OpenBlock::Workstation { pos, .. } = provider.block {
+        p.containers.bookshelves = super::world::count_bookshelves(level, pos);
+    }
     // The menu constructor's `container.startOpen(player)`.
     for &pos in &provider.openers {
         start_open(level, pos, spectator);
@@ -455,7 +485,7 @@ fn opener_sound(level: &mut RegionLevel, pos: BlockPos, s: u16, open: bool) {
     if cblock::is_chest(s) && state::get(s, "type") == Some("left") {
         return;
     }
-    let pitch = level.random().next_float() * 0.1 + 0.9;
+    let pitch = super::pos_random(level, pos, 5).next_float() * 0.1 + 0.9;
     level.effect(Effect::Sound { pos, sound: if open { o } else { c }, volume: 0.5, pitch });
 }
 
@@ -507,7 +537,7 @@ pub(crate) fn start_open(level: &mut RegionLevel, pos: BlockPos, spectator: bool
             kiln_blocks::block_events::block_event(level, pos, BlockId::of(s), 1, n);
             if n == 1 {
                 level.effect(Effect::GameEvent { pos, event: "minecraft:container_open" });
-                let pitch = level.random().next_float() * 0.1 + 0.9;
+                let pitch = super::pos_random(level, pos, 5).next_float() * 0.1 + 0.9;
                 level.effect(Effect::Sound { pos, sound: "minecraft:block.shulker_box.open", volume: 0.5, pitch });
             }
         }
@@ -559,7 +589,7 @@ fn stop_open_at(level: &mut RegionLevel, pos: BlockPos) {
             kiln_blocks::block_events::block_event(level, pos, BlockId::of(s), 1, n);
             if n <= 0 {
                 level.effect(Effect::GameEvent { pos, event: "minecraft:container_close" });
-                let pitch = level.random().next_float() * 0.1 + 0.9;
+                let pitch = super::pos_random(level, pos, 5).next_float() * 0.1 + 0.9;
                 level.effect(Effect::Sound { pos, sound: "minecraft:block.shulker_box.close", volume: 0.5, pitch });
             }
         }
@@ -632,6 +662,9 @@ pub(crate) fn menu_op<R>(
     f: impl FnOnce(&mut Menu, Option<&mut Menu>, &mut kiln_inventory::Env) -> R,
 ) -> R {
     let before = open_changes(p, level);
+    if let Some(OpenBlock::Workstation { pos, .. }) = p.containers.open {
+        p.containers.bookshelves = super::world::count_bookshelves(level, pos);
+    }
     let rules = level.env.menus.clone();
     let r = p.with_menu_at(&rules, spawns, Some(&mut level.blocks.containers), f);
     workstation_effects(p, level);
@@ -709,11 +742,24 @@ fn workstation_effects(p: &mut Player, level: &mut RegionLevel) {
         match effect {
             kiln_inventory::Effect::GrindstoneUsed { experience } => {
                 let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
-                super::furnace::award_experience(at, experience, &mut level.blocks.random, &mut level.out.spawns);
+                let mut rng = super::pos_random(level, pos, 3);
+                super::furnace::award_experience(at, experience, &mut rng, &mut level.out.spawns);
                 level.effect(Effect::LevelEvent { id: 1042, pos, data: 0 });
             }
             // Kiln keeps no experience levels yet: the `levels` cost is not taken.
             kiln_inventory::Effect::AnvilUsed { .. } => anvil_wear(p, level, pos),
+            kiln_inventory::Effect::LoomUsed => {
+                let now = level.env.game_time;
+                if p.containers.last_loom_sound != now {
+                    p.containers.last_loom_sound = now;
+                    level.effect(Effect::Sound { pos, sound: "minecraft:ui.loom.take_result", volume: 1.0, pitch: 1.0 });
+                }
+            }
+            kiln_inventory::Effect::Enchanted { seed, .. } => {
+                p.containers.enchantment_seed = seed;
+                let pitch = super::pos_random(level, pos, 5).next_float() * 0.1 + 0.9;
+                level.effect(Effect::Sound { pos, sound: "minecraft:block.enchantment_table.use", volume: 1.0, pitch });
+            }
             _ => {}
         }
     }

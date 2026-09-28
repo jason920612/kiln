@@ -360,6 +360,7 @@ impl Player {
             dead: false,
             removed: self.disconnected,
             xp_level: 0,
+            enchantment_seed: self.containers.enchantment_seed,
         }
     }
 

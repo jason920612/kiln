@@ -32,6 +32,8 @@ pub struct PlayerFlags {
     pub removed: bool,
     /// `experienceLevel` (anvil costs).
     pub xp_level: i32,
+    /// `Player.enchantmentSeed` (enchanting table offers).
+    pub enchantment_seed: i32,
 }
 
 /// World state that some recipes and results depend on (maps, the recipe book, game rules).
@@ -88,6 +90,22 @@ pub trait World {
 
     /// `level.getRandom().nextInt(bound)` (grindstone experience).
     fn random_int(&mut self, _bound: i32) -> i32 {
+        0
+    }
+
+    /// `EnchantmentHelper.selectEnchantment(random, stack, cost, #in_enchanting_table)`:
+    /// (`minecraft:enchantment` id, level) pairs.
+    fn select_enchantments(&self, _rng: &mut dyn kiln_javamath::random::RandomSource, _stack: &ItemStack, _cost: i32) -> Vec<(i32, i32)> {
+        Vec::new()
+    }
+
+    /// Bookshelves around the enchanting table (`EnchantingTableBlock.isValidBookShelf`).
+    fn enchanting_bookshelves(&self) -> i32 {
+        0
+    }
+
+    /// `player.getRandom().nextInt()` (the new enchantment seed).
+    fn next_player_int(&mut self) -> i32 {
         0
     }
 }
@@ -153,6 +171,20 @@ pub(crate) struct AnvilState {
     pub only_renaming: bool,
 }
 
+/// `EnchantmentMenu`'s seed and random.
+#[derive(Debug, Clone)]
+pub(crate) struct EnchantState {
+    /// `enchantmentSeed` (also data value 3).
+    pub seed: i32,
+    pub rng: kiln_javamath::random::LegacyRandom,
+}
+
+impl Default for EnchantState {
+    fn default() -> Self {
+        EnchantState { seed: 0, rng: kiln_javamath::random::LegacyRandom::new(0) }
+    }
+}
+
 /// `ResultContainer`: one stack whatever the index; removing takes it whole.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct ResultBox {
@@ -201,6 +233,10 @@ pub struct Menu {
     pub(crate) visible_recipes: Vec<usize>,
     /// The anvil's name and repair bookkeeping.
     pub(crate) anvil: AnvilState,
+    /// `LoomMenu.selectablePatterns` (`minecraft:banner_pattern` ids).
+    pub(crate) visible_patterns: Vec<i32>,
+    /// The enchanting table's seed and random.
+    pub(crate) enchant: EnchantState,
 }
 
 impl Menu {
@@ -232,6 +268,8 @@ impl Menu {
             last_input: ItemStack::empty(),
             visible_recipes: Vec::new(),
             anvil: AnvilState::default(),
+            visible_patterns: Vec::new(),
+            enchant: EnchantState::default(),
         }
     }
 
@@ -517,6 +555,10 @@ impl Menu {
             SlotKind::SmithingResult => crate::menus::smithing_take(self, env),
             SlotKind::GrindstoneResult => crate::workstation::grindstone_take(self, env),
             SlotKind::AnvilResult => crate::workstation::anvil_take(self, env),
+            SlotKind::LoomResult => {
+                crate::stations::loom_take(self, env);
+                self.set_changed(env, i);
+            }
             _ => self.set_changed(env, i),
         }
     }
@@ -582,6 +624,10 @@ impl Menu {
             MenuKind::Smithing => crate::menus::smithing_slots_changed(self, env, source),
             MenuKind::Grindstone => crate::workstation::grindstone_slots_changed(self, env, source),
             MenuKind::Anvil => crate::workstation::anvil_slots_changed(self, env, source),
+            MenuKind::Loom if source == Source::Input => crate::stations::loom_slots_changed(self, env),
+            MenuKind::CartographyTable if source == Source::Input => crate::stations::cartography_slots_changed(self, env),
+            MenuKind::Enchantment if source == Source::Input => crate::stations::enchantment_slots_changed(self, env),
+            MenuKind::Loom | MenuKind::CartographyTable | MenuKind::Enchantment => {}
             _ => self.broadcast_changes(env),
         }
     }
@@ -1136,7 +1182,13 @@ impl Menu {
                     clear_container_item(env, stack);
                 }
             }
-            MenuKind::Stonecutter | MenuKind::Smithing | MenuKind::Grindstone | MenuKind::Anvil => {
+            MenuKind::Stonecutter
+            | MenuKind::Smithing
+            | MenuKind::Grindstone
+            | MenuKind::Anvil
+            | MenuKind::Loom
+            | MenuKind::CartographyTable
+            | MenuKind::Enchantment => {
                 if self.kind == MenuKind::Stonecutter {
                     self.result.item = ItemStack::empty();
                 }

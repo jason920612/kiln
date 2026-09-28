@@ -534,11 +534,12 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
     }
     let (loot, game_time, seed) = (level.env.loot.clone(), level.env.game_time, level.env.seed);
     unpack_loot(&mut removed, pos, loot.as_deref(), false, game_time, seed);
-    drop_contents(pos, &removed.items, &mut level.blocks.random, &mut level.out.spawns);
+    let mut rng = pos_random(level, pos, 1);
+    drop_contents(pos, &removed.items, &mut rng, &mut level.out.spawns);
     if let BeKind::Furnace(_) = removed.kind {
         let rules = level.env.menus.clone();
         let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
-        furnace::pop_experience(&mut removed, &rules, at, &mut level.blocks.random, &mut level.out.spawns);
+        furnace::pop_experience(&mut removed, &rules, at, &mut rng, &mut level.out.spawns);
     }
 }
 
@@ -604,6 +605,19 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
             }
         }
     }
+}
+
+/// A random for a block entity's draws at `pos` this tick (dropped items, dispensing,
+/// experience). Vanilla draws them from the level's random; a region's random would make them
+/// depend on how the world is split, so each gets its own seed from the world seed, the time,
+/// the position and `salt` (an approximation, I class).
+pub(crate) fn pos_random(level: &RegionLevel, pos: BlockPos, salt: u64) -> kiln_javamath::random::LegacyRandom {
+    let mut h = (level.env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ level.env.seed as u64 ^ salt.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    for v in [pos.x as i64, pos.y as i64, pos.z as i64] {
+        h = (h ^ v as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 31;
+    }
+    kiln_javamath::random::LegacyRandom::new(h as i64)
 }
 
 /// `Containers.dropItemStack`: an item entity at a random spot in the block, split into random

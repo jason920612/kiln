@@ -284,3 +284,54 @@ fn anvils_rename_for_creative_players_only_when_affordable() {
     assert!(p.out.iter().any(|e| matches!(e, Effect::AnvilUsed { levels: 0 })));
     assert!(menu.items(&p.env(&rules))[0].is_empty());
 }
+
+#[test]
+fn looms_add_the_selected_pattern_in_the_dye_color() {
+    let rules = rules();
+    let mut p = Player::new();
+    p.inv.set_item(0, stack("minecraft:white_banner", 2));
+    p.inv.set_item(1, stack("minecraft:red_dye", 5));
+    p.inv.set_item(2, stack("stone", 1));
+    let mut menu = Menu::loom(1);
+    menu.open(&mut p.env(&rules));
+    // Shift-clicks sort the banner and the dye into their slots; stone goes nowhere near.
+    menu.clicked(&mut p.env(&rules), 31, 0, ContainerInput::QuickMove).unwrap();
+    menu.clicked(&mut p.env(&rules), 32, 0, ContainerInput::QuickMove).unwrap();
+    menu.clicked(&mut p.env(&rules), 33, 0, ContainerInput::QuickMove).unwrap();
+    let items = menu.items(&p.env(&rules));
+    assert_eq!(items[0], stack("minecraft:white_banner", 2));
+    assert_eq!(items[1], stack("minecraft:red_dye", 5));
+    assert!(items[2].is_empty() && items[3].is_empty(), "no pattern chosen yet");
+    assert!(handle_container_button_click(&mut menu, &mut p.env(&rules), 1, 0, true));
+    let result = menu.items(&p.env(&rules))[3].clone();
+    assert_eq!(result.item_name(), "minecraft:white_banner");
+    let layers = result.get(kiln_item::keys::BANNER_PATTERNS).unwrap();
+    assert_eq!(layers.0.len(), 1);
+    assert_eq!(layers.0[0].color, kiln_item::component::DyeColor::Red);
+    // Taking it uses one banner and one dye; the selection stays for the next one.
+    menu.clicked(&mut p.env(&rules), 3, 0, ContainerInput::Pickup).unwrap();
+    assert_eq!(menu.carried().item_name(), "minecraft:white_banner");
+    let items = menu.items(&p.env(&rules));
+    assert_eq!(items[0].count(), 1);
+    assert_eq!(items[1].count(), 4);
+    assert!(!items[3].is_empty());
+    assert!(p.out.iter().any(|e| matches!(e, Effect::LoomUsed)));
+}
+
+#[test]
+fn enchanting_tables_keep_one_item_and_lapis_apart() {
+    let rules = rules();
+    let mut p = Player::new();
+    p.inv.set_item(0, stack("minecraft:book", 3));
+    p.inv.set_item(1, stack("minecraft:lapis_lazuli", 10));
+    let mut menu = Menu::enchantment(1, 12345);
+    menu.open(&mut p.env(&rules));
+    menu.clicked(&mut p.env(&rules), 29, 0, ContainerInput::QuickMove).unwrap();
+    menu.clicked(&mut p.env(&rules), 30, 0, ContainerInput::QuickMove).unwrap();
+    let items = menu.items(&p.env(&rules));
+    assert_eq!(items[0], stack("minecraft:book", 1), "one item goes in");
+    assert_eq!(items[1], stack("minecraft:lapis_lazuli", 10));
+    assert_eq!(p.inv.item(0).count(), 2);
+    // Without bookshelves the costs are low but positive for the first option.
+    assert!(p.out.iter().any(|e| matches!(e, Effect::SetData { id: 3, value, .. } if *value == 12345i32 as i16)));
+}
