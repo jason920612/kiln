@@ -22,19 +22,6 @@ pub(crate) trait ItemEntities {
     fn changed(&mut self, i: usize);
 }
 
-/// No item entities.
-pub(crate) struct NoItems;
-
-impl ItemEntities for NoItems {
-    fn items_in(&self, _lo: [f64; 3], _hi: [f64; 3]) -> Vec<usize> {
-        Vec::new()
-    }
-    fn stack_mut(&mut self, _i: usize) -> &mut ItemStack {
-        unreachable!("no item entities")
-    }
-    fn changed(&mut self, _i: usize) {}
-}
-
 /// A container a hopper moves items into or out of: one block entity, or a double chest.
 pub(crate) enum Target {
     One(BlockPos),

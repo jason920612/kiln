@@ -272,19 +272,24 @@ pub(crate) fn pop_experience(c: &mut ContainerBe, rules: &Rules, at: [f64; 3], r
         if frac != 0.0 && rng.next_float() < frac {
             amount += 1;
         }
-        // `ExperienceOrb.award`.
-        while amount > 0 {
-            let v = orb_value(amount);
-            amount -= v;
-            let seed = rng.next_long();
-            let orb = kiln_entity::xp_orb::new_at(0, 0, kiln_entity::math::Vec3::new(at[0], at[1], at[2]), v, seed);
-            spawns.push(crate::entities::Spawn {
-                kind: &kiln_data::entities::types::EXPERIENCE_ORB,
-                pos: at,
-                vel: [orb.delta.x, orb.delta.y, orb.delta.z],
-                body: crate::entities::Body::Ready(Box::new(orb)),
-            });
-        }
+        award_experience(at, amount, rng, spawns);
     }
     c.mark_changed();
+}
+
+/// `ExperienceOrb.award`: `amount` experience as orbs at `at` (merging into orbs nearby is not
+/// simulated).
+pub(crate) fn award_experience(at: [f64; 3], mut amount: i32, rng: &mut dyn kiln_javamath::random::RandomSource, spawns: &mut Vec<crate::entities::Spawn>) {
+    while amount > 0 {
+        let v = orb_value(amount);
+        amount -= v;
+        let seed = rng.next_long();
+        let orb = kiln_entity::xp_orb::new_at(0, 0, kiln_entity::math::Vec3::new(at[0], at[1], at[2]), v, seed);
+        spawns.push(crate::entities::Spawn {
+            kind: &kiln_data::entities::types::EXPERIENCE_ORB,
+            pos: at,
+            vel: [orb.delta.x, orb.delta.y, orb.delta.z],
+            body: crate::entities::Body::Ready(Box::new(orb)),
+        });
+    }
 }

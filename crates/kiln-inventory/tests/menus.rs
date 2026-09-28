@@ -229,3 +229,58 @@ fn creative_slots_need_infinite_materials() {
     handle_set_creative_slot(&mut menu, &mut p.env(&rules), 36, stack("stone", 5), true);
     assert_eq!(p.inv.item(0), &stack("stone", 5));
 }
+
+fn enchanted(name: &str, enchantments: &[(&str, i32)]) -> ItemStack {
+    let mut s = stack(name, 1);
+    let list = enchantments.iter().map(|(e, l)| (kiln_item::registry::ENCHANTMENT.id(e).unwrap(), *l)).collect();
+    s.insert(kiln_item::keys::ENCHANTMENTS, kiln_item::component::Enchantments(list));
+    s
+}
+
+#[test]
+fn grindstones_disenchant_and_use_up_their_inputs() {
+    let rules = rules();
+    let mut p = Player::new();
+    p.inv.set_item(0, enchanted("minecraft:diamond_sword", &[("minecraft:sharpness", 4), ("minecraft:binding_curse", 1)]));
+    p.inv.set_item(1, stack("stone", 3));
+    let mut menu = Menu::grindstone(1);
+    menu.open(&mut p.env(&rules));
+    // Stone cannot go in; the sword can.
+    menu.clicked(&mut p.env(&rules), 31, 0, ContainerInput::QuickMove).unwrap();
+    assert!(menu.items(&p.env(&rules))[0].is_empty());
+    menu.clicked(&mut p.env(&rules), 30, 0, ContainerInput::QuickMove).unwrap();
+    let items = menu.items(&p.env(&rules));
+    let result = &items[2];
+    assert_eq!(result.item_name(), "minecraft:diamond_sword");
+    let left: Vec<i32> = result.get(kiln_item::keys::ENCHANTMENTS).unwrap().0.iter().map(|e| e.0).collect();
+    assert_eq!(left, vec![kiln_item::registry::ENCHANTMENT.id("minecraft:binding_curse").unwrap()]);
+    // Taking the result empties the inputs and reports the grindstone's use.
+    menu.clicked(&mut p.env(&rules), 2, 0, ContainerInput::QuickMove).unwrap();
+    let items = menu.items(&p.env(&rules));
+    assert!(items[0].is_empty() && items[1].is_empty() && items[2].is_empty());
+    assert!(p.out.iter().any(|e| matches!(e, Effect::GrindstoneUsed { .. })));
+    assert_eq!(p.inv.item(8).item_name(), "minecraft:diamond_sword");
+}
+
+#[test]
+fn anvils_rename_for_creative_players_only_when_affordable() {
+    let rules = rules();
+    let mut p = Player::new();
+    p.inv.set_item(0, stack("minecraft:iron_pickaxe", 1));
+    let mut menu = Menu::anvil(1);
+    menu.open(&mut p.env(&rules));
+    menu.clicked(&mut p.env(&rules), 30, 0, ContainerInput::QuickMove).unwrap();
+    assert!(menu.items(&p.env(&rules))[2].is_empty(), "nothing to do without a name or an addition");
+    assert!(kiln_inventory::click::handle_rename_item(&mut menu, &mut p.env(&rules), "Digger", true));
+    let result = menu.items(&p.env(&rules))[2].clone();
+    assert_eq!(result.get(kiln_item::keys::CUSTOM_NAME).and_then(|t| t.as_plain()), Some("Digger"));
+    assert_eq!(result.get(kiln_item::keys::REPAIR_COST), None.or(Some(&0)), "renaming alone keeps the repair cost");
+    // One level: a player without levels cannot take it; a creative one can.
+    menu.clicked(&mut p.env(&rules), 2, 0, ContainerInput::QuickMove).unwrap();
+    assert!(p.inv.item(8).is_empty());
+    p.flags.infinite_materials = true;
+    menu.clicked(&mut p.env(&rules), 2, 0, ContainerInput::QuickMove).unwrap();
+    assert_eq!(p.inv.item(8).get(kiln_item::keys::CUSTOM_NAME).and_then(|t| t.as_plain()), Some("Digger"));
+    assert!(p.out.iter().any(|e| matches!(e, Effect::AnvilUsed { levels: 0 })));
+    assert!(menu.items(&p.env(&rules))[0].is_empty());
+}

@@ -30,6 +30,12 @@ pub enum Effect {
     Crafted { item: i32, amount: i32 },
     /// A player inventory slot changed (`InventoryChangeTrigger`, from the menu's slot listener).
     InventoryChanged { slot: usize, stack: ItemStack },
+    /// The grindstone's result was taken: experience orbs at the grindstone and its sound
+    /// (level event 1042).
+    GrindstoneUsed { experience: i32 },
+    /// The anvil's result was taken: the player loses `levels` experience levels, and the anvil
+    /// wears (`AnvilMenu.onTake`'s block part: level events 1030 and 1029).
+    AnvilUsed { levels: i32 },
 }
 
 impl Effect {

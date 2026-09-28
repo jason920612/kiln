@@ -272,3 +272,32 @@ fn a_comparator_on_a_filled_chest_lights_a_lamp() {
     assert!(state::get_bool(w.block(comparator), "powered"), "{}", state::state_string(w.block(comparator)));
     assert!(state::get_bool(w.block(lamp), "lit"), "{}", state::state_string(w.block(lamp)));
 }
+
+#[test]
+fn workstations_open_their_menus_and_the_anvil_renames() {
+    let mut w = World::new("creative");
+    let stations = [
+        ("minecraft:crafting_table", "minecraft:crafting"),
+        ("minecraft:stonecutter", "minecraft:stonecutter"),
+        ("minecraft:smithing_table", "minecraft:smithing"),
+        ("minecraft:grindstone[face=floor]", "minecraft:grindstone"),
+        ("minecraft:anvil", "minecraft:anvil"),
+    ];
+    for (i, (block, menu)) in stations.iter().enumerate() {
+        let pos = w.at(-2 + i as i32, 1, 2);
+        w.setblock(pos, block);
+        w.use_on(pos);
+        assert_eq!(w.sim.open_menu(1).map(|m| m.0), Some(*menu), "{block}");
+    }
+    // The anvil is open: an iron pickaxe gets a new name.
+    w.hold(36, "minecraft:iron_pickaxe", 1);
+    w.click(5, 30, 0, ContainerInput::QuickMove);
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::RenameItem { name: "Digger".into() })]));
+    let (_, slots) = w.sim.open_menu(1).unwrap();
+    assert_eq!(slots[2], Some(("minecraft:iron_pickaxe", 1)));
+    // Breaking the anvil closes the menu (its block is gone).
+    let anvil = w.at(2, 1, 2);
+    w.setblock(anvil, "minecraft:air");
+    w.ticks(1);
+    assert!(w.sim.open_menu(1).is_none());
+}

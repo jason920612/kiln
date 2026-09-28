@@ -470,6 +470,12 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.with_menu(&env.rules, fx.spawns, |menu, _, env| kiln_inventory::click::close_container(menu, None, env));
             }
         }
+        PlayIn::RenameItem { name } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {
+                kiln_inventory::click::handle_rename_item(menu, env, &name, true)
+            });
+        }
         PlayIn::ContainerButtonClick { container_id, button_id } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
             crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {

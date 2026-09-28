@@ -36,6 +36,10 @@ pub enum MenuKind {
     Stonecutter,
     /// `SmithingMenu`.
     Smithing,
+    /// `GrindstoneMenu`.
+    Grindstone,
+    /// `AnvilMenu`.
+    Anvil,
 }
 
 impl MenuKind {
@@ -57,6 +61,8 @@ impl MenuKind {
             MenuKind::Furnace(FurnaceKind::Smoker) => "minecraft:smoker",
             MenuKind::Stonecutter => "minecraft:stonecutter",
             MenuKind::Smithing => "minecraft:smithing",
+            MenuKind::Grindstone => "minecraft:grindstone",
+            MenuKind::Anvil => "minecraft:anvil",
         })
     }
 
@@ -68,7 +74,7 @@ impl MenuKind {
     /// Slots of the block container, before the player inventory slots.
     pub fn block_size(self) -> usize {
         match self {
-            MenuKind::Inventory | MenuKind::Crafting | MenuKind::Stonecutter | MenuKind::Smithing => 0,
+            MenuKind::Inventory | MenuKind::Crafting | MenuKind::Stonecutter | MenuKind::Smithing | MenuKind::Grindstone | MenuKind::Anvil => 0,
             MenuKind::Generic { rows } => rows as usize * 9,
             MenuKind::Generic3x3 => 9,
             MenuKind::Hopper => 5,
@@ -178,6 +184,28 @@ impl Menu {
         player_slots(&mut slots);
         let mut menu = Menu::with_slots(MenuKind::Smithing, container_id, slots, 1, CraftGrid::default());
         menu.input = SimpleContainer::new(3);
+        menu.local_data = vec![0];
+        menu
+    }
+
+    /// `GrindstoneMenu`: inputs 0 and 1, result 2, main 3-29, hotbar 30-38.
+    pub fn grindstone(container_id: i32) -> Menu {
+        let mut slots = vec![Slot::new(Source::Input, 0, SlotKind::GrindstoneInput), Slot::new(Source::Input, 1, SlotKind::GrindstoneInput)];
+        slots.push(Slot::new(Source::Result, 2, SlotKind::GrindstoneResult));
+        player_slots(&mut slots);
+        let mut menu = Menu::with_slots(MenuKind::Grindstone, container_id, slots, 0, CraftGrid::default());
+        menu.input = SimpleContainer::new(2);
+        menu
+    }
+
+    /// `AnvilMenu`: inputs 0 and 1, result 2, main 3-29, hotbar 30-38, and the level cost as
+    /// its data value.
+    pub fn anvil(container_id: i32) -> Menu {
+        let mut slots = vec![Slot::new(Source::Input, 0, SlotKind::Normal), Slot::new(Source::Input, 1, SlotKind::Normal)];
+        slots.push(Slot::new(Source::Result, 2, SlotKind::AnvilResult));
+        player_slots(&mut slots);
+        let mut menu = Menu::with_slots(MenuKind::Anvil, container_id, slots, 1, CraftGrid::default());
+        menu.input = SimpleContainer::new(2);
         menu.local_data = vec![0];
         menu
     }
@@ -413,6 +441,28 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
             };
             if !ok {
                 return ItemStack::empty();
+            }
+            menu.finish_quick_move(env, i, stack, copy, false).0
+        }
+        MenuKind::Grindstone | MenuKind::Anvil => {
+            let grindstone = menu.kind == MenuKind::Grindstone;
+            let ok = match i {
+                2 => menu.move_item_stack_to(env, &mut stack, 3, 39, true),
+                0 | 1 => menu.move_item_stack_to(env, &mut stack, 3, 39, false),
+                // The grindstone takes an item while an input is free; the anvil always tries.
+                _ if (!grindstone || menu.input.items[0].is_empty() || menu.input.items[1].is_empty()) && (grindstone || (3..39).contains(&i)) => {
+                    menu.move_item_stack_to(env, &mut stack, 0, 2, false)
+                }
+                3..30 => menu.move_item_stack_to(env, &mut stack, 30, 39, false),
+                30..39 => menu.move_item_stack_to(env, &mut stack, 3, 30, false),
+                _ => true,
+            };
+            if !ok {
+                return ItemStack::empty();
+            }
+            let mut old = copy.clone();
+            if i == 2 {
+                menu.on_quick_craft(env, i, &stack, &mut old);
             }
             menu.finish_quick_move(env, i, stack, copy, false).0
         }

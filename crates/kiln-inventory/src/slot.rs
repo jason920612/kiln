@@ -44,6 +44,12 @@ pub enum SlotKind {
     SmithingInput(u8),
     /// The smithing table's result slot (`ItemCombinerMenu$3`).
     SmithingResult,
+    /// A grindstone input: damageable or enchanted items (`GrindstoneMenu$2`, `$3`).
+    GrindstoneInput,
+    /// The grindstone's result slot (`GrindstoneMenu$4`).
+    GrindstoneResult,
+    /// The anvil's result slot (`ItemCombinerMenu$3` with `AnvilMenu.mayPickup`).
+    AnvilResult,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +70,13 @@ impl Slot {
         match self.kind {
             SlotKind::Normal | SlotKind::Offhand => true,
             SlotKind::Armor(slot) => rules.is_equippable_in_slot(stack, slot),
-            SlotKind::CraftResult | SlotKind::FurnaceResult | SlotKind::StonecutterResult | SlotKind::SmithingResult => false,
+            SlotKind::CraftResult
+            | SlotKind::FurnaceResult
+            | SlotKind::StonecutterResult
+            | SlotKind::SmithingResult
+            | SlotKind::GrindstoneResult
+            | SlotKind::AnvilResult => false,
+            SlotKind::GrindstoneInput => stack.is_damageable_item() || crate::workstation::has_any_enchantments(stack),
             SlotKind::SmithingInput(k) => {
                 let key = ["minecraft:smithing_template", "minecraft:smithing_base", "minecraft:smithing_addition"][k as usize];
                 rules.recipes.property_set_accepts(key, stack)

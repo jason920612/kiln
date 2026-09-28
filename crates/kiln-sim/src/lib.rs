@@ -359,6 +359,7 @@ impl Player {
             spectator: self.game_mode == 3,
             dead: false,
             removed: self.disconnected,
+            xp_level: 0,
         }
     }
 
@@ -1159,8 +1160,23 @@ impl Sim {
         let p = self.players.get(&conn)?;
         let menu = p.open_menu.as_ref()?;
         let ty = menu.kind.menu_type()?;
-        let items = menu.slots().iter().map(|s| {
+        // The menu's own containers (crafting grid, inputs, result), read through a scratch
+        // environment when the menu has no block container.
+        let own: Option<Vec<kiln_item::ItemStack>> = menu.slots().iter().all(|s| s.source != kiln_inventory::Source::Block).then(|| {
+            let (mut inv, mut out) = (p.inv.clone(), Vec::new());
+            let env = kiln_inventory::Env {
+                inventory: &mut inv,
+                block: None,
+                player: p.player_flags(),
+                rules: &self.rules,
+                world: &mut kiln_inventory::NoWorld,
+                out: &mut out,
+            };
+            menu.items(&env)
+        });
+        let items = menu.slots().iter().enumerate().map(|(i, s)| {
             let stack = match s.source {
+                _ if own.is_some() => own.as_ref().and_then(|o| o.get(i).cloned()),
                 kiln_inventory::Source::Player => p.inv.items.get(s.index).cloned(),
                 kiln_inventory::Source::Block => match &p.containers.open {
                     Some(container::open::OpenBlock::EnderChest { .. }) => p.containers.ender.items.get(s.index).cloned(),
@@ -1880,7 +1896,7 @@ fn initial_spawn(pipeline: &kiln_worldgen::Pipeline) -> [i32; 3] {
 }
 
 /// The built-in data: the datapack at `path`, `KILN_DATAPACK` or `work/generated`.
-fn datapack_dir(path: Option<&std::path::Path>) -> std::path::PathBuf {
+pub(crate) fn datapack_dir(path: Option<&std::path::Path>) -> std::path::PathBuf {
     let dir = path.map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("KILN_DATAPACK").map(Into::into));
     dir.unwrap_or_else(|| "work/generated".into())
 }

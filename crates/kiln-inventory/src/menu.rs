@@ -30,6 +30,8 @@ pub struct PlayerFlags {
     /// Removed from the world (other than by changing dimension) or disconnected: items that
     /// would go back into the inventory are dropped instead.
     pub removed: bool,
+    /// `experienceLevel` (anvil costs).
+    pub xp_level: i32,
 }
 
 /// World state that some recipes and results depend on (maps, the recipe book, game rules).
@@ -53,6 +55,41 @@ pub trait World {
     /// `MapItem.onCraftedPostProcess`: applies and removes `minecraft:map_post_processing`
     /// (vanilla locks or scales the map, creating new map data).
     fn post_process_map(&mut self, _stack: &mut ItemStack) {}
+
+    /// The server's `en_us` text for a translation key (item names the anvil compares with).
+    fn translate(&self, _key: &str) -> Option<String> {
+        None
+    }
+
+    /// `Enchantment.canEnchant(stack)` of a `minecraft:enchantment` id.
+    fn enchantment_can_enchant(&self, _enchantment: i32, _stack: &ItemStack) -> bool {
+        false
+    }
+
+    /// `Enchantment.areCompatible`.
+    fn enchantments_compatible(&self, a: i32, b: i32) -> bool {
+        a != b
+    }
+
+    /// `Enchantment.getMaxLevel`.
+    fn enchantment_max_level(&self, _enchantment: i32) -> i32 {
+        1
+    }
+
+    /// `Enchantment.getAnvilCost`.
+    fn enchantment_anvil_cost(&self, _enchantment: i32) -> i32 {
+        1
+    }
+
+    /// `Enchantment.getMinCost(level)`.
+    fn enchantment_min_cost(&self, _enchantment: i32, _level: i32) -> i32 {
+        0
+    }
+
+    /// `level.getRandom().nextInt(bound)` (grindstone experience).
+    fn random_int(&mut self, _bound: i32) -> i32 {
+        0
+    }
 }
 
 /// A world with no maps, the recipe book open and `limitedCrafting` off.
@@ -105,6 +142,17 @@ impl CraftGrid {
     }
 }
 
+/// `AnvilMenu`'s own state besides its cost data slot.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct AnvilState {
+    /// `itemName`: the name the client typed.
+    pub item_name: Option<String>,
+    /// `repairItemCountCost`: materials a repair uses up.
+    pub repair_item_count_cost: i32,
+    /// `onlyRenaming`.
+    pub only_renaming: bool,
+}
+
 /// `ResultContainer`: one stack whatever the index; removing takes it whole.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub(crate) struct ResultBox {
@@ -151,6 +199,8 @@ pub struct Menu {
     pub(crate) last_input: ItemStack,
     /// `StonecutterMenu.recipesForInput` (recipe indices).
     pub(crate) visible_recipes: Vec<usize>,
+    /// The anvil's name and repair bookkeeping.
+    pub(crate) anvil: AnvilState,
 }
 
 impl Menu {
@@ -181,6 +231,7 @@ impl Menu {
             local_data: Vec::new(),
             last_input: ItemStack::empty(),
             visible_recipes: Vec::new(),
+            anvil: AnvilState::default(),
         }
     }
 
@@ -271,6 +322,9 @@ impl Menu {
     }
 
     fn may_pickup(&self, env: &Env, i: usize) -> bool {
+        if self.slots[i].kind == SlotKind::AnvilResult {
+            return crate::workstation::anvil_may_pickup(self, env);
+        }
         self.slots[i].may_pickup(self.item(env, i), env.player.creative, env.rules)
     }
 
@@ -461,6 +515,8 @@ impl Menu {
                 self.set_changed(env, i);
             }
             SlotKind::SmithingResult => crate::menus::smithing_take(self, env),
+            SlotKind::GrindstoneResult => crate::workstation::grindstone_take(self, env),
+            SlotKind::AnvilResult => crate::workstation::anvil_take(self, env),
             _ => self.set_changed(env, i),
         }
     }
@@ -524,6 +580,8 @@ impl Menu {
             MenuKind::Crafting => {}
             MenuKind::Stonecutter => crate::menus::stonecutter_slots_changed(self, env),
             MenuKind::Smithing => crate::menus::smithing_slots_changed(self, env, source),
+            MenuKind::Grindstone => crate::workstation::grindstone_slots_changed(self, env, source),
+            MenuKind::Anvil => crate::workstation::anvil_slots_changed(self, env, source),
             _ => self.broadcast_changes(env),
         }
     }
@@ -1078,7 +1136,7 @@ impl Menu {
                     clear_container_item(env, stack);
                 }
             }
-            MenuKind::Stonecutter | MenuKind::Smithing => {
+            MenuKind::Stonecutter | MenuKind::Smithing | MenuKind::Grindstone | MenuKind::Anvil => {
                 if self.kind == MenuKind::Stonecutter {
                     self.result.item = ItemStack::empty();
                 }

@@ -43,13 +43,16 @@ pub(crate) struct PlayerContainers {
     pub open: Option<OpenBlock>,
     pub ender: SimpleContainer,
     ender_undecoded: Vec<(i32, Tag)>,
+    /// Workstation effects of the last menu operation (grindstone and anvil use), for the
+    /// region to carry out at the workstation.
+    pub pending: Vec<kiln_inventory::Effect>,
 }
 
 impl PlayerContainers {
     /// From saved player data (`EnderItems`).
     pub fn load(player: &Tag) -> PlayerContainers {
         let list = ItemList::load(player.get("EnderItems"), 27);
-        PlayerContainers { counter: 0, open: None, ender: SimpleContainer::from_items(list.stacks), ender_undecoded: list.undecoded }
+        PlayerContainers { counter: 0, open: None, ender: SimpleContainer::from_items(list.stacks), ender_undecoded: list.undecoded, pending: Vec::new() }
     }
 
     /// Writes `EnderItems` into saved player data.
@@ -117,8 +120,9 @@ impl Player {
         let mut out = Vec::new();
         let player = self.player_flags();
         let result = {
-            let Player { inv, menu, open_menu, containers: pc, .. } = self;
+            let Player { inv, menu, open_menu, containers: pc, loot, level_rng, .. } = self;
             let PlayerContainers { open, ender, .. } = pc;
+            let mut world = super::world::SimWorld { loot: loot.as_deref(), rng: level_rng };
             // A double chest's second half is taken out while the menu works on both.
             let mut second_taken: Option<(BlockPos, ContainerBe)> = None;
             if let (Some(OpenBlock::Containers { second: Some((p, _)), .. }), Some(cs)) = (&*open, containers.as_deref_mut()) {
@@ -141,7 +145,6 @@ impl Player {
                     (Some(OpenBlock::EnderChest { .. }), _) => (Some(ender as &mut dyn Container), true),
                     _ => (None, true),
                 };
-                let mut world = kiln_inventory::NoWorld;
                 let mut env = kiln_inventory::Env { inventory: inv, block, player, rules, world: &mut world, out: &mut out };
                 result = match open_menu {
                     Some(o) if use_open => f(o, Some(menu), &mut env),
@@ -161,6 +164,7 @@ impl Player {
             match effect {
                 kiln_inventory::Effect::Drop { stack, .. } => spawns.push(self.throw(stack)),
                 kiln_inventory::Effect::Crafted { .. } => took_result = true,
+                e @ (kiln_inventory::Effect::GrindstoneUsed { .. } | kiln_inventory::Effect::AnvilUsed { .. }) => self.containers.pending.push(e),
                 _ => {}
             }
         }
@@ -208,7 +212,12 @@ impl Player {
         match *open {
             OpenBlock::Containers { first, second } => be_ok(first) && second.is_none_or(be_ok),
             OpenBlock::EnderChest { pos, serial } => be_ok((pos, serial)),
-            OpenBlock::Workstation { pos, block } => BlockId::of(level.block(pos)) == block && near(pos),
+            OpenBlock::Workstation { pos, block } => {
+                // `AnvilMenu.isValidBlock`: any anvil (it wears while open).
+                let now = level.block(pos);
+                let anvil = |s: u16| kiln_blocks::tags::is(s, "minecraft:anvil");
+                (BlockId::of(now) == block || anvil(now) && anvil(block.default_state())) && near(pos)
+            }
         }
     }
 
@@ -313,6 +322,8 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
 fn workstation_provider(s: u16, pos: BlockPos) -> Option<Provider> {
     let (make, title): (fn(i32) -> Menu, &str) = match logic::block_class(s) {
         C::CraftingTableBlock => (Menu::crafting, "container.crafting"),
+        C::GrindstoneBlock => (Menu::grindstone, "container.grindstone_title"),
+        C::AnvilBlock => (Menu::anvil, "container.repair"),
         C::StonecutterBlock => (Menu::stonecutter, "container.stonecutter"),
         C::SmithingTableBlock => (Menu::smithing, "container.upgrade"),
         _ => return None,
@@ -623,6 +634,7 @@ pub(crate) fn menu_op<R>(
     let before = open_changes(p, level);
     let rules = level.env.menus.clone();
     let r = p.with_menu_at(&rules, spawns, Some(&mut level.blocks.containers), f);
+    workstation_effects(p, level);
     for (pos, n) in before {
         if level.blocks.containers.get(pos).is_some_and(|c| c.changes != n) {
             let s = level.block(pos);
@@ -686,5 +698,52 @@ pub(crate) fn player_will_destroy(level: &mut RegionLevel, pos: BlockPos, s: u16
         });
     } else if !creative {
         super::unpack_loot(c, pos, loot.as_deref(), true, game_time, seed);
+    }
+}
+
+/// Carries out what grindstones and anvils did at the open workstation.
+fn workstation_effects(p: &mut Player, level: &mut RegionLevel) {
+    let pending = std::mem::take(&mut p.containers.pending);
+    let Some(OpenBlock::Workstation { pos, .. }) = p.containers.open else { return };
+    for effect in pending {
+        match effect {
+            kiln_inventory::Effect::GrindstoneUsed { experience } => {
+                let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+                super::furnace::award_experience(at, experience, &mut level.blocks.random, &mut level.out.spawns);
+                level.effect(Effect::LevelEvent { id: 1042, pos, data: 0 });
+            }
+            // Kiln keeps no experience levels yet: the `levels` cost is not taken.
+            kiln_inventory::Effect::AnvilUsed { .. } => anvil_wear(p, level, pos),
+            _ => {}
+        }
+    }
+}
+
+/// `AnvilMenu.onTake`'s block part: a survival player's anvil may get a step more damaged (or
+/// break), with the anvil use or destroy sound.
+fn anvil_wear(p: &mut Player, level: &mut RegionLevel, pos: BlockPos) {
+    let s = level.block(pos);
+    let creative = p.game_mode == 1;
+    if !creative && kiln_blocks::tags::is(s, "minecraft:anvil") && p.entity_rng.next_float() < 0.12 {
+        // `AnvilBlock.damage`.
+        let name = BlockId::of(s).name();
+        let next = match name {
+            "minecraft:anvil" => Some("minecraft:chipped_anvil"),
+            "minecraft:chipped_anvil" => Some("minecraft:damaged_anvil"),
+            _ => None,
+        };
+        match next.and_then(BlockId::by_name) {
+            Some(b) => {
+                let damaged = state::with_properties_of(b.default_state(), s);
+                kiln_blocks::set_block(level, pos, damaged, flags::CLIENTS);
+                level.effect(Effect::LevelEvent { id: 1030, pos, data: 0 });
+            }
+            None => {
+                kiln_blocks::remove_block(level, pos, false);
+                level.effect(Effect::LevelEvent { id: 1029, pos, data: 0 });
+            }
+        }
+    } else {
+        level.effect(Effect::LevelEvent { id: 1030, pos, data: 0 });
     }
 }

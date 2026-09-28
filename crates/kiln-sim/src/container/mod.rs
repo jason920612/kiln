@@ -17,6 +17,7 @@ pub(crate) mod dispense;
 pub(crate) mod furnace;
 pub(crate) mod hopper;
 pub(crate) mod open;
+pub(crate) mod world;
 
 use crate::blocks::RegionLevel;
 use kiln_blocks::{BlockPos, Level};
@@ -212,11 +213,6 @@ impl ContainerBe {
             dirty: false,
             extra,
         }
-    }
-
-    /// A new, empty block entity of `kind`.
-    pub fn new(kind: BeKind, type_id: u16) -> ContainerBe {
-        ContainerBe::load(kind, type_id, &Tag::Compound(Vec::new()))
     }
 
     /// `saveAdditional`: the saved NBT (without `id` and position, which kiln-world adds).
@@ -695,7 +691,7 @@ mod tests {
 
     #[test]
     fn saved_form_round_trips() {
-        let mut c = ContainerBe::new(BeKind::Chest, kiln_world::block_entity::type_id("minecraft:chest").unwrap());
+        let mut c = ContainerBe::load(BeKind::Chest, kiln_world::block_entity::type_id("minecraft:chest").unwrap(), &Tag::Compound(Vec::new()));
         c.items[3] = ItemStack::of("minecraft:stone", 12).unwrap();
         c.custom_name = Some(Tag::String("Loot".into()));
         let saved = c.save();
