@@ -214,3 +214,23 @@ fn map_mut_visits_each_item_once_in_place() {
         }
     }
 }
+
+#[test]
+fn windows_too_small_for_one_helper_share_stay_inline() {
+    let mut cfg = PoolConfig::new(7);
+    cfg.helper_share = Duration::from_millis(100);
+    let mut pool = TickPool::with_config(cfg);
+    let items: Vec<u64> = (0..4000).collect();
+    let expect: Vec<u64> = items.iter().map(f).collect();
+    // Estimated at 4 ms: worth splitting, but less than two helper shares, so nobody is woken
+    // and the caller maps everything itself.
+    let workers = Mutex::new(HashSet::new());
+    let got = pool.serial(|c| {
+        c.map_indexed_with(Window::new().item_ns(1_000), &items, |c, x| {
+            workers.lock().unwrap().insert(c.worker());
+            f(x)
+        })
+    });
+    assert_eq!(got, expect);
+    assert_eq!(*workers.lock().unwrap(), HashSet::from([0]));
+}

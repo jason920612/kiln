@@ -6,7 +6,7 @@ use std::hint;
 use std::mem;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle, Thread, ThreadId};
 use std::time::{Duration, Instant};
@@ -23,6 +23,9 @@ use crate::window::Ctx;
 
 /// Upper bound on [`PoolConfig::workers`] (the sleeper and live-window sets are `u64` masks).
 pub const MAX_WORKERS: usize = 64;
+
+/// Fixed-point one of [`Shared::helper_yield`].
+pub(crate) const YIELD_ONE: u32 = 1024;
 
 /// Family of a worker outside any unit: it may help every window.
 pub(crate) const ANY: u64 = 0;
@@ -52,6 +55,9 @@ pub(crate) struct Shared {
     epoch: Instant,
     /// Until this time (ns since `epoch`) idle workers keep spinning; see `prewake`.
     hot_until: AtomicU64,
+    /// Moving average (of [`YIELD_ONE`]) of the share of their even part that woken helpers
+    /// took in recent rationed windows. Low when helpers cannot get a core in time.
+    pub helper_yield: AtomicU32,
     hk: Injector<HkJob>,
     hk_pending: AtomicUsize,
     shutdown: AtomicBool,
@@ -115,10 +121,37 @@ impl WorkerLocal {
 pub(crate) struct Idle {
     since: Option<Instant>,
     rounds: u32,
+    /// An idle worker's own spin budget in ns (`None`: always [`PoolConfig::spin`]).
+    ///
+    /// Spinning pays only when work shows up before the worker would have parked. In a crowd
+    /// the serial segments between a region's windows are usually longer than the spin, so a
+    /// fixed spin burns CPU after every window for nothing. The budget halves after a spin
+    /// that ended in parking (down to a sixteenth of the configured spin) and grows back to
+    /// twice the wait of a spin that found work, capped at the configured spin.
+    ///
+    /// [`PoolConfig::spin`]: crate::PoolConfig::spin
+    budget: Option<u64>,
+    /// The configured spin, the budget's cap.
+    cap: u64,
 }
 
 impl Idle {
+    /// The spin of an idle worker, which adapts to how often spinning found work.
+    pub fn adaptive(sh: &Shared) -> Self {
+        Idle { budget: Some(sh.tuning.spin_ns), cap: sh.tuning.spin_ns, ..Idle::default() }
+    }
+
+    /// Work was found: a spin in progress paid off.
     pub fn reset(&mut self) {
+        if let (Some(since), Some(budget)) = (self.since, self.budget.as_mut()) {
+            let waited = since.elapsed().as_nanos() as u64;
+            *budget = (*budget).max(waited.saturating_mul(2)).min(self.cap);
+        }
+        self.since = None;
+    }
+
+    /// The worker parked (and was woken): the next spin starts afresh.
+    pub fn parked(&mut self) {
         self.since = None;
     }
 
@@ -127,7 +160,11 @@ impl Idle {
     /// critical path, and a yield can cost it a whole OS quantum when the machine is busy.
     pub fn spin(&mut self, sh: &Shared, may_yield: bool) -> bool {
         let since = *self.since.get_or_insert_with(Instant::now);
-        if since.elapsed().as_nanos() as u64 >= sh.tuning.spin_ns && sh.now_ns() >= sh.hot_until.load(Relaxed) {
+        let limit = self.budget.unwrap_or(sh.tuning.spin_ns);
+        if since.elapsed().as_nanos() as u64 >= limit && sh.now_ns() >= sh.hot_until.load(Relaxed) {
+            if let Some(b) = self.budget.as_mut() {
+                *b = (*b / 2).max(sh.tuning.spin_ns / 16);
+            }
             return false;
         }
         self.rounds = self.rounds.wrapping_add(1);
@@ -157,6 +194,7 @@ impl Shared {
             wake_debt: CachePadded::new(AtomicUsize::new(0)),
             epoch: Instant::now(),
             hot_until: AtomicU64::new(0),
+            helper_yield: AtomicU32::new(YIELD_ONE),
             hk: Injector::new(),
             hk_pending: AtomicUsize::new(0),
             shutdown: AtomicBool::new(false),
@@ -390,7 +428,7 @@ fn worker_main(shared: Arc<Shared>, idx: usize, seed: u64) {
     let _ = shared.threads[idx].set(thread::current());
     let local = WorkerLocal::new(shared.clone(), idx, seed);
     let sh = &*shared;
-    let mut idle = Idle::default();
+    let mut idle = Idle::adaptive(sh);
     loop {
         if sh.timed(&local, || sh.find_work(&local)) {
             idle.reset();
@@ -401,7 +439,7 @@ fn worker_main(shared: Arc<Shared>, idx: usize, seed: u64) {
         }
         if !idle.spin(sh, true) {
             sh.sleep(&local, || sh.idle_has_work());
-            idle.reset();
+            idle.parked();
         }
     }
 }
