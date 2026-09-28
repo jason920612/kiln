@@ -25,6 +25,16 @@ pub enum ChunkError {
     NotFull(String),
 }
 
+/// A section of stored chunk data, decoded: its light layers as stored (`None` when absent)
+/// and, inside the build height, its blocks and biomes (`None` when absent).
+pub(crate) struct SectionData {
+    pub y: i32,
+    pub blocks: Option<BlockContainer>,
+    pub biomes: Option<Biomes>,
+    pub sky: Option<Light>,
+    pub block: Option<Light>,
+}
+
 /// Chunks from a dimension's `region/` directory.
 pub struct AnvilSource {
     region_dir: PathBuf,
@@ -37,6 +47,7 @@ pub struct AnvilSource {
     preserved: HashMap<ChunkPos, Tag>,
     /// Encoded chunks waiting for `flush`, per region.
     pending: HashMap<(i32, i32), Vec<(usize, usize, Vec<u8>)>>,
+    pub stats: crate::native::LoadStats,
 }
 
 impl AnvilSource {
@@ -55,6 +66,7 @@ impl AnvilSource {
             warned_version: false,
             preserved: HashMap::new(),
             pending: HashMap::new(),
+            stats: crate::native::LoadStats::new("anvil chunk storage"),
         }
     }
 
@@ -65,12 +77,15 @@ impl AnvilSource {
         if let Some((_, _, payload)) = self.pending.get(&key).and_then(|p| p.iter().find(|(x, z, _)| (*x, *z) == local)) {
             return crate::region::decompress_chunk(payload).map_err(|e| warn!("chunk {pos:?}: {e}")).ok();
         }
-        let dir = &self.region_dir;
+        let (dir, stats) = (&self.region_dir, &mut self.stats);
         let region = self.regions.entry(key).or_insert_with(|| {
+            let start = std::time::Instant::now();
             let path = dir.join(format!("r.{}.{}.mca", key.0, key.1));
-            path.exists().then(|| RegionFile::open(&path)).and_then(|r| {
+            let r = path.exists().then(|| RegionFile::open(&path)).and_then(|r| {
                 r.map_err(|e| warn!("cannot open {}: {e}", path.display())).ok()
-            })
+            });
+            stats.record_open(start);
+            r
         });
         match region.as_mut()?.read((pos.x & 31) as usize, (pos.z & 31) as usize) {
             Ok(data) => data,
@@ -84,6 +99,17 @@ impl AnvilSource {
     /// Parses chunk NBT into a chunk for `dim`.
     pub fn decode(&mut self, data: &[u8], dim: Dimension) -> Result<Chunk, ChunkError> {
         let (_, root) = nbt::read_named(data)?;
+        self.check_root(&root)?;
+        let light_on = root.get("isLightOn").and_then(Tag::as_i64) == Some(1);
+        let mut sections = Vec::new();
+        for s in root.get("sections").and_then(Tag::as_list).ok_or(ChunkError::Field("sections"))? {
+            sections.push(self.section_data(s, dim, light_on)?);
+        }
+        self.assemble(&root, sections, dim)
+    }
+
+    /// Warns once about another data version; fails unless the chunk is fully generated.
+    pub(crate) fn check_root(&mut self, root: &Tag) -> Result<(), ChunkError> {
         let version = root.get("DataVersion").and_then(Tag::as_i64).unwrap_or(0);
         if version != DATA_VERSION && !self.warned_version {
             warn!("world data version {version} differs from {DATA_VERSION}; upgrade old worlds with vanilla --forceUpgrade");
@@ -93,7 +119,29 @@ impl AnvilSource {
         if status != "minecraft:full" {
             return Err(ChunkError::NotFull(status.to_owned()));
         }
+        Ok(())
+    }
 
+    /// One `sections` entry: light layers (when the chunk's light is on) and, inside the build
+    /// height, blocks and biomes.
+    pub(crate) fn section_data(&self, s: &Tag, dim: Dimension, light_on: bool) -> Result<SectionData, ChunkError> {
+        let y = s.get("Y").and_then(Tag::as_i64).ok_or(ChunkError::Field("sections.Y"))? as i32;
+        let mut d = SectionData { y, blocks: None, biomes: None, sky: None, block: None };
+        if light_on {
+            d.sky = s.get("SkyLight").and_then(Tag::as_byte_array).map(light_layer);
+            d.block = s.get("BlockLight").and_then(Tag::as_byte_array).map(light_layer);
+        }
+        let li = y - (dim.min_y >> 4) + 1;
+        if li >= 1 && li <= dim.height / 16 {
+            d.blocks = s.get("block_states").map(decode_blocks).transpose()?;
+            d.biomes = s.get("biomes").map(|b| self.decode_biomes(b)).transpose()?;
+        }
+        Ok(d)
+    }
+
+    /// A chunk from its sections and the other fields of its NBT (`isLightOn`, `xPos`/`zPos`,
+    /// `block_entities`, `block_ticks`, `fluid_ticks`).
+    pub(crate) fn assemble(&self, root: &Tag, data: Vec<SectionData>, dim: Dimension) -> Result<Chunk, ChunkError> {
         let n = (dim.height / 16) as usize;
         let min_section = dim.min_y >> 4;
         let mut sections = vec![Section::filled(default_state::AIR, self.default_biome); n];
@@ -101,32 +149,25 @@ impl AnvilSource {
         let mut block: Vec<Light> = vec![Light::Zero; n + 2];
         let light_on = root.get("isLightOn").and_then(Tag::as_i64) == Some(1);
 
-        for s in root.get("sections").and_then(Tag::as_list).ok_or(ChunkError::Field("sections"))? {
-            let y = s.get("Y").and_then(Tag::as_i64).ok_or(ChunkError::Field("sections.Y"))? as i32;
-            let li = y - min_section + 1;
+        for s in data {
+            let li = s.y - min_section + 1;
             if li < 0 || li as usize >= n + 2 {
                 continue;
             }
             let li = li as usize;
             if light_on {
-                if let Some(l) = s.get("SkyLight").and_then(Tag::as_byte_array) {
-                    sky[li] = Some(light_layer(l));
+                if let Some(l) = s.sky {
+                    sky[li] = Some(l);
                 }
-                if let Some(l) = s.get("BlockLight").and_then(Tag::as_byte_array) {
-                    block[li] = light_layer(l);
+                if let Some(l) = s.block {
+                    block[li] = l;
                 }
             }
             if li == 0 || li == n + 1 {
                 continue; // light-only sections outside the build height
             }
-            let blocks = match s.get("block_states") {
-                Some(b) => decode_blocks(b)?,
-                None => BlockContainer::Single(default_state::AIR),
-            };
-            let biomes = match s.get("biomes") {
-                Some(b) => self.decode_biomes(b)?,
-                None => Biomes::Single(self.default_biome),
-            };
+            let blocks = s.blocks.unwrap_or(BlockContainer::Single(default_state::AIR));
+            let biomes = s.biomes.unwrap_or(Biomes::Single(self.default_biome));
             sections[li - 1] = Section::new(blocks, biomes);
         }
 
@@ -152,7 +193,7 @@ impl AnvilSource {
         Ok(chunk)
     }
 
-    fn decode_biomes(&self, tag: &Tag) -> Result<Biomes, ChunkError> {
+    pub(crate) fn decode_biomes(&self, tag: &Tag) -> Result<Biomes, ChunkError> {
         let palette: Vec<u16> = tag
             .get("palette")
             .and_then(Tag::as_list)
@@ -178,8 +219,13 @@ impl AnvilSource {
 
 impl ChunkSource for AnvilSource {
     fn load(&mut self, pos: ChunkPos, dim: Dimension) -> Option<Chunk> {
+        let start = std::time::Instant::now();
         let data = self.read_nbt(pos)?;
-        match self.decode(&data, dim) {
+        let decoded = self.decode(&data, dim);
+        if decoded.is_ok() {
+            self.stats.record(start);
+        }
+        match decoded {
             Ok(c) => {
                 if let Ok((_, Tag::Compound(mut fields))) = nbt::read_named(&data) {
                     fields.retain(|(k, _)| k != "sections" && k != "block_entities");
@@ -237,6 +283,57 @@ fn set(fields: &mut Vec<(String, Tag)>, key: &str, value: Tag) {
 
 /// Encodes a chunk as 26.3 chunk NBT, keeping `preserved` fields from the loaded chunk.
 pub fn encode_chunk(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Tag {
+    let mut fields = chunk_fields(pos, chunk, preserved);
+    let biome_names = biome_names();
+    let sections = chunk_sections(chunk)
+        .map(|(y, sec, sky, block)| {
+            let mut s = vec![("Y".to_owned(), Tag::Byte(y as i8))];
+            if let Some(sec) = sec {
+                s.push(("block_states".into(), encode_blocks(&sec.blocks)));
+                s.push(("biomes".into(), encode_biomes(&sec.biomes, biome_names)));
+            }
+            if let Some(sky) = sky {
+                s.push(("SkyLight".into(), light_tag(sky)));
+            }
+            if let Some(block) = block {
+                s.push(("BlockLight".into(), light_tag(block)));
+            }
+            Tag::Compound(s)
+        })
+        .collect();
+    set(&mut fields, "sections", Tag::List(sections));
+    Tag::Compound(fields)
+}
+
+pub(crate) fn light_tag(l: &Light) -> Tag {
+    Tag::ByteArray(l.to_bytes().iter().map(|&b| b as i8).collect())
+}
+
+/// Biome names by registry id.
+pub(crate) fn biome_names() -> &'static [&'static str] {
+    kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").map(|(_, e)| *e).unwrap_or(&[])
+}
+
+/// The sections a saved chunk lists, in order: Y, the section inside the build height, and
+/// the sky and block light layers written. Kiln keeps light up to date on every change, so
+/// complete light is saved (a chunk that came without light goes back without it and vanilla
+/// relights it); all-dark block light layers are left out.
+#[allow(clippy::type_complexity)]
+pub(crate) fn chunk_sections(chunk: &Chunk) -> impl Iterator<Item = (i32, Option<&Section>, Option<&Light>, Option<&Light>)> {
+    let min_section = chunk.min_y() >> 4;
+    let n = chunk.sections.len();
+    let light_valid = chunk.light_trusted();
+    (0..n + 2).filter_map(move |li| {
+        let sec = (1..=n).contains(&li).then(|| &chunk.sections[li - 1]);
+        let sky = light_valid.then(|| &chunk.sky_light()[li]);
+        let block = light_valid.then(|| &chunk.block_light()[li]).filter(|b| !matches!(b, Light::Zero));
+        (sec.is_some() || sky.is_some() || block.is_some()).then_some((min_section + li as i32 - 1, sec, sky, block))
+    })
+}
+
+/// A saved chunk's fields, `sections` left an empty list in its place: `preserved` fields
+/// from the loaded chunk, updated.
+pub(crate) fn chunk_fields(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Vec<(String, Tag)> {
     let mut fields = match preserved {
         Some(Tag::Compound(f)) => f.clone(),
         _ => vec![
@@ -260,42 +357,12 @@ pub fn encode_chunk(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Ta
     set(&mut fields, "zPos", Tag::Int(pos.z));
     set(&mut fields, "yPos", Tag::Int(min_section));
     set(&mut fields, "Status", Tag::String("minecraft:full".into()));
-    // Kiln keeps light up to date on every change, so complete light is saved (a chunk that
-    // came without light goes back without it and vanilla relights it). Changed chunks go
-    // back without heightmaps (vanilla recomputes missing ones on load).
-    let light_valid = chunk.light_trusted();
-    set(&mut fields, "isLightOn", Tag::Byte(light_valid as i8));
+    set(&mut fields, "isLightOn", Tag::Byte(chunk.light_trusted() as i8));
+    // Changed chunks go back without heightmaps (vanilla recomputes missing ones on load).
     if chunk.modified() {
         fields.retain(|(k, _)| k != "Heightmaps");
     }
-
-    let biome_names = kiln_data::registries::SYNCHRONIZED
-        .iter()
-        .find(|(r, _)| *r == "minecraft:worldgen/biome")
-        .map(|(_, e)| *e)
-        .unwrap_or(&[]);
-    let n = chunk.sections.len();
-    let mut sections = Vec::with_capacity(n + 2);
-    for li in 0..n + 2 {
-        let mut s = vec![("Y".to_owned(), Tag::Byte((min_section + li as i32 - 1) as i8))];
-        if (1..=n).contains(&li) {
-            let sec = &chunk.sections[li - 1];
-            s.push(("block_states".into(), encode_blocks(&sec.blocks)));
-            s.push(("biomes".into(), encode_biomes(&sec.biomes, biome_names)));
-        }
-        if light_valid {
-            let sky = &chunk.sky_light()[li];
-            s.push(("SkyLight".into(), Tag::ByteArray(sky.to_bytes().iter().map(|&b| b as i8).collect())));
-            let block = &chunk.block_light()[li];
-            if !matches!(block, Light::Zero) {
-                s.push(("BlockLight".into(), Tag::ByteArray(block.to_bytes().iter().map(|&b| b as i8).collect())));
-            }
-        }
-        if s.len() > 1 {
-            sections.push(Tag::Compound(s));
-        }
-    }
-    set(&mut fields, "sections", Tag::List(sections));
+    set(&mut fields, "sections", Tag::List(Vec::new()));
     let (bx, bz) = (pos.x * 16, pos.z * 16);
     let block_entities = chunk.block_entities().map(|((x, y, z), be)| be.saved([bx + x as i32, y, bz + z as i32])).collect();
     set(&mut fields, "block_entities", Tag::List(block_entities));
@@ -306,7 +373,7 @@ pub fn encode_chunk(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>) -> Ta
     if let Some(structures) = &chunk.structures {
         set(&mut fields, "structures", (**structures).clone());
     }
-    Tag::Compound(fields)
+    fields
 }
 
 /// Adds a `block_entities` entry to the chunk if it belongs to the block at its position, as
@@ -350,27 +417,52 @@ fn state_tag(state: u16) -> Tag {
     Tag::Compound(vec![("id".into(), Tag::String(block.name.to_owned())), ("properties".into(), Tag::Compound(props))])
 }
 
-fn encode_blocks(c: &BlockContainer) -> Tag {
+/// A section's `block_states`: the palette in order of first use (as vanilla writes it), and
+/// the indices packed at least 4 bits each.
+pub(crate) fn encode_blocks(c: &BlockContainer) -> Tag {
     let mut palette: Vec<u16> = Vec::new();
-    let mut idx = vec![0usize; 4096];
-    let mut lookup: HashMap<u16, usize> = HashMap::new();
-    for (i, e) in idx.iter_mut().enumerate() {
-        let s = c.get(i);
-        *e = *lookup.entry(s).or_insert_with(|| {
+    let mut idx = vec![0u64; 4096];
+    let add = |palette: &mut Vec<u16>, s: u16| match palette.iter().position(|&p| p == s) {
+        Some(i) => i as u16,
+        None => {
             palette.push(s);
-            palette.len() - 1
-        });
+            (palette.len() - 1) as u16
+        }
+    };
+    match c {
+        BlockContainer::Single(s) => palette.push(*s),
+        BlockContainer::Nibble { palette: pal, .. } | BlockContainer::Byte { palette: pal, .. } => {
+            // Container palette index -> saved palette index, assigned on first use.
+            let mut map = [u16::MAX; 256];
+            for (i, e) in idx.iter_mut().enumerate() {
+                let pi = match c {
+                    BlockContainer::Nibble { indices, .. } => ((indices[i >> 1] >> ((i & 1) * 4)) & 0xf) as usize,
+                    BlockContainer::Byte { indices, .. } => indices[i] as usize,
+                    _ => unreachable!(),
+                };
+                if map[pi] == u16::MAX {
+                    map[pi] = add(&mut palette, pal[pi]);
+                }
+                *e = map[pi] as u64;
+            }
+        }
+        BlockContainer::Direct(d) => {
+            let mut lookup: HashMap<u16, u16> = HashMap::new();
+            for (e, &s) in idx.iter_mut().zip(d.iter()) {
+                *e = *lookup.entry(s).or_insert_with(|| add(&mut palette, s)) as u64;
+            }
+        }
     }
     let mut fields = vec![("palette".to_owned(), Tag::heterogeneous_list(palette.iter().map(|&s| state_tag(s)).collect()))];
     if palette.len() > 1 {
         let bits = bits_for(palette.len()).max(4);
-        let packed = kiln_world::section::pack(&idx.iter().map(|&i| i as u64).collect::<Vec<_>>(), bits);
+        let packed = kiln_world::section::pack(&idx, bits);
         fields.push(("data".into(), Tag::LongArray(packed.into_iter().map(|l| l as i64).collect())));
     }
     Tag::Compound(fields)
 }
 
-fn encode_biomes(b: &Biomes, names: &[&str]) -> Tag {
+pub(crate) fn encode_biomes(b: &Biomes, names: &[&str]) -> Tag {
     let cells: Vec<u16> = match b {
         Biomes::Single(s) => vec![*s],
         Biomes::Cells(c) => c.to_vec(),
@@ -395,7 +487,7 @@ fn encode_biomes(b: &Biomes, names: &[&str]) -> Tag {
     Tag::Compound(fields)
 }
 
-fn bits_for(n: usize) -> u32 {
+pub(crate) fn bits_for(n: usize) -> u32 {
     usize::BITS - (n - 1).leading_zeros()
 }
 
@@ -429,7 +521,7 @@ fn palette_state(entry: &Tag) -> Option<u16> {
     Some(state)
 }
 
-fn decode_blocks(tag: &Tag) -> Result<BlockContainer, ChunkError> {
+pub(crate) fn decode_blocks(tag: &Tag) -> Result<BlockContainer, ChunkError> {
     let palette: Vec<u16> = tag
         .get("palette")
         .and_then(Tag::as_list)
@@ -454,7 +546,7 @@ fn decode_blocks(tag: &Tag) -> Result<BlockContainer, ChunkError> {
     Ok(BlockContainer::from_palette(&palette, |i| idx[i]))
 }
 
-fn light_layer(bytes: &[i8]) -> Light {
+pub(crate) fn light_layer(bytes: &[i8]) -> Light {
     if bytes.len() != 2048 {
         return Light::Zero;
     }

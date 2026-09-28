@@ -14,3 +14,8 @@ lz4_flex.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 uuid.workspace = true
+zstd.workspace = true
+crc32fast.workspace = true
+
+[dev-dependencies]
+kiln-worldgen.workspace = true

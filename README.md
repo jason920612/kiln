@@ -57,6 +57,7 @@ Settings come from the environment until there is a config file:
 | `KILN_PORT` | listen port (25565) |
 | `KILN_MAX_PLAYERS` | player limit (100) |
 | `KILN_WORLD` | a vanilla 26.3 world directory to load; superflat when unset |
+| `KILN_WORLD_FORMAT` | `native` stores a new world in Kiln's native format (an existing world keeps its format) |
 | `KILN_OPS` | comma-separated operator names; `prefix*` matches every name with that prefix |
 | `KILN_TICK_THREADS` | tick pool size (all cores but one, at most 7) |
 | `KILN_REGIONS` | `unified` for one region per dimension (vanilla profile) |
@@ -68,6 +69,14 @@ Settings come from the environment until there is a config file:
 | `RUST_LOG` | log filter (`info`) |
 
 Lines typed on the server's standard input run as console commands (`stop` saves and exits).
+
+Worlds are Anvil (vanilla's format) by default. The optional native format (cell files, zstd)
+loads and saves faster and is smaller; conversion is lossless both ways:
+
+```sh
+kiln world convert --to native <world> <new world>   # and --to anvil to go back
+kiln world compare <anvil world> <anvil world>       # chunk NBT byte for byte, other files
+```
 
 ## Testing
 
@@ -87,7 +96,10 @@ KILN_PARITY=1 cargo test -p kiln-loot --test vanilla_parity
 
 Packets Kiln encodes are checked by decoding them with vanilla's own codecs
 (`tools/VanillaDecode.java`); saved worlds are checked by loading them in the vanilla server
-(`tools/vanilla_check_world.py`).
+(`tools/vanilla_check_world.py`), and native conversion by a round trip of vanilla worlds
+that vanilla loads again (`tools/native_roundtrip_check.py`). Storage throughput:
+`cargo run --release -p kiln-storage --example native_bench -- bench <world>`, and in the
+running simulation `cargo run --release -p kiln-sim --example sim_storage -- <world>`.
 
 ## Clean room
 

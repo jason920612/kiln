@@ -31,3 +31,4 @@ serde_json.workspace = true
 [dev-dependencies]
 # Exact float parsing: the parity vectors print Java's shortest round-trip decimals.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
+tracing-subscriber.workspace = true

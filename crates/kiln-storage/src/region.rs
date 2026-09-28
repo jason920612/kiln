@@ -26,18 +26,31 @@ pub struct RegionFile {
     path: PathBuf,
     file: File,
     offsets: Box<[u32; 1024]>,
+    stamps: Box<[u32; 1024]>,
 }
 
 impl RegionFile {
     pub fn open(path: &Path) -> Result<Self, RegionError> {
         let mut file = File::open(path)?;
-        let mut header = vec![0u8; 4096];
+        let mut header = vec![0u8; 8192];
         file.read_exact(&mut header).map_err(|_| RegionError::Corrupt("short header"))?;
         let mut offsets = Box::new([0u32; 1024]);
-        for (i, o) in offsets.iter_mut().enumerate() {
-            *o = u32::from_be_bytes(header[i * 4..i * 4 + 4].try_into().unwrap());
+        let mut stamps = Box::new([0u32; 1024]);
+        for i in 0..1024 {
+            offsets[i] = u32::from_be_bytes(header[i * 4..i * 4 + 4].try_into().unwrap());
+            stamps[i] = u32::from_be_bytes(header[4096 + i * 4..4096 + i * 4 + 4].try_into().unwrap());
         }
-        Ok(Self { path: path.to_owned(), file, offsets })
+        Ok(Self { path: path.to_owned(), file, offsets, stamps })
+    }
+
+    /// Whether the chunk at local coordinates (0..32) is stored.
+    pub fn contains(&self, x: usize, z: usize) -> bool {
+        self.offsets[(z << 5) | x] != 0
+    }
+
+    /// The last-write time (epoch seconds) the header records for a chunk.
+    pub fn timestamp(&self, x: usize, z: usize) -> u32 {
+        self.stamps[(z << 5) | x]
     }
 
     /// The uncompressed NBT of the chunk at local coordinates (0..32), if present.
@@ -96,6 +109,12 @@ pub fn compress_chunk(nbt: &[u8]) -> Vec<u8> {
 /// replacing or adding chunks, an empty payload removing one; other chunks are copied as
 /// stored. Writes a temporary file and renames it over the old one.
 pub fn write_region(path: &Path, updates: &[(usize, usize, Vec<u8>)], now: u32) -> Result<(), RegionError> {
+    let stamped: Vec<(usize, usize, &[u8], u32)> = updates.iter().map(|(x, z, p)| (*x, *z, &p[..], now)).collect();
+    write_region_stamped(path, &stamped)
+}
+
+/// [`write_region`] with each chunk's header timestamp given.
+pub fn write_region_stamped(path: &Path, updates: &[(usize, usize, &[u8], u32)]) -> Result<(), RegionError> {
     const MAX_SECTORS: usize = 255;
     let mut payloads: Vec<Option<Vec<u8>>> = vec![None; 1024];
     let mut stamps = vec![0u32; 1024];
@@ -122,15 +141,15 @@ pub fn write_region(path: &Path, updates: &[(usize, usize, Vec<u8>)], now: u32) 
             payloads[i] = Some(p);
         }
     }
-    for (x, z, payload) in updates {
+    for &(x, z, payload, stamp) in updates {
         let i = (z << 5) | x;
         if payload.is_empty() {
             payloads[i] = None;
             stamps[i] = 0;
             continue;
         }
-        payloads[i] = Some(payload.clone());
-        stamps[i] = now;
+        payloads[i] = Some(payload.to_vec());
+        stamps[i] = stamp;
     }
 
     let mut header = vec![0u8; 8192];

@@ -6,7 +6,9 @@ use crate::region::RegionFile;
 use kiln_proto::nbt::{self, Tag};
 use kiln_world::ChunkPos;
 use std::collections::{HashMap, HashSet};
+use crate::native::{ENTITIES, FORM_NBT, NativeStore};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use tracing::warn;
 
 /// A pending update: the compressed chunk, or `None` to delete it (vanilla stores `null` for
@@ -14,6 +16,8 @@ use tracing::warn;
 type Update = (usize, usize, Option<Vec<u8>>);
 
 pub struct EntityStore {
+    /// Entity records of a native world's cell files instead of region files.
+    native: Option<Arc<Mutex<NativeStore>>>,
     dir: PathBuf,
     regions: HashMap<(i32, i32), Option<RegionFile>>,
     /// Writes waiting for `flush`, per region; loads read them first.
@@ -26,7 +30,14 @@ pub struct EntityStore {
 
 impl EntityStore {
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into(), regions: HashMap::new(), pending: HashMap::new(), empty: HashSet::new(), warned_version: false }
+        Self { native: None, dir: dir.into(), regions: HashMap::new(), pending: HashMap::new(), empty: HashSet::new(), warned_version: false }
+    }
+
+    /// Entity chunks kept in a native store.
+    pub fn native(store: Arc<Mutex<NativeStore>>) -> Self {
+        let mut s = Self::new(PathBuf::new());
+        s.native = Some(store);
+        s
     }
 
     fn local(pos: ChunkPos) -> ((i32, i32), (usize, usize)) {
@@ -34,6 +45,9 @@ impl EntityStore {
     }
 
     fn read_nbt(&mut self, pos: ChunkPos) -> Option<Vec<u8>> {
+        if let Some(store) = &self.native {
+            return store.lock().unwrap().read(ENTITIES, pos).map(|(_, raw, _)| raw);
+        }
         let (key, local) = Self::local(pos);
         // A write not flushed yet is newer than the region file.
         if let Some((_, _, payload)) = self.pending.get(&key).and_then(|p| p.iter().find(|(x, z, _)| (*x, *z) == local)) {
@@ -95,7 +109,7 @@ impl EntityStore {
     /// `EntityStorage.storeEntities`: queues a chunk's entities for the next `flush`. An empty
     /// list deletes the chunk's data unless it is already known to be empty.
     pub fn store(&mut self, pos: ChunkPos, entities: Vec<Tag>) {
-        let payload = if entities.is_empty() {
+        let nbt = if entities.is_empty() {
             if !self.empty.insert(pos) {
                 return;
             }
@@ -109,8 +123,17 @@ impl EntityStore {
             let mut buf = bytes::BytesMut::new();
             root.write_named("", &mut buf);
             self.empty.remove(&pos);
-            Some(crate::region::compress_chunk(&buf))
+            Some(buf)
         };
+        if let Some(store) = &self.native {
+            let mut store = store.lock().unwrap();
+            // Deleting what is not stored changes nothing.
+            if nbt.is_some() || store.contains(ENTITIES, pos) {
+                store.write(ENTITIES, pos, FORM_NBT, nbt.as_deref());
+            }
+            return;
+        }
+        let payload = nbt.map(|b| crate::region::compress_chunk(&b));
         let (key, (lx, lz)) = Self::local(pos);
         let entry = self.pending.entry(key).or_default();
         entry.retain(|(x, z, _)| (*x, *z) != (lx, lz));
@@ -125,6 +148,9 @@ impl EntityStore {
 
     /// Writes the queued chunks into their region files.
     pub fn flush(&mut self) -> std::io::Result<usize> {
+        if let Some(store) = &self.native {
+            return store.lock().unwrap().flush();
+        }
         if self.pending.is_empty() {
             return Ok(0);
         }

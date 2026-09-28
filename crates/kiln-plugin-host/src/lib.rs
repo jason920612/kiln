@@ -57,7 +57,7 @@ pub mod manifest;
 mod ns;
 
 pub use manifest::{Area, Capability, EventKind, FailPolicy, Filter, Manifest};
-pub use ns::{CellKey, EntityData, GlobalValue};
+pub use ns::{CellKey, CellSidecars, EntityData, GlobalValue};
 
 use anyhow::{Context, Result, bail};
 use host::{Frame, GlobalGuest, GlobalIndices, HostState, NewTask, Pre, RegionGuest, RegionIndices, wit};
@@ -243,6 +243,8 @@ pub struct RuntimeConfig {
     pub player_events_per_second: u32,
     /// Pooling allocator slots (component instances); `0` uses on-demand allocation.
     pub pool_instances: u32,
+    /// Where cell data goes instead of sidecar files under `data_dir` (native worlds).
+    pub cell_sidecars: Option<Arc<dyn CellSidecars>>,
 }
 
 impl Default for RuntimeConfig {
@@ -262,6 +264,7 @@ impl Default for RuntimeConfig {
             player_burst: 64,
             player_events_per_second: 80,
             pool_instances: 512,
+            cell_sidecars: None,
         }
     }
 }
@@ -1461,6 +1464,7 @@ impl PluginRuntime {
             root: root.clone(),
             levels: cfg.registries.levels.clone(),
             ids: defs.iter().map(|d| d.manifest.id.clone()).collect(),
+            sidecars: cfg.cell_sidecars.clone(),
         });
         let globals = persist.as_ref().map(Persist::load_globals).unwrap_or_default();
         let epoch = Arc::new(AtomicU64::new(0));

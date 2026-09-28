@@ -113,6 +113,9 @@ pub struct SimConfig {
     pub schedule: ScheduleMode,
     /// Tests: a region holding this column sleeps in each of its ticks.
     pub inject_delay: Option<InjectedDelay>,
+    /// Storage format of a new world (an existing world keeps its own: Anvil unless marked
+    /// native, see `kiln_storage::WorldFormat`).
+    pub world_format: kiln_storage::WorldFormat,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -141,6 +144,7 @@ impl SimConfig {
             plugins: None,
             schedule: ScheduleMode::Lockstep,
             inject_delay: None,
+            world_format: kiln_storage::WorldFormat::Anvil,
         }
     }
 }
@@ -529,6 +533,8 @@ struct Dim {
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
     entity_store: Option<kiln_storage::EntityStore>,
+    /// The dimension's store when the world is in the native format.
+    native: Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>,
     /// Saved entities of loaded chunks that Kiln does not simulate (mobs, ...), written back
     /// as they were loaded.
     raw_entities: HashMap<ChunkPos, Vec<Tag>>,
@@ -571,10 +577,14 @@ impl Dim {
         threads: usize,
         game_time: i64,
         world: Option<&std::path::Path>,
+        native: Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>,
     ) -> Dim {
         let kind = kiln_data::dimension_type(key).expect("vanilla dimension type");
         let generation = provider.fork_generator().map(|g| generation::GenPool::new(g.as_ref(), provider.dimension, threads));
-        let entity_store = world.map(|dir| kiln_storage::EntityStore::new(dir.join(dimension_dir(key)).join("entities")));
+        let entity_store = match native.clone() {
+            Some(store) => Some(kiln_storage::EntityStore::native(store)),
+            None => world.map(|dir| kiln_storage::EntityStore::new(dir.join(dimension_dir(key)).join("entities"))),
+        };
         Dim {
             key,
             kind,
@@ -589,6 +599,7 @@ impl Dim {
             generation,
             game_time,
             entity_store,
+            native,
             raw_entities: HashMap::new(),
             gateway_cooldowns: HashMap::new(),
             portal_cooldowns: HashMap::new(),
@@ -844,6 +855,12 @@ impl Sim {
             Some(kiln_worldgen::FullChunks::new(pipeline))
         };
         let mut spawn = None;
+        let format = config.world.as_deref().map(|d| kiln_storage::WorldFormat::resolve(d, config.world_format));
+        if format == Some(kiln_storage::WorldFormat::Native) {
+            info!("world storage: native format");
+        }
+        // A native world's store per dimension, shared by its chunks and entities.
+        let mut native_stores: Vec<Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>> = Vec::new();
         let providers: Vec<ChunkProvider> = (0..DIMENSIONS.len())
             .map(|id| {
                 let (key, biome_name) = DIMENSIONS[id];
@@ -853,8 +870,15 @@ impl Sim {
                 let generator = generator(id);
                 match &config.world {
                     Some(dir) => {
-                        let source = kiln_storage::AnvilSource::new(dir.join(dimension_dir(key)).join("region"));
-                        let provider = ChunkProvider::with_source(dimension, Box::new(source), Terrain::Void, biome, biome_count);
+                        let source: Box<dyn kiln_world::ChunkSource> = if format == Some(kiln_storage::WorldFormat::Native) {
+                            let store = kiln_storage::NativeStore::shared(dir.join(dimension_dir(key)).join("native"));
+                            native_stores.push(Some(store.clone()));
+                            Box::new(kiln_storage::NativeSource::new(store))
+                        } else {
+                            native_stores.push(None);
+                            Box::new(kiln_storage::AnvilSource::new(dir.join(dimension_dir(key)).join("region")))
+                        };
+                        let provider = ChunkProvider::with_source(dimension, source, Terrain::Void, biome, biome_count);
                         if id == OVERWORLD_ID {
                             let s = kiln_storage::read_spawn(dir).unwrap_or([0, 64, 0]);
                             info!("loaded world {} (spawn {s:?})", dir.display());
@@ -894,7 +918,10 @@ impl Sim {
         let dims = providers
             .into_iter()
             .enumerate()
-            .map(|(id, provider)| Dim::new(DIMENSIONS[id].0, provider, policy, threads, game_time, config.world.as_deref()))
+            .map(|(id, provider)| {
+                let native = native_stores.get_mut(id).and_then(Option::take);
+                Dim::new(DIMENSIONS[id].0, provider, policy, threads, game_time, config.world.as_deref(), native)
+            })
             .collect();
         info!(
             "tick pool: {} workers, {} regions",
