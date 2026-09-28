@@ -276,6 +276,95 @@ fn sheep_shear_and_dye_cows_milk() {
     assert_eq!(w.held().map(|h| h.0), kiln_data::builtin_id("minecraft:item", "minecraft:milk_bucket"), "milked");
 }
 
+impl World {
+    fn packet(&mut self, pkt: PlayIn) {
+        assert!(self.sim.step([ToSim::Packet(1, pkt)]));
+    }
+
+    /// A left click on menu slot `slot` of container `id` (`quick`: shift-click).
+    fn click(&mut self, id: i32, slot: i16, quick: bool) {
+        let input = if quick { kiln_inventory::ContainerInput::QuickMove } else { kiln_inventory::ContainerInput::Pickup };
+        let click = kiln_inventory::ContainerClick {
+            container_id: id,
+            state_id: 0,
+            slot,
+            button: 0,
+            input,
+            changed: Vec::new(),
+            carried: kiln_item::HashedStack::Empty,
+        };
+        let mut body = bytes::BytesMut::new();
+        click.write(&mut body);
+        self.packet(PlayIn::ContainerClick { body: body.freeze() });
+    }
+
+    fn count_of(&self, item: &str) -> i32 {
+        let id = kiln_data::builtin_id("minecraft:item", item).unwrap();
+        self.sim.inventory(1).unwrap().iter().flatten().filter(|s| s.0 == id).map(|s| s.1).sum()
+    }
+}
+
+#[test]
+fn trading_with_a_villager() {
+    let item = |n: &str| kiln_data::builtin_id("minecraft:item", n).unwrap();
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:wheat", 64);
+    w.console("gamemode survival Hunter");
+    let offers = r#"Offers:{Recipes:[{buy:{id:"minecraft:wheat",count:20},sell:{id:"minecraft:emerald",count:1},maxUses:3,xp:4,priceMultiplier:0.05f},{buy:{id:"minecraft:emerald",count:1},sell:{id:"minecraft:bread",count:6},maxUses:16,xp:1,priceMultiplier:0.05f}]}"#;
+    w.summon("minecraft:villager", [1.5, 0.0, 0.0], &format!(r#"{{NoAI:1b,VillagerData:{{profession:"minecraft:farmer",level:1,type:"minecraft:plains"}},{offers}}}"#));
+    let villager = w.mobs("minecraft:villager")[0].0;
+    // A baby shakes its head; an adult opens its screen.
+    w.interact(villager);
+    let (id, v, slots) = w.sim.merchant_screen(1).expect("the merchant screen opened");
+    assert_eq!(v, villager);
+    assert!(slots.iter().all(Option::is_none));
+    // Selecting the wheat offer moves the wheat into the payment slot.
+    w.packet(PlayIn::SelectTrade { offer: 0 });
+    let (_, _, slots) = w.sim.merchant_screen(1).unwrap();
+    assert_eq!(slots[0], Some((item("minecraft:wheat"), 64)));
+    assert_eq!(slots[2], Some((item("minecraft:emerald"), 1)));
+    assert_eq!(w.count_of("minecraft:wheat"), 0);
+    // Taking the result pays for it; shift-clicking trades until the offer runs out (3 uses).
+    w.click(id, 2, false);
+    let (_, _, slots) = w.sim.merchant_screen(1).unwrap();
+    assert_eq!(slots[0], Some((item("minecraft:wheat"), 44)));
+    w.click(id, 2, true);
+    let (_, _, slots) = w.sim.merchant_screen(1).unwrap();
+    assert_eq!(slots[0], Some((item("minecraft:wheat"), 4)));
+    assert_eq!(slots[2], None, "out of stock");
+    assert_eq!(w.count_of("minecraft:emerald"), 2, "two emeralds shift-clicked into the inventory");
+    w.ticks(2);
+    assert!(w.sim.entities().iter().any(|e| e.0 == "minecraft:experience_orb"), "trading experience");
+    // Closing gives the payment back; the villager can trade again.
+    w.packet(PlayIn::ContainerClose { container_id: id });
+    assert!(w.sim.merchant_screen(1).is_none());
+    assert_eq!(w.count_of("minecraft:wheat"), 4);
+    w.interact(villager);
+    assert!(w.sim.merchant_screen(1).is_some(), "trading again");
+    // Killing the villager closes the screen.
+    w.console("kill @e[type=minecraft:villager]");
+    w.ticks(3);
+    assert!(w.sim.merchant_screen(1).is_none(), "closed when the villager died");
+}
+
+#[test]
+fn villager_offers_come_from_the_datapack() {
+    if std::env::var_os("KILN_DATAPACK").is_none() {
+        return;
+    }
+    let mut w = World::new();
+    w.summon("minecraft:villager", [1.5, 0.0, 0.0], r#"{NoAI:1b,VillagerData:{profession:"minecraft:librarian",level:1,type:"minecraft:plains"}}"#);
+    w.summon("minecraft:villager", [-1.5, 0.0, 0.0], r#"{NoAI:1b}"#);
+    let v = w.mobs("minecraft:villager");
+    let (librarian, unemployed) = if v[0].1[0] > v[1].1[0] { (v[0].0, v[1].0) } else { (v[1].0, v[0].0) };
+    // Unemployed villagers have no trades: no screen.
+    w.interact(unemployed);
+    assert!(w.sim.merchant_screen(1).is_none());
+    w.interact(librarian);
+    assert!(w.sim.merchant_screen(1).is_some(), "a librarian trades from its level 1 trade set");
+}
+
 #[test]
 fn every_mob_type_summons_ticks_and_saves() {
     let mut w = World::new();

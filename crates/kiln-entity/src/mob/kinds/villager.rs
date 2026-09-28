@@ -237,6 +237,21 @@ pub fn notify_trade_updated(e: &mut Entity, m: &mut MobData, level: &mut dyn Ent
     }
 }
 
+/// Runs `f` on a villager entity and its mob data (outside the mob tick).
+pub fn with_villager<R>(e: &mut Entity, f: impl FnOnce(&mut Entity, &mut MobData) -> R) -> Option<R> {
+    use crate::entity::EntityKind;
+    if !mob::data(e).is_some_and(|m| state(m).is_some()) {
+        return None;
+    }
+    let mut kind = std::mem::replace(&mut e.kind, EntityKind::MobTicking { gravity: 0.08 });
+    let r = match &mut kind {
+        EntityKind::Mob(m) => Some(f(e, m)),
+        _ => None,
+    };
+    e.kind = kind;
+    r
+}
+
 /// `Villager.setTradingPlayer(null)` (the merchant screen closed).
 pub fn stop_trading(m: &mut MobData) {
     if let Some(st) = state_mut(m) {

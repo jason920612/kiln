@@ -41,6 +41,7 @@ pub(crate) mod portal;
 mod region;
 mod rng;
 mod stats;
+mod trading;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
@@ -186,6 +187,10 @@ struct Player {
     menu: kiln_inventory::Menu,
     /// A block or entity menu the player has open.
     open_menu: Option<kiln_inventory::Menu>,
+    /// `ServerPlayer.containerCounter` (container ids 1-100).
+    container_counter: i32,
+    /// What an open merchant screen told its villager, for [`trading::apply_events`].
+    merchant_events: Vec<(i32, kiln_inventory::merchant::MerchantEvent)>,
     /// Movement packets for this player's viewers.
     tracker: packets::entity::MovementTracker,
     /// Players currently seeing this one (sorted).
@@ -382,6 +387,10 @@ impl Player {
                 None => f(menu, None, &mut env),
             }
         };
+        if let Some(st) = self.open_menu.as_mut().and_then(|m| m.merchant_state_mut()) {
+            let v = st.merchant;
+            self.merchant_events.extend(st.drain().into_iter().map(|e| (v, e)));
+        }
         for effect in out {
             if let Some(pkt) = effect.encode() {
                 self.send(pkt);
@@ -1132,6 +1141,14 @@ impl Sim {
         self.players.get(&conn).map(Player::menu_view)
     }
 
+    /// A player's open merchant screen: container id, the villager, and (item id, count) of the
+    /// payment and result slots.
+    pub fn merchant_screen(&self, conn: ConnId) -> Option<(i32, i32, Vec<Option<(i32, i32)>>)> {
+        let menu = self.players.get(&conn)?.open_menu.as_ref()?;
+        let st = menu.merchant_state()?;
+        Some((menu.container_id, st.merchant, st.items.iter().map(|s| (!s.is_empty()).then(|| (s.item(), s.count()))).collect()))
+    }
+
     /// Timing of the last completed statistics window.
     pub fn last_report(&self) -> Option<&str> {
         self.commands.last_report.as_deref()
@@ -1636,6 +1653,8 @@ impl Sim {
             inv_extra: joining.inv_extra,
             menu: kiln_inventory::Menu::inventory(),
             open_menu: None,
+            container_counter: 0,
+            merchant_events: Vec::new(),
             tracker: packets::entity::MovementTracker::new(
                 entity_id,
                 kiln_data::entities::types::PLAYER.update_interval,
