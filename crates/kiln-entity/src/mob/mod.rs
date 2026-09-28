@@ -90,6 +90,8 @@ pub enum MobKind {
     // -- slice 3: common mobs A
 
     // -- slice 3: common mobs B
+    Squid,
+    GlowSquid,
 
 }
 
@@ -100,24 +102,47 @@ pub enum Category {
     Creature,
     /// Villagers and golems: never spawned by the natural spawner, never despawn.
     Misc,
+    /// Bats.
+    Ambient,
+    Axolotls,
+    /// Glow squids.
+    UndergroundWaterCreature,
+    /// Squids, dolphins.
+    WaterCreature,
+    /// Fish.
+    WaterAmbient,
 }
 
 impl Category {
+    /// `NaturalSpawner.SPAWNING_CATEGORIES` (every category but `MISC`, in `MobCategory` order).
+    pub const SPAWNING: [Category; 7] = [
+        Category::Monster,
+        Category::Creature,
+        Category::Ambient,
+        Category::Axolotls,
+        Category::UndergroundWaterCreature,
+        Category::WaterCreature,
+        Category::WaterAmbient,
+    ];
+
     pub fn max_instances(self) -> i32 {
         match self {
             Category::Monster => 70,
             Category::Creature => 10,
             Category::Misc => -1,
+            Category::Ambient => 15,
+            Category::Axolotls | Category::UndergroundWaterCreature | Category::WaterCreature => 5,
+            Category::WaterAmbient => 20,
         }
     }
     pub fn friendly(self) -> bool {
         self != Category::Monster
     }
     pub fn persistent(self) -> bool {
-        self != Category::Monster
+        matches!(self, Category::Creature | Category::Misc)
     }
     pub fn despawn_distance(self) -> i32 {
-        128
+        if self == Category::WaterAmbient { 64 } else { 128 }
     }
     pub fn no_despawn_distance(self) -> i32 {
         32
@@ -127,6 +152,11 @@ impl Category {
             Category::Monster => "monster",
             Category::Creature => "creature",
             Category::Misc => "misc",
+            Category::Ambient => "ambient",
+            Category::Axolotls => "axolotls",
+            Category::UndergroundWaterCreature => "underground_water_creature",
+            Category::WaterCreature => "water_creature",
+            Category::WaterAmbient => "water_ambient",
         }
     }
 }
@@ -176,12 +206,16 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- slice 3: common mobs A
 
     // -- slice 3: common mobs B
+    MobKind::Squid,
+    MobKind::GlowSquid,
 
 ];
 
 impl MobKind {
     pub fn by_name(name: &str) -> Option<MobKind> {
-        ALL_KINDS.iter().copied().find(|k| k.type_name() == name)
+        // Called per move (fall damage, fluids): a table rather than a scan of the types.
+        static BY_NAME: std::sync::OnceLock<std::collections::HashMap<&'static str, MobKind>> = std::sync::OnceLock::new();
+        BY_NAME.get_or_init(|| ALL_KINDS.iter().map(|&k| (k.type_name(), k)).collect()).get(name).copied()
     }
 
     /// The extension type's behaviour (`None` for the shared-code types).
@@ -1077,6 +1111,7 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
 
 /// `Mob.baseTick` → `LivingEntity.baseTick` → `Entity.baseTick`.
 fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    let air_before = e.air_supply;
     e.compute_speed();
     e.was_in_powder_snow = e.is_in_powder_snow;
     e.is_in_powder_snow = false;
@@ -1169,6 +1204,9 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
                 make_sound(e, m, level, s);
             }
         }
+    }
+    if let Some(k) = m.kind.ext() {
+        k.after_base_tick(e, m, level, air_before);
     }
 }
 
@@ -1271,6 +1309,9 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         e.delta = Vec3::ZERO;
     } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
         travel(e, m, level, input);
+    }
+    if let Some((distance, multiplier)) = e.pending_fall_damage.take() {
+        cause_fall_damage(e, m, level, distance, multiplier);
     }
     e.apply_effects_from_blocks(level);
     // Freezing.
@@ -1377,6 +1418,28 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
         control::tick_look(e, m);
     }
     control::tick_jump(m);
+}
+
+/// `LivingEntity.causeFallDamage`: past the safe fall distance, the fall sound and damage.
+pub fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, distance: f64, multiplier: f32) -> bool {
+    if entity_type_tag(e.type_name, "minecraft:fall_damage_immune") {
+        return false;
+    }
+    let power = distance + 1.0e-6 - m.attrs.value(Attr::SafeFallDistance);
+    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier));
+    if dmg <= 0 {
+        return false;
+    }
+    let hostile = m.kind.category() == Category::Monster;
+    let sound = match (hostile, dmg > 4) {
+        (true, true) => "minecraft:entity.hostile.big_fall",
+        (true, false) => "minecraft:entity.hostile.small_fall",
+        (false, true) => "minecraft:entity.generic.big_fall",
+        (false, false) => "minecraft:entity.generic.small_fall",
+    };
+    play_sound(e, m, level, sound, 1.0, 1.0);
+    hurt(e, m, level, DamageSource::of(DamageKind::Fall), dmg as f32);
+    true
 }
 
 /// `LivingEntity.jumpFromGround`.
@@ -1637,12 +1700,17 @@ fn play_sound(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'sta
 
 /// `LivingEntity.makeSound`: volume 1, the voice pitch.
 pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'static str) {
-    let pitch = if m.baby() {
+    let mut pitch = if m.baby() {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.5
     } else {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0
     };
-    play_sound(e, m, level, sound, 1.0, pitch);
+    let mut volume = 1.0;
+    if let Some(k) = m.kind.ext() {
+        volume = k.sound_volume(m);
+        pitch = k.voice_pitch(m, pitch);
+    }
+    play_sound(e, m, level, sound, volume, pitch);
 }
 
 /// Damage to a mob from outside its own tick (explosions, arrows, players).
@@ -1686,6 +1754,19 @@ pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSo
     let r = hurt(e, &mut m, level, source, amount);
     put(e, m);
     r
+}
+
+/// `isPushedByFluid` of mob type `type_name`.
+pub fn pushed_by_fluid(type_name: &str) -> bool {
+    MobKind::by_name(type_name).and_then(MobKind::ext).is_none_or(|k| k.pushed_by_fluid())
+}
+
+/// The swim sound of mob type `type_name` (`None`: it makes no movement sounds).
+pub fn swim_sound(type_name: &str) -> Option<&'static str> {
+    match MobKind::by_name(type_name).and_then(MobKind::ext) {
+        Some(k) => k.swim_sound(),
+        None => Some("minecraft:entity.generic.swim"),
+    }
 }
 
 /// Whether mob type `type_name` runs `checkFallDamage` (flying types override it with nothing).

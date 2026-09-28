@@ -43,6 +43,7 @@ pub mod hoglin;
 // -- slice 3: common mobs A
 
 // -- slice 3: common mobs B
+pub mod squid;
 
 
 /// The behaviour of an extension type; `None` for the shared-code types.
@@ -84,6 +85,8 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         // -- slice 3: common mobs A
 
         // -- slice 3: common mobs B
+        MobKind::Squid => &squid::KIND,
+        MobKind::GlowSquid => &squid::GLOW,
 
         _ => return None,
     })

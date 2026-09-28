@@ -456,6 +456,7 @@ public class MobVectors {
         if (mc.getClass().getSimpleName().equals("CubeMobMoveControl")) {
             set(mc, "yRot", 180.0F * m.getYRot() / 3.1415927F);
         }
+        pinCommonB(m);
     }
 
     static String d(double v) {
@@ -1550,7 +1551,58 @@ public class MobVectors {
 
 
     // ---------------------------------------------------------- slice 3: common mobs B
+    /// A pool of water `r` blocks around the origin, `depth` deep, on a stone floor.
+    static void pool(Scenario s, int r, int depth) {
+        floor(s, r + 4, "minecraft:stone");
+        for (int x = -r; x <= r; x++)
+            for (int z = -r; z <= r; z++)
+                for (int y = BY; y < BY + depth; y++) block(s, x, y, z, "minecraft:water");
+    }
+
+    /// Constructor draws of the common mobs B types (from the unpinnable constructor random): both
+    /// sides take them from a random seeded 0, as Kiln's replay constructs its mobs.
+    static void pinCommonB(Mob m) throws Exception {
+        var r = new net.minecraft.world.level.levelgen.LegacyRandomSource(0L);
+        if (m instanceof net.minecraft.world.entity.animal.squid.Squid) {
+            set(m, "tentacleSpeed", 1.0F / (r.nextFloat() + 1.0F) * 0.2F);
+        }
+    }
+
     static void scenariosCommonB(List<Scenario> out) {
+        // Squids and glow squids: swimming by tentacle pulses, fleeing and squirting ink when
+        // hurt, drowning on land.
+        for (String type : new String[] {"squid", "glow_squid"}) {
+            for (int seed = 1; seed <= 2; seed++) {
+                Scenario s = new Scenario("idle_" + type + "_" + seed);
+                pool(s, 8, 6);
+                s.mobs.add(new MobSpec("minecraft:" + type, 0.5, BY + 2, 0.5, 40f * seed, 11000L * seed + 7));
+                s.player = new double[] {12.5, BY, 0.5};
+                s.playerCreative = true;
+                s.levelSeed = seed;
+                s.ticks = 400;
+                out.add(s);
+            }
+            {
+                Scenario s = new Scenario("hurt_" + type);
+                pool(s, 8, 6);
+                s.mobs.add(new MobSpec("minecraft:" + type, 0.5, BY + 2, 0.5, 0f, 11100));
+                s.player = new double[] {4.5, BY + 2, 0.5};
+                s.playerCreative = true;
+                s.hurts.put(5, new double[] {0, 1.0});
+                s.hurts.put(60, new double[] {0, 1.0});
+                s.ticks = 200;
+                out.add(s);
+            }
+            {
+                Scenario s = new Scenario("land_" + type);
+                floor(s, 8, "minecraft:stone");
+                s.mobs.add(new MobSpec("minecraft:" + type, 0.5, BY, 0.5, 0f, 11200));
+                s.player = new double[] {8.5, BY, 0.5};
+                s.playerCreative = true;
+                s.ticks = 400;
+                out.add(s);
+            }
+        }
     }
 
 }

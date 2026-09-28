@@ -127,6 +127,9 @@ pub struct Entity {
     pub passengers: Vec<i32>,
     /// `canStandOnFluid(lava)`: lava sources hold the entity up (striders).
     pub stands_on_lava: bool,
+    /// A mob's `causeFallDamage(distance, multiplier)` from a landing during its own move (its
+    /// data is out for the tick): the mob takes it right after the move.
+    pub pending_fall_damage: Option<(f64, f32)>,
     /// Saved fields Kiln does not model (custom name, tags, passengers, ...), written back
     /// unchanged by [`crate::persist::save`].
     pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
@@ -194,6 +197,7 @@ impl Entity {
             vehicle: None,
             passengers: Vec::new(),
             stands_on_lava: false,
+            pending_fall_damage: None,
             extra: Vec::new(),
         };
         e.set_pos(Vec3::ZERO);
@@ -315,6 +319,9 @@ impl Entity {
     }
 
     pub fn is_pushed_by_fluid(&self) -> bool {
+        if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) {
+            return crate::mob::pushed_by_fluid(self.type_name);
+        }
         !matches!(&self.kind, EntityKind::Arrow(a) if a.in_ground)
     }
 
@@ -677,10 +684,12 @@ impl Entity {
             self.next_step = (self.move_dist as i32 + 1) as f32;
         } else if self.is_in_water() {
             self.next_step = (self.move_dist as i32 + 1) as f32;
-            let d = self.delta;
-            let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.35);
-            let pitch = 1.0 + (self.random_next_float_pub() - self.random_next_float_pub()) * 0.4;
-            self.play_sound(level, "minecraft:entity.generic.swim", volume, pitch);
+            if let Some(sound) = crate::mob::swim_sound(self.type_name) {
+                let d = self.delta;
+                let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.35);
+                let pitch = 1.0 + (self.random_next_float_pub() - self.random_next_float_pub()) * 0.4;
+                self.play_sound(level, sound, volume, pitch);
+            }
             level.emit(Event::GameEvent { event: "minecraft:swim", pos: self.position, entity: Some(self.id) });
         }
     }
