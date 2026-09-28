@@ -696,6 +696,28 @@ pub(crate) fn tick(
             e.cell = cell;
         }
     }
+    // `Player.aiStep` → `touch`: mobs in the player's box inflated by (1, 0.5, 1) (slimes and
+    // magma cubes hurt the player). Vanilla runs it in the player's tick; here after the
+    // entities'.
+    let touchers: Vec<(i32, Aabb)> = sim
+        .views
+        .iter()
+        .filter(|v| v.alive && !v.spectator)
+        .map(|v| {
+            let h = if v.sneaking { 1.5 } else { 1.8 };
+            (v.id, Aabb::new(v.pos.x - 0.3, v.pos.y, v.pos.z - 0.3, v.pos.x + 0.3, v.pos.y + h, v.pos.z + 0.3).inflate(1.0, 0.5, 1.0))
+        })
+        .collect();
+    for (pid, area) in touchers {
+        for id in sim.entities_in(&area, EntityFilter::Living, pid) {
+            let Some(i) = sim.index(id) else { continue };
+            let Some(mut phys) = sim.list[i].phys.take() else { continue };
+            if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
+                kiln_entity::mob::player_touch(&mut phys, &mut sim, pid);
+            }
+            sim.list[i].phys = Some(phys);
+        }
+    }
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     // Explosion knockback reaches the pushed player's client (it owns its movement).
     for pr in proxies.iter().filter(|e| e.delta != Vec3::ZERO) {
@@ -1328,5 +1350,6 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::Kill => ("minecraft:generic_kill", "death.attack.genericKill"),
         DamageKind::Cramming => ("minecraft:cramming", "death.attack.cramming"),
         DamageKind::PlayerExplosion => ("minecraft:player_explosion", "death.attack.explosion.player"),
+        DamageKind::Fireball => ("minecraft:fireball", "death.attack.fireball"),
     }
 }

@@ -19,10 +19,11 @@ impl World {
         let (msg, stats) = join(1, "Hunter", 2);
         assert!(sim.step([msg]));
         let mut w = World { sim, clients: vec![Client::new(1, stats)] };
-        w.ticks(5);
         w.console("gamerule minecraft:natural_health_regeneration false");
-        // Only the mobs a test summons (natural spawning has its own test).
+        // Only the mobs a test summons (natural spawning has its own test; slimes spawn in the
+        // superflat world's slime chunks at once).
         w.console("gamerule minecraft:spawn_mobs false");
+        w.ticks(5);
         w
     }
 
@@ -437,4 +438,77 @@ fn every_mob_type_summons_ticks_and_saves() {
     for kind in kiln_entity::mob::ALL_KINDS {
         assert!(!w.mobs(kind.type_name()).is_empty(), "{} is gone", kind.type_name());
     }
+}
+
+#[test]
+fn slimes_hurt_touching_players_and_split_when_killed() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:slime", [0.5, 0.0, 0.5], "{Size:1,PersistenceRequired:1b}");
+    let slimes = w.mobs("minecraft:slime");
+    assert_eq!(slimes.len(), 1);
+    assert_eq!(slimes[0].2, 4.0, "a size 2 slime has 4 health");
+    w.ticks(60);
+    assert!(w.health() < 20.0, "the touching slime hurt the player (health {})", w.health());
+    w.console("gamemode creative Hunter");
+    w.console("kill @e[type=minecraft:slime]");
+    w.ticks(25);
+    let small = w.mobs("minecraft:slime");
+    assert!((2..=4).contains(&small.len()), "split into 2 to 4 slimes: {small:?}");
+    assert!(small.iter().all(|s| s.2 == 1.0), "tiny slimes have 1 health: {small:?}");
+    w.console("kill @e[type=minecraft:slime]");
+    w.ticks(25);
+    assert!(w.mobs("minecraft:slime").is_empty(), "tiny slimes do not split");
+}
+
+#[test]
+fn tiny_magma_cubes_hurt_touching_players() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:magma_cube", [0.3, 0.0, 0.3], "{Size:0,PersistenceRequired:1b}");
+    w.ticks(60);
+    assert!(w.health() < 20.0, "the magma cube hurt the player (health {})", w.health());
+}
+
+#[test]
+fn ghasts_shoot_fireballs_at_players() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    let p = w.pos();
+    let (x, y, z) = (p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32);
+    // A ceiling keeps the ghast within 4 blocks of the player's height.
+    w.console(&format!("fill {} {} {} {} {} {} minecraft:stone", x - 20, y + 6, z - 20, x + 20, y + 6, z + 20));
+    w.summon("minecraft:ghast", [12.0, 0.5, 0.0], "{PersistenceRequired:1b}");
+    let mut fireball = false;
+    for _ in 0..300 {
+        w.ticks(1);
+        fireball |= w.sim.entities().iter().any(|e| e.0 == "minecraft:fireball");
+    }
+    assert!(fireball, "the ghast shot a fireball");
+    assert!(w.health() < 20.0, "the fireball hurt the player (health {})", w.health());
+}
+
+#[test]
+fn blazes_shoot_small_fireballs_at_players() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:blaze", [7.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    let mut fireball = false;
+    for _ in 0..200 {
+        w.ticks(1);
+        fireball |= w.sim.entities().iter().any(|e| e.0 == "minecraft:small_fireball");
+    }
+    assert!(fireball, "the blaze shot small fireballs");
+    assert!(w.health() < 20.0, "the blaze hurt the player (health {})", w.health());
+}
+
+#[test]
+fn phantoms_swoop_at_players_at_night() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:phantom", [2.0, 12.0, 0.0], "{PersistenceRequired:1b,size:2}");
+    w.ticks(400);
+    assert!(w.health() < 20.0, "the phantom bit the player (health {})", w.health());
 }

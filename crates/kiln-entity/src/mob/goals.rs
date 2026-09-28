@@ -18,6 +18,9 @@ pub const TARGET: u8 = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wanted {
     Player,
+    /// Players at most this many blocks above or below the mob (slimes, magma cubes, ghasts:
+    /// `Math.abs(target.getY() - getY()) <= 4`).
+    PlayerWithinDy(u8),
     /// A type Kiln does not simulate yet (turtles, ...): the search always comes back empty,
     /// but the goal still draws its randomness.
     Unsimulated,
@@ -603,6 +606,10 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
             let range = m.attrs.value(Attr::FollowRange);
             *tg = match wanted {
                 Wanted::Player => nearest_player(e, m, level, true, range, true, |_| true).map(|p| p.id),
+                Wanted::PlayerWithinDy(dy) => {
+                    let (y, dy) = (e.y(), *dy as f64);
+                    nearest_player(e, m, level, true, range, true, |p| (p.pos.y - y).abs() <= dy).map(|p| p.id)
+                }
                 Wanted::Unsimulated => None,
                 Wanted::Types(types) => nearest_mob(e, m, level, range, *must_see, types),
             };

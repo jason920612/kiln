@@ -386,6 +386,39 @@ pub trait Kind: Sync + Send {
         let _ = m;
         None
     }
+    /// `jumpFromGround` in place of `LivingEntity.jumpFromGround`; true when handled.
+    fn jump_from_ground(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// `jumpInLiquid(water or lava)` in place of the shared rise of 0.04; true when handled.
+    fn jump_in_liquid(&self, e: &mut Entity, m: &mut MobData, lava: bool) -> bool {
+        let _ = (e, m, lava);
+        false
+    }
+    /// `isSensitiveToWater`: hurt (drowning, 1) in water or rain at the end of `LivingEntity.aiStep`.
+    fn sensitive_to_water(&self) -> bool {
+        false
+    }
+    /// `playerTouch`: a player's box inflated by (1, 0.5, 1) touches the mob (vanilla runs it in
+    /// the player's `aiStep`; the simulation calls [`super::player_touch`] after the entity tick).
+    fn player_touch(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, player: &Living) {
+        let _ = (e, m, level, player);
+    }
+    /// `getMaxSpawnClusterSize`.
+    fn max_spawn_cluster(&self) -> i32 {
+        4
+    }
+    /// Natural spawning's walk target test (`isValidPositionForMob` → `checkSpawnRules`) always
+    /// passes: `PathfinderMob`s that are neither monsters nor animals (value 0), plain `Mob`s.
+    fn spawn_ignores_light(&self) -> bool {
+        false
+    }
+    /// false: `checkFallDamage` overridden to do nothing (ghasts, phantoms: no fall distance,
+    /// no landing, no fluid refresh after the move).
+    fn checks_fall_damage(&self) -> bool {
+        true
+    }
 }
 
 /// `Mob.finalizeSpawn`: the follow range bonus and left-handedness, from `r` (the level's random).
