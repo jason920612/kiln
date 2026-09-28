@@ -1265,6 +1265,7 @@ dependencies = [
  "kiln-javamath",
  "kiln-link",
  "kiln-loot",
+ "kiln-plugin-host",
  "kiln-proto",
  "kiln-region",
  "kiln-sched",

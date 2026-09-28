@@ -35,6 +35,15 @@ fn main() -> Result<()> {
         sim_config.pool.workers = n;
     }
     sim_config.unified_regions = std::env::var("KILN_REGIONS").is_ok_and(|v| v == "unified");
+    // KILN_PLUGINS_DIR: WASM plugins (`<dir>/<plugin>/plugin.toml` + `plugin.wasm`);
+    // KILN_PLUGIN_BUDGET_US: time budget of each cancellable plugin call (default 500).
+    if let Some(dir) = std::env::var_os("KILN_PLUGINS_DIR") {
+        let mut plugins = kiln_sim::PluginSettings::new(dir);
+        if let Some(us) = std::env::var("KILN_PLUGIN_BUDGET_US").ok().and_then(|v| v.parse().ok()) {
+            plugins.call_budget = std::time::Duration::from_micros(us);
+        }
+        sim_config.plugins = Some(plugins);
+    }
     // KILN_GENERATOR=noise: vanilla overworld terrain (KILN_SEED, KILN_DATAPACK = the data
     // generator output, default work/generated).
     if std::env::var("KILN_GENERATOR").is_ok_and(|v| v == "noise") {

@@ -6,6 +6,8 @@
 //! (centre and radius) in that cell, and later decisions read the cell's claim, so a claim
 //! stays as recorded even if the configured radius changes. Each cell also counts denials.
 //!
+//! `center = "x,z"` protects around another point than the world spawn.
+//!
 //! `chaos` (`trap` or `spin`) with `chaos_y` makes handlers misbehave at that height, after
 //! their writes, for the host's failure-policy tests.
 
@@ -93,8 +95,12 @@ impl Plugin for SpawnProtection {
             _ => Chaos::None,
         };
         let int = |k: &str, d: i32| config(&info, k).and_then(|v| v.parse().ok()).unwrap_or(d);
+        let center = config(&info, "center")
+            .and_then(|c| c.split_once(','))
+            .and_then(|(x, z)| Some((x.trim().parse().ok()?, z.trim().parse().ok()?)))
+            .unwrap_or((info.spawn.x, info.spawn.z));
         *SETTINGS.lock().unwrap() = Some(Settings {
-            spawn: (info.spawn.x, info.spawn.z),
+            spawn: center,
             radius: int("radius", 16),
             chaos,
             chaos_y: int("chaos_y", i32::MIN),

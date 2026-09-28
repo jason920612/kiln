@@ -66,3 +66,33 @@ pub fn load(id: &str, extra_config: &str) -> Result<(Manifest, Vec<u8>)> {
     }
     Ok((Manifest::parse(&text)?, std::fs::read(dir.join("plugin.wasm"))?))
 }
+
+/// A plugin directory named `name` (under the examples' build directory) with the examples
+/// `ids` (all when empty), `extra` config appended per id.
+pub fn custom_dir(name: &str, ids: &[&str], extra: &[(&str, &str)]) -> Result<PathBuf> {
+    let built = build()?;
+    let out = built.with_file_name(name);
+    let _ = std::fs::remove_dir_all(&out);
+    for entry in std::fs::read_dir(&built)? {
+        let id = entry?.file_name().to_string_lossy().into_owned();
+        if !ids.is_empty() && !ids.contains(&id.as_str()) {
+            continue;
+        }
+        let add = extra.iter().filter(|(i, _)| *i == id).map(|(_, e)| *e).collect::<Vec<_>>().join("\n");
+        let (manifest, wasm) = load(&id, &add)?;
+        let dest = out.join(&id);
+        std::fs::create_dir_all(&dest)?;
+        let mut text = std::fs::read_to_string(built.join(&id).join("plugin.toml"))?;
+        if !add.is_empty() {
+            if !text.contains("[config]") {
+                text.push_str("\n[config]\n");
+            }
+            text.push('\n');
+            text.push_str(&add);
+        }
+        debug_assert_eq!(Manifest::parse(&text)?.id, manifest.id);
+        std::fs::write(dest.join("plugin.toml"), text)?;
+        std::fs::write(dest.join("plugin.wasm"), wasm)?;
+    }
+    Ok(out)
+}

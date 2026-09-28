@@ -25,10 +25,22 @@ struct Run {
     /// must not depend on the topology either.
     traffic: Vec<Vec<(u64, u64)>>,
     max_regions: usize,
+    /// With plugins: blocks the counter plugin counted, and edits of group 1 (inside the
+    /// protected area) that left a block.
+    counted: i64,
+    protected_built: usize,
+    /// Plugin calls, traps, timeouts.
+    plugin_stats: (u64, u64, u64),
 }
 
 fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
+    run_with(ticks, workers, unified, chaos, None)
+}
+
+fn run_with(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>, plugins: Option<kiln_sim::PluginSettings>) -> Run {
+    let with_plugins = plugins.is_some();
     let mut config = SimConfig::new(PLAYERS, 4, None);
+    config.plugins = plugins;
     config.pool.workers = workers;
     config.pool.chaos = chaos;
     config.unified_regions = unified;
@@ -66,12 +78,18 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
                 let [x, y, z] = w.client.pos.map(|c| c.floor() as i32);
                 let (conn, sequence) = (w.client.conn, tick as i32);
                 let ground = [x + 2, y - 1, z];
-                placed.push([x + 2, y, z]);
+                placed.push(([x + 2, y, z], i % GROUPS));
                 inbox.push(ToSim::Packet(conn, if (tick / 40) % 3 == 2 {
                     PlayIn::PlayerAction { action: 0, pos: [x + 2, y, z], face: 1, sequence }
                 } else {
                     PlayIn::UseItemOn { hand: 0, pos: ground, face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence }
                 }));
+            }
+        }
+        // With plugins, everyone chats (PX, the formatter rewrites it) mid-way.
+        if with_plugins && tick == 160 {
+            for i in 0..PLAYERS {
+                inbox.push(ToSim::Packet(i as u64 + 1, PlayIn::Chat { message: format!("hello from P{i}") }));
             }
         }
         if tick == 150 {
@@ -169,7 +187,16 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     }
     assert_eq!(sim.player_count(), PLAYERS);
     let air = kiln_data::blocks::default_state::AIR;
-    let built = placed.iter().filter(|p| sim.block_at(p[0], p[1], p[2]).is_some_and(|s| s != air)).count();
+    let built = placed.iter().filter(|(p, _)| sim.block_at(p[0], p[1], p[2]).is_some_and(|s| s != air)).count();
+    // (The group's spring may have flowed there.)
+    let protected_built = placed
+        .iter()
+        .filter(|(p, g)| *g == 1 && sim.block_at(p[0], p[1], p[2]).is_some_and(|s| s != air && !kiln_data::blocks_types::has_fluid(s)))
+        .count();
+    let counted = (0..PLAYERS as u64)
+        .filter_map(|c| sim.plugin_player_value(uuid::Uuid::from_u64_pair(0x6b69_6c6e, c + 1), "counter", "broken"))
+        .map(|v| i64::from_le_bytes(v.try_into().unwrap()))
+        .sum();
     assert!(built > 10, "only {built} of {} edits left a block", placed.len());
     let [ox, oz] = group_offset(0, GROUPS, GROUP_SPACING);
     let (wx, wz) = ((14.0 + ox) as i32, (3.0 + oz) as i32);
@@ -184,7 +211,7 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
     assert!(effects > 0, "players had effects");
     assert!(burning > 0, "someone walked into the fire");
     assert!(mob_ticks > 0, "mobs took part");
-    Run { hashes, traffic, max_regions }
+    Run { hashes, traffic, max_regions, counted, protected_built, plugin_stats: sim.plugin_stats() }
 }
 
 #[test]
@@ -209,6 +236,35 @@ fn regions_and_workers_do_not_change_the_result() {
         assert_eq!(parallel.hashes, unified.hashes, "{workers} workers, chaos seed {seed}");
         assert_eq!(parallel.traffic, unified.traffic, "{workers} workers, chaos seed {seed}");
     }
+}
+
+/// WASM plugins loaded: spawn protection around group 1's centre (fail-closed, cell data),
+/// the chat formatter (everyone chats once), the counter (observe batches, global adds) and
+/// the ledger. Their calls run in the parallel regions and in PX; the result must still not
+/// depend on the regions or the workers.
+#[test]
+fn plugins_do_not_change_the_result() {
+    let dir = kiln_plugin_host::examples::custom_dir("determinism", &[], &[("spawn-protection", "center = \"520,-504\"")]).expect("example plugins");
+    // Wall-clock timeouts are not deterministic (a preempted call runs out of its budget):
+    // the budget here is one no call reaches.
+    let settings_dir = dir.clone();
+    let settings = kiln_sim::PluginSettings { call_budget: std::time::Duration::from_secs(1), ..kiln_sim::PluginSettings::new(dir) };
+    let unified = run_with(400, 1, true, None, Some(settings.clone()));
+    assert!(unified.counted > 0, "the counter saw breaks");
+    assert_eq!(unified.protected_built, 0, "nothing was built in the protected area");
+    let split = run_with(400, 4, false, Some(5), Some(settings));
+    assert!(split.max_regions >= GROUPS);
+    assert_eq!(split.hashes, unified.hashes);
+    assert_eq!(split.traffic, unified.traffic);
+    assert_eq!(split.counted, unified.counted);
+    let (calls, traps, timeouts) = split.plugin_stats;
+    assert!(calls > 100 && traps == 0 && timeouts == 0, "{:?}", split.plugin_stats);
+    // With the default 500 µs budget under chaos scheduling, some calls may time out (and,
+    // fail-closed, deny): report how many.
+    let tight = run_with(400, 4, false, Some(5), Some(kiln_sim::PluginSettings::new(settings_dir)));
+    eprintln!("plugin calls, traps, timeouts at the default budget: {:?}", tight.plugin_stats);
+    // Plugins take part in the state: without them the hashes differ.
+    assert_ne!(run(400, 1, true, None).hashes, unified.hashes);
 }
 
 /// Players spread over the three levels: some are sent to the nether and the End with

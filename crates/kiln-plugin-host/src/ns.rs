@@ -229,7 +229,8 @@ impl Persist {
     }
 
     pub fn save_cells(&self, table: &CellTable) {
-        let mut by_region: BTreeMap<(u32, i32, i32), Vec<(&CellKey, &Ns)>> = BTreeMap::new();
+        type Sidecars<'a> = BTreeMap<(u32, i32, i32), Vec<(&'a CellKey, &'a Ns)>>;
+        let mut by_region: Sidecars = BTreeMap::new();
         for (k, ns) in &table.cells {
             by_region.entry(k.region()).or_default().push((k, ns));
         }
