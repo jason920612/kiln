@@ -1072,13 +1072,6 @@ fn carry_out(
                 spawns.push(crate::mobs::drop_item(stack, arr(pos), h));
             }
         }
-        Event::MobEffect { target, effect, duration, amplifier, source: _ } => {
-            if let Some(p) = players.iter_mut().find(|p| p.entity_id == target && !p.dead)
-                && let Some(id) = crate::effects::effect_id(effect)
-            {
-                p.add_effect(crate::effects::Effect::simple(id, duration, amplifier));
-            }
-        }
         Event::PotionSplash { target, potion, scale, owner: _ } => {
             // `ThrownSplashPotion.onHitAsPotion` on a player: instant effects scaled by the
             // distance, the others with scaled durations (dropped at 20 ticks or less).

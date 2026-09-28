@@ -223,7 +223,7 @@ impl ShulkerBullet {
             }
         };
         if hurt && level.player(id).is_some() {
-            level.emit(Event::MobEffect { target: id, effect: "minecraft:levitation", duration: 200, amplifier: 0, source: self.owner.or(Some(e.id)) });
+            level.add_effect(id, "minecraft:levitation", 200, 0, self.owner.or(Some(e.id)));
         }
     }
 }

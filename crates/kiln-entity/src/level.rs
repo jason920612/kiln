@@ -157,9 +157,6 @@ pub enum Event {
     },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
-    /// `addEffect` on player `target` (a `minecraft:mob_effect` id) from `source`. Mobs have no
-    /// effects in Kiln.
-    MobEffect { target: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32> },
     /// A splash potion (`minecraft:` potion id) reached player `target` at `scale` of its full
     /// strength (`ThrownSplashPotion.onHitAsPotion`); `owner` threw it.
     PotionSplash { target: i32, potion: &'static str, scale: f64, owner: Option<i32> },
