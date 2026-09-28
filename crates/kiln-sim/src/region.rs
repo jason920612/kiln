@@ -267,8 +267,11 @@ impl RegionWork<'_> {
             self.out.portals.extend(t.portals);
         }
         mark(&mut self.out.times, 1);
-        for p in self.players.iter_mut().filter(|p| !p.disconnected) {
-            update_chunks(p, &mut *self.cells, env, &mut self.out.wanted);
+        // Which chunks each player lacks is its own business (a window); sending them needs
+        // the chunks' packet caches, so that part runs in connection order here.
+        let missing = ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| if p.disconnected { Vec::new() } else { chunk_view(p) });
+        for (p, missing) in self.players.iter_mut().zip(missing).filter(|(_, m)| !m.is_empty()) {
+            send_chunks(p, missing, &mut *self.cells, env, &mut self.out.wanted);
         }
         // The same tick everywhere, so when chunks unload does not depend on the regions.
         if env.game_time % 20 == 0 {
@@ -1002,9 +1005,9 @@ fn tick_connection(p: &mut Player, env: &Env) {
     }
 }
 
-/// Recenters the player's chunk view and streams missing loaded chunks, nearest first;
-/// missing chunks that are not loaded yet are requested.
-fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &mut Vec<(u32, ConnId, ChunkPos)>) {
+/// Recenters the player's chunk view (forgetting chunks now out of it) and returns the chunks
+/// it lacks, nearest first (none while the client is behind on batches).
+fn chunk_view(p: &mut Player) -> Vec<ChunkPos> {
     let center = ChunkPos::of_block(p.pos[0].floor() as i32, p.pos[2].floor() as i32);
     let r = p.view_distance;
     // A smaller view distance forgets chunks too (vanilla `updateChunkTracking`).
@@ -1023,7 +1026,7 @@ fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &
         }
     }
     if p.unacked_batches >= MAX_UNACKED_BATCHES {
-        return;
+        return Vec::new();
     }
     let mut missing: Vec<ChunkPos> = Vec::new();
     for x in center.x - r..=center.x + r {
@@ -1034,10 +1037,13 @@ fn update_chunks(p: &mut Player, cells: &mut CellSet<Cell>, env: &Env, wanted: &
             }
         }
     }
-    if missing.is_empty() {
-        return;
-    }
     missing.sort_by_key(|c| (c.x - center.x).pow(2) + (c.z - center.z).pow(2));
+    missing
+}
+
+/// Streams the missing chunks that are loaded, nearest first; missing chunks that are not
+/// loaded yet are requested.
+fn send_chunks(p: &mut Player, missing: Vec<ChunkPos>, cells: &mut CellSet<Cell>, env: &Env, wanted: &mut Vec<(u32, ConnId, ChunkPos)>) {
     let budget = (p.chunks_per_tick.ceil() as usize).max(1);
     let mut batch = Vec::new();
     // Ask for about what the client takes in the next tick or two, nearest first.
