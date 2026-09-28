@@ -793,6 +793,20 @@ public class MobVectors {
             s.ticks = 120;
             out.add(s);
         }
+        // A skeleton in powder snow freezes into a stray (7 s, then 15 s of shaking).
+        {
+            Scenario s = new Scenario("convert_skeleton");
+            floor(s, 16, "minecraft:stone");
+            for (int x = -3; x <= 3; x++)
+                for (int z = -3; z <= 3; z++)
+                    for (int y = BY; y <= BY + 1; y++) block(s, x, y, z, "minecraft:powder_snow");
+            s.mobs.add(new MobSpec("minecraft:skeleton", 0.5, BY, 0.5, 0f, 7250));
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 480;
+            out.add(s);
+        }
         // Zombies go after villagers, skeletons after iron golems (standing still: no AI).
         {
             Scenario s = new Scenario("target_villager_zombie");
