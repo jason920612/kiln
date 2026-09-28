@@ -687,6 +687,18 @@ fn open_changes(p: &Player, level: &RegionLevel) -> Vec<(BlockPos, u64)> {
     positions.into_iter().filter_map(|pos| level.blocks.containers.get(pos).map(|c| (pos, c.changes))).collect()
 }
 
+/// [`menu_op`]'s broadcast for a player with no block menu open (`containers.open` is `None`):
+/// no block entity, comparator or workstation takes part, so it needs only the player.
+/// Returns what the player dropped.
+pub(crate) fn own_menu_broadcast(p: &mut Player, rules: &kiln_inventory::Rules) -> Vec<Spawn> {
+    debug_assert!(p.containers.open.is_none());
+    let mut spawns = Vec::new();
+    p.with_menu_at(rules, &mut spawns, None, |menu, _, env| menu.broadcast_changes(env));
+    // `workstation_effects` without a workstation: pending effects are dropped.
+    p.containers.pending.clear();
+    spawns
+}
+
 /// A menu operation on the player's open menu within its region (clicks, broadcasts):
 /// containers it changed update their comparators (`BlockEntity.setChanged`).
 pub(crate) fn menu_op<R>(

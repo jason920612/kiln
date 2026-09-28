@@ -38,11 +38,23 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
 }
 
 fn run_with(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>, plugins: Option<kiln_sim::PluginSettings>) -> Run {
+    run_phased(ticks, workers, unified, chaos, plugins, kiln_sched::PhaseMode::Auto)
+}
+
+fn run_phased(
+    ticks: usize,
+    workers: usize,
+    unified: bool,
+    chaos: Option<u64>,
+    plugins: Option<kiln_sim::PluginSettings>,
+    phase: kiln_sched::PhaseMode,
+) -> Run {
     let with_plugins = plugins.is_some();
     let mut config = SimConfig::new(PLAYERS, 4, None);
     config.plugins = plugins;
     config.pool.workers = workers;
     config.pool.chaos = chaos;
+    config.pool.phase = phase;
     config.unified_regions = unified;
     let mut sim = Sim::new(config);
     let items = ["minecraft:stone", "minecraft:oak_fence", "minecraft:redstone_torch"].map(|n| kiln_data::builtin_id("minecraft:item", n).unwrap());
@@ -235,6 +247,22 @@ fn regions_and_workers_do_not_change_the_result() {
         let parallel = run(400, workers, false, Some(seed));
         assert_eq!(parallel.hashes, unified.hashes, "{workers} workers, chaos seed {seed}");
         assert_eq!(parallel.traffic, unified.traffic, "{workers} workers, chaos seed {seed}");
+    }
+}
+
+/// The per-player windows inside a region (player ticks, menus, visibility, movement
+/// encoding and delivery, egress) forced to split into chunks, or split at random, on
+/// several workers: the same states and the same packets as one worker running them inline.
+#[test]
+fn crowd_windows_do_not_change_the_result() {
+    use kiln_sched::PhaseMode;
+    let reference = run_phased(400, 1, true, None, None, PhaseMode::Inline);
+    for (workers, phase, seed) in [(4, PhaseMode::Parallel, 7), (7, PhaseMode::Mixed, 13), (7, PhaseMode::Parallel, 21)] {
+        for unified in [true, false] {
+            let r = run_phased(400, workers, unified, Some(seed), None, phase);
+            assert_eq!(r.hashes, reference.hashes, "{workers} workers, {phase:?}, unified {unified}");
+            assert_eq!(r.traffic, reference.traffic, "{workers} workers, {phase:?}, unified {unified}");
+        }
     }
 }
 

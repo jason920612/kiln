@@ -181,6 +181,24 @@ impl<C, P> Region<C, P> {
         &mut self.part
     }
 
+    /// Lends the region's cells and part out (to tick away from the scheduler), leaving the
+    /// region empty in place: the cell table keeps pointing at it, lookups through it find
+    /// nothing, and [`Regionizer::apply`](crate::Regionizer::apply) must not run on this
+    /// dimension until [`restore`](Self::restore) puts them back.
+    pub fn lend(&mut self) -> (CellSet<C>, P)
+    where
+        P: Default,
+    {
+        (std::mem::replace(&mut self.cells, CellSet::new()), std::mem::take(&mut self.part))
+    }
+
+    /// Puts back what [`lend`](Self::lend) took.
+    pub fn restore(&mut self, cells: CellSet<C>, part: P) {
+        debug_assert!(self.cells.is_empty(), "restoring into a region that is not lent");
+        self.cells = cells;
+        self.part = part;
+    }
+
     pub fn cells_and_part_mut(&mut self) -> (&mut CellSet<C>, &mut P) {
         (&mut self.cells, &mut self.part)
     }

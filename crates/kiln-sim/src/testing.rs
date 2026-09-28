@@ -17,6 +17,8 @@ pub struct SinkStats {
     pub disconnected: AtomicBool,
     /// Latest Player Position (teleport) received: id and position.
     pub teleport: Mutex<Option<(i32, [f64; 3])>>,
+    /// Latest keep-alive id not answered yet.
+    pub keep_alive: Mutex<Option<i64>>,
     /// Packets and bytes per packet id, when `KILN_SINK_IDS` is set or `count_ids` (costs time
     /// per packet).
     pub by_id: Mutex<std::collections::BTreeMap<i32, (u64, u64)>>,
@@ -44,6 +46,11 @@ impl SinkStats {
             let e = m.entry(id).or_default();
             e.0 += 1;
             e.1 += p.len() as u64;
+        }
+        if id == Some(kiln_data::packets::play::clientbound::KEEP_ALIVE)
+            && let Ok(k) = r.i64()
+        {
+            *self.keep_alive.lock().unwrap() = Some(k);
         }
         if id == Some(kiln_data::packets::play::clientbound::PLAYER_POSITION)
             && let (Ok(id), Ok(x), Ok(y), Ok(z)) = (r.varint(), r.f64(), r.f64(), r.f64())
@@ -97,9 +104,13 @@ impl Client {
         Self { conn, stats, pos: [0.0; 3], confirmed: 0, loaded: false }
     }
 
-    /// Packets for this client tick: a teleport confirmation (which replaces movement this
+    /// Packets for this client tick: a keep-alive answer, a teleport confirmation (which replaces movement this
     /// tick), the loaded report once, or a move to `to` if given; then Client Tick End.
     pub fn tick(&mut self, to: Option<[f64; 3]>, out: &mut Vec<ToSim>) {
+        // Answered at once, so a slow simulation does not time scripted clients out.
+        if let Some(id) = self.stats.keep_alive.lock().unwrap().take() {
+            out.push(ToSim::Packet(self.conn, PlayIn::KeepAlive { id }));
+        }
         let teleport = *self.stats.teleport.lock().unwrap();
         if let Some((id, pos)) = teleport.filter(|(id, _)| *id != self.confirmed) {
             self.confirmed = id;

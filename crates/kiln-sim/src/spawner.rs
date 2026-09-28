@@ -118,12 +118,16 @@ struct Spawner<'a> {
     local: Vec<[i32; 2]>,
     /// Players whose spawning squares (8 chunks around them) overlap form a cluster; each
     /// cluster has vanilla's category cap for its chunks, so how players are grouped into
-    /// regions does not matter. `cluster_of[player]`, and per cluster its chunk count and
-    /// mobs per category.
-    cluster_of: Vec<usize>,
+    /// regions does not matter. Per cluster, mobs per category and the cap.
     counts: Vec<[i32; 2]>,
     caps: Vec<[i32; 2]>,
     table: &'a SpawnTable,
+    /// The distinct chunks players stand in and each one's cluster.
+    stands: Vec<ChunkPos>,
+    stand_cluster: Vec<usize>,
+    /// Players by the chunk they stand in, for distance checks that need only whether some
+    /// player is within a radius (a crowd stands in a few chunks).
+    by_chunk: std::collections::HashMap<ChunkPos, Vec<usize>>,
 }
 
 fn cat_index(c: Category) -> usize {
@@ -138,12 +142,28 @@ fn close_for_spawning(p: [f64; 3], c: ChunkPos) -> bool {
 }
 
 impl Spawner<'_> {
-    /// The cluster whose spawning squares hold chunk `c`.
+    /// The cluster whose spawning squares hold chunk `c` (players within 8 chunks of one
+    /// chunk are all in one cluster, so any stand chunk that close tells).
     fn cluster(&self, c: ChunkPos) -> Option<usize> {
-        self.pos.iter().position(|p| {
-            let pc = ChunkPos::of_block(p[0].floor() as i32, p[2].floor() as i32);
-            (pc.x - c.x).abs() <= 8 && (pc.z - c.z).abs() <= 8
-        }).map(|i| self.cluster_of[i])
+        self.stands.iter().position(|pc| (pc.x - c.x).abs() <= 8 && (pc.z - c.z).abs() <= 8).map(|k| self.stand_cluster[k])
+    }
+
+    /// Whether some player is within `sqrt(r2)` blocks of (`x`, `y`, `z`): the players of the
+    /// chunks that close, each checked exactly as a scan over all players would.
+    fn player_within(&self, x: f64, y: f64, z: f64, r2: f64) -> bool {
+        // |dx| <= r moves the chunk by at most ceil(r / 16).
+        let reach = (r2.sqrt().ceil() as i32 + 15) / 16;
+        let c = ChunkPos::of_block(x.floor() as i32, z.floor() as i32);
+        (c.x - reach..=c.x + reach).any(|cx| {
+            (c.z - reach..=c.z + reach).any(|cz| {
+                self.by_chunk.get(&ChunkPos::new(cx, cz)).is_some_and(|ps| {
+                    ps.iter().any(|&i| {
+                        let p = self.pos[i];
+                        (p[0] - x).powi(2) + (p[1] - y).powi(2) + (p[2] - z).powi(2) <= r2
+                    })
+                })
+            })
+        })
     }
 
     fn local_ok(&self, c: ChunkPos, cat: Category) -> bool {
@@ -211,8 +231,10 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     ids.sort_unstable();
     ids.dedup();
     let stand_cluster: Vec<usize> = roots.iter().map(|r| ids.binary_search(r).unwrap()).collect();
-    let cluster_of: Vec<usize> =
-        players.iter().map(|p| stand_cluster[stands.binary_search(&chunk_of(p)).expect("a player's chunk")]).collect();
+    let mut by_chunk: std::collections::HashMap<ChunkPos, Vec<usize>> = Default::default();
+    for (i, p) in players.iter().enumerate() {
+        by_chunk.entry(chunk_of(p)).or_default().push(i);
+    }
     // `getNaturalSpawnChunkCount` per cluster: chunks within 8 of its players (chessboard).
     let mut near: Vec<std::collections::HashSet<ChunkPos>> = vec![Default::default(); ids.len()];
     for (k, c) in stands.iter().enumerate() {
@@ -227,10 +249,12 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     let mut s = Spawner {
         pos: players.clone(),
         local: vec![[0; 2]; players.len()],
-        cluster_of,
         counts: vec![[0; 2]; ids.len()],
         caps,
         table: &table,
+        stands,
+        stand_cluster,
+        by_chunk,
     };
     // `createState`: mobs per category, persistent ones excluded.
     for e in &entities.list {
@@ -358,12 +382,8 @@ fn spawn_category_for_chunk(
             px += r.next_int_bounded(6) - r.next_int_bounded(6);
             pz += r.next_int_bounded(6) - r.next_int_bounded(6);
             let (fx, fz) = (px as f64 + 0.5, pz as f64 + 0.5);
-            let Some(d) = s.pos.iter().map(|p| (p[0] - fx).powi(2) + (p[1] - y as f64).powi(2) + (p[2] - fz).powi(2)).min_by(|a, b| a.total_cmp(b))
-            else {
-                continue;
-            };
-            // `isRightDistanceToPlayerAndSpawnPoint`.
-            if d <= 576.0 {
+            // `isRightDistanceToPlayerAndSpawnPoint`: the nearest player farther than 24.
+            if s.player_within(fx, y as f64, fz, 576.0) {
                 continue;
             }
             let sp = env.mobs.spawn_point;
@@ -390,7 +410,8 @@ fn spawn_category_for_chunk(
             let d_ = data.clone().unwrap();
             let Some(kind) = d_.kind else { continue };
             // `isValidSpawnPostitionForType`.
-            if d > (cat.despawn_distance() * cat.despawn_distance()) as f64 {
+            // The nearest player within the despawn distance.
+            if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
                 continue;
             }
             if !s.table.list(biome, cat).iter().any(|e| *e == d_) {

@@ -4,6 +4,7 @@
 //!
 //! usage: cargo run --release -p kiln-sim --example sim_load -- [--players 1000] [--groups 20]
 //!        [--spacing 48] [--radius 6] [--ticks 1200] [--view-distance 2] [--behavior crowd|walk]
+//!        [--threads n] [--unified] [--inline] [--independent] [--slow-ms n]
 
 use kiln_sim::testing::{Client, Walker, group_offset, join};
 use kiln_sim::{Sim, SimConfig};
@@ -22,6 +23,12 @@ struct Args {
     walk: bool,
     threads: usize,
     unified: bool,
+    /// Every phase window inline (the serial baseline for crowd windows).
+    inline: bool,
+    /// Independent scheduling instead of lockstep.
+    independent: bool,
+    /// Milliseconds injected into each tick of group 0's region.
+    slow_ms: u64,
 }
 
 fn args() -> Args {
@@ -36,6 +43,9 @@ fn args() -> Args {
         walk: false,
         threads: cores.saturating_sub(1).clamp(1, 7),
         unified: false,
+        inline: false,
+        independent: false,
+        slow_ms: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -50,6 +60,9 @@ fn args() -> Args {
             "--behavior" => a.walk = value() == "walk",
             "--threads" => a.threads = value().parse().unwrap(),
             "--unified" => a.unified = true,
+            "--inline" => a.inline = true,
+            "--independent" => a.independent = true,
+            "--slow-ms" => a.slow_ms = value().parse().unwrap(),
             other => panic!("unknown argument {other}"),
         }
     }
@@ -65,6 +78,21 @@ fn main() {
     let mut config = SimConfig::new(a.players, 10, None);
     config.pool.workers = a.threads;
     config.unified_regions = a.unified;
+    if a.inline {
+        config.pool.phase = kiln_sched::PhaseMode::Inline;
+    }
+    if a.independent {
+        config.schedule = kiln_sim::ScheduleMode::Independent;
+    }
+    if a.slow_ms > 0 {
+        let [ox, oz] = group_offset(0, a.groups, a.spacing);
+        config.inject_delay = Some(kiln_sim::InjectedDelay {
+            dimension: "minecraft:overworld".into(),
+            x: (8.5 + ox) as i32,
+            z: (8.5 + oz) as i32,
+            delay: std::time::Duration::from_millis(a.slow_ms),
+        });
+    }
     let mut sim = Sim::new(config);
     let mut walkers: Vec<Walker> = Vec::with_capacity(a.players);
     let mut inbox = Vec::new();
@@ -110,6 +138,21 @@ fn main() {
             }
             None => assert!(tick < 20 * 600, "players did not settle"),
         }
+    }
+    // Regions ticking away (independent mode) come back before anything is counted.
+    sim.rendezvous();
+    if a.independent || a.slow_ms > 0 {
+        let local = |g: usize| {
+            let [ox, oz] = group_offset(g, a.groups, a.spacing);
+            sim.local_tick_at("minecraft:overworld", (8.5 + ox) as i32, (8.5 + oz) as i32).unwrap_or(0)
+        };
+        let (rendezvous, waited, lends) = sim.independent_stats();
+        println!(
+            "own ticks: group 0 {}, last group {}; {rendezvous} rendezvous ({:.1} ms waited), {lends} ticks away",
+            local(0),
+            local(a.groups - 1),
+            waited.as_secs_f64() * 1e3
+        );
     }
     let n = times.len() as f64;
     let packets: u64 = walkers.iter().map(|w| w.client.stats.packets.load(Relaxed)).sum();

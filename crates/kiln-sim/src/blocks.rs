@@ -97,6 +97,13 @@ impl RegionBlocks {
         }
     }
 
+    /// The region rejoins the server's clock `delta` ticks after its own (it ticked away
+    /// and missed them): its scheduled ticks keep their distance in region ticks (REG-02).
+    pub fn shift_time(&mut self, delta: i64) {
+        self.block_ticks.shift(delta);
+        self.fluid_ticks.shift(delta);
+    }
+
     /// A chunk leaves the region's cells: its ticks and moving pistons go onto it for saving.
     pub fn chunk_unloaded(&mut self, pos: ChunkPos, chunk: &mut Chunk, game_time: i64) {
         self.store(pos, chunk, game_time);

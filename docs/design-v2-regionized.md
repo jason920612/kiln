@@ -281,6 +281,7 @@ E   fork  每個 region：egress 組裝（含本 tick 的全域廣播與聊天�
 - 拓撲變更只需要相關 region 停在 tick 邊界（兩兩 rendezvous），合併時以 local tick 差值平移 scheduled tick（Folia 的 redstone time 平移）。
 - 需要獨佔的動作（PX、EX、需要獨佔的 G1 function）以 rendezvous 執行：受影響維度的 region 在下一個 tick 邊界暫停，執行後恢復；落後的 region 會拖慢 rendezvous（記錄）。若靜態掃描發現**每 tick** 都需要獨佔的消費者（例如含無界 selector 的 `#minecraft:tick`），伺服器自動改用 lockstep 並記錄原因（Q27）。
 - independent 模式不具決定性，strict 模式禁止使用。
+- **目前實作（2026-09-28，`kiln-sim/src/independent.rs`，`SimConfig::schedule`／`KILN_SCHEDULE=independent`，預設 lockstep）**：還沒有 EDF 與每 region 的 B0/P；做法是「慢的 region 離開 lockstep」。tick 時間 EMA 超過 30 ms 的 region 在 L 階段被**借出**（`Region::lend` 讓 region 在原位變空、cell 表不變），它的 cell、part 與玩家在自己的執行緒跑 L，伺服器不等它；跑完的 region 在下一個 tick 開頭回來，在家度過那個 tick（B0、P fork、PX、G）後再借出，EMA 低於 15 ms 才回到 lockstep。回來時 scheduled block/fluid tick 平移錯過的 tick 數（`LevelTicks::shift`），其餘狀態讀伺服器時間（V）。rendezvous（等所有借出的 region 回來，之後同 lockstep）：加入與離開、console、任何玩家的聊天與指令、到期的 datapack function、autosave 與關機、有借出 region 的維度要改拓撲、傳送門旅行；借出期間的廣播替它的玩家保留，它的玩家的封包、它的 cell 的 chunk 與生成的實體都等它回來。載入插件或有 `#minecraft:tick` function 時自動留在 lockstep（記錄一次）。已知缺口：借出期間的天氣封包與睡眠計數看不到它的玩家；`state_hash` 等檢視 API 需先呼叫 `Sim::rendezvous`；慢 region 的 chunk 新佔 cell 會觸發 rendezvous。測試：`tests/independent.rs`（注入 100 ms 延遲的 region 不拖累另一個 region 的 20 TPS；水在慢 region 的第 5 個自身 tick 流動，伺服器同時跑了數百 tick；拿掉平移時測試失敗）。
 
 ### 4.4 平行化與決定性
 
@@ -590,6 +591,8 @@ enum TransferState { InTransit, Parked { chunk: ChunkPos }, Arrived }
 
 ### 4.9 熱點與人群
 人群不會分割：300 位擠在一起的玩家永遠在一個 region。每個 O(n²) 工作都在視窗內執行或化為 memcpy：可見性依原版觸發條件增量計算（§6.3）、delta 每實體編碼一次、每位檢視者的組裝是區段 memcpy、壓縮加密在 tick 外或 proxy。序列成本維持 O(玩家 + 實體 + 封包)。LPT 讓人群 region 最先開始，其他 region 做完的 worker 轉去執行它的視窗工作。M1 以校準的 mob 成本量測人群序列比例，超過 60% 時把數據與選項（CROWD-01、切分 connection tick、之後的著色子 cell 平行實體 tick 實驗）交給使用者（R1）。
+
+**目前實作（2026-09-28）**：region 內只動到單一玩家的子階段以 `Ctx::map_mut_with`（互斥借用的 indexed map）在 tick 池上分窗執行，輸出依連線 id 合併：P 中只影響自己的封包串（移動、keep-alive、傳送確認、客戶端設定、疾跑、tick end，依玩家分組、各自保序，掉落與死亡依到達順序合併）、玩家 tick（connection upkeep、base tick、飲食、觸發器）、未開方塊選單的玩家的選單廣播、chunk 視野維護（缺少的 chunk 才進序列段建封包）、可見性差異、移動編碼與遞送（每 32 位連續檢視者一段，各自依連線順序收集看得到的玩家的封包，outbox 的內容與順序按構造與序列執行相同）、egress。方塊與實體（生怪、mob tick）維持序列。另外生怪的玩家距離檢查改用 chunk 索引（結果相同）。sim_load（1,000 人、20 組合成單一 region、有 mob）平均約 19.4 → 14.2 ms，其中 mob tick 約 7 ms 仍是序列；無 mob 的單一人群以 `--inline` 同時段對照 20.6 → 7.9 ms；state hash 與改動前相同。300 人人群的 CPU 秒/tick 約多 5–10%（量測雜訊大；閒置 worker 的自旋），尚未證明達到 MR 的 +3% 閘門。
 
 ### 4.10 超時策略
 - 預設不做追趕 tick（TICK-01）；vanilla profile 保留原版追趕。lockstep 的 MSPT 是整個 tick（最慢的 region 加序列段）；independent 的 MSPT 以 region 計。
