@@ -1781,5 +1781,19 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::Magic => ("minecraft:magic", "death.attack.magic"),
         DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),
         DamageKind::LightningBolt => ("minecraft:lightning_bolt", "death.attack.lightningBolt"),
+        // -- slice 3: mob effects
+
+        // -- slice 3: raids
+
+        // -- slice 3: the end
+
+        // -- slice 3: wither and guardians
+
+        // -- slice 3: warden
+
+        // -- slice 3: common mobs A
+
+        // -- slice 3: common mobs B
+
     }
 }

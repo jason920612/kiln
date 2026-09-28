@@ -192,6 +192,21 @@ pub enum DamageKind {
     IndirectMagic,
     /// `minecraft:lightning_bolt`.
     LightningBolt,
+    // Slice 3 work packages add damage types below their own marker.
+    // -- slice 3: mob effects
+
+    // -- slice 3: raids
+
+    // -- slice 3: the end
+
+    // -- slice 3: wither and guardians
+
+    // -- slice 3: warden
+
+    // -- slice 3: common mobs A
+
+    // -- slice 3: common mobs B
+
 }
 
 /// Side effects the simulation carries out or broadcasts.

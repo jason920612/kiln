@@ -684,6 +684,21 @@ public class MobVectors {
         scenariosZombies(out);
         scenariosEnder(out);
         scenariosTame(out);
+        // slice 3: one call per work package (keep the blank lines between them).
+        scenariosEffects(out);
+
+        scenariosRaids(out);
+
+        scenariosEnd(out);
+
+        scenariosWither(out);
+
+        scenariosWarden(out);
+
+        scenariosCommonA(out);
+
+        scenariosCommonB(out);
+
         return out;
     }
 
@@ -1503,4 +1518,39 @@ public class MobVectors {
             out.add(s);
         }
     }
+
+    // ---------------------------------------------------------- slice 3: mob effects on mobs, curing
+    static void scenariosEffects(List<Scenario> out) {
+    }
+
+
+    // ---------------------------------------------------------- slice 3: raids and illagers
+    static void scenariosRaids(List<Scenario> out) {
+    }
+
+
+    // ---------------------------------------------------------- slice 3: the end fight
+    static void scenariosEnd(List<Scenario> out) {
+    }
+
+
+    // ---------------------------------------------------------- slice 3: wither and guardians
+    static void scenariosWither(List<Scenario> out) {
+    }
+
+
+    // ---------------------------------------------------------- slice 3: warden and sculk
+    static void scenariosWarden(List<Scenario> out) {
+    }
+
+
+    // ---------------------------------------------------------- slice 3: common mobs A
+    static void scenariosCommonA(List<Scenario> out) {
+    }
+
+
+    // ---------------------------------------------------------- slice 3: common mobs B
+    static void scenariosCommonB(List<Scenario> out) {
+    }
+
 }

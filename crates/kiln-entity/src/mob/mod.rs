@@ -77,6 +77,20 @@ pub enum MobKind {
     Villager,
     Piglin,
     Hoglin,
+    // Slice 3 work packages add their types below their own marker (keep the blank lines
+    // between markers so parallel additions merge cleanly).
+    // -- slice 3: raids
+
+    // -- slice 3: the end
+
+    // -- slice 3: wither and guardians
+
+    // -- slice 3: warden
+
+    // -- slice 3: common mobs A
+
+    // -- slice 3: common mobs B
+
 }
 
 /// `MobCategory`.
@@ -117,7 +131,7 @@ impl Category {
     }
 }
 
-pub const ALL_KINDS: [MobKind; 33] = [
+pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Pig,
     MobKind::Cow,
     MobKind::Sheep,
@@ -151,6 +165,18 @@ pub const ALL_KINDS: [MobKind; 33] = [
     MobKind::Villager,
     MobKind::Piglin,
     MobKind::Hoglin,
+    // -- slice 3: raids
+
+    // -- slice 3: the end
+
+    // -- slice 3: wither and guardians
+
+    // -- slice 3: warden
+
+    // -- slice 3: common mobs A
+
+    // -- slice 3: common mobs B
+
 ];
 
 impl MobKind {
@@ -635,6 +661,17 @@ pub fn item_tag(item: i32, tag: &str) -> bool {
             .find(|(r, _)| *r == "minecraft:item")
             .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
             .is_some_and(|(_, ids)| ids.contains(&item))
+}
+
+/// Whether entity type `type_name` is in the `minecraft:entity_type` tag `tag` (e.g.
+/// `minecraft:undead`, `minecraft:raiders`).
+pub fn entity_type_tag(type_name: &str, tag: &str) -> bool {
+    let Some(id) = kiln_data::builtin_id("minecraft:entity_type", type_name) else { return false };
+    kiln_data::registries::TAGS
+        .iter()
+        .find(|(r, _)| *r == "minecraft:entity_type")
+        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+        .is_some_and(|(_, ids)| ids.contains(&id))
 }
 
 /// The variant components of a mob (`Entity.get(DataComponents.*_VARIANT)`) that entity
@@ -2206,6 +2243,20 @@ impl DamageKind {
             DamageKind::Magic => "minecraft:magic",
             DamageKind::IndirectMagic => "minecraft:indirect_magic",
             DamageKind::LightningBolt => "minecraft:lightning_bolt",
+            // -- slice 3: mob effects
+
+            // -- slice 3: raids
+
+            // -- slice 3: the end
+
+            // -- slice 3: wither and guardians
+
+            // -- slice 3: warden
+
+            // -- slice 3: common mobs A
+
+            // -- slice 3: common mobs B
+
         }
     }
 

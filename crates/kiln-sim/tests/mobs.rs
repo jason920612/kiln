@@ -519,7 +519,7 @@ fn every_mob_type_summons_ticks_and_saves() {
         w.summon(kind.type_name(), [6.0 * a.cos(), 0.0, 6.0 * a.sin()], "{PersistenceRequired:1b}");
     }
     w.ticks(1);
-    for kind in kiln_entity::mob::ALL_KINDS {
+    for &kind in kiln_entity::mob::ALL_KINDS {
         // Endermen hunt endermites.
         if kind == kiln_entity::mob::MobKind::Endermite {
             continue;
