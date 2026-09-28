@@ -378,8 +378,7 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         open_menu(p, level, provider, spawns);
         return Some(true);
     }
-    let kind = level.blocks.containers.get(pos).map(|c| c.kind)?;
-    let _ = kind;
+    level.blocks.containers.get(pos)?;
     if let Some(provider) = container_provider(level, pos, s) {
         open_menu(p, level, provider, spawns);
     }
@@ -446,7 +445,6 @@ fn open_menu(p: &mut Player, level: &mut RegionLevel, provider: Provider, spawns
         p.send(kiln_inventory::effect::open_screen(id, ty, &provider.title));
     }
     p.containers.open = Some(provider.block);
-    let _ = &mut menu;
     p.open_menu = Some(menu);
     p.with_menu_at(&rules, spawns, Some(&mut level.blocks.containers), |menu, _, env| menu.open(env));
 }
