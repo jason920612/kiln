@@ -48,6 +48,9 @@ pub mod fish;
 pub mod mooshroom;
 pub mod ocelot;
 pub mod bat;
+pub mod snow_golem;
+pub mod bogged;
+pub mod armadillo;
 
 
 /// The behaviour of an extension type; `None` for the shared-code types.
@@ -98,6 +101,9 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Mooshroom => &mooshroom::KIND,
         MobKind::Ocelot => &ocelot::KIND,
         MobKind::Bat => &bat::KIND,
+        MobKind::SnowGolem => &snow_golem::KIND,
+        MobKind::Bogged => &bogged::KIND,
+        MobKind::Armadillo => &armadillo::KIND,
 
         _ => return None,
     })

@@ -100,6 +100,9 @@ pub enum MobKind {
     Mooshroom,
     Ocelot,
     Bat,
+    SnowGolem,
+    Bogged,
+    Armadillo,
 
 }
 
@@ -223,6 +226,9 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Mooshroom,
     MobKind::Ocelot,
     MobKind::Bat,
+    MobKind::SnowGolem,
+    MobKind::Bogged,
+    MobKind::Armadillo,
 
 ];
 
@@ -359,7 +365,7 @@ impl MobKind {
 
     /// `instanceof AbstractSkeleton`.
     pub fn is_skeleton(self) -> bool {
-        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton)
+        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton | MobKind::Bogged)
     }
 
     pub fn loot_table(self) -> String {
@@ -872,7 +878,7 @@ pub fn reassess_weapon_goal(m: &mut MobData, hard: bool) {
     let goal = if m.holding_bow() {
         Goal::RangedBow {
             speed: 1.0,
-            interval_min: if hard { 20 } else { 40 },
+            interval_min: m.kind.ext().and_then(|k| k.bow_interval(hard)).unwrap_or(if hard { 20 } else { 40 }),
             radius_sqr: 15.0 * 15.0,
             attack_time: -1,
             see_time: 0,

@@ -567,6 +567,11 @@ pub trait Kind: Sync + Send {
     fn pushable(&self) -> bool {
         true
     }
+    /// `AbstractSkeleton.getAttackInterval` / `getHardAttackInterval` (`None`: 40 and 20).
+    fn bow_interval(&self, hard: bool) -> Option<i32> {
+        let _ = hard;
+        None
+    }
 }
 
 /// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the

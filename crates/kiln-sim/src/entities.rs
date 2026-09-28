@@ -475,6 +475,24 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         !self.level.env.rules.fast_lava
     }
 
+    fn snow_golem_melts(&self, pos: Vec3) -> bool {
+        if self.level.env.rules.fast_lava {
+            return true;
+        }
+        // The biomes whose `minecraft:gameplay/snow_golem_melts` is on.
+        const HOT: [&str; 7] = [
+            "minecraft:badlands",
+            "minecraft:desert",
+            "minecraft:eroded_badlands",
+            "minecraft:savanna",
+            "minecraft:savanna_plateau",
+            "minecraft:windswept_savanna",
+            "minecraft:wooded_badlands",
+        ];
+        let b = crate::spawner::biome_at(self.level, kb(BlockPos::containing(pos.x, pos.y, pos.z))) as i32;
+        HOT.iter().any(|n| kiln_data::synced_id("minecraft:worldgen/biome", n) == Some(b))
+    }
+
     fn trade_offers(&mut self, set: &str, merchant: &kiln_entity::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
         let env = self.level.env;
         crate::trading::roll_offers(env.loot.as_deref(), env.seed, env.game_time, set, merchant)
