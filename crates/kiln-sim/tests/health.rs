@@ -43,6 +43,40 @@ fn landing_after_a_long_fall_hurts() {
     assert_eq!(sim.health(1), Some((13.0, false)));
 }
 
+/// A totem of undying in hand: a deadly fall leaves the player at 1 health (then absorption
+/// and regeneration), the totem used up; `/kill` goes through it.
+#[test]
+fn totems_save_players_from_death() {
+    let (mut sim, mut client) = joined();
+    hold(&mut sim, "minecraft:totem_of_undying", 1);
+    let ground = client.pos;
+    assert!(sim.step([ToSim::Console(format!("tp Faller {} {} {}", ground[0], ground[1] + 30.0, ground[2]))]));
+    for _ in 0..2 {
+        let mut inbox = Vec::new();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
+    for i in 1..=30 {
+        let y = ground[1] + 30.0 - i as f64;
+        assert!(sim.step([
+            ToSim::Packet(1, PlayIn::Move { pos: Some([ground[0], y, ground[2]]), rot: None, on_ground: i == 30 }),
+            ToSim::Packet(1, PlayIn::ClientTickEnd),
+        ]));
+    }
+    let (health, dead) = sim.health(1).unwrap();
+    // (Regeneration II may already have healed a point.)
+    assert!(!dead && health <= 2.0 + 1e-3, "saved at 1 health, got {health}");
+    assert_eq!(sim.inventory(1).unwrap()[36], None, "the totem is used up");
+    let effects: Vec<&str> = sim.effects(1).unwrap().into_iter().map(|e| e.0).collect();
+    assert!(effects.iter().any(|e| *e == "minecraft:regeneration") && effects.iter().any(|e| *e == "minecraft:absorption"), "{effects:?}");
+    if let Some(done) = sim.criterion_done(1, "minecraft:adventure/totem_of_undying", "used_totem") {
+        assert!(done);
+    }
+    hold(&mut sim, "minecraft:totem_of_undying", 1);
+    assert!(sim.step([ToSim::Console("kill Faller".into())]));
+    assert_eq!(sim.health(1), Some((0.0, true)), "/kill bypasses the totem");
+}
+
 #[test]
 fn killed_players_drop_their_items_and_respawn() {
     let (mut sim, mut client) = joined();

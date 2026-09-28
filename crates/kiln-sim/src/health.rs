@@ -8,8 +8,8 @@
 //! durability, absorption and the damage type's exhaustion. Enchantments take part through
 //! `EnchantmentHelper` (see [`crate::enchant`]): damage immunity (frost walker), protection,
 //! armor effectiveness (breach) and unbreaking on armor. Mob effects take part too: fire
-//! resistance makes fire damage miss, resistance takes 20% per level after armor. Not modelled
-//! yet: shields, totems.
+//! resistance makes fire damage miss, resistance takes 20% per level after armor. Totems of
+//! undying (`death_protection` in a hand) save a dying player. Not modelled yet: shields.
 //!
 //! Food follows `FoodData`: exhaustion from sprinting, jumping, fighting and breaking blocks
 //! uses up saturation then food; a well-fed player heals, a starving one takes damage.
@@ -585,7 +585,7 @@ impl Player {
             vehicle: None,
         });
         self.hurt_trigger("minecraft:entity_hurt_player", killer.as_ref(), amount, taken, source.cause.damage_type());
-        if self.health <= 0.0 {
+        if self.health <= 0.0 && !self.check_totem_death_protection(source) {
             let death = self.die(ctx);
             ctx.deaths.push(death);
             // `KilledTrigger` for the killer's side (`entity_killed_player`).
@@ -780,6 +780,54 @@ impl Player {
             self.sent_health = Some(now);
             self.send(self.health_packet());
         }
+    }
+
+    /// `LivingEntity.checkTotemDeathProtection`: an item with `death_protection` in a hand (the
+    /// main hand first) is used up instead of dying: the `used` statistic and `used_totem`,
+    /// health 1, its death effects, and the totem animation (entity event 35).
+    pub(crate) fn check_totem_death_protection(&mut self, source: &Source) -> bool {
+        use kiln_item::component::{ConsumeEffect, EquipmentSlot};
+        if source.is("minecraft:bypasses_invulnerability") {
+            return false;
+        }
+        for slot in [EquipmentSlot::MainHand, EquipmentSlot::OffHand] {
+            let index = kiln_inventory::inventory::equipment_index(slot, self.inv.selected);
+            let stack = kiln_inventory::Container::item(&self.inv, index);
+            let Some(protection) = stack.get(kiln_item::keys::DEATH_PROTECTION).cloned() else { continue };
+            let used = stack.clone();
+            kiln_inventory::Container::item_mut(&mut self.inv, index).shrink(1);
+            self.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, used.item()), 1);
+            self.fire_conds("minecraft:used_totem", None, |c, _, loot| {
+                c.item("item").is_none_or(|p| kiln_loot::predicate::item_matches(&loot.tags, p, &used))
+            });
+            self.health = 1.0;
+            // `DeathProtection.applyEffects`: the consume effects that make sense here.
+            for effect in &protection.death_effects {
+                match effect {
+                    ConsumeEffect::ClearAllEffects => {
+                        self.remove_all_effects();
+                    }
+                    ConsumeEffect::ApplyEffects { effects, probability } => {
+                        use kiln_javamath::random::RandomSource;
+                        if self.entity_rng.next_float() < *probability {
+                            for e in effects {
+                                self.add_effect(crate::effects::Effect::from_item(e));
+                            }
+                        }
+                    }
+                    ConsumeEffect::RemoveEffects(kiln_item::HolderSet::Direct(ids)) => {
+                        for &id in ids {
+                            self.remove_effect(id);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            self.entity_events.push(35);
+            self.send(entity::entity_event(self.entity_id, 35));
+            return true;
+        }
+        false
     }
 
     /// `LivingEntity.heal`.

@@ -371,6 +371,8 @@ struct Player {
     vehicle: Option<i32>,
     /// The type of that entity (for the vehicle entity predicates of criteria).
     vehicle_type: Option<&'static str>,
+    /// `ServerPlayer.levitationStartTime` and `levitationStartPos` (the `levitation` trigger).
+    levitation_start: Option<(i32, [f64; 3])>,
     /// `getLastHurtByMob` and `getLastHurtMob` with the game time (tamed animals take their
     /// owner's side).
     last_hurt_by_mob: Option<(i32, i64)>,
@@ -2119,6 +2121,7 @@ impl Sim {
             pending_travel: None,
             vehicle: None,
             vehicle_type: None,
+            levitation_start: None,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
             sleep: sleep::Sleep::default(),

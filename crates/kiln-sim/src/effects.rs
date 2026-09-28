@@ -448,6 +448,10 @@ impl Player {
         if effect_type(e.id).is_some_and(|t| t.modifier.is_some()) {
             self.attributes_dirty = true;
         }
+        if Some(e.id) == effect_id("minecraft:levitation") {
+            self.levitation_start = Some((self.tick_count, self.pos));
+        }
+        self.effects_changed();
     }
 
     /// `ServerPlayer.onEffectUpdated`: `refresh` re-applies the attribute modifiers.
@@ -458,6 +462,7 @@ impl Player {
             self.refresh_dirty_attributes();
         }
         self.send(e.packet(self.entity_id, false));
+        self.effects_changed();
     }
 
     /// `ServerPlayer.onEffectsRemoved`: a removal packet each, then the attributes.
@@ -468,8 +473,20 @@ impl Player {
             if effect_type(e.id).is_some_and(|t| t.modifier.is_some()) {
                 self.attributes_dirty = true;
             }
+            if Some(e.id) == effect_id("minecraft:levitation") {
+                self.levitation_start = None;
+            }
         }
         self.refresh_dirty_attributes();
+        self.effects_changed();
+    }
+
+    /// `EffectsChangedTrigger.trigger` (Kiln's effects have no source entity).
+    fn effects_changed(&mut self) {
+        let effects: Vec<(i32, i32, i32, bool, bool)> = self.effects.values().map(|e| (e.id, e.amplifier, e.duration, e.ambient, e.visible)).collect();
+        self.fire_conds("minecraft:effects_changed", None, |c, _, _| {
+            c.get("effects").is_none_or(|j| crate::advancements::criteria::effects_match(j, &effects)) && c.cap("source").is_none()
+        });
     }
 
     /// `refreshDirtyAttributes`: health and absorption above their new maximum drop to it.

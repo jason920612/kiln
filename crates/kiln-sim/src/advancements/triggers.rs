@@ -224,6 +224,13 @@ impl Player {
         if self.tick_count % 20 == 0 && !self.dead {
             self.fire("minecraft:location", Some(world), |c, _, _| matches!(c.trigger, Trigger::Player));
         }
+        // `LevitationTrigger`: how far and how long since the levitation began.
+        if let Some((start, from)) = self.levitation_start {
+            let (duration, pos) = (self.tick_count - start, self.pos);
+            self.fire_conds("minecraft:levitation", None, |c, _, _| {
+                c.distance("distance", from, pos) && kiln_loot::predicate::item::int_bounds(&c.ints("duration"), duration)
+            });
+        }
     }
 
     /// `ConsumeItemTrigger.trigger`.

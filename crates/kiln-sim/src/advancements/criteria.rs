@@ -159,6 +159,9 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:player_hurt_entity",
     "minecraft:bred_animals",
     "minecraft:tame_animal",
+    "minecraft:effects_changed",
+    "minecraft:levitation",
+    "minecraft:used_totem",
     "minecraft:slept_in_bed",
 ];
 
@@ -382,7 +385,7 @@ impl Subject<'_> {
 
 /// `MobEffectsPredicate.matches`: every listed effect is active with its amplifier and
 /// duration in bounds and the ambient and visible flags as given.
-fn effects_match(j: &Json, effects: &[(i32, i32, i32, bool, bool)]) -> bool {
+pub(crate) fn effects_match(j: &Json, effects: &[(i32, i32, i32, bool, bool)]) -> bool {
     let Some(fields) = j.as_object() else { return false };
     fields.iter().all(|(name, want)| {
         let Some(id) = kiln_data::synced_id("minecraft:mob_effect", name).or_else(|| kiln_data::builtin_id("minecraft:mob_effect", name)) else {
