@@ -23,6 +23,11 @@ fn outside_limits(level: &dyn EntityLevel, p: BlockPos) -> bool {
     p.y < level.min_y() || p.y > level.max_y()
 }
 
+/// `PathNavigation.isStableDestination` of the mob's navigation.
+fn stable(m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> bool {
+    m.kind.ext().and_then(|k| k.stable_destination(level, p)).unwrap_or_else(|| path::is_stable_destination(level, p))
+}
+
 fn has_malus(m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> bool {
     path::malus(m, path::path_type_static(level, p.x, p.y, p.z)) != 0.0
 }
@@ -47,7 +52,7 @@ pub fn default_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32,
     generate(e, m, level, |e| {
         let dir = random_direction(e, h, v);
         let p = toward(e, dir);
-        if outside_limits(level, p) || !path::is_stable_destination(level, p) || has_malus(m, level, p) {
+        if outside_limits(level, p) || !stable(m, level, p) || has_malus(m, level, p) {
             return None;
         }
         Some(p)
@@ -59,7 +64,7 @@ pub fn land_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v:
     generate(e, m, level, |e| {
         let dir = random_direction(e, h, v);
         let p = toward(e, dir);
-        if outside_limits(level, p) || !path::is_stable_destination(level, p) {
+        if outside_limits(level, p) || !stable(m, level, p) {
             return None;
         }
         move_up_out_of_solid(m, level, p)
@@ -75,7 +80,7 @@ pub fn land_pos_away(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i3
     generate(e, m, level, |e| {
         let dir = direction_within_radians(e, 0.0, h as f64, v, 0, d.x, d.z, std::f32::consts::FRAC_PI_2 as f64)?;
         let p = toward(e, dir);
-        if outside_limits(level, p) || !path::is_stable_destination(level, p) {
+        if outside_limits(level, p) || !stable(m, level, p) {
             return None;
         }
         move_up_out_of_solid(m, level, p)
@@ -88,7 +93,20 @@ pub fn default_pos_away(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h:
     generate(e, m, level, |e| {
         let dir = direction_within_radians(e, 0.0, h as f64, v, 0, d.x, d.z, std::f32::consts::FRAC_PI_2 as f64)?;
         let p = toward(e, dir);
-        if outside_limits(level, p) || !path::is_stable_destination(level, p) || has_malus(m, level, p) {
+        if outside_limits(level, p) || !stable(m, level, p) || has_malus(m, level, p) {
+            return None;
+        }
+        Some(p)
+    })
+}
+
+/// `DefaultRandomPos.getPosTowards(mob, h, v, target, spread)`.
+pub fn default_pos_towards(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, target: Vec3, spread: f64) -> Option<Vec3> {
+    let d = target - e.position();
+    generate(e, m, level, |e| {
+        let dir = direction_within_radians(e, 0.0, h as f64, v, 0, d.x, d.z, spread)?;
+        let p = toward(e, dir);
+        if outside_limits(level, p) || !stable(m, level, p) || has_malus(m, level, p) {
             return None;
         }
         Some(p)

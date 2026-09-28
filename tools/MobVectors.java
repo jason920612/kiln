@@ -822,5 +822,39 @@ public class MobVectors {
             s.ticks = 300;
             out.add(s);
         }
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("idle_iron_golem_" + i);
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:iron_golem", 0.5, BY, 0.5, 70f * i, 9900L + i));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 5 + i;
+            s.dayTime = i == 0 ? 1000 : 18000;
+            s.ticks = 600;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("anger_iron_golem");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:iron_golem", 0.5, BY, 0.5, 0f, 9950));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("lava_strider_" + i);
+            floor(s, 16, "minecraft:stone");
+            if (i == 0) {
+                for (int x = 3; x <= 7; x++)
+                    for (int z = -2; z <= 2; z++) block(s, x, BY - 1, z, "minecraft:lava");
+            }
+            s.mobs.add(new MobSpec("minecraft:strider", 0.5, BY, 0.5, 20f * i, 9970L + i));
+            s.player = new double[] {-8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 3 + i;
+            s.ticks = 500;
+            out.add(s);
+        }
     }
 }

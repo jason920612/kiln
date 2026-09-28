@@ -434,6 +434,16 @@ pub trait Kind: Sync + Send {
         let _ = m;
         Vec::new()
     }
+    /// `doPush(other)` before the push itself (iron golems pick fights with monsters they bump).
+    fn do_push(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, other: i32) {
+        let _ = (e, m, level, other);
+    }
+    /// `isStableDestination` of the type's navigation (striders stand on lava): `None` for
+    /// the ground navigation's.
+    fn stable_destination(&self, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
+        let _ = (level, p);
+        None
+    }
     /// The items a `TemptGoal` of the type follows.
     fn tempted_by(&self, item: i32) -> bool {
         let _ = item;

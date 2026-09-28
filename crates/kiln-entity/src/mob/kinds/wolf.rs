@@ -2,13 +2,14 @@
 //! sheep while wild, gets angry at whoever hurts it (`NeutralMob`), shakes itself dry; variants
 //! by biome, collar dyes, healing with meat, breeding between tamed wolves.
 
+use super::anger::{Anger, AngryAtPlayerGoal};
 use super::tame::{self, FollowOwnerGoal, NonTameRandomTargetGoal, OwnerTargetGoal, SitWhenOrderedToGoal, Tame, TamableAnimalPanicGoal};
 use crate::custom_goal_boilerplate;
 use crate::entity::Entity;
 use crate::level::{EntityLevel, Event, PlayerView};
 use crate::mob::attributes::Attr::{self, *};
 use crate::mob::ext::{self, CustomGoal, Info, Kind, MobExt, SpawnView};
-use crate::mob::goals::{self, Goal, Living, MeleeKind, Wanted, LOOK, TARGET};
+use crate::mob::goals::{self, Goal, Living, MeleeKind, Wanted, LOOK};
 use crate::mob::interact::{HeldChange, Interactor, Outcome};
 use crate::mob::mth::{self, reduced_tick_delay};
 use crate::mob::path::PathType;
@@ -36,9 +37,8 @@ pub struct State {
     /// `DATA_INTERESTED_ID` (begging).
     pub interested: bool,
     pub collar: u8,
-    /// `NeutralMob`: `DATA_ANGER_END_TIME` (-1: none) and the persistent anger target.
-    pub anger_end: i64,
-    pub anger_target: Option<i32>,
+    /// `NeutralMob`: `DATA_ANGER_END_TIME` and the persistent anger target.
+    pub anger: Anger,
     pub wet: bool,
     pub shaking: bool,
     pub shake_anim: f32,
@@ -55,8 +55,7 @@ fn st_mut(m: &mut MobData) -> &mut State {
 
 /// `NeutralMob.isAngry`.
 pub fn is_angry(m: &MobData, level: &dyn EntityLevel) -> bool {
-    let end = st(m).anger_end;
-    end > 0 && end - level.game_time() > 0
+    super::anger::is_angry(m, level)
 }
 
 /// `Wolf.wantsToAttack(target, owner)`.
@@ -139,54 +138,6 @@ fn sound(m: &MobData, what: &str) -> &'static str {
     crate::mob::sound_event(&format!("minecraft:entity.{set}.{what}"))
 }
 
-/// `NeutralMob.stopBeingAngry`.
-fn stop_being_angry(m: &mut MobData) {
-    m.last_hurt_by_mob = None;
-    let s = st_mut(m);
-    s.anger_target = None;
-    s.anger_end = -1;
-    m.target = None;
-}
-
-/// `Wolf.startPersistentAngerTimer`: 20 to 39 seconds.
-fn start_anger_timer(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
-    let t = 400 + e.random.next_int_bounded(381);
-    st_mut(m).anger_end = level.game_time() + t as i64;
-}
-
-fn valid_player_target(level: &dyn EntityLevel, t: &Living) -> bool {
-    t.player && !t.creative && !t.spectator && level.difficulty() != 0
-}
-
-/// `NeutralMob.updatePersistentAnger(level, true)`.
-fn update_persistent_anger(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
-    let anger_ref = st(m).anger_target;
-    if let Some(u) = m.target.and_then(|id| goals::living(level, id))
-        && !u.alive
-        && anger_ref == Some(u.id)
-        && !u.player
-    {
-        stop_being_angry(m);
-        return;
-    }
-    let target = goals::target(m, level);
-    if let Some(t) = target {
-        let changed = anger_ref != Some(t.id);
-        if changed {
-            st_mut(m).anger_target = Some(t.id);
-        }
-        start_anger_timer(e, m, level);
-    }
-    if anger_ref.is_some() && !is_angry(m, level) && target.is_none_or(|t| !valid_player_target(level, &t)) {
-        stop_being_angry(m);
-    }
-    if let Some(p) = anger_ref.and_then(|id| level.player(id))
-        && (p.creative || p.spectator || level.difficulty() == 0)
-    {
-        stop_being_angry(m);
-    }
-}
-
 /// `Wolf.applyTamingSideEffects`.
 fn apply_taming_side_effects(m: &mut MobData) {
     if tame::is_tame(m) {
@@ -224,8 +175,7 @@ impl Kind for Wolf {
             tame: Tame::default(),
             interested: false,
             collar: DEFAULT_COLLAR,
-            anger_end: -1,
-            anger_target: None,
+            anger: Anger::default(),
             wet: false,
             shaking: false,
             shake_anim: 0.0,
@@ -255,7 +205,7 @@ impl Kind for Wolf {
         t.add(1, Goal::Custom(Box::new(OwnerTargetGoal::new(true))));
         t.add(2, Goal::Custom(Box::new(OwnerTargetGoal::new(false))));
         t.add(3, Goal::HurtByTarget { timestamp: 0, alert_others: true, target_mob: None, unseen: 0, unseen_memory: 60 });
-        t.add(4, Goal::Custom(Box::new(AngryAtPlayerGoal { target: None, unseen: 0 })));
+        t.add(4, Goal::Custom(Box::new(AngryAtPlayerGoal::default())));
         t.add(5, Goal::Custom(Box::new(NonTameRandomTargetGoal::new(&["minecraft:sheep", "minecraft:rabbit", "minecraft:fox"], false))));
         // Baby turtles on land (turtles are not simulated).
         t.add(6, Goal::Custom(Box::new(NonTameRandomTargetGoal::new(&[], false))));
@@ -324,7 +274,7 @@ impl Kind for Wolf {
             s.shake_anim_o = 0.0;
             level.emit(Event::EntityEvent { entity: e.id, event: 8 });
         }
-        update_persistent_anger(e, m, level);
+        super::anger::update_persistent_anger(e, m, level);
     }
 
     fn ambient_sound(&self, e: &mut Entity, m: &MobData, level: &dyn EntityLevel) -> Option<Option<&'static str>> {
@@ -461,7 +411,7 @@ impl Kind for Wolf {
             m.variant = v;
         }
         st_mut(m).collar = r.byte_or("CollarColor", DEFAULT_COLLAR as i8) as u8 & 15;
-        st_mut(m).anger_end = match r.get("anger_end_time") {
+        st_mut(m).anger.end = match r.get("anger_end_time") {
             Some(Tag::Long(t)) => *t,
             _ => -1,
         };
@@ -477,7 +427,7 @@ impl Kind for Wolf {
         if let Some(v) = synced_name("minecraft:wolf_variant", m.variant) {
             o.put("variant", Tag::String(v.to_owned()));
         }
-        o.put("anger_end_time", Tag::Long(s.anger_end));
+        o.put("anger_end_time", Tag::Long(s.anger.end));
         if let Some(v) = synced_name("minecraft:wolf_sound_variant", m.sound_variant) {
             o.put("sound_variant", Tag::String(v.to_owned()));
         }
@@ -488,7 +438,7 @@ impl Kind for Wolf {
         tame::entity_data(&s.tame, d);
         d.set(data::wolf::INTERESTED, &DataValue::Boolean(s.interested));
         d.set(data::wolf::COLLAR_COLOR, &DataValue::Int(s.collar as i32));
-        d.set(data::wolf::ANGER_END_TIME, &DataValue::Long(s.anger_end));
+        d.set(data::wolf::ANGER_END_TIME, &DataValue::Long(s.anger.end));
         d.set(data::wolf::VARIANT, &DataValue::Holder(m.variant));
         d.set(data::wolf::SOUND_VARIANT, &DataValue::Holder(m.sound_variant));
     }
@@ -542,42 +492,5 @@ impl CustomGoal for BegGoal {
         let max_x = m.max_head_x_rot() as f32;
         m.look.set_look_at(p.pos.x, p.pos.y + p.eye_height as f64, p.pos.z, 10.0, max_x);
         self.look_time -= 1;
-    }
-}
-
-/// `NearestAttackableTargetGoal<Player>(10, mustSee, isAngryAt)`: the player the wolf is angry at.
-#[derive(Clone, Debug)]
-struct AngryAtPlayerGoal {
-    target: Option<i32>,
-    unseen: i32,
-}
-
-impl CustomGoal for AngryAtPlayerGoal {
-    custom_goal_boilerplate!();
-    fn name(&self) -> &'static str {
-        "NearestAttackableTargetGoal"
-    }
-    fn flags(&self) -> u8 {
-        TARGET
-    }
-    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if e.random.next_int_bounded(reduced_tick_delay(10)) != 0 {
-            return false;
-        }
-        let range = m.attrs.value(Attr::FollowRange);
-        let angry_at = st(m).anger_target;
-        self.target = goals::nearest_player(e, m, level, true, range, true, |p| angry_at == Some(p.id)).map(|p| p.id);
-        self.target.is_some()
-    }
-    fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        goals::continue_target(e, m, level, self.target, true, &mut self.unseen, 60)
-    }
-    fn start(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
-        m.target = self.target;
-        self.unseen = 0;
-    }
-    fn stop(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
-        m.target = None;
-        self.target = None;
     }
 }

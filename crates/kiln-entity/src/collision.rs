@@ -21,6 +21,8 @@ pub struct CollisionContext {
     pub falling_block: bool,
     /// `PowderSnowBlock.canEntityWalkOnPowderSnow` (leather boots, snow-walking mobs).
     pub walks_on_powder_snow: bool,
+    /// `LivingEntity.canStandOnFluid(lava)` (striders).
+    pub stands_on_lava: bool,
 }
 
 impl CollisionContext {
@@ -34,6 +36,7 @@ impl CollisionContext {
         fall_distance: 0.0,
         falling_block: false,
         walks_on_powder_snow: false,
+        stands_on_lava: false,
     };
 
     /// `isAbove(shape, pos, default)`.
@@ -131,7 +134,11 @@ pub fn for_each_block_collision(
                 if edges == 2 && kind(state) != Kind::MovingPiston {
                     continue;
                 }
-                let (shape, cube) = collision_shape(state, pos, ctx);
+                let (shape, cube) = if ctx.stands_on_lava && stable_lava(level, state, pos, ctx) {
+                    (Cow::Borrowed(lava_stable_shape()), false)
+                } else {
+                    collision_shape(state, pos, ctx)
+                };
                 let (px, py, pz) = (pos.x as f64, pos.y as f64, pos.z as f64);
                 let hit = if cube {
                     area.intersects_raw(px, py, pz, px + 1.0, py + 1.0, pz + 1.0)
@@ -145,6 +152,22 @@ pub fn for_each_block_collision(
             }
         }
     }
+}
+
+/// `LiquidBlock.STABLE_SHAPE`: the lower half of the block.
+fn lava_stable_shape() -> &'static Shape {
+    static SHAPE: std::sync::OnceLock<Shape> = std::sync::OnceLock::new();
+    SHAPE.get_or_init(|| Shape::from_box(&Aabb::new(0.0, 0.0, 0.0, 1.0, 0.5, 1.0)).expect("a box"))
+}
+
+/// `LiquidBlock.getCollisionShape` for a mob that stands on lava: a lava source with no lava
+/// above, under the entity's feet.
+fn stable_lava(level: &dyn EntityLevel, state: u16, pos: BlockPos, ctx: &CollisionContext) -> bool {
+    let f = physics::fluid_state(state);
+    f.kind == physics::FluidKind::Lava
+        && crate::blocks::block_name(state) == "minecraft:lava"
+        && ctx.is_above(0.5, pos, true)
+        && !physics::fluid_state(level.block(pos.above())).kind.is_lava()
 }
 
 /// `getBlockCollisions` as placed colliders.

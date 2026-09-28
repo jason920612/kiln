@@ -121,6 +121,8 @@ pub struct Entity {
     /// controlling one (`passengers`); players by their network id.
     pub vehicle: Option<i32>,
     pub passengers: Vec<i32>,
+    /// `canStandOnFluid(lava)`: lava sources hold the entity up (striders).
+    pub stands_on_lava: bool,
     /// Saved fields Kiln does not model (custom name, tags, passengers, ...), written back
     /// unchanged by [`crate::persist::save`].
     pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
@@ -184,6 +186,7 @@ impl Entity {
             random: LegacyRandom::new(random_seed),
             vehicle: None,
             passengers: Vec::new(),
+            stands_on_lava: false,
             extra: Vec::new(),
         };
         e.set_pos(Vec3::ZERO);
@@ -298,6 +301,8 @@ impl Entity {
             EntityKind::Item(item) => crate::item::fire_immune(item),
             EntityKind::Tnt(_) => true,
             EntityKind::Mob(m) => m.kind.fire_immune(),
+            // A mob in its own tick (striders walking through lava).
+            EntityKind::MobTicking { .. } => crate::mob::MobKind::by_name(self.type_name).is_some_and(|k| k.fire_immune()),
             _ => false,
         }
     }
@@ -347,6 +352,7 @@ impl Entity {
             fall_distance: self.fall_distance,
             falling_block: matches!(self.kind, EntityKind::FallingBlock(_)),
             walks_on_powder_snow: matches!(&self.kind, EntityKind::Player(p) if p.walks_on_powder_snow),
+            stands_on_lava: self.stands_on_lava,
         }
     }
 
@@ -696,6 +702,17 @@ impl Entity {
 
     /// `checkFallDamage`.
     fn check_fall_damage(&mut self, level: &mut dyn EntityLevel, y: f64, on_ground: bool, state: u16, pos: BlockPos) {
+        if self.is_living() {
+            // `Strider.checkFallDamage`: no falling in lava.
+            if self.type_name == "minecraft:strider" && self.is_in_lava() {
+                self.fall_distance = 0.0;
+                return;
+            }
+            // `LivingEntity.checkFallDamage`: the fluids are looked at again after the move.
+            if !self.is_in_water() {
+                self.update_fluid_interaction(level);
+            }
+        }
         if !self.is_in_water() && y < 0.0 {
             self.fall_distance -= y as f32 as f64;
         }

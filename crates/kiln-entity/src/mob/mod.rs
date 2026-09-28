@@ -1277,7 +1277,7 @@ fn modified_friction(f: f32, modifier: f32) -> f32 {
     mth::clamp(1.0 - (1.0 - f) * modifier, 0.0, 1.0)
 }
 
-fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
+pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
     let below = e.block_pos_below_that_affects_movement(level);
     let friction = if e.on_ground {
         modified_friction(crate::physics::block_factors(level.block(below)).friction, m.attrs.value(Attr::FrictionModifier) as f32)
@@ -1423,8 +1423,7 @@ fn fluid_falling_adjusted(g: f64, falling: bool, v: Vec3) -> Vec3 {
 
 /// `LivingEntity.pushEntities`: pushable living entities touching this one push each other
 /// apart (`Entity.push`). Players push the mob; their own half is their client's.
-fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
-    let _ = m;
+fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let bb = e.bounding_box();
     let mut others: Vec<(i32, f64, f64, bool)> = Vec::new();
     // In the level's entity order, players (their stand-ins) among the mobs.
@@ -1456,6 +1455,9 @@ fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
         }
     }
     for (id, ox, oz, player) in others {
+        if let Some(k) = m.kind.ext() {
+            k.do_push(e, m, &*level, id);
+        }
         let (dx, dz) = (ox - e.x(), oz - e.z());
         let mut d = dx.abs().max(dz.abs());
         if d < 0.009999999776482582 {
@@ -1833,25 +1835,29 @@ pub fn do_hurt_target(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
     r
 }
 
+/// `target.hurtServer(source, damage)` for a player or a mob of the level.
+pub fn hurt_living(level: &mut dyn EntityLevel, t: &Living, source: DamageSource, damage: f32) -> bool {
+    if t.player {
+        return level.hurt_player(t.id, source, damage);
+    }
+    match level.entity_mut(t.id) {
+        Some(o) => {
+            let mut o2 = std::mem::replace(o, Entity::new("minecraft:marker", 0, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+            let r = hurt_entity(&mut o2, level, source, damage);
+            if let Some(slot) = level.entity_mut(t.id) {
+                *slot = o2;
+            }
+            r
+        }
+        None => false,
+    }
+}
+
 /// The shared `Mob.doHurtTarget`.
 pub fn do_hurt_target_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> bool {
     let damage = m.attrs.value(Attr::AttackDamage) as f32;
     let source = DamageSource { kind: DamageKind::MobAttack, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
-    let hurt = if t.player {
-        level.hurt_player(t.id, source, damage)
-    } else {
-        match level.entity_mut(t.id) {
-            Some(o) => {
-                let mut o2 = std::mem::replace(o, Entity::new("minecraft:marker", 0, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
-                let r = hurt_entity(&mut o2, level, source, damage);
-                if let Some(slot) = level.entity_mut(t.id) {
-                    *slot = o2;
-                }
-                r
-            }
-            None => false,
-        }
-    };
+    let hurt = hurt_living(level, t, source, damage);
     if hurt {
         m.last_hurt_mob = Some(t.id);
         // `Zombie.doHurtTarget`: a burning, empty-handed zombie sets its target on fire.

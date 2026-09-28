@@ -440,3 +440,37 @@ fn wild_horses_throw_riders_until_tamed() {
     assert_eq!(tag.get("Tame").and_then(|t| t.as_f64()), Some(1.0), "tamed after {throws} rides");
     assert!(throws >= 1);
 }
+
+#[test]
+fn iron_golems_fight_monsters() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.console("time set 18000");
+    w.summon("minecraft:iron_golem", [4.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    w.summon("minecraft:zombie", [8.0, 0.0, 3.0], "{PersistenceRequired:1b}");
+    let mut hurt = false;
+    for _ in 0..40 {
+        w.ticks(10);
+        hurt |= w.mobs("minecraft:zombie").first().is_none_or(|z| z.2 < 20.0);
+    }
+    assert!(hurt, "the golem hit the zombie");
+}
+
+#[test]
+fn saddled_striders_are_steered_with_a_fungus_on_a_stick() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:warped_fungus_on_a_stick", 1);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:strider", [1.5, 0.0, 0.0], "{PersistenceRequired:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1}}}");
+    w.ticks(5);
+    let (strider, sp, _) = w.mobs("minecraft:strider")[0];
+    w.interact(strider);
+    w.ticks(3);
+    let p = player_pos(&w);
+    assert!((p[1] - (sp[1] + 1.7 - 0.6)).abs() < 0.05, "seated at {p:?} on {sp:?}");
+    let sp = w.mobs("minecraft:strider")[0].1;
+    let to = [sp[0] + 0.5, sp[1], sp[2]];
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::MoveVehicle { pos: to, rot: [0.0, 0.0], on_ground: true })]));
+    assert_eq!(w.mobs("minecraft:strider")[0].1, to, "steered by the rider's client");
+}
