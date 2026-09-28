@@ -78,7 +78,7 @@ impl Kind for Ocelot {
         let t = &mut m.targets;
         t.add(1, Goal::NearestAttackable { wanted: Wanted::Types(&["minecraft:chicken"]), interval: reduced_tick_delay(10), must_see: false, target: None, unseen: 0, spider: false });
         // Baby turtles on land.
-        t.add(1, Goal::NearestAttackable { wanted: Wanted::Unsimulated, interval: reduced_tick_delay(10), must_see: false, target: None, unseen: 0, spider: false });
+        t.add(1, Goal::NearestAttackable { wanted: Wanted::BabyTurtlesOnLand, interval: reduced_tick_delay(10), must_see: false, target: None, unseen: 0, spider: false });
         m.goals.add(4, Goal::Custom(Box::new(AvoidPlayerGoal::new("OcelotAvoidEntityGoal", 16.0, 0.8, 1.33, Some(trusting)))));
     }
 

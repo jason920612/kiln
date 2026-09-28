@@ -264,6 +264,8 @@ pub struct Named {
     pub gate: Option<fn(&Entity, &MobData, &dyn EntityLevel) -> bool>,
     /// Extra `canContinueToUse` condition, checked first.
     pub keep: Option<fn(&Entity, &MobData, &dyn EntityLevel) -> bool>,
+    /// Extra `canUse` condition checked after the inner goal's (`super.canUse() && ...`).
+    pub post_gate: Option<fn(&Entity, &MobData, &dyn EntityLevel) -> bool>,
     /// Run after the inner goal's tick.
     pub after_tick: Option<fn(&Goal, &mut Entity, &mut MobData, &mut dyn EntityLevel)>,
     /// Run after the inner goal's start.
@@ -272,10 +274,14 @@ pub struct Named {
 
 impl Named {
     pub fn new(name: &'static str, inner: Goal) -> Named {
-        Named { name, inner, gate: None, keep: None, after_tick: None, after_start: None }
+        Named { name, inner, gate: None, keep: None, post_gate: None, after_tick: None, after_start: None }
     }
     pub fn gate(mut self, f: fn(&Entity, &MobData, &dyn EntityLevel) -> bool) -> Self {
         self.gate = Some(f);
+        self
+    }
+    pub fn post_gate(mut self, f: fn(&Entity, &MobData, &dyn EntityLevel) -> bool) -> Self {
+        self.post_gate = Some(f);
         self
     }
     pub fn keep(mut self, f: fn(&Entity, &MobData, &dyn EntityLevel) -> bool) -> Self {
@@ -312,7 +318,7 @@ impl CustomGoal for Named {
         {
             return false;
         }
-        goals::can_use(&mut self.inner, e, m, level)
+        goals::can_use(&mut self.inner, e, m, level) && self.post_gate.is_none_or(|g| g(e, m, level))
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         if let Some(g) = self.keep
@@ -632,11 +638,14 @@ pub struct MeleeGoal {
     pub inner: Goal,
     pub attack: fn(&mut i32, i32, &mut Entity, &mut MobData, &mut dyn EntityLevel, &Living),
     pub on_stop: Option<fn(&mut Entity, &mut MobData)>,
+    /// Extra `canUse` condition, checked first.
+    pub gate: Option<fn(&MobData) -> bool>,
+    pub on_start: Option<fn(&mut MobData)>,
 }
 
 impl MeleeGoal {
     pub fn new(name: &'static str, speed: f64, follow_unseen: bool, attack: fn(&mut i32, i32, &mut Entity, &mut MobData, &mut dyn EntityLevel, &Living)) -> MeleeGoal {
-        MeleeGoal { name, inner: melee(speed, follow_unseen), attack, on_stop: None }
+        MeleeGoal { name, inner: melee(speed, follow_unseen), attack, on_stop: None, gate: None, on_start: None }
     }
 }
 
@@ -662,12 +671,18 @@ impl CustomGoal for MeleeGoal {
         true
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        if self.gate.is_some_and(|g| !g(m)) {
+            return false;
+        }
         goals::can_use(&mut self.inner, e, m, level)
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         goals::can_continue(&mut self.inner, e, m, level)
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if let Some(f) = self.on_start {
+            f(m);
+        }
         goals::start(&mut self.inner, e, m, level);
     }
     fn stop(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {

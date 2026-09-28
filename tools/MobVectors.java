@@ -1944,6 +1944,54 @@ public class MobVectors {
             s.ticks = 400;
             out.add(s);
         }
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_fox_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:fox", 0.5, BY, 0.5, 35f * seed, 14000L * seed + 1));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            // Night: by day `SeekShelterGoal` looks for shade, and the harness world never
+            // relights under its floor (vanilla sees open sky everywhere, Kiln darkness).
+            s.dayTime = 14000 + 1000 * seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("flee_fox");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:fox", 0.5, BY, 0.5, 0f, 14100));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.ticks = 300;
+            s.dayTime = 18000;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hunt_fox");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:fox", 0.5, BY, 0.5, 0f, 14200);
+            m.nbt = "{Type:\"red\"}";
+            s.mobs.add(m);
+            s.mobs.add(new MobSpec("minecraft:chicken", 9.5, BY, 3.5, 0f, 14201));
+            s.player = new double[] {-12.5, BY, 0.5};
+            s.playerCreative = true;
+            // The chicken dies at tick 86; its loot (not replayed in Rust) later draws the fox.
+            s.ticks = 95;
+            s.dayTime = 18000;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("berries_fox");
+            floor(s, 16, "minecraft:grass_block");
+            block(s, 4, BY, 3, "minecraft:sweet_berry_bush[age=3]");
+            block(s, -3, BY, -4, "minecraft:sweet_berry_bush[age=2]");
+            s.mobs.add(new MobSpec("minecraft:fox", 0.5, BY, 0.5, 0f, 14300));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 600;
+            s.dayTime = 18000;
+            out.add(s);
+        }
     }
 
 

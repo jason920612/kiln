@@ -26,6 +26,8 @@ pub enum Wanted {
     Unsimulated,
     /// Mobs of these types (`getNearestEntity` over `getEntitiesOfClass` in the follow range box).
     Types(&'static [&'static str]),
+    /// `Turtle.class` with `Turtle.BABY_ON_LAND_SELECTOR`: baby turtles out of the water.
+    BabyTurtlesOnLand,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -411,11 +413,16 @@ fn nearest_attackable_player(e: &Entity, m: &mut MobData, level: &dyn EntityLeve
 /// `NearestAttackableTargetGoal.findTarget` for mob types: the nearest (to the eyes) mob of
 /// `types` in the box `range` around (4 up and down) that passes the combat conditions.
 pub fn nearest_mob(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, range: f64, must_see: bool, types: &[&str]) -> Option<i32> {
+    nearest_mob_where(e, m, level, range, must_see, types, |_| true)
+}
+
+/// [`nearest_mob`] with a selector on the candidates.
+pub fn nearest_mob_where(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, range: f64, must_see: bool, types: &[&str], selector: impl Fn(i32) -> bool) -> Option<i32> {
     let area = e.bounding_box().inflate(range, 4.0, range);
     let mut best: Option<(f64, i32)> = None;
     for id in level.entities_in(&area, crate::level::EntityFilter::Living, e.id) {
         let Some(t) = living(level, id) else { continue };
-        if t.player || !types.contains(&t.type_name) {
+        if t.player || !types.contains(&t.type_name) || !selector(id) {
             continue;
         }
         if !targeting_ok(e, m, level, &t, true, range, must_see) {
@@ -653,6 +660,10 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                 }
                 Wanted::Unsimulated => None,
                 Wanted::Types(types) => nearest_mob(e, m, level, range, true, types),
+                Wanted::BabyTurtlesOnLand => {
+                    let on_land = |id: i32| level.entity(id).is_some_and(|o| !o.is_in_water() && super::data(o).is_some_and(|om| om.baby()));
+                    nearest_mob_where(e, m, level, range, true, &["minecraft:turtle"], on_land)
+                }
             };
             tg.is_some()
         }
