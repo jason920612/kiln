@@ -80,6 +80,7 @@ pub enum MobKind {
     Villager,
     Piglin,
     Hoglin,
+    Silverfish,
     // Slice 3 work packages add their types below their own marker (keep the blank lines
     // between markers so parallel additions merge cleanly).
     // -- slice 3: raids
@@ -214,6 +215,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Villager,
     MobKind::Piglin,
     MobKind::Hoglin,
+    MobKind::Silverfish,
     // -- slice 3: raids
 
     // -- slice 3: the end

@@ -32,6 +32,7 @@ pub mod iron_golem;
 pub mod villager;
 pub mod piglin;
 pub mod hoglin;
+pub mod silverfish;
 // -- slice 3: raids
 
 // -- slice 3: the end
@@ -88,6 +89,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Villager => &villager::KIND,
         MobKind::Piglin => &piglin::KIND,
         MobKind::Hoglin => &hoglin::KIND,
+        MobKind::Silverfish => &silverfish::KIND,
         // -- slice 3: raids
 
         // -- slice 3: the end

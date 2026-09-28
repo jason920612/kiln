@@ -373,6 +373,17 @@ impl Entity {
     // ------------------------------------------------------------------ tick
 
     /// `Entity.commonTick`, run by the level before `tick`.
+    /// `getLookAngle` (`calculateViewVector(xRot, yRot)`).
+    pub fn view_vector(&self) -> Vec3 {
+        let f = self.x_rot * 0.017453292;
+        let g = -self.y_rot * 0.017453292;
+        let h = crate::mob::mth::cos(g as f64);
+        let i = crate::mob::mth::sin(g as f64);
+        let j = crate::mob::mth::cos(f as f64);
+        let k = crate::mob::mth::sin(f as f64);
+        Vec3::new((i * j) as f64, (-k) as f64, (h * j) as f64)
+    }
+
     pub fn common_tick(&mut self) {
         if self.invulnerable_time > 0 {
             self.invulnerable_time -= 1;
