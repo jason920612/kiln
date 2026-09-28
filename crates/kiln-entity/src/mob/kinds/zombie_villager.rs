@@ -246,7 +246,14 @@ fn conversion_progress(e: &mut Entity, level: &dyn EntityLevel) -> i32 {
 
 /// `finishConversion`: a villager with the zombie villager's data takes its place.
 fn finish_conversion(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    let zombie = crate::level::Seen::of_mob(e, m);
+    let starter = st(m).conversion_player.and_then(|u| level.players().iter().find(|p| p.uuid == u).map(|p| p.id));
     mob::convert::convert_to(e, m, level, MobKind::Villager, false, false, |ne, nm, level| {
+        // `CuredZombieVillagerTrigger` for the player who started the cure.
+        if let Some(player) = starter {
+            let villager = crate::level::Seen::of_mob(ne, nm);
+            level.emit(Event::Criterion { player, criterion: crate::level::Criterion::CuredZombieVillager { zombie: zombie.clone(), villager } });
+        }
         let eff = level.effective_difficulty(ne.block_position());
         let ctx = SpawnContext {
             biome: None,

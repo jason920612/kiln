@@ -172,6 +172,8 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:nether_travel",
     "minecraft:ride_entity_in_lava",
     "minecraft:lightning_strike",
+    "minecraft:cured_zombie_villager",
+    "minecraft:player_generates_container_loot",
     "minecraft:slept_in_bed",
 ];
 

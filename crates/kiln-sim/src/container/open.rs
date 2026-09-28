@@ -458,7 +458,15 @@ fn open_menu(p: &mut Player, level: &mut RegionLevel, provider: Provider, spawns
         let (loot, game_time, seed) = (level.env.loot.clone(), level.env.game_time, level.env.seed);
         for pos in positions.into_iter().flatten() {
             if let Some(c) = level.blocks.containers.get_mut(pos) {
+                let table = c.loot_table.clone();
                 super::unpack_loot(c, pos, loot.as_deref(), true, game_time, seed);
+                // `unpackLootTable(player)`: `player_generates_container_loot`.
+                if let Some(table) = table {
+                    let table = kiln_item::ident::Identifier::parse(&table).map_or(table, |i| i.to_string());
+                    p.fire_conds("minecraft:player_generates_container_loot", None, |c, _, _| {
+                        c.get("loot_tables").and_then(|v| v.as_str()).and_then(kiln_item::ident::Identifier::parse).is_some_and(|i| i.to_string() == table)
+                    });
+                }
             }
         }
     }
