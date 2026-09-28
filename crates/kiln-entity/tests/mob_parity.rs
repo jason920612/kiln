@@ -35,9 +35,10 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
         "look_around" => "RandomLookAroundGoal",
         "eat_block" => "EatBlockGoal",
         "melee" => match kind {
-            MobKind::Zombie => "ZombieAttackGoal",
+            k if k.is_zombie() => "ZombieAttackGoal",
             MobKind::Spider => "SpiderAttackGoal",
-            MobKind::Skeleton => "",
+            // `AbstractSkeleton$1` (an anonymous class: no simple name).
+            k if k.is_skeleton() => "",
             _ => "MeleeAttackGoal",
         },
         "bow" => "RangedBowAttackGoal",

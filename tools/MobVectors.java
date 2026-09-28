@@ -658,6 +658,98 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        scenariosZombies(out);
         return out;
+    }
+
+    // ---------------------------------------------------------- slice 2: the zombie and skeleton families
+    static void scenariosZombies(List<Scenario> out) {
+        String[][] types = {{"husk", null}, {"zombie_villager", null}, {"zombified_piglin", null}, {"stray", "minecraft:bow"}, {"wither_skeleton", "minecraft:stone_sword"}};
+        for (String[] t : types) {
+            for (int seed = 1; seed <= 2; seed++) {
+                Scenario s = new Scenario("idle_" + t[0] + "_" + seed);
+                floor(s, 16, "minecraft:stone");
+                MobSpec m = new MobSpec("minecraft:" + t[0], 0.5, BY, 0.5, 45f * seed, 3000L * seed + 13);
+                m.mainHand = t[1];
+                s.mobs.add(m);
+                s.player = new double[] {8.5, BY, 0.5};
+                s.playerCreative = true;
+                s.levelSeed = seed;
+                // Husks do not burn: one of them idles in daylight.
+                s.dayTime = t[0].equals("husk") && seed == 2 ? 6000 : 18000;
+                s.ticks = 400;
+                out.add(s);
+            }
+            if (t[0].equals("zombified_piglin")) continue;
+            for (int dist : new int[] {4, 9}) {
+                Scenario s = new Scenario("chase_" + t[0] + "_" + dist);
+                floor(s, 20, "minecraft:stone");
+                MobSpec m = new MobSpec("minecraft:" + t[0], 0.5, BY, 0.5, 0f, 5250 + dist);
+                m.mainHand = t[1];
+                s.mobs.add(m);
+                s.player = new double[] {0.5 + dist, BY, 0.5};
+                s.dayTime = 18000;
+                s.ticks = 160;
+                out.add(s);
+            }
+        }
+        // Zombified piglins: hurt one, the group gets angry at the player.
+        {
+            Scenario s = new Scenario("anger_zombified_piglin");
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:zombified_piglin", 0.5, BY, 0.5, 0f, 7100));
+            s.mobs.add(new MobSpec("minecraft:zombified_piglin", -2.5, BY, 3.5, 90f, 7101));
+            s.mobs.add(new MobSpec("minecraft:zombified_piglin", -12.5, BY, -6.5, 180f, 7102));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // A husk under water turns into a zombie (conversion shortened through its saved data).
+        for (String type : new String[] {"husk"}) {
+            Scenario s = new Scenario("convert_" + type);
+            floor(s, 16, "minecraft:stone");
+            for (int x = -2; x <= 2; x++)
+                for (int z = -2; z <= 2; z++)
+                    for (int y = BY; y <= BY + 2; y++) block(s, x, y, z, "minecraft:water");
+            MobSpec m = new MobSpec("minecraft:" + type, 0.5, BY, 0.5, 0f, 7200);
+            m.nbt = "{DrownedConversionTime:30}";
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 120;
+            out.add(s);
+        }
+        // Zombies go after villagers, skeletons after iron golems (standing still: no AI).
+        {
+            Scenario s = new Scenario("target_villager_zombie");
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 0f, 7300));
+            MobSpec v = new MobSpec("minecraft:villager", 6.5, BY, 0.5, 90f, 7301);
+            v.nbt = "{NoAI:1b}";
+            s.mobs.add(v);
+            s.player = new double[] {-12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 160;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("target_golem_skeleton");
+            floor(s, 20, "minecraft:stone");
+            MobSpec k = new MobSpec("minecraft:skeleton", 0.5, BY, 0.5, 0f, 7400);
+            s.mobs.add(k);
+            // Far enough that the golem (whose own behaviour is not simulated yet) is not reached.
+            MobSpec g = new MobSpec("minecraft:iron_golem", 12.5, BY, 0.5, 90f, 7401);
+            g.nbt = "{NoAI:1b}";
+            s.mobs.add(g);
+            s.player = new double[] {-12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 70;
+            out.add(s);
+        }
     }
 }

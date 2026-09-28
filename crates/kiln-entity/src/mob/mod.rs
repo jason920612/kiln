@@ -14,6 +14,7 @@ pub mod attributes;
 pub mod breed;
 pub mod ext;
 pub mod control;
+pub mod convert;
 pub mod goals;
 pub mod interact;
 pub mod kinds;
@@ -276,6 +277,16 @@ impl MobKind {
         self.ext().is_some_and(|k| k.info().fire_immune)
     }
 
+    /// `instanceof Zombie` (husks, drowned, zombie villagers and zombified piglins too).
+    pub fn is_zombie(self) -> bool {
+        matches!(self, MobKind::Zombie | MobKind::Husk | MobKind::Drowned | MobKind::ZombieVillager | MobKind::ZombifiedPiglin)
+    }
+
+    /// `instanceof AbstractSkeleton`.
+    pub fn is_skeleton(self) -> bool {
+        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton)
+    }
+
     pub fn loot_table(self) -> String {
         format!("minecraft:entities/{}", self.short_name())
     }
@@ -340,8 +351,9 @@ pub enum Species {
     Cow,
     Sheep { color: u8, sheared: bool },
     Chicken { egg_time: i32 },
-    Zombie { can_break_doors: bool },
-    Skeleton,
+    Zombie { can_break_doors: bool, drowning: kinds::zombie::Tracker },
+    /// `Skeleton.freezingTracker` (powder snow turns it into a stray).
+    Skeleton { freezing: kinds::zombie::Tracker },
     Creeper { swell: i32, old_swell: i32, swell_dir: i32, max_swell: i32, radius: i32, powered: bool, ignited: bool },
     Spider { climbing: bool },
     /// An extension type without state of its own.
@@ -425,6 +437,8 @@ pub struct MobData {
     pub air_supply_max: i32,
     /// `ServerEntity` needs the last hurt direction for the damage event.
     pub hurt_by: Option<(DamageKind, Option<i32>, Option<i32>)>,
+    /// The attribute modifiers the equipment added (`collectEquipmentChanges`).
+    pub equip_mods: Vec<(Attr, String)>,
 }
 
 impl MobData {
@@ -439,8 +453,8 @@ impl MobData {
             MobKind::Cow => Species::Cow,
             MobKind::Sheep => Species::Sheep { color: 0, sheared: false },
             MobKind::Chicken => Species::Chicken { egg_time: 0 },
-            MobKind::Zombie => Species::Zombie { can_break_doors: false },
-            MobKind::Skeleton => Species::Skeleton,
+            MobKind::Zombie => Species::Zombie { can_break_doors: false, drowning: kinds::zombie::Tracker::default() },
+            MobKind::Skeleton => Species::Skeleton { freezing: kinds::zombie::Tracker::default() },
             MobKind::Creeper => {
                 Species::Creeper { swell: 0, old_swell: 0, swell_dir: -1, max_swell: 30, radius: 3, powered: false, ignited: false }
             }
@@ -511,6 +525,7 @@ impl MobData {
             swing: false,
             air_supply_max: 300,
             hurt_by: None,
+            equip_mods: Vec::new(),
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -686,34 +701,8 @@ fn register_goals(m: &mut MobData) {
             g.add(6, look(6.0));
             g.add(7, around());
         }
-        MobKind::Zombie => {
-            g.add(4, Goal::RemoveTurtleEgg { next_start: 0, block: BlockPos::default(), try_ticks: 0, max_stay: 0, reached: false, since_reached: 0 });
-            g.add(8, look(8.0));
-            g.add(8, around());
-            g.add(2, Goal::Never);
-            g.add(3, melee(MeleeKind::Zombie, 1.0, false));
-            g.add(6, Goal::Never);
-            g.add(7, stroll(1.0));
-            t.add(1, hurt_by(true));
-            t.add(2, nearest(Wanted::Player, true));
-            t.add(3, nearest(Wanted::Unsimulated, false));
-            t.add(3, nearest(Wanted::Unsimulated, true));
-            t.add(5, nearest(Wanted::Unsimulated, true));
-        }
-        MobKind::Skeleton => {
-            g.add(2, Goal::RestrictSun);
-            g.add(3, Goal::FleeSun { speed: 1.0, wanted: Vec3::ZERO });
-            g.add(3, Goal::AvoidEntity);
-            g.add(5, stroll(1.0));
-            g.add(6, look(8.0));
-            g.add(6, around());
-            t.add(1, hurt_by(false));
-            t.add(2, nearest(Wanted::Player, true));
-            t.add(3, nearest(Wanted::Unsimulated, true));
-            t.add(3, nearest(Wanted::Unsimulated, true));
-            // `reassessWeaponGoal` in the constructor: no bow yet, so the melee goal.
-            g.add(4, melee(MeleeKind::Plain, 1.2, false));
-        }
+        MobKind::Zombie => kinds::zombie::register_goals(m),
+        MobKind::Skeleton => kinds::skeleton::register_goals(m),
         MobKind::Creeper => {
             g.add(1, Goal::Float);
             g.add(2, Goal::Swell { target: None });
@@ -755,7 +744,7 @@ fn register_goals(m: &mut MobData) {
 
 /// `AbstractSkeleton.reassessWeaponGoal`: the bow goal (priority 4) with a bow, else melee.
 pub fn reassess_weapon_goal(m: &mut MobData, hard: bool) {
-    if m.kind != MobKind::Skeleton {
+    if !m.kind.is_skeleton() {
         return;
     }
     m.goals.goals.retain(|w| !(matches!(w.goal, Goal::Melee { .. } | Goal::RangedBow { .. }) && w.priority == 4 && !w.running));
@@ -872,6 +861,25 @@ pub fn kill(e: &mut Entity) {
     }
 }
 
+/// `Mob.setTarget`, with the type's override first (zombified piglins draw their anger timers).
+pub fn set_target(e: &mut Entity, m: &mut MobData, target: Option<i32>) {
+    if let Some(k) = m.kind.ext() {
+        k.on_set_target(e, m, target);
+    }
+    m.target = target;
+}
+
+/// `setTarget` on mob `id` (not the one ticking).
+pub fn set_target_of(level: &mut dyn EntityLevel, id: i32, target: Option<i32>) {
+    let Some(o) = level.entity_mut(id) else { return };
+    if !matches!(o.kind, EntityKind::Mob(_)) {
+        return;
+    }
+    let mut m = take(o);
+    set_target(o, &mut m, target);
+    put(o, m);
+}
+
 pub fn data_mut(e: &mut Entity) -> Option<&mut MobData> {
     match &mut e.kind {
         EntityKind::Mob(m) => Some(m),
@@ -918,6 +926,7 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if let Some(t) = m.using_item.as_mut() {
         *t += 1;
     }
+    sync_equipment_modifiers(m);
     if !e.is_removed() {
         ai_step(e, m, level);
     }
@@ -948,6 +957,59 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
     while m.y_head_rot - m.y_head_rot_o >= 180.0 {
         m.y_head_rot_o += 360.0;
+    }
+}
+
+/// `LivingEntity.detectEquipmentUpdates`: the attribute modifiers of the items worn and held
+/// (a sword's attack damage, armor points) replace those of the previous equipment. Broken
+/// items give none; enchantment attribute effects are not applied to mobs.
+pub fn sync_equipment_modifiers(m: &mut MobData) {
+    use kiln_item::component::{AttributeOperation, EquipmentSlotGroup as G};
+    let mut want: Vec<(Attr, String, f64, Op)> = Vec::new();
+    for slot in 0..6 {
+        let stack = &m.equipment[slot];
+        if stack.is_empty() || (stack.is_damageable_item() && stack.damage() >= stack.max_damage()) {
+            continue;
+        }
+        let Some(mods) = stack.get(kiln_item::keys::ATTRIBUTE_MODIFIERS) else { continue };
+        for md in &mods.0 {
+            let fits = match md.slot {
+                G::Any => true,
+                G::MainHand => slot == MAINHAND,
+                G::OffHand => slot == OFFHAND,
+                G::Hand => slot <= OFFHAND,
+                G::Feet => slot == FEET,
+                G::Legs => slot == LEGS,
+                G::Chest => slot == CHEST,
+                G::Head => slot == HEAD,
+                G::Armor => slot >= FEET,
+                G::Body | G::Saddle => false,
+            };
+            let name = kiln_data::builtin_entries("minecraft:attribute").and_then(|e| e.get(md.attribute as usize).copied());
+            let Some(attr) = name.and_then(Attr::by_name) else { continue };
+            if !fits || m.attrs.get(attr).is_none() {
+                continue;
+            }
+            let op = match md.operation {
+                AttributeOperation::AddValue => Op::AddValue,
+                AttributeOperation::AddMultipliedBase => Op::AddMultipliedBase,
+                AttributeOperation::AddMultipliedTotal => Op::AddMultipliedTotal,
+            };
+            let id = md.id.as_str().to_owned();
+            want.retain(|(a, i, _, _)| !(*a == attr && *i == id));
+            want.push((attr, id, md.amount, op));
+        }
+    }
+    let same = want.len() == m.equip_mods.len() && want.iter().zip(&m.equip_mods).all(|(w, (a, i))| w.0 == *a && w.1 == *i);
+    if same {
+        return;
+    }
+    for (a, id) in std::mem::take(&mut m.equip_mods) {
+        m.attrs.remove_modifier(a, &id);
+    }
+    for (a, id, amount, op) in want {
+        m.attrs.set_modifier(a, &id, amount, op);
+        m.equip_mods.push((a, id));
     }
 }
 
@@ -1404,14 +1466,9 @@ fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
     let _ = m;
     let bb = e.bounding_box();
     let mut others: Vec<(i32, f64, f64, bool)> = Vec::new();
-    for id in level.entities_in(&bb, EntityFilter::Living, e.id) {
-        let Some(o) = level.entity(id) else { continue };
-        if let EntityKind::Mob(om) = &o.kind
-            && om.health > 0.0
-        {
-            others.push((id, o.x(), o.z(), false));
-        }
-    }
+    // Players first: they joined the entity sections before the mobs around them (the order
+    // the pushes add up in shows in the last bits of the motion).
+    let mobs = level.entities_in(&bb, EntityFilter::Living, e.id);
     for p in level.players() {
         if p.spectator || !p.alive {
             continue;
@@ -1420,6 +1477,14 @@ fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
         let pb = Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3);
         if pb.intersects(&bb) {
             others.push((p.id, p.pos.x, p.pos.z, true));
+        }
+    }
+    for id in mobs {
+        let Some(o) = level.entity(id) else { continue };
+        if let EntityKind::Mob(om) = &o.kind
+            && om.health > 0.0
+        {
+            others.push((id, o.x(), o.z(), false));
         }
     }
     for (id, ox, oz, player) in others {
@@ -1549,8 +1614,8 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     m.last_damage_source = Some(source);
     m.last_damage_stamp = level.game_time();
-    if let Species::Zombie { .. } = m.species {
-        // `Zombie.hurtServer`: reinforcements only on hard difficulty (not simulated).
+    if m.kind == MobKind::Zombie {
+        kinds::zombie::reinforcements(e, m, level, &source);
     }
     true
 }
@@ -1814,7 +1879,7 @@ pub fn do_hurt_target_base(e: &mut Entity, m: &mut MobData, level: &mut dyn Enti
     if hurt {
         m.last_hurt_mob = Some(t.id);
         // `Zombie.doHurtTarget`: a burning, empty-handed zombie sets its target on fire.
-        if m.kind == MobKind::Zombie && m.equipment[MAINHAND].is_empty() && e.is_on_fire() {
+        if m.kind.is_zombie() && m.equipment[MAINHAND].is_empty() && e.is_on_fire() {
             let difficulty = level.effective_difficulty(e.block_position());
             if e.random.next_float() < difficulty * 0.3 {
                 level.ignite(t.id, (2 * difficulty as i32) as f32);
@@ -1848,12 +1913,25 @@ pub struct GroupData {
     pub zombie_baby: Option<bool>,
     pub sheep_colors: bool,
     pub spider_effect: Option<Option<&'static str>>,
+    /// `EntitySpawnReason.NATURAL` (set by [`finalize_spawn`]).
+    pub natural: bool,
 }
 
 /// `Mob.finalizeSpawn` and the types' overrides; random draws from `r` (the level's).
 pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData, natural: bool) {
     let mut m = take(e);
     let kind = m.kind;
+    group.natural = natural;
+    if kind == MobKind::Zombie {
+        kinds::zombie::finalize(e, &mut m, r, ctx, group, false);
+        put(e, m);
+        return;
+    }
+    if kind == MobKind::Skeleton {
+        kinds::skeleton::finalize(e, &mut m, r, ctx);
+        put(e, m);
+        return;
+    }
     if let Some(k) = kind.ext() {
         k.finalize_spawn(e, &mut m, r, ctx, group);
         put(e, m);
@@ -1878,67 +1956,11 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
             *c = color;
         }
     }
-    if kind == MobKind::Zombie {
-        // Drawn before `Mob.finalizeSpawn` (`p0.getRandom()` stored first).
-    }
     // `Mob.finalizeSpawn`.
     let bonus = mth::triangle(r, 0.0, 0.11485000000000001);
     m.attrs.set_modifier(Attr::FollowRange, "minecraft:random_spawn_bonus", bonus, Op::AddMultipliedBase);
     m.left_handed = r.next_float() < 0.05;
     match kind {
-        MobKind::Zombie => {
-            m.can_pick_up_loot = r.next_float() < 0.55 * ctx.special_multiplier;
-            let baby = *group.zombie_baby.get_or_insert_with(|| r.next_float() < 0.05);
-            if baby {
-                m.zombie_baby = true;
-                m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
-                refresh_dimensions(e, &m);
-                // Chicken jockeys (not simulated): the two draws.
-                if r.next_float() < 0.05 {
-                } else {
-                    let _ = r.next_float();
-                }
-            }
-            let doors = r.next_float() < ctx.special_multiplier * 0.1;
-            if let Species::Zombie { can_break_doors } = &mut m.species {
-                *can_break_doors = doors;
-            }
-            populate_equipment(&mut m, r, ctx);
-            if ctx.halloween {
-                halloween(&mut m, r);
-            }
-            // `handleAttributes`, from the zombie's own random.
-            let rr = &mut e.random;
-            let reinf = rr.next_double() * 0.1;
-            if let Some(i) = m.attrs.get_mut(Attr::SpawnReinforcements) {
-                i.base = reinf;
-            }
-            let kb = rr.next_double() * 0.05000000074505806;
-            m.attrs.set_modifier(Attr::KnockbackResistance, "minecraft:random_spawn_bonus", kb, Op::AddValue);
-            let d = rr.next_double() * 1.5 * ctx.special_multiplier as f64;
-            if d > 1.0 {
-                m.attrs.set_modifier(Attr::FollowRange, "minecraft:zombie_random_spawn_bonus", d, Op::AddMultipliedTotal);
-            }
-            if rr.next_float() < ctx.special_multiplier * 0.05 {
-                let a = rr.next_double() * 0.25 + 0.5;
-                m.attrs.set_modifier(Attr::SpawnReinforcements, "minecraft:leader_zombie_bonus", a, Op::AddValue);
-                let b = rr.next_double() * 3.0 + 1.0;
-                m.attrs.set_modifier(Attr::MaxHealth, "minecraft:leader_zombie_bonus", b, Op::AddMultipliedTotal);
-                m.health = m.max_health();
-                if let Species::Zombie { can_break_doors } = &mut m.species {
-                    *can_break_doors = true;
-                }
-            }
-        }
-        MobKind::Skeleton => {
-            populate_equipment(&mut m, r, ctx);
-            m.equipment[MAINHAND] = ItemStack::of("minecraft:bow", 1).unwrap_or_else(ItemStack::empty);
-            reassess_weapon_goal(&mut m, ctx.hard);
-            m.can_pick_up_loot = r.next_float() < 0.55 * ctx.special_multiplier;
-            if ctx.halloween {
-                halloween(&mut m, r);
-            }
-        }
         MobKind::Spider => {
             // Spider jockeys (1 in 100) are not simulated; the draw still happens.
             let _ = r.next_int_bounded(100);
@@ -1964,56 +1986,6 @@ fn sound_variant_count(kind: MobKind) -> i32 {
     };
     kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == reg).map_or(1, |(_, e)| e.len() as i32)
 }
-
-/// `Mob.populateDefaultEquipmentSlots` (armor) and the zombie's weapon roll.
-fn populate_equipment(m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext) {
-    if r.next_float() < 0.15 * ctx.special_multiplier {
-        let mut tier = r.next_int_bounded(3);
-        for _ in 1..=3 {
-            if r.next_float() < 0.1087 {
-                tier += 1;
-            }
-        }
-        let stop = if ctx.hard { 0.1 } else { 0.25 };
-        let mut first = true;
-        for slot in [HEAD, CHEST, LEGS, FEET] {
-            if !first && r.next_float() < stop {
-                break;
-            }
-            first = false;
-            if m.equipment[slot].is_empty() {
-                let material = ["leather", "golden", "chainmail", "iron", "diamond"][tier.clamp(0, 4) as usize];
-                let piece = ["boots", "leggings", "chestplate", "helmet"][slot - FEET];
-                let name = if material == "golden" { format!("minecraft:golden_{piece}") } else { format!("minecraft:{material}_{piece}") };
-                if let Some(s) = ItemStack::of(&name, 1) {
-                    m.equipment[slot] = s;
-                }
-            }
-        }
-    }
-    if m.kind == MobKind::Zombie && r.next_float() < if ctx.hard { 0.05 } else { 0.01 } {
-        let i = r.next_int_bounded(6);
-        let name = match i {
-            0 => "minecraft:iron_sword",
-            1 => "minecraft:iron_spear",
-            _ => "minecraft:iron_shovel",
-        };
-        if let Some(s) = ItemStack::of(name, 1) {
-            m.equipment[MAINHAND] = s;
-        }
-    }
-}
-
-fn halloween(m: &mut MobData, r: &mut dyn RandomSource) {
-    if m.equipment[HEAD].is_empty() && r.next_float() < 0.25 {
-        let name = if r.next_float() < 0.1 { "minecraft:jack_o_lantern" } else { "minecraft:carved_pumpkin" };
-        if let Some(s) = ItemStack::of(name, 1) {
-            m.equipment[HEAD] = s;
-            m.drop_chances[HEAD] = 0.0;
-        }
-    }
-}
-
 /// `Mob.checkDespawn`: `nearest` is the squared distance to the nearest player (`None`: no
 /// player in the dimension).
 pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f64>) {

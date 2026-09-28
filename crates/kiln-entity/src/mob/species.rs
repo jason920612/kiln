@@ -14,6 +14,10 @@ pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         k.pre_tick(e, m, level);
         return;
     }
+    if m.kind == MobKind::Skeleton {
+        super::kinds::skeleton::tick_freezing(e, m, level);
+        return;
+    }
     let alive = super::is_alive(e, m);
     if let Species::Creeper { swell, old_swell, swell_dir, max_swell, radius, powered, ignited } = &mut m.species {
         if !alive {
@@ -50,6 +54,10 @@ pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 pub fn post_tick(e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
     if let Some(k) = m.kind.ext() {
         k.post_tick(e, m, _level);
+        return;
+    }
+    if m.kind == MobKind::Zombie {
+        super::kinds::zombie::tick_drowning(e, m, _level);
         return;
     }
     if let Species::Spider { climbing } = &mut m.species {
@@ -107,6 +115,9 @@ pub fn perform_ranged_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn En
     let damage = (power * 2.0) as f64 + super::mth::triangle(&mut arrow.random, difficulty * 0.11, 0.57425);
     if let crate::entity::EntityKind::Arrow(a) = &mut arrow.kind {
         a.base_damage = damage;
+    }
+    if let Some(k) = m.kind.ext() {
+        k.ranged_arrow(e, m, &mut arrow);
     }
     let dx = t.pos.x - e.x();
     let dy = t.pos.y + (t.bb.max_y - t.bb.min_y) * 0.3333333333333333 - arrow.y();
@@ -220,6 +231,7 @@ fn baby_dimensions(kind: MobKind) -> Option<(f32, f32, f32)> {
         MobKind::Cow => (0.45, 0.7, 0.69),
         MobKind::Sheep => (0.45, 0.65, 0.65625),
         MobKind::Chicken => (0.3, 0.4, 0.28125),
+        MobKind::Zombie => super::kinds::zombie::baby_dimensions(kind),
         _ => return None,
     })
 }

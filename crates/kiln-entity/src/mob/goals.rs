@@ -364,6 +364,27 @@ fn nearest_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, combat: 
     best.map(|(_, t)| t)
 }
 
+/// `NearestAttackableTargetGoal<Player>.findTarget`: the nearest player passing the combat
+/// conditions and the type's selector ([`super::ext::Kind::player_target_ok`]).
+fn nearest_attackable_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, range: f64) -> Option<Living> {
+    let k = m.kind.ext();
+    let mut best: Option<(f64, Living)> = None;
+    for p in level.players() {
+        let Some(t) = living(level, p.id) else { continue };
+        if k.is_some_and(|k| !k.player_target_ok(e, m, level, &t)) {
+            continue;
+        }
+        if !targeting_ok(e, m, level, &t, true, range, true) {
+            continue;
+        }
+        let d = t.dist_sqr(e.x(), e.eye_y(), e.z());
+        if best.as_ref().is_none_or(|(b, _)| d < *b) {
+            best = Some((d, t));
+        }
+    }
+    best.map(|(_, t)| t)
+}
+
 /// `NearestAttackableTargetGoal.findTarget` for mob types: the nearest (to the eyes) mob of
 /// `types` in the box `range` around (4 up and down) that passes the combat conditions.
 pub fn nearest_mob(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, range: f64, must_see: bool, types: &[&str]) -> Option<i32> {
@@ -602,7 +623,7 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
             }
             let range = m.attrs.value(Attr::FollowRange);
             *tg = match wanted {
-                Wanted::Player => nearest_player(e, m, level, true, range, true, |_| true).map(|p| p.id),
+                Wanted::Player => nearest_attackable_player(e, m, level, range).map(|p| p.id),
                 Wanted::Unsimulated => None,
                 Wanted::Types(types) => nearest_mob(e, m, level, range, *must_see, types),
             };
@@ -641,7 +662,7 @@ fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn E
         Goal::EatBlock { tick } => *tick > 0,
         Goal::Melee { kind, follow_unseen, .. } => {
             if *kind == MeleeKind::Spider && light_ok_for_spider_to_stop(e, level) && e.random.next_int_bounded(100) == 0 {
-                m.target = None;
+                super::set_target(e, m, None);
                 return false;
             }
             let Some(t) = target(m, level) else { return false };
@@ -671,7 +692,7 @@ fn light_ok_for_spider_to_stop(e: &Entity, level: &dyn EntityLevel) -> bool {
 }
 
 /// `TargetGoal.canContinueToUse`.
-fn continue_target(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target_mob: Option<i32>, must_see: bool, unseen: &mut i32, memory: i32) -> bool {
+fn continue_target(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, target_mob: Option<i32>, must_see: bool, unseen: &mut i32, memory: i32) -> bool {
     let id = m.target.or(target_mob);
     let Some(t) = id.and_then(|id| living(level, id)) else { return false };
     if !can_attack(level, &t) {
@@ -691,7 +712,7 @@ fn continue_target(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target_
             }
         }
     }
-    m.target = Some(t.id);
+    super::set_target(e, m, Some(t.id));
     true
 }
 
@@ -752,7 +773,8 @@ fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
             *max_stay = e.random.next_int_bounded(inner) + 1200;
         }
         Goal::HurtByTarget { timestamp, alert_others, target_mob, unseen, unseen_memory } => {
-            m.target = m.last_hurt_by_mob;
+            let by = m.last_hurt_by_mob;
+            super::set_target(e, m, by);
             *target_mob = m.target;
             *timestamp = m.last_hurt_by_mob_timestamp;
             *unseen_memory = 300;
@@ -762,7 +784,7 @@ fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
             *unseen = 0;
         }
         Goal::NearestAttackable { target: tg, unseen, .. } => {
-            m.target = *tg;
+            super::set_target(e, m, *tg);
             *unseen = 0;
         }
         Goal::Tempt { .. } => {}
@@ -791,7 +813,7 @@ fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
             // `NO_CREATIVE_OR_SPECTATOR.test(target)` fails for a missing target too.
             let keep = m.target.and_then(|id| living(level, id)).is_some_and(|t| !(t.player && (t.creative || t.spectator)));
             if !keep {
-                m.target = None;
+                super::set_target(_e, m, None);
             }
             m.set_aggressive(false);
             m.nav.stop();
@@ -806,7 +828,7 @@ fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
         Goal::RestrictSun => m.nav.avoid_sun = false,
         Goal::RemoveTurtleEgg { .. } => _e.fall_distance = 1.0,
         Goal::HurtByTarget { target_mob, .. } | Goal::NearestAttackable { target: target_mob, .. } => {
-            m.target = None;
+            super::set_target(_e, m, None);
             *target_mob = None;
         }
         _ => {}
@@ -1071,13 +1093,18 @@ fn alert_others_of_kind(e: &Entity, m: &MobData, level: &mut dyn EntityLevel) {
     let r = m.attrs.value(Attr::FollowRange);
     let p = e.position();
     let area = crate::math::Aabb::new(p.x, p.y, p.z, p.x + 1.0, p.y + 1.0, p.z + 1.0).inflate(r, 10.0, r);
+    // `getEntitiesOfClass(mob.getClass())`: zombies alert every kind of zombie; zombies and
+    // drowned leave zombified piglins alone (`setAlertOthers(ZombifiedPiglin.class)`).
+    let kind = m.kind;
+    let same = |o: MobKind| {
+        let class = o == kind || (kind == MobKind::Zombie && o.is_zombie());
+        let ignored = o == MobKind::ZombifiedPiglin && kind != MobKind::ZombifiedPiglin;
+        class && !ignored
+    };
     for id in level.entities_in(&area, crate::level::EntityFilter::Living, e.id) {
-        if let Some(o) = level.entity_mut(id)
-            && o.type_name == e.type_name
-            && let crate::entity::EntityKind::Mob(om) = &mut o.kind
-            && om.target.is_none()
-        {
-            om.target = Some(attacker);
+        let alert = matches!(level.entity(id).map(|o| &o.kind), Some(crate::entity::EntityKind::Mob(om)) if same(om.kind) && om.target.is_none());
+        if alert {
+            super::set_target_of(level, id, Some(attacker));
         }
     }
 }

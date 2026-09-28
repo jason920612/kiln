@@ -276,6 +276,14 @@ pub trait EntityLevel {
         true
     }
 
+    /// `LivingEntity.addEffect` on player or entity `id` (`effect`: a `minecraft:mob_effect`
+    /// name; `source`: the entity responsible). Returns whether it took (mobs have no effects
+    /// yet).
+    fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32>) -> bool {
+        let _ = (id, effect, duration, amplifier, source);
+        false
+    }
+
     /// Sets entity or player `id` on fire for `seconds`.
     fn ignite(&mut self, id: i32, seconds: f32) {
         if let Some(e) = self.entity_mut(id) {

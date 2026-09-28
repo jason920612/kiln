@@ -1,5 +1,6 @@
-//! Pathfinding: `WalkNodeEvaluator`, the A* `PathFinder` with vanilla's `BinaryHeap`, `Path`,
-//! and `GroundPathNavigation` / `WallClimberNavigation` (spiders).
+//! Pathfinding: `WalkNodeEvaluator` (and `AmphibiousNodeEvaluator`), the A* `PathFinder` with
+//! vanilla's `BinaryHeap`, `Path`, and `GroundPathNavigation` / `WallClimberNavigation` (spiders)
+//! / `AmphibiousPathNavigation` (drowned).
 
 use super::MobData;
 use super::mth;
@@ -293,6 +294,8 @@ struct Search<'a> {
     can_open_doors: bool,
     can_pass_doors: bool,
     can_walk_over_fences: bool,
+    /// `AmphibiousNodeEvaluator`: water is walkable, swimming up and down, land costs more.
+    amphibious: bool,
     heap: Vec<u32>,
 }
 
@@ -317,7 +320,24 @@ impl<'a> Search<'a> {
     }
 
     fn malus(&self, t: PathType) -> f32 {
+        // `AmphibiousNodeEvaluator.prepare`: walkable 6 and water border 4 while searching.
+        if self.amphibious {
+            match t {
+                PathType::Walkable => return 6.0,
+                PathType::WaterBorder => return 4.0,
+                _ => {}
+            }
+        }
         malus(self.m, t)
+    }
+
+    /// `getPathType(context, x, y, z)`: the static type, or the amphibious evaluator's (water
+    /// next to a blocked block is a water border).
+    fn block_type(&self, x: i32, y: i32, z: i32) -> PathType {
+        if !self.amphibious {
+            return path_type_static(self.level, x, y, z);
+        }
+        amphibious_type(self.level, x, y, z)
     }
 
     fn max_up_step(&self) -> f32 {
@@ -358,7 +378,7 @@ impl<'a> Search<'a> {
                 best = t;
             }
         }
-        let here = path_type_static(self.level, x, y, z);
+        let here = self.block_type(x, y, z);
         if self.width > 1 {
             if self.malus(here) < best_malus && self.malus(PathType::BigMobsCloseToDanger) < best_malus {
                 return PathType::BigMobsCloseToDanger;
@@ -379,7 +399,7 @@ impl<'a> Search<'a> {
             for j in 0..self.height {
                 for k in 0..self.depth {
                     let (px, py, pz) = (x + i, y + j, z + k);
-                    let mut t = path_type_static(self.level, px, py, pz);
+                    let mut t = self.block_type(px, py, pz);
                     if t == PathType::DoorWoodClosed && self.can_open_doors && self.can_pass_doors {
                         t = PathType::WalkableDoor;
                     }
@@ -402,7 +422,7 @@ impl<'a> Search<'a> {
     }
 
     fn floor_level(&self, pos: BlockPos) -> f64 {
-        if self.can_float && crate::fluid::fluid_at(self.level, pos).kind.is_water() {
+        if (self.can_float || self.amphibious) && crate::fluid::fluid_at(self.level, pos).kind.is_water() {
             return pos.y as f64 + 0.5;
         }
         floor_level(self.level, pos)
@@ -424,6 +444,12 @@ impl<'a> Search<'a> {
         let e = self.e;
         let mut y = e.block_position().y;
         let at = |x: f64, y: i32, z: f64| BlockPos::containing(x, y as f64, z);
+        if self.amphibious && e.is_in_water() {
+            // `AmphibiousNodeEvaluator.getStart`: the block at the box's low corner, half up.
+            let bb = e.bounding_box();
+            let (x, y, z) = (floor(bb.min_x), floor(bb.min_y + 0.5), floor(bb.min_z));
+            return Some(self.start_node(x, y, z));
+        }
         let state = self.level.block(at(e.x(), y, e.z()));
         if self.can_float && e.fluid.is_in_water() {
             let mut s = state;
@@ -511,6 +537,17 @@ impl<'a> Search<'a> {
                 }
             }
         }
+        if self.amphibious {
+            // `AmphibiousNodeEvaluator.getNeighbors`: swimming straight up and down.
+            let up = self.accepted_node(x, y + 1, z, (jump - 1).max(0), floor_y, (0, 0), here);
+            let down = self.accepted_node(x, y - 1, z, jump, floor_y, (0, 0), here);
+            if self.neighbor_valid(up, cur) && self.n(up.unwrap()).kind == PathType::Water {
+                out.push(up.unwrap());
+            }
+            if self.neighbor_valid(down, cur) && self.n(down.unwrap()).kind == PathType::Water && here != PathType::Trapdoor {
+                out.push(down.unwrap());
+            }
+        }
     }
 
     fn neighbor_valid(&self, n: Option<u32>, cur: u32) -> bool {
@@ -569,7 +606,7 @@ impl<'a> Search<'a> {
         {
             node = None;
         }
-        if t == PathType::Walkable {
+        if t == PathType::Walkable || (self.amphibious && t == PathType::Water) {
             return node;
         }
         let blocked = node.is_none_or(|n| self.n(n).cost_malus < 0.0);
@@ -582,7 +619,7 @@ impl<'a> Search<'a> {
         {
             return self.try_jump_on(x, y, z, jump, floor_y, dir, here);
         }
-        if t == PathType::Water && !self.can_float {
+        if t == PathType::Water && !self.can_float && !self.amphibious {
             return self.first_non_water_below(x, y, z, node);
         }
         if t == PathType::Open {
@@ -873,6 +910,8 @@ pub struct Navigation {
     /// `WallClimberNavigation.pathToPosition` (spiders).
     pub climber: bool,
     pub path_to_position: Option<BlockPos>,
+    /// `AmphibiousPathNavigation` (drowned).
+    pub amphibious: bool,
 }
 
 impl Navigation {
@@ -907,15 +946,37 @@ fn max_path_length(m: &MobData) -> f32 {
     (m.attrs.value(super::attributes::Attr::FollowRange) as f32).max(m.nav.required_path_length)
 }
 
-/// `GroundPathNavigation.canUpdatePath`.
-fn can_update_path(e: &Entity) -> bool {
-    e.on_ground || e.is_in_water() || e.is_in_lava()
+/// `GroundPathNavigation.canUpdatePath` (always for amphibious navigation).
+fn can_update_path(e: &Entity, m: &MobData) -> bool {
+    m.nav.amphibious || e.on_ground || e.is_in_water() || e.is_in_lava()
+}
+
+/// `AmphibiousNodeEvaluator.getPathType`.
+pub fn amphibious_type(level: &dyn EntityLevel, x: i32, y: i32, z: i32) -> PathType {
+    if type_at(level, x, y, z) != PathType::Water {
+        return path_type_static(level, x, y, z);
+    }
+    // `Direction.values()`: down, up, north, south, west, east.
+    for (dx, dy, dz) in [(0, -1, 0), (0, 1, 0), (0, 0, -1), (0, 0, 1), (-1, 0, 0), (1, 0, 0)] {
+        if type_at(level, x + dx, y + dy, z + dz) == PathType::Blocked {
+            return PathType::WaterBorder;
+        }
+    }
+    PathType::Water
+}
+
+/// `isStableDestination` of the mob's navigation.
+pub fn stable_destination(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -> bool {
+    if m.nav.amphibious {
+        return !kiln_data::blocks_types::is_air(level.block(pos.below()));
+    }
+    is_stable_destination(level, pos)
 }
 
 /// `PathNavigation.createPath(Set<BlockPos>, regionOffset, offsetUpward, reach, maxPathLength)`.
 fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, region: i32, up: bool, reach: i32) -> Option<Path> {
     let max_len = max_path_length(m);
-    if e.y() < level.min_y() as f64 || !can_update_path(e) {
+    if e.y() < level.min_y() as f64 || !can_update_path(e, m) {
         return None;
     }
     if let Some(p) = &m.nav.path
@@ -943,6 +1004,7 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
         can_open_doors: m.nav.can_open_doors,
         can_pass_doors: m.nav.can_pass_doors,
         can_walk_over_fences: m.nav.can_walk_over_fences,
+        amphibious: m.nav.amphibious,
         heap: Vec::with_capacity(64),
     };
     let path = s.find(target, max_len, reach, max_visited);
@@ -962,7 +1024,7 @@ pub fn create_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: Bl
     if !level.is_loaded(pos) {
         return None;
     }
-    let pos = find_surface(level, pos);
+    let pos = if m.nav.amphibious { pos } else { find_surface(level, pos) };
     create_path_raw(e, m, level, pos, 8, false, reach)
 }
 
@@ -974,7 +1036,7 @@ pub fn create_path_to_entity(e: &Entity, m: &mut MobData, level: &dyn EntityLeve
     if !level.is_loaded(target) {
         return None;
     }
-    let pos = find_surface(level, target);
+    let pos = if m.nav.amphibious { target } else { find_surface(level, target) };
     create_path_raw(e, m, level, pos, 16, true, reach)
 }
 
@@ -1084,6 +1146,10 @@ fn trim_path(_e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
 
 /// `GroundPathNavigation.getTempMobPos`.
 fn temp_mob_pos(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Vec3 {
+    if m.nav.amphibious {
+        // `AmphibiousPathNavigation.getTempMobPos`: half way up the box.
+        return Vec3::new(e.x(), e.y() + e.height as f64 * 0.5, e.z());
+    }
     Vec3::new(e.x(), surface_y(e, m, level) as f64, e.z())
 }
 
@@ -1129,7 +1195,7 @@ pub fn tick(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
     if m.nav.is_done() {
         return;
     }
-    if can_update_path(e) {
+    if can_update_path(e, m) {
         follow_the_path(e, m, level);
     } else if let Some(path) = &m.nav.path
         && !path.is_done()
@@ -1145,13 +1211,13 @@ pub fn tick(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
     }
     let next = m.nav.path.as_ref().unwrap().next_entity_pos(e.width);
     let bp = BlockPos::containing(next.x, next.y, next.z);
-    let y = if kiln_data::blocks_types::is_air(level.block(bp.below())) { next.y } else { floor_level(level, bp) };
+    let y = if m.nav.amphibious || kiln_data::blocks_types::is_air(level.block(bp.below())) { next.y } else { floor_level(level, bp) };
     let s = m.nav.speed_modifier;
     m.mov.set_wanted_position(next.x, y, next.z, s);
 }
 
 fn recompute_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
-    if level.game_time() - m.nav.time_last_recompute > 20 && can_update_path(e) {
+    if level.game_time() - m.nav.time_last_recompute > 20 && can_update_path(e, m) {
         if let Some(t) = m.nav.target_pos {
             m.nav.path = None;
             let reach = m.nav.reach_range;
@@ -1176,13 +1242,13 @@ fn follow_the_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
     let close = dx < md && dz < md && dy < 1.0;
     let kind = path.nodes[path.next].kind;
     let cut = !matches!(kind, PathType::FireInNeighbor | PathType::DamagingInNeighbor | PathType::WalkableDoor);
-    if close || (cut && should_target_next_node_in_direction(e, path, cur)) {
+    if close || (cut && should_target_next_node_in_direction(e, m, level, path, cur)) {
         m.nav.path.as_mut().unwrap().next += 1;
     }
     do_stuck_detection(e, m, level, cur);
 }
 
-fn should_target_next_node_in_direction(e: &Entity, path: &Path, cur: Vec3) -> bool {
+fn should_target_next_node_in_direction(e: &Entity, m: &MobData, level: &dyn EntityLevel, path: &Path, cur: Vec3) -> bool {
     if path.next + 1 >= path.nodes.len() {
         return false;
     }
@@ -1191,7 +1257,15 @@ fn should_target_next_node_in_direction(e: &Entity, path: &Path, cur: Vec3) -> b
     if cur.distance_to_sqr(a) >= 4.0 {
         return false;
     }
-    // `canMoveDirectly` is false for ground navigation.
+    // `canMoveDirectly`: false for ground navigation; amphibious navigation in a liquid goes
+    // straight when nothing is in the way (`isClearForMovementBetween`).
+    if m.nav.amphibious && (e.is_in_water() || e.is_in_lava()) {
+        let to = path.next_entity_pos(e.width);
+        let to = Vec3::new(to.x, to.y + e.height as f64 * 0.5, to.z);
+        if !super::clip_blocks(level, cur, to) {
+            return true;
+        }
+    }
     let b = bottom(path.nodes[path.next + 1].pos());
     let (va, vb) = (a - cur, b - cur);
     let (la, lb) = (va.length_sqr(), vb.length_sqr());

@@ -594,6 +594,12 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         p.hurt(amount, &source, &mut ctx)
     }
 
+    fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, _source: Option<i32>) -> bool {
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
+        let Some(e) = crate::effects::effect_id(effect) else { return false };
+        p.add_effect(crate::effects::Effect::simple(e, duration, amplifier))
+    }
+
     fn ignite(&mut self, id: i32, seconds: f32) {
         if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
             let ticks = kiln_javamath::math::floor_f32(seconds * 20.0);

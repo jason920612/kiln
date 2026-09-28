@@ -141,14 +141,14 @@ impl PartialEq for Box<dyn MobExt> {
 /// The type state of `m` as `T` (the type's own state struct).
 pub fn state<T: 'static>(m: &MobData) -> Option<&T> {
     match &m.species {
-        super::Species::Ext(s) => s.as_any().downcast_ref::<T>(),
+        super::Species::Ext(s) => (**s).as_any().downcast_ref::<T>(),
         _ => None,
     }
 }
 
 pub fn state_mut<T: 'static>(m: &mut MobData) -> Option<&mut T> {
     match &mut m.species {
-        super::Species::Ext(s) => s.as_any_mut().downcast_mut::<T>(),
+        super::Species::Ext(s) => (**s).as_any_mut().downcast_mut::<T>(),
         _ => None,
     }
 }
@@ -315,6 +315,22 @@ pub trait Kind: Sync + Send {
     fn do_hurt_target(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> Option<bool> {
         let _ = (e, m, level, t);
         None
+    }
+    /// `setTarget` overrides, before the target changes to `target` (zombified piglins draw their
+    /// anger timers when they first get one).
+    fn on_set_target(&self, e: &mut Entity, m: &mut MobData, target: Option<i32>) {
+        let _ = (e, m, target);
+    }
+    /// `TargetingConditions` selector of the type's player `NearestAttackableTargetGoal`
+    /// (drowned `okTarget`, zombified piglin `isAngryAt`).
+    fn player_target_ok(&self, e: &Entity, m: &MobData, level: &dyn EntityLevel, t: &Living) -> bool {
+        let _ = (e, m, level, t);
+        true
+    }
+    /// `AbstractSkeleton.getArrow` / `performRangedAttack` extras on the arrow just made
+    /// (stray slowness, wither skeleton fire).
+    fn ranged_arrow(&self, e: &mut Entity, m: &mut MobData, arrow: &mut Entity) {
+        let _ = (e, m, arrow);
     }
     /// After a successful shared `doHurtTarget` (husk hunger, wither skeleton wither).
     fn after_hurt_target(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) {

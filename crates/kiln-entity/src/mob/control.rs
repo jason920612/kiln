@@ -99,7 +99,7 @@ impl MoveControl {
 }
 
 /// `MoveControl.rotlerp`.
-fn rotlerp(from: f32, to: f32, max: f32) -> f32 {
+pub fn rotlerp(from: f32, to: f32, max: f32) -> f32 {
     let mut d = mth::wrap_degrees(to - from);
     if d > max {
         d = max;
