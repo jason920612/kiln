@@ -174,6 +174,9 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     }
     let spawn_enemies = rules.difficulty != 0 && rules.spawn_monsters;
     let spawn_persistent = env.game_time % 400 == 0;
+    if spawn_enemies {
+        phantoms(level, players, spawns);
+    }
     let players: Vec<[f64; 3]> =
         players.iter().filter(|p| !p.disconnected && !p.dead && p.game_mode != 3).map(|p| p.pos).collect();
     if players.is_empty() {
@@ -260,6 +263,54 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
             if global && s.local_ok(c, cat) {
                 spawn_category_for_chunk(level, &mut s, &mut r, cat, c, ticking, spawns);
             }
+        }
+    }
+}
+
+/// `PhantomSpawner.tick`, per region. Approximations: the pass comes every 1200 ticks with a
+/// chance of 2 in 3 from a random seeded by the world and the time (vanilla waits 1200 to 2379
+/// ticks, 1790 on average: here 1800), and the insomnia statistic `time_since_rest` is the
+/// player's ticks since joining or respawning (Kiln has no beds to rest in).
+fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn>) {
+    let env = level.env;
+    if env.game_time % 1200 != 0 {
+        return;
+    }
+    let mut r = chunk_random(env.seed ^ 0x7068_616e_746f_6d, env.game_time, ChunkPos::new(0, 0));
+    if r.next_int_bounded(3) == 0 {
+        return;
+    }
+    let skylight = env.dim == crate::OVERWORLD_ID;
+    if env.mobs.sky_darken < 5 && skylight {
+        return;
+    }
+    for p in players.iter().filter(|p| !p.disconnected && !p.dead && p.game_mode != 3) {
+        let pos = KBlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
+        let sky = kiln_world::light::light_at(&*level.cells, kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z).map_or(15, i32::from);
+        if skylight && (pos.y < 63 || sky < 15) {
+            continue;
+        }
+        let ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, moon_brightness(env.mobs.day_time));
+        if !(ctx.effective_difficulty > r.next_float() * 3.0) {
+            continue;
+        }
+        let since_rest = p.tick_count.max(1);
+        if r.next_int_bounded(since_rest) < 72000 {
+            continue;
+        }
+        let up = 20 + r.next_int_bounded(15);
+        let east = -10 + r.next_int_bounded(21);
+        let south = -10 + r.next_int_bounded(21);
+        let at = KBlockPos::new(pos.x + east, pos.y + up, pos.z + south);
+        let state = level.block(at);
+        if !kiln_entity::mob::path::valid_empty_spawn(state, false) || !kiln_entity::physics::fluid_state(state).is_empty() {
+            continue;
+        }
+        let count = 1 + r.next_int_bounded(env.mobs.difficulty as i32 + 1);
+        for _ in 0..count {
+            let seed = r.next_long();
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false };
+            spawns.push(crate::mobs::spawn(MobKind::Phantom, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(0.0), Some(fin)));
         }
     }
 }

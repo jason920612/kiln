@@ -153,7 +153,7 @@ impl CustomGoal for BlazeAttack {
             m.mov.set_wanted_position(t.pos.x, t.pos.y, t.pos.z, 1.0);
         } else if d < follow * follow && can_see {
             let dx = t.pos.x - e.x();
-            let dy = (t.pos.y + (t.bb.max_y - t.bb.min_y) * 0.5) - (e.y() + e.height as f64 * 0.5);
+            let dy = (t.pos.y + (t.bb.max_y - t.bb.min_y) as f32 as f64 * 0.5) - (e.y() + e.height as f64 * 0.5);
             let dz = t.pos.z - e.z();
             if self.attack_time <= 0 {
                 self.attack_step += 1;

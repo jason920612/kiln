@@ -1465,6 +1465,8 @@ impl Sim {
             p.combat = health::CombatTracker::default();
             p.attack_ticker = 0;
             p.portal_cooldown = 0;
+            // Its tick count too (phantoms' insomnia counts from it).
+            p.tick_count = 0;
         }
         p.effects_dirty = true;
         p.attributes_dirty = true;

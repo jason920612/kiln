@@ -277,7 +277,7 @@ impl CustomGoal for GhastShootFireball {
             if self.charge_time == 20 {
                 let view = fireball::view_vector(e.x_rot, m.y_head_rot);
                 let half = e.y() + e.height as f64 * 0.5;
-                let t_half = t.pos.y + (t.bb.max_y - t.bb.min_y) * 0.5;
+                let t_half = t.pos.y + (t.bb.max_y - t.bb.min_y) as f32 as f64 * 0.5;
                 let dx = t.pos.x - (e.x() + view.x * 4.0);
                 let dy = t_half - (0.5 + half);
                 let dz = t.pos.z - (e.z() + view.z * 4.0);

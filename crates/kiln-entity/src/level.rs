@@ -161,6 +161,11 @@ pub trait EntityLevel {
     /// Lowest block y of the dimension.
     fn min_y(&self) -> i32;
 
+    /// `Level.getSeaLevel`.
+    fn sea_level(&self) -> i32 {
+        63
+    }
+
     /// Highest block y of the dimension.
     fn max_y(&self) -> i32 {
         self.min_y() + 383

@@ -800,5 +800,37 @@ public class MobVectors {
             s.ticks = 100;
             out.add(s);
         }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_phantom_" + seed);
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:phantom", 0.5, BY + 10, 0.5, 60f * seed, 10000 + seed));
+            s.player = new double[] {18.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (String nbt : new String[] {null, "{size:3}"}) {
+            Scenario s = new Scenario(nbt == null ? "attack_phantom" : "attack_phantom_big");
+            floor(s, 24, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:phantom", 0.5, BY + 12, 0.5, 0f, nbt == null ? 10100 : 10101);
+            m.nbt = nbt;
+            s.mobs.add(m);
+            s.player = new double[] {4.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("daylight_phantom");
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:phantom", 0.5, BY + 8, 0.5, 0f, 10200));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 6000;
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 }

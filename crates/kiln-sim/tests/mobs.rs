@@ -353,3 +353,13 @@ fn blazes_shoot_small_fireballs_at_players() {
     assert!(fireball, "the blaze shot small fireballs");
     assert!(w.health() < 20.0, "the blaze hurt the player (health {})", w.health());
 }
+
+#[test]
+fn phantoms_swoop_at_players_at_night() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:phantom", [2.0, 12.0, 0.0], "{PersistenceRequired:1b,size:2}");
+    w.ticks(400);
+    assert!(w.health() < 20.0, "the phantom bit the player (health {})", w.health());
+}
