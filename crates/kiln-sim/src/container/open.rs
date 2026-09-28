@@ -183,8 +183,18 @@ impl Player {
                 self.send(pkt);
             }
             match effect {
-                kiln_inventory::Effect::Drop { stack, .. } => spawns.push(self.throw(stack)),
-                kiln_inventory::Effect::Crafted { .. } => took_result = true,
+                kiln_inventory::Effect::Drop { stack, retain_ownership } => {
+                    // `ServerPlayer.drop` with ownership kept: the dropped statistics.
+                    if retain_ownership && !stack.is_empty() {
+                        self.award_stat(crate::player_stats::Stat::item(crate::player_stats::DROPPED, stack.item()), stack.count());
+                        self.award_stat(*crate::player_stats::stat::DROP, 1);
+                    }
+                    spawns.push(self.throw(stack))
+                }
+                kiln_inventory::Effect::Crafted { item, amount } => {
+                    took_result = true;
+                    self.award_stat(crate::player_stats::Stat::item(crate::player_stats::CRAFTED, item), amount);
+                }
                 e @ (kiln_inventory::Effect::GrindstoneUsed { .. }
                 | kiln_inventory::Effect::AnvilUsed { .. }
                 | kiln_inventory::Effect::LoomUsed
@@ -375,16 +385,23 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
                 openers: vec![pos],
             };
             open_menu(p, level, provider, spawns);
+            p.award_stat(*crate::player_stats::stat::OPEN_ENDERCHEST, 1);
         }
         return Some(true);
     }
     if let Some(provider) = workstation_provider(s, pos) {
         open_menu(p, level, provider, spawns);
+        if let Some(stat) = crate::player_stats::interact_stat(s) {
+            p.award_stat(stat, 1);
+        }
         return Some(true);
     }
     level.blocks.containers.get(pos)?;
     if let Some(provider) = container_provider(level, pos, s) {
         open_menu(p, level, provider, spawns);
+        if let Some(stat) = crate::player_stats::interact_stat(s) {
+            p.award_stat(stat, 1);
+        }
     }
     Some(true)
 }
@@ -762,6 +779,7 @@ fn workstation_effects(p: &mut Player, level: &mut RegionLevel) {
                 }
             }
             kiln_inventory::Effect::Enchanted { levels, seed } => {
+                p.award_stat(*crate::player_stats::stat::ENCHANT_ITEM, 1);
                 p.pay_levels(levels);
                 p.containers.enchantment_seed = seed;
                 let pitch = super::pos_random(level, pos, 5).next_float() * 0.1 + 0.9;

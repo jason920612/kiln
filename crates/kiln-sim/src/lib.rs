@@ -39,6 +39,7 @@ mod spawner;
 mod movement;
 mod persist;
 mod players;
+pub(crate) mod player_stats;
 pub(crate) mod portal;
 mod region;
 mod rng;
@@ -358,6 +359,10 @@ struct Player {
     /// (`/spawnpoint`; beds and anchors are not).
     respawn_angle: f32,
     respawn_forced: bool,
+    /// The type of the last mob that hurt the player and when (`getKillCredit`'s fallback).
+    last_mob_attacker: Option<(&'static str, i64)>,
+    /// `ServerStatsCounter`.
+    stats: player_stats::PlayerStats,
 }
 
 impl Player {
@@ -422,6 +427,8 @@ impl Player {
         let dropped = if all { std::mem::replace(slot, kiln_item::ItemStack::empty()) } else { slot.split(1) };
         self.inv.times_changed += 1;
         // `drop(stack, false, true)`: the thrower is kept.
+        self.award_stat(player_stats::Stat::item(player_stats::DROPPED, dropped.item()), dropped.count());
+        self.award_stat(*player_stats::stat::DROP, 1);
         let mut spawn = self.throw(dropped);
         if let entities::Body::Item { thrower, .. } = &mut spawn.body {
             *thrower = Some(self.uuid.as_u128());
@@ -966,6 +973,7 @@ impl Sim {
             self.run_console_command(command.trim_start_matches('/'));
         }
         self.tick_global();
+        self.flush_stat_scores();
         // Players teleported in PX or G tick in their destination's region from now on.
         self.settle_teleported();
         lap(&mut self.stats, "global");
@@ -1579,6 +1587,9 @@ impl Sim {
 
     /// Death messages to everyone (`show_death_messages`), in the order the deaths happened.
     fn announce_deaths(&mut self, deaths: Vec<health::Death>) {
+        for d in &deaths {
+            self.award_kill_score(d);
+        }
         if deaths.is_empty() || !self.rule_bool("minecraft:show_death_messages") {
             return;
         }
@@ -1783,6 +1794,8 @@ impl Sim {
                 self.with_level_in(dim, pos, |level| sleep::stop_sleep_in_bed(&mut p, level, true, false));
             }
             self.sleep_status[p.dim].dirty = true;
+            // `PlayerList.remove`.
+            p.award_stat(*player_stats::stat::LEAVE_GAME, 1);
             self.commands.bossbars.player_left(p.uuid);
             self.save_player(&p);
             self.announce_leave(&p, conn);
@@ -1961,6 +1974,8 @@ impl Sim {
             woke_up: false,
             respawn_angle: joining.respawn_angle,
             respawn_forced: joining.respawn_forced,
+            last_mob_attacker: None,
+            stats: self.load_stats(j.uuid),
         };
 
         player.send(packets::play_login(&packets::Login {

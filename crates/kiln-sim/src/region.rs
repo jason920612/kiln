@@ -205,6 +205,7 @@ impl RegionWork<'_> {
                 self.out.portals.push(t);
             }
             p.tick_food(env.natural_regen, &mut ctx);
+            p.tick_stats();
             p.sync_health();
             p.sync_experience();
         }
@@ -444,6 +445,14 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                     p.vel[1] = 0.0;
                 }
                 p.exhaust_for_move(d, was_on_ground, in_fluid);
+                // `jumpFromGround` and `checkMovementStatistics`.
+                if was_on_ground && !on_ground && d[1] > 0.0 {
+                    p.award_stat(*crate::player_stats::stat::JUMP, 1);
+                }
+                let eye = [feet[0], (p.pos[1] + if p.sneaking { 1.27 } else { 1.62 }).floor() as i32, feet[2]];
+                let eyes_in_water = world.cells.get_block(eye[0], eye[1], eye[2]).is_some_and(kiln_data::blocks_types::has_fluid);
+                let climbing = world.cells.get_block(feet[0], feet[1], feet[2]).is_some_and(crate::player_stats::climbable);
+                p.movement_stats(d, in_fluid, eyes_in_water, climbing);
                 let mut ctx = damage_ctx(env, fx.spawns, fx.deaths);
                 p.check_fall(p.pos[1] - y0, on_ground, in_fluid, &mut ctx);
             }
@@ -590,6 +599,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.meta_dirty = true;
             }
         }
+        PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::RequestStats) => {
+            let pkt = p.stats.take_award_packet();
+            p.send(pkt);
+        }
         PlayIn::ClientTickEnd => {
             p.position_this_tick = false;
             if !std::mem::take(&mut p.moved_this_tick) {
@@ -671,6 +684,8 @@ fn use_on_block(
             persistent: false,
         };
         spawns.push(crate::mobs::spawn(kind, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(yaw), Some(finalize)));
+        let egg = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
+        p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, egg), 1);
         if p.game_mode != 1 {
             let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
             kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
@@ -691,6 +706,8 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    // `ItemStack.useOn`: a successful item interaction counts as a use.
+    p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, placed_from.item()), 1);
     if p.game_mode != 1 {
         let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
         kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
@@ -715,6 +732,8 @@ fn light_fire(p: &mut Player, level: &mut RegionLevel, main_hand: bool, pos: [i3
     level.effect(kiln_blocks::level::Effect::ActorSound { pos: at, sound: "minecraft:item.flintandsteel.use", volume: 1.0, pitch });
     let fire = portal::fire_state(level, at);
     kiln_blocks::set_block(level, at, fire, kiln_blocks::flags::ALL_IMMEDIATE);
+    let flint = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
+    p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, flint), 1);
     p.hurt_and_break(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, 1, None);
 }
 

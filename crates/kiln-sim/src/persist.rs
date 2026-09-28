@@ -211,6 +211,7 @@ impl Sim {
         if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
             warn!("failed to save player data for {}: {e}", p.name);
         }
+        self.save_stats(p);
     }
 
     /// Loads the scoreboard and custom boss bars (`data/minecraft/scoreboard.dat`,

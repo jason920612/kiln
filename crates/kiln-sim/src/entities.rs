@@ -885,8 +885,11 @@ pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player],
         m.y_head_rot = yaw;
     }
     let seat = kiln_entity::ride::rider_position(phys, 0, "minecraft:player", 1.0);
+    let vehicle_type = phys.type_name;
     entities.list[idx].sync();
     let p = &mut *players[i];
+    let d = [seat.x - p.pos[0], seat.y - p.pos[1], seat.z - p.pos[2]];
+    p.riding_stats(d, vehicle_type);
     p.pos = arr(seat);
 }
 
@@ -952,7 +955,15 @@ pub(crate) fn hit_mob(
         pos: Some(vec3(hit.attacker_pos)),
         attacker_is_player: true,
     };
+    let health_before = kiln_entity::mob::data(&phys).map(|m| m.health);
     let hurt = kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount);
+    // `Player.damageStatsAndHearts`.
+    if hurt
+        && let (Some(before), Some(after)) = (health_before, kiln_entity::mob::data(&phys).map(|m| m.health))
+        && let Some(p) = sim.players.iter_mut().find(|p| p.entity_id == hit.attacker)
+    {
+        p.award_stat(*crate::player_stats::stat::DAMAGE_DEALT, ((before - after) * 10.0).round() as i32);
+    }
     if hurt {
         if hit.knockback > 0.0 {
             let rad = (hit.yaw * 0.017453292) as f64;
@@ -1355,6 +1366,11 @@ fn carry_out(
                 }
             }
         }
+        Event::Killed { entity_type, credit, .. } => {
+            if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
+                p.killed_entity(entity_type);
+            }
+        }
         Event::GiftLoot { entity: id, table, pos } => loot_drop(env, spawns, id, table, pos, n, 0.0),
         Event::ShearLoot { entity: id, table, pos } => loot_drop(env, spawns, id, &table, pos, n, 1.0),
         // Vibrations, other projectile hits and the block effects of entities inside blocks
@@ -1483,10 +1499,13 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
         let Some(i) = players.iter().position(|p| !p.disconnected && !p.dead && p.game_mode != 3 && touching(p)) else {
             continue;
         };
+        let picked = item.stack.item();
         let taken = players[i].add_to_inventory(&mut item.stack);
         if taken == 0 {
             continue;
         }
+        // `ItemEntity.playerTouch`.
+        players[i].award_stat(crate::player_stats::Stat::item(crate::player_stats::PICKED_UP, picked), taken);
         let pkt = entity::take_item_entity(e.id, players[i].entity_id, taken);
         players[i].send(pkt.clone());
         for v in &e.seen_by {

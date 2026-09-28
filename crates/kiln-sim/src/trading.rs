@@ -47,6 +47,7 @@ pub(crate) fn open_if_requested(entities: &mut Entities, p: &mut Player, target:
     }
     st.open_for = None;
     let offers = st.offers.clone().unwrap_or_default();
+    p.award_stat(*crate::player_stats::stat::TALKED_TO_VILLAGER, 1);
     let (level, xp, profession) = (st.level, st.xp, st.profession);
     // `ServerPlayer.openMenu`: another open screen closes first.
     if let Some(open) = p.open_menu.as_ref() {
@@ -111,7 +112,7 @@ pub(crate) fn apply_events(
                 });
             }
             MerchantEvent::Closed => stop_trading(entities, target),
-            MerchantEvent::TradedStat => {}
+            MerchantEvent::TradedStat => players[i].award_stat(*crate::player_stats::stat::TRADED_WITH_VILLAGER, 1),
         }
     }
 }
