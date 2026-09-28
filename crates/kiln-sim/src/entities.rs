@@ -364,6 +364,18 @@ struct SimLevel<'a, 'l, 'p> {
     /// The entity being ticked and how many seeds it drew, for partition-independent seeds.
     current: i32,
     seeds: u64,
+    /// The level random as the ticking entity sees it: seeded per entity and tick, so what
+    /// one entity draws (explosions, experience orbs) does not depend on the others in its
+    /// region (vanilla shares one random per level).
+    rng: LegacyRandom,
+}
+
+/// The level random stand-in for entity `id` this tick.
+fn entity_level_random(seed: i64, game_time: i64, id: i32) -> LegacyRandom {
+    let mut h = (seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (game_time as u64) ^ 0x6c65_7665_6c;
+    h = (h ^ id as u32 as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    h ^= h >> 31;
+    LegacyRandom::new(h as i64)
 }
 
 impl SimLevel<'_, '_, '_> {
@@ -397,7 +409,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn random(&mut self) -> &mut LegacyRandom {
-        self.level.random()
+        &mut self.rng
     }
 
     fn game_time(&self) -> i64 {
@@ -580,6 +592,7 @@ pub(crate) fn tick(
         next_placeholder: -1_000_000,
         current: 0,
         seeds: 0,
+        rng: LegacyRandom::new(0),
     };
     for i in 0..sim.list.len() {
         let e = &mut sim.list[i];
@@ -589,6 +602,7 @@ pub(crate) fn tick(
         e.age += 1;
         let Some(mut phys) = e.phys.take() else { continue };
         (sim.current, sim.seeds) = (phys.id, 0);
+        sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
         // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
         // farther apart than the despawn distance, so the region's players decide).
         if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
@@ -637,6 +651,7 @@ pub(crate) fn hit_mob(
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x6869_74, hit.target);
     let mut sim = SimLevel {
         level,
         list: &mut entities.list,
@@ -649,6 +664,7 @@ pub(crate) fn hit_mob(
         next_placeholder: -1_000_000,
         current: hit.target,
         seeds: 0x6869_7400,
+        rng,
     };
     let Some(mut phys) = sim.list[i].phys.take() else { return };
     let source = kiln_entity::mob::DamageSource {

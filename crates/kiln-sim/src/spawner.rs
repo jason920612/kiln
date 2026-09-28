@@ -111,13 +111,18 @@ fn chunk_random(seed: i64, game_time: i64, c: ChunkPos) -> LegacyRandom {
     LegacyRandom::new(h as i64)
 }
 
-/// A player as the spawner sees it.
+/// The spawner's view of a region.
 struct Spawner<'a> {
     pos: Vec<[f64; 3]>,
     /// Per player, mobs per category nearby (`LocalMobCapCalculator.MobCounts`).
     local: Vec<[i32; 2]>,
-    counts: [i32; 2],
-    caps: [i32; 2],
+    /// Players whose spawning squares (8 chunks around them) overlap form a cluster; each
+    /// cluster has vanilla's category cap for its chunks, so how players are grouped into
+    /// regions does not matter. `cluster_of[player]`, and per cluster its chunk count and
+    /// mobs per category.
+    cluster_of: Vec<usize>,
+    counts: Vec<[i32; 2]>,
+    caps: Vec<[i32; 2]>,
     table: &'a SpawnTable,
 }
 
@@ -133,6 +138,19 @@ fn close_for_spawning(p: [f64; 3], c: ChunkPos) -> bool {
 }
 
 impl Spawner<'_> {
+    /// The cluster whose spawning squares hold chunk `c`.
+    fn cluster(&self, c: ChunkPos) -> Option<usize> {
+        self.pos.iter().position(|p| {
+            let pc = ChunkPos::of_block(p[0].floor() as i32, p[2].floor() as i32);
+            (pc.x - c.x).abs() <= 8 && (pc.z - c.z).abs() <= 8
+        }).map(|i| self.cluster_of[i])
+    }
+
+    fn global_ok(&self, c: ChunkPos, cat: Category) -> bool {
+        let i = cat_index(cat);
+        self.cluster(c).is_some_and(|k| self.counts[k][i] < self.caps[k][i])
+    }
+
     fn local_ok(&self, c: ChunkPos, cat: Category) -> bool {
         let i = cat_index(cat);
         self.pos.iter().zip(&self.local).any(|(p, n)| close_for_spawning(*p, c) && n[i] < cat.max_instances())
@@ -140,7 +158,9 @@ impl Spawner<'_> {
 
     fn add(&mut self, c: ChunkPos, cat: Category) {
         let i = cat_index(cat);
-        self.counts[i] += 1;
+        if let Some(k) = self.cluster(c) {
+            self.counts[k][i] += 1;
+        }
         for (p, n) in self.pos.iter().zip(self.local.iter_mut()) {
             if close_for_spawning(*p, c) {
                 n[i] += 1;
@@ -164,20 +184,51 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     if players.is_empty() {
         return;
     }
-    // `getNaturalSpawnChunkCount`: chunks within 8 of a player (chessboard).
-    let mut near = std::collections::HashSet::new();
-    for p in &players {
-        let c = ChunkPos::of_block(p[0].floor() as i32, p[2].floor() as i32);
-        for x in c.x - 8..=c.x + 8 {
-            for z in c.z - 8..=c.z + 8 {
-                near.insert(ChunkPos::new(x, z));
+    // Clusters of players with overlapping spawning squares (union-find over players).
+    let chunk_of = |p: &[f64; 3]| ChunkPos::of_block(p[0].floor() as i32, p[2].floor() as i32);
+    let mut parent: Vec<usize> = (0..players.len()).collect();
+    fn root(parent: &mut [usize], i: usize) -> usize {
+        let mut r = i;
+        while parent[r] != r {
+            r = parent[r];
+        }
+        parent[i] = r;
+        r
+    }
+    for i in 0..players.len() {
+        for j in i + 1..players.len() {
+            let (a, b) = (chunk_of(&players[i]), chunk_of(&players[j]));
+            if (a.x - b.x).abs() <= 16 && (a.z - b.z).abs() <= 16 {
+                let (ra, rb) = (root(&mut parent, i), root(&mut parent, j));
+                parent[ra.max(rb)] = ra.min(rb);
             }
         }
     }
-    let mut s = Spawner { pos: players.clone(), local: vec![[0; 2]; players.len()], counts: [0; 2], caps: [0; 2], table: &table };
-    for cat in CATEGORIES {
-        s.caps[cat_index(cat)] = cat.max_instances() * near.len() as i32 / 289;
+    let roots: Vec<usize> = (0..players.len()).map(|i| root(&mut parent, i)).collect();
+    let mut ids: Vec<usize> = roots.clone();
+    ids.sort_unstable();
+    ids.dedup();
+    let cluster_of: Vec<usize> = roots.iter().map(|r| ids.binary_search(r).unwrap()).collect();
+    // `getNaturalSpawnChunkCount` per cluster: chunks within 8 of its players (chessboard).
+    let mut near: Vec<std::collections::HashSet<ChunkPos>> = vec![Default::default(); ids.len()];
+    for (i, p) in players.iter().enumerate() {
+        let c = chunk_of(p);
+        for x in c.x - 8..=c.x + 8 {
+            for z in c.z - 8..=c.z + 8 {
+                near[cluster_of[i]].insert(ChunkPos::new(x, z));
+            }
+        }
     }
+    let caps: Vec<[i32; 2]> =
+        near.iter().map(|n| CATEGORIES.map(|cat| cat.max_instances() * n.len() as i32 / 289)).collect();
+    let mut s = Spawner {
+        pos: players.clone(),
+        local: vec![[0; 2]; players.len()],
+        cluster_of,
+        counts: vec![[0; 2]; ids.len()],
+        caps,
+        table: &table,
+    };
     // `createState`: mobs per category, persistent ones excluded.
     for e in &entities.list {
         let Some(m) = e.phys.as_ref().and_then(mob::data) else { continue };
@@ -186,11 +237,11 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
         }
         s.add(crate::entities::chunk_of(e.pos), m.kind.category());
     }
-    let categories: Vec<Category> = CATEGORIES
-        .into_iter()
-        .filter(|c| (spawn_enemies || c.friendly()) && (spawn_persistent || !c.persistent()))
-        .filter(|c| s.counts[cat_index(*c)] < s.caps[cat_index(*c)])
-        .collect();
+    // `getFilteredSpawningCategories`; the global cap is checked per cluster below, with
+    // the counts as they were at the start of the tick.
+    let categories: Vec<Category> =
+        CATEGORIES.into_iter().filter(|c| (spawn_enemies || c.friendly()) && (spawn_persistent || !c.persistent())).collect();
+    let start_counts = s.counts.clone();
     if categories.is_empty() {
         return;
     }
@@ -210,7 +261,8 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     for (_, c) in chunks {
         let mut r = chunk_random(env.seed, env.game_time, c);
         for &cat in &categories {
-            if s.local_ok(c, cat) {
+            let global = s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
+            if global && s.local_ok(c, cat) {
                 spawn_category_for_chunk(level, &mut s, &mut r, cat, c, ticking, spawns);
             }
         }

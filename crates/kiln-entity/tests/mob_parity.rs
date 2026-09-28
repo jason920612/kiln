@@ -240,7 +240,8 @@ fn replay(s: &Value) -> Result<usize, String> {
             compared += 1;
         }
     }
-    // Arrow hits are not replayed here (the simulation deals arrow damage).
+    // Vanilla arrows draw their damage and spread from their own random, which is seeded from
+    // the clock (not pinnable): skeleton scenarios compare the mob, not where arrows land.
     let arrows = s["mobs"].as_array().unwrap().iter().any(|m| m["main_hand"].as_str() == Some("minecraft:bow"));
     let f32s = |v: &[(i64, f64)]| v.iter().map(|&(t, a)| (t, (a as f32).to_bits())).collect::<Vec<_>>();
     if !arrows && f32s(&got_hits) != f32s(&want_hits) {

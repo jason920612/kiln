@@ -983,6 +983,19 @@ impl Sim {
         }
         let mut players: Vec<&Player> = self.players.values().collect();
         players.sort_by_key(|p| p.uuid);
+        // Entities (items, mobs, projectiles...) in id order: ids do not depend on the regions.
+        let mut ents: Vec<_> = self
+            .dim
+            .regions
+            .iter()
+            .flat_map(|r| r.part().0.list.iter())
+            .map(|e| {
+                let mob = e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
+                (e.id, e.kind.id, e.pos.map(f64::to_bits), e.vel.map(f64::to_bits), mob)
+            })
+            .collect();
+        ents.sort_unstable_by_key(|e| e.0);
+        ents.hash(&mut h);
         for p in players {
             p.uuid.hash(&mut h);
             (p.dim, p.portal_cooldown, p.portal.as_ref().map(|t| t.time)).hash(&mut h);
