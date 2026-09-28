@@ -95,6 +95,14 @@ pub(crate) struct CellTable {
     loaded: HashSet<(u32, i32, i32)>,
 }
 
+/// Where cell data is kept instead of sidecar files: a world in Kiln's native format keeps it
+/// in its cell files. Sidecars are per Anvil region (32x32 chunks) of a level.
+pub trait CellSidecars: Send + Sync {
+    fn read(&self, level: &str, rx: i32, rz: i32) -> Option<Vec<u8>>;
+    /// Stores the region's data (`None` deletes it).
+    fn write(&self, level: &str, rx: i32, rz: i32, data: Option<&[u8]>);
+}
+
 /// Where the namespaces are saved, and how plugin ids map to load order.
 #[derive(Clone)]
 pub(crate) struct Persist {
@@ -102,6 +110,8 @@ pub(crate) struct Persist {
     /// Level keys by dimension index.
     pub levels: Vec<String>,
     pub ids: Vec<String>,
+    /// Cell data store replacing the sidecar files.
+    pub sidecars: Option<std::sync::Arc<dyn CellSidecars>>,
 }
 
 impl Persist {
@@ -117,6 +127,17 @@ impl Persist {
         let level = self.levels.get(dim as usize).map_or("unknown:level", String::as_str);
         let (ns, path) = level.split_once(':').unwrap_or(("minecraft", level));
         self.root.join("cells").join(ns).join(path).join(format!("r.{rx}.{rz}.bin"))
+    }
+
+    fn level(&self, dim: u32) -> &str {
+        self.levels.get(dim as usize).map_or("unknown:level", String::as_str)
+    }
+
+    fn read_sidecar(&self, region: (u32, i32, i32)) -> Option<Vec<u8>> {
+        match &self.sidecars {
+            Some(s) => s.read(self.level(region.0), region.1, region.2),
+            None => std::fs::read(self.sidecar_path(region)).ok(),
+        }
     }
 
     fn global_path(&self) -> PathBuf {
@@ -206,7 +227,7 @@ impl Persist {
         if !table.loaded.insert(region) {
             return;
         }
-        let Ok(b) = std::fs::read(self.sidecar_path(region)) else { return };
+        let Some(b) = self.read_sidecar(region) else { return };
         let mut r = Reader(&b);
         let read = (|| {
             let n = r.u32()?;
@@ -241,7 +262,10 @@ impl Persist {
             cells.retain(|(_, ns)| !ns.is_empty());
             let path = self.sidecar_path(region);
             if cells.is_empty() {
-                let _ = std::fs::remove_file(&path);
+                match &self.sidecars {
+                    Some(s) => s.write(self.level(region.0), region.1, region.2, None),
+                    None => drop(std::fs::remove_file(&path)),
+                }
                 continue;
             }
             cells.sort_by_key(|(k, _)| **k);
@@ -252,7 +276,10 @@ impl Persist {
                 put_u32(&mut w, k.z as u32);
                 write_ns(&mut w, ns, self);
             }
-            write_file(&path, &w);
+            match &self.sidecars {
+                Some(s) => s.write(self.level(region.0), region.1, region.2, Some(&w)),
+                None => write_file(&path, &w),
+            }
         }
     }
 }
@@ -360,7 +387,7 @@ mod tests {
     use super::*;
 
     fn persist(dir: &Path) -> Persist {
-        Persist { root: dir.to_owned(), levels: vec!["minecraft:overworld".into()], ids: vec!["a".into(), "b".into()] }
+        Persist { root: dir.to_owned(), levels: vec!["minecraft:overworld".into()], ids: vec!["a".into(), "b".into()], sidecars: None }
     }
 
     #[test]

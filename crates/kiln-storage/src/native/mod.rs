@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::{info, warn};
 
-pub use cellfile::{ENTITIES, POI};
+pub use cellfile::{ENTITIES, PLUGIN, POI};
 
 /// Chunk records: a [`NativeChunk`], or chunk NBT as stored (chunks not fully generated, and
 /// chunks the native layout does not reproduce exactly).
@@ -299,6 +299,14 @@ impl NativeStore {
             let path = cell_path(&self.dir, cell);
             let f = CellFile::open(&path).unwrap_or_else(|e| {
                 warn!("cannot open {}: {e}", path.display());
+                // A corrupt file is moved aside, so the next write starts a new one.
+                if e.kind() == std::io::ErrorKind::InvalidData {
+                    let aside = path.with_extension(format!("kcell.corrupt-{}", now()));
+                    match std::fs::rename(&path, &aside) {
+                        Ok(()) => warn!("moved to {}", aside.display()),
+                        Err(e) => warn!("cannot move {}: {e}", path.display()),
+                    }
+                }
                 None
             });
             self.stats.record_open(start);
@@ -388,6 +396,22 @@ impl NativeStore {
             .clone()
     }
 
+    /// The plugin cell data of Anvil region `(rx, rz)`.
+    pub fn read_sidecar(&mut self, rx: i32, rz: i32) -> Option<Vec<u8>> {
+        self.read(PLUGIN, ChunkPos::new(rx * 32, rz * 32)).map(|(_, raw, _)| raw)
+    }
+
+    /// Stores (or with `None` deletes) the plugin cell data of Anvil region `(rx, rz)` and
+    /// flushes.
+    pub fn write_sidecar(&mut self, rx: i32, rz: i32, data: Option<&[u8]>) -> std::io::Result<()> {
+        let pos = ChunkPos::new(rx * 32, rz * 32);
+        if data.is_some() || self.contains(PLUGIN, pos) {
+            self.write(PLUGIN, pos, FORM_NBT, data);
+            self.flush()?;
+        }
+        Ok(())
+    }
+
     /// Writes the queued records, one append per cell file.
     pub fn flush(&mut self) -> std::io::Result<usize> {
         if self.pending.is_empty() {
@@ -404,6 +428,13 @@ impl NativeStore {
             let path = cell_path(&self.dir, cell);
             if self.file(cell).is_none() {
                 if updates.values().all(Option::is_none) {
+                    continue;
+                }
+                if path.exists() {
+                    // It could not be opened (and is not corrupt): never replace it; retry later.
+                    warn!("{} is unavailable; its writes wait for the next save", path.display());
+                    self.files.remove(&cell);
+                    self.pending.insert(cell, updates);
                     continue;
                 }
                 let f = CellFile::create(&path)?;

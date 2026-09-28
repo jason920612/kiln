@@ -213,7 +213,30 @@ impl SimPlugins {
     }
 }
 
+/// Plugin cell data of a native world, in its dimensions' cell files.
+struct NativeSidecars(Vec<(&'static str, std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>)>);
+
+impl kiln_plugin_host::CellSidecars for NativeSidecars {
+    fn read(&self, level: &str, rx: i32, rz: i32) -> Option<Vec<u8>> {
+        let (_, store) = self.0.iter().find(|(l, _)| *l == level)?;
+        store.lock().unwrap().read_sidecar(rx, rz)
+    }
+
+    fn write(&self, level: &str, rx: i32, rz: i32, data: Option<&[u8]>) {
+        let Some((_, store)) = self.0.iter().find(|(l, _)| *l == level) else { return };
+        if let Err(e) = store.lock().unwrap().write_sidecar(rx, rz, data) {
+            warn!("cannot save plugin cell data of {level}: {e}");
+        }
+    }
+}
+
 impl Sim {
+    /// Where plugin cell data goes in a native world (sidecar files otherwise).
+    fn native_sidecars(&self) -> Option<std::sync::Arc<dyn kiln_plugin_host::CellSidecars>> {
+        let stores: Vec<_> = self.dims.iter().filter_map(|d| Some((d.key, d.native.clone()?))).collect();
+        (!stores.is_empty()).then(|| std::sync::Arc::new(NativeSidecars(stores)) as std::sync::Arc<dyn kiln_plugin_host::CellSidecars>)
+    }
+
     /// Loads the plugins of `SimConfig::plugins` and registers their commands.
     pub(crate) fn load_plugins(&mut self) {
         let Some(PluginSettings { dir, call_budget }) = self.config.plugins.clone() else { return };
@@ -222,6 +245,7 @@ impl Sim {
             levels: DIMENSIONS.iter().map(|(k, _)| (*k).to_owned()).collect(),
             spawn: self.spawn,
             call_budget,
+            cell_sidecars: self.native_sidecars(),
             ..RuntimeConfig::default()
         };
         let rt = match PluginRuntime::load_dir(&dir, cfg) {

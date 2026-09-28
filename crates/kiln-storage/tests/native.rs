@@ -61,6 +61,12 @@ fn kiln_world(dir: &Path) -> Vec<ChunkPos> {
     e.store(ChunkPos::new(-40, -3), vec![pig(1), pig(2)]);
     e.store(ChunkPos::new(30, 20), vec![pig(3)]);
     e.flush().unwrap();
+    // Plugin cell data, also of a level without chunks.
+    for (level, name) in [("overworld", "r.-2.0.bin"), ("the_nether", "r.0.-1.bin")] {
+        let d = dir.join("kiln/plugins/cells/minecraft").join(level);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(name), format!("plugin data of {level}")).unwrap();
+    }
     chunks
 }
 
@@ -108,14 +114,18 @@ fn kiln_worlds_round_trip_through_native() {
     let dir = tmp("kiln-rt");
     let positions = kiln_world(&dir.join("anvil"));
     let r = convert_world(&dir.join("anvil"), &dir.join("native"), WorldFormat::Native, 4).unwrap();
-    assert_eq!((r.native_chunks, r.nbt_chunks, r.entity_chunks, r.unreadable), (positions.len(), 0, 2, 0), "{r}");
+    assert_eq!((r.native_chunks, r.nbt_chunks, r.entity_chunks, r.plugin_sidecars, r.unreadable), (positions.len(), 0, 2, 2, 0), "{r}");
     assert_eq!(WorldFormat::of(&dir.join("native")), WorldFormat::Native);
     assert!(!dir.join("native").join(OW).join("region").exists());
+    assert!(!dir.join("native/kiln/plugins/cells/minecraft/overworld/r.-2.0.bin").exists());
+    let mut nether = NativeStore::open(dir.join("native/dimensions/minecraft/the_nether/native"));
+    assert_eq!(nether.read_sidecar(0, -1).as_deref(), Some(&b"plugin data of the_nether"[..]));
     let r = convert_world(&dir.join("native"), &dir.join("back"), WorldFormat::Anvil, 4).unwrap();
     assert_eq!(r.native_chunks, positions.len());
     let (chunks, diffs) = compare_worlds(&dir.join("anvil"), &dir.join("back")).unwrap();
     assert!(diffs.is_empty(), "{diffs:#?}");
     assert_eq!(chunks, positions.len() + 2);
+    assert!(dir.join("back/kiln/plugins/cells/minecraft/the_nether/r.0.-1.bin").exists());
 
     // The native world loads the same chunks and entities.
     let store = NativeStore::shared(dir.join("native").join(OW).join("native"));
@@ -203,4 +213,21 @@ fn vanilla_world_round_trips_through_native() {
     let mut anvil = AnvilSource::new(src.join(OW).join("region"));
     let positions = (-16..16).flat_map(|x| (-16..16).map(move |z| ChunkPos::new(x, z)));
     assert!(assert_same_chunks(&mut anvil, &mut native, positions) >= 24 * 24);
+}
+
+#[test]
+fn a_corrupt_cell_file_is_moved_aside_not_overwritten() {
+    use kiln_storage::native::{ENTITIES, FORM_NBT};
+    let dir = tmp("corrupt");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("c.0.0.kcell"), b"not a cell file at all").unwrap();
+    let mut store = NativeStore::open(&dir);
+    assert!(store.read(ENTITIES, ChunkPos::new(1, 1)).is_none());
+    store.write(ENTITIES, ChunkPos::new(1, 1), FORM_NBT, Some(b"x"));
+    store.flush().unwrap();
+    let names: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    let aside = names.iter().find(|n| n.starts_with("c.0.0.kcell.corrupt-")).expect("moved aside");
+    assert_eq!(std::fs::read(dir.join(aside)).unwrap(), b"not a cell file at all");
+    let mut store = NativeStore::open(&dir);
+    assert_eq!(store.read(ENTITIES, ChunkPos::new(1, 1)).map(|r| r.1), Some(b"x".to_vec()));
 }

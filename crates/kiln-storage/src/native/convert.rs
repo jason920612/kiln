@@ -1,9 +1,11 @@
 //! `kiln world convert`: moves a world between Anvil and the native format. Chunk, entity and
-//! POI data go through [`NativeChunk`] records or as stored NBT, so converting to native and
-//! back gives every chunk's NBT byte for byte (and the Anvil header timestamps); every other
-//! file of the world is copied unchanged. [`compare_worlds`] checks two Anvil worlds for that.
+//! POI data go through [`NativeChunk`] records or as stored NBT, and plugin cell data between
+//! its Anvil-world sidecars (`kiln/plugins/cells/<level>/r.<x>.<z>.bin`) and cell file
+//! records, so converting to native and back gives every chunk's NBT byte for byte (and the
+//! Anvil header timestamps) and the same sidecars; every other file of the world is copied
+//! unchanged. [`compare_worlds`] checks two Anvil worlds for that.
 
-use super::cellfile::{self, CHUNK, CellFile, ENTITIES, Key, POI, Record};
+use super::cellfile::{self, CHUNK, CellFile, ENTITIES, Key, PLUGIN, POI, Record};
 use super::chunk::NativeChunk;
 use super::registry::{Registry, Remap};
 use super::{Compressor, Dictionaries, FORM_NATIVE, FORM_NBT, WorldFormat, ZSTD_LEVEL, cell_path};
@@ -19,18 +21,31 @@ use std::time::Instant;
 /// Anvil directories of a dimension and the record kinds they become.
 const KINDS: [(&str, u8); 3] = [("region", CHUNK), ("entities", ENTITIES), ("poi", POI)];
 const NATIVE_DIR: &str = "native";
+/// Plugin cell data of Anvil worlds, per level (`<namespace>/<path>`, as under `dimensions`).
+const SIDECARS: &str = "kiln/plugins/cells";
+
+/// The sidecar directory of a dimension directory (`dimensions/<namespace>/<path>`).
+fn sidecar_dir(dim: &Path) -> PathBuf {
+    Path::new(SIDECARS).join(dim.strip_prefix("dimensions").unwrap_or(dim))
+}
+
+fn sidecar_files(dir: &Path) -> io::Result<Vec<(i32, i32)>> {
+    list_coords(dir, "r.", ".bin")
+}
 
 #[derive(Default, Debug, Clone)]
 pub struct Report {
     pub dimensions: usize,
     /// Chunks converted through the native layout.
     pub native_chunks: usize,
-    /// Chunks kept as NBT: not fully generated.
+    /// Of those, chunks not fully generated.
     pub proto_chunks: usize,
-    /// Fully generated chunks kept as NBT (the native layout would not reproduce them).
+    /// Chunks kept as NBT (the native layout would not reproduce them).
     pub nbt_chunks: usize,
     pub entity_chunks: usize,
     pub poi_chunks: usize,
+    /// Plugin cell data sidecars (one per Anvil region).
+    pub plugin_sidecars: usize,
     /// Chunk data that could not be read (left out, with a warning).
     pub unreadable: usize,
     pub files_copied: usize,
@@ -43,13 +58,14 @@ impl std::fmt::Display for Report {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{} dimensions: {} chunks native, {} not fully generated and {} other kept as NBT, {} entity chunks, {} POI chunks, {} unreadable; {} other files copied; chunk data {:.1} MiB -> {:.1} MiB in {:.1} s",
+            "{} dimensions: {} chunks native ({} of them not fully generated), {} kept as NBT, {} entity chunks, {} POI chunks, {} plugin sidecars, {} unreadable; {} other files copied; chunk data {:.1} MiB -> {:.1} MiB in {:.1} s",
             self.dimensions,
             self.native_chunks,
             self.proto_chunks,
             self.nbt_chunks,
             self.entity_chunks,
             self.poi_chunks,
+            self.plugin_sidecars,
             self.unreadable,
             self.files_copied,
             self.bytes_in as f64 / 1048576.0,
@@ -74,19 +90,31 @@ pub fn convert_world(src: &Path, dst: &Path, to: WorldFormat, threads: usize) ->
     }
     let mut report = Report::default();
     let mut dims = Vec::new();
-    copy_other_files(src, dst, Path::new(""), &mut dims, &mut report)?;
+    copy_other_files(src, dst, Path::new(""), to, &mut dims, &mut report)?;
+    if to == WorldFormat::Native {
+        // Levels with plugin cell data but no chunks get a native directory too.
+        let mut levels = Vec::new();
+        find_sidecar_levels(&src.join(SIDECARS), Path::new(""), &mut levels)?;
+        for l in levels {
+            let dim = Path::new("dimensions").join(l);
+            if !dims.contains(&dim) {
+                dims.push(dim);
+            }
+        }
+    }
     report.dimensions = dims.len();
     for dim in &dims {
         let (s, d) = (src.join(dim), dst.join(dim));
         let r = match to {
-            WorldFormat::Native => to_native(&s, &d, threads)?,
-            WorldFormat::Anvil => to_anvil(&s, &d, threads)?,
+            WorldFormat::Native => to_native(&s, &d, &src.join(sidecar_dir(dim)), threads)?,
+            WorldFormat::Anvil => to_anvil(&s, &d, &dst.join(sidecar_dir(dim)), threads)?,
         };
         report.native_chunks += r.native_chunks;
         report.proto_chunks += r.proto_chunks;
         report.nbt_chunks += r.nbt_chunks;
         report.entity_chunks += r.entity_chunks;
         report.poi_chunks += r.poi_chunks;
+        report.plugin_sidecars += r.plugin_sidecars;
         report.unreadable += r.unreadable;
         report.bytes_in += r.bytes_in;
         report.bytes_out += r.bytes_out;
@@ -96,9 +124,9 @@ pub fn convert_world(src: &Path, dst: &Path, to: WorldFormat, threads: usize) ->
     Ok(report)
 }
 
-/// Copies every file but chunk storage and the lock, noting dimension directories (those
-/// holding `region`, `entities`, `poi` or `native`).
-fn copy_other_files(src: &Path, dst: &Path, rel: &Path, dims: &mut Vec<PathBuf>, report: &mut Report) -> io::Result<()> {
+/// Copies every file but chunk storage (and, to native, plugin cell data) and the lock,
+/// noting dimension directories (those holding `region`, `entities`, `poi` or `native`).
+fn copy_other_files(src: &Path, dst: &Path, rel: &Path, to: WorldFormat, dims: &mut Vec<PathBuf>, report: &mut Report) -> io::Result<()> {
     let dir = src.join(rel);
     let mut is_dim = false;
     for e in std::fs::read_dir(&dir)? {
@@ -111,9 +139,12 @@ fn copy_other_files(src: &Path, dst: &Path, rel: &Path, dims: &mut Vec<PathBuf>,
                 is_dim = true;
                 continue;
             }
-            copy_other_files(src, dst, &sub, dims, report)?;
+            copy_other_files(src, dst, &sub, to, dims, report)?;
         } else {
             if sub == Path::new("session.lock") || sub == Path::new("kiln/world_format") {
+                continue;
+            }
+            if to == WorldFormat::Native && rel.starts_with(SIDECARS) && coords(&name.to_string_lossy(), "r.", ".bin").is_some() {
                 continue;
             }
             std::fs::create_dir_all(dst.join(rel))?;
@@ -127,19 +158,46 @@ fn copy_other_files(src: &Path, dst: &Path, rel: &Path, dims: &mut Vec<PathBuf>,
     Ok(())
 }
 
-fn region_files(dir: &Path) -> io::Result<Vec<(i32, i32)>> {
+/// Levels (`<namespace>/<path>`) with sidecar files under `dir`.
+fn find_sidecar_levels(dir: &Path, rel: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
+    let Ok(rd) = std::fs::read_dir(dir.join(rel)) else { return Ok(()) };
+    let mut has = false;
+    for e in rd {
+        let e = e?;
+        if e.file_type()?.is_dir() {
+            find_sidecar_levels(dir, &rel.join(e.file_name()), out)?;
+        } else {
+            has |= coords(&e.file_name().to_string_lossy(), "r.", ".bin").is_some();
+        }
+    }
+    if has {
+        out.push(rel.to_owned());
+    }
+    Ok(())
+}
+
+/// `(x, z)` from a `<prefix><x>.<z><suffix>` file name.
+fn coords(name: &str, prefix: &str, suffix: &str) -> Option<(i32, i32)> {
+    let mut it = name.strip_prefix(prefix)?.strip_suffix(suffix)?.split('.');
+    match (it.next()?.parse(), it.next()?.parse(), it.next()) {
+        (Ok(x), Ok(z), None) => Some((x, z)),
+        _ => None,
+    }
+}
+
+fn list_coords(dir: &Path, prefix: &str, suffix: &str) -> io::Result<Vec<(i32, i32)>> {
     let mut out = Vec::new();
     let Ok(rd) = std::fs::read_dir(dir) else { return Ok(out) };
     for e in rd {
-        let name = e?.file_name();
-        let name = name.to_string_lossy();
-        let Some(mid) = name.strip_prefix("r.").and_then(|n| n.strip_suffix(".mca")) else { continue };
-        let mut it = mid.split('.');
-        if let (Some(Ok(x)), Some(Ok(z)), None) = (it.next().map(str::parse), it.next().map(str::parse), it.next()) {
-            out.push((x, z));
+        if let Some(c) = coords(&e?.file_name().to_string_lossy(), prefix, suffix) {
+            out.push(c);
         }
     }
     Ok(out)
+}
+
+fn region_files(dir: &Path) -> io::Result<Vec<(i32, i32)>> {
+    list_coords(dir, "r.", ".mca")
 }
 
 fn file_size(p: &Path) -> u64 {
@@ -168,16 +226,22 @@ fn parallel<T: Sync>(items: &[T], threads: usize, work: impl Fn(&T) -> io::Resul
     }
 }
 
-/// Stored chunk NBT of every chunk of region files, by kind: (kind, global x, global z,
-/// timestamp, NBT).
 /// A chunk for a region file: local x, local z, compressed payload, timestamp.
 type RegionEntry = (usize, usize, Vec<u8>, u32);
 
+/// The stored data of an Anvil region, by kind: (kind, global chunk x, global chunk z,
+/// timestamp, NBT or sidecar bytes). A sidecar goes with the region's first chunk.
 type Chunks = Vec<(u8, i32, i32, u32, Vec<u8>)>;
 
-fn read_region(dim: &Path, (rx, rz): (i32, i32), unreadable: &AtomicUsize) -> io::Result<(Chunks, u64)> {
+fn read_region(dim: &Path, sidecars: &Path, (rx, rz): (i32, i32), unreadable: &AtomicUsize) -> io::Result<(Chunks, u64)> {
     let mut out = Vec::new();
     let mut bytes = 0;
+    let sidecar = sidecars.join(format!("r.{rx}.{rz}.bin"));
+    if sidecar.exists() {
+        let data = std::fs::read(&sidecar)?;
+        bytes += data.len() as u64;
+        out.push((PLUGIN, rx * 32, rz * 32, 0, data));
+    }
     for (sub, kind) in KINDS {
         let path = dim.join(sub).join(format!("r.{rx}.{rz}.mca"));
         if !path.exists() {
@@ -205,11 +269,12 @@ fn read_region(dim: &Path, (rx, rz): (i32, i32), unreadable: &AtomicUsize) -> io
     Ok((out, bytes))
 }
 
-fn to_native(src: &Path, dst: &Path, threads: usize) -> io::Result<Report> {
+fn to_native(src: &Path, dst: &Path, sidecars: &Path, threads: usize) -> io::Result<Report> {
     let out_dir = dst.join(NATIVE_DIR);
     std::fs::create_dir_all(&out_dir)?;
     Registry::save_current(&out_dir)?;
     let mut regions: Vec<(i32, i32)> = KINDS.iter().map(|(k, _)| region_files(&src.join(k))).collect::<io::Result<Vec<_>>>()?.concat();
+    regions.extend(sidecar_files(sidecars)?);
     regions.sort_unstable();
     regions.dedup();
 
@@ -219,7 +284,7 @@ fn to_native(src: &Path, dst: &Path, threads: usize) -> io::Result<Report> {
     let ignored = AtomicUsize::new(0);
     let step = regions.len().div_ceil(8).max(1);
     for r in regions.iter().step_by(step) {
-        let (chunks, _) = read_region(src, *r, &ignored)?;
+        let (chunks, _) = read_region(src, sidecars, *r, &ignored)?;
         let per = chunks.len().div_ceil(super::DICT_SAMPLES / 8).max(1);
         for (kind, .., nbt) in chunks.iter().step_by(per) {
             if *kind == CHUNK
@@ -235,7 +300,7 @@ fn to_native(src: &Path, dst: &Path, threads: usize) -> io::Result<Report> {
     let totals = Mutex::new(Report::default());
     let unreadable = AtomicUsize::new(0);
     parallel(&regions, threads, |&r| {
-        let (chunks, bytes_in) = read_region(src, r, &unreadable)?;
+        let (chunks, bytes_in) = read_region(src, sidecars, r, &unreadable)?;
         let mut compressor = Compressor::new(ZSTD_LEVEL, dict.as_ref().map(|(id, d)| (*id, &d[..])));
         let codec = AnvilSource::new(PathBuf::new());
         let mut local = Report { bytes_in, ..Report::default() };
@@ -258,10 +323,10 @@ fn to_native(src: &Path, dst: &Path, threads: usize) -> io::Result<Report> {
                     }
                 },
                 _ => {
-                    if kind == ENTITIES {
-                        local.entity_chunks += 1;
-                    } else {
-                        local.poi_chunks += 1;
+                    match kind {
+                        ENTITIES => local.entity_chunks += 1,
+                        POI => local.poi_chunks += 1,
+                        _ => local.plugin_sidecars += 1,
                     }
                     compressor.record(FORM_NBT, &nbt, 0, stamp)
                 }
@@ -279,6 +344,7 @@ fn to_native(src: &Path, dst: &Path, threads: usize) -> io::Result<Report> {
         t.nbt_chunks += local.nbt_chunks;
         t.entity_chunks += local.entity_chunks;
         t.poi_chunks += local.poi_chunks;
+        t.plugin_sidecars += local.plugin_sidecars;
         t.bytes_in += local.bytes_in;
         t.bytes_out += local.bytes_out;
         Ok(())
@@ -301,21 +367,10 @@ fn is_full(nbt: &[u8]) -> bool {
 }
 
 fn cell_files(dir: &Path) -> io::Result<Vec<(i32, i32)>> {
-    let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir) else { return Ok(out) };
-    for e in rd {
-        let name = e?.file_name();
-        let name = name.to_string_lossy();
-        let Some(mid) = name.strip_prefix("c.").and_then(|n| n.strip_suffix(".kcell")) else { continue };
-        let mut it = mid.split('.');
-        if let (Some(Ok(x)), Some(Ok(z)), None) = (it.next().map(str::parse), it.next().map(str::parse), it.next()) {
-            out.push((x, z));
-        }
-    }
-    Ok(out)
+    list_coords(dir, "c.", ".kcell")
 }
 
-fn to_anvil(src: &Path, dst: &Path, threads: usize) -> io::Result<Report> {
+fn to_anvil(src: &Path, dst: &Path, sidecars: &Path, threads: usize) -> io::Result<Report> {
     let in_dir = src.join(NATIVE_DIR);
     let mut regions: HashMap<(i32, i32), Vec<(i32, i32)>> = HashMap::new();
     for c in cell_files(&in_dir)? {
@@ -336,6 +391,13 @@ fn to_anvil(src: &Path, dst: &Path, threads: usize) -> io::Result<Report> {
             for key in f.keys().collect::<Vec<_>>() {
                 let rec = f.read(key)?.expect("listed");
                 let raw = dicts.decompress(&rec)?;
+                if key.kind == PLUGIN {
+                    let (rx, rz) = (cell.0.div_euclid(4), cell.1.div_euclid(4));
+                    std::fs::create_dir_all(sidecars)?;
+                    std::fs::write(sidecars.join(format!("r.{rx}.{rz}.bin")), &raw)?;
+                    local.plugin_sidecars += 1;
+                    continue;
+                }
                 let nbt = if key.kind == CHUNK && rec.form == FORM_NATIVE {
                     let mut c = NativeChunk::decode(&raw).ok_or_else(|| io::Error::other(format!("{}: corrupt chunk record", path.display())))?;
                     if rec.registry != Registry::current().fingerprint {
@@ -382,6 +444,7 @@ fn to_anvil(src: &Path, dst: &Path, threads: usize) -> io::Result<Report> {
         t.nbt_chunks += local.nbt_chunks;
         t.entity_chunks += local.entity_chunks;
         t.poi_chunks += local.poi_chunks;
+        t.plugin_sidecars += local.plugin_sidecars;
         t.bytes_in += local.bytes_in;
         t.bytes_out += local.bytes_out;
         Ok(())

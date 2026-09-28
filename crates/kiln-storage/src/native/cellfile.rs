@@ -31,6 +31,9 @@ const INDEX_ENTRY: usize = 16;
 pub const CHUNK: u8 = 1;
 pub const ENTITIES: u8 = 2;
 pub const POI: u8 = 3;
+/// Plugin cell data of the Anvil region holding the cell (the sidecar Anvil worlds keep in
+/// `kiln/plugins/cells`), in the region's first cell.
+pub const PLUGIN: u8 = 4;
 const INDEX: u8 = 0xff;
 
 /// A record's place in a cell: its kind and the chunk (`(z & 7) << 3 | (x & 7)`).

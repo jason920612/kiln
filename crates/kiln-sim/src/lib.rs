@@ -532,6 +532,8 @@ struct Dim {
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
     entity_store: Option<kiln_storage::EntityStore>,
+    /// The dimension's store when the world is in the native format.
+    native: Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>,
     /// Saved entities of loaded chunks that Kiln does not simulate (mobs, ...), written back
     /// as they were loaded.
     raw_entities: HashMap<ChunkPos, Vec<Tag>>,
@@ -578,7 +580,7 @@ impl Dim {
     ) -> Dim {
         let kind = kiln_data::dimension_type(key).expect("vanilla dimension type");
         let generation = provider.fork_generator().map(|g| generation::GenPool::new(g.as_ref(), provider.dimension, threads));
-        let entity_store = match native {
+        let entity_store = match native.clone() {
             Some(store) => Some(kiln_storage::EntityStore::native(store)),
             None => world.map(|dir| kiln_storage::EntityStore::new(dir.join(dimension_dir(key)).join("entities"))),
         };
@@ -596,6 +598,7 @@ impl Dim {
             generation,
             game_time,
             entity_store,
+            native,
             raw_entities: HashMap::new(),
             gateway_cooldowns: HashMap::new(),
             portal_cooldowns: HashMap::new(),

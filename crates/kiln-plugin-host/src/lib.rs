@@ -31,7 +31,7 @@ pub mod manifest;
 mod ns;
 
 pub use manifest::{Capability, EventKind, FailPolicy, Manifest};
-pub use ns::{CellKey, GlobalValue};
+pub use ns::{CellKey, CellSidecars, GlobalValue};
 
 use anyhow::{Context, Result};
 use host::{GlobalGuest, GlobalIndices, Pre, RegionGuest, RegionIndices, wit};
@@ -103,6 +103,8 @@ pub struct RuntimeConfig {
     pub epoch_tick: Duration,
     /// Pooling allocator slots (component instances); `0` uses on-demand allocation.
     pub pool_instances: u32,
+    /// Where cell data goes instead of sidecar files under `data_dir` (native worlds).
+    pub cell_sidecars: Option<Arc<dyn CellSidecars>>,
 }
 
 impl Default for RuntimeConfig {
@@ -114,6 +116,7 @@ impl Default for RuntimeConfig {
             call_budget: Duration::from_micros(500),
             epoch_tick: Duration::from_micros(250),
             pool_instances: 512,
+            cell_sidecars: None,
         }
     }
 }
@@ -734,6 +737,7 @@ impl PluginRuntime {
             root: root.clone(),
             levels: cfg.levels.clone(),
             ids: defs.iter().map(|d| d.manifest.id.clone()).collect(),
+            sidecars: cfg.cell_sidecars.clone(),
         });
         let globals = persist.as_ref().map(Persist::load_globals).unwrap_or_default();
         let shared = Arc::new(Shared {

@@ -45,6 +45,8 @@ fn main() {
         for (i, c) in clients.iter_mut().enumerate() {
             let x = (64.0 + tick as f64 * speed) % extent;
             inbox.push(kiln_link::ToSim::Console(format!("tp S{i} {x:.1} 180 {:.1}", lane(i))));
+            // A fast client: acknowledges every chunk batch and takes 32 chunks a tick.
+            inbox.push(kiln_link::ToSim::Packet(c.conn, kiln_link::PlayIn::ChunkBatchReceived { chunks_per_tick: 32.0 }));
             c.tick(None, &mut inbox);
         }
         let t = Instant::now();
