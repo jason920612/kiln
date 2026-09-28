@@ -81,6 +81,7 @@ fn register_goals(m: &mut MobData) {
 fn ai_step(e: &mut Entity, m: &mut MobData) {
     let in_water = e.is_in_water();
     let gravity = if e.no_gravity { 0.0 } else { m.attrs.value(Gravity) };
+    let levitation = mob::effects::amplifier(m, crate::effect::ids::levitation());
     let s = st_mut(m);
     s.x_body_rot_o = s.x_body_rot;
     s.tentacle_movement += s.tentacle_speed;
@@ -113,8 +114,10 @@ fn ai_step(e: &mut Entity, m: &mut MobData) {
         s.z_body_rot += std::f32::consts::PI * s.rotate_speed * 1.5;
         s.x_body_rot += (-(mth::atan2(h, v.y) as f32) * (180.0 / std::f32::consts::PI) - s.x_body_rot) * 0.1;
     } else {
-        // Levitation is not simulated on mobs: the squid falls.
-        let yd = e.delta.y - gravity;
+        let yd = match levitation {
+            Some(amp) => 0.05 * (amp + 1) as f64,
+            None => e.delta.y - gravity,
+        };
         e.delta = Vec3::new(0.0, yd * 0.98f32 as f64, 0.0);
         s.x_body_rot += (-90.0 - s.x_body_rot) * 0.02;
     }

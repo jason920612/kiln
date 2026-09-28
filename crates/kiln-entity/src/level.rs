@@ -491,6 +491,13 @@ pub trait EntityLevel {
         !self.fast_lava()
     }
 
+    /// The `minecraft:gameplay/snow_golem_melts` environment attribute at `pos` (hot biomes,
+    /// the nether).
+    fn snow_golem_melts(&self, pos: Vec3) -> bool {
+        let _ = pos;
+        self.fast_lava()
+    }
+
     /// `AbstractVillager.addOffersFromTradeSet`: the offers the datapack trade set `set` (a
     /// `minecraft:trade_set` id) rolls for `merchant`; none without trade data.
     fn trade_offers(&mut self, set: &str, merchant: &TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {

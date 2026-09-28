@@ -2195,6 +2195,93 @@ public class MobVectors {
             s.ticks = 400;
             out.add(s);
         }
+        // A puffed-up pufferfish stings a cod beside it (poison).
+        {
+            Scenario s = new Scenario("sting_pufferfish");
+            pool(s, 8, 6);
+            MobSpec p = new MobSpec("minecraft:pufferfish", 0.5, BY + 2, 0.5, 0f, 13900);
+            p.nbt = "{PuffState:2}";
+            s.mobs.add(p);
+            s.mobs.add(new MobSpec("minecraft:cod", 0.9, BY + 2, 0.5, 90f, 13901));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Snow golems: wandering with a trail of snow, throwing snowballs at a monster.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_snow_golem_" + seed);
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:snow_golem", 0.5, BY, 0.5, 30f * seed, 14000L * seed + 9));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("attack_snow_golem");
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:snow_golem", 0.5, BY, 0.5, 0f, 14100));
+            // Close enough that the snowballs' spread (their own random, not pinnable) cannot miss.
+            MobSpec z = new MobSpec("minecraft:zombie", 2.5, BY, 0.5, 90f, 14101);
+            z.nbt = "{NoAI:1b}";
+            s.mobs.add(z);
+            s.player = new double[] {-12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Bogged: the skeleton goals with its slower bow.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_bogged_" + seed);
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:bogged", 0.5, BY, 0.5, 45f * seed, 14200L * seed + 13);
+            m.mainHand = "minecraft:bow";
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (int dist : new int[] {4, 9}) {
+            Scenario s = new Scenario("chase_bogged_" + dist);
+            floor(s, 20, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:bogged", 0.5, BY, 0.5, 0f, 14300 + dist);
+            m.mainHand = "minecraft:bow";
+            s.mobs.add(m);
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Armadillos (a brain in vanilla, goals in Kiln): wandering, rolling up near the undead.
+        {
+            Scenario s = new Scenario("idle_armadillo");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:armadillo", 0.5, BY, 0.5, 30f, 14400));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            s.diverges = true;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("scared_armadillo");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:armadillo", 0.5, BY, 0.5, 30f, 14500));
+            MobSpec z = new MobSpec("minecraft:zombie", 4.5, BY, 0.5, 90f, 14501);
+            z.nbt = "{NoAI:1b}";
+            s.mobs.add(z);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            s.diverges = true;
+            out.add(s);
+        }
         {
             Scenario s = new Scenario("hurt_bat");
             floor(s, 12, "minecraft:stone");

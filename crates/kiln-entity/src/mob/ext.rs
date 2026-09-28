@@ -588,6 +588,16 @@ pub trait Kind: Sync + Send {
     fn pushable(&self) -> bool {
         true
     }
+    /// `AbstractSkeleton.getAttackInterval` / `getHardAttackInterval` (`None`: 40 and 20).
+    fn bow_interval(&self, hard: bool) -> Option<i32> {
+        let _ = hard;
+        None
+    }
+    /// [`Kind::passenger_offset`] for the passenger at `index` (camels seat two).
+    fn passenger_offset_at(&self, e: &Entity, m: &MobData, index: usize) -> Option<Vec3> {
+        let _ = index;
+        self.passenger_offset(e, m)
+    }
 }
 
 /// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the

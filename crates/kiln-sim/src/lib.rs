@@ -34,6 +34,7 @@ mod effects;
 mod entities;
 mod fishing;
 mod generation;
+mod golem;
 mod independent;
 pub use independent::{InjectedDelay, ScheduleMode};
 mod hazards;

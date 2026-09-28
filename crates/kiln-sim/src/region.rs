@@ -901,6 +901,11 @@ fn use_on_block(
     // and `ServerPlayerGameMode.useItemOn` fire their triggers.
     p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, placed_from.item()), 1);
     let placed_state = level.block(placed_at);
+    // `CarvedPumpkinBlock.onPlace`: a pumpkin may finish a golem.
+    if matches!(kiln_data::blocks_types::block_of(placed_state).name, "minecraft:carved_pumpkin" | "minecraft:jack_o_lantern") {
+        crate::golem::try_spawn(level, placed_at, p, spawns);
+    }
+    let placed_state = level.block(placed_at);
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     let at = [placed_at.x, placed_at.y, placed_at.z];
     p.used_on_block("minecraft:placed_block", at, placed_state, &placed_from, &probe);
