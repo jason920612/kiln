@@ -450,12 +450,25 @@ pub(crate) fn add_item_entity(hopper: &mut ContainerBe, items: &mut dyn ItemEnti
 /// A region's item entities for hoppers, remembering which ones they changed.
 pub(crate) struct EntityItems<'a> {
     entities: &'a mut crate::entities::Entities,
+    /// The item entities at the start of the phase with their boxes (hoppers only look at
+    /// these, not at every entity).
+    items: Vec<(usize, [f64; 3], [f64; 3])>,
     touched: Vec<usize>,
 }
 
 impl<'a> EntityItems<'a> {
     pub fn new(entities: &'a mut crate::entities::Entities) -> Self {
-        EntityItems { entities, touched: Vec::new() }
+        let items = entities
+            .list
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| !e.removed && matches!(e.phys.as_ref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(_))))
+            .map(|(i, e)| {
+                let (min, max, _) = e.body();
+                (i, min, max)
+            })
+            .collect();
+        EntityItems { entities, items, touched: Vec::new() }
     }
 
     /// Indices of the item entities whose stack changed.
@@ -468,7 +481,11 @@ impl<'a> EntityItems<'a> {
 
 impl ItemEntities for EntityItems<'_> {
     fn items_in(&self, lo: [f64; 3], hi: [f64; 3]) -> Vec<usize> {
-        self.entities.items_in(lo, hi)
+        self.items
+            .iter()
+            .filter(|(i, min, max)| !self.entities.list[*i].removed && (0..3).all(|k| min[k] < hi[k] && max[k] > lo[k]))
+            .map(|(i, _, _)| *i)
+            .collect()
     }
     fn stack_mut(&mut self, i: usize) -> &mut ItemStack {
         self.entities.stack_mut(i)
