@@ -9,6 +9,11 @@ use kiln_sim::{Sim, SimConfig};
 use std::time::{Duration, Instant};
 
 fn run(mobs: usize, ticks: usize, kinds: &[&str]) -> (Duration, Duration, usize) {
+    run_with(mobs, ticks, kinds, &[])
+}
+
+/// `run`, with console commands after the mobs are summoned (effects for everyone).
+fn run_with(mobs: usize, ticks: usize, kinds: &[&str], after: &[&str]) -> (Duration, Duration, usize) {
     let mut sim = Sim::new(SimConfig::new(8, 6, None));
     let (msg, stats) = join(1, "Bench", 6);
     assert!(sim.step([msg]));
@@ -31,6 +36,7 @@ fn run(mobs: usize, ticks: usize, kinds: &[&str]) -> (Duration, Duration, usize)
         cmds.push(ToSim::Console(format!("summon {} {x} {} {z} {{PersistenceRequired:1b}}", kinds[i % kinds.len()], p[1])));
     }
     step(&mut sim, &mut client, cmds);
+    step(&mut sim, &mut client, after.iter().map(|c| ToSim::Console((*c).into())).collect());
     for _ in 0..40 {
         step(&mut sim, &mut client, Vec::new());
     }
@@ -66,7 +72,7 @@ const FIRST: [&str; 8] = [
     "minecraft:chicken",
 ];
 
-/// 500 mobs of all 33 types Kiln simulates, round robin.
+/// 500 mobs of every type Kiln simulates, round robin.
 #[test]
 #[ignore = "benchmark"]
 fn five_hundred_mixed_mobs() {
@@ -74,6 +80,26 @@ fn five_hundred_mixed_mobs() {
     let (base, base_worst, _) = run(0, 200, &all);
     let (with, with_worst, n) = run(500, 200, &all);
     eprintln!("no mobs:  mean {base:?}, worst {base_worst:?}");
-    eprintln!("{n} mobs (33 types): mean {with:?}, worst {with_worst:?}");
+    eprintln!("{n} mobs ({} types): mean {with:?}, worst {with_worst:?}", all.len());
     eprintln!("per mob:  {:?}", (with.saturating_sub(base)) / n.max(1) as u32);
+}
+
+/// The same mix, every mob with three effects (speed, regeneration, poison: attribute
+/// modifiers, heal and hurt ticks, entity data).
+#[test]
+#[ignore = "benchmark"]
+fn five_hundred_mixed_mobs_with_effects() {
+    let all: Vec<&str> = kiln_entity::mob::ALL_KINDS.iter().map(|k| k.type_name()).collect();
+    let effects = [
+        "effect give @e[type=!minecraft:player] minecraft:speed 1000 1",
+        "effect give @e[type=!minecraft:player] minecraft:regeneration 1000 0",
+        "effect give @e[type=!minecraft:player] minecraft:poison 1000 0",
+    ];
+    let (base, _, _) = run(0, 200, &all);
+    let (plain, plain_worst, n0) = run(500, 200, &all);
+    let (with, with_worst, n) = run_with(500, 200, &all, &effects);
+    eprintln!("no mobs:  mean {base:?}");
+    eprintln!("{n0} mobs: mean {plain:?}, worst {plain_worst:?}");
+    eprintln!("{n} mobs with 3 effects each: mean {with:?}, worst {with_worst:?}");
+    eprintln!("per mob:  {:?} without effects, {:?} with", plain.saturating_sub(base) / n0.max(1) as u32, with.saturating_sub(base) / n.max(1) as u32);
 }
