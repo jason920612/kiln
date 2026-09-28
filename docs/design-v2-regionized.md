@@ -837,6 +837,14 @@ region 拓撲不持久化：載入時由已載入 chunk 重新計算。
 ### 9.4 可選原生格式（M8）
 放在 `trait ChunkStorage` 後面：log-structured region store（附加寫入加索引、背景壓實）、直接存我們的 container 格式（載入不需重新索引）、zstd 等級 3 加每維度字典，消除 Anvil 實測 27% 的 sector 填充；每個檔案帶以 DataVersion 為鍵的 state-id 表，季度 ID 重排只需重新對應；`kiln world convert` 雙向轉換。Anvil 維持預設（Q12 採建議預設），round-trip 閘門只涵蓋 Anvil。
 
+**實作（2026-09-28，`kiln-storage::native`）**
+- 佈局：每維度 `dimensions/<ns>/<dim>/native/`，一個 cell（8×8 chunk）一個 `c.<x>.<z>.kcell`；紀錄種類 chunk、實體 chunk、POI chunk、插件 cell 資料（取代 `kiln/plugins/cells` sidecar，每個 Anvil region 一筆，放在該 region 第一個 cell）。`kiln/world_format` 內容為 `native` 即為原生世界；`KILN_WORLD_FORMAT=native` 只影響新世界，既有世界維持原格式。
+- 檔案：log-structured，附加紀錄後寫完整索引與帶 CRC 的 trailer（一次寫入、可選 fsync）；讀取只透過最後一個完整索引，中斷寫入回到前一個一致狀態（掃描復原、下次寫入先截斷殘留）。每筆紀錄 CRC-32；stale 資料超過一半時以暫存檔加 rename 壓實（同步於 flush，不是背景執行緒）。無法解析的檔案改名移開，暫時打不開的檔案絕不覆寫。
+- chunk 紀錄：section 以記憶體中的 container（Single/Nibble/Byte/Direct、biome、光照 zero/full/nibbles）直接存放，其他欄位存 NBT（`sections` 位置保留）。轉換時逐 chunk 驗證可逐位元組還原，否則該 section（或整個 chunk）存原 NBT；原版世界 2,500/2,500 chunk 皆走原生佈局。
+- 壓縮：每筆 zstd 3；每維度字典（轉換時或新世界前 256 筆 chunk 訓練，`dict.<id>.zdict`、`dict.current`）。id 表：紀錄帶 state/biome 表指紋（含 DataVersion），表存於 `registries/<指紋>.bin`，不同版本以名稱重新對應。
+- 無損：Anvil → native → Anvil 每個 chunk 解壓後的 NBT 逐位元組相同（包含 compound 欄位順序，因為重建時保留原順序）、header 時間戳相同，其他檔案原樣複製；`kiln world compare` 檢查。`tools/native_roundtrip_check.py` 以原版參考世界與實體 fixture 世界驗證，原版伺服器載入轉回的世界無錯誤、方塊探測一致。Kiln 自行存檔的 chunk 欄位順序依 Kiln 的 encode 順序（原版 CompoundTag 為 hash map，順序本就不固定）。
+- 量測（20,480 chunk 噪聲世界，單執行緒載入／存檔，機器同時有其他負載）：磁碟 162.5 → 99.2 MiB（−39%）；載入 1,114 → 2,585 chunk/s（平均 775 → 373 µs，p50 640 → 258 µs）；全量存檔 655 → 3,597 chunk/s；增量 10% 重存 597 → 2,317 chunk/s（Anvil 需重寫整個 region 檔）。轉換 8 執行緒：→native 554 chunk/s、→Anvil 1,745 chunk/s。模擬中（`sim_storage`，4 名玩家以 8 格/tick 穿越世界、視距 10，600 tick）：Anvil 10,000 次載入平均 2.3 ms、p50 0.80 ms、p99 21 ms（region 開檔 21 次、平均 0.23 ms），同樣 tick 數原生 28,000 次載入平均 0.59 ms、p50 0.27 ms、p99 5.4 ms（cell 開檔 745 次、平均 0.41 ms；LRU 256 個檔案，繞回時重開），牆鐘 51 s → 33 s。
+
 ---
 
 ## 10. 近似與最佳化目錄
