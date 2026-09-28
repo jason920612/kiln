@@ -113,8 +113,12 @@ fn state(e: &kiln_entity::Entity) -> (Vec<f64>, String) {
         m.target.map_or(-1.0, |t| t as f64),
         e.random.state() as f64,
     ];
-    let mut goals: Vec<&str> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind)).collect();
+    let mut goals: Vec<String> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind).to_owned()).collect();
     goals.retain(|g| !g.is_empty());
+    // The dragon's phase (`EnderDragonPhase` id).
+    if let Some(d) = mob::kinds::ender_dragon::state_of(e) {
+        goals.push(format!("DragonPhase{}", d.phase.id()));
+    }
     (nums, goals.join(" "))
 }
 
@@ -212,6 +216,19 @@ fn replay(s: &Value) -> Result<usize, String> {
         ids.push(id);
         level.insert(e);
     }
+    // Other entities (end crystals), after the mobs: ticked, not traced.
+    let mut other_ids = Vec::new();
+    for o in s.get("others").and_then(Value::as_array).into_iter().flatten() {
+        let id = o["id"].as_i64().unwrap() as i32;
+        let tag = kiln_proto::nbt::Tag::Compound(vec![
+            ("id".into(), kiln_proto::nbt::Tag::String(o["type"].as_str().unwrap().to_owned())),
+            ("Pos".into(), kiln_proto::nbt::Tag::List((0..3).map(|i| kiln_proto::nbt::Tag::Double(f(&o["pos"][i]))).collect())),
+            ("Rotation".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Float(f(&o["yaw"]) as f32), kiln_proto::nbt::Tag::Float(0.0)])),
+        ]);
+        let e = kiln_entity::persist::load(&tag, id, 0).expect("other entity");
+        other_ids.push(id);
+        level.insert(e);
+    }
     let hurts: Vec<(i64, usize, f32)> = s["hurts"]
         .as_array()
         .unwrap()
@@ -223,7 +240,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     let trace = s["trace"].as_array().unwrap();
     let initial = ids.len();
     // Vanilla numbers new entities on from the scenario's mobs (id parity paces the AI).
-    level.set_next_entity_id(ids.iter().copied().max().unwrap_or(0) + 1);
+    level.set_next_entity_id(ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1);
     level.immediate_adds = true;
     let mut known = level.len();
     let mut compared = 0;

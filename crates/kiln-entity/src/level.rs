@@ -259,6 +259,36 @@ pub enum Event {
     ShearLoot { entity: i32, table: String, pos: Vec3 },
     /// A criteria trigger for player `player` (entity id).
     Criterion { player: i32, criterion: Criterion },
+    /// What the ender dragon and end crystals tell the level's dragon fight.
+    DragonFight(DragonFightEvent),
+}
+
+/// The level's `EnderDragonFight` as its dragon and crystals see it
+/// ([`EntityLevel::dragon_fight`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragonFightView {
+    /// `dragonUUID`: the fight's dragon.
+    pub dragon: Option<u128>,
+    /// `aliveCrystals` (counted every 100 ticks).
+    pub alive_crystals: i32,
+    /// `hasPreviouslyKilledDragon`.
+    pub previously_killed: bool,
+    /// The fight's origin (`BlockPos.ZERO` in the End).
+    pub origin: BlockPos,
+}
+
+/// Calls from the dragon and the crystals into `EnderDragonFight`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DragonFightEvent {
+    /// `updateDragon`: the fight's dragon is alive with this health (the boss bar).
+    Update { dragon: i32, uuid: u128, health: f32, max_health: f32 },
+    /// `setDragonKilled`: the dragon finished dying (or was killed by `/kill`).
+    Killed { dragon: i32, uuid: u128 },
+    /// `globalLevelEvent(1028)`: the dragon's death roar for every player.
+    DeathRoar { pos: BlockPos },
+    /// `onCrystalDestroyed`: end crystal `crystal` at `pos` was destroyed by `kind` from
+    /// `attacker`.
+    CrystalDestroyed { crystal: i32, uuid: u128, pos: Vec3, kind: DamageKind, attacker: Option<i32> },
 }
 
 /// World access for entity ticks.
@@ -286,6 +316,26 @@ pub trait EntityLevel {
 
     /// The level's shared random source (`Level.random`).
     fn random(&mut self) -> &mut LegacyRandom;
+
+    /// `getHeightmapPos(MOTION_BLOCKING_NO_LEAVES or MOTION_BLOCKING, (x, z))`: the y above the
+    /// highest motion blocking block of the column (`min_y` for an empty one).
+    fn heightmap(&self, x: i32, z: i32, no_leaves: bool) -> i32 {
+        let mut y = self.max_y();
+        while y >= self.min_y() {
+            let s = self.block(BlockPos::new(x, y, z));
+            let blocks = if no_leaves { kiln_data::block_props::motion_blocking_no_leaves(s) } else { kiln_data::block_props::motion_blocking(s) };
+            if blocks {
+                return y + 1;
+            }
+            y -= 1;
+        }
+        self.min_y()
+    }
+
+    /// `ServerLevel.getDragonFight`: the level's ender dragon fight (the End's), if any.
+    fn dragon_fight(&self) -> Option<DragonFightView> {
+        None
+    }
 
     fn game_time(&self) -> i64;
 

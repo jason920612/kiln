@@ -8,6 +8,8 @@ use kiln_proto::packets::entity::EntityData;
 use std::any::Any;
 use std::fmt::Debug;
 
+pub mod dragon_fireball;
+pub mod end_crystal;
 pub mod fireball;
 pub mod fishing_hook;
 pub mod lightning;
@@ -67,7 +69,14 @@ macro_rules! entity_ext_boilerplate {
 }
 
 /// The extension entity types.
-pub const TYPES: &[&str] = &["minecraft:trident", "minecraft:fireball", "minecraft:small_fireball", "minecraft:shulker_bullet"];
+pub const TYPES: &[&str] = &[
+    "minecraft:trident",
+    "minecraft:fireball",
+    "minecraft:small_fireball",
+    "minecraft:shulker_bullet",
+    "minecraft:end_crystal",
+    "minecraft:dragon_fireball",
+];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
 pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
@@ -75,6 +84,8 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:trident" => trident::load(r),
         "minecraft:fireball" | "minecraft:small_fireball" => fireball::load(type_name, r),
         "minecraft:shulker_bullet" => shulker_bullet::load(r),
+        "minecraft:end_crystal" => end_crystal::load(r),
+        "minecraft:dragon_fireball" => dragon_fireball::load(r),
         _ => None,
     }
 }

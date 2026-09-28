@@ -82,6 +82,7 @@ pub enum MobKind {
     // -- slice 3: raids
 
     // -- slice 3: the end
+    EnderDragon,
 
     // -- slice 3: wither and guardians
 
@@ -168,6 +169,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- slice 3: raids
 
     // -- slice 3: the end
+    MobKind::EnderDragon,
 
     // -- slice 3: wither and guardians
 
@@ -845,6 +847,8 @@ pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     e.y_rot = e.random.next_float() * 6.2831855;
     m.y_head_rot = e.y_rot;
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
+    // `EnderDragon`'s constructor: `noPhysics`.
+    e.no_physics = kind == MobKind::EnderDragon;
     e.kind = EntityKind::Mob(Box::new(m));
     e
 }
@@ -1125,7 +1129,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if m.damage_cooldown > 0 {
         m.damage_cooldown -= 1;
     }
-    if m.is_dead_or_dying() {
+    if m.is_dead_or_dying() && !m.kind.ext().is_some_and(|k| k.tick_death(e, m, level)) {
         m.death_time += 1;
         if m.death_time >= 20 && !e.is_removed() {
             level.emit(Event::EntityEvent { entity: e.id, event: 60 });
@@ -1207,6 +1211,9 @@ pub fn is_alive(e: &Entity, m: &MobData) -> bool {
 /// `LivingEntity.aiStep` then the mob types' additions.
 fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if let Some(k) = m.kind.ext() {
+        if k.replaces_ai_step(e, m, level) {
+            return;
+        }
         k.ai_step_before(e, m, level);
     }
     if m.no_jump_delay > 0 {
@@ -1823,6 +1830,9 @@ pub fn knockback_entity(e: &mut Entity, strength: f64, dx: f64, dz: f64) {
 
 /// `LivingEntity.knockback`.
 pub fn knockback(e: &mut Entity, m: &MobData, strength: f64, mut dx: f64, mut dz: f64) {
+    if m.kind.ext().is_some_and(|k| k.knockback_immune(m)) {
+        return;
+    }
     let strength = strength * (1.0 - m.attrs.value(Attr::KnockbackResistance));
     if strength <= 0.0 {
         return;
@@ -1843,7 +1853,9 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     if e.is_removed() || m.dead {
         return;
     }
-    m.dead = true;
+    if !m.kind.ext().is_some_and(|k| k.handle_killing_blow(e, m, level)) {
+        m.dead = true;
+    }
     let killed_by_player = m.last_hurt_by_player_memory > 0;
     level.emit(Event::Killed {
         entity: e.id,
@@ -2186,6 +2198,9 @@ fn sound_variant_count(kind: MobKind) -> i32 {
 /// player in the dimension).
 pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f64>) {
     let Some(m) = data(e) else { return };
+    if m.kind.ext().is_some_and(|k| !k.despawns()) {
+        return;
+    }
     if level.difficulty() == 0 && !m.kind.is_animal() {
         e.discard();
         return;

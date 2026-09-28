@@ -29,6 +29,7 @@ fn op_of(name: &str) -> Option<Op> {
 pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     let mut m = MobData::new(kind, &mut e.random);
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
+    e.no_physics = kind == MobKind::EnderDragon;
     read_fields(e, &mut m, r);
     e.kind = EntityKind::Mob(Box::new(m));
 }
