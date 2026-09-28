@@ -1663,6 +1663,43 @@ spreadplayers 0 0 1 10 under -100 false Diff0
 spreadplayers 0 0 1 10 false @e[type=minecraft:pig]
 spreadplayers 0 0 1 10 false
 ! tp Diff0 8 160 8 0 0
+
+# loot
+! clear @a
+! setblock 6 100 6 stone
+! setblock 7 100 6 chest
+! setblock 8 100 6 air
+loot give Diff0 mine 6 100 6
+loot give Diff0 mine 6 100 6 minecraft:diamond_pickaxe[minecraft:enchantments={"minecraft:silk_touch":1}]
+loot give @a mine 6 100 6
+loot give Diff0 mine 8 100 6
+loot give Diff0 mine 6 100 6 mainhand
+execute as Diff0 run loot give Diff0 mine 6 100 6 mainhand
+loot give Diff0 loot minecraft:blocks/stone
+loot give Diff0 loot minecraft:blocks/dirt
+loot give Diff0 loot minecraft:nonexistent
+loot give Nobody loot minecraft:blocks/stone
+loot insert 7 100 6 loot minecraft:blocks/stone
+loot insert 7 100 6 loot minecraft:blocks/dirt
+loot insert 7 100 6 mine 6 100 6
+data get block 7 100 6 Items
+loot insert 6 100 6 loot minecraft:blocks/stone
+loot replace block 7 100 6 container.3 loot minecraft:blocks/dirt
+loot replace block 7 100 6 container.30 loot minecraft:blocks/dirt
+loot replace block 7 100 6 container.4 2 loot minecraft:blocks/dirt
+loot replace block 7 100 6 container.5 0 loot minecraft:blocks/dirt
+data get block 7 100 6 Items
+loot replace entity Diff0 hotbar.8 loot minecraft:blocks/cobblestone
+loot replace entity @a armor.head loot minecraft:blocks/carved_pumpkin
+data get entity Diff0 Inventory[{Slot:8b}].id
+loot spawn 5 101 5 loot minecraft:blocks/stone
+loot spawn 5 101 5 mine 6 100 6
+loot give Diff0 kill Other0
+loot give Diff0 kill @e[type=minecraft:item,limit=1]
+loot give Diff0 loot {pools:[{rolls:1,entries:[{type:"minecraft:item",name:"minecraft:apple"}]}]}
+loot give Diff0 fish minecraft:blocks/stone 6 100 6
+! clear @a
+! kill @e[type=!minecraft:player]
 """
 
 

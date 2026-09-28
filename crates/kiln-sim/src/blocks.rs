@@ -954,13 +954,13 @@ fn block_drops(
 }
 
 /// The loot context of a block broken at `origin` (`LootContextParamSets.BLOCK`).
-struct BreakContext {
-    tool: kiln_item::ItemStack,
-    player: bool,
-    state: u16,
-    origin: [f64; 3],
+pub(crate) struct BreakContext {
+    pub tool: kiln_item::ItemStack,
+    pub player: bool,
+    pub state: u16,
+    pub origin: [f64; 3],
     /// The components of the block's block entity (`collectComponents`), if it had one.
-    block_entity: Option<Vec<kiln_item::component::Component>>,
+    pub block_entity: Option<Vec<kiln_item::component::Component>>,
 }
 
 impl kiln_loot::LootContext for BreakContext {

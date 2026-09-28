@@ -1068,6 +1068,44 @@ pub trait Host: SelectorWorld {
     fn remove_attribute_modifier(&mut self, _entity: &Self::Entity, _attribute: &str, _id: &str) -> bool {
         false
     }
+    /// Rolls loot for `/loot` (stacks as item stack NBT, already split to stack sizes) and the
+    /// table used, if it was named.
+    fn roll_loot(&mut self, _source: &LootSource<Self::Entity>) -> Result<(Vec<Tag>, Option<String>), CommandError> {
+        Err(CommandError::unsupported("Loot"))
+    }
+    /// `LivingEntity.getItemBySlot(MAINHAND/OFFHAND)`: `None` for entities that are not living.
+    fn hand_item(&mut self, _entity: &Self::Entity, _offhand: bool) -> Option<Option<Tag>> {
+        None
+    }
+    /// `Inventory.add(copy)`: whether anything was added.
+    fn give_stack(&mut self, _player: &Self::Entity, _item: &Tag) -> bool {
+        false
+    }
+    /// Spawns an item entity at `pos` with the default pickup delay.
+    fn spawn_item(&mut self, _dimension: &str, _pos: [f64; 3], _item: &Tag) {}
+    /// `Container.getContainerSize` of the container at `pos`.
+    fn container_size(&mut self, _dimension: &str, _pos: [i32; 3]) -> Option<i32> {
+        None
+    }
+    /// `ItemStack.getMaxStackSize` of item stack NBT.
+    fn item_max_stack(&self, _item: &Tag) -> i32 {
+        64
+    }
+    /// `ItemStack.getHoverName` of item stack NBT.
+    fn item_name(&self, item: &Tag) -> Text {
+        let id = match item.get("id") {
+            Some(Tag::String(s)) => s.as_str(),
+            _ => "minecraft:air",
+        };
+        let (ns, path) = id.split_once(':').unwrap_or(("minecraft", id));
+        let kind = if kiln_data::builtin_id("minecraft:block", id).is_some() { "block" } else { "item" };
+        Text::translate(format!("{kind}.{ns}.{path}"), Vec::new())
+    }
+    /// Applies an item modifier (`/item modify`, `/item ... from ... <modifier>`) to item stack
+    /// NBT; `None` when the modifier is unknown.
+    fn apply_item_modifier(&mut self, _modifier: &LootTableArg, _item: &Tag) -> Result<Tag, CommandError> {
+        Err(CommandError::unsupported("Item modifiers"))
+    }
     /// `EnchantCommand` on one entity's main hand item.
     fn enchant_held(&mut self, _entity: &Self::Entity, _enchantment: &str, _level: i32) -> EnchantOutcome {
         EnchantOutcome::NotLiving
@@ -1167,6 +1205,25 @@ pub struct AttributeState {
     pub value: f64,
     /// Modifier ids and amounts.
     pub modifiers: Vec<(String, f64)>,
+}
+
+/// A `loot_table` / `loot_modifier` argument: a registry id or an inline definition (SNBT).
+#[derive(Debug, Clone, PartialEq)]
+pub enum LootTableArg {
+    Id(String),
+    Inline(Tag),
+}
+
+/// Where `/loot` takes items from.
+pub enum LootSource<E> {
+    /// `loot <table>`: the chest parameter set at the source's position.
+    Table { table: LootTableArg, origin: [f64; 3], dimension: String, this: Option<E> },
+    /// `fish <table> <pos> [tool]`.
+    Fish { table: LootTableArg, pos: [i32; 3], dimension: String, tool: Option<Tag>, this: Option<E> },
+    /// `kill <target>`: the entity's loot table, as killed by the source (magic damage).
+    Kill { target: E, origin: [f64; 3], killer: Option<E> },
+    /// `mine <pos> [tool]`: the block's drops.
+    Mine { pos: [i32; 3], dimension: String, tool: Option<Tag>, this: Option<E> },
 }
 
 /// Where `/item` and `/loot` put items: a container block or an entity.

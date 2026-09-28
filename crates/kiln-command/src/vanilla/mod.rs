@@ -15,6 +15,7 @@ mod summon;
 mod execute;
 mod function;
 mod items;
+mod loot;
 pub use function::{run_as_server, run_function};
 pub mod gamerules;
 mod players;
@@ -135,6 +136,7 @@ pub const COMMANDS: &[&str] = &[
     "place",
     "fillbiome",
     "spreadplayers",
+    "loot",
 ];
 
 /// Registers every built-in command.
@@ -220,6 +222,7 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     world::place(d);
     world::fillbiome(d);
     world::spreadplayers(d);
+    loot::loot(d);
 }
 
 /// `getEntityOrException`.

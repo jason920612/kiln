@@ -510,7 +510,7 @@ fn normalize_items(fields: &mut [(String, Tag)]) {
         out.retain(|(s, _)| *s != slot);
         out.push((slot, t));
     }
-    out.sort_by_key(|(s, _)| (*s as u8));
+    out.sort_by_key(|(s, _)| *s as u8);
     *items = out.into_iter().map(|(_, t)| t).collect();
 }
 
@@ -637,6 +637,227 @@ impl Sim {
                 before != i.modifiers.len()
             }
         }
+    }
+}
+
+/// The loot context of `/loot loot` and `/loot fish` (`CHEST` / `FISHING` parameter sets).
+struct CommandLootContext {
+    origin: [f64; 3],
+    this: bool,
+    tool: Option<kiln_item::ItemStack>,
+}
+
+impl kiln_loot::LootContext for CommandLootContext {
+    fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
+        self.this && target == kiln_loot::EntityTarget::This
+    }
+    fn origin(&self) -> Option<[f64; 3]> {
+        Some(self.origin)
+    }
+    fn tool(&self) -> Option<&kiln_item::ItemStack> {
+        self.tool.as_ref()
+    }
+}
+
+/// SNBT-decoded NBT as JSON text, the way `NbtOps` hands a definition to a codec.
+fn nbt_json(tag: &Tag, out: &mut String) {
+    use std::fmt::Write as _;
+    match tag {
+        Tag::Byte(v) => write!(out, "{v}").unwrap(),
+        Tag::Short(v) => write!(out, "{v}").unwrap(),
+        Tag::Int(v) => write!(out, "{v}").unwrap(),
+        Tag::Long(v) => write!(out, "{v}").unwrap(),
+        Tag::Float(v) => write!(out, "{v}").unwrap(),
+        Tag::Double(v) => write!(out, "{v}").unwrap(),
+        Tag::String(s) => {
+            out.push('"');
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    c => out.push(c),
+                }
+            }
+            out.push('"');
+        }
+        Tag::List(items) => {
+            out.push('[');
+            for (i, t) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                nbt_json(t, out);
+            }
+            out.push(']');
+        }
+        Tag::ByteArray(v) => nbt_json(&Tag::List(v.iter().map(|b| Tag::Byte(*b)).collect()), out),
+        Tag::IntArray(v) => nbt_json(&Tag::List(v.iter().map(|b| Tag::Int(*b)).collect()), out),
+        Tag::LongArray(v) => nbt_json(&Tag::List(v.iter().map(|b| Tag::Long(*b)).collect()), out),
+        Tag::Compound(f) => {
+            out.push('{');
+            for (i, (k, v)) in f.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                nbt_json(&Tag::String(k.clone()), out);
+                out.push(':');
+                nbt_json(v, out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+fn no_such_element(id: &str, registry: &str) -> CommandError {
+    CommandError::new(kiln_command::tr!("argument.resource_or_id.no_such_element", id, registry))
+}
+
+fn stack_of(t: Option<&Tag>) -> kiln_item::ItemStack {
+    t.and_then(|t| kiln_item::ItemStack::from_nbt(t).ok()).unwrap_or_else(kiln_item::ItemStack::empty)
+}
+
+impl Sim {
+    /// A seed for a `/loot` roll: the world, the tick and a per-call counter.
+    fn command_loot_seed(&mut self) -> i64 {
+        self.commands.rng = self.commands.rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        crate::mobs::loot_seed(self.commands.seed, self.game_time, 0, self.commands.rng)
+    }
+
+    /// Rolls `table` (an id or an inline definition) for `ctx`.
+    fn roll_table(
+        &mut self,
+        table: &kiln_command::host::LootTableArg,
+        ctx: &dyn kiln_loot::LootContext,
+    ) -> Result<(Vec<kiln_item::ItemStack>, Option<String>), CommandError> {
+        use kiln_command::host::LootTableArg;
+        let Some(loot) = self.loot.clone() else { return Err(CommandError::unsupported("Loot tables")) };
+        let seed = self.command_loot_seed();
+        let (mut sequences, mut level) = (kiln_loot::RandomSequences::new(0), kiln_javamath::random::LegacyRandom::new(seed));
+        match table {
+            LootTableArg::Id(id) => {
+                let ident = kiln_item::Identifier::parse(id).ok_or_else(|| no_such_element(id, "minecraft:loot_table"))?;
+                let t = loot.table(&ident).ok_or_else(|| no_such_element(id, "minecraft:loot_table"))?;
+                let mut rng = t.random(0, &mut sequences, &mut level);
+                Ok((loot.random_items(&ident, ctx, rng.source()), Some(id.clone())))
+            }
+            LootTableArg::Inline(tag) => {
+                let mut json = String::new();
+                nbt_json(tag, &mut json);
+                let t = loot.parse_table(&json).map_err(|e| {
+                    CommandError::new(kiln_command::tr!("argument.resource_or_id.failed_to_parse", e.to_string()))
+                })?;
+                let t = std::sync::Arc::new(t);
+                let mut rng = t.random(0, &mut sequences, &mut level);
+                Ok((loot.random_items(&t, ctx, rng.source()), None))
+            }
+        }
+    }
+
+    /// `/loot`'s sources.
+    pub(crate) fn roll_command_loot(&mut self, source: &kiln_command::host::LootSource<PlayerRef>) -> Result<(Vec<Tag>, Option<String>), CommandError> {
+        use kiln_command::host::LootSource;
+        let (items, table) = match source {
+            LootSource::Table { table, origin, this, .. } => {
+                let ctx = CommandLootContext { origin: *origin, this: this.is_some(), tool: None };
+                let (items, _) = self.roll_table(table, &ctx)?;
+                (items, None)
+            }
+            LootSource::Fish { table, pos, tool, this, .. } => {
+                let ctx = CommandLootContext {
+                    origin: [pos[0] as f64 + 0.5, pos[1] as f64 + 0.5, pos[2] as f64 + 0.5],
+                    this: this.is_some(),
+                    tool: Some(stack_of(tool.as_ref())),
+                };
+                let (items, _) = self.roll_table(table, &ctx)?;
+                (items, None)
+            }
+            LootSource::Mine { pos, dimension, tool, this } => {
+                let state = kiln_command::Host::block_state(self, dimension, *pos);
+                let name = kiln_blocks::BlockId::of(state).name();
+                let Some(loot) = self.loot.clone() else { return Err(CommandError::unsupported("Loot tables")) };
+                let Some(table_id) = loot.block_table(name) else {
+                    let (ns, path) = name.split_once(':').unwrap_or(("minecraft", name));
+                    let block = kiln_command::Text::translate(format!("block.{ns}.{path}"), Vec::new());
+                    return Err(CommandError::new(kiln_command::tr!("commands.drop.no_loot_table.block", block)));
+                };
+                let ctx = crate::blocks::BreakContext {
+                    tool: stack_of(tool.as_ref()),
+                    player: this.is_some(),
+                    state,
+                    origin: [pos[0] as f64 + 0.5, pos[1] as f64 + 0.5, pos[2] as f64 + 0.5],
+                    block_entity: None,
+                };
+                let (items, _) = self.roll_table(&kiln_command::host::LootTableArg::Id(table_id.to_string()), &ctx)?;
+                (items, Some(table_id.to_string()))
+            }
+            LootSource::Kill { target, origin, killer } => {
+                let (table, type_name, baby) = if target.entity.is_none() {
+                    ("minecraft:entities/player".to_owned(), "minecraft:player", false)
+                } else {
+                    let found = self.entity_mut(target).and_then(|e| e.phys.as_ref()).and_then(|p| {
+                        let m = kiln_entity::mob::data(p)?;
+                        Some((m.kind.ext().and_then(|k| k.loot_table(m)).unwrap_or_else(|| m.kind.loot_table()), p.type_name, m.baby()))
+                    });
+                    match found {
+                        Some(f) => f,
+                        None => return Err(CommandError::new(kiln_command::tr!("commands.drop.no_loot_table", kiln_command::SelectorTarget::display_name(target)))),
+                    }
+                };
+                let weapon = killer.as_ref().filter(|k| k.entity.is_none()).and_then(|k| self.players.get(&k.conn)).map(|p| p.inv.selected_item().clone());
+                let ctx = crate::mobs::DeathContext {
+                    type_name,
+                    origin: *origin,
+                    on_fire: false,
+                    baby,
+                    killed_by_player: weapon.is_some(),
+                    damage_type: "minecraft:magic",
+                    weapon,
+                };
+                self.roll_table(&kiln_command::host::LootTableArg::Id(table), &ctx)?
+            }
+        };
+        Ok((items.into_iter().filter(|s| !s.is_empty()).map(|s| s.to_nbt()).collect(), table))
+    }
+
+    /// `getItemBySlot(MAINHAND / OFFHAND)`.
+    pub(crate) fn hand_item_nbt(&mut self, target: &PlayerRef, offhand: bool) -> Option<Option<Tag>> {
+        let stack = if target.entity.is_none() {
+            let p = self.players.get(&target.conn)?;
+            if offhand { p.inv.equipment[4].clone() } else { p.inv.selected_item().clone() }
+        } else {
+            let m = self.entity_mut(target)?.phys.as_ref().and_then(kiln_entity::mob::data)?;
+            m.equipment[offhand as usize].clone()
+        };
+        Some((!stack.is_empty()).then(|| stack.to_nbt()))
+    }
+
+    /// `Inventory.add(copy)`.
+    pub(crate) fn give_stack_nbt(&mut self, player: &PlayerRef, item: &Tag) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        let mut stack = stack_of(Some(item));
+        let creative = p.game_mode == 1;
+        let added = p.inv.add(None, &mut stack, creative);
+        if added {
+            p.inv.times_changed += 1;
+        }
+        added
+    }
+
+    /// A dropped item entity (`ItemEntity` with the default pickup delay).
+    pub(crate) fn spawn_item_nbt(&mut self, dimension: &str, pos: [f64; 3], item: &Tag) {
+        let Some(dim) = crate::dim_id(dimension) else { return };
+        let stack = stack_of(Some(item));
+        if stack.is_empty() {
+            return;
+        }
+        let h = self.command_loot_seed() as u64;
+        let spawn = crate::mobs::drop_item(stack, pos, h);
+        self.dims[dim].spawns.push(spawn);
+    }
+
+    pub(crate) fn container_size_at(&mut self, dimension: &str, pos: [i32; 3]) -> Option<i32> {
+        kiln_command::Host::block_entity(self, dimension, pos).and_then(|d| d.get("id").and_then(Tag::as_str).and_then(container_size))
     }
 }
 

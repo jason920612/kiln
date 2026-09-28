@@ -468,6 +468,16 @@ impl Source for Sim {
             "minecraft:advancement" => self.advancements.list.iter().map(|a| a.id.clone()).collect(),
             "minecraft:recipe" => self.rules.recipes.recipes().iter().map(|r| r.id.clone()).collect(),
             "minecraft:worldgen/template_pool" => crate::world_state::worldgen_ids("worldgen/template_pool").clone(),
+            "minecraft:loot_table" => self.loot.as_ref().map_or_else(Vec::new, |l| l.table_ids().iter().map(|i| i.to_string()).collect()),
+            "minecraft:context_int_provider" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::IntProvider).iter().map(|i| i.to_string()).collect())
+            }
+            "minecraft:context_float_provider" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::FloatProvider).iter().map(|i| i.to_string()).collect())
+            }
+            "minecraft:item_modifier" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::Modifier).iter().map(|i| i.to_string()).collect())
+            }
             _ => Vec::new(),
         }
     }
@@ -1404,6 +1414,30 @@ impl Host for Sim {
 
     fn remove_attribute_modifier(&mut self, entity: &PlayerRef, attribute: &str, id: &str) -> bool {
         self.change_attribute(entity, attribute, crate::command_data::AttributeChange::RemoveModifier(id.to_owned()))
+    }
+
+    fn roll_loot(&mut self, source: &kiln_command::host::LootSource<PlayerRef>) -> Result<(Vec<Tag>, Option<String>), CommandError> {
+        self.roll_command_loot(source)
+    }
+
+    fn hand_item(&mut self, entity: &PlayerRef, offhand: bool) -> Option<Option<Tag>> {
+        self.hand_item_nbt(entity, offhand)
+    }
+
+    fn give_stack(&mut self, player: &PlayerRef, item: &Tag) -> bool {
+        self.give_stack_nbt(player, item)
+    }
+
+    fn spawn_item(&mut self, dimension: &str, pos: [f64; 3], item: &Tag) {
+        self.spawn_item_nbt(dimension, pos, item);
+    }
+
+    fn container_size(&mut self, dimension: &str, pos: [i32; 3]) -> Option<i32> {
+        self.container_size_at(dimension, pos)
+    }
+
+    fn item_max_stack(&self, item: &Tag) -> i32 {
+        kiln_item::ItemStack::from_nbt(item).map_or(64, |s| s.max_stack_size())
     }
 
     fn enchantment_max_level(&self, enchantment: &str) -> Option<i32> {
