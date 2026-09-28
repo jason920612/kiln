@@ -2137,6 +2137,30 @@ public class MobVectors {
             s.diverges = true;
             out.add(s);
         }
+        // Creakings (brain in vanilla): stared at by a survival player, and unwatched.
+        for (boolean stare : new boolean[] {true, false}) {
+            Scenario s = new Scenario(stare ? "stare_creaking" : "idle_creaking");
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14700));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = stare ? 90f : 270f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            s.diverges = true;
+            out.add(s);
+        }
+        // Sniffers (brain in vanilla): wandering and sniffing on grass.
+        {
+            Scenario s = new Scenario("idle_sniffer");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 20f, 14800));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            s.diverges = true;
+            out.add(s);
+        }
         {
             Scenario s = new Scenario("hurt_bat");
             floor(s, 12, "minecraft:stone");

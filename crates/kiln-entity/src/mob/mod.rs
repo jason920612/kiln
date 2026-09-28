@@ -109,6 +109,8 @@ pub enum MobKind {
     Camel,
     Allay,
     Breeze,
+    Creaking,
+    Sniffer,
 
 }
 
@@ -239,6 +241,8 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Camel,
     MobKind::Allay,
     MobKind::Breeze,
+    MobKind::Creaking,
+    MobKind::Sniffer,
 
 ];
 

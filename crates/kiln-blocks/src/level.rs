@@ -97,6 +97,8 @@ pub enum Effect {
     /// (`moveCollidedEntities`) and stuck to honey or slime (`moveStuckEntities`) are
     /// carried to `progress`.
     PistonMove { pos: BlockPos, piston: MovingPiston, progress: f32 },
+    /// `SnifferEggBlock.tick`: a baby sniffer hatches at the egg's center (the egg is gone).
+    HatchSniffer { pos: BlockPos },
 }
 
 pub trait Level {

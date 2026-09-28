@@ -216,6 +216,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         C::PistonBaseBlock => piston::on_place(level, s, pos, old),
         C::HopperBlock => container::hopper_on_place(level, s, pos, old),
+        C::SnifferEggBlock if !state::same_block(old, s) => misc::sniffer_egg_on_place(level, s, pos),
         // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it; one that cannot
         // survive goes out.
         C::FireBlock | C::SoulFireBlock => {
@@ -261,6 +262,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::FireBlock => crate::fire::fire_tick(level, s, pos),
         C::LightningRodBlock | C::WeatheringLightningRodBlock => crate::weather::rod_tick(level, s, pos),
         C::DetectorRailBlock => rail::detector_tick(level, s, pos),
+        C::SnifferEggBlock => misc::sniffer_egg_tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.
         C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock => level.block_entity_tick(pos, s),
