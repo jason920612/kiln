@@ -1223,3 +1223,21 @@ impl Sim {
         Ok(())
     }
 }
+
+impl Sim {
+    /// The world border of level `dimension`: `(center, size, remaining ticks of a move)`.
+    pub fn world_border_of(&self, dimension: &str) -> Option<([f64; 2], f64, i64)> {
+        let b = &self.world.borders[crate::dim_id(dimension)?];
+        Some((b.center, b.size(), b.lerp_time()))
+    }
+
+    /// Force-loaded chunks of level `dimension`.
+    pub fn forced_chunks_of(&self, dimension: &str) -> Vec<[i32; 2]> {
+        crate::dim_id(dimension).map(|d| self.world.forced[d].iter().copied().collect()).unwrap_or_default()
+    }
+
+    /// Whether the levels run this tick (`/tick freeze` stops them).
+    pub fn runs_normally(&self) -> bool {
+        self.world.tick_rate.runs_normally()
+    }
+}

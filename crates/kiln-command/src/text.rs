@@ -409,8 +409,8 @@ fn write_plain_nbt(tag: &Tag, out: &mut String) {
         Tag::Short(v) => out.push_str(&v.to_string()),
         Tag::Int(v) => out.push_str(&v.to_string()),
         Tag::Long(v) => out.push_str(&v.to_string()),
-        Tag::Float(v) => out.push_str(&v.to_string()),
-        Tag::Double(v) => out.push_str(&v.to_string()),
+        Tag::Float(v) => out.push_str(&crate::vanilla::java_float(*v)),
+        Tag::Double(v) => out.push_str(&crate::vanilla::java_double(*v)),
         _ => {}
     }
 }
@@ -433,8 +433,9 @@ impl Arg {
             Arg::Str(s) => out.push_str(s),
             Arg::Int(v) => write!(out, "{v}").unwrap(),
             Arg::Long(v) => write!(out, "{v}").unwrap(),
-            Arg::Float(v) => write!(out, "{v:?}").unwrap(),
-            Arg::Double(v) => write!(out, "{v:?}").unwrap(),
+            // `String.valueOf`: Java's `Float.toString` / `Double.toString`.
+            Arg::Float(v) => out.push_str(&crate::vanilla::java_float(*v)),
+            Arg::Double(v) => out.push_str(&crate::vanilla::java_double(*v)),
         }
     }
 }

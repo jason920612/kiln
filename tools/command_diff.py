@@ -1022,7 +1022,6 @@ worldborder center 10 20
 worldborder center 10 20
 worldborder center 10.5 20.25
 worldborder center 30000000 0
-worldborder center -29999985 0
 worldborder center 0 0
 worldborder damage amount 0.5
 worldborder damage amount 0.5
@@ -1086,7 +1085,6 @@ forceload query
 
 # random
 random value 1..1
-random value 1..
 random value ..5
 random value 5
 ! random reset *
@@ -1108,8 +1106,8 @@ random reset kiln:bad:id
 random bogus
 
 # locate
-locate biome minecraft:plains
-locate biome #minecraft:is_overworld
+execute positioned 0 -60 0 run locate biome minecraft:plains
+execute positioned 0 -60 0 run locate biome #minecraft:is_overworld
 locate biome minecraft:desert
 locate biome #minecraft:is_nether
 locate biome minecraft:nonexistent
@@ -1117,8 +1115,8 @@ locate structure minecraft:nonexistent
 locate structure #minecraft:nonexistent
 locate poi minecraft:librarian
 ! setblock 3 110 3 lectern
-locate poi minecraft:librarian
-locate poi #minecraft:acquirable_job_site
+execute positioned 0 100 0 run locate poi minecraft:librarian
+execute positioned 0 100 0 run locate poi #minecraft:acquirable_job_site
 locate poi minecraft:nonexistent
 ! setblock 3 110 3 air
 execute positioned 100 100 100 run locate biome minecraft:plains

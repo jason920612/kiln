@@ -477,7 +477,7 @@ impl ArgumentType {
                         let e = tr!(
                             "argument.resource_or_id.no_such_element",
                             id.to_string(),
-                            "minecraft:worldgen/configured_feature"
+                            "minecraft:worldgen/feature"
                         );
                         return Err(CommandError::new(e).at(reader));
                     }
@@ -492,7 +492,7 @@ impl ArgumentType {
                     &["none", "left_right", "front_back"]
                 };
                 if !names.contains(&s) {
-                    return too(reader, CommandError::new(tr!("argument.enum.invalid", s)));
+                    return Err(CommandError::new(tr!("argument.enum.invalid", s)).at(reader));
                 }
                 ArgumentValue::String(s.to_owned())
             }
@@ -894,7 +894,7 @@ pub(crate) fn configured_features() -> Option<&'static Vec<String>> {
     static IDS: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
     IDS.get_or_init(|| {
         let root = std::env::var_os("KILN_DATAPACK").map(std::path::PathBuf::from).unwrap_or_else(|| "work/generated".into());
-        let dir = root.join("data/minecraft/worldgen/configured_feature");
+        let dir = root.join("data/minecraft/worldgen/feature");
         let mut ids: Vec<String> = std::fs::read_dir(&dir)
             .ok()?
             .filter_map(|e| e.ok()?.file_name().to_str()?.strip_suffix(".json").map(|n| format!("minecraft:{n}")))
