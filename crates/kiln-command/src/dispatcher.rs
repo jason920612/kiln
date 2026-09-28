@@ -368,6 +368,7 @@ getters! {
     resource_or_tag: ResourceOrTag => &'a crate::arguments::ResourceOrTag;
     component: Component => &'a crate::component::Component;
     nbt: Nbt => &'a kiln_proto::nbt::Tag;
+    particle: Particle => &'a crate::arguments::ParticleArg;
 }
 
 /// A command tree over sources of type `S`.

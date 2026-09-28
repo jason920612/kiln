@@ -114,6 +114,9 @@ pub enum ArgumentType {
     /// `minecraft:dialog`: a `minecraft:dialog` registry id ([`ArgumentValue::Identifier`]) or
     /// an inline definition ([`ArgumentValue::Nbt`]).
     Dialog,
+    /// `minecraft:particle`: a particle type id and its options as SNBT (checked when the
+    /// command runs).
+    Particle,
 }
 
 impl ArgumentType {
@@ -232,6 +235,7 @@ impl ArgumentType {
             ArgumentType::NbtCompound => Parser::Plain("minecraft:nbt_compound_tag"),
             ArgumentType::TeamColor => Parser::Plain("minecraft:team_color"),
             ArgumentType::Dialog => Parser::Plain("minecraft:dialog"),
+            ArgumentType::Particle => Parser::Plain("minecraft:particle"),
         }
     }
 
@@ -352,7 +356,8 @@ impl ArgumentType {
                 let s = reader.read_unquoted_string();
                 match GameMode::by_name(s) {
                     Some(m) => ArgumentValue::GameMode(m),
-                    None => return too(reader, CommandError::invalid_game_mode(s)),
+                    // `GameModeArgument`: the error points after the word.
+                    None => return Err(CommandError::invalid_game_mode(s).at(reader)),
                 }
             }
             ArgumentType::Time { min } => {
@@ -484,6 +489,24 @@ impl ArgumentType {
                     }
                     ArgumentValue::Identifier(id)
                 }
+            }
+            ArgumentType::Particle => {
+                // `ParticleArgument.readParticle`: the type, then its options through the codec
+                // (whose errors carry no position).
+                let id = Identifier::read(reader)?;
+                if kiln_data::builtin_id("minecraft:particle_type", id.as_str()).is_none() {
+                    return Err(CommandError::new(tr!("particle.notFound", id.to_string())).at(reader));
+                }
+                let options = if reader.can_read() && reader.peek() == '{' {
+                    snbt::parse_tag(reader)?
+                } else {
+                    Tag::Compound(Vec::new())
+                };
+                let arg = ParticleArg { id, options };
+                if let Err(message) = crate::vanilla::sound::decode_particle(&arg) {
+                    return Err(CommandError::new(tr!("particle.invalidOptions", message)));
+                }
+                ArgumentValue::Particle(arg)
             }
             ArgumentType::Component => ArgumentValue::Component(Box::new(component::parse(reader)?)),
             ArgumentType::Style => {
@@ -1005,6 +1028,14 @@ pub enum ArgumentValue {
     Component(Box<Component>),
     /// Inline NBT (`loot_predicate` definitions, `style`).
     Nbt(Tag),
+    Particle(ParticleArg),
+}
+
+/// `ParticleArgument`: the type and its options compound (empty when none was given).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParticleArg {
+    pub id: Identifier,
+    pub options: Tag,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1151,7 +1182,7 @@ mod tests {
     #[test]
     fn simple_enums_and_ids() {
         assert_eq!(parse(ArgumentType::GameMode, "creative").unwrap(), ArgumentValue::GameMode(GameMode::Creative));
-        assert_eq!(err(ArgumentType::GameMode, "god"), ("argument.gamemode.invalid".into(), Some(0)));
+        assert_eq!(err(ArgumentType::GameMode, "god"), ("argument.gamemode.invalid".into(), Some(3)));
         assert_eq!(parse(ArgumentType::EntityAnchor, "eyes").unwrap(), ArgumentValue::Anchor(Anchor::Eyes));
         assert_eq!(err(ArgumentType::EntityAnchor, "head"), ("argument.anchor.invalid".into(), Some(0)));
         assert_eq!(

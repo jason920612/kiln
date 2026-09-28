@@ -201,6 +201,17 @@ pub(crate) struct CommandState {
     pub last_report: Option<String>,
     /// Packets `/kiln use` made for players, handled with the next tick's packets.
     pub injected: Vec<(ConnId, kiln_link::PlayIn)>,
+    /// `save-on` / `save-off`.
+    pub auto_save: bool,
+    /// `save-all`: saved at the end of the tick's serial phase.
+    pub save_requested: bool,
+    /// `setidletimeout` in minutes (0: off).
+    pub idle_timeout: i32,
+    /// `defaultgamemode` for worlds without a `level.dat`.
+    pub default_game_mode: Option<u8>,
+    /// `Stopwatches`: id, start and time accumulated before this run, in load order.
+    pub stopwatches: Vec<(String, std::time::Instant, u64)>,
+    pub stopwatches_dirty: bool,
 }
 
 impl CommandState {
@@ -230,6 +241,12 @@ impl CommandState {
             stop_requested: false,
             last_report: None,
             injected: Vec::new(),
+            auto_save: true,
+            save_requested: false,
+            idle_timeout: 0,
+            default_game_mode: None,
+            stopwatches: Vec::new(),
+            stopwatches_dirty: false,
         }
     }
 }
@@ -812,11 +829,18 @@ impl Host for Sim {
         if take { p.reset_recipes(&rules, &idx) } else { p.award_recipes(&rules, &idx) }
     }
 
+    /// Online players, then (offline mode) the offline profile vanilla falls back to when the
+    /// name has no Mojang account: the name in lower case and its offline UUID. Kiln does not
+    /// look names up at Mojang, so names of real accounts resolve offline too.
     fn find_profile(&mut self, name: &str) -> Option<Profile> {
         if let Some(p) = self.players.values().find(|p| p.name.eq_ignore_ascii_case(name)) {
             return Some(Profile { uuid: p.uuid, name: p.name.clone() });
         }
-        None
+        if self.config.online_mode {
+            return None;
+        }
+        let lower = name.to_ascii_lowercase();
+        Some(Profile { uuid: offline_uuid(&lower), name: lower })
     }
 
     fn is_operator(&self, profile: &Profile) -> bool {
@@ -835,6 +859,7 @@ impl Host for Sim {
         } else {
             self.commands.ops.remove(&profile.name);
         }
+        self.sync_ops();
         let conn = self.players.iter().find(|(_, p)| p.name == profile.name).map(|(c, _)| *c);
         if let Some(c) = conn {
             self.send_command_tree(c);
@@ -1112,6 +1137,214 @@ impl Host for Sim {
     fn storage_mut(&mut self) -> Option<&mut kiln_command::CommandStorage> {
         Some(&mut self.commands.storage)
     }
+
+    // ---- server administration ----
+
+    fn access(&self) -> Option<kiln_link::access::SharedAccess> {
+        Some(self.config.access.clone())
+    }
+
+    fn player_ip(&self, player: &PlayerRef) -> Option<String> {
+        self.players.get(&player.conn)?.address.map(|a| a.to_string())
+    }
+
+    fn set_auto_save(&mut self, on: bool) -> bool {
+        std::mem::replace(&mut self.commands.auto_save, on) != on
+    }
+
+    fn save_all(&mut self, _flush: bool) -> bool {
+        self.commands.save_requested = true;
+        true
+    }
+
+    /// Without `force-gamemode`, players keep their modes (`enforceGameTypeForPlayers(null)`).
+    fn set_default_game_mode(&mut self, mode: GameMode) -> i32 {
+        self.commands.default_game_mode = Some(mode.id() as u8);
+        if let Some(s) = self.storage.as_mut() {
+            s.level.set_game_type(mode.id() as u8);
+        }
+        0
+    }
+
+    fn set_idle_timeout(&mut self, minutes: i32) {
+        self.commands.idle_timeout = minutes;
+    }
+
+    fn random_seed(&mut self) -> i64 {
+        // xorshift64, as for `@r`.
+        let r = &mut self.commands.rng;
+        *r ^= *r << 13;
+        *r ^= *r >> 7;
+        *r ^= *r << 17;
+        *r as i64
+    }
+
+    // ---- stopwatches and post effects ----
+
+    fn stopwatch_ids(&self) -> Vec<String> {
+        self.commands.stopwatches.iter().map(|(id, ..)| id.clone()).collect()
+    }
+
+    fn stopwatch_create(&mut self, id: &str) -> bool {
+        if self.commands.stopwatches.iter().any(|(i, ..)| i == id) {
+            return false;
+        }
+        self.commands.stopwatches.push((id.to_owned(), std::time::Instant::now(), 0));
+        self.commands.stopwatches_dirty = true;
+        true
+    }
+
+    fn stopwatch_seconds(&self, id: &str) -> Option<f64> {
+        let (_, start, before) = self.commands.stopwatches.iter().find(|(i, ..)| i == id)?;
+        let ms = *before + start.elapsed().as_millis() as u64;
+        Some(ms as f64 / 1000.0)
+    }
+
+    fn stopwatch_restart(&mut self, id: &str) -> bool {
+        let Some(w) = self.commands.stopwatches.iter_mut().find(|(i, ..)| i == id) else { return false };
+        w.1 = std::time::Instant::now();
+        w.2 = 0;
+        self.commands.stopwatches_dirty = true;
+        true
+    }
+
+    fn stopwatch_remove(&mut self, id: &str) -> bool {
+        let before = self.commands.stopwatches.len();
+        self.commands.stopwatches.retain(|(i, ..)| i != id);
+        self.commands.stopwatches_dirty |= self.commands.stopwatches.len() != before;
+        self.commands.stopwatches.len() != before
+    }
+
+    fn post_effects(&self, player: &PlayerRef) -> Vec<String> {
+        self.players.get(&player.conn).map_or_else(Vec::new, |p| p.post_effects.clone())
+    }
+
+    fn add_post_effect(&mut self, player: &PlayerRef, id: &str) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        if p.post_effects.iter().any(|e| e == id) {
+            return false;
+        }
+        p.post_effects.push(id.to_owned());
+        p.post_effects_dirty = true;
+        true
+    }
+
+    fn remove_post_effect(&mut self, player: &PlayerRef, id: &str) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        let Some(i) = p.post_effects.iter().position(|e| e == id) else { return false };
+        p.post_effects.remove(i);
+        p.post_effects_dirty = true;
+        true
+    }
+
+    fn clear_post_effects(&mut self, player: &PlayerRef) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        if p.post_effects.is_empty() {
+            return false;
+        }
+        p.post_effects.clear();
+        p.post_effects_dirty = true;
+        true
+    }
+}
+
+impl Sim {
+    /// `ServerPlayer.sendPostEffects` for players whose post effects changed (and after
+    /// joining).
+    pub(crate) fn send_post_effects(&mut self) {
+        for p in self.players.values_mut() {
+            if std::mem::take(&mut p.post_effects_dirty) {
+                let ids: Vec<&str> = p.post_effects.iter().map(String::as_str).collect();
+                let pkt = packets::post_effects(&ids);
+                p.send(pkt);
+            }
+        }
+    }
+
+    /// `Stopwatches` from `data/minecraft/stopwatches.dat` (elapsed milliseconds by id).
+    pub(crate) fn load_stopwatches(&mut self) {
+        let Some(storage) = &self.storage else { return };
+        let Some(data) = kiln_storage::saved_data::read(&storage.dir, "stopwatches") else { return };
+        let now = std::time::Instant::now();
+        if let Some(Tag::Compound(entries)) = data.get("stopwatches") {
+            for (id, t) in entries {
+                if let Some(ms) = t.as_i64() {
+                    self.commands.stopwatches.push((id.clone(), now, ms.max(0) as u64));
+                }
+            }
+        }
+    }
+
+    /// Saves the stopwatches (their elapsed time) when they changed, and with every autosave
+    /// while any run.
+    pub(crate) fn save_stopwatches(&mut self) {
+        let Some(storage) = &self.storage else { return };
+        if !self.commands.stopwatches_dirty && self.commands.stopwatches.is_empty() {
+            return;
+        }
+        self.commands.stopwatches_dirty = false;
+        let entries = self
+            .commands
+            .stopwatches
+            .iter()
+            .map(|(id, start, before)| (id.clone(), Tag::Long((*before + start.elapsed().as_millis() as u64) as i64)))
+            .collect();
+        let data = Tag::Compound(vec![("stopwatches".to_owned(), Tag::Compound(entries))]);
+        if let Err(e) = kiln_storage::saved_data::write(&storage.dir.clone(), "stopwatches", data) {
+            tracing::warn!("failed to save stopwatches: {e}");
+        }
+    }
+
+    /// Copies the operator names to the login checks (operators bypass the whitelist).
+    pub(crate) fn sync_ops(&mut self) {
+        let ops = self.commands.ops.clone();
+        self.config.access.write().unwrap_or_else(std::sync::PoisonError::into_inner).ops = ops;
+    }
+
+    /// `ServerPlayer.resetLastActionTime` on what the player does, and the idle kick
+    /// (`ServerGamePacketListenerImpl.tick` with a `player-idle-timeout`).
+    pub(crate) fn track_idle(&mut self, packets: &[(ConnId, kiln_link::PlayIn)]) {
+        use kiln_link::PlayIn;
+        let now = std::time::Instant::now();
+        for (conn, pkt) in packets {
+            let Some(p) = self.players.get_mut(conn) else { continue };
+            let active = match pkt {
+                PlayIn::KeepAlive { .. }
+                | PlayIn::ChunkBatchReceived { .. }
+                | PlayIn::ClientTickEnd
+                | PlayIn::ClientInformation(_)
+                | PlayIn::AcceptTeleport { .. }
+                | PlayIn::PlayerLoaded => false,
+                PlayIn::Move { pos, rot, .. } => pos.is_some_and(|v| v != p.pos) || rot.is_some_and(|r| r != p.rot),
+                _ => true,
+            };
+            if active {
+                p.last_action = now;
+            }
+        }
+        let minutes = self.commands.idle_timeout;
+        if minutes <= 0 {
+            return;
+        }
+        let limit = std::time::Duration::from_secs(minutes as u64 * 60);
+        let idle: Vec<ConnId> =
+            self.players.iter().filter(|(_, p)| !p.disconnected && now.duration_since(p.last_action) > limit).map(|(c, _)| *c).collect();
+        for conn in idle {
+            if let Some(p) = self.players.get_mut(&conn) {
+                p.flush();
+                p.sink.disconnect(packets::play_disconnect_text(kiln_command::tr!("multiplayer.disconnect.idling").to_nbt()));
+            }
+        }
+    }
+}
+
+/// `UUIDUtil.createOfflinePlayerUUID`: a version 3 UUID of `OfflinePlayer:<name>`.
+fn offline_uuid(name: &str) -> Uuid {
+    use md5::Digest;
+    let mut h: [u8; 16] = md5::Md5::digest(format!("OfflinePlayer:{name}").as_bytes()).into();
+    h[6] = (h[6] & 0x0f) | 0x30;
+    h[8] = (h[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(h)
 }
 
 fn block_pos(p: [i32; 3]) -> kiln_blocks::BlockPos {

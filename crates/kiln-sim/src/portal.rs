@@ -1081,6 +1081,8 @@ impl Sim {
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info);
         p.send(difficulty);
+        // `ServerPlayer.teleport` to another level sends the post effects again.
+        p.post_effects_dirty = true;
         self.sleep_status[p.dim].dirty = true;
         self.sleep_status[dim].dirty = true;
         // `enteredNetherPosition`: where the player left the overworld for the nether.

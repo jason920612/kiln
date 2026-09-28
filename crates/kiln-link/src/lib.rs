@@ -3,6 +3,8 @@
 //! The simulation never depends on tokio: connections reach it through `ToSim` messages
 //! and it answers through `Sink`s, which the network layer implements.
 
+pub mod access;
+
 use bytes::Bytes;
 pub use kiln_proto::packets::{ClientInfo, PlayIn};
 use uuid::Uuid;
@@ -42,6 +44,8 @@ pub struct JoinInfo {
     /// Settings from the configuration phase (view distance, skin layers, main hand).
     pub client: ClientInfo,
     pub sink: Box<dyn Sink>,
+    /// The client's address (`getIpAddress`), when known.
+    pub address: Option<std::net::IpAddr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

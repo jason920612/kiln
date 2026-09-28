@@ -117,6 +117,8 @@ pub struct SimConfig {
     /// Storage format of a new world (an existing world keeps its own: Anvil unless marked
     /// native, see `kiln_storage::WorldFormat`).
     pub world_format: kiln_storage::WorldFormat,
+    /// Whitelist and ban lists, shared with the login checks.
+    pub access: kiln_link::access::SharedAccess,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -146,6 +148,7 @@ impl SimConfig {
             schedule: ScheduleMode::Lockstep,
             inject_delay: None,
             world_format: kiln_storage::WorldFormat::Anvil,
+            access: kiln_link::access::AccessLists::new(None).shared(),
         }
     }
 }
@@ -198,6 +201,13 @@ struct Player {
     client: ClientInfo,
     game_mode: u8,
     sink: Box<dyn Sink>,
+    /// The client's address, for `/ban-ip`.
+    address: Option<std::net::IpAddr>,
+    /// `ServerPlayer.lastActionTime`, for `/setidletimeout`.
+    last_action: Instant,
+    /// `ServerPlayer.postEffects` and whether the client has them (`postEffectsDirty`).
+    post_effects: Vec<String>,
+    post_effects_dirty: bool,
     /// Packets queued this tick; flushed in the egress phase.
     outbox: Vec<Bytes>,
     /// Set once the connection was told to close; the player leaves when it does.
@@ -814,6 +824,7 @@ fn ops_from_env() -> HashSet<String> {
 
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     let mut sim = Sim::new(config);
+    sim.sync_ops();
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();
     loop {
@@ -980,6 +991,7 @@ impl Sim {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.load_scoreboard();
+        sim.load_stopwatches();
         sim.load_weather();
         sim.init_packs(vanilla_pack);
         sim.load_plugins();
@@ -1021,6 +1033,7 @@ impl Sim {
         // Independent mode: regions back from ticking away rejoin; anything that needs the
         // whole server waits for all of them.
         let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
+        self.track_idle(&packets);
         self.maintain_chunks();
         self.rendezvous_for_topology();
         let joining: Vec<_> = joins.into_iter().map(|j| (self.joining(j.uuid), j)).collect();
@@ -1806,6 +1819,8 @@ impl Sim {
         self.untrack_everywhere(conn);
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info_packet);
+        // `PlayerList.respawn` sends the post effects again.
+        p.post_effects_dirty = true;
         self.sleep_status[p.dim].dirty = true;
         self.sleep_status[dim].dirty = true;
         p.dim = dim;
@@ -2012,6 +2027,7 @@ impl Sim {
         self.save_level();
         self.save_weather();
         self.save_scoreboard();
+        self.save_stopwatches();
         self.save_timers();
         self.save_plugins();
     }
@@ -2038,6 +2054,10 @@ impl Sim {
             client: j.client,
             game_mode: joining.game_mode,
             sink: j.sink,
+            address: j.address,
+            last_action: Instant::now(),
+            post_effects: persist::saved_post_effects(joining.saved.raw()),
+            post_effects_dirty: true,
             outbox: Vec::new(),
             disconnected: false,
             region,
@@ -2253,7 +2273,10 @@ impl Sim {
         self.update_sleeping();
         self.tick_weather();
         self.tick_sleep();
-        if self.game_time % AUTOSAVE_TICKS == 0 {
+        self.send_post_effects();
+        // `save-all` asks for a save; `save-off` stops the autosave.
+        let autosave = self.commands.auto_save && self.game_time % AUTOSAVE_TICKS == 0;
+        if std::mem::take(&mut self.commands.save_requested) || autosave {
             self.save();
         }
     }

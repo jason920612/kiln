@@ -34,6 +34,13 @@ pub fn custom_query(transaction_id: i32, channel: &str, payload: &[u8]) -> Bytes
 }
 
 /// Login Disconnect with a translatable reason, so the client shows its own localized text.
+/// Login Disconnect with a JSON text component.
+pub fn login_disconnect_json(json: &str) -> Bytes {
+    let mut b = packet(ids::login::clientbound::LOGIN_DISCONNECT);
+    b.put_string(json);
+    b.freeze()
+}
+
 pub fn login_disconnect_translated(key: &str) -> Bytes {
     let mut b = packet(ids::login::clientbound::LOGIN_DISCONNECT);
     b.put_string(&serde_json::json!({ "translate": key }).to_string());

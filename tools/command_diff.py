@@ -999,6 +999,153 @@ scoreboard objectives remove st_jump
 scoreboard objectives remove st_mined
 scoreboard objectives remove st_deaths
 scoreboard objectives remove st_health
+
+# whitelist
+whitelist list
+whitelist add Diff0
+whitelist add Diff0
+whitelist add @a
+whitelist list
+whitelist on
+whitelist on
+whitelist reload
+whitelist remove Other0
+whitelist remove Other0
+whitelist add Zqx9NoAcct1
+whitelist remove Zqx9NoAcct1
+whitelist add @e[type=minecraft:pig]
+whitelist list
+whitelist off
+whitelist off
+whitelist remove @a
+whitelist list
+whitelist bogus
+
+# bans
+banlist
+banlist players
+banlist ips
+ban Zqx9NoAcct1
+ban Zqx9NoAcct2 griefing a lot
+pardon Zqx9NoAcct1
+ban @e[type=minecraft:pig]
+banlist players
+ban-ip 10.0.0.1
+ban-ip 10.0.0.1
+ban-ip 10.0.0.2 spam
+ban-ip 192.168.1.20 a b  c
+ban-ip 172.16.0.1
+ban-ip notanip
+ban-ip 10.0.0.300
+ban-ip ::1
+ban-ip Zqx9NoAcct1
+banlist ips
+banlist
+banlist players
+pardon-ip 10.0.0.1
+pardon-ip 10.0.0.1
+pardon-ip notanip
+pardon-ip 10.0.0.2
+pardon-ip ::1
+banlist
+pardon-ip 192.168.1.20
+pardon-ip 172.16.0.1
+banlist
+pardon @a
+banlist bogus
+
+# server settings
+save-off
+save-off
+save-on
+save-on
+save-all
+save-all flush
+defaultgamemode survival
+defaultgamemode creative
+defaultgamemode adventure
+defaultgamemode survival
+defaultgamemode bogus
+gamemode creatve
+gamemode creatve Diff0
+setidletimeout 0
+setidletimeout 10
+setidletimeout 0
+setidletimeout -1
+! version
+publish
+publish true
+publish false 25599
+unpublish
+jfr stop
+perf stop
+debug stop
+
+# particles and sounds
+particle minecraft:flame
+particle minecraft:flame 8 160 8
+particle flame 0 100 0
+particle flame 0 100 0 1 1 1 0.5 10
+particle flame 0 100 0 1 1 1 0.5 10 force
+particle flame 8 160 8 1 1 1 0.5 10 normal
+particle flame 8 160 8 1 1 1 0.5 10 normal Diff0
+particle flame 8 160 8 1 1 1 0.5 10 force @a
+particle minecraft:dust{color:[1.0,0.0,0.0],scale:1.0} 8 160 8
+particle minecraft:dust 8 160 8
+particle minecraft:block{block_state:"minecraft:stone"} 8 160 8
+particle minecraft:nope 8 160 8
+particle flame 8 160 8 1 1 1 0.5 -1
+playsound minecraft:entity.pig.ambient master Diff0
+playsound minecraft:entity.pig.ambient master @a
+playsound minecraft:entity.pig.ambient master @a 8 160 8
+playsound minecraft:entity.pig.ambient master @a 0 100 0
+playsound minecraft:entity.pig.ambient master @a 0 100 0 1 1 0.5
+playsound minecraft:entity.pig.ambient master @a 0 100 0 1 1 1
+playsound minecraft:entity.pig.ambient music Diff0 8 160 8 2 0.5
+playsound minecraft:entity.pig.ambient bogus Diff0
+playsound minecraft:not.a.sound master Diff0
+playsound minecraft:entity.pig.ambient master Nobody
+playsound minecraft:entity.pig.ambient master @a ~ ~ ~ 1 3
+playsound minecraft:entity.pig.ambient master @a ~ ~ ~ 1 1 2
+stopsound Diff0
+stopsound @a
+stopsound Diff0 master
+stopsound Diff0 * minecraft:entity.pig.ambient
+stopsound Diff0 music minecraft:entity.pig.ambient
+stopsound Nobody
+stopsound Diff0 bogus
+
+# stopwatch
+stopwatch create kiln:sw
+stopwatch create kiln:sw
+stopwatch restart kiln:sw
+stopwatch restart kiln:nope
+stopwatch query kiln:nope
+stopwatch remove kiln:sw
+stopwatch remove kiln:sw
+stopwatch create sw2
+stopwatch remove sw2
+
+# post effects and waypoints
+posteffect list Diff0
+posteffect add Diff0 minecraft:creeper
+posteffect add Diff0 minecraft:creeper
+posteffect add @a minecraft:spider
+posteffect list Diff0
+posteffect list Other0
+posteffect remove Diff0 minecraft:creeper
+posteffect remove Diff0 minecraft:creeper
+posteffect remove @a minecraft:spider
+posteffect clear @a
+posteffect clear Diff0
+posteffect list Diff0
+waypoint list
+waypoint modify Diff0 color red
+waypoint modify Diff0 color hex FF00AA
+waypoint modify Diff0 color reset
+waypoint modify Diff0 style set minecraft:bowtie
+waypoint modify Diff0 style reset
+waypoint list
 """
 
 
@@ -1100,10 +1247,17 @@ class Server:
         self.log.close()
 
 
+def reset_lists(base: Path):
+    """Both servers keep the whitelist and ban lists next to the world; each run starts empty."""
+    for name in ("whitelist.json", "banned-players.json", "banned-ips.json", "usercache.json"):
+        (base / name).unlink(missing_ok=True)
+
+
 def start_vanilla(port: int) -> Server:
     base = SCRATCH / "vanilla"
     base.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(base / "world", ignore_errors=True)
+    reset_lists(base)
     # The test functions: a world pack, found and enabled when the world is created.
     shutil.copytree(DATAPACK, base / "world" / "datapacks" / DATAPACK.name)
     (base / "eula.txt").write_text("eula=true\n", encoding="utf-8")
@@ -1134,6 +1288,7 @@ def start_vanilla(port: int) -> Server:
 def start_kiln(port: int, exe: Path, lang: Path) -> Server:
     base = SCRATCH / "kiln"
     base.mkdir(parents=True, exist_ok=True)
+    reset_lists(base)
     copy = SCRATCH / "kiln-diff.exe"
     shutil.copy2(exe, copy)
     env = os.environ.copy()

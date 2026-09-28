@@ -119,6 +119,12 @@ impl LevelStore {
         self.data()?.get("GameType")?.as_i64().map(|g| g as u8)
     }
 
+    /// Sets `Data.GameType` (`/defaultgamemode`), written with the next save.
+    pub fn set_game_type(&mut self, game_type: u8) {
+        let root = self.level.get_or_insert_with(|| Tag::Compound(Vec::new()));
+        put(child(root, "Data"), "GameType", Tag::Int(i32::from(game_type)));
+    }
+
     /// A saved game rule (`minecraft:respawn_radius`, ...) as a number (booleans are 0 or 1).
     pub fn game_rule(&self, name: &str) -> Option<i64> {
         self.game_rules.as_ref()?.get("data")?.get(name)?.as_i64()

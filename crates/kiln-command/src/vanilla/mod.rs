@@ -1,6 +1,7 @@
 //! Built-in commands with vanilla 26.3's tree shape (checked against the data generator's
 //! `commands.json`) and feedback, plus Kiln's `/kiln`.
 
+mod admin;
 mod advancement;
 mod blocks;
 mod bossbar;
@@ -14,7 +15,9 @@ pub use function::{run_as_server, run_function};
 pub mod gamerules;
 mod players;
 mod protocol;
+mod misc;
 mod scoreboard;
+pub(crate) mod sound;
 mod server;
 mod team;
 mod title;
@@ -83,6 +86,26 @@ pub const COMMANDS: &[&str] = &[
     "summon",
     "advancement",
     "recipe",
+    "whitelist",
+    "ban",
+    "ban-ip",
+    "banlist",
+    "pardon",
+    "pardon-ip",
+    "save-all",
+    "save-on",
+    "save-off",
+    "defaultgamemode",
+    "setidletimeout",
+    "version",
+    "debug",
+    "perf",
+    "jfr",
+    "particle",
+    "playsound",
+    "stopsound",
+    "stopwatch",
+    "posteffect",
 ];
 
 /// Registers every built-in command.
@@ -131,6 +154,22 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     server::kiln(d);
     advancement::advancement(d);
     advancement::recipe(d);
+    admin::whitelist(d);
+    admin::ban(d);
+    admin::ban_ip(d);
+    admin::banlist(d);
+    admin::pardon(d);
+    admin::pardon_ip(d);
+    admin::save(d);
+    admin::defaultgamemode(d);
+    admin::setidletimeout(d);
+    admin::version(d);
+    admin::profilers(d);
+    sound::particle_command(d);
+    sound::playsound(d);
+    sound::stopsound(d);
+    misc::stopwatch(d);
+    misc::posteffect(d);
 }
 
 /// `getEntityOrException`.

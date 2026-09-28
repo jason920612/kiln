@@ -68,10 +68,16 @@ pub(crate) struct Joining {
     pub saved: PlayerData,
 }
 
+/// `post_effects` of saved player data.
+pub(crate) fn saved_post_effects(data: &Tag) -> Vec<String> {
+    data.get("post_effects").and_then(Tag::as_list).unwrap_or(&[]).iter().filter_map(|t| t.as_str().map(str::to_owned)).collect()
+}
+
 impl Sim {
     /// The default game mode for new players: the world's `GameType`.
     pub(crate) fn default_game_mode(&self) -> u8 {
-        self.storage.as_ref().and_then(|s| s.level.game_type()).unwrap_or(KILN_DEFAULT_GAME_MODE)
+        let saved = self.storage.as_ref().and_then(|s| s.level.game_type());
+        saved.or(self.commands.default_game_mode).unwrap_or(KILN_DEFAULT_GAME_MODE)
     }
 
     /// Vanilla `PrepareSpawnTask`: saved position and rotation if present, else the spawn
@@ -197,7 +203,8 @@ impl Sim {
                     None => fields.push((key.to_owned(), value)),
                 }
             }
-            fields.retain(|(k, _)| k != "active_effects" && k != "recipeBook");
+            fields.retain(|(k, _)| k != "active_effects" && k != "recipeBook" && k != "post_effects");
+            fields.push(("post_effects".to_owned(), Tag::List(p.post_effects.iter().cloned().map(Tag::String).collect())));
             fields.push(("recipeBook".to_owned(), p.recipe_book.to_nbt()));
             if let Some(list) = p.effects_nbt() {
                 fields.push(("active_effects".to_owned(), list));

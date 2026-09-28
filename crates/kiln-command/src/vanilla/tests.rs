@@ -657,7 +657,8 @@ fn parse_errors_render_like_vanilla() {
     let d = dispatcher();
     let s = &mut Mock::new(2);
     let e = s.run(&d, "gamemode creatve").unwrap_err();
-    assert_eq!(e.to_string(), "argument.gamemode.invalid[creatve] at position 9: gamemode <--[HERE]");
+    // `GameModeArgument` reports the error after the word.
+    assert_eq!(e.to_string(), "argument.gamemode.invalid[creatve] at position 16: ...de creatve<--[HERE]");
     let lines = e.chat_lines("gamemode creatve");
     assert_eq!(lines.len(), 2);
     let e = s.run(&d, "kill @e[type=zombie,foo=1]").unwrap_err();
@@ -993,7 +994,15 @@ fn commands_packet_flags() {
                     if flags & 0x10 != 0 {
                         match r.string(32767).unwrap() {
                             "minecraft:ask_server" => ask_server.push(name),
-                            other => assert_eq!((name.as_str(), other), ("entity", "minecraft:summonable_entities")),
+                            other => assert!(
+                                [
+                                    ("entity", "minecraft:summonable_entities"),
+                                    ("sound", "minecraft:available_sounds"),
+                                    ("posteffect", "minecraft:post_effects")
+                                ]
+                                .contains(&(name.as_str(), other)),
+                                "{name}: {other}"
+                            ),
                         }
                     }
                 }
@@ -1019,7 +1028,8 @@ fn commands_packet_flags() {
     // Functions: function, schedule function/clear, datapack enable/after/before/disable,
     // execute if/unless function.
     // Advancement criteria: grant and revoke only.
-    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2 + 2);
+    // Whitelist add and remove, pardon and pardon-ip; stopwatch query, restart and remove.
+    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2 + 2 + 4 + 3);
     assert!(res4.contains(&"stop".to_owned()) && res4.contains(&"tp".to_owned()) && !res4.contains(&"msg".to_owned()));
 }
 

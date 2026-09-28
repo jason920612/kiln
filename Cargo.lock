@@ -1097,6 +1097,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "kiln-data",
+ "kiln-link",
  "kiln-proto",
  "serde_json",
  "uuid",
@@ -1156,6 +1157,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "kiln-proto",
+ "serde_json",
  "uuid",
 ]
 
@@ -1287,6 +1289,7 @@ dependencies = [
  "kiln-storage",
  "kiln-world",
  "kiln-worldgen",
+ "md-5",
  "serde_json",
  "smallvec",
  "tracing",

@@ -86,6 +86,7 @@ pub fn join(conn: ConnId, name: &str, view_distance: u8) -> (ToSim, Arc<SinkStat
         properties: Vec::new(),
         client: ClientInfo { view_distance, ..ClientInfo::default() },
         sink: Box::new(TestSink(stats.clone())),
+        address: None,
     });
     (msg, stats)
 }

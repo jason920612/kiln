@@ -143,6 +143,8 @@ pub struct Shared {
     registry_packets: Vec<Bytes>,
     tags_packet: Bytes,
     auth: Option<Authenticator>,
+    /// Whitelist and bans, checked at login; the simulation's commands change them.
+    pub access: kiln_link::access::SharedAccess,
 }
 
 impl Shared {
@@ -186,7 +188,14 @@ impl Shared {
             registry_packets,
             tags_packet,
             auth,
+            access: kiln_link::access::AccessLists::new(None).shared(),
         }
+    }
+
+    /// Uses `access` for the login checks (shared with the simulation).
+    pub fn with_access(mut self, access: kiln_link::access::SharedAccess) -> Self {
+        self.access = access;
+        self
     }
 
     /// Whether Kiln itself authenticates players with the session server, i.e. the value for
@@ -482,6 +491,17 @@ async fn login(mut conn: Conn, addr: SocketAddr, shared: &Shared, protocol: i32,
             None => (GameProfile { uuid: offline_uuid(&name), name, properties: Vec::new() }, addr.ip(), ""),
         },
     };
+
+    // `PlayerList.canPlayerLogin`: bans, the whitelist, then IP bans.
+    let user = kiln_link::access::NameAndId { uuid: profile.uuid, name: profile.name.clone() };
+    let refusal = {
+        let mut lists = shared.access.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        lists.can_login(&user, Some(&remote.to_string())).err()
+    };
+    if let Some(r) = refusal {
+        conn.send(&login_ext::login_disconnect_json(&r.to_json().to_string())).await?;
+        bail!("{} ({}) refused: {r:?}", profile.name, remote);
+    }
 
     if let Some(t) = shared.compression_threshold() {
         conn.send(&packets::login_compression(t as i32)).await?;
@@ -847,6 +867,7 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
             properties: profile.properties,
             client,
             sink: Box::new(ChannelSink { tx: out_tx, queued: queued.clone() }),
+            address: Some(remote),
         }))
         .is_ok();
 

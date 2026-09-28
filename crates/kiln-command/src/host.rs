@@ -757,6 +757,72 @@ pub trait Host: SelectorWorld {
     }
     /// Sends a play packet to one player (titles and the action bar).
     fn send_packet(&mut self, _player: &Self::Entity, _packet: Bytes) {}
+
+    // ---- server administration: whitelist, bans, saving, defaults ----
+
+    /// The whitelist and ban lists, shared with the login checks; `None` when the host keeps
+    /// none (the commands then fail).
+    fn access(&self) -> Option<kiln_link::access::SharedAccess> {
+        None
+    }
+    /// `ServerPlayer.getIpAddress`.
+    fn player_ip(&self, _player: &Self::Entity) -> Option<String> {
+        None
+    }
+    /// `MinecraftServer.setAutoSave`: whether it changed.
+    fn set_auto_save(&mut self, _on: bool) -> bool {
+        false
+    }
+    /// `MinecraftServer.saveEverything`: whether saving worked.
+    fn save_all(&mut self, _flush: bool) -> bool {
+        true
+    }
+    /// `setDefaultGameType` + `enforceGameTypeForPlayers`: players whose mode changed.
+    fn set_default_game_mode(&mut self, _mode: GameMode) -> i32 {
+        0
+    }
+    /// `setPlayerIdleTimeout` (minutes, 0 = off).
+    fn set_idle_timeout(&mut self, _minutes: i32) {}
+    /// A sound's variant seed (`level.getRandom().nextLong()`).
+    fn random_seed(&mut self) -> i64 {
+        0
+    }
+
+    // ---- stopwatches and post effects ----
+
+    /// Stopwatch ids (`Stopwatches.ids`).
+    fn stopwatch_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Starts a stopwatch; false if `id` exists.
+    fn stopwatch_create(&mut self, _id: &str) -> bool {
+        false
+    }
+    /// Seconds the stopwatch has run.
+    fn stopwatch_seconds(&self, _id: &str) -> Option<f64> {
+        None
+    }
+    /// Restarts it from zero; false if there is none.
+    fn stopwatch_restart(&mut self, _id: &str) -> bool {
+        false
+    }
+    fn stopwatch_remove(&mut self, _id: &str) -> bool {
+        false
+    }
+    /// `ServerPlayer.getPostEffects`.
+    fn post_effects(&self, _player: &Self::Entity) -> Vec<String> {
+        Vec::new()
+    }
+    /// `addPostEffect`: whether it was added.
+    fn add_post_effect(&mut self, _player: &Self::Entity, _id: &str) -> bool {
+        false
+    }
+    fn remove_post_effect(&mut self, _player: &Self::Entity, _id: &str) -> bool {
+        false
+    }
+    fn clear_post_effects(&mut self, _player: &Self::Entity) -> bool {
+        false
+    }
 }
 
 #[cfg(test)]

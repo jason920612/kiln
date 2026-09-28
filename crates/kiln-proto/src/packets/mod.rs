@@ -314,6 +314,16 @@ pub fn disguised_chat(message: &Tag, chat_type: i32, sender: &Tag, target: Optio
     b.freeze()
 }
 
+/// Post Effects (`ClientboundPostEffectsPacket`, play): the player's post-processing shaders.
+pub fn post_effects(ids: &[&str]) -> Bytes {
+    let mut b = packet(ids::play::clientbound::POST_EFFECTS);
+    b.put_varint(ids.len() as i32);
+    for id in ids {
+        b.put_string(id);
+    }
+    b.freeze()
+}
+
 pub fn change_difficulty(difficulty: u8, locked: bool) -> Bytes {
     let mut b = packet(ids::play::clientbound::CHANGE_DIFFICULTY);
     b.put_u8(difficulty);
