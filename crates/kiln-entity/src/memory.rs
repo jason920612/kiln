@@ -60,6 +60,9 @@ pub struct MemoryLevel {
     next_id: i32,
     next_seq: u64,
     spawned: Vec<Entity>,
+    /// New entities join the level at once (vanilla's `addFreshEntity`: other entities see
+    /// them the same tick; they tick from the next), instead of at [`MemoryLevel::flush_spawned`].
+    pub immediate_adds: bool,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -88,6 +91,7 @@ impl MemoryLevel {
             next_id: 1_000_000,
             next_seq: 0,
             spawned: Vec::new(),
+            immediate_adds: false,
         }
     }
 
@@ -126,7 +130,9 @@ impl MemoryLevel {
 
     /// Runs `f` on entity `i` with the level (the entity is detached meanwhile).
     pub fn tick_one(&mut self, i: usize, f: impl FnOnce(&mut Entity, &mut MemoryLevel)) {
-        let Some(mut e) = self.slots[i].entity.take() else { return };
+        let Some(mut e) = self.slots[i].entity.take() else {
+            return;
+        };
         if !e.is_removed() {
             f(&mut e, self);
         }
@@ -152,6 +158,11 @@ impl MemoryLevel {
     }
 
     /// Moves entities added by behaviours into the level.
+    /// The next entity id handed out will be `id` (to follow another world's numbering).
+    pub fn set_next_entity_id(&mut self, id: i32) {
+        self.next_id = id - 1;
+    }
+
     pub fn flush_spawned(&mut self) {
         for e in std::mem::take(&mut self.spawned) {
             self.insert(e);
@@ -204,7 +215,9 @@ impl EntityLevel for MemoryLevel {
 
     /// `Player.hurtServer` with its hurt cooldown (difficulty scaling at normal: none).
     fn hurt_player(&mut self, id: i32, _source: crate::mob::DamageSource, amount: f32) -> bool {
-        let Some(p) = self.players.iter().find(|p| p.id == id) else { return false };
+        let Some(p) = self.players.iter().find(|p| p.id == id) else {
+            return false;
+        };
         if p.creative || p.spectator || !p.alive {
             return false;
         }
@@ -257,7 +270,11 @@ impl EntityLevel for MemoryLevel {
     }
 
     fn add_entity(&mut self, entity: Entity) {
-        self.spawned.push(entity);
+        if self.immediate_adds {
+            self.insert(entity);
+        } else {
+            self.spawned.push(entity);
+        }
     }
 
     fn next_entity_id(&mut self) -> i32 {

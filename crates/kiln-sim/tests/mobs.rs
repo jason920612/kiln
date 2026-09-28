@@ -204,3 +204,74 @@ fn selectors_see_mobs_and_kill_removes_them() {
     assert!(w.mobs("minecraft:pig").is_empty());
     assert!(w.sim.health(1).is_some_and(|h| !h.1), "the player is alive");
 }
+
+impl World {
+    /// Puts `count` of `item` in the first hotbar slot (through creative mode).
+    fn hold(&mut self, item: &str, count: i32) {
+        let id = kiln_data::builtin_id("minecraft:item", item).unwrap();
+        let stack = ItemStack { item: id, count, added: Vec::new(), removed: Vec::new() };
+        assert!(self.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 36, item: Some(stack) })]));
+    }
+
+    fn interact(&mut self, entity_id: i32) {
+        let pkt = PlayIn::Interact { entity_id, hand: kiln_proto::packets::serverbound::Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false };
+        assert!(self.sim.step([ToSim::Packet(1, pkt)]));
+    }
+
+    fn held(&self) -> Option<(i32, i32)> {
+        // Menu slot 36 is the first hotbar slot.
+        self.sim.inventory(1).unwrap()[36]
+    }
+}
+
+#[test]
+fn fed_animals_breed_and_babies_grow() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:wheat", 64);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:cow", [1.5, 0.0, 0.0], "");
+    w.summon("minecraft:cow", [-1.5, 0.0, 0.0], "");
+    let cows: Vec<i32> = w.mobs("minecraft:cow").iter().map(|c| c.0).collect();
+    for &c in &cows {
+        w.interact(c);
+    }
+    assert_eq!(w.held(), Some((kiln_data::builtin_id("minecraft:item", "minecraft:wheat").unwrap(), 62)), "two wheat eaten");
+    w.ticks(200);
+    assert_eq!(w.mobs("minecraft:cow").len(), 3, "a calf was born");
+    assert!(w.sim.entities().iter().any(|e| e.0 == "minecraft:experience_orb"), "breeding experience");
+    // The parents are on their breeding cooldown: more wheat does nothing.
+    for &c in &cows {
+        w.interact(c);
+    }
+    assert_eq!(w.held().unwrap().1, 62);
+}
+
+#[test]
+fn sheep_shear_and_dye_cows_milk() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:red_dye", 2);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:sheep", [1.5, 0.0, 0.0], "{NoAI:1b}");
+    let sheep = w.mobs("minecraft:sheep")[0].0;
+    w.interact(sheep);
+    assert_eq!(w.held().unwrap().1, 1, "dye used");
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:shears", 1);
+    w.console("gamemode survival Hunter");
+    w.interact(sheep);
+    w.ticks(2);
+    if std::env::var_os("KILN_DATAPACK").is_some() {
+        let items = w.sim.entities().iter().filter(|e| e.0 == "minecraft:item").count();
+        assert!(items >= 1, "wool dropped");
+    }
+    assert_eq!(w.sim.item_damage(1, 36), Some(1), "the shears wore");
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:bucket", 1);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:cow", [-1.5, 0.0, 0.0], "{NoAI:1b}");
+    let cow = w.mobs("minecraft:cow")[0].0;
+    w.interact(cow);
+    assert_eq!(w.held().map(|h| h.0), kiln_data::builtin_id("minecraft:item", "minecraft:milk_bucket"), "milked");
+}

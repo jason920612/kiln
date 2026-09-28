@@ -108,6 +108,17 @@ impl RegionWork<'_> {
                 }
                 continue;
             }
+            if let PlayIn::Interact { entity_id, hand, sneaking, .. } = pkt {
+                let p = &mut *self.players[i];
+                if sneaking != p.sneaking {
+                    p.sneaking = sneaking;
+                    p.meta_dirty = true;
+                }
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+                entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, &mut self.out.spawns, &mut self.out.deaths);
+                continue;
+            }
             let mut world = World { cells: &mut *self.cells, blocks: &mut *self.blocks };
             let mut fx = Fx { blocks: &mut out, bodies: &bodies, spawns: &mut self.out.spawns, deaths: &mut self.out.deaths };
             local_packet(self.players[i], &mut world, env, pkt, &mut fx);

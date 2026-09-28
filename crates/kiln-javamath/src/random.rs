@@ -158,6 +158,8 @@ impl RandomSource for XoroshiroRandom {
 #[derive(Clone, Debug)]
 pub struct LegacyRandom {
     seed: i64,
+    /// `MarsagliaPolarGaussian`'s second value of the last pair, until drawn.
+    next_gaussian: Option<f64>,
 }
 
 impl LegacyRandom {
@@ -165,7 +167,27 @@ impl LegacyRandom {
     const MASK: i64 = (1 << 48) - 1;
 
     pub fn new(seed: i64) -> Self {
-        Self { seed: (seed ^ Self::MULTIPLIER) & Self::MASK }
+        Self { seed: (seed ^ Self::MULTIPLIER) & Self::MASK, next_gaussian: None }
+    }
+
+    /// `nextGaussian` (`MarsagliaPolarGaussian`): pairs of normal values from pairs of doubles
+    /// inside the unit circle; the second of a pair is kept for the next call. The values use
+    /// the platform's `ln` (vanilla: `StrictMath.log`), so their last bits may differ; the
+    /// draws do not.
+    pub fn next_gaussian(&mut self) -> f64 {
+        if let Some(g) = self.next_gaussian.take() {
+            return g;
+        }
+        loop {
+            let a = 2.0 * self.next_double() - 1.0;
+            let b = 2.0 * self.next_double() - 1.0;
+            let s = a * a + b * b;
+            if s < 1.0 && s != 0.0 {
+                let m = (-2.0 * s.ln() / s).sqrt();
+                self.next_gaussian = Some(b * m);
+                return a * m;
+            }
+        }
     }
 
     /// The raw 48-bit state (`seed` of `LegacyRandomSource`), for tests.

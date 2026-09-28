@@ -28,6 +28,8 @@ fn goal_class(name: &str, kind: MobKind) -> &'static str {
         "float" => "FloatGoal",
         "panic" => "PanicGoal",
         "tempt" => "TemptGoal",
+        "breed" => "BreedGoal",
+        "follow_parent" => "FollowParentGoal",
         "stroll" => "WaterAvoidingRandomStrollGoal",
         "look_at_player" => "LookAtPlayerGoal",
         "look_around" => "RandomLookAroundGoal",
@@ -105,6 +107,9 @@ fn replay(s: &Value) -> Result<usize, String> {
             v.eye_height = 1.27;
         }
         v.creative = p.get("creative").and_then(Value::as_bool).unwrap_or(false);
+        if let Some(item) = p.get("main_hand").and_then(Value::as_str) {
+            v.main_hand = kiln_data::builtin_id("minecraft:item", item).unwrap();
+        }
         v
     });
     if let Some(p) = player {
@@ -138,6 +143,20 @@ fn replay(s: &Value) -> Result<usize, String> {
             if let mob::Species::Chicken { egg_time } = &mut m.species {
                 *egg_time = spec["egg_time"].as_i64().unwrap() as i32;
             }
+            m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
+        }
+        {
+            let age = spec.get("age").and_then(Value::as_i64).unwrap_or(0) as i32;
+            if age != 0 {
+                let mut m = std::mem::replace(&mut e.kind, EntityKind::MobTicking { gravity: 0.08 });
+                if let EntityKind::Mob(md) = &mut m {
+                    mob::set_age(&mut e, md, age);
+                }
+                e.kind = m;
+            }
+        }
+        {
+            let m = mob::data_mut(&mut e).unwrap();
             if let Some(item) = spec["main_hand"].as_str() {
                 m.equipment[mob::MAINHAND] = kiln_item::ItemStack::of(item, 1).unwrap();
                 mob::reassess_weapon_goal(m, false);
@@ -155,6 +174,11 @@ fn replay(s: &Value) -> Result<usize, String> {
     let want_hits: Vec<(i64, f64)> = s["hits"].as_array().unwrap().iter().map(|h| (h[0].as_i64().unwrap(), f(&h[1]))).collect();
     let mut got_hits: Vec<(i64, f64)> = Vec::new();
     let trace = s["trace"].as_array().unwrap();
+    let initial = ids.len();
+    // Vanilla numbers new entities on from the scenario's mobs (id parity paces the AI).
+    level.set_next_entity_id(ids.iter().copied().max().unwrap_or(0) + 1);
+    level.immediate_adds = true;
+    let mut known = level.len();
     let mut compared = 0;
     for (tick, expected) in trace.iter().enumerate() {
         let tick = tick as i64;
@@ -194,7 +218,30 @@ fn replay(s: &Value) -> Result<usize, String> {
                 e.tick(level);
             });
         }
+        let before_flush = known;
         level.flush_spawned();
+        known = level.len();
+        // Mobs that appeared get the harness's pinned random and head/body yaw.
+        for i in before_flush..level.len() {
+            let Some(e) = level.entity_at(i) else { continue };
+            if mob::data(e).is_none() {
+                continue;
+            }
+            let id = e.id;
+            let n = (ids.len() - initial) as i64;
+            let e = level.entity_mut(id).unwrap();
+            e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
+            let yaw = e.y_rot;
+            let m = mob::data_mut(e).unwrap();
+            m.y_head_rot = yaw;
+            m.y_head_rot_o = yaw;
+            m.y_body_rot = yaw;
+            m.y_body_rot_o = yaw;
+            if let mob::Species::Chicken { egg_time } = &mut m.species {
+                *egg_time = 6000 + n as i32;
+            }
+            ids.push(id);
+        }
         // Explosions hurt the player through events (it is not an entity of the harness).
         for ev in std::mem::take(&mut level.events) {
             if let kiln_entity::level::Event::Hurt { target, amount, kind, attacker } = ev
@@ -208,8 +255,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         if dealt > 0.0 {
             got_hits.push((tick, dealt as f64));
         }
-        if std::env::var_os("KILN_MOB_DEBUG").is_some() {
-            let e = level.entity(ids[0]).unwrap();
+        if let Some(k) = std::env::var("KILN_MOB_DEBUG").ok().map(|v| v.parse::<usize>().unwrap_or(0))
+            && let Some(e) = ids.get(k).and_then(|&id| level.entity(id))
+        {
             let m = mob::data(e).unwrap();
             eprintln!("dbg tick {tick} rnd {} ambient {} noaction {} goals {:?}", e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals());
         }
@@ -220,6 +268,10 @@ fn replay(s: &Value) -> Result<usize, String> {
             let e = level.entity(ids[k]).ok_or_else(|| format!("tick {tick}: mob {k} missing"))?;
             let (got, goals) = state(e);
             for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+                // Mobs that appeared have ids of their own on each side.
+                if k >= initial && i == 0 {
+                    continue;
+                }
                 // Rotations and health are floats, printed by Java's `Float.toString`.
                 let float = matches!(i, 7..=10 | 12);
                 let same = if float { (*g as f32).to_bits() == (*w as f32).to_bits() } else { g.to_bits() == w.to_bits() };

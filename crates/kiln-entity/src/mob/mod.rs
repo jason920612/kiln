@@ -11,8 +11,10 @@
 //! level's random for spawning decisions.
 
 pub mod attributes;
+pub mod breed;
 pub mod control;
 pub mod goals;
+pub mod interact;
 pub mod mth;
 pub mod path;
 pub mod persist;
@@ -264,6 +266,15 @@ pub struct MobData {
     /// `AgeableMob.age` (negative for babies); zombies keep a baby flag instead.
     pub age: i32,
     pub zombie_baby: bool,
+    /// `AgeableMob.forcedAge`, `forcedAgeTimer`, the age lock (golden dandelion) and its
+    /// particle timer.
+    pub forced_age: i32,
+    pub forced_age_timer: i32,
+    pub age_locked: bool,
+    pub age_lock_timer: i32,
+    /// `Animal.inLove` ticks and the player who fed it (`loveCause`).
+    pub in_love: i32,
+    pub love_cause: Option<i32>,
     pub target: Option<i32>,
     pub look: control::LookControl,
     pub mov: control::MoveControl,
@@ -349,6 +360,12 @@ impl MobData {
             can_pick_up_loot: false,
             age: 0,
             zombie_baby: false,
+            forced_age: 0,
+            forced_age_timer: 0,
+            age_locked: false,
+            age_lock_timer: 0,
+            in_love: 0,
+            love_cause: None,
             target: None,
             look: control::LookControl::default(),
             mov: control::MoveControl::default(),
@@ -448,6 +465,21 @@ impl MobData {
     }
 }
 
+/// A `minecraft:sound_event` id as a static name (the generic hurt sound if unknown).
+pub fn sound_event(name: &str) -> &'static str {
+    kiln_data::builtin_entries("minecraft:sound_event").and_then(|e| e.iter().find(|x| **x == name).copied()).unwrap_or("minecraft:entity.generic.hurt")
+}
+
+/// Whether item id `item` is in the `minecraft:item` tag `tag`.
+pub fn item_tag(item: i32, tag: &str) -> bool {
+    item > 0
+        && kiln_data::registries::TAGS
+            .iter()
+            .find(|(r, _)| *r == "minecraft:item")
+            .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+            .is_some_and(|(_, ids)| ids.contains(&item))
+}
+
 pub fn item_name(s: &ItemStack) -> &'static str {
     kiln_data::builtin_entries("minecraft:item").and_then(|e| e.get(s.item() as usize).copied()).unwrap_or("minecraft:air")
 }
@@ -461,6 +493,8 @@ fn register_goals(m: &mut MobData) {
     let around = || Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 };
     let tempt = |speed: f64| Goal::Tempt { speed, calm_down: 0, player: None };
     let panic = |speed: f64| Goal::Panic { speed, pos: Vec3::ZERO };
+    let breed = |speed: f64| Goal::Breed { speed, partner: None, love_time: 0 };
+    let follow_parent = |speed: f64| Goal::FollowParent { speed, parent: None, recalc: 0 };
     let melee = |kind: MeleeKind, speed: f64, follow: bool| Goal::Melee {
         kind,
         speed,
@@ -478,10 +512,10 @@ fn register_goals(m: &mut MobData) {
         MobKind::Pig => {
             g.add(0, Goal::Float);
             g.add(1, panic(1.25));
-            g.add(3, Goal::Idle);
+            g.add(3, breed(1.0));
             g.add(4, tempt(1.2));
             g.add(4, tempt(1.2));
-            g.add(5, Goal::Idle);
+            g.add(5, follow_parent(1.1));
             g.add(6, stroll(1.0));
             g.add(7, look(6.0));
             g.add(8, around());
@@ -489,9 +523,9 @@ fn register_goals(m: &mut MobData) {
         MobKind::Cow => {
             g.add(0, Goal::Float);
             g.add(1, panic(2.0));
-            g.add(2, Goal::Idle);
+            g.add(2, breed(1.0));
             g.add(3, tempt(1.25));
-            g.add(4, Goal::Idle);
+            g.add(4, follow_parent(1.25));
             g.add(5, stroll(1.0));
             g.add(6, look(6.0));
             g.add(7, around());
@@ -499,9 +533,9 @@ fn register_goals(m: &mut MobData) {
         MobKind::Sheep => {
             g.add(0, Goal::Float);
             g.add(1, panic(1.25));
-            g.add(2, Goal::Idle);
+            g.add(2, breed(1.0));
             g.add(3, tempt(1.1));
-            g.add(4, Goal::Idle);
+            g.add(4, follow_parent(1.1));
             g.add(5, Goal::EatBlock { tick: 0 });
             g.add(6, stroll(1.0));
             g.add(7, look(6.0));
@@ -510,9 +544,9 @@ fn register_goals(m: &mut MobData) {
         MobKind::Chicken => {
             g.add(0, Goal::Float);
             g.add(1, panic(1.4));
-            g.add(2, Goal::Idle);
+            g.add(2, breed(1.0));
             g.add(3, tempt(1.0));
-            g.add(4, Goal::Idle);
+            g.add(4, follow_parent(1.1));
             g.add(5, stroll(1.0));
             g.add(6, look(6.0));
             g.add(7, around());
@@ -626,6 +660,62 @@ pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
     e.kind = EntityKind::Mob(Box::new(m));
     e
+}
+
+/// `AgeableMob.setAge`: crossing zero toggles the baby flag and the size.
+pub fn set_age(e: &mut Entity, m: &mut MobData, age: i32) {
+    let old = m.age;
+    m.age = age;
+    if (old < 0) != (age < 0) {
+        refresh_dimensions(e, m);
+    }
+}
+
+/// `AgeableMob.ageUp(seconds, forced)`.
+pub fn age_up(e: &mut Entity, m: &mut MobData, seconds: i32, forced: bool) {
+    let old = m.age;
+    let age = (old + seconds * 20).min(0);
+    let delta = age - old;
+    set_age(e, m, age);
+    if forced {
+        m.forced_age += delta;
+        if m.forced_age_timer == 0 {
+            m.forced_age_timer = 40;
+        }
+    }
+    if m.age == 0 {
+        let f = m.forced_age;
+        set_age(e, m, f);
+    }
+}
+
+/// `Entity.getRandomX(scale)`, `getRandomY()`, `getRandomZ(scale)`: a random point of the box
+/// (particle positions: only the draws matter on the server).
+pub fn random_point(e: &mut Entity, scale: f64) -> Vec3 {
+    let x = e.x() + e.width as f64 * (2.0 * e.random.next_double() - 1.0) * scale;
+    let y = e.y() + e.height as f64 * e.random.next_double();
+    let z = e.z() + e.width as f64 * (2.0 * e.random.next_double() - 1.0) * scale;
+    Vec3::new(x, y, z)
+}
+
+/// `Entity.refreshDimensions` for a mob: the type's size (or its baby size: half size, or the
+/// type's own `BABY_DIMENSIONS`) scaled by the scale attribute. Approximation: a mob that grows
+/// next to a wall is not nudged out of it (`fudgePositionAfterSizeChange`).
+pub fn refresh_dimensions(e: &mut Entity, m: &MobData) {
+    let Some(t) = kiln_data::entities::by_name(e.type_name) else { return };
+    let (mut w, mut h, mut eye) = species::dimensions(m, (t.width, t.height, t.eye_height));
+    let scale = m.attrs.value(Attr::Scale) as f32;
+    if scale != 1.0 {
+        (w, h, eye) = (w * scale, h * scale, eye * scale);
+    }
+    if (w, h, eye) == (e.width, e.height, e.eye_height) {
+        return;
+    }
+    e.width = w;
+    e.height = h;
+    e.eye_height = eye;
+    let p = e.position();
+    e.set_pos(p);
 }
 
 pub fn data(e: &Entity) -> Option<&MobData> {
@@ -971,7 +1061,7 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     }
     m.goals = sel;
     path::tick(e, m, level);
-    // `Animal.customServerAiStep`: in-love reset (never in love here).
+    breed::custom_server_ai_step(m);
     control::tick_move(e, m, level);
     control::tick_look(e, m);
     control::tick_jump(m);
@@ -1573,9 +1663,11 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     if matches!(kind, MobKind::Pig | MobKind::Cow | MobKind::Chicken) {
         m.sound_variant = r.next_int_bounded(sound_variant_count(kind).max(1));
     }
-    if kind.is_animal() {
-        // `AgeableMob.finalizeSpawn`: babies only in groups with `shouldSpawnBaby` (off for
-        // animals' default group data).
+    if breed::is_ageable(kind) {
+        // `AgeableMob.finalizeSpawn`: after the first mob of a group, 5% are babies.
+        if group.ageable_group_size > 0 && r.next_float() <= 0.05 {
+            set_age(e, &mut m, breed::BABY_START_AGE);
+        }
         group.ageable_group_size += 1;
     }
     if kind == MobKind::Sheep {
@@ -1599,6 +1691,7 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
             if baby {
                 m.zombie_baby = true;
                 m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
+                refresh_dimensions(e, &m);
                 // Chicken jockeys (not simulated): the two draws.
                 if r.next_float() < 0.05 {
                 } else {

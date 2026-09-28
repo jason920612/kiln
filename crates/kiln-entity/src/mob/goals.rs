@@ -34,8 +34,12 @@ pub enum MeleeKind {
 pub enum Goal {
     Float,
     Panic { speed: f64, pos: Vec3 },
-    /// Breeding and following parents: never start for adults out of love.
+    /// A goal that never starts (kept for its slot in the selector).
     Idle,
+    /// `BreedGoal`: an animal in love walks to a partner of its type in love and breeds.
+    Breed { speed: f64, partner: Option<i32>, love_time: i32 },
+    /// `FollowParentGoal`: a baby walks after the nearest adult of its type.
+    FollowParent { speed: f64, parent: Option<i32>, recalc: i32 },
     Tempt { speed: f64, calm_down: i32, player: Option<i32> },
     RandomStroll { speed: f64, interval: i32, check_no_action: bool, water_avoiding: Option<f32>, wanted: Vec3, force: bool },
     LookAtPlayer { dist: f32, probability: f32, look_at: Option<i32>, look_time: i32 },
@@ -61,13 +65,13 @@ impl Goal {
         match self {
             Goal::Float => JUMP,
             Goal::Panic { .. } | Goal::RandomStroll { .. } | Goal::Swell { .. } | Goal::FleeSun { .. } | Goal::AvoidEntity => MOVE,
-            Goal::Tempt { .. } | Goal::Melee { .. } | Goal::RangedBow { .. } | Goal::RandomLookAround { .. } => MOVE | LOOK,
+            Goal::Tempt { .. } | Goal::Breed { .. } | Goal::Melee { .. } | Goal::RangedBow { .. } | Goal::RandomLookAround { .. } => MOVE | LOOK,
             Goal::LookAtPlayer { .. } => LOOK,
             Goal::EatBlock { .. } => MOVE | LOOK | JUMP,
             Goal::LeapAtTarget { .. } => JUMP | MOVE,
             Goal::RemoveTurtleEgg { .. } => MOVE | JUMP,
             Goal::HurtByTarget { .. } | Goal::NearestAttackable { .. } => TARGET,
-            Goal::Idle | Goal::RestrictSun | Goal::Never => 0,
+            Goal::Idle | Goal::RestrictSun | Goal::Never | Goal::FollowParent { .. } => 0,
         }
     }
 
@@ -80,6 +84,8 @@ impl Goal {
             Goal::Float => "float",
             Goal::Panic { .. } => "panic",
             Goal::Idle => "idle",
+            Goal::Breed { .. } => "breed",
+            Goal::FollowParent { .. } => "follow_parent",
             Goal::Tempt { .. } => "tempt",
             Goal::RandomStroll { .. } => "stroll",
             Goal::LookAtPlayer { .. } => "look_at_player",
@@ -368,6 +374,39 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
             }
         }
         Goal::Idle | Goal::Never | Goal::AvoidEntity => false,
+        Goal::Breed { partner, .. } => {
+            if m.in_love <= 0 {
+                return false;
+            }
+            *partner = free_partner(e, m, level);
+            partner.is_some()
+        }
+        Goal::FollowParent { parent, .. } => {
+            if m.age >= 0 {
+                return false;
+            }
+            let area = e.bounding_box().inflate(8.0, 4.0, 8.0);
+            let mut best: Option<(f64, i32)> = None;
+            for id in level.entities_in(&area, crate::level::EntityFilter::Living, i32::MIN) {
+                let Some(o) = level.entity(id) else { continue };
+                let crate::entity::EntityKind::Mob(om) = &o.kind else { continue };
+                if om.kind != m.kind || om.age < 0 {
+                    continue;
+                }
+                let d = e.position().distance_to_sqr(o.position());
+                if best.is_some_and(|(b, _)| d > b) {
+                    continue;
+                }
+                best = Some((d, id));
+            }
+            match best {
+                Some((d, id)) if d >= 9.0 => {
+                    *parent = Some(id);
+                    true
+                }
+                _ => false,
+            }
+        }
         Goal::Tempt { calm_down, player, .. } => {
             if *calm_down > 0 {
                 *calm_down -= 1;
@@ -422,7 +461,7 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
         }
         Goal::RandomLookAround { .. } => e.random.next_float() < 0.02,
         Goal::EatBlock { .. } => {
-            let bound = if m.baby() { 50 } else { adj(1000) };
+            let bound = adj(if m.baby() { 50 } else { 1000 });
             if e.random.next_int_bounded(bound) != 0 {
                 return false;
             }
@@ -538,6 +577,22 @@ fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn E
         Goal::Panic { .. } | Goal::FleeSun { .. } => !nav_done(m),
         Goal::RandomStroll { .. } => !nav_done(m),
         Goal::Tempt { .. } => can_use(g, e, m, level),
+        Goal::Breed { partner, love_time, .. } => {
+            let Some(p) = partner.and_then(|id| level.entity(id)) else { return false };
+            let Some(pm) = super::data(p) else { return false };
+            p.is_alive() && pm.health > 0.0 && pm.in_love > 0 && *love_time < 60 && !pm.goals.is_running(|g| matches!(g, Goal::Panic { .. }))
+        }
+        Goal::FollowParent { parent, .. } => {
+            if m.age >= 0 {
+                return false;
+            }
+            let Some(p) = parent.and_then(|id| living(level, id)) else { return false };
+            if !p.alive {
+                return false;
+            }
+            let d = e.position().distance_to_sqr(p.pos);
+            !(d < 9.0) && !(d > 256.0)
+        }
         Goal::LookAtPlayer { dist, look_at, look_time, .. } => {
             let Some(t) = look_at.and_then(|id| living(level, id)) else { return false };
             t.alive && e.position().distance_to_sqr(t.pos) <= (*dist * *dist) as f64 && *look_time > 0
@@ -670,6 +725,7 @@ fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
             *unseen = 0;
         }
         Goal::Tempt { .. } => {}
+        Goal::FollowParent { recalc, .. } => *recalc = 0,
         _ => {}
     }
 }
@@ -683,6 +739,11 @@ fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
             *calm_down = reduced_tick_delay(100);
         }
         Goal::LookAtPlayer { look_at, .. } => *look_at = None,
+        Goal::Breed { partner, love_time, .. } => {
+            *partner = None;
+            *love_time = 0;
+        }
+        Goal::FollowParent { parent, .. } => *parent = None,
         Goal::EatBlock { tick } => *tick = 0,
         Goal::Melee { .. } => {
             // `NO_CREATIVE_OR_SPECTATOR.test(target)` fails for a missing target too.
@@ -728,6 +789,25 @@ fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Enti
             } else {
                 path::move_to_entity(e, m, level, p.block_pos(), *speed);
             }
+        }
+        Goal::Breed { speed, partner, love_time } => {
+            let Some(p) = partner.and_then(|id| living(level, id)) else { return };
+            let max_x = m.kind.max_head_x_rot() as f32;
+            m.look.set_look_at(p.pos.x, p.eye_y, p.pos.z, 10.0, max_x);
+            path::move_to_entity(e, m, level, p.block_pos(), *speed);
+            *love_time += 1;
+            if *love_time >= adj(60) && e.position().distance_to_sqr(p.pos) < 9.0 {
+                super::breed::spawn_child(e, m, level, p.id);
+            }
+        }
+        Goal::FollowParent { speed, parent, recalc } => {
+            *recalc -= 1;
+            if *recalc > 0 {
+                return;
+            }
+            *recalc = adj(10);
+            let Some(p) = parent.and_then(|id| living(level, id)) else { return };
+            path::move_to_entity(e, m, level, p.block_pos(), *speed);
         }
         Goal::LookAtPlayer { look_at: la, look_time, .. } => {
             let Some(t) = la.and_then(|id| living(level, id)) else { return };
@@ -917,6 +997,29 @@ fn fluid_jump_threshold(e: &Entity) -> f64 {
 /// `PanicGoal.shouldPanic`: hurt by a `panic_causes` damage type in the last 40 ticks.
 fn should_panic(m: &MobData, level: &dyn EntityLevel) -> bool {
     m.last_damage_source(level.game_time()).is_some_and(|s| s.kind.is_tag("minecraft:panic_causes"))
+}
+
+/// `BreedGoal.getFreePartner`: the nearest animal of the same type within 8 blocks that can
+/// mate (both in love) and is not panicking.
+fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<i32> {
+    let area = e.bounding_box().inflate(8.0, 8.0, 8.0);
+    let mut best: Option<(f64, i32)> = None;
+    for id in level.entities_in(&area, crate::level::EntityFilter::Living, e.id) {
+        let Some(o) = level.entity(id) else { continue };
+        let crate::entity::EntityKind::Mob(om) = &o.kind else { continue };
+        // `PARTNER_TARGETING`: non-combat, 8 blocks, no line of sight needed.
+        if om.kind != m.kind || !o.is_alive() || om.health <= 0.0 || e.position().distance_to_sqr(o.position()) > 64.0 {
+            continue;
+        }
+        if !(m.in_love > 0 && om.in_love > 0) || om.goals.is_running(|g| matches!(g, Goal::Panic { .. })) {
+            continue;
+        }
+        let d = e.position().distance_to_sqr(o.position());
+        if best.is_none_or(|(b, _)| d < b) {
+            best = Some((d, id));
+        }
+    }
+    best.map(|(_, id)| id)
 }
 
 /// `HurtByTargetGoal.alertOthers`: mobs of the same type nearby without a target.

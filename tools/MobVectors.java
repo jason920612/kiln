@@ -55,6 +55,8 @@ public class MobVectors {
         float yaw;
         long seed;
         String mainHand;
+        Integer age;
+        Integer inLove;
         MobSpec(String type, double x, double y, double z, float yaw, long seed) {
             this.type = type; this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.seed = seed;
         }
@@ -67,6 +69,7 @@ public class MobVectors {
         double[] player; // x, y, z or null
         boolean playerSneaking;
         boolean playerCreative;
+        String playerMainHand;
         long dayTime = 1000;
         long levelSeed = 1;
         int ticks = 200;
@@ -259,6 +262,8 @@ public class MobVectors {
             player.setPose(s.playerSneaking ? net.minecraft.world.entity.Pose.CROUCHING : net.minecraft.world.entity.Pose.STANDING);
             player.setHealth(20f);
             set(player, "damageCooldownTime", 0);
+            player.setItemSlot(EquipmentSlot.MAINHAND, s.playerMainHand == null ? ItemStack.EMPTY
+                    : new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(s.playerMainHand))));
         } else {
             player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
             player.snapTo(0, 300, 0, 0f, 0f);
@@ -277,19 +282,26 @@ public class MobVectors {
             if (spec.mainHand != null) {
                 m.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(spec.mainHand))));
             }
+            if (spec.age != null) ((net.minecraft.world.entity.AgeableMob) m).setAge(spec.age);
+            if (spec.inLove != null) ((net.minecraft.world.entity.animal.Animal) m).setInLoveTime(spec.inLove);
             m.getRandom().setSeed(spec.seed);
             int eggTime = m instanceof net.minecraft.world.entity.animal.chicken.Chicken c ? (Integer) get(c, "eggTime") : 0;
             if (!level.addFreshEntity(m)) throw new IllegalStateException("could not add " + spec.type);
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
-                    spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime));
+                    spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
+                    spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove));
         }
         StringBuilder trace = new StringBuilder();
         StringBuilder hits = new StringBuilder();
         StringBuilder spawned = new StringBuilder();
+        // Mobs that appear during the scenario (babies, split slimes, converted zombies) get a
+        // pinned random, their head and body turned to their yaw (the constructor's random yaw
+        // is not reproducible) and join the trace.
+        List<Mob> pinned = new ArrayList<>();
         int initial = tracked.size();
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
         long startTime = level.getGameTime();
@@ -326,6 +338,15 @@ public class MobVectors {
                     spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"%s\",\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s]}", tick,
                             BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()), d(e.getX()), d(e.getY()), d(e.getZ()),
                             d(e.getDeltaMovement().x), d(e.getDeltaMovement().y), d(e.getDeltaMovement().z)));
+                    if (e instanceof Mob nm) {
+                        nm.getRandom().setSeed(7777L * (tick + 1) + pinned.size());
+                        nm.setYHeadRot(nm.getYRot());
+                        nm.yHeadRotO = nm.getYRot();
+                        nm.setYBodyRot(nm.getYRot());
+                        nm.yBodyRotO = nm.getYRot();
+                        if (nm instanceof net.minecraft.world.entity.animal.chicken.Chicken) set(nm, "eggTime", 6000 + pinned.size());
+                        pinned.add(nm);
+                    }
                 }
             }
             if (tick > 0) trace.append(',');
@@ -333,6 +354,10 @@ public class MobVectors {
             for (int i = 0; i < initial; i++) {
                 if (i > 0) trace.append(',');
                 trace.append(state((Mob) tracked.get(i)));
+            }
+            for (Mob nm : pinned) {
+                trace.append(',');
+                trace.append(state(nm));
             }
             trace.append(']');
         }
@@ -348,7 +373,8 @@ public class MobVectors {
             hurts.append(String.format(Locale.ROOT, "[%d,%d,%s]", h.getKey(), (int) h.getValue()[0], d(h.getValue()[1])));
         }
         String playerJson = s.player == null ? "null"
-                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative);
+                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
+                        s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"");
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"trace\":[%s]}",
@@ -522,6 +548,58 @@ public class MobVectors {
             s.ticks = 600;
             s.player = new double[] {8.5, BY, 0.5};
             s.playerCreative = true;
+            out.add(s);
+        }
+        // ---------------------------------------------------------- slice 2: breeding
+        String[][] breeders = {{"cow", "minecraft:wheat"}, {"pig", "minecraft:carrot"}, {"sheep", "minecraft:wheat"}, {"chicken", "minecraft:wheat_seeds"}};
+        for (String[] b : breeders) {
+            Scenario s = new Scenario("breed_" + b[0]);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:" + b[0], 0.5, BY, 0.5, 20f, 6100);
+            MobSpec m2 = new MobSpec("minecraft:" + b[0], 3.5, BY, 1.5, 200f, 6101);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("follow_parent_cow");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec baby = new MobSpec("minecraft:cow", 0.5, BY, 0.5, 0f, 6200);
+            baby.age = -24000;
+            s.mobs.add(baby);
+            s.mobs.add(new MobSpec("minecraft:cow", 6.5, BY, 2.5, 90f, 6201));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("grow_up_pig");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec baby = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 0f, 6300);
+            baby.age = -150;
+            s.mobs.add(baby);
+            MobSpec parent = new MobSpec("minecraft:pig", 4.5, BY, 0.5, 0f, 6301);
+            parent.age = 100;
+            s.mobs.add(parent);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (String[] b : breeders) {
+            Scenario s = new Scenario("tempt_" + b[0]);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:" + b[0], 0.5, BY, 0.5, 0f, 6400));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = b[1];
+            s.ticks = 200;
             out.add(s);
         }
         return out;

@@ -759,6 +759,143 @@ pub(crate) fn hit_mob(
     }
 }
 
+/// `ServerGamePacketListenerImpl.handleInteract` on a mob, then `Player.interactOn`: player
+/// `i` of the region's players right-clicks entity `target` with the item in `hand` (0 main,
+/// 1 off). The held item changes as the mob says; sheared wool drops.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn interact_mob(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    i: usize,
+    target: i32,
+    off_hand: bool,
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+) {
+    use kiln_item::component::EquipmentSlot;
+    let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
+    {
+        let p = &*players[i];
+        if p.dead || p.game_mode == 3 || entities.list[idx].removed {
+            return;
+        }
+        let Some(phys) = entities.list[idx].phys.as_ref() else { return };
+        if kiln_entity::mob::data(phys).is_none() {
+            return;
+        }
+        // `canInteractWithEntity(box, 3.0)`: the box within the interaction range plus 3.
+        let bb = phys.bounding_box();
+        let eye = p.eye_position();
+        let d = |v: f64, lo: f64, hi: f64| if v < lo { lo - v } else if v > hi { v - hi } else { 0.0 };
+        let (dx, dy, dz) = (d(eye[0], bb.min_x, bb.max_x), d(eye[1], bb.min_y, bb.max_y), d(eye[2], bb.min_z, bb.max_z));
+        let range = p.attribute(crate::combat::ENTITY_INTERACTION_RANGE) + 3.0;
+        if dx * dx + dy * dy + dz * dz >= range * range {
+            return;
+        }
+    }
+    let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
+    let stack = players[i].inv.equipped(slot).clone();
+    let who = kiln_entity::mob::interact::Interactor { id: players[i].entity_id, creative: players[i].game_mode == 1, sneaking: players[i].sneaking };
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x696e_74, target);
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: target,
+        seeds: 0x696e_7400,
+        rng,
+        grid: Grid::default(),
+    };
+    sim.grid = Grid::build(sim.list);
+    let Some(mut phys) = sim.list[idx].phys.take() else { return };
+    let out = kiln_entity::mob::interact::interact(&mut phys, &mut sim, &who, &stack);
+    // Sheared wool: each item on its own, thrown up from the sheep with a push from its random.
+    if let Some(table) = &out.shear
+        && let Some(loot) = sim.level.env.loot.clone()
+    {
+        let env = sim.level.env;
+        let ctx = crate::mobs::DeathContext {
+            type_name: phys.type_name,
+            origin: arr(phys.position()),
+            on_fire: false,
+            baby: false,
+            killed_by_player: false,
+            damage_type: "minecraft:generic",
+            weapon: Some(stack.clone()),
+        };
+        let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
+        let mut k = 0u64;
+        for drop in crate::mobs::roll(&loot, table, &ctx, seed) {
+            for _ in 0..drop.count() {
+                let mut one = drop.clone();
+                one.set_count(1);
+                let push = kiln_entity::mob::species::shear_drop_motion(&mut phys);
+                let h = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_0000 | k) as u64;
+                k += 1;
+                let p = phys.position();
+                let mut s = crate::mobs::drop_item(one, [p.x, p.y + 1.0, p.z], h);
+                s.vel = [s.vel[0] + push.x, s.vel[1] + push.y, s.vel[2] + push.z];
+                sim.spawns.push(s);
+            }
+        }
+    }
+    let e = &mut sim.list[idx];
+    e.phys = Some(phys);
+    e.sync();
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let p = &mut *players[i];
+    let index = kiln_inventory::inventory::equipment_index(slot, p.inv.selected);
+    use kiln_entity::mob::interact::HeldChange;
+    match &out.held {
+        HeldChange::None => {}
+        HeldChange::Consume(n) => {
+            if p.game_mode != 1 {
+                kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
+            }
+        }
+        HeldChange::Damage(n) => p.hurt_and_break(slot, *n, None),
+        HeldChange::Fill(filled) => {
+            // `ItemUtils.createFilledResult`: creative players keep the empty item and get the
+            // filled one if they have none; others trade one of the held items for it.
+            let mut filled = filled.clone();
+            if p.game_mode == 1 {
+                let has = (0..kiln_inventory::Container::size(&p.inv))
+                    .any(|j| kiln_inventory::stack::matches(kiln_inventory::Container::item(&p.inv, j), &filled));
+                if !has {
+                    p.add_to_inventory(&mut filled);
+                }
+            } else {
+                let held = kiln_inventory::Container::item_mut(&mut p.inv, index);
+                held.shrink(1);
+                if held.is_empty() {
+                    *held = filled;
+                } else if p.add_to_inventory(&mut filled) == 0 {
+                    spawns.push(crate::mobs::drop_item(filled, p.pos, p.entity_id as u64));
+                }
+            }
+        }
+    }
+    if let Some(sound) = out.player_sound
+        && let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound)
+    {
+        let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, p.pos, 1.0, 1.0, level.env.game_time);
+        p.send(pkt);
+    }
+    for (n, event) in events.into_iter().enumerate() {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
 fn carry_out(
     event: Event,
     n: usize,

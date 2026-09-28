@@ -83,9 +83,14 @@ pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     }
     m.left_handed = r.bool_or("LeftHanded", false);
     m.no_ai = r.bool_or("NoAI", false);
-    // `AgeableMob`.
-    if kind.is_animal() {
+    // `AgeableMob` and `Animal`.
+    if super::breed::is_ageable(kind) {
         m.age = r.int_or("Age", 0);
+        m.forced_age = r.int_or("ForcedAge", 0);
+        m.age_locked = r.bool_or("AgeLocked", false);
+    }
+    if super::breed::is_animal(kind) {
+        m.in_love = r.int_or("InLove", 0);
     }
     match &mut m.species {
         Species::Sheep { color, sheared } => {
@@ -117,6 +122,7 @@ pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
         m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
     super::reassess_weapon_goal(&mut m, false);
+    super::refresh_dimensions(e, &m);
     e.kind = EntityKind::Mob(Box::new(m));
 }
 
@@ -177,10 +183,13 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     if m.no_ai {
         o.put("NoAI", Tag::Byte(1));
     }
-    if m.kind.is_animal() {
+    if super::breed::is_ageable(m.kind) {
         o.put("Age", Tag::Int(m.age));
-        o.put("ForcedAge", Tag::Int(0));
-        o.put("InLove", Tag::Int(0));
+        o.put("ForcedAge", Tag::Int(m.forced_age));
+        o.put("AgeLocked", Tag::Byte(m.age_locked as i8));
+    }
+    if super::breed::is_animal(m.kind) {
+        o.put("InLove", Tag::Int(m.in_love));
     }
     match &m.species {
         Species::Sheep { color, sheared } => {
