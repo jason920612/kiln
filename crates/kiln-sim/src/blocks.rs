@@ -255,6 +255,8 @@ pub(crate) struct BlockEnv {
     /// Where the level's non-spectator players stood when the tick began (fire spreads near
     /// them; the same in every region).
     pub fire_watchers: std::sync::Arc<Vec<[f64; 3]>>,
+    /// The End's dragon fight as the level's entities see it (`None` elsewhere).
+    pub dragon_fight: Option<crate::dragon_fight::FightEnv>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -544,6 +546,14 @@ impl Ticking {
             }
         }
         Self(cells)
+    }
+
+    /// Chunks within `r` of `center` tick too (the dragon fight's arena).
+    pub fn add(&mut self, center: ChunkPos, r: i32) {
+        let other = Ticking::around(std::iter::once(center), r);
+        for (cell, mask) in other.0 {
+            *self.0.entry(cell).or_default() |= mask;
+        }
     }
 
     pub fn contains(&self, c: ChunkPos) -> bool {
@@ -1118,6 +1128,7 @@ mod tests {
             weather: Default::default(),
             fire_spread_radius: 128,
             fire_watchers: Default::default(),
+            dragon_fight: None,
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

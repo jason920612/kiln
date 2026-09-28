@@ -312,7 +312,7 @@ impl Entity {
     pub fn body(&self) -> ([f64; 3], [f64; 3], bool) {
         let p = self.phys();
         let bb = p.bounding_box();
-        let blocks_building = matches!(p.kind, EntityKind::Tnt(_) | EntityKind::FallingBlock(_));
+        let blocks_building = matches!(p.kind, EntityKind::Tnt(_) | EntityKind::FallingBlock(_)) || p.type_name == "minecraft:end_crystal";
         ([bb.min_x, bb.min_y, bb.min_z], [bb.max_x, bb.max_y, bb.max_z], blocks_building)
     }
 }
@@ -615,6 +615,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn mob_griefing(&self) -> bool {
         self.level.env.mobs.griefing
+    }
+
+    fn dragon_fight(&self) -> Option<kiln_entity::level::DragonFightView> {
+        self.level.env.dragon_fight.as_ref().map(|f| f.view)
     }
 
     fn mob_drops(&self) -> bool {
@@ -982,7 +986,8 @@ pub(crate) fn hit_mob(
     deaths: &mut Vec<health::Death>,
     hit: &crate::combat::MobHit,
 ) {
-    let Ok(i) = entities.list.binary_search_by_key(&hit.target, |e| e.id) else { return };
+    let target = hit.target - hit.part.map_or(0, |p| p as i32 + 1);
+    let Ok(i) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
@@ -1016,7 +1021,12 @@ pub(crate) fn hit_mob(
         attacker_is_player: true,
     };
     let health_before = kiln_entity::mob::data(&phys).map(|m| m.health);
-    let hurt = kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount);
+    // `EnderDragonPart.hurtServer` → `EnderDragon.hurt(part)`; an end crystal explodes.
+    let hurt = match hit.part {
+        Some(part) => kiln_entity::mob::kinds::ender_dragon::hurt_entity_part(&mut phys, &mut sim, part, source, hit.amount),
+        None if kiln_entity::mob::data(&phys).is_none() => phys.hurt(&mut sim, DamageKind::PlayerAttack, hit.amount, Some(hit.attacker)),
+        None => kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount),
+    };
     // `Player.damageStatsAndHearts`.
     if hurt
         && let (Some(before), Some(after)) = (health_before, kiln_entity::mob::data(&phys).map(|m| m.health))
@@ -1475,6 +1485,11 @@ fn carry_out(
                 p.entity_criterion(crate::DIMENSIONS[env.dim].0, &criterion);
             }
         }
+        Event::DragonFight(ev) => {
+            if let Some(f) = &env.dragon_fight {
+                f.send(crate::dragon_fight::FightMsg::Entity(ev));
+            }
+        }
     }
 }
 
@@ -1696,6 +1711,18 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
         if let Some(EntityKind::Mob(m)) = e.phys.as_mut().map(|p| &mut p.kind) {
             if std::mem::take(&mut m.swing) {
                 packets.push(entity::swing_animation(e.id, false, entity::swing::WHACK, entity::swing::DEFAULT_DURATION));
+            }
+        }
+        if let Some(phys) = e.phys.as_ref()
+            && let EntityKind::Ext(x) = &phys.kind
+        {
+            let mut meta = EntityData::new();
+            x.entity_data(phys, &mut meta);
+            if meta.entries() != e.meta_sent.as_slice() {
+                if !e.meta_sent.is_empty() {
+                    packets.push(entity::set_entity_data(e.id, &meta));
+                }
+                e.meta_sent = meta.entries().to_vec();
             }
         }
         if let Some(phys) = e.phys.as_ref()

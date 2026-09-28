@@ -592,6 +592,17 @@ impl Host for Sim {
                             kiln_entity::mob::kill(p);
                         } else {
                             p.removed = Some(kiln_entity::entity::RemovalReason::Killed);
+                            // `EndCrystal.kill`: the fight hears of it.
+                            if p.type_name == "minecraft:end_crystal" && dim == crate::END_ID {
+                                let ev = kiln_entity::level::DragonFightEvent::CrystalDestroyed {
+                                    crystal: p.id,
+                                    uuid: p.uuid,
+                                    pos: p.position(),
+                                    kind: kiln_entity::level::DamageKind::Generic,
+                                    attacker: None,
+                                };
+                                self.dragon_fight.send(crate::dragon_fight::FightMsg::Entity(ev));
+                            }
                         }
                     }
                     break;

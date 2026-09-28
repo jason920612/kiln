@@ -367,7 +367,11 @@ impl RegionWork<'_> {
             self.tick_block_entities(env);
             return;
         }
-        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let mut ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        // `TicketType.DRAGON`: the fight's arena ticks while its boss bar has players.
+        if let Some(f) = env.blocks.dragon_fight.as_ref().filter(|f| f.active) {
+            ticking.add(f.arena_center, f.arena_radius);
+        }
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         {
@@ -877,6 +881,38 @@ fn use_on_block(
         spawns.push(crate::mobs::spawn(kind, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(yaw), Some(finalize)));
         let egg = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
         p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, egg), 1);
+        if p.game_mode != 1 {
+            let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
+            kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
+        }
+        return;
+    }
+    // `EndCrystalItem.useOn`: on obsidian or bedrock with air above and no entity in the two
+    // blocks there; the fight looks for its respawn crystals.
+    if item_name == Some("minecraft:end_crystal") {
+        let s = level.block(bp);
+        if !kiln_blocks::state::is(s, kiln_data::blocks::default_state::OBSIDIAN) && !kiln_blocks::state::is(s, kiln_data::blocks::default_state::BEDROCK) {
+            return;
+        }
+        let above = bp.relative(kiln_blocks::Direction::Up);
+        if !kiln_data::blocks_types::is_air(level.block(above)) {
+            return;
+        }
+        let (x, y, z) = (above.x as f64, above.y as f64, above.z as f64);
+        if level.bodies.iter().any(|b| b.intersects([x, y, z], [x + 1.0, y + 2.0, z + 1.0])) {
+            return;
+        }
+        let env = level.env;
+        let seed = crate::mobs::loot_seed(env.seed, env.game_time, p.entity_id, (above.x as u64) << 32 ^ above.z as u64 ^ (above.y as u64) << 16);
+        let crystal = kiln_entity::ext_entity::end_crystal::new(0, kiln_entity::math::Vec3::new(x + 0.5, y, z + 0.5), false, seed);
+        if let Some(kind) = kiln_data::entities::by_name("minecraft:end_crystal") {
+            spawns.push(Spawn { kind, pos: [x + 0.5, y, z + 0.5], vel: [0.0; 3], body: crate::entities::Body::Ready(Box::new(crystal)) });
+        }
+        if let Some(f) = &env.dragon_fight {
+            f.send(crate::dragon_fight::FightMsg::TryRespawn);
+        }
+        let item = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
+        p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
         if p.game_mode != 1 {
             let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
             kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
