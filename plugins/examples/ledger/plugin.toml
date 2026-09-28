@@ -1,0 +1,10 @@
+id = "ledger"
+version = "0.1.0"
+capabilities = ["command.register"]
+
+[[subscribe]]
+event = "join"
+
+[[subscribe]]
+event = "chat"
+policy = "fail-open"

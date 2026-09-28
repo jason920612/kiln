@@ -1,0 +1,21 @@
+# Guest side: the plugin SDK and example plugins, built for wasm32-wasip2 (separate from the
+# server workspace): `cargo build --release --target wasm32-wasip2` in this directory.
+[workspace]
+resolver = "3"
+members = ["sdk", "examples/*"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+publish = false
+
+[workspace.dependencies]
+kiln-plugin-sdk = { path = "sdk" }
+wit-bindgen = "0.62"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

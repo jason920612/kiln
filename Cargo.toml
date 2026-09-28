@@ -26,6 +26,7 @@ kiln-region = { path = "crates/kiln-region" }
 kiln-sched = { path = "crates/kiln-sched" }
 kiln-javamath = { path = "crates/kiln-javamath" }
 kiln-worldgen = { path = "crates/kiln-worldgen" }
+kiln-plugin-host = { path = "crates/kiln-plugin-host" }
 anyhow = "1"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
@@ -56,6 +57,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 uuid = "1"
+wasmtime = { version = "49", default-features = false, features = ["runtime", "cranelift", "component-model", "pooling-allocator", "parallel-compilation", "std", "addr2line", "anyhow"] }
+wasmtime-wasi = { version = "49", default-features = false, features = ["p2"] }
 
 [profile.release]
 debug = "line-tables-only"

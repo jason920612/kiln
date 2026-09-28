@@ -695,7 +695,7 @@ fn suggestions() {
     let sug = d.complete("/difficulty e", s4);
     assert_eq!((sug.start, sug.texts()), (12, vec!["easy"]));
     assert_eq!(d.complete("/gamerule keep_inv", s4).texts(), ["keep_inventory"]);
-    assert_eq!(d.complete("/kiln ", s4).texts(), ["recipebook", "regions", "tick", "use"]);
+    assert_eq!(d.complete("/kiln ", s4).texts(), ["break", "recipebook", "regions", "tick", "use"]);
     // The packet answering a request: ranges in UTF-16 units of the request text.
     let p = d.suggestions_packet(5, "/msg Bob é@", s);
     let mut r = kiln_proto::Reader::new(&p);

@@ -4,3 +4,4 @@
 # Claude Code worktrees and local state
 /.claude/
 __pycache__/
+/plugins/target

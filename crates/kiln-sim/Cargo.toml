@@ -17,6 +17,7 @@ smallvec.workspace = true
 kiln-worldgen.workspace = true
 kiln-region.workspace = true
 kiln-sched.workspace = true
+kiln-plugin-host.workspace = true
 kiln-command.workspace = true
 kiln-storage.workspace = true
 kiln-proto.workspace = true

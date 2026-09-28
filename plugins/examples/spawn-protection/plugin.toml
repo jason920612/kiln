@@ -1,0 +1,14 @@
+id = "spawn-protection"
+version = "0.1.0"
+capabilities = []
+
+[[subscribe]]
+event = "block-break"
+policy = "fail-closed"
+
+[[subscribe]]
+event = "block-place"
+policy = "fail-closed"
+
+[config]
+radius = 16

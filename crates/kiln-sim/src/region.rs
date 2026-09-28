@@ -74,6 +74,8 @@ pub(crate) struct RegionWork<'a> {
     pub players: Vec<&'a mut Player>,
     /// This region's packets for the tick, in arrival order.
     pub packets: Vec<(ConnId, PlayIn)>,
+    /// The region's plugin instances.
+    pub plugins: Option<crate::plugins::RegionHook<'a>>,
     pub out: RegionOut,
 }
 
@@ -88,6 +90,11 @@ impl RegionWork<'_> {
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         for (conn, pkt) in std::mem::take(&mut self.packets) {
             let Some(i) = self.index_of(conn) else { continue };
+            if let Some(h) = self.plugins.as_mut()
+                && crate::plugins::deny_packet(h, self.players[i], self.cells, env, &pkt, &mut self.out.spawns)
+            {
+                continue;
+            }
             if let PlayIn::Attack { entity_id } = pkt {
                 if !self.players[i].dead {
                     let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
@@ -147,6 +154,9 @@ impl RegionWork<'_> {
                 let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
                 crate::trading::apply_events(self.entities, &mut level, &mut self.players, i, &mut self.out.spawns, &mut self.out.deaths);
             }
+        }
+        if let Some(h) = self.plugins.as_mut() {
+            crate::plugins::after_packets(h, self.cells, env);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }

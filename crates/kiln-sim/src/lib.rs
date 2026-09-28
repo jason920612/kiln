@@ -42,6 +42,8 @@ mod persist;
 mod players;
 pub(crate) mod player_stats;
 mod recipe_book;
+mod plugins;
+pub use plugins::PluginSettings;
 pub(crate) mod portal;
 mod region;
 mod rng;
@@ -100,6 +102,8 @@ pub struct SimConfig {
     pub noise: Option<NoiseConfig>,
     /// `require-resource-pack` with a server pack set: declining any pack disconnects.
     pub require_resource_pack: bool,
+    /// WASM plugins to load.
+    pub plugins: Option<PluginSettings>,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -125,6 +129,7 @@ impl SimConfig {
             unified_regions: false,
             noise: None,
             require_resource_pack: false,
+            plugins: None,
         }
     }
 }
@@ -744,6 +749,7 @@ pub struct Sim {
     sleep_status: [sleep::SleepStatus; 3],
     /// Advancements of the enabled data packs.
     advancements: std::sync::Arc<advancements::Advancements>,
+    plugins: Option<plugins::SimPlugins>,
 }
 
 /// Operator names from `KILN_OPS` (comma separated).
@@ -898,6 +904,7 @@ impl Sim {
             clock_runs: Default::default(),
             sleep_status: Default::default(),
             advancements: Default::default(),
+            plugins: None,
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -905,6 +912,7 @@ impl Sim {
         sim.load_scoreboard();
         sim.load_weather();
         sim.init_packs(vanilla_pack);
+        sim.load_plugins();
         sim
     }
 
@@ -946,9 +954,12 @@ impl Sim {
             self.dims[jn.dim].load_chunk(player_chunk(jn.pos));
         }
         let changed = self.apply_topology();
+        self.plugins_b0();
         for (jn, j) in joining {
             let in_end = jn.dim == END_ID;
+            let conn = j.conn;
             self.join(j, jn);
+            self.plugins_joined(conn);
             if in_end {
                 self.prepare_end();
             }
@@ -963,6 +974,7 @@ impl Sim {
             self.dims[dim].spawns.extend(out.spawns);
             self.announce_deaths(out.deaths);
         }
+        self.deliver_plugin_messages();
         lap(&mut self.stats, "packets");
 
         // PX: chat, commands and what followed them, in arrival order.
@@ -986,6 +998,7 @@ impl Sim {
         self.advancement_upkeep();
         // Players teleported in PX or G tick in their destination's region from now on.
         self.settle_teleported();
+        self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
 
         // L: regions tick in parallel.
@@ -1087,6 +1100,7 @@ impl Sim {
                 (e.id, e.duration, e.amplifier, e.ambient, e.visible, e.show_icon, e.hidden.is_some()).hash(&mut h);
             }
         }
+        self.hash_plugins(&mut h);
         h.finish()
     }
 
@@ -1438,6 +1452,7 @@ impl Sim {
         for p in self.players.values_mut() {
             buckets.entry((p.dim, p.region)).or_default().push(p);
         }
+        let mut hooks = self.plugins.as_mut().map(|pl| pl.hooks()).unwrap_or_default();
         let mut work: Vec<RegionWork> = Vec::new();
         for (dim, d) in self.dims.iter_mut().enumerate() {
             let (_, regions) = d.regions.split_mut();
@@ -1447,7 +1462,8 @@ impl Sim {
                 players.sort_unstable_by_key(|p| p.conn);
                 let packets = packets.remove(&key).unwrap_or_default();
                 let (cells, (entities, blocks)) = r.cells_and_part_mut();
-                RegionWork { dim, cells, entities, blocks, players, packets, out: RegionOut::default() }
+                let plugins = hooks.remove(&key);
+                RegionWork { dim, cells, entities, blocks, players, packets, plugins, out: RegionOut::default() }
             }));
         }
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
@@ -1531,6 +1547,7 @@ impl Sim {
         for d in &mut self.dims {
             changed |= d.apply_topology(tick);
         }
+        self.sync_plugin_regions();
         changed
     }
 
@@ -1762,7 +1779,11 @@ impl Sim {
     fn exclusive_packet(&mut self, conn: ConnId, pkt: PlayIn) {
         match pkt {
             PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::PerformRespawn) => self.respawn(conn),
-            PlayIn::ChatCommand { command } => self.run_command(conn, &command),
+            PlayIn::ChatCommand { command } => {
+                if !self.plugin_command_denied(conn, &command) {
+                    self.run_command(conn, &command);
+                }
+            }
             PlayIn::CommandSuggestion { id, text } => self.suggest(conn, id, text),
             PlayIn::ResourcePack { id, action } => self.resource_pack_response(conn, id, action),
             PlayIn::CookieResponse(response) => self.cookie_response(conn, response),
@@ -1772,6 +1793,10 @@ impl Sim {
                     p.disconnect("Illegal characters in chat");
                     return;
                 }
+                if self.plugin_chat(conn, &message) {
+                    return;
+                }
+                let Some(p) = self.players.get(&conn) else { return };
                 info!("<{}> {}", p.name, message);
                 let pkt = players::chat_player(&p.name, &message);
                 self.broadcast(pkt);
@@ -1786,9 +1811,18 @@ impl Sim {
                 let bodies = blocks::entity_boxes(self.players.values().filter(|p| p.dim == dim && p.region == id), &part.0);
                 let (mut out, mut deaths) = (blocks::BlockOut::default(), Vec::new());
                 let p = self.players.get_mut(&conn).unwrap();
+                let mut hook = self.plugins.as_mut().and_then(|pl| pl.hook(dim, id));
+                if let Some(h) = hook.as_mut()
+                    && plugins::deny_packet(h, p, cells, &env, &pkt, &mut d.spawns)
+                {
+                    return;
+                }
                 let mut world = region::World { cells: &mut *cells, blocks: &mut part.1 };
                 let mut fx = region::Fx { blocks: &mut out, bodies: &bodies, spawns: &mut d.spawns, deaths: &mut deaths };
                 region::local_packet(p, &mut world, &env, pkt, &mut fx);
+                if let Some(h) = hook.as_mut() {
+                    plugins::after_packets(h, cells, &env);
+                }
                 let mut everyone: Vec<&mut Player> = self.players.values_mut().filter(|p| p.dim == dim).collect();
                 blocks::finish(cells, out, &mut everyone, &mut d.spawns, &env.blocks);
                 self.announce_deaths(deaths);
@@ -1808,6 +1842,7 @@ impl Sim {
             p.award_stat(*player_stats::stat::LEAVE_GAME, 1);
             self.commands.bossbars.player_left(p.uuid);
             self.save_player(&p);
+            self.plugins_left(&p);
             self.announce_leave(&p, conn);
             self.broadcast_system(yellow(&format!("{} left the game", p.name)));
         }
@@ -1856,6 +1891,7 @@ impl Sim {
         self.save_weather();
         self.save_scoreboard();
         self.save_timers();
+        self.save_plugins();
     }
 
     fn join(&mut self, j: JoinInfo, joining: persist::Joining) {

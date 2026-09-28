@@ -1,0 +1,11 @@
+id = "chat-format"
+version = "0.1.0"
+capabilities = []
+
+[[subscribe]]
+event = "chat"
+policy = "fail-open"
+
+[config]
+name_color = "gold"
+blocked = "griefing"

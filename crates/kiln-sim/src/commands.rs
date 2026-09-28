@@ -917,6 +917,13 @@ impl Host for Sim {
         true
     }
 
+    fn kiln_break(&mut self, player: &PlayerRef, pos: [i32; 3]) -> bool {
+        let Some(p) = self.players.get(&player.conn) else { return false };
+        let pkt = kiln_link::PlayIn::PlayerAction { action: crate::digging::START_DESTROY_BLOCK, pos, face: 1, sequence: p.ack_block_changes.max(0) };
+        self.commands.injected.push((player.conn, pkt));
+        true
+    }
+
     fn kiln_regions(&mut self) -> Vec<Text> {
         let mut players: std::collections::BTreeMap<(crate::DimId, kiln_region::RegionId), usize> = Default::default();
         for p in self.players.values() {
