@@ -999,6 +999,15 @@ trait PluginHost {
 - region 實例的建立成本由 pooling allocator 攤平（微秒級，未量測）；分割有遲滯（§4.5.2），實例翻轉的頻率低。
 - 測試：帶有跨情境工作與進行中 HTTP 完成的重載；S8 region 翻轉下插件狀態守恆。
 
+### 11.7 實作現況（M7 slice 1 與 follow-ups，`crates/kiln-plugin-host`）
+- **ordered 與 strict 兩種模式**：ordered（預設）以 epoch 牆鐘期限（每次可取消呼叫 500 µs、每個 region 實例每 tick 10 ms）；只要沒有呼叫超時就具決定性，但被 OS 搶佔的呼叫可能這次超時、下次不超時，所以 lockstep 決定性測試要嘛用不會超時的預算，要嘛用 strict。strict（`KILN_PLUGIN_MODE=strict`、`KILN_PLUGIN_FUEL`）以 fuel（wasm 指令數）為每次呼叫與每 tick 預算，`env.now-millis` 與 WASI 時鐘跟隨 tick，WASI 亂數流固定；`env.random`、ticket 與 task handle 在兩種模式都由（seed、插件、tick、來源玩家、該玩家本 tick 第幾次呼叫）導出，不依到達順序。決定性測試以全部範例插件、每次呼叫 2,000,000／5,000／2,000 fuel 跑單一 region 與 4 worker 加 chaos：hash、封包、超時次數都相同（5,000 fuel 時 3 次、2,000 fuel 時 30 次超時）。批次呼叫（observe）以批次第一位玩家為來源，所以其中的原子操作只有可交換者（`add`）與佈局無關；每 region 實例每 tick 預算本質上依佈局而定，strict 下不應觸及。
+- **熱重載**：`/kiln plugins reload <id>` 在背景執行緒重新讀取並編譯（`.cwasm` 快取），下一個 B0 換入：舊 global 實例 `on-disable` 的 blob 交給新實例 `on-enable`，訂閱與指令一次替換，global 與每個 region 實例重建；舊世代的工作取消並以 `on-cancelled`（附剩餘延遲）通知新世代，舊世代的原子操作結果丟棄。handle 與 task handle 帶世代，舊 task handle 會 trap。
+- **工作**（`scheduler`）在 B0 依（到期 tick、排程 tick、來源、呼叫順序）執行：global 在 global 實例、跟隨玩家者在玩家所在 region、定位者在擁有該位置的 region（未載入就等待）；玩家離線則取消並通知。原子操作結果下一 tick 送回來源玩家所在 region（否則 global）。
+- **實體範圍**存在實體 NBT 的 `kiln:plugin`（插件 id → 鍵 → 位元組），隨實體跨 region 與存檔；原版開啟世界時保留在未知欄位中。
+- **host 端過濾**（方塊鍵與 `#tag`、實體類型、方形區域、`bypass-permission`）、每位玩家 token bucket（預設 64 容量、每秒 80）、每實例每 tick 預算：超出時套用失敗政策，不計 strike；strike 視窗以 tick 計（1,200）。
+- **呼叫成本**（release，同機前後量測，20 批取最佳）：立即返回的處理器 123 ns（strict 131 ns）；spawn-protection 允許（讀一次 cell）539 ns（slice 1 為 1,600 ns）；拒絕（cell 讀寫加訊息）2.6 µs（4.2 µs）；host 端過濾掉的事件 13 ns。手段：事件紀錄扁平（玩家名改為 `event.player-name`）、決策為扁平 enum（拒絕訊息走 `event.deny-message`，免 post-return）、`get-int`/`put-int`、每 region 計數、分片 bucket、frame 重用。
+- **缺口**：WASI 0.3 `async-tasks` world 與進行中 HTTP 完成的重載測試；插件引發的可取消事件；玩家傷害、物品欄、死亡與生成的事件；UseItem 只有水桶類走放置檢查（Kiln 尚未模擬玩家倒水）。
+
 ---
 
 ## 12. 安全與維運

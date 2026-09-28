@@ -680,6 +680,9 @@ struct PluginSet {
     /// Region-hook subscribers of each event kind, in load order.
     subs: Vec<Vec<usize>>,
     call: Budget,
+    /// Calls that are not cancellable events (tasks, results, observe batches, the global
+    /// instance's hooks): no player waits on them, so a larger fresh budget.
+    serial: Budget,
     init: Budget,
     /// Per region instance and tick, in epoch ticks or fuel.
     tick_budget: u64,
@@ -698,6 +701,7 @@ impl PluginSet {
             plugins,
             subs,
             call: cfg.call,
+            serial: cfg.serial,
             init: cfg.init,
             tick_budget: cfg.tick_budget,
             player_burst: cfg.player_burst,
@@ -714,6 +718,7 @@ impl PluginSet {
 #[derive(Clone)]
 struct SetCfg {
     call: Budget,
+    serial: Budget,
     init: Budget,
     tick_budget: u64,
     player_burst: u32,
@@ -1148,7 +1153,7 @@ impl RegionPlugins {
                 })
                 .collect();
             *calls += 1;
-            let outcome = inst.call(shared, set.call, |store, _, g| g.expect("region guest").call_on_observe(store, &batch));
+            let outcome = inst.call(shared, set.serial, |store, _, g| g.expect("region guest").call_on_observe(store, &batch));
             if !matches!(outcome, Outcome::Ok(())) {
                 region_failed(set, shared, insts, i, outcome);
             }
@@ -1174,7 +1179,7 @@ impl RegionPlugins {
         let ch = frame.cell_handle(generation, 0);
         let p = player.map(|p| wit::Player { handle: ph, uuid: host::wit_uuid(p.uuid), operator: p.operator });
         *calls += 1;
-        let outcome = inst.call(shared, set.call, |store, _, g| {
+        let outcome = inst.call(shared, set.serial, |store, _, g| {
             let g = g.expect("region guest");
             match f {
                 RegionCall::Task(handle, id) => g.call_on_task(store, wit::TaskEvent { handle, id, player: p, cell: cell.map(|_| ch) }),
@@ -1432,6 +1437,7 @@ impl PluginRuntime {
         let set_cfg = if strict {
             SetCfg {
                 call: Budget::Fuel(cfg.call_fuel),
+                serial: Budget::Fuel(cfg.call_fuel.saturating_mul(50)),
                 init: Budget::Fuel(cfg.call_fuel.saturating_mul(500)),
                 tick_budget: cfg.tick_fuel,
                 player_burst: cfg.player_burst,
@@ -1442,6 +1448,7 @@ impl PluginRuntime {
             let per = cfg.epoch_tick.as_nanos().max(1);
             SetCfg {
                 call: Budget::Epoch((cfg.call_budget.as_nanos() / per).max(1) as u64 + 1),
+                serial: Budget::Epoch(((cfg.call_budget.as_nanos() * 50) / per).max(1) as u64 + 1),
                 // Generous: first calls allocate and warm up.
                 init: Budget::Epoch((Duration::from_secs(1).as_nanos() / per) as u64),
                 tick_budget: (cfg.tick_budget.as_nanos() / per).max(1) as u64,
@@ -1822,7 +1829,7 @@ impl PluginRuntime {
         }
         let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
         self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
-        let outcome = inst.call(&self.shared, self.set.call, |store, g, _| f(store, g.expect("global guest"), p));
+        let outcome = inst.call(&self.shared, self.set.serial, |store, g, _| f(store, g.expect("global guest"), p));
         let ok = matches!(outcome, Outcome::Ok(()));
         self.global_failed(i, outcome);
         ok
@@ -1853,7 +1860,7 @@ impl PluginRuntime {
             frame.push_player(actor.uuid, actor.name);
             let p = wit_player(actor, frame.player_handle(generation, 0));
             self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
-            let outcome = inst.call(&self.shared, self.set.call, |store, g, _| {
+            let outcome = inst.call(&self.shared, self.set.serial, |store, g, _| {
                 let g = g.expect("global guest");
                 if kind == EventKind::Join { g.call_on_join(store, p) } else { g.call_on_leave(store, p) }
             });
@@ -1911,7 +1918,7 @@ impl PluginRuntime {
         }
         let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
         self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
-        let outcome = inst.call(&self.shared, self.set.call, |store, g, _| g.expect("global guest").call_on_command(store, p, name, args));
+        let outcome = inst.call(&self.shared, self.set.serial, |store, g, _| g.expect("global guest").call_on_command(store, p, name, args));
         match outcome {
             Outcome::Ok(reply) => spans(reply),
             failed => {
@@ -1982,7 +1989,7 @@ impl PluginRuntime {
         let mut blob = None;
         if let Some(inst) = self.globals[i].as_mut() {
             inst.frame().reset(true, 0);
-            match inst.call(&self.shared, self.set.call, |store, g, _| g.expect("global guest").call_on_disable(store)) {
+            match inst.call(&self.shared, self.set.serial, |store, g, _| g.expect("global guest").call_on_disable(store)) {
                 Outcome::Ok(b) => blob = b,
                 Outcome::Timeout => warn!("plugin {id}: on-disable ran out of budget; no state handed over"),
                 Outcome::Trap(e) => warn!("plugin {id}: on-disable trapped ({e:#}); no state handed over"),
