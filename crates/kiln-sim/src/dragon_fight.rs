@@ -299,7 +299,12 @@ impl Sim {
             return;
         }
         if !self.arena_loaded() {
-            return;
+            // `TicketType.DRAGON` loads the arena; the middle first, at once.
+            let o = self.dragon_fight.origin;
+            self.load_area(END_ID, o, 16);
+            if !self.arena_loaded() {
+                return;
+            }
         }
         if self.dragon_fight.needs_state_scanning {
             self.scan_state();
@@ -340,11 +345,11 @@ impl Sim {
         msgs.sort_by_key(FightMsg::key);
         for m in msgs {
             match m {
-                FightMsg::Entity(DragonFightEvent::Update { uuid, health, max_health, dragon }) => {
+                FightMsg::Entity(DragonFightEvent::Update { uuid, pos, health, max_health, .. }) => {
                     if Some(uuid) == self.dragon_fight.dragon_uuid {
                         self.boss_progress(health / max_health);
                         self.dragon_fight.ticks_since_dragon_seen = 0;
-                        self.dragon_fight.last_seen = self.end_entity(dragon).map(|e| entities::chunk_of(e.pos));
+                        self.dragon_fight.last_seen = Some(entities::chunk_of([pos.x, pos.y, pos.z]));
                     }
                 }
                 FightMsg::Entity(DragonFightEvent::Killed { uuid, .. }) => self.set_dragon_killed(uuid),
@@ -990,6 +995,55 @@ impl Sim {
         self.materialize_spawns();
         Some(result)
     }
+}
+
+/// `BottleItem.use` near a cloud of the dragon's breath (owned by an ender dragon, within two
+/// blocks of the player's box): the cloud shrinks by half a block and the bottle fills with
+/// dragon's breath. Returns false when the player does not hold a glass bottle there or no
+/// such cloud is near (other uses of the bottle are not Kiln's yet).
+pub(crate) fn bottle_breath(ents: &mut entities::Entities, p: &mut Player, off_hand: bool, spawns: &mut Vec<Spawn>, env: &blocks::BlockEnv) -> bool {
+    use kiln_entity::ext_entity::area_effect_cloud::AreaEffectCloud;
+    use kiln_item::component::EquipmentSlot;
+    let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
+    if p.dead || p.game_mode == 3 || p.inv.equipped(slot).item_name() != "minecraft:glass_bottle" {
+        return false;
+    }
+    let h = if p.sneaking { 1.5 } else { 1.8 };
+    let (lo, hi) = ([p.pos[0] - 2.3, p.pos[1] - 2.0, p.pos[2] - 2.3], [p.pos[0] + 2.3, p.pos[1] + h + 2.0, p.pos[2] + 2.3]);
+    let dragons: Vec<i32> = ents.list.iter().filter(|e| !e.removed && e.kind.name == "minecraft:ender_dragon").map(|e| e.id).collect();
+    let cloud = ents.list.iter_mut().filter(|e| !e.removed).find(|e| {
+        let (min, max, _) = e.body();
+        let owner = e.phys.as_ref().and_then(|x| kiln_entity::ext_entity::get::<AreaEffectCloud>(x)).and_then(|c| c.owner);
+        owner.is_some_and(|o| dragons.contains(&o)) && (0..3).all(|i| min[i] < hi[i] && max[i] > lo[i])
+    });
+    let Some(cloud) = cloud else { return false };
+    if let Some(c) = cloud.phys.as_mut().and_then(kiln_entity::ext_entity::get_mut::<AreaEffectCloud>) {
+        c.radius = (c.radius - 0.5).clamp(0.0, 32.0);
+    }
+    if let Some(id) = kiln_data::builtin_id("minecraft:sound_event", "minecraft:item.bottle.fill_dragonbreath") {
+        let seed = crate::mobs::loot_seed(env.seed, env.game_time, p.entity_id, 0x6272_6561);
+        let pkt = kiln_proto::packets::world_fx::sound(&kiln_proto::packets::world_fx::Sound::Registered(id), kiln_proto::packets::world_fx::SoundSource::Neutral, p.pos, 1.0, 1.0, seed);
+        p.send(pkt);
+    }
+    p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, p.inv.equipped(slot).item()), 1);
+    // `ItemUtils.createFilledResult`.
+    let Some(mut filled) = kiln_item::ItemStack::of("minecraft:dragon_breath", 1) else { return true };
+    if p.game_mode == 1 {
+        let has = (0..kiln_inventory::Container::size(&p.inv)).any(|j| kiln_inventory::stack::matches(kiln_inventory::Container::item(&p.inv, j), &filled));
+        if !has {
+            p.add_to_inventory(&mut filled);
+        }
+    } else {
+        let index = kiln_inventory::inventory::equipment_index(slot, p.inv.selected);
+        let held = kiln_inventory::Container::item_mut(&mut p.inv, index);
+        held.shrink(1);
+        if held.is_empty() {
+            *held = filled;
+        } else if p.add_to_inventory(&mut filled) == 0 {
+            spawns.push(crate::mobs::drop_item(filled, p.pos, p.entity_id as u64));
+        }
+    }
+    true
 }
 
 /// Whether an end crystal at `pos` stands over pillar `s` (`getTopBoundingBox`: the pillar's

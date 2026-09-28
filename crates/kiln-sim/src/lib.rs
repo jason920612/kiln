@@ -1618,9 +1618,20 @@ impl Sim {
         self.materialize_spawns();
         for dim in 0..self.dims.len() {
             let mut keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
-            // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`).
+            // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),
+            // and the rest of it loads a few chunks a tick.
             if dim == END_ID && self.dragon_fight.active() {
                 keep.extend(self.dragon_fight.arena());
+                let mut n = 0;
+                for pos in self.dragon_fight.arena() {
+                    if n == 4 {
+                        break;
+                    }
+                    let d = &mut self.dims[dim];
+                    if !d.is_loaded(pos) && d.request(pos) {
+                        n += 1;
+                    }
+                }
             }
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
             let unloaded = self.dims[dim].unload(unloads, &keep);

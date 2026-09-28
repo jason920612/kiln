@@ -287,7 +287,7 @@ pub struct DragonFightView {
 #[derive(Clone, Debug, PartialEq)]
 pub enum DragonFightEvent {
     /// `updateDragon`: the fight's dragon is alive with this health (the boss bar).
-    Update { dragon: i32, uuid: u128, health: f32, max_health: f32 },
+    Update { dragon: i32, uuid: u128, pos: Vec3, health: f32, max_health: f32 },
     /// `setDragonKilled`: the dragon finished dying (or was killed by `/kill`).
     Killed { dragon: i32, uuid: u128 },
     /// `globalLevelEvent(1028)`: the dragon's death roar for every player.

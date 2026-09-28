@@ -131,6 +131,15 @@ impl RegionWork<'_> {
                 }
                 continue;
             }
+            // A glass bottle by a cloud of the dragon's breath fills with it.
+            if let PlayIn::UseItem { hand, sequence, .. } = pkt {
+                let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+                if crate::dragon_fight::bottle_breath(self.entities, self.players[i], off, &mut self.out.spawns, &env.blocks) {
+                    let p = &mut *self.players[i];
+                    p.ack_block_changes = p.ack_block_changes.max(sequence);
+                    continue;
+                }
+            }
             // Fishing rods cast and reel in bobbers, which are the region's entities.
             if let PlayIn::UseItem { hand, sequence, .. } = pkt
                 && self.rod_use(conn, &pkt)

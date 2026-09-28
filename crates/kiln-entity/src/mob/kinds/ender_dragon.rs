@@ -1380,7 +1380,7 @@ fn tick_parts(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 /// `EnderDragonFight.updateDragon`.
 fn update_fight(e: &Entity, m: &MobData, level: &mut dyn EntityLevel) {
     if dragon(m).in_fight {
-        level.emit(Event::DragonFight(DragonFightEvent::Update { dragon: e.id, uuid: e.uuid, health: m.health, max_health: m.max_health() }));
+        level.emit(Event::DragonFight(DragonFightEvent::Update { dragon: e.id, uuid: e.uuid, pos: e.position(), health: m.health, max_health: m.max_health() }));
     }
 }
 
