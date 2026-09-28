@@ -118,6 +118,35 @@ impl<'a> Ctx<'a> {
         out
     }
 
+    /// [`map_indexed_with`](Self::map_indexed_with) over exclusive borrows: `run` gets
+    /// `&mut items[i]` and `result[i]` is its return value.
+    ///
+    /// Each item is handed to exactly one call (or to none, when another item panicked), so
+    /// the `&mut` never aliases; items share nothing through this call, which is what keeps
+    /// a window's result independent of the schedule. `T: Send` because the item may be
+    /// mutated on another worker.
+    pub fn map_mut_with<T, Out, R>(&self, window: Window, items: &mut [T], run: R) -> Vec<Out>
+    where
+        T: Send,
+        Out: Send,
+        R: Fn(&Ctx<'_>, &mut T) -> Out + Sync,
+    {
+        let ptrs: Vec<ItemPtr<T>> = items.iter_mut().map(|x| ItemPtr(x as *mut T)).collect();
+        // SAFETY: `ptrs[i]` points to `items[i]`, which stays exclusively borrowed for this
+        // call; the window runs each element of `ptrs` at most once, so no two `&mut` to the
+        // same item exist at once.
+        self.map_indexed_with(window, &ptrs, |ctx, p| run(ctx, unsafe { &mut *p.0 }))
+    }
+
+    /// [`map_mut_with`](Self::map_mut_with) without hints or a nested context.
+    pub fn map_mut<T, Out>(&self, items: &mut [T], run: impl Fn(&mut T) -> Out + Sync) -> Vec<Out>
+    where
+        T: Send,
+        Out: Send,
+    {
+        self.map_mut_with(Window::new(), items, |_, x| run(x))
+    }
+
     fn plan(&self, w: Window, n: usize) -> Plan {
         let sh = &*self.local.shared;
         let t = &sh.tuning;
@@ -346,6 +375,14 @@ where
         job.fail(chunk, Some(p));
     }
 }
+
+/// One item of a [`Ctx::map_mut_with`] window.
+struct ItemPtr<T>(*mut T);
+
+// SAFETY: an `ItemPtr` is only dereferenced by the single call that runs its item, which then
+// holds the only reference to a `T: Send`.
+unsafe impl<T: Send> Sync for ItemPtr<T> {}
+unsafe impl<T: Send> Send for ItemPtr<T> {}
 
 /// Drops the outputs a chunk wrote before one of its items panicked.
 struct Written<T> {

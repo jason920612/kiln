@@ -4,6 +4,7 @@
 //!
 //! usage: cargo run --release -p kiln-sim --example sim_load -- [--players 1000] [--groups 20]
 //!        [--spacing 48] [--radius 6] [--ticks 1200] [--view-distance 2] [--behavior crowd|walk]
+//!        [--threads n] [--unified] [--inline]
 
 use kiln_sim::testing::{Client, Walker, group_offset, join};
 use kiln_sim::{Sim, SimConfig};
@@ -22,6 +23,8 @@ struct Args {
     walk: bool,
     threads: usize,
     unified: bool,
+    /// Every phase window inline (the serial baseline for crowd windows).
+    inline: bool,
 }
 
 fn args() -> Args {
@@ -36,6 +39,7 @@ fn args() -> Args {
         walk: false,
         threads: cores.saturating_sub(1).clamp(1, 7),
         unified: false,
+        inline: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -50,6 +54,7 @@ fn args() -> Args {
             "--behavior" => a.walk = value() == "walk",
             "--threads" => a.threads = value().parse().unwrap(),
             "--unified" => a.unified = true,
+            "--inline" => a.inline = true,
             other => panic!("unknown argument {other}"),
         }
     }
@@ -65,6 +70,9 @@ fn main() {
     let mut config = SimConfig::new(a.players, 10, None);
     config.pool.workers = a.threads;
     config.unified_regions = a.unified;
+    if a.inline {
+        config.pool.phase = kiln_sched::PhaseMode::Inline;
+    }
     let mut sim = Sim::new(config);
     let mut walkers: Vec<Walker> = Vec::with_capacity(a.players);
     let mut inbox = Vec::new();

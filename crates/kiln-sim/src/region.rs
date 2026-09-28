@@ -14,6 +14,7 @@ use kiln_blocks::{BlockPos, Level};
 use kiln_link::{ConnId, PlayIn};
 use kiln_proto::packets;
 use kiln_region::CellSet;
+use kiln_sched::{Ctx, Window};
 use kiln_world::{Blocks, Cell, CellStore, ChunkPos};
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
@@ -162,7 +163,7 @@ impl RegionWork<'_> {
     }
 
     /// L: connection upkeep, chunk streaming, tracking, light, then egress.
-    pub fn tick(&mut self, env: &Env) {
+    pub fn tick(&mut self, env: &Env, ctx: &Ctx<'_>) {
         let mut lap = Instant::now();
         let mut mark = |times: &mut [Duration; SUB_PHASES.len()], i: usize| {
             let now = Instant::now();
@@ -171,7 +172,14 @@ impl RegionWork<'_> {
         };
         // Menu changes first, like vanilla's container broadcast at the start of a player tick,
         // then `stillValid`: a menu whose block went away or is out of reach closes.
+        // A player without a block menu open touches only itself here, so those players
+        // broadcast in windows first; the others then run serially in connection order, and
+        // the drops land in that order either way.
         {
+            let rules = &*env.blocks.menus;
+            let own = ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| {
+                p.containers.open.is_none().then(|| crate::container::open::own_menu_broadcast(p, rules))
+            });
             let bodies = Vec::new();
             let mut out = BlockOut::default();
             {
@@ -183,7 +191,11 @@ impl RegionWork<'_> {
                     bodies: &bodies,
                     actor: None,
                 };
-                for p in self.players.iter_mut() {
+                for (p, own) in self.players.iter_mut().zip(own) {
+                    if let Some(spawns) = own {
+                        self.out.spawns.extend(spawns);
+                        continue;
+                    }
                     crate::container::open::menu_op(p, &mut level, &mut self.out.spawns, |menu, _, env| menu.broadcast_changes(env));
                     if p.open_menu.is_some() && !p.menu_still_valid(&level) {
                         p.close_block_menu(&env.rules, &mut self.out.spawns, &mut level, true);
@@ -194,38 +206,15 @@ impl RegionWork<'_> {
         }
         mark(&mut self.out.times, 0);
         // The player tick in vanilla's order: base tick (fire, void, air, effects), using an
-        // item, equipment, the blocks the player is in, then food.
+        // item, equipment, the blocks the player is in, then food. Each player touches only
+        // itself and reads the region's blocks, so the players split into windows; what they
+        // leave behind is merged in connection order, as a serial loop would have left it.
         let cells = &*self.cells;
-        let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
-        for p in self.players.iter_mut() {
-            tick_connection(p, env);
-            p.tick_damage(env.game_time);
-            let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
-            p.base_tick(&block, env.min_y, &mut ctx);
-            // `Entity.handlePortal` (in `baseTick`).
-            if let Some(t) = p.handle_portal(env) {
-                self.out.portals.push(t);
-            }
-            p.tick_using(&block, &mut ctx);
-            p.tick_combat();
-            let (_, h, _) = p.dimensions();
-            let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
-            p.block_effects(&block, env.dim, in_rain, &mut ctx);
-            if let Some(t) = p.pending_travel.take() {
-                self.out.portals.push(t);
-            }
-            p.tick_food(env.natural_regen, &mut ctx);
-            p.tick_stats();
-            let probe = crate::advancements::triggers::CellProbe { cells, min_y: env.min_y };
-            p.tick_triggers(&probe);
-            // `onInsideBlock` (Kiln checks the block at the feet).
-            let feet = kiln_entity::math::BlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
-            let inside = block(feet);
-            if inside != 0 && !p.dead {
-                p.entered_block(inside);
-            }
-            p.sync_health();
-            p.sync_experience();
+        let ticked = ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| player_tick(p, cells, env));
+        for t in ticked {
+            self.out.spawns.extend(t.spawns);
+            self.out.deaths.extend(t.deaths);
+            self.out.portals.extend(t.portals);
         }
         mark(&mut self.out.times, 1);
         for p in self.players.iter_mut().filter(|p| !p.disconnected) {
@@ -243,9 +232,9 @@ impl RegionWork<'_> {
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
         mark(&mut self.out.times, 4);
-        let movers = crate::players::update_visibility(&mut self.players);
+        let movers = crate::players::update_visibility(&mut self.players, ctx);
         mark(&mut self.out.times, 5);
-        crate::players::broadcast_movement(&mut self.players);
+        crate::players::broadcast_movement(&mut self.players, ctx);
         for p in self.players.iter_mut() {
             p.decay_velocity();
         }
@@ -253,9 +242,7 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 6);
         self.send_light_updates();
         mark(&mut self.out.times, 7);
-        for p in self.players.iter_mut() {
-            p.flush();
-        }
+        ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| p.flush());
         mark(&mut self.out.times, 8);
     }
 
@@ -377,6 +364,53 @@ impl RegionWork<'_> {
             }
         }
     }
+}
+
+/// Players per window chunk in the per-player windows of a crowd (a few microseconds each).
+const PLAYER_WINDOW: Window = Window::new().item_ns(4_000);
+
+/// What one player's tick leaves for its region, merged in connection order.
+#[derive(Default)]
+struct PlayerTicked {
+    spawns: Vec<Spawn>,
+    deaths: Vec<crate::health::Death>,
+    portals: Vec<crate::portal::Travel>,
+}
+
+/// One player's part of the connection phase: connection upkeep and the player tick. It
+/// changes only the player and reads the region's blocks.
+fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked {
+    let mut t = PlayerTicked::default();
+    let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
+    tick_connection(p, env);
+    p.tick_damage(env.game_time);
+    let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
+    p.base_tick(&block, env.min_y, &mut ctx);
+    // `Entity.handlePortal` (in `baseTick`).
+    if let Some(travel) = p.handle_portal(env) {
+        t.portals.push(travel);
+    }
+    p.tick_using(&block, &mut ctx);
+    p.tick_combat();
+    let (_, h, _) = p.dimensions();
+    let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
+    p.block_effects(&block, env.dim, in_rain, &mut ctx);
+    if let Some(travel) = p.pending_travel.take() {
+        t.portals.push(travel);
+    }
+    p.tick_food(env.natural_regen, &mut ctx);
+    p.tick_stats();
+    let probe = crate::advancements::triggers::CellProbe { cells, min_y: env.min_y };
+    p.tick_triggers(&probe);
+    // `onInsideBlock` (Kiln checks the block at the feet).
+    let feet = kiln_entity::math::BlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
+    let inside = block(feet);
+    if inside != 0 && !p.dead {
+        p.entered_block(inside);
+    }
+    p.sync_health();
+    p.sync_experience();
+    t
 }
 
 /// Damage context for region work.

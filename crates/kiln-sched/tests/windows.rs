@@ -191,3 +191,26 @@ fn windows_inside_units() {
         }
     }
 }
+
+#[test]
+fn map_mut_visits_each_item_once_in_place() {
+    for workers in [1, 7] {
+        for phase in MODES {
+            for chaos in [None, Some(5)] {
+                let mut pool = pool(workers, phase, chaos);
+                for n in [0usize, 1, 2, 65, 3000] {
+                    let mut items: Vec<(u64, u32)> = (0..n as u64).map(|x| (x, 0)).collect();
+                    let got = pool.serial(|c| {
+                        c.map_mut(&mut items, |it| {
+                            it.1 += 1;
+                            f(&it.0)
+                        })
+                    });
+                    let expect: Vec<u64> = (0..n as u64).map(|x| f(&x)).collect();
+                    assert_eq!(got, expect, "{workers} {phase:?} {chaos:?} {n}");
+                    assert!(items.iter().all(|it| it.1 == 1), "every item mutated exactly once");
+                }
+            }
+        }
+    }
+}

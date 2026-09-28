@@ -969,7 +969,7 @@ impl Sim {
 
         // P: region-local packets in parallel.
         let (local, exclusive) = self.route(packets);
-        let outs = self.run_regions(local, |w, env| w.apply_packets(env));
+        let outs = self.run_regions(local, |w, env, _| w.apply_packets(env));
         for (dim, out) in outs {
             self.dims[dim].spawns.extend(out.spawns);
             self.announce_deaths(out.deaths);
@@ -1002,7 +1002,7 @@ impl Sim {
         lap(&mut self.stats, "global");
 
         // L: regions tick in parallel.
-        let outs = self.run_regions(BTreeMap::new(), |w, env| w.tick(env));
+        let outs = self.run_regions(BTreeMap::new(), |w, env, ctx| w.tick(env, ctx));
         let mut times = [Duration::ZERO; region::SUB_PHASES.len()];
         let mut travels = Vec::new();
         for (dim, out) in outs {
@@ -1445,7 +1445,7 @@ impl Sim {
     fn run_regions(
         &mut self,
         mut packets: BTreeMap<(DimId, RegionId), Vec<(ConnId, PlayIn)>>,
-        f: impl Fn(&mut RegionWork, &Env) + Sync,
+        f: impl Fn(&mut RegionWork, &Env, &kiln_sched::Ctx<'_>) + Sync,
     ) -> Vec<(DimId, RegionOut)> {
         let envs: Vec<Env> = (0..self.dims.len()).map(|d| self.env(d)).collect();
         let mut buckets: BTreeMap<(DimId, RegionId), Vec<&mut Player>> = BTreeMap::new();
@@ -1471,7 +1471,7 @@ impl Sim {
         let cost = |w: &RegionWork| {
             20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
         };
-        self.pool.run_units(&mut work, cost, |w, _ctx| f(w, &envs[w.dim]));
+        self.pool.run_units(&mut work, cost, |w, ctx| f(w, &envs[w.dim], ctx));
         work.into_iter().map(|w| (w.dim, w.out)).collect()
     }
 

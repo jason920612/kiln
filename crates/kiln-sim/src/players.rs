@@ -10,6 +10,12 @@ use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, Player
 use kiln_proto::packets::ProfileProperty;
 use kiln_world::ChunkPos;
 use std::collections::HashMap;
+use kiln_sched::{Ctx, Window};
+
+/// Per-player windows of a crowd (a few microseconds per player).
+const PLAYER_WINDOW: Window = Window::new().item_ns(4_000);
+/// Visibility: each player checks every mover (or everyone, when it moved).
+const VISIBILITY_WINDOW: Window = Window::new().item_ns(2_000);
 
 /// A command chat message (`say`, `me`, `msg`) through its chat type.
 pub(crate) fn chat_disguised(message: &kiln_command::ChatMessage) -> Bytes {
@@ -225,7 +231,7 @@ impl Sim {
 /// viewers re-evaluated against everyone, and every player re-evaluates its pairing with
 /// the viewers whose section changed. Nothing else changes who sees whom. Players of other
 /// regions are too far away to track.
-pub(crate) fn update_visibility(players: &mut [&mut Player]) -> Vec<ConnId> {
+pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> Vec<ConnId> {
     struct Snap {
         conn: ConnId,
         x: f64,
@@ -270,15 +276,16 @@ pub(crate) fn update_visibility(players: &mut [&mut Player]) -> Vec<ConnId> {
             && (t.chunk.x - v.chunk.x).abs() <= v.view
             && (t.chunk.z - v.chunk.z).abs() <= v.view
     };
-    let mut changes: Vec<(usize, Vec<ConnId>, Vec<ConnId>)> = Vec::new();
-    let mut want: Vec<ConnId> = Vec::with_capacity(snaps.len());
-    for (ti, t) in snaps.iter().enumerate() {
-        let seen = &players[ti].seen_by;
+    // Each player's viewer changes depend only on the snapshots and its own viewer list, so
+    // the players split into windows; the changes apply below in connection order.
+    let seen: Vec<&[ConnId]> = players.iter().map(|p| p.seen_by.as_slice()).collect();
+    let targets: Vec<usize> = (0..snaps.len()).collect();
+    let diffs = ctx.map_indexed_with(VISIBILITY_WINDOW, &targets, |_, &ti| {
+        let (t, seen) = (&snaps[ti], seen[ti]);
         let (added, removed) = if t.moved {
-            want.clear();
-            want.extend(snaps.iter().filter(|v| sees(v, t)).map(|v| v.conn));
+            let want: Vec<ConnId> = snaps.iter().filter(|v| sees(v, t)).map(|v| v.conn).collect();
             if seen[..] == want[..] {
-                continue;
+                return None;
             }
             sorted_diff(&want, seen)
         } else {
@@ -291,12 +298,14 @@ pub(crate) fn update_visibility(players: &mut [&mut Player]) -> Vec<ConnId> {
                 }
             }
             if added.is_empty() && removed.is_empty() {
-                continue;
+                return None;
             }
             (added, removed)
         };
-        changes.push((ti, added, removed));
-    }
+        Some((ti, added, removed))
+    });
+    drop(seen);
+    let changes: Vec<(usize, Vec<ConnId>, Vec<ConnId>)> = diffs.into_iter().flatten().collect();
     let index = |conn: ConnId| snaps.binary_search_by_key(&conn, |s| s.conn).ok();
     for (ti, added, removed) in changes {
         let (spawn, id) = (players[ti].spawn_packets(), players[ti].entity_id);
@@ -323,102 +332,144 @@ pub(crate) fn update_visibility(players: &mut [&mut Player]) -> Vec<ConnId> {
 
 /// Streams movement and metadata changes of one region's players (sorted by connection):
 /// encoded once per player, shared by its viewers.
-pub(crate) fn broadcast_movement(players: &mut [&mut Player]) {
-    for ti in 0..players.len() {
-        let target = &mut players[ti];
-        let state = target.move_state();
-        let mut packets = target.tracker.tick(&state);
-        packets.extend(target.equipment_changes());
-        // `updateDataBeforeSync`: effect particles, ambience and the flags effects set.
-        let effects_dirty = std::mem::take(&mut target.effects_dirty);
-        if effects_dirty {
-            target.meta_dirty = true;
-            target.self_meta_dirty = true;
-        }
-        // Lying down or getting up: the pose and the bed position go to the player as well.
-        let sleep_dirty = std::mem::take(&mut target.sleep.meta_dirty);
+///
+/// Two windows: each player encodes its own changes (touching only itself), then each run
+/// of consecutive viewers collects what the players it sees encoded, in connection order.
+/// Every outbox ends up exactly as a serial loop over the players would have left it: the
+/// packets of lower connections first, the player's own packets at its turn.
+pub(crate) fn broadcast_movement(players: &mut [&mut Player], ctx: &Ctx<'_>) {
+    let encoded = ctx.map_mut_with(PLAYER_WINDOW, players, |_, t| encode_movement(t));
+    let mut runs: Vec<(usize, &mut [&mut Player])> = Vec::new();
+    let mut start = 0;
+    for run in players.chunks_mut(VIEWER_RUN) {
+        let n = run.len();
+        runs.push((start, run));
+        start += n;
+    }
+    let encoded = &encoded[..];
+    ctx.map_mut_with(Window::new().item_ns(20_000), &mut runs, |_, (lo, run)| deliver_movement(*lo, run, encoded));
+}
+
+/// Players per viewer run in [`broadcast_movement`]'s delivery window.
+const VIEWER_RUN: usize = 32;
+
+/// One player's movement changes: for its viewers, for itself, and who its viewers are.
+struct Encoded {
+    to_viewers: Vec<Bytes>,
+    to_self: Vec<Bytes>,
+    viewers: Vec<ConnId>,
+}
+
+fn encode_movement(target: &mut Player) -> Encoded {
+    let mut to_self = Vec::new();
+    let state = target.move_state();
+    let mut packets = target.tracker.tick(&state);
+    packets.extend(target.equipment_changes());
+    // `updateDataBeforeSync`: effect particles, ambience and the flags effects set.
+    let effects_dirty = std::mem::take(&mut target.effects_dirty);
+    if effects_dirty {
+        target.meta_dirty = true;
+        target.self_meta_dirty = true;
+    }
+    // Lying down or getting up: the pose and the bed position go to the player as well.
+    let sleep_dirty = std::mem::take(&mut target.sleep.meta_dirty);
+    if sleep_dirty {
+        let mut d = EntityData::new();
+        d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
+        d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(target.sleep.pos));
+        to_self.push(entity::set_entity_data(target.entity_id, &d));
+    }
+    if std::mem::take(&mut target.woke_up) {
+        // `ClientboundAnimatePacket.WAKE_UP`, to the player and its viewers.
+        let pkt = entity::animate(target.entity_id, 0);
+        to_self.push(pkt.clone());
+        packets.push(pkt);
+    }
+    if target.meta_dirty {
+        target.meta_dirty = false;
+        let mut d = EntityData::new();
+        d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
+        d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
+        d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(target.living_flags()));
         if sleep_dirty {
-            let mut d = EntityData::new();
-            d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
             d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(target.sleep.pos));
-            target.send(entity::set_entity_data(target.entity_id, &d));
         }
-        if std::mem::take(&mut target.woke_up) {
-            // `ClientboundAnimatePacket.WAKE_UP`, to the player and its viewers.
-            let pkt = entity::animate(target.entity_id, 0);
-            target.send(pkt.clone());
-            packets.push(pkt);
+        if effects_dirty {
+            target.effect_data(&mut d);
         }
-        if target.meta_dirty {
-            target.meta_dirty = false;
-            let mut d = EntityData::new();
-            d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
-            d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
-            d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(target.living_flags()));
-            if sleep_dirty {
-                d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(target.sleep.pos));
-            }
-            if effects_dirty {
-                target.effect_data(&mut d);
-            }
-            packets.push(entity::set_entity_data(target.entity_id, &d));
+        packets.push(entity::set_entity_data(target.entity_id, &d));
+    }
+    // What the player's own client needs of its entity data: burning, invisibility and
+    // effect particles, and the air supply (`ServerEntity.sendDirtyEntityData` sends to the
+    // player too).
+    let air_changed = target.air != target.air_sent;
+    if std::mem::take(&mut target.self_meta_dirty) || air_changed {
+        let mut d = EntityData::new();
+        d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
+        if air_changed {
+            target.air_sent = target.air;
+            d.set(data::entity::AIR_SUPPLY, &DataValue::Int(target.air));
         }
-        // What the player's own client needs of its entity data: burning, invisibility and
-        // effect particles, and the air supply (`ServerEntity.sendDirtyEntityData` sends to the
-        // player too).
-        let air_changed = target.air != target.air_sent;
-        if std::mem::take(&mut target.self_meta_dirty) || air_changed {
-            let mut d = EntityData::new();
-            d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
-            if air_changed {
-                target.air_sent = target.air;
-                d.set(data::entity::AIR_SUPPLY, &DataValue::Int(target.air));
-            }
-            if effects_dirty {
-                target.effect_data(&mut d);
-            }
-            target.send(entity::set_entity_data(target.entity_id, &d));
+        if effects_dirty {
+            target.effect_data(&mut d);
         }
-        if std::mem::take(&mut target.attributes_dirty) {
-            let pkt = target.effect_attributes_packet();
-            target.send(pkt.clone());
-            packets.push(pkt);
+        to_self.push(entity::set_entity_data(target.entity_id, &d));
+    }
+    if std::mem::take(&mut target.attributes_dirty) {
+        let pkt = target.effect_attributes_packet();
+        to_self.push(pkt.clone());
+        packets.push(pkt);
+    }
+    packets.append(&mut target.pending_sounds);
+    if let Some((damage_type, cause, direct)) = target.damaged.take() {
+        packets.push(entity::damage_event(target.entity_id, damage_type, cause, direct, None));
+    }
+    for event in std::mem::take(&mut target.entity_events) {
+        packets.push(entity::entity_event(target.entity_id, event));
+    }
+    // `ServerEntity.sendChanges` for a hit that was not answered by the attack itself
+    // (swept players): the velocity goes to viewers and the player.
+    if std::mem::take(&mut target.sync_velocity) {
+        let motion = entity::set_entity_motion(target.entity_id, target.vel);
+        to_self.push(motion.clone());
+        packets.push(motion);
+    }
+    if std::mem::take(&mut target.died) {
+        // `EntityEvent.DEATH`: the death animation and sound.
+        packets.push(entity::entity_event(target.entity_id, 3));
+    }
+    if std::mem::take(&mut target.swung) {
+        packets.push(entity::swing_animation(
+            target.entity_id,
+            false,
+            entity::swing::WHACK,
+            entity::swing::DEFAULT_DURATION,
+        ));
+    }
+    let viewers = if packets.is_empty() { Vec::new() } else { target.seen_by.clone() };
+    Encoded { to_viewers: packets, to_self, viewers }
+}
+
+/// Hands the viewers `run` (players `lo..lo + run.len()`) what every player they see encoded,
+/// in connection order, and each viewer its own packets at its turn.
+fn deliver_movement(lo: usize, run: &mut [&mut Player], encoded: &[Encoded]) {
+    let (Some(first), Some(last)) = (run.first().map(|p| p.conn), run.last().map(|p| p.conn)) else { return };
+    for (ti, e) in encoded.iter().enumerate() {
+        if (lo..lo + run.len()).contains(&ti) {
+            run[ti - lo].outbox.extend(e.to_self.iter().cloned());
         }
-        packets.append(&mut target.pending_sounds);
-        if let Some((damage_type, cause, direct)) = target.damaged.take() {
-            packets.push(entity::damage_event(target.entity_id, damage_type, cause, direct, None));
-        }
-        for event in std::mem::take(&mut target.entity_events) {
-            packets.push(entity::entity_event(target.entity_id, event));
-        }
-        // `ServerEntity.sendChanges` for a hit that was not answered by the attack itself
-        // (swept players): the velocity goes to viewers and the player.
-        if std::mem::take(&mut target.sync_velocity) {
-            let motion = entity::set_entity_motion(target.entity_id, target.vel);
-            target.send(motion.clone());
-            packets.push(motion);
-        }
-        if std::mem::take(&mut target.died) {
-            // `EntityEvent.DEATH`: the death animation and sound.
-            packets.push(entity::entity_event(target.entity_id, 3));
-        }
-        if std::mem::take(&mut target.swung) {
-            packets.push(entity::swing_animation(
-                target.entity_id,
-                false,
-                entity::swing::WHACK,
-                entity::swing::DEFAULT_DURATION,
-            ));
-        }
-        if packets.is_empty() || target.seen_by.is_empty() {
+        if e.to_viewers.is_empty() {
             continue;
         }
-        let viewers = target.seen_by.clone();
-        for v in viewers {
-            if let Ok(i) = players.binary_search_by_key(&v, |p| p.conn) {
-                for pkt in &packets {
-                    players[i].send(pkt.clone());
-                }
+        let from = e.viewers.partition_point(|&v| v < first);
+        let to = e.viewers.partition_point(|&v| v <= last);
+        let mut j = 0;
+        for &v in &e.viewers[from..to] {
+            while j < run.len() && run[j].conn < v {
+                j += 1;
+            }
+            if j < run.len() && run[j].conn == v {
+                run[j].outbox.extend(e.to_viewers.iter().cloned());
             }
         }
     }
