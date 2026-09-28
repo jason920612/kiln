@@ -480,6 +480,48 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         crate::trading::roll_offers(env.loot.as_deref(), env.seed, env.game_time, set, merchant)
     }
 
+    fn raid(&self, id: i32) -> Option<&kiln_entity::level::RaidView> {
+        self.level.env.raids.iter().find(|r| r.id == id)
+    }
+
+    fn raid_at(&self, pos: BlockPos) -> Option<&kiln_entity::level::RaidView> {
+        crate::raid::raid_at_view(&self.level.env.raids, pos)
+    }
+
+    fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        crate::poi::sections_to_village(&*self.level.cells, [pos.x, pos.y, pos.z])
+    }
+
+    fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: kiln_entity::level::PoiOccupancy) -> Vec<BlockPos> {
+        let kinds = crate::poi::kinds_of(types);
+        crate::poi::in_range(&*self.level.cells, &kinds, [center.x, center.y, center.z], radius, occupancy_of(occupancy))
+            .into_iter()
+            .map(|r| BlockPos::new(r.pos[0], r.pos[1], r.pos[2]))
+            .collect()
+    }
+
+    fn poi_take(&mut self, types: &[&str], center: BlockPos, radius: i32, accept: &dyn Fn(&str, BlockPos) -> bool) -> Option<BlockPos> {
+        let kinds = crate::poi::kinds_of(types);
+        let accept = |k: u8, p: [i32; 3]| accept(kiln_world::poi::TYPES[k as usize].name, BlockPos::new(p[0], p[1], p[2]));
+        crate::poi::take(&mut *self.level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]))
+    }
+
+    fn poi_release(&mut self, pos: BlockPos) {
+        crate::poi::release(&mut *self.level.cells, [pos.x, pos.y, pos.z]);
+    }
+
+    fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
+        crate::poi::type_at(&*self.level.cells, [pos.x, pos.y, pos.z]).map(|k| kiln_world::poi::TYPES[k as usize].name)
+    }
+
+    fn motion_blocking_no_leaves_height(&self, x: i32, z: i32) -> i32 {
+        use kiln_world::Blocks;
+        let Some(chunk) = self.level.cells.chunk(ChunkPos::of_block(x, z)) else { return self.level.env.min_y };
+        chunk.column_height((x & 15) as usize, (z & 15) as usize, |s| {
+            kiln_data::block_props::motion_blocking(s) && !kiln_data::blocks_types::block_of(s).name.ends_with("_leaves")
+        })
+    }
+
     fn block(&self, pos: BlockPos) -> u16 {
         self.level.block(kb(pos))
     }
@@ -746,6 +788,14 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         if let Some(e) = self.entity_mut(id) {
             e.ignite_for_seconds(seconds);
         }
+    }
+}
+
+fn occupancy_of(o: kiln_entity::level::PoiOccupancy) -> kiln_world::poi::Occupancy {
+    match o {
+        kiln_entity::level::PoiOccupancy::HasSpace => kiln_world::poi::Occupancy::HasSpace,
+        kiln_entity::level::PoiOccupancy::IsOccupied => kiln_world::poi::Occupancy::IsOccupied,
+        kiln_entity::level::PoiOccupancy::Any => kiln_world::poi::Occupancy::Any,
     }
 }
 
@@ -1169,6 +1219,7 @@ pub(crate) fn interact_mob(
             killed_by_player: false,
             damage_type: "minecraft:generic",
             weapon: Some(stack.clone()),
+            raider: None,
         };
         let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
         let mut k = 0u64;
@@ -1461,6 +1512,12 @@ fn carry_out(
                 killed_by_player: killer.is_some(),
                 damage_type: kind.type_name(),
                 weapon,
+                // `Raider.isCaptain` as it died: the leader still wore the banner (its drop
+                // chance of 2 marks it; the banner itself dropped with the equipment).
+                raider: kiln_entity::mob::data(phys).and_then(|m| {
+                    let r = kiln_entity::mob::kinds::raider::raider(m)?;
+                    Some((r.raid.is_some(), r.patrol_leader && m.drop_chances[kiln_entity::mob::HEAD] >= 2.0))
+                }),
             };
             let _ = attacker;
             let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
@@ -1495,12 +1552,14 @@ fn carry_out(
                 }
             }
         }
-        Event::Killed { entity, entity_type, credit, kind, attacker, direct } => {
+        Event::Killed { entity, entity_type, credit, kind, attacker, direct, equipment } => {
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
                 p.killed_entity(entity_type);
                 let dim = crate::DIMENSIONS[env.dim].0;
                 if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_ref()) {
-                    let subject = crate::advancements::triggers::mob_subject(e, dim);
+                    let mut subject = crate::advancements::triggers::mob_subject(e, dim);
+                    // `minecraft:equipment` as the mob wore it when it died (a captain's banner).
+                    subject.equipment = equipment.iter().map(|(slot, s)| (*slot, s)).collect();
                     p.killed("minecraft:player_killed_entity", &subject, kind.type_name(), direct == attacker);
                 }
             }
@@ -1510,7 +1569,7 @@ fn carry_out(
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
-        Event::Raid(_) => {}
+        Event::Raid(ev) => level.blocks.raid_events.push(ev),
         Event::Criterion { player, criterion } => {
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
                 p.entity_criterion(crate::DIMENSIONS[env.dim].0, &criterion);
@@ -1530,6 +1589,7 @@ fn loot_drop(env: &blocks::BlockEnv, spawns: &mut Vec<Spawn>, id: i32, table: &s
         killed_by_player: false,
         damage_type: "minecraft:generic",
         weapon: None,
+        raider: None,
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {

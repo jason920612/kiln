@@ -262,9 +262,30 @@ impl Player {
                 self.hurt(6i32.wrapping_shl(amplifier as u32) as f32, &Cause::Other("minecraft:magic").into(), ctx);
                 true
             }
-            // Omens: raids are not simulated for players yet. The mob hurt/death effects never
-            // tick.
-            Kind::BadOmen | Kind::RaidOmen | Kind::Infested | Kind::Oozing | Kind::Weaving | Kind::WindCharged => true,
+            // `BadOmenMobEffect`: in a village (whose raid, if any, can take more omen) it turns
+            // into raid omen at the player's position.
+            Kind::BadOmen => {
+                if self.game_mode != 3 && ctx.rules.difficulty != 0 && self.omen_village && !self.omen_raid_full {
+                    if let Some(id) = effect_id("minecraft:raid_omen") {
+                        self.add_effect(Effect::simple(id, 600, amplifier));
+                    }
+                    self.raid_omen_position = Some([self.pos[0].floor() as i32, self.pos[1].floor() as i32, self.pos[2].floor() as i32]);
+                    return false;
+                }
+                true
+            }
+            // `RaidOmenMobEffect`: on its last tick the raid starts (in the serial phase).
+            Kind::RaidOmen => {
+                if self.game_mode != 3
+                    && let Some(pos) = self.raid_omen_position.take()
+                {
+                    self.raid_omen_trigger = Some((pos, amplifier));
+                    return false;
+                }
+                true
+            }
+            // The mob hurt/death effects never tick.
+            Kind::Infested | Kind::Oozing | Kind::Weaving | Kind::WindCharged => true,
         }
     }
 

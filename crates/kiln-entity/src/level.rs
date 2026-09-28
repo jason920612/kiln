@@ -253,7 +253,16 @@ pub enum Event {
     },
     /// A mob died (`LivingEntity.die`): `credit` is the player the kill counts for
     /// (`getKillCredit` when it is a player: statistics, kill criteria, advancements).
-    Killed { entity: i32, entity_type: &'static str, credit: Option<i32>, kind: DamageKind, attacker: Option<i32>, direct: Option<i32> },
+    /// `equipment`: what it wore when it died (by slot name), before any of it dropped.
+    Killed {
+        entity: i32,
+        entity_type: &'static str,
+        credit: Option<i32>,
+        kind: DamageKind,
+        attacker: Option<i32>,
+        direct: Option<i32>,
+        equipment: Vec<(&'static str, kiln_item::ItemStack)>,
+    },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
     /// A splash potion (`minecraft:` potion id) reached player `target` at `scale` of its full

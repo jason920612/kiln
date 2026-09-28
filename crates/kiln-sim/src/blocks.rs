@@ -47,6 +47,8 @@ pub(crate) struct RegionBlocks {
     generated: Vec<(ChunkPos, kiln_world::chunk::PendingUpdates)>,
     /// Container block entities of the region's chunks, live.
     pub containers: crate::container::Containers,
+    /// Raider news for the level's raids, until the next raid tick takes them.
+    pub raid_events: Vec<kiln_entity::level::RaidEvent>,
 }
 
 impl Default for RegionBlocks {
@@ -59,6 +61,7 @@ impl Default for RegionBlocks {
             sub_tick: 0,
             generated: Vec::new(),
             containers: Default::default(),
+            raid_events: Vec::new(),
         }
     }
 }
@@ -169,6 +172,7 @@ impl RegionPart for RegionBlocks {
         into.generated.append(&mut from.generated);
         into.sub_tick = into.sub_tick.max(from.sub_tick);
         into.containers.merge(std::mem::take(&mut from.containers));
+        into.raid_events.append(&mut from.raid_events);
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -205,6 +209,7 @@ impl RegionPart for RegionBlocks {
             let mut containers: SmallVec<[&mut crate::container::Containers; 4]> = parts.iter_mut().map(|p| &mut p.containers).collect();
             self.containers.split_into(&mut containers, |c| owner((c.x, c.z)));
         }
+        parts[0].raid_events = std::mem::take(&mut self.raid_events);
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
@@ -255,6 +260,8 @@ pub(crate) struct BlockEnv {
     /// Where the level's non-spectator players stood when the tick began (fire spreads near
     /// them; the same in every region).
     pub fire_watchers: std::sync::Arc<Vec<[f64; 3]>>,
+    /// The level's raids as they stood when the tick began.
+    pub raids: std::sync::Arc<Vec<kiln_entity::level::RaidView>>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -1118,6 +1125,7 @@ mod tests {
             weather: Default::default(),
             fire_spread_radius: 128,
             fire_watchers: Default::default(),
+            raids: Default::default(),
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

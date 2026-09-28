@@ -113,6 +113,8 @@ pub struct VillagerState {
     pub last_restock: i64,
     pub restocks_today: i32,
     pub last_gossip_decay: i64,
+    /// Claimed bed, job site and meeting point (`super::villager_poi`).
+    pub pois: super::villager_poi::VillagerPois,
 }
 
 impl Default for VillagerState {
@@ -132,6 +134,7 @@ impl Default for VillagerState {
             last_restock: 0,
             restocks_today: 0,
             last_gossip_decay: 0,
+            pois: Default::default(),
         }
     }
 }
@@ -447,6 +450,7 @@ impl Kind for Villager {
         {
             st.trading_player = None;
         }
+        super::villager_poi::tick(e, m, level);
     }
 
     fn after_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, _amount: f32, hurt: bool) {
@@ -456,8 +460,11 @@ impl Kind for Villager {
         }
     }
 
-    fn die(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, _source: &DamageSource) {
+    fn die(&self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, _source: &DamageSource) {
         stop_trading(m);
+        if let Some(st) = state_mut(m) {
+            super::villager_poi::release_all(level, st);
+        }
     }
 
     fn finalize_spawn(&self, _e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, _group: &mut GroupData) {
@@ -503,6 +510,7 @@ impl Kind for Villager {
         st.last_restock = last_restock;
         st.last_gossip_decay = last_decay;
         st.restocks_today = restocks;
+        super::villager_poi::load(st, r);
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
@@ -524,6 +532,7 @@ impl Kind for Villager {
         o.put("LastRestock", Tag::Long(st.last_restock));
         o.put("LastGossipDecay", Tag::Long(st.last_gossip_decay));
         o.put("RestocksToday", Tag::Int(st.restocks_today));
+        super::villager_poi::save(st, o);
     }
 
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {

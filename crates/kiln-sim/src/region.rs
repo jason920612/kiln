@@ -469,6 +469,13 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     tick_connection(p, env);
     p.tick_damage(env.game_time);
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
+    // What bad omen asks of the level (only looked up while the player has it).
+    if p.has_effect("minecraft:bad_omen") {
+        let at = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
+        p.omen_village = crate::poi::sections_to_village(cells, at) <= 1;
+        let bp = kiln_entity::math::BlockPos::new(at[0], at[1], at[2]);
+        p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
+    }
     p.base_tick(&block, env.min_y, &mut ctx);
     // `Entity.handlePortal` (in `baseTick`).
     if let Some(travel) = p.handle_portal(env) {

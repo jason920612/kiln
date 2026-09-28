@@ -1936,6 +1936,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         kind: source.kind,
         attacker: source.attacker,
         direct: source.direct.or(source.attacker),
+        equipment: m.equipment.iter().zip(SLOT_NAMES).filter(|(s, _)| !s.is_empty()).map(|(s, n)| (n, s.clone())).collect(),
     });
     if !m.baby() && level.mob_drops() {
         level.emit(Event::DeathLoot {

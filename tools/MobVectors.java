@@ -183,6 +183,13 @@ public class MobVectors {
                 }
                 cleanup(level, s);
             }
+            if (filter == null || "raid_waves".contains(filter)) {
+                try {
+                    lines.addAll(raidWaves());
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                }
+            }
         }).get();
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(outPath))) {
             for (String l : lines) w.println(l);
@@ -1779,6 +1786,46 @@ public class MobVectors {
 
 
     // ---------------------------------------------------------- slice 3: raids and illagers
+    /// Raid wave composition: `Raid.spawnGroup`'s counts per raider type for every wave (and the
+    /// bonus wave) with the raid's random pinned, by difficulty and omen level. Lines carry
+    /// `raid_waves` instead of a mob trace.
+    static List<String> raidWaves() throws Exception {
+        List<String> out = new ArrayList<>();
+        Class<?> typeClass = Class.forName("net.minecraft.world.entity.raid.Raid$RaiderType");
+        Object[] types = typeClass.getEnumConstants();
+        var defaults = net.minecraft.world.entity.raid.Raid.class.getDeclaredMethod("getDefaultNumSpawns", typeClass, int.class, boolean.class);
+        var bonus = net.minecraft.world.entity.raid.Raid.class.getDeclaredMethod("getPotentialBonusSpawns", typeClass,
+                net.minecraft.util.RandomSource.class, int.class, net.minecraft.world.DifficultyInstance.class, boolean.class);
+        defaults.setAccessible(true);
+        bonus.setAccessible(true);
+        for (var diff : new net.minecraft.world.Difficulty[] {net.minecraft.world.Difficulty.EASY, net.minecraft.world.Difficulty.NORMAL, net.minecraft.world.Difficulty.HARD}) {
+            for (int omen = 1; omen <= 5; omen += 2) {
+                for (long seed = 1; seed <= 3; seed++) {
+                    var raid = new net.minecraft.world.entity.raid.Raid(BlockPos.ZERO, diff);
+                    raid.setRaidOmenLevel(omen);
+                    var random = (net.minecraft.util.RandomSource) get(raid, "random");
+                    random.setSeed(seed);
+                    var inst = new net.minecraft.world.DifficultyInstance(diff, 1000L, 0L, 1.0F);
+                    int groups = raid.getNumGroups(diff);
+                    StringBuilder waves = new StringBuilder();
+                    for (int wave = 1; wave <= groups + (omen > 1 ? 1 : 0); wave++) {
+                        boolean isBonus = wave > groups;
+                        if (waves.length() > 0) waves.append(',');
+                        waves.append('[');
+                        for (int i = 0; i < types.length; i++) {
+                            int n = (Integer) defaults.invoke(raid, types[i], wave, isBonus) + (Integer) bonus.invoke(raid, types[i], random, wave, inst, isBonus);
+                            waves.append(i > 0 ? "," : "").append(n);
+                        }
+                        waves.append(']');
+                    }
+                    out.add(String.format(Locale.ROOT, "{\"name\":\"raid_waves_%s_%d_%d\",\"raid_waves\":{\"difficulty\":%d,\"omen\":%d,\"seed\":%d,\"groups\":%d,\"waves\":[%s]}}",
+                            diff.getSerializedName(), omen, seed, diff.getId(), omen, seed, groups, waves));
+                }
+            }
+        }
+        return out;
+    }
+
     static void scenariosRaids(List<Scenario> out) {
         // Illagers, the ravager and the vex idle (a creative player watching) and chasing a
         // survival player at night.

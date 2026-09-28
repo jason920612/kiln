@@ -237,6 +237,8 @@ pub(crate) struct DeathContext {
     pub damage_type: &'static str,
     /// The killer's main hand item (looting), if a player.
     pub weapon: Option<kiln_item::ItemStack>,
+    /// A raider's `type_specific/raider` facts: (has a raid, is a captain).
+    pub raider: Option<(bool, bool)>,
 }
 
 impl kiln_loot::LootContext for DeathContext {
@@ -278,6 +280,10 @@ impl kiln_loot::LootContext for DeathContext {
         };
         use kiln_loot::predicate::world::EntitySubPredicate as P;
         predicate.parts.iter().all(|part| match part {
+            P::Raider { has_raid, is_captain } => {
+                let (raid, captain) = self.raider.unwrap_or((false, false));
+                self.raider.is_some() && has_raid.is_none_or(|h| h == raid) && is_captain.is_none_or(|c| c == captain)
+            }
             P::Flags(f) if f.is_baby.is_some() => f.is_baby == Some(self.baby) && {
                 let mut f2 = f.clone();
                 f2.is_baby = None;

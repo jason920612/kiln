@@ -43,6 +43,8 @@ mod spawner;
 mod movement;
 mod persist;
 mod players;
+mod poi;
+mod raid;
 pub(crate) mod player_stats;
 mod recipe_book;
 mod plugins;
@@ -309,6 +311,15 @@ struct Player {
     dead: bool,
     /// Died this tick: viewers see the death animation.
     died: bool,
+    /// `ServerPlayer.raidOmenPosition`: where bad omen turned into raid omen.
+    raid_omen_position: Option<[i32; 3]>,
+    /// The raid omen ran out this tick at this position with this amplifier: the serial phase
+    /// starts or extends a raid (`Raids.createOrExtendRaid`).
+    raid_omen_trigger: Option<([i32; 3], i32)>,
+    /// What bad omen needs to know this tick: in a village, and the raid there already has
+    /// the most omen levels.
+    omen_village: bool,
+    omen_raid_full: bool,
     /// A hit this tick for viewers' damage effect: damage type, attacker, direct entity.
     damaged: Option<(i32, Option<i32>, Option<i32>)>,
     /// Entity events for viewers this tick (item breaks).
@@ -543,6 +554,10 @@ struct Dim {
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
     entity_store: Option<kiln_storage::EntityStore>,
+    /// Point of interest chunks (`poi/`), when the world is saved somewhere.
+    poi_store: Option<kiln_storage::PoiStore>,
+    /// The level's raids (`raids.dat`) and patrol spawner.
+    raids: raid::Raids,
     /// The dimension's store when the world is in the native format.
     native: Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>,
     /// Saved entities of loaded chunks that Kiln does not simulate (mobs, ...), written back
@@ -595,6 +610,10 @@ impl Dim {
             Some(store) => Some(kiln_storage::EntityStore::native(store)),
             None => world.map(|dir| kiln_storage::EntityStore::new(dir.join(dimension_dir(key)).join("entities"))),
         };
+        let poi_store = match native.clone() {
+            Some(store) => Some(kiln_storage::PoiStore::native(store)),
+            None => world.map(|dir| kiln_storage::PoiStore::new(dir.join(dimension_dir(key)).join("poi"))),
+        };
         Dim {
             key,
             kind,
@@ -609,6 +628,8 @@ impl Dim {
             generation,
             game_time,
             entity_store,
+            poi_store,
+            raids: raid::Raids::new(),
             native,
             raw_entities: HashMap::new(),
             gateway_cooldowns: HashMap::new(),
@@ -653,6 +674,9 @@ impl Dim {
         let (cells, part) = region.cells_and_part_mut();
         let Some(cell) = cells.get_mut(pos.cell()) else { return Err(chunk) };
         part.1.chunk_loaded(pos, &mut chunk, self.game_time);
+        // `PoiManager`: the chunk's saved points of interest, checked against its blocks.
+        let stored = self.poi_store.as_mut().and_then(|s| s.load(pos)).map(|t| kiln_world::poi::ChunkPois::from_nbt(&t));
+        chunk.init_pois(pos.x, pos.z, stored);
         let new = chunk.is_new();
         let generated = std::mem::take(&mut chunk.generated_entities);
         cell.insert(pos, chunk);
@@ -717,6 +741,11 @@ impl Dim {
             }
             if let Some(mut chunk) = cell.remove(pos) {
                 part.1.chunk_unloaded(pos, &mut chunk, self.game_time);
+                if let (Some(store), Some(p)) = (self.poi_store.as_mut(), chunk.pois.as_deref())
+                    && p.dirty
+                {
+                    store.store(pos, Some(p.to_nbt(kiln_storage::anvil::DATA_VERSION as i32)));
+                }
                 self.provider.unload(pos, &mut chunk);
                 unloaded.push(pos);
             }
@@ -981,6 +1010,7 @@ impl Sim {
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.load_scoreboard();
         sim.load_weather();
+        sim.load_raids();
         sim.init_packs(vanilla_pack);
         sim.load_plugins();
         sim
@@ -1268,6 +1298,27 @@ impl Sim {
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
     }
 
+    /// The raids of a level: (id, status, waves spawned, omen level, center, raiders alive,
+    /// boss bar progress) (for tests and tools).
+    pub fn raids(&self, dimension: &str) -> Vec<(i32, &'static str, i32, i32, [i32; 3], usize, f32)> {
+        let Some(d) = dim_id(dimension) else { return Vec::new() };
+        raid::summary(&self.dims[d])
+    }
+
+    /// `ServerLevel.sectionsToVillage` at a position of a level (for tests and tools).
+    pub fn sections_to_village(&self, dimension: &str, pos: [i32; 3]) -> i32 {
+        dim_id(dimension).map_or(7, |d| poi::sections_to_village(&self.dims[d].regions, pos))
+    }
+
+    /// The raider state of a mob: (raid id, wave, patrol leader, patrolling, wears the ominous
+    /// banner) (for tests and tools).
+    pub fn raider(&self, id: i32) -> Option<(Option<i32>, i32, bool, bool, bool)> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id)?;
+        let m = kiln_entity::mob::data(e.phys.as_ref()?)?;
+        let r = kiln_entity::mob::kinds::raider::raider(m)?;
+        Some((r.raid, r.wave, r.patrol_leader, r.patrolling, kiln_entity::mob::kinds::raider::is_ominous_banner(&m.equipment[kiln_entity::mob::HEAD])))
+    }
+
     /// Mobs: (network id, type name, position, health), in id order (for tests and tools).
     pub fn mobs(&self) -> Vec<(i32, &'static str, [f64; 3], f32)> {
         let mut out: Vec<_> = self
@@ -1511,6 +1562,7 @@ impl Sim {
                 conns.sort_unstable();
                 conns.into_iter().filter_map(|c| self.players.get(c)).filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()
             }),
+            raids: self.dims[dim].raids.views.clone(),
         }
     }
 
@@ -1990,6 +2042,12 @@ impl Sim {
                 for (cell_pos, cell) in cells.iter_mut() {
                     for (pos, chunk) in cell.chunks_mut(cell_pos) {
                         part.1.store(pos, chunk, self.game_time);
+                        if let (Some(store), Some(p)) = (d.poi_store.as_mut(), chunk.pois.as_deref_mut())
+                            && p.dirty
+                        {
+                            store.store(pos, Some(p.to_nbt(kiln_storage::anvil::DATA_VERSION as i32)));
+                            p.dirty = false;
+                        }
                     }
                 }
             }
@@ -2005,12 +2063,16 @@ impl Sim {
                 Ok(n) => debug!("saved {n} entity chunks"),
                 Err(e) => warn!("saving entities failed: {e}"),
             }
+            if let Some(Err(e)) = self.dims[dim].poi_store.as_mut().map(kiln_storage::PoiStore::flush) {
+                warn!("saving points of interest failed: {e}");
+            }
         }
         for p in self.players.values() {
             self.save_player(p);
         }
         self.save_level();
         self.save_weather();
+        self.save_raids();
         self.save_scoreboard();
         self.save_timers();
         self.save_plugins();
@@ -2140,6 +2202,10 @@ impl Sim {
             vehicle: None,
             vehicle_type: None,
             levitation_start: None,
+            raid_omen_position: None,
+            raid_omen_trigger: None,
+            omen_village: false,
+            omen_raid_full: false,
             starting_to_fall: None,
             entered_nether: None,
             entered_lava_on_vehicle: None,
@@ -2253,6 +2319,7 @@ impl Sim {
         self.update_sleeping();
         self.tick_weather();
         self.tick_sleep();
+        self.tick_raids();
         if self.game_time % AUTOSAVE_TICKS == 0 {
             self.save();
         }
