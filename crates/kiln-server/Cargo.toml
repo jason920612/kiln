@@ -13,6 +13,7 @@ kiln-net.workspace = true
 kiln-sim.workspace = true
 kiln-sched.workspace = true
 kiln-link.workspace = true
+kiln-storage.workspace = true
 anyhow.workspace = true
 crossbeam-channel.workspace = true
 mimalloc.workspace = true

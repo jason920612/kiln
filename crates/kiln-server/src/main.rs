@@ -10,6 +10,12 @@ fn main() -> Result<()> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
 
+    // `kiln world ...`: world tools, without starting the server.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "world") {
+        return world_tool(&args[1..]);
+    }
+
     let port: u16 = std::env::var("KILN_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(25565);
     let net_config = kiln_net::Config {
         bind: ([0, 0, 0, 0], port).into(),
@@ -43,6 +49,11 @@ fn main() -> Result<()> {
     // deterministic; lockstep is the default).
     if std::env::var("KILN_SCHEDULE").is_ok_and(|v| v == "independent") {
         sim_config.schedule = kiln_sim::ScheduleMode::Independent;
+    }
+    // KILN_WORLD_FORMAT=native: a new world is stored in Kiln's native format (an existing
+    // world keeps its format; convert one with `kiln world convert`).
+    if std::env::var("KILN_WORLD_FORMAT").is_ok_and(|v| v == "native") {
+        sim_config.world_format = kiln_storage::WorldFormat::Native;
     }
     // KILN_PLUGINS_DIR: WASM plugins (`<dir>/<plugin>/plugin.toml` + `plugin.wasm`);
     // KILN_PLUGIN_BUDGET_US: time budget of each cancellable plugin call (default 500).
@@ -98,4 +109,45 @@ fn main() -> Result<()> {
     }
     let _ = sim.join();
     Ok(())
+}
+
+/// `kiln world convert --to native|anvil <world> <new world> [--threads N]`: converts a world
+/// between Anvil and the native format into a new directory (the original is untouched).
+/// `kiln world compare <world> <world>`: compares two Anvil worlds chunk by chunk.
+fn world_tool(args: &[String]) -> Result<()> {
+    const USAGE: &str = "usage: kiln world convert --to native|anvil <world> <new world> [--threads N]\n       kiln world compare <anvil world> <anvil world>";
+    let mut to = None;
+    let mut threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut paths = Vec::new();
+    let mut it = args.iter().skip(1);
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--to" => {
+                to = match it.next().map(String::as_str) {
+                    Some("native") => Some(kiln_storage::WorldFormat::Native),
+                    Some("anvil") => Some(kiln_storage::WorldFormat::Anvil),
+                    _ => anyhow::bail!(USAGE),
+                }
+            }
+            "--threads" => threads = it.next().and_then(|n| n.parse().ok()).ok_or_else(|| anyhow::anyhow!(USAGE))?,
+            p => paths.push(std::path::PathBuf::from(p)),
+        }
+    }
+    match (args.first().map(String::as_str), &paths[..]) {
+        (Some("convert"), [src, dst]) => {
+            let to = to.ok_or_else(|| anyhow::anyhow!(USAGE))?;
+            let report = kiln_storage::native::convert::convert_world(src, dst, to, threads)?;
+            println!("{report}");
+            Ok(())
+        }
+        (Some("compare"), [a, b]) => {
+            let (chunks, diffs) = kiln_storage::native::convert::compare_worlds(a, b)?;
+            for d in &diffs {
+                println!("{d}");
+            }
+            println!("{chunks} chunks compared, {} differences", diffs.len());
+            if diffs.is_empty() { Ok(()) } else { anyhow::bail!("the worlds differ") }
+        }
+        _ => anyhow::bail!(USAGE),
+    }
 }

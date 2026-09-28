@@ -94,21 +94,36 @@ impl WorldFormat {
     }
 }
 
-/// Timings of chunk loads from storage (read, decompress, decode), for both formats.
+/// Timings of chunk loads from storage (read, decompress, decode), for both formats; a
+/// summary is logged every [`LoadStats::REPORT_EVERY`] loads.
 #[derive(Default, Clone)]
 pub struct LoadStats {
+    pub label: &'static str,
     /// Microseconds per load, in order (the first 1,000,000).
     pub loads_us: Vec<u32>,
     /// File opens (region or cell) and their total time.
     pub opens: u64,
     pub open_us: u64,
+    /// Loads up to the last report.
     reported: usize,
 }
 
 impl LoadStats {
+    pub const REPORT_EVERY: usize = 2000;
+
+    pub fn new(label: &'static str) -> LoadStats {
+        LoadStats { label, ..LoadStats::default() }
+    }
+
     pub fn record(&mut self, start: Instant) {
         if self.loads_us.len() < 1_000_000 {
             self.loads_us.push(start.elapsed().as_micros().min(u32::MAX as u128) as u32);
+        }
+        if self.loads_us.len() >= self.reported + Self::REPORT_EVERY {
+            // The loads since the last report.
+            let recent = LoadStats { loads_us: self.loads_us[self.reported..].to_vec(), ..LoadStats::default() };
+            self.reported = self.loads_us.len();
+            info!("{}: {} (all: {})", self.label, recent.summary(), self.summary());
         }
     }
 
@@ -135,14 +150,6 @@ impl LoadStats {
             self.opens,
             if self.opens > 0 { self.open_us as f64 / self.opens as f64 } else { 0.0 }
         )
-    }
-
-    /// Logs the summary when at least `every` loads happened since the last report.
-    pub fn report(&mut self, what: &str, every: usize) {
-        if self.loads_us.len() >= self.reported + every {
-            self.reported = self.loads_us.len();
-            info!("{what}: {}", self.summary());
-        }
     }
 }
 
@@ -266,7 +273,7 @@ impl NativeStore {
             compressor,
             remaps: HashMap::new(),
             sync: true,
-            stats: LoadStats::default(),
+            stats: LoadStats::new("native chunk storage"),
         }
     }
 
@@ -492,7 +499,6 @@ impl ChunkSource for NativeSource {
 
     fn flush(&mut self) -> std::io::Result<()> {
         let mut store = self.store.lock().unwrap();
-        store.stats.report("native chunk storage", 1000);
         store.flush().map(|_| ())
     }
 }

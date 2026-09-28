@@ -66,7 +66,7 @@ impl AnvilSource {
             warned_version: false,
             preserved: HashMap::new(),
             pending: HashMap::new(),
-            stats: Default::default(),
+            stats: crate::native::LoadStats::new("anvil chunk storage"),
         }
     }
 
@@ -257,7 +257,6 @@ impl ChunkSource for AnvilSource {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        self.stats.report("anvil chunk storage", 1000);
         if self.pending.is_empty() {
             return Ok(());
         }
@@ -418,21 +417,46 @@ fn state_tag(state: u16) -> Tag {
     Tag::Compound(vec![("id".into(), Tag::String(block.name.to_owned())), ("properties".into(), Tag::Compound(props))])
 }
 
+/// A section's `block_states`: the palette in order of first use (as vanilla writes it), and
+/// the indices packed at least 4 bits each.
 pub(crate) fn encode_blocks(c: &BlockContainer) -> Tag {
     let mut palette: Vec<u16> = Vec::new();
-    let mut idx = vec![0usize; 4096];
-    let mut lookup: HashMap<u16, usize> = HashMap::new();
-    for (i, e) in idx.iter_mut().enumerate() {
-        let s = c.get(i);
-        *e = *lookup.entry(s).or_insert_with(|| {
+    let mut idx = vec![0u64; 4096];
+    let add = |palette: &mut Vec<u16>, s: u16| match palette.iter().position(|&p| p == s) {
+        Some(i) => i as u16,
+        None => {
             palette.push(s);
-            palette.len() - 1
-        });
+            (palette.len() - 1) as u16
+        }
+    };
+    match c {
+        BlockContainer::Single(s) => palette.push(*s),
+        BlockContainer::Nibble { palette: pal, .. } | BlockContainer::Byte { palette: pal, .. } => {
+            // Container palette index -> saved palette index, assigned on first use.
+            let mut map = [u16::MAX; 256];
+            for (i, e) in idx.iter_mut().enumerate() {
+                let pi = match c {
+                    BlockContainer::Nibble { indices, .. } => ((indices[i >> 1] >> ((i & 1) * 4)) & 0xf) as usize,
+                    BlockContainer::Byte { indices, .. } => indices[i] as usize,
+                    _ => unreachable!(),
+                };
+                if map[pi] == u16::MAX {
+                    map[pi] = add(&mut palette, pal[pi]);
+                }
+                *e = map[pi] as u64;
+            }
+        }
+        BlockContainer::Direct(d) => {
+            let mut lookup: HashMap<u16, u16> = HashMap::new();
+            for (e, &s) in idx.iter_mut().zip(d.iter()) {
+                *e = *lookup.entry(s).or_insert_with(|| add(&mut palette, s)) as u64;
+            }
+        }
     }
     let mut fields = vec![("palette".to_owned(), Tag::heterogeneous_list(palette.iter().map(|&s| state_tag(s)).collect()))];
     if palette.len() > 1 {
         let bits = bits_for(palette.len()).max(4);
-        let packed = kiln_world::section::pack(&idx.iter().map(|&i| i as u64).collect::<Vec<_>>(), bits);
+        let packed = kiln_world::section::pack(&idx, bits);
         fields.push(("data".into(), Tag::LongArray(packed.into_iter().map(|l| l as i64).collect())));
     }
     Tag::Compound(fields)

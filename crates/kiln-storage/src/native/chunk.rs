@@ -72,17 +72,18 @@ impl NativeChunk {
     /// A native record for chunk NBT that it reproduces byte for byte; `None` otherwise.
     pub fn from_nbt(data: &[u8], codec: &AnvilSource) -> Option<NativeChunk> {
         let (name, root) = nbt::read_named(data).ok()?;
-        let Tag::Compound(mut fields) = root else { return None };
-        if !name.is_empty() {
+        // The NBT must write back as it was read (a native section is only taken when it
+        // gives back the very tag it came from, and the rest is kept as tags).
+        let mut back = bytes::BytesMut::new();
+        root.write_named("", &mut back);
+        if !name.is_empty() || back[..] != *data {
             return None;
         }
+        let Tag::Compound(mut fields) = root else { return None };
         let (_, sections) = fields.iter_mut().find(|(k, _)| k == "sections")?;
         let Tag::List(list) = std::mem::replace(sections, Tag::List(Vec::new())) else { return None };
         let sections = list.into_iter().map(|s| native_section(&s, codec).map_or(NSection::Nbt(s), |n| NSection::Native(Box::new(n)))).collect();
-        let chunk = NativeChunk { rest: Tag::Compound(fields), sections };
-        let mut back = bytes::BytesMut::new();
-        chunk.to_nbt().write_named("", &mut back);
-        (back[..] == *data).then_some(chunk)
+        Some(NativeChunk { rest: Tag::Compound(fields), sections })
     }
 
     /// The chunk NBT this record stands for.

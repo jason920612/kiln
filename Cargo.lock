@@ -1257,6 +1257,7 @@ dependencies = [
  "kiln-net",
  "kiln-sched",
  "kiln-sim",
+ "kiln-storage",
  "mimalloc",
  "tokio",
  "tracing",
@@ -1288,6 +1289,7 @@ dependencies = [
  "serde_json",
  "smallvec",
  "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 
