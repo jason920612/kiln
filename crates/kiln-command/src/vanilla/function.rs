@@ -198,8 +198,8 @@ fn data_source<S: Host>(c: &CommandContext<S>, s: &mut S, kind: &str) -> Result<
             s.block_entity(&dimension, pos).ok_or_else(|| CommandError::new(tr!("commands.data.block.invalid")))
         }
         "entity" => {
-            c.selector("source").entity(s)?;
-            Err(CommandError::unsupported("Entity data"))
+            let entity = c.selector("source").entity(s)?;
+            s.entity_data(&entity).ok_or_else(|| CommandError::unsupported("Entity data"))
         }
         _ => {
             let id = c.identifier("source").to_string();

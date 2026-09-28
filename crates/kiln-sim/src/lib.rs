@@ -28,6 +28,8 @@ mod consume;
 mod xp;
 mod container;
 mod datapacks;
+mod tags;
+mod zip_pack;
 pub mod lobby;
 mod digging;
 mod effects;
@@ -123,6 +125,8 @@ pub struct SimConfig {
     /// Keep-alives every 15 s of wall-clock time; `false` sends none (replays and
     /// determinism tests, whose packet streams must not depend on how fast they run).
     pub keep_alive: bool,
+    /// Where the data packs publish the feature flags and tags that logins send.
+    pub data_sync: std::sync::Arc<kiln_link::DataSync>,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -154,6 +158,7 @@ impl SimConfig {
             world_format: kiln_storage::WorldFormat::Anvil,
             access: kiln_link::access::AccessLists::new(None).shared(),
             keep_alive: true,
+            data_sync: Default::default(),
         }
     }
 }

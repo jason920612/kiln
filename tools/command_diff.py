@@ -31,6 +31,13 @@ WORK = Path(os.environ.get("KILN_WORK", ROOT / "work"))
 SCRATCH = Path(os.environ.get("KILN_DIFF_SCRATCH", WORK / "wp2-commands" / "diff"))
 VERSION = "26.3"
 DATAPACK = ROOT / "tools" / "datapacks" / "kilndiff"
+# A zip pack (vanilla reads `.zip` packs in the world's datapacks directory in place).
+ZIP_PACK = {
+    "pack.mcmeta": '{"pack":{"description":"zipped","min_format":121,"max_format":121}}',
+    "data/kilnzip/function/hi.mcfunction": "say hello from a zip\n",
+}
+# Both worlds are created with a feature pack enabled (`initial-enabled-packs`).
+INITIAL_PACKS = "vanilla,minecart_improvements"
 UNKNOWN = "Unknown or incomplete command. See below for error"
 
 # Test area: chunks -1..1 around 0,0, y 100..170, cleared to air first. Vanilla's flat world
@@ -801,6 +808,26 @@ datapack enable "file/kilndiff"
 datapack enable "file/nope"
 datapack enable minecart_improvements
 datapack disable minecart_improvements
+datapack enable trade_rebalance
+datapack enable redstone_experiments
+datapack list available
+function kilnzip:hi
+datapack disable "file/kilnzip.zip"
+function kilnzip:hi
+datapack enable "file/kilnzip.zip"
+function kilnzip:hi
+function kilndiff:ent with entity Diff0
+function kilndiff:abil with entity Diff0 abilities
+function kilndiff:ent with entity Diff0 abilities
+function kilndiff:macro with entity Diff0
+function kilndiff:ent with entity Diff0 Air
+function kilndiff:ent with entity Diff0 nope
+function kilndiff:ent with entity @a
+function kilndiff:ent with entity Nobody
+execute as Other0 run function kilndiff:ent with entity @s
+! summon minecraft:pig 8 101 8 {NoAI:1b,Invulnerable:1b}
+function kilndiff:ent with entity @e[type=minecraft:pig,limit=1]
+! kill @e[type=minecraft:pig]
 datapack enable file/kilndiff
 datapack enable "file/kilndiff" first
 datapack disable "file/kilndiff"
@@ -1267,6 +1294,10 @@ def reset_lists(base: Path):
     """Both servers keep the whitelist and ban lists next to the world; each run starts empty."""
     for name in ("whitelist.json", "banned-players.json", "banned-ips.json", "usercache.json"):
         (base / name).unlink(missing_ok=True)
+def write_zip_pack(dest: Path):
+    with zipfile.ZipFile(dest / "kilnzip.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for name, text in ZIP_PACK.items():
+            z.writestr(name, text)
 
 
 def start_vanilla(port: int) -> Server:
@@ -1276,6 +1307,7 @@ def start_vanilla(port: int) -> Server:
     reset_lists(base)
     # The test functions: a world pack, found and enabled when the world is created.
     shutil.copytree(DATAPACK, base / "world" / "datapacks" / DATAPACK.name)
+    write_zip_pack(base / "world" / "datapacks")
     (base / "eula.txt").write_text("eula=true\n", encoding="utf-8")
     props = [
         f"server-port={port}",
@@ -1294,6 +1326,7 @@ def start_vanilla(port: int) -> Server:
         "sync-chunk-writes=false",
         "enable-rcon=false",
         "enable-query=false",
+        f"initial-enabled-packs={INITIAL_PACKS}",
     ]
     (base / "server.properties").write_text("\n".join(props) + "\n", encoding="utf-8")
     argv = ["java", "-Xmx2G", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Dfile.encoding=UTF-8",
@@ -1313,7 +1346,11 @@ def start_kiln(port: int, exe: Path, lang: Path) -> Server:
     packs = SCRATCH / "kiln-datapacks"
     shutil.rmtree(packs, ignore_errors=True)
     shutil.copytree(DATAPACK, packs / DATAPACK.name)
+    write_zip_pack(packs)
     env["KILN_DATAPACKS"] = str(packs)
+    env["KILN_INITIAL_PACKS"] = INITIAL_PACKS
+    # The vanilla pack (recipes, loot, advancements, the feature packs).
+    env.setdefault("KILN_DATAPACK", str(WORK / "generated"))
     env.pop("KILN_OPS", None)
     return Server("kiln", [str(copy)], base, env, KILN_LINE, SCRATCH / "kiln.log")
 

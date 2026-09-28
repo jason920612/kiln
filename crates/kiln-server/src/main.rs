@@ -42,6 +42,7 @@ fn main() -> Result<()> {
     let mut sim_config = kiln_sim::SimConfig::new(max_players, view_distance, std::env::var_os("KILN_WORLD").map(Into::into));
     sim_config.simulation_distance = simulation_distance;
     sim_config.access = access;
+    sim_config.data_sync = shared.data_sync.clone();
     sim_config.online_mode = shared.authenticates();
     sim_config.require_resource_pack = shared.resource_pack_required();
     // KILN_TICK_THREADS: tick pool size; KILN_REGIONS=unified: one region (vanilla profile).

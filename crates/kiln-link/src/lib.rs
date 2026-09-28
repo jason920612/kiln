@@ -54,3 +54,41 @@ pub struct Property {
     pub value: String,
     pub signature: Option<String>,
 }
+
+/// What the configuration phase sends that the simulation's data packs decide: the world's
+/// feature flags (`Update Enabled Features`) and the tags of the enabled packs (`Update
+/// Tags`). The simulation writes it when the packs load; logins read it.
+#[derive(Debug)]
+pub struct DataSync {
+    features: std::sync::RwLock<Vec<String>>,
+    /// A configuration `Update Tags` packet; `None` sends the built-in vanilla tags.
+    config_tags: std::sync::RwLock<Option<Bytes>>,
+}
+
+impl Default for DataSync {
+    fn default() -> Self {
+        Self { features: std::sync::RwLock::new(vec!["minecraft:vanilla".to_owned()]), config_tags: Default::default() }
+    }
+}
+
+impl DataSync {
+    pub fn features(&self) -> Vec<String> {
+        self.features.read().map(|f| f.clone()).unwrap_or_default()
+    }
+
+    pub fn set_features(&self, features: Vec<String>) {
+        if let Ok(mut f) = self.features.write() {
+            *f = features;
+        }
+    }
+
+    pub fn config_tags(&self) -> Option<Bytes> {
+        self.config_tags.read().ok().and_then(|t| t.clone())
+    }
+
+    pub fn set_config_tags(&self, packet: Option<Bytes>) {
+        if let Ok(mut t) = self.config_tags.write() {
+            *t = packet;
+        }
+    }
+}

@@ -236,7 +236,7 @@ impl CommandState {
             scoreboard: Scoreboard::default(),
             bossbars: BossBars::default(),
             storage: kiln_command::CommandStorage::default(),
-            packs: crate::datapacks::Packs::new(None, "work/generated".into(), None),
+            packs: crate::datapacks::Packs::new(None, "work/generated".into(), crate::datapacks::PackConfig { enabled: vec!["vanilla".into()], disabled: Vec::new(), features: None }),
             ops,
             difficulty: Difficulty::Normal,
             game_rules: HashMap::new(),
@@ -1016,6 +1016,10 @@ impl Host for Sim {
     }
 
     /// `BlockEntity.saveWithFullMetadata`.
+    fn entity_data(&mut self, entity: &PlayerRef) -> Option<Tag> {
+        self.entity_data_of(entity.conn, entity.entity, entity.dim)
+    }
+
     fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
         let [x, y, z] = pos;
         let dim = crate::dim_id(dimension)?;

@@ -15,24 +15,40 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
-/// Feature packs built into the server jar, each needing its feature flag.
+/// Feature packs built into the server jar (`data/minecraft/datapacks/<name>` of the vanilla
+/// data), each needing its feature flag.
 const FEATURE_PACKS: [&str; 3] = ["minecart_improvements", "redstone_experiments", "trade_rebalance"];
+const VANILLA_FEATURE: &str = "minecraft:vanilla";
 const LOAD_TAG: &str = "minecraft:load";
 const TICK_TAG: &str = "minecraft:tick";
 
 pub(crate) struct Pack {
     pub info: PackInfo,
-    /// The directory holding `data/`, for packs Kiln can read.
+    /// The directory holding `data/`, for packs Kiln can read (a zip pack's unpacked copy).
     root: Option<PathBuf>,
 }
 
+impl Pack {
+    /// `PackSource.shouldAddAutomatically`: feature packs are only enabled on request.
+    fn adds_automatically(&self) -> bool {
+        self.info.source != PackSource::Feature
+    }
+
+    /// Whether every feature the pack requests is in `features`.
+    fn features_in(&self, features: &[String]) -> bool {
+        self.info.required_features.iter().all(|f| features.contains(f))
+    }
+}
+
 pub(crate) struct Packs {
-    /// Folder packs live here.
+    /// Folder and zip packs live here.
     dir: Option<PathBuf>,
     vanilla: PathBuf,
     pub available: Vec<Pack>,
     pub selected: Vec<String>,
     pub disabled: Vec<String>,
+    /// The world's feature flags (`WorldData.enabledFeatures`), fixed when it was created.
+    pub features: Vec<String>,
     pub library: FunctionLibrary,
     pub timers: TimerQueue,
     /// `#minecraft:load` runs on the next tick (`ServerFunctionManager.postReload`).
@@ -41,36 +57,115 @@ pub(crate) struct Packs {
     pub dirty: bool,
 }
 
+/// What a world starts from: its saved pack lists and features, or for a new world the
+/// initial packs (`initial-enabled-packs`, `initial-disabled-packs`).
+pub(crate) struct PackConfig {
+    pub enabled: Vec<String>,
+    pub disabled: Vec<String>,
+    /// `None` for a new world (`initMode`): every feature counts as available and the
+    /// features come from the packs chosen.
+    pub features: Option<Vec<String>>,
+}
+
+impl PackConfig {
+    /// A new world's packs from `KILN_INITIAL_PACKS` / `KILN_INITIAL_DISABLED_PACKS` (comma
+    /// separated, like the server properties; default `vanilla` and none).
+    pub fn initial() -> Self {
+        let list = |var: &str, default: &str| -> Vec<String> {
+            let value = std::env::var(var).unwrap_or_else(|_| default.to_owned());
+            value.split(',').map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).collect()
+        };
+        PackConfig { enabled: list("KILN_INITIAL_PACKS", "vanilla"), disabled: list("KILN_INITIAL_DISABLED_PACKS", ""), features: None }
+    }
+}
+
 impl Packs {
-    /// The packs of a world whose `level.dat` saved `saved` (enabled, disabled); new folder
-    /// packs are enabled (`Found new data pack ..., loading it automatically`).
-    pub fn new(dir: Option<PathBuf>, vanilla: PathBuf, saved: Option<(Vec<String>, Vec<String>)>) -> Self {
+    /// `MinecraftServer.configurePackRepository`: the saved (or initial) enabled packs that
+    /// exist, new packs that need no missing feature enabled (`Found new data pack ...,
+    /// loading it automatically`), packs whose features the world lacks dropped, `vanilla`
+    /// if nothing is left; the world's features are its saved ones, or for a new world those
+    /// of the chosen packs.
+    pub fn new(dir: Option<PathBuf>, vanilla: PathBuf, config: PackConfig) -> Self {
         let mut packs = Packs {
             dir,
             vanilla,
             available: Vec::new(),
             selected: Vec::new(),
             disabled: Vec::new(),
+            features: Vec::new(),
             library: FunctionLibrary::default(),
             timers: TimerQueue::default(),
             load_pending: true,
             dirty: false,
         };
         packs.discover();
-        let (enabled, disabled) =
-            saved.unwrap_or_else(|| (vec!["vanilla".into()], FEATURE_PACKS.iter().map(|s| (*s).to_owned()).collect()));
-        packs.selected = enabled.into_iter().filter(|id| packs.find(id).is_some()).collect();
-        packs.disabled = disabled;
-        for id in packs.new_packs() {
-            info!("Found new data pack {id}, loading it automatically");
-            packs.selected.push(id);
-            packs.dirty = true;
+        let init = config.features.is_none();
+        let base = config.features.clone().unwrap_or_default();
+        let all: Vec<String> = packs.available.iter().flat_map(|p| p.info.required_features.iter().cloned()).collect();
+        let check = if init { all } else { base.clone() };
+        let mut selected: Vec<String> = Vec::new();
+        for id in config.enabled {
+            if packs.find(&id).is_some() {
+                if !selected.contains(&id) {
+                    selected.push(id);
+                }
+            } else {
+                warn!("Missing data pack {id}");
+            }
         }
+        for pack in &packs.available {
+            let id = &pack.info.id;
+            if config.disabled.contains(id) {
+                continue;
+            }
+            let is_selected = selected.contains(id);
+            if !is_selected && pack.adds_automatically() {
+                if pack.features_in(&check) {
+                    info!("Found new data pack {id}, loading it automatically");
+                    selected.push(id.clone());
+                    packs.dirty = true;
+                } else {
+                    info!("Found new data pack {id}, but can't load it due to missing features {}", missing(pack, &check));
+                }
+            }
+            if is_selected && !pack.features_in(&check) {
+                warn!("Pack {id} requires features {} that are not enabled for this world, disabling pack.", missing(pack, &check));
+                selected.retain(|s| s != id);
+                packs.dirty = true;
+            }
+        }
+        if selected.is_empty() {
+            info!("No datapacks selected, forcing vanilla");
+            selected.push("vanilla".into());
+        }
+        packs.selected = selected;
+        let mut features = base;
+        if !features.iter().any(|f| f == VANILLA_FEATURE) && init {
+            features.push(VANILLA_FEATURE.into());
+        }
+        for id in &packs.selected {
+            for f in packs.find(id).map(|p| p.info.required_features.clone()).unwrap_or_default() {
+                if !features.contains(&f) {
+                    features.push(f);
+                }
+            }
+        }
+        if features.is_empty() {
+            features.push(VANILLA_FEATURE.into());
+        }
+        packs.features = features;
+        packs.update_disabled();
         packs
     }
 
     fn find(&self, id: &str) -> Option<&Pack> {
         self.available.iter().find(|p| p.info.id == id)
+    }
+
+    /// `getSelectedPacks`: every available pack that is not enabled.
+    fn update_disabled(&mut self) {
+        let selected = &self.selected;
+        self.disabled = self.available.iter().map(|p| p.info.id.clone()).filter(|id| !selected.contains(id)).collect();
     }
 
     /// `PackRepository.reload`: what exists now, sorted by id.
@@ -80,17 +175,20 @@ impl Packs {
             id: "vanilla".into(),
             source: PackSource::BuiltIn,
             description: Text::translate("dataPack.vanilla.description", vec![]),
-            required_features: Vec::new(),
+            required_features: vec![VANILLA_FEATURE.into()],
         };
         found.insert("vanilla".into(), Pack { info: vanilla, root: Some(self.vanilla.clone()) });
         for name in FEATURE_PACKS {
+            let root = self.vanilla.join("data/minecraft/datapacks").join(name);
+            let meta = read_meta(&root.join("pack.mcmeta"));
+            let required_features = meta.as_ref().map(meta_features).filter(|f| !f.is_empty());
             let info = PackInfo {
                 id: name.into(),
                 source: PackSource::Feature,
                 description: Text::translate(format!("dataPack.{name}.description"), vec![]),
-                required_features: vec![format!("minecraft:{name}")],
+                required_features: required_features.unwrap_or_else(|| vec![format!("minecraft:{name}")]),
             };
-            found.insert(name.into(), Pack { info, root: None });
+            found.insert(name.into(), Pack { info, root: meta.is_some().then_some(root) });
         }
         if let Some(dir) = &self.dir
             && let Ok(entries) = std::fs::read_dir(dir)
@@ -98,13 +196,29 @@ impl Packs {
             for e in entries.flatten() {
                 let path = e.path();
                 let Some(name) = path.file_name().and_then(|n| n.to_str()).map(str::to_owned) else { continue };
-                if !path.is_dir() || !path.join("pack.mcmeta").is_file() {
+                // `FolderRepositorySource`: directories with a `pack.mcmeta`, and zip files.
+                let root = if path.is_dir() {
+                    if !path.join("pack.mcmeta").is_file() {
+                        continue;
+                    }
+                    path
+                } else if path.is_file() && name.to_ascii_lowercase().ends_with(".zip") && crate::zip_pack::is_pack(&path) {
+                    match crate::zip_pack::unpacked(&path) {
+                        Ok(root) => root,
+                        Err(e) => {
+                            warn!("Failed to read data pack {}: {e}", path.display());
+                            continue;
+                        }
+                    }
+                } else {
                     continue;
-                }
+                };
                 let id = format!("file/{name}");
-                let description = pack_description(&path);
-                let info = PackInfo { id: id.clone(), source: PackSource::World, description, required_features: Vec::new() };
-                found.insert(id, Pack { info, root: Some(path) });
+                let meta = read_meta(&root.join("pack.mcmeta"));
+                let description = meta.as_ref().map_or_else(|| Text::literal(""), meta_description);
+                let required_features = meta.as_ref().map(meta_features).unwrap_or_default();
+                let info = PackInfo { id: id.clone(), source: PackSource::World, description, required_features };
+                found.insert(id, Pack { info, root: Some(root) });
             }
         }
         self.available = found.into_values().collect();
@@ -112,11 +226,12 @@ impl Packs {
         self.selected.retain(|id| available.contains(id));
     }
 
-    /// Packs neither enabled nor disabled that need no missing features.
+    /// `ReloadCommand.discoverNewPacks`: packs neither enabled nor disabled whose features the
+    /// world has.
     fn new_packs(&self) -> Vec<String> {
         self.available
             .iter()
-            .filter(|p| p.info.required_features.is_empty())
+            .filter(|p| p.features_in(&self.features))
             .map(|p| p.info.id.clone())
             .filter(|id| !self.selected.contains(id) && !self.disabled.contains(id))
             .collect()
@@ -127,22 +242,52 @@ impl Packs {
         self.selected.iter().filter_map(|id| self.find(id)?.root.clone()).collect()
     }
 
+    /// The tag sources of the enabled packs in load order: the vanilla pack without its files
+    /// is the built-in copy of its tags.
+    fn tag_roots(&self) -> Vec<(bool, Option<PathBuf>)> {
+        self.selected
+            .iter()
+            .filter_map(|id| {
+                let root = self.find(id)?.root.clone();
+                let builtin = id == "vanilla" && !root.as_ref().is_some_and(|r| r.join("data/minecraft/tags").is_dir());
+                Some((builtin, root))
+            })
+            .collect()
+    }
+
     pub fn snapshot(&self) -> DataPacks {
         DataPacks {
             available: self.available.iter().map(|p| p.info.clone()).collect(),
             selected: self.selected.clone(),
-            features: Vec::new(),
+            features: self.features.clone(),
         }
     }
 }
 
-/// `pack.mcmeta`'s description, when it is a plain string.
-fn pack_description(dir: &Path) -> Text {
-    let text = std::fs::read_to_string(dir.join("pack.mcmeta")).unwrap_or_default();
-    match Json::parse(&text).ok().as_ref().and_then(|j| j.get("pack")?.get("description")?.as_str().map(str::to_owned)) {
-        Some(d) => Text::literal(d),
+/// `FeatureFlags.printMissingFlags`.
+fn missing(pack: &Pack, features: &[String]) -> String {
+    let missing: Vec<&str> = pack.info.required_features.iter().filter(|f| !features.contains(f)).map(String::as_str).collect();
+    missing.join(", ")
+}
+
+/// `pack.mcmeta` as NBT (JSON is read as SNBT).
+fn read_meta(path: &Path) -> Option<kiln_proto::nbt::Tag> {
+    let text = std::fs::read_to_string(path).ok()?;
+    kiln_command::snbt::parse_tag(&mut kiln_command::StringReader::new(text.trim_start_matches('\u{feff}'))).ok()
+}
+
+/// `pack.description`, a text component.
+fn meta_description(meta: &kiln_proto::nbt::Tag) -> Text {
+    match meta.get("pack").and_then(|p| p.get("description")) {
+        Some(d) => kiln_command::component::decode(d).map_or_else(|_| Text::literal(""), |c| c.to_text()),
         None => Text::literal(""),
     }
+}
+
+/// `features.enabled`: the feature flags a pack requests.
+fn meta_features(meta: &kiln_proto::nbt::Tag) -> Vec<String> {
+    let list = meta.get("features").and_then(|f| f.get("enabled")).and_then(kiln_proto::nbt::Tag::as_list).unwrap_or(&[]);
+    list.iter().filter_map(|t| t.as_str()).map(|s| if s.contains(':') { s.to_owned() } else { format!("minecraft:{s}") }).collect()
 }
 
 /// A text component's NBT as JSON (bytes become booleans, as component fields use them).
@@ -198,7 +343,7 @@ fn walk(root: &Path, ext: &str, prefix: &str, out: &mut Vec<(String, PathBuf)>) 
 }
 
 /// Every `(namespace, relative path, file)` of `data/<ns>/<dir>/**.<ext>` in `root`.
-fn pack_files(root: &Path, dir: &str, ext: &str) -> Vec<(String, String, PathBuf)> {
+pub(crate) fn pack_files(root: &Path, dir: &str, ext: &str) -> Vec<(String, String, PathBuf)> {
     let mut out = Vec::new();
     let Ok(namespaces) = std::fs::read_dir(root.join("data")) else { return out };
     for ns in namespaces.flatten() {
@@ -277,13 +422,25 @@ impl Sim {
             Some(world) => Some(world.join("datapacks")),
             None => std::env::var_os("KILN_DATAPACKS").map(PathBuf::from),
         };
-        let saved = self.storage.as_ref().and_then(|s| s.level.data_packs());
-        self.commands.packs = Packs::new(dir, vanilla, saved);
+        let level = self.storage.as_ref().map(|s| &s.level);
+        let config = match level.and_then(|l| l.data_packs()) {
+            Some((enabled, disabled)) => {
+                // Worlds without saved features have vanilla's defaults.
+                let features = level.and_then(|l| l.enabled_features()).unwrap_or_else(|| vec![VANILLA_FEATURE.into()]);
+                PackConfig { enabled, disabled, features: Some(features) }
+            }
+            None => PackConfig::initial(),
+        };
+        self.commands.packs = Packs::new(dir, vanilla, config);
+        self.config.data_sync.set_features(self.commands.packs.features.clone());
         if let Some(data) = self.storage.as_ref().and_then(|s| kiln_storage::saved_data::read(&s.dir, "scheduled_events")) {
             self.commands.packs.timers.load_nbt(&data);
         }
         let only_vanilla = self.commands.packs.selected == ["vanilla"];
         self.load_packs(!only_vanilla);
+        if !only_vanilla {
+            self.load_tags();
+        }
     }
 
     /// `/reload` and `/datapack enable|disable`: the new pack list, then everything the packs
@@ -299,14 +456,40 @@ impl Sim {
                 }
             }
         }
-        let selected = packs.selected.clone();
-        packs.disabled = packs.available.iter().map(|p| p.info.id.clone()).filter(|id| !selected.contains(id)).collect();
+        packs.update_disabled();
         packs.dirty = true;
         self.load_packs(true);
-        let pkt = kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes);
+        // `PlayerList.reloadResources`: the tags to everyone, then each player's recipes and
+        // recipe book.
+        let tags = self.load_tags();
+        let tags = kiln_proto::packets::update_tags_owned(kiln_data::packets::play::clientbound::UPDATE_TAGS, &tags);
+        let recipes = kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes);
+        let rules = self.rules.clone();
         for p in self.players.values_mut() {
-            p.send(pkt.clone());
+            p.send(tags.clone());
         }
+        for p in self.players.values_mut() {
+            p.send(recipes.clone());
+            p.send_initial_recipe_book(&rules);
+        }
+    }
+
+    /// The enabled packs' tags for the network; logins get them from now on.
+    fn load_tags(&mut self) -> crate::tags::NetworkTags {
+        use crate::tags::TagSource;
+        let roots = self.commands.packs.tag_roots();
+        let sources: Vec<TagSource> = roots
+            .iter()
+            .filter_map(|(builtin, root)| match (builtin, root) {
+                (true, _) => Some(TagSource::BuiltIn),
+                (false, Some(r)) => Some(TagSource::Dir(r)),
+                (false, None) => None,
+            })
+            .collect();
+        let tags = crate::tags::load(&sources);
+        let config = kiln_proto::packets::update_tags_owned(kiln_data::packets::configuration::clientbound::UPDATE_TAGS, &tags);
+        self.config.data_sync.set_config_tags(Some(config));
+        tags
     }
 
     /// Loads functions and function tags, and with `data`, recipes and loot tables, from the
@@ -483,5 +666,99 @@ impl Sim {
             warn!("Failed to create pack at {}: {e}", path.display());
             CommandError::new(tr!("commands.datapack.create.io_failure", id))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Sim, SimConfig};
+    use kiln_link::ToSim;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kiln-packs-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The vanilla data (with the feature packs), if this machine has it.
+    fn vanilla() -> Option<PathBuf> {
+        let root = crate::datapack_dir(None);
+        let root = if root.is_absolute() { root } else { Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").join(root) };
+        root.join("data/minecraft/datapacks/minecart_improvements/pack.mcmeta").is_file().then_some(root)
+    }
+
+    #[test]
+    fn zip_packs_load_and_reload_sends_tags() {
+        let world = scratch("zip");
+        let packs = world.join("datapacks");
+        std::fs::create_dir_all(packs.join("tagpack/data/minecraft/tags/block")).unwrap();
+        std::fs::write(packs.join("tagpack/pack.mcmeta"), r#"{"pack":{"description":"t","min_format":121,"max_format":121}}"#).unwrap();
+        let zip = crate::zip_pack::tests::build(
+            &[
+                ("pack.mcmeta", br#"{"pack":{"description":{"text":"zipped"},"min_format":121,"max_format":121}}"#),
+                ("data/kz/function/hi.mcfunction", b"say hi\n"),
+            ],
+            true,
+        );
+        std::fs::write(packs.join("kz.zip"), zip).unwrap();
+        std::fs::write(packs.join("notapack.zip"), b"junk").unwrap();
+        let mut sim = Sim::new(SimConfig::new(8, 2, Some(world.clone())));
+        let p = &sim.commands.packs;
+        assert!(p.selected.iter().any(|s| s == "file/kz.zip"), "{:?}", p.selected);
+        assert!(p.find("file/notapack.zip").is_none());
+        assert_eq!(p.find("file/kz.zip").unwrap().info.description.to_plain(), "zipped");
+        assert!(p.library.get(&Identifier::parse("kz:hi").unwrap()).is_some());
+
+        let (msg, stats) = crate::testing::join(1, "Tagger", 2);
+        *stats.log.lock().unwrap() = Some(Vec::new());
+        assert!(sim.step([msg]));
+        std::fs::write(
+            packs.join("tagpack/data/minecraft/tags/block/kiln_test.json"),
+            r#"{"values":["minecraft:stone","minecraft:dirt"]}"#,
+        )
+        .unwrap();
+        stats.log.lock().unwrap().as_mut().unwrap().clear();
+        assert!(sim.step([ToSim::Console("reload".into())]));
+        let log = stats.log.lock().unwrap().clone().unwrap();
+        let id = |p: &bytes::Bytes| kiln_proto::codec::Reader::new(p).varint().ok();
+        let tags = log.iter().position(|p| id(p) == Some(kiln_data::packets::play::clientbound::UPDATE_TAGS)).expect("update tags");
+        let recipes =
+            log.iter().position(|p| id(p) == Some(kiln_data::packets::play::clientbound::UPDATE_RECIPES)).expect("update recipes");
+        assert!(tags < recipes);
+        let needle = b"minecraft:kiln_test";
+        assert!(log[tags].windows(needle.len()).any(|w| w == needle));
+        // Logins from now on get the same tags.
+        let config = sim.config.data_sync.config_tags().expect("config tags");
+        assert!(config.windows(needle.len()).any(|w| w == needle));
+        drop(sim);
+        let _ = std::fs::remove_dir_all(&world);
+    }
+
+    #[test]
+    fn feature_packs_need_their_world_features() {
+        let Some(vanilla) = vanilla() else {
+            eprintln!("skipped: no vanilla data");
+            return;
+        };
+        let config = |enabled: &[&str], features: Option<&[&str]>| PackConfig {
+            enabled: enabled.iter().map(|s| (*s).to_owned()).collect(),
+            disabled: Vec::new(),
+            features: features.map(|f| f.iter().map(|s| (*s).to_owned()).collect()),
+        };
+        // A new world with a feature pack gets its feature.
+        let p = Packs::new(None, vanilla.clone(), config(&["vanilla", "minecart_improvements"], None));
+        assert_eq!(p.selected, ["vanilla", "minecart_improvements"]);
+        assert_eq!(p.features, ["minecraft:vanilla", "minecraft:minecart_improvements"]);
+        assert!(p.find("minecart_improvements").unwrap().root.is_some());
+        assert_eq!(p.disabled, ["redstone_experiments", "trade_rebalance"]);
+        // A saved world without the feature drops the pack.
+        let p = Packs::new(None, vanilla.clone(), config(&["vanilla", "trade_rebalance"], Some(&["minecraft:vanilla"])));
+        assert_eq!(p.selected, ["vanilla"]);
+        assert_eq!(p.features, ["minecraft:vanilla"]);
+        // Nothing left: vanilla.
+        let p = Packs::new(None, vanilla, config(&["nope"], Some(&["minecraft:vanilla"])));
+        assert_eq!(p.selected, ["vanilla"]);
     }
 }
