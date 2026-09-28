@@ -776,6 +776,14 @@ impl Host for Sim {
         }
     }
 
+    fn kiln_open_recipe_book(&mut self, player: &PlayerRef) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        p.recipe_book.settings[0] = (true, false);
+        let pkt = kiln_inventory::recipe::book::recipe_book_settings(&p.recipe_book.settings);
+        p.send(pkt);
+        true
+    }
+
     fn recipe_ids(&self) -> Vec<String> {
         self.rules.recipes.recipes().iter().filter(|r| !r.recipe.is_special()).map(|r| r.id.clone()).collect()
     }

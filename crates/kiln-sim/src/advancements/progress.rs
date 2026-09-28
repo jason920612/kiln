@@ -143,11 +143,13 @@ impl PlayerAdvancements {
                 Some(d) if d.hidden => Rule::Hide,
                 Some(_) => Rule::NoChange,
             };
-            let mut visible = done;
+            // Done here or below (what the parent learns), then visible.
+            let mut any_done = done;
             stack.push(rule);
             for c in pa.data.children[n].clone() {
-                visible |= eval(pa, c, stack, added, removed);
+                any_done |= eval(pa, c, stack, added, removed);
             }
+            let mut visible = any_done;
             // `evaluateVisiblityForUnfinishedNode`: the nearest decisive rule within 2 levels.
             if !visible {
                 for k in 0..=2 {
@@ -172,7 +174,7 @@ impl PlayerAdvancements {
                 pa.visible[n] = false;
                 removed.push(n);
             }
-            visible
+            any_done
         }
         let mut stack = vec![Rule::NoChange; 3];
         eval(self, root, &mut stack, added, removed);

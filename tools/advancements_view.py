@@ -1,13 +1,11 @@
 """Advancements and the recipe book seen by the real 26.3 client: join a release server,
 grant an advancement (its toast and chat announcement), then unlock recipes, open a crafting
-table (`/kiln use`) and click its recipe book button (a posted mouse click, no focus
-stealing); screenshots of the game window only (PrintWindow): work/advancements-view-*.png.
+table (`/kiln use`) with its recipe book open (`/kiln recipebook`); screenshots of the game window only (PrintWindow): work/advancements-view-*.png.
 
 usage: python tools/advancements_view.py [--port 25587] [--keep]
 """
 
 import argparse
-import ctypes
 import os
 import re
 import subprocess
@@ -29,70 +27,6 @@ give KilnView oak_planks 16
 give KilnView cobblestone 16
 give KilnView stick 8
 """
-
-
-def window(pid):
-    user32 = ctypes.windll.user32
-    found = None
-
-    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-    def cb(h, _):
-        nonlocal found
-        p = ctypes.c_ulong()
-        user32.GetWindowThreadProcessId(h, ctypes.byref(p))
-        if p.value == pid and user32.IsWindowVisible(h):
-            found = h
-            return False
-        return True
-
-    user32.EnumWindows(cb, 0)
-    return found
-
-
-def client_size(hwnd):
-    class RECT(ctypes.Structure):
-        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
-
-    r = RECT()
-    ctypes.windll.user32.GetClientRect(hwnd, ctypes.byref(r))
-    return r.r, r.b
-
-
-def gui_scale(w, h):
-    """`Window.calculateScale` for the client's GUI scale option (0: auto)."""
-    wanted = 0
-    opts = e2e.WORK / "client" / "options.txt"
-    if opts.exists():
-        m = re.search(r"(?m)^guiScale:(\d+)", opts.read_text(encoding="utf-8", errors="replace"))
-        wanted = int(m.group(1)) if m else 0
-    n = 1
-    while n != wanted and n < w and n < h and w // (n + 1) >= 320 and h // (n + 1) >= 240:
-        n += 1
-    return n
-
-
-def left_click(pid, x, y):
-    hwnd = window(pid)
-    if not hwnd:
-        return False
-    lp = (int(y) << 16) | int(x)
-    user32 = ctypes.windll.user32
-    user32.PostMessageW(hwnd, 0x0200, 0, lp)  # WM_MOUSEMOVE
-    time.sleep(0.1)
-    user32.PostMessageW(hwnd, 0x0201, 0x0001, lp)  # WM_LBUTTONDOWN
-    time.sleep(0.08)
-    user32.PostMessageW(hwnd, 0x0202, 0, lp)  # WM_LBUTTONUP
-    return True
-
-
-def recipe_book_button(pid):
-    """Where `CraftingScreen` puts its recipe book button: (leftPos + 5, height / 2 - 49),
-    20x18 GUI pixels."""
-    w, h = client_size(window(pid))
-    s = gui_scale(w, h)
-    gw, gh = w // s, h // s
-    left = (gw - 176) // 2
-    return (left + 5 + 10) * s, (gh // 2 - 49 + 9) * s
 
 
 def send(server, lines):
@@ -147,12 +81,13 @@ def main():
     time.sleep(2)
     send(server, "kiln use KilnView 8 -60 18")
     time.sleep(3)
-    x, y = recipe_book_button(pid)
-    left_click(pid, x, y)  # the first click may only grab the window
-    time.sleep(1)
     shot("crafting")
-    left_click(pid, x, y)
-    time.sleep(2)
+    # The book open (the client would send this setting when its button is clicked; posted
+    # clicks land at the window center, since the cursor does not move without focus).
+    send(server, "kiln recipebook KilnView")
+    time.sleep(1)
+    send(server, "kiln use KilnView 8 -60 18")
+    time.sleep(3)
     shot("recipe-book")
     client_log = (e2e.WORK / "client" / "logs" / "latest.log").read_text(encoding="utf-8", errors="replace")
     problems = [l for l in client_log.splitlines()

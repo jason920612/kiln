@@ -703,6 +703,25 @@ mod tests {
     }
 
     #[test]
+    fn visibility_reaches_two_levels_below_a_done_node() {
+        let chain = ["a:root", "a:1", "a:2", "a:3"];
+        let mut list: Vec<Advancement> =
+            chain.iter().enumerate().map(|(i, id)| adv(id, (i > 0).then(|| chain[i - 1]), true)).collect();
+        list.push(adv("a:nodisplay", Some("a:root"), false));
+        let t = std::sync::Arc::new(Advancements::build(list));
+        let mut pa = progress::PlayerAdvancements::new(t.clone());
+        assert!(pa.flush(true).is_none(), "nothing done: nothing visible");
+        pa.award(t.get("a:root").unwrap(), 0, 0);
+        let pkt = pa.flush(true).expect("the root and two levels below appear");
+        let has = |id: &str| pkt.windows(id.len()).any(|w| w == id.as_bytes());
+        assert!(has("a:root") && has("a:1") && has("a:2") && !has("a:3") && !has("a:nodisplay"));
+        // A done advancement without a display is sent too (vanilla's done flag shows it).
+        pa.award(t.get("a:nodisplay").unwrap(), 0, 0);
+        let pkt = pa.flush(true).expect("update");
+        assert!(pkt.windows(11).any(|w| w == b"a:nodisplay"));
+    }
+
+    #[test]
     fn vanilla_advancements_load() {
         let dir = crate::datapack_dir(None);
         if !dir.join("data/minecraft/advancement").is_dir() {
