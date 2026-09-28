@@ -288,6 +288,32 @@ impl ContainerBe {
         signal_from_items(self.items.iter(), self.items.len())
     }
 
+    /// `BlockEntity.collectComponents` (`collectImplicitComponents` of
+    /// `BaseContainerBlockEntity` and `RandomizableContainerBlockEntity`): what a block item
+    /// dropped from it copies (`copy_components` with the block entity as source).
+    pub fn components(&self) -> Vec<kiln_item::component::Component> {
+        use kiln_item::component::{Component, ItemContainerContents, LockCode, SeededContainerLoot};
+        let mut out = Vec::new();
+        if let Some(name) = self.custom_name.clone().and_then(kiln_item::Text::from_nbt) {
+            out.push(Component::CustomName(name));
+        }
+        if let Some(lock) = self.lock.as_ref().and_then(|t| <LockCode as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(t)).ok()) {
+            out.push(Component::Lock(lock));
+        }
+        if self.kind.is_container() {
+            // `ItemContainerContents.fromItems`: up to the last occupied slot.
+            let last = self.items.iter().rposition(|s| !s.is_empty());
+            let slots = last.map_or(Vec::new(), |l| {
+                self.items[..=l].iter().map(|s| (!s.is_empty()).then(|| kiln_item::ItemStackTemplate::from_stack(s))).collect()
+            });
+            out.push(Component::Container(ItemContainerContents(slots)));
+        }
+        if let Some(table) = self.loot_table.as_deref().and_then(kiln_item::ident::Identifier::parse) {
+            out.push(Component::ContainerLoot(SeededContainerLoot { loot_table: table, seed: self.loot_seed }));
+        }
+        out
+    }
+
     /// The display title for `open_screen`: the custom name, or the default translation.
     pub fn title(&self) -> Tag {
         self.custom_name.clone().unwrap_or_else(|| translatable(self.kind.default_name()))
@@ -506,6 +532,7 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
     let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
     let now = level.cells.chunk(chunk_of(pos)).and_then(|c| c.block_entity(x, pos.y, z));
     let Some(mut removed) = level.blocks.containers.block_changed(pos, now) else { return };
+    level.out.removed_components.push((pos, removed.components()));
     if flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS != 0 || !removed.kind.is_container() || removed.kind == BeKind::ShulkerBox {
         return;
     }

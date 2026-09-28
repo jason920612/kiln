@@ -234,3 +234,24 @@ fn ender_chests_show_the_players_own_items() {
     assert_eq!(slots[0], Some(("minecraft:diamond", 3)));
     let _ = d::AIR;
 }
+
+#[test]
+fn shulker_boxes_keep_their_contents_when_broken() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    let shulker = w.at(2, 1, 2);
+    w.run(&format!(
+        "setblock {} {} {} minecraft:red_shulker_box{{Items:[{{Slot:3b,id:\"minecraft:emerald\",count:7}}]}}",
+        shulker[0], shulker[1], shulker[2]
+    ));
+    w.run(&format!("setblock {} {} {} minecraft:air destroy", shulker[0], shulker[1], shulker[2]));
+    w.ticks(1);
+    let stacks = w.sim.item_stacks();
+    assert_eq!(stacks.len(), 1, "only the box drops, not its contents: {stacks:?}");
+    let contents = stacks[0].get(kiln_item::keys::CONTAINER).expect("the box keeps its contents");
+    assert_eq!(stacks[0].item_name(), "minecraft:red_shulker_box");
+    let emerald = contents.0.get(3).and_then(|s| s.as_ref()).expect("slot 3");
+    assert_eq!(emerald.create().count(), 7);
+}

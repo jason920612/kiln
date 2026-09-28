@@ -664,3 +664,27 @@ pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stac
         c.mark_changed();
     }
 }
+
+/// `ShulkerBoxBlock.playerWillDestroy`: a creative player breaking a filled shulker box still
+/// gets it as an item, with its contents; otherwise its loot table rolls first.
+pub(crate) fn player_will_destroy(level: &mut RegionLevel, pos: BlockPos, s: u16, creative: bool) {
+    if logic::block_class(s) != C::ShulkerBoxBlock {
+        return;
+    }
+    let (loot, game_time, seed) = (level.env.loot.clone(), level.env.game_time, level.env.seed);
+    let Some(c) = level.blocks.containers.get_mut(pos) else { return };
+    if creative && (!c.is_empty() || c.loot_table.is_some()) {
+        let Some(mut item) = ItemStack::of(BlockId::of(s).name(), 1) else { return };
+        for component in c.components() {
+            item.set(component);
+        }
+        level.out.spawns.push(Spawn {
+            kind: &kiln_data::entities::types::ITEM,
+            pos: [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5],
+            vel: [0.0; 3],
+            body: crate::entities::Body::Item { stack: item, pickup_delay: 10, thrower: None },
+        });
+    } else if !creative {
+        super::unpack_loot(c, pos, loot.as_deref(), true, game_time, seed);
+    }
+}

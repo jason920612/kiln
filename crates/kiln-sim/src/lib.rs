@@ -1135,6 +1135,20 @@ impl Sim {
         Some((items, [c.lit_remaining, c.lit_total, c.cook_timer, c.cook_total]))
     }
 
+    /// The stacks of the overworld's item entities (for tests and tools).
+    pub fn item_stacks(&self) -> Vec<kiln_item::ItemStack> {
+        self.dims[OVERWORLD_ID]
+            .regions
+            .iter()
+            .flat_map(|r| r.part().0.list.iter())
+            .filter(|e| !e.removed)
+            .filter_map(|e| match e.phys.as_ref().map(|p| &p.kind) {
+                Some(kiln_entity::EntityKind::Item(d)) => Some(d.stack.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// A player's open menu: its `minecraft:menu` type and its slots as (item name, count) (for
     /// tests and tools).
     pub fn open_menu(&self, conn: ConnId) -> Option<(&'static str, Vec<Option<(&'static str, i32)>>)> {

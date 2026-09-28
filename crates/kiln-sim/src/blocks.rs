@@ -298,6 +298,9 @@ pub(crate) struct BlockOut {
     /// Chests, barrels and ender chests whose openers to recount (their scheduled tick), for
     /// the region, which knows the players.
     pub rechecks: Vec<BlockPos>,
+    /// The components of container block entities removed this phase, for the loot of their
+    /// block (`copy_components` from the block entity: names, shulker box contents).
+    pub removed_components: Vec<(BlockPos, Vec<kiln_item::component::Component>)>,
 }
 
 /// A region's cells and block machinery as kiln-blocks' [`Level`].
@@ -600,15 +603,16 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
         let pkt = world_fx::block_destruction(breaker, pos, u8::try_from(stage).ok());
         send_near(players, BlockPos::new(pos[0], pos[1], pos[2]), 32.0, &pkt, |p| p.entity_id != breaker);
     }
-    for (i, (actor, effect)) in out.effects.into_iter().enumerate() {
+    for (i, (actor, effect)) in std::mem::take(&mut out.effects).into_iter().enumerate() {
         let others = |p: &&mut Player| Some(p.conn) != actor;
         match effect {
             Effect::Drop { pos, state } => {
                 if env.drops {
                     // The breaking player's held item is the tool; other breaks use an empty hand.
                     let tool = actor.and_then(|c| players.iter().find(|p| p.conn == c)).map(|p| p.inv.selected_item().clone());
+                    let components = out.removed_components.iter().rev().find(|(p, _)| *p == pos).map(|(_, c)| c.clone());
                     match &env.loot {
-                        Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, env, i)),
+                        Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i)),
                         None => spawns.extend(drop_stand_in(pos, state, env, i)),
                     }
                 }
@@ -712,6 +716,7 @@ fn block_drops(
     pos: BlockPos,
     state: u16,
     tool: Option<kiln_item::ItemStack>,
+    block_entity: Option<Vec<kiln_item::component::Component>>,
     env: &BlockEnv,
     i: usize,
 ) -> Vec<Spawn> {
@@ -724,6 +729,7 @@ fn block_drops(
         player,
         state,
         origin: [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5],
+        block_entity,
     };
     // Vanilla draws block drops from the server-wide random sequence of the table; parallel
     // regions cannot share one without the order depending on the partition, so each drop gets
@@ -748,6 +754,8 @@ struct BreakContext {
     player: bool,
     state: u16,
     origin: [f64; 3],
+    /// The components of the block's block entity (`collectComponents`), if it had one.
+    block_entity: Option<Vec<kiln_item::component::Component>>,
 }
 
 impl kiln_loot::LootContext for BreakContext {
@@ -762,6 +770,22 @@ impl kiln_loot::LootContext for BreakContext {
     }
     fn tool(&self) -> Option<&kiln_item::ItemStack> {
         Some(&self.tool)
+    }
+    fn has_block_entity(&self) -> bool {
+        self.block_entity.is_some()
+    }
+    fn components(&self, source: kiln_loot::Source) -> Option<Vec<kiln_item::component::Component>> {
+        match source {
+            kiln_loot::Source::BlockEntity => self.block_entity.clone(),
+            _ => None,
+        }
+    }
+    fn custom_name(&self, source: kiln_loot::Source) -> Option<Option<kiln_item::Text>> {
+        let components = self.block_entity.as_ref().filter(|_| source == kiln_loot::Source::BlockEntity)?;
+        Some(components.iter().find_map(|c| match c {
+            kiln_item::component::Component::CustomName(t) => Some(t.clone()),
+            _ => None,
+        }))
     }
 }
 
@@ -894,7 +918,7 @@ mod tests {
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {
-            block_drops(&loot, BlockPos::new(0, 64, 0), state, tool, &env, 0)
+            block_drops(&loot, BlockPos::new(0, 64, 0), state, tool, None, &env, 0)
                 .into_iter()
                 .map(|s| {
                     let entities::Body::Item { stack, .. } = s.body else { panic!("not an item") };
