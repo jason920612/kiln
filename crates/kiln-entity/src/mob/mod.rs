@@ -17,6 +17,7 @@ pub mod control;
 pub mod convert;
 pub mod effects;
 pub mod goals;
+pub mod gossip;
 pub mod interact;
 pub mod kinds;
 pub mod mth;
