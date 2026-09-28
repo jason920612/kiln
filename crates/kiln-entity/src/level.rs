@@ -200,6 +200,10 @@ pub enum DamageKind {
     // -- slice 3: the end
 
     // -- slice 3: wither and guardians
+    /// `witherSkull` (a wither skull's direct hit).
+    WitherSkull,
+    /// `thorns` (a guardian's spikes; thorns armor).
+    Thorns,
 
     // -- slice 3: warden
 
@@ -259,6 +263,10 @@ pub enum Event {
     ShearLoot { entity: i32, table: String, pos: Vec3 },
     /// A criteria trigger for player `player` (entity id).
     Criterion { player: i32, criterion: Criterion },
+    /// `Level.globalLevelEvent` (the wither's spawn sound heard everywhere).
+    GlobalLevelEvent { event: i32, pos: BlockPos, data: i32 },
+    /// A `ClientboundGameEventPacket` for player `player` (10: the elder guardian's curse).
+    PlayerGameEvent { player: i32, event: u8, param: f32 },
 }
 
 /// World access for entity ticks.
@@ -444,6 +452,12 @@ pub trait EntityLevel {
     fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32>) -> bool {
         let _ = (id, effect, duration, amplifier, source);
         false
+    }
+
+    /// Player `id`'s active `effect` as (amplifier, remaining ticks; -1 infinite).
+    fn player_effect(&self, id: i32, effect: &str) -> Option<(i32, i32)> {
+        let _ = (id, effect);
+        None
     }
 
     /// Sets entity or player `id` on fire for `seconds`.

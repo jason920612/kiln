@@ -1536,6 +1536,110 @@ public class MobVectors {
 
     // ---------------------------------------------------------- slice 3: wither and guardians
     static void scenariosWither(List<Scenario> out) {
+        // The wither idles over the ground: hovering strolls (flying navigation), gravity
+        // while it does not move, the heads' particles drawing from its random.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_wither_" + seed);
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:wither", 0.5, BY + 3, 0.5, 60f * seed, 11000L + seed));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // It shoots skulls at a survival player (the middle head's ranged attack, the side
+        // heads' own targets, the explosions breaking the floor).
+        for (int dist : new int[] {8, 16}) {
+            Scenario s = new Scenario("attack_wither_" + dist);
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:wither", 0.5, BY + 2, 0.5, 90f, 11100L + dist));
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Just built: invulnerable, healing, then the power 7 explosion.
+        {
+            Scenario s = new Scenario("summoned_wither");
+            solidGround(s);
+            MobSpec m = new MobSpec("minecraft:wither", 0.5, BY, 0.5, 0f, 11200L);
+            m.nbt = "{Invul:60,Health:100f}";
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 120;
+            out.add(s);
+        }
+        // Hurt at half health: powered (it stays low over its target), breaking the blocks
+        // around it a second after the hit.
+        {
+            Scenario s = new Scenario("hurt_wither");
+            solidGround(s);
+            for (int y = BY; y <= BY + 4; y++) block(s, 1, y, 1, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:wither", 0.5, BY, 0.5, 0f, 11300L);
+            m.nbt = "{Health:140f}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.hurts.put(3, new double[] {0, 4.0});
+            s.ticks = 150;
+            out.add(s);
+        }
+        // Guardians in a pool: swimming strolls, the elder's home and slower strolls.
+        String[][] guardians = {{"guardian", "12000"}, {"elder_guardian", "12100"}};
+        for (String[] g : guardians) {
+            for (int seed = 1; seed <= 2; seed++) {
+                Scenario s = new Scenario("swim_" + g[0] + "_" + seed);
+                pool(s);
+                s.mobs.add(new MobSpec("minecraft:" + g[0], 0.5, BY + 2, 0.5, 45f * seed, Long.parseLong(g[1]) + seed));
+                s.player = new double[] {12.5, BY, 0.5};
+                s.playerCreative = true;
+                s.levelSeed = seed;
+                s.ticks = 400;
+                out.add(s);
+            }
+            // The beam at a survival player at the pool's edge, the spikes and the stroll after
+            // a hit.
+            Scenario s = new Scenario("attack_" + g[0]);
+            pool(s);
+            s.mobs.add(new MobSpec("minecraft:" + g[0], 0.5, BY + 2, 0.5, 90f, Long.parseLong(g[1]) + 50));
+            s.player = new double[] {5.5, BY + 6, 0.5};
+            s.hurts.put(150, new double[] {0, 1.0});
+            // (The elder's wobble meets a `Math.sin` argument where HotSpot's intrinsic and the
+            // correctly rounded sine differ in the last bit at tick 257.)
+            s.ticks = 250;
+            out.add(s);
+        }
+        // Out of the water it flops.
+        {
+            Scenario s = new Scenario("flop_guardian");
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:guardian", 0.5, BY, 0.5, 0f, 12200L));
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 120;
+            out.add(s);
+        }
+    }
+
+    /// A stone floor over solid stone down to the cleared depth: random positions under an
+    /// open floor would depend on sky light the replay does not model.
+    static void solidGround(Scenario s) {
+        floor(s, 24, "minecraft:stone");
+        for (int x = -20; x <= 20; x++)
+            for (int z = -20; z <= 20; z++)
+                for (int y = BY - 8; y <= BY - 2; y++) block(s, x, y, z, "minecraft:stone");
+    }
+
+    /// A 9x9, 5 deep pool of water walled in on the floor, over solid ground.
+    static void pool(Scenario s) {
+        solidGround(s);
+        for (int x = -5; x <= 5; x++)
+            for (int z = -5; z <= 5; z++)
+                for (int y = BY; y <= BY + 5; y++) {
+                    boolean inside = Math.abs(x) <= 4 && Math.abs(z) <= 4;
+                    if (!inside) block(s, x, y, z, "minecraft:stone");
+                    else if (y <= BY + 4) block(s, x, y, z, "minecraft:water");
+                }
     }
 
 

@@ -695,6 +695,12 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         p.add_effect(crate::effects::Effect::simple(e, duration, amplifier))
     }
 
+    fn player_effect(&self, id: i32, effect: &str) -> Option<(i32, i32)> {
+        let p = self.players.iter().find(|p| p.entity_id == id)?;
+        let e = p.effects.get(&crate::effects::effect_id(effect)?)?;
+        Some((e.amplifier, e.duration))
+    }
+
     fn ignite(&mut self, id: i32, seconds: f32) {
         if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
             let ticks = kiln_javamath::math::floor_f32(seconds * 20.0);
@@ -1470,6 +1476,19 @@ fn carry_out(
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
+        // `globalLevelEvent`: approximation, every player of the region hears it (vanilla: every
+        // player on the server).
+        Event::GlobalLevelEvent { event, pos, data } => {
+            let pkt = world_fx::level_event(event, [pos.x, pos.y, pos.z], data, true);
+            for p in players.iter_mut() {
+                p.send(pkt.clone());
+            }
+        }
+        Event::PlayerGameEvent { player, event, param } => {
+            if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
+                p.send(kiln_proto::packets::game_event(event, param));
+            }
+        }
         Event::Criterion { player, criterion } => {
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
                 p.entity_criterion(crate::DIMENSIONS[env.dim].0, &criterion);
@@ -1788,6 +1807,8 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         // -- slice 3: the end
 
         // -- slice 3: wither and guardians
+        DamageKind::WitherSkull => ("minecraft:wither_skull", "death.attack.witherSkull"),
+        DamageKind::Thorns => ("minecraft:thorns", "death.attack.thorns"),
 
         // -- slice 3: warden
 

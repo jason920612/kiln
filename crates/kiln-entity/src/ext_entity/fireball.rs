@@ -53,6 +53,21 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
     }))
 }
 
+/// `ProjectileUtil.getHitResultOnMoveVector` (`COLLIDER` blocks, no fluids) with
+/// `canHitEntity` of an `AbstractHurtingProjectile`: not the owner until it left it.
+pub(crate) fn hit_on_move_vector(e: &Entity, level: &dyn EntityLevel, owner: Option<i32>, left_owner: bool) -> Option<Hit> {
+    Fireball { small: false, owner, acceleration_power: 0.0, explosion_power: 0, left_owner, has_been_shot: false }.hit_on_move_vector(e, level)
+}
+
+/// `Projectile.checkLeftOwner`: whether the projectile is clear of its owner's box.
+pub(crate) fn left_owner(e: &Entity, level: &dyn EntityLevel, owner: Option<i32>) -> bool {
+    let area = e.bounding_box().expand_towards_vec(e.delta).inflate_all(1.0);
+    match owner.and_then(|id| level.entity(id)) {
+        Some(o) => !(crate::projectile::can_be_hit_by_projectile(o) && area.intersects(&o.bounding_box())),
+        None => true,
+    }
+}
+
 impl Fireball {
     /// `ProjectileUtil.getHitResultOnMoveVector` (`COLLIDER` blocks, no fluids) with
     /// `canHitEntity`: not the owner until the fireball left it.
@@ -94,11 +109,7 @@ impl Fireball {
         if self.left_owner {
             return;
         }
-        let area = e.bounding_box().expand_towards_vec(e.delta).inflate_all(1.0);
-        self.left_owner = match self.owner.and_then(|id| level.entity(id)) {
-            Some(o) => !(crate::projectile::can_be_hit_by_projectile(o) && area.intersects(&o.bounding_box())),
-            None => true,
-        };
+        self.left_owner = left_owner(e, level, self.owner);
     }
 
     fn on_hit(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
@@ -171,7 +182,7 @@ fn fire_state(level: &dyn EntityLevel, p: crate::math::BlockPos) -> u16 {
 }
 
 /// `target.hurtServer(fireball source, amount)` for a mob, a player or another entity.
-fn hurt(level: &mut dyn EntityLevel, id: i32, source: DamageSource, amount: f32) -> bool {
+pub(crate) fn hurt(level: &mut dyn EntityLevel, id: i32, source: DamageSource, amount: f32) -> bool {
     if level.player(id).is_some() {
         return level.hurt_player(id, source, amount);
     }
@@ -270,7 +281,7 @@ pub fn view_vector(x_rot: f32, y_rot: f32) -> Vec3 {
 }
 
 /// `ProjectileUtil.rotateTowardsMovement`.
-fn rotate_towards_movement(e: &mut Entity, amount: f32) {
+pub(crate) fn rotate_towards_movement(e: &mut Entity, amount: f32) {
     let v = e.delta;
     if v.length_sqr() == 0.0 {
         return;
