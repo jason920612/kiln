@@ -96,6 +96,7 @@ public class ExtractBlockLogic {
             w.println("]");
         }
         blockItems(out);
+        flammability(out);
         try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out.resolve("block_classes.json")))) {
             w.println("[");
             int i = 0, count = BuiltInRegistries.BLOCK.size();
@@ -137,6 +138,26 @@ public class ExtractBlockLogic {
                     BuiltInRegistries.ITEM.getKey(item), BuiltInRegistries.BLOCK.getKey(bi.getBlock()), wall, attach));
         }
         Files.writeString(out.resolve("block_items.json"), "[\n" + String.join(",\n", rows) + "\n]\n");
+    }
+
+    // FireBlock's ignite and burn odds per block (FireBlock.bootStrap's setFlammable calls),
+    // in block registry order.
+    @SuppressWarnings("unchecked")
+    static void flammability(Path out) throws Exception {
+        var fire = net.minecraft.world.level.block.Blocks.FIRE;
+        Field ignite = net.minecraft.world.level.block.FireBlock.class.getDeclaredField("igniteOdds");
+        ignite.setAccessible(true);
+        Field burn = net.minecraft.world.level.block.FireBlock.class.getDeclaredField("burnOdds");
+        burn.setAccessible(true);
+        var igniteOdds = (it.unimi.dsi.fastutil.objects.Object2IntMap<Block>) ignite.get(fire);
+        var burnOdds = (it.unimi.dsi.fastutil.objects.Object2IntMap<Block>) burn.get(fire);
+        List<String> rows = new ArrayList<>();
+        for (Block b : BuiltInRegistries.BLOCK) {
+            int i = igniteOdds.getInt(b), u = burnOdds.getInt(b);
+            if (i == 0 && u == 0) continue;
+            rows.add(String.format(Locale.ROOT, "{\"block\":\"%s\",\"ignite\":%d,\"burn\":%d}", BuiltInRegistries.BLOCK.getKey(b), i, u));
+        }
+        Files.writeString(out.resolve("flammability.json"), "[\n" + String.join(",\n", rows) + "\n]\n");
     }
 
     static boolean covered(VoxelShape test, VoxelShape face) {

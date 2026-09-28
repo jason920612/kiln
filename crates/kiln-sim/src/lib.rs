@@ -1473,6 +1473,12 @@ impl Sim {
                 zoom_seed: self.zoom_seed,
                 sea_level: SEA_LEVELS[dim],
             },
+            fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
+            fire_watchers: std::sync::Arc::new({
+                let mut conns: Vec<&ConnId> = self.players.keys().collect();
+                conns.sort_unstable();
+                conns.into_iter().filter_map(|c| self.players.get(c)).filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()
+            }),
         }
     }
 

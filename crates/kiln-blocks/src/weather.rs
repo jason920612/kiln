@@ -181,52 +181,6 @@ pub fn handle_precipitation<L: Level>(level: &mut L, s: u16, pos: BlockPos, p: P
     }
 }
 
-/// `FireBlock.getFireTickDelay`: 30 to 39 ticks.
-pub fn schedule_fire_tick<L: Level>(level: &mut L, pos: BlockPos) {
-    level.reseed_random(pos);
-    let delay = 30 + level.random().next_int_bounded(10);
-    crate::schedule_block_tick(level, pos, crate::BlockId::of(d::FIRE), delay, crate::TickPriority::Normal);
-}
-
-/// `FireBlock.isNearRain`.
-fn near_rain<L: Level>(level: &L, pos: BlockPos) -> bool {
-    use crate::pos::Direction;
-    level.is_raining_at(pos) || [Direction::West, Direction::East, Direction::North, Direction::South].iter().any(|&d| level.is_raining_at(pos.relative(d)))
-}
-
-/// `FireBlock.tick` without flammability (Kiln has no burn odds): fire goes out in rain, ages,
-/// and off an infiniburn block burns out once older than 3 (or at once without a sturdy
-/// floor). Fire does not spread or burn blocks.
-pub fn fire_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
-    schedule_fire_tick(level, pos);
-    let below = level.block(pos.below());
-    let sturdy = crate::behaviour::sturdy(below, crate::pos::Direction::Up, kiln_data::block_logic::Support::Full);
-    if !sturdy {
-        // `canSurvive`: a sturdy floor (or flammable neighbours, which Kiln does not know).
-        crate::remove_block(level, pos, false);
-        return;
-    }
-    let infiniburn = tags::is(below, level.rules().infiniburn);
-    let age = state::get_int(s, "age");
-    if !infiniburn && level.weather().raining && near_rain(level, pos) && level.random().next_float() < 0.2 + age as f32 * 0.03 {
-        crate::remove_block(level, pos, false);
-        return;
-    }
-    let aged = 15.min(age + level.random().next_int_bounded(3) / 2);
-    if age != aged {
-        crate::set_block(level, pos, state::set_int(s, "age", aged), crate::flags::NONE);
-    }
-    if !infiniburn {
-        if age > 3 {
-            crate::remove_block(level, pos, false);
-        }
-        return;
-    }
-    if age == 15 && level.random().next_int_bounded(4) == 0 {
-        crate::remove_block(level, pos, false);
-    }
-}
-
 /// `LightningRodBlock.onLightningStrike`: powered for 8 ticks, with the spark particles.
 pub fn lightning_strike<L: Level>(level: &mut L, pos: BlockPos) {
     let s = level.block(pos);

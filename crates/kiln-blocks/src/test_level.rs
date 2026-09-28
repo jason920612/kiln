@@ -62,6 +62,8 @@ pub struct TestLevel {
     /// Biome climates for precipitation: (biome position, read position) to the climate.
     #[allow(clippy::type_complexity)]
     pub climate: Option<Box<dyn Fn(BlockPos, BlockPos) -> Option<crate::weather::Climate>>>,
+    /// `Difficulty.getId` (fire spread odds).
+    pub difficulty: i32,
 }
 
 impl TestLevel {
@@ -86,6 +88,7 @@ impl TestLevel {
             reads: std::cell::Cell::new(0),
             weather: Default::default(),
             climate: None,
+            difficulty: 2,
         }
     }
 
@@ -275,5 +278,9 @@ impl Level for TestLevel {
 
     fn climate(&self, biome_pos: BlockPos, pos: BlockPos) -> Option<crate::weather::Climate> {
         self.climate.as_ref().and_then(|f| f(biome_pos, pos))
+    }
+
+    fn difficulty(&self) -> i32 {
+        self.difficulty
     }
 }

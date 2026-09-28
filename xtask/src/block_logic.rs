@@ -247,6 +247,23 @@ pub fn gen_block_items(items: &Value) -> Result<String> {
     Ok(s)
 }
 
+/// `flammability.rs`: `FireBlock`'s ignite and burn odds of each flammable block (block
+/// registry order).
+pub fn gen_flammability(rows: &Value) -> Result<String> {
+    let mut s = String::from(HEADER);
+    s.push_str("//! `FireBlock.setFlammable` registrations: (block, ignite odds, burn odds).\n\n");
+    s.push_str("pub static FLAMMABILITY: &[(&str, u8, u8)] = &[\n");
+    for r in rows.as_array().context("flammability.json")? {
+        let block = r["block"].as_str().context("block")?;
+        let ignite = r["ignite"].as_u64().context("ignite")?;
+        let burn = r["burn"].as_u64().context("burn")?;
+        ensure!(ignite <= 255 && burn <= 255, "odds of {block} out of range");
+        writeln!(s, "    ({block:?}, {ignite}, {burn}),")?;
+    }
+    s.push_str("];\n");
+    Ok(s)
+}
+
 fn screaming(name: &str) -> String {
     let mut out = String::new();
     for (i, ch) in name.chars().enumerate() {

@@ -141,13 +141,33 @@ impl Fireball {
     }
 }
 
-/// `BaseFireBlock.getState`: soul fire on soul blocks, else fire.
+/// `BaseFireBlock.getState`: soul fire on soul blocks, else fire (`FireBlock
+/// .getStateForPlacement`: off a burnable or sturdy floor, a face toward each burnable side).
 fn fire_state(level: &dyn EntityLevel, p: crate::math::BlockPos) -> u16 {
+    use kiln_data::blocks::default_state as d;
     let below = level.block(p.below());
     if crate::blocks::block_name(below) == "minecraft:soul_sand" || crate::blocks::block_name(below) == "minecraft:soul_soil" {
-        return kiln_data::blocks::default_state::SOUL_FIRE;
+        return d::SOUL_FIRE;
     }
-    kiln_data::blocks::default_state::FIRE
+    let can_burn = |s: u16| {
+        let wet = kiln_data::blocks_types::block_of(s).property(s, "waterlogged") == Some("true");
+        !wet && kiln_data::block_logic::flammability(s).0 > 0
+    };
+    // Face 1 is up in `Direction` order (down, up, north, south, west, east).
+    if can_burn(below) || kiln_data::block_logic::face_sturdy(below, 1, kiln_data::block_logic::Support::Full) {
+        return d::FIRE;
+    }
+    let fire = kiln_data::blocks_types::block_of(d::FIRE);
+    let sides = [
+        ("up", p.above()),
+        ("north", p.offset(0, 0, -1)),
+        ("south", p.offset(0, 0, 1)),
+        ("west", p.offset(-1, 0, 0)),
+        ("east", p.offset(1, 0, 0)),
+    ];
+    sides.iter().fold(d::FIRE, |s, &(name, at)| {
+        fire.with_property(s, name, if can_burn(level.block(at)) { "true" } else { "false" }).unwrap_or(s)
+    })
 }
 
 /// `target.hurtServer(fireball source, amount)` for a mob, a player or another entity.

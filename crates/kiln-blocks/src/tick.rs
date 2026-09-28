@@ -81,6 +81,10 @@ pub fn tick_chunk_blocks<L: Level>(level: &mut L, chunk: ChunkKey, sections: &[(
             if block_props::randomly_ticks(s) {
                 behaviour::random_tick(level, s, pos);
             }
+            // `FluidState.randomTick` of the state read before the block's tick (lava).
+            if kiln_data::block_logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
+                crate::fire::lava_random_tick(level, pos);
+            }
         }
     }
 }

@@ -250,6 +250,11 @@ pub(crate) struct BlockEnv {
     pub menus: std::sync::Arc<kiln_inventory::Rules>,
     /// The level's weather and the biome climates.
     pub weather: crate::weather::WeatherEnv,
+    /// `minecraft:fire_spread_radius_around_player` (-1: everywhere).
+    pub fire_spread_radius: i32,
+    /// Where the level's non-spectator players stood when the tick began (fire spreads near
+    /// them; the same in every region).
+    pub fire_watchers: std::sync::Arc<Vec<[f64; 3]>>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -489,6 +494,20 @@ impl Level for RegionLevel<'_> {
 
     fn block_light(&self, pos: BlockPos) -> i32 {
         self.cells.light_at(LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
+    }
+
+    fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
+        let r = self.env.fire_spread_radius;
+        let at = [pos.x as f64, pos.y as f64, pos.z as f64];
+        r == -1 || self.env.fire_watchers.iter().any(|p| (0..3).map(|i| (p[i] - at[i]) * (p[i] - at[i])).sum::<f64>().sqrt() < r as f64)
+    }
+
+    fn difficulty(&self) -> i32 {
+        i32::from(self.env.mobs.difficulty)
+    }
+
+    fn increased_fire_burnout(&self, pos: BlockPos) -> bool {
+        self.env.weather.climates.as_ref().is_some_and(|c| c.increased_fire_burnout(crate::weather::biome_at(self.cells, self.env, pos)))
     }
 }
 
@@ -1066,6 +1085,8 @@ mod tests {
             spawn_table: None,
             menus: Default::default(),
             weather: Default::default(),
+            fire_spread_radius: 128,
+            fire_watchers: Default::default(),
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {
