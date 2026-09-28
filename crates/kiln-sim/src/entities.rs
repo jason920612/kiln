@@ -980,14 +980,14 @@ fn carry_out(
                 weapon,
             };
             let _ = attacker;
-            let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, n as u64);
+            let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
             for (k, stack) in crate::mobs::roll(&loot, &table, &ctx, seed).into_iter().enumerate() {
-                let h = crate::mobs::loot_seed(env.seed, env.game_time, id, (n as u64) << 8 | k as u64) as u64;
+                let h = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174_00 | k as u64) as u64;
                 spawns.push(crate::mobs::drop_item(stack, arr(pos), h));
             }
         }
-        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, spawns, id, table, pos, n, 0.0),
-        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, spawns, id, &table, pos, n, 1.0),
+        Event::GiftLoot { entity: id, table, pos } => loot_drop(env, spawns, id, table, pos, 0x6966, 0.0),
+        Event::ShearLoot { entity: id, table, pos } => loot_drop(env, spawns, id, &table, pos, 0x7368, 1.0),
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}

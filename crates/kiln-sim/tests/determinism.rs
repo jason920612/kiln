@@ -5,8 +5,8 @@
 //! ticks, and random ticks run in every chunk near a player. Players of a group hit each
 //! other: damage, hurt cooldowns and knockback are part of the state; so are mob effects
 //! (poison, regeneration, speed) and burning in the fire lit in each group. Every group gets
-//! the eight mobs Kiln simulates: they wander, path, chase and hit the survival players,
-//! and the skeletons shoot.
+//! the eight first mob types Kiln simulated (they wander, path, chase and hit the survival
+//! players, and the skeletons shoot) and a row of every other mob type.
 
 use kiln_link::{PlayIn, ToSim};
 use kiln_proto::packets::ItemStack;
@@ -121,6 +121,11 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
                 for (k, m) in mobs.iter().enumerate() {
                     let (x, z) = (8.5 + ox + 6.0 * (k as f64 - 3.5), 8.5 + oz + 7.0);
                     inbox.push(ToSim::Console(format!("summon minecraft:{m} {x} {SURFACE_Y} {z}")));
+                }
+                // Every other mob type in a second row behind them.
+                for (k, kind) in kiln_entity::mob::ALL_KINDS[8..].iter().enumerate() {
+                    let (x, z) = (8.5 + ox + 2.0 * (k as f64 - 12.0), 8.5 + oz - 9.0);
+                    inbox.push(ToSim::Console(format!("summon {} {x} {SURFACE_Y} {z}", kind.type_name())));
                 }
             }
         }
