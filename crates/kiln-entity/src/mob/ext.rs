@@ -128,7 +128,7 @@ impl<T: Any + Debug + Clone + Send + Sync> MobExt for T {
 
 impl Clone for Box<dyn MobExt> {
     fn clone(&self) -> Self {
-        self.box_clone()
+        (**self).box_clone()
     }
 }
 
