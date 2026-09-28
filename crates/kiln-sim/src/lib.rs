@@ -23,6 +23,7 @@
 mod advancements;
 mod blocks;
 mod combat;
+mod command_data;
 mod commands;
 mod consume;
 mod xp;

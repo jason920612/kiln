@@ -999,6 +999,183 @@ scoreboard objectives remove st_jump
 scoreboard objectives remove st_mined
 scoreboard objectives remove st_deaths
 scoreboard objectives remove st_health
+
+# data storage
+data get storage kiln:t
+data get storage kiln:t a
+data merge storage kiln:t {a:1,b:{c:"x",d:2.5d},l:[1,2,3],s:"hello world",f:1.5f,by:3b}
+data merge storage kiln:t {a:1}
+data get storage kiln:t
+data get storage kiln:t a
+data get storage kiln:t b
+data get storage kiln:t b.c
+data get storage kiln:t b.d
+data get storage kiln:t b.d 10
+data get storage kiln:t b.d -0.5
+data get storage kiln:t f 3
+data get storage kiln:t by
+data get storage kiln:t l
+data get storage kiln:t l[]
+data get storage kiln:t l[1]
+data get storage kiln:t l[-1]
+data get storage kiln:t l[5]
+data get storage kiln:t s
+data get storage kiln:t s 2
+data get storage kiln:t nope
+data get storage kiln:t b.nope.deep
+data get storage kiln:t b.c.deep
+data get storage kiln:t {a:1}
+data get storage kiln:t {a:2}
+data get storage kiln:other
+data modify storage kiln:t l append value 4
+data modify storage kiln:t l prepend value 0
+data modify storage kiln:t l insert 2 value 9
+data modify storage kiln:t l insert -1 value 8
+data modify storage kiln:t l insert 100 value 8
+data get storage kiln:t l
+data modify storage kiln:t l[0] set value 7
+data modify storage kiln:t l[0] set value 7
+data modify storage kiln:t l[] set value 1
+data get storage kiln:t l
+data modify storage kiln:t b merge value {e:1b}
+data modify storage kiln:t b merge value {e:1b}
+data modify storage kiln:t a merge value {e:1b}
+data modify storage kiln:t b merge value 5
+data modify storage kiln:t new.path set value "v"
+data get storage kiln:t new
+data modify storage kiln:t a append value 1
+data modify storage kiln:t s2 set string storage kiln:t s
+data modify storage kiln:t s3 set string storage kiln:t s 6
+data modify storage kiln:t s4 set string storage kiln:t s 0 5
+data modify storage kiln:t s5 set string storage kiln:t s -5
+data modify storage kiln:t s6 set string storage kiln:t s 3 1
+data modify storage kiln:t s7 set string storage kiln:t a
+data modify storage kiln:t s8 set string storage kiln:t f
+data modify storage kiln:t s9 set string storage kiln:t b
+data modify storage kiln:t s10 set string storage kiln:t
+data get storage kiln:t s4
+data get storage kiln:t s5
+data get storage kiln:t s7
+data get storage kiln:t s8
+data modify storage kiln:t copy set from storage kiln:t b
+data modify storage kiln:t copy2 set from storage kiln:t
+data modify storage kiln:t copy set from storage kiln:t nope
+data get storage kiln:t copy
+data modify storage kiln:t l append from storage kiln:t l[]
+data get storage kiln:t l
+data modify storage kiln:t merged merge from storage kiln:t b
+data get storage kiln:t merged
+data remove storage kiln:t l[0]
+data remove storage kiln:t l[]
+data remove storage kiln:t l[]
+data remove storage kiln:t nope
+data remove storage kiln:t b.c
+data get storage kiln:t b
+data modify storage kiln:t x set value [B;1b,2b]
+data get storage kiln:t x
+data modify storage kiln:t x append value 3
+data get storage kiln:t x
+data modify storage kiln:t y set value [1L,2L]
+data get storage kiln:t y
+data modify storage kiln:t z set value 'it"s'
+data get storage kiln:t z
+data get storage kiln:t z 1
+execute store result storage kiln:t n int 1 run data get storage kiln:t y
+data get storage kiln:t n
+execute if data storage kiln:t n
+execute if data storage kiln:t nope
+data merge storage kiln:t {}
+data get storage kiln:t missing 1
+data get
+
+# data blocks
+! setblock 4 100 4 chest{Items:[{Slot:0b,id:"minecraft:stone",count:3}]}
+data get block 4 100 4 Items
+data get block 4 100 4 Items[0].count
+data get block 4 100 4 Items[0].count 2.5
+data get block 4 100 4 Items[0].id
+data get block 4 100 4 Items[0].id 1
+data get block 4 100 4 Items[5]
+data get block 4 100 4 id
+data get block 5 100 4
+data get block 100000 100 4
+data merge block 4 100 4 {CustomName:"Box"}
+data merge block 4 100 4 {CustomName:"Box"}
+data get block 4 100 4 CustomName
+data remove block 4 100 4 CustomName
+data remove block 4 100 4 CustomName
+data modify block 4 100 4 Items[0].count set value 5
+data get block 4 100 4 Items[0].count
+data modify block 4 100 4 Items append value {Slot:1b,id:"minecraft:dirt",count:1}
+data get block 4 100 4 Items[1].id
+data modify storage kiln:t fromblock set from block 4 100 4 Items[0]
+data get storage kiln:t fromblock
+execute store result block 4 100 4 Items[0].count byte 1 run data get storage kiln:t a
+data get block 4 100 4 Items[0].count
+execute if data block 4 100 4 Items[{id:"minecraft:dirt"}]
+execute unless data block 4 100 4 Items[{id:"minecraft:dirt"}]
+
+# data entities
+data get entity Diff0 XpLevel
+data get entity Diff0 foodLevel
+data get entity Diff0 Health
+data get entity Diff0 Health 2
+data get entity Diff0 SelectedItemSlot
+data get entity Diff0 Dimension
+data get entity Diff0 nope
+data merge entity Diff0 {Health:5f}
+data modify entity Diff0 Health set value 5f
+data remove entity Diff0 Health
+data remove entity Diff0 nope
+data get entity Nobody
+data get entity @e[type=minecraft:pig]
+execute if data entity Diff0 Health
+execute if data entity Diff0 nope
+! kill @e[type=!minecraft:player]
+! summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b}
+data get entity @e[type=minecraft:pig,limit=1] Health
+data get entity @e[type=minecraft:pig,limit=1] NoAI
+data merge entity @e[type=minecraft:pig,limit=1] {Health:5f}
+data merge entity @e[type=minecraft:pig,limit=1] {Health:5f}
+data get entity @e[type=minecraft:pig,limit=1] Health
+data modify entity @e[type=minecraft:pig,limit=1] Health set value 7f
+data get entity @e[type=minecraft:pig,limit=1] Health
+execute store result entity @e[type=minecraft:pig,limit=1] Health float 0.5 run data get storage kiln:t a
+data get entity @e[type=minecraft:pig,limit=1] Health
+execute if data entity @e[type=minecraft:pig,limit=1] {NoAI:1b}
+
+# tags
+tag Diff0 list
+tag @a list
+tag Diff0 add a
+tag Diff0 add a
+tag Diff0 add b
+tag Diff0 list
+tag @a add a
+tag @a add c
+tag @a list
+tag Other0 list
+execute if entity @a[tag=a]
+execute if entity @a[tag=b]
+execute if entity @a[tag=!b]
+execute if entity @a[tag=]
+tag Diff0 remove a
+tag Diff0 remove a
+tag @a remove zz
+tag @a remove c
+tag @a list
+tag @e[type=minecraft:pig] add pigtag
+tag @e[type=minecraft:pig] list
+data get entity @e[type=minecraft:pig,limit=1] Tags
+execute if entity @e[tag=pigtag]
+tag @e list
+tag Nobody add x
+tag Diff0 add "quoted"
+tag Diff0 add x y
+data get entity Diff0 Tags
+! tag @a remove a
+! tag @a remove b
+! kill @e[type=!minecraft:player]
 """
 
 

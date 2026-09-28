@@ -149,6 +149,17 @@ impl Sim {
 
     pub(crate) fn save_player(&self, p: &Player) {
         let Some(storage) = &self.storage else { return };
+        let nbt = self.player_nbt(p);
+        if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
+            warn!("failed to save player data for {}: {e}", p.name);
+        }
+        self.save_stats(p);
+        self.save_player_advancements(p);
+    }
+
+    /// The player's saved compound (`ServerPlayer.saveWithoutId` as far as Kiln models it,
+    /// with everything else as it was loaded).
+    pub(crate) fn player_nbt(&self, p: &Player) -> Tag {
         let mut data = p.saved.clone();
         data.pos = Some(p.pos);
         data.rot = Some(p.rot);
@@ -203,11 +214,7 @@ impl Sim {
                 fields.push(("active_effects".to_owned(), list));
             }
         }
-        if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
-            warn!("failed to save player data for {}: {e}", p.name);
-        }
-        self.save_stats(p);
-        self.save_player_advancements(p);
+        nbt
     }
 
     /// Loads the scoreboard and custom boss bars (`data/minecraft/scoreboard.dat`,

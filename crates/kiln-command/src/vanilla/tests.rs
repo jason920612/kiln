@@ -1019,7 +1019,9 @@ fn commands_packet_flags() {
     // Functions: function, schedule function/clear, datapack enable/after/before/disable,
     // execute if/unless function.
     // Advancement criteria: grant and revoke only.
-    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2 + 2);
+    // Data storage ids: 4 targets (get, merge, remove, modify) and the from/string sources of
+    // 5 modifications on 3 target kinds; tag remove's names.
+    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2 + 2 + 4 + 30 + 1);
     assert!(res4.contains(&"stop".to_owned()) && res4.contains(&"tp".to_owned()) && !res4.contains(&"msg".to_owned()));
 }
 

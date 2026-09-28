@@ -63,17 +63,19 @@ pub struct PlayerRef {
     pos: [f64; 3],
     rot: [f32; 2],
     /// The player's level.
-    dim: &'static str,
+    pub(crate) dim: &'static str,
     mode: GameMode,
     /// The player's team, and their name as the team formats it.
     team: Option<String>,
     display: Text,
     /// A non-player entity: its id, type and eye height (`conn` is then [`NO_CONN`]).
-    entity: Option<i32>,
+    pub(crate) entity: Option<i32>,
     kind: &'static str,
     size: [f64; 2],
     eye: f64,
     alive: bool,
+    /// `Entity.entityTags`.
+    tags: Vec<String>,
 }
 
 /// The connection of a non-player selector target: no player has it.
@@ -96,6 +98,7 @@ impl PlayerRef {
             size: [0.6, 1.8],
             eye: 1.62f32 as f64,
             alive: true,
+            tags: p.tags(),
         }
     }
 
@@ -122,6 +125,7 @@ impl PlayerRef {
             size: [e.kind.width as f64, e.kind.height as f64],
             eye,
             alive,
+            tags: e.phys.as_ref().map_or_else(Vec::new, |p| crate::command_data::tags_in(&Tag::Compound(p.extra.clone()))),
         }
     }
 }
@@ -174,6 +178,9 @@ impl SelectorTarget for PlayerRef {
     }
     fn game_mode(&self) -> Option<GameMode> {
         self.entity.is_none().then_some(self.mode)
+    }
+    fn tags(&self) -> &[String] {
+        &self.tags
     }
 }
 
@@ -238,7 +245,7 @@ impl Sim {
     /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
     /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
     /// the contents changed.
-    fn load_block_entity(&mut self, dim: crate::DimId, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
+    pub(crate) fn load_block_entity(&mut self, dim: crate::DimId, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
         let [x, y, z] = pos;
         let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
         let chunk_pos = ChunkPos::of_block(x, z);
@@ -1111,6 +1118,41 @@ impl Host for Sim {
     /// Kept in memory only (not saved with the world yet).
     fn storage_mut(&mut self) -> Option<&mut kiln_command::CommandStorage> {
         Some(&mut self.commands.storage)
+    }
+
+    // ---- data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing and fetchprofile (see `command_data`) ----------------------------------------------
+
+    fn entity_data(&mut self, entity: &PlayerRef) -> Option<Tag> {
+        self.entity_saved_data(entity)
+    }
+
+    fn set_entity_data(&mut self, entity: &PlayerRef, data: &Tag) -> Result<(), CommandError> {
+        self.load_entity_data(entity, data)
+    }
+
+    fn set_block_entity_data(&mut self, dimension: &str, pos: [i32; 3], data: &Tag) -> Result<(), CommandError> {
+        self.set_block_entity_nbt(dimension, pos, data);
+        Ok(())
+    }
+
+    fn storage_ids(&self) -> Vec<String> {
+        self.commands.storage.keys().map(str::to_owned).collect()
+    }
+
+    fn entity_tags(&mut self, entity: &PlayerRef) -> Vec<String> {
+        match entity.entity {
+            None => self.players.get(&entity.conn).map_or_else(Vec::new, Player::tags),
+            Some(_) => entity.tags.clone(),
+        }
+    }
+
+    fn add_entity_tag(&mut self, entity: &PlayerRef, tag: &str) -> bool {
+        self.change_entity_tag(entity, tag, true)
+    }
+
+    fn remove_entity_tag(&mut self, entity: &PlayerRef, tag: &str) -> bool {
+        self.change_entity_tag(entity, tag, false)
     }
 }
 

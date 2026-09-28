@@ -320,8 +320,9 @@ fn data_conditionals<S: Host + 'static>(exec: NodeId, positive: bool) -> Builder
             argument("path", ArgumentType::NbtPath),
             positive,
             |c: &CommandContext<S>, s: &mut S| {
-                c.selector("source").entity(s)?;
-                Err(CommandError::unsupported("Entity data"))
+                let e = c.selector("source").entity(s)?;
+                let data = super::data::Accessor::Entity(e).get(s)?;
+                Ok(c.nbt_path("path").count_matching(&data) as i32)
             },
         ))))
         .then(literal("storage").then(argument("source", ArgumentType::ResourceLocation).then(numeric_conditional(
@@ -428,13 +429,44 @@ pub(super) fn score_holder_arg<S: Host + 'static>(name: &str, multiple: bool) ->
     })
 }
 
-/// `<path> (byte|short|int|long|float|double) <scale>` under an NBT store target.
-fn nbt_target<S: Host + 'static>(exec: NodeId, target: Builder<S>, check: Test<S>) -> Builder<S> {
+/// Resolves the accessor of an NBT store target (`ArgProvider.access`).
+type AccessFn<S> = fn(&CommandContext<S>, &mut S) -> Result<super::data::Accessor<<S as crate::host::Source>::Entity>>;
+
+/// `<path> (byte|short|int|long|float|double) <scale>` under an NBT store target:
+/// `storeData`, whose failures (no such parent, player data) are dropped as in vanilla.
+fn nbt_target<S: Host + 'static>(exec: NodeId, target: Builder<S>, access: AccessFn<S>, result: bool) -> Builder<S> {
+    use super::data::Accessor;
+    /// The accessor without the entity handle (callbacks must be `Send`).
+    enum Key {
+        Block(String, [i32; 3]),
+        Entity(uuid::Uuid),
+        Storage(String),
+    }
     let path = NUMERIC_TYPES.into_iter().fold(argument("path", ArgumentType::NbtPath), |p, ty| {
         p.then(literal(ty).then(argument("scale", ArgumentType::double()).redirect_with(exec, move |c, s: &mut S| {
-            check(c, s)?;
-            // Only reached for targets whose writes vanilla drops silently (players).
-            Ok(s.stack().clone())
+            let key = match access(c, s)? {
+                Accessor::Block { dimension, pos } => Key::Block(dimension, pos),
+                Accessor::Entity(e) => Key::Entity(e.uuid()),
+                Accessor::Storage(id) => Key::Storage(id),
+            };
+            let path = c.nbt_path("path").clone();
+            let scale = c.double("scale");
+            Ok(s.stack().clone().with_callback(Arc::new(move |s: &mut S, success, value| {
+                let v = if result { value } else { success as i32 };
+                let acc = match &key {
+                    Key::Block(dimension, pos) => Accessor::Block { dimension: dimension.clone(), pos: *pos },
+                    Key::Entity(uuid) => match s.entity_by_uuid(*uuid) {
+                        Some(e) => Accessor::Entity(e),
+                        None => return,
+                    },
+                    Key::Storage(id) => Accessor::Storage(id.clone()),
+                };
+                if let Ok(mut data) = acc.get(s)
+                    && path.set(&mut data, &numeric_tag(ty, v, scale)).is_ok()
+                {
+                    let _ = acc.set(s, data);
+                }
+            })))
         })))
     });
     target.then(path)
@@ -477,16 +509,23 @@ fn stores<S: Host + 'static>(exec: NodeId, b: Builder<S>, result: bool) -> Build
             .then(literal("value").redirect_with(exec, bar(false)))
             .then(literal("max").redirect_with(exec, bar(true)))
     }))
-    .then(literal("block").then(nbt_target(exec, argument("target", ArgumentType::BlockPos), |c, s| {
-        let dimension = s.dimension().to_owned();
-        let pos = loaded_block_pos(c, s, "target", &dimension)?;
-        s.block_entity(&dimension, pos).ok_or_else(block_not_entity)?;
-        Err(CommandError::unsupported("Storing into block entity data"))
-    })))
-    .then(literal("entity").then(nbt_target(exec, argument("target", ArgumentType::entity()), |c, s| {
-        let target = c.selector("target").entity(s)?;
-        if target.is_player() { Ok(true) } else { Err(CommandError::unsupported("Storing into entity data")) }
-    })))
+    .then(literal("block").then(nbt_target(
+        exec,
+        argument("target", ArgumentType::BlockPos),
+        |c, s| {
+            let dimension = s.dimension().to_owned();
+            let pos = loaded_block_pos(c, s, "target", &dimension)?;
+            s.block_entity(&dimension, pos).ok_or_else(block_not_entity)?;
+            Ok(super::data::Accessor::Block { dimension, pos })
+        },
+        result,
+    )))
+    .then(literal("entity").then(nbt_target(
+        exec,
+        argument("target", ArgumentType::entity()),
+        |c, s| Ok(super::data::Accessor::Entity(c.selector("target").entity(s)?)),
+        result,
+    )))
     .then(literal("storage").then(storage_target(exec, result)))
 }
 

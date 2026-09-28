@@ -114,6 +114,24 @@ pub enum ArgumentType {
     /// `minecraft:dialog`: a `minecraft:dialog` registry id ([`ArgumentValue::Identifier`]) or
     /// an inline definition ([`ArgumentValue::Nbt`]).
     Dialog,
+    /// `minecraft:nbt_tag`: any SNBT value.
+    NbtTag,
+    /// `minecraft:context_int_provider` / `minecraft:context_float_provider`: an inline number
+    /// provider ([`ArgumentValue::Nbt`]); ids name data-driven providers, which Kiln has none of.
+    ContextProvider { float: bool },
+    /// `minecraft:item_slot`: a slot name such as `container.5` or `weapon.mainhand`
+    /// ([`ArgumentValue::Integer`]).
+    ItemSlot,
+    /// `minecraft:item_slots`: a slot range such as `container.*` ([`ArgumentValue::String`]
+    /// with the name; see [`item_slots`]).
+    ItemSlots,
+    /// `minecraft:loot_table`, `minecraft:loot_modifier`: an id or an inline definition
+    /// ([`ArgumentValue::Identifier`] or [`ArgumentValue::Nbt`]).
+    LootResource { registry: &'static str },
+    /// `minecraft:uuid`.
+    Uuid,
+    /// `minecraft:swing_animation`: `whack` or `stab`... ([`ArgumentValue::String`]).
+    SwingAnimation,
 }
 
 impl ArgumentType {
@@ -232,6 +250,17 @@ impl ArgumentType {
             ArgumentType::NbtCompound => Parser::Plain("minecraft:nbt_compound_tag"),
             ArgumentType::TeamColor => Parser::Plain("minecraft:team_color"),
             ArgumentType::Dialog => Parser::Plain("minecraft:dialog"),
+            ArgumentType::NbtTag => Parser::Plain("minecraft:nbt_tag"),
+            ArgumentType::ContextProvider { float: false } => Parser::Plain("minecraft:context_int_provider"),
+            ArgumentType::ContextProvider { float: true } => Parser::Plain("minecraft:context_float_provider"),
+            ArgumentType::ItemSlot => Parser::Plain("minecraft:item_slot"),
+            ArgumentType::ItemSlots => Parser::Plain("minecraft:item_slots"),
+            ArgumentType::LootResource { registry } => Parser::Plain(match registry {
+                "minecraft:loot_table" => "minecraft:loot_table",
+                _ => "minecraft:loot_modifier",
+            }),
+            ArgumentType::Uuid => Parser::Plain("minecraft:uuid"),
+            ArgumentType::SwingAnimation => Parser::Plain("minecraft:swing_animation"),
         }
     }
 
@@ -484,6 +513,58 @@ impl ArgumentType {
                     }
                     ArgumentValue::Identifier(id)
                 }
+            }
+            ArgumentType::NbtTag => ArgumentValue::Nbt(snbt::parse_tag(reader)?),
+            ArgumentType::ContextProvider { float } => {
+                let tag = snbt::parse_tag(reader)?;
+                if let Tag::String(id) = &tag {
+                    // An id of a data-driven provider (none are loaded).
+                    let registry = if float { "minecraft:context_float_provider" } else { "minecraft:context_int_provider" };
+                    let id = Identifier::parse(id).map_or_else(|| id.clone(), |i| i.to_string());
+                    return Err(CommandError::new(tr!("argument.resource_or_id.no_such_element", id, registry)).at(reader));
+                }
+                ArgumentValue::Nbt(tag)
+            }
+            ArgumentType::ItemSlot | ArgumentType::ItemSlots => {
+                let name = read_until_space(reader).to_owned();
+                let Some(slots) = crate::slots::by_name(&name) else {
+                    return Err(CommandError::new(tr!("slot.unknown", name.as_str())).at(reader));
+                };
+                if matches!(self, ArgumentType::ItemSlot) {
+                    if slots.len() != 1 {
+                        return Err(CommandError::new(tr!("slot.only_single_allowed", name.as_str())).at(reader));
+                    }
+                    ArgumentValue::Integer(slots[0])
+                } else {
+                    ArgumentValue::String(name)
+                }
+            }
+            ArgumentType::LootResource { .. } => {
+                // Ids are looked up when the command runs (the host has the loot data).
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    ArgumentValue::Nbt(snbt::parse_tag(reader)?)
+                } else {
+                    ArgumentValue::Identifier(Identifier::read(reader)?)
+                }
+            }
+            ArgumentType::Uuid => {
+                let rest = reader.remaining();
+                let len = rest.find(|c: char| !(c == '-' || c.is_ascii_hexdigit())).unwrap_or(rest.len());
+                match crate::selector::java_uuid_from_string(&rest[..len]) {
+                    Some(u) if len > 0 => {
+                        reader.set_cursor(reader.cursor() + len);
+                        ArgumentValue::String(u.to_string())
+                    }
+                    _ => return Err(CommandError::new(tr!("argument.uuid.invalid")).at(reader)),
+                }
+            }
+            ArgumentType::SwingAnimation => {
+                let s = reader.read_unquoted_string();
+                if !["none", "whack", "stab"].contains(&s) {
+                    let s = s.to_owned();
+                    return Err(CommandError::new(tr!("argument.swing_animation.invalid", s)).at(reader));
+                }
+                ArgumentValue::String(s.to_owned())
             }
             ArgumentType::Component => ArgumentValue::Component(Box::new(component::parse(reader)?)),
             ArgumentType::Style => {

@@ -5,7 +5,9 @@ mod advancement;
 mod blocks;
 mod bossbar;
 mod chat;
+mod data;
 mod effect;
+mod entity;
 pub mod experience;
 mod summon;
 mod execute;
@@ -16,8 +18,10 @@ mod players;
 mod protocol;
 mod scoreboard;
 mod server;
+mod tag;
 mod team;
 mod title;
+mod tracker;
 
 use crate::arguments::GameProfileArg;
 use crate::dispatcher::Dispatcher;
@@ -83,6 +87,15 @@ pub const COMMANDS: &[&str] = &[
     "summon",
     "advancement",
     "recipe",
+    // data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing, fetchprofile
+    "data",
+    "tag",
+    "rotate",
+    "spectate",
+    "swing",
+    "ride",
+    "damage",
 ];
 
 /// Registers every built-in command.
@@ -131,6 +144,15 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     server::kiln(d);
     advancement::advancement(d);
     advancement::recipe(d);
+    // data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing, fetchprofile
+    data::data(d);
+    tag::tag(d);
+    entity::rotate(d);
+    entity::spectate(d);
+    entity::swing(d);
+    entity::ride(d);
+    entity::damage(d);
 }
 
 /// `getEntityOrException`.

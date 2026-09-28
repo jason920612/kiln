@@ -757,6 +757,78 @@ pub trait Host: SelectorWorld {
     }
     /// Sends a play packet to one player (titles and the action bar).
     fn send_packet(&mut self, _player: &Self::Entity, _packet: Bytes) {}
+
+    // ---- data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing and fetchprofile -----------------------------------------------------------------
+
+    /// `NbtPredicate.getEntityTagToCompare`: the entity's saved data (`saveWithoutId`), with the
+    /// selected item as `SelectedItem` for players; `None` if the host cannot save it.
+    fn entity_data(&mut self, _entity: &Self::Entity) -> Option<Tag> {
+        None
+    }
+    /// `EntityDataAccessor.setData` for a non-player: `Entity.load(data)` keeping its UUID.
+    fn set_entity_data(&mut self, _entity: &Self::Entity, _data: &Tag) -> Result<(), CommandError> {
+        Err(CommandError::unsupported("Entity data"))
+    }
+    /// `BlockDataAccessor.setData`: loads `data` into the block entity at `pos`.
+    fn set_block_entity_data(&mut self, _dimension: &str, _pos: [i32; 3], _data: &Tag) -> Result<(), CommandError> {
+        Err(CommandError::unsupported("Block entity data"))
+    }
+    /// Command storage ids with data (`/data ... storage` suggestions).
+    fn storage_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// `Entity.entityTags`.
+    fn entity_tags(&mut self, entity: &Self::Entity) -> Vec<String> {
+        entity.tags().to_vec()
+    }
+    /// `Entity.addTag`: false when present or the entity has 1024 tags.
+    fn add_entity_tag(&mut self, _entity: &Self::Entity, _tag: &str) -> bool {
+        false
+    }
+    /// `Entity.removeTag`.
+    fn remove_entity_tag(&mut self, _entity: &Self::Entity, _tag: &str) -> bool {
+        false
+    }
+    /// `Entity.forceSetRotation` to an absolute `[yaw, pitch]`.
+    fn rotate_entity(&mut self, _entity: &Self::Entity, _rotation: [f32; 2]) {}
+    /// `LivingEntity.swing(hand, animation)`; false for entities that are not living.
+    fn swing_arm(&mut self, _entity: &Self::Entity, _offhand: bool, _animation: &str, _duration: i32) -> bool {
+        false
+    }
+    /// `Entity.getVehicle`.
+    fn vehicle_of(&mut self, _entity: &Self::Entity) -> Option<Self::Entity> {
+        None
+    }
+    /// `getSelfAndPassengers` (recursively).
+    fn self_and_passengers(&mut self, entity: &Self::Entity) -> Vec<Self::Entity> {
+        vec![entity.clone()]
+    }
+    /// `Entity.startRiding(vehicle, force, true)`: whether the entity now rides.
+    fn start_riding(&mut self, _entity: &Self::Entity, _vehicle: &Self::Entity) -> bool {
+        false
+    }
+    /// `Entity.stopRiding`.
+    fn stop_riding(&mut self, _entity: &Self::Entity) {}
+    /// `hurtServer` with a damage source of `damage_type` (`at` a position, `by` a direct
+    /// entity, `from` a causing entity); whether the entity was hurt.
+    fn damage_entity(
+        &mut self,
+        _entity: &Self::Entity,
+        _amount: f32,
+        _damage_type: &str,
+        _at: Option<[f64; 3]>,
+        _by: Option<&Self::Entity>,
+        _from: Option<&Self::Entity>,
+    ) -> bool {
+        false
+    }
+    /// `EntityType.clientTrackingRange() != 0`: whether a player may spectate it.
+    fn can_spectate(&self, _entity: &Self::Entity) -> bool {
+        true
+    }
+    /// `ServerPlayer.setCamera` (`None`: back to the player itself).
+    fn set_camera(&mut self, _player: &Self::Entity, _target: Option<&Self::Entity>) {}
 }
 
 #[cfg(test)]
