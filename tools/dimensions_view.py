@@ -86,7 +86,7 @@ def main():
     m = re.findall(r"to minecraft:the_nether at \[(-?[\d.]+), (-?[\d.]+), (-?[\d.]+)\]", e2e.server_log())
     if m:
         x, yy, z = (float(v) for v in m[-1])
-        console(f"execute in minecraft:the_nether run tp {name} {x} {yy} {z + 1.5} 0 10", 6)
+        console(f"execute in minecraft:the_nether run tp {name} {x} {yy} {z + 3.5} 180 10", 6)
         nether2 = e2e.WORK / "dimensions-view-nether-2.png"
         e2e.screenshot(pid, nether2)
         print("screenshot:", nether2)
