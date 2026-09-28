@@ -1005,7 +1005,7 @@ impl Sim {
 
         // P: region-local packets in parallel.
         let (local, exclusive) = self.route(packets);
-        let outs = self.run_regions(local, |w, env, _| w.apply_packets(env));
+        let outs = self.run_regions(local, |w, env, ctx| w.apply_packets(env, ctx));
         for (dim, out) in outs {
             self.dims[dim].spawns.extend(out.spawns);
             self.announce_deaths(out.deaths);

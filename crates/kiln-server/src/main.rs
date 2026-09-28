@@ -35,6 +35,10 @@ fn main() -> Result<()> {
         sim_config.pool.workers = n;
     }
     sim_config.unified_regions = std::env::var("KILN_REGIONS").is_ok_and(|v| v == "unified");
+    // KILN_TICK_WINDOWS=inline: every phase window inline (A/B measurements of the windows).
+    if std::env::var("KILN_TICK_WINDOWS").is_ok_and(|v| v == "inline") {
+        sim_config.pool.phase = kiln_sched::PhaseMode::Inline;
+    }
     // KILN_SCHEDULE=independent: regions too slow for the tick leave the lockstep (not
     // deterministic; lockstep is the default).
     if std::env::var("KILN_SCHEDULE").is_ok_and(|v| v == "independent") {

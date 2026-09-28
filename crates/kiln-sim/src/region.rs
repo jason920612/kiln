@@ -88,11 +88,23 @@ impl RegionWork<'_> {
         self.players.binary_search_by_key(&conn, |p| p.conn).ok()
     }
 
-    /// P1: applies the region's packets in arrival order.
-    pub fn apply_packets(&mut self, env: &Env) {
+    /// P1: applies the region's packets in arrival order. Runs of packets that each touch only
+    /// their player ([`is_player_packet`]) apply in windows, player by player in arrival
+    /// order; what they leave behind merges in arrival order. With plugins (which may deny
+    /// any packet) everything applies in order on this thread.
+    pub fn apply_packets(&mut self, env: &Env, ctx: &Ctx<'_>) {
         let mut out = BlockOut::default();
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
-        for (conn, pkt) in std::mem::take(&mut self.packets) {
+        let mut packets = std::mem::take(&mut self.packets).into_iter().peekable();
+        while let Some((conn, pkt)) = packets.next() {
+            if self.plugins.is_none() && is_player_packet(&pkt) {
+                let mut run = vec![(conn, pkt)];
+                while let Some(next) = packets.next_if(|(_, p)| is_player_packet(p)) {
+                    run.push(next);
+                }
+                self.apply_player_packets(run, env, ctx);
+                continue;
+            }
             let Some(i) = self.index_of(conn) else { continue };
             if let Some(h) = self.plugins.as_mut()
                 && crate::plugins::deny_packet(h, self.players[i], self.cells, env, &pkt, &mut self.out.spawns)
@@ -163,6 +175,38 @@ impl RegionWork<'_> {
             crate::plugins::after_packets(h, self.cells, env);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+    }
+
+    /// A run of [`is_player_packet`] packets: grouped by player (each keeps its order) and
+    /// applied in a window; drops and deaths merge in arrival order.
+    fn apply_player_packets(&mut self, run: Vec<(ConnId, PlayIn)>, env: &Env, ctx: &Ctx<'_>) {
+        let mut jobs: Vec<Vec<(usize, PlayIn)>> = (0..self.players.len()).map(|_| Vec::new()).collect();
+        for (seq, (conn, pkt)) in run.into_iter().enumerate() {
+            if let Some(i) = self.index_of(conn) {
+                jobs[i].push((seq, pkt));
+            }
+        }
+        let mut items: Vec<(&mut &mut Player, Vec<(usize, PlayIn)>)> =
+            self.players.iter_mut().zip(jobs).filter(|(_, j)| !j.is_empty()).collect();
+        let cells = &*self.cells;
+        let left = ctx.map_mut_with(PACKET_WINDOW, &mut items, |_, (p, pkts)| {
+            let mut left = Vec::new();
+            for (seq, pkt) in std::mem::take(pkts) {
+                let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
+                let rest = player_packet(p, cells, env, pkt, &mut spawns, &mut deaths);
+                debug_assert!(rest.is_none(), "a player packet came back");
+                if !spawns.is_empty() || !deaths.is_empty() {
+                    left.push((seq, spawns, deaths));
+                }
+            }
+            left
+        });
+        let mut left: Vec<_> = left.into_iter().flatten().collect();
+        left.sort_unstable_by_key(|(seq, _, _)| *seq);
+        for (_, spawns, deaths) in left {
+            self.out.spawns.extend(spawns);
+            self.out.deaths.extend(deaths);
+        }
     }
 
     /// L: connection upkeep, chunk streaming, tracking, light, then egress.
@@ -374,6 +418,8 @@ impl RegionWork<'_> {
 
 /// Players per window chunk in the per-player windows of a crowd (a few microseconds each).
 const PLAYER_WINDOW: Window = Window::new().item_ns(4_000);
+/// A player's packets of one run (mostly a move and a tick end).
+const PACKET_WINDOW: Window = Window::new().item_ns(2_000);
 
 /// What one player's tick leaves for its region, merged in connection order.
 #[derive(Default)]
@@ -466,10 +512,42 @@ impl World<'_> {
     }
 }
 
-/// A packet that touches only its player and the world around it.
-pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: PlayIn, fx: &mut Fx) {
+/// Whether [`player_packet`] handles the packet: it changes only its player and reads the
+/// region's blocks (movement, keep-alives, client settings, ...), so packets like these from
+/// different players may apply in parallel.
+pub(crate) fn is_player_packet(pkt: &PlayIn) -> bool {
+    match pkt {
+        PlayIn::AcceptTeleport { .. }
+        | PlayIn::KeepAlive { .. }
+        | PlayIn::Move { .. }
+        | PlayIn::PlayerAbilities { .. }
+        | PlayIn::ChunkBatchReceived { .. }
+        | PlayIn::ClientInformation(_)
+        | PlayIn::PlayerInput { .. }
+        | PlayIn::PlayerLoaded
+        | PlayIn::SetCarriedItem { .. }
+        | PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::RequestStats)
+        | PlayIn::ClientTickEnd => true,
+        PlayIn::PlayerCommand { action } => *action != STOP_SLEEPING,
+        _ => false,
+    }
+}
+
+/// `PlayerCommand`'s "Leave Bed" action.
+const STOP_SLEEPING: i32 = 0;
+
+/// The packets of [`is_player_packet`]; any other packet comes back for [`local_packet`]
+/// (`None`: handled, or ignored because the player is dead).
+pub(crate) fn player_packet(
+    p: &mut Player,
+    cells: &CellSet<Cell>,
+    env: &Env,
+    pkt: PlayIn,
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<crate::health::Death>,
+) -> Option<PlayIn> {
     if p.dead && !matches!(pkt, PlayIn::KeepAlive { .. } | PlayIn::ChunkBatchReceived { .. } | PlayIn::ClientTickEnd) {
-        return;
+        return None;
     }
     match pkt {
         PlayIn::AcceptTeleport { id } => {
@@ -491,9 +569,9 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         PlayIn::Move { pos, rot, on_ground } => {
             let (from, was_on_ground) = (p.pos, p.on_ground);
             let y0 = p.pos[1];
-            if handle_move(p, &*world.cells, env, pos, rot, on_ground) {
+            if handle_move(p, cells, env, pos, rot, on_ground) {
                 let feet = p.pos.map(|c| c.floor() as i32);
-                let in_fluid = world.cells.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
+                let in_fluid = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
                 let d = [p.pos[0] - from[0], p.pos[1] - from[1], p.pos[2] - from[2]];
                 // `handlePlayerKnownMovement`.
                 p.known_movement = d;
@@ -508,10 +586,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                     p.award_stat(*crate::player_stats::stat::JUMP, 1);
                 }
                 let eye = [feet[0], (p.pos[1] + if p.sneaking { 1.27 } else { 1.62 }).floor() as i32, feet[2]];
-                let eyes_in_water = world.cells.get_block(eye[0], eye[1], eye[2]).is_some_and(kiln_data::blocks_types::has_fluid);
-                let climbing = world.cells.get_block(feet[0], feet[1], feet[2]).is_some_and(crate::player_stats::climbable);
+                let eyes_in_water = cells.get_block(eye[0], eye[1], eye[2]).is_some_and(kiln_data::blocks_types::has_fluid);
+                let climbing = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(crate::player_stats::climbable);
                 p.movement_stats(d, in_fluid, eyes_in_water, climbing);
-                let mut ctx = damage_ctx(env, fx.spawns, fx.deaths);
+                let mut ctx = damage_ctx(env, spawns, deaths);
                 p.check_fall(p.pos[1] - y0, on_ground, in_fluid, &mut ctx);
             }
         }
@@ -534,16 +612,9 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.meta_dirty = true;
             }
         }
-        PlayIn::PlayerCommand { action } => {
+        PlayIn::PlayerCommand { action } if action != STOP_SLEEPING => {
             const START_SPRINTING: i32 = 1;
             const STOP_SPRINTING: i32 = 2;
-            const STOP_SLEEPING: i32 = 0;
-            if action == STOP_SLEEPING {
-                // `handlePlayerCommand`: the "Leave Bed" button.
-                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
-                crate::sleep::stop_sleep_in_bed(p, &mut level, false, true);
-                return;
-            }
             let sprinting = match action {
                 START_SPRINTING => true,
                 STOP_SPRINTING => false,
@@ -563,6 +634,30 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             if (0..9).contains(&slot) {
                 p.inv.selected = slot as usize;
             }
+        }
+        PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::RequestStats) => {
+            let pkt = p.stats.take_award_packet();
+            p.send(pkt);
+        }
+        PlayIn::ClientTickEnd => {
+            p.position_this_tick = false;
+            if !std::mem::take(&mut p.moved_this_tick) {
+                p.known_movement = [0.0; 3];
+            }
+        }
+        other => return Some(other),
+    }
+    None
+}
+
+/// A packet that touches only its player and the world around it.
+pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: PlayIn, fx: &mut Fx) {
+    let Some(pkt) = player_packet(p, world.cells, env, pkt, fx.spawns, fx.deaths) else { return };
+    match pkt {
+        // `handlePlayerCommand`: the "Leave Bed" button (the other actions are the player's own).
+        PlayIn::PlayerCommand { .. } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::sleep::stop_sleep_in_bed(p, &mut level, false, true);
         }
         PlayIn::SetCreativeSlot { slot, item } => {
             let Ok(stack) = kiln_inventory::click::creative_stack(item.as_ref()) else {
@@ -667,16 +762,6 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         PlayIn::SeenAdvancements { tab: Some(tab) } => {
             if let Some(pkt) = p.advancements.select_tab(Some(&tab)) {
                 p.send(pkt);
-            }
-        }
-        PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::RequestStats) => {
-            let pkt = p.stats.take_award_packet();
-            p.send(pkt);
-        }
-        PlayIn::ClientTickEnd => {
-            p.position_this_tick = false;
-            if !std::mem::take(&mut p.moved_this_tick) {
-                p.known_movement = [0.0; 3];
             }
         }
         _ => {}
