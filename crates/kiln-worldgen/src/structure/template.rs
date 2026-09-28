@@ -407,7 +407,93 @@ impl Template {
             let placed: Vec<BlockPos> = placed.iter().map(|(p, _)| *p).collect();
             super::shape::update_placed_shapes(r, flags, &placed, min, max);
         }
+        if !settings.ignore_entities {
+            self.place_entities(r, p, settings.mirror, settings.rotation, settings.pivot, bbox);
+        }
         true
+    }
+
+    /// `placeEntities`: the recorded entities inside `bbox`, moved and turned with the
+    /// template, go to their chunks' entity lists (`UUID` dropped). Vanilla then runs
+    /// `finalizeSpawn` on mobs when the settings ask for it (random equipment and the like
+    /// from the level's random); that is left to whoever loads the entity.
+    fn place_entities(&self, r: &mut Region, p: BlockPos, m: Mirror, rot: Rotation, pivot: BlockPos, bbox: Option<BoundingBox>) {
+        for e in &self.entities {
+            let bp = transform(e.block_pos, m, rot, pivot).offset(p.x, p.y, p.z);
+            if bbox.is_some_and(|b| !b.is_inside(bp)) {
+                continue;
+            }
+            let v = transform_vec(e.pos, m, rot, pivot);
+            let pos = [v[0] + p.x as f64, v[1] + p.y as f64, v[2] + p.z as f64];
+            let Tag::Compound(mut fields) = e.nbt.clone() else { continue };
+            fields.retain(|(k, _)| k != "UUID");
+            let rotation = fields.iter().find(|(k, _)| k == "Rotation").and_then(|(_, v)| v.as_list()).map(|l| l.to_vec());
+            let yaw = rotation.as_ref().and_then(|l| l.first()).and_then(|t| t.as_f64()).unwrap_or(0.0) as f32;
+            let pitch = rotation.as_ref().and_then(|l| l.get(1)).and_then(|t| t.as_f64()).unwrap_or(0.0) as f32;
+            let turned = entity_rotate(yaw, rot) + (entity_mirror(yaw, m) - yaw);
+            for (k, v) in fields.iter_mut() {
+                match k.as_str() {
+                    "Pos" => *v = Tag::List(pos.iter().map(|&c| Tag::Double(c)).collect()),
+                    "Rotation" => *v = Tag::List(vec![Tag::Float(turned), Tag::Float(pitch)]),
+                    "block_pos" => *v = Tag::IntArray(vec![bp.x, bp.y, bp.z]),
+                    _ => {}
+                }
+            }
+            if !fields.iter().any(|(k, _)| k == "Pos") {
+                fields.push(("Pos".into(), Tag::List(pos.iter().map(|&c| Tag::Double(c)).collect())));
+            }
+            r.add_entity(pos[0], pos[2], Tag::Compound(fields));
+        }
+    }
+}
+
+/// `Mth.wrapDegrees(float)`.
+fn wrap_degrees(f: f32) -> f32 {
+    let mut f = f % 360.0;
+    if f >= 180.0 {
+        f -= 360.0;
+    }
+    if f < -180.0 {
+        f += 360.0;
+    }
+    f
+}
+
+/// `Entity.rotate(Rotation)`.
+fn entity_rotate(yaw: f32, r: Rotation) -> f32 {
+    let f = wrap_degrees(yaw);
+    match r {
+        Rotation::Clockwise180 => f + 180.0,
+        Rotation::CounterClockwise90 => f + 270.0,
+        Rotation::Clockwise90 => f + 90.0,
+        Rotation::None => f,
+    }
+}
+
+/// `Entity.mirror(Mirror)`.
+fn entity_mirror(yaw: f32, m: Mirror) -> f32 {
+    let f = wrap_degrees(yaw);
+    match m {
+        Mirror::FrontBack => -f,
+        Mirror::LeftRight => 180.0 - f,
+        Mirror::None => f,
+    }
+}
+
+/// `StructureTemplate.transform(Vec3, mirror, rotation, pivot)`.
+pub fn transform_vec(v: [f64; 3], m: Mirror, r: Rotation, pivot: BlockPos) -> [f64; 3] {
+    let [mut x, y, mut z] = v;
+    match m {
+        Mirror::LeftRight => z = 1.0 - z,
+        Mirror::FrontBack => x = 1.0 - x,
+        Mirror::None => {}
+    }
+    let (px, pz) = (pivot.x, pivot.z);
+    match r {
+        Rotation::CounterClockwise90 => [(px - pz) as f64 + z, y, (px + pz + 1) as f64 - x],
+        Rotation::Clockwise90 => [(px + pz + 1) as f64 - z, y, (pz - px) as f64 + x],
+        Rotation::Clockwise180 => [(px + px + 1) as f64 - x, y, (pz + pz + 1) as f64 - z],
+        Rotation::None => [x, y, z],
     }
 }
 

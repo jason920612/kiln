@@ -722,8 +722,11 @@ fn features_match_vanilla() {
                     }
                 } else {
                     for (t, k) in theirs.iter().zip(&c.entities) {
-                        for field in ["ShowBottom", "Invulnerable", "Rotation", "Facing", "Item", "Color", "AttachFace", "Peek"] {
-                            if t.get(field).is_some() && k.get(field) != t.get(field) {
+                        for field in ["ShowBottom", "Invulnerable", "Rotation", "Facing", "Item", "Color", "AttachFace", "Peek", "LootTable", "LootTableSeed"] {
+                            // A shulker's yaw comes from `Math.random()` in the `LivingEntity`
+                            // constructor: not reproducible.
+                            let random_yaw = field == "Rotation" && t.get("id").and_then(|v| v.as_str()) == Some("minecraft:shulker");
+                            if !random_yaw && t.get(field).is_some() && k.get(field) != t.get(field) {
                                 entity_fields_bad += 1;
                                 if entity_fields_bad <= 3 {
                                     eprintln!("    entity field {field} differs in {x},{z}: vanilla {:?}, kiln {:?}", t.get(field), k.get(field));

@@ -1,7 +1,9 @@
 //! Structures made of one or a few templates (`TemplateStructurePiece`): igloos, shipwrecks,
-//! ocean ruins and ruined portals.
+//! ocean ruins, ruined portals, nether fossils and end cities.
 
+pub mod end_city;
 pub mod igloo;
+pub mod nether_fossil;
 pub mod ocean_ruin;
 pub mod ruined_portal;
 pub mod shipwreck;
@@ -19,7 +21,7 @@ use kiln_proto::nbt::Tag;
 use std::sync::Arc;
 
 /// `TemplateStructurePiece`: a template placed at a position with fixed settings.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TemplatePiece {
     pub base: PieceBase,
     pub name: String,

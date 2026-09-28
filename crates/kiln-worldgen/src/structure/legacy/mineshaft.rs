@@ -587,14 +587,17 @@ impl MsPiece {
         false
     }
 
-    /// `MineShaftCorridor.createChest`: a rail with a chest minecart on it. Kiln places the
-    /// rail and draws the loot seed; the minecart entity is not spawned.
+    /// `MineShaftCorridor.createChest`: a rail with a chest minecart (loot table and seed) on
+    /// it; the minecart goes to the chunk's entity list.
     fn minecart_chest(&self, r: &mut Region, cb: &BoundingBox, random: &mut WorldgenRandom, x: i32, y: i32, z: i32) -> bool {
         let p = self.base.world_pos(x, y, z);
         if cb.is_inside(p) && is_air(r.get(p)) && !is_air(r.get(p.below())) {
             let shape = if random.next_bool() { "north_south" } else { "east_west" };
             self.base.place_block(r, with(st("minecraft:rail"), &[("shape", shape)]), x, y, z, cb);
-            let _loot_seed = (LOOT, random.next_long());
+            let seed = random.next_long();
+            let pos = [p.x as f64 + 0.5, p.y as f64 + 0.5, p.z as f64 + 0.5];
+            let extra = vec![("LootTable".into(), Tag::String(LOOT.into())), ("LootTableSeed".into(), Tag::Long(seed))];
+            r.add_entity(pos[0], pos[2], crate::feature::entity_tag("minecraft:chest_minecart", pos, 0.0, extra));
             return true;
         }
         false

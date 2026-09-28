@@ -2,6 +2,7 @@
 //! `StructurePiecesBuilder` helpers they use.
 
 pub mod buried_treasure;
+pub mod fortress;
 pub mod mansion;
 pub mod mineshaft;
 pub mod monument;

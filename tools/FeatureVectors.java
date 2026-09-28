@@ -991,7 +991,14 @@ public class FeatureVectors {
         Files.createDirectories(out);
         net.minecraft.server.Main.main(new String[] {"--nogui"});
         MinecraftServer server = findServer();
-        while (!server.isReady()) Thread.sleep(100);
+        // A server that failed to start (e.g. its port was taken meanwhile) never gets ready.
+        for (int waited = 0; !server.isReady(); waited++) {
+            if (waited > 50 && !server.isRunning()) {
+                OUT.println("server failed to start");
+                Runtime.getRuntime().halt(2);
+            }
+            Thread.sleep(100);
+        }
         FeatureVectors fv = new FeatureVectors(server, dimension);
         if (fv.seed != seedArg) throw new IllegalStateException("server seed " + fv.seed + " != " + seedArg);
         OUT.printf("server ready, seed %d, structures %b%n", fv.seed, fv.structures);
