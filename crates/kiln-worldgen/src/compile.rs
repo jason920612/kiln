@@ -23,6 +23,8 @@ pub trait NoiseSource {
     fn noise(&mut self, id: &str) -> Result<Arc<NoiseStack>, Error>;
     /// `CompileContext.createRandom(id)`.
     fn random(&mut self, id: &str) -> WorldgenRandom;
+    /// `EndIslandFunction.compileSampler`'s island noise.
+    fn end_islands(&mut self) -> Arc<crate::simplex::Simplex>;
 }
 
 /// A node after the rewrite passes: inlined, possibly a prepared cache, possibly wrapped in
@@ -275,6 +277,7 @@ impl<'a, S: NoiseSource> Compiler<'a, S> {
             Node::BlendAlpha => Sampler::Const(1.0),
             Node::BlendOffset => Sampler::Const(0.0),
             Node::Beardifier => Sampler::Beardifier,
+            Node::EndIslands => Sampler::EndIslands(self.source.end_islands()),
             Node::BlendDensity(input) => return self.child(id, *input),
             Node::DistanceToPoint { point, metric } => Sampler::DistanceToPoint { point: *point, metric: *metric },
             Node::Unsupported(ty) => return Err(Error::UnsupportedFunction(ty.clone())),

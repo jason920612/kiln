@@ -48,3 +48,40 @@ pub fn builtin_id(registry: &str, entry: &str) -> Option<i32> {
 pub fn builtin_entries(registry: &str) -> Option<&'static [&'static str]> {
     registries::BUILTIN.iter().find(|(r, _)| *r == registry).map(|(_, e)| *e)
 }
+
+#[path = "gen/dimension_types.rs"]
+pub mod dimension_types;
+
+/// A built-in dimension type (`minecraft:dimension_type`): what the server simulates with.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DimensionType {
+    pub name: &'static str,
+    pub min_y: i32,
+    pub height: i32,
+    pub logical_height: i32,
+    pub coordinate_scale: f64,
+    pub has_skylight: bool,
+    pub has_ceiling: bool,
+    pub has_fixed_time: bool,
+    pub has_ender_dragon_fight: bool,
+    pub ambient_light: f32,
+    /// The world clock the dimension's time follows, if any.
+    pub default_clock: Option<&'static str>,
+    /// Block tag fire burns forever on.
+    pub infiniburn: &'static str,
+    /// `minecraft:gameplay/fast_lava` (the Nether's "ultrawarm" lava).
+    pub fast_lava: bool,
+    /// `minecraft:gameplay/water_evaporates`.
+    pub water_evaporates: bool,
+    pub respawn_anchor_works: bool,
+    /// Beds set the respawn point (`bed_rule.can_set_spawn` is not `never`).
+    pub bed_sets_spawn: bool,
+    /// Using a bed destroys it (`bed_rule.destroy_on_use`: it explodes).
+    pub bed_explodes: bool,
+    pub monster_spawn_block_light_limit: i64,
+}
+
+/// A built-in dimension type by name, e.g. `minecraft:the_nether`.
+pub fn dimension_type(name: &str) -> Option<&'static DimensionType> {
+    dimension_types::DIMENSION_TYPES.iter().find(|d| d.name == name)
+}

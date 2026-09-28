@@ -25,6 +25,7 @@ const GRADIENTS: [[i32; 3]; 16] = [
     [0, -1, -1],
 ];
 
+#[derive(Debug)]
 pub struct Simplex {
     perms: [u8; 256],
     offset: [f64; 2],

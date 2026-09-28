@@ -208,6 +208,8 @@ impl RegionPart for RegionBlocks {
 pub(crate) struct BlockEnv {
     pub game_time: i64,
     pub rules: kiln_blocks::Rules,
+    /// The level these blocks are in.
+    pub dim: crate::DimId,
     pub min_y: i32,
     pub height: i32,
     /// `minecraft:random_tick_speed`.
@@ -321,6 +323,14 @@ impl Level for RegionLevel<'_> {
 
     fn is_loaded(&self, pos: BlockPos) -> bool {
         self.cells.chunk(chunk_of(pos)).is_some()
+    }
+
+    fn min_y(&self) -> i32 {
+        self.env.min_y
+    }
+
+    fn portals_light(&self) -> bool {
+        matches!(self.env.dim, crate::OVERWORLD_ID | crate::NETHER_ID)
     }
 
     fn game_time(&self) -> i64 {
@@ -831,6 +841,7 @@ mod tests {
                 water_evaporates: false,
                 tnt_explodes: true,
             },
+            dim: crate::OVERWORLD_ID,
             min_y: -64,
             height: 384,
             random_tick_speed: 3,

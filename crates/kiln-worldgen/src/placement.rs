@@ -164,7 +164,7 @@ impl Modifier {
                 out.push(p.offset(dx, dy, dz));
             }
             Modifier::HeightRange(h) => {
-                let g = GenContext { min_y: r.min_y(), height: r.height(), sea_level: r.sea_level() };
+                let g = GenContext { min_y: r.generator.gen_min_y, height: r.generator.gen_height, sea_level: r.sea_level() };
                 out.push(p.at_y(h.sample(random, g)));
             }
             Modifier::Heightmap(map) => {

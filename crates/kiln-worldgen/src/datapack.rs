@@ -65,6 +65,8 @@ pub struct Datapack {
     /// Other `worldgen/*` registries loaded as raw JSON by directory (`structure`,
     /// `structure_set`, `template_pool`, `processor_list`), entries sorted by id.
     pub registries: HashMap<String, Vec<(String, Json)>>,
+    /// `dimension_type` entries: (`min_y`, `height`), the level geometry chunks are built in.
+    pub dimension_types: HashMap<String, (i32, i32)>,
     /// The directory the pack was loaded from (structure templates are looked up near it).
     pub root: PathBuf,
 }
@@ -85,6 +87,7 @@ impl Datapack {
         let mut placed_features = Vec::new();
         let mut state_providers = HashMap::new();
         let mut registries: HashMap<String, Vec<(String, Json)>> = HashMap::new();
+        let mut dimension_types = HashMap::new();
         let data = root.join("data");
         let mut namespaces: Vec<_> = fs::read_dir(&data)
             .map_err(|e| Error::from(e).context(data.display().to_string()))?
@@ -135,6 +138,10 @@ impl Datapack {
             for dir in ["structure", "structure_set", "template_pool", "processor_list"] {
                 registries.entry(dir.to_string()).or_default().extend(entries(&worldgen.join(dir), &ns)?);
             }
+            for (id, json) in entries(&ns_dir.join("dimension_type"), &ns)? {
+                let geometry = (i32_of(&json, "min_y")?, i32_of(&json, "height")?);
+                dimension_types.insert(id, geometry);
+            }
             for (id, json) in entries(&ns_dir.join("tags").join("block"), &ns)? {
                 block_tags.insert(id, tag_values(&json)?);
             }
@@ -165,6 +172,7 @@ impl Datapack {
             placed_features,
             state_providers,
             registries,
+            dimension_types,
         })
     }
 
@@ -211,6 +219,10 @@ impl Datapack {
         walk(&self.block_tags, &qualify(id.trim_start_matches('#')), &mut out, 0)?;
         Ok(out)
     }
+}
+
+fn i32_of(json: &Json, key: &str) -> Result<i32, Error> {
+    field(json, key)?.as_i32().ok_or_else(|| Error::Invalid(format!("{key} must be an integer")))
 }
 
 /// A tag's `values`: plain ids or `{"id", "required"}` entries.

@@ -17,20 +17,25 @@ use std::f64::consts::PI;
 
 /// `EndIslandFeature.place`: stacked shrinking discs of end stone.
 pub fn end_island(r: &mut Region, random: &mut WorldgenRandom, origin: BlockPos) -> bool {
+    end_island_with(random, origin, &mut |p, s| r.set_block(p, s));
+    true
+}
+
+/// The blocks of [`end_island`] (it reads nothing), handed to `set` in placement order.
+pub fn end_island_with(random: &mut impl RandomSource, origin: BlockPos, set: &mut dyn FnMut(BlockPos, u16)) {
     let mut radius = random.next_int_bounded(3) as f32 + 4.0;
     let mut y = 0;
     while radius > 0.5 {
         for x in floor_f32(-radius)..=ceil(radius) {
             for z in floor_f32(-radius)..=ceil(radius) {
                 if ((x * x + z * z) as f32) <= (radius + 1.0) * (radius + 1.0) {
-                    r.set_block(origin.offset(x, y, z), state::END_STONE);
+                    set(origin.offset(x, y, z), state::END_STONE);
                 }
             }
         }
         radius -= random.next_int_bounded(2) as f32 + 0.5;
         y -= 1;
     }
-    true
 }
 
 /// `EndGatewayFeature` configuration: the exit portal position and whether teleports are
@@ -60,30 +65,46 @@ impl EndGateway {
 
     /// `EndGatewayFeature.place`: the gateway block in a bedrock frame, cleared around.
     pub fn place(&self, r: &mut Region, origin: BlockPos) -> bool {
-        for p in super::between_closed(origin.offset(-1, -2, -1), origin.offset(1, 2, 1)) {
-            let (same_x, same_y, same_z) = (p.x == origin.x, p.y == origin.y, p.z == origin.z);
-            let two_off = (p.y - origin.y).abs() == 2;
-            if same_x && same_y && same_z {
-                r.set_block(p, state::END_GATEWAY);
-                if let Some(exit) = self.exit
-                    && let Some(tag) = r.block_entity_mut(p)
-                {
-                    *tag = Tag::Compound(vec![
-                        ("id".into(), Tag::String("minecraft:end_gateway".into())),
-                        ("exit_portal".into(), Tag::IntArray(vec![exit.x, exit.y, exit.z])),
-                        ("ExactTeleport".into(), Tag::Byte(self.exact as i8)),
-                    ]);
-                }
-            } else if same_y {
-                r.set_block(p, state::AIR);
-            } else if (two_off && same_x && same_z) || ((same_x || same_z) && !two_off) {
-                r.set_block(p, state::BEDROCK);
-            } else {
-                r.set_block(p, state::AIR);
-            }
+        end_gateway_with(origin, &mut |p, s| r.set_block(p, s));
+        if let Some(exit) = self.exit
+            && let Some(tag) = r.block_entity_mut(origin)
+        {
+            *tag = end_gateway_entity(Some((exit, self.exact)));
         }
         true
     }
+}
+
+/// The blocks of `EndGatewayFeature.place` around `origin` (it reads nothing): the gateway,
+/// bedrock above and below and on the sides of the middle layers, air elsewhere in the 3x5x3.
+pub fn end_gateway_with(origin: BlockPos, set: &mut dyn FnMut(BlockPos, u16)) {
+    for p in super::between_closed(origin.offset(-1, -2, -1), origin.offset(1, 2, 1)) {
+        let (same_x, same_y, same_z) = (p.x == origin.x, p.y == origin.y, p.z == origin.z);
+        let two_off = (p.y - origin.y).abs() == 2;
+        let s = if same_x && same_y && same_z {
+            state::END_GATEWAY
+        } else if same_y {
+            state::AIR
+        } else if (two_off && same_x && same_z) || ((same_x || same_z) && !two_off) {
+            state::BEDROCK
+        } else {
+            state::AIR
+        };
+        set(p, s);
+    }
+}
+
+/// The saved `TheEndGatewayBlockEntity` a gateway feature leaves (`Age` 0; `exit_portal` and
+/// `ExactTeleport` when the feature knows the exit).
+pub fn end_gateway_entity(exit: Option<(BlockPos, bool)>) -> Tag {
+    let mut fields = vec![("id".into(), Tag::String("minecraft:end_gateway".into())), ("Age".into(), Tag::Long(0))];
+    if let Some((exit, exact)) = exit {
+        fields.push(("exit_portal".into(), Tag::IntArray(vec![exit.x, exit.y, exit.z])));
+        fields.push(("ExactTeleport".into(), Tag::Byte(exact as i8)));
+    } else {
+        fields.push(("ExactTeleport".into(), Tag::Byte(0)));
+    }
+    Tag::Compound(fields)
 }
 
 /// `EndSpikeFeature.EndSpike`.
@@ -99,8 +120,7 @@ pub struct EndSpike {
 /// `EndSpikeFeature`: obsidian pillars (from the configuration, or the level's ten), iron
 /// bar cages on guarded ones, and a bedrock and fire top where the end crystal stands.
 ///
-/// Proto-chunks carry no entities, so the crystal itself is not spawned (its yaw is still
-/// drawn).
+/// The crystal (bottom shown, random yaw) goes to the chunk's entity list.
 #[derive(Debug)]
 pub struct EndSpikes {
     spikes: Vec<EndSpike>,
@@ -196,8 +216,10 @@ fn place_spike(r: &mut Region, random: &mut WorldgenRandom, s: EndSpike) {
             }
         }
     }
-    let _yaw = random.next_float() * 360.0;
+    let yaw = random.next_float() * 360.0;
     let crystal = BlockPos::new(s.center_x, s.height + 1, s.center_z);
+    let (x, y, z) = (crystal.x as f64 + 0.5, crystal.y as f64, crystal.z as f64 + 0.5);
+    r.add_entity(x, z, crate::feature::entity_tag("minecraft:end_crystal", [x, y, z], yaw, vec![("ShowBottom".into(), Tag::Byte(1))]));
     r.set_block(crystal.below(), state::BEDROCK);
     // `BaseFireBlock.getState` on bedrock: plain fire, sturdy floor so no side flags.
     r.set_block(crystal, state::FIRE);

@@ -76,12 +76,7 @@ impl Decorator {
         features.set_biome_features(sets);
 
         // `BiomeSource.possibleBiomes`: parameter list order, first occurrence.
-        let mut order: Vec<u16> = Vec::new();
-        for (_, b) in generator.parameters().values() {
-            if !order.contains(b) {
-                order.push(*b);
-            }
-        }
+        let order: Vec<u16> = generator.possible_biomes();
         let mut possible = vec![false; generator.biomes.len()];
         for &b in &order {
             possible[b as usize] = true;

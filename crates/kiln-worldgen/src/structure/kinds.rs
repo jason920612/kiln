@@ -55,14 +55,17 @@ pub fn parse(ty: &str, json: &Json, l: &Loader) -> Result<Option<Box<dyn Kind>>,
         "jungle_temple" => Some(Box::new(legacy::scattered::JungleTemple)),
         "swamp_hut" => Some(Box::new(legacy::scattered::SwampHut)),
         "stronghold" => Some(Box::new(legacy::stronghold::Stronghold)),
+        "fortress" => Some(Box::new(legacy::fortress::Fortress)),
         "woodland_mansion" => Some(Box::new(legacy::mansion::Mansion)),
         "ocean_monument" => Some(Box::new(legacy::monument::OceanMonument::parse(json, l)?)),
         "igloo" => Some(Box::new(super::templated::igloo::Igloo)),
+        "nether_fossil" => Some(Box::new(super::templated::nether_fossil::parse(json)?)),
         "shipwreck" => Some(Box::new(super::templated::shipwreck::Shipwreck {
             beached: json.get("is_beached").and_then(Json::as_bool).unwrap_or(false),
         })),
         "ocean_ruin" => Some(Box::new(super::templated::ocean_ruin::parse(json, l)?)),
         "ruined_portal" => Some(Box::new(super::templated::ruined_portal::parse(json, l)?)),
+        "end_city" => Some(Box::new(super::templated::end_city::EndCity)),
         _ => None,
     })
 }

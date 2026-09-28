@@ -225,8 +225,9 @@ impl Player {
     /// (`LivingEntity.randomTeleport`: down to the first block that blocks motion, then a free,
     /// dry box without dangerous blocks).
     fn teleport_randomly(&mut self, diameter: f32, block: BlockAt, now: i64) -> bool {
-        let dim = kiln_world::OVERWORLD;
-        let (min_y, max_y) = (dim.min_y, dim.min_y + dim.height - 1);
+        // `level.getMinY()` to `getMinY() + getLogicalHeight() - 1` of the player's level.
+        let dim = kiln_data::dimension_type(crate::DIMENSIONS[self.dim].0).expect("dimension type");
+        let (min_y, max_y) = (dim.min_y, dim.min_y + dim.logical_height - 1);
         for _ in 0..16 {
             let x = self.pos[0] + (self.entity_rng.next_double() - 0.5) * diameter as f64;
             let y = (self.pos[1] + (self.entity_rng.next_double() - 0.5) * diameter as f64).clamp(min_y as f64, max_y as f64);
@@ -248,7 +249,8 @@ impl Player {
     fn random_teleport_target(&self, x: f64, y: f64, z: f64, block: BlockAt) -> Option<[f64; 3]> {
         let mut y = y;
         let mut pos = BlockPos::containing(x, y, z);
-        while pos.y > kiln_world::OVERWORLD.min_y {
+        let min_y = kiln_data::dimension_type(crate::DIMENSIONS[self.dim].0).map_or(-64, |d| d.min_y);
+        while pos.y > min_y {
             pos = pos.below();
             let state = block(pos);
             if kiln_entity::physics::collision_shape(state).is_empty() {

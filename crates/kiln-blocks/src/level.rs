@@ -111,6 +111,17 @@ pub trait Level {
         true
     }
 
+    /// `Level.getMinY`: the bottom of the level.
+    fn min_y(&self) -> i32 {
+        -64
+    }
+
+    /// `BaseFireBlock.inPortalDimension`: fire lights nether portals here (the overworld and
+    /// the nether).
+    fn portals_light(&self) -> bool {
+        true
+    }
+
     fn game_time(&self) -> i64;
 
     /// `Level.nextSubTickCount`: one counter for block and fluid ticks.

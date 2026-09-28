@@ -188,8 +188,8 @@ impl Sim {
     /// Ends pairings between players now in different regions (one was teleported away):
     /// tracking only runs within a region, so the viewer forgets the entity.
     pub(crate) fn drop_cross_region_pairs(&mut self) {
-        let region: HashMap<ConnId, (kiln_region::RegionId, i32)> =
-            self.players.iter().map(|(&c, p)| (c, (p.region, p.entity_id))).collect();
+        let region: HashMap<ConnId, ((crate::DimId, kiln_region::RegionId), i32)> =
+            self.players.iter().map(|(&c, p)| (c, ((p.dim, p.region), p.entity_id))).collect();
         let mut forget: Vec<(ConnId, i32)> = Vec::new();
         for (&conn, p) in self.players.iter_mut() {
             let (mine, id) = region[&conn];

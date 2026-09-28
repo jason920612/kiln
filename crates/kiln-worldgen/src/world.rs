@@ -121,6 +121,7 @@ impl ChunkGenerator for FullChunks {
         let p = self.pipeline.full(&mut self.scratch, pos.x, pos.z);
         let mut chunk = to_chunk(&p, &self.biome_ids);
         chunk.structures = Some(Box::new(self.pipeline.structure_data(&mut self.scratch, pos.x, pos.z)));
+        chunk.generated_entities = p.entities.clone();
         chunk
     }
 

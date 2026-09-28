@@ -173,12 +173,49 @@ impl ShapeLevel<'_, '_> {
         if let Some(new) = self.banner_update_shape(s, p, d) {
             return new;
         }
+        if crate::blocks::is_block(s, "minecraft:chorus_plant") {
+            return self.chorus_plant_update_shape(s, p, d, ns);
+        }
         let s = chest_update_shape(s, d, ns);
         kb::behaviour::update_shape(self, s, to_kb(p), dir_kb(d), to_kb(p.relative(d)), ns)
     }
 }
 
 impl ShapeLevel<'_, '_> {
+    /// `ChorusPlantBlock.updateShape`: unsupported plants schedule their removal (and keep
+    /// their state); others connect toward `d` if the neighbour is chorus (or, downward, a
+    /// block supporting chorus).
+    fn chorus_plant_update_shape(&mut self, s: u16, p: BlockPos, d: Dir, ns: u16) -> u16 {
+        use crate::blocks::{is_air, is_block, with_prop};
+        let chorus = |s: u16| is_block(s, "minecraft:chorus_plant");
+        let supports = |s: u16| crate::vtags::is(s, "supports_chorus_plant");
+        // `canSurvive`.
+        let below = self.get(p.below());
+        let vertical = !is_air(self.get(p.above())) && !is_air(below);
+        let mut survives = None;
+        for h in Dir::HORIZONTAL {
+            let q = p.relative(h);
+            if chorus(self.get(q)) {
+                if vertical {
+                    survives = Some(false);
+                    break;
+                }
+                let qb = self.get(q.below());
+                if chorus(qb) || supports(qb) {
+                    survives = Some(true);
+                    break;
+                }
+            }
+        }
+        let survives = survives.unwrap_or_else(|| chorus(below) || supports(below));
+        if !survives {
+            self.r.schedule_block_tick(p, "minecraft:chorus_plant", 1);
+            return s;
+        }
+        let connects = chorus(ns) || is_block(ns, "minecraft:chorus_flower") || (d == Dir::Down && supports(ns));
+        with_prop(s, d.name(), if connects { "true" } else { "false" })
+    }
+
     /// `WallBannerBlock` / `BannerBlock.updateShape`: gone without a (legacy) solid block
     /// behind or below.
     fn banner_update_shape(&self, s: u16, p: BlockPos, d: Dir) -> Option<u16> {
