@@ -45,8 +45,11 @@
 //! large block, so a block that lost its core does not inflate it) and extrapolates. A split
 //! window wakes only as many parked helpers as get [`PoolConfig::helper_share`] of the estimate
 //! each, and stays inline when that is none: a helper costs a wake-up and a spin whether or not
-//! it finds much to do. A single worker always runs inline. The strategy never changes a result: inline and parallel call
-//! the same closure on the same items, and outputs land at their index.
+//! it finds much to do. The estimate is scaled by how much of their even part woken helpers
+//! took in recent windows (a moving average), so when their cores are busy elsewhere windows
+//! stay inline, drifting back to splitting as later windows try again. A single worker always
+//! runs inline. The strategy never changes a result: inline and parallel call the same closure
+//! on the same items, and outputs land at their index.
 //!
 //! # Determinism, strict and chaos modes
 //! The pool decides only where and when code runs, never what it computes. If units touch only

@@ -6,7 +6,7 @@ use std::hint;
 use std::mem;
 use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::Ordering::{Acquire, Relaxed, SeqCst};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle, Thread, ThreadId};
 use std::time::{Duration, Instant};
@@ -23,6 +23,9 @@ use crate::window::Ctx;
 
 /// Upper bound on [`PoolConfig::workers`] (the sleeper and live-window sets are `u64` masks).
 pub const MAX_WORKERS: usize = 64;
+
+/// Fixed-point one of [`Shared::helper_yield`].
+pub(crate) const YIELD_ONE: u32 = 1024;
 
 /// Family of a worker outside any unit: it may help every window.
 pub(crate) const ANY: u64 = 0;
@@ -52,6 +55,9 @@ pub(crate) struct Shared {
     epoch: Instant,
     /// Until this time (ns since `epoch`) idle workers keep spinning; see `prewake`.
     hot_until: AtomicU64,
+    /// Moving average (of [`YIELD_ONE`]) of the share of their even part that woken helpers
+    /// took in recent rationed windows. Low when helpers cannot get a core in time.
+    pub helper_yield: AtomicU32,
     hk: Injector<HkJob>,
     hk_pending: AtomicUsize,
     shutdown: AtomicBool,
@@ -188,6 +194,7 @@ impl Shared {
             wake_debt: CachePadded::new(AtomicUsize::new(0)),
             epoch: Instant::now(),
             hot_until: AtomicU64::new(0),
+            helper_yield: AtomicU32::new(YIELD_ONE),
             hk: Injector::new(),
             hk_pending: AtomicUsize::new(0),
             shutdown: AtomicBool::new(false),

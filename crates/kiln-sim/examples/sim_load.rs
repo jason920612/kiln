@@ -5,7 +5,7 @@
 //! usage: cargo run --release -p kiln-sim --example sim_load -- [--players 1000] [--groups 20]
 //!        [--spacing 48] [--radius 6] [--ticks 1200] [--view-distance 2] [--behavior crowd|walk]
 //!        [--threads n] [--unified] [--inline] [--independent] [--slow-ms n]
-//!        [--spin-us n] [--inline-below-us n] [--chunk-us n]
+//!        [--spin-us n] [--inline-below-us n] [--chunk-us n] [--helper-share-us n]
 //!
 //! Prints the process CPU time per measured tick next to the wall time: idle workers spinning
 //! cost CPU without showing in mspt.
@@ -78,6 +78,7 @@ struct Args {
     spin_us: Option<u64>,
     inline_below_us: Option<u64>,
     chunk_us: Option<u64>,
+    helper_share_us: Option<u64>,
 }
 
 fn args() -> Args {
@@ -98,6 +99,7 @@ fn args() -> Args {
         spin_us: None,
         inline_below_us: None,
         chunk_us: None,
+        helper_share_us: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -118,6 +120,7 @@ fn args() -> Args {
             "--spin-us" => a.spin_us = Some(value().parse().unwrap()),
             "--inline-below-us" => a.inline_below_us = Some(value().parse().unwrap()),
             "--chunk-us" => a.chunk_us = Some(value().parse().unwrap()),
+            "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
             other => panic!("unknown argument {other}"),
         }
     }
@@ -142,6 +145,9 @@ fn main() {
     }
     if let Some(v) = a.chunk_us {
         config.pool.chunk_target = us(v);
+    }
+    if let Some(v) = a.helper_share_us {
+        config.pool.helper_share = us(v);
     }
     if a.inline {
         config.pool.phase = kiln_sched::PhaseMode::Inline;

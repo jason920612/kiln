@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use crate::config::{PhaseMode, Strategy};
 use crate::job::{AbortOnUnwind, Header};
-use crate::pool::WorkerLocal;
+use crate::pool::{WorkerLocal, YIELD_ONE};
 use crate::stats::StatCells;
 
 /// Per-window hints. All optional; none of them can change a result.
@@ -254,9 +254,19 @@ impl<'a> Ctx<'a> {
         let base = out.len();
         let chunks = self.chunking(base, n - base, size);
         let mut wake = sh.wake_count(self.local, chunks.count.saturating_sub(1));
-        if let Some(est) = est.filter(|_| !self.local.chaos()) {
-            wake = wake.min((est / sh.tuning.helper_share_ns).saturating_sub(1) as usize);
+        let rationed = est.is_some() && !self.local.chaos();
+        if let Some(est) = est.filter(|_| rationed) {
+            // Helpers that do not show up (their cores are busy elsewhere) make a share cost
+            // more: scale the estimate by how much of their part helpers have been taking.
+            let yield_ = sh.helper_yield.load(Relaxed);
+            let useful = (est as u128 * yield_ as u128 / YIELD_ONE as u128) as u64;
+            wake = wake.min((useful / sh.tuning.helper_share_ns).saturating_sub(1) as usize);
             if wake == 0 {
+                if (est / sh.tuning.helper_share_ns) >= 2 {
+                    // Inline only because helpers have not been showing up: drift back, so
+                    // a later window tries again once the machine is less busy.
+                    let _ = sh.helper_yield.fetch_update(Relaxed, Relaxed, |y| Some(y + (YIELD_ONE - y) / 32));
+                }
                 out.extend(items[base..].iter().map(|x| run(self, x)));
                 return;
             }
@@ -284,11 +294,19 @@ impl<'a> Ctx<'a> {
         slot.publish(jp.cast(), self.family, self.local.idx);
         sh.live.fetch_or(1 << si, SeqCst);
         sh.wake(wake);
+        let mut own = 0;
         while let Some(p) = job.header.claim() {
             // SAFETY: the job is alive and `p` was claimed.
             unsafe { Header::exec(jp, p, self.local) };
+            own += 1;
         }
         sh.live.fetch_and(!(1 << si), SeqCst);
+        if rationed {
+            // With `wake` helpers an even split leaves them wake / (wake + 1) of the chunks.
+            let taken = (count - own) as u64 * (wake as u64 + 1);
+            let sample = (taken * YIELD_ONE as u64 / (count as u64 * wake as u64)).min(YIELD_ONE as u64) as u32;
+            let _ = sh.helper_yield.fetch_update(Relaxed, Relaxed, |y| Some(y - y / 8 + sample / 8));
+        }
         if !slot.close() {
             sh.wait_drained(slot, self.local, self.family);
         }
