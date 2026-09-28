@@ -153,7 +153,7 @@ fn perform_shooting(p: &mut Player, level: &mut RegionLevel, off_hand: bool, cro
 
 /// `CrossbowItem.shootProjectile` without a target: the view vector turned `angle` degrees
 /// about the up vector.
-fn shot_vector(rot: [f32; 2], angle: f32) -> Vec3 {
+pub(crate) fn shot_vector(rot: [f32; 2], angle: f32) -> Vec3 {
     let view = crate::use_item::view_vector(rot);
     let up = crate::use_item::view_vector([rot[0], rot[1] - 90.0]);
     let (v, k) = ([view.x as f32, view.y as f32, view.z as f32], [up.x as f32, up.y as f32, up.z as f32]);

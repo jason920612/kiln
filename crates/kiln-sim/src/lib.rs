@@ -74,6 +74,8 @@ mod enchant_parity;
 mod effect_parity;
 #[cfg(test)]
 mod weather_parity;
+#[cfg(test)]
+mod item_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;

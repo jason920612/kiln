@@ -157,13 +157,19 @@ fn push_spawn(spawns: &mut Vec<Spawn>, e: kiln_entity::Entity) {
 /// `Projectile.shootFromRotation`: along the rotation (with `roll` added to the pitch), plus the
 /// shooter's own movement (not its vertical movement on the ground).
 pub(crate) fn shoot_from_rotation(e: &mut kiln_entity::Entity, p: &Player, x_rot: f32, y_rot: f32, roll: f32, speed: f32, inaccuracy: f32) {
+    shoot_rotated(e, x_rot, y_rot, roll, speed, inaccuracy, p.known_movement, p.on_ground);
+}
+
+/// [`shoot_from_rotation`] for a shooter moving by `movement` (`getKnownMovement`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn shoot_rotated(e: &mut kiln_entity::Entity, x_rot: f32, y_rot: f32, roll: f32, speed: f32, inaccuracy: f32, movement: [f64; 3], on_ground: bool) {
     const RAD: f32 = 0.017453292;
     let x = -mth::sin((y_rot * RAD) as f64) * mth::cos((x_rot * RAD) as f64);
     let y = -mth::sin(((x_rot + roll) * RAD) as f64);
     let z = mth::cos((y_rot * RAD) as f64) * mth::cos((x_rot * RAD) as f64);
     kiln_entity::mob::species::shoot(e, x as f64, y as f64, z as f64, speed, inaccuracy);
-    let m = p.known_movement;
-    e.delta = e.delta.add(m[0], if p.on_ground { 0.0 } else { m[1] }, m[2]);
+    let m = movement;
+    e.delta = e.delta.add(m[0], if on_ground { 0.0 } else { m[1] }, m[2]);
 }
 
 /// `BowItem.getPowerForTime`.

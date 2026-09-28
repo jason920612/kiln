@@ -1,16 +1,17 @@
 //! Packs tools/ExtractEntityPhysics.java's output into the binary table kiln-entity embeds.
 //!
-//! Layout (little endian): magic "KEP2", state count u32, shape count u32, block count u32;
+//! Layout (little endian): magic "KEP3", state count u32, shape count u32, block count u32;
 //! per shape: coordinate counts u8 ×3 (x, y, z), the coordinates as f64, then the full-cell
 //! bits (x-major, then y, then z; LSB first), padded to a byte;
-//! per state: collision shape u16, entity-inside shape u16 (0xffff = the full block),
-//! fluid u8 (0 none, 1 flowing water, 2 water, 3 flowing lava, 4 lava), amount u8,
-//! sturdy faces u8 (bit = 3D data value), flags u16 (see `STATE_FLAGS`);
+//! per state: collision shape u16, entity-inside shape u16 (0xffff = the full block), outline
+//! shape u16 (`getShape`), fluid u8 (0 none, 1 flowing water, 2 water, 3 flowing lava,
+//! 4 lava), amount u8, sturdy faces u8 (bit = 3D data value), flags u16 (see `STATE_FLAGS`);
 //! per block (registry order): friction, speed factor, jump factor, bounce restitution and
-//! fall distance reduction and explosion resistance as f32; then named shapes (context-dependent blocks' shapes): count u8,
-//! per entry a name (length u8, UTF-8) and a shape u16; then the offset blocks with collision
-//! (whose collision shape is stored unshifted): count u16, per entry state u16 and maximum
-//! horizontal offset f32.
+//! fall distance reduction and explosion resistance as f32; then named shapes
+//! (context-dependent blocks' shapes): count u8, per entry a name (length u8, UTF-8) and a
+//! shape u16; then the offset blocks with a collision or outline shape (both stored
+//! unshifted): count u16, per entry state u16, maximum horizontal offset f32 and whether the
+//! outline shape follows the offset u8.
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -30,7 +31,7 @@ pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
     if states.len() != state_count {
         bail!("extractor saw {} states, blocks.json has {state_count}", states.len());
     }
-    let mut out = b"KEP2".to_vec();
+    let mut out = b"KEP3".to_vec();
     for n in [states.len(), shapes.len(), blocks.len()] {
         out.extend_from_slice(&(n as u32).to_le_bytes());
     }
@@ -71,8 +72,10 @@ pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
                 flags |= 1 << bit;
             }
         }
+        let outline = u16::try_from(s["outline"].as_u64().context("outline")?)?;
         out.extend_from_slice(&collision.to_le_bytes());
         out.extend_from_slice(&inside.to_le_bytes());
+        out.extend_from_slice(&outline.to_le_bytes());
         out.push(fluid);
         out.push(s["amount"].as_u64().context("amount")? as u8);
         out.push(s["sturdy"].as_u64().context("sturdy")? as u8);
@@ -92,18 +95,20 @@ pub fn pack(json: &Value, state_count: usize) -> Result<Vec<u8>> {
         out.extend_from_slice(name.as_bytes());
         out.extend_from_slice(&u16::try_from(id.as_u64().context("named shape")?)?.to_le_bytes());
     }
-    let offsets: Vec<(usize, f32)> = states
+    let offsets: Vec<(usize, f32, bool)> = states
         .iter()
         .enumerate()
         .filter_map(|(i, s)| {
             let v: f32 = s["max_offset"].to_string().parse().ok()?;
-            (v != 0.0).then_some((i, v))
+            let outline = s["outline_offset"].as_bool()?;
+            (v != 0.0).then_some((i, v, outline))
         })
         .collect();
     out.extend_from_slice(&u16::try_from(offsets.len())?.to_le_bytes());
-    for (i, v) in offsets {
+    for (i, v, outline) in offsets {
         out.extend_from_slice(&u16::try_from(i)?.to_le_bytes());
         out.extend_from_slice(&v.to_le_bytes());
+        out.push(outline as u8);
     }
     Ok(out)
 }

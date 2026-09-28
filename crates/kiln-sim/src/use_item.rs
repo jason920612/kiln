@@ -33,9 +33,8 @@ pub(crate) fn view_vector(rot: [f32; 2]) -> Vec3 {
 }
 
 /// `Item.getPlayerPOVHitResult`: `level.clip` from the eyes along the view for the block
-/// interaction range, with the blocks' outline shapes (approximation: collision shapes, and a
-/// full cube for blocks without collision that are not air or a bare liquid) and the fluids of
-/// `fluid`. `None`: a miss.
+/// interaction range, with the blocks' outline shapes (`getShape`) and the fluids of `fluid`.
+/// `None`: a miss.
 pub(crate) fn pov_hit(p: &Player, block: &dyn Fn(kiln_blocks::BlockPos) -> u16, fluid: FluidMode) -> Option<PovHit> {
     pov_hit_rot(p, p.rot, block, fluid)
 }
@@ -56,8 +55,12 @@ pub(crate) fn clip(from: Vec3, to: Vec3, block: &dyn Fn(kiln_blocks::BlockPos) -
     let kb = |p: EBlockPos| kiln_blocks::BlockPos::new(p.x, p.y, p.z);
     traverse_blocks(from, to, |pos| {
         let state = block(kb(pos));
-        let shape = outline_shape(state);
-        let block_hit = shape_clip(shape, from, to, pos);
+        let shape = physics::outline_shape(state);
+        let block_hit = match physics::outline_offset(state, pos.x, pos.z) {
+            // Offset blocks (flowers): the shape moved to where the block sits.
+            Some((ox, oz)) => shape_clip(&shape.moved(ox, 0.0, oz), from, to, pos),
+            None => shape_clip(shape, from, to, pos),
+        };
         let f = physics::fluid_state(state);
         let pick = match fluid {
             FluidMode::None => false,
@@ -81,16 +84,6 @@ pub(crate) fn clip(from: Vec3, to: Vec3, block: &dyn Fn(kiln_blocks::BlockPos) -
             location: [location.x, location.y, location.z],
         })
     })
-}
-
-/// The shape a view ray stops at (see [`pov_hit`]).
-fn outline_shape(state: u16) -> &'static kiln_entity::shape::Shape {
-    use kiln_entity::physics;
-    let shape = physics::collision_shape(state);
-    if shape.is_empty() && !physics::is_air(state) && !physics::is_liquid(state) {
-        return physics::block_shape();
-    }
-    shape
 }
 
 impl Player {

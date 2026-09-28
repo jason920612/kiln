@@ -53,12 +53,23 @@ public class ExtractEntityPhysics {
             // Offset blocks with collision (bamboo, pointed dripstone): store the unshifted shape
             // and the block's maximum horizontal offset; kiln-entity applies getOffset(pos).
             float maxOffset = 0;
+            // The outline shape (`getShape`: what view rays and block outlines stop at), stored
+            // unshifted when it follows the block's offset (flowers; short grass keeps still).
+            VoxelShape outlineShape = s.getShape(getter, pos);
+            boolean outlineOffset = s.hasOffsetFunction() && !outlineShape.isEmpty()
+                    && !outlineShape.toAabbs().equals(s.getShape(getter, new BlockPos(7, 0, 3)).toAabbs());
             if (s.hasOffsetFunction() && !collisionShape.isEmpty()) {
-                collisionShape = unoffset(s, collisionShape);
+                collisionShape = unoffset(s, collisionShape, false);
+            }
+            if (outlineOffset) {
+                outlineShape = unoffset(s, outlineShape, true);
+            }
+            if (s.hasOffsetFunction() && (!collisionShape.isEmpty() || outlineOffset)) {
                 var m = net.minecraft.world.level.block.state.BlockBehaviour.class.getDeclaredMethod("getMaxHorizontalOffset");
                 m.setAccessible(true);
                 maxOffset = (Float) m.invoke(s.getBlock());
             }
+            int outline = shapeId(outlineShape);
             int collision = shapeId(collisionShape);
             // Powder snow's inside shape depends on the entity (its collision context); kiln-entity
             // computes it.
@@ -74,11 +85,11 @@ public class ExtractEntityPhysics {
             states.add(String.format(Locale.ROOT,
                     "{\"id\":%d,\"collision\":%d,\"cube\":%b,\"large\":%b,\"inside\":%d,\"sturdy\":%d,\"fluid\":\"%s\",\"amount\":%d,"
                             + "\"falling\":%b,\"source\":%b,\"air\":%b,\"liquid\":%b,\"solid\":%b,\"replaceable\":%b,"
-                            + "\"offset\":%b,\"suffocating\":%b,\"max_offset\":%s}",
+                            + "\"offset\":%b,\"suffocating\":%b,\"max_offset\":%s,\"outline\":%d,\"outline_offset\":%b}",
                     id, collision, collisionShape == Shapes.block(), s.hasLargeCollisionShape(), inside, sturdy,
                     BuiltInRegistries.FLUID.getKey(f.getType()), f.getAmount(), falling, f.isSource(), s.isAir(),
                     s.liquid(), s.isSolid(), s.canBeReplaced(), s.hasOffsetFunction(), s.isSuffocating(getter, pos),
-                    Float.toString(maxOffset)));
+                    Float.toString(maxOffset), outline, outlineOffset));
         }
         List<String> blocks = new ArrayList<>();
         for (Block b : BuiltInRegistries.BLOCK) {
@@ -112,21 +123,28 @@ public class ExtractEntityPhysics {
         }
     }
 
-    /** The collision shape without the position offset, checked to reproduce vanilla's exactly. */
-    static VoxelShape unoffset(BlockState s, VoxelShape atZero) {
+    /** The collision (or outline) shape without the position offset, checked to reproduce
+     *  vanilla's exactly. */
+    static VoxelShape unoffset(BlockState s, VoxelShape atZero, boolean outline) {
         var o = s.getOffset(BlockPos.ZERO);
-        VoxelShape base = atZero.move(-o.x, -o.y, -o.z);
+        // Shapes move by the horizontal offset only (the vertical one sinks the model, not the
+        // shape).
+        VoxelShape base = atZero.move(-o.x, 0, -o.z);
         var r = new java.util.Random(s.hashCode());
         for (int i = 0; i < 200; i++) {
             BlockPos p = new BlockPos(r.nextInt(2000) - 1000, r.nextInt(300) - 64, r.nextInt(2000) - 1000);
-            VoxelShape want = s.getCollisionShape(EmptyBlockGetter.INSTANCE, p);
+            VoxelShape want = outline ? s.getShape(EmptyBlockGetter.INSTANCE, p) : s.getCollisionShape(EmptyBlockGetter.INSTANCE, p);
             var op = s.getOffset(p);
             for (Direction.Axis a : Direction.Axis.values()) {
                 DoubleList w = want.getCoords(a), b = base.getCoords(a);
-                double off = a == Direction.Axis.X ? op.x : a == Direction.Axis.Y ? op.y : op.z;
+                double off = a == Direction.Axis.X ? op.x : a == Direction.Axis.Y ? 0 : op.z;
                 for (int k = 0; k < w.size(); k++) {
-                    if (Double.doubleToRawLongBits(w.getDouble(k)) != Double.doubleToRawLongBits(b.getDouble(k) + off)) {
-                        throw new IllegalStateException("offset shape of " + s + " not reproducible at " + p);
+                    // Collision must be bit-exact; outlines (view rays) only to rounding.
+                    boolean same = outline
+                            ? Math.abs(w.getDouble(k) - (b.getDouble(k) + off)) < 1e-9
+                            : Double.doubleToRawLongBits(w.getDouble(k)) == Double.doubleToRawLongBits(b.getDouble(k) + off);
+                    if (!same) {
+                        throw new IllegalStateException("offset shape of " + s + " not reproducible at " + p + ": " + a + " " + w + " vs " + b + " + " + off);
                     }
                 }
             }

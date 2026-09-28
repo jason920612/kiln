@@ -60,6 +60,7 @@ impl FluidState {
 struct StateEntry {
     collision: u16,
     inside: u16,
+    outline: u16,
     fluid: u8,
     amount: u8,
     sturdy: u8,
@@ -93,14 +94,15 @@ struct Table {
     shapes: Vec<Shape>,
     blocks: Vec<BlockFactors>,
     named: HashMap<String, u16>,
-    offsets: HashMap<u16, f32>,
+    /// Offset blocks: maximum horizontal offset, and whether the outline shape follows it.
+    offsets: HashMap<u16, (f32, bool)>,
 }
 
 fn table() -> &'static Table {
     static TABLE: OnceLock<Table> = OnceLock::new();
     TABLE.get_or_init(|| {
         let mut r = Reader { data: RAW, pos: 0 };
-        assert_eq!(r.bytes(4), b"KEP2", "physics.bin: bad magic");
+        assert_eq!(r.bytes(4), b"KEP3", "physics.bin: bad magic");
         let (n_states, n_shapes, n_blocks) = (r.u32() as usize, r.u32() as usize, r.u32() as usize);
         let mut shapes = Vec::with_capacity(n_shapes);
         for _ in 0..n_shapes {
@@ -115,6 +117,7 @@ fn table() -> &'static Table {
             .map(|_| StateEntry {
                 collision: r.u16(),
                 inside: r.u16(),
+                outline: r.u16(),
                 fluid: r.u8(),
                 amount: r.u8(),
                 sturdy: r.u8(),
@@ -133,7 +136,8 @@ fn table() -> &'static Table {
         let mut offsets = HashMap::new();
         for _ in 0..r.u16() {
             let state = r.u16();
-            offsets.insert(state, r.f32());
+            let (h, outline) = (r.f32(), r.u8() != 0);
+            offsets.insert(state, (h, outline));
         }
         assert_eq!(r.pos, RAW.len(), "physics.bin: trailing data");
         Table { states, shapes, blocks, named, offsets }
@@ -175,6 +179,22 @@ fn entry(state: u16) -> StateEntry {
 /// The state's collision shape with an empty collision context (`BlockState.getCollisionShape`).
 pub fn collision_shape(state: u16) -> &'static Shape {
     &table().shapes[entry(state).collision as usize]
+}
+
+/// The state's outline shape (`BlockState.getShape`: what view rays stop at), unshifted for
+/// offset blocks (see [`block_offset`]).
+pub fn outline_shape(state: u16) -> &'static Shape {
+    &table().shapes[entry(state).outline as usize]
+}
+
+/// `BlockState.getOffset(pos)` (horizontal) of a block whose outline shape follows it
+/// (flowers, bamboo, dripstone).
+pub fn outline_offset(state: u16, x: i32, z: i32) -> Option<(f64, f64)> {
+    let (_, follows) = *table().offsets.get(&state)?;
+    if !follows {
+        return None;
+    }
+    collision_offset(state, x, z)
 }
 
 /// `Shapes.empty()`.
@@ -263,7 +283,7 @@ pub fn collision_offset(state: u16, x: i32, z: i32) -> Option<(f64, f64)> {
     if entry(state).flags & OFFSET == 0 {
         return None;
     }
-    let max = *table().offsets.get(&state)?;
+    let (max, _) = *table().offsets.get(&state)?;
     let seed = kiln_javamath::math::get_seed(x, 0, z);
     let clamp = |v: f64| {
         let lo = -max as f64;
