@@ -21,6 +21,7 @@ static INFO: Info = Info {
     fire_immune: true,
     ageable: true,
     head: (75, 0, 10),
+    extends_monster: false,
     ..Info::monster("minecraft:magma_cube", &[(MovementSpeed, 0.20000000298023224)])
 };
 

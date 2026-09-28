@@ -66,6 +66,9 @@ pub enum EntityKind {
 
 #[derive(Clone, Debug)]
 pub struct Entity {
+    /// A mob's landing (`causeFallDamage(distance, multiplier)`) during its move, applied by
+    /// the mob once its travel is done (its data is out of the entity meanwhile).
+    pub pending_fall: Option<(f64, f32)>,
     pub id: i32,
     pub uuid: u128,
     pub kind: EntityKind,
@@ -138,6 +141,7 @@ impl Entity {
     pub fn new(type_name: &'static str, id: i32, uuid: u128, kind: EntityKind, random_seed: i64) -> Entity {
         let t = kiln_data::entities::by_name(type_name).unwrap_or_else(|| panic!("unknown entity type {type_name}"));
         let mut e = Entity {
+            pending_fall: None,
             id,
             uuid,
             kind,

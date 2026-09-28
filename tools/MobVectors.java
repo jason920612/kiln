@@ -60,8 +60,61 @@ public class MobVectors {
         /// SNBT read by the mob's `readAdditionalSaveData` before it joins the level (both sides
         /// load it the same way: slime sizes, owners, carried blocks...).
         String nbt;
+        /// Effects added (`addEffect`) once the mob is in the level: {effect, duration, amplifier}.
+        final List<Object[]> effects = new ArrayList<>();
         MobSpec(String type, double x, double y, double z, float yaw, long seed) {
             this.type = type; this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.seed = seed;
+        }
+    }
+
+    /// kind: "effect" (mob, effect, duration, amp), "splash" (potion at pos: a splash potion
+    /// breaking there), "linger" (potion at pos: a lingering potion's cloud), "interact" (mob,
+    /// item: the player uses the item on the mob).
+    static final class Action {
+        int tick;
+        String kind;
+        int mob;
+        String what;
+        int duration, amp;
+        double x, y, z;
+        Action(int tick, String kind) { this.tick = tick; this.kind = kind; }
+        String json() {
+            return String.format(Locale.ROOT, "{\"tick\":%d,\"kind\":\"%s\",\"mob\":%d,\"what\":\"%s\",\"duration\":%d,\"amp\":%d,\"pos\":[%s,%s,%s]}",
+                    tick, kind, mob, what, duration, amp, d(x), d(y), d(z));
+        }
+    }
+
+    static net.minecraft.core.Holder<net.minecraft.world.effect.MobEffect> effect(String name) {
+        return BuiltInRegistries.MOB_EFFECT.get(Identifier.parse(name)).orElseThrow();
+    }
+
+    static ItemStack potionItem(String item, String potion) {
+        ItemStack stack = new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)));
+        stack.set(net.minecraft.core.component.DataComponents.POTION_CONTENTS,
+                new net.minecraft.world.item.alchemy.PotionContents(BuiltInRegistries.POTION.get(Identifier.parse(potion)).orElseThrow()));
+        return stack;
+    }
+
+    static void act(ServerLevel level, ServerPlayer player, List<Entity> tracked, Action a) {
+        switch (a.kind) {
+            case "effect" -> ((LivingEntity) tracked.get(a.mob)).addEffect(new net.minecraft.world.effect.MobEffectInstance(effect(a.what), a.duration, a.amp));
+            case "splash" -> {
+                ItemStack stack = potionItem("minecraft:splash_potion", a.what);
+                var potion = new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownSplashPotion(level, a.x, a.y, a.z, stack);
+                Vec3 at = new Vec3(a.x, a.y, a.z);
+                potion.onHitAsPotion(level, stack, new net.minecraft.world.phys.BlockHitResult(at, net.minecraft.core.Direction.UP, BlockPos.containing(at), false));
+            }
+            case "linger" -> {
+                ItemStack stack = potionItem("minecraft:lingering_potion", a.what);
+                var potion = new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownLingeringPotion(level, a.x, a.y, a.z, stack);
+                Vec3 at = new Vec3(a.x, a.y, a.z);
+                potion.onHitAsPotion(level, stack, new net.minecraft.world.phys.BlockHitResult(at, net.minecraft.core.Direction.UP, BlockPos.containing(at), false));
+            }
+            case "interact" -> {
+                player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what))));
+                player.interactOn(tracked.get(a.mob), net.minecraft.world.InteractionHand.MAIN_HAND, tracked.get(a.mob).position());
+            }
+            default -> throw new IllegalArgumentException(a.kind);
         }
     }
 
@@ -84,6 +137,9 @@ public class MobVectors {
         boolean diverges;
         // tick -> [mob index, amount]; the player (or nobody) hurts the mob.
         final Map<Integer, double[]> hurts = new HashMap<>();
+        /// Things done to the mobs before the entity ticks of a tick (effects, potions,
+        /// player interactions), in order.
+        final List<Action> actions = new ArrayList<>();
         Scenario(String name) { this.name = name; }
     }
 
@@ -110,7 +166,7 @@ public class MobVectors {
         main.start();
         MinecraftServer server = awaitServer();
         List<Scenario> selected = new ArrayList<>();
-        for (Scenario s : scenarios()) if (filter == null || s.name.contains(filter)) selected.add(s);
+        for (Scenario s : scenarios()) if (filter == null || java.util.Arrays.stream(filter.split("\\|")).anyMatch(s.name::contains)) selected.add(s);
         System.out.println("MobVectors: " + selected.size() + " scenarios");
         server.submit(() -> prepare(server)).get();
         Thread.sleep(3000);
@@ -314,13 +370,16 @@ public class MobVectors {
             pinCubeMoveYaw(m);
             int eggTime = m instanceof net.minecraft.world.entity.animal.chicken.Chicken c ? (Integer) get(c, "eggTime") : 0;
             if (!level.addFreshEntity(m)) throw new IllegalStateException("could not add " + spec.type);
+            for (Object[] fx : spec.effects) {
+                m.addEffect(new net.minecraft.world.effect.MobEffectInstance(effect((String) fx[0]), (Integer) fx[1], (Integer) fx[2]));
+            }
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
                     spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
-                    spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson));
+                    spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson, effectsJson(spec.effects)));
         }
         StringBuilder trace = new StringBuilder();
         StringBuilder hits = new StringBuilder();
@@ -345,6 +404,9 @@ public class MobVectors {
                 LivingEntity target = (LivingEntity) tracked.get((int) hurt[0]);
                 var src = s.player != null ? level.damageSources().playerAttack(player) : level.damageSources().generic();
                 target.hurtServer(level, src, (float) hurt[1]);
+            }
+            for (Action a : s.actions) {
+                if (a.tick == tick) act(level, player, tracked, a);
             }
             float healthBefore = player.getHealth();
             for (Entity e : new ArrayList<>(tracked)) {
@@ -405,9 +467,37 @@ public class MobVectors {
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", Float.toString(s.playerYaw), Float.toString(s.playerPitch),
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())));
         return String.format(Locale.ROOT,
-                "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
+                "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.levelSeed, s.ticks, startTime, skyDarken, blocks, specs, playerJson, hurts, hits, spawned, trace);
+                s.name, s.diverges, s.levelSeed, s.ticks, startTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, trace);
+    }
+
+    static String effectsJson(List<Object[]> effects) {
+        StringBuilder sb = new StringBuilder("[");
+        for (Object[] fx : effects) {
+            if (sb.length() > 1) sb.append(',');
+            sb.append(String.format(Locale.ROOT, "[\"%s\",%d,%d]", fx[0], fx[1], fx[2]));
+        }
+        return sb.append(']').toString();
+    }
+
+    static String actionsJson(List<Action> actions) {
+        StringBuilder sb = new StringBuilder("[");
+        for (Action a : actions) {
+            if (sb.length() > 1) sb.append(',');
+            sb.append(a.json());
+        }
+        return sb.append(']').toString();
+    }
+
+    /// The active effects as one number: the sum of (id + 1) * 100000 + duration * 10 + amplifier
+    /// (hidden effects not included).
+    static long effectsSig(LivingEntity m) {
+        long sig = 0;
+        for (var fx : m.getActiveEffects()) {
+            sig += (BuiltInRegistries.MOB_EFFECT.getId(fx.getEffect().value()) + 1) * 100000L + fx.getDuration() * 10L + fx.getAmplifier();
+        }
+        return sig;
     }
 
     /// NBT as typed JSON: {"b":1}, {"i":2}, {"s":..}, {"L":"n"}, {"f":x}, {"d":x}, {"str":".."},
@@ -474,7 +564,8 @@ public class MobVectors {
                 .append(',').append(m.onGround() ? 1 : 0).append(',').append(Float.toString(m.getHealth()))
                 .append(',').append(m.hurtTime).append(',').append(m.isRemoved() ? 1 : 0).append(',').append(m.getRemainingFireTicks())
                 .append(',').append(m.getTarget() == null ? -1 : m.getTarget().getId())
-                .append(',').append(((java.util.concurrent.atomic.AtomicLong) get(m.getRandom(), "seed")).get());
+                .append(',').append(((java.util.concurrent.atomic.AtomicLong) get(m.getRandom(), "seed")).get())
+                .append(',').append(effectsSig(m)).append(',').append(Float.toString(m.getAbsorptionAmount()));
         StringBuilder goals = new StringBuilder();
         for (var sel : new net.minecraft.world.entity.ai.goal.GoalSelector[] {(net.minecraft.world.entity.ai.goal.GoalSelector) get(m, "goalSelector"), (net.minecraft.world.entity.ai.goal.GoalSelector) get(m, "targetSelector")}) {
             for (WrappedGoal g : sel.getAvailableGoals()) {
@@ -1521,6 +1612,169 @@ public class MobVectors {
 
     // ---------------------------------------------------------- slice 3: mob effects on mobs, curing
     static void scenariosEffects(List<Scenario> out) {
+        // A mob with one effect near a standing player: movement, health and the effect run down.
+        String[][] single = {
+            {"zombie", "minecraft:speed", "300", "1"},
+            {"zombie", "minecraft:slowness", "300", "1"},
+            {"zombie", "minecraft:jump_boost", "300", "2"},
+            {"zombie", "minecraft:strength", "300", "0"},
+            {"zombie", "minecraft:weakness", "300", "0"},
+            {"zombie", "minecraft:poison", "300", "0"},
+            {"zombie", "minecraft:regeneration", "300", "1"},
+            {"zombie", "minecraft:instant_health", "1", "0"},
+            {"zombie", "minecraft:instant_damage", "1", "0"},
+            {"zombie", "minecraft:levitation", "80", "0"},
+            {"pig", "minecraft:poison", "200", "1"},
+            {"pig", "minecraft:wither", "200", "1"},
+            {"pig", "minecraft:regeneration", "200", "0"},
+            {"pig", "minecraft:instant_damage", "1", "0"},
+            {"pig", "minecraft:instant_health", "1", "0"},
+            {"pig", "minecraft:levitation", "60", "1"},
+            {"pig", "minecraft:absorption", "200", "1"},
+            {"pig", "minecraft:health_boost", "200", "1"},
+            {"pig", "minecraft:speed", "200", "3"},
+            {"spider", "minecraft:poison", "200", "0"},
+            {"skeleton", "minecraft:wither", "200", "0"},
+            {"cow", "minecraft:slow_falling", "200", "0"},
+        };
+        for (String[] c : single) {
+            Scenario s = new Scenario("effect_" + c[0] + "_" + c[1].substring(10));
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:" + c[0], 0.5, BY, 0.5, 0f, 7100 + out.size());
+            m.effects.add(new Object[] {c[1], Integer.parseInt(c[2]), Integer.parseInt(c[3])});
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.ticks = 160;
+            if (c[0].equals("pig") || c[0].equals("cow")) s.hurts.put(0, new double[] {0, 3});
+            out.add(s);
+        }
+        {
+            // Falling with slow falling from a height.
+            Scenario s = new Scenario("effect_chicken_slow_falling_drop");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:chicken", 0.5, BY + 12, 0.5, 0f, 7201);
+            m.effects.add(new Object[] {"minecraft:slow_falling", 400, 0});
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            // A fire resistant zombie in daylight: it burns but takes no damage.
+            Scenario s = new Scenario("effect_zombie_fire_resistance_daylight");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 0f, 7202);
+            m.effects.add(new Object[] {"minecraft:fire_resistance", 400, 0});
+            s.mobs.add(m);
+            s.dayTime = 6000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            // Resistance against the player's hits.
+            Scenario s = new Scenario("effect_pig_resistance_hits");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 0f, 7203);
+            m.effects.add(new Object[] {"minecraft:resistance", 400, 1});
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(2, new double[] {0, 4});
+            s.hurts.put(40, new double[] {0, 5});
+            s.ticks = 100;
+            out.add(s);
+        }
+        {
+            // A stronger, shorter effect over a weaker, longer one: the weaker comes back.
+            Scenario s = new Scenario("effect_pig_hidden_speed");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 0f, 7204);
+            m.effects.add(new Object[] {"minecraft:speed", 200, 0});
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            Action a = new Action(10, "effect");
+            a.mob = 0; a.what = "minecraft:speed"; a.duration = 40; a.amp = 2;
+            s.actions.add(a);
+            s.hurts.put(0, new double[] {0, 1});
+            s.ticks = 120;
+            out.add(s);
+        }
+        // Splash potions on a row of mobs at different distances (the undead invert healing
+        // and harming).
+        String[][] splash = {
+            {"minecraft:poison", "pig"}, {"minecraft:harming", "pig"}, {"minecraft:harming", "zombie"},
+            {"minecraft:healing", "zombie"}, {"minecraft:strong_healing", "skeleton"}, {"minecraft:slowness", "cow"},
+            {"minecraft:long_swiftness", "zombie"}, {"minecraft:weakness", "zombie"},
+        };
+        for (String[] c : splash) {
+            Scenario s = new Scenario("splash_" + c[0].substring(10) + "_" + c[1]);
+            floor(s, 16, "minecraft:grass_block");
+            for (int i = 0; i < 4; i++) {
+                s.mobs.add(new MobSpec("minecraft:" + c[1], 0.5 + i * 1.3, BY, 0.5 + (i % 2) * 0.7, 90f * i, 7300 + i + out.size() * 4));
+            }
+            s.player = new double[] {12.5, BY, 8.5};
+            s.playerCreative = true;
+            // Night: no sun to flee from (the recording's light below the floor can be stale).
+            s.dayTime = 18000;
+            s.hurts.put(0, new double[] {1, 4});
+            Action a = new Action(3, "splash");
+            a.what = c[0]; a.x = 1.1; a.y = BY + 0.2; a.z = 0.6;
+            s.actions.add(a);
+            s.ticks = 100;
+            out.add(s);
+        }
+        {
+            // A lingering potion's cloud over pigs and a zombie: effects every five ticks at
+            // most, the cloud shrinking with each use.
+            for (String potion : new String[] {"minecraft:poison", "minecraft:harming", "minecraft:regeneration"}) {
+                Scenario s = new Scenario("linger_" + potion.substring(10));
+                floor(s, 16, "minecraft:grass_block");
+                s.mobs.add(new MobSpec("minecraft:pig", 0.5, BY, 0.5, 0f, 7400));
+                s.mobs.add(new MobSpec("minecraft:pig", 2.0, BY, 0.9, 90f, 7401));
+                s.mobs.add(new MobSpec("minecraft:zombie", -1.2, BY, -0.4, 180f, 7402));
+                s.player = new double[] {12.5, BY, 8.5};
+                s.playerCreative = true;
+                s.hurts.put(0, new double[] {0, 5});
+                s.hurts.put(1, new double[] {1, 5});
+                Action a = new Action(2, "linger");
+                a.what = potion; a.x = 0.5; a.y = BY; a.z = 0.5;
+                s.actions.add(a);
+                s.ticks = 160;
+                out.add(s);
+            }
+        }
+        {
+            // A golden apple on a weakened zombie villager starts the cure: the weakness goes,
+            // strength comes; a golden apple without weakness does nothing.
+            for (boolean weak : new boolean[] {true, false}) {
+                Scenario s = new Scenario("cure_zombie_villager_" + (weak ? "weak" : "plain"));
+                floor(s, 16, "minecraft:grass_block");
+                MobSpec m = new MobSpec("minecraft:zombie_villager", 0.5, BY, 0.5, 0f, 7500);
+                m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:farmer\",level:2},Xp:5}";
+                if (weak) m.effects.add(new Object[] {"minecraft:weakness", 600, 0});
+                s.mobs.add(m);
+                s.player = new double[] {1.5, BY, 0.5};
+                s.playerCreative = true;
+                Action a = new Action(5, "interact");
+                a.mob = 0; a.what = "minecraft:golden_apple";
+                s.actions.add(a);
+                s.ticks = 60;
+                out.add(s);
+            }
+        }
+        {
+            // The end of a cure: a villager with the zombie villager's data takes its place (the
+            // villager is brain-driven: compared loosely).
+            Scenario s = new Scenario("cure_zombie_villager_finish");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:zombie_villager", 0.5, BY, 0.5, 0f, 7502);
+            m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:farmer\",level:2},Xp:5,ConversionTime:30}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 60;
+            s.diverges = true;
+            out.add(s);
+        }
     }
 
 
