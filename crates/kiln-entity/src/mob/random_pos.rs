@@ -82,6 +82,19 @@ pub fn land_pos_away(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i3
     })
 }
 
+/// `DefaultRandomPos.getPosAway(mob, h, v, from)`.
+pub fn default_pos_away(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, from: Vec3) -> Option<Vec3> {
+    let d = e.position() - from;
+    generate(e, m, level, |e| {
+        let dir = direction_within_radians(e, 0.0, h as f64, v, 0, d.x, d.z, std::f32::consts::FRAC_PI_2 as f64)?;
+        let p = toward(e, dir);
+        if outside_limits(level, p) || !path::is_stable_destination(level, p) || has_malus(m, level, p) {
+            return None;
+        }
+        Some(p)
+    })
+}
+
 /// `RandomPos.generateRandomDirectionWithinRadians`.
 #[allow(clippy::too_many_arguments)]
 fn direction_within_radians(e: &mut Entity, min: f64, max: f64, v: i32, y_off: i32, dx: f64, dz: f64, spread: f64) -> Option<BlockPos> {

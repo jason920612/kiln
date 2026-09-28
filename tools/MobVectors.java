@@ -732,5 +732,60 @@ public class MobVectors {
             s.ticks = 300;
             out.add(s);
         }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_cat_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:cat", 0.5, BY, 0.5, 60f * seed, 9600L * seed + 1));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("avoid_cat");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:cat", 0.5, BY, 0.5, 0f, 9700));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_cat");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:cat", 0.5, BY, 0.5, 0f, 9710));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerMainHand = "minecraft:cod";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("follow_owner_cat");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:cat", 0.5, BY, 0.5, 0f, 9720);
+            m.nbt = "{" + owner() + "}";
+            s.mobs.add(m);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("block_cat");
+            floor(s, 20, "minecraft:grass_block");
+            block(s, 3, BY, 2, "minecraft:chest[facing=north]");
+            block(s, -3, BY, 1, "minecraft:red_bed[facing=east,part=foot]");
+            block(s, -2, BY, 1, "minecraft:red_bed[facing=east,part=head]");
+            MobSpec m = new MobSpec("minecraft:cat", 0.5, BY, 0.5, 0f, 9730);
+            m.nbt = "{" + owner() + "}";
+            s.mobs.add(m);
+            MobSpec m2 = new MobSpec("minecraft:cat", 1.5, BY, -1.5, 90f, 9731);
+            m2.nbt = "{" + owner() + "}";
+            s.mobs.add(m2);
+            s.player = new double[] {4.5, BY, -3.5};
+            s.playerCreative = true;
+            s.ticks = 600;
+            out.add(s);
+        }
     }
 }

@@ -44,6 +44,8 @@ pub struct PlayerView {
     pub hurt_recently: bool,
     /// The entity the player rides.
     pub vehicle: Option<i32>,
+    /// (yaw, pitch).
+    pub rot: [f32; 2],
 }
 
 impl PlayerView {
@@ -68,6 +70,7 @@ impl PlayerView {
             last_hurt_mob_time: 0,
             hurt_recently: false,
             vehicle: None,
+            rot: [0.0; 2],
         }
     }
 }

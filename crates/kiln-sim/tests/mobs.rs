@@ -350,3 +350,26 @@ fn wild_wolves_hunt_sheep() {
     }
     assert!(hurt, "the wolf bit the sheep");
 }
+
+#[test]
+fn cats_are_tamed_with_fish() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:cod", 64);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:cat", [1.5, 0.0, 0.0], "{NoAI:1b}");
+    let cat = w.mobs("minecraft:cat")[0].0;
+    let mut tries = 0;
+    loop {
+        assert!(tries < 40, "tamed within 40 fish");
+        w.interact(cat);
+        tries += 1;
+        assert_eq!(w.held().unwrap().1, 64 - tries, "each fish is eaten");
+        let all = w.sim.entity_nbt();
+        let tag = all.iter().find(|t| t.get("id").and_then(|v| v.as_str()) == Some("minecraft:cat")).unwrap();
+        if tag.get("Owner").is_some() {
+            assert_eq!(tag.get("Sitting").and_then(|t| t.as_f64()), Some(1.0), "a new tamed cat sits");
+            break;
+        }
+    }
+}

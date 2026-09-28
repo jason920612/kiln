@@ -1036,6 +1036,7 @@ fn view(p: &Player) -> PlayerView {
         last_hurt_mob_time: 0,
         hurt_recently: false,
         vehicle: None,
+        rot: p.rot,
     }
 }
 
