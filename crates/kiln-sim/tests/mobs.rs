@@ -246,7 +246,9 @@ fn fed_animals_breed_and_babies_grow() {
     assert_eq!(w.held(), Some((kiln_data::builtin_id("minecraft:item", "minecraft:wheat").unwrap(), 62)), "two wheat eaten");
     w.ticks(200);
     assert_eq!(w.mobs("minecraft:cow").len(), 3, "a calf was born");
-    assert!(w.sim.entities().iter().any(|e| e.0 == "minecraft:experience_orb"), "breeding experience");
+    // (The orbs may already have reached the player standing next to the cows.)
+    let orb = w.sim.entities().iter().any(|e| e.0 == "minecraft:experience_orb");
+    assert!(orb || w.sim.experience(1).unwrap().2 > 0, "breeding experience");
     // The parents are on their breeding cooldown: more wheat does nothing.
     for &c in &cows {
         w.interact(c);
@@ -342,7 +344,8 @@ fn trading_with_a_villager() {
     assert_eq!(slots[2], None, "out of stock");
     assert_eq!(w.count_of("minecraft:emerald"), 2, "two emeralds shift-clicked into the inventory");
     w.ticks(2);
-    assert!(w.sim.entities().iter().any(|e| e.0 == "minecraft:experience_orb"), "trading experience");
+    let orb = w.sim.entities().iter().any(|e| e.0 == "minecraft:experience_orb");
+    assert!(orb || w.sim.experience(1).unwrap().2 > 0, "trading experience");
     // Closing gives the payment back; the villager can trade again.
     w.packet(PlayIn::ContainerClose { container_id: id });
     assert!(w.sim.merchant_screen(1).is_none());
