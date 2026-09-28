@@ -152,11 +152,9 @@ pub fn can_break_doors(m: &MobData) -> bool {
 /// `setCanBreakDoors`: ground navigation opens doors (the break-door goal is not simulated:
 /// Kiln has no door breaking yet).
 pub fn set_can_break_doors(m: &mut MobData, on: bool) {
-    let ground = m.kind != MobKind::Drowned;
-    with_zombie(m, |d, _| *d = on && ground);
-    if ground {
-        m.nav.can_open_doors = on;
-    }
+    // Every zombie type's navigation `canNavigateGround` (amphibious navigation too).
+    with_zombie(m, |d, _| *d = on);
+    m.nav.can_open_doors = on;
 }
 
 /// `setBaby`: the flag and the speed bonus (dimensions follow).

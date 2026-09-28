@@ -378,6 +378,10 @@ pub trait Kind: Sync + Send {
     fn placement(&self) -> Placement {
         Placement::OnGround
     }
+    /// `checkSpawnObstruction` lets the type spawn with liquid in its box (drowned).
+    fn spawn_in_liquids(&self) -> bool {
+        false
+    }
     /// `getBaseExperienceReward`: `None` for the shared rule.
     fn experience(&self, e: &mut Entity, m: &MobData) -> Option<i32> {
         let _ = (e, m);

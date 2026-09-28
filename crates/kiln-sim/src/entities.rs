@@ -1036,6 +1036,7 @@ fn view(p: &Player) -> PlayerView {
         armor_cover: armor as f32 / 4.0,
         main_hand: p.inv.selected_item().item(),
         off_hand: p.inv.equipped(S::OffHand).item(),
+        in_water: None,
     }
 }
 
@@ -1273,5 +1274,6 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::Kill => ("minecraft:generic_kill", "death.attack.genericKill"),
         DamageKind::Cramming => ("minecraft:cramming", "death.attack.cramming"),
         DamageKind::PlayerExplosion => ("minecraft:player_explosion", "death.attack.explosion.player"),
+        DamageKind::Trident => ("minecraft:trident", "death.attack.trident"),
     }
 }

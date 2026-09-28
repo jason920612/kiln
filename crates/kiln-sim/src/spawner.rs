@@ -355,7 +355,8 @@ fn spawn_category_for_chunk(
             } else {
                 -(magic - 0.5)
             };
-            if walk < 0.0 || contains_liquid(level, [fx, y as f64, fz], t.width, t.height) {
+            let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
+            if walk < 0.0 || (!liquid_ok && contains_liquid(level, [fx, y as f64, fz], t.width, t.height)) {
                 continue;
             }
             // `finalizeSpawn` draws from the chunk's random.

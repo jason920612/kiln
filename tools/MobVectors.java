@@ -706,8 +706,79 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
-        // A husk under water turns into a zombie (conversion shortened through its saved data).
-        for (String type : new String[] {"husk"}) {
+        // Drowned: idle and chasing on land at night, heading for water by day, swimming after a
+        // target in the water, throwing tridents.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_drowned_" + seed);
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:drowned", 0.5, BY, 0.5, 45f * seed, 3100L * seed + 17));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (int dist : new int[] {4, 9}) {
+            Scenario s = new Scenario("chase_drowned_" + dist);
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:drowned", 0.5, BY, 0.5, 0f, 5350 + dist));
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 160;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("trident_drowned_9");
+            floor(s, 20, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:drowned", 0.5, BY, 0.5, 0f, 5400);
+            m.mainHand = "minecraft:trident";
+            s.mobs.add(m);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("to_water_drowned");
+            floor(s, 16, "minecraft:stone");
+            for (int x = 4; x <= 7; x++)
+                for (int z = -2; z <= 2; z++) block(s, x, BY, z, "minecraft:water");
+            s.mobs.add(new MobSpec("minecraft:drowned", 0.5, BY, 0.5, 0f, 5500));
+            s.player = new double[] {-8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 6000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("swim_drowned");
+            floor(s, 16, "minecraft:stone");
+            for (int x = -4; x <= 6; x++)
+                for (int z = -4; z <= 4; z++)
+                    for (int y = BY; y <= BY + 4; y++) block(s, x, y, z, "minecraft:water");
+            s.mobs.add(new MobSpec("minecraft:drowned", 0.5, BY, 0.5, 0f, 5600));
+            s.player = new double[] {4.5, BY + 3, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("beach_drowned");
+            floor(s, 16, "minecraft:stone");
+            for (int x = -3; x <= 3; x++)
+                for (int z = -3; z <= 3; z++)
+                    for (int y = BY; y <= BY + 1; y++) block(s, x, y, z, "minecraft:water");
+            s.mobs.add(new MobSpec("minecraft:drowned", 0.5, BY, 0.5, 0f, 5700));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A husk under water turns into a zombie, a zombie into a drowned (conversions shortened
+        // through the saved data).
+        for (String type : new String[] {"husk", "zombie"}) {
             Scenario s = new Scenario("convert_" + type);
             floor(s, 16, "minecraft:stone");
             for (int x = -2; x <= 2; x++)

@@ -34,6 +34,9 @@ pub struct PlayerView {
     /// Item ids in the hands (`minecraft:item` protocol ids, 0 for none).
     pub main_hand: i32,
     pub off_hand: i32,
+    /// `isInWater` when known (`None`: from the blocks around the player, as its own tick
+    /// would find).
+    pub in_water: Option<bool>,
 }
 
 impl PlayerView {
@@ -52,6 +55,7 @@ impl PlayerView {
             armor_cover: 0.0,
             main_hand: 0,
             off_hand: 0,
+            in_water: None,
         }
     }
 }
@@ -82,6 +86,8 @@ pub enum DamageKind {
     Kill,
     Cramming,
     PlayerExplosion,
+    /// `minecraft:trident` (a thrown trident).
+    Trident,
 }
 
 /// Side effects the simulation carries out or broadcasts.
@@ -158,6 +164,11 @@ pub trait EntityLevel {
 
     /// Lowest block y of the dimension.
     fn min_y(&self) -> i32;
+
+    /// `Level.getSeaLevel` (63 in the overworld, 32 in the nether, -63 in a superflat world).
+    fn sea_level(&self) -> i32 {
+        63
+    }
 
     /// Highest block y of the dimension.
     fn max_y(&self) -> i32 {

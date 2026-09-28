@@ -1169,10 +1169,12 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let h = if e.is_in_lava() { e.fluid_height_lava() } else { e.fluid_height_water() };
         let in_water = e.is_in_water() && h > 0.0;
         let threshold = if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 };
+        // `Mob.jumpInLiquid`: a mob whose navigation cannot float gets a strong push instead.
+        let lift = if m.nav.can_float { 0.03999999910593033 } else { 0.3 };
         if in_water && (!e.on_ground || h > threshold) {
-            e.delta = e.delta.add(0.0, 0.03999999910593033, 0.0);
+            e.delta = e.delta.add(0.0, lift, 0.0);
         } else if e.is_in_lava() && (!e.on_ground || e.fluid_height_lava() > threshold) {
-            e.delta = e.delta.add(0.0, 0.03999999910593033, 0.0);
+            e.delta = e.delta.add(0.0, lift, 0.0);
         } else if (e.on_ground || (in_water && h <= threshold)) && m.no_jump_delay == 0 {
             jump_from_ground(e, m, level);
             m.no_jump_delay = 10;
@@ -2041,6 +2043,7 @@ impl DamageKind {
             DamageKind::Kill => "minecraft:generic_kill",
             DamageKind::Cramming => "minecraft:cramming",
             DamageKind::PlayerExplosion => "minecraft:player_explosion",
+            DamageKind::Trident => "minecraft:trident",
         }
     }
 

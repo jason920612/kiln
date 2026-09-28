@@ -690,6 +690,11 @@ impl Entity {
 
     /// `checkFallDamage`.
     fn check_fall_damage(&mut self, level: &mut dyn EntityLevel, y: f64, on_ground: bool, state: u16, pos: BlockPos) {
+        // `LivingEntity.checkFallDamage`: a mob that moved into water notices at once (the
+        // splash comes this tick, not at the next `baseTick`).
+        if matches!(self.kind, EntityKind::MobTicking { .. }) && !self.is_in_water() {
+            self.update_fluid_interaction(level);
+        }
         if !self.is_in_water() && y < 0.0 {
             self.fall_distance -= y as f32 as f64;
         }

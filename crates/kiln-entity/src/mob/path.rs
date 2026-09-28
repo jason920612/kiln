@@ -30,7 +30,18 @@ fn flags(state: u16) -> u8 {
 
 /// `WalkNodeEvaluator.getPathTypeFromState` (a function of the state alone).
 pub fn path_type_from_state(state: u16) -> PathType {
-    PathType::ALL[table().get(state as usize * 2).copied().unwrap_or(0) as usize]
+    let t = PathType::ALL[table().get(state as usize * 2).copied().unwrap_or(0) as usize];
+    // The extracted table saw no fluid states (the extractor's block states had empty fluid
+    // caches), so its liquids came out as their block's type: lava as fire (`isBurningBlock`),
+    // water as open. Vanilla checks lava right after the early block types and water last.
+    let f = crate::physics::fluid_state(state);
+    if f.kind.is_lava() && !matches!(t, PathType::Trapdoor | PathType::PowderSnow | PathType::Damaging | PathType::StickyHoney | PathType::Cocoa | PathType::DamageCautious) {
+        return PathType::Lava;
+    }
+    if f.kind.is_water() && t == PathType::Open {
+        return PathType::Water;
+    }
+    t
 }
 
 /// `isPathfindable(LAND)`.

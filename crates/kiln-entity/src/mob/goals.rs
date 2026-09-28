@@ -412,7 +412,7 @@ fn nav_done(m: &MobData) -> bool {
     m.nav.is_done()
 }
 
-fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
     let every = g.every_tick();
     let adj = |t: i32| if every { t } else { reduced_tick_delay(t) };
     match g {
@@ -632,7 +632,7 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
     }
 }
 
-fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+pub(crate) fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
     match g {
         Goal::Custom(c) => c.can_continue(e, m, level),
         Goal::Panic { .. } | Goal::FleeSun { .. } => !nav_done(m),
@@ -716,7 +716,7 @@ fn continue_target(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, tar
     true
 }
 
-fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+pub(crate) fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let every = g.every_tick();
     let adj = |t: i32| if every { t } else { reduced_tick_delay(t) };
     match g {
@@ -793,7 +793,7 @@ fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
     }
 }
 
-fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+pub(crate) fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     match g {
         Goal::Custom(c) => c.stop(_e, m, level),
         Goal::RandomStroll { .. } => m.nav.stop(),
@@ -835,7 +835,7 @@ fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
     }
 }
 
-fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let every = g.every_tick();
     let adj = |t: i32| if every { t } else { reduced_tick_delay(t) };
     match g {
