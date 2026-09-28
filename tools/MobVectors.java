@@ -76,6 +76,9 @@ public class MobVectors {
         long dayTime = 1000;
         long levelSeed = 1;
         int ticks = 200;
+        /// Brain-driven mobs Kiln approximates with goals: the replay reports where Kiln
+        /// diverges instead of failing.
+        boolean diverges;
         // tick -> [mob index, amount]; the player (or nobody) hurts the mob.
         final Map<Integer, double[]> hurts = new HashMap<>();
         Scenario(String name) { this.name = name; }
@@ -393,9 +396,9 @@ public class MobVectors {
                 : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"");
         return String.format(Locale.ROOT,
-                "{\"name\":\"%s\",\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
+                "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"trace\":[%s]}",
-                s.name, s.levelSeed, s.ticks, startTime, skyDarken, blocks, specs, playerJson, hurts, hits, spawned, trace);
+                s.name, s.diverges, s.levelSeed, s.ticks, startTime, skyDarken, blocks, specs, playerJson, hurts, hits, spawned, trace);
     }
 
     /// NBT as typed JSON: {"b":1}, {"i":2}, {"s":..}, {"L":"n"}, {"f":x}, {"d":x}, {"str":".."},
@@ -658,6 +661,36 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        scenariosVillagers(out);
         return out;
+    }
+
+    // ---------------------------------------------------------- m6s2: villagers, piglins, hoglins
+    static void scenariosVillagers(List<Scenario> out) {
+        // Without AI the brain does not run: health, hurt and the ambient sound clock compare.
+        for (boolean baby : new boolean[] {false, true}) {
+            Scenario s = new Scenario("villager_noai_" + (baby ? "baby" : "adult"));
+            floor(s, 8, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9100);
+            m.nbt = "{NoAI:1b,VillagerData:{type:\"minecraft:desert\",profession:\"minecraft:farmer\",level:2}}";
+            if (baby) m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 3.0});
+            s.ticks = 120;
+            out.add(s);
+        }
+        // With AI: the brain against Kiln's goals.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("villager_idle_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:villager", 0.5, BY, 0.5, 40f * seed, 9200L + seed));
+            s.player = new double[] {4.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 200;
+            s.diverges = true;
+            out.add(s);
+        }
     }
 }

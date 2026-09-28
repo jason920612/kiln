@@ -26,6 +26,7 @@ pub mod patch;
 pub mod registry;
 pub mod stack;
 pub mod text;
+pub mod trading;
 pub mod value;
 pub mod wire;
 
