@@ -220,8 +220,8 @@ fn recipes<S: Host>(c: &CommandContext<S>, s: &mut S, take: bool, all: bool) -> 
         return Err(CommandError::new(tr!(failed)));
     }
     let text = match &targets[..] {
-        [one] => tr!(format!("commands.recipe.{verb}.success.single"), list.len() as i32, one.display_name()),
-        many => tr!(format!("commands.recipe.{verb}.success.multiple"), list.len() as i32, many.len() as i32),
+        [one] => tr!(format!("commands.recipe.{verb}.success.single"), total, one.display_name()),
+        many => tr!(format!("commands.recipe.{verb}.success.multiple"), total, many.len() as i32),
     };
     s.send_success(text, true);
     Ok(total)

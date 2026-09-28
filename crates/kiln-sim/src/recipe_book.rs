@@ -209,6 +209,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vanilla_book_recipes() {
+        let dir = crate::datapack_dir(None);
+        let Ok(rules) = kiln_inventory::Rules::load(&dir) else { return };
+        assert_eq!(rules.recipes.errors, Vec::new());
+        assert_eq!(rules.recipes.len(), 2042, "every recipe file loads");
+        let book = rules.recipes.recipes().iter().filter(|r| !r.recipe.is_special()).count();
+        // Every non-special recipe (vanilla 26.3 counts 7 more for `/recipe give @s *`).
+        assert_eq!(book, 1739);
+    }
+
+    #[test]
     fn packed_round_trip() {
         let mut b = RecipeBook::default();
         b.known.insert("minecraft:stick".into());

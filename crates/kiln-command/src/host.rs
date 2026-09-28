@@ -711,7 +711,8 @@ pub trait Host: SelectorWorld {
     }
     /// `PlayerAdvancements.flushDirty(player, showAdvancements)`.
     fn flush_advancements(&mut self, _player: &Self::Entity, _show: bool) {}
-    /// Recipe ids in registry order (`/recipe ... *`); `None` when recipes are not loaded.
+    /// Ids of the recipes a recipe book can hold (not special), in registry order
+    /// (`/recipe ... *`; `ResourceKeyArgument.getRecipe` rejects special ones).
     fn recipe_ids(&self) -> Vec<String> {
         Vec::new()
     }

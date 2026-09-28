@@ -412,50 +412,50 @@ impl Sim {
     pub(crate) fn advancement_upkeep(&mut self) {
         let mut conns: Vec<ConnId> = self.players.keys().copied().collect();
         conns.sort_unstable();
-        let announce = self.rule_bool("minecraft:show_advancement_messages");
-        let mut messages = Vec::new();
-        let mut functions: Vec<(ConnId, String)> = Vec::new();
         for conn in conns {
-            let rules = self.rules.clone();
-            let loot = self.loot.clone();
-            let seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
-            let game_time = self.game_time;
-            let mut spawns = Vec::new();
-            let Some(p) = self.players.get_mut(&conn) else { continue };
-            // Rewards can unlock recipes that complete more advancements.
-            for _ in 0..64 {
-                let done = std::mem::take(&mut p.advancements.completed.advancements);
-                if done.is_empty() {
-                    break;
-                }
-                let data = p.advancements.data.clone();
-                for i in done {
-                    let a = &data.list[i];
-                    p.grant_rewards(a, &rules, loot.as_deref(), seed ^ game_time, &mut spawns);
-                    if let Some(f) = &a.rewards.function {
-                        functions.push((conn, f.clone()));
-                    }
-                    if announce
-                        && a.display.as_ref().is_some_and(|d| d.announce_to_chat)
-                        && let Some(text) = a.announcement(kiln_command::Text::literal(p.name.clone()))
-                    {
-                        messages.push(text);
-                    }
-                }
-            }
-            if let Some(pkt) = p.advancements.flush(true) {
+            self.grant_completed(conn);
+            if let Some(p) = self.players.get_mut(&conn)
+                && let Some(pkt) = p.advancements.flush(true)
+            {
                 p.send(pkt);
             }
-            let dim = p.dim;
-            self.dims[dim].spawns.extend(spawns);
         }
-        for m in messages {
-            let tag = self.decorate_for_players(&m);
-            self.broadcast(kiln_proto::packets::system_chat(tag, false));
-            tracing::info!("{}", crate::commands::console_text(&m));
-        }
-        for (conn, id) in functions {
-            self.run_function_as_player(conn, &id);
+    }
+
+    /// What `PlayerAdvancements.award` does when an advancement completes: its rewards, then
+    /// the announcement to everyone. Commands call this right away (vanilla announces before
+    /// the command's feedback); region work leaves it to the next upkeep.
+    pub(crate) fn grant_completed(&mut self, conn: ConnId) {
+        let announce = self.rule_bool("minecraft:show_advancement_messages");
+        let rules = self.rules.clone();
+        let loot = self.loot.clone();
+        let seed = self.config.noise.as_ref().map_or(0, |n| n.seed) ^ self.game_time;
+        // Rewards can unlock recipes that complete more advancements.
+        for _ in 0..64 {
+            let Some(p) = self.players.get_mut(&conn) else { return };
+            let done = std::mem::take(&mut p.advancements.completed.advancements);
+            if done.is_empty() {
+                break;
+            }
+            let data = p.advancements.data.clone();
+            for i in done {
+                let a = &data.list[i];
+                let mut spawns = Vec::new();
+                let Some(p) = self.players.get_mut(&conn) else { return };
+                p.grant_rewards(a, &rules, loot.as_deref(), seed, &mut spawns);
+                let (dim, name) = (p.dim, p.name.clone());
+                self.dims[dim].spawns.extend(spawns);
+                if let Some(f) = &a.rewards.function {
+                    self.run_function_as_player(conn, f);
+                }
+                if announce
+                    && a.display.as_ref().is_some_and(|d| d.announce_to_chat)
+                    && let Some(text) = a.announcement(kiln_command::Text::literal(name))
+                {
+                    self.broadcast(kiln_proto::packets::system_chat(text.to_nbt(), false));
+                    tracing::info!(target: "kiln_sim::commands", "{}", crate::commands::console_text(&text));
+                }
+            }
         }
     }
 
@@ -478,10 +478,6 @@ impl Sim {
         self.flush_scoreboard();
     }
 
-    /// Text for players' chat.
-    fn decorate_for_players(&self, t: &kiln_command::Text) -> kiln_proto::nbt::Tag {
-        t.to_nbt()
-    }
 }
 
 impl Player {

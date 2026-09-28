@@ -750,6 +750,7 @@ impl Host for Sim {
                     pa.award(i, c, now);
                 }
             }
+            self.grant_completed(player.conn);
         }
         true
     }
@@ -759,7 +760,12 @@ impl Host for Sim {
         let pa = &mut p.advancements;
         let Some(i) = pa.data.get(id) else { return false };
         let Some(c) = pa.data.list[i].criterion_index(criterion) else { return false };
-        if revoke { pa.revoke(i, c) } else { pa.award(i, c, crate::advancements::progress::now_millis()) }
+        if revoke {
+            return pa.revoke(i, c);
+        }
+        let changed = pa.award(i, c, crate::advancements::progress::now_millis());
+        self.grant_completed(player.conn);
+        changed
     }
 
     fn flush_advancements(&mut self, player: &PlayerRef, show: bool) {
@@ -771,7 +777,7 @@ impl Host for Sim {
     }
 
     fn recipe_ids(&self) -> Vec<String> {
-        self.rules.recipes.recipes().iter().map(|r| r.id.clone()).collect()
+        self.rules.recipes.recipes().iter().filter(|r| !r.recipe.is_special()).map(|r| r.id.clone()).collect()
     }
 
     fn change_recipes(&mut self, player: &PlayerRef, recipes: &[String], take: bool) -> i32 {

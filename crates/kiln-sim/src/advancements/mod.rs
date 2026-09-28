@@ -87,12 +87,23 @@ impl Advancement {
         match &self.display {
             None => kiln_command::Text::literal(self.id.clone()),
             Some(d) => {
-                let color = d.frame.color();
-                let hover = kiln_command::Text::raw(d.title.clone())
-                    .color(color)
-                    .append(kiln_command::Text::literal("\n"))
-                    .append(kiln_command::Text::raw(d.description.clone()));
-                kiln_command::Text::raw(d.title.clone()).hover(hover).bracketed().color(color)
+                let color = Tag::String(d.frame.color().into());
+                // The title in the frame's color, then a line break and the description.
+                let mut hover = compound(&d.title);
+                set(&mut hover, "color", color.clone());
+                push_extra(&mut hover, Tag::String("\n".into()));
+                push_extra(&mut hover, d.description.clone());
+                let mut inner = compound(&d.title);
+                set(
+                    &mut inner,
+                    "hover_event",
+                    Tag::Compound(vec![("action".into(), Tag::String("show_text".into())), ("value".into(), hover)]),
+                );
+                kiln_command::Text::raw(Tag::Compound(vec![
+                    ("translate".into(), Tag::String("chat.square_brackets".into())),
+                    ("with".into(), Tag::List(vec![inner])),
+                    ("color".into(), color),
+                ]))
             }
         }
     }
@@ -295,6 +306,37 @@ trait PutU8 {
 impl PutU8 for BytesMut {
     fn put_u8(&mut self, v: u8) {
         bytes::BufMut::put_u8(self, v);
+    }
+}
+
+/// A text component as a compound (a bare string becomes `{text}`).
+fn compound(t: &Tag) -> Tag {
+    match t {
+        Tag::Compound(_) => t.clone(),
+        Tag::String(s) => Tag::Compound(vec![("text".into(), Tag::String(s.clone()))]),
+        other => Tag::Compound(vec![("text".into(), Tag::String(String::new())), ("extra".into(), Tag::List(vec![other.clone()]))]),
+    }
+}
+
+fn set(t: &mut Tag, key: &str, v: Tag) {
+    if let Tag::Compound(f) = t {
+        f.retain(|(k, _)| k != key);
+        f.push((key.into(), v));
+    }
+}
+
+/// Appends a sibling (NBT lists hold one type: every sibling becomes a compound).
+fn push_extra(t: &mut Tag, v: Tag) {
+    if let Tag::Compound(f) = t {
+        match f.iter_mut().find(|(k, _)| k == "extra") {
+            Some((_, Tag::List(items))) => {
+                for i in items.iter_mut() {
+                    *i = compound(i);
+                }
+                items.push(compound(&v));
+            }
+            _ => f.push(("extra".into(), Tag::List(vec![compound(&v)]))),
+        }
     }
 }
 
@@ -654,6 +696,10 @@ mod tests {
         assert_eq!(pos("a:b"), (1.0, 0.0));
         assert_eq!(pos("a:c"), (2.0, 0.0));
         assert_eq!(pos("a:d"), (1.0, 1.0));
+        // The decorated name encodes (siblings of mixed kinds become compounds).
+        let name = t.list[t.get("a:root").unwrap()].name();
+        let _ = name.to_nbt();
+        assert_eq!(name.to_plain(), "chat.square_brackets[a:root]");
     }
 
     #[test]

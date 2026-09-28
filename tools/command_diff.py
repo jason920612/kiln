@@ -37,9 +37,9 @@ UNKNOWN = "Unknown or incomplete command. See below for error"
 # spawns animals as chunks generate and drops items for `destroy`; they are killed before the
 # sections that select entities (Kiln has neither). Periodic animal spawns are turned off.
 CASES = r"""
-!v gamerule spawn_mobs false
+! gamerule spawn_mobs false
 !v forceload add -32 -32 47 47
-!v kill @e[type=!minecraft:player]
+! kill @e[type=!minecraft:player]
 ! fill -16 100 -16 31 113 31 air
 ! fill -16 114 -16 31 127 31 air
 ! fill -16 128 -16 31 141 31 air
@@ -158,7 +158,7 @@ clone 0 110 0 2 112 2 25 110 5 filtered stone force
 clone 0 110 0 2 112 2 25 110 5 masked bogus
 
 # execute conditions
-!v kill @e[type=!minecraft:player]
+! kill @e[type=!minecraft:player]
 execute if blocks 0 110 0 2 112 2 25 110 0 all
 execute if blocks 0 110 0 2 112 2 25 110 0 masked
 execute unless blocks 0 110 0 2 112 2 26 110 0 all
@@ -274,7 +274,7 @@ execute as @a run say limited
 gamerule max_command_sequence_length 65536
 
 # forks over two players
-!v kill @e[type=!minecraft:player]
+! kill @e[type=!minecraft:player]
 execute as @a run say hi
 execute as @a at @s run say at
 execute as @a as @a run say nested
@@ -333,7 +333,7 @@ tellraw Diff0 {text:"a",color:"nocolor"}
 tellraw Diff0 {text:"a",extra:[]}
 
 # scoreboard
-!v kill @e[type=!minecraft:player]
+! kill @e[type=!minecraft:player]
 scoreboard objectives list
 scoreboard players list
 scoreboard objectives add kills dummy
@@ -409,7 +409,7 @@ scoreboard players reset #nobody
 scoreboard players list
 
 # execute store and scores
-!v kill @e[type=!minecraft:player]
+! kill @e[type=!minecraft:player]
 execute store result score Diff0 kills run fill 0 130 0 1 130 1 stone
 scoreboard players get Diff0 kills
 execute store success score Diff0 kills run fill 0 130 0 1 130 1 stone
@@ -913,6 +913,92 @@ xp set Diff0 0 levels
 xp add Other0 30 levels
 xp query Other0 levels
 xp set Other0 0 levels
+
+# advancements
+! advancement revoke @a everything
+! recipe take @a *
+advancement grant Diff0 only minecraft:story/mine_stone
+advancement grant Diff0 only minecraft:story/mine_stone
+advancement revoke Diff0 only minecraft:story/mine_stone
+advancement revoke Diff0 only minecraft:story/mine_stone
+advancement grant Diff0 only minecraft:story/mine_stone get_stone
+advancement grant Diff0 only minecraft:story/mine_stone get_stone
+advancement revoke Diff0 only minecraft:story/mine_stone get_stone
+advancement grant Diff0 only minecraft:story/mine_stone nonsense
+advancement grant Diff0 only minecraft:nonexistent
+advancement grant Diff0 only nonexistent:thing criterion
+advancement grant @a only minecraft:story/root
+advancement grant @a only minecraft:story/root
+advancement revoke @a only minecraft:story/root
+advancement revoke @a only minecraft:story/root
+advancement grant Diff0 until minecraft:story/iron_tools
+advancement grant Diff0 until minecraft:story/iron_tools
+advancement revoke Diff0 through minecraft:story/root
+advancement grant Diff0 from minecraft:story/follow_ender_eye
+advancement revoke Diff0 from minecraft:story/follow_ender_eye
+advancement revoke Diff0 from minecraft:story/follow_ender_eye
+advancement grant Diff0 only minecraft:recipes/misc/stick
+advancement grant @a only minecraft:adventure/kill_a_mob minecraft:zombie
+advancement grant @a only minecraft:adventure/kill_a_mob minecraft:zombie
+advancement revoke @a only minecraft:adventure/kill_a_mob minecraft:zombie
+advancement revoke Other0 only minecraft:adventure/kill_a_mob minecraft:zombie
+advancement grant Diff0 only minecraft:adventure/root
+advancement grant Diff0 only minecraft:nether/root
+! gamerule show_advancement_messages false
+advancement grant Diff0 only minecraft:story/enter_the_nether
+advancement grant Diff0 everything
+advancement grant Diff0 everything
+advancement revoke Diff0 everything
+advancement revoke Diff0 everything
+advancement grant @a everything
+advancement revoke @a everything
+! gamerule show_advancement_messages true
+advancement grant
+advancement grant Diff0
+advancement grant Diff0 only
+advancement grant Diff0 sideways minecraft:story/root
+
+# recipes
+recipe give Diff0 minecraft:stick
+recipe give Diff0 minecraft:stick
+recipe take Diff0 minecraft:stick
+recipe take Diff0 minecraft:stick
+recipe give @a minecraft:crafting_table
+recipe give @a minecraft:crafting_table
+recipe take @a minecraft:crafting_table
+recipe give Diff0 minecraft:nonexistent
+recipe give Diff0 nonexistent:thing
+recipe give Diff0 minecraft:armor_dye
+recipe give Diff0 minecraft:repair_item
+recipe give Diff0 minecraft:white_banner_duplicate
+recipe give Diff0 minecraft:book_cloning
+recipe give Diff0 minecraft:decorated_pot
+recipe give Diff0 minecraft:firework_rocket
+recipe give Diff0 minecraft:firework_star
+recipe give Diff0 minecraft:firework_star_fade
+recipe give Diff0 minecraft:map_extending
+recipe give Diff0 minecraft:shield_decoration
+recipe give Diff0 minecraft:brewing/lingering_potion_awkward_blaze_powder
+recipe give Diff0 *
+recipe give Diff0 *
+! recipe take @a *
+recipe take @a *
+recipe give Other0 *
+recipe take Other0 *
+recipe give
+
+# statistics criteria
+scoreboard objectives add st_jump minecraft.custom:minecraft.jump
+scoreboard objectives add st_mined minecraft.mined:minecraft.stone
+scoreboard objectives add st_deaths deathCount
+scoreboard objectives add st_health health
+scoreboard objectives add st_bad minecraft.custom:minecraft.nothing
+scoreboard objectives add st_bad2 minecraft.used:minecraft.stone_bricks_nope
+scoreboard objectives list
+scoreboard objectives remove st_jump
+scoreboard objectives remove st_mined
+scoreboard objectives remove st_deaths
+scoreboard objectives remove st_health
 """
 
 

@@ -225,7 +225,7 @@ impl Text {
     fn write_in(&self, lang: &Language, out: &mut String) {
         match &self.content {
             Content::Literal(s) => out.push_str(s),
-            Content::Raw(tag) => write_plain_nbt(tag, out),
+            Content::Raw(tag) => write_nbt_in(tag, lang, out),
             Content::Translate { key, args } => {
                 let args: Vec<String> = args
                     .iter()
@@ -340,6 +340,43 @@ fn decompose(template: &str, args: &[String]) -> Option<String> {
 }
 
 /// Plain rendering of a component in NBT form: text as-is, translations as `key[args]`.
+/// A component in NBT form as `getString()` renders it with `lang`.
+fn write_nbt_in(tag: &Tag, lang: &Language, out: &mut String) {
+    match tag {
+        Tag::Compound(_) => {
+            if let Some(Tag::String(s)) = tag.get("text") {
+                out.push_str(s);
+            } else if let Some(Tag::String(k)) = tag.get("translate") {
+                let args: Vec<String> = match tag.get("with") {
+                    Some(Tag::List(args)) => args
+                        .iter()
+                        .map(|a| {
+                            let mut s = String::new();
+                            write_nbt_in(a.unwrap_list_element(), lang, &mut s);
+                            s
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                };
+                match (lang.get(k), tag.get("fallback")) {
+                    (None, Some(Tag::String(f))) => lang.format(f, &args, out),
+                    _ => lang.format(k, &args, out),
+                }
+            } else {
+                let mut s = String::new();
+                write_plain_nbt(tag, &mut s);
+                out.push_str(&s);
+                return;
+            }
+            if let Some(Tag::List(extra)) = tag.get("extra") {
+                extra.iter().for_each(|t| write_nbt_in(t.unwrap_list_element(), lang, out));
+            }
+        }
+        Tag::List(items) => items.iter().for_each(|t| write_nbt_in(t.unwrap_list_element(), lang, out)),
+        other => write_plain_nbt(other, out),
+    }
+}
+
 fn write_plain_nbt(tag: &Tag, out: &mut String) {
     match tag {
         Tag::String(s) => out.push_str(s),

@@ -42,10 +42,11 @@ impl Recipe {
         matches!(self, Recipe::Shaped(_) | Recipe::Shapeless(_) | Recipe::Transmute(_) | Recipe::Special(_))
     }
 
-    /// `Recipe.isSpecial`.
+    /// `Recipe.isSpecial` (`CustomRecipe` and brewing recipes).
     pub fn is_special(&self) -> bool {
         match self {
             Recipe::Special(s) => s.is_special(),
+            Recipe::Brewing(_) => true,
             _ => false,
         }
     }
