@@ -644,6 +644,7 @@ impl Player {
         self.clear_fire();
         self.sync_on_fire_flag();
         self.death_location = Some(self.pos.map(|c| c.floor() as i32));
+        self.death_dim = self.dim;
         for i in 0..self.inv.items.len() {
             let stack = std::mem::replace(&mut self.inv.items[i], kiln_item::ItemStack::empty());
             if !stack.is_empty() {

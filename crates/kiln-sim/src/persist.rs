@@ -53,6 +53,12 @@ pub(crate) struct Joining {
     pub absorption: f32,
     pub effects: std::collections::BTreeMap<i32, crate::effects::Effect>,
     pub respawn: Option<[i32; 3]>,
+    pub respawn_dim: crate::DimId,
+    /// The saved level (`Dimension`).
+    pub dim: crate::DimId,
+    /// `PortalCooldown` and `seenCredits`.
+    pub portal_cooldown: i32,
+    pub seen_credits: bool,
     pub saved: PlayerData,
 }
 
@@ -66,14 +72,25 @@ impl Sim {
     /// finder around the world spawn and the world spawn's angles.
     pub(crate) fn joining(&mut self, uuid: Uuid) -> Joining {
         let saved = self.storage.as_ref().and_then(|s| s.players.load(uuid)).unwrap_or_default();
-        if saved.dimension.as_deref().is_some_and(|d| d != OVERWORLD) {
-            // Vanilla falls back to the spawn dimension, keeping the coordinates.
-            warn!("player {uuid} was in {:?}, which Kiln does not run; placing them in the overworld", saved.dimension);
-        }
-        let pos = match saved.pos {
-            Some(p) => p,
-            None => self.new_player_position(uuid),
+        let dim = match saved.dimension.as_deref() {
+            None => crate::OVERWORLD_ID,
+            Some(d) => crate::dim_id(d).unwrap_or_else(|| {
+                // Vanilla falls back to the spawn dimension, keeping the coordinates.
+                warn!("player {uuid} was in {d}, which Kiln does not run; placing them in the overworld");
+                crate::OVERWORLD_ID
+            }),
         };
+        let (pos, dim) = match saved.pos {
+            Some(p) => (p, dim),
+            None => (self.new_player_position(uuid), crate::OVERWORLD_ID),
+        };
+        let respawn_dim = saved
+            .raw()
+            .get("respawn")
+            .and_then(|r| r.get("dimension"))
+            .and_then(Tag::as_str)
+            .and_then(crate::dim_id)
+            .unwrap_or(crate::OVERWORLD_ID);
         let (mut inv, inv_extra) = kiln_inventory::persist::load_player_inventory(saved.raw());
         inv.selected = saved.selected_slot as usize;
         Joining {
@@ -92,6 +109,10 @@ impl Sim {
             absorption: saved.raw().get("AbsorptionAmount").and_then(Tag::as_f64).map_or(0.0, |a| a as f32),
             effects: saved.raw().get("active_effects").map(crate::effects::load_effects).unwrap_or_default(),
             respawn: saved.respawn,
+            respawn_dim,
+            dim,
+            portal_cooldown: saved.raw().get("PortalCooldown").and_then(Tag::as_i64).map_or(0, |c| c as i32),
+            seen_credits: saved.raw().get("seenCredits").and_then(Tag::as_i64) == Some(1),
             saved,
         }
     }
@@ -101,7 +122,7 @@ impl Sim {
     pub(crate) fn new_player_position(&mut self, uuid: Uuid) -> [f64; 3] {
         let level = self.storage.as_ref().map(|s| &s.level);
         if level.and_then(LevelStore::game_type) == Some(ADVENTURE) {
-            return kiln_world::spawn::free_spawn_at(&mut self.dim, self.spawn);
+            return kiln_world::spawn::free_spawn_at(&mut self.dims[crate::OVERWORLD_ID], self.spawn);
         }
         let radius = match self.commands.game_rules.get("minecraft:respawn_radius") {
             Some(kiln_command::GameRuleValue::Int(r)) => *r as i64,
@@ -109,7 +130,7 @@ impl Sim {
         };
         let (hi, lo) = uuid.as_u64_pair();
         let offset = ((hi ^ lo) % 1024) as u32;
-        kiln_world::spawn::find_spawn(&mut self.dim, self.spawn, radius.clamp(0, i32::MAX as i64) as i32, offset)
+        kiln_world::spawn::find_spawn(&mut self.dims[crate::OVERWORLD_ID], self.spawn, radius.clamp(0, i32::MAX as i64) as i32, offset)
     }
 
     pub(crate) fn save_player(&self, p: &Player) {
@@ -119,9 +140,10 @@ impl Sim {
         data.rot = Some(p.rot);
         data.on_ground = p.on_ground;
         data.game_mode = Some(p.game_mode);
-        data.dimension = Some(OVERWORLD.to_owned());
+        data.dimension = Some(crate::DIMENSIONS[p.dim].0.to_owned());
         data.selected_slot = p.inv.selected as u8;
         data.respawn = p.respawn;
+        data.respawn_dimension = Some(crate::DIMENSIONS[p.respawn_dim].0.to_owned());
         let mut nbt = data.to_nbt(p.uuid);
         kiln_inventory::persist::save_player_inventory(&p.inv, &p.inv_extra, &mut nbt);
         if let Tag::Compound(fields) = &mut nbt {
@@ -135,6 +157,8 @@ impl Sim {
                 ("Fire", Tag::Short(p.fire_ticks as i16)),
                 ("Air", Tag::Short(p.air as i16)),
                 ("AbsorptionAmount", Tag::Float(p.absorption)),
+                ("PortalCooldown", Tag::Int(p.portal_cooldown)),
+                ("seenCredits", Tag::Byte(p.seen_credits as i8)),
             ] {
                 match fields.iter_mut().find(|(k, _)| k == key) {
                     Some((_, v)) => *v = value,
@@ -214,14 +238,14 @@ impl Sim {
         let owners = self.owner_uuids();
         let owner = |id: i32| owners.get(&id).copied();
         let mut all: Vec<&entities::Entity> =
-            self.dim.regions.iter().flat_map(|r| r.part().0.list.iter()).filter(|e| !e.removed).collect();
+            self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).filter(|e| !e.removed).collect();
         all.sort_by_key(|e| e.id);
         all.into_iter().map(|e| e.save(&owner)).collect()
     }
 
     /// How many entities of loaded chunks are kept as saved without being simulated.
     pub fn kept_entity_count(&self) -> usize {
-        self.dim.raw_entities.values().map(Vec::len).sum()
+        self.dims.iter().flat_map(|d| d.raw_entities.values()).map(Vec::len).sum()
     }
 }
 

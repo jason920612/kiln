@@ -23,6 +23,10 @@ use tracing::{info, warn};
 #[derive(Clone)]
 pub(crate) struct Env {
     pub rules: std::sync::Arc<kiln_inventory::Rules>,
+    /// The level the region is in.
+    pub dim: crate::DimId,
+    /// Portal game rules.
+    pub portal: crate::portal::PortalRules,
     /// Bottom of the dimension (void damage starts 64 blocks below).
     pub min_y: i32,
     pub game_time: i64,
@@ -51,6 +55,8 @@ pub(crate) struct RegionOut {
     pub spawns: Vec<Spawn>,
     /// Players that died this phase (the messages go to everyone afterwards).
     pub deaths: Vec<crate::health::Death>,
+    /// Players whose portal took them (they change level in a serial phase).
+    pub portals: Vec<crate::portal::Travel>,
     /// CPU time per sub-phase, for the statistics.
     pub times: [Duration; SUB_PHASES.len()],
 }
@@ -59,6 +65,8 @@ pub(crate) const SUB_PHASES: [&str; 9] =
     ["menus", "connections", "chunks", "blocks", "entities", "visibility", "movement", "light", "egress"];
 
 pub(crate) struct RegionWork<'a> {
+    /// The level the region is in.
+    pub dim: crate::DimId,
     pub cells: &'a mut CellSet<Cell>,
     pub entities: &'a mut Entities,
     pub blocks: &'a mut RegionBlocks,
@@ -117,9 +125,16 @@ impl RegionWork<'_> {
             p.tick_damage(env.game_time);
             let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
             p.base_tick(&block, env.min_y, &mut ctx);
+            // `Entity.handlePortal` (in `baseTick`).
+            if let Some(t) = p.handle_portal(env) {
+                self.out.portals.push(t);
+            }
             p.tick_using(&block, &mut ctx);
             p.tick_combat();
-            p.block_effects(&block, &mut ctx);
+            p.block_effects(&block, env.dim, &mut ctx);
+            if let Some(t) = p.pending_travel.take() {
+                self.out.portals.push(t);
+            }
             p.tick_food(env.natural_regen, &mut ctx);
             p.sync_health();
         }
@@ -492,6 +507,10 @@ fn use_on_block(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3
             return;
         }
     }
+    if item_name == Some("minecraft:flint_and_steel") && actor.may_build {
+        light_fire(p, level, main_hand, pos, dir);
+        return;
+    }
     // `ItemStack.useOn` for block items (adventure players cannot place).
     let Some(item) = item_name.and_then(BlockItem::of_item) else { return };
     if !actor.may_build {
@@ -510,6 +529,27 @@ fn use_on_block(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3
         let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
         kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
     }
+}
+
+/// `FlintAndSteelItem.useOn` beside a block (campfires and candles are not lit by Kiln): fire
+/// where it can burn or where it lights a nether portal frame, and a point of durability.
+fn light_fire(p: &mut Player, level: &mut RegionLevel, main_hand: bool, pos: [i32; 3], dir: kiln_blocks::Direction) {
+    use kiln_blocks::behaviour::portal;
+    use kiln_item::component::EquipmentSlot;
+    let at = BlockPos::new(pos[0], pos[1], pos[2]).relative(dir);
+    let forward = kiln_blocks::Direction::from_yaw(p.rot[0] as f64);
+    if !portal::fire_can_be_placed_at(level, at, forward) {
+        return;
+    }
+    // `level.getRandom().nextFloat() * 0.4F + 0.8F` for the sound's pitch.
+    let pitch = {
+        use kiln_javamath::random::RandomSource;
+        level.random().next_float() * 0.4 + 0.8
+    };
+    level.effect(kiln_blocks::level::Effect::ActorSound { pos: at, sound: "minecraft:item.flintandsteel.use", volume: 1.0, pitch });
+    let fire = portal::fire_state(level, at);
+    kiln_blocks::set_block(level, at, fire, kiln_blocks::flags::ALL_IMMEDIATE);
+    p.hurt_and_break(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, 1, None);
 }
 
 /// `Level.isUnobstructed`: the placed block's collision boxes would overlap a player (this one

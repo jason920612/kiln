@@ -57,6 +57,7 @@ pub fn run(root: &Path, work: &Path) -> Result<()> {
     fs::write(out.join("block_items.rs"), crate::block_logic::gen_block_items(&block_items)?)?;
     let rules = read_json(&input.generated.join("extra/game_rules.json")).context("run `cargo xtask extract` first")?;
     fs::write(out.join("game_rules.rs"), gen_game_rules(&rules)?)?;
+    fs::write(out.join("dimension_types.rs"), gen_dimension_types(&input)?)?;
     println!("codegen: wrote {}", out.display());
 
     let items = read_json(&input.generated.join("extra/item_components.json")).context("run `cargo xtask extract items` first")?;
@@ -101,6 +102,51 @@ fn gen_game_rules(rules: &Value) -> Result<String> {
             other => bail!("game rule {name}: unsupported type {other:?}"),
         };
         writeln!(s, "    ({name:?}, {value}),")?;
+    }
+    s.push_str("];
+");
+    Ok(s)
+}
+
+/// The built-in dimension types (`data/minecraft/dimension_type`): the fields the server
+/// simulates with, in synchronized registry order.
+fn gen_dimension_types(input: &Input) -> Result<String> {
+    let dir = input.generated.join("data/minecraft/dimension_type");
+    let mut names: Vec<String> = fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok()?.file_name().to_str()?.strip_suffix(".json").map(str::to_owned))
+        .collect();
+    names.sort();
+    let mut s = String::from(HEADER);
+    s.push_str("use crate::DimensionType;
+
+");
+    s.push_str("pub const DIMENSION_TYPES: &[DimensionType] = &[
+");
+    for name in names {
+        let v = read_json(&dir.join(format!("{name}.json")))?;
+        let attr = |k: &str| &v["attributes"][k];
+        let bed = attr("minecraft:gameplay/bed_rule");
+        writeln!(s, "    DimensionType {{")?;
+        writeln!(s, "        name: \"minecraft:{name}\",")?;
+        writeln!(s, "        min_y: {},", v["min_y"].as_i64().context("min_y")?)?;
+        writeln!(s, "        height: {},", v["height"].as_i64().context("height")?)?;
+        writeln!(s, "        logical_height: {},", v["logical_height"].as_i64().context("logical_height")?)?;
+        writeln!(s, "        coordinate_scale: {:?},", v["coordinate_scale"].as_f64().context("coordinate_scale")?)?;
+        writeln!(s, "        has_skylight: {},", v["has_skylight"].as_bool().context("has_skylight")?)?;
+        writeln!(s, "        has_ceiling: {},", v["has_ceiling"].as_bool().context("has_ceiling")?)?;
+        writeln!(s, "        has_fixed_time: {},", v["has_fixed_time"].as_bool().unwrap_or(false))?;
+        writeln!(s, "        has_ender_dragon_fight: {},", v["has_ender_dragon_fight"].as_bool().unwrap_or(false))?;
+        writeln!(s, "        ambient_light: {:?},", v["ambient_light"].as_f64().unwrap_or(0.0) as f32)?;
+        writeln!(s, "        default_clock: {:?},", v["default_clock"].as_str())?;
+        writeln!(s, "        infiniburn: {:?},", v["infiniburn"].as_str().unwrap_or(""))?;
+        writeln!(s, "        fast_lava: {},", attr("minecraft:gameplay/fast_lava").as_bool().unwrap_or(false))?;
+        writeln!(s, "        water_evaporates: {},", attr("minecraft:gameplay/water_evaporates").as_bool().unwrap_or(false))?;
+        writeln!(s, "        respawn_anchor_works: {},", attr("minecraft:gameplay/respawn_anchor_works").as_bool().unwrap_or(false))?;
+        writeln!(s, "        bed_sets_spawn: {},", bed["can_set_spawn"].as_str().is_none_or(|r| r != "never"))?;
+        writeln!(s, "        bed_explodes: {},", bed["destroy_on_use"].as_bool().unwrap_or(false))?;
+        writeln!(s, "        monster_spawn_block_light_limit: {},", v["monster_spawn_block_light_limit"].as_i64().unwrap_or(0))?;
+        writeln!(s, "    }},")?;
     }
     s.push_str("];
 ");

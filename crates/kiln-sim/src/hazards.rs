@@ -62,7 +62,7 @@ fn camera_height(block: BlockAt, pos: BlockPos, f: &FluidState) -> f32 {
 
 impl Player {
     /// `EntityDimensions` of the standing or crouching player: (width, height, eye height).
-    fn dimensions(&self) -> (f32, f32, f32) {
+    pub(crate) fn dimensions(&self) -> (f32, f32, f32) {
         if self.sneaking { (0.6, 1.5, 1.27) } else { (0.6, 1.8, 1.62) }
     }
 
@@ -230,7 +230,7 @@ impl Player {
     /// `Entity.applyEffectsFromBlocks` for the move since the last player tick: magma under the
     /// feet, then the fire, lava, water and campfire blocks the box passed through, in vanilla's
     /// step order; a player that is not burning afterwards rests at -20 fire ticks.
-    pub(crate) fn block_effects(&mut self, block: BlockAt, ctx: &mut DamageCtx) {
+    pub(crate) fn block_effects(&mut self, block: BlockAt, dim: crate::DimId, ctx: &mut DamageCtx) {
         let to = self.pos;
         let mut from = std::mem::replace(&mut self.block_effects_from, to);
         let d2 = (0..3).map(|i| (to[i] - from[i]).powi(2)).sum::<f64>();
@@ -250,7 +250,7 @@ impl Player {
         }
         let was_on_fire = self.fire_ticks > 0;
         let fire_before = self.fire_ticks;
-        let effects = self.inside_blocks(block, Vec3::new(from[0], from[1], from[2]), Vec3::new(to[0], to[1], to[2]), ctx);
+        let effects = self.inside_blocks(block, dim, Vec3::new(from[0], from[1], from[2]), Vec3::new(to[0], to[1], to[2]), ctx);
         for e in effects {
             if !self.alive() {
                 break;
@@ -277,13 +277,13 @@ impl Player {
 
     /// `checkInsideBlocks` for one movement: the collector's effects in apply order. Campfires
     /// hurt at once, as their `entityInside` does.
-    fn inside_blocks(&mut self, block: BlockAt, from: Vec3, to: Vec3, ctx: &mut DamageCtx) -> Vec<Inside> {
+    fn inside_blocks(&mut self, block: BlockAt, dim: crate::DimId, from: Vec3, to: Vec3, ctx: &mut DamageCtx) -> Vec<Inside> {
         let mut collector = Collector::default();
         let mut visited = Vec::new();
         let max_steps = 16;
-        let used = self.inside_segment(block, from, to, &mut visited, max_steps, &mut collector, ctx);
+        let used = self.inside_segment(block, dim, from, to, &mut visited, max_steps, &mut collector, ctx);
         if max_steps - used <= 0 {
-            self.inside_segment(block, to, to, &mut visited, 1, &mut collector, ctx);
+            self.inside_segment(block, dim, to, to, &mut visited, 1, &mut collector, ctx);
         }
         collector.finish()
     }
@@ -292,6 +292,7 @@ impl Player {
     fn inside_segment(
         &mut self,
         block: BlockAt,
+        dim: crate::DimId,
         from: Vec3,
         to: Vec3,
         visited: &mut Vec<i64>,
@@ -348,6 +349,7 @@ impl Player {
             if collided {
                 c.advance(step);
                 self.entity_inside(state, c, ctx);
+                self.portal_inside(state, [pos.x, pos.y, pos.z], dim);
             }
             if fluid_collided {
                 c.advance(step);

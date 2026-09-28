@@ -7,6 +7,7 @@
 pub mod connect;
 pub mod misc;
 pub mod piston;
+pub mod portal;
 pub mod rail;
 pub mod support;
 
@@ -71,6 +72,7 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         C::ObserverBlock => return devices::observer_update_shape(level, s, pos, dir),
         C::NoteBlock => return devices::note_update_shape(level, s, pos, dir),
         C::PistonHeadBlock => return piston::head_update_shape(level, s, pos, dir),
+        C::NetherPortalBlock => return portal::portal_update_shape(level, s, pos, dir, neighbor_state),
         _ => {}
     }
     if logic::is_instance(s, C::LeavesBlock) {
@@ -206,6 +208,10 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::ObserverBlock => devices::observer_on_place(level, s, pos, old),
         C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         C::PistonBaseBlock => piston::on_place(level, s, pos, old),
+        // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it.
+        C::FireBlock | C::SoulFireBlock if !state::same_block(old, s) => {
+            portal::fire_on_place(level, pos);
+        }
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_schedule(level, s, pos),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::on_place(level, s, pos, old, moved_by_piston),
         _ => {}

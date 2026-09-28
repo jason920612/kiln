@@ -74,6 +74,8 @@ pub struct PlayerData {
     pub inventory: Vec<Option<StoredItem>>,
     /// `respawn.pos` (the spawn point set by a bed or `/spawnpoint`).
     pub respawn: Option<[i32; 3]>,
+    /// `respawn.dimension`; `None` is the overworld.
+    pub respawn_dimension: Option<String>,
     raw: Tag,
 }
 
@@ -88,6 +90,7 @@ impl Default for PlayerData {
             selected_slot: 0,
             inventory: vec![None; INVENTORY_SLOTS],
             respawn: None,
+            respawn_dimension: None,
             raw: Tag::Compound(Vec::new()),
         }
     }
@@ -147,6 +150,7 @@ impl PlayerData {
             selected_slot: raw.get("SelectedItemSlot").and_then(Tag::as_i64).filter(|s| (0..9).contains(s)).unwrap_or(0) as u8,
             inventory,
             respawn,
+            respawn_dimension: raw.get("respawn").and_then(|r| r.get("dimension")).and_then(Tag::as_str).map(str::to_owned),
             raw,
         }
     }
@@ -226,11 +230,13 @@ impl PlayerData {
             Some(Tag::IntArray(v)) if v.len() == 3 => Some([v[0], v[1], v[2]]),
             _ => None,
         };
-        if self.respawn != saved_respawn {
+        let saved_dimension = self.raw.get("respawn").and_then(|r| r.get("dimension")).and_then(Tag::as_str);
+        let dimension = self.respawn_dimension.as_deref().unwrap_or("minecraft:overworld");
+        if self.respawn != saved_respawn || (self.respawn.is_some() && saved_dimension != Some(dimension)) {
             match self.respawn {
                 Some(pos) => {
                     let r = Tag::Compound(vec![
-                        ("dimension".into(), Tag::String("minecraft:overworld".into())),
+                        ("dimension".into(), Tag::String(dimension.into())),
                         ("pos".into(), Tag::IntArray(pos.to_vec())),
                         ("yaw".into(), Tag::Float(0.0)),
                         ("pitch".into(), Tag::Float(0.0)),

@@ -62,6 +62,8 @@ pub struct PlayerRef {
     name: String,
     pos: [f64; 3],
     rot: [f32; 2],
+    /// The player's level.
+    dim: &'static str,
     mode: GameMode,
     /// The player's team, and their name as the team formats it.
     team: Option<String>,
@@ -76,6 +78,7 @@ impl PlayerRef {
             name: p.name.clone(),
             pos: p.pos,
             rot: p.rot,
+            dim: crate::DIMENSIONS[p.dim].0,
             mode: game_mode(p.game_mode),
             team: scoreboard.team_of(&p.name).map(|t| t.name.clone()),
             display: scoreboard.player_display_name(&p.name),
@@ -115,7 +118,7 @@ impl SelectorTarget for PlayerRef {
         self.rot
     }
     fn dimension(&self) -> &str {
-        OVERWORLD
+        self.dim
     }
     fn bounding_box(&self) -> Aabb {
         let [x, y, z] = self.pos;
@@ -192,11 +195,11 @@ impl Sim {
     /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
     /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
     /// the contents changed.
-    fn load_block_entity(&mut self, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
+    fn load_block_entity(&mut self, dim: crate::DimId, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
         let [x, y, z] = pos;
         let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
         let chunk_pos = ChunkPos::of_block(x, z);
-        let Some(chunk) = self.dim.regions.chunk_mut(chunk_pos) else { return false };
+        let Some(chunk) = self.dims[dim].regions.chunk_mut(chunk_pos) else { return false };
         let Some(old) = chunk.block_entity(lx, y, lz).cloned() else { return false };
         let mut be = kiln_world::block_entity::BlockEntity::new(old.kind);
         if let Tag::Compound(out) = &mut be.nbt {
@@ -206,9 +209,9 @@ impl Sim {
             return false;
         }
         chunk.set_block_entity(lx, y, lz, be);
-        let Some((kind, tag)) = self.dim.regions.block_entity_data(x, y, z) else { return true };
+        let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);
-        for p in self.players.values_mut().filter(|p| p.sent_chunks.contains(&chunk_pos)) {
+        for p in self.players.values_mut().filter(|p| p.dim == dim && p.sent_chunks.contains(&chunk_pos)) {
             p.send(pkt.clone());
         }
         true
@@ -226,9 +229,9 @@ impl Sim {
     }
 
     /// Loads block entity data given with a block (`BlockInput.place`); whether it changed.
-    fn load_nbt(&mut self, pos: [i32; 3], nbt: Option<&Tag>) -> bool {
+    fn load_nbt(&mut self, dim: crate::DimId, pos: [i32; 3], nbt: Option<&Tag>) -> bool {
         match nbt {
-            Some(Tag::Compound(fields)) => self.load_block_entity(pos, fields),
+            Some(Tag::Compound(fields)) => self.load_block_entity(dim, pos, fields),
             _ => false,
         }
     }
@@ -357,7 +360,7 @@ impl Sim {
         }
     }
 
-    fn weather_packets(&self) -> Vec<Bytes> {
+    pub(crate) fn weather_packets(&self) -> Vec<Bytes> {
         const START_RAINING: u8 = 2;
         const STOP_RAINING: u8 = 1;
         const RAIN_LEVEL: u8 = 7;
@@ -416,10 +419,11 @@ impl SelectorWorld for Sim {
 
     fn entities(&self, dimension: Option<&str>, _area: Option<&Aabb>) -> Vec<PlayerRef> {
         // Only players exist as entities so far.
-        match dimension {
-            Some(d) if d != OVERWORLD => Vec::new(),
-            _ => self.players(),
+        let mut all = self.players();
+        if let Some(d) = dimension {
+            all.retain(|p| p.dim == d);
         }
+        all
     }
 
     fn shuffle(&mut self, entities: &mut [PlayerRef]) {
@@ -484,16 +488,21 @@ impl Host for Sim {
     }
 
     fn teleport(&mut self, entity: &PlayerRef, to: &Teleport) -> Result<(), CommandError> {
-        if to.dimension != OVERWORLD {
-            return Err(CommandError::new(Text::literal("Other dimensions are not loaded yet")));
-        }
+        let Some(dim) = crate::dim_id(&to.dimension) else {
+            return Err(CommandError::new(Text::literal("Unknown dimension")));
+        };
         let Some(p) = self.players.get_mut(&entity.conn) else { return Ok(()) };
         let rot = match (to.facing, to.rotation) {
             (Some(f), _) => kiln_command::host::look_at([to.pos[0], to.pos[1] + 1.62, to.pos[2]], f),
             (None, Some(r)) => r,
             (None, None) => p.rot,
         };
-        p.teleport(to.pos, rot, self.game_time);
+        if p.dim == dim {
+            p.teleport(to.pos, rot, self.game_time);
+        } else {
+            // `ServerPlayer.teleport` into another level.
+            self.change_dimension(entity.conn, dim, to.pos, rot);
+        }
         Ok(())
     }
 
@@ -516,13 +525,15 @@ impl Host for Sim {
         let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
         let mut ctx = crate::health::DamageCtx { rules, game_time, spawns: &mut spawns, deaths: &mut deaths, level_rng: None };
         p.hurt(f32::MAX, &crate::health::Cause::Kill.into(), &mut ctx);
-        self.dim.spawns.extend(spawns);
+        let dim = p.dim;
+        self.dims[dim].spawns.extend(spawns);
         self.announce_deaths(deaths);
     }
 
     fn give(&mut self, player: &PlayerRef, item: &ItemInput, count: i32) {
         let Some(id) = kiln_data::builtin_id("minecraft:item", item.item.as_str()) else { return };
         let Some(p) = self.players.get_mut(&player.conn) else { return };
+        let dim = p.dim;
         // Stacks of at most the item's size; what does not fit is thrown (`GiveCommand`).
         let mut left = count;
         let max = kiln_item::ItemStack::new(id, 1).max_stack_size();
@@ -533,13 +544,13 @@ impl Host for Sim {
             p.add_to_inventory(&mut stack);
             if !stack.is_empty() {
                 let spawn = p.throw(stack);
-                self.dim.spawns.push(spawn);
+                self.dims[dim].spawns.push(spawn);
             }
         }
         let rules = self.rules.clone();
         let mut spawns = Vec::new();
         p.with_menu(&rules, &mut spawns, |menu, _, env| menu.broadcast_changes(env));
-        self.dim.spawns.extend(spawns);
+        self.dims[dim].spawns.extend(spawns);
     }
 
     fn add_effect(&mut self, entity: &PlayerRef, effect: &Identifier, duration: i32, amplifier: i32, show_particles: bool) -> Option<bool> {
@@ -668,6 +679,7 @@ impl Host for Sim {
     fn set_spawn_point(&mut self, player: &PlayerRef, spawn: &SpawnPoint) {
         if let Some(p) = self.players.get_mut(&player.conn) {
             p.respawn = Some(spawn.pos);
+            p.respawn_dim = crate::dim_id(&spawn.dimension).unwrap_or(crate::OVERWORLD_ID);
         }
     }
 
@@ -681,7 +693,7 @@ impl Host for Sim {
 
     fn kiln_tick(&mut self) -> Vec<Text> {
         let players = self.players.len();
-        let chunks = kiln_world::Blocks::loaded_chunks(&self.dim.regions);
+        let chunks: usize = self.dims.iter().map(|d| kiln_world::Blocks::loaded_chunks(&d.regions)).sum();
         let mut lines = vec![Text::literal(format!("{players} players, {chunks} loaded chunks"))];
         match &self.commands.last_report {
             Some(r) => lines.push(Text::literal(r.clone())),
@@ -691,16 +703,17 @@ impl Host for Sim {
     }
 
     fn kiln_regions(&mut self) -> Vec<Text> {
-        let mut players: std::collections::BTreeMap<kiln_region::RegionId, usize> = Default::default();
+        let mut players: std::collections::BTreeMap<(crate::DimId, kiln_region::RegionId), usize> = Default::default();
         for p in self.players.values() {
-            *players.entry(p.region).or_default() += 1;
+            *players.entry((p.dim, p.region)).or_default() += 1;
         }
-        let mut lines = vec![Text::literal(format!("{} regions", self.dim.regions.len()))];
-        for r in self.dim.regions.iter() {
+        let mut lines = vec![Text::literal(format!("{} regions", self.region_count()))];
+        for (dim, r) in self.dims.iter().enumerate().flat_map(|(i, d)| d.regions.iter().map(move |r| (i, r))) {
             let chunks: usize = r.cells().iter().map(|(_, c)| c.len()).sum();
             let anchor = r.anchor();
             lines.push(Text::literal(format!(
-                "#{}: anchor cell {},{} (block {},{}), {} cells, {} chunks, {} players",
+                "{} #{}: anchor cell {},{} (block {},{}), {} cells, {} chunks, {} players",
+                crate::DIMENSIONS[dim].0,
                 r.id().0,
                 anchor.x,
                 anchor.z,
@@ -708,45 +721,48 @@ impl Host for Sim {
                 anchor.z * kiln_region::CELL_BLOCKS,
                 r.len(),
                 chunks,
-                players.get(&r.id()).copied().unwrap_or(0)
+                players.get(&(dim, r.id())).copied().unwrap_or(0)
             )));
         }
         lines
     }
 
     fn is_chunk_loaded(&self, dimension: &str, cx: i32, cz: i32) -> bool {
-        dimension == OVERWORLD && self.dim.regions.chunk(ChunkPos::new(cx, cz)).is_some()
+        crate::dim_id(dimension).is_some_and(|d| self.dims[d].regions.chunk(ChunkPos::new(cx, cz)).is_some())
     }
 
-    fn build_height(&self, _dimension: &str) -> (i32, i32) {
-        let d = self.dim.provider.dimension;
+    fn build_height(&self, dimension: &str) -> (i32, i32) {
+        let d = self.dims[crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID)].provider.dimension;
         (d.min_y, d.min_y + d.height)
     }
 
     /// Unloaded positions read as void air (commands check loadedness first).
-    fn block_state(&mut self, _dimension: &str, pos: [i32; 3]) -> u16 {
+    fn block_state(&mut self, dimension: &str, pos: [i32; 3]) -> u16 {
         let [x, y, z] = pos;
-        self.dim.regions.get_block(x, y, z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR)
+        let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
+        self.dims[dim].regions.get_block(x, y, z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR)
     }
 
     /// `BlockEntity.saveWithFullMetadata`.
-    fn block_entity(&mut self, _dimension: &str, pos: [i32; 3]) -> Option<Tag> {
+    fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
         let [x, y, z] = pos;
-        let chunk = self.dim.regions.chunk(ChunkPos::of_block(x, z))?;
+        let chunk = self.dims[crate::dim_id(dimension)?].regions.chunk(ChunkPos::of_block(x, z))?;
         chunk.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| be.saved(pos))
     }
 
     /// `Level.setBlock` with the given flags; block entity data then replaces the block
     /// entity's contents. Succeeds if the state or the block entity's data changed.
-    fn set_block(&mut self, _dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool {
+    fn set_block(&mut self, dimension: &str, pos: [i32; 3], state: u16, nbt: Option<&Tag>, flags: UpdateFlags) -> bool {
         let at = block_pos(pos);
-        let state_changed = self.with_level(pos, |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or(false);
-        self.load_nbt(pos, nbt) || state_changed
+        let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
+        let state_changed = self.with_level_in(dim, pos, |level| kiln_blocks::set_block(level, at, state, flags.0)).unwrap_or(false);
+        self.load_nbt(dim, pos, nbt) || state_changed
     }
 
     /// `BlockInput.place`: the state shaped by its neighbours except for the properties the
     /// command names.
-    fn place_block(&mut self, _dimension: &str, pos: [i32; 3], block: &kiln_command::BlockInput, flags: UpdateFlags) -> bool {
+    fn place_block(&mut self, dimension: &str, pos: [i32; 3], block: &kiln_command::BlockInput, flags: UpdateFlags) -> bool {
+        let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
         let at = block_pos(pos);
         let defined = block
             .properties
@@ -754,23 +770,26 @@ impl Host for Sim {
             .map(|&p| (p.to_owned(), kiln_blocks::state::get(block.state, p).unwrap_or_default().to_owned()))
             .collect();
         let input = kiln_blocks::commands::BlockInput { state: block.state, defined };
-        let state_changed = self.with_level(pos, |level| input.place(level, at, flags.0)).unwrap_or(false);
-        self.load_nbt(pos, block.nbt.as_ref()) || state_changed
+        let state_changed = self.with_level_in(dim, pos, |level| input.place(level, at, flags.0)).unwrap_or(false);
+        self.load_nbt(dim, pos, block.nbt.as_ref()) || state_changed
     }
 
-    fn update_neighbours(&mut self, _dimension: &str, pos: [i32; 3], old: u16) {
+    fn update_neighbours(&mut self, dimension: &str, pos: [i32; 3], old: u16) {
         let at = block_pos(pos);
-        self.with_level(pos, |level| kiln_blocks::commands::update_neighbours_on_block_set(level, at, old));
+        let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
+        self.with_level_in(dim, pos, |level| kiln_blocks::commands::update_neighbours_on_block_set(level, at, old));
     }
 
-    fn destroy_block(&mut self, _dimension: &str, pos: [i32; 3], drop: bool) -> bool {
+    fn destroy_block(&mut self, dimension: &str, pos: [i32; 3], drop: bool) -> bool {
         let at = block_pos(pos);
-        self.with_level(pos, |level| kiln_blocks::destroy_block(level, at, drop, kiln_blocks::flags::LIMIT)).unwrap_or(false)
+        let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
+        self.with_level_in(dim, pos, |level| kiln_blocks::destroy_block(level, at, drop, kiln_blocks::flags::LIMIT)).unwrap_or(false)
     }
 
-    fn height(&mut self, _dimension: &str, heightmap: Heightmap, x: i32, z: i32) -> i32 {
-        let (min_y, max_y) = Host::build_height(self, OVERWORLD);
-        let Some(chunk) = self.dim.regions.chunk(ChunkPos::of_block(x, z)) else { return min_y };
+    fn height(&mut self, dimension: &str, heightmap: Heightmap, x: i32, z: i32) -> i32 {
+        let (min_y, max_y) = Host::build_height(self, dimension);
+        let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
+        let Some(chunk) = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z)) else { return min_y };
         (min_y..max_y)
             .rev()
             .find(|&y| heightmap.counts(chunk.get((x & 15) as usize, y, (z & 15) as usize)))
@@ -779,9 +798,9 @@ impl Host for Sim {
 
     /// The stored biome of the 4x4x4 cell holding `pos` (vanilla adds a seeded jitter between
     /// neighbouring cells, which only matters at biome borders).
-    fn biome(&mut self, _dimension: &str, pos: [i32; 3]) -> Option<String> {
+    fn biome(&mut self, dimension: &str, pos: [i32; 3]) -> Option<String> {
         let [x, y, z] = pos;
-        let chunk = self.dim.regions.chunk(ChunkPos::of_block(x, z))?;
+        let chunk = self.dims[crate::dim_id(dimension)?].regions.chunk(ChunkPos::of_block(x, z))?;
         let rel = y - chunk.min_y();
         let section = chunk.sections.get(usize::try_from(rel >> 4).ok()?)?;
         let id = match &section.biomes {
