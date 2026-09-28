@@ -897,6 +897,8 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    // `WitherSkullBlock.setPlacedBy`.
+    crate::wither::check_spawn(level, placed_at, spawns);
     // `ItemStack.useOn`: a successful item interaction counts as a use; `BlockItem.place`
     // and `ServerPlayerGameMode.useItemOn` fire their triggers.
     p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, placed_from.item()), 1);

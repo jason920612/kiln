@@ -55,6 +55,7 @@ mod sleep;
 mod stats;
 mod trading;
 mod weather;
+mod wither;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;

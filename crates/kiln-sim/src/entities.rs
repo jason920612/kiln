@@ -14,7 +14,7 @@ use kiln_entity::{EntityFilter, EntityKind, EntityLevel, Event};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
 use kiln_link::ConnId;
 use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, MovementTracker};
-use kiln_proto::packets::world_fx;
+use kiln_proto::packets::{hud, world_fx};
 use kiln_region::{CellPos, RegionPart};
 use kiln_world::{CellStore, ChunkPos};
 use smallvec::SmallVec;
@@ -69,6 +69,8 @@ pub(crate) struct Entity {
     /// Passengers as viewers last got them (Set Passengers).
     passengers_sent: Vec<i32>,
     equipment_sent: Vec<(u8, kiln_item::ItemStack)>,
+    /// A boss's bar fill as its viewers last got it (`ServerBossEvent`, the wither).
+    boss_sent: Option<f32>,
 }
 
 /// A spawn requested during a phase; ids are handed out afterwards in canonical order.
@@ -213,6 +215,7 @@ impl Entity {
             meta_sent: Vec::new(),
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
+            boss_sent: None,
         }
     }
 
@@ -1723,6 +1726,42 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
             for &m in movers {
                 if let Some(i) = index(players, m) {
                     check(players[i], e.seen_by.binary_search(&m).is_ok());
+                }
+            }
+        }
+        // `ServerBossEvent`: a boss's bar for the players that see it.
+        let boss = e.phys.as_ref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
+        let bar_id = Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72);
+        if let Some(progress) = boss {
+            let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
+            let op = hud::BossEvent::Add {
+                name: &name,
+                progress,
+                color: hud::BossBarColor::Purple,
+                overlay: hud::BossBarOverlay::Progress,
+                flags: hud::boss_flags::DARKEN_SCREEN,
+            };
+            let add = hud::boss_event(bar_id, &op);
+            for &c in &added {
+                if let Some(i) = index(players, c) {
+                    players[i].send(add.clone());
+                }
+            }
+            if e.boss_sent.is_some_and(|p| p != progress) {
+                let pkt = hud::boss_event(bar_id, &hud::BossEvent::Progress(progress));
+                for v in e.seen_by.iter().filter(|v| !added.contains(v) && !removed.contains(v)) {
+                    if let Some(i) = index(players, *v) {
+                        players[i].send(pkt.clone());
+                    }
+                }
+            }
+            e.boss_sent = Some(progress);
+        }
+        if (boss.is_some() || e.boss_sent.is_some()) && !removed.is_empty() {
+            let pkt = hud::boss_event(bar_id, &hud::BossEvent::Remove);
+            for &c in &removed {
+                if let Some(i) = index(players, c) {
+                    players[i].send(pkt.clone());
                 }
             }
         }
