@@ -151,6 +151,8 @@ pub struct Menu {
     pub(crate) last_input: ItemStack,
     /// `StonecutterMenu.recipesForInput` (recipe indices).
     pub(crate) visible_recipes: Vec<usize>,
+    /// The merchant menu's trade container and offers.
+    pub(crate) merchant: Option<Box<crate::merchant::MerchantState>>,
 }
 
 impl Menu {
@@ -181,6 +183,7 @@ impl Menu {
             local_data: Vec::new(),
             last_input: ItemStack::empty(),
             visible_recipes: Vec::new(),
+            merchant: None,
         }
     }
 
@@ -238,6 +241,7 @@ impl Menu {
             Source::Craft => &self.craft,
             Source::Result => &self.result,
             Source::Input => &self.input,
+            Source::Merchant => self.merchant.as_deref().expect("merchant menu"),
         }
     }
 
@@ -248,6 +252,7 @@ impl Menu {
             Source::Craft => &mut self.craft,
             Source::Result => &mut self.result,
             Source::Input => &mut self.input,
+            Source::Merchant => self.merchant.as_deref_mut().expect("merchant menu"),
         }
     }
 
@@ -271,6 +276,9 @@ impl Menu {
     }
 
     fn may_pickup(&self, env: &Env, i: usize) -> bool {
+        if self.slots[i].kind == SlotKind::MerchantResult {
+            return crate::merchant::result_may_pickup(self);
+        }
         self.slots[i].may_pickup(self.item(env, i), env.player.creative, env.rules)
     }
 
@@ -330,6 +338,10 @@ impl Menu {
         let s = self.slots[i];
         if matches!(s.kind, SlotKind::CraftResult | SlotKind::FurnaceResult) && self.has_item(env, i) {
             self.remove_count += count.min(self.item(env, i).count());
+        }
+        if s.kind == SlotKind::MerchantResult && self.has_item(env, i) {
+            let n = count.min(self.item(env, i).count());
+            crate::merchant::add_remove_count(self, n);
         }
         let removed = self.container_mut(env, s.source).remove_item(s.index, count);
         if matches!(s.source, Source::Craft | Source::Input) && !removed.is_empty() {
@@ -425,6 +437,10 @@ impl Menu {
                 let n = stack.count();
                 self.on_crafted_by(env, stack, n);
             }
+            SlotKind::MerchantResult => {
+                let n = crate::merchant::take_remove_count(self);
+                self.on_crafted_by(env, stack, n);
+            }
             _ => {}
         }
     }
@@ -461,6 +477,7 @@ impl Menu {
                 self.set_changed(env, i);
             }
             SlotKind::SmithingResult => crate::menus::smithing_take(self, env),
+            SlotKind::MerchantResult => crate::merchant::on_take(self),
             _ => self.set_changed(env, i),
         }
     }
@@ -470,6 +487,10 @@ impl Menu {
         let n = old.count() - new.count();
         if n > 0 && matches!(self.slots[i].kind, SlotKind::CraftResult | SlotKind::FurnaceResult) {
             self.remove_count += n;
+            self.check_take_achievements(env, i, old);
+        }
+        if n > 0 && self.slots[i].kind == SlotKind::MerchantResult {
+            crate::merchant::add_remove_count(self, n);
             self.check_take_achievements(env, i, old);
         }
     }
@@ -1087,6 +1108,7 @@ impl Menu {
                     clear_container_item(env, stack);
                 }
             }
+            MenuKind::Merchant => crate::merchant::removed(self, env),
             _ => {}
         }
     }

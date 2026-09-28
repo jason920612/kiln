@@ -18,6 +18,8 @@ pub enum Source {
     /// The menu's own input container (stonecutter, smithing table): a `SimpleContainer` whose
     /// changes make the menu update its result.
     Input,
+    /// The merchant menu's trade container (`MerchantContainer`, see [`crate::merchant`]).
+    Merchant,
 }
 
 /// The slot subclass: placement, pickup and stack size rules.
@@ -44,6 +46,8 @@ pub enum SlotKind {
     SmithingInput(u8),
     /// The smithing table's result slot (`ItemCombinerMenu$3`).
     SmithingResult,
+    /// `MerchantResultSlot`: taking the result makes the trade.
+    MerchantResult,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +68,7 @@ impl Slot {
         match self.kind {
             SlotKind::Normal | SlotKind::Offhand => true,
             SlotKind::Armor(slot) => rules.is_equippable_in_slot(stack, slot),
-            SlotKind::CraftResult | SlotKind::FurnaceResult | SlotKind::StonecutterResult | SlotKind::SmithingResult => false,
+            SlotKind::CraftResult | SlotKind::FurnaceResult | SlotKind::StonecutterResult | SlotKind::SmithingResult | SlotKind::MerchantResult => false,
             SlotKind::SmithingInput(k) => {
                 let key = ["minecraft:smithing_template", "minecraft:smithing_base", "minecraft:smithing_addition"][k as usize];
                 rules.recipes.property_set_accepts(key, stack)

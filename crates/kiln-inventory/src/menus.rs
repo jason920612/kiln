@@ -36,6 +36,8 @@ pub enum MenuKind {
     Stonecutter,
     /// `SmithingMenu`.
     Smithing,
+    /// `MerchantMenu` (see [`crate::merchant`]).
+    Merchant,
 }
 
 impl MenuKind {
@@ -57,6 +59,7 @@ impl MenuKind {
             MenuKind::Furnace(FurnaceKind::Smoker) => "minecraft:smoker",
             MenuKind::Stonecutter => "minecraft:stonecutter",
             MenuKind::Smithing => "minecraft:smithing",
+            MenuKind::Merchant => "minecraft:merchant",
         })
     }
 
@@ -68,7 +71,7 @@ impl MenuKind {
     /// Slots of the block container, before the player inventory slots.
     pub fn block_size(self) -> usize {
         match self {
-            MenuKind::Inventory | MenuKind::Crafting | MenuKind::Stonecutter | MenuKind::Smithing => 0,
+            MenuKind::Inventory | MenuKind::Crafting | MenuKind::Stonecutter | MenuKind::Smithing | MenuKind::Merchant => 0,
             MenuKind::Generic { rows } => rows as usize * 9,
             MenuKind::Generic3x3 => 9,
             MenuKind::Hopper => 5,
@@ -89,6 +92,7 @@ impl MenuKind {
     pub fn can_take_item_for_pick_all(self, slot: Slot) -> bool {
         match self {
             MenuKind::Inventory | MenuKind::Crafting | MenuKind::Stonecutter | MenuKind::Smithing => slot.source != Source::Result,
+            MenuKind::Merchant => false,
             _ => true,
         }
     }
@@ -416,6 +420,7 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
             }
             menu.finish_quick_move(env, i, stack, copy, false).0
         }
+        MenuKind::Merchant => crate::merchant::quick_move_stack(menu, env, i),
         MenuKind::Generic3x3 => {
             let ok = if i < 9 {
                 menu.move_item_stack_to(env, &mut stack, 9, 45, true)

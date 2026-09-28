@@ -21,6 +21,7 @@ pub mod effect;
 pub mod inventory;
 pub mod menu;
 pub mod menus;
+pub mod merchant;
 pub mod persist;
 pub mod recipe;
 pub mod remote;
