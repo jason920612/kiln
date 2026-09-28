@@ -5,6 +5,13 @@
 //! usage: cargo run --release -p kiln-sim --example sim_load -- [--players 1000] [--groups 20]
 //!        [--spacing 48] [--radius 6] [--ticks 1200] [--view-distance 2] [--behavior crowd|walk]
 //!        [--threads n] [--unified] [--inline] [--independent] [--slow-ms n]
+//!        [--spin-us n] [--inline-below-us n] [--chunk-us n] [--helper-share-us n]
+//!
+//! Prints the process CPU time per measured tick next to the wall time: idle workers spinning
+//! cost CPU without showing in mspt.
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use kiln_sim::testing::{Client, Walker, group_offset, join};
 use kiln_sim::{Sim, SimConfig};
@@ -12,6 +19,44 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::time::Instant;
 
 const SURFACE_Y: f64 = -60.0;
+
+/// Process CPU time, so the measured ticks' CPU cost can be compared (idle workers spinning
+/// count here but not in the tick's wall time).
+#[cfg(windows)]
+mod cpu {
+    #[repr(C)]
+    #[derive(Default)]
+    struct FileTime {
+        lo: u32,
+        hi: u32,
+    }
+
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn GetProcessTimes(p: isize, c: *mut FileTime, e: *mut FileTime, k: *mut FileTime, u: *mut FileTime) -> i32;
+        fn QueryProcessCycleTime(p: isize, cycles: *mut u64) -> i32;
+    }
+
+    /// Kernel plus user time in seconds, and TSC cycles, of the whole process.
+    pub fn now() -> Option<(f64, u64)> {
+        let (mut c, mut e, mut k, mut u) = Default::default();
+        let mut cycles = 0;
+        // SAFETY: the current-process pseudo-handle and valid out pointers.
+        let ok = unsafe {
+            GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u) != 0
+                && QueryProcessCycleTime(GetCurrentProcess(), &mut cycles) != 0
+        };
+        let secs = |t: &FileTime| ((t.hi as u64) << 32 | t.lo as u64) as f64 * 1e-7;
+        ok.then(|| (secs(&k) + secs(&u), cycles))
+    }
+}
+
+#[cfg(not(windows))]
+mod cpu {
+    pub fn now() -> Option<(f64, u64)> {
+        None
+    }
+}
 
 struct Args {
     players: usize,
@@ -29,6 +74,11 @@ struct Args {
     independent: bool,
     /// Milliseconds injected into each tick of group 0's region.
     slow_ms: u64,
+    /// Pool tuning overrides in microseconds (idle spin, inline threshold, chunk target).
+    spin_us: Option<u64>,
+    inline_below_us: Option<u64>,
+    chunk_us: Option<u64>,
+    helper_share_us: Option<u64>,
 }
 
 fn args() -> Args {
@@ -46,6 +96,10 @@ fn args() -> Args {
         inline: false,
         independent: false,
         slow_ms: 0,
+        spin_us: None,
+        inline_below_us: None,
+        chunk_us: None,
+        helper_share_us: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -63,6 +117,10 @@ fn args() -> Args {
             "--inline" => a.inline = true,
             "--independent" => a.independent = true,
             "--slow-ms" => a.slow_ms = value().parse().unwrap(),
+            "--spin-us" => a.spin_us = Some(value().parse().unwrap()),
+            "--inline-below-us" => a.inline_below_us = Some(value().parse().unwrap()),
+            "--chunk-us" => a.chunk_us = Some(value().parse().unwrap()),
+            "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
             other => panic!("unknown argument {other}"),
         }
     }
@@ -78,6 +136,19 @@ fn main() {
     let mut config = SimConfig::new(a.players, 10, None);
     config.pool.workers = a.threads;
     config.unified_regions = a.unified;
+    let us = std::time::Duration::from_micros;
+    if let Some(v) = a.spin_us {
+        config.pool.spin = us(v);
+    }
+    if let Some(v) = a.inline_below_us {
+        config.pool.inline_below = us(v);
+    }
+    if let Some(v) = a.chunk_us {
+        config.pool.chunk_target = us(v);
+    }
+    if let Some(v) = a.helper_share_us {
+        config.pool.helper_share = us(v);
+    }
     if a.inline {
         config.pool.phase = kiln_sched::PhaseMode::Inline;
     }
@@ -103,6 +174,8 @@ fn main() {
     let (mut packets0, mut bytes0) = (0, 0);
     let warmup_done = |w: &[Walker]| w.len() == a.players && w.iter().all(|w| w.client.settled());
     let mut measuring_since: Option<usize> = None;
+    let mut cpu0 = None;
+    let mut wall0 = Instant::now();
     loop {
         for _ in 0..joins_per_tick {
             let i = walkers.len();
@@ -127,6 +200,9 @@ fn main() {
         match measuring_since {
             None if warmup_done(&walkers) => {
                 measuring_since = Some(tick);
+                cpu0 = cpu::now();
+                sim.reset_pool_stats();
+                wall0 = Instant::now();
                 packets0 = walkers.iter().map(|w| w.client.stats.packets.load(Relaxed)).sum();
                 bytes0 = walkers.iter().map(|w| w.client.stats.bytes.load(Relaxed)).sum();
             }
@@ -139,6 +215,8 @@ fn main() {
             None => assert!(tick < 20 * 600, "players did not settle"),
         }
     }
+    let cpu1 = cpu::now();
+    let wall = wall0.elapsed().as_secs_f64();
     // Regions ticking away (independent mode) come back before anything is counted.
     sim.rendezvous();
     if a.independent || a.slow_ms > 0 {
@@ -192,6 +270,27 @@ fn main() {
             println!("  packet {id:#04x}: {n} packets, {:.1} kB", *b as f64 / 1e3);
         }
     }
+    if let (Some((s0, c0)), Some((s1, c1))) = (cpu0, cpu1) {
+        let t = times.len() as f64;
+        println!(
+            "cpu {:.3} ms/tick ({:.2} Mcycles/tick), {:.2} cores busy over {:.1} s",
+            (s1 - s0) * 1e3 / t,
+            (c1 - c0) as f64 / 1e6 / t,
+            (s1 - s0) / wall,
+            wall
+        );
+    }
+    let st = sim.pool_stats();
+    let helpers = &st[1.min(st.len())..];
+    let sum = |f: fn(&kiln_sched::WorkerStats) -> std::time::Duration| helpers.iter().map(f).sum::<std::time::Duration>();
+    let t = times.len() as f64;
+    println!(
+        "helpers ({}): working {:.3} ms/tick, parked {:.3} ms/tick, {:.1} chunks/tick",
+        helpers.len(),
+        sum(|w| w.working).as_secs_f64() * 1e3 / t,
+        sum(|w| w.parked).as_secs_f64() * 1e3 / t,
+        helpers.iter().map(|w| w.chunks).sum::<u64>() as f64 / t,
+    );
     if let Some(r) = sim.last_report() {
         println!("last window: {r}");
     }
