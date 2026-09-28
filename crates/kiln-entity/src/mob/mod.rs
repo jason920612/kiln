@@ -884,7 +884,18 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if m.equipment[HEAD].is_empty() {
             e.ignite_for_seconds(8.0);
         } else {
-            let _ = e.random.next_int_bounded(2);
+            // `hurtAndBreak(random.nextInt(2))` on the helmet that keeps the sun off.
+            let n = e.random.next_int_bounded(2);
+            let helmet = &mut m.equipment[HEAD];
+            if n > 0 && helmet.is_damageable_item() {
+                let d = helmet.damage() + n;
+                if d >= helmet.max_damage() {
+                    *helmet = ItemStack::empty();
+                    level.emit(Event::EntityEvent { entity: e.id, event: 49 });
+                } else {
+                    helmet.insert(kiln_item::keys::DAMAGE, d);
+                }
+            }
         }
     }
     species::ai_step(e, m, level);

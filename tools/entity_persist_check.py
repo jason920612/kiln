@@ -2,8 +2,8 @@
 
 1. Fixture: a copy of the reference world where the vanilla 26.3 server summons entities on a
    stone platform (items, an experience orb, an arrow stuck in the floor, a floating falling
-   block, primed TNT, a snowball, and a pig and an armor stand, which Kiln does not simulate)
-   and saves them.
+   block, primed TNT, a snowball, a pig, a zombie in armor, and an armor stand, which Kiln does
+   not simulate) and saves them.
 2. Kiln on that world: a player joins next to them; Kiln must spawn the simulated entities
    for the client with vanilla's UUIDs (and not the others). The player drops emeralds; Kiln
    saves on `stop`. The entity chunk Kiln wrote must keep every entity: the unsimulated ones
@@ -57,10 +57,12 @@ SUMMONS = [
     ("tnt", f"tnt 135.5 {Y} -46.5 {{fuse:30000s}}"),
     ("snowball", f"snowball 136.5 {Y + 2} -46.5 {{NoGravity:1b}}"),
     ("pig", f'pig 138.5 {Y} -46.5 {{NoAI:1b,CustomName:"Porky",Health:7f,Tags:["kiln"]}}'),
+    ("zombie", f'zombie 140.5 {Y} -46.5 {{NoAI:1b,PersistenceRequired:1b,Health:15f,IsBaby:1b,'
+               f'equipment:{{head:{{id:"minecraft:iron_helmet",count:1}}}},Tags:["kiln"]}}'),
     ("armor stand", f'armor_stand 139.5 {Y} -46.5 {{CustomName:"Stand",ShowArms:1b}}'),
 ]
 SIMULATED = {"minecraft:item", "minecraft:experience_orb", "minecraft:arrow", "minecraft:falling_block",
-             "minecraft:tnt", "minecraft:snowball"}
+             "minecraft:tnt", "minecraft:snowball", "minecraft:pig", "minecraft:zombie"}
 
 
 def entity_types():
@@ -267,6 +269,15 @@ def main():
           fb is not None and get(fb, "BlockState") == ("string", "minecraft:red_sand") and val(get(fb, "NoGravity")) == 1, f"{fb}")
     tnt = one("minecraft:tnt")
     check("TNT keeps burning its fuse", tnt is not None and 20000 < val(get(tnt, "fuse")) < 30000, f"{tnt}")
+    pig = one("minecraft:pig")
+    check("pig keeps its health, NoAI, custom name and tags",
+          pig is not None and val(get(pig, "Health")) == 7.0 and val(get(pig, "NoAI")) == 1
+          and get(pig, "CustomName") is not None and get(pig, "Tags") is not None, f"{pig}")
+    zombie = one("minecraft:zombie")
+    check("zombie keeps its health, baby flag, persistence and helmet",
+          zombie is not None and val(get(zombie, "Health")) == 15.0 and val(get(zombie, "IsBaby")) == 1
+          and val(get(zombie, "PersistenceRequired")) == 1
+          and val(get(zombie, "equipment", "head", "id")) == "minecraft:iron_helmet", f"{zombie}")
     snow = one("minecraft:snowball")
     check("snowball kept", snow is not None and val(get(snow, "NoGravity")) == 1, f"{snow}")
     emerald = one("minecraft:item", lambda e: val(get(e, "Item", "id")) == "minecraft:emerald")
@@ -299,6 +310,8 @@ def main():
         check("vanilla sees Kiln's emeralds", line and "minecraft:emerald" in line and "count: 4" in line, (line or "")[-120:])
         line = s.query('execute if entity @e[type=pig,name=Porky,tag=kiln]', r"Test passed|Test failed")
         check("vanilla's pig came back with its name and tag", line and "Test passed" in line, line or "")
+        line = s.query('execute if entity @e[type=zombie,tag=kiln,nbt={IsBaby:1b,Health:15f}]', r"Test passed|Test failed")
+        check("vanilla's zombie came back as a hurt baby", line and "Test passed" in line, line or "")
         line = s.query('execute if entity @e[type=item,tag=kiln,nbt={Age:-32768s}]', r"Test passed|Test failed")
         check("vanilla reads the item's age and tag", line and "Test passed" in line, line or "")
     finally:
