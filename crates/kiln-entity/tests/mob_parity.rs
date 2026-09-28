@@ -3,7 +3,7 @@
 //! every tick bit for bit (position, velocity, rotations, health, hurt time, target, running
 //! goals), and the ticks at which the player was hit.
 //!
-//! Vectors: `$KILN_MOB_VECTORS`, else `<KILN_WORK or workspace/work>/m6-mobs/vectors.jsonl`; the
+//! Vectors: `$KILN_MOB_VECTORS`, else `<KILN_WORK or workspace/work>/m6-mobs2/vectors.jsonl`; the
 //! test is skipped when they are absent. `KILN_PARITY_FILTER` selects scenarios by name.
 
 use kiln_entity::entity::EntityKind;
@@ -357,7 +357,7 @@ fn vectors() -> Option<PathBuf> {
     let work = std::env::var_os("KILN_WORK")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work"));
-    let p = work.join("m6-mobs/vectors.jsonl");
+    let p = work.join("m6-mobs2/vectors.jsonl");
     p.exists().then_some(p)
 }
 

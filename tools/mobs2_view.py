@@ -125,6 +125,8 @@ def main():
         console("setblock 8 -60 7 minecraft:water")
         time.sleep(1.5)
         shot("enderman-after")
+        time.sleep(3)
+        shot("enderman-later")
         log = e2e.server_log()
         console("kill @e[type=minecraft:enderman]", 1.0)
         console("setblock 8 -60 7 minecraft:air")
@@ -136,9 +138,13 @@ def main():
         console(f"summon minecraft:wolf 8.5 -60 10.5 {{Owner:{owner},PersistenceRequired:1b}}")
         time.sleep(2)
         shot("wolf-tamed")
-        console(f"tp {name} 20.5 -60 20.5 180 15")
-        time.sleep(4)
-        shot("wolf-following")
+        # Out of reach: the wolf teleports next to its owner, then keeps close.
+        console(f"tp {name} 24.5 -60 24.5 130 20")
+        time.sleep(3)
+        # It lands somewhere around its owner: look around.
+        for yaw in (0, 90, 180, 270):
+            console(f"tp {name} 24.5 -60 24.5 {yaw} 35", 0.8)
+            shot(f"wolf-following-{yaw}")
         console("kill @e[type=minecraft:wolf]", 1.0)
         console(f"tp {name} 8.5 -60 14.5 180 15")
         time.sleep(1)
@@ -148,6 +154,9 @@ def main():
         console(f"tp {name} 8.5 -60 11.5 180 10")
         console("summon minecraft:villager 8.5 -60 9.5 {NoAI:1b,VillagerData:{profession:\"minecraft:farmer\",level:2,type:\"minecraft:plains\"}}")
         time.sleep(2)
+        # The first click grabs the mouse (MouseHandler), the second one uses the villager.
+        right_click(pid_)
+        time.sleep(0.8)
         right_click(pid_)
         time.sleep(1.5)
         shot("villager-trade")
