@@ -985,9 +985,9 @@ impl Sim {
         players.sort_by_key(|p| p.uuid);
         // Entities (items, mobs, projectiles...) in id order: ids do not depend on the regions.
         let mut ents: Vec<_> = self
-            .dim
-            .regions
+            .dims
             .iter()
+            .flat_map(|d| d.regions.iter())
             .flat_map(|r| r.part().0.list.iter())
             .map(|e| {
                 let mob = e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
