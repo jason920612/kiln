@@ -146,11 +146,6 @@ impl Spawner<'_> {
         }).map(|i| self.cluster_of[i])
     }
 
-    fn global_ok(&self, c: ChunkPos, cat: Category) -> bool {
-        let i = cat_index(cat);
-        self.cluster(c).is_some_and(|k| self.counts[k][i] < self.caps[k][i])
-    }
-
     fn local_ok(&self, c: ChunkPos, cat: Category) -> bool {
         let i = cat_index(cat);
         self.pos.iter().zip(&self.local).any(|(p, n)| close_for_spawning(*p, c) && n[i] < cat.max_instances())

@@ -240,7 +240,7 @@ impl Living {
 }
 
 pub fn living(level: &dyn EntityLevel, id: i32) -> Option<Living> {
-    if let Some(p) = level.players().into_iter().find(|p| p.id == id) {
+    if let Some(p) = level.player(id) {
         let h = if p.sneaking { 1.5 } else { 1.8 };
         return Some(Living {
             id,

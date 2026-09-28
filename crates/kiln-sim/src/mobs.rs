@@ -5,7 +5,6 @@
 use crate::entities::{Body, Spawn};
 use kiln_data::entities::data;
 use kiln_entity::mob::{self, MobData, MobKind, Species};
-use kiln_entity::{EntityKind, level::DamageKind};
 use kiln_proto::packets::entity::{DataValue, EntityData};
 
 /// World state and game rules mobs depend on (part of the block environment).
@@ -237,6 +236,13 @@ impl kiln_loot::LootContext for DeathContext {
     fn has_damage_source(&self) -> bool {
         true
     }
+    fn damage_source_matches(&self, p: &kiln_loot::predicate::world::DamageSourcePredicate) -> bool {
+        // Only the damage type tags are known here; entity sub-predicates fail.
+        let id = kiln_data::synced_id("minecraft:damage_type", self.damage_type).unwrap_or(0);
+        p.direct_entity.is_none()
+            && p.source_entity.is_none()
+            && p.tags.iter().all(|t| crate::health::damage_type_tag(id, t.tag.as_str()) == t.expected)
+    }
     fn entity_matches(&self, target: kiln_loot::EntityTarget, predicate: &kiln_loot::predicate::EntityPredicate) -> bool {
         if target != kiln_loot::EntityTarget::This {
             return false;
@@ -299,15 +305,6 @@ pub(crate) fn drop_item(stack: kiln_item::ItemStack, pos: [f64; 3], h: u64) -> S
         vel: [unit(0) * 0.2 - 0.1, 0.2, unit(16) * 0.2 - 0.1],
         body: Body::Item { stack, pickup_delay: 10, thrower: None },
     }
-}
-
-/// The mob's type as a damage cause (for death messages): its damage kind.
-pub(crate) fn is_mob(e: &kiln_entity::Entity) -> bool {
-    matches!(e.kind, EntityKind::Mob(_))
-}
-
-pub(crate) fn damage_name(kind: DamageKind) -> &'static str {
-    kind.type_name()
 }
 
 #[cfg(test)]

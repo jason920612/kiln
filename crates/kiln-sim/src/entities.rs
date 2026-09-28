@@ -368,6 +368,44 @@ struct SimLevel<'a, 'l, 'p> {
     /// one entity draws (explosions, experience orbs) does not depend on the others in its
     /// region (vanilla shares one random per level).
     rng: LegacyRandom,
+    /// Entity sections (16³) → indices in `list`, for area queries.
+    grid: Grid,
+}
+
+/// Entities by section, like vanilla's `EntitySectionStorage`.
+#[derive(Default)]
+struct Grid {
+    cells: std::collections::HashMap<(i32, i32, i32), Vec<usize>>,
+    at: Vec<(i32, i32, i32)>,
+}
+
+fn section_of(p: [f64; 3]) -> (i32, i32, i32) {
+    ((p[0].floor() as i32) >> 4, (p[1].floor() as i32) >> 4, (p[2].floor() as i32) >> 4)
+}
+
+impl Grid {
+    fn build(list: &[Entity]) -> Grid {
+        let mut g = Grid { cells: Default::default(), at: Vec::with_capacity(list.len()) };
+        for (i, e) in list.iter().enumerate() {
+            let s = section_of(e.pos);
+            g.cells.entry(s).or_default().push(i);
+            g.at.push(s);
+        }
+        g
+    }
+
+    /// Entity `i` is now at `pos`.
+    fn moved(&mut self, i: usize, pos: [f64; 3]) {
+        let s = section_of(pos);
+        let old = self.at[i];
+        if s != old {
+            if let Some(v) = self.cells.get_mut(&old) {
+                v.retain(|&j| j != i);
+            }
+            self.cells.entry(s).or_default().push(i);
+            self.at[i] = s;
+        }
+    }
 }
 
 /// The level random stand-in for entity `id` this tick.
@@ -434,15 +472,31 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             };
             kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)
         };
-        // Within a section vanilla keeps insertion order, which id order follows here.
-        let mut found: Vec<((i32, i64), i32)> = self
-            .list
-            .iter()
-            .filter_map(|e| e.phys.as_ref())
-            .chain(self.proxies.iter())
-            .filter(|e| wanted(e))
-            .map(|e| (section_key(e), e.id))
-            .collect();
+        // Within a section vanilla keeps insertion order, which id order follows here. The
+        // sections within 2 blocks of the area hold every entity whose box can touch it.
+        let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
+        let hi = section_of([area.max_x + 2.0, area.max_y + 2.0, area.max_z + 2.0]);
+        let mut found: Vec<((i32, i64), i32)> = Vec::new();
+        let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
+        if span > self.grid.cells.len() as i64 * 4 {
+            found.extend(self.list.iter().filter_map(|e| e.phys.as_ref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+        } else {
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
+                        for &i in v {
+                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_ref())
+                                && wanted(e)
+                            {
+                                found.push((section_key(e), e.id));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        found.extend(self.proxies.iter().filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
         found.sort_unstable();
         found.into_iter().map(|(_, id)| id).collect()
     }
@@ -483,6 +537,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn players(&self) -> Vec<PlayerView> {
         self.views.clone()
+    }
+
+    fn player(&self, id: i32) -> Option<PlayerView> {
+        self.views.iter().find(|p| p.id == id).copied()
     }
 
     fn emit(&mut self, event: Event) {
@@ -593,7 +651,9 @@ pub(crate) fn tick(
         current: 0,
         seeds: 0,
         rng: LegacyRandom::new(0),
+        grid: Grid::default(),
     };
+    sim.grid = Grid::build(sim.list);
     for i in 0..sim.list.len() {
         let e = &mut sim.list[i];
         if e.removed || !ticking.contains(chunk_of(e.pos)) {
@@ -617,6 +677,9 @@ pub(crate) fn tick(
         let e = &mut sim.list[i];
         e.phys = Some(phys);
         e.sync();
+        let pos = e.pos;
+        sim.grid.moved(i, pos);
+        let e = &mut sim.list[i];
         let cell = chunk_of(e.pos).cell();
         if sim.level.cells.cell(cell).is_some() {
             e.cell = cell;
@@ -665,7 +728,9 @@ pub(crate) fn hit_mob(
         current: hit.target,
         seeds: 0x6869_7400,
         rng,
+        grid: Grid::default(),
     };
+    sim.grid = Grid::build(sim.list);
     let Some(mut phys) = sim.list[i].phys.take() else { return };
     let source = kiln_entity::mob::DamageSource {
         kind: DamageKind::PlayerAttack,

@@ -185,7 +185,7 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
 /// (a critical arrow adds a random bonus), then the arrow breaks, or bounces back when the hit
 /// did not land. Returns false for other entities (the simulation handles them).
 fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Option<i32>) -> bool {
-    let is_player = level.players().iter().any(|p| p.id == id);
+    let is_player = level.player(id).is_some();
     let target = match level.entity(id) {
         Some(t) if matches!(t.kind, EntityKind::Mob(_)) || is_player => t.position(),
         _ => return false,
@@ -198,7 +198,7 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
         let bonus = e.random.next_int_bounded(damage / 2 + 2) as i64;
         damage = (bonus + damage as i64).min(i32::MAX as i64) as i32;
     }
-    let owner_is_player = owner.is_some_and(|o| level.players().iter().any(|p| p.id == o));
+    let owner_is_player = owner.is_some_and(|o| level.player(o).is_some());
     // Knockback goes along the arrow's motion (`calculateHorizontalHurtKnockbackDirection`).
     let source = crate::mob::DamageSource {
         kind: crate::level::DamageKind::Arrow,

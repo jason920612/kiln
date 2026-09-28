@@ -206,6 +206,11 @@ pub trait EntityLevel {
         Vec::new()
     }
 
+    /// Player `id`, if it is one.
+    fn player(&self, id: i32) -> Option<PlayerView> {
+        self.players().into_iter().find(|p| p.id == id)
+    }
+
     fn emit(&mut self, event: Event);
 
     /// `getRawBrightness(pos, skyDarken)`: the larger of the sky light less `sky_darken` and
