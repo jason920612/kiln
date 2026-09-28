@@ -983,8 +983,8 @@ recipe give Diff0 *
 recipe give Diff0 *
 ! recipe take @a *
 recipe take @a *
-recipe give Other0 *
-recipe take Other0 *
+! recipe give Other0 *
+! recipe take Other0 *
 recipe give
 
 # statistics criteria

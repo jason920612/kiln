@@ -215,7 +215,8 @@ mod tests {
         assert_eq!(rules.recipes.errors, Vec::new());
         assert_eq!(rules.recipes.len(), 2042, "every recipe file loads");
         let book = rules.recipes.recipes().iter().filter(|r| !r.recipe.is_special()).count();
-        // Every non-special recipe (vanilla 26.3 counts 7 more for `/recipe give @s *`).
+        // Every non-special recipe: vanilla 26.3's book after `/recipe give @s *` on the
+        // reference world (feature packs add more).
         assert_eq!(book, 1739);
     }
 

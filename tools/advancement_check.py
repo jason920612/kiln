@@ -31,7 +31,7 @@ WORK = Path(os.environ.get("KILN_WORK") or ROOT / "work").resolve()
 os.environ["KILN_WORK"] = str(WORK)
 sys.path.insert(0, str(ROOT / "tools"))
 sys.dont_write_bytecode = True
-from persist_check import Client, Server, check, offline_uuid, pid, port_free, vanilla, RESULTS  # noqa: E402
+from persist_check import Client, Server, check, get, nbt_file, offline_uuid, pid, port_free, val, vanilla, RESULTS  # noqa: E402
 from smoke_client import Buf, varint  # noqa: E402
 import command_diff  # noqa: E402
 
@@ -99,10 +99,14 @@ AGAIN = [
 ]
 SECOND = [
     ("advancement grant {n} only minecraft:story/upgrade_tools", "Granted the advancement [Getting an Upgrade]"),
-    ("recipe give {n} minecraft:crafting_table", "Unlocked 1 recipe(s)"),
+    ("recipe give {n} minecraft:diamond_block", "Unlocked 1 recipe(s)"),
 ]
-FINAL = AGAIN + [
+FINAL = AGAIN[:2] + [
+    ("advancement grant {n} only minecraft:adventure/kill_a_mob minecraft:skeleton", "as they already have it"),
+    ("recipe give {n} minecraft:stick", "No new recipes were learned"),
     ("advancement grant {n} only minecraft:story/upgrade_tools", "as they already have it"),
+    ("recipe give {n} minecraft:diamond_block", "No new recipes were learned"),
+    # Unlocked on the first tick by `recipes/decorations/crafting_table` (a `tick` criterion).
     ("recipe give {n} minecraft:crafting_table", "No new recipes were learned"),
 ]
 
@@ -206,9 +210,23 @@ def main():
         vstats = request_stats(c) or {}
         pt = vstats.get(("minecraft:custom", PLAY_TIME), 0)
         check("vanilla continues Kiln's play time", pt >= kiln_play_time, f"Kiln {kiln_play_time}, vanilla {pt}")
+        # Every recipe vanilla's book holds, to compare with the recipe files.
+        s.query(f"recipe give {NAME} *", r"Unlocked|No new")
         c.close()
+        time.sleep(2)
+        s.query("save-all flush", r"Saved the game", 120)
     finally:
         s.stop()
+    data = nbt_file(world / "world" / "players" / "data" / f"{uid}.dat")
+    book = {val(t) for t in val(get(data, "recipeBook", "recipes"))}
+    files = {}
+    root = WORK / "generated" / "data" / "minecraft" / "recipe"
+    for f in root.rglob("*.json"):
+        files["minecraft:" + f.relative_to(root).as_posix()[:-5]] = json.loads(f.read_text(encoding="utf-8"))["type"]
+    special = {k for k, t in files.items() if "special" in t or t in ("minecraft:brewing", "minecraft:crafting_decorated_pot")}
+    extra = sorted(book & special)
+    missing = sorted(set(files) - special - book)
+    print(f"vanilla's book: {len(book)} recipes; special by type but in the book: {extra}; not special but missing: {missing}")
     bad = [l for l in s.lines if re.search(r"Couldn't (parse|access|read)|Failed to parse|Tried to load unrecognized recipe", l)]
     check("vanilla logs no errors reading Kiln's files", not bad, "; ".join(bad[:3]))
 
