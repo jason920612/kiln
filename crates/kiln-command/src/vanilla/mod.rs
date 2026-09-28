@@ -18,6 +18,7 @@ mod scoreboard;
 mod server;
 mod team;
 mod title;
+mod world;
 
 use crate::arguments::GameProfileArg;
 use crate::dispatcher::Dispatcher;
@@ -83,6 +84,14 @@ pub const COMMANDS: &[&str] = &[
     "summon",
     "advancement",
     "recipe",
+    "worldborder",
+    "tick",
+    "forceload",
+    "random",
+    "locate",
+    "place",
+    "fillbiome",
+    "spreadplayers",
 ];
 
 /// Registers every built-in command.
@@ -131,6 +140,14 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     server::kiln(d);
     advancement::advancement(d);
     advancement::recipe(d);
+    world::worldborder(d);
+    world::tick(d);
+    world::forceload(d);
+    world::random(d);
+    world::locate(d);
+    world::place(d);
+    world::fillbiome(d);
+    world::spreadplayers(d);
 }
 
 /// `getEntityOrException`.
