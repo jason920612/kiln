@@ -241,7 +241,7 @@ impl CustomGoal for AttackPlayerTarget {
         let mut players: Vec<Living> = level
             .players()
             .iter()
-            .filter_map(|p| goals::living(level, p.id))
+            .map(goals::living_player)
             .filter(|t| t.bb.intersects(&area))
             .collect();
         players.retain(|t| can_attack(e, m, level, t, Some(64.0)));

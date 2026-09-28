@@ -283,14 +283,15 @@ pub trait EntityLevel {
     /// uniquifier and the clock).
     fn fresh_seed(&mut self) -> i64;
 
-    /// Players (for experience orbs); empty by default.
-    fn players(&self) -> Vec<PlayerView> {
-        Vec::new()
+    /// Players (for experience orbs); none by default. Borrowed: mobs ask for them several
+    /// times a tick each, and a crowd server has a thousand.
+    fn players(&self) -> &[PlayerView] {
+        &[]
     }
 
     /// Player `id`, if it is one.
     fn player(&self, id: i32) -> Option<PlayerView> {
-        self.players().into_iter().find(|p| p.id == id)
+        self.players().iter().find(|p| p.id == id).copied()
     }
 
     fn emit(&mut self, event: Event);

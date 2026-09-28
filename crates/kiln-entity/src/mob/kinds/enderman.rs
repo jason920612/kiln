@@ -573,7 +573,7 @@ impl CustomGoal for LookForPlayer {
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let range = m.attrs.value(FollowRange);
         let mm: &MobData = m;
-        let wanted: Vec<i32> = level.players().iter().filter_map(|p| goals::living(level, p.id)).filter(|t| anger_inducing(e, mm, level, t)).map(|t| t.id).collect();
+        let wanted: Vec<i32> = level.players().iter().map(goals::living_player).filter(|t| anger_inducing(e, mm, level, t)).map(|t| t.id).collect();
         self.pending = goals::nearest_player(e, m, level, true, range, true, |p| wanted.contains(&p.id)).map(|t| t.id);
         self.pending.is_some()
     }

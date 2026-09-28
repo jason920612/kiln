@@ -302,8 +302,8 @@ impl EntityLevel for MemoryLevel {
         (self.next_id as i64).wrapping_mul(0x5DEE_CE66D)
     }
 
-    fn players(&self) -> Vec<PlayerView> {
-        self.players.clone()
+    fn players(&self) -> &[PlayerView] {
+        &self.players
     }
 
     fn emit(&mut self, event: Event) {

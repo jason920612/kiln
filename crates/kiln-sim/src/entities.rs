@@ -18,6 +18,7 @@ use kiln_proto::packets::world_fx;
 use kiln_region::{CellPos, RegionPart};
 use kiln_world::{CellStore, ChunkPos};
 use smallvec::SmallVec;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Ticks an item waits before it can be picked up after a player drops it.
@@ -390,6 +391,12 @@ struct SimLevel<'a, 'l, 'p> {
     rng: LegacyRandom,
     /// Entity sections (16³) → indices in `list`, for area queries.
     grid: Grid,
+    /// Player entity id → index in `proxies` / `views` ([`SimLevel::index_players`]; mobs look
+    /// players up several times a tick, and a crowd has a thousand).
+    proxy_at: HashMap<i32, usize>,
+    view_at: HashMap<i32, usize>,
+    /// Player stand-ins by entity section (like `grid`), so area queries skip far players.
+    proxy_grid: HashMap<(i32, i32, i32), Vec<usize>>,
 }
 
 /// Entities by section, like vanilla's `EntitySectionStorage`.
@@ -439,6 +446,20 @@ fn entity_level_random(seed: i64, game_time: i64, id: i32) -> LegacyRandom {
 impl SimLevel<'_, '_, '_> {
     fn index(&self, id: i32) -> Option<usize> {
         self.list.binary_search_by_key(&id, |e| e.id).ok()
+    }
+
+    fn index_players(&mut self) {
+        self.proxy_at = self.proxies.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
+        self.view_at = self.views.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
+        self.proxy_grid.clear();
+        for (i, e) in self.proxies.iter().enumerate() {
+            let p = e.position();
+            self.proxy_grid.entry(section_of([p.x, p.y, p.z])).or_default().push(i);
+        }
+    }
+
+    fn proxy_index(&self, id: i32) -> Option<usize> {
+        if self.proxy_at.is_empty() { self.proxies.iter().position(|e| e.id == id) } else { self.proxy_at.get(&id).copied() }
     }
 }
 
@@ -525,7 +546,18 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
                 }
             }
         }
-        found.extend(self.proxies.iter().filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+        if self.proxy_grid.is_empty() || span > self.proxy_grid.len() as i64 * 4 {
+            found.extend(self.proxies.iter().filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+        } else {
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        let Some(v) = self.proxy_grid.get(&(x, y, z)) else { continue };
+                        found.extend(v.iter().map(|&i| &self.proxies[i]).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+                    }
+                }
+            }
+        }
         found.sort_unstable();
         found.into_iter().map(|(_, id)| id).collect()
     }
@@ -534,14 +566,16 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         if let Some(i) = self.index(id) {
             return self.list[i].phys.as_mut();
         }
-        self.proxies.iter_mut().find(|e| e.id == id)
+        let i = self.proxy_index(id)?;
+        self.proxies.get_mut(i)
     }
 
     fn entity(&self, id: i32) -> Option<&kiln_entity::Entity> {
         if let Some(i) = self.index(id) {
             return self.list[i].phys.as_ref();
         }
-        self.proxies.iter().find(|e| e.id == id)
+        let i = self.proxy_index(id)?;
+        self.proxies.get(i)
     }
 
     fn add_entity(&mut self, entity: kiln_entity::Entity) {
@@ -564,12 +598,15 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         h as i64
     }
 
-    fn players(&self) -> Vec<PlayerView> {
-        self.views.clone()
+    fn players(&self) -> &[PlayerView] {
+        &self.views
     }
 
     fn player(&self, id: i32) -> Option<PlayerView> {
-        self.views.iter().find(|p| p.id == id).copied()
+        if self.view_at.is_empty() {
+            return self.views.iter().find(|p| p.id == id).copied();
+        }
+        self.view_at.get(&id).map(|&i| self.views[i])
     }
 
     fn emit(&mut self, event: Event) {
@@ -714,8 +751,12 @@ pub(crate) fn tick(
         seeds: 0,
         rng: LegacyRandom::new(0),
         grid: Grid::default(),
+        proxy_at: HashMap::new(),
+        view_at: HashMap::new(),
+        proxy_grid: HashMap::new(),
     };
     sim.grid = Grid::build(sim.list);
+    sim.index_players();
     for i in 0..sim.list.len() {
         // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
         let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
@@ -945,8 +986,12 @@ pub(crate) fn hit_mob(
         seeds: 0x6869_7400,
         rng,
         grid: Grid::default(),
+        proxy_at: HashMap::new(),
+        view_at: HashMap::new(),
+        proxy_grid: HashMap::new(),
     };
     sim.grid = Grid::build(sim.list);
+    sim.index_players();
     let Some(mut phys) = sim.list[i].phys.take() else { return };
     let source = kiln_entity::mob::DamageSource {
         kind: DamageKind::PlayerAttack,
@@ -1042,8 +1087,12 @@ pub(crate) fn interact_mob(
         seeds: 0x696e_7400,
         rng,
         grid: Grid::default(),
+        proxy_at: HashMap::new(),
+        view_at: HashMap::new(),
+        proxy_grid: HashMap::new(),
     };
     sim.grid = Grid::build(sim.list);
+    sim.index_players();
     let Some(mut phys) = sim.list[idx].phys.take() else { return };
     let out = kiln_entity::mob::interact::interact(&mut phys, &mut sim, &who, &stack);
     // Sheared wool: each item on its own, thrown up from the sheep with a push from its random.
@@ -1172,8 +1221,12 @@ pub(crate) fn with_entity<R>(
         seeds: salt << 8,
         rng,
         grid: Grid::default(),
+        proxy_at: HashMap::new(),
+        view_at: HashMap::new(),
+        proxy_grid: HashMap::new(),
     };
     sim.grid = Grid::build(sim.list);
+    sim.index_players();
     let mut phys = sim.list[idx].phys.take()?;
     let r = f(&mut phys, &mut sim);
     let e = &mut sim.list[idx];
@@ -1216,8 +1269,12 @@ pub(crate) fn with_level<R>(
         seeds: salt << 8,
         rng,
         grid: Grid::default(),
+        proxy_at: HashMap::new(),
+        view_at: HashMap::new(),
+        proxy_grid: HashMap::new(),
     };
     sim.grid = Grid::build(sim.list);
+    sim.index_players();
     let r = f(&mut sim);
     for e in sim.list.iter_mut() {
         e.sync();

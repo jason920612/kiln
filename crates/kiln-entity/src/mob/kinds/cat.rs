@@ -467,13 +467,13 @@ impl CustomGoal for AvoidPlayerGoal {
             if !pb.intersects(&area) || p.creative || p.spectator {
                 continue;
             }
-            let Some(t) = goals::living(level, p.id) else { continue };
+            let t = goals::living_player(p);
             if !goals::targeting_ok(e, m, level, &t, true, d, true) {
                 continue;
             }
             let dist = e.position().distance_to_sqr(p.pos);
             if best.as_ref().is_none_or(|(b, _)| dist < *b) {
-                best = Some((dist, p));
+                best = Some((dist, *p));
             }
         }
         let Some((_, p)) = best else { return false };

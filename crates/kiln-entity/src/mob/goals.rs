@@ -264,8 +264,17 @@ impl Living {
 
 pub fn living(level: &dyn EntityLevel, id: i32) -> Option<Living> {
     if let Some(p) = level.player(id) {
+        return Some(living_player(&p));
+    }
+    living_entity(level, id)
+}
+
+/// A player as a [`Living`] target, from its view (no lookup).
+pub fn living_player(p: &crate::level::PlayerView) -> Living {
+    {
+        let id = p.id;
         let h = if p.sneaking { 1.5 } else { 1.8 };
-        return Some(Living {
+        return Living {
             id,
             type_name: "minecraft:player",
             pos: p.pos,
@@ -279,8 +288,11 @@ pub fn living(level: &dyn EntityLevel, id: i32) -> Option<Living> {
             invisible: p.invisible,
             armor_cover: p.armor_cover,
             bb: crate::math::Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3),
-        });
+        };
     }
+}
+
+fn living_entity(level: &dyn EntityLevel, id: i32) -> Option<Living> {
     let e = level.entity(id)?;
     let crate::entity::EntityKind::Mob(m) = &e.kind else { return None };
     Some(Living {
@@ -360,7 +372,7 @@ pub fn nearest_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, comb
         if !filter(&p) {
             continue;
         }
-        let Some(t) = living(level, p.id) else { continue };
+        let t = living_player(p);
         if !targeting_ok(e, m, level, &t, combat, range, los) {
             continue;
         }
@@ -381,7 +393,7 @@ fn nearest_attackable_player(e: &Entity, m: &mut MobData, level: &dyn EntityLeve
         if !filter(&p) {
             continue;
         }
-        let Some(t) = living(level, p.id) else { continue };
+        let t = living_player(p);
         if k.is_some_and(|k| !k.player_target_ok(e, m, level, &t)) {
             continue;
         }

@@ -182,9 +182,13 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     if players.is_empty() {
         return;
     }
-    // Clusters of players with overlapping spawning squares (union-find over players).
+    // Clusters of players with overlapping spawning squares: union-find over the distinct
+    // chunks players stand in (a crowd shares a few chunks), each player joining its chunk's.
     let chunk_of = |p: &[f64; 3]| ChunkPos::of_block(p[0].floor() as i32, p[2].floor() as i32);
-    let mut parent: Vec<usize> = (0..players.len()).collect();
+    let mut stands: Vec<ChunkPos> = players.iter().map(chunk_of).collect();
+    stands.sort_unstable();
+    stands.dedup();
+    let mut parent: Vec<usize> = (0..stands.len()).collect();
     fn root(parent: &mut [usize], i: usize) -> usize {
         let mut r = i;
         while parent[r] != r {
@@ -193,27 +197,28 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
         parent[i] = r;
         r
     }
-    for i in 0..players.len() {
-        for j in i + 1..players.len() {
-            let (a, b) = (chunk_of(&players[i]), chunk_of(&players[j]));
+    for i in 0..stands.len() {
+        for j in i + 1..stands.len() {
+            let (a, b) = (stands[i], stands[j]);
             if (a.x - b.x).abs() <= 16 && (a.z - b.z).abs() <= 16 {
                 let (ra, rb) = (root(&mut parent, i), root(&mut parent, j));
                 parent[ra.max(rb)] = ra.min(rb);
             }
         }
     }
-    let roots: Vec<usize> = (0..players.len()).map(|i| root(&mut parent, i)).collect();
+    let roots: Vec<usize> = (0..stands.len()).map(|i| root(&mut parent, i)).collect();
     let mut ids: Vec<usize> = roots.clone();
     ids.sort_unstable();
     ids.dedup();
-    let cluster_of: Vec<usize> = roots.iter().map(|r| ids.binary_search(r).unwrap()).collect();
+    let stand_cluster: Vec<usize> = roots.iter().map(|r| ids.binary_search(r).unwrap()).collect();
+    let cluster_of: Vec<usize> =
+        players.iter().map(|p| stand_cluster[stands.binary_search(&chunk_of(p)).expect("a player's chunk")]).collect();
     // `getNaturalSpawnChunkCount` per cluster: chunks within 8 of its players (chessboard).
     let mut near: Vec<std::collections::HashSet<ChunkPos>> = vec![Default::default(); ids.len()];
-    for (i, p) in players.iter().enumerate() {
-        let c = chunk_of(p);
+    for (k, c) in stands.iter().enumerate() {
         for x in c.x - 8..=c.x + 8 {
             for z in c.z - 8..=c.z + 8 {
-                near[cluster_of[i]].insert(ChunkPos::new(x, z));
+                near[stand_cluster[k]].insert(ChunkPos::new(x, z));
             }
         }
     }

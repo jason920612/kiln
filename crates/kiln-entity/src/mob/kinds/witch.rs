@@ -368,7 +368,7 @@ pub fn splash(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit, item: &Item
     let margin = kiln_javamath::math::max(0.0, kiln_javamath::math::min(0.3, (e.tick_count - 2) as f32 / 20.0)) as f64;
     let effects = potion_effects(potion);
     if !effects.is_empty() {
-        for p in level.players() {
+        for p in level.players().to_vec() {
             if !p.alive || p.spectator {
                 continue;
             }
