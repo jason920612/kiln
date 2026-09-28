@@ -141,6 +141,11 @@ impl RegionWork<'_> {
                 continue;
             }
             if let PlayIn::Interact { entity_id, hand, sneaking, .. } = pkt {
+                if let Some(h) = self.plugins.as_mut()
+                    && crate::plugins::deny_interact(h, self.players[i], self.entities, entity_id)
+                {
+                    continue;
+                }
                 let p = &mut *self.players[i];
                 if sneaking != p.sneaking {
                     p.sneaking = sneaking;
@@ -305,6 +310,9 @@ impl RegionWork<'_> {
         let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
+        if let Some(h) = self.plugins.as_mut() {
+            crate::plugins::watch_delayed_breaks(h, &self.players, self.cells);
+        }
         {
             let mut level = RegionLevel {
                 cells: &mut *self.cells,
@@ -329,6 +337,9 @@ impl RegionWork<'_> {
             blocks::tick_pistons(&mut level, &ticking);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        if let Some(h) = self.plugins.as_mut() {
+            crate::plugins::after_packets(h, self.cells, env);
+        }
     }
 
     /// The entity phase: the region's entities tick against its blocks; what they change

@@ -2,13 +2,16 @@ id = "spawn-protection"
 version = "0.1.0"
 capabilities = []
 
+# Operators are not subject to it: the host allows their events without calling the plugin.
 [[subscribe]]
 event = "block-break"
 policy = "fail-closed"
+bypass-permission = 4
 
 [[subscribe]]
 event = "block-place"
 policy = "fail-closed"
+bypass-permission = 4
 
 [config]
 radius = 16

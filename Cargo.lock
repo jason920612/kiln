@@ -1199,6 +1199,7 @@ dependencies = [
  "serde",
  "toml",
  "tracing",
+ "tracing-subscriber",
  "uuid",
  "wasmtime",
  "wasmtime-wasi",

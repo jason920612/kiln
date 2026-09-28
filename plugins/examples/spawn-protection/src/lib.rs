@@ -12,11 +12,12 @@
 //! their writes, for the host's failure-policy tests.
 
 use kiln_plugin_sdk::state::{self, Scope};
-use kiln_plugin_sdk::{BlockPos, InitInfo, Plugin, Verdict, colored, config, export_plugin};
+use kiln_plugin_sdk::{BlockPos, InitInfo, Plugin, Verdict, colored, config, export_plugin, level_id};
 use std::sync::Mutex;
 
 #[derive(Clone, Copy)]
 struct Settings {
+    overworld: Option<u32>,
     spawn: (i32, i32),
     radius: i32,
     chaos: Chaos,
@@ -51,10 +52,10 @@ fn within(pos: &BlockPos, (x, z, r): (i32, i32, i32)) -> bool {
 }
 
 /// The shared decision of break and place.
-fn decide(operator: bool, level: &str, pos: &BlockPos, cell: u64) -> Verdict {
+fn decide(operator: bool, level: u32, pos: &BlockPos, cell: u64) -> Verdict {
     let s = settings();
     let mut deny = false;
-    if !operator && level == "minecraft:overworld" {
+    if !operator && Some(level) == s.overworld {
         let configured = (s.spawn.0, s.spawn.1, s.radius);
         let scope = || Scope::Cell(cell);
         let claim = match state::get(scope(), "claim").as_deref().and_then(decode_claim) {
@@ -100,6 +101,7 @@ impl Plugin for SpawnProtection {
             .and_then(|(x, z)| Some((x.trim().parse().ok()?, z.trim().parse().ok()?)))
             .unwrap_or((info.spawn.x, info.spawn.z));
         *SETTINGS.lock().unwrap() = Some(Settings {
+            overworld: level_id(&info, "minecraft:overworld"),
             spawn: center,
             radius: int("radius", 16),
             chaos,
@@ -108,11 +110,11 @@ impl Plugin for SpawnProtection {
     }
 
     fn on_block_break(ev: kiln_plugin_sdk::BlockEvent) -> Verdict {
-        decide(ev.player.operator, &ev.level, &ev.pos, ev.cell)
+        decide(ev.player.operator, ev.level, &ev.pos, ev.cell)
     }
 
     fn on_block_place(ev: kiln_plugin_sdk::PlaceEvent) -> Verdict {
-        decide(ev.player.operator, &ev.level, &ev.pos, ev.cell)
+        decide(ev.player.operator, ev.level, &ev.pos, ev.cell)
     }
 }
 

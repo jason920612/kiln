@@ -45,6 +45,7 @@ mod players;
 pub(crate) mod player_stats;
 mod recipe_book;
 mod plugins;
+pub use kiln_plugin_host::ExecMode as PluginMode;
 pub use plugins::PluginSettings;
 pub(crate) mod portal;
 mod region;

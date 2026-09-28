@@ -1,0 +1,7 @@
+id = "petting"
+version = "0.1.0"
+capabilities = ["player.message"]
+
+[[subscribe]]
+event = "entity-interact"
+entities = ["minecraft:cow", "minecraft:pig", "minecraft:sheep", "minecraft:chicken"]
