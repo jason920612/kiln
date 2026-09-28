@@ -83,7 +83,9 @@ impl Player {
     ) {
         let data = self.advancements.data.clone();
         let candidates = data.criteria_for(trigger);
-        if candidates.is_empty() {
+        // Most triggers fire every tick or on every move; nothing to test once the player has
+        // every criterion that listens to them.
+        if !candidates.iter().any(|&(i, c)| self.advancements.listening(i, c)) {
             return;
         }
         let loot = self.loot.clone();
@@ -215,6 +217,10 @@ impl Player {
 
     /// `EnterBlockTrigger.trigger` for a block the player is inside.
     pub(crate) fn entered_block(&mut self, state: u16) {
+        let data = self.advancements.data.clone();
+        if !data.criteria_for("minecraft:enter_block").iter().any(|&(i, c)| self.advancements.listening(i, c)) {
+            return;
+        }
         let block = kiln_item::registry::BLOCK.id(kiln_data::builtin_entries("minecraft:block").and_then(|b| b.get(kiln_data::block_logic::block_index(state)).copied()).unwrap_or(""));
         self.fire("minecraft:enter_block", None, |c, _, _| match &c.trigger {
             Trigger::EnterBlock { blocks, state: props } => {
