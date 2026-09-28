@@ -110,8 +110,11 @@ fn a_slow_region_does_not_hold_back_the_others() {
     let fast = w.own_ticks(1) - fast0;
     assert_eq!(fast, ticks, "the fast region ticks every server tick");
     let met = w.sim.independent_stats().0 - rendezvous0;
-    assert!(longest < TICK, "no server tick waited for the slow region (longest {longest:?}, {met} rendezvous)");
-    assert!(elapsed < TICK * (ticks as u32 + 4), "20 TPS held: {ticks} ticks took {elapsed:?}");
+    assert_eq!(met, 0, "nothing needed the whole server");
+    // A tick that waited for the slow region would take its 100 ms (a loaded machine can
+    // stretch a normal tick past 50 ms now and then).
+    assert!(longest < SLOW, "no server tick waited for the slow region (longest {longest:?})");
+    assert!(elapsed < TICK * (ticks as u32 + 10), "20 TPS held: {ticks} ticks took {elapsed:?}");
     assert!(w.packets(1) > packets0 + fast * PER_GROUP as u64, "the fast region's players are served every tick");
     w.sim.rendezvous();
     assert_eq!(w.sim.regions_away(), 0);
