@@ -1,11 +1,12 @@
-//! `stopwatch` (vanilla `StopwatchCommand`: named real-time stopwatches kept with the world)
-//! and `posteffect` (`PostEffectCommand`: client post-processing shaders per player).
+//! `stopwatch` (vanilla `StopwatchCommand`: named real-time stopwatches kept with the world),
+//! `posteffect` (`PostEffectCommand`: client post-processing shaders per player) and
+//! `waypoint` (`WaypointCommand`: the locator bar's waypoints and their icons).
 
 use super::LEVEL_GAMEMASTERS;
-use crate::arguments::ArgumentType;
+use crate::arguments::{ArgumentType, TEAM_COLORS};
 use crate::dispatcher::{CommandContext, Dispatcher, SuggestionProvider, argument, literal};
 use crate::error::CommandError;
-use crate::host::Host;
+use crate::host::{Host, WaypointChange};
 use crate::selector::SelectorTarget;
 use crate::text::Text;
 use crate::tr;
@@ -130,6 +131,72 @@ pub fn posteffect<S: Host + 'static>(d: &mut Dispatcher<S>) {
                 let changed: Vec<_> = targets.into_iter().filter(|p| s.remove_post_effect(p, &id)).collect();
                 feedback(s, &changed, Some(&id), "remove")
             })))),
+    );
+}
+
+/// `TeamColor.rgb` by [`TEAM_COLORS`] index: the chat colors' values.
+pub const TEAM_RGB: [i32; 16] = [
+    0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA, 0x555555, 0x5555FF, 0x55FF55, 0x55FFFF,
+    0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF,
+];
+
+pub fn waypoint<S: Host + 'static>(d: &mut Dispatcher<S>) {
+    fn modify<S: Host>(c: &CommandContext<S>, s: &mut S, change: WaypointChange, feedback: Text) -> Result<i32> {
+        let target = c.selector("waypoint").entities(s)?.into_iter().next().expect("a single entity");
+        // `WaypointArgument.getWaypoint`.
+        if !s.is_waypoint(&target) {
+            return Err(CommandError::new(tr!("argument.waypoint.invalid")));
+        }
+        s.modify_waypoint(&target, &change);
+        s.send_success(feedback, false);
+        Ok(0)
+    }
+    d.register(
+        literal("waypoint")
+            .requires(LEVEL_GAMEMASTERS)
+            .then(literal("list").executes(|_, s: &mut S| {
+                let dimension = s.dimension().to_owned();
+                let names = s.waypoints(&dimension);
+                if names.is_empty() {
+                    s.send_success(tr!("commands.waypoint.list.empty", dimension.as_str()), false);
+                } else {
+                    let n = names.len() as i32;
+                    s.send_success(tr!("commands.waypoint.list.success", n, dimension.as_str(), Text::join(names)), false);
+                }
+                Ok(s.waypoints(&dimension).len() as i32)
+            }))
+            .then(
+                literal("modify").then(
+                    argument("waypoint", ArgumentType::entity())
+                        .then(
+                            literal("color")
+                                .then(argument("color", ArgumentType::TeamColor).executes(move |c, s: &mut S| {
+                                    // `TeamColor.rgb`: the chat color's value.
+                                    let i = TEAM_COLORS.iter().position(|n| *n == c.string("color")).expect("a team color");
+                                    let text = tr!("commands.waypoint.modify.color", Text::literal(TEAM_COLORS[i]).color(TEAM_COLORS[i]));
+                                    modify(c, s, WaypointChange::Color(Some(TEAM_RGB[i])), text)
+                                }))
+                                .then(literal("hex").then(argument("color", ArgumentType::HexColor).executes(move |c, s: &mut S| {
+                                    let rgb = c.integer("color") & 0xFF_FFFF;
+                                    let text = tr!("commands.waypoint.modify.color", Text::literal(format!("{rgb:06X}")));
+                                    modify(c, s, WaypointChange::Color(Some(rgb)), text)
+                                })))
+                                .then(literal("reset").executes(|c, s: &mut S| {
+                                    modify(c, s, WaypointChange::Color(None), tr!("commands.waypoint.modify.color.reset"))
+                                })),
+                        )
+                        .then(
+                            literal("style")
+                                .then(literal("reset").executes(|c, s: &mut S| {
+                                    modify(c, s, WaypointChange::Style(None), tr!("commands.waypoint.modify.style"))
+                                }))
+                                .then(literal("set").then(argument("style", ArgumentType::ResourceLocation).executes(|c, s: &mut S| {
+                                    let style = c.identifier("style").to_string();
+                                    modify(c, s, WaypointChange::Style(Some(style)), tr!("commands.waypoint.modify.style"))
+                                }))),
+                        ),
+                ),
+            ),
     );
 }
 

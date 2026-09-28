@@ -493,6 +493,15 @@ impl ChatMessage {
     }
 }
 
+/// A change to a waypoint's icon (`/waypoint modify`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaypointChange {
+    /// `0xRRGGBB`, or `None` to reset.
+    Color(Option<i32>),
+    /// A `waypoint_style` asset id, or `None` for the default.
+    Style(Option<String>),
+}
+
 /// Effects of the built-in commands. `Self::Entity` handles come from selectors.
 pub trait Host: SelectorWorld {
     /// `sendSuccess`: feedback to the source; `broadcast` also informs operators and the log.
@@ -821,6 +830,22 @@ pub trait Host: SelectorWorld {
         false
     }
     fn clear_post_effects(&mut self, _player: &Self::Entity) -> bool {
+        false
+    }
+
+    // ---- waypoints (the locator bar) ----
+
+    /// The display names of `dimension`'s waypoint transmitters
+    /// (`ServerWaypointManager.transmitters`).
+    fn waypoints(&self, _dimension: &str) -> Vec<Text> {
+        Vec::new()
+    }
+    /// Whether `entity` can be a waypoint (a living entity, `WaypointArgument`).
+    fn is_waypoint(&self, entity: &Self::Entity) -> bool {
+        entity.is_player()
+    }
+    /// `WaypointCommand.mutateIcon`: whether the host keeps icons for `entity`.
+    fn modify_waypoint(&mut self, _entity: &Self::Entity, _change: &WaypointChange) -> bool {
         false
     }
 }

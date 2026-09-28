@@ -1145,7 +1145,23 @@ waypoint modify Diff0 color hex FF00AA
 waypoint modify Diff0 color reset
 waypoint modify Diff0 style set minecraft:bowtie
 waypoint modify Diff0 style reset
+waypoint modify Diff0 color hex F0A
+waypoint modify Diff0 color hex GGGGGG
+waypoint modify Diff0 color hex 12345
+waypoint modify Diff0 color blurple
+waypoint modify Other0 color reset
+waypoint modify Nobody color reset
+waypoint modify @a color reset
+waypoint modify Diff0 color hex 1G2345
+waypoint modify Diff0 color hex +F0000
 waypoint list
+execute in minecraft:the_nether run waypoint list
+gamerule locator_bar false
+waypoint list
+gamerule locator_bar true
+! summon minecraft:pig 8 160 8
+waypoint modify @e[type=minecraft:pig,limit=1] color red
+! kill @e[type=minecraft:pig]
 """
 
 

@@ -68,6 +68,18 @@ pub(crate) struct Joining {
     pub saved: PlayerData,
 }
 
+/// `locator_bar_icon` of saved player data.
+pub(crate) fn saved_waypoint_icon(data: &Tag) -> crate::waypoints::Icon {
+    let mut icon = crate::waypoints::Icon::default();
+    if let Some(saved) = data.get("locator_bar_icon") {
+        if let Some(style) = saved.get("style").and_then(Tag::as_str) {
+            icon.style = style.to_owned();
+        }
+        icon.color = saved.get("color").and_then(Tag::as_i64).map(|c| c as i32);
+    }
+    icon
+}
+
 /// `post_effects` of saved player data.
 pub(crate) fn saved_post_effects(data: &Tag) -> Vec<String> {
     data.get("post_effects").and_then(Tag::as_list).unwrap_or(&[]).iter().filter_map(|t| t.as_str().map(str::to_owned)).collect()
@@ -205,6 +217,16 @@ impl Sim {
             }
             fields.retain(|(k, _)| k != "active_effects" && k != "recipeBook" && k != "post_effects");
             fields.push(("post_effects".to_owned(), Tag::List(p.post_effects.iter().cloned().map(Tag::String).collect())));
+            // `locator_bar_icon` when it is not the default (`Icon.hasData`).
+            fields.retain(|(k, _)| k != "locator_bar_icon");
+            let icon = &p.waypoint_icon;
+            if icon.style != crate::waypoints::DEFAULT_STYLE || icon.color.is_some() {
+                let mut c = vec![("style".to_owned(), Tag::String(icon.style.clone()))];
+                if let Some(color) = icon.color {
+                    c.push(("color".to_owned(), Tag::Int(color)));
+                }
+                fields.push(("locator_bar_icon".to_owned(), Tag::Compound(c)));
+            }
             fields.push(("recipeBook".to_owned(), p.recipe_book.to_nbt()));
             if let Some(list) = p.effects_nbt() {
                 fields.push(("active_effects".to_owned(), list));

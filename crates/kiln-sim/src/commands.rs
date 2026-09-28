@@ -74,13 +74,15 @@ pub struct PlayerRef {
     size: [f64; 2],
     eye: f64,
     alive: bool,
+    /// A `LivingEntity` (players and mobs).
+    living: bool,
 }
 
 /// The connection of a non-player selector target: no player has it.
 const NO_CONN: ConnId = ConnId::MAX;
 
 impl PlayerRef {
-    fn of(conn: ConnId, p: &Player, scoreboard: &Scoreboard) -> Self {
+    pub(crate) fn of(conn: ConnId, p: &Player, scoreboard: &Scoreboard) -> Self {
         Self {
             conn,
             uuid: p.uuid,
@@ -96,6 +98,7 @@ impl PlayerRef {
             size: [0.6, 1.8],
             eye: 1.62f32 as f64,
             alive: true,
+            living: true,
         }
     }
 
@@ -122,6 +125,7 @@ impl PlayerRef {
             size: [e.kind.width as f64, e.kind.height as f64],
             eye,
             alive,
+            living: e.phys.as_ref().is_some_and(|p| kiln_entity::mob::data(p).is_some()),
         }
     }
 }
@@ -906,6 +910,10 @@ impl Host for Sim {
             let pkt = self.time_packet();
             self.broadcast(pkt);
         }
+        // The locator bar's connections break or are made again.
+        if rule == "minecraft:locator_bar" {
+            self.locator_bar_changed();
+        }
     }
 
     fn seed(&self) -> i64 {
@@ -1235,6 +1243,27 @@ impl Host for Sim {
         p.post_effects.remove(i);
         p.post_effects_dirty = true;
         true
+    }
+
+    fn waypoints(&self, dimension: &str) -> Vec<Text> {
+        crate::dim_id(dimension).map_or_else(Vec::new, |d| self.waypoint_names(d))
+    }
+
+    fn is_waypoint(&self, entity: &PlayerRef) -> bool {
+        entity.living
+    }
+
+    /// Players' icons; mobs keep none in Kiln (they transmit no waypoint without the
+    /// `waypoint_transmit_range` attribute anyway).
+    fn modify_waypoint(&mut self, entity: &PlayerRef, change: &kiln_command::host::WaypointChange) -> bool {
+        use kiln_command::host::WaypointChange;
+        if !entity.is_player() {
+            return false;
+        }
+        self.set_waypoint_icon(entity.conn, |icon| match change {
+            WaypointChange::Color(c) => icon.color = *c,
+            WaypointChange::Style(s) => icon.style = s.clone().unwrap_or_else(|| crate::waypoints::DEFAULT_STYLE.to_owned()),
+        })
     }
 
     fn clear_post_effects(&mut self, player: &PlayerRef) -> bool {

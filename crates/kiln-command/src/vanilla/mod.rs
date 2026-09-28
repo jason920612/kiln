@@ -15,7 +15,7 @@ pub use function::{run_as_server, run_function};
 pub mod gamerules;
 mod players;
 mod protocol;
-mod misc;
+pub mod misc;
 mod scoreboard;
 pub(crate) mod sound;
 mod server;
@@ -106,6 +106,7 @@ pub const COMMANDS: &[&str] = &[
     "stopsound",
     "stopwatch",
     "posteffect",
+    "waypoint",
 ];
 
 /// Registers every built-in command.
@@ -170,6 +171,7 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     sound::stopsound(d);
     misc::stopwatch(d);
     misc::posteffect(d);
+    misc::waypoint(d);
 }
 
 /// `getEntityOrException`.

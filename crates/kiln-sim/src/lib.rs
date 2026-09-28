@@ -54,6 +54,7 @@ mod rng;
 mod sleep;
 mod stats;
 mod trading;
+mod waypoints;
 mod weather;
 pub mod testing;
 #[cfg(test)]
@@ -119,6 +120,9 @@ pub struct SimConfig {
     pub world_format: kiln_storage::WorldFormat,
     /// Whitelist and ban lists, shared with the login checks.
     pub access: kiln_link::access::SharedAccess,
+    /// Keep-alives every 15 s of wall-clock time; `false` sends none (replays and
+    /// determinism tests, whose packet streams must not depend on how fast they run).
+    pub keep_alive: bool,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -149,6 +153,7 @@ impl SimConfig {
             inject_delay: None,
             world_format: kiln_storage::WorldFormat::Anvil,
             access: kiln_link::access::AccessLists::new(None).shared(),
+            keep_alive: true,
         }
     }
 }
@@ -208,6 +213,12 @@ struct Player {
     /// `ServerPlayer.postEffects` and whether the client has them (`postEffectsDirty`).
     post_effects: Vec<String>,
     post_effects_dirty: bool,
+    /// The locator bar: the icon (`locatorBarIcon`), the level whose waypoint manager has the
+    /// player, `firstTick`, and the position waypoints were last updated for.
+    waypoint_icon: waypoints::Icon,
+    waypoint_dim: Option<DimId>,
+    waypoint_first_tick: bool,
+    waypoint_last_pos: [f64; 3],
     /// Packets queued this tick; flushed in the egress phase.
     outbox: Vec<Bytes>,
     /// Set once the connection was told to close; the player leaves when it does.
@@ -808,6 +819,8 @@ pub struct Sim {
     clock_runs: [weather::ClockRun; 2],
     /// Each level's sleeping players (`ServerLevel.sleepStatus`).
     sleep_status: [sleep::SleepStatus; 3],
+    /// Each level's locator bar waypoints (`ServerWaypointManager`).
+    waypoints: [waypoints::WaypointManager; 3],
     /// Advancements of the enabled data packs.
     advancements: std::sync::Arc<advancements::Advancements>,
     plugins: Option<plugins::SimPlugins>,
@@ -983,6 +996,7 @@ impl Sim {
             zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
             clock_runs: Default::default(),
             sleep_status: Default::default(),
+            waypoints: Default::default(),
             advancements: Default::default(),
             plugins: None,
             independent: Default::default(),
@@ -1467,6 +1481,7 @@ impl Sim {
             biome_count: self.dims[dim].provider.biome_count,
             now: Instant::now(),
             keep_alive_id: self.started.elapsed().as_millis() as i64,
+            keep_alive: self.config.keep_alive,
             portal: self.portal_rules(),
             blocks: self.block_env(dim),
         }
@@ -1819,8 +1834,10 @@ impl Sim {
         self.untrack_everywhere(conn);
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info_packet);
-        // `PlayerList.respawn` sends the post effects again.
+        // `PlayerList.respawn` sends the post effects again; the new player starts its first
+        // tick (no waypoint until it has moved).
         p.post_effects_dirty = true;
+        p.waypoint_first_tick = true;
         self.sleep_status[p.dim].dirty = true;
         self.sleep_status[dim].dirty = true;
         p.dim = dim;
@@ -1975,6 +1992,9 @@ impl Sim {
             // `PlayerList.remove`.
             p.award_stat(*player_stats::stat::LEAVE_GAME, 1);
             self.commands.bossbars.player_left(p.uuid);
+            if let Some(dim) = p.waypoint_dim {
+                self.waypoints_remove_player(dim, conn, p.uuid);
+            }
             self.save_player(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
@@ -2058,6 +2078,10 @@ impl Sim {
             last_action: Instant::now(),
             post_effects: persist::saved_post_effects(joining.saved.raw()),
             post_effects_dirty: true,
+            waypoint_icon: persist::saved_waypoint_icon(joining.saved.raw()),
+            waypoint_dim: None,
+            waypoint_first_tick: true,
+            waypoint_last_pos: spawn,
             outbox: Vec::new(),
             disconnected: false,
             region,
@@ -2274,6 +2298,7 @@ impl Sim {
         self.tick_weather();
         self.tick_sleep();
         self.send_post_effects();
+        self.tick_waypoints();
         // `save-all` asks for a save; `save-off` stops the autosave.
         let autosave = self.commands.auto_save && self.game_time % AUTOSAVE_TICKS == 0;
         if std::mem::take(&mut self.commands.save_requested) || autosave {

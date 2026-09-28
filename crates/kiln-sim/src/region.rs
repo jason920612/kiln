@@ -41,6 +41,8 @@ pub(crate) struct Env {
     pub now: Instant,
     /// Id for keep-alives sent this tick.
     pub keep_alive_id: i64,
+    /// Whether keep-alives are sent (`SimConfig::keep_alive`).
+    pub keep_alive: bool,
     pub blocks: blocks::BlockEnv,
 }
 
@@ -1031,7 +1033,7 @@ fn tick_connection(p: &mut Player, env: &Env) {
             warn!("{} timed out", p.name);
             p.disconnect("Timed out");
         }
-    } else if env.now - p.last_keep_alive > KEEP_ALIVE_INTERVAL {
+    } else if env.keep_alive && env.now - p.last_keep_alive > KEEP_ALIVE_INTERVAL {
         p.keep_alive = Some((env.keep_alive_id, env.now));
         p.last_keep_alive = env.now;
         p.send(packets::keep_alive(env.keep_alive_id));

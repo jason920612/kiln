@@ -117,6 +117,8 @@ pub enum ArgumentType {
     /// `minecraft:particle`: a particle type id and its options as SNBT (checked when the
     /// command runs).
     Particle,
+    /// `minecraft:hex_color`: `RGB` or `RRGGBB`, as an [`ArgumentValue::Integer`] `0xRRGGBB`.
+    HexColor,
 }
 
 impl ArgumentType {
@@ -236,6 +238,7 @@ impl ArgumentType {
             ArgumentType::TeamColor => Parser::Plain("minecraft:team_color"),
             ArgumentType::Dialog => Parser::Plain("minecraft:dialog"),
             ArgumentType::Particle => Parser::Plain("minecraft:particle"),
+            ArgumentType::HexColor => Parser::Plain("minecraft:hex_color"),
         }
     }
 
@@ -507,6 +510,30 @@ impl ArgumentType {
                     return Err(CommandError::new(tr!("particle.invalidOptions", message)));
                 }
                 ArgumentValue::Particle(arg)
+            }
+            ArgumentType::HexColor => {
+                // `HexColorArgument`: `Integer.parseInt` of each digit (doubled) or pair; its
+                // `NumberFormatException` reaches brigadier, which reports it as a parse failure.
+                let s = reader.read_unquoted_string();
+                let width = match s.len() {
+                    3 => 1,
+                    6 => 2,
+                    _ => return Err(CommandError::new(tr!("argument.hexcolor.invalid", s)).at(reader)),
+                };
+                let mut channels = [0i32; 3];
+                for (i, part) in s.as_bytes().chunks(width).enumerate() {
+                    match java_parse_hex(part) {
+                        Ok(v) => channels[i] = if width == 1 { v * 17 } else { v },
+                        Err(at) => {
+                            let text = std::str::from_utf8(part).unwrap_or("");
+                            let message = format!("Error at index {at} in: \"{text}\"");
+                            return Err(CommandError::new(tr!("command.exception", message)).at(reader));
+                        }
+                    }
+                }
+                // `ARGB.color(r, g, b)`: opaque.
+                let [r, g, b] = channels;
+                ArgumentValue::Integer(0xFF << 24 | (r & 0xFF) << 16 | (g & 0xFF) << 8 | (b & 0xFF))
             }
             ArgumentType::Component => ArgumentValue::Component(Box::new(component::parse(reader)?)),
             ArgumentType::Style => {
@@ -1029,6 +1056,27 @@ pub enum ArgumentValue {
     /// Inline NBT (`loot_predicate` definitions, `style`).
     Nbt(Tag),
     Particle(ParticleArg),
+}
+
+/// `Integer.parseInt(s, 16)` of a short run: the value, or the index `NumberFormatException`
+/// reports (a sign is allowed first, as in Java).
+fn java_parse_hex(s: &[u8]) -> std::result::Result<i32, usize> {
+    let (negative, start) = match s.first() {
+        Some(b'-') => (true, 1),
+        Some(b'+') => (false, 1),
+        _ => (false, 0),
+    };
+    if start == s.len() {
+        return Err(start);
+    }
+    let mut v = 0i32;
+    for (i, &c) in s.iter().enumerate().skip(start) {
+        match (c as char).to_digit(16) {
+            Some(d) => v = v * 16 + d as i32,
+            None => return Err(i),
+        }
+    }
+    Ok(if negative { -v } else { v })
 }
 
 /// `ParticleArgument`: the type and its options compound (empty when none was given).
