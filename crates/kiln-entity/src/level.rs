@@ -19,6 +19,8 @@ pub enum EntityFilter {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerView {
     pub id: i32,
+    /// The player's UUID (tamed animals remember their owner by it).
+    pub uuid: u128,
     pub pos: Vec3,
     pub eye_height: f32,
     pub spectator: bool,
@@ -39,6 +41,7 @@ impl PlayerView {
     pub fn new(id: i32, pos: Vec3) -> PlayerView {
         PlayerView {
             id,
+            uuid: 0,
             pos,
             eye_height: 1.62,
             spectator: false,

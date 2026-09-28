@@ -10,6 +10,10 @@ use kiln_javamath::random::RandomSource;
 
 /// Before `LivingEntity.tick` (`Creeper.tick` swells first).
 pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    if let Some(k) = m.kind.ext() {
+        k.pre_tick(e, m, level);
+        return;
+    }
     let alive = super::is_alive(e, m);
     if let Species::Creeper { swell, old_swell, swell_dir, max_swell, radius, powered, ignited } = &mut m.species {
         if !alive {
@@ -44,6 +48,10 @@ pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 
 /// After `LivingEntity.tick` (`Spider.tick` records its climbing).
 pub fn post_tick(e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+    if let Some(k) = m.kind.ext() {
+        k.post_tick(e, m, _level);
+        return;
+    }
     if let Species::Spider { climbing } = &mut m.species {
         *climbing = e.horizontal_collision;
     }
@@ -53,6 +61,10 @@ pub fn post_tick(e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) 
 pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if super::breed::is_ageable(m.kind) {
         super::breed::ai_step(e, m);
+    }
+    if let Some(k) = m.kind.ext() {
+        k.ai_step(e, m, level);
+        return;
     }
     let alive = super::is_alive(e, m);
     let baby = m.baby();
@@ -188,6 +200,9 @@ pub fn shear_drop_motion(e: &mut Entity) -> Vec3 {
 /// `getDefaultDimensions` of the type: `base` (width, height, eye height) for adults; for babies
 /// the type's `BABY_DIMENSIONS`, else `base` scaled by `getAgeScale` (0.5).
 pub fn dimensions(m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {
+    if let Some(k) = m.kind.ext() {
+        return k.dimensions(m, base);
+    }
     let (w, h, eye) = base;
     if m.baby() {
         if let Some(d) = baby_dimensions(m.kind) {

@@ -1,7 +1,7 @@
 """Differential tests of Kiln's mobs against vanilla 26.3.
 
 1. Runs tools/MobVectors.java: a vanilla dedicated server started in-process (in
-   <work>/m6-mobs/server, port 25597) that ticks mob scenarios by hand with pinned seeds and
+   <out dir>/server, port $KILN_MOB_PORT or 25597) that ticks mob scenarios by hand with pinned seeds and
    records every mob's state after every tick into <work>/m6-mobs/vectors.jsonl.
 2. Runs `cargo test -p kiln-entity --test mob_parity` with KILN_MOB_VECTORS set, which replays
    each scenario in Rust and compares position, velocity, rotations, health, target, running

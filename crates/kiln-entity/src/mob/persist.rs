@@ -29,6 +29,22 @@ fn op_of(name: &str) -> Option<Op> {
 pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     let mut m = MobData::new(kind, &mut e.random);
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
+    read_fields(e, &mut m, r);
+    e.kind = EntityKind::Mob(Box::new(m));
+}
+
+/// `readAdditionalSaveData` on an existing mob from a compound of saved fields (the parity
+/// harness sets scenario mobs up this way, as vanilla's harness does).
+pub fn apply_nbt(e: &mut Entity, tag: &Tag) {
+    let Tag::Compound(fields) = tag else { return };
+    let mut r = Input { fields, used: Vec::new() };
+    let mut m = super::take(e);
+    read_fields(e, &mut m, &mut r);
+    super::put(e, m);
+}
+
+fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
+    let kind = m.kind;
     // `LivingEntity.readAdditionalSaveData`.
     m.absorption = r.float_or("AbsorptionAmount", 0.0);
     if let Some(Tag::List(list)) = r.get("attributes") {
@@ -121,9 +137,11 @@ pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     if m.zombie_baby {
         m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
-    super::reassess_weapon_goal(&mut m, false);
-    super::refresh_dimensions(e, &m);
-    e.kind = EntityKind::Mob(Box::new(m));
+    super::reassess_weapon_goal(m, false);
+    if let Some(k) = kind.ext() {
+        k.load(e, m, r);
+    }
+    super::refresh_dimensions(e, m);
 }
 
 /// Writes the mob's fields.
@@ -216,6 +234,9 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
         }
         Species::Skeleton => o.put("StrayConversionTime", Tag::Int(-1)),
         _ => {}
+    }
+    if let Some(k) = m.kind.ext() {
+        k.save(e, m, o);
     }
     if !e.extra.iter().any(|(k, _)| k == "Brain") {
         o.put("Brain", Tag::Compound(vec![("memories".into(), Tag::Compound(vec![]))]));

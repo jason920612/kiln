@@ -58,12 +58,18 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData) {
 
 /// Types that extend `AgeableMob` (an age, growing up).
 pub fn is_ageable(kind: MobKind) -> bool {
-    is_animal(kind)
+    match kind.ext() {
+        Some(k) => k.info().ageable,
+        None => is_animal(kind),
+    }
 }
 
 /// Types that extend `Animal` (love mode, breeding food).
 pub fn is_animal(kind: MobKind) -> bool {
-    matches!(kind, MobKind::Pig | MobKind::Cow | MobKind::Sheep | MobKind::Chicken)
+    match kind.ext() {
+        Some(k) => k.info().animal,
+        None => matches!(kind, MobKind::Pig | MobKind::Cow | MobKind::Sheep | MobKind::Chicken),
+    }
 }
 
 /// `Animal.customServerAiStep`: out of love once the age is not zero.
@@ -119,7 +125,13 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
                     *c = color;
                 }
             }
-            _ => {}
+            _ => {
+                if let Some(k) = m.kind.ext()
+                    && let Some(p) = level.entity(partner).and_then(super::data).cloned()
+                {
+                    k.breed_offspring(e, m, &p, cm, level);
+                }
+            }
         }
     }
     // `setBaby(true)`, then `snapTo(x, y, z, 0, 0)`.
@@ -208,7 +220,7 @@ pub fn is_food(kind: MobKind, item: i32) -> bool {
         MobKind::Cow => "minecraft:cow_food",
         MobKind::Sheep => "minecraft:sheep_food",
         MobKind::Chicken => "minecraft:chicken_food",
-        _ => return false,
+        _ => return kind.ext().is_some_and(|k| k.is_food(item)),
     };
     super::item_tag(item, tag)
 }

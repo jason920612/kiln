@@ -27,6 +27,8 @@ pub enum Attr {
     AttackDamage,
     TemptRange,
     SpawnReinforcements,
+    FlyingSpeed,
+    CameraDistance,
 }
 
 impl Attr {
@@ -58,6 +60,8 @@ impl Attr {
             AttackDamage => ("minecraft:attack_damage", 2.0, 0.0, 2048.0),
             TemptRange => ("minecraft:tempt_range", 10.0, 0.0, 2048.0),
             SpawnReinforcements => ("minecraft:spawn_reinforcements", 0.0, 0.0, 1.0),
+            FlyingSpeed => ("minecraft:flying_speed", 0.4, 0.0, 1024.0),
+            CameraDistance => ("minecraft:camera_distance", 4.0, 0.0, 32.0),
         }
     }
 
@@ -70,7 +74,7 @@ impl Attr {
     }
 }
 
-pub const ALL: [Attr; 24] = {
+pub const ALL: [Attr; 26] = {
     use Attr::*;
     [
         MaxHealth,
@@ -97,6 +101,8 @@ pub const ALL: [Attr; 24] = {
         AttackDamage,
         TemptRange,
         SpawnReinforcements,
+        FlyingSpeed,
+        CameraDistance,
     ]
 };
 

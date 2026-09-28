@@ -60,6 +60,8 @@ pub enum EntityKind {
     MobTicking { gravity: f64 },
     /// An entity simulated elsewhere (players), present so behaviours can see it.
     Other { type_name: &'static str },
+    /// An entity type with its behaviour in its own module (see [`crate::ext_entity`]).
+    Ext(Box<dyn crate::ext_entity::EntityExt>),
 }
 
 #[derive(Clone, Debug)]
@@ -271,6 +273,7 @@ impl Entity {
             EntityKind::Arrow(_) => 0.05,
             EntityKind::Mob(ref m) => m.attrs.value(crate::mob::attributes::Attr::Gravity),
             EntityKind::MobTicking { gravity } => gravity,
+            EntityKind::Ext(ref x) => x.gravity(),
             EntityKind::Other { .. } => 0.0,
         }
     }
@@ -288,6 +291,7 @@ impl Entity {
         match &self.kind {
             EntityKind::Item(item) => crate::item::fire_immune(item),
             EntityKind::Tnt(_) => true,
+            EntityKind::Mob(m) => m.kind.fire_immune(),
             _ => false,
         }
     }
@@ -363,6 +367,7 @@ impl Entity {
             EntityKind::Player(_) | EntityKind::MobTicking { .. } => {}
             EntityKind::Mob(_) => crate::mob::tick(self, level),
             EntityKind::Other { .. } => self.base_tick(level),
+            EntityKind::Ext(_) => crate::ext_entity::tick(self, level),
         }
     }
 
@@ -448,6 +453,15 @@ impl Entity {
                 crate::mob::hurt_entity(self, level, source, amount)
             }
             EntityKind::MobTicking { .. } => false,
+            EntityKind::Ext(_) => {
+                let placeholder = EntityKind::Other { type_name: self.type_name };
+                let EntityKind::Ext(mut x) = std::mem::replace(&mut self.kind, placeholder) else { unreachable!() };
+                let r = x.hurt(self, level, kind, amount, attacker);
+                if matches!(self.kind, EntityKind::Other { .. }) {
+                    self.kind = EntityKind::Ext(x);
+                }
+                r
+            }
             EntityKind::Player(_) | EntityKind::Other { .. } => {
                 level.emit(Event::Hurt { target: self.id, amount, kind, attacker });
                 true

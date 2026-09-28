@@ -23,7 +23,7 @@ fn vec3(v: &Value) -> Vec3 {
 }
 
 /// Vanilla goal class names for Kiln's goals.
-fn goal_class(name: &str, kind: MobKind) -> &'static str {
+fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
     match name {
         "float" => "FloatGoal",
         "panic" => "PanicGoal",
@@ -54,7 +54,30 @@ fn goal_class(name: &str, kind: MobKind) -> &'static str {
                 "NearestAttackableTargetGoal"
             }
         }
+        // Extension goals are named after their vanilla class.
+        n if n.starts_with(|c: char| c.is_ascii_uppercase()) => n,
         _ => "?",
+    }
+}
+
+/// Typed JSON NBT (see `MobVectors.tagJson`).
+fn tag_of(v: &Value) -> kiln_proto::nbt::Tag {
+    use kiln_proto::nbt::Tag;
+    let (k, x) = v.as_object().unwrap().iter().next().unwrap();
+    match k.as_str() {
+        "c" => Tag::Compound(x.as_object().unwrap().iter().map(|(k, v)| (k.clone(), tag_of(v))).collect()),
+        "l" => Tag::List(x.as_array().unwrap().iter().map(tag_of).collect()),
+        "b" => Tag::Byte(x.as_i64().unwrap() as i8),
+        "s" => Tag::Short(x.as_i64().unwrap() as i16),
+        "i" => Tag::Int(x.as_i64().unwrap() as i32),
+        "L" => Tag::Long(x.as_str().unwrap().parse().unwrap()),
+        "f" => Tag::Float(f(x) as f32),
+        "d" => Tag::Double(f(x)),
+        "str" => Tag::String(x.as_str().unwrap().to_owned()),
+        "ia" => Tag::IntArray(x.as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i32).collect()),
+        "ba" => Tag::ByteArray(x.as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i8).collect()),
+        "la" => Tag::LongArray(x.as_array().unwrap().iter().map(|v| v.as_str().unwrap().parse().unwrap()).collect()),
+        _ => panic!("tag {k}"),
     }
 }
 
@@ -144,6 +167,9 @@ fn replay(s: &Value) -> Result<usize, String> {
                 *egg_time = spec["egg_time"].as_i64().unwrap() as i32;
             }
             m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
+        }
+        if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
+            mob::persist::apply_nbt(&mut e, &tag_of(nbt));
         }
         {
             let age = spec.get("age").and_then(Value::as_i64).unwrap_or(0) as i32;

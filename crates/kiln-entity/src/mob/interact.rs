@@ -76,6 +76,9 @@ fn mob_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wh
     if !super::is_alive(e, m) {
         return Outcome::PASS;
     }
+    if let Some(o) = m.kind.ext().and_then(|k| k.interact(e, m, level, who, stack)) {
+        return o;
+    }
     match m.kind {
         MobKind::Cow if is(stack, "minecraft:bucket") && !m.baby() => {
             let mut out = Outcome::success(HeldChange::Fill(ItemStack::of("minecraft:milk_bucket", 1).unwrap_or_else(ItemStack::empty)));

@@ -57,6 +57,9 @@ public class MobVectors {
         String mainHand;
         Integer age;
         Integer inLove;
+        /// SNBT read by the mob's `readAdditionalSaveData` before it joins the level (both sides
+        /// load it the same way: slime sizes, owners, carried blocks...).
+        String nbt;
         MobSpec(String type, double x, double y, double z, float yaw, long seed) {
             this.type = type; this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.seed = seed;
         }
@@ -130,7 +133,7 @@ public class MobVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=25597",
+                "server-port=" + System.getenv().getOrDefault("KILN_MOB_PORT", "25597"),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
@@ -282,6 +285,20 @@ public class MobVectors {
             if (spec.mainHand != null) {
                 m.setItemSlot(EquipmentSlot.MAINHAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(spec.mainHand))));
             }
+            String nbtJson = "null";
+            if (spec.nbt != null) {
+                net.minecraft.nbt.CompoundTag tag = net.minecraft.nbt.TagParser.parseCompoundFully(spec.nbt);
+                var in = net.minecraft.world.level.storage.TagValueInput.create(net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag);
+                java.lang.reflect.Method read = null;
+                for (Class<?> c = m.getClass(); c != null && read == null; c = c.getSuperclass()) {
+                    for (java.lang.reflect.Method mm : c.getDeclaredMethods()) {
+                        if (mm.getName().equals("readAdditionalSaveData") && mm.getParameterCount() == 1) read = mm;
+                    }
+                }
+                read.setAccessible(true);
+                read.invoke(m, in);
+                nbtJson = tagJson(tag);
+            }
             if (spec.age != null) ((net.minecraft.world.entity.AgeableMob) m).setAge(spec.age);
             if (spec.inLove != null) ((net.minecraft.world.entity.animal.Animal) m).setInLoveTime(spec.inLove);
             m.getRandom().setSeed(spec.seed);
@@ -290,10 +307,10 @@ public class MobVectors {
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
                     spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
-                    spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove));
+                    spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson));
         }
         StringBuilder trace = new StringBuilder();
         StringBuilder hits = new StringBuilder();
@@ -379,6 +396,45 @@ public class MobVectors {
                 "{\"name\":\"%s\",\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"trace\":[%s]}",
                 s.name, s.levelSeed, s.ticks, startTime, skyDarken, blocks, specs, playerJson, hurts, hits, spawned, trace);
+    }
+
+    /// NBT as typed JSON: {"b":1}, {"i":2}, {"s":..}, {"L":"n"}, {"f":x}, {"d":x}, {"str":".."},
+    /// {"c":{...}}, {"l":[...]}, {"ba":[..]}, {"ia":[..]}, {"la":["n"..]}.
+    static String tagJson(net.minecraft.nbt.Tag t) {
+        if (t instanceof net.minecraft.nbt.CompoundTag c) {
+            StringBuilder sb = new StringBuilder("{\"c\":{");
+            boolean first = true;
+            for (String k : c.keySet()) {
+                if (!first) sb.append(',');
+                first = false;
+                sb.append('"').append(k).append("\":").append(tagJson(c.get(k)));
+            }
+            return sb.append("}}").toString();
+        }
+        if (t instanceof net.minecraft.nbt.ListTag l) {
+            StringBuilder sb = new StringBuilder("{\"l\":[");
+            for (int i = 0; i < l.size(); i++) {
+                if (i > 0) sb.append(',');
+                sb.append(tagJson(l.get(i)));
+            }
+            return sb.append("]}").toString();
+        }
+        if (t instanceof net.minecraft.nbt.ByteTag b) return "{\"b\":" + b.byteValue() + "}";
+        if (t instanceof net.minecraft.nbt.ShortTag s) return "{\"s\":" + s.shortValue() + "}";
+        if (t instanceof net.minecraft.nbt.IntTag i) return "{\"i\":" + i.intValue() + "}";
+        if (t instanceof net.minecraft.nbt.LongTag g) return "{\"L\":\"" + g.longValue() + "\"}";
+        if (t instanceof net.minecraft.nbt.FloatTag f) return "{\"f\":" + Float.toString(f.floatValue()) + "}";
+        if (t instanceof net.minecraft.nbt.DoubleTag dd) return "{\"d\":" + Double.toString(dd.doubleValue()) + "}";
+        if (t instanceof net.minecraft.nbt.StringTag st) return "{\"str\":\"" + st.value().replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
+        if (t instanceof net.minecraft.nbt.IntArrayTag ia) return "{\"ia\":" + java.util.Arrays.toString(ia.getAsIntArray()) + "}";
+        if (t instanceof net.minecraft.nbt.ByteArrayTag ba) return "{\"ba\":" + java.util.Arrays.toString(ba.getAsByteArray()) + "}";
+        if (t instanceof net.minecraft.nbt.LongArrayTag la) {
+            StringBuilder sb = new StringBuilder("{\"la\":[");
+            long[] v = la.getAsLongArray();
+            for (int i = 0; i < v.length; i++) sb.append(i > 0 ? "," : "").append('"').append(v[i]).append('"');
+            return sb.append("]}").toString();
+        }
+        throw new IllegalArgumentException("tag " + t);
     }
 
     static String d(double v) {

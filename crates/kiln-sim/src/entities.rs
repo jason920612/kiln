@@ -257,6 +257,7 @@ impl Entity {
                 d.set(data::experience_orb::VALUE, &DataValue::Int(o.value));
             }
             EntityKind::Mob(m) => return crate::mobs::metadata(self.phys(), m),
+            EntityKind::Ext(x) => x.entity_data(self.phys(), &mut d),
             _ => {}
         }
         d
@@ -267,6 +268,7 @@ impl Entity {
         // A falling block's spawn data is its block state (`Block.getId`).
         let spawn_data = match &self.phys().kind {
             EntityKind::FallingBlock(f) => f.state as i32,
+            EntityKind::Ext(x) => x.spawn_data(),
             _ => 0,
         };
         let mut out = vec![
@@ -1017,6 +1019,7 @@ fn view(p: &Player) -> PlayerView {
     let armor = [S::Feet, S::Legs, S::Chest, S::Head].iter().filter(|s| !p.inv.equipped(**s).is_empty()).count();
     PlayerView {
         id: p.entity_id,
+        uuid: p.uuid.as_u128(),
         pos: vec3(p.pos),
         eye_height: if p.sneaking { 1.27 } else { 1.62 },
         spectator: p.game_mode == 3,

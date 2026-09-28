@@ -85,7 +85,7 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
     d.set(data::living_entity::HEALTH, &DataValue::Float(m.health));
     let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);
     d.set(data::mob::MOB_FLAGS, &DataValue::Byte(mob_flags));
-    if m.kind.is_animal() && m.age < 0 {
+    if kiln_entity::mob::breed::is_ageable(m.kind) && m.age < 0 {
         d.set(data::ageable_mob::BABY, &DataValue::Boolean(true));
     }
     match &m.species {
@@ -114,7 +114,10 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
         Species::Spider { climbing } => {
             d.set(data::spider::FLAGS, &DataValue::Byte(*climbing as i8));
         }
-        Species::Skeleton => {}
+        Species::Skeleton | Species::Plain | Species::Ext(_) => {}
+    }
+    if let Some(k) = m.kind.ext() {
+        k.entity_data(e, m, &mut d);
     }
     d
 }
@@ -205,7 +208,14 @@ pub(crate) fn difficulty_instance(difficulty: u8, game_time: i64, inhabited: i64
     } else {
         (effective - 2.0) / 2.0
     };
-    mob::SpawnContext { special_multiplier: special, effective_difficulty: effective, hard: difficulty == 3, halloween: false }
+    mob::SpawnContext {
+        special_multiplier: special,
+        effective_difficulty: effective,
+        hard: difficulty == 3,
+        halloween: false,
+        biome: None,
+        moon_brightness: moon_brightness,
+    }
 }
 
 /// The loot context of a dying mob (`LootContextParamSets.ENTITY`).

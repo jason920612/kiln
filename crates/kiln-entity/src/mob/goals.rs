@@ -18,9 +18,11 @@ pub const TARGET: u8 = 8;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wanted {
     Player,
-    /// A type Kiln does not simulate yet (villagers, iron golems, turtles, cats, wolves...):
-    /// the search always comes back empty, but the goal still draws its randomness.
+    /// A type Kiln does not simulate yet (turtles, ...): the search always comes back empty,
+    /// but the goal still draws its randomness.
     Unsimulated,
+    /// Mobs of these types (`getNearestEntity` over `getEntitiesOfClass` in the follow range box).
+    Types(&'static [&'static str]),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,12 +59,15 @@ pub enum Goal {
     /// Goals whose start conditions Kiln's world never meets (villages, spears).
     Never,
     HurtByTarget { timestamp: i32, alert_others: bool, target_mob: Option<i32>, unseen: i32, unseen_memory: i32 },
+    /// A goal of an extension type (see [`super::ext::CustomGoal`]).
+    Custom(Box<dyn super::ext::CustomGoal>),
     NearestAttackable { wanted: Wanted, interval: i32, must_see: bool, target: Option<i32>, unseen: i32, spider: bool },
 }
 
 impl Goal {
     pub fn flags(&self) -> u8 {
         match self {
+            Goal::Custom(c) => c.flags(),
             Goal::Float => JUMP,
             Goal::Panic { .. } | Goal::RandomStroll { .. } | Goal::Swell { .. } | Goal::FleeSun { .. } | Goal::AvoidEntity => MOVE,
             Goal::Tempt { .. } | Goal::Breed { .. } | Goal::Melee { .. } | Goal::RangedBow { .. } | Goal::RandomLookAround { .. } => MOVE | LOOK,
@@ -76,11 +81,15 @@ impl Goal {
     }
 
     fn every_tick(&self) -> bool {
+        if let Goal::Custom(c) = self {
+            return c.every_tick();
+        }
         matches!(self, Goal::Float | Goal::RandomLookAround { .. } | Goal::Melee { .. } | Goal::RangedBow { .. } | Goal::Swell { .. })
     }
 
     pub fn name(&self) -> &'static str {
         match self {
+            Goal::Custom(c) => c.name(),
             Goal::Float => "float",
             Goal::Panic { .. } => "panic",
             Goal::Idle => "idle",
@@ -201,8 +210,11 @@ pub fn tick_running(sel: &mut GoalSelector, e: &mut Entity, m: &mut MobData, lev
     }
 }
 
-fn interruptable(_g: &Goal) -> bool {
-    true
+fn interruptable(g: &Goal) -> bool {
+    match g {
+        Goal::Custom(c) => c.interruptable(),
+        _ => true,
+    }
 }
 
 // ---------------------------------------------------------------------- targets
@@ -211,6 +223,8 @@ fn interruptable(_g: &Goal) -> bool {
 #[derive(Clone, Copy, Debug)]
 pub struct Living {
     pub id: i32,
+    /// The entity type (`minecraft:player` for players).
+    pub type_name: &'static str,
     pub pos: Vec3,
     pub eye_y: f64,
     pub alive: bool,
@@ -250,6 +264,7 @@ pub fn living(level: &dyn EntityLevel, id: i32) -> Option<Living> {
         let h = if p.sneaking { 1.5 } else { 1.8 };
         return Some(Living {
             id,
+            type_name: "minecraft:player",
             pos: p.pos,
             eye_y: p.pos.y + p.eye_height as f64,
             alive: p.alive,
@@ -267,6 +282,7 @@ pub fn living(level: &dyn EntityLevel, id: i32) -> Option<Living> {
     let crate::entity::EntityKind::Mob(m) = &e.kind else { return None };
     Some(Living {
         id,
+        type_name: e.type_name,
         pos: e.position(),
         eye_y: e.eye_y(),
         alive: e.is_alive() && m.health > 0.0,
@@ -348,6 +364,27 @@ fn nearest_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, combat: 
     best.map(|(_, t)| t)
 }
 
+/// `NearestAttackableTargetGoal.findTarget` for mob types: the nearest (to the eyes) mob of
+/// `types` in the box `range` around (4 up and down) that passes the combat conditions.
+pub fn nearest_mob(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, range: f64, must_see: bool, types: &[&str]) -> Option<i32> {
+    let area = e.bounding_box().inflate(range, 4.0, range);
+    let mut best: Option<(f64, i32)> = None;
+    for id in level.entities_in(&area, crate::level::EntityFilter::Living, e.id) {
+        let Some(t) = living(level, id) else { continue };
+        if t.player || !types.contains(&t.type_name) {
+            continue;
+        }
+        if !targeting_ok(e, m, level, &t, true, range, must_see) {
+            continue;
+        }
+        let d = t.dist_sqr(e.x(), e.eye_y(), e.z());
+        if best.is_none_or(|(b, _)| d < b) {
+            best = Some((d, id));
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
 // ---------------------------------------------------------------------- goal logic
 
 fn nav_done(m: &MobData) -> bool {
@@ -358,6 +395,7 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
     let every = g.every_tick();
     let adj = |t: i32| if every { t } else { reduced_tick_delay(t) };
     match g {
+        Goal::Custom(c) => c.can_use(e, m, level),
         Goal::Float => (e.fluid_height_water() > fluid_jump_threshold(e)) || e.is_in_lava(),
         Goal::Panic { pos, .. } => {
             if !should_panic(m, level) {
@@ -555,7 +593,7 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
             // `HURT_BY_TARGETING`: combat, ignoring line of sight and invisibility.
             targeting_ok(e, m, level, &t, true, -1.0, false)
         }
-        Goal::NearestAttackable { wanted, interval, target: tg, spider, .. } => {
+        Goal::NearestAttackable { wanted, interval, target: tg, spider, must_see, .. } => {
             if *spider && super::light_magic_value(e, level) >= 0.5 {
                 return false;
             }
@@ -566,6 +604,7 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
             *tg = match wanted {
                 Wanted::Player => nearest_player(e, m, level, true, range, true, |_| true).map(|p| p.id),
                 Wanted::Unsimulated => None,
+                Wanted::Types(types) => nearest_mob(e, m, level, range, *must_see, types),
             };
             tg.is_some()
         }
@@ -574,6 +613,7 @@ fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
 
 fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
     match g {
+        Goal::Custom(c) => c.can_continue(e, m, level),
         Goal::Panic { .. } | Goal::FleeSun { .. } => !nav_done(m),
         Goal::RandomStroll { .. } => !nav_done(m),
         Goal::Tempt { .. } => can_use(g, e, m, level),
@@ -659,6 +699,7 @@ fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
     let every = g.every_tick();
     let adj = |t: i32| if every { t } else { reduced_tick_delay(t) };
     match g {
+        Goal::Custom(c) => c.start(e, m, level),
         Goal::Panic { speed, pos } => {
             path::move_to(e, m, level, pos.x, pos.y, pos.z, *speed);
         }
@@ -732,6 +773,7 @@ fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLe
 
 fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     match g {
+        Goal::Custom(c) => c.stop(_e, m, level),
         Goal::RandomStroll { .. } => m.nav.stop(),
         Goal::Tempt { calm_down, player, .. } => {
             *player = None;
@@ -775,6 +817,7 @@ fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn Enti
     let every = g.every_tick();
     let adj = |t: i32| if every { t } else { reduced_tick_delay(t) };
     match g {
+        Goal::Custom(c) => c.tick(e, m, level),
         Goal::Float => {
             if e.random.next_float() < 0.8 {
                 m.jump.jump = true;

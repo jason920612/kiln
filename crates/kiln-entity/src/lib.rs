@@ -11,6 +11,7 @@ pub mod clip;
 pub mod collision;
 pub mod entity;
 pub mod explosion;
+pub mod ext_entity;
 pub mod fall;
 pub mod falling_block;
 pub mod fluid;
