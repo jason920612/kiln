@@ -389,3 +389,18 @@ fn containers_and_ender_items_survive_unloading_and_a_restart() {
     let (_, slots) = w.sim.open_menu(1).expect("the ender chest opens");
     assert_eq!(slots[0], Some(("minecraft:emerald", 4)), "the player's ender items came back");
 }
+
+#[test]
+fn locked_chests_open_only_with_the_key() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    let chest = w.at(2, 1, 0);
+    w.run(&format!("setblock {} {} {} minecraft:chest{{lock:{{items:\"minecraft:diamond\"}}}}", chest[0], chest[1], chest[2]));
+    w.use_on(chest);
+    assert!(w.sim.open_menu(1).is_none(), "locked without the key");
+    w.run("give Keeper minecraft:diamond 1");
+    w.use_on(chest);
+    assert_eq!(w.sim.open_menu(1).map(|m| m.0), Some("minecraft:generic_9x3"));
+}

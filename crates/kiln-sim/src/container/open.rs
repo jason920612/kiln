@@ -409,7 +409,9 @@ fn open_menu(p: &mut Player, level: &mut RegionLevel, provider: Provider, spawns
     // `createMenu`: containers check their lock and roll their loot table first.
     if let OpenBlock::Containers { first, second } = &provider.block {
         let positions = [Some(first.0), second.map(|s| s.0)];
-        let can_open = positions.iter().flatten().all(|&pos| level.blocks.containers.get(pos).is_none_or(|c| c.can_open(spectator)));
+        let held = p.inv.selected_item().clone();
+        let loot = level.env.loot.clone();
+        let can_open = positions.iter().flatten().all(|&pos| level.blocks.containers.get(pos).is_none_or(|c| c.can_open(spectator, &held, loot.as_deref())));
         if !can_open {
             if spectator {
                 p.send(kiln_proto::packets::system_chat(spectator_cant_open(), true));

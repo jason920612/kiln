@@ -98,6 +98,9 @@ def main():
     send(server, "tp KilnView 5.5 -60 21 200 25")
     time.sleep(6)
     shot("hoppers")
+    # The comparator reads the fed chest and lights the lamp.
+    send(server, "execute if block 7 -60 16 minecraft:redstone_lamp[lit=true]")
+    send(server, "execute if block 6 -60 16 minecraft:comparator[powered=true]")
     send(server, "tp KilnView 5.5 -60 19 180 30\nkiln use KilnView 5 -60 16")
     time.sleep(3)
     shot("hopper-chest")
@@ -107,7 +110,7 @@ def main():
     for l in problems[-20:]:
         print("client:", l)
     for l in e2e.server_log().splitlines():
-        if re.search(r"panicked|ERROR|WARN", l):
+        if re.search(r"panicked|ERROR|WARN|commands.execute", l):
             print("server:", l)
     if not a.keep:
         subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)

@@ -68,6 +68,13 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+/// A container block entity for tests and tools: (slot, item name, count) of its non-empty slots,
+/// and the furnace values (lit time, lit total, cook progress, cook total).
+pub type ContainerView = (Vec<(usize, &'static str, i32)>, [i32; 4]);
+
+/// An open menu for tests and tools: its `minecraft:menu` type and (item name, count) per slot.
+pub type MenuView = (&'static str, Vec<Option<(&'static str, i32)>>);
+
 pub struct SimConfig {
     pub max_players: usize,
     pub view_distance: u8,
@@ -1134,7 +1141,7 @@ impl Sim {
     /// The contents of the container block entity at an overworld position: (slot, item name,
     /// count) of each non-empty slot, and the furnace values (lit time, lit total, cook
     /// progress, cook total) for furnaces (for tests and tools).
-    pub fn container_at(&self, pos: [i32; 3]) -> Option<(Vec<(usize, &'static str, i32)>, [i32; 4])> {
+    pub fn container_at(&self, pos: [i32; 3]) -> Option<ContainerView> {
         let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(pos[0], pos[2]).cell())?;
         let c = region.part().1.containers.get(kiln_blocks::BlockPos::new(pos[0], pos[1], pos[2]))?;
         let items = c.items.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i, s.item_name(), s.count())).collect();
@@ -1157,7 +1164,7 @@ impl Sim {
 
     /// A player's open menu: its `minecraft:menu` type and its slots as (item name, count) (for
     /// tests and tools).
-    pub fn open_menu(&self, conn: ConnId) -> Option<(&'static str, Vec<Option<(&'static str, i32)>>)> {
+    pub fn open_menu(&self, conn: ConnId) -> Option<MenuView> {
         let p = self.players.get(&conn)?;
         let menu = p.open_menu.as_ref()?;
         let ty = menu.kind.menu_type()?;

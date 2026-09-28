@@ -271,12 +271,23 @@ impl ContainerBe {
         self.items.iter().all(ItemStack::is_empty)
     }
 
-    /// `BaseContainerBlockEntity.canOpen` (`LockCode.canUnlock`: spectators pass any lock)
-    /// and `RandomizableContainerBlockEntity.canOpen` (spectators cannot open an unrolled loot
-    /// container). Kiln does not evaluate lock item predicates yet: a locked container stays
-    /// locked for other players.
-    pub fn can_open(&self, spectator: bool) -> bool {
-        !(self.loot_table.is_some() && spectator) && (spectator || self.lock.is_none())
+    /// `BaseContainerBlockEntity.canOpen` (`LockCode.canUnlock`: spectators pass any lock,
+    /// others need a main hand item matching the lock's item predicate) and
+    /// `RandomizableContainerBlockEntity.canOpen` (spectators cannot open an unrolled loot
+    /// container). Without loot data (tags) a lock stays shut.
+    pub fn can_open(&self, spectator: bool, held: &ItemStack, loot: Option<&kiln_loot::LootData>) -> bool {
+        if self.loot_table.is_some() && spectator {
+            return false;
+        }
+        let Some(lock) = &self.lock else { return true };
+        if spectator {
+            return true;
+        }
+        let predicate = <kiln_item::component::LockCode as kiln_item::component::ComponentValue>::from_value(&kiln_item::Value::from_nbt(lock));
+        match (predicate, loot) {
+            (Ok(p), Some(loot)) => kiln_loot::predicate::item_matches(&loot.tags, &p.0, held),
+            _ => false,
+        }
     }
 
     /// `AbstractContainerMenu.getRedstoneSignalFromContainer` over these items.

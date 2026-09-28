@@ -47,13 +47,13 @@ fn candidate_partner_facing<L: Level + ?Sized>(level: &L, chest: u16, pos: Block
 pub fn chest_placement<L: Level + ?Sized>(level: &L, d: u16, pos: BlockPos, horizontal: Direction, clicked: Direction, sneaking: bool) -> u16 {
     let mut ty = "single";
     let mut facing = horizontal.opposite();
-    if clicked.is_horizontal() && sneaking {
-        if let Some(partner) = candidate_partner_facing(level, d, pos, clicked.opposite())
-            && partner.axis() != clicked.axis()
-        {
-            facing = partner;
-            ty = if facing.counter_clockwise() == clicked.opposite() { "right" } else { "left" };
-        }
+    if clicked.is_horizontal()
+        && sneaking
+        && let Some(partner) = candidate_partner_facing(level, d, pos, clicked.opposite())
+        && partner.axis() != clicked.axis()
+    {
+        facing = partner;
+        ty = if facing.counter_clockwise() == clicked.opposite() { "right" } else { "left" };
     }
     if ty == "single" && !sneaking {
         ty = if candidate_partner_facing(level, d, pos, facing.clockwise()) == Some(facing) {
