@@ -404,3 +404,19 @@ fn locked_chests_open_only_with_the_key() {
     w.use_on(chest);
     assert_eq!(w.sim.open_menu(1).map(|m| m.0), Some("minecraft:generic_9x3"));
 }
+
+#[test]
+fn dispensers_shoot_arrows_and_place_water() {
+    let mut w = World::new("creative");
+    let arrows = w.at(-4, 1, 4);
+    w.run(&format!("setblock {} {} {} minecraft:dispenser[facing=up]{{Items:[{{Slot:0b,id:\"minecraft:arrow\",count:5}}]}}", arrows[0], arrows[1], arrows[2]));
+    let water = w.at(4, 1, 4);
+    w.run(&format!("setblock {} {} {} minecraft:dispenser[facing=north]{{Items:[{{Slot:0b,id:\"minecraft:water_bucket\",count:1}}]}}", water[0], water[1], water[2]));
+    w.setblock([arrows[0] + 1, arrows[1], arrows[2]], "minecraft:redstone_block");
+    w.setblock([water[0] + 1, water[1], water[2]], "minecraft:redstone_block");
+    w.ticks(6);
+    assert!(w.sim.entities().iter().any(|(k, _)| *k == "minecraft:arrow"), "{:?}", w.sim.entities());
+    assert_eq!(w.items(arrows), vec![(0, "minecraft:arrow", 4)]);
+    assert!(state::is(w.block([water[0], water[1], water[2] - 1]), d::WATER));
+    assert_eq!(w.items(water), vec![(0, "minecraft:bucket", 1)]);
+}

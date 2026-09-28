@@ -1,9 +1,9 @@
 //! `DispenserBlock.dispenseFrom` and `DropperBlock.dispenseFrom`: a random non-empty slot's
 //! item is dropped in front (`DefaultDispenseItemBehavior`) or, for a dropper facing a
 //! container, moved into it. Dispensers use the default behaviour for every item, except
-//! water and lava buckets (placed) and empty buckets (filled from a source) — the other
-//! vanilla dispense behaviours (projectiles, armor, bone meal, shulker boxes, ...) are not
-//! simulated yet.
+//! arrows, spectral arrows, snowballs and eggs (shot), water and lava buckets (placed) and
+//! empty buckets (filled from a source) — the other vanilla dispense behaviours (tipped arrows,
+//! potions, fire charges, armor, bone meal, shulker boxes, boats, ...) are not simulated yet.
 
 use super::hopper::{View, add_item, container_at, with_target};
 use super::triangle;
@@ -115,9 +115,60 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
 }
 
 /// The dispenser's behaviour for an item (`DispenserBlock.getDispenseMethod`).
+/// `ProjectileDispenseBehavior` with the default `DispenseConfig` (power 1.1, uncertainty 6):
+/// the projectile flies out of the front face (`Projectile.shoot`), click sound 1002.
+fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
+    use kiln_entity::math::Vec3;
+    let at = dispense_position(pos, facing);
+    let (kind, entity) = {
+        let seed = rng.next_long();
+        let origin = Vec3::new(at[0], at[1], at[2]);
+        match stack.item_name() {
+            "minecraft:snowball" | "minecraft:egg" => {
+                let (t, k) = if stack.item_name() == "minecraft:snowball" {
+                    (kiln_entity::projectile::Throwable::Snowball, &kiln_data::entities::types::SNOWBALL)
+                } else {
+                    (kiln_entity::projectile::Throwable::Egg, &kiln_data::entities::types::EGG)
+                };
+                (k, kiln_entity::projectile::new(0, 0, t, origin, Vec3::new(0.0, 0.0, 0.0), None, seed))
+            }
+            name => {
+                let (type_name, k) = if name == "minecraft:spectral_arrow" {
+                    ("minecraft:spectral_arrow", &kiln_data::entities::types::SPECTRAL_ARROW)
+                } else {
+                    ("minecraft:arrow", &kiln_data::entities::types::ARROW)
+                };
+                (k, kiln_entity::arrow::new(0, 0, type_name, origin, Vec3::new(0.0, 0.0, 0.0), None, seed))
+            }
+        }
+    };
+    let mut entity = entity;
+    // `Projectile.getMovementToShoot` and `shoot`: the facing, spread by the entity's random.
+    let st = facing.step();
+    let len = ((st[0] * st[0] + st[1] * st[1] + st[2] * st[2]) as f64).sqrt();
+    let spread = 0.0172275 * 6.0;
+    let mut v = [st[0] as f64 / len, st[1] as f64 / len, st[2] as f64 / len];
+    for c in &mut v {
+        *c += triangle(&mut entity.random, 0.0, spread);
+    }
+    let v = v.map(|c| c * 1.1);
+    entity.delta = Vec3::new(v[0], v[1], v[2]);
+    let horizontal = (v[0] * v[0] + v[2] * v[2]).sqrt();
+    entity.y_rot = (v[0].atan2(v[2]) * 57.2957763671875) as f32;
+    entity.x_rot = (v[1].atan2(horizontal) * 57.2957763671875) as f32;
+    entity.y_rot_o = entity.y_rot;
+    entity.x_rot_o = entity.x_rot;
+    level.out.spawns.push(crate::entities::Spawn { kind, pos: at, vel: v, body: crate::entities::Body::Ready(Box::new(entity)) });
+    stack.shrink_count(1);
+    level.effect(Effect::LevelEvent { id: 1002, pos, data: 0 });
+    level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
+    stack
+}
+
 fn dispense_behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, stack: ItemStack) -> ItemStack {
     let target = pos.relative(facing);
     match stack.item_name() {
+        "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:snowball" | "minecraft:egg" => dispense_projectile(level, rng, pos, facing, stack),
         "minecraft:water_bucket" | "minecraft:lava_bucket" => {
             // `DispenseItemBehavior` for filled buckets: `BucketItem.emptyContents`, then an
             // empty bucket.
