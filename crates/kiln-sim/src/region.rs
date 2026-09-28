@@ -420,9 +420,9 @@ impl RegionWork<'_> {
 }
 
 /// Players per window chunk in the per-player windows of a crowd (a few microseconds each).
-const PLAYER_WINDOW: Window = Window::new().item_ns(4_000);
+const PLAYER_WINDOW: Window = Window::new();
 /// A player's packets of one run (mostly a move and a tick end).
-const PACKET_WINDOW: Window = Window::new().item_ns(2_000);
+const PACKET_WINDOW: Window = Window::new();
 
 /// What one player's tick leaves for its region, merged in connection order.
 #[derive(Default)]

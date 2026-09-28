@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use kiln_sched::{Ctx, Window};
 
 /// Per-player windows of a crowd (a few microseconds per player).
-const PLAYER_WINDOW: Window = Window::new().item_ns(4_000);
+const PLAYER_WINDOW: Window = Window::new();
 /// Visibility: each player checks every mover (or everyone, when it moved).
-const VISIBILITY_WINDOW: Window = Window::new().item_ns(2_000);
+const VISIBILITY_WINDOW: Window = Window::new();
 
 /// A command chat message (`say`, `me`, `msg`) through its chat type.
 pub(crate) fn chat_disguised(message: &kiln_command::ChatMessage) -> Bytes {
@@ -347,7 +347,7 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player], ctx: &Ctx<'_>) {
         start += n;
     }
     let encoded = &encoded[..];
-    ctx.map_mut_with(Window::new().item_ns(20_000), &mut runs, |_, (lo, run)| deliver_movement(*lo, run, encoded));
+    ctx.map_mut_with(Window::new(), &mut runs, |_, (lo, run)| deliver_movement(*lo, run, encoded));
 }
 
 /// Players per viewer run in [`broadcast_movement`]'s delivery window.
