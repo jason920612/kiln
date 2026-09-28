@@ -48,6 +48,19 @@ impl Conn {
         self.stream.write_all(&out).await.unwrap();
     }
 
+    /// Closes like a server that sent a disconnect: our side shuts down, then whatever the
+    /// client still sends is read until it closes. Dropping a socket with unread input makes
+    /// Windows reset the connection, which can reach the client before the disconnect packet.
+    async fn close(&mut self) {
+        use tokio::io::AsyncReadExt;
+        let _ = self.stream.shutdown().await;
+        let mut buf = [0u8; 4096];
+        let _ = tokio::time::timeout(Duration::from_secs(2), async {
+            while matches!(self.stream.read(&mut buf).await, Ok(n) if n > 0) {}
+        })
+        .await;
+    }
+
     fn compress(&mut self, threshold: usize) {
         self.rx.set_threshold(Some(threshold));
         self.tx.set_threshold(Some(threshold));
@@ -91,6 +104,7 @@ async fn serve(stream: TcpStream, port: u16, seen: Arc<Mutex<Vec<Seen>>>) {
 
     if s.name.ends_with('2') {
         c.send(&pk::login_disconnect("The server is full.")).await;
+        c.close().await;
         return;
     }
     c.send(&pk::login_compression(256)).await;
@@ -143,6 +157,7 @@ async fn serve(stream: TcpStream, port: u16, seen: Arc<Mutex<Vec<Seen>>>) {
         let timeout = kick_at.map_or(Duration::from_secs(30), |t| t.saturating_duration_since(Instant::now()));
         let Ok(next) = tokio::time::timeout(timeout, c.recv()).await else {
             c.send(&pk::play_disconnect("Bye")).await;
+            c.close().await;
             break;
         };
         let Some((id, body)) = next else { break };

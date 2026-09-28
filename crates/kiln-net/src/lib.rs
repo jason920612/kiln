@@ -853,9 +853,20 @@ async fn play(conn: Conn, shared: &Shared, profile: GameProfile, remote: IpAddr,
     let mut writer_task = tokio::spawn(write_loop(writer, tx, wbuf, encrypt, out_rx, queued));
     let result = if joined {
         // The writer ends after a kick (disconnect packet sent) or when the client falls behind.
+        let read = read_loop(reader, &mut rbuf, &mut rx, decrypt.as_mut(), conn_id, &shared.to_sim);
+        tokio::pin!(read);
         tokio::select! {
-            r = read_loop(reader, &mut rbuf, &mut rx, decrypt.as_mut(), conn_id, &shared.to_sim) => r,
-            w = &mut writer_task => w.map_err(|e| anyhow!("writer: {e}")).and_then(|r| r),
+            r = &mut read => r,
+            w = &mut writer_task => {
+                let w = w.map_err(|e| anyhow!("writer: {e}")).and_then(|r| r);
+                // After a kick our side is shut down; keep reading until the client closes (at
+                // most a second): dropping a socket with unread input resets the connection,
+                // which can discard the disconnect reason before the client reads it.
+                if w.is_ok() {
+                    let _ = tokio::time::timeout(Duration::from_secs(1), &mut read).await;
+                }
+                w
+            }
         }
     } else {
         Err(anyhow!("simulation is not running"))
