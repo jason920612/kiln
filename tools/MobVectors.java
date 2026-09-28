@@ -1566,6 +1566,12 @@ public class MobVectors {
         if (m instanceof net.minecraft.world.entity.animal.squid.Squid) {
             set(m, "tentacleSpeed", 1.0F / (r.nextFloat() + 1.0F) * 0.2F);
         }
+        if (m instanceof net.minecraft.world.entity.animal.fish.AbstractSchoolingFish) {
+            int start = (200 + r.nextInt(200) % 20 + 1) / 2;
+            for (WrappedGoal g : ((net.minecraft.world.entity.ai.goal.GoalSelector) get(m, "goalSelector")).getAvailableGoals()) {
+                if (g.getGoal() instanceof net.minecraft.world.entity.ai.goal.FollowFlockLeaderGoal f) set(f, "nextStartTick", start);
+            }
+        }
     }
 
     static void scenariosCommonB(List<Scenario> out) {
@@ -1602,6 +1608,159 @@ public class MobVectors {
                 s.ticks = 400;
                 out.add(s);
             }
+        }
+        // Fish: swimming about (salmon sizes, tropical patterns, a pufferfish), schooling, flopping
+        // and drowning on land, panicking, keeping away from players, puffing up.
+        String[][] fish = {
+            {"cod", null}, {"cod", null}, {"salmon", "{type:\"small\"}"}, {"salmon", "{type:\"large\"}"},
+            {"tropical_fish", "{Variant:117506305}"}, {"tropical_fish", null}, {"pufferfish", null}, {"pufferfish", "{PuffState:2}"},
+        };
+        for (int i = 0; i < fish.length; i++) {
+            Scenario s = new Scenario("idle_" + fish[i][0] + "_" + i);
+            pool(s, 8, 6);
+            MobSpec m = new MobSpec("minecraft:" + fish[i][0], 0.5, BY + 2, 0.5, 45f * i, 12000L + 31 * i);
+            m.nbt = fish[i][1];
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = i + 1;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (String type : new String[] {"cod", "salmon", "tropical_fish"}) {
+            Scenario s = new Scenario("school_" + type);
+            pool(s, 10, 6);
+            for (int k = 0; k < 4; k++) s.mobs.add(new MobSpec("minecraft:" + type, 0.5 + 1.5 * k, BY + 1 + (k % 2), 0.5 - k, 30f * k, 12500L + k));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 500;
+            out.add(s);
+        }
+        for (String type : new String[] {"cod", "pufferfish"}) {
+            Scenario s = new Scenario("land_" + type);
+            floor(s, 8, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:" + type, 0.5, BY, 0.5, 0f, 12600));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_cod");
+            pool(s, 8, 6);
+            s.mobs.add(new MobSpec("minecraft:cod", 0.5, BY + 2, 0.5, 0f, 12700));
+            s.player = new double[] {3.5, BY + 2, 0.5};
+            s.playerCreative = true;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        for (String type : new String[] {"cod", "pufferfish"}) {
+            Scenario s = new Scenario("near_player_" + type);
+            pool(s, 8, 6);
+            s.mobs.add(new MobSpec("minecraft:" + type, 0.5, BY + 2, 0.5, 0f, 12800));
+            s.player = new double[] {2.0, BY + 2, 0.5};
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Mooshrooms: a cow's life on mycelium, both colors.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_mooshroom_" + seed);
+            floor(s, 16, "minecraft:mycelium");
+            MobSpec m = new MobSpec("minecraft:mooshroom", 0.5, BY, 0.5, 50f * seed, 13000L * seed + 3);
+            if (seed == 2) m.nbt = "{Type:\"brown\"}";
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("breed_mooshroom");
+            floor(s, 16, "minecraft:mycelium");
+            MobSpec m1 = new MobSpec("minecraft:mooshroom", 0.5, BY, 0.5, 20f, 13100);
+            MobSpec m2 = new MobSpec("minecraft:mooshroom", 3.5, BY, 1.5, 200f, 13101);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_mooshroom");
+            floor(s, 16, "minecraft:mycelium");
+            s.mobs.add(new MobSpec("minecraft:mooshroom", 0.5, BY, 0.5, 0f, 13200));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:wheat";
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Ocelots: wandering, keeping away from players, tempted by fish, hunting chickens.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_ocelot_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:ocelot", 0.5, BY, 0.5, 70f * seed, 13300L * seed + 1));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("avoid_ocelot");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:ocelot", 0.5, BY, 0.5, 0f, 13400));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_ocelot");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:ocelot", 0.5, BY, 0.5, 0f, 13500));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerMainHand = "minecraft:cod";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hunt_ocelot");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:ocelot", 0.5, BY, 0.5, 0f, 13600));
+            s.mobs.add(new MobSpec("minecraft:chicken", 6.5, BY, 2.5, 0f, 13601));
+            s.player = new double[] {-14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Bats: hanging under a ceiling, woken by a player close by, fluttering about.
+        for (int dist : new int[] {3, 9}) {
+            Scenario s = new Scenario("bat_" + dist);
+            floor(s, 12, "minecraft:stone");
+            for (int x = -12; x <= 12; x++)
+                for (int z = -12; z <= 12; z++) block(s, x, BY + 6, z, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:bat", 0.5, BY + 5, 0.5, 0f, 13700L + dist));
+            s.player = new double[] {0.5 + dist, BY + 3, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_bat");
+            floor(s, 12, "minecraft:stone");
+            for (int x = -12; x <= 12; x++)
+                for (int z = -12; z <= 12; z++) block(s, x, BY + 6, z, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:bat", 0.5, BY + 5, 0.5, 0f, 13800));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.hurts.put(10, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
         }
     }
 

@@ -92,6 +92,13 @@ pub enum MobKind {
     // -- slice 3: common mobs B
     Squid,
     GlowSquid,
+    Cod,
+    Salmon,
+    TropicalFish,
+    Pufferfish,
+    Mooshroom,
+    Ocelot,
+    Bat,
 
 }
 
@@ -208,6 +215,13 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- slice 3: common mobs B
     MobKind::Squid,
     MobKind::GlowSquid,
+    MobKind::Cod,
+    MobKind::Salmon,
+    MobKind::TropicalFish,
+    MobKind::Pufferfish,
+    MobKind::Mooshroom,
+    MobKind::Ocelot,
+    MobKind::Bat,
 
 ];
 
@@ -721,6 +735,7 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
         MobKind::Chicken => {
             vec![C::ChickenVariant(v::ChickenVariant(m.variant)), C::ChickenSoundVariant(v::ChickenSoundVariant(m.sound_variant))]
         }
+        MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -879,6 +894,8 @@ pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     e.y_rot = e.random.next_float() * 6.2831855;
     m.y_head_rot = e.y_rot;
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
+    // Constructors that size the mob by its state (salmon, pufferfish: `refreshDimensions`).
+    refresh_dimensions(&mut e, &m);
     e.kind = EntityKind::Mob(Box::new(m));
     e
 }
@@ -937,6 +954,78 @@ pub fn refresh_dimensions(e: &mut Entity, m: &MobData) {
     e.eye_height = eye;
     let p = e.position();
     e.set_pos(p);
+}
+
+/// `Entity.refreshDimensions` with the level at hand: a mob that grew (outside its first tick)
+/// is moved to the free spot nearest its old center (`fudgePositionAfterSizeChange`).
+pub fn refresh_dimensions_in(e: &mut Entity, m: &MobData, level: &dyn EntityLevel) {
+    let (old_w, old_h) = (e.width, e.height);
+    refresh_dimensions(e, m);
+    let (w, h) = (e.width, e.height);
+    if e.first_tick || e.no_physics || w > 4.0 || h > 4.0 || !(w > old_w || h > old_h) {
+        return;
+    }
+    let old_center = e.position().add(0.0, old_h as f64 / 2.0, 0.0);
+    let wd = (w - old_w).max(0.0) as f64 + 1.0e-6;
+    let hd = (h - old_h).max(0.0) as f64 + 1.0e-6;
+    if let Some(p) = find_free_position(e, level, old_center, wd, hd, w as f64, h as f64) {
+        e.set_pos(p.add(0.0, -(h as f64) / 2.0, 0.0));
+        return;
+    }
+    if w > old_w && h > old_h
+        && let Some(p) = find_free_position(e, level, old_center, wd, 1.0e-6, w as f64, old_h as f64)
+    {
+        e.set_pos(p.add(0.0, -(old_h as f64) / 2.0 + 1.0e-6, 0.0));
+    }
+}
+
+/// `CollisionGetter.findFreePosition` over an allowed box of centers (`wd` by `hd` around
+/// `center`): the point of it nearest `center` where a `w` by `h` box touches no block.
+fn find_free_position(e: &Entity, level: &dyn EntityLevel, center: Vec3, wd: f64, hd: f64, w: f64, h: f64) -> Option<Vec3> {
+    let allowed = Aabb::new(center.x - wd / 2.0, center.y - hd / 2.0, center.z - wd / 2.0, center.x + wd / 2.0, center.y + hd / 2.0, center.z + wd / 2.0);
+    let search = allowed.inflate(w, h, w);
+    let mut blocked: Vec<Aabb> = Vec::new();
+    let ctx = e.collision_context();
+    crate::collision::for_each_block_collision(level, &ctx, &search, |pos, shape, _| {
+        for b in shape.boxes() {
+            blocked.push(b.offset(pos.x as f64, pos.y as f64, pos.z as f64).inflate(w / 2.0, h / 2.0, w / 2.0));
+        }
+        true
+    });
+    // The free part of the allowed box, cut along every blocked face, nearest cell first.
+    let cuts = |lo: f64, hi: f64, f: &dyn Fn(&Aabb) -> [f64; 2]| {
+        let mut v = vec![lo, hi];
+        for b in &blocked {
+            for c in f(b) {
+                if c > lo && c < hi {
+                    v.push(c);
+                }
+            }
+        }
+        v.sort_by(f64::total_cmp);
+        v.dedup();
+        v
+    };
+    let xs = cuts(allowed.min_x, allowed.max_x, &|b| [b.min_x, b.max_x]);
+    let ys = cuts(allowed.min_y, allowed.max_y, &|b| [b.min_y, b.max_y]);
+    let zs = cuts(allowed.min_z, allowed.max_z, &|b| [b.min_z, b.max_z]);
+    let mut best: Option<(f64, Vec3)> = None;
+    for i in 0..xs.len() - 1 {
+        for j in 0..ys.len() - 1 {
+            for k in 0..zs.len() - 1 {
+                let mid = Vec3::new((xs[i] + xs[i + 1]) / 2.0, (ys[j] + ys[j + 1]) / 2.0, (zs[k] + zs[k + 1]) / 2.0);
+                if blocked.iter().any(|b| b.min_x < mid.x && mid.x < b.max_x && b.min_y < mid.y && mid.y < b.max_y && b.min_z < mid.z && mid.z < b.max_z) {
+                    continue;
+                }
+                let p = Vec3::new(center.x.clamp(xs[i], xs[i + 1]), center.y.clamp(ys[j], ys[j + 1]), center.z.clamp(zs[k], zs[k + 1]));
+                let d = p.distance_to_sqr(center);
+                if best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, p));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 pub fn data(e: &Entity) -> Option<&MobData> {
@@ -1617,6 +1706,10 @@ fn fluid_falling_adjusted(g: f64, falling: bool, v: Vec3) -> Vec3 {
 /// `LivingEntity.pushEntities`: pushable living entities touching this one push each other
 /// apart (`Entity.push`). Players push the mob; their own half is their client's.
 fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    // `pushEntities` overridden with nothing (bats).
+    if m.kind.ext().is_some_and(|k| !k.pushable()) {
+        return;
+    }
     let bb = e.bounding_box();
     let mut others: Vec<(i32, f64, f64, bool)> = Vec::new();
     // Players first: they joined the entity sections before the mobs around them (the order
@@ -1653,6 +1746,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let Some(o) = level.entity(id) else { continue };
         if let EntityKind::Mob(om) = &o.kind
             && om.health > 0.0
+            && om.kind.ext().is_none_or(|k| k.pushable())
             && !riding(id, o.vehicle)
         {
             others.push((id, o.x(), o.z(), false));
@@ -1720,6 +1814,14 @@ pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, soun
 /// when the plain `Entity.thunderHit` applies.
 pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> bool {
     let Some(kind) = data(e).map(|m| m.kind) else { return false };
+    if let Some(k) = kind.ext() {
+        let mut m = take(e);
+        let handled = k.thunder_hit(e, &mut m, level, _bolt);
+        put(e, m);
+        if handled {
+            return true;
+        }
+    }
     match kind {
         MobKind::Creeper => {
             crate::ext_entity::lightning::base_thunder_hit(e, level);

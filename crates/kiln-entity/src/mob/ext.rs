@@ -541,6 +541,16 @@ pub trait Kind: Sync + Send {
         let _ = m;
         pitch
     }
+    /// `thunderHit` by bolt `bolt` in place of `Entity.thunderHit`; true when handled (mooshrooms
+    /// change color instead of burning).
+    fn thunder_hit(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, bolt: i32) -> bool {
+        let _ = (e, m, level, bolt);
+        false
+    }
+    /// `isPushable` (false: bats neither push nor get pushed).
+    fn pushable(&self) -> bool {
+        true
+    }
 }
 
 /// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the
