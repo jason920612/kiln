@@ -125,8 +125,8 @@ impl Player {
                     p.inside = true;
                 }
             }
-            // A new `PortalProcessor` starts outside (`insidePortalThisTick` false).
-            _ => self.portal = Some(PortalProcess { kind, entry: pos, time: 0, inside: false }),
+            // A new `PortalProcessor` counts as inside this tick.
+            _ => self.portal = Some(PortalProcess { kind, entry: pos, time: 0, inside: true }),
         }
     }
 

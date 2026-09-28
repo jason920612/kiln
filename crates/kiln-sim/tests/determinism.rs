@@ -167,3 +167,84 @@ fn regions_and_workers_do_not_change_the_result() {
         assert_eq!(parallel.traffic, unified.traffic, "{workers} workers, chaos seed {seed}");
     }
 }
+
+/// Players spread over the three levels: some are sent to the nether and the End with
+/// `/execute in`, some walk through a nether portal lit in the overworld; they walk and build
+/// there. Regions of different levels tick in parallel; the result must not depend on it.
+fn run_levels(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> (Vec<u64>, Vec<Vec<(u64, u64)>>) {
+    const N: usize = 9;
+    let mut config = SimConfig::new(N, 4, None);
+    config.pool.workers = workers;
+    config.pool.chaos = chaos;
+    config.unified_regions = unified;
+    let mut sim = Sim::new(config);
+    let stone = kiln_data::builtin_id("minecraft:item", "minecraft:stone").unwrap();
+    let (mut walkers, mut inbox, mut hashes, mut traffic) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for tick in 0..ticks {
+        if walkers.len() < N {
+            let i = walkers.len();
+            let conn = i as u64 + 1;
+            let name = format!("L{i}");
+            let (msg, stats) = join(conn, &name, 2);
+            inbox.push(msg);
+            let (level, y) = match i % 3 {
+                0 => ("minecraft:overworld", SURFACE_Y),
+                1 => ("minecraft:the_nether", 4.0),
+                _ => ("minecraft:the_end", 4.0),
+            };
+            let center = [8.5 + (i / 3) as f64 * 300.0, 8.5];
+            inbox.push(ToSim::Console(format!("execute in {level} run tp {name} {} {y} {}", center[0], center[1])));
+            let item = ItemStack { item: stone, count: 64, added: Vec::new(), removed: Vec::new() };
+            inbox.push(ToSim::Packet(conn, PlayIn::SetCreativeSlot { slot: 36, item: Some(item) }));
+            walkers.push(Walker::new(Client::new(conn, stats), center, conn));
+        }
+        // A portal frame east of the spawn, lit with fire.
+        if tick == 20 {
+            inbox.push(ToSim::Console("fill 30 -61 8 33 -57 8 minecraft:obsidian".into()));
+            inbox.push(ToSim::Console("fill 31 -60 8 32 -58 8 minecraft:air".into()));
+            inbox.push(ToSim::Console("setblock 31 -60 8 minecraft:fire".into()));
+        }
+        // The overworld players walk into the portal and keep walking in the nether.
+        if tick == 60 {
+            for i in (0..N).step_by(3) {
+                inbox.push(ToSim::Console(format!("tp L{i} 32.0 -60 8.5")));
+            }
+        }
+        for (i, w) in walkers.iter_mut().enumerate() {
+            if tick >= 60 && tick < 90 && i % 3 == 0 {
+                w.client.tick(None, &mut inbox);
+                continue;
+            }
+            if tick == 90 && i % 3 == 0 {
+                w.center = [w.client.pos[0], w.client.pos[2]];
+            }
+            w.tick(4.0, true, &mut inbox);
+            if w.client.settled() && (tick + i) % 30 == 0 {
+                let [x, y, z] = w.client.pos.map(|c| c.floor() as i32);
+                let pkt = PlayIn::UseItemOn { hand: 0, pos: [x + 2, y - 1, z], face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: tick as i32 };
+                inbox.push(ToSim::Packet(w.client.conn, pkt));
+            }
+        }
+        assert!(sim.step(inbox.drain(..)), "simulation stopped");
+        if tick % 50 == 49 {
+            hashes.push(sim.state_hash());
+            let load = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed);
+            traffic.push(walkers.iter().map(|w| (load(&w.client.stats.packets), load(&w.client.stats.bytes))).collect());
+        }
+    }
+    let levels: Vec<&str> = (1..=N as u64).map(|c| sim.player_level(c).unwrap().0).collect();
+    assert_eq!(levels.iter().filter(|l| **l == "minecraft:the_nether").count(), 6, "{levels:?}");
+    assert_eq!(levels.iter().filter(|l| **l == "minecraft:the_end").count(), 3, "{levels:?}");
+    assert!(sim.loaded_chunks().iter().all(|&n| n > 0));
+    (hashes, traffic)
+}
+
+#[test]
+fn levels_tick_in_parallel_with_the_same_result() {
+    let reference = run_levels(200, 1, true, None);
+    assert!(reference.0.windows(2).all(|w| w[0] != w[1]));
+    assert_eq!(run_levels(200, 1, false, None), reference, "one region per level vs split regions");
+    for (workers, seed) in [(4, 3), (7, 42)] {
+        assert_eq!(run_levels(200, workers, false, Some(seed)), reference, "{workers} workers, chaos seed {seed}");
+    }
+}
