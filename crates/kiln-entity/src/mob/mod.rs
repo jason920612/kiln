@@ -1478,6 +1478,11 @@ pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSo
     r
 }
 
+/// Whether mob type `type_name` runs `checkFallDamage` (flying types override it with nothing).
+pub fn checks_fall_damage(type_name: &str) -> bool {
+    MobKind::by_name(type_name).and_then(MobKind::ext).is_none_or(|k| k.checks_fall_damage())
+}
+
 /// `Entity.playerTouch`: player `player` touches mob `e` (slimes and magma cubes hurt it).
 pub fn player_touch(e: &mut Entity, level: &mut dyn EntityLevel, player: i32) {
     let Some(k) = data(e).and_then(|m| m.kind.ext()) else { return };
@@ -2087,6 +2092,7 @@ impl DamageKind {
             DamageKind::Kill => "minecraft:generic_kill",
             DamageKind::Cramming => "minecraft:cramming",
             DamageKind::PlayerExplosion => "minecraft:player_explosion",
+            DamageKind::Fireball => "minecraft:fireball",
         }
     }
 

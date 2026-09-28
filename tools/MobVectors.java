@@ -745,5 +745,60 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_ghast_" + seed);
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:ghast", 0.5, BY + 4, 0.5, 70f * seed, 9600 + seed));
+            s.player = new double[] {18.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("shoot_ghast");
+            floor(s, 20, "minecraft:stone");
+            // A ceiling keeps the ghast within 4 blocks of the player's height.
+            for (int x = -20; x <= 20; x++)
+                for (int z = -20; z <= 20; z++) block(s, x, BY + 7, z, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:ghast", 0.5, BY + 1, 0.5, 0f, 9700));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.ticks = 200;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_blaze_" + seed);
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:blaze", 0.5, BY, 0.5, 50f * seed, 9800 + seed));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (int dist : new int[] {3, 9}) {
+            Scenario s = new Scenario("burst_blaze_" + dist);
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:blaze", 0.5, BY, 0.5, 0f, 9900 + dist));
+            s.player = new double[] {0.5 + dist, BY, 2.5};
+            s.dayTime = 18000;
+            s.ticks = 240;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("water_blaze");
+            floor(s, 16, "minecraft:stone");
+            for (int x = -3; x <= 3; x++)
+                for (int z = -3; z <= 3; z++) {
+                    block(s, x, BY - 1, z, "minecraft:water");
+                    block(s, x, BY - 2, z, "minecraft:stone");
+                }
+            s.mobs.add(new MobSpec("minecraft:blaze", 0.5, BY - 1, 0.5, 0f, 9950));
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 100;
+            out.add(s);
+        }
     }
 }

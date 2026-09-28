@@ -320,3 +320,36 @@ fn tiny_magma_cubes_hurt_touching_players() {
     w.ticks(60);
     assert!(w.health() < 20.0, "the magma cube hurt the player (health {})", w.health());
 }
+
+#[test]
+fn ghasts_shoot_fireballs_at_players() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    let p = w.pos();
+    let (x, y, z) = (p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32);
+    // A ceiling keeps the ghast within 4 blocks of the player's height.
+    w.console(&format!("fill {} {} {} {} {} {} minecraft:stone", x - 20, y + 6, z - 20, x + 20, y + 6, z + 20));
+    w.summon("minecraft:ghast", [12.0, 0.5, 0.0], "{PersistenceRequired:1b}");
+    let mut fireball = false;
+    for _ in 0..300 {
+        w.ticks(1);
+        fireball |= w.sim.entities().iter().any(|e| e.0 == "minecraft:fireball");
+    }
+    assert!(fireball, "the ghast shot a fireball");
+    assert!(w.health() < 20.0, "the fireball hurt the player (health {})", w.health());
+}
+
+#[test]
+fn blazes_shoot_small_fireballs_at_players() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:blaze", [7.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    let mut fireball = false;
+    for _ in 0..200 {
+        w.ticks(1);
+        fireball |= w.sim.entities().iter().any(|e| e.0 == "minecraft:small_fireball");
+    }
+    assert!(fireball, "the blaze shot small fireballs");
+    assert!(w.health() < 20.0, "the blaze hurt the player (health {})", w.health());
+}

@@ -414,6 +414,11 @@ pub trait Kind: Sync + Send {
     fn spawn_ignores_light(&self) -> bool {
         false
     }
+    /// false: `checkFallDamage` overridden to do nothing (ghasts, phantoms: no fall distance,
+    /// no landing, no fluid refresh after the move).
+    fn checks_fall_damage(&self) -> bool {
+        true
+    }
 }
 
 /// `Mob.finalizeSpawn`: the follow range bonus and left-handedness, from `r` (the level's random).

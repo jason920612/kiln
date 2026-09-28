@@ -82,6 +82,8 @@ pub enum DamageKind {
     Kill,
     Cramming,
     PlayerExplosion,
+    /// A ghast's or blaze's fireball (`DamageSources.fireball`).
+    Fireball,
 }
 
 /// Side effects the simulation carries out or broadcasts.

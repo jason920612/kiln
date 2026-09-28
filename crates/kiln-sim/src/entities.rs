@@ -1289,5 +1289,6 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::Kill => ("minecraft:generic_kill", "death.attack.genericKill"),
         DamageKind::Cramming => ("minecraft:cramming", "death.attack.cramming"),
         DamageKind::PlayerExplosion => ("minecraft:player_explosion", "death.attack.explosion.player"),
+        DamageKind::Fireball => ("minecraft:fireball", "death.attack.fireball"),
     }
 }

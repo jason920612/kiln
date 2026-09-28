@@ -740,6 +740,9 @@ impl Entity {
     fn check_fall_damage(&mut self, level: &mut dyn EntityLevel, y: f64, on_ground: bool, state: u16, pos: BlockPos) {
         // `LivingEntity.checkFallDamage`: out of water, the fluid state is refreshed after the move
         // (a mob falling into water splashes in the same tick).
+        if matches!(self.kind, EntityKind::MobTicking { .. } | EntityKind::Mob(_)) && !crate::mob::checks_fall_damage(self.type_name) {
+            return;
+        }
         if self.is_living() && !self.is_in_water() {
             self.update_fluid_interaction(level);
         }
