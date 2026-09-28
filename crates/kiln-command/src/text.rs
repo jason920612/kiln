@@ -433,8 +433,8 @@ impl Arg {
             Arg::Str(s) => out.push_str(s),
             Arg::Int(v) => write!(out, "{v}").unwrap(),
             Arg::Long(v) => write!(out, "{v}").unwrap(),
-            Arg::Float(v) => write!(out, "{v:?}").unwrap(),
-            Arg::Double(v) => write!(out, "{v:?}").unwrap(),
+            Arg::Float(v) => out.push_str(&crate::nbt_text::java_float(*v)),
+            Arg::Double(v) => out.push_str(&crate::nbt_text::java_double(*v)),
         }
     }
 }

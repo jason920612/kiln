@@ -63,19 +63,21 @@ pub struct PlayerRef {
     pos: [f64; 3],
     rot: [f32; 2],
     /// The player's level.
-    dim: &'static str,
+    pub(crate) dim: &'static str,
     mode: GameMode,
     /// The player's team, and their name as the team formats it.
     team: Option<String>,
     display: Text,
     /// A non-player entity: its id, type and eye height (`conn` is then [`NO_CONN`]).
-    entity: Option<i32>,
+    pub(crate) entity: Option<i32>,
     kind: &'static str,
     size: [f64; 2],
     eye: f64,
     alive: bool,
     /// A `LivingEntity` (players and mobs).
     living: bool,
+    /// `Entity.entityTags`.
+    tags: Vec<String>,
 }
 
 /// The connection of a non-player selector target: no player has it.
@@ -99,6 +101,7 @@ impl PlayerRef {
             eye: 1.62f32 as f64,
             alive: true,
             living: true,
+            tags: p.tags(),
         }
     }
 
@@ -126,6 +129,7 @@ impl PlayerRef {
             eye,
             alive,
             living: e.phys.as_ref().is_some_and(|p| kiln_entity::mob::data(p).is_some()),
+            tags: e.phys.as_ref().map_or_else(Vec::new, |p| crate::command_data::tags_in(&Tag::Compound(p.extra.clone()))),
         }
     }
 }
@@ -178,6 +182,9 @@ impl SelectorTarget for PlayerRef {
     }
     fn game_mode(&self) -> Option<GameMode> {
         self.entity.is_none().then_some(self.mode)
+    }
+    fn tags(&self) -> &[String] {
+        &self.tags
     }
 }
 
@@ -259,7 +266,7 @@ impl Sim {
     /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
     /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
     /// the contents changed.
-    fn load_block_entity(&mut self, dim: crate::DimId, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
+    pub(crate) fn load_block_entity(&mut self, dim: crate::DimId, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
         let [x, y, z] = pos;
         let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
         let chunk_pos = ChunkPos::of_block(x, z);
@@ -1278,6 +1285,132 @@ impl Host for Sim {
         p.post_effects.clear();
         p.post_effects_dirty = true;
         true
+    }
+
+    // ---- data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing and fetchprofile (see `command_data`; `entity_data` is above) ----------------------
+
+    fn set_entity_data(&mut self, entity: &PlayerRef, data: &Tag) -> Result<(), CommandError> {
+        self.load_entity_data(entity, data)
+    }
+
+    fn set_block_entity_data(&mut self, dimension: &str, pos: [i32; 3], data: &Tag) -> Result<(), CommandError> {
+        self.set_block_entity_nbt(dimension, pos, data);
+        Ok(())
+    }
+
+    fn storage_ids(&self) -> Vec<String> {
+        self.commands.storage.keys().map(str::to_owned).collect()
+    }
+
+    fn entity_tags(&mut self, entity: &PlayerRef) -> Vec<String> {
+        match entity.entity {
+            None => self.players.get(&entity.conn).map_or_else(Vec::new, Player::tags),
+            Some(_) => entity.tags.clone(),
+        }
+    }
+
+    fn add_entity_tag(&mut self, entity: &PlayerRef, tag: &str) -> bool {
+        self.change_entity_tag(entity, tag, true)
+    }
+
+    fn remove_entity_tag(&mut self, entity: &PlayerRef, tag: &str) -> bool {
+        self.change_entity_tag(entity, tag, false)
+    }
+
+    fn rotate_entity(&mut self, entity: &PlayerRef, rotation: [f32; 2]) {
+        self.rotate_target(entity, rotation);
+    }
+
+    fn swing_arm(&mut self, entity: &PlayerRef, offhand: bool, animation: &str, duration: i32) -> bool {
+        self.swing_target(entity, offhand, animation, duration)
+    }
+
+    fn vehicle_of(&mut self, entity: &PlayerRef) -> Option<PlayerRef> {
+        self.vehicle_of_target(entity)
+    }
+
+    fn self_and_passengers(&mut self, entity: &PlayerRef) -> Vec<PlayerRef> {
+        self.self_and_passengers_of(entity)
+    }
+
+    fn start_riding(&mut self, entity: &PlayerRef, vehicle: &PlayerRef) -> bool {
+        self.start_riding_target(entity, vehicle)
+    }
+
+    fn stop_riding(&mut self, entity: &PlayerRef) {
+        self.stop_riding_target(entity);
+    }
+
+    fn damage_entity(
+        &mut self,
+        entity: &PlayerRef,
+        amount: f32,
+        damage_type: &str,
+        _at: Option<[f64; 3]>,
+        _by: Option<&PlayerRef>,
+        _from: Option<&PlayerRef>,
+    ) -> Result<bool, CommandError> {
+        self.damage_target(entity, amount, damage_type)
+    }
+
+    fn can_spectate(&self, entity: &PlayerRef) -> bool {
+        kiln_data::entities::by_name(entity.kind).is_none_or(|t| t.tracking_range != 0)
+    }
+
+    fn set_camera(&mut self, player: &PlayerRef, target: Option<&PlayerRef>) {
+        self.set_camera_of(player, target);
+    }
+
+    fn slot_item(&mut self, holder: &kiln_command::host::ItemHolder<PlayerRef>, slot: i32) -> Option<Option<Tag>> {
+        self.slot_item_nbt(holder, slot)
+    }
+
+    fn set_slot_item(&mut self, holder: &kiln_command::host::ItemHolder<PlayerRef>, slot: i32, item: Option<&Tag>) -> bool {
+        self.set_slot_item_nbt(holder, slot, item)
+    }
+
+    fn is_container(&mut self, dimension: &str, pos: [i32; 3]) -> bool {
+        self.is_container_at(dimension, pos)
+    }
+
+    /// Main inventory, armor (feet first), off hand, body and saddle; the crafting grid and
+    /// cursor are not modeled here.
+    fn clear_slots(&self, _player: &PlayerRef) -> Vec<i32> {
+        (0..36).chain([100, 101, 102, 103, 99, 105, 106]).collect()
+    }
+
+    fn inventory_changed(&mut self, player: &PlayerRef) {
+        self.broadcast_inventory(player);
+    }
+
+    fn attribute(&mut self, entity: &PlayerRef, attribute: &str) -> Result<Option<kiln_command::host::AttributeState>, ()> {
+        self.attribute_state(entity, attribute)
+    }
+
+    fn set_attribute_base(&mut self, entity: &PlayerRef, attribute: &str, value: f64) {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::Base(Some(value)));
+    }
+
+    fn reset_attribute_base(&mut self, entity: &PlayerRef, attribute: &str) {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::Base(None));
+    }
+
+    fn add_attribute_modifier(&mut self, entity: &PlayerRef, attribute: &str, id: &str, amount: f64, operation: u8) {
+        let change = crate::command_data::AttributeChange::AddModifier(id.to_owned(), amount, operation);
+        self.change_attribute(entity, attribute, change);
+    }
+
+    fn remove_attribute_modifier(&mut self, entity: &PlayerRef, attribute: &str, id: &str) -> bool {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::RemoveModifier(id.to_owned()))
+    }
+
+    fn enchantment_max_level(&self, enchantment: &str) -> Option<i32> {
+        self.enchantment_max(enchantment)
+    }
+
+    fn enchant_held(&mut self, entity: &PlayerRef, enchantment: &str, level: i32) -> kiln_command::host::EnchantOutcome {
+        self.enchant_target(entity, enchantment, level)
     }
 }
 

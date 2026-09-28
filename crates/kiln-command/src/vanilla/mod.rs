@@ -4,13 +4,17 @@
 mod admin;
 mod advancement;
 mod blocks;
+mod attribute;
 mod bossbar;
 mod chat;
+mod data;
 mod effect;
+mod entity;
 pub mod experience;
 mod summon;
 mod execute;
 mod function;
+mod items;
 pub use function::{run_as_server, run_function};
 pub mod gamerules;
 mod players;
@@ -19,8 +23,10 @@ pub mod misc;
 mod scoreboard;
 pub(crate) mod sound;
 mod server;
+mod tag;
 mod team;
 mod title;
+mod tracker;
 
 use crate::arguments::GameProfileArg;
 use crate::dispatcher::Dispatcher;
@@ -107,6 +113,18 @@ pub const COMMANDS: &[&str] = &[
     "stopwatch",
     "posteffect",
     "waypoint",
+    // data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing, fetchprofile
+    "data",
+    "tag",
+    "rotate",
+    "spectate",
+    "swing",
+    "ride",
+    "damage",
+    "clear",
+    "enchant",
+    "attribute",
 ];
 
 /// Registers every built-in command.
@@ -172,6 +190,18 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     misc::stopwatch(d);
     misc::posteffect(d);
     misc::waypoint(d);
+    // data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing, fetchprofile
+    data::data(d);
+    tag::tag(d);
+    entity::rotate(d);
+    entity::spectate(d);
+    entity::swing(d);
+    entity::ride(d);
+    entity::damage(d);
+    items::clear(d);
+    items::enchant(d);
+    attribute::attribute(d);
 }
 
 /// `getEntityOrException`.
