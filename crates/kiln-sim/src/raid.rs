@@ -1263,3 +1263,44 @@ impl Sim {
 fn add_packet(bar: &BossBar) -> bytes::Bytes {
     hud::boss_event(bar.uuid, &BossEvent::Add { name: &bar.name, progress: bar.progress, color: BossBarColor::Red, overlay: BossBarOverlay::Notched10, flags: 0 })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Wave compositions against vanilla's `Raid.spawnGroup` counts with the raid's random
+    /// pinned (`raid_waves` lines of the mob vectors, `$KILN_MOB_VECTORS` or
+    /// `<KILN_WORK>/m6s3-raids/vectors.jsonl`); skipped without them.
+    #[test]
+    fn wave_counts_match_vanilla() {
+        let path = std::env::var_os("KILN_MOB_VECTORS").map(std::path::PathBuf::from).unwrap_or_else(|| {
+            let work = std::env::var_os("KILN_WORK")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work"));
+            work.join("m6s3-raids/vectors.jsonl")
+        });
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            eprintln!("raid waves: no vectors; skipped");
+            return;
+        };
+        let mut n = 0;
+        for line in text.lines() {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            let Some(w) = v.get("raid_waves") else { continue };
+            let difficulty = w["difficulty"].as_u64().unwrap() as u8;
+            let omen = w["omen"].as_i64().unwrap() as i32;
+            let groups = w["groups"].as_i64().unwrap() as i32;
+            assert_eq!(num_groups(difficulty), groups);
+            let mut random = LegacyRandom::new(w["seed"].as_i64().unwrap());
+            for (i, want) in w["waves"].as_array().unwrap().iter().enumerate() {
+                let wave = i as i32 + 1;
+                let bonus = wave > groups && omen > 1;
+                let got = wave_counts(&mut random, difficulty, groups, wave, bonus);
+                let want: Vec<i32> = want.as_array().unwrap().iter().map(|x| x.as_i64().unwrap() as i32).collect();
+                assert_eq!(got.to_vec(), want, "{} wave {wave}", v["name"]);
+                n += 1;
+            }
+        }
+        eprintln!("raid waves: {n} waves identical");
+    }
+}

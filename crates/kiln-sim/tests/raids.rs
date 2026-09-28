@@ -53,12 +53,23 @@ impl World {
     /// Beds (head halves) and a bell around the player, and a villager for each bed, walled in
     /// so they stay near.
     fn village(&mut self) {
+        self.village_blocks();
+        self.villagers();
+    }
+
+    fn village_blocks(&mut self) {
         let [x, y, z] = self.pos();
         for i in 0..3 {
             self.console(&format!("setblock {} {y} {} minecraft:red_bed[part=head]", x + 3 + 2 * i, z + 4));
-            self.console(&format!("summon minecraft:villager {} {y} {}", x + 3 + 2 * i, z + 6));
         }
         self.console(&format!("setblock {} {y} {} minecraft:bell", x - 3, z + 4));
+    }
+
+    fn villagers(&mut self) {
+        let [x, y, z] = self.pos();
+        for i in 0..3 {
+            self.console(&format!("summon minecraft:villager {} {y} {}", x + 3 + 2 * i, z + 6));
+        }
     }
 }
 
@@ -67,10 +78,11 @@ fn villagers_claim_points_of_interest_and_make_a_village() {
     let mut w = World::new();
     let p = w.pos();
     assert_eq!(w.sim.sections_to_village("minecraft:overworld", p), 7, "no village yet");
-    w.village();
+    w.village_blocks();
     // Beds alone are no village: someone has to sleep in them.
-    w.ticks(1);
+    w.ticks(40);
     assert_eq!(w.sim.sections_to_village("minecraft:overworld", p), 7);
+    w.villagers();
     w.ticks(40);
     assert!(w.sim.sections_to_village("minecraft:overworld", p) <= 1, "villagers claimed the beds and the bell");
     // A broken bed is forgotten and no longer counts.

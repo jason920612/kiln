@@ -439,6 +439,10 @@ fn mobs_match_vanilla() {
         if filter.as_deref().is_some_and(|f| !f.split('|').any(|f| name.contains(f))) {
             continue;
         }
+        // Raid wave compositions are checked by kiln-sim's raid tests.
+        if s.get("raid_waves").is_some() {
+            continue;
+        }
         if s.get("error").is_some() {
             eprintln!("{name}: vanilla error {}", s["error"]);
             continue;
