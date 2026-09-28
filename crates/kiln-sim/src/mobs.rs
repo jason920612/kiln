@@ -134,7 +134,20 @@ pub(crate) fn summon(
         spawns.push(Spawn { kind, pos, vel: [0.0; 3], body: crate::entities::Body::Lightning { visual_only: false } });
         return Some(Tag::Compound(vec![("translate".into(), Tag::String("entity.minecraft.lightning_bolt".into()))]));
     }
-    let kind = MobKind::by_name(entity)?;
+    let Some(kind) = MobKind::by_name(entity) else {
+        // Other entities kiln-entity can load (orbs, items, TNT, arrows, ...): from the data.
+        let mut c: Vec<(String, Tag)> = match nbt {
+            Some(Tag::Compound(fields)) => fields.iter().filter(|(k, _)| k != "id" && k != "Pos").cloned().collect(),
+            _ => Vec::new(),
+        };
+        c.push(("id".into(), Tag::String(entity.into())));
+        c.push(("Pos".into(), Tag::List(pos.iter().map(|&v| Tag::Double(v)).collect())));
+        let mut e = kiln_entity::persist::load(&Tag::Compound(c), 0, seed).ok()?;
+        e.set_pos(kiln_entity::math::Vec3::new(pos[0], pos[1], pos[2]));
+        spawns.push(Spawn::loaded(e)?);
+        let path = entity.strip_prefix("minecraft:").unwrap_or(entity);
+        return Some(Tag::Compound(vec![("translate".into(), Tag::String(format!("entity.minecraft.{path}")))]));
+    };
     let name = Tag::Compound(vec![("translate".into(), Tag::String(format!("entity.minecraft.{}", kind.short_name())))]);
     match nbt {
         Some(Tag::Compound(fields)) => {

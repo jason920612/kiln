@@ -234,6 +234,7 @@ fn start_sleep_in_bed(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s:
 fn start_sleeping(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16) {
     const SLEEP_HEIGHT: f64 = 0.5625;
     p.vehicle = None;
+    p.vehicle_type = None;
     p.pos = [pos.x as f64 + 0.5, pos.y as f64 + SLEEP_HEIGHT + 0.125, pos.z as f64 + 0.5];
     kiln_blocks::set_block(level, pos, kiln_blocks::state::set_bool(s, "occupied", true), flags::ALL);
     p.sleep.pos = Some([pos.x, pos.y, pos.z]);

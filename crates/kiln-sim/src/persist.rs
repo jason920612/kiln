@@ -345,8 +345,8 @@ impl crate::Dim {
         let mut groups: HashMap<ChunkPos, Vec<Tag>> = HashMap::new();
         let mut leaving: HashSet<i32> = HashSet::new();
         for r in self.regions.iter() {
-            // Lightning bolts are never saved (`EntityType.noSave`).
-            for e in r.part().0.list.iter().filter(|e| !e.removed && e.kind.name != "minecraft:lightning_bolt") {
+            // Lightning bolts and fishing bobbers are never saved (`EntityType.noSave`).
+            for e in r.part().0.list.iter().filter(|e| !e.removed && !matches!(e.kind.name, "minecraft:lightning_bolt" | "minecraft:fishing_bobber")) {
                 let c = entities::chunk_of(e.pos);
                 let loaded = self.regions.chunk(c).is_some();
                 if storing && (all || !loaded) {

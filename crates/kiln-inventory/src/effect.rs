@@ -42,6 +42,9 @@ pub enum Effect {
     /// its enchantment seed becomes `seed` (`Player.onEnchantmentPerformed`); the table plays its
     /// sound.
     Enchanted { levels: i32, seed: i32 },
+    /// A potion was taken out of a brewing stand's bottle slot (`BrewedPotionTrigger`): its
+    /// `minecraft:potion` id.
+    BrewedPotion { potion: Option<i32> },
 }
 
 impl Effect {

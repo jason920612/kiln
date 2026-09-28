@@ -17,10 +17,19 @@ fn empty_loot() -> &'static LootData {
     EMPTY.get_or_init(LootData::default)
 }
 
-/// Blocks and biomes of a region's loaded chunks.
+/// Blocks, biomes, light and structures of a region's loaded chunks.
 pub(crate) struct CellProbe<'a> {
     pub cells: &'a kiln_region::CellSet<kiln_world::Cell>,
     pub min_y: i32,
+    pub height: i32,
+    /// `Level.getSkyDarken`.
+    pub sky_darken: i32,
+}
+
+impl<'a> CellProbe<'a> {
+    pub fn new(cells: &'a kiln_region::CellSet<kiln_world::Cell>, env: &crate::blocks::BlockEnv) -> Self {
+        CellProbe { cells, min_y: env.min_y, height: env.height, sky_darken: env.mobs.sky_darken }
+    }
 }
 
 impl WorldProbe for CellProbe<'_> {
@@ -43,9 +52,52 @@ impl WorldProbe for CellProbe<'_> {
         let biomes = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?.1;
         biomes.get(id as usize).copied()
     }
-}
 
-/// Equipment slot names as entity predicates spell them.
+    fn light(&self, pos: [i32; 3]) -> Option<i32> {
+        use kiln_world::Blocks;
+        use kiln_world::chunk::LightLayer;
+        self.cells.chunk(kiln_world::ChunkPos::of_block(pos[0], pos[2]))?;
+        let top = self.min_y + self.height;
+        let sky = self.cells.light_at(LightLayer::Sky, pos[0], pos[1], pos[2]).map_or(if pos[1] >= top { 15 } else { 0 }, i32::from);
+        let block = self.cells.light_at(LightLayer::Block, pos[0], pos[1], pos[2]).map_or(0, i32::from);
+        Some(block.max(sky - self.sky_darken))
+    }
+
+    fn can_see_sky(&self, pos: [i32; 3]) -> Option<bool> {
+        use kiln_world::Blocks;
+        use kiln_world::chunk::LightLayer;
+        self.cells.chunk(kiln_world::ChunkPos::of_block(pos[0], pos[2]))?;
+        let top = self.min_y + self.height;
+        Some(self.cells.light_at(LightLayer::Sky, pos[0], pos[1], pos[2]).map_or(pos[1] >= top, |s| s >= 15))
+    }
+
+    fn structures_at(&self, pos: [i32; 3]) -> Option<Vec<String>> {
+        use kiln_proto::nbt::Tag;
+        use kiln_world::Blocks;
+        let here = self.cells.chunk(kiln_world::ChunkPos::of_block(pos[0], pos[2]))?;
+        let mut out = Vec::new();
+        let Some(data) = here.structures.as_deref() else { return Some(out) };
+        let Some(Tag::Compound(refs)) = data.get("References") else { return Some(out) };
+        let inside = |bb: &[i32]| bb.len() == 6 && (bb[0]..=bb[3]).contains(&pos[0]) && (bb[1]..=bb[4]).contains(&pos[1]) && (bb[2]..=bb[5]).contains(&pos[2]);
+        for (id, list) in refs {
+            let Tag::LongArray(chunks) = list else { continue };
+            let found = chunks.iter().any(|&packed| {
+                // `ChunkPos.toLong`: x in the low 32 bits, z in the high.
+                let c = kiln_world::ChunkPos::new(packed as i32, (packed >> 32) as i32);
+                let Some(start) = self.cells.chunk(c).and_then(|ch| ch.structures.as_deref()).and_then(|s| s.get("starts")).and_then(|s| s.get(id)) else {
+                    return false;
+                };
+                let Some(Tag::List(children)) = start.get("Children") else { return false };
+                children.iter().any(|piece| matches!(piece.get("BB"), Some(Tag::IntArray(bb)) if inside(bb)))
+            });
+            if found {
+                out.push(id.clone());
+            }
+        }
+        Some(out)
+    }
+}
+// Equipment slot names as entity predicates spell them.
 const SLOT_NAMES: [(EquipmentSlot, &str); 6] = [
     (EquipmentSlot::MainHand, "mainhand"),
     (EquipmentSlot::OffHand, "offhand"),
@@ -70,6 +122,10 @@ impl Player {
             baby: false,
             equipment: SLOT_NAMES.iter().map(|(s, n)| (*n, self.inv.equipped(*s))).collect(),
             world,
+            components: Default::default(),
+            effects: self.effects.values().map(|e| (e.id, e.amplifier, e.duration, e.ambient, e.visible)).collect(),
+            vehicle: self.vehicle_type,
+            lightning_fires: None,
         }
     }
 
@@ -168,6 +224,13 @@ impl Player {
         self.fire("minecraft:tick", None, |c, _, _| matches!(c.trigger, Trigger::Player));
         if self.tick_count % 20 == 0 && !self.dead {
             self.fire("minecraft:location", Some(world), |c, _, _| matches!(c.trigger, Trigger::Player));
+        }
+        // `LevitationTrigger`: how far and how long since the levitation began.
+        if let Some((start, from)) = self.levitation_start {
+            let (duration, pos) = (self.tick_count - start, self.pos);
+            self.fire_conds("minecraft:levitation", None, |c, _, _| {
+                c.distance("distance", from, pos) && kiln_loot::predicate::item::int_bounds(&c.ints("duration"), duration)
+            });
         }
     }
 
@@ -316,11 +379,189 @@ impl Player {
         });
     }
 
+    /// `PlayerHurtEntityTrigger.trigger`: the player (the damage's direct entity when `direct`)
+    /// hurt `victim`.
+    pub(crate) fn player_hurt_entity(&mut self, victim: &Subject, dealt: f32, taken: f32, damage_type: &str, direct: bool) {
+        let loot = self.loot.clone();
+        let loot_ref: &LootData = loot.as_deref().unwrap_or_else(|| empty_loot());
+        let origin = self.pos;
+        let victim_ok = |cap: &criteria::Cap| {
+            let ctx = TriggerCtx { this: victim, tags: &loot_ref.tags, origin: Some(origin), block: None, tool: None };
+            criteria::test_cap(loot_ref, cap, &ctx)
+        };
+        let me = self.subject(None);
+        let me_ok = |p: &kiln_loot::predicate::world::EntityPredicate| me.matches(&loot_ref.tags, p, origin);
+        let type_id = kiln_data::synced_id("minecraft:damage_type", damage_type).unwrap_or(0);
+        let within = |b: &kiln_item::component::DoubleBounds, v: f32| b.min.is_none_or(|m| m <= v as f64) && b.max.is_none_or(|m| v as f64 <= m);
+        let hits: bool = {
+            let data = self.advancements.data.clone();
+            data.criteria_for("minecraft:player_hurt_entity").iter().any(|&(i, c)| self.advancements.listening(i, c))
+        };
+        if !hits {
+            return;
+        }
+        let pass = |c: &Criterion| match &c.trigger {
+            Trigger::Hurt { dealt: d, taken: t, blocked, source, entity: e } => {
+                within(d, dealt)
+                    && within(t, taken)
+                    && blocked.is_none_or(|b| !b)
+                    && e.as_ref().is_none_or(&victim_ok)
+                    && source.as_ref().is_none_or(|p| {
+                        p.tags.iter().all(|t| crate::health::damage_type_tag(type_id, t.tag.as_str()) == t.expected)
+                            && p.direct_entity.as_ref().is_none_or(|d| direct && me_ok(d))
+                            && p.source_entity.as_ref().is_none_or(|s| me_ok(s))
+                            && p.is_direct.is_none_or(|d| d == direct)
+                    })
+            }
+            _ => false,
+        };
+        let data = self.advancements.data.clone();
+        let hits: Vec<(usize, usize)> =
+            data.criteria_for("minecraft:player_hurt_entity").iter().copied().filter(|&(i, c)| self.advancements.listening(i, c) && pass(&data.list[i].criteria[c].1)).collect();
+        drop(me);
+        let now = now_millis();
+        for (i, c) in hits {
+            let crit = &data.list[i].criteria[c].1;
+            if crit.player.as_ref().is_some_and(|cap| {
+                let s = self.subject(None);
+                let ctx = TriggerCtx { this: &s, tags: &loot_ref.tags, origin: None, block: None, tool: None };
+                !criteria::test_cap(loot_ref, cap, &ctx)
+            }) {
+                continue;
+            }
+            self.advancements.award(i, c, now);
+        }
+    }
+
+    /// `FishingRodHookedTrigger.trigger`: the rod, the hooked entity (or the bobber) and what
+    /// came up (the hooked item entity's stack counts too).
+    pub(crate) fn fishing_rod_hooked(&mut self, rod: &ItemStack, entity: Option<&Subject>, items: &[ItemStack]) {
+        self.fire_conds("minecraft:fishing_rod_hooked", None, |c, ok, loot| {
+            let item_ok = |p: &kiln_item::component::ItemPredicate| items.iter().any(|s| kiln_loot::predicate::item_matches(&loot.tags, p, s));
+            c.item("rod").is_none_or(|p| kiln_loot::predicate::item_matches(&loot.tags, p, rod))
+                && c.cap("entity").is_none_or(|cap| entity.is_some_and(|e| ok(cap, e)))
+                && c.item("item").is_none_or(item_ok)
+        });
+    }
+
     /// `StartRidingTrigger.trigger`.
     pub(crate) fn started_riding(&mut self) {
         self.fire("minecraft:started_riding", None, |c, _, _| matches!(c.trigger, Trigger::Player));
     }
+
+    /// Fires `trigger` for the criteria whose conditions ([`Conds`]) pass `test`, which gets
+    /// a tester for entity conditions (`EntityPredicate.createContext`: the entity as `this`,
+    /// the player's position as the origin).
+    pub(crate) fn fire_conds(
+        &mut self,
+        trigger: &str,
+        world: Option<&dyn WorldProbe>,
+        test: impl Fn(&Conds, &dyn Fn(&criteria::Cap, &Subject) -> bool, &LootData) -> bool,
+    ) {
+        let origin = self.pos;
+        self.fire(trigger, world, |c, loot, _| {
+            let Trigger::Conds(conds) = &c.trigger else { return false };
+            let ok = |cap: &criteria::Cap, s: &Subject| {
+                let ctx = TriggerCtx { this: s, tags: &loot.tags, origin: Some(origin), block: None, tool: None };
+                criteria::test_cap(loot, cap, &ctx)
+            };
+            test(conds, &ok, loot)
+        });
+    }
+
+    /// `DistanceTrigger.trigger` (`fall_from_height`, `nether_travel`, `ride_entity_in_lava`):
+    /// `start_position` tested where the trip began, `distance` from there to here.
+    pub(crate) fn distance_trigger(&mut self, trigger: &str, start: [f64; 3]) {
+        let (pos, dim) = (self.pos, crate::DIMENSIONS[self.dim].0);
+        self.fire_conds(trigger, None, |c, _, _| {
+            c.location("start_position").is_none_or(|l| criteria::location_matches(l, start, dim, None)) && c.distance("distance", start, pos)
+        });
+    }
+
+    /// The trigger of a criterion event from the entity simulation.
+    pub(crate) fn entity_criterion(&mut self, dim: &'static str, c: &kiln_entity::level::Criterion) {
+        use kiln_entity::level::Criterion as E;
+        let s = |seen: &kiln_entity::level::Seen| seen_subject(seen, dim);
+        match c {
+            E::BredAnimals { parent, partner, child } => {
+                self.award_stat(*crate::player_stats::stat::ANIMALS_BRED, 1);
+                let (a, b, ch) = (s(parent), s(partner), child.as_ref().map(s));
+                // `BredAnimalsTrigger.TriggerInstance.matches`: the child, then the parents
+                // either way round.
+                self.fire_conds("minecraft:bred_animals", None, |c, ok, _| {
+                    if let Some(cc) = c.cap("child")
+                        && !ch.as_ref().is_some_and(|x| ok(cc, x))
+                    {
+                        return false;
+                    }
+                    let is = |key: &str, x: &Subject| c.cap(key).is_none_or(|cap| ok(cap, x));
+                    (is("parent", &a) && is("partner", &b)) || (is("parent", &b) && is("partner", &a))
+                });
+            }
+            E::TameAnimal { animal } => {
+                let a = s(animal);
+                self.fire_conds("minecraft:tame_animal", None, |c, ok, _| c.cap("entity").is_none_or(|cap| ok(cap, &a)));
+            }
+            E::SummonedEntity { entity } => {
+                let a = s(entity);
+                self.fire_conds("minecraft:summoned_entity", None, |c, ok, _| c.cap("entity").is_none_or(|cap| ok(cap, &a)));
+            }
+            E::CuredZombieVillager { zombie, villager } => {
+                let (z, v) = (s(zombie), s(villager));
+                self.fire_conds("minecraft:cured_zombie_villager", None, |c, ok, _| {
+                    c.cap("zombie").is_none_or(|cap| ok(cap, &z)) && c.cap("villager").is_none_or(|cap| ok(cap, &v))
+                });
+            }
+            E::LightningStrike { lightning, victims, .. } => {
+                let l = s(lightning);
+                let vs: Vec<Subject> = victims.iter().map(s).collect();
+                self.fire_conds("minecraft:lightning_strike", None, |c, ok, _| {
+                    c.cap("lightning").is_none_or(|cap| ok(cap, &l))
+                        && c.cap_list("bystander").is_none_or(|b| b.iter().all(|cap| vs.iter().any(|v| ok(cap, v))))
+                });
+            }
+            E::ChanneledLightning { victims } => {
+                let vs: Vec<Subject> = victims.iter().map(s).collect();
+                self.fire_conds("minecraft:channeled_lightning", None, |c, ok, _| {
+                    c.cap_list("victims").is_none_or(|list| list.iter().all(|cap| vs.iter().any(|v| ok(cap, v))))
+                });
+            }
+            E::KilledByArrow { victims, weapon } => {
+                let vs: Vec<Subject> = victims.iter().map(s).collect();
+                let types: std::collections::HashSet<i32> = vs.iter().map(|v| v.type_id).collect();
+                self.fire_conds("minecraft:killed_by_arrow", None, |c, ok, loot| {
+                    if let Some(p) = c.item("fired_from_weapon")
+                        && !weapon.as_ref().is_some_and(|w| kiln_loot::predicate::item_matches(&loot.tags, p, w))
+                    {
+                        return false;
+                    }
+                    // Each condition takes a victim of its own.
+                    let mut left: Vec<&Subject> = vs.iter().collect();
+                    let all = c.cap_list("victims").is_none_or(|list| {
+                        list.iter().all(|cap| match left.iter().position(|v| ok(cap, v)) {
+                            Some(i) => {
+                                left.remove(i);
+                                true
+                            }
+                            None => false,
+                        })
+                    });
+                    all && kiln_loot::predicate::item::int_bounds(&c.ints("unique_entity_types"), types.len() as i32)
+                });
+            }
+            E::TargetHit { projectile, pos, signal } => {
+                let p = s(projectile);
+                let origin = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+                let _ = origin;
+                self.fire_conds("minecraft:target_hit", None, |c, ok, _| {
+                    kiln_loot::predicate::item::int_bounds(&c.ints("signal_strength"), *signal) && c.cap("projectile").is_none_or(|cap| ok(cap, &p))
+                });
+            }
+        }
+    }
 }
+
+use criteria::Conds;
 
 /// `StatePropertiesPredicate` of `enter_block`: every named property has the value (or is in
 /// the `{min, max}` range).
@@ -350,21 +591,29 @@ fn json_str(v: &kiln_loot::Json) -> String {
     }
 }
 
-/// A mob as criteria conditions see it.
+//// A mob as criteria conditions see it.
 pub(crate) fn mob_subject<'a>(e: &'a kiln_entity::Entity, dim: &'static str) -> Subject<'a> {
-    let p = e.position();
+    seen_subject(&kiln_entity::level::Seen::of(e), dim)
+}
+
+/// An entity as it was when the event about it happened.
+pub(crate) fn seen_subject(s: &kiln_entity::level::Seen, dim: &'static str) -> Subject<'static> {
     Subject {
-        type_id: kiln_item::registry::ENTITY_TYPE.id(e.type_name).unwrap_or(-1),
-        pos: [p.x, p.y, p.z],
+        type_id: kiln_item::registry::ENTITY_TYPE.id(s.type_name).unwrap_or(-1),
+        pos: [s.pos.x, s.pos.y, s.pos.z],
         dim,
-        on_ground: e.on_ground,
-        on_fire: e.is_on_fire(),
+        on_ground: s.on_ground,
+        on_fire: s.on_fire,
         sneaking: false,
         sprinting: false,
         flying: false,
-        baby: kiln_entity::mob::data(e).is_some_and(|m| m.baby()),
+        baby: s.baby,
         equipment: Vec::new(),
         world: None,
+        components: std::borrow::Cow::Owned(s.components.clone()),
+        effects: Vec::new(),
+        vehicle: None,
+        lightning_fires: s.lightning_fires,
     }
 }
 

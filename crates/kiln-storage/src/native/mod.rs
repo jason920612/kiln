@@ -507,7 +507,11 @@ impl ChunkSource for NativeSource {
             store.stats.record(start);
         }
         match decoded {
-            Ok((chunk, preserved)) => {
+            Ok((mut chunk, preserved)) => {
+                // Structure starts and references stay readable (location predicates).
+                if let Some(s) = preserved.get("structures") {
+                    chunk.structures = Some(Box::new(s.clone()));
+                }
                 self.preserved.insert(pos, preserved);
                 Some(chunk)
             }

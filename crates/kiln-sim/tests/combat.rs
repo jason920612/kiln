@@ -216,6 +216,33 @@ fn survival_hits_and_mining_wear_tools() {
     assert_eq!(w.sim.item_damage(1, 36), Some(3));
 }
 
+/// Mending: orb points repair a damaged mending item two durability per point before the
+/// player gets any; what the repair does not use goes to the player.
+#[test]
+fn mending_spends_orb_points_on_repairs() {
+    let mut w = World::new(&["Mender"]);
+    w.console("gamemode survival Mender");
+    w.console("give Mender minecraft:diamond_pickaxe[minecraft:damage=25,minecraft:enchantments={\"minecraft:mending\":1}]");
+    w.ticks(2);
+    if w.sim.item_damage(1, 36) != Some(25) {
+        eprintln!("skipped: no datapack (KILN_DATAPACK)");
+        return;
+    }
+    let orb = |w: &mut World, value: i32| {
+        let p = w.clients[0].pos;
+        w.console(&format!("summon minecraft:experience_orb {} {} {} {{Value:{value}}}", p[0], p[1], p[2]));
+        w.ticks(4);
+    };
+    orb(&mut w, 10);
+    // 10 points repair 20; nothing left for the player.
+    assert_eq!(w.sim.item_damage(1, 36), Some(5));
+    assert_eq!(w.sim.experience(1).unwrap().2, 0);
+    orb(&mut w, 10);
+    // 5 repaired use 10 - 5 * 10 / 20 = 8 points less: 8 go to the player.
+    assert_eq!(w.sim.item_damage(1, 36), Some(0));
+    assert_eq!(w.sim.experience(1).unwrap().2, 8);
+}
+
 #[test]
 fn viewers_see_held_items_and_armor() {
     let mut w = World::new(&["Holder", "Watcher"]);

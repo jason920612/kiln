@@ -142,7 +142,20 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     child.y_rot = 0.0;
     child.x_rot = 0.0;
     child.set_old_pos_and_rot();
-    // `finalizeSpawnChildFromBreeding`.
+    // `finalizeSpawnChildFromBreeding`: the player who made either parent fall in love bred
+    // them (the `animals_bred` statistic and `bred_animals`).
+    let cause = m.love_cause.or_else(|| level.entity(partner).and_then(super::data).and_then(|p| p.love_cause));
+    if let Some(player) = cause.filter(|&c| level.player(c).is_some()) {
+        let partner_seen = level.entity(partner).map(crate::level::Seen::of);
+        if let Some(partner_seen) = partner_seen {
+            let criterion = crate::level::Criterion::BredAnimals {
+                parent: crate::level::Seen::of_mob(e, m),
+                partner: partner_seen,
+                child: Some(crate::level::Seen::of(&child)),
+            };
+            level.emit(Event::Criterion { player, criterion });
+        }
+    }
     super::set_age(e, m, PARENT_AGE_AFTER_BREEDING);
     m.in_love = 0;
     if let Some(p) = level.entity_mut(partner) {

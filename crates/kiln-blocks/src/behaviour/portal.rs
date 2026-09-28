@@ -193,11 +193,7 @@ pub fn fire_on_place<L: Level>(level: &mut L, pos: BlockPos) -> bool {
     }
 }
 
-/// `BaseFireBlock.getState`: soul fire on soul fire base blocks, else fire. (Kiln has no
-/// flammability data: fire off a sturdy block gets no side faces.)
-pub fn fire_state<L: Level + ?Sized>(level: &L, pos: BlockPos) -> u16 {
-    if crate::tags::is(level.block(pos.below()), "minecraft:soul_fire_base_blocks") { d::SOUL_FIRE } else { d::FIRE }
-}
+pub use crate::fire::fire_state;
 
 /// `BaseFireBlock.canBePlacedAt` for a player facing `forward` (horizontal): the position is
 /// air and fire survives there, or it would light a portal.
@@ -205,14 +201,8 @@ pub fn fire_can_be_placed_at<L: Level + ?Sized>(level: &L, pos: BlockPos, forwar
     if !kiln_data::blocks_types::is_air(level.block(pos)) {
         return false;
     }
-    let below = level.block(pos.below());
     let fire = fire_state(level, pos);
-    let survives = if state::is(fire, d::SOUL_FIRE) {
-        true
-    } else {
-        super::sturdy(below, Direction::Up, kiln_data::block_logic::Support::Full)
-    };
-    survives || is_portal(level, pos, forward)
+    crate::fire::can_survive(level, fire, pos) || is_portal(level, pos, forward)
 }
 
 /// `BaseFireBlock.isPortal`.

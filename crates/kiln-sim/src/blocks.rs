@@ -250,6 +250,11 @@ pub(crate) struct BlockEnv {
     pub menus: std::sync::Arc<kiln_inventory::Rules>,
     /// The level's weather and the biome climates.
     pub weather: crate::weather::WeatherEnv,
+    /// `minecraft:fire_spread_radius_around_player` (-1: everywhere).
+    pub fire_spread_radius: i32,
+    /// Where the level's non-spectator players stood when the tick began (fire spreads near
+    /// them; the same in every region).
+    pub fire_watchers: std::sync::Arc<Vec<[f64; 3]>>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -315,6 +320,16 @@ pub(crate) struct BlockOut {
     /// The components of container block entities removed this phase, for the loot of their
     /// block (`copy_components` from the block entity: names, shulker box contents).
     pub removed_components: Vec<(BlockPos, Vec<kiln_item::component::Component>)>,
+    /// What block entities do to the players in a box (beacons).
+    pub player_fx: Vec<PlayerFx>,
+}
+
+/// A block entity's effect on the players whose box meets `min..max`.
+pub(crate) enum PlayerFx {
+    /// A mob effect (a beacon's power).
+    Effect { min: [f64; 3], max: [f64; 3], effect: crate::effects::Effect },
+    /// A beacon lit: `construct_beacon` with its levels.
+    BeaconActivated { min: [f64; 3], max: [f64; 3], levels: i32 },
 }
 
 /// A region's cells and block machinery as kiln-blocks' [`Level`].
@@ -489,6 +504,20 @@ impl Level for RegionLevel<'_> {
 
     fn block_light(&self, pos: BlockPos) -> i32 {
         self.cells.light_at(LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
+    }
+
+    fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
+        let r = self.env.fire_spread_radius;
+        let at = [pos.x as f64, pos.y as f64, pos.z as f64];
+        r == -1 || self.env.fire_watchers.iter().any(|p| (0..3).map(|i| (p[i] - at[i]) * (p[i] - at[i])).sum::<f64>().sqrt() < r as f64)
+    }
+
+    fn difficulty(&self) -> i32 {
+        i32::from(self.env.mobs.difficulty)
+    }
+
+    fn increased_fire_burnout(&self, pos: BlockPos) -> bool {
+        self.env.weather.climates.as_ref().is_some_and(|c| c.increased_fire_burnout(crate::weather::biome_at(self.cells, self.env, pos)))
     }
 }
 
@@ -739,6 +768,27 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
 pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, env: &BlockEnv) {
     send_changes(cells, &out.changed, players);
     spawns.append(&mut out.spawns);
+    for fx in std::mem::take(&mut out.player_fx) {
+        let (min, max) = match &fx {
+            PlayerFx::Effect { min, max, .. } | PlayerFx::BeaconActivated { min, max, .. } => (*min, *max),
+        };
+        // The player's box (0.6 wide, 1.8 tall).
+        let inside = |p: &Player| {
+            let (lo, hi) = ([p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3], [p.pos[0] + 0.3, p.pos[1] + 1.8, p.pos[2] + 0.3]);
+            (0..3).all(|i| lo[i] < max[i] && hi[i] > min[i])
+        };
+        for p in players.iter_mut().filter(|p| !p.dead && !p.disconnected && inside(p)) {
+            match &fx {
+                PlayerFx::Effect { effect, .. } => {
+                    p.add_effect(effect.clone());
+                }
+                PlayerFx::BeaconActivated { levels, .. } => {
+                    let levels = *levels;
+                    p.fire_conds("minecraft:construct_beacon", None, |c, _, _| kiln_loot::predicate::item::int_bounds(&c.ints("level"), levels));
+                }
+            }
+        }
+    }
     for (breaker, pos, stage) in out.destruction {
         // `ServerLevel.destroyBlockProgress`: other players within 32 blocks.
         let pkt = world_fx::block_destruction(breaker, pos, u8::try_from(stage).ok());
@@ -1066,6 +1116,8 @@ mod tests {
             spawn_table: None,
             menus: Default::default(),
             weather: Default::default(),
+            fire_spread_radius: 128,
+            fire_watchers: Default::default(),
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

@@ -57,7 +57,7 @@ pub fn observer_removed<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
 }
 
 /// `TntBlock.prime`: the level spawns the primed TNT from [`Effect::PrimedTnt`].
-fn prime<L: Level>(level: &mut L, pos: BlockPos) -> bool {
+pub(crate) fn prime<L: Level>(level: &mut L, pos: BlockPos) -> bool {
     if !level.rules().tnt_explodes {
         return false;
     }

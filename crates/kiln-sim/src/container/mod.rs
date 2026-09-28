@@ -1,5 +1,5 @@
 //! Container block entities (chests, barrels, shulker boxes, hoppers, dispensers, droppers,
-//! furnaces, ender chests): their contents as live state next to the region's block
+//! furnaces, brewing stands, beacons, ender chests): their contents as live state next to the region's block
 //! machinery, the menus players open on them, and their ticks.
 //!
 //! A chunk keeps every block entity as NBT (kiln-world). While a chunk is in a region, the
@@ -13,6 +13,8 @@
 //! were added to the level), so the result never depends on how the world is split into
 //! regions (an approximation, I class).
 
+pub(crate) mod beacon;
+pub(crate) mod brewing;
 pub(crate) mod dispense;
 pub(crate) mod furnace;
 pub(crate) mod hopper;
@@ -44,6 +46,9 @@ pub(crate) enum BeKind {
     Furnace(FurnaceKind),
     /// Holds nothing itself (the items are the player's `EnderItems`); counts its openers.
     EnderChest,
+    BrewingStand,
+    /// Holds no items (the payment is the menu's); ticks its beam and powers.
+    Beacon,
 }
 
 impl BeKind {
@@ -61,6 +66,8 @@ impl BeKind {
             "blast_furnace" => BeKind::Furnace(FurnaceKind::BlastFurnace),
             "smoker" => BeKind::Furnace(FurnaceKind::Smoker),
             "ender_chest" => BeKind::EnderChest,
+            "brewing_stand" => BeKind::BrewingStand,
+            "beacon" => BeKind::Beacon,
             _ => return None,
         })
     }
@@ -72,18 +79,19 @@ impl BeKind {
             BeKind::Hopper => 5,
             BeKind::Dispenser | BeKind::Dropper => 9,
             BeKind::Furnace(_) => 3,
-            BeKind::EnderChest => 0,
+            BeKind::BrewingStand => 5,
+            BeKind::EnderChest | BeKind::Beacon => 0,
         }
     }
 
     /// `RandomizableContainerBlockEntity`: can hold an unopened loot table.
     pub fn randomizable(self) -> bool {
-        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest)
+        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon)
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        self != BeKind::EnderChest
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon)
     }
 
     /// `getDefaultName` translation key.
@@ -99,12 +107,21 @@ impl BeKind {
             BeKind::Furnace(FurnaceKind::BlastFurnace) => "container.blast_furnace",
             BeKind::Furnace(FurnaceKind::Smoker) => "container.smoker",
             BeKind::EnderChest => "container.enderchest",
+            BeKind::BrewingStand => "container.brewing",
+            BeKind::Beacon => "container.beacon",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 17] = [
+const MODELED: [&str; 24] = [
+    "primary_effect",
+    "secondary_effect",
+    "Levels",
+    "BrewTime",
+    "total_brew_time",
+    "Fuel",
+    "total_fuel",
     "Items",
     "CustomName",
     "lock",
@@ -159,6 +176,13 @@ pub(crate) struct ContainerBe {
     pub recipes_used: Vec<(String, i32)>,
     /// The furnace's `quickCheck`: the recipe it last found.
     pub last_recipe: Option<usize>,
+    /// Brewing stand (which keeps `fuel`, `totalFuel`, `brewTime`, `totalBrewTime` and its
+    /// speed in the furnace fields above): the `ingredient` item the brewing started with, and
+    /// `lastPotionCount` (the bottles its block state last showed; not saved).
+    pub ingredient: Option<i32>,
+    pub last_bottles: Option<[bool; 3]>,
+    /// A beacon's beam, levels and powers.
+    pub beacon: Option<beacon::Beacon>,
     /// A furnace's input changed to another item (its `setItem` on slot 0): the cook timer
     /// resets once the recipes are at hand ([`furnace::apply_input_change`]).
     pub input_changed: bool,
@@ -186,6 +210,8 @@ impl ContainerBe {
             Tag::Compound(fields) => fields.iter().filter(|(k, _)| !MODELED.contains(&k.as_str())).cloned().collect(),
             _ => Vec::new(),
         };
+        // `BrewingStandBlockEntity.loadAdditional`: brewing under way remembers its ingredient.
+        let ingredient = (kind == BeKind::BrewingStand && int("BrewTime", 0) > 0).then(|| list.stacks.get(3).map_or(0, ItemStack::item));
         static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         ContainerBe {
             kind,
@@ -201,13 +227,16 @@ impl ContainerBe {
             max_range: 0.0,
             cooldown: if kind == BeKind::Hopper { int("TransferCooldown", -1) } else { -1 },
             ticked_game_time: 0,
-            lit_remaining: int("lit_time_remaining", 0),
-            lit_total: int("lit_total_time", 0),
-            cook_timer: int("cooking_time_spent", 0),
-            cook_total: int("cooking_total_time", 0),
+            lit_remaining: if kind == BeKind::BrewingStand { int("Fuel", 0) } else { int("lit_time_remaining", 0) },
+            lit_total: if kind == BeKind::BrewingStand { int("total_fuel", 20) } else { int("lit_total_time", 0) },
+            cook_timer: if kind == BeKind::BrewingStand { int("BrewTime", 0) } else { int("cooking_time_spent", 0) },
+            cook_total: if kind == BeKind::BrewingStand { int("total_brew_time", 400) } else { int("cooking_total_time", 0) },
             speed: nbt.get("speed_multiplier").and_then(Tag::as_f64).map_or(1.0, |v| v as f32),
             recipes_used,
             last_recipe: None,
+            ingredient,
+            last_bottles: None,
+            beacon: (kind == BeKind::Beacon).then(|| beacon::Beacon::load(nbt)),
             input_changed: false,
             changes: 0,
             dirty: false,
@@ -226,6 +255,19 @@ impl ContainerBe {
         }
         match self.kind {
             BeKind::EnderChest => {}
+            BeKind::Beacon => {
+                if let Some(b) = &self.beacon {
+                    b.save(&mut out);
+                }
+            }
+            BeKind::BrewingStand => {
+                out.push(("BrewTime".into(), Tag::Int(self.cook_timer)));
+                out.push(("total_brew_time".into(), Tag::Int(self.cook_total)));
+                out.push(("Items".into(), self.item_list().save()));
+                out.push(("Fuel".into(), Tag::Int(self.lit_remaining)));
+                out.push(("total_fuel".into(), Tag::Int(self.lit_total)));
+                out.push(("speed_multiplier".into(), Tag::Float(self.speed)));
+            }
             BeKind::Furnace(_) => {
                 out.push(("cooking_time_spent".into(), Tag::Int(self.cook_timer)));
                 out.push(("cooking_total_time".into(), Tag::Int(self.cook_total)));
@@ -401,6 +443,20 @@ impl kiln_inventory::Container for ContainerBe {
     }
 
     fn data(&self, index: usize) -> i32 {
+        if let Some(b) = &self.beacon {
+            // `BeaconBlockEntity.dataAccess`.
+            return b.data(index);
+        }
+        if self.kind == BeKind::BrewingStand {
+            // `BrewingStandBlockEntity.dataAccess`.
+            return match index {
+                0 => self.cook_timer,
+                1 => self.lit_remaining,
+                2 => self.cook_total,
+                3 => self.lit_total,
+                _ => 0,
+            };
+        }
         // `AbstractFurnaceBlockEntity.dataAccess`.
         match index {
             0 => self.lit_remaining,
@@ -598,7 +654,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
         .containers
         .map
         .iter()
-        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_)))
+        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon))
         .filter(|(p, _)| ticking.contains(chunk_of(**p)))
         .map(|(p, c)| (*p, c.kind))
         .collect();
@@ -609,6 +665,12 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
         }
         match kind {
             BeKind::Hopper => hopper::push_items_tick(level, items, pos),
+            BeKind::BrewingStand => {
+                let mut spawns = std::mem::take(&mut level.out.spawns);
+                brewing::server_tick(level, pos, &mut spawns);
+                level.out.spawns.append(&mut spawns);
+            }
+            BeKind::Beacon => beacon::tick(level, pos),
             _ => {
                 let mut spawns = std::mem::take(&mut level.out.spawns);
                 furnace::server_tick(level, pos, &mut spawns);

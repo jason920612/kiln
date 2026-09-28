@@ -212,6 +212,70 @@ fn furnaces_smelt_with_fuel() {
     assert_eq!(items, vec![(2, "minecraft:iron_ingot", 2)]);
 }
 
+/// A beacon on a one-level iron pyramid lights (`construct_beacon`); an iron ingot pays for
+/// speed, which reaches the player on the next 80-tick pulse.
+#[test]
+fn beacons_light_and_give_their_power() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    let b = w.at(3, 2, 3);
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:iron_block", b[0] - 1, b[1] - 1, b[2] - 1, b[0] + 1, b[1] - 1, b[2] + 1));
+    w.setblock(b, "minecraft:beacon");
+    w.ticks(170);
+    if let Some(done) = w.sim.criterion_done(1, "minecraft:nether/create_beacon", "beacon") {
+        assert!(done, "construct_beacon when it lights");
+    }
+    // Open it, put the payment in, choose speed.
+    w.run("gamemode creative Keeper");
+    w.hold(36, "minecraft:iron_ingot", 1);
+    w.use_on(b);
+    w.ticks(1);
+    w.click(1, 28, 0, ContainerInput::QuickMove);
+    let speed = kiln_data::synced_id("minecraft:mob_effect", "minecraft:speed").or_else(|| kiln_data::builtin_id("minecraft:mob_effect", "minecraft:speed"));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetBeacon { primary: speed, secondary: None })]));
+    w.close(1);
+    w.ticks(90);
+    let effects = w.sim.effects(1).unwrap();
+    assert!(effects.iter().any(|e| e.0 == "minecraft:speed" && e.1 == 0), "the beacon's speed: {effects:?}");
+    assert_eq!(w.sim.inventory(1).unwrap()[36], None, "the payment was used");
+}
+
+/// A brewing stand with a water bottle, nether wart and blaze powder: the bottle shows in the
+/// block state, and 400 ticks later the potion is awkward; taking it fires `brewed_potion`.
+#[test]
+fn brewing_stands_brew_with_blaze_powder() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    let stand = w.at(2, 1, 0);
+    let water = "{Slot:0b,id:\"minecraft:potion\",count:1,components:{\"minecraft:potion_contents\":{potion:\"minecraft:water\"}}}";
+    w.run(&format!(
+        "setblock {} {} {} minecraft:brewing_stand{{Items:[{water},{{Slot:3b,id:\"minecraft:nether_wart\",count:1}},{{Slot:4b,id:\"minecraft:blaze_powder\",count:1}}]}}",
+        stand[0], stand[1], stand[2]
+    ));
+    w.ticks(3);
+    assert!(state::get_bool(w.block(stand), "has_bottle_0") && !state::get_bool(w.block(stand), "has_bottle_1"));
+    let (_, data) = w.sim.container_at(stand).unwrap();
+    // (Fuel, total fuel, brew time, total brew time.)
+    assert_eq!((data[0], data[1], data[3]), (19, 20, 400), "blaze powder gives 20 brews, one under way");
+    w.ticks(410);
+    let (items, _) = w.sim.container_at(stand).unwrap();
+    assert_eq!(items.iter().map(|i| (i.0, i.1)).collect::<Vec<_>>(), vec![(0, "minecraft:potion")], "the wart is used up");
+    // Open it and shift-click the potion out.
+    w.use_on(stand);
+    w.ticks(1);
+    w.click(1, 0, 0, ContainerInput::QuickMove);
+    w.ticks(1);
+    let (items, _) = w.sim.container_at(stand).unwrap();
+    assert!(items.is_empty(), "the potion was taken: {items:?}");
+    if let Some(done) = w.sim.criterion_done(1, "minecraft:nether/brew_potion", "potion") {
+        assert!(done, "brewed_potion");
+    }
+}
+
 #[test]
 fn droppers_drop_and_feed_containers() {
     let mut w = World::new("creative");

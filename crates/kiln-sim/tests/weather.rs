@@ -181,3 +181,58 @@ fn lightning_charges_creepers_converts_pigs_and_lights_fire() {
     w.ticks(600);
     assert!(!state::is(w.sim.block_at(at[0], at[1], at[2]).unwrap(), d::FIRE), "the fire burnt out");
 }
+
+/// A bolt striking oxidized copper takes the oxidation off; where fire may not spread it sets
+/// nothing alight, so a villager watching nearby completes `lightning_rod_with_villager_no_fire`.
+#[test]
+fn lightning_cleans_copper_and_fires_lightning_strike() {
+    let mut w = World::new("creative");
+    // (Later flashes set fire on any difficulty: no fire spreads without a player close enough.)
+    w.run("gamerule minecraft:fire_spread_radius_around_player 0");
+    let at = w.at(5, 0, 5);
+    w.run(&format!("setblock {} {} {} minecraft:oxidized_cut_copper", at[0], at[1], at[2]));
+    let v = w.at(-6, 1, 5);
+    w.run(&format!("summon minecraft:villager {} {} {} {{NoAI:1b}}", v[0] as f64 + 0.5, v[1], v[2] as f64 + 0.5));
+    w.ticks(2);
+    w.run(&format!("summon minecraft:lightning_bolt {} {} {}", at[0] as f64 + 0.5, at[1] + 1, at[2] as f64 + 0.5));
+    w.ticks(40);
+    let s = w.sim.block_at(at[0], at[1], at[2]).unwrap();
+    assert!(state::is(s, d::CUT_COPPER), "back to cut copper: {}", state::state_string(s));
+    if let Some(done) = w.sim.criterion_done(1, "minecraft:adventure/lightning_rod_with_villager_no_fire", "lightning_rod_with_villager_no_fire") {
+        assert!(done, "a villager saw a bolt that lit nothing");
+    }
+}
+
+/// A field of wool with fire in the middle: with `fire_spread_radius_around_player 0` the
+/// fire does nothing (not even age); near the player it spreads and burns wool away; on
+/// netherrack it never burns out.
+#[test]
+fn fire_spreads_burns_and_respects_the_radius_rule() {
+    let mut w = World::new("creative");
+    let a = w.at(2, 0, 2);
+    let field: Vec<[i32; 3]> = (0..9).flat_map(|i| (0..9).map(move |j| [a[0] + i, a[1], a[2] + j])).collect();
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:white_wool", a[0], a[1], a[2], a[0] + 8, a[1], a[2] + 8));
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:air", a[0], a[1] + 1, a[2], a[0] + 8, a[1] + 4, a[2] + 8));
+    let c = [a[0] + 4, a[1] + 1, a[2] + 4];
+    w.run("gamerule minecraft:fire_spread_radius_around_player 0");
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:fire", a[0], c[1], c[2], a[0] + 8, c[1], c[2]));
+    w.ticks(300);
+    let s = w.sim.block_at(c[0], c[1], c[2]).unwrap();
+    assert!(state::is(s, d::FIRE) && state::get_int(s, "age") == 0, "no player close enough: the fire just sits ({})", state::state_string(s));
+    w.run("gamerule minecraft:fire_spread_radius_around_player 128");
+    let fires = |w: &World| field.iter().filter(|p| state::is(w.sim.block_at(p[0], p[1] + 1, p[2]).unwrap(), d::FIRE) && p[2] != c[2]).count();
+    let wool = |w: &World| field.iter().filter(|p| state::is(w.sim.block_at(p[0], p[1], p[2]).unwrap(), d::WHITE_WOOL)).count();
+    let mut spread = false;
+    for _ in 0..60 {
+        w.ticks(20);
+        spread |= fires(&w) > 0;
+    }
+    assert!(spread, "the fire spread over the wool");
+    assert!(wool(&w) < 81, "wool burnt away");
+    // Netherrack keeps its fire.
+    let n = w.at(-4, 0, -4);
+    w.run(&format!("setblock {} {} {} minecraft:netherrack", n[0], n[1], n[2]));
+    w.run(&format!("setblock {} {} {} minecraft:fire", n[0], n[1] + 1, n[2]));
+    w.ticks(1200);
+    assert!(state::is(w.sim.block_at(n[0], n[1] + 1, n[2]).unwrap(), d::FIRE), "fire on netherrack stays");
+}

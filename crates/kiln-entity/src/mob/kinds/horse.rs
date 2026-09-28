@@ -682,6 +682,8 @@ impl CustomGoal for RunAroundLikeCrazyGoal {
                 s.owner = Some(p.uuid);
                 s.tamed = true;
                 level.emit(Event::EntityEvent { entity: e.id, event: 7 });
+                let animal = crate::level::Seen::of_mob(e, m);
+                level.emit(Event::Criterion { player: p.id, criterion: crate::level::Criterion::TameAnimal { animal } });
                 return;
             }
             let s = st_mut(m);

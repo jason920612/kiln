@@ -227,6 +227,23 @@ pub trait Level {
     /// level did (a simulation split into regions reseeds it from the position and time;
     /// the vanilla level keeps its one random, so the default does nothing).
     fn reseed_random(&mut self, _pos: BlockPos) {}
+
+    /// `ServerLevel.canSpreadFireAround`: a non-spectator player closer than
+    /// `fire_spread_radius_around_player` (always with -1).
+    fn can_spread_fire_around(&self, _pos: BlockPos) -> bool {
+        true
+    }
+
+    /// `Difficulty.getId` (0 peaceful .. 3 hard).
+    fn difficulty(&self) -> i32 {
+        2
+    }
+
+    /// The `minecraft:gameplay/increased_fire_burnout` environment attribute at `pos` (wet
+    /// biomes).
+    fn increased_fire_burnout(&self, _pos: BlockPos) -> bool {
+        false
+    }
 }
 
 /// Which entities a block counts.

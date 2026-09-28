@@ -247,6 +247,8 @@ pub(crate) fn sky_darken(dim: crate::DimId, day_time: i64, weather: &LevelWeathe
 pub(crate) struct Climates {
     /// (base temperature, frozen modifier, has precipitation).
     biomes: HashMap<u16, (f32, bool, bool)>,
+    /// Biomes with the `minecraft:gameplay/increased_fire_burnout` attribute.
+    fire_burnout: std::collections::HashSet<u16>,
 }
 
 impl Climates {
@@ -263,8 +265,17 @@ impl Climates {
             let frozen = json.get("temperature_modifier").and_then(|v| v.as_str()) == Some("frozen");
             let precipitation = json.get("has_precipitation").and_then(|v| v.as_bool()).unwrap_or(false);
             c.biomes.insert(id as u16, (temperature, frozen, precipitation));
+            let attributes = json.get("attributes");
+            if attributes.and_then(|a| a.get("minecraft:gameplay/increased_fire_burnout")).and_then(|v| v.as_bool()) == Some(true) {
+                c.fire_burnout.insert(id as u16);
+            }
         }
         Some(c)
+    }
+
+    /// The biome's `minecraft:gameplay/increased_fire_burnout`.
+    pub fn increased_fire_burnout(&self, biome: u16) -> bool {
+        self.fire_burnout.contains(&biome)
     }
 
     /// The climate of biome `biome` read at `pos`.
@@ -356,14 +367,8 @@ pub(crate) fn place_lightning_fire(level: &mut crate::blocks::RegionLevel, pos: 
     if !kiln_data::blocks_types::is_air(level.block(pos)) {
         return false;
     }
-    let fire = kiln_blocks::behaviour::portal::fire_state(level, pos);
-    let below = level.block(pos.below());
-    let survives = if kiln_blocks::state::is(fire, kiln_data::blocks::default_state::SOUL_FIRE) {
-        true
-    } else {
-        kiln_blocks::behaviour::sturdy(below, kiln_blocks::Direction::Up, kiln_data::block_logic::Support::Full)
-    };
-    survives && kiln_blocks::set_block(level, pos, fire, kiln_blocks::flags::ALL)
+    let fire = kiln_blocks::fire::fire_state(level, pos);
+    kiln_blocks::fire::can_survive(level, fire, pos) && kiln_blocks::set_block(level, pos, fire, kiln_blocks::flags::ALL)
 }
 
 impl Sim {

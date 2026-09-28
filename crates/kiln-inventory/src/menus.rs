@@ -48,6 +48,10 @@ pub enum MenuKind {
     CartographyTable,
     /// `EnchantmentMenu`.
     Enchantment,
+    /// `BrewingStandMenu`.
+    BrewingStand,
+    /// `BeaconMenu`.
+    Beacon,
 }
 
 impl MenuKind {
@@ -75,6 +79,8 @@ impl MenuKind {
             MenuKind::Loom => "minecraft:loom",
             MenuKind::CartographyTable => "minecraft:cartography_table",
             MenuKind::Enchantment => "minecraft:enchantment",
+            MenuKind::BrewingStand => "minecraft:brewing_stand",
+            MenuKind::Beacon => "minecraft:beacon",
         })
     }
 
@@ -95,12 +101,14 @@ impl MenuKind {
             | MenuKind::Loom
             | MenuKind::CartographyTable
             | MenuKind::Enchantment
+            | MenuKind::Beacon
             | MenuKind::Merchant => 0,
             MenuKind::Generic { rows } => rows as usize * 9,
             MenuKind::Generic3x3 => 9,
             MenuKind::Hopper => 5,
             MenuKind::ShulkerBox => 27,
             MenuKind::Furnace(_) => 3,
+            MenuKind::BrewingStand => 5,
         }
     }
 
@@ -185,6 +193,42 @@ impl Menu {
         ];
         player_slots(&mut slots);
         Menu::with_slots(MenuKind::Furnace(kind), container_id, slots, 4, CraftGrid::default())
+    }
+
+    /// `BrewingStandMenu`: bottles 0-2, ingredient 3, fuel 4 over the brewing stand's container,
+    /// and its four data values (brew time, fuel, total brew time, total fuel).
+    pub fn brewing_stand(container_id: i32) -> Menu {
+        let mut slots = vec![
+            Slot::new(Source::Block, 0, SlotKind::BrewingPotion),
+            Slot::new(Source::Block, 1, SlotKind::BrewingPotion),
+            Slot::new(Source::Block, 2, SlotKind::BrewingPotion),
+            Slot::new(Source::Block, 3, SlotKind::BrewingIngredient),
+            Slot::new(Source::Block, 4, SlotKind::BrewingFuel),
+        ];
+        player_slots(&mut slots);
+        Menu::with_slots(MenuKind::BrewingStand, container_id, slots, 4, CraftGrid::default())
+    }
+
+    /// `BeaconMenu`: the payment slot 0 (the menu's own), main 1-27, hotbar 28-36, and the
+    /// beacon's three data values (levels, primary and secondary power).
+    pub fn beacon(container_id: i32) -> Menu {
+        let mut slots = vec![Slot::new(Source::Input, 0, SlotKind::BeaconPayment)];
+        player_slots(&mut slots);
+        let mut menu = Menu::with_slots(MenuKind::Beacon, container_id, slots, 3, CraftGrid::default());
+        menu.input = SimpleContainer::new(1);
+        menu
+    }
+
+    /// `BeaconMenu.hasPayment`.
+    pub fn has_beacon_payment(&self) -> bool {
+        self.kind == MenuKind::Beacon && self.input.items.first().is_some_and(|s| !s.is_empty())
+    }
+
+    /// `paymentSlot.remove(1)` once the powers are set (`BeaconMenu.updateEffects`).
+    pub fn take_beacon_payment(&mut self) {
+        if let Some(s) = self.input.items.first_mut() {
+            s.shrink(1);
+        }
     }
 
     /// `StonecutterMenu`: input 0, result 1, main 2-28, hotbar 29-37, and the selected recipe
@@ -469,6 +513,71 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
                 menu.on_quick_craft(env, i, &stack, &mut old);
             }
             menu.finish_quick_move(env, i, stack, old, false).0
+        }
+        MenuKind::BrewingStand => {
+            // `BrewingStandMenu.quickMoveStack`.
+            let rules = env.rules;
+            let ingredient = rules.recipes.property_set_accepts("minecraft:brewing_reagent", &stack);
+            let ok = match i {
+                0..5 => {
+                    let ok = menu.move_item_stack_to(env, &mut stack, 5, 41, true);
+                    if ok {
+                        let mut old = copy.clone();
+                        menu.on_quick_craft(env, i, &stack, &mut old);
+                    }
+                    ok
+                }
+                _ if copy.has(kiln_item::component::ids::BREWING_FUEL) => {
+                    menu.move_item_stack_to(env, &mut stack, 4, 5, false)
+                        || !ingredient
+                        || menu.move_item_stack_to(env, &mut stack, 3, 4, false)
+                }
+                _ if ingredient => menu.move_item_stack_to(env, &mut stack, 3, 4, false),
+                _ if crate::slot::is_potion_input(&copy, rules) => menu.move_item_stack_to(env, &mut stack, 0, 3, false),
+                5..32 => menu.move_item_stack_to(env, &mut stack, 32, 41, false),
+                32..41 => menu.move_item_stack_to(env, &mut stack, 5, 32, false),
+                _ => menu.move_item_stack_to(env, &mut stack, 5, 41, false),
+            };
+            if !ok {
+                return ItemStack::empty();
+            }
+            *menu.item_mut(env, i) = stack.clone();
+            if stack.is_empty() {
+                menu.set_by_player(env, i, ItemStack::empty());
+            } else {
+                menu.set_changed(env, i);
+            }
+            if stack.count() == copy.count() {
+                return ItemStack::empty();
+            }
+            // `slot.onTake(player, copy)`: the stack as it was (a bottle slot's potion).
+            let mut taken = copy.clone();
+            menu.on_take(env, i, &mut taken);
+            copy
+        }
+        MenuKind::Beacon => {
+            // `BeaconMenu.quickMoveStack`.
+            let payment_empty = menu.item(env, 0).is_empty();
+            let ok = match i {
+                0 => {
+                    let ok = menu.move_item_stack_to(env, &mut stack, 1, 37, true);
+                    if ok {
+                        let mut old = copy.clone();
+                        menu.on_quick_craft(env, i, &stack, &mut old);
+                    }
+                    ok
+                }
+                _ if payment_empty && menu.slots[0].may_place(&stack, env.rules) && stack.count() == 1 => {
+                    menu.move_item_stack_to(env, &mut stack, 0, 1, false)
+                }
+                1..28 => menu.move_item_stack_to(env, &mut stack, 28, 37, false),
+                28..37 => menu.move_item_stack_to(env, &mut stack, 1, 28, false),
+                _ => menu.move_item_stack_to(env, &mut stack, 1, 37, false),
+            };
+            if !ok {
+                return ItemStack::empty();
+            }
+            menu.finish_quick_move(env, i, stack, copy, false).0
         }
         MenuKind::Stonecutter => {
             if i == 1 {

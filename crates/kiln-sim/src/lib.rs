@@ -32,6 +32,7 @@ pub mod lobby;
 mod digging;
 mod effects;
 mod entities;
+mod fishing;
 mod generation;
 mod independent;
 pub use independent::{InjectedDelay, ScheduleMode};
@@ -369,6 +370,15 @@ struct Player {
     pending_travel: Option<portal::Travel>,
     /// The entity the player rides (see [`entities::ride_players`]).
     vehicle: Option<i32>,
+    /// The type of that entity (for the vehicle entity predicates of criteria).
+    vehicle_type: Option<&'static str>,
+    /// `ServerPlayer.levitationStartTime` and `levitationStartPos` (the `levitation` trigger).
+    levitation_start: Option<(i32, [f64; 3])>,
+    /// `startingToFallPosition` (`fall_from_height`), `enteredNetherPosition`
+    /// (`nether_travel`) and `enteredLavaOnVehiclePosition` (`ride_entity_in_lava`).
+    starting_to_fall: Option<[f64; 3]>,
+    entered_nether: Option<[f64; 3]>,
+    entered_lava_on_vehicle: Option<[f64; 3]>,
     /// `getLastHurtByMob` and `getLastHurtMob` with the game time (tamed animals take their
     /// owner's side).
     last_hurt_by_mob: Option<(i32, i64)>,
@@ -1294,6 +1304,28 @@ impl Sim {
         (!stack.is_empty()).then(|| stack.damage())
     }
 
+    /// The overworld's fishing bobbers: (owner entity id, biting, bobbing in water) (for tests).
+    pub fn fishing_bobbers(&self) -> Vec<(i32, bool, bool)> {
+        self.dims[OVERWORLD_ID]
+            .regions
+            .iter()
+            .flat_map(|r| r.part().0.list.iter())
+            .filter(|e| !e.removed)
+            .filter_map(|e| e.phys.as_ref().and_then(kiln_entity::ext_entity::fishing_hook::get))
+            .map(|h| (h.owner, h.biting, h.state == kiln_entity::ext_entity::fishing_hook::State::Bobbing))
+            .collect()
+    }
+
+    /// Whether a player has criterion `criterion` of advancement `id` (for tests); `None` when
+    /// the advancement or criterion is unknown.
+    pub fn criterion_done(&self, conn: ConnId, id: &str, criterion: &str) -> Option<bool> {
+        let p = self.players.get(&conn)?;
+        let data = &p.advancements.data;
+        let i = data.get(id)?;
+        let c = data.list[i].criterion_index(criterion)?;
+        Some(p.advancements.criterion_done(i, c))
+    }
+
     /// A player's entity id (for tests and tools that attack or interact with it).
     pub fn entity_id(&self, conn: ConnId) -> Option<i32> {
         self.players.get(&conn).map(|p| p.entity_id)
@@ -1473,6 +1505,12 @@ impl Sim {
                 zoom_seed: self.zoom_seed,
                 sea_level: SEA_LEVELS[dim],
             },
+            fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
+            fire_watchers: std::sync::Arc::new({
+                let mut conns: Vec<&ConnId> = self.players.keys().collect();
+                conns.sort_unstable();
+                conns.into_iter().filter_map(|c| self.players.get(c)).filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()
+            }),
         }
     }
 
@@ -2100,6 +2138,11 @@ impl Sim {
             seen_credits: joining.seen_credits,
             pending_travel: None,
             vehicle: None,
+            vehicle_type: None,
+            levitation_start: None,
+            starting_to_fall: None,
+            entered_nether: None,
+            entered_lava_on_vehicle: None,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
             sleep: sleep::Sleep::default(),

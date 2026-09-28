@@ -97,9 +97,9 @@ impl RegionWork<'_> {
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut packets = std::mem::take(&mut self.packets).into_iter().peekable();
         while let Some((conn, pkt)) = packets.next() {
-            if self.plugins.is_none() && is_player_packet(&pkt) {
+            if self.plugins.is_none() && is_player_packet(&pkt) && !self.rod_use(conn, &pkt) {
                 let mut run = vec![(conn, pkt)];
-                while let Some(next) = packets.next_if(|(_, p)| is_player_packet(p)) {
+                while let Some(next) = packets.next_if(|(c, p)| is_player_packet(p) && !self.rod_use(*c, p)) {
                     run.push(next);
                 }
                 self.apply_player_packets(run, env, ctx);
@@ -129,6 +129,17 @@ impl RegionWork<'_> {
                         entities::hit_mob(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &hit);
                     }
                 }
+                continue;
+            }
+            // Fishing rods cast and reel in bobbers, which are the region's entities.
+            if let PlayIn::UseItem { hand, sequence, .. } = pkt
+                && self.rod_use(conn, &pkt)
+            {
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+                crate::fishing::use_rod(self.entities, &mut level, &mut self.players, i, off, &mut self.out.spawns);
+                let p = &mut *self.players[i];
+                p.ack_block_changes = p.ack_block_changes.max(sequence);
                 continue;
             }
             // Riding: the steered mount moves, the jump key makes it rear.
@@ -180,6 +191,13 @@ impl RegionWork<'_> {
             crate::plugins::after_packets(h, self.cells, env);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+    }
+
+    /// A Use Item with a fishing rod in that hand, from a living player.
+    fn rod_use(&self, conn: ConnId, pkt: &PlayIn) -> bool {
+        let PlayIn::UseItem { hand, .. } = pkt else { return false };
+        let off = *hand == kiln_proto::packets::serverbound::Hand::Off;
+        self.index_of(conn).is_some_and(|i| !self.players[i].dead && self.players[i].game_mode != 3 && crate::fishing::holds_rod(self.players[i], off))
     }
 
     /// A run of [`is_player_packet`] packets: grouped by player (each keeps its order) and
@@ -466,7 +484,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     }
     p.tick_food(env.natural_regen, &mut ctx);
     p.tick_stats();
-    let probe = crate::advancements::triggers::CellProbe { cells, min_y: env.min_y };
+    let probe = crate::advancements::triggers::CellProbe::new(cells, &env.blocks);
     p.tick_triggers(&probe);
     // `onInsideBlock` (Kiln checks the block at the feet).
     let feet = kiln_entity::math::BlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
@@ -770,6 +788,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
             p.place_recipe(&mut level, fx.spawns, container_id, recipe, use_max_items);
         }
+        PlayIn::SetBeacon { primary, secondary } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::container::open::set_beacon(p, &mut level, fx.spawns, primary, secondary);
+        }
         PlayIn::RecipeBookChangeSettings { book, open, filtering } => p.recipe_book_settings(book, open, filtering),
         PlayIn::RecipeBookSeenRecipe { recipe } => p.recipe_seen(&env.rules, recipe),
         // `handleSeenAdvancements`: opening a tab selects it.
@@ -879,7 +901,7 @@ fn use_on_block(
     // and `ServerPlayerGameMode.useItemOn` fire their triggers.
     p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, placed_from.item()), 1);
     let placed_state = level.block(placed_at);
-    let probe = crate::advancements::triggers::CellProbe { cells: &*level.cells, min_y: level.env.min_y };
+    let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     let at = [placed_at.x, placed_at.y, placed_at.z];
     p.used_on_block("minecraft:placed_block", at, placed_state, &placed_from, &probe);
     p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &placed_from, &probe);

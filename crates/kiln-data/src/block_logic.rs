@@ -23,6 +23,25 @@ pub fn block_item(item: &str) -> Option<(&'static str, Option<(&'static str, &'s
     Some((block, wall))
 }
 
+#[path = "gen/flammability.rs"]
+mod flammability;
+
+/// `FireBlock`'s (ignite odds, burn odds) of the state's block, before the waterlogged check
+/// (0, 0 for blocks fire does not burn).
+pub fn flammability(state: u16) -> (i32, i32) {
+    static BY_BLOCK: OnceLock<Vec<(u8, u8)>> = OnceLock::new();
+    let t = BY_BLOCK.get_or_init(|| {
+        let mut t = vec![(0, 0); BLOCKS.len()];
+        for &(name, ignite, burn) in flammability::FLAMMABILITY {
+            let i = BLOCKS.iter().position(|b| b.name == name).expect("flammable block exists");
+            t[i] = (ignite, burn);
+        }
+        t
+    });
+    let (i, b) = t[block_index(state)];
+    (i32::from(i), i32::from(b))
+}
+
 static RAW: &[u8] = include_bytes!("gen/block_logic.bin");
 
 struct Table {

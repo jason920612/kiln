@@ -1,6 +1,7 @@
 //! Player experience (`Player.giveExperiencePoints` / `giveExperienceLevels`,
 //! `ExperienceOrb.playerTouch`): orbs picked up add points, levels pay for anvils and
-//! enchanting, a dead player drops some as orbs. Mending is not applied yet.
+//! enchanting, a dead player drops some as orbs; mending (`repair_with_xp`) spends orb points
+//! on damaged equipment first.
 
 use crate::Player;
 use crate::entities::Entities;
@@ -67,6 +68,42 @@ impl Player {
         }
     }
 
+    /// `ExperienceOrb.repairPlayerItems`: a random damaged equipped item with a `repair_with_xp`
+    /// enchantment (the pick from the player's entity random) is repaired by what the
+    /// enchantment makes of `amount` (from the level random); the points the repair did not
+    /// use go to the next item. Returns the points left for the player.
+    pub(crate) fn repair_with_xp(&mut self, amount: i32) -> i32 {
+        use kiln_javamath::random::RandomSource;
+        let Some(loot) = self.loot.clone() else { return amount };
+        let mut amount = amount;
+        loop {
+            let slots: Vec<kiln_item::component::EquipmentSlot> = {
+                let equipment = self.equipment();
+                loot.items_with(kiln_loot::effects::ValueComponent::RepairWithXp, &equipment, kiln_item::ItemStack::is_damaged)
+                    .into_iter()
+                    .map(|(s, _)| s)
+                    .collect()
+            };
+            if slots.is_empty() {
+                return amount;
+            }
+            let slot = slots[self.entity_rng.next_int_bounded(slots.len() as i32) as usize];
+            let index = kiln_inventory::inventory::equipment_index(slot, self.inv.selected);
+            let stack = kiln_inventory::Container::item(&self.inv, index).clone();
+            let to_repair = loot.durability_from_xp(&stack, &mut self.level_rng, amount);
+            let repaired = to_repair.min(stack.damage());
+            kiln_inventory::Container::item_mut(&mut self.inv, index).insert(kiln_item::keys::DAMAGE, stack.damage() - repaired);
+            if repaired > 0 {
+                let used = amount.wrapping_sub(repaired.wrapping_mul(amount) / to_repair);
+                if used > 0 {
+                    amount = used;
+                    continue;
+                }
+            }
+            return 0;
+        }
+    }
+
     /// `Player.getBaseExperienceReward`: what a dead player drops.
     pub(crate) fn death_experience(&self, keep_inventory: bool) -> i32 {
         if keep_inventory || self.game_mode == 3 { 0 } else { (self.xp_level * 7).min(100) }
@@ -101,7 +138,10 @@ pub(crate) fn pick_up_orbs(entities: &mut Entities, players: &mut [&mut Player])
         p.take_xp_delay = 2;
         let pkt = entity::take_item_entity(e.id, p.entity_id, 1);
         p.send(pkt.clone());
-        p.give_experience_points(orb.value);
+        let remaining = p.repair_with_xp(orb.value);
+        if remaining > 0 {
+            p.give_experience_points(remaining);
+        }
         orb.count -= 1;
         for v in &e.seen_by {
             if let Ok(j) = players.binary_search_by_key(v, |q| q.conn)

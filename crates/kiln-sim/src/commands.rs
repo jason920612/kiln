@@ -613,13 +613,30 @@ impl Host for Sim {
         let Some(id) = kiln_data::builtin_id("minecraft:item", item.item.as_str()) else { return };
         let Some(p) = self.players.get_mut(&player.conn) else { return };
         let dim = p.dim;
+        // `ItemInput.createItemStack`: the item with the component changes.
+        let patch = {
+            let mut m = kiln_item::value::MapBuilder::new();
+            for (component, snbt) in &item.components {
+                match snbt {
+                    Some(s) => {
+                        if let Ok(v) = kiln_item::component::predicate::parse_snbt(s) {
+                            m.put(component.as_str(), v);
+                        }
+                    }
+                    None => {
+                        m.put(&format!("!{}", component.as_str()), kiln_item::value::Value::empty_map());
+                    }
+                }
+            }
+            kiln_item::DataComponentPatch::from_value(&m.build()).unwrap_or_default()
+        };
         // Stacks of at most the item's size; what does not fit is thrown (`GiveCommand`).
         let mut left = count;
-        let max = kiln_item::ItemStack::new(id, 1).max_stack_size();
+        let max = kiln_item::ItemStack::from_parts(id, 1, patch.clone()).max_stack_size();
         while left > 0 {
             let n = left.min(max);
             left -= n;
-            let mut stack = kiln_item::ItemStack::new(id, n);
+            let mut stack = kiln_item::ItemStack::from_parts(id, n, patch.clone());
             p.add_to_inventory(&mut stack);
             if !stack.is_empty() {
                 let spawn = p.throw(stack);

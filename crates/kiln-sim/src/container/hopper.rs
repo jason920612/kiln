@@ -60,11 +60,13 @@ pub(crate) fn container_at(level: &RegionLevel, pos: BlockPos) -> Option<Target>
 /// Container operations with the `WorldlyContainer` and `canPlaceItem` rules hoppers follow.
 pub(crate) struct View<'a> {
     parts: Vec<&'a mut ContainerBe>,
+    /// Recipes and item rules (what a brewing stand accepts); without them it accepts nothing.
+    rules: Option<std::sync::Arc<kiln_inventory::Rules>>,
 }
 
 impl<'a> View<'a> {
     pub fn one(c: &'a mut ContainerBe) -> Self {
-        View { parts: vec![c] }
+        View { parts: vec![c], rules: None }
     }
 
     fn locate(&self, slot: usize) -> (usize, usize) {
@@ -129,6 +131,12 @@ impl<'a> View<'a> {
                 Direction::Up => vec![0],
                 _ => vec![1],
             },
+            // `BrewingStandBlockEntity.getSlotsForFace`.
+            BeKind::BrewingStand => match face {
+                Direction::Up => vec![3],
+                Direction::Down => vec![0, 1, 2, 3],
+                _ => vec![0, 1, 2, 4],
+            },
             _ => (0..self.size()).collect(),
         }
     }
@@ -144,6 +152,7 @@ impl<'a> View<'a> {
                 }
                 _ => true,
             },
+            BeKind::BrewingStand => self.rules.as_deref().is_some_and(|r| super::brewing::can_place_item(&self.parts[0], slot, stack, r)),
             _ => true,
         }
     }
@@ -167,13 +176,16 @@ impl<'a> View<'a> {
             BeKind::Furnace(_) if face == Direction::Down && slot == 1 => {
                 kiln_inventory::tags::contains("minecraft:item", "minecraft:furnace_fuel_bottom_takeable", stack.effective_item())
             }
+            // `BrewingStandBlockEntity.canTakeItemThroughFace`: the ingredient slot gives up
+            // only glass bottles.
+            BeKind::BrewingStand if slot == 3 => !stack.is_empty() && stack.item_name() == "minecraft:glass_bottle",
             _ => true,
         }
     }
 
     /// `isWorldly`: a `WorldlyContainer` (face-specific slots).
     fn worldly(&self) -> bool {
-        matches!(self.kind(), BeKind::Furnace(_) | BeKind::ShulkerBox) && self.parts.len() == 1
+        matches!(self.kind(), BeKind::Furnace(_) | BeKind::ShulkerBox | BeKind::BrewingStand) && self.parts.len() == 1
     }
 }
 
@@ -194,7 +206,7 @@ pub(crate) fn with_target<R>(level: &mut RegionLevel, target: &Target, f: impl F
         }
     }
     let r = {
-        let mut view = View { parts: taken.iter_mut().map(|(_, c)| c).collect() };
+        let mut view = View { parts: taken.iter_mut().map(|(_, c)| c).collect(), rules: Some(level.env.menus.clone()) };
         f(&mut view)
     };
     // A furnace's new input item restarts its cooking at once (`setItem`).

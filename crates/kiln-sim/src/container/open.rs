@@ -202,6 +202,16 @@ impl Player {
                     }
                 }
                 kiln_inventory::Effect::InventoryChanged { stack, .. } => self.inventory_changed(&stack),
+                // `BrewedPotionTrigger`.
+                kiln_inventory::Effect::BrewedPotion { potion } => {
+                    self.fire_conds("minecraft:brewed_potion", None, |c, _, _| {
+                        c.get("potion").and_then(|v| v.as_str()).is_none_or(|want| {
+                            potion.and_then(|p| kiln_item::registry::POTION.name(p)).is_some_and(|have| {
+                                kiln_item::ident::Identifier::parse(want).is_some_and(|w| w.to_string() == have)
+                            })
+                        })
+                    });
+                }
                 e @ (kiln_inventory::Effect::GrindstoneUsed { .. }
                 | kiln_inventory::Effect::AnvilUsed { .. }
                 | kiln_inventory::Effect::LoomUsed
@@ -361,6 +371,8 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         BeKind::Hopper => single(Menu::hopper),
         BeKind::Dispenser | BeKind::Dropper => single(Menu::generic_3x3),
         BeKind::Furnace(kind) => single(furnace_menu(kind)),
+        BeKind::BrewingStand => single(Menu::brewing_stand),
+        BeKind::Beacon => single(Menu::beacon),
         BeKind::EnderChest => return None,
     })
 }
@@ -458,7 +470,15 @@ fn open_menu(p: &mut Player, level: &mut RegionLevel, provider: Provider, spawns
         let (loot, game_time, seed) = (level.env.loot.clone(), level.env.game_time, level.env.seed);
         for pos in positions.into_iter().flatten() {
             if let Some(c) = level.blocks.containers.get_mut(pos) {
+                let table = c.loot_table.clone();
                 super::unpack_loot(c, pos, loot.as_deref(), true, game_time, seed);
+                // `unpackLootTable(player)`: `player_generates_container_loot`.
+                if let Some(table) = table {
+                    let table = kiln_item::ident::Identifier::parse(&table).map_or(table, |i| i.to_string());
+                    p.fire_conds("minecraft:player_generates_container_loot", None, |c, _, _| {
+                        c.get("loot_tables").and_then(|v| v.as_str()).and_then(kiln_item::ident::Identifier::parse).is_some_and(|i| i.to_string() == table)
+                    });
+                }
             }
         }
     }
@@ -721,6 +741,21 @@ pub(crate) fn menu_op<R>(
         }
     }
     r
+}
+
+/// `handleSetBeaconPacket` → `BeaconMenu.updateEffects`: with a payment in the open beacon's
+/// menu and powers the pyramid allows, the beacon takes them and the payment is used up.
+pub(crate) fn set_beacon(p: &mut Player, level: &mut RegionLevel, spawns: &mut Vec<Spawn>, primary: Option<i32>, secondary: Option<i32>) {
+    let Some(OpenBlock::Containers { first: (pos, _), second: None }) = p.containers.open else { return };
+    let Some(levels) = level.blocks.containers.get(pos).and_then(|c| c.beacon.as_ref()).map(|b| b.levels) else { return };
+    if !p.open_menu.as_ref().is_some_and(|m| m.has_beacon_payment()) || !super::beacon::valid_powers(primary, secondary, levels) {
+        return;
+    }
+    super::beacon::set_powers(level, pos, primary, secondary);
+    menu_op(p, level, spawns, |menu, _, env| {
+        menu.take_beacon_payment();
+        menu.broadcast_changes(env);
+    });
 }
 
 /// Applies a placed block item's components to the block entity it made

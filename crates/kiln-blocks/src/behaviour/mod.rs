@@ -79,6 +79,7 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         C::NoteBlock => return devices::note_update_shape(level, s, pos, dir),
         C::PistonHeadBlock => return piston::head_update_shape(level, s, pos, dir),
         C::NetherPortalBlock => return portal::portal_update_shape(level, s, pos, dir, neighbor_state),
+        C::FireBlock | C::SoulFireBlock => return crate::fire::update_shape(level, s, pos),
         _ => {}
     }
     if logic::is_instance(s, C::LeavesBlock) {
@@ -215,12 +216,15 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         C::PistonBaseBlock => piston::on_place(level, s, pos, old),
         C::HopperBlock => container::hopper_on_place(level, s, pos, old),
-        // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it.
-        C::FireBlock | C::SoulFireBlock if !state::same_block(old, s) => {
-            portal::fire_on_place(level, pos);
-            // `FireBlock.onPlace`: the burn-out ticks start.
+        // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it; one that cannot
+        // survive goes out.
+        C::FireBlock | C::SoulFireBlock => {
+            if !state::same_block(old, s) && !portal::fire_on_place(level, pos) && !crate::fire::can_survive(level, s, pos) {
+                crate::remove_block(level, pos, false);
+            }
+            // `FireBlock.onPlace`: on every change of the state, the next tick.
             if logic::block_class(s) == C::FireBlock {
-                crate::weather::schedule_fire_tick(level, pos);
+                crate::fire::schedule_fire_tick(level, pos);
             }
         }
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_schedule(level, s, pos),
@@ -254,7 +258,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::ButtonBlock => components::button_tick(level, s, pos),
         C::RedstoneLampBlock => components::lamp_tick(level, s, pos),
         C::ObserverBlock => devices::observer_tick(level, s, pos),
-        C::FireBlock => crate::weather::fire_tick(level, s, pos),
+        C::FireBlock => crate::fire::fire_tick(level, s, pos),
         C::LightningRodBlock | C::WeatheringLightningRodBlock => crate::weather::rod_tick(level, s, pos),
         C::DetectorRailBlock => rail::detector_tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
@@ -268,12 +272,14 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     }
 }
 
-/// `randomTick`: leaf decay. Other random-tick behaviour (crop growth, grass spread, lava
-/// fire, ...) is not simulated yet; the positions are still drawn so the random-tick
-/// sequence stays aligned.
+/// `randomTick`: leaf decay and lava setting fire (`LiquidBlock.randomTick`: the fluid's).
+/// Other random-tick behaviour (crop growth, grass spread, ...) is not simulated yet; the
+/// positions are still drawn so the random-tick sequence stays aligned.
 pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     if logic::is_instance(s, BlockClass::LeavesBlock) {
         misc::leaves_random_tick(level, s, pos);
+    } else if logic::block_class(s) == BlockClass::LiquidBlock && logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
+        crate::fire::lava_random_tick(level, pos);
     }
 }
 
