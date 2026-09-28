@@ -820,6 +820,15 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     // The breaking player's held item is the tool; other breaks use an empty hand.
                     let tool = actor.and_then(|c| players.iter().find(|p| p.conn == c)).map(|p| p.inv.selected_item().clone());
                     let components = out.removed_components.iter().rev().find(|(p, _)| *p == pos).map(|(_, c)| c.clone());
+                    // `InfestedBlock.spawnAfterBreak`: a silverfish comes out unless the tool has
+                    // silk touch (`#prevents_infested_spawns`).
+                    let silk = tool.as_ref().and_then(|t| t.get(kiln_item::keys::ENCHANTMENTS)).is_some_and(|e| {
+                        kiln_item::registry::ENCHANTMENT.id("minecraft:silk_touch").is_some_and(|id| e.level(id) > 0)
+                    });
+                    if !silk && kiln_entity::mob::kinds::silverfish::is_infested(state) {
+                        let at = [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5];
+                        spawns.push(crate::mobs::spawn(kiln_entity::mob::MobKind::Silverfish, at, Some(0.0), None));
+                    }
                     match &env.loot {
                         Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i)),
                         None => spawns.extend(drop_stand_in(pos, state, env, i)),

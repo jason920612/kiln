@@ -119,6 +119,8 @@ pub struct PlayerView {
     pub hurt_recently: bool,
     /// The entity the player rides.
     pub vehicle: Option<i32>,
+    /// The amplifier of the player's Hero of the Village effect.
+    pub hero_of_the_village: Option<i32>,
 }
 
 impl PlayerView {
@@ -151,6 +153,7 @@ impl PlayerView {
             last_hurt_mob_time: 0,
             hurt_recently: false,
             vehicle: None,
+            hero_of_the_village: None,
         }
     }
 

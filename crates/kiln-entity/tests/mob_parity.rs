@@ -158,11 +158,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             if kind == "splash" {
                 mob::kinds::witch::splash(&mut p, level, hit, &stack, None);
             } else {
-                // The cloud joins the harness's entities at the end of the tick (vanilla's
-                // harness ticks what it tracks), so it first ticks on the next one.
-                level.immediate_adds = false;
                 mob::kinds::witch::linger(&mut p, level, hit, &stack, None);
-                level.immediate_adds = true;
             }
         }
         "interact" => {
@@ -309,6 +305,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         let tick = tick as i64;
         level.game_time = start + 1 + tick;
         level.tick_players();
+        // What the hurts and actions spawn is in the level at once but joins the harness's
+        // ticked entities at the end of the tick (vanilla's harness ticks what it tracks).
+        let ticked = level.len();
         for &(t, i, amount) in &hurts {
             if t == tick {
                 let p = player.expect("a hurting player");
@@ -332,7 +331,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         let before = level.player_hits.len();
         let nearest = player.filter(|p| !p.spectator);
-        for i in 0..level.len() {
+        for i in 0..ticked {
             level.tick_one(i, |e, level| {
                 if let (Some(p), EntityKind::Mob(_)) = (nearest, &e.kind) {
                     let d = e.position().distance_to_sqr(p.pos);
@@ -456,7 +455,7 @@ fn mobs_match_vanilla() {
     for line in text.lines() {
         let s: Value = serde_json::from_str(line).unwrap();
         let name = s["name"].as_str().unwrap().to_owned();
-        if filter.as_deref().is_some_and(|f| !name.contains(f)) {
+        if filter.as_deref().is_some_and(|f| !f.split('|').any(|f| name.contains(f))) {
             continue;
         }
         if s.get("error").is_some() {

@@ -42,6 +42,8 @@ pub struct ZombieVillagerState {
     pub conversion_player: Option<u128>,
     /// `tradeOffers` kept from the villager it was (given to the cured villager).
     pub offers: Option<Vec<kiln_item::trading::MerchantOffer>>,
+    /// `gossips` kept from the villager it was.
+    pub gossips: Option<crate::mob::gossip::Gossips>,
 }
 
 impl HasZombie for ZombieVillagerState {
@@ -108,6 +110,7 @@ impl Kind for ZombieVillager {
             conversion_time: -1,
             conversion_player: None,
             offers: None,
+            gossips: None,
         }))
     }
 
@@ -182,6 +185,8 @@ impl Kind for ZombieVillager {
         }
         let offers = r.get("Offers").map(kiln_item::trading::offers_from_nbt);
         st_mut(m).offers = offers;
+        let gossips = r.get("Gossips").map(crate::mob::gossip::Gossips::load);
+        st_mut(m).gossips = gossips;
         let t = r.int_or("ConversionTime", -1);
         let player = r.uuid("ConversionPlayer");
         let xp = r.int_or("Xp", 0);
@@ -209,6 +214,9 @@ impl Kind for ZombieVillager {
         o.put("VillagerDataFinalized", Tag::Byte(s.finalized as i8));
         if let Some(offers) = &s.offers {
             o.put("Offers", kiln_item::trading::offers_to_nbt(offers));
+        }
+        if let Some(g) = &s.gossips {
+            o.put("Gossips", g.save());
         }
         o.put("ConversionTime", Tag::Int(s.conversion_time));
         if let Some(p) = s.conversion_player {
@@ -293,6 +301,8 @@ fn finish_conversion(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         (s.villager_type.clone(), s.profession.clone(), s.level, s.finalized, s.xp)
     };
     let offers = st_mut(m).offers.take();
+    let gossips = st_mut(m).gossips.take();
+    let starter_uuid = st(m).conversion_player;
     mob::convert::convert_to(e, m, level, MobKind::Villager, false, false, |ne, nm, level| {
         // `setVillagerDataFinalized`, `setVillagerData`, `setOffers`, `setVillagerXp`.
         if let Some(v) = super::villager::state_mut(nm) {
@@ -303,6 +313,9 @@ fn finish_conversion(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
             v.level = vlevel;
             v.offers = offers;
             v.xp = xp;
+            if let Some(g) = &gossips {
+                v.gossips.put_all(g);
+            }
         }
         // `CuredZombieVillagerTrigger` for the player who started the cure.
         if let Some(player) = starter {
@@ -321,6 +334,10 @@ fn finish_conversion(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         mob::put(ne, Box::new(std::mem::replace(nm, MobData::new(MobKind::Villager, &mut kiln_javamath::random::LegacyRandom::new(0)))));
         mob::finalize_spawn(ne, level.random(), &ctx, &mut GroupData::default(), false);
         *nm = *mob::take(ne);
+        // `onReputationEvent(ZOMBIE_VILLAGER_CURED)` from the player who started the cure.
+        if let (Some(_), Some(u)) = (starter, starter_uuid) {
+            super::villager::reputation_event(nm, crate::mob::gossip::ReputationEvent::ZombieVillagerCured, u);
+        }
         if let Some(fx) = crate::effect::Effect::named("minecraft:nausea", 200, 0) {
             mob::effects::add(ne, nm, level, fx, None);
         }
