@@ -192,8 +192,6 @@ pub(crate) struct CommandState {
     /// Operators by name (permission level 4).
     pub ops: std::collections::HashSet<String>,
     pub difficulty: Difficulty,
-    pub raining: bool,
-    pub thundering: bool,
     pub game_rules: HashMap<String, GameRuleValue>,
     pub seed: i64,
     /// Shuffle state for `@r` / `sort=random` (xorshift).
@@ -226,8 +224,6 @@ impl CommandState {
             packs: crate::datapacks::Packs::new(None, "work/generated".into(), None),
             ops,
             difficulty: Difficulty::Normal,
-            raining: false,
-            thundering: false,
             game_rules: HashMap::new(),
             seed: 0,
             rng: 0x9E37_79B9_7F4A_7C15,
@@ -418,20 +414,6 @@ impl Sim {
         if let Some(p) = self.players.get_mut(&conn) {
             p.send(pkt);
         }
-    }
-
-    pub(crate) fn weather_packets(&self) -> Vec<Bytes> {
-        const START_RAINING: u8 = 2;
-        const STOP_RAINING: u8 = 1;
-        const RAIN_LEVEL: u8 = 7;
-        const THUNDER_LEVEL: u8 = 8;
-        let rain = if self.commands.raining { 1.0 } else { 0.0 };
-        let thunder = if self.commands.thundering { 1.0 } else { 0.0 };
-        vec![
-            packets::game_event(if self.commands.raining { START_RAINING } else { STOP_RAINING }, 0.0),
-            packets::game_event(RAIN_LEVEL, rain),
-            packets::game_event(THUNDER_LEVEL, thunder),
-        ]
     }
 }
 
@@ -740,42 +722,19 @@ impl Host for Sim {
     }
 
     fn set_weather(&mut self, weather: Weather, duration: Option<i32>) -> i32 {
-        self.commands.raining = weather != Weather::Clear;
-        self.commands.thundering = weather == Weather::Thunder;
-        for pkt in self.weather_packets() {
-            self.broadcast(pkt);
-        }
-        duration.unwrap_or(6000)
+        self.command_weather(weather, duration)
     }
 
-    fn time(&mut self, _clock: Option<&Identifier>, action: &TimeAction) -> Result<i32, CommandError> {
-        let result = match action {
-            TimeAction::Set(t) => {
-                self.day_time = *t as i64;
-                self.reply(kiln_command::tr!("commands.time.set", *t));
-                *t
-            }
-            TimeAction::Add(t) => {
-                self.day_time += *t as i64;
-                let now = self.day_time as i32;
-                self.reply(kiln_command::tr!("commands.time.set", now));
-                now
-            }
-            TimeAction::QueryGameTime => {
-                let t = self.game_time as i32;
-                self.reply(kiln_command::tr!("commands.time.query", t));
-                t
-            }
-            TimeAction::QueryTime => {
-                let t = self.day_time as i32;
-                self.reply(kiln_command::tr!("commands.time.query", t));
-                t
-            }
-            _ => return Err(CommandError::new(Text::literal("Not supported yet"))),
-        };
-        let pkt = self.time_packet();
-        self.broadcast(pkt);
-        Ok(result)
+    fn time(&mut self, clock: Option<&Identifier>, action: &TimeAction) -> Result<i32, CommandError> {
+        self.command_time(clock.map(Identifier::as_str), action)
+    }
+
+    fn time_markers(&self, clock: Option<&Identifier>) -> Vec<String> {
+        crate::weather::time_markers(clock.map_or(OVERWORLD, Identifier::as_str)).iter().map(|(m, _)| (*m).to_owned()).collect()
+    }
+
+    fn timelines(&self, clock: Option<&Identifier>) -> Vec<String> {
+        crate::weather::timelines(clock.map_or(OVERWORLD, Identifier::as_str)).iter().map(|(t, _)| (*t).to_owned()).collect()
     }
 
     fn game_rule(&self, rule: &str) -> GameRuleValue {
@@ -788,6 +747,11 @@ impl Host for Sim {
 
     fn set_game_rule(&mut self, rule: &str, value: GameRuleValue) {
         self.commands.game_rules.insert(rule.to_owned(), value);
+        // `MinecraftServer.onGameRuleChanged`: clients stop or restart their clocks.
+        if rule == "minecraft:advance_time" {
+            let pkt = self.time_packet();
+            self.broadcast(pkt);
+        }
     }
 
     fn seed(&self) -> i64 {
@@ -810,6 +774,8 @@ impl Host for Sim {
         if let Some(p) = self.players.get_mut(&player.conn) {
             p.respawn = Some(spawn.pos);
             p.respawn_dim = crate::dim_id(&spawn.dimension).unwrap_or(crate::OVERWORLD_ID);
+            p.respawn_forced = true;
+            p.respawn_angle = spawn.yaw;
         }
     }
 

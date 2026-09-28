@@ -131,6 +131,8 @@ pub enum DamageKind {
     MobProjectile,
     Magic,
     IndirectMagic,
+    /// `minecraft:lightning_bolt`.
+    LightningBolt,
 }
 
 /// Side effects the simulation carries out or broadcasts.
@@ -224,6 +226,23 @@ pub trait EntityLevel {
     fn is_raining_at(&self, pos: BlockPos) -> bool {
         let _ = pos;
         false
+    }
+
+    /// `LightningBolt.spawnFire` at one position: fire (or soul fire) where the block is air
+    /// and fire survives. Returns whether fire was placed.
+    fn place_lightning_fire(&mut self, pos: BlockPos) -> bool {
+        let _ = pos;
+        false
+    }
+
+    /// `LightningBolt.powerLightningRod`: the block the bolt struck.
+    fn lightning_strike_block(&mut self, pos: BlockPos) {
+        let _ = pos;
+    }
+
+    /// `Entity.thunderHit` of player `id` (fire and 5 lightning damage).
+    fn thunder_hit_player(&mut self, id: i32) {
+        let _ = id;
     }
 
     /// The `minecraft:fast_lava` environment attribute (true in the nether).

@@ -42,8 +42,10 @@ mod players;
 pub(crate) mod portal;
 mod region;
 mod rng;
+mod sleep;
 mod stats;
 mod trading;
+mod weather;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
@@ -54,6 +56,8 @@ mod enchant;
 mod enchant_parity;
 #[cfg(test)]
 mod effect_parity;
+#[cfg(test)]
+mod weather_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -346,6 +350,14 @@ struct Player {
     /// owner's side).
     last_hurt_by_mob: Option<(i32, i64)>,
     last_hurt_mob: Option<(i32, i64)>,
+    /// Sleeping in a bed and the insomnia statistic.
+    sleep: sleep::Sleep,
+    /// Woke up this tick: the wake-up animation goes out with the movement.
+    woke_up: bool,
+    /// `RespawnConfig`: the facing at the respawn point and whether it is forced
+    /// (`/spawnpoint`; beds and anchors are not).
+    respawn_angle: f32,
+    respawn_forced: bool,
 }
 
 impl Player {
@@ -703,6 +715,20 @@ pub struct Sim {
     /// The End's exit portal and first gateway were checked this run ([`Sim::prepare_end`]).
     end_prepared: bool,
     commands: commands::CommandState,
+    /// The server-wide weather counters (`weather.dat`).
+    weather: weather::WeatherData,
+    /// Each level's rain and thunder levels, by [`DimId`].
+    level_weather: [weather::LevelWeather; 3],
+    /// Stand-in for the overworld's level random (weather cycle, `/weather` durations).
+    weather_random: kiln_javamath::random::LegacyRandom,
+    /// Biome climates from the datapack (precipitation, `isRainingAt`).
+    climates: Option<std::sync::Arc<weather::Climates>>,
+    /// `BiomeManager`'s obfuscated world seed.
+    zoom_seed: i64,
+    /// Rate, fraction and pause of the overworld and End clocks.
+    clock_runs: [weather::ClockRun; 2],
+    /// Each level's sleeping players (`ServerLevel.sleepStatus`).
+    sleep_status: [sleep::SleepStatus; 3],
 }
 
 /// Operator names from `KILN_OPS` (comma separated).
@@ -827,6 +853,7 @@ impl Sim {
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
+        let seed = config.noise.as_ref().map_or(0, |n| n.seed);
         let mut sim = Sim {
             rules,
             loot,
@@ -848,11 +875,19 @@ impl Sim {
             end_clock: kiln_data::synced_id("minecraft:world_clock", "minecraft:the_end").expect("end clock"),
             end_prepared: false,
             commands: commands::CommandState::new(ops_from_env()),
+            weather: Default::default(),
+            level_weather: Default::default(),
+            weather_random: kiln_javamath::random::LegacyRandom::new(seed ^ 0x7765_6174_6865_72),
+            climates: weather::Climates::load(&vanilla_pack).map(std::sync::Arc::new),
+            zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
+            clock_runs: Default::default(),
+            sleep_status: Default::default(),
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.load_scoreboard();
+        sim.load_weather();
         sim.init_packs(vanilla_pack);
         sim
     }
@@ -1035,6 +1070,34 @@ impl Sim {
             }
         }
         h.finish()
+    }
+
+    /// The overworld clock (time of day).
+    pub fn day_time(&self) -> i64 {
+        self.day_time
+    }
+
+    /// The overworld's weather: (raining, thundering, rain level, thunder level) with the
+    /// levels as `getRainLevel(1)` and `getThunderLevel(1)`.
+    pub fn overworld_weather(&self) -> (bool, bool, f32, f32) {
+        let w = &self.level_weather[OVERWORLD_ID];
+        (self.is_raining(OVERWORLD_ID), self.is_thundering(OVERWORLD_ID), w.rain_level(), w.thunder_level())
+    }
+
+    /// The weather counters: (clear time, rain time, thunder time, raining, thundering).
+    pub fn weather_counters(&self) -> (i32, i32, i32, bool, bool) {
+        let w = &self.weather;
+        (w.clear_weather_time, w.rain_time, w.thunder_time, w.raining, w.thundering)
+    }
+
+    /// The bed a player sleeps in, and its sleep counter and `time_since_rest`.
+    pub fn sleep_state(&self, conn: ConnId) -> Option<(Option<[i32; 3]>, i32, i32)> {
+        self.players.get(&conn).map(|p| (p.sleep.pos, p.sleep.counter, p.sleep.time_since_rest))
+    }
+
+    /// A player's respawn point and level.
+    pub fn respawn_point(&self, conn: ConnId) -> Option<(Option<[i32; 3]>, &'static str)> {
+        self.players.get(&conn).map(|p| (p.respawn, DIMENSIONS[p.respawn_dim].0))
     }
 
     pub fn game_time(&self) -> i64 {
@@ -1273,6 +1336,7 @@ impl Sim {
                 fast_lava: kind.fast_lava,
                 water_evaporates: kind.water_evaporates,
                 tnt_explodes: self.rule_bool("minecraft:tnt_explodes"),
+                infiniburn: kind.infiniburn.trim_start_matches('#'),
             },
             dim,
             min_y: d.min_y,
@@ -1285,7 +1349,7 @@ impl Sim {
             damage: self.damage_rules(),
             mobs: mobs::MobRules {
                 day_time: self.day_time,
-                sky_darken: mobs::sky_darken(self.day_time),
+                sky_darken: weather::sky_darken(dim, self.day_time, &self.level_weather[dim]),
                 monsters_burn: mobs::monsters_burn(self.day_time),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
@@ -1297,6 +1361,16 @@ impl Sim {
             },
             spawn_table: self.spawn_table.clone(),
             menus: self.rules.clone(),
+            weather: weather::WeatherEnv {
+                weather: kiln_blocks::weather::Weather {
+                    raining: self.is_raining(dim),
+                    thundering: self.is_thundering(dim),
+                    max_snow_height: self.rule_int("minecraft:max_snow_accumulation_height"),
+                },
+                climates: self.climates.clone(),
+                zoom_seed: self.zoom_seed,
+                sea_level: SEA_LEVELS[dim],
+            },
         }
     }
 
@@ -1531,12 +1605,35 @@ impl Sim {
     /// the End) keeps health, food, effects and the rest; otherwise the player is a fresh one.
     fn respawn_player(&mut self, conn: ConnId, keep_all: bool) {
         let Some(p) = self.players.get(&conn) else { return };
-        let (dim, pos) = match p.respawn {
+        // `ServerPlayer.findRespawnAndUseSpawnBlock`: beside the bed or charged anchor, at a
+        // forced point, or (the block is gone) at the world spawn with a notice.
+        let (respawn, respawn_dim, forced, uuid, angle) = (p.respawn, p.respawn_dim, p.respawn_forced, p.uuid, p.respawn_angle);
+        let mut rot = [0.0, 0.0];
+        let mut lost = false;
+        let mut depleted = None;
+        let (dim, pos) = match respawn {
             Some(r) => {
-                let d = p.respawn_dim;
-                (d, kiln_world::spawn::free_spawn_at(&mut self.dims[d], r))
+                self.dims[respawn_dim].load_chunk(player_chunk([r[0] as f64, r[1] as f64, r[2] as f64]));
+                let charges_before = self.dims[respawn_dim].regions.chunk(ChunkPos::of_block(r[0], r[2])).map(|c| c.get((r[0] & 15) as usize, r[1], (r[2] & 15) as usize));
+                match self.with_level_in(respawn_dim, r, |level| sleep::find_respawn(level, r, forced)) {
+                    Some(sleep::RespawnAt::Block(v, facing)) => {
+                        rot = [facing, 0.0];
+                        if charges_before.is_some_and(|s| kiln_data::block_logic::block_class(s) == kiln_data::block_logic::BlockClass::RespawnAnchorBlock) && !forced {
+                            depleted = Some(r);
+                        }
+                        (respawn_dim, v)
+                    }
+                    Some(sleep::RespawnAt::Invalid) => {
+                        lost = true;
+                        (OVERWORLD_ID, self.new_player_position(uuid))
+                    }
+                    Some(sleep::RespawnAt::Forced) | None => {
+                        rot = [angle, 0.0];
+                        (respawn_dim, kiln_world::spawn::free_spawn_at(&mut self.dims[respawn_dim], r))
+                    }
+                }
             }
-            None => (OVERWORLD_ID, self.new_player_position(p.uuid)),
+            None => (OVERWORLD_ID, self.new_player_position(uuid)),
         };
         let info_packet = {
             let p = &self.players[&conn];
@@ -1545,12 +1642,15 @@ impl Sim {
         };
         let (spawn, spawn_rot, now) = (self.spawn, self.spawn_rot, self.game_time);
         let time = self.time_packet();
+        let weather = self.weather_packets(dim);
         let rules = self.rules.clone();
         // Viewers in the old level saw the death (or the player walk into the portal): they
         // forget it and get the entity again once tracking re-evaluates it.
         self.untrack_everywhere(conn);
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info_packet);
+        self.sleep_status[p.dim].dirty = true;
+        self.sleep_status[dim].dirty = true;
         p.dim = dim;
         p.dead = false;
         p.using = None;
@@ -1587,13 +1687,27 @@ impl Sim {
         p.sync_velocity = false;
         p.sent_chunks.clear();
         p.unacked_batches = 0;
-        p.teleport(pos, [0.0, 0.0], now);
+        if lost {
+            // `NO_RESPAWN_BLOCK_AVAILABLE`: "You have no home bed or charged respawn anchor...".
+            p.respawn = None;
+            p.send(packets::game_event(0, 0.0));
+        }
+        if let Some(at) = depleted {
+            let id = kiln_data::builtin_id("minecraft:sound_event", "minecraft:block.respawn_anchor.deplete").unwrap_or(0);
+            let seed = kiln_javamath::random::RandomSource::next_long(&mut p.sound_seed);
+            let at = [at[0] as f64, at[1] as f64, at[2] as f64];
+            p.send(packets::world_fx::sound(&packets::world_fx::Sound::Registered(id), packets::world_fx::SoundSource::Blocks, at, 1.0, 1.0, seed));
+        }
+        p.teleport(pos, rot, now);
         p.block_effects_from = pos;
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
         p.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         p.send(time);
+        for w in weather {
+            p.send(w);
+        }
         p.sent_health = None;
         p.sync_health();
         p.sent_xp = None;
@@ -1662,7 +1776,13 @@ impl Sim {
     }
 
     fn leave(&mut self, conn: ConnId) {
-        if let Some(p) = self.players.remove(&conn) {
+        // `ServerPlayer.disconnect`: a sleeper gets out of bed first.
+        if let Some(mut p) = self.players.remove(&conn) {
+            if p.sleep.pos.is_some() {
+                let (dim, pos) = (p.dim, p.pos.map(|c| c.floor() as i32));
+                self.with_level_in(dim, pos, |level| sleep::stop_sleep_in_bed(&mut p, level, true, false));
+            }
+            self.sleep_status[p.dim].dirty = true;
             self.commands.bossbars.player_left(p.uuid);
             self.save_player(&p);
             self.announce_leave(&p, conn);
@@ -1710,6 +1830,7 @@ impl Sim {
             self.save_player(p);
         }
         self.save_level();
+        self.save_weather();
         self.save_scoreboard();
         self.save_timers();
     }
@@ -1836,6 +1957,10 @@ impl Sim {
             vehicle: None,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
+            sleep: sleep::Sleep { time_since_rest: joining.time_since_rest, ..Default::default() },
+            woke_up: false,
+            respawn_angle: joining.respawn_angle,
+            respawn_forced: joining.respawn_forced,
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -1857,6 +1982,10 @@ impl Sim {
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
         player.send(self.time_packet());
+        // `PlayerList.sendLevelInfo`: the weather of the player's level.
+        for pkt in self.weather_packets(player.dim) {
+            player.send(pkt);
+        }
         player.send(packets::set_held_slot(player.inv.selected as i32));
         player.sync_health();
         // `PlayerList.placeNewPlayer`: the saved effects.
@@ -1871,21 +2000,13 @@ impl Sim {
         for pkt in self.commands.scoreboard.join_packets() {
             player.send(pkt);
         }
+        self.sleep_status[player.dim].dirty = true;
         self.players.insert(j.conn, player);
         self.send_command_tree(j.conn);
         self.announce_join(j.conn);
         self.broadcast_system(msg);
         self.commands.bossbars.player_joined(uuid);
         self.flush_scoreboard();
-    }
-
-    fn time_packet(&self) -> Bytes {
-        // `ServerClockManager.createFullSyncPacket`: every clock, whatever the player's level.
-        let overworld = packets::ClockState { clock: self.overworld_clock, time: self.day_time, fraction: 0.0, rate: 1.0 };
-        let end = packets::ClockState { clock: self.end_clock, time: self.end_time, fraction: 0.0, rate: 1.0 };
-        let mut clocks = [overworld, end];
-        clocks.sort_by_key(|c| c.clock);
-        packets::set_time(self.game_time, &clocks)
     }
 
     /// `ServerLevel.isFlat` (a superflat generator): Kiln's test worlds' overworld.
@@ -1927,15 +2048,18 @@ impl Sim {
         for d in &mut self.dims {
             d.game_time = self.game_time;
         }
-        self.end_time += 1;
         self.tick_functions();
-        if self.game_time % AUTOSAVE_TICKS == 0 {
-            self.save();
-        }
-        self.day_time += 1;
+        self.tick_clocks();
         if self.game_time % 20 == 0 {
             let pkt = self.time_packet();
             self.broadcast(pkt);
+        }
+        // The levels' `tick`: the weather, sleeping, then (in the regions) the blocks.
+        self.update_sleeping();
+        self.tick_weather();
+        self.tick_sleep();
+        if self.game_time % AUTOSAVE_TICKS == 0 {
+            self.save();
         }
     }
 }

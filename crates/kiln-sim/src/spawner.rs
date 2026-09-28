@@ -269,8 +269,8 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
 
 /// `PhantomSpawner.tick`, per region. Approximations: the pass comes every 1200 ticks with a
 /// chance of 2 in 3 from a random seeded by the world and the time (vanilla waits 1200 to 2379
-/// ticks, 1790 on average: here 1800), and the insomnia statistic `time_since_rest` is the
-/// player's ticks since joining or respawning (Kiln has no beds to rest in).
+/// ticks, 1790 on average: here 1800). The insomnia statistic is `time_since_rest` (see
+/// [`crate::sleep`]).
 fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn>) {
     let env = level.env;
     if env.game_time % 1200 != 0 {
@@ -294,7 +294,7 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
         if !(ctx.effective_difficulty > r.next_float() * 3.0) {
             continue;
         }
-        let since_rest = p.tick_count.max(1);
+        let since_rest = p.sleep.time_since_rest.max(1);
         if r.next_int_bounded(since_rest) < 72000 {
             continue;
         }

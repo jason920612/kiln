@@ -56,7 +56,13 @@ impl Player {
     }
 
     fn pose(&self) -> i32 {
-        if self.sneaking { pose::CROUCHING } else { pose::STANDING }
+        if self.sleep.pos.is_some() {
+            pose::SLEEPING
+        } else if self.sneaking {
+            pose::CROUCHING
+        } else {
+            pose::STANDING
+        }
     }
 
     /// Entity data a new viewer needs (fields that differ from their defaults).
@@ -67,9 +73,12 @@ impl Player {
         if self.client.main_hand == 0 {
             d.set(data::avatar::PLAYER_MAIN_HAND, &DataValue::HumanoidArm(HumanoidArm::Left));
         }
-        if self.shared_flags() != 0 {
+        if self.shared_flags() != 0 || self.sleep.pos.is_some() {
             d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(self.shared_flags()));
             d.set(data::entity::POSE, &DataValue::Pose(self.pose()));
+        }
+        if self.sleep.pos.is_some() {
+            d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(self.sleep.pos));
         }
         if self.living_flags() != 0 {
             d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(self.living_flags()));
@@ -326,12 +335,29 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player]) {
             target.meta_dirty = true;
             target.self_meta_dirty = true;
         }
+        // Lying down or getting up: the pose and the bed position go to the player as well.
+        let sleep_dirty = std::mem::take(&mut target.sleep.meta_dirty);
+        if sleep_dirty {
+            let mut d = EntityData::new();
+            d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
+            d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(target.sleep.pos));
+            target.send(entity::set_entity_data(target.entity_id, &d));
+        }
+        if std::mem::take(&mut target.woke_up) {
+            // `ClientboundAnimatePacket.WAKE_UP`, to the player and its viewers.
+            let pkt = entity::animate(target.entity_id, 0);
+            target.send(pkt.clone());
+            packets.push(pkt);
+        }
         if target.meta_dirty {
             target.meta_dirty = false;
             let mut d = EntityData::new();
             d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(target.shared_flags()));
             d.set(data::entity::POSE, &DataValue::Pose(target.pose()));
             d.set(data::living_entity::LIVING_ENTITY_FLAGS, &DataValue::Byte(target.living_flags()));
+            if sleep_dirty {
+                d.set(data::living_entity::SLEEPING_POS, &DataValue::OptionalBlockPos(target.sleep.pos));
+            }
             if effects_dirty {
                 target.effect_data(&mut d);
             }

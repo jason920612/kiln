@@ -49,12 +49,21 @@ pub struct Rules {
     pub water_evaporates: bool,
     /// `minecraft:tnt_explodes`.
     pub tnt_explodes: bool,
+    /// The dimension's `infiniburn` block tag (fire never burns out on these).
+    pub infiniburn: &'static str,
 }
 
 impl Default for Rules {
     /// Overworld with default game rules.
     fn default() -> Self {
-        Self { water_source_conversion: true, lava_source_conversion: false, fast_lava: false, water_evaporates: false, tnt_explodes: true }
+        Self {
+            water_source_conversion: true,
+            lava_source_conversion: false,
+            fast_lava: false,
+            water_evaporates: false,
+            tnt_explodes: true,
+            infiniburn: "minecraft:infiniburn_overworld",
+        }
     }
 }
 
@@ -182,6 +191,42 @@ pub trait Level {
 
     /// Called before each queued update runs (vanilla's neighbour-update debug listener).
     fn trace_update(&mut self, _update: UpdateTrace) {}
+
+    /// `Level.getHeight`: the build height.
+    fn height(&self) -> i32 {
+        384
+    }
+
+    /// The weather and rules precipitation reads (clear by default).
+    fn weather(&self) -> crate::weather::Weather {
+        crate::weather::Weather::default()
+    }
+
+    /// The `MOTION_BLOCKING` heightmap: the y above the column's topmost motion-blocking block.
+    fn motion_blocking_height(&self, _x: i32, _z: i32) -> i32 {
+        self.min_y()
+    }
+
+    /// The climate of the biome at `biome_pos` (`Level.getBiome`), its temperature read at
+    /// `pos`; `None` without biome data (no precipitation effects).
+    fn climate(&self, _biome_pos: BlockPos, _pos: BlockPos) -> Option<crate::weather::Climate> {
+        None
+    }
+
+    /// `getBrightness(LightLayer.BLOCK, pos)`.
+    fn block_light(&self, _pos: BlockPos) -> i32 {
+        0
+    }
+
+    /// `Level.isRainingAt`.
+    fn is_raining_at(&self, _pos: BlockPos) -> bool {
+        false
+    }
+
+    /// Makes the level random's next draws for work at `pos` independent of what else the
+    /// level did (a simulation split into regions reseeds it from the position and time;
+    /// the vanilla level keeps its one random, so the default does nothing).
+    fn reseed_random(&mut self, _pos: BlockPos) {}
 }
 
 /// Which entities a block counts.

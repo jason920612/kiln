@@ -38,6 +38,8 @@ pub(crate) enum Body {
     /// A new mob facing `yaw`; `finalize` runs its `finalizeSpawn`.
     /// `yaw`: `None` keeps the constructor's random yaw.
     Mob { kind: kiln_entity::mob::MobKind, yaw: Option<f32>, finalize: Option<crate::mobs::Finalize> },
+    /// A lightning bolt (`visual_only`: a skeleton trap's, which hurts nothing).
+    Lightning { visual_only: bool },
 }
 
 pub(crate) struct Entity {
@@ -158,6 +160,7 @@ impl Entity {
                 kiln_entity::falling_block::fall(id, u, BlockPos::containing(pos.x, pos.y, pos.z), state, seed)
             }
             Body::Tnt => kiln_entity::tnt::ignite(id, u, pos, None, seed),
+            Body::Lightning { visual_only } => kiln_entity::ext_entity::lightning::new(id, u, pos, visual_only, seed),
             Body::Mob { kind, yaw, finalize } => {
                 let mut e = kiln_entity::mob::new(kind, id, u, seed);
                 e.set_pos(pos);
@@ -296,6 +299,15 @@ impl Entity {
 
     /// The bounding box, and whether it keeps blocks from being placed into it
     /// (`Entity.blocksBuilding`: primed TNT and falling blocks).
+    /// `Monster.isPreventingPlayerRest`: monsters do, zombified piglins only while angry.
+    pub fn prevents_rest(&self) -> bool {
+        let Some(m) = self.phys.as_ref().and_then(kiln_entity::mob::data) else { return false };
+        if m.health <= 0.0 || m.kind.category() != kiln_entity::mob::Category::Monster {
+            return false;
+        }
+        m.kind != kiln_entity::mob::MobKind::ZombifiedPiglin || m.target.is_some()
+    }
+
     pub fn body(&self) -> ([f64; 3], [f64; 3], bool) {
         let p = self.phys();
         let bb = p.bounding_box();
@@ -578,6 +590,29 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn sky_darken(&self) -> i32 {
         self.level.env.mobs.sky_darken
+    }
+
+    fn is_raining_at(&self, pos: BlockPos) -> bool {
+        crate::weather::is_raining_at(self.level.cells, self.level.env, kb(pos))
+    }
+
+    fn place_lightning_fire(&mut self, pos: BlockPos) -> bool {
+        crate::weather::place_lightning_fire(&mut *self.level, kb(pos))
+    }
+
+    fn lightning_strike_block(&mut self, pos: BlockPos) {
+        kiln_blocks::weather::lightning_strike(&mut *self.level, kb(pos));
+    }
+
+    fn thunder_hit_player(&mut self, id: i32) {
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return };
+        // `Entity.thunderHit`: one more tick of fire, 8 seconds if that made it 0.
+        let ticks = p.fire_ticks + 1;
+        p.set_fire_ticks(if ticks == 0 { 160 } else { ticks });
+        let source = health::Source { cause: health::Cause::Entity(DamageKind::LightningBolt), attacker: None, direct: None, weapon: None };
+        let env = self.level.env;
+        let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
+        p.hurt(5.0, &source, &mut ctx);
     }
 
     fn monsters_burn(&self) -> bool {
@@ -1139,6 +1174,49 @@ pub(crate) fn with_entity<R>(
     Some(r)
 }
 
+/// Runs `f` with the region as an entity level (block work that affects entities: bed and
+/// respawn anchor explosions), then carries out what it did.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_level<R>(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    salt: u64,
+    f: impl FnOnce(&mut dyn EntityLevel) -> R,
+) -> R {
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, 0);
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: 0,
+        seeds: salt << 8,
+        rng,
+        grid: Grid::default(),
+    };
+    sim.grid = Grid::build(sim.list);
+    let r = f(&mut sim);
+    for e in sim.list.iter_mut() {
+        e.sync();
+    }
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    for (n, event) in keyed(events) {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+    r
+}
+
 /// Events with the index each gets for its seeds (sounds, loot): counted per source (the
 /// entity, or the position), so they do not depend on what else the region's entities did.
 fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
@@ -1584,5 +1662,6 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::MobProjectile => ("minecraft:mob_projectile", "death.attack.mob"),
         DamageKind::Magic => ("minecraft:magic", "death.attack.magic"),
         DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),
+        DamageKind::LightningBolt => ("minecraft:lightning_bolt", "death.attack.lightningBolt"),
     }
 }

@@ -57,6 +57,11 @@ pub struct TestLevel {
     pub comparator_outputs: HashMap<BlockPos, i32>,
     /// Block reads so far (for profiling).
     pub reads: std::cell::Cell<u64>,
+    /// The weather precipitation sees.
+    pub weather: crate::weather::Weather,
+    /// Biome climates for precipitation: (biome position, read position) to the climate.
+    #[allow(clippy::type_complexity)]
+    pub climate: Option<Box<dyn Fn(BlockPos, BlockPos) -> Option<crate::weather::Climate>>>,
 }
 
 impl TestLevel {
@@ -79,7 +84,14 @@ impl TestLevel {
             trace: None,
             comparator_outputs: HashMap::new(),
             reads: std::cell::Cell::new(0),
+            weather: Default::default(),
+            climate: None,
         }
+    }
+
+    /// Reseeds the level random (`RandomSource.setSeed`).
+    pub fn set_random_seed(&mut self, seed: i64) {
+        self.random = LegacyRandom::new(seed);
     }
 
     /// An empty overworld-height void.
@@ -235,5 +247,33 @@ impl Level for TestLevel {
         if let Some(t) = &mut self.trace {
             t.push(update);
         }
+    }
+
+    fn min_y(&self) -> i32 {
+        self.min_y
+    }
+
+    fn height(&self) -> i32 {
+        self.height
+    }
+
+    fn weather(&self) -> crate::weather::Weather {
+        self.weather
+    }
+
+    fn motion_blocking_height(&self, x: i32, z: i32) -> i32 {
+        let top_section = self.sections.keys().filter(|k| k.0 == x >> 4 && k.2 == z >> 4).map(|k| k.1 * 16 + 15).max();
+        let top_layer = self.min_y + self.layers.len() as i32 - 1;
+        let start = top_section.unwrap_or(i32::MIN).max(top_layer).min(self.min_y + self.height - 1);
+        for y in (self.min_y..=start).rev() {
+            if kiln_data::block_props::motion_blocking(self.block(BlockPos::new(x, y, z))) {
+                return y + 1;
+            }
+        }
+        self.min_y
+    }
+
+    fn climate(&self, biome_pos: BlockPos, pos: BlockPos) -> Option<crate::weather::Climate> {
+        self.climate.as_ref().and_then(|f| f(biome_pos, pos))
     }
 }

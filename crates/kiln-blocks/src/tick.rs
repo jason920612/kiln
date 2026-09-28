@@ -57,16 +57,15 @@ pub fn randomly_ticks(state: u16) -> bool {
 }
 
 /// The block part of `ServerLevel.tickChunk` for the chunk at `chunk`: the precipitation
-/// rolls, then `speed` random ticks in each section that `section_ticks` reports as holding
-/// randomly ticking blocks or fluids (sections from the bottom, as `(section_y, ticking)`).
-///
-/// Precipitation effects (snow, ice, cauldrons) are not simulated; their random numbers and
-/// positions are still drawn, so later picks match vanilla.
+/// rolls (`tickPrecipitation`: ice, snow, cauldrons), then `speed` random ticks in each
+/// section that `section_ticks` reports as holding randomly ticking blocks or fluids
+/// (sections from the bottom, as `(section_y, ticking)`).
 pub fn tick_chunk_blocks<L: Level>(level: &mut L, chunk: ChunkKey, sections: &[(i32, bool)], speed: i32) {
     let (x, z) = (chunk.0 * 16, chunk.1 * 16);
     for _ in 0..speed {
         if level.random().next_int_bounded(48) == 0 {
-            block_random_pos(level, x, 0, z, 15);
+            let pos = block_random_pos(level, x, 0, z, 15);
+            crate::weather::tick_precipitation(level, pos);
         }
     }
     if speed <= 0 {

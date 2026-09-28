@@ -229,8 +229,9 @@ impl Player {
 
     /// `Entity.applyEffectsFromBlocks` for the move since the last player tick: magma under the
     /// feet, then the fire, lava, water and campfire blocks the box passed through, in vanilla's
-    /// step order; a player that is not burning afterwards rests at -20 fire ticks.
-    pub(crate) fn block_effects(&mut self, block: BlockAt, dim: crate::DimId, ctx: &mut DamageCtx) {
+    /// step order, then rain (`isInRain`) puts the fire out; a player that is not burning
+    /// afterwards rests at -20 fire ticks.
+    pub(crate) fn block_effects(&mut self, block: BlockAt, dim: crate::DimId, in_rain: bool, ctx: &mut DamageCtx) {
         let to = self.pos;
         let mut from = std::mem::replace(&mut self.block_effects_from, to);
         let d2 = (0..3).map(|i| (to[i] - from[i]).powi(2)).sum::<f64>();
@@ -264,6 +265,9 @@ impl Player {
                 }
                 Inside::LavaHurt => self.lava_hurt(ctx),
             }
+        }
+        if in_rain {
+            self.clear_fire();
         }
         if was_on_fire && self.fire_ticks <= 0 {
             // `playEntityOnFireExtinguishedSound`.

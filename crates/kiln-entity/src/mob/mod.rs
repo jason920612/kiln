@@ -1590,6 +1590,41 @@ pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, soun
 }
 
 /// Damage to a mob from outside its own tick (explosions, arrows, players).
+/// The mob overrides of `Entity.thunderHit` (the bolt is entity `_bolt`): creepers get charged
+/// after the usual fire and damage; pigs turn into zombified piglins with a golden sword and
+/// villagers into witches, both persistent, unless the difficulty is peaceful. Returns false
+/// when the plain `Entity.thunderHit` applies.
+pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> bool {
+    let Some(kind) = data(e).map(|m| m.kind) else { return false };
+    match kind {
+        MobKind::Creeper => {
+            crate::ext_entity::lightning::base_thunder_hit(e, level);
+            if let Some(m) = data_mut(e)
+                && let Species::Creeper { powered, .. } = &mut m.species
+            {
+                *powered = true;
+            }
+            true
+        }
+        MobKind::Pig | MobKind::Villager if level.difficulty() != 0 => {
+            let mut m = take(e);
+            let to = if kind == MobKind::Pig { MobKind::ZombifiedPiglin } else { MobKind::Witch };
+            let converted = convert::convert_to(e, &mut m, level, to, false, kind == MobKind::Pig, |_, nm, _| {
+                if to == MobKind::ZombifiedPiglin {
+                    nm.equipment[MAINHAND] = ItemStack::of("minecraft:golden_sword", 1).unwrap_or_else(ItemStack::empty);
+                }
+                nm.persistence_required = true;
+            });
+            put(e, m);
+            if converted.is_none() {
+                crate::ext_entity::lightning::base_thunder_hit(e, level);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSource, amount: f32) -> bool {
     let mut m = take(e);
     let r = hurt(e, &mut m, level, source, amount);
@@ -2143,6 +2178,7 @@ impl DamageKind {
             DamageKind::MobProjectile => "minecraft:mob_projectile",
             DamageKind::Magic => "minecraft:magic",
             DamageKind::IndirectMagic => "minecraft:indirect_magic",
+            DamageKind::LightningBolt => "minecraft:lightning_bolt",
         }
     }
 
