@@ -274,6 +274,7 @@ fn classify(e: &kiln_entity::Entity) -> EntityClass {
         EntityKind::FallingBlock(_) => EntityClass::NotAttackable,
         EntityKind::Mob(m) if m.health > 0.0 => EntityClass::Mob,
         EntityKind::Mob(_) => EntityClass::NotAttackable,
+        EntityKind::Ext(x) if x.attackable() => EntityClass::Mob,
         _ => EntityClass::Unhurtable,
     }
 }

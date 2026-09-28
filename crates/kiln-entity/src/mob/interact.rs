@@ -59,6 +59,18 @@ fn is(stack: &ItemStack, name: &str) -> bool {
 /// `Player.interactOn` for a mob: the mob's own handler first, then the held item's.
 pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
     if super::data(e).is_none() {
+        // Extension entities with a click of their own (boats).
+        let placeholder = crate::entity::EntityKind::Other { type_name: e.type_name };
+        if let crate::entity::EntityKind::Ext(mut x) = std::mem::replace(&mut e.kind, placeholder) {
+            let out = x.interact(e, level, who);
+            e.kind = crate::entity::EntityKind::Ext(x);
+            if let Some(out) = out {
+                if out.success {
+                    level.emit(Event::GameEvent { event: "minecraft:entity_interact", pos: e.position(), entity: Some(who.id) });
+                }
+                return out;
+            }
+        }
         return Outcome::PASS;
     }
     let mut m = super::take(e);

@@ -147,6 +147,10 @@ impl RegionWork<'_> {
                 entities::move_vehicle(self.entities, &mut self.players, i, pos, rot, on_ground, env.game_time);
                 continue;
             }
+            if let PlayIn::PaddleBoat { left, right } = pkt {
+                entities::paddle_boat(self.entities, &self.players, i, left, right);
+                continue;
+            }
             if let PlayIn::RidingJump { data } = pkt {
                 entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
                 continue;
@@ -785,6 +789,9 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             } else if name == crate::firework::ITEM {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::firework::use_item(p, &mut level, off, fx.spawns);
+            } else if crate::boats::is_boat_item(name) {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::boats::use_item(p, &mut level, off, fx.spawns);
             } else if crate::ranged::handles(name) {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::ranged::use_item(p, &mut level, off, fx.spawns);

@@ -8,6 +8,7 @@ use kiln_proto::packets::entity::EntityData;
 use std::any::Any;
 use std::fmt::Debug;
 
+pub mod boat;
 pub mod fireball;
 pub mod firework;
 pub mod fishing_hook;
@@ -37,6 +38,20 @@ pub trait EntityExt: Any + Debug + Send + Sync {
     /// The spawn packet's data field (`getAddEntityPacket`: often the owner's id).
     fn spawn_data(&self) -> i32 {
         0
+    }
+    /// `Entity.interact` (a right click): `Some` when the entity reacts (a boat takes the rider).
+    fn interact(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, who: &crate::mob::interact::Interactor) -> Option<crate::mob::interact::Outcome> {
+        let _ = (e, level, who);
+        None
+    }
+    /// Whether a player's melee hit reaches `hurt` (`isAttackable`: boats yes, fireballs no).
+    fn attackable(&self) -> bool {
+        false
+    }
+    /// `getPassengerAttachmentPoint` for the passenger at `index` (`None`: on top of the box).
+    fn passenger_offset(&self, e: &Entity, index: usize, animal: bool) -> Option<crate::math::Vec3> {
+        let _ = (e, index, animal);
+        None
     }
     /// `hurtServer`: whether the hit did something (a deflected fireball).
     fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>) -> bool {
@@ -77,6 +92,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:fireball" | "minecraft:small_fireball" => fireball::load(type_name, r),
         "minecraft:shulker_bullet" => shulker_bullet::load(r),
         "minecraft:firework_rocket" => firework::load(r),
+        n if boat::is_boat(n) => boat::load(n, r),
         _ => None,
     }
 }

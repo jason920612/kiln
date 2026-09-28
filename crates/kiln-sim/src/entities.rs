@@ -957,7 +957,8 @@ pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player],
     let view = view(p, now);
     let Some(phys) = entities.list[idx].phys.as_mut() else { return };
     let steers = phys.passengers.first() == Some(&p.entity_id)
-        && kiln_entity::mob::data(phys).is_some_and(|m| m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)));
+        && (kiln_entity::mob::data(phys).is_some_and(|m| m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)))
+            || kiln_entity::ext_entity::boat::is_boat(phys.type_name));
     if !steers {
         return;
     }
@@ -992,6 +993,20 @@ pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player],
         }
     } else {
         p.entered_lava_on_vehicle = None;
+    }
+}
+
+/// `ServerGamePacketListenerImpl.handlePaddleBoat`: the blades of the boat player `i` steers.
+pub(crate) fn paddle_boat(entities: &mut Entities, players: &[&mut Player], i: usize, left: bool, right: bool) {
+    let p = &*players[i];
+    let Some(v) = p.vehicle else { return };
+    let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
+    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    if phys.passengers.first() != Some(&p.entity_id) {
+        return;
+    }
+    if let Some(b) = kiln_entity::ext_entity::get_mut::<kiln_entity::ext_entity::boat::Boat>(phys) {
+        b.set_paddle_state(left, right);
     }
 }
 
@@ -1062,7 +1077,12 @@ pub(crate) fn hit_mob(
         attacker_is_player: true,
     };
     let health_before = kiln_entity::mob::data(&phys).map(|m| m.health);
-    let hurt = kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount);
+    let is_mob = kiln_entity::mob::data(&phys).is_some();
+    let hurt = if is_mob {
+        kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount)
+    } else {
+        phys.hurt(&mut sim, DamageKind::PlayerAttack, hit.amount, Some(hit.attacker))
+    };
     // `Player.damageStatsAndHearts`.
     if hurt
         && let (Some(before), Some(after)) = (health_before, kiln_entity::mob::data(&phys).map(|m| m.health))
@@ -1070,7 +1090,7 @@ pub(crate) fn hit_mob(
     {
         p.award_stat(*crate::player_stats::stat::DAMAGE_DEALT, ((before - after) * 10.0).round() as i32);
     }
-    if hurt {
+    if hurt && is_mob {
         if hit.knockback > 0.0 {
             let rad = (hit.yaw * 0.017453292) as f64;
             let (s, c) = (kiln_entity::mob::mth::sin(rad) as f64, kiln_entity::mob::mth::cos(rad) as f64);
@@ -1120,7 +1140,7 @@ pub(crate) fn interact_mob(
             return;
         }
         let Some(phys) = entities.list[idx].phys.as_ref() else { return };
-        if kiln_entity::mob::data(phys).is_none() {
+        if kiln_entity::mob::data(phys).is_none() && !matches!(phys.kind, EntityKind::Ext(_)) {
             return;
         }
         // `canInteractWithEntity(box, 3.0)`: the box within the interaction range plus 3.
@@ -1859,7 +1879,7 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
             }
         }
         // Arrows and tridents: crit, in-ground and loyalty flags change in flight.
-        if e.phys.as_ref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_)) || p.type_name == "minecraft:trident") {
+        if e.phys.as_ref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_) | EntityKind::Ext(_))) {
             let meta = e.metadata();
             if meta.entries() != e.meta_sent.as_slice() {
                 if !e.meta_sent.is_empty() || e.age > 1 {

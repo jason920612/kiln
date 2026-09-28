@@ -36,6 +36,7 @@ mod golems;
 mod glide;
 mod slide;
 mod firework;
+mod boats;
 mod xp;
 mod container;
 mod datapacks;
@@ -1284,6 +1285,18 @@ impl Sim {
             self.dims[d].regions.iter().flat_map(|r| r.part().0.list.iter()).map(|e| (e.id, e.kind.name, e.pos)).collect();
         out.sort_by_key(|&(id, ..)| id);
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
+    }
+
+    /// The network ids of the entities of type `name`, in id order (for tests and tools).
+    pub fn entity_ids_of(&self, name: &str) -> Vec<i32> {
+        let mut out: Vec<i32> = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).filter(|e| !e.removed && e.kind.name == name).map(|e| e.id).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// The entity a player rides (for tests and tools).
+    pub fn vehicle_of(&self, conn: ConnId) -> Option<i32> {
+        self.players.get(&conn)?.vehicle
     }
 
     /// Mobs: (network id, type name, position, health), in id order (for tests and tools).

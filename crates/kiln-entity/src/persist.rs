@@ -42,6 +42,7 @@ pub fn is_simulated(type_name: &str) -> bool {
         "minecraft:item" | "minecraft:experience_orb" | "minecraft:falling_block" | "minecraft:tnt" | "minecraft:arrow" | "minecraft:spectral_arrow"
     ) || THROWABLES.iter().any(|t| t.type_name() == type_name)
         || crate::ext_entity::TYPES.contains(&type_name)
+        || crate::ext_entity::boat::is_boat(type_name)
         || crate::mob::MobKind::by_name(type_name).is_some()
 }
 

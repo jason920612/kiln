@@ -548,3 +548,58 @@ fn sliding_down_honey_earns_the_advancement() {
         assert!(done, "slid down the honey block");
     }
 }
+
+impl World {
+    /// Attacks entity `id`.
+    fn attack(&mut self, id: i32) {
+        assert!(self.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: id })]));
+    }
+
+    /// Right-clicks entity `id`.
+    fn interact(&mut self, id: i32) {
+        let pkt = PlayIn::Interact { entity_id: id, hand: Hand::Main, location: [0.0, 0.5, 0.0], sneaking: false };
+        assert!(self.sim.step([ToSim::Packet(1, pkt)]));
+    }
+}
+
+#[test]
+fn boats_float_carry_and_break() {
+    let mut w = World::new("survival");
+    // A pool in front of the player; they look down at it.
+    let a = w.at(-3, 0, 1);
+    let b = w.at(3, 0, 5);
+    w.run(&format!("fill {} {} {} {} {} {} minecraft:water", a[0], a[1], a[2], b[0], b[1], b[2]));
+    w.ticks(2);
+    w.hold("minecraft:oak_boat", 1);
+    w.use_item(45.0);
+    let ids = w.sim.entity_ids_of("minecraft:oak_boat");
+    assert_eq!(ids.len(), 1, "{:?}", w.sim.entities());
+    assert_eq!(w.held(), None, "the boat item is used up");
+    // It floats: settled at the water's surface, not fallen into the pool.
+    w.ticks(60);
+    let (_, at) = w.sim.entities().into_iter().find(|(k, _)| *k == "minecraft:oak_boat").unwrap();
+    let surface = w.ground[1] as f64 + 1.0 - 1.0 / 9.0;
+    assert!((at[1] - surface).abs() < 0.6, "afloat at {at:?}, surface {surface}");
+    // A click gets the player aboard; sneaking gets them off again.
+    w.interact(ids[0]);
+    assert_eq!(w.sim.vehicle_of(1), Some(ids[0]));
+    // The rider's client steers: the boat goes where it says.
+    let (_, at) = w.sim.entities().into_iter().find(|(k, _)| *k == "minecraft:oak_boat").unwrap();
+    let to = [at[0] + 1.5, at[1], at[2]];
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::MoveVehicle { pos: to, rot: [90.0, 0.0], on_ground: false })]));
+    w.ticks(1);
+    let (_, now) = w.sim.entities().into_iter().find(|(k, _)| *k == "minecraft:oak_boat").unwrap();
+    assert!((now[0] - to[0]).abs() < 0.5, "steered from {at:?} toward {to:?}: {now:?}");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0x20 })]));
+    w.ticks(2);
+    assert_eq!(w.sim.vehicle_of(1), None, "dismounted");
+    // Hits add up (ten a point, one point less every tick): fist blows every five ticks take
+    // a boat apart, and it drops its item.
+    for _ in 0..16 {
+        w.attack(ids[0]);
+        w.ticks(5);
+    }
+    assert_eq!(w.count("minecraft:oak_boat"), 0, "broken: {:?}", w.sim.entities());
+    // It dropped its item (left a moment before anyone can pick it up).
+    assert!(w.count("minecraft:item") == 1 || w.inventory_count("minecraft:oak_boat") == 1, "drops the boat");
+}
