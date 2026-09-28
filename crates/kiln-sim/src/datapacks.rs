@@ -334,6 +334,7 @@ impl Sim {
             }
         }
         self.commands.packs.library = self.load_functions(&roots);
+        self.load_advancements(&roots);
         self.commands.packs.load_pending = true;
     }
 

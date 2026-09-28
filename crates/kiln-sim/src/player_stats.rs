@@ -533,7 +533,28 @@ impl Sim {
             self.commands.scoreboard.team_of(name).and_then(|t| t.color).map(|c| kiln_command::arguments::TEAM_COLORS[c])
         };
         let (victim_color, killer_color) = (color(&victim), color(killer));
+        let victim_subject = self.players.get(&d.conn).map(|v| {
+            let mut s = v.subject(None);
+            s.equipment.clear();
+            (s.type_id, s.pos, s.dim)
+        });
         if let Some(k) = self.players.values_mut().find(|p| p.name == killer) {
+            if let Some((type_id, pos, dim)) = victim_subject {
+                let s = crate::advancements::criteria::Subject {
+                    type_id,
+                    pos,
+                    dim,
+                    on_ground: true,
+                    on_fire: false,
+                    sneaking: false,
+                    sprinting: false,
+                    flying: false,
+                    baby: false,
+                    equipment: Vec::new(),
+                    world: None,
+                };
+                k.killed("minecraft:player_killed_entity", &s, "minecraft:player_attack", true);
+            }
             k.update_criterion("totalKillCount", ScoreOp::Add(1));
             k.award_stat(*stat::PLAYER_KILLS, 1);
             k.update_criterion("playerKillCount", ScoreOp::Add(1));

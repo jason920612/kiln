@@ -206,6 +206,14 @@ impl RegionWork<'_> {
             }
             p.tick_food(env.natural_regen, &mut ctx);
             p.tick_stats();
+            let probe = crate::advancements::triggers::CellProbe { cells, min_y: env.min_y };
+            p.tick_triggers(&probe);
+            // `onInsideBlock` (Kiln checks the block at the feet).
+            let feet = kiln_entity::math::BlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
+            let inside = block(feet);
+            if inside != 0 && !p.dead {
+                p.entered_block(inside);
+            }
             p.sync_health();
             p.sync_experience();
         }
@@ -599,6 +607,18 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.meta_dirty = true;
             }
         }
+        PlayIn::PlaceRecipe { container_id, recipe, use_max_items } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            p.place_recipe(&mut level, fx.spawns, container_id, recipe, use_max_items);
+        }
+        PlayIn::RecipeBookChangeSettings { book, open, filtering } => p.recipe_book_settings(book, open, filtering),
+        PlayIn::RecipeBookSeenRecipe { recipe } => p.recipe_seen(&env.rules, recipe),
+        // `handleSeenAdvancements`: opening a tab selects it.
+        PlayIn::SeenAdvancements { tab: Some(tab) } => {
+            if let Some(pkt) = p.advancements.select_tab(Some(&tab)) {
+                p.send(pkt);
+            }
+        }
         PlayIn::ClientCommand(kiln_proto::packets::serverbound::ClientCommand::RequestStats) => {
             let pkt = p.stats.take_award_packet();
             p.send(pkt);
@@ -706,8 +726,14 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
-    // `ItemStack.useOn`: a successful item interaction counts as a use.
+    // `ItemStack.useOn`: a successful item interaction counts as a use; `BlockItem.place`
+    // and `ServerPlayerGameMode.useItemOn` fire their triggers.
     p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, placed_from.item()), 1);
+    let placed_state = level.block(placed_at);
+    let probe = crate::advancements::triggers::CellProbe { cells: &*level.cells, min_y: level.env.min_y };
+    let at = [placed_at.x, placed_at.y, placed_at.z];
+    p.used_on_block("minecraft:placed_block", at, placed_state, &placed_from, &probe);
+    p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &placed_from, &probe);
     if p.game_mode != 1 {
         let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
         kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);

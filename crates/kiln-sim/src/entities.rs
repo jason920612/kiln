@@ -1088,6 +1088,7 @@ pub(crate) fn interact_mob(
         let p = &mut *sim.players[i];
         p.vehicle = Some(target);
         p.teleport(arr(seat), [phys.y_rot, phys.x_rot], now);
+        p.started_riding();
     }
     let e = &mut sim.list[idx];
     e.phys = Some(phys);
@@ -1366,9 +1367,14 @@ fn carry_out(
                 }
             }
         }
-        Event::Killed { entity_type, credit, .. } => {
+        Event::Killed { entity, entity_type, credit, kind, attacker, direct } => {
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
                 p.killed_entity(entity_type);
+                let dim = crate::DIMENSIONS[env.dim].0;
+                if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_ref()) {
+                    let subject = crate::advancements::triggers::mob_subject(e, dim);
+                    p.killed("minecraft:player_killed_entity", &subject, kind.type_name(), direct == attacker);
+                }
             }
         }
         Event::GiftLoot { entity: id, table, pos } => loot_drop(env, spawns, id, table, pos, n, 0.0),

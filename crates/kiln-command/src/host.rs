@@ -48,6 +48,11 @@ pub trait Source {
     fn player_names(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Ids of a data pack registry (`minecraft:advancement`, `minecraft:recipe`), for
+    /// `resource_key` suggestions.
+    fn registry_ids(&self, _registry: &str) -> Vec<String> {
+        Vec::new()
+    }
     /// Dimension ids, for suggestions.
     fn dimensions(&self) -> Vec<String> {
         ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"].map(String::from).to_vec()
@@ -673,6 +678,46 @@ pub trait Host: SelectorWorld {
     /// Loaded functions and function tags, if the host loads data packs.
     fn functions(&self) -> Option<&FunctionLibrary> {
         None
+    }
+    /// `Advancement.name` (`[title]`, or the id without a display); `None` when the
+    /// advancement does not exist.
+    fn advancement_name(&self, _id: &str) -> Option<Text> {
+        None
+    }
+    /// Every advancement id, in load order (`/advancement ... everything`).
+    fn advancement_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// The advancement's criterion names.
+    fn advancement_criteria(&self, _id: &str) -> Vec<String> {
+        Vec::new()
+    }
+    /// Its parents, nearest first.
+    fn advancement_parents(&self, _id: &str) -> Vec<String> {
+        Vec::new()
+    }
+    /// Its descendants, depth first (`AdvancementCommands.addChildren`).
+    fn advancement_descendants(&self, _id: &str) -> Vec<String> {
+        Vec::new()
+    }
+    /// `AdvancementCommands.Action.perform` for one advancement: grants every remaining
+    /// criterion (or revokes every obtained one); whether anything changed.
+    fn change_advancement(&mut self, _player: &Self::Entity, _id: &str, _revoke: bool) -> bool {
+        false
+    }
+    /// `performCriterion`.
+    fn change_criterion(&mut self, _player: &Self::Entity, _id: &str, _criterion: &str, _revoke: bool) -> bool {
+        false
+    }
+    /// `PlayerAdvancements.flushDirty(player, showAdvancements)`.
+    fn flush_advancements(&mut self, _player: &Self::Entity, _show: bool) {}
+    /// Recipe ids in registry order (`/recipe ... *`); `None` when recipes are not loaded.
+    fn recipe_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// `awardRecipes` (or `resetRecipes` with `take`) for a player: how many changed.
+    fn change_recipes(&mut self, _player: &Self::Entity, _recipes: &[String], _take: bool) -> i32 {
+        0
     }
     /// Scheduled functions (`/schedule`).
     fn timers(&self) -> Option<&TimerQueue> {

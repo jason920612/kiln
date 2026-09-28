@@ -503,6 +503,7 @@ impl Player {
         if source.is("minecraft:is_fire") && self.has_effect("minecraft:fire_resistance") {
             return false;
         }
+        let health_before = self.health;
         let mut amount = amount;
         if source.scales_with_difficulty() {
             amount = match rules.difficulty {
@@ -564,9 +565,30 @@ impl Player {
                 self.knockback(0.4000000059604645, dx, dz);
             }
         }
+        // `EntityHurtPlayerTrigger` (dealt before armor and effects, taken after).
+        let taken = health_before - self.health;
+        let attacker_view = source.attacker.as_ref().map(|a| a.view.clone());
+        let killer = attacker_view.as_ref().map(|v| crate::advancements::criteria::Subject {
+            type_id: v.type_id,
+            pos: v.pos,
+            dim: crate::DIMENSIONS[self.dim].0,
+            on_ground: v.on_ground,
+            on_fire: v.on_fire,
+            sneaking: v.sneaking,
+            sprinting: v.sprinting,
+            flying: v.flying,
+            baby: false,
+            equipment: Vec::new(),
+            world: None,
+        });
+        self.hurt_trigger("minecraft:entity_hurt_player", killer.as_ref(), amount, taken, source.cause.damage_type());
         if self.health <= 0.0 {
             let death = self.die(ctx);
             ctx.deaths.push(death);
+            // `KilledTrigger` for the killer's side (`entity_killed_player`).
+            if let Some(k) = &killer {
+                self.killed("minecraft:entity_killed_player", k, source.cause.damage_type(), source.direct.is_none());
+            }
         }
         true
     }

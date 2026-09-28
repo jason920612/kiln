@@ -83,6 +83,13 @@ pub(crate) fn apply_events(
         let salt = 0x7472_0000 | n as u64;
         match event {
             MerchantEvent::Trade { index } => {
+                // `TradeTrigger` (the traded item is not known here: item conditions fail).
+                if let Ok(k) = entities.list.binary_search_by_key(&target, |e| e.id)
+                    && let Some(phys) = entities.list[k].phys.as_ref()
+                {
+                    let subject = crate::advancements::triggers::mob_subject(phys, crate::DIMENSIONS[level.env.dim].0);
+                    players[i].traded(&subject, &kiln_item::ItemStack::empty());
+                }
                 let r = entities::with_entity(entities, level, players, target, spawns, deaths, salt, |e, lvl| {
                     villager::with_villager(e, |e, m| {
                         let t = villager::notify_trade(e, m, lvl, index);

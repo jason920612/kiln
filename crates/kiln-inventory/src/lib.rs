@@ -23,6 +23,7 @@ pub mod menu;
 pub mod menus;
 pub mod merchant;
 pub mod persist;
+pub mod place;
 pub mod recipe;
 pub mod remote;
 pub mod rules;

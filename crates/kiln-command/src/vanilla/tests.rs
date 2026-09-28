@@ -987,7 +987,7 @@ fn commands_packet_flags() {
                         "brigadier:string" => drop(r.varint().unwrap()),
                         "minecraft:entity" | "minecraft:score_holder" => drop(r.u8().unwrap()),
                         "minecraft:time" => drop(r.i32().unwrap()),
-                        "minecraft:resource" | "minecraft:resource_or_tag" => drop(r.string(32767).unwrap()),
+                        "minecraft:resource" | "minecraft:resource_key" | "minecraft:resource_or_tag" => drop(r.string(32767).unwrap()),
                         _ => {}
                     }
                     if flags & 0x10 != 0 {
@@ -1010,7 +1010,7 @@ fn commands_packet_flags() {
     let (n4, lit4, ask4, res4) = decode(4);
     assert!(n4 > n0 + 100);
     assert!(lit4.contains(&"kiln".to_owned()));
-    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective", "members", "name", "function", "existing"];
+    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective", "members", "name", "function", "existing", "criterion"];
     ask4.iter().for_each(|a| assert!(allowed.contains(&a.as_str()), "{a}"));
     // op, deop, time's markers/timelines at both levels, execute's score holders (if and
     // unless: target + 5 sources each; store result and success: targets) and boss bars, and
@@ -1018,7 +1018,8 @@ fn commands_packet_flags() {
     // objective, team's join and leave members and bossbar's remove, set and get ids.
     // Functions: function, schedule function/clear, datapack enable/after/before/disable,
     // execute if/unless function.
-    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2);
+    // Advancement criteria: grant and revoke only.
+    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2 + 2);
     assert!(res4.contains(&"stop".to_owned()) && res4.contains(&"tp".to_owned()) && !res4.contains(&"msg".to_owned()));
 }
 

@@ -203,7 +203,8 @@ impl Sim {
                     None => fields.push((key.to_owned(), value)),
                 }
             }
-            fields.retain(|(k, _)| k != "active_effects");
+            fields.retain(|(k, _)| k != "active_effects" && k != "recipeBook");
+            fields.push(("recipeBook".to_owned(), p.recipe_book.to_nbt()));
             if let Some(list) = p.effects_nbt() {
                 fields.push(("active_effects".to_owned(), list));
             }
@@ -212,6 +213,7 @@ impl Sim {
             warn!("failed to save player data for {}: {e}", p.name);
         }
         self.save_stats(p);
+        self.save_player_advancements(p);
     }
 
     /// Loads the scoreboard and custom boss bars (`data/minecraft/scoreboard.dat`,
