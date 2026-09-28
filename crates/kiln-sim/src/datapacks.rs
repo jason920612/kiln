@@ -402,6 +402,19 @@ impl Sim {
     }
 
     /// `ServerFunctionManager.tick` then the due scheduled functions (`TimerQueue.tick`).
+    /// Whether `#minecraft:tick` has functions (they run every tick, with the whole server).
+    pub(crate) fn has_tick_functions(&self) -> bool {
+        !self.commands.packs.library.tag(&Identifier::parse(TICK_TAG).expect("tag")).is_empty()
+    }
+
+    /// Whether server functions run at game time `time`: `#minecraft:load` after a (re)load,
+    /// `#minecraft:tick`, or a `/schedule` due.
+    pub(crate) fn functions_due(&self, time: i64) -> bool {
+        self.commands.packs.load_pending
+            || self.has_tick_functions()
+            || self.commands.packs.timers.next_trigger().is_some_and(|t| t <= time)
+    }
+
     pub(crate) fn tick_functions(&mut self) {
         if std::mem::take(&mut self.commands.packs.load_pending) {
             for f in self.commands.packs.library.tag(&Identifier::parse(LOAD_TAG).expect("tag")) {

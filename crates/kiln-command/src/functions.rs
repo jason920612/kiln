@@ -323,6 +323,11 @@ impl TimerQueue {
         n
     }
 
+    /// The earliest trigger time of a queued event.
+    pub fn next_trigger(&self) -> Option<i64> {
+        self.events.iter().map(|e| e.trigger_time).min()
+    }
+
     /// Takes the events due at `time`, in order.
     pub fn due(&mut self, time: i64) -> Vec<TimerCallback> {
         let mut due: Vec<TimerEvent> = Vec::new();

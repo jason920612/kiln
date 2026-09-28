@@ -68,6 +68,7 @@ pub(crate) const SUB_PHASES: [&str; 9] =
 pub(crate) struct RegionWork<'a> {
     /// The level the region is in.
     pub dim: crate::DimId,
+    pub region: kiln_region::RegionId,
     pub cells: &'a mut CellSet<Cell>,
     pub entities: &'a mut Entities,
     pub blocks: &'a mut RegionBlocks,
@@ -77,6 +78,8 @@ pub(crate) struct RegionWork<'a> {
     pub packets: Vec<(ConnId, PlayIn)>,
     /// The region's plugin instances.
     pub plugins: Option<crate::plugins::RegionHook<'a>>,
+    /// Injected at the start of each tick ([`crate::SimConfig::inject_delay`], tests).
+    pub delay: Duration,
     pub out: RegionOut,
 }
 
@@ -164,6 +167,9 @@ impl RegionWork<'_> {
 
     /// L: connection upkeep, chunk streaming, tracking, light, then egress.
     pub fn tick(&mut self, env: &Env, ctx: &Ctx<'_>) {
+        if !self.delay.is_zero() {
+            std::thread::sleep(self.delay);
+        }
         let mut lap = Instant::now();
         let mut mark = |times: &mut [Duration; SUB_PHASES.len()], i: usize| {
             let now = Instant::now();

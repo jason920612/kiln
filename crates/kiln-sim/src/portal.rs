@@ -452,6 +452,10 @@ impl Sim {
                 }
             }
         }
+        // The destination may be a region ticking away (independent mode).
+        if !trips.is_empty() {
+            self.rendezvous();
+        }
         for (from, id, kind, entry) in trips {
             let Some((pos, rot, size)) = self.dims[from]
                 .regions

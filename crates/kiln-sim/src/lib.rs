@@ -33,6 +33,8 @@ mod digging;
 mod effects;
 mod entities;
 mod generation;
+mod independent;
+pub use independent::{InjectedDelay, ScheduleMode};
 mod hazards;
 mod health;
 mod mobs;
@@ -104,6 +106,12 @@ pub struct SimConfig {
     pub require_resource_pack: bool,
     /// WASM plugins to load.
     pub plugins: Option<PluginSettings>,
+    /// Lockstep (the default: every region ticks every tick, deterministic) or independent
+    /// (a region too slow for the tick leaves the lockstep and ticks on its own; see
+    /// [`independent`](crate::independent)).
+    pub schedule: ScheduleMode,
+    /// Tests: a region holding this column sleeps in each of its ticks.
+    pub inject_delay: Option<InjectedDelay>,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -130,6 +138,8 @@ impl SimConfig {
             noise: None,
             require_resource_pack: false,
             plugins: None,
+            schedule: ScheduleMode::Lockstep,
+            inject_delay: None,
         }
     }
 }
@@ -526,6 +536,9 @@ struct Dim {
     gateway_cooldowns: HashMap<[i32; 3], i64>,
     /// Non-player entities that came through a portal, by UUID, until this game time.
     portal_cooldowns: HashMap<u128, i64>,
+    /// Regions ticking away from the lockstep (independent mode): their cells and part are
+    /// lent out, so the topology and chunks of their cells wait until they are back.
+    lent: HashSet<RegionId>,
 }
 
 /// Serial access that loads chunks on demand: into their region if the cell has an owner,
@@ -578,16 +591,28 @@ impl Dim {
             raw_entities: HashMap::new(),
             gateway_cooldowns: HashMap::new(),
             portal_cooldowns: HashMap::new(),
+            lent: HashSet::new(),
         }
     }
 
+    /// Whether the cell of `pos` belongs to a region that is lent out.
+    fn lent_at(&self, pos: ChunkPos) -> bool {
+        !self.lent.is_empty() && self.regions.owner(pos.cell()).is_some_and(|r| self.lent.contains(&r))
+    }
+
+    /// Whether `pos` is loaded (a lent region's chunks count as loaded: they are away).
     fn is_loaded(&self, pos: ChunkPos) -> bool {
-        self.regions.chunk(pos).is_some() || self.pending.contains_key(&pos)
+        self.regions.chunk(pos).is_some() || self.pending.contains_key(&pos) || self.lent_at(pos)
     }
 
     /// Puts a loaded chunk in its region, or pending until its cell gets one. Returns whether
     /// it went straight into a region.
     fn install(&mut self, pos: ChunkPos, chunk: Chunk) -> bool {
+        // A lent region takes its chunks when it is back.
+        if self.lent_at(pos) {
+            self.pending.insert(pos, chunk);
+            return false;
+        }
         match self.put(pos, chunk) {
             Ok(()) => true,
             Err(chunk) => {
@@ -683,6 +708,10 @@ impl Dim {
     /// Runs the regionizer and installs the chunks that were waiting for their cell's owner.
     /// Returns whether the topology changed.
     fn apply_topology(&mut self, tick: u64) -> bool {
+        // The regionizer needs every region of the level at home.
+        if !self.lent.is_empty() {
+            return false;
+        }
         for pos in std::mem::take(&mut self.emptied) {
             if self.regions.cell(pos).is_some_and(Cell::is_empty) {
                 self.regionizer.push(TopologyEvent::Vacated(pos));
@@ -750,6 +779,8 @@ pub struct Sim {
     /// Advancements of the enabled data packs.
     advancements: std::sync::Arc<advancements::Advancements>,
     plugins: Option<plugins::SimPlugins>,
+    /// Independent scheduling state: regions ticking away, their clocks.
+    independent: independent::Independent,
 }
 
 /// Operator names from `KILN_OPS` (comma separated).
@@ -905,6 +936,7 @@ impl Sim {
             sleep_status: Default::default(),
             advancements: Default::default(),
             plugins: None,
+            independent: Default::default(),
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -948,7 +980,11 @@ impl Sim {
         }
         // `/kiln use` clicks, as if their players had sent them.
         packets.splice(0..0, std::mem::take(&mut self.commands.injected));
+        // Independent mode: regions back from ticking away rejoin; anything that needs the
+        // whole server waits for all of them.
+        let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
         self.maintain_chunks();
+        self.rendezvous_for_topology();
         let joining: Vec<_> = joins.into_iter().map(|j| (self.joining(j.uuid), j)).collect();
         for (jn, _) in &joining {
             self.dims[jn.dim].load_chunk(player_chunk(jn.pos));
@@ -1001,8 +1037,11 @@ impl Sim {
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
 
-        // L: regions tick in parallel.
+        // L: regions tick in parallel; in independent mode, regions too slow for the tick
+        // tick away on their own.
+        self.lend_slow_regions();
         let outs = self.run_regions(BTreeMap::new(), |w, env, ctx| w.tick(env, ctx));
+        self.note_region_ticks();
         let mut times = [Duration::ZERO; region::SUB_PHASES.len()];
         let mut travels = Vec::new();
         for (dim, out) in outs {
@@ -1018,6 +1057,9 @@ impl Sim {
         }
         self.materialize_spawns();
         // Players whose portal time ran out change level (serially: two levels take part).
+        if !travels.is_empty() {
+            self.rendezvous();
+        }
         travels.sort_unstable_by_key(|t: &portal::Travel| t.conn);
         for t in travels {
             self.travel(t);
@@ -1158,7 +1200,7 @@ impl Sim {
     }
 
     pub fn player_count(&self) -> usize {
-        self.players.len()
+        self.players.len() + self.independent.players_away()
     }
 
     /// Regions of all levels.
@@ -1454,16 +1496,19 @@ impl Sim {
         }
         let mut hooks = self.plugins.as_mut().map(|pl| pl.hooks()).unwrap_or_default();
         let mut work: Vec<RegionWork> = Vec::new();
+        let inject = self.config.inject_delay.as_ref();
         for (dim, d) in self.dims.iter_mut().enumerate() {
             let (_, regions) = d.regions.split_mut();
-            work.extend(regions.map(|r| {
+            let lent = &d.lent;
+            work.extend(regions.filter(|r| !lent.contains(&r.id())).map(|r| {
                 let key = (dim, r.id());
                 let mut players = buckets.remove(&key).unwrap_or_default();
                 players.sort_unstable_by_key(|p| p.conn);
                 let packets = packets.remove(&key).unwrap_or_default();
                 let (cells, (entities, blocks)) = r.cells_and_part_mut();
                 let plugins = hooks.remove(&key);
-                RegionWork { dim, cells, entities, blocks, players, packets, plugins, out: RegionOut::default() }
+                let delay = inject.map_or(Duration::ZERO, |i| i.delay_for(dim, cells));
+                RegionWork { dim, region: key.1, cells, entities, blocks, players, packets, plugins, delay, out: RegionOut::default() }
             }));
         }
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
@@ -1471,7 +1516,8 @@ impl Sim {
         let cost = |w: &RegionWork| {
             20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
         };
-        self.pool.run_units(&mut work, cost, |w, ctx| f(w, &envs[w.dim], ctx));
+        let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, &envs[w.dim], ctx));
+        self.independent.last_fork = work.iter().zip(&report.unit_ns).map(|(w, &ns)| (w.dim, w.region, ns)).collect();
         work.into_iter().map(|w| (w.dim, w.out)).collect()
     }
 
@@ -1594,8 +1640,14 @@ impl Sim {
     fn materialize_spawns(&mut self) {
         let world_seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
         for d in &mut self.dims {
+            let mut later = Vec::new();
             for spawn in entities::canonical(std::mem::take(&mut d.spawns)) {
                 let chunk = entities::chunk_of(spawn.pos);
+                // Into a region ticking away: once it is back.
+                if d.lent_at(chunk) {
+                    later.push(spawn);
+                    continue;
+                }
                 let Some(region) = d.regions.at_mut(chunk.cell()) else {
                     // A loaded entity outside its chunk's loaded area goes back to storage.
                     if let entities::Body::Loaded(e) = spawn.body {
@@ -1609,6 +1661,7 @@ impl Sim {
                 let uuid = entities::fresh_uuid(world_seed, self.game_time, id);
                 region.part_mut().0.list.push(entities::Entity::new(id, uuid, spawn));
             }
+            d.spawns = later;
         }
     }
 
@@ -1849,6 +1902,7 @@ impl Sim {
     }
 
     fn shut_down(&mut self) {
+        self.rendezvous();
         for p in self.players.values_mut() {
             p.disconnect("Server closed");
         }
@@ -1856,6 +1910,8 @@ impl Sim {
     }
 
     fn save(&mut self) {
+        // Everything is saved together: regions ticking away come back first.
+        self.rendezvous();
         let start = Instant::now();
         // Entities waiting for their ids are saved with the rest.
         self.materialize_spawns();
@@ -2106,6 +2162,8 @@ impl Sim {
         for p in self.players.values_mut() {
             p.send(pkt.clone());
         }
+        // Players of regions ticking away get it when they are back.
+        self.independent.mail(&pkt);
     }
 
     /// G: world age and time, autosave.

@@ -176,6 +176,23 @@ impl<T: Copy + Eq + Hash> ChunkTicks<T> {
         out
     }
 
+    /// Moves every queued tick `delta` ticks later (a region that fell behind rejoins the
+    /// server's clock: what was due in n of its ticks stays due in n ticks). Loaded ticks not
+    /// unpacked yet are relative and stay as they are; the order is unchanged.
+    pub fn shift(&mut self, delta: i64) {
+        if delta == 0 {
+            return;
+        }
+        let ticks = std::mem::take(&mut self.queue).into_vec();
+        self.queue = ticks
+            .into_iter()
+            .map(|Reverse(Queued(mut t))| {
+                t.trigger += delta;
+                Reverse(Queued(t))
+            })
+            .collect();
+    }
+
     /// `unpack`: loaded ticks trigger `delay` ticks after `game_time`, numbered -n..-1.
     pub fn unpack(&mut self, game_time: i64) {
         let Some(pending) = self.pending.take() else { return };
@@ -365,6 +382,19 @@ impl<T: Copy + Eq + Hash> LevelTicks<T> {
         self.containers.values().map(ChunkTicks::count).sum()
     }
 
+    /// [`ChunkTicks::shift`] for every chunk. Call between ticks (nothing collected).
+    pub fn shift(&mut self, delta: i64) {
+        if delta == 0 {
+            return;
+        }
+        for c in self.containers.values_mut() {
+            c.shift(delta);
+        }
+        for next in self.next_tick.values_mut() {
+            *next += delta;
+        }
+    }
+
     /// Removes the ticks inside the box (inclusive corners), as `/fill` and structures do.
     pub fn clear_area(&mut self, min: BlockPos, max: BlockPos) {
         let inside = |p: BlockPos| (min.x..=max.x).contains(&p.x) && (min.y..=max.y).contains(&p.y) && (min.z..=max.z).contains(&p.z);
@@ -438,6 +468,23 @@ mod tests {
         }
         t.finish_tick();
         out
+    }
+
+    #[test]
+    fn shifted_ticks_keep_their_distance_and_order() {
+        use TickPriority::*;
+        let mut t = LevelTicks::new();
+        t.add_container((0, 0), ChunkTicks::new());
+        t.add_container((1, 0), ChunkTicks::new());
+        assert!(t.schedule(tick(1, 0, 12, Normal, 0)));
+        assert!(t.schedule(tick(2, 16, 12, High, 1)));
+        assert!(t.schedule(tick(3, 1, 15, Normal, 2)));
+        // A region that ran one tick (time 10) while the server ran four more.
+        t.shift(3);
+        assert_eq!(run_all(&mut t, 14), vec![], "due at 15 now");
+        assert_eq!(run_all(&mut t, 15), vec![(2, 16), (1, 0)]);
+        assert_eq!(run_all(&mut t, 17), vec![]);
+        assert_eq!(run_all(&mut t, 18), vec![(3, 1)]);
     }
 
     #[test]
