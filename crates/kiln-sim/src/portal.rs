@@ -1071,7 +1071,7 @@ impl Sim {
         let difficulty = packets::change_difficulty(self.commands.difficulty as u8, false);
         let (spawn, spawn_rot) = (self.spawn, self.spawn_rot);
         let time = self.time_packet();
-        let weather = if dim == OVERWORLD_ID && self.commands.raining { self.weather_packets() } else { Vec::new() };
+        let weather = self.weather_packets(dim);
         let rules = self.rules.clone();
         self.untrack_everywhere(conn);
         let p = self.players.get_mut(&conn).unwrap();

@@ -241,6 +241,8 @@ pub(crate) struct BlockEnv {
     pub spawn_table: Option<std::sync::Arc<crate::spawner::SpawnTable>>,
     /// Recipes and item rules for menus and furnaces.
     pub menus: std::sync::Arc<kiln_inventory::Rules>,
+    /// The level's weather and the biome climates.
+    pub weather: crate::weather::WeatherEnv,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -447,6 +449,26 @@ impl Level for RegionLevel<'_> {
     }
 
     fn trace_update(&mut self, _update: UpdateTrace) {}
+
+    fn height(&self) -> i32 {
+        self.env.height
+    }
+
+    fn weather(&self) -> kiln_blocks::weather::Weather {
+        self.env.weather.weather
+    }
+
+    fn motion_blocking_height(&self, x: i32, z: i32) -> i32 {
+        crate::weather::motion_blocking_height(self.cells, self.env, x, z)
+    }
+
+    fn climate(&self, biome_pos: BlockPos, pos: BlockPos) -> Option<kiln_blocks::weather::Climate> {
+        crate::weather::climate(self.cells, self.env, biome_pos, pos)
+    }
+
+    fn block_light(&self, pos: BlockPos) -> i32 {
+        self.cells.light_at(LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
+    }
 }
 
 /// Chunks within simulation distance of a player: a bit per chunk of each cell.
@@ -923,6 +945,7 @@ mod tests {
             mobs: Default::default(),
             spawn_table: None,
             menus: Default::default(),
+            weather: Default::default(),
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

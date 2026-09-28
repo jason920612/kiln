@@ -580,6 +580,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.env.mobs.sky_darken
     }
 
+    fn is_raining_at(&self, pos: BlockPos) -> bool {
+        crate::weather::is_raining_at(self.level.cells, self.level.env, kb(pos))
+    }
+
     fn monsters_burn(&self) -> bool {
         self.level.env.mobs.monsters_burn
     }

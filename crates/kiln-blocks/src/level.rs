@@ -182,6 +182,32 @@ pub trait Level {
 
     /// Called before each queued update runs (vanilla's neighbour-update debug listener).
     fn trace_update(&mut self, _update: UpdateTrace) {}
+
+    /// `Level.getHeight`: the build height.
+    fn height(&self) -> i32 {
+        384
+    }
+
+    /// The weather and rules precipitation reads (clear by default).
+    fn weather(&self) -> crate::weather::Weather {
+        crate::weather::Weather::default()
+    }
+
+    /// The `MOTION_BLOCKING` heightmap: the y above the column's topmost motion-blocking block.
+    fn motion_blocking_height(&self, _x: i32, _z: i32) -> i32 {
+        self.min_y()
+    }
+
+    /// The climate of the biome at `biome_pos` (`Level.getBiome`), its temperature read at
+    /// `pos`; `None` without biome data (no precipitation effects).
+    fn climate(&self, _biome_pos: BlockPos, _pos: BlockPos) -> Option<crate::weather::Climate> {
+        None
+    }
+
+    /// `getBrightness(LightLayer.BLOCK, pos)`.
+    fn block_light(&self, _pos: BlockPos) -> i32 {
+        0
+    }
 }
 
 /// Which entities a block counts.

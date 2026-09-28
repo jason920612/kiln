@@ -187,7 +187,9 @@ impl RegionWork<'_> {
             }
             p.tick_using(&block, &mut ctx);
             p.tick_combat();
-            p.block_effects(&block, env.dim, &mut ctx);
+            let (_, h, _) = p.dimensions();
+            let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
+            p.block_effects(&block, env.dim, in_rain, &mut ctx);
             if let Some(t) = p.pending_travel.take() {
                 self.out.portals.push(t);
             }

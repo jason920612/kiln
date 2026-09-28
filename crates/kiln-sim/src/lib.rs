@@ -44,6 +44,7 @@ mod region;
 mod rng;
 mod stats;
 mod trading;
+mod weather;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
@@ -703,6 +704,18 @@ pub struct Sim {
     /// The End's exit portal and first gateway were checked this run ([`Sim::prepare_end`]).
     end_prepared: bool,
     commands: commands::CommandState,
+    /// The server-wide weather counters (`weather.dat`).
+    weather: weather::WeatherData,
+    /// Each level's rain and thunder levels, by [`DimId`].
+    level_weather: [weather::LevelWeather; 3],
+    /// Stand-in for the overworld's level random (weather cycle, `/weather` durations).
+    weather_random: kiln_javamath::random::LegacyRandom,
+    /// Biome climates from the datapack (precipitation, `isRainingAt`).
+    climates: Option<std::sync::Arc<weather::Climates>>,
+    /// `BiomeManager`'s obfuscated world seed.
+    zoom_seed: i64,
+    /// Rate, fraction and pause of the overworld and End clocks.
+    clock_runs: [weather::ClockRun; 2],
 }
 
 /// Operator names from `KILN_OPS` (comma separated).
@@ -827,6 +840,7 @@ impl Sim {
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
+        let seed = config.noise.as_ref().map_or(0, |n| n.seed);
         let mut sim = Sim {
             rules,
             loot,
@@ -848,11 +862,18 @@ impl Sim {
             end_clock: kiln_data::synced_id("minecraft:world_clock", "minecraft:the_end").expect("end clock"),
             end_prepared: false,
             commands: commands::CommandState::new(ops_from_env()),
+            weather: Default::default(),
+            level_weather: Default::default(),
+            weather_random: kiln_javamath::random::LegacyRandom::new(seed ^ 0x7765_6174_6865_72),
+            climates: weather::Climates::load(&vanilla_pack).map(std::sync::Arc::new),
+            zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
+            clock_runs: Default::default(),
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.load_scoreboard();
+        sim.load_weather();
         sim.init_packs(vanilla_pack);
         sim
     }
@@ -1285,7 +1306,7 @@ impl Sim {
             damage: self.damage_rules(),
             mobs: mobs::MobRules {
                 day_time: self.day_time,
-                sky_darken: mobs::sky_darken(self.day_time),
+                sky_darken: weather::sky_darken(dim, self.day_time, &self.level_weather[dim]),
                 monsters_burn: mobs::monsters_burn(self.day_time),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
@@ -1297,6 +1318,16 @@ impl Sim {
             },
             spawn_table: self.spawn_table.clone(),
             menus: self.rules.clone(),
+            weather: weather::WeatherEnv {
+                weather: kiln_blocks::weather::Weather {
+                    raining: self.is_raining(dim),
+                    thundering: self.is_thundering(dim),
+                    max_snow_height: self.rule_int("minecraft:max_snow_accumulation_height"),
+                },
+                climates: self.climates.clone(),
+                zoom_seed: self.zoom_seed,
+                sea_level: SEA_LEVELS[dim],
+            },
         }
     }
 
@@ -1545,6 +1576,7 @@ impl Sim {
         };
         let (spawn, spawn_rot, now) = (self.spawn, self.spawn_rot, self.game_time);
         let time = self.time_packet();
+        let weather = self.weather_packets(dim);
         let rules = self.rules.clone();
         // Viewers in the old level saw the death (or the player walk into the portal): they
         // forget it and get the entity again once tracking re-evaluates it.
@@ -1594,6 +1626,9 @@ impl Sim {
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
         p.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         p.send(time);
+        for w in weather {
+            p.send(w);
+        }
         p.sent_health = None;
         p.sync_health();
         p.sent_xp = None;
@@ -1710,6 +1745,7 @@ impl Sim {
             self.save_player(p);
         }
         self.save_level();
+        self.save_weather();
         self.save_scoreboard();
         self.save_timers();
     }
@@ -1857,6 +1893,10 @@ impl Sim {
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
         player.send(self.time_packet());
+        // `PlayerList.sendLevelInfo`: the weather of the player's level.
+        for pkt in self.weather_packets(player.dim) {
+            player.send(pkt);
+        }
         player.send(packets::set_held_slot(player.inv.selected as i32));
         player.sync_health();
         // `PlayerList.placeNewPlayer`: the saved effects.
@@ -1877,15 +1917,6 @@ impl Sim {
         self.broadcast_system(msg);
         self.commands.bossbars.player_joined(uuid);
         self.flush_scoreboard();
-    }
-
-    fn time_packet(&self) -> Bytes {
-        // `ServerClockManager.createFullSyncPacket`: every clock, whatever the player's level.
-        let overworld = packets::ClockState { clock: self.overworld_clock, time: self.day_time, fraction: 0.0, rate: 1.0 };
-        let end = packets::ClockState { clock: self.end_clock, time: self.end_time, fraction: 0.0, rate: 1.0 };
-        let mut clocks = [overworld, end];
-        clocks.sort_by_key(|c| c.clock);
-        packets::set_time(self.game_time, &clocks)
     }
 
     /// `ServerLevel.isFlat` (a superflat generator): Kiln's test worlds' overworld.
@@ -1927,15 +1958,16 @@ impl Sim {
         for d in &mut self.dims {
             d.game_time = self.game_time;
         }
-        self.end_time += 1;
         self.tick_functions();
-        if self.game_time % AUTOSAVE_TICKS == 0 {
-            self.save();
-        }
-        self.day_time += 1;
+        self.tick_clocks();
         if self.game_time % 20 == 0 {
             let pkt = self.time_packet();
             self.broadcast(pkt);
+        }
+        // The levels' `tick`: the weather, sleeping, then (in the regions) the blocks.
+        self.tick_weather();
+        if self.game_time % AUTOSAVE_TICKS == 0 {
+            self.save();
         }
     }
 }

@@ -24,6 +24,7 @@ pub mod test_level;
 pub mod tick;
 pub mod ticks;
 pub mod update;
+pub mod weather;
 
 pub use behaviour::piston::{MovingPiston, MovingPistons, tick_moving_pistons};
 pub use fluid::FluidType;

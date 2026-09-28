@@ -43,28 +43,6 @@ impl Default for MobRules {
     }
 }
 
-/// The overworld `day` timeline's `minecraft:gameplay/sky_light_level` multiplier: 1 by day, 4/15
-/// at night, linear between the keyframes (the timeline repeats every 24000 ticks).
-fn sky_light_factor(day_time: i64) -> f32 {
-    const KEYS: [(i64, f32); 4] = [(133, 1.0), (11867, 1.0), (13670, 0.26666668), (22330, 0.26666668)];
-    let t = day_time.rem_euclid(24000);
-    for w in 0..KEYS.len() {
-        let (a, b) = (KEYS[w], KEYS[(w + 1) % KEYS.len()]);
-        let bt = if b.0 <= a.0 { b.0 + 24000 } else { b.0 };
-        let tt = if t < a.0 { t + 24000 } else { t };
-        if tt >= a.0 && tt <= bt {
-            let f = (tt - a.0) as f32 / (bt - a.0) as f32;
-            return a.1 + f * (b.1 - a.1);
-        }
-    }
-    1.0
-}
-
-/// `Level.updateSkyBrightness` (clear weather): `15 - sky light level`.
-pub(crate) fn sky_darken(day_time: i64) -> i32 {
-    (15.0 - 15.0 * sky_light_factor(day_time)) as i32
-}
-
 /// The `minecraft:gameplay/monsters_burn` timeline: off from 12542 to 23460.
 pub(crate) fn monsters_burn(day_time: i64) -> bool {
     let t = day_time.rem_euclid(24000);
@@ -324,16 +302,6 @@ pub(crate) fn drop_item(stack: kiln_item::ItemStack, pos: [f64; 3], h: u64) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sky_darkening() {
-        assert_eq!(sky_darken(1000), 0);
-        assert_eq!(sky_darken(6000), 0);
-        assert_eq!(sky_darken(18000), 11);
-        assert!(sky_darken(12800) > 0 && sky_darken(12800) < 11);
-        assert!(monsters_burn(6000));
-        assert!(!monsters_burn(18000));
-    }
 
     #[test]
     fn difficulty_of_a_new_world() {
