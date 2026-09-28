@@ -546,6 +546,12 @@ impl Ticking {
         Self(cells)
     }
 
+    /// Adds one chunk (a force-loaded one).
+    pub fn add(&mut self, c: ChunkPos) {
+        let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
+        *self.0.entry(c.cell()).or_default() |= 1 << bit;
+    }
+
     pub fn contains(&self, c: ChunkPos) -> bool {
         let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
         self.0.get(&c.cell()).is_some_and(|m| m & (1 << bit) != 0)

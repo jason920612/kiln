@@ -44,6 +44,12 @@ pub(crate) struct Env {
     /// Whether keep-alives are sent (`SimConfig::keep_alive`).
     pub keep_alive: bool,
     pub blocks: blocks::BlockEnv,
+    /// `/tick freeze`: only players tick (`TickRateManager.runsNormally` is false).
+    pub frozen: bool,
+    /// The level's world border, for players outside it.
+    pub border: crate::world_state::BorderBox,
+    /// Force-loaded chunks of the level, which tick without players near.
+    pub forced: std::sync::Arc<Vec<ChunkPos>>,
 }
 
 /// What a region leaves for the next serial phase.
@@ -327,7 +333,7 @@ impl RegionWork<'_> {
     /// The block phases: players' digging, pressure plates under bodies, then scheduled
     /// ticks, random ticks, block events and moving pistons in chunks near players.
     fn tick_blocks(&mut self, env: &Env) {
-        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let ticking = ticking_chunks(&self.players, env);
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
@@ -349,12 +355,15 @@ impl RegionWork<'_> {
             for p in self.players.iter_mut().filter(|p| !p.disconnected) {
                 crate::sleep::tick_player(p, &mut level);
             }
-            blocks::press_plates(&mut level);
-            blocks::tick_blocks(&mut level, &ticking);
-            for pos in std::mem::take(&mut level.out.rechecks) {
-                crate::container::open::recheck_openers(&mut level, &self.players, pos);
+            // A frozen game (`/tick freeze`) ticks no blocks.
+            if !env.frozen {
+                blocks::press_plates(&mut level);
+                blocks::tick_blocks(&mut level, &ticking);
+                for pos in std::mem::take(&mut level.out.rechecks) {
+                    crate::container::open::recheck_openers(&mut level, &self.players, pos);
+                }
+                blocks::tick_pistons(&mut level, &ticking);
             }
-            blocks::tick_pistons(&mut level, &ticking);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         if let Some(h) = self.plugins.as_mut() {
@@ -365,11 +374,15 @@ impl RegionWork<'_> {
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
     fn tick_entities(&mut self, env: &Env) {
+        // `TickRateManager.isEntityFrozen`: nothing but players ticks while frozen.
+        if env.frozen {
+            return;
+        }
         if self.entities.list.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
             self.tick_block_entities(env);
             return;
         }
-        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let ticking = ticking_chunks(&self.players, env);
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         {
@@ -395,7 +408,7 @@ impl RegionWork<'_> {
         if self.blocks.containers.len() == 0 {
             return;
         }
-        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let ticking = ticking_chunks(&self.players, env);
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         let mut items = crate::container::hopper::EntityItems::new(self.entities);
@@ -471,7 +484,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     tick_connection(p, env);
     p.tick_damage(env.game_time);
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
-    p.base_tick(&block, env.min_y, &mut ctx);
+    p.base_tick(&block, env.min_y, &env.border, &mut ctx);
     // `Entity.handlePortal` (in `baseTick`).
     if let Some(travel) = p.handle_portal(env) {
         t.portals.push(travel);
@@ -496,6 +509,16 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     }
     p.sync_health();
     p.sync_experience();
+    t
+}
+
+/// Chunks that tick: those within the simulation distance of the region's players and the
+/// level's force-loaded chunks.
+fn ticking_chunks(players: &[&mut Player], env: &Env) -> Ticking {
+    let mut t = Ticking::around(players.iter().map(|p| p.center), env.blocks.simulation_distance);
+    for &c in env.forced.iter() {
+        t.add(c);
+    }
     t
 }
 
@@ -755,7 +778,12 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 }
                 digging::START_DESTROY_BLOCK | digging::STOP_DESTROY_BLOCK | digging::ABORT_DESTROY_BLOCK => {
                     let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
-                    digging::player_action(p, &mut level, action, pos);
+                    // `Level.mayInteract`: nothing outside the world border breaks.
+                    if env.border.contains(pos[0] as f64, pos[2] as f64) {
+                        digging::player_action(p, &mut level, action, pos);
+                    } else {
+                        p.resend_block(&level, pos);
+                    }
                 }
                 _ => {}
             }
@@ -770,7 +798,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         }
         PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
-            use_item_on(p, &mut level, hand, pos, face, cursor, fx.spawns);
+            let may_interact = env.border.contains(pos[0] as f64, pos[2] as f64);
+            use_item_on(p, &mut level, hand, pos, face, cursor, may_interact, fx.spawns);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         // `handlePunch`: the swing resets the attack strength.
@@ -810,7 +839,17 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
 /// clicked block reacts (levers, doors, ...) unless the player sneaks with something in hand;
 /// otherwise a held block item is placed. The player always gets the clicked block and the
 /// one next to it back, to settle its prediction.
-fn use_item_on(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3], face: i32, cursor: [f32; 3], spawns: &mut Vec<Spawn>) {
+#[allow(clippy::too_many_arguments)]
+fn use_item_on(
+    p: &mut Player,
+    level: &mut RegionLevel,
+    hand: i32,
+    pos: [i32; 3],
+    face: i32,
+    cursor: [f32; 3],
+    may_interact: bool,
+    spawns: &mut Vec<Spawn>,
+) {
     let Some(dir) = blocks::direction(face) else { return };
     if !p.can_reach_block(pos, 1.0) || cursor.iter().any(|&c| (c as f64 - 0.5).abs() >= 1.0000001) {
         return;
@@ -818,7 +857,8 @@ fn use_item_on(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3]
     let step = dir.step();
     let next = [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]];
     let top = level.env.min_y + level.env.height - 1;
-    if pos[1] <= top && p.awaiting_teleport.is_none() {
+    // `Level.mayInteract`: blocks outside the world border do not react.
+    if pos[1] <= top && p.awaiting_teleport.is_none() && may_interact {
         if p.game_mode == 3 {
             crate::container::open::spectator_use(p, level, BlockPos::new(pos[0], pos[1], pos[2]), spawns);
         } else {

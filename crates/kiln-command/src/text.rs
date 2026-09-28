@@ -409,8 +409,8 @@ fn write_plain_nbt(tag: &Tag, out: &mut String) {
         Tag::Short(v) => out.push_str(&v.to_string()),
         Tag::Int(v) => out.push_str(&v.to_string()),
         Tag::Long(v) => out.push_str(&v.to_string()),
-        Tag::Float(v) => out.push_str(&v.to_string()),
-        Tag::Double(v) => out.push_str(&v.to_string()),
+        Tag::Float(v) => out.push_str(&crate::vanilla::java_float(*v)),
+        Tag::Double(v) => out.push_str(&crate::vanilla::java_double(*v)),
         _ => {}
     }
 }

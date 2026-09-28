@@ -27,6 +27,8 @@ mod tag;
 mod team;
 mod title;
 mod tracker;
+mod world;
+pub use world::{java_double, java_fixed, java_float};
 
 use crate::arguments::GameProfileArg;
 use crate::dispatcher::Dispatcher;
@@ -125,6 +127,14 @@ pub const COMMANDS: &[&str] = &[
     "clear",
     "enchant",
     "attribute",
+    "worldborder",
+    "tick",
+    "forceload",
+    "random",
+    "locate",
+    "place",
+    "fillbiome",
+    "spreadplayers",
 ];
 
 /// Registers every built-in command.
@@ -202,6 +212,14 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     items::clear(d);
     items::enchant(d);
     attribute::attribute(d);
+    world::worldborder(d);
+    world::tick(d);
+    world::forceload(d);
+    world::random(d);
+    world::locate(d);
+    world::place(d);
+    world::fillbiome(d);
+    world::spreadplayers(d);
 }
 
 /// `getEntityOrException`.

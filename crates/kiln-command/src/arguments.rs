@@ -93,6 +93,14 @@ pub enum ArgumentType {
     NbtPath,
     /// `minecraft:resource_or_tag`: an entry or `#tag` of `registry`.
     ResourceOrTag { registry: &'static str },
+    /// `minecraft:resource_or_tag_key`: an id or `#tag` of `registry`, looked up when used.
+    ResourceOrTagKey { registry: &'static str },
+    /// `minecraft:feature` (`ResourceOrIdArgument`): a configured feature id or an inline one.
+    Feature,
+    /// `minecraft:template_rotation`: `none`, `clockwise_90`, `180`, `counterclockwise_90`.
+    TemplateRotation,
+    /// `minecraft:template_mirror`: `none`, `left_right`, `front_back`.
+    TemplateMirror,
     /// `minecraft:function`: a function id or `#tag`.
     Function,
     /// `minecraft:item_predicate`
@@ -245,6 +253,12 @@ impl ArgumentType {
             ArgumentType::FloatRange => Parser::Plain("minecraft:float_range"),
             ArgumentType::NbtPath => Parser::Plain("minecraft:nbt_path"),
             ArgumentType::ResourceOrTag { registry } => Parser::Registry { id: "minecraft:resource_or_tag", registry },
+            ArgumentType::ResourceOrTagKey { registry } => {
+                Parser::Registry { id: "minecraft:resource_or_tag_key", registry }
+            }
+            ArgumentType::Feature => Parser::Plain("minecraft:feature"),
+            ArgumentType::TemplateRotation => Parser::Plain("minecraft:template_rotation"),
+            ArgumentType::TemplateMirror => Parser::Plain("minecraft:template_mirror"),
             ArgumentType::Function => Parser::Plain("minecraft:function"),
             ArgumentType::ItemPredicate => Parser::Plain("minecraft:item_predicate"),
             ArgumentType::SlotSource => Parser::Plain("minecraft:slot_source"),
@@ -482,6 +496,42 @@ impl ArgumentType {
                     }
                     ArgumentValue::ResourceOrTag(ResourceOrTag::Resource(id))
                 }
+            }
+            ArgumentType::ResourceOrTagKey { .. } => {
+                if reader.can_read() && reader.peek() == '#' {
+                    reader.skip();
+                    ArgumentValue::ResourceOrTag(ResourceOrTag::Tag(Identifier::read(reader)?))
+                } else {
+                    ArgumentValue::ResourceOrTag(ResourceOrTag::Resource(Identifier::read(reader)?))
+                }
+            }
+            ArgumentType::Feature => {
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    ArgumentValue::Nbt(snbt::parse_tag(reader)?)
+                } else {
+                    let id = Identifier::read(reader)?;
+                    if configured_features().is_some_and(|ids| !ids.iter().any(|i| i == id.as_str())) {
+                        let e = tr!(
+                            "argument.resource_or_id.no_such_element",
+                            id.to_string(),
+                            "minecraft:worldgen/feature"
+                        );
+                        return Err(CommandError::new(e).at(reader));
+                    }
+                    ArgumentValue::Identifier(id)
+                }
+            }
+            ArgumentType::TemplateRotation | ArgumentType::TemplateMirror => {
+                let s = reader.read_unquoted_string();
+                let names: &[&str] = if *self == ArgumentType::TemplateRotation {
+                    &["none", "clockwise_90", "180", "counterclockwise_90"]
+                } else {
+                    &["none", "left_right", "front_back"]
+                };
+                if !names.contains(&s) {
+                    return Err(CommandError::new(tr!("argument.enum.invalid", s)).at(reader));
+                }
+                ArgumentValue::String(s.to_owned())
             }
             ArgumentType::Function => {
                 let tag = reader.can_read() && reader.peek() == '#';
@@ -967,6 +1017,23 @@ impl ResourceOrTag {
             }
         }
     }
+}
+
+/// Configured feature ids of the vanilla datapack (`KILN_DATAPACK` or `work/generated`), if
+/// it is there.
+pub(crate) fn configured_features() -> Option<&'static Vec<String>> {
+    static IDS: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
+    IDS.get_or_init(|| {
+        let root = std::env::var_os("KILN_DATAPACK").map(std::path::PathBuf::from).unwrap_or_else(|| "work/generated".into());
+        let dir = root.join("data/minecraft/worldgen/feature");
+        let mut ids: Vec<String> = std::fs::read_dir(&dir)
+            .ok()?
+            .filter_map(|e| e.ok()?.file_name().to_str()?.strip_suffix(".json").map(|n| format!("minecraft:{n}")))
+            .collect();
+        ids.sort();
+        Some(ids)
+    })
+    .as_ref()
 }
 
 /// `ScoreHolderArgument.Result`: a selector, `*` or a name.

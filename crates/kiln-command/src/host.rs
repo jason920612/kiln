@@ -502,10 +502,116 @@ pub enum WaypointChange {
     Style(Option<String>),
 }
 
+/// A level's world border as `/worldborder` reads it (`WorldBorder`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BorderInfo {
+    pub center: [f64; 2],
+    /// The current size (`getSize`, mid-move while it moves).
+    pub size: f64,
+    /// Ticks left of a size change (`getLerpTime`), 0 when still.
+    pub lerp_time: i64,
+    pub damage_per_block: f64,
+    pub safe_zone: f64,
+    /// Ticks.
+    pub warning_time: i32,
+    pub warning_blocks: i32,
+}
+
+impl Default for BorderInfo {
+    /// `WorldBorder.Settings.DEFAULT`.
+    fn default() -> Self {
+        BorderInfo {
+            center: [0.0, 0.0],
+            size: 59_999_968.0,
+            lerp_time: 0,
+            damage_per_block: 0.2,
+            safe_zone: 5.0,
+            warning_time: 300,
+            warning_blocks: 5,
+        }
+    }
+}
+
+/// A change `/worldborder` makes (the `WorldBorder` setters).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BorderChange {
+    Center(f64, f64),
+    Size(f64),
+    /// `lerpSizeBetween(from, to, ticks, gameTime)`.
+    Lerp { from: f64, to: f64, ticks: i64 },
+    DamagePerBlock(f64),
+    SafeZone(f64),
+    WarningTime(i32),
+    WarningBlocks(i32),
+}
+
+/// The server's tick rate state (`ServerTickRateManager`), for `/tick query`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TickRateInfo {
+    pub rate: f32,
+    pub nanos_per_tick: i64,
+    pub frozen: bool,
+    pub sprinting: bool,
+    /// `getAverageTickTimeNanos`.
+    pub average_tick_nanos: i64,
+    /// `getTickTimesNanos`: the last 100 tick times.
+    pub tick_times: Vec<i64>,
+}
+
+impl Default for TickRateInfo {
+    fn default() -> Self {
+        TickRateInfo {
+            rate: 20.0,
+            nanos_per_tick: 50_000_000,
+            frozen: false,
+            sprinting: false,
+            average_tick_nanos: 0,
+            tick_times: vec![0; 100],
+        }
+    }
+}
+
+/// What `/tick` asks of the tick rate manager.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TickRateAction {
+    Rate(f32),
+    /// `setFrozen`, after stopping a sprint or steps when freezing.
+    Freeze(bool),
+    /// `stepGameIfPaused`: false unless frozen.
+    Step(i32),
+    /// `stopStepping`: whether it was stepping.
+    StopStepping,
+    /// `requestGameToSprint`: whether a sprint was already running.
+    Sprint(i32),
+    /// `stopSprinting`: whether it was sprinting.
+    StopSprinting,
+}
+
+/// A located element (`locate`): its position and registered name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Located {
+    pub pos: [i32; 3],
+    pub id: String,
+}
+
+/// What `/place` places.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Placement {
+    /// A configured feature by id, or inline (SNBT) when `inline`.
+    Feature { id: Option<Identifier>, inline: Option<Tag> },
+    Jigsaw { pool: Identifier, target: Identifier, max_depth: i32 },
+    Structure(Identifier),
+    Template { id: Identifier, rotation: u8, mirror: u8, integrity: f32, seed: i32, strict: bool },
+}
+
 /// Effects of the built-in commands. `Self::Entity` handles come from selectors.
 pub trait Host: SelectorWorld {
     /// `sendSuccess`: feedback to the source; `broadcast` also informs operators and the log.
     fn send_success(&mut self, text: Text, broadcast: bool);
+    /// `sendFailure` without failing the command: red feedback to the source.
+    fn send_failure(&mut self, text: Text) {
+        self.send_success(text.color("red"), false);
+    }
     /// A system message to one player.
     fn send_system(&mut self, player: &Self::Entity, text: Text);
     /// `say` and `me`: to every player.
@@ -966,7 +1072,92 @@ pub trait Host: SelectorWorld {
     fn enchant_held(&mut self, _entity: &Self::Entity, _enchantment: &str, _level: i32) -> EnchantOutcome {
         EnchantOutcome::NotLiving
     }
+    // ---- worldborder, tick, forceload, random, locate, place, fillbiome, spreadplayers ----
+
+    /// The world border of `dimension`.
+    fn world_border(&mut self, _dimension: &str) -> BorderInfo {
+        BorderInfo::default()
+    }
+    /// Applies a border change (players in the level are told, the level saves it).
+    fn change_world_border(&mut self, _dimension: &str, _change: BorderChange) {}
+    /// The level's game time, for border moves.
+    fn level_game_time(&self, _dimension: &str) -> i64 {
+        self.game_time()
+    }
+    fn tick_rate(&self) -> TickRateInfo {
+        TickRateInfo::default()
+    }
+    /// Applies `/tick` actions; the returned flag is the manager method's result.
+    fn change_tick_rate(&mut self, _action: TickRateAction) -> bool {
+        false
+    }
+    /// `ServerLevel.getForceLoadedChunks` of `dimension`.
+    fn forced_chunks(&self, _dimension: &str) -> Vec<[i32; 2]> {
+        Vec::new()
+    }
+    /// `ServerLevel.setChunkForced`: whether it changed.
+    fn set_chunk_forced(&mut self, _dimension: &str, _chunk: [i32; 2], _forced: bool) -> bool {
+        false
+    }
+    /// `Mth.randomBetweenInclusive` on random sequence `sequence` (the server's, seeded from
+    /// the world seed) or, without one, the level random.
+    fn random_between(&mut self, _sequence: Option<&Identifier>, min: i32, _max: i32) -> i32 {
+        min
+    }
+    /// `RandomSequences.reset(id, seed, salt, includeWorldSeed, includeSequenceId)`, with the
+    /// sequence defaults when `params` is `None`.
+    fn reset_random_sequence(&mut self, _id: &Identifier, _params: Option<(i32, bool, bool)>) {}
+    /// `RandomSequences.clear` (after `setSeedDefaults` when `defaults` is given): how many
+    /// sequences there were.
+    fn clear_random_sequences(&mut self, _defaults: Option<(i32, bool, bool)>) -> i32 {
+        0
+    }
+    /// Ids of the existing random sequences, for suggestions.
+    fn random_sequence_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// `PlayerList.broadcastSystemMessage`: to every player and the server log.
+    fn broadcast_system_message(&mut self, text: Text) {
+        self.send_success(text, false);
+    }
+    /// `ServerLevel.findClosestBiome3d(origin, 6400, 32, 64)` over the generator's biome
+    /// source, for biomes `matches` accepts. `None` when nothing matches.
+    fn locate_biome(&mut self, _dimension: &str, _origin: [i32; 3], _matches: &dyn Fn(&str) -> bool) -> Option<Located> {
+        None
+    }
+    /// `ChunkGenerator.findNearestMapStructure(level, structures, origin, 100, false)`.
+    fn locate_structure(&mut self, _dimension: &str, _origin: [i32; 3], _structures: &[String]) -> Option<Located> {
+        None
+    }
+    /// Structure ids of the level's registry (`minecraft:worldgen/structure`).
+    fn structure_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Structure ids in tag `tag`, if the tag exists.
+    fn structure_tag(&self, _tag: &str) -> Option<Vec<String>> {
+        None
+    }
+    /// `PoiManager.findClosestWithType(types, origin, 256, ANY)`.
+    fn locate_poi(&mut self, _dimension: &str, _origin: [i32; 3], _matches: &dyn Fn(&str) -> bool) -> Option<Located> {
+        None
+    }
+    /// `/place`: places at `pos` (chunks already checked loaded where vanilla checks before
+    /// placing); the error is vanilla's failure.
+    fn place(&mut self, _dimension: &str, _what: &Placement, _pos: [i32; 3]) -> Result<(), CommandError> {
+        Err(CommandError::unsupported("place"))
+    }
+    /// The biome id at quart position `quart` of a loaded chunk.
+    fn noise_biome(&mut self, _dimension: &str, _quart: [i32; 3]) -> Option<String> {
+        None
+    }
+    /// `/fillbiome`: sets `biome` in the quart cells of loaded chunks inside `[min, max]` (block
+    /// coordinates, quantized) whose biome `filter` accepts and differs; resends the chunks.
+    /// Returns how many cells changed, or `None` when a chunk is not loaded.
+    fn fill_biome(&mut self, _dimension: &str, _min: [i32; 3], _max: [i32; 3], _biome: &str, _filter: &dyn Fn(&str) -> bool) -> Option<i32> {
+        None
+    }
 }
+
 
 /// An entity's attribute instance as `/attribute` reads it.
 #[derive(Debug, Clone, PartialEq)]
