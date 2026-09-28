@@ -129,8 +129,13 @@ impl Kind for GuardianKind {
         self.kind_info()
     }
 
+    /// Guardians emit only events (`MovementEmission.EVENTS`): no swim sound.
+    fn swim_sound(&self) -> Option<&'static str> {
+        None
+    }
+
     fn new_state(&self, m: &mut MobData, random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
-        m.nav.swim = true;
+        m.nav.water_bound = true;
         m.nav.can_pass_doors = false;
         m.maluses.push((path::PathType::Water, 0.0));
         // `clientSideTailAnimation`.

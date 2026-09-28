@@ -319,6 +319,9 @@ impl Entity {
     }
 
     pub fn is_pushed_by_fluid(&self) -> bool {
+        if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) {
+            return crate::mob::pushed_by_fluid(self.type_name);
+        }
         !matches!(&self.kind, EntityKind::Arrow(a) if a.in_ground)
     }
 
@@ -698,12 +701,11 @@ impl Entity {
             self.next_step = (self.move_dist as i32 + 1) as f32;
         } else if self.is_in_water() {
             self.next_step = (self.move_dist as i32 + 1) as f32;
-            // Guardians emit only events (`MovementEmission.EVENTS`): no swim sound.
-            if !matches!(self.type_name, "minecraft:guardian" | "minecraft:elder_guardian") {
+            if let Some(sound) = crate::mob::swim_sound(self.type_name) {
                 let d = self.delta;
                 let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.35);
                 let pitch = 1.0 + (self.random_next_float_pub() - self.random_next_float_pub()) * 0.4;
-                self.play_sound(level, "minecraft:entity.generic.swim", volume, pitch);
+                self.play_sound(level, sound, volume, pitch);
             }
             level.emit(Event::GameEvent { event: "minecraft:swim", pos: self.position, entity: Some(self.id) });
         }

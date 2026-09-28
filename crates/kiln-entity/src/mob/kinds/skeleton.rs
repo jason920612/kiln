@@ -30,8 +30,8 @@ pub fn register_goals(m: &mut MobData) {
     t.add(1, hurt_by(false));
     t.add(2, nearest(Wanted::Player, true));
     t.add(3, nearest(Wanted::Types(IRON_GOLEM), true));
-    // Baby turtles on land (turtles are not simulated).
-    t.add(3, nearest(Wanted::Unsimulated, true));
+    // Baby turtles on land.
+    t.add(3, nearest(Wanted::BabyTurtlesOnLand, true));
     m.goals.add(
         4,
         Goal::Melee { kind: MeleeKind::Plain, speed: 1.2, follow_unseen: false, path: None, recalc: 0, next_attack: 0, last_can_use: 0, pathed: Vec3::ZERO, raise_arm: 0 },

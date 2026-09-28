@@ -54,8 +54,24 @@ pub mod guardian;
 pub mod warden;
 
 // -- slice 3: common mobs A
+pub mod common_a;
+pub mod rabbit;
+pub mod polar_bear;
+pub mod turtle;
+pub mod fox;
+pub mod panda;
 
 // -- slice 3: common mobs B
+pub mod squid;
+pub mod fish;
+pub mod mooshroom;
+pub mod ocelot;
+pub mod bat;
+pub mod snow_golem;
+pub mod bogged;
+pub mod armadillo;
+pub mod camel;
+pub mod allay;
 
 
 /// The behaviour of an extension type; `None` for the shared-code types.
@@ -107,8 +123,27 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Warden => &warden::KIND,
 
         // -- slice 3: common mobs A
+        MobKind::Rabbit => &rabbit::KIND,
+        MobKind::PolarBear => &polar_bear::KIND,
+        MobKind::Turtle => &turtle::KIND,
+        MobKind::Fox => &fox::KIND,
+        MobKind::Panda => &panda::KIND,
 
         // -- slice 3: common mobs B
+        MobKind::Squid => &squid::KIND,
+        MobKind::GlowSquid => &squid::GLOW,
+        MobKind::Cod => &fish::COD,
+        MobKind::Salmon => &fish::SALMON,
+        MobKind::TropicalFish => &fish::TROPICAL_FISH,
+        MobKind::Pufferfish => &fish::PUFFERFISH,
+        MobKind::Mooshroom => &mooshroom::KIND,
+        MobKind::Ocelot => &ocelot::KIND,
+        MobKind::Bat => &bat::KIND,
+        MobKind::SnowGolem => &snow_golem::KIND,
+        MobKind::Bogged => &bogged::KIND,
+        MobKind::Armadillo => &armadillo::KIND,
+        MobKind::Camel => &camel::KIND,
+        MobKind::Allay => &allay::KIND,
 
         _ => return None,
     })

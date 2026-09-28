@@ -382,6 +382,12 @@ pub trait EntityLevel {
         63
     }
 
+    /// The `minecraft:worldgen/biome` id at `pos` (`None` when unknown: tests).
+    fn biome(&self, pos: BlockPos) -> Option<i32> {
+        let _ = pos;
+        None
+    }
+
     /// Highest block y of the dimension.
     fn max_y(&self) -> i32 {
         self.min_y() + 383
@@ -626,6 +632,13 @@ pub trait EntityLevel {
     /// The `minecraft:gameplay/piglins_zombify` environment attribute (false in the nether).
     fn piglins_zombify(&self) -> bool {
         !self.fast_lava()
+    }
+
+    /// The `minecraft:gameplay/snow_golem_melts` environment attribute at `pos` (hot biomes,
+    /// the nether).
+    fn snow_golem_melts(&self, pos: Vec3) -> bool {
+        let _ = pos;
+        self.fast_lava()
     }
 
     /// `AbstractVillager.addOffersFromTradeSet`: the offers the datapack trade set `set` (a

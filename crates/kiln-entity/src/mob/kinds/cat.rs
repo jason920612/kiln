@@ -656,9 +656,9 @@ impl CustomGoal for MoveToBlock {
 
 /// `OcelotAttackGoal`: runs at the target and swipes at it once a second.
 #[derive(Clone, Debug)]
-struct OcelotAttackGoal {
-    target: Option<i32>,
-    attack_time: i32,
+pub(crate) struct OcelotAttackGoal {
+    pub(crate) target: Option<i32>,
+    pub(crate) attack_time: i32,
 }
 
 impl CustomGoal for OcelotAttackGoal {

@@ -88,7 +88,7 @@ fn tag_of(v: &Value) -> kiln_proto::nbt::Tag {
     }
 }
 
-fn state(e: &kiln_entity::Entity, level: &MemoryLevel) -> (Vec<f64>, String) {
+fn state(e: &kiln_entity::Entity, level: &dyn EntityLevel) -> (Vec<f64>, String) {
     let m = mob::data(e).expect("a mob");
     let p = e.position();
     let v = e.delta;
@@ -110,7 +110,7 @@ fn state(e: &kiln_entity::Entity, level: &MemoryLevel) -> (Vec<f64>, String) {
         m.hurt_time as f64,
         b(e.is_removed()),
         e.remaining_fire_ticks as f64,
-        // `getTarget()`: the target while it is still a valid one.
+        // `Mob.getTarget`: the target while it can be attacked (not once it died).
         mob::goals::target(m, level).map_or(-1.0, |t| t.id as f64),
         e.random.state() as f64,
         effects_sig(m) as f64,

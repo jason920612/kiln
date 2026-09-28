@@ -349,8 +349,10 @@ struct Search<'a> {
     can_walk_over_fences: bool,
     /// `AmphibiousNodeEvaluator`: water is walkable, swimming up and down, land costs more.
     amphibious: bool,
-    /// `SwimNodeEvaluator` (no breaching): water only, in all 6 directions and the level diagonals.
+    /// `SwimNodeEvaluator`: water only, in all 6 directions and the level diagonals.
     swim: bool,
+    /// `allowBreaching` (dolphins).
+    breaching: bool,
     /// `FlyNodeEvaluator`: open air in 26 directions.
     fly: bool,
     /// `PathfindingContext.mobPosition`.
@@ -815,7 +817,7 @@ impl<'a> Search<'a> {
     /// costs 8 more.
     fn swim_accepted(&mut self, x: i32, y: i32, z: i32) -> Option<u32> {
         let t = self.cached_type(x, y, z);
-        if t != PathType::Water {
+        if !(t == PathType::Water || (self.breaching && t == PathType::Breach)) {
             return None;
         }
         let malus = self.malus(t);
@@ -1161,8 +1163,10 @@ pub struct Navigation {
     pub path_to_position: Option<BlockPos>,
     /// `AmphibiousPathNavigation` (drowned).
     pub amphibious: bool,
-    /// `WaterBoundPathNavigation` (guardians; no breaching).
-    pub swim: bool,
+    /// `WaterBoundPathNavigation` (fish, squids, guardians, dolphins, tadpoles).
+    pub water_bound: bool,
+    /// `WaterBoundPathNavigation.allowBreaching` (dolphins: paths may leave the water).
+    pub allow_breaching: bool,
     /// `FlyingPathNavigation` (the wither).
     pub fly: bool,
 }
@@ -1202,8 +1206,9 @@ fn max_path_length(m: &MobData) -> f32 {
 /// `GroundPathNavigation.canUpdatePath` (always for amphibious navigation; in a liquid for
 /// water-bound navigation; unless riding for flying navigation).
 fn can_update_path(e: &Entity, m: &MobData) -> bool {
-    if m.nav.swim {
-        return e.is_in_water() || e.is_in_lava();
+    if m.nav.water_bound {
+        // `WaterBoundPathNavigation.canUpdatePath`: in a liquid, unless it may breach.
+        return m.nav.allow_breaching || e.is_in_water() || e.is_in_lava();
     }
     if m.nav.fly {
         return (m.nav.can_float && (e.is_in_water() || e.is_in_lava())) || e.vehicle.is_none();
@@ -1214,7 +1219,7 @@ fn can_update_path(e: &Entity, m: &MobData) -> bool {
 /// Water-bound, flying and amphibious navigation go to the block itself, ground navigation to
 /// the surface there.
 fn keeps_target_block(m: &MobData) -> bool {
-    m.nav.amphibious || m.nav.swim || m.nav.fly
+    m.nav.amphibious || m.nav.water_bound || m.nav.fly
 }
 
 /// `AmphibiousNodeEvaluator.getPathType`.
@@ -1300,12 +1305,28 @@ fn top_face_full(level: &dyn EntityLevel, pos: BlockPos) -> bool {
     (0..shape.size(Axis::X) as i32).all(|i| (0..shape.size(Axis::Z) as i32).all(|k| shape.is_full_wide(i, top, k)))
 }
 
+/// `BehaviorUtils.getRandomSwimmablePos`: a `DefaultRandomPos` in the water (up to ten more
+/// tries while the spot is not swimmable).
+pub fn random_swimmable_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32) -> Option<Vec3> {
+    let mut p = super::random_pos::default_pos(e, m, level, h, v);
+    let mut count = 0;
+    while let Some(q) = p {
+        let swimmable = crate::physics::fluid_state(level.block(BlockPos::containing(q.x, q.y, q.z))).kind.is_water();
+        if swimmable || count >= 10 {
+            break;
+        }
+        count += 1;
+        p = super::random_pos::default_pos(e, m, level, h, v);
+    }
+    p
+}
+
 /// `isStableDestination` of the mob's navigation.
 pub fn stable_destination(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -> bool {
-    if let Some(stable) = m.kind.ext().and_then(|k| k.stable_destination(level, pos)) {
+    if let Some(stable) = m.kind.ext().and_then(|k| k.stable_destination_for(m, level, pos)) {
         return stable;
     }
-    if m.nav.swim {
+    if m.nav.water_bound {
         return !kiln_data::block_props::solid_render(level.block(pos));
     }
     if m.nav.fly {
@@ -1349,7 +1370,8 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
         can_pass_doors: m.nav.can_pass_doors,
         can_walk_over_fences: m.nav.can_walk_over_fences,
         amphibious: m.nav.amphibious,
-        swim: m.nav.swim,
+        swim: m.nav.water_bound,
+        breaching: m.nav.allow_breaching,
         fly: m.nav.fly,
         mob_pos: e.block_position(),
         heap: Vec::with_capacity(64),
@@ -1496,7 +1518,7 @@ fn temp_mob_pos(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Vec3 {
     if m.nav.fly {
         return e.position();
     }
-    if m.nav.amphibious || m.nav.swim {
+    if m.nav.amphibious || m.nav.water_bound {
         // `AmphibiousPathNavigation.getTempMobPos`: half way up the box.
         return Vec3::new(e.x(), e.y() + e.height as f64 * 0.5, e.z());
     }
@@ -1598,7 +1620,7 @@ fn follow_the_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
     let dz = (e.z() - (next.z as f64 + 0.5)).abs();
     let md = m.nav.max_distance_to_waypoint as f64;
     // `getMaxVerticalDistanceToWaypoint`: 0.5 for water-bound navigation.
-    let close = dx < md && dz < md && dy < if m.nav.swim { 0.5 } else { 1.0 };
+    let close = dx < md && dz < md && dy < if m.nav.water_bound { 0.5 } else { 1.0 };
     let kind = path.nodes[path.next].kind;
     let cut = !matches!(kind, PathType::FireInNeighbor | PathType::DamagingInNeighbor | PathType::WalkableDoor);
     if close || (cut && should_target_next_node_in_direction(e, m, level, path, cur)) {
@@ -1618,7 +1640,7 @@ fn should_target_next_node_in_direction(e: &Entity, m: &MobData, level: &dyn Ent
     }
     // `canMoveDirectly`: false for ground navigation; amphibious navigation in a liquid goes
     // straight when nothing is in the way (`isClearForMovementBetween`).
-    if (m.nav.amphibious && (e.is_in_water() || e.is_in_lava())) || m.nav.swim || m.nav.fly {
+    if (m.nav.amphibious && (e.is_in_water() || e.is_in_lava())) || m.nav.water_bound || m.nav.fly {
         let to = path.next_entity_pos(e.width);
         let to = Vec3::new(to.x, to.y + e.height as f64 * 0.5, to.z);
         // Flying navigation is blocked by fluids too (`isClearForMovementBetween(.., true)`).

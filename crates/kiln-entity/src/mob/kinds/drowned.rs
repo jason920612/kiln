@@ -132,8 +132,8 @@ impl Kind for Drowned {
         t.add(3, nearest(Wanted::Types(VILLAGERS), false));
         t.add(3, nearest(Wanted::Types(IRON_GOLEM), true));
         t.add(3, nearest(Wanted::Types(&["minecraft:axolotl"]), true));
-        // Baby turtles on land (turtles are not simulated).
-        t.add(5, nearest(Wanted::Unsimulated, true));
+        // Baby turtles on land.
+        t.add(5, nearest(Wanted::BabyTurtlesOnLand, true));
     }
 
     fn player_target_ok(&self, _e: &Entity, _m: &MobData, level: &dyn EntityLevel, t: &Living) -> bool {

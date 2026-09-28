@@ -13,6 +13,7 @@
 pub mod attributes;
 pub mod breed;
 pub mod ext;
+pub mod fly;
 pub mod control;
 pub mod convert;
 pub mod effects;
@@ -102,8 +103,27 @@ pub enum MobKind {
     Warden,
 
     // -- slice 3: common mobs A
+    Rabbit,
+    PolarBear,
+    Turtle,
+    Fox,
+    Panda,
 
     // -- slice 3: common mobs B
+    Squid,
+    GlowSquid,
+    Cod,
+    Salmon,
+    TropicalFish,
+    Pufferfish,
+    Mooshroom,
+    Ocelot,
+    Bat,
+    SnowGolem,
+    Bogged,
+    Armadillo,
+    Camel,
+    Allay,
 
 }
 
@@ -114,24 +134,47 @@ pub enum Category {
     Creature,
     /// Villagers and golems: never spawned by the natural spawner, never despawn.
     Misc,
+    /// Bats.
+    Ambient,
+    Axolotls,
+    /// Glow squids.
+    UndergroundWaterCreature,
+    /// Squids, dolphins.
+    WaterCreature,
+    /// Fish.
+    WaterAmbient,
 }
 
 impl Category {
+    /// `NaturalSpawner.SPAWNING_CATEGORIES` (every category but `MISC`, in `MobCategory` order).
+    pub const SPAWNING: [Category; 7] = [
+        Category::Monster,
+        Category::Creature,
+        Category::Ambient,
+        Category::Axolotls,
+        Category::UndergroundWaterCreature,
+        Category::WaterCreature,
+        Category::WaterAmbient,
+    ];
+
     pub fn max_instances(self) -> i32 {
         match self {
             Category::Monster => 70,
             Category::Creature => 10,
             Category::Misc => -1,
+            Category::Ambient => 15,
+            Category::Axolotls | Category::UndergroundWaterCreature | Category::WaterCreature => 5,
+            Category::WaterAmbient => 20,
         }
     }
     pub fn friendly(self) -> bool {
         self != Category::Monster
     }
     pub fn persistent(self) -> bool {
-        self != Category::Monster
+        matches!(self, Category::Creature | Category::Misc)
     }
     pub fn despawn_distance(self) -> i32 {
-        128
+        if self == Category::WaterAmbient { 64 } else { 128 }
     }
     pub fn no_despawn_distance(self) -> i32 {
         32
@@ -141,6 +184,11 @@ impl Category {
             Category::Monster => "monster",
             Category::Creature => "creature",
             Category::Misc => "misc",
+            Category::Ambient => "ambient",
+            Category::Axolotls => "axolotls",
+            Category::UndergroundWaterCreature => "underground_water_creature",
+            Category::WaterCreature => "water_creature",
+            Category::WaterAmbient => "water_ambient",
         }
     }
 }
@@ -200,14 +248,35 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Warden,
 
     // -- slice 3: common mobs A
+    MobKind::Rabbit,
+    MobKind::PolarBear,
+    MobKind::Turtle,
+    MobKind::Fox,
+    MobKind::Panda,
 
     // -- slice 3: common mobs B
+    MobKind::Squid,
+    MobKind::GlowSquid,
+    MobKind::Cod,
+    MobKind::Salmon,
+    MobKind::TropicalFish,
+    MobKind::Pufferfish,
+    MobKind::Mooshroom,
+    MobKind::Ocelot,
+    MobKind::Bat,
+    MobKind::SnowGolem,
+    MobKind::Bogged,
+    MobKind::Armadillo,
+    MobKind::Camel,
+    MobKind::Allay,
 
 ];
 
 impl MobKind {
     pub fn by_name(name: &str) -> Option<MobKind> {
-        ALL_KINDS.iter().copied().find(|k| k.type_name() == name)
+        // Called per move (fall damage, fluids): a table rather than a scan of the types.
+        static BY_NAME: std::sync::OnceLock<std::collections::HashMap<&'static str, MobKind>> = std::sync::OnceLock::new();
+        BY_NAME.get_or_init(|| ALL_KINDS.iter().map(|&k| (k.type_name(), k)).collect()).get(name).copied()
     }
 
     /// The extension type's behaviour (`None` for the shared-code types).
@@ -336,7 +405,7 @@ impl MobKind {
 
     /// `instanceof AbstractSkeleton`.
     pub fn is_skeleton(self) -> bool {
-        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton)
+        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton | MobKind::Bogged)
     }
 
     pub fn loot_table(self) -> String {
@@ -722,6 +791,7 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
         MobKind::Chicken => {
             vec![C::ChickenVariant(v::ChickenVariant(m.variant)), C::ChickenSoundVariant(v::ChickenSoundVariant(m.sound_variant))]
         }
+        MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -848,7 +918,7 @@ pub fn reassess_weapon_goal(m: &mut MobData, hard: bool) {
     let goal = if m.holding_bow() {
         Goal::RangedBow {
             speed: 1.0,
-            interval_min: if hard { 20 } else { 40 },
+            interval_min: m.kind.ext().and_then(|k| k.bow_interval(hard)).unwrap_or(if hard { 20 } else { 40 }),
             radius_sqr: 15.0 * 15.0,
             attack_time: -1,
             see_time: 0,
@@ -882,6 +952,8 @@ pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
     // `EnderDragon`'s constructor: `noPhysics`.
     e.no_physics = kind == MobKind::EnderDragon;
+    // Constructors that size the mob by its state (salmon, pufferfish: `refreshDimensions`).
+    refresh_dimensions(&mut e, &m);
     e.kind = EntityKind::Mob(Box::new(m));
     e
 }
@@ -940,6 +1012,78 @@ pub fn refresh_dimensions(e: &mut Entity, m: &MobData) {
     e.eye_height = eye;
     let p = e.position();
     e.set_pos(p);
+}
+
+/// `Entity.refreshDimensions` with the level at hand: a mob that grew (outside its first tick)
+/// is moved to the free spot nearest its old center (`fudgePositionAfterSizeChange`).
+pub fn refresh_dimensions_in(e: &mut Entity, m: &MobData, level: &dyn EntityLevel) {
+    let (old_w, old_h) = (e.width, e.height);
+    refresh_dimensions(e, m);
+    let (w, h) = (e.width, e.height);
+    if e.first_tick || e.no_physics || w > 4.0 || h > 4.0 || !(w > old_w || h > old_h) {
+        return;
+    }
+    let old_center = e.position().add(0.0, old_h as f64 / 2.0, 0.0);
+    let wd = (w - old_w).max(0.0) as f64 + 1.0e-6;
+    let hd = (h - old_h).max(0.0) as f64 + 1.0e-6;
+    if let Some(p) = find_free_position(e, level, old_center, wd, hd, w as f64, h as f64) {
+        e.set_pos(p.add(0.0, -(h as f64) / 2.0, 0.0));
+        return;
+    }
+    if w > old_w && h > old_h
+        && let Some(p) = find_free_position(e, level, old_center, wd, 1.0e-6, w as f64, old_h as f64)
+    {
+        e.set_pos(p.add(0.0, -(old_h as f64) / 2.0 + 1.0e-6, 0.0));
+    }
+}
+
+/// `CollisionGetter.findFreePosition` over an allowed box of centers (`wd` by `hd` around
+/// `center`): the point of it nearest `center` where a `w` by `h` box touches no block.
+fn find_free_position(e: &Entity, level: &dyn EntityLevel, center: Vec3, wd: f64, hd: f64, w: f64, h: f64) -> Option<Vec3> {
+    let allowed = Aabb::new(center.x - wd / 2.0, center.y - hd / 2.0, center.z - wd / 2.0, center.x + wd / 2.0, center.y + hd / 2.0, center.z + wd / 2.0);
+    let search = allowed.inflate(w, h, w);
+    let mut blocked: Vec<Aabb> = Vec::new();
+    let ctx = e.collision_context();
+    crate::collision::for_each_block_collision(level, &ctx, &search, |pos, shape, _| {
+        for b in shape.boxes() {
+            blocked.push(b.offset(pos.x as f64, pos.y as f64, pos.z as f64).inflate(w / 2.0, h / 2.0, w / 2.0));
+        }
+        true
+    });
+    // The free part of the allowed box, cut along every blocked face, nearest cell first.
+    let cuts = |lo: f64, hi: f64, f: &dyn Fn(&Aabb) -> [f64; 2]| {
+        let mut v = vec![lo, hi];
+        for b in &blocked {
+            for c in f(b) {
+                if c > lo && c < hi {
+                    v.push(c);
+                }
+            }
+        }
+        v.sort_by(f64::total_cmp);
+        v.dedup();
+        v
+    };
+    let xs = cuts(allowed.min_x, allowed.max_x, &|b| [b.min_x, b.max_x]);
+    let ys = cuts(allowed.min_y, allowed.max_y, &|b| [b.min_y, b.max_y]);
+    let zs = cuts(allowed.min_z, allowed.max_z, &|b| [b.min_z, b.max_z]);
+    let mut best: Option<(f64, Vec3)> = None;
+    for i in 0..xs.len() - 1 {
+        for j in 0..ys.len() - 1 {
+            for k in 0..zs.len() - 1 {
+                let mid = Vec3::new((xs[i] + xs[i + 1]) / 2.0, (ys[j] + ys[j + 1]) / 2.0, (zs[k] + zs[k + 1]) / 2.0);
+                if blocked.iter().any(|b| b.min_x < mid.x && mid.x < b.max_x && b.min_y < mid.y && mid.y < b.max_y && b.min_z < mid.z && mid.z < b.max_z) {
+                    continue;
+                }
+                let p = Vec3::new(center.x.clamp(xs[i], xs[i + 1]), center.y.clamp(ys[j], ys[j + 1]), center.z.clamp(zs[k], zs[k + 1]));
+                let d = p.distance_to_sqr(center);
+                if best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, p));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 pub fn data(e: &Entity) -> Option<&MobData> {
@@ -1119,6 +1263,7 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
 
 /// `Mob.baseTick` → `LivingEntity.baseTick` → `Entity.baseTick`.
 fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    let air_before = e.air_supply;
     e.compute_speed();
     e.was_in_powder_snow = e.is_in_powder_snow;
     e.is_in_powder_snow = false;
@@ -1215,6 +1360,9 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
                 make_sound(e, m, level, s);
             }
         }
+    }
+    if let Some(k) = m.kind.ext() {
+        k.after_base_tick(e, m, level, air_before);
     }
 }
 
@@ -1435,7 +1583,9 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     if !k.is_some_and(|k| k.tick_look(e, m, level)) {
         control::tick_look(e, m);
     }
-    control::tick_jump(m);
+    if !k.is_some_and(|k| k.tick_jump(e, m, level)) {
+        control::tick_jump(m);
+    }
 }
 
 /// `LivingEntity.causeFallDamage` (the landing happened in the move just done): the fall
@@ -1571,7 +1721,10 @@ fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     let y0 = e.y();
     let g = effective_gravity(e, m);
     if e.is_in_water() {
-        let mut slow = 0.8f32;
+        if m.kind.ext().is_some_and(|k| k.travel_in_water(e, m, level, input)) {
+            return;
+        }
+        let mut slow = m.kind.ext().map_or(0.8f32, |k| k.water_slow_down(m));
         let mut speed = 0.02f32;
         let mut eff = m.attrs.value(Attr::WaterMovementEfficiency) as f32;
         if !e.on_ground {
@@ -1646,6 +1799,10 @@ fn fluid_falling_adjusted(g: f64, falling: bool, v: Vec3) -> Vec3 {
 /// `LivingEntity.pushEntities`: pushable living entities touching this one push each other
 /// apart (`Entity.push`). Players push the mob; their own half is their client's.
 fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    // `pushEntities` overridden with nothing (bats).
+    if m.kind.ext().is_some_and(|k| !k.pushable()) {
+        return;
+    }
     let bb = e.bounding_box();
     let mut others: Vec<(i32, f64, f64, bool)> = Vec::new();
     // Players first: they joined the entity sections before the mobs around them (the order
@@ -1682,6 +1839,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let Some(o) = level.entity(id) else { continue };
         if let EntityKind::Mob(om) = &o.kind
             && om.health > 0.0
+            && om.kind.ext().is_none_or(|k| k.pushable())
             && !riding(id, o.vehicle)
         {
             others.push((id, o.x(), o.z(), false));
@@ -1733,12 +1891,17 @@ fn play_sound(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'sta
 
 /// `LivingEntity.makeSound`: volume 1, the voice pitch.
 pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'static str) {
-    let pitch = if m.baby() {
+    let mut pitch = if m.baby() {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.5
     } else {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0
     };
-    play_sound(e, m, level, sound, 1.0, pitch);
+    let mut volume = 1.0;
+    if let Some(k) = m.kind.ext() {
+        volume = k.sound_volume(m);
+        pitch = k.voice_pitch(m, pitch);
+    }
+    play_sound(e, m, level, sound, volume, pitch);
 }
 
 /// Damage to a mob from outside its own tick (explosions, arrows, players).
@@ -1748,6 +1911,14 @@ pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, soun
 /// when the plain `Entity.thunderHit` applies.
 pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> bool {
     let Some(kind) = data(e).map(|m| m.kind) else { return false };
+    if let Some(k) = kind.ext() {
+        let mut m = take(e);
+        let handled = k.thunder_hit(e, &mut m, level, _bolt);
+        put(e, m);
+        if handled {
+            return true;
+        }
+    }
     match kind {
         MobKind::Creeper => {
             crate::ext_entity::lightning::base_thunder_hit(e, level);
@@ -1756,6 +1927,11 @@ pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> b
             {
                 *powered = true;
             }
+            true
+        }
+        // `Turtle.thunderHit`: struck dead.
+        MobKind::Turtle => {
+            hurt_entity(e, level, DamageSource::of(DamageKind::LightningBolt), f32::MAX);
             true
         }
         MobKind::Pig | MobKind::Villager if level.difficulty() != 0 => {
@@ -1782,6 +1958,19 @@ pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSo
     let r = hurt(e, &mut m, level, source, amount);
     put(e, m);
     r
+}
+
+/// `isPushedByFluid` of mob type `type_name`.
+pub fn pushed_by_fluid(type_name: &str) -> bool {
+    MobKind::by_name(type_name).and_then(MobKind::ext).is_none_or(|k| k.pushed_by_fluid())
+}
+
+/// The swim sound of mob type `type_name` (`None`: it makes no movement sounds).
+pub fn swim_sound(type_name: &str) -> Option<&'static str> {
+    match MobKind::by_name(type_name).and_then(MobKind::ext) {
+        Some(k) => k.swim_sound(),
+        None => Some("minecraft:entity.generic.swim"),
+    }
 }
 
 /// Whether mob type `type_name` runs `checkFallDamage` (flying types override it with nothing).

@@ -121,6 +121,25 @@ pub(crate) fn shown_equipment(m: &MobData) -> Vec<(u8, kiln_item::ItemStack)> {
     v
 }
 
+/// `MobBucketItem.checkExtraContent`: the fish of a mob bucket (`cod_bucket`, ...) emptied at
+/// block `pos` (`EntitySpawnReason.BUCKET`: `finalizeSpawn`, then the bucket's components and
+/// `bucket_entity_data`, `FromBucket`). `seed` seeds the spawn's random draws. `None` for other
+/// items.
+#[allow(dead_code)]
+pub(crate) fn bucket_release(bucket: &kiln_item::ItemStack, pos: [i32; 3], difficulty: u8, game_time: i64, seed: i64) -> Option<Spawn> {
+    let kind = kiln_entity::mob::kinds::fish::bucket_mob(kiln_entity::mob::item_name(bucket))?;
+    let mut e = kiln_entity::mob::new(kind, 0, 0, seed);
+    let at = kiln_entity::math::Vec3::new(pos[0] as f64 + 0.5, pos[1] as f64, pos[2] as f64 + 0.5);
+    e.set_pos(at);
+    e.set_old_pos_and_rot();
+    let ctx = difficulty_instance(difficulty, game_time, 0, 1.0);
+    let mut r = kiln_javamath::random::LegacyRandom::new(seed);
+    mob::finalize_spawn(&mut e, &mut r, &ctx, &mut mob::GroupData::default(), false);
+    kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
+    let t = kiln_data::entities::by_name(kind.type_name())?;
+    Some(Spawn { kind: t, pos: [at.x, at.y, at.z], vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
+}
+
 /// A new mob of `kind` at `pos`, facing `yaw` (the entity's own random decides nothing
 /// here; `finalize` runs `finalizeSpawn` with the given context when set).
 pub(crate) fn spawn(kind: MobKind, pos: [f64; 3], yaw: Option<f32>, finalize: Option<Finalize>) -> Spawn {

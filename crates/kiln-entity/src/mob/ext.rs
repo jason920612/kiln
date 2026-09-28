@@ -279,6 +279,16 @@ pub trait Kind: Sync + Send {
         let _ = (e, m, level, input);
         false
     }
+    /// `travelInWater` in place of the shared one; true when handled (turtles swim their way).
+    fn travel_in_water(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) -> bool {
+        let _ = (e, m, level, input);
+        false
+    }
+    /// `getWaterSlowDown` (0.8; polar bears 0.98).
+    fn water_slow_down(&self, m: &MobData) -> f32 {
+        let _ = m;
+        0.8
+    }
     /// The type's `MoveControl.tick`; true when handled.
     fn tick_move(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let _ = (e, m, level);
@@ -286,6 +296,11 @@ pub trait Kind: Sync + Send {
     }
     /// The type's `LookControl.tick`; true when handled.
     fn tick_look(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// The type's `JumpControl.tick`; true when handled (rabbits start a hop instead).
+    fn tick_jump(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let _ = (e, m, level);
         false
     }
@@ -565,6 +580,12 @@ pub trait Kind: Sync + Send {
         let _ = (level, p);
         None
     }
+    /// [`Kind::stable_destination`] for types whose answer depends on their state (a turtle
+    /// travelling out wants water).
+    fn stable_destination_for(&self, m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
+        let _ = m;
+        self.stable_destination(level, p)
+    }
     /// The items a `TemptGoal` of the type follows.
     fn tempted_by(&self, item: i32) -> bool {
         let _ = item;
@@ -581,6 +602,64 @@ pub trait Kind: Sync + Send {
     fn check_despawn(&self, e: &mut Entity, level: &dyn EntityLevel) -> bool {
         let _ = (e, level);
         false
+    }
+    /// `isPushedByFluid` (water animals are not).
+    fn pushed_by_fluid(&self) -> bool {
+        true
+    }
+    /// `getSwimSound` when `getMovementEmission` emits sounds; `None` for `MovementEmission.EVENTS`
+    /// (no step or swim sounds, no pitch draws).
+    fn swim_sound(&self) -> Option<&'static str> {
+        Some("minecraft:entity.generic.swim")
+    }
+    /// After `Mob.baseTick` (the ambient sound roll): `WaterAnimal.handleAirSupply` with the air
+    /// supply from before the base tick.
+    fn after_base_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, air_before: i32) {
+        let _ = (e, m, level, air_before);
+    }
+    /// `getSoundVolume` (squids 0.4, bats 0.1).
+    fn sound_volume(&self, m: &MobData) -> f32 {
+        let _ = m;
+        1.0
+    }
+    /// `getVoicePitch` from the shared one (bats: 0.95 of it).
+    fn voice_pitch(&self, m: &MobData, pitch: f32) -> f32 {
+        let _ = m;
+        pitch
+    }
+    /// `thunderHit` by bolt `bolt` in place of `Entity.thunderHit`; true when handled (mooshrooms
+    /// change color instead of burning).
+    fn thunder_hit(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, bolt: i32) -> bool {
+        let _ = (e, m, level, bolt);
+        false
+    }
+    /// `isPushable` (false: bats neither push nor get pushed).
+    fn pushable(&self) -> bool {
+        true
+    }
+    /// `AbstractSkeleton.getAttackInterval` / `getHardAttackInterval` (`None`: 40 and 20).
+    fn bow_interval(&self, hard: bool) -> Option<i32> {
+        let _ = hard;
+        None
+    }
+    /// [`Kind::passenger_offset`] for the passenger at `index` (camels seat two).
+    fn passenger_offset_at(&self, e: &Entity, m: &MobData, index: usize) -> Option<Vec3> {
+        let _ = index;
+        self.passenger_offset(e, m)
+    }
+}
+
+/// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the
+/// air runs out a point a tick, then drowning hurts for 2; in the water it is full.
+pub fn water_animal_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, air_before: i32) {
+    if super::is_alive(e, m) && !e.is_in_water() {
+        e.air_supply = air_before - 1;
+        if e.air_supply <= -20 {
+            e.air_supply = 0;
+            super::hurt(e, m, level, DamageSource::of(DamageKind::Drown), 2.0);
+        }
+    } else {
+        e.air_supply = 300;
     }
 }
 
