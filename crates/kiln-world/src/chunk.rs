@@ -79,6 +79,9 @@ pub struct Chunk {
     pub structures: Option<Box<kiln_proto::nbt::Tag>>,
     /// Updates owed since generation, handed to the simulation when the chunk becomes full.
     pending: Option<Box<PendingUpdates>>,
+    /// Entities generation placed (end crystals, ...), in saved form, for the simulation to
+    /// add when the chunk loads.
+    pub generated_entities: Vec<kiln_proto::nbt::Tag>,
 }
 
 /// Work a freshly generated chunk leaves for the simulation, to run once the chunk (and its
@@ -134,6 +137,7 @@ impl Chunk {
             saved_ticks: None,
             structures: None,
             pending: None,
+            generated_entities: Vec::new(),
         };
         for x in 0..16 {
             for z in 0..16 {

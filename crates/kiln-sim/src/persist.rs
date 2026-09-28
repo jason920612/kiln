@@ -257,8 +257,18 @@ impl crate::Dim {
     /// order); others are kept as saved until the chunk is written again.
     pub(crate) fn load_entities(&mut self, pos: ChunkPos) {
         let Some(store) = &mut self.entity_store else { return };
+        let tags = store.load(pos);
+        self.add_saved_entities(pos, tags);
+    }
+
+    /// Saved entities of a chunk entering the simulation (stored, or placed by generation):
+    /// simulated ones become spawns, the rest are kept as saved.
+    pub(crate) fn add_saved_entities(&mut self, pos: ChunkPos, tags: Vec<Tag>) {
+        if tags.is_empty() {
+            return;
+        }
         let mut raw = Vec::new();
-        for tag in store.load(pos) {
+        for tag in tags {
             let uuid = tag.get("UUID").and_then(persist::uuid_from_tag).unwrap_or(0);
             match persist::load(&tag, 0, entities::seed_for_uuid(uuid)) {
                 Ok(e) => match entities::Spawn::loaded(e) {
@@ -274,7 +284,7 @@ impl crate::Dim {
             }
         }
         if !raw.is_empty() {
-            self.raw_entities.insert(pos, raw);
+            self.raw_entities.entry(pos).or_default().extend(raw);
         }
     }
 

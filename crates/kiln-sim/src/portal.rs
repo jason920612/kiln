@@ -749,6 +749,8 @@ impl Sim {
             Some(e) => e,
             None if dim == END_ID => {
                 let e = self.gateway_teleport_pos(entry).offset(0, 10, 0);
+                // `spawnGatewayPortal(level, exit, knownExit(entry, false))`: the way back.
+                self.place_gateway(e, Some((entry, false)));
                 self.record_gateway_exit(dim, entry, e);
                 e
             }
@@ -827,8 +829,13 @@ impl Sim {
         let at = match found {
             Some(p) => p,
             None => {
+                // No land: an `end_island` grows there (`RandomSource.create(pos.asLong())`).
                 let p = BlockPos::new((exit[0] + 0.5).floor() as i32, 75, (exit[1] + 0.5).floor() as i32);
-                warn!("no end stone for a gateway exit near {p:?}; vanilla would grow an island there (not placed by Kiln)");
+                let wp = kiln_worldgen::pos::BlockPos::new(p.x, p.y, p.z);
+                self.load_area(END_ID, p, 8);
+                for (q, state) in kiln_worldgen::end::end_island_blocks(wp, wp.as_long()) {
+                    self.set_level_block(END_ID, BlockPos::new(q.x, q.y, q.z), state, kiln_blocks::flags::ALL);
+                }
                 p
             }
         };
@@ -870,11 +877,81 @@ impl Sim {
         best.map(|(_, p)| p)
     }
 
+    /// The End as a dragon-free world has it: the exit portal active on its bedrock podium
+    /// (`EnderDragonFight.spawnExitPortal(true)`) and the first end gateway
+    /// (`spawnNewGateway`, exit found on first use), as after the fight. No dragon, no egg.
+    /// Done once per run when a player first enters the End; placing again is skipped when
+    /// the podium or gateway is already there.
+    pub(crate) fn prepare_end(&mut self) {
+        if self.end_prepared {
+            return;
+        }
+        self.end_prepared = true;
+        let conv = |p: kiln_worldgen::pos::BlockPos| BlockPos::new(p.x, p.y, p.z);
+        self.load_area(END_ID, BlockPos::new(0, 0, 0), 8);
+        let min_y = self.dims[END_ID].kind.min_y;
+        let d = self.dims[END_ID].provider.dimension;
+        let mut surface = min_y;
+        for y in (d.min_y..d.min_y + d.height).rev() {
+            if kiln_data::block_props::motion_blocking_no_leaves(self.block_loading(END_ID, BlockPos::new(0, y, 0))) {
+                surface = y + 1;
+                break;
+            }
+        }
+        let origin = kiln_worldgen::end::exit_portal_origin(surface, min_y, |p| {
+            kiln_blocks::state::is(self.block_in_level(END_ID, conv(p)), block::BEDROCK)
+        });
+        let o = conv(origin);
+        let built = (0..4).all(|dy| kiln_blocks::state::is(self.block_in_level(END_ID, o.offset(0, dy, 0)), block::BEDROCK))
+            && kiln_blocks::state::is(self.block_in_level(END_ID, o.offset(1, 0, 0)), block::END_PORTAL);
+        if !built {
+            for b in kiln_worldgen::end::end_podium_blocks(origin, true) {
+                let p = conv(b.pos);
+                let state = b.state;
+                self.with_level_in(END_ID, [p.x, p.y, p.z], |level| {
+                    use kiln_blocks::Level;
+                    if b.drop_previous && !kiln_blocks::state::same_block(level.block(p), state) {
+                        kiln_blocks::destroy_block(level, p, true, kiln_blocks::flags::LIMIT);
+                    }
+                    kiln_blocks::set_block(level, p, state, kiln_blocks::flags::ALL);
+                });
+            }
+            info!("placed the End's exit portal at {o:?}");
+        }
+        let seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
+        let gateway = conv(kiln_worldgen::end::end_gateway_positions(seed)[0]);
+        self.load_area(END_ID, gateway, 2);
+        if !kiln_blocks::state::is(self.block_in_level(END_ID, gateway), block::END_GATEWAY) {
+            self.place_gateway(gateway, None);
+            info!("placed an end gateway at {gateway:?}");
+        }
+    }
+
+    /// `EndGatewayFeature` at `at` with its block entity (`exit`: a known exit and whether it
+    /// is exact).
+    fn place_gateway(&mut self, at: BlockPos, exit: Option<(BlockPos, bool)>) {
+        let conv = |p: BlockPos| kiln_worldgen::pos::BlockPos::new(p.x, p.y, p.z);
+        self.load_area(END_ID, at, 2);
+        for (p, state) in kiln_worldgen::end::end_gateway_blocks(conv(at)) {
+            self.set_level_block(END_ID, BlockPos::new(p.x, p.y, p.z), state, kiln_blocks::flags::ALL);
+        }
+        let tag = kiln_worldgen::end::end_gateway_entity(exit.map(|(p, exact)| (conv(p), exact)));
+        let (lx, lz) = ((at.x & 15) as usize, (at.z & 15) as usize);
+        if let (Some(be), Some(chunk)) =
+            (kiln_world::block_entity::BlockEntity::from_saved(tag), self.dims[END_ID].regions.chunk_mut(ChunkPos::of_block(at.x, at.z)))
+        {
+            chunk.set_block_entity(lx, at.y, lz, be);
+        }
+    }
+
     /// `ServerPlayer.teleport` to another level (or within one): the client rebuilds its world
     /// from a Respawn packet keeping all data, gets the level's info again and its chunks
     /// stream anew; viewers in the old level forget the player.
     pub(crate) fn change_dimension(&mut self, conn: ConnId, dim: DimId, pos: [f64; 3], rot: [f32; 2]) {
         let now = self.game_time;
+        if dim == END_ID {
+            self.prepare_end();
+        }
         let Some(p) = self.players.get(&conn) else { return };
         if p.dim == dim {
             let p = self.players.get_mut(&conn).unwrap();

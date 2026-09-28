@@ -564,6 +564,7 @@ impl Dim {
         let Some(cell) = cells.get_mut(pos.cell()) else { return Err(chunk) };
         part.1.chunk_loaded(pos, &mut chunk, self.game_time);
         let new = chunk.is_new();
+        let generated = std::mem::take(&mut chunk.generated_entities);
         cell.insert(pos, chunk);
         // A generated chunk gets its light from its blocks and loaded neighbours (vanilla's
         // LIGHT status).
@@ -571,6 +572,7 @@ impl Dim {
             kiln_world::light::light_new_chunk(cells, pos);
         }
         self.load_entities(pos);
+        self.add_saved_entities(pos, generated);
         Ok(())
     }
 
@@ -683,6 +685,8 @@ pub struct Sim {
     /// The End's clock (`minecraft:the_end`, the End's `default_clock`).
     end_time: i64,
     end_clock: i32,
+    /// The End's exit portal and first gateway were checked this run ([`Sim::prepare_end`]).
+    end_prepared: bool,
     commands: commands::CommandState,
 }
 
@@ -825,6 +829,7 @@ impl Sim {
             overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
             end_time: 0,
             end_clock: kiln_data::synced_id("minecraft:world_clock", "minecraft:the_end").expect("end clock"),
+            end_prepared: false,
             commands: commands::CommandState::new(ops_from_env()),
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
@@ -872,7 +877,11 @@ impl Sim {
         }
         let changed = self.apply_topology();
         for (jn, j) in joining {
+            let in_end = jn.dim == END_ID;
             self.join(j, jn);
+            if in_end {
+                self.prepare_end();
+            }
         }
         self.update_membership(changed);
         lap(&mut self.stats, "b0");
