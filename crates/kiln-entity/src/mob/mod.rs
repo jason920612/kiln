@@ -588,6 +588,14 @@ impl MobData {
         self.using_item.unwrap_or(0)
     }
 
+    /// `getMaxHeadXRot` of this mob (its type's, or what its state makes it).
+    pub fn max_head_x_rot(&self) -> i32 {
+        match self.kind.ext() {
+            Some(k) => k.max_head_x_rot(self),
+            None => self.kind.max_head_x_rot(),
+        }
+    }
+
     pub fn max_health(&self) -> f32 {
         self.attrs.value(Attr::MaxHealth) as f32
     }
@@ -1099,8 +1107,11 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.ambient_sound_time += 1;
         if e.random.next_int_bounded(1000) < t {
             m.ambient_sound_time = -m.kind.ambient_sound_interval();
-            let sound = m.kind.ambient_sound();
-            if let Some(s) = m.kind.ext().map_or(sound, |k| k.ambient_sound(m, sound)) {
+            let sound = match m.kind.ext().and_then(|k| k.ambient_sound(e, m, &*level)) {
+                Some(s) => s,
+                None => m.kind.ambient_sound(),
+            };
+            if let Some(s) = sound {
                 make_sound(e, m, level, s);
             }
         }
@@ -1147,6 +1158,11 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if m.no_jump_delay > 0 {
         m.no_jump_delay -= 1;
     }
+    // A mount steered by a player: its client moves it (`canSimulateMovement` is false).
+    let rider = m.kind.ext().and_then(|k| k.controlling_player(e, m, &*level)).and_then(|id| level.player(id));
+    if rider.is_some() {
+        e.delta = e.delta.scale(0.98);
+    }
     let v = e.delta;
     let (mut x, mut y, mut z) = (v.x, v.y, v.z);
     if x.abs() < 0.003 {
@@ -1162,11 +1178,11 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     // `applyInput`.
     m.xxa *= 0.98;
     m.zza *= 0.98;
-    if m.is_dead_or_dying() {
+    if m.is_dead_or_dying() || m.kind.ext().is_some_and(|k| k.is_immobile(m)) {
         m.jumping = false;
         m.xxa = 0.0;
         m.zza = 0.0;
-    } else if !m.no_ai {
+    } else if !m.no_ai && rider.is_none() {
         server_ai_step(e, m, level);
     }
     if m.jumping {
@@ -1193,7 +1209,13 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.no_jump_delay = 0;
     }
     let input = Vec3::new(m.xxa as f64, m.yya as f64, m.zza as f64);
-    if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
+    if let Some(r) = rider {
+        // `travelRidden`: the rider turns the mount; the move comes from the rider's client.
+        if let Some(k) = m.kind.ext() {
+            k.tick_ridden(e, m, level, &r);
+        }
+        e.delta = Vec3::ZERO;
+    } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
         travel(e, m, level, input);
     }
     e.apply_effects_from_blocks(level);
@@ -1331,7 +1353,7 @@ fn modified_friction(f: f32, modifier: f32) -> f32 {
     mth::clamp(1.0 - (1.0 - f) * modifier, 0.0, 1.0)
 }
 
-fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
+pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
     let below = e.block_pos_below_that_affects_movement(level);
     let friction = if e.on_ground {
         modified_friction(crate::physics::block_factors(level.block(below)).friction, m.attrs.value(Attr::FrictionModifier) as f32)
@@ -1477,15 +1499,26 @@ fn fluid_falling_adjusted(g: f64, falling: bool, v: Vec3) -> Vec3 {
 
 /// `LivingEntity.pushEntities`: pushable living entities touching this one push each other
 /// apart (`Entity.push`). Players push the mob; their own half is their client's.
-fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
-    let _ = m;
+fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let bb = e.bounding_box();
     let mut others: Vec<(i32, f64, f64, bool)> = Vec::new();
     // Players first: they joined the entity sections before the mobs around them (the order
-    // the pushes add up in shows in the last bits of the motion).
-    let mobs = level.entities_in(&bb, EntityFilter::Living, e.id);
+    // the pushes add up in shows in the last bits of the motion). Riding together: no pushes
+    // between a vehicle and its passengers or passengers of the same vehicle.
+    let near = level.entities_in(&bb, EntityFilter::Living, e.id);
+    let riding = |id: i32, vehicle: Option<i32>| e.vehicle == Some(id) || e.passengers.contains(&id) || (e.vehicle.is_some() && vehicle == e.vehicle);
+    for &id in &near {
+        if let Some(p) = level.player(id)
+            && !p.spectator
+            && p.alive
+            && !riding(id, p.vehicle)
+        {
+            others.push((id, p.pos.x, p.pos.z, true));
+        }
+    }
+    // Players without a stand-in among the entities.
     for p in level.players() {
-        if p.spectator || !p.alive {
+        if p.spectator || !p.alive || others.iter().any(|o| o.0 == p.id) || level.entity(p.id).is_some() || riding(p.id, p.vehicle) {
             continue;
         }
         let h = if p.sneaking { 1.5 } else { 1.8 };
@@ -1494,15 +1527,22 @@ fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
             others.push((p.id, p.pos.x, p.pos.z, true));
         }
     }
-    for id in mobs {
+    for id in near {
+        if level.player(id).is_some() {
+            continue;
+        }
         let Some(o) = level.entity(id) else { continue };
         if let EntityKind::Mob(om) = &o.kind
             && om.health > 0.0
+            && !riding(id, o.vehicle)
         {
             others.push((id, o.x(), o.z(), false));
         }
     }
     for (id, ox, oz, player) in others {
+        if let Some(k) = m.kind.ext() {
+            k.do_push(e, m, &*level, id);
+        }
         let (dx, dz) = (ox - e.x(), oz - e.z());
         let mut d = dx.abs().max(dz.abs());
         if d < 0.009999999776482582 {
@@ -1511,11 +1551,19 @@ fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
         d = d.sqrt();
         let (mut dx, mut dz) = (dx / d, dz / d);
         let f = (1.0 / d).min(1.0);
-        dx *= f * 0.05000000074505806;
-        dz *= f * 0.05000000074505806;
-        e.delta = e.delta.add(-dx, 0.0, -dz);
-        e.needs_sync = true;
-        if !player && let Some(o) = level.entity_mut(id) {
+        dx *= f;
+        dz *= f;
+        dx *= 0.05000000074505806;
+        dz *= 0.05000000074505806;
+        // `Entity.push`: vehicles are not pushed.
+        if e.passengers.is_empty() {
+            e.delta = e.delta.add(-dx, 0.0, -dz);
+            e.needs_sync = true;
+        }
+        if !player
+            && let Some(o) = level.entity_mut(id)
+            && o.passengers.is_empty()
+        {
             o.delta = o.delta.add(dx, 0.0, dz);
             o.needs_sync = true;
         }
@@ -1889,25 +1937,29 @@ pub fn do_hurt_target(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
     r
 }
 
+/// `target.hurtServer(source, damage)` for a player or a mob of the level.
+pub fn hurt_living(level: &mut dyn EntityLevel, t: &Living, source: DamageSource, damage: f32) -> bool {
+    if t.player {
+        return level.hurt_player(t.id, source, damage);
+    }
+    match level.entity_mut(t.id) {
+        Some(o) => {
+            let mut o2 = std::mem::replace(o, Entity::new("minecraft:marker", 0, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+            let r = hurt_entity(&mut o2, level, source, damage);
+            if let Some(slot) = level.entity_mut(t.id) {
+                *slot = o2;
+            }
+            r
+        }
+        None => false,
+    }
+}
+
 /// The shared `Mob.doHurtTarget`.
 pub fn do_hurt_target_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> bool {
     let damage = m.attrs.value(Attr::AttackDamage) as f32;
     let source = DamageSource { kind: DamageKind::MobAttack, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
-    let hurt = if t.player {
-        level.hurt_player(t.id, source, damage)
-    } else {
-        match level.entity_mut(t.id) {
-            Some(o) => {
-                let mut o2 = std::mem::replace(o, Entity::new("minecraft:marker", 0, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
-                let r = hurt_entity(&mut o2, level, source, damage);
-                if let Some(slot) = level.entity_mut(t.id) {
-                    *slot = o2;
-                }
-                r
-            }
-            None => false,
-        }
-    };
+    let hurt = hurt_living(level, t, source, damage);
     if hurt {
         m.last_hurt_mob = Some(t.id);
         // `Zombie.doHurtTarget`: a burning, empty-handed zombie sets its target on fire.
@@ -1947,6 +1999,8 @@ pub struct GroupData {
     pub spider_effect: Option<Option<&'static str>>,
     /// `EntitySpawnReason.NATURAL` (set by [`finalize_spawn`]).
     pub natural: bool,
+    /// The variant the first mob of a group picked (`WolfPackData`, horses' `HorseGroupData`).
+    pub variant: Option<i32>,
 }
 
 /// `Mob.finalizeSpawn` and the types' overrides; random draws from `r` (the level's).

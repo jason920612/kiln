@@ -410,12 +410,6 @@ pub trait Kind: Sync + Send {
         let _ = (id, m, source);
         amount
     }
-    /// `playAmbientSound`: the sound (`default`: the type's ambient sound), `None` for silence
-    /// (then no pitch is drawn either).
-    fn ambient_sound(&self, m: &MobData, default: Option<&'static str>) -> Option<&'static str> {
-        let _ = m;
-        default
-    }
     /// `removeWhenFarAway` for a type that despawns differently from its category.
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         let _ = m;
@@ -453,6 +447,75 @@ pub trait Kind: Sync + Send {
     /// no landing, no fluid refresh after the move).
     fn checks_fall_damage(&self) -> bool {
         true
+    }
+    /// `LivingEntity.canAttack` extras (a tamed animal never attacks its owner): false vetoes `t`.
+    fn can_attack(&self, m: &MobData, level: &dyn EntityLevel, t: &Living) -> bool {
+        let _ = (m, level, t);
+        true
+    }
+    /// `Animal.canMate` beyond both being in love (tamed wolves only, not sitting ...).
+    fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
+        let _ = (m, partner);
+        true
+    }
+    /// `getAmbientSound` when it draws randomness or depends on state: `Some(sound)` replaces the
+    /// type's `ambient` sound (`Some(None)`: silent this time, no pitch draws).
+    fn ambient_sound(&self, e: &mut Entity, m: &MobData, level: &dyn EntityLevel) -> Option<Option<&'static str>> {
+        let _ = (e, m, level);
+        None
+    }
+    /// `getMaxHeadXRot` (wolves look less far up while sitting).
+    fn max_head_x_rot(&self, m: &MobData) -> i32 {
+        let _ = m;
+        self.info().head.1
+    }
+    /// `isImmobile` beyond dying (a grazing or rearing horse): no AI and no input this tick.
+    fn is_immobile(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
+    /// Whether a player riding first steers the mob (`getControllingPassenger` returns the player:
+    /// a saddled horse, a saddled strider when the rider holds a warped fungus on a stick).
+    fn steerable_by(&self, m: &MobData, rider: &crate::level::PlayerView) -> bool {
+        let _ = (m, rider);
+        false
+    }
+    /// `getControllingPassenger` when it is a player: the player's client moves the mob, the
+    /// server runs no AI for it.
+    fn controlling_player(&self, e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<i32> {
+        let first = level.player(*e.passengers.first()?)?;
+        self.steerable_by(m, &first).then_some(first.id)
+    }
+    /// `tickRidden` with the controlling player (rotations follow the rider).
+    fn tick_ridden(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, rider: &crate::level::PlayerView) {
+        let _ = (e, m, level, rider);
+    }
+    /// Equipment beyond the six hand and armor slots, as (`EquipmentSlot` ordinal, stack): a
+    /// horse's saddle (7).
+    fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
+        let _ = m;
+        Vec::new()
+    }
+    /// `doPush(other)` before the push itself (iron golems pick fights with monsters they bump).
+    fn do_push(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, other: i32) {
+        let _ = (e, m, level, other);
+    }
+    /// `isStableDestination` of the type's navigation (striders stand on lava): `None` for
+    /// the ground navigation's.
+    fn stable_destination(&self, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
+        let _ = (level, p);
+        None
+    }
+    /// The items a `TemptGoal` of the type follows.
+    fn tempted_by(&self, item: i32) -> bool {
+        let _ = item;
+        false
+    }
+    /// `positionRider` / `getPassengerAttachmentPoint`: where a passenger sits, relative to the
+    /// vehicle's position (`None`: vanilla's default, on top of the box).
+    fn passenger_offset(&self, e: &Entity, m: &MobData) -> Option<Vec3> {
+        let _ = (e, m);
+        None
     }
 }
 

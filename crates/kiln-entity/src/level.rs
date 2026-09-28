@@ -47,6 +47,16 @@ pub struct PlayerView {
     pub health: f32,
     /// Active effects: bit `id` for `minecraft:mob_effect` network id `id` (below 64).
     pub effects: u64,
+    /// `getLastHurtByMob` and `getLastHurtByMobTimestamp` (tamed animals defend their owner).
+    pub last_hurt_by_mob: Option<i32>,
+    pub last_hurt_by_mob_time: i32,
+    /// `getLastHurtMob` and `getLastHurtMobTimestamp` (tamed animals join their owner's fight).
+    pub last_hurt_mob: Option<i32>,
+    pub last_hurt_mob_time: i32,
+    /// `getLastDamageSource(100)` is set and not in `no_wolf_retaliation`.
+    pub hurt_recently: bool,
+    /// The entity the player rides.
+    pub vehicle: Option<i32>,
 }
 
 impl PlayerView {
@@ -72,6 +82,12 @@ impl PlayerView {
             pitch: 0.0,
             health: 20.0,
             effects: 0,
+            last_hurt_by_mob: None,
+            last_hurt_by_mob_time: 0,
+            last_hurt_mob: None,
+            last_hurt_mob_time: 0,
+            hurt_recently: false,
+            vehicle: None,
         }
     }
 

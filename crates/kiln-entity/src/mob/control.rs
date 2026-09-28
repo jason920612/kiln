@@ -30,7 +30,7 @@ impl LookControl {
 
 /// `setLookAt(x, y, z)` with the mob's head speed and pitch limit.
 pub fn look_at(m: &mut MobData, x: f64, y: f64, z: f64) {
-    let (speed, max_x) = (m.kind.head_rot_speed() as f32, m.kind.max_head_x_rot() as f32);
+    let (speed, max_x) = (m.kind.head_rot_speed() as f32, m.max_head_x_rot() as f32);
     m.look.set_look_at(x, y, z, speed, max_x);
 }
 

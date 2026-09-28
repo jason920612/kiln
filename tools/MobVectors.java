@@ -401,9 +401,9 @@ public class MobVectors {
             hurts.append(String.format(Locale.ROOT, "[%d,%d,%s]", h.getKey(), (int) h.getValue()[0], d(h.getValue()[1])));
         }
         String playerJson = s.player == null ? "null"
-                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s,\"yaw\":%s,\"pitch\":%s,\"head\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
+                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s,\"yaw\":%s,\"pitch\":%s,\"head\":%s,\"uuid\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", Float.toString(s.playerYaw), Float.toString(s.playerPitch),
-                        s.playerHead == null ? "null" : "\"" + s.playerHead + "\"");
+                        s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"trace\":[%s]}",
@@ -683,7 +683,204 @@ public class MobVectors {
         scenariosFlyers(out);
         scenariosZombies(out);
         scenariosEnder(out);
+        scenariosTame(out);
         return out;
+    }
+
+    /// `Owner` of the harness player (`KilnMob`), for tamed animals.
+    static String owner() {
+        int[] u = net.minecraft.core.UUIDUtil.uuidToIntArray(UUID.nameUUIDFromBytes("KilnMob".getBytes()));
+        return String.format(Locale.ROOT, "Owner:[I;%d,%d,%d,%d]", u[0], u[1], u[2], u[3]);
+    }
+
+    // ---------------------------------------------------------- slice 2: tameables, riding, golems
+    static void scenariosTame(List<Scenario> out) {
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_wolf_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f * seed, 9000L * seed + 3));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (double dist : new double[] {11, 14}) {
+            Scenario s = new Scenario("follow_owner_wolf_" + (int) dist);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 0f, 9100 + (long) dist);
+            m.nbt = "{" + owner() + "}";
+            s.mobs.add(m);
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("sit_wolf");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 45f, 9200);
+            m.nbt = "{" + owner() + ",Sitting:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("beg_wolf");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 90f, 9300));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:bone";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hunt_wolf");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 0f, 9400));
+            s.mobs.add(new MobSpec("minecraft:sheep", 5.5, BY, 2.5, 0f, 9401));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("anger_wolf");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 0f, 9500));
+            s.mobs.add(new MobSpec("minecraft:wolf", -2.5, BY, 1.5, 0f, 9501));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_cat_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:cat", 0.5, BY, 0.5, 60f * seed, 9600L * seed + 1));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("avoid_cat");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:cat", 0.5, BY, 0.5, 0f, 9700));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_cat");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:cat", 0.5, BY, 0.5, 0f, 9710));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerMainHand = "minecraft:cod";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("follow_owner_cat");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:cat", 0.5, BY, 0.5, 0f, 9720);
+            m.nbt = "{" + owner() + "}";
+            s.mobs.add(m);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("block_cat");
+            floor(s, 20, "minecraft:grass_block");
+            block(s, 3, BY, 2, "minecraft:chest[facing=north]");
+            block(s, -3, BY, 1, "minecraft:red_bed[facing=east,part=foot]");
+            block(s, -2, BY, 1, "minecraft:red_bed[facing=east,part=head]");
+            MobSpec m = new MobSpec("minecraft:cat", 0.5, BY, 0.5, 0f, 9730);
+            m.nbt = "{" + owner() + "}";
+            s.mobs.add(m);
+            MobSpec m2 = new MobSpec("minecraft:cat", 1.5, BY, -1.5, 90f, 9731);
+            m2.nbt = "{" + owner() + "}";
+            s.mobs.add(m2);
+            s.player = new double[] {4.5, BY, -3.5};
+            s.playerCreative = true;
+            s.ticks = 600;
+            out.add(s);
+        }
+        String[] equines = {"horse", "horse", "donkey", "mule"};
+        for (int i = 0; i < equines.length; i++) {
+            Scenario s = new Scenario("idle_" + equines[i] + "_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:" + equines[i], 0.5, BY, 0.5, 40f * i, 9800L + 13 * i));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = i + 1;
+            s.ticks = 600;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_horse");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:horse", 0.5, BY, 0.5, 0f, 9850));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerSneaking = true;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.hurts.put(40, new double[] {0, 1.0});
+            s.hurts.put(80, new double[] {0, 1.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_horse");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:horse", 0.5, BY, 0.5, 0f, 9860);
+            m.nbt = "{Tame:1b,Temper:40}";
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:golden_carrot";
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("idle_iron_golem_" + i);
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:iron_golem", 0.5, BY, 0.5, 70f * i, 9900L + i));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 5 + i;
+            s.dayTime = i == 0 ? 1000 : 18000;
+            s.ticks = 600;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("anger_iron_golem");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:iron_golem", 0.5, BY, 0.5, 0f, 9950));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("lava_strider_" + i);
+            floor(s, 16, "minecraft:stone");
+            if (i == 0) {
+                for (int x = 3; x <= 7; x++)
+                    for (int z = -2; z <= 2; z++) block(s, x, BY - 1, z, "minecraft:lava");
+            }
+            s.mobs.add(new MobSpec("minecraft:strider", 0.5, BY, 0.5, 20f * i, 9970L + i));
+            s.player = new double[] {-8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 3 + i;
+            s.ticks = 500;
+            out.add(s);
+        }
     }
 
     // ---------------------------------------------------------- slice M6s2: enderman, endermite, shulker, witch

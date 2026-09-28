@@ -566,6 +566,7 @@ dependencies = [
  "kiln-javamath",
  "kiln-proto",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]

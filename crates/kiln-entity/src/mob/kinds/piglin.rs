@@ -570,7 +570,7 @@ impl Kind for Piglin {
         }
         hold_in_offhand(e, m, level, stack.with_count(1));
         admire(m);
-        Some(Outcome { success: true, held: HeldChange::Consume(1), shear: None, player_sound: None })
+        Some(Outcome { success: true, held: HeldChange::Consume(1), shear: None, player_sound: None, ride: false })
     }
 
     fn dimensions(&self, m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {

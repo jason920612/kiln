@@ -157,9 +157,9 @@ impl Kind for Shulker {
         ext::mob_finalize(m, r);
     }
 
-    fn ambient_sound(&self, m: &MobData, default: Option<&'static str>) -> Option<&'static str> {
+    fn ambient_sound(&self, _e: &mut Entity, m: &MobData, _level: &dyn EntityLevel) -> Option<Option<&'static str>> {
         // Closed shulkers keep quiet.
-        default.filter(|_| st(m).peek != 0)
+        (st(m).peek == 0).then_some(None)
     }
 
     fn remove_when_far_away(&self, _m: &MobData) -> Option<bool> {

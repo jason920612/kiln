@@ -121,6 +121,12 @@ pub struct Entity {
     pub last_known_speed: Vec3,
     pub(crate) inside: InsideCollector,
     pub random: LegacyRandom,
+    /// The entity this one rides (`Entity.vehicle`) and the ones riding it, first the
+    /// controlling one (`passengers`); players by their network id.
+    pub vehicle: Option<i32>,
+    pub passengers: Vec<i32>,
+    /// `canStandOnFluid(lava)`: lava sources hold the entity up (striders).
+    pub stands_on_lava: bool,
     /// Saved fields Kiln does not model (custom name, tags, passengers, ...), written back
     /// unchanged by [`crate::persist::save`].
     pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
@@ -185,6 +191,9 @@ impl Entity {
             last_known_speed: Vec3::ZERO,
             inside: InsideCollector::default(),
             random: LegacyRandom::new(random_seed),
+            vehicle: None,
+            passengers: Vec::new(),
+            stands_on_lava: false,
             extra: Vec::new(),
         };
         e.set_pos(Vec3::ZERO);
@@ -299,7 +308,7 @@ impl Entity {
             EntityKind::Item(item) => crate::item::fire_immune(item),
             EntityKind::Tnt(_) => true,
             EntityKind::Mob(m) => m.kind.fire_immune(),
-            // A mob during its own tick.
+            // A mob in its own tick (striders walking through lava).
             EntityKind::MobTicking { .. } => crate::mob::MobKind::by_name(self.type_name).is_some_and(|k| k.fire_immune()),
             _ => false,
         }
@@ -350,6 +359,7 @@ impl Entity {
             fall_distance: self.fall_distance,
             falling_block: matches!(self.kind, EntityKind::FallingBlock(_)),
             walks_on_powder_snow: matches!(&self.kind, EntityKind::Player(p) if p.walks_on_powder_snow),
+            stands_on_lava: self.stands_on_lava,
         }
     }
 
@@ -741,6 +751,11 @@ impl Entity {
         // `LivingEntity.checkFallDamage`: out of water, the fluid state is refreshed after the move
         // (a mob falling into water splashes in the same tick).
         if matches!(self.kind, EntityKind::MobTicking { .. } | EntityKind::Mob(_)) && !crate::mob::checks_fall_damage(self.type_name) {
+            return;
+        }
+        // `Strider.checkFallDamage`: no falling in lava.
+        if self.type_name == "minecraft:strider" && self.is_in_lava() {
+            self.fall_distance = 0.0;
             return;
         }
         if self.is_living() && !self.is_in_water() {

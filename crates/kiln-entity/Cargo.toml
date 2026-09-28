@@ -10,6 +10,7 @@ kiln-data.workspace = true
 kiln-item.workspace = true
 kiln-javamath.workspace = true
 kiln-proto.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["float_roundtrip"] }

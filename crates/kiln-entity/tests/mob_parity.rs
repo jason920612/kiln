@@ -151,6 +151,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         v.yaw = p.get("yaw").and_then(Value::as_f64).unwrap_or(0.0) as f32;
         v.pitch = p.get("pitch").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        if let Some(u) = p.get("uuid").and_then(Value::as_array) {
+            v.uuid = u.iter().fold(0u128, |acc, x| (acc << 32) | (x.as_i64().unwrap() as u32 as u128));
+        }
         v
     });
     if let Some(p) = player {

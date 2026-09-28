@@ -156,8 +156,8 @@ impl Kind for Enderman {
         }
     }
 
-    fn ambient_sound(&self, m: &MobData, default: Option<&'static str>) -> Option<&'static str> {
-        if st(m).creepy { Some(mob::sound_event("minecraft:entity.enderman.scream")) } else { default }
+    fn ambient_sound(&self, _e: &mut Entity, m: &MobData, _level: &dyn EntityLevel) -> Option<Option<&'static str>> {
+        st(m).creepy.then(|| Some(mob::sound_event("minecraft:entity.enderman.scream")))
     }
 
     fn walk_target_value(&self, _m: &MobData, _level: &dyn EntityLevel, _p: BlockPos) -> Option<f32> {
@@ -299,7 +299,7 @@ fn update_persistent_anger(e: &mut Entity, m: &mut MobData, level: &mut dyn Enti
 
 /// `NeutralMob.isAngryAt` (universal anger is off).
 fn is_angry_at(m: &MobData, level: &dyn EntityLevel, t: &Living) -> bool {
-    if !goals::can_attack(level, t) {
+    if !goals::can_attack(m, level, t) {
         return false;
     }
     st(m).angry_at.is_some_and(|r| r.matches(level, t.id))

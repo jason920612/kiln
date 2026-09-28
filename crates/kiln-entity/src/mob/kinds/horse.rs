@@ -1,16 +1,750 @@
-//! Horse: tamed by riding, saddled, ridden.
+//! Horses, donkeys and mules (`AbstractHorse`, `AbstractChestedHorse`): random stats at spawn,
+//! grazing and rearing, tamed by riding (temper, `RunAroundLikeCrazyGoal` bucks the rider),
+//! fed, saddled and then steered by their rider, chests on donkeys and mules, breeding.
+//! Not modelled: horse armor, the inventory screen, horse-donkey cross breeding (mules).
 
-use crate::mob::attributes::Attr::*;
-use crate::mob::ext::{Info, Kind};
+use super::tame::TamableAnimalPanicGoal;
+use crate::custom_goal_boilerplate;
+use crate::entity::Entity;
+use crate::level::{EntityLevel, Event, PlayerView};
+use crate::math::Vec3;
+use crate::mob::attributes::Attr::{self, *};
+use crate::mob::ext::{self, CustomGoal, Info, Kind, MobExt};
+use crate::mob::goals::{Goal, MOVE};
+use crate::mob::interact::{HeldChange, Interactor, Outcome};
+use crate::mob::mth::reduced_tick_delay;
+use crate::mob::{DamageSource, GroupData, MobData, MobKind, SpawnContext, item_name, item_tag, path, random_pos};
+use crate::persist::{Input, Output, uuid_to_tag};
+use kiln_data::entities::data;
+use kiln_item::ItemStack;
+use kiln_javamath::random::RandomSource;
+use kiln_proto::nbt::Tag;
+use kiln_proto::packets::entity::{DataValue, EntityData};
 
-pub struct Horse;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Which {
+    Horse,
+    Donkey,
+    Mule,
+}
 
-pub static KIND: Horse = Horse;
+pub struct Equine(pub Which);
 
-static INFO: Info = Info::animal("minecraft:horse", &[(JumpStrength, 0.7), (MaxHealth, 53.0), (MovementSpeed, 0.22499999403953552), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5)]);
+pub static KIND: Equine = Equine(Which::Horse);
+pub static DONKEY: Equine = Equine(Which::Donkey);
+pub static MULE: Equine = Equine(Which::Mule);
 
-impl Kind for Horse {
-    fn info(&self) -> &'static Info {
-        &INFO
+static HORSE_INFO: Info = Info {
+    ambient_interval: 400,
+    ..Info::animal("minecraft:horse", &[(JumpStrength, 0.7), (MaxHealth, 53.0), (MovementSpeed, 0.22499999403953552), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5)])
+};
+static DONKEY_INFO: Info = Info {
+    ambient_interval: 400,
+    ..Info::animal("minecraft:donkey", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
+};
+static MULE_INFO: Info = Info {
+    ambient_interval: 400,
+    ..Info::animal("minecraft:mule", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
+};
+
+#[derive(Clone, Debug)]
+pub struct State {
+    pub tamed: bool,
+    pub bred: bool,
+    pub eating: bool,
+    pub standing: bool,
+    pub open_mouth: bool,
+    pub temper: i32,
+    pub owner: Option<u128>,
+    eating_counter: i32,
+    mouth_counter: i32,
+    stand_counter: i32,
+    tail_counter: i32,
+    sprint_counter: i32,
+    eat_anim: f32,
+    eat_anim_o: f32,
+    stand_anim: f32,
+    stand_anim_o: f32,
+    mouth_anim: f32,
+    mouth_anim_o: f32,
+    allow_stand_sliding: bool,
+    /// `EquipmentSlot.SADDLE`.
+    pub saddle: ItemStack,
+    /// `AbstractChestedHorse.hasChest`.
+    pub chest: bool,
+    /// `Horse.DATA_ID_TYPE_VARIANT`: variant | markings << 8.
+    pub type_variant: i32,
+}
+
+fn st(m: &MobData) -> &State {
+    ext::state::<State>(m).expect("horse state")
+}
+
+fn st_mut(m: &mut MobData) -> &mut State {
+    ext::state_mut::<State>(m).expect("horse state")
+}
+
+/// `AbstractHorse.isTamed`.
+pub fn is_tamed(m: &MobData) -> bool {
+    ext::state::<State>(m).is_some_and(|s| s.tamed)
+}
+
+fn is(stack: &ItemStack, name: &str) -> bool {
+    !stack.is_empty() && item_name(stack) == name
+}
+
+fn sound(m: &MobData, what: &str) -> &'static str {
+    crate::mob::sound_event(&format!("minecraft:entity.{}.{what}", m.kind.short_name()))
+}
+
+/// `LivingEntity.getVoicePitch` (two draws).
+fn voice_pitch(e: &mut Entity, m: &MobData) -> f32 {
+    let d = (e.random.next_float() - e.random.next_float()) * 0.2;
+    if m.baby() { d + 1.5 } else { d + 1.0 }
+}
+
+fn play(e: &Entity, level: &mut dyn EntityLevel, sound: &'static str, volume: f32, pitch: f32) {
+    if !e.silent {
+        level.emit(Event::Sound { pos: e.position(), sound, source: "neutral", volume, pitch });
     }
+}
+
+/// `setStanding(20)` through `standIfPossible`.
+fn stand(m: &mut MobData) {
+    let s = st_mut(m);
+    s.eating = false;
+    s.standing = true;
+    s.stand_counter = 20;
+}
+
+fn clear_standing(m: &mut MobData) {
+    let s = st_mut(m);
+    s.standing = false;
+    s.stand_counter = 0;
+}
+
+/// `makeMad`: rears up and makes its angry sound.
+fn make_mad(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    if st(m).standing {
+        return;
+    }
+    stand(m);
+    let pitch = voice_pitch(e, m);
+    play(e, level, sound(m, "angry"), 0.8, pitch);
+}
+
+fn heal(m: &mut MobData, amount: f32) {
+    if m.health > 0.0 {
+        let h = m.health + amount;
+        m.set_health(h);
+    }
+}
+
+/// `eating`: the mouth opens with the eating sound.
+fn eating(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    let s = st_mut(m);
+    s.mouth_counter = 1;
+    s.open_mouth = true;
+    if !e.silent {
+        let pitch = 1.0 + (e.random.next_float() - e.random.next_float()) * 0.2;
+        level.emit(Event::Sound { pos: e.position(), sound: sound(m, "eat"), source: "neutral", volume: 1.0, pitch });
+    }
+    level.emit(Event::GameEvent { event: "minecraft:eat", pos: e.position(), entity: Some(e.id) });
+}
+
+/// `handleEating`: whether the horse ate `stack`.
+fn handle_eating(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> bool {
+    let mut ate = false;
+    let (heal_by, age_up, temper_up): (f32, i32, i32) = match item_name(stack) {
+        "minecraft:wheat" => (2.0, 20, 3),
+        "minecraft:sugar" => (1.0, 30, 3),
+        "minecraft:hay_block" => (20.0, 180, 0),
+        "minecraft:apple" => (3.0, 60, 3),
+        "minecraft:red_mushroom" => (3.0, 0, 3),
+        "minecraft:carrot" => (3.0, 60, 3),
+        "minecraft:golden_carrot" => (4.0, 60, 5),
+        "minecraft:golden_apple" | "minecraft:enchanted_golden_apple" => (10.0, 240, 10),
+        _ => (0.0, 0, 0),
+    };
+    let love_food = matches!(item_name(stack), "minecraft:golden_carrot" | "minecraft:golden_apple" | "minecraft:enchanted_golden_apple");
+    if love_food && st(m).tamed && m.age == 0 && m.in_love <= 0 {
+        ate = true;
+        crate::mob::breed::set_in_love(e, m, level, Some(who.id));
+    }
+    if m.health < m.max_health() && heal_by > 0.0 {
+        heal(m, heal_by);
+        ate = true;
+    }
+    if m.baby() && age_up > 0 && !m.age_locked {
+        crate::mob::random_point(e, 1.0);
+        crate::mob::age_up(e, m, age_up, false);
+        ate = true;
+    }
+    if temper_up > 0 && (ate || !st(m).tamed) && st(m).temper < 100 {
+        let s = st_mut(m);
+        s.temper = (s.temper + temper_up).clamp(0, 100);
+        ate = true;
+    }
+    if ate {
+        eating(e, m, level);
+    }
+    ate
+}
+
+/// `generateMaxHealth`.
+fn random_health(r: &mut dyn RandomSource) -> f32 {
+    15.0 + r.next_int_bounded(8) as f32 + r.next_int_bounded(9) as f32
+}
+
+/// `generateJumpStrength`.
+fn random_jump(r: &mut dyn RandomSource) -> f64 {
+    0.4000000059604645 + r.next_double() * 0.2 + r.next_double() * 0.2 + r.next_double() * 0.2
+}
+
+/// `generateSpeed`.
+fn random_speed(r: &mut dyn RandomSource) -> f64 {
+    (0.44999998807907104 + r.next_double() * 0.3 + r.next_double() * 0.3 + r.next_double() * 0.3) * 0.25
+}
+
+fn set_base(m: &mut MobData, a: Attr, v: f64) {
+    if let Some(i) = m.attrs.get_mut(a) {
+        i.base = v;
+    }
+    if a == MaxHealth && m.health > m.max_health() {
+        m.health = m.max_health();
+    }
+}
+
+/// `createOffspringAttribute`.
+fn offspring_attribute(a: f64, b: f64, min: f64, max: f64, r: &mut dyn RandomSource) -> f64 {
+    let a = a.clamp(min, max);
+    let b = b.clamp(min, max);
+    let margin = 0.15 * (max - min);
+    let spread = (a - b).abs() + margin * 2.0;
+    let mean = (a + b) / 2.0;
+    let x = (r.next_double() + r.next_double() + r.next_double()) / 3.0 - 0.5;
+    let v = mean + spread * x;
+    if v > max {
+        return max - (v - max);
+    }
+    if v < min {
+        return min + (min - v);
+    }
+    v
+}
+
+impl Equine {
+    fn chested(&self) -> bool {
+        self.0 != Which::Horse
+    }
+
+    /// The type's passenger attachment height (`passengerAttachments`).
+    fn attach_height(&self, m: &MobData) -> (f64, f64) {
+        match (self.0, m.baby()) {
+            (Which::Horse, false) => (1.44375, 0.0),
+            (Which::Horse, true) => (((1.6f32 - 0.125) * 0.7) as f64, 0.0),
+            (Which::Donkey, false) => (1.1125, 0.0),
+            (Which::Mule, false) => (1.2125, 0.0),
+            (_, true) => (((1.5f32 + 0.03125) * 0.5) as f64, (-0.3125f32 * 0.5) as f64),
+        }
+    }
+}
+
+impl Kind for Equine {
+    fn info(&self) -> &'static Info {
+        match self.0 {
+            Which::Horse => &HORSE_INFO,
+            Which::Donkey => &DONKEY_INFO,
+            Which::Mule => &MULE_INFO,
+        }
+    }
+
+    fn new_state(&self, _m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
+        Some(Box::new(State {
+            tamed: false,
+            bred: false,
+            eating: false,
+            standing: false,
+            open_mouth: false,
+            temper: 0,
+            owner: None,
+            eating_counter: 0,
+            mouth_counter: 0,
+            stand_counter: 0,
+            tail_counter: 0,
+            sprint_counter: 0,
+            eat_anim: 0.0,
+            eat_anim_o: 0.0,
+            stand_anim: 0.0,
+            stand_anim_o: 0.0,
+            mouth_anim: 0.0,
+            mouth_anim_o: 0.0,
+            allow_stand_sliding: false,
+            saddle: ItemStack::empty(),
+            chest: false,
+            type_variant: 0,
+        }))
+    }
+
+    fn register_goals(&self, m: &mut MobData) {
+        let g = &mut m.goals;
+        g.add(1, Goal::Custom(Box::new(RunAroundLikeCrazyGoal { speed: 1.2, pos: Vec3::ZERO })));
+        g.add(2, Goal::Breed { speed: 1.0, partner: None, love_time: 0 });
+        g.add(4, Goal::FollowParent { speed: 1.0, parent: None, recalc: 0 });
+        g.add(6, Goal::RandomStroll { speed: 0.7, interval: 120, check_no_action: true, water_avoiding: Some(0.001), wanted: Vec3::ZERO, force: false });
+        g.add(7, Goal::LookAtPlayer { dist: 6.0, probability: 0.02, look_at: None, look_time: 0 });
+        g.add(8, Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 });
+        g.add(9, Goal::Custom(Box::new(RandomStandGoal { next_stand: -400 })));
+        g.add(0, Goal::Float);
+        g.add(1, Goal::Custom(Box::new(TamableAnimalPanicGoal::named("MountPanicGoal", 1.2, "minecraft:panic_causes"))));
+        g.add(3, Goal::Tempt { speed: 1.25, calm_down: 0, player: None });
+    }
+
+    fn tempted_by(&self, item: i32) -> bool {
+        item_tag(item, "minecraft:horse_tempt_items")
+    }
+
+    fn is_food(&self, item: i32) -> bool {
+        item_tag(item, "minecraft:horse_food")
+    }
+
+    fn is_immobile(&self, m: &MobData) -> bool {
+        let s = st(m);
+        s.eating || s.standing
+    }
+
+    fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        if e.random.next_int_bounded(200) == 0 {
+            st_mut(m).tail_counter = 1;
+        }
+    }
+
+    fn ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if !crate::mob::is_alive(e, m) {
+            return;
+        }
+        if e.random.next_int_bounded(900) == 0 && m.death_time == 0 {
+            heal(m, 1.0);
+        }
+        // `canEatGrass`.
+        if !st(m).eating
+            && e.passengers.is_empty()
+            && e.random.next_int_bounded(300) == 0
+            && crate::blocks::block_name(level.block(e.block_position().below())) == "minecraft:grass_block"
+        {
+            st_mut(m).eating = true;
+        }
+        let s = st_mut(m);
+        if s.eating {
+            s.eating_counter += 1;
+            if s.eating_counter > 50 {
+                s.eating_counter = 0;
+                s.eating = false;
+            }
+        }
+        // `followMommy` only creates a path it does not follow (not modelled).
+    }
+
+    fn post_tick(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        let s = st_mut(m);
+        if s.mouth_counter > 0 {
+            s.mouth_counter += 1;
+            if s.mouth_counter > 30 {
+                s.mouth_counter = 0;
+                s.open_mouth = false;
+            }
+        }
+        if s.stand_counter > 0 {
+            s.stand_counter -= 1;
+            if s.stand_counter <= 0 {
+                s.standing = false;
+                s.stand_counter = 0;
+            }
+        }
+        if s.tail_counter > 0 {
+            s.tail_counter += 1;
+            if s.tail_counter > 8 {
+                s.tail_counter = 0;
+            }
+        }
+        if s.sprint_counter > 0 {
+            s.sprint_counter += 1;
+            if s.sprint_counter > 300 {
+                s.sprint_counter = 0;
+            }
+        }
+        s.eat_anim_o = s.eat_anim;
+        if s.eating {
+            s.eat_anim += (1.0 - s.eat_anim) * 0.4 + 0.05;
+            if s.eat_anim > 1.0 {
+                s.eat_anim = 1.0;
+            }
+        } else {
+            s.eat_anim += (0.0 - s.eat_anim) * 0.4 - 0.05;
+            if s.eat_anim < 0.0 {
+                s.eat_anim = 0.0;
+            }
+        }
+        s.stand_anim_o = s.stand_anim;
+        if s.standing {
+            s.eat_anim = 0.0;
+            s.eat_anim_o = s.eat_anim;
+            s.stand_anim += (1.0 - s.stand_anim) * 0.4 + 0.05;
+            if s.stand_anim > 1.0 {
+                s.stand_anim = 1.0;
+            }
+        } else {
+            s.allow_stand_sliding = false;
+            s.stand_anim += (0.8 * s.stand_anim * s.stand_anim * s.stand_anim - s.stand_anim) * 0.6 - 0.05;
+            if s.stand_anim < 0.0 {
+                s.stand_anim = 0.0;
+            }
+        }
+        s.mouth_anim_o = s.mouth_anim;
+        if s.open_mouth {
+            s.mouth_anim += (1.0 - s.mouth_anim) * 0.7 + 0.05;
+            if s.mouth_anim > 1.0 {
+                s.mouth_anim = 1.0;
+            }
+        } else {
+            s.mouth_anim += (0.0 - s.mouth_anim) * 0.7 - 0.05;
+            if s.mouth_anim < 0.0 {
+                s.mouth_anim = 0.0;
+            }
+        }
+    }
+
+    fn after_hurt(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, _source: &DamageSource, _amount: f32, hurt: bool) {
+        if hurt && e.random.next_int_bounded(3) == 0 {
+            stand(m);
+        }
+    }
+
+    fn steerable_by(&self, m: &MobData, _rider: &PlayerView) -> bool {
+        !st(m).saddle.is_empty()
+    }
+
+    fn tick_ridden(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, rider: &PlayerView) {
+        // `getRiddenRotation`: the rider's yaw, half its pitch.
+        e.y_rot = rider.yaw % 360.0;
+        e.x_rot = (rider.pitch * 0.5) % 360.0;
+        e.y_rot_o = e.y_rot;
+        m.y_body_rot = e.y_rot;
+        m.y_head_rot = e.y_rot;
+    }
+
+    fn passenger_offset(&self, e: &Entity, m: &MobData) -> Option<Vec3> {
+        let (h, z) = self.attach_height(m);
+        let base = crate::ride::y_rot(Vec3::new(0.0, h, z), -e.y_rot * 0.017453292);
+        let a = st(m).stand_anim_o as f64;
+        let stand = crate::ride::y_rot(Vec3::new(0.0, 0.15 * a, -0.7 * a), -e.y_rot * 0.017453292);
+        Some(base + stand)
+    }
+
+    fn dimensions(&self, m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {
+        if !m.baby() {
+            return base;
+        }
+        let s = if self.chested() { 0.5 } else { 0.7 };
+        (base.0 * s, base.1 * s, base.2 * s)
+    }
+
+    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &SpawnContext, group: &mut GroupData) {
+        let chance = if self.0 == Which::Horse {
+            // `HorseGroupData`: one coat for the group, markings each.
+            let variant = match group.variant {
+                Some(v) => v,
+                None => {
+                    let v = r.next_int_bounded(7);
+                    group.variant = Some(v);
+                    v
+                }
+            };
+            let markings = r.next_int_bounded(5);
+            st_mut(m).type_variant = (variant & 255) | ((markings << 8) & 65280);
+            0.05
+        } else {
+            0.2
+        };
+        // `randomizeAttributes`.
+        let health = random_health(r);
+        set_base(m, MaxHealth, health as f64);
+        if self.0 == Which::Horse {
+            let speed = random_speed(r);
+            set_base(m, MovementSpeed, speed);
+            let jump = random_jump(r);
+            set_base(m, JumpStrength, jump);
+        }
+        ext::ageable_finalize(e, m, r, group, chance);
+        ext::mob_finalize(m, r);
+    }
+
+    fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
+        // `canParent` on both (vehicles are not checked here); mules never breed.
+        let parent = |x: &MobData| is_tamed(x) && !x.baby() && x.health >= x.max_health() && x.in_love > 0;
+        self.0 != Which::Mule && parent(m) && parent(partner)
+    }
+
+    fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, _level: &mut dyn EntityLevel) {
+        if self.0 == Which::Mule {
+            return;
+        }
+        if self.0 == Which::Horse {
+            let (mine, theirs) = (st(m).type_variant, ext::state::<State>(partner).map_or(0, |s| s.type_variant));
+            let r = e.random.next_int_bounded(9);
+            let variant = if r < 4 {
+                mine & 255
+            } else if r < 8 {
+                theirs & 255
+            } else {
+                e.random.next_int_bounded(7)
+            };
+            let k = e.random.next_int_bounded(5);
+            let markings = if k < 2 {
+                (mine & 65280) >> 8
+            } else if k < 4 {
+                (theirs & 65280) >> 8
+            } else {
+                e.random.next_int_bounded(5)
+            };
+            st_mut(child).type_variant = (variant & 255) | ((markings << 8) & 65280);
+        }
+        // `setOffspringAttributes`: health, jump strength, speed.
+        let min_speed = (0.44999998807907104f64 * 0.25) as f32 as f64;
+        let max_speed = ((0.44999998807907104f64 + 0.9) * 0.25) as f32 as f64;
+        let min_jump = 0.4000000059604645f32 as f64;
+        let max_jump = (0.4000000059604645f64 + 0.6) as f32 as f64;
+        for (a, min, max) in [(MaxHealth, 15.0, 30.0), (JumpStrength, min_jump, max_jump), (MovementSpeed, min_speed, max_speed)] {
+            let v = offspring_attribute(m.attrs.base(a), partner.attrs.base(a), min, max, &mut e.random);
+            set_base(child, a, v);
+        }
+        child.health = child.max_health();
+    }
+
+    fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+        let vehicle = !e.passengers.is_empty();
+        let open_inventory = !m.baby() && st(m).tamed && who.sneaking;
+        let dandelion = m.baby() && is(stack, "minecraft:golden_dandelion");
+        if !(vehicle || open_inventory || dandelion) && !stack.is_empty() {
+            if self.is_food(stack.item()) {
+                // `fedFood`.
+                if handle_eating(e, m, level, who, stack) {
+                    return Some(Outcome::success(HeldChange::Consume(1)));
+                }
+                return Some(Outcome::PASS);
+            }
+            if !st(m).tamed {
+                make_mad(e, m, level);
+                return Some(Outcome::success(HeldChange::None));
+            }
+            if self.chested() && !st(m).chest && is(stack, "minecraft:chest") {
+                st_mut(m).chest = true;
+                let pitch = (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0;
+                play(e, level, sound(m, "chest"), 1.0, pitch);
+                return Some(Outcome::success(HeldChange::Consume(1)));
+            }
+        }
+        // `AbstractHorse.mobInteract`.
+        if vehicle || m.baby() {
+            return Some(crate::mob::interact::animal_interact(e, m, level, who, stack));
+        }
+        if st(m).tamed && who.sneaking {
+            // The inventory screen is not modelled.
+            return Some(Outcome::success(HeldChange::None));
+        }
+        if is(stack, "minecraft:saddle") && st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m) {
+            let mut one = stack.clone();
+            one.set_count(1);
+            st_mut(m).saddle = one;
+            play(e, level, "minecraft:entity.horse.saddle", 0.5, 1.0);
+            return Some(Outcome::success(HeldChange::Consume(1)));
+        }
+        // `doPlayerRide`.
+        st_mut(m).eating = false;
+        clear_standing(m);
+        let mut out = Outcome::success(HeldChange::None);
+        out.ride = true;
+        Some(out)
+    }
+
+    fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
+        let s = st(m);
+        if s.saddle.is_empty() { Vec::new() } else { vec![(7, s.saddle.clone())] }
+    }
+
+    fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
+        let saddle = match r.get("equipment") {
+            Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
+            _ => None,
+        };
+        let eating = r.bool_or("EatingHaystack", false);
+        let bred = r.bool_or("Bred", false);
+        let temper = r.int_or("Temper", 0);
+        let tamed = r.bool_or("Tame", false);
+        let owner = r.uuid("Owner");
+        let variant = r.int_or("Variant", 0);
+        let chest = r.bool_or("ChestedHorse", false);
+        let s = st_mut(m);
+        s.eating = eating;
+        s.bred = bred;
+        s.temper = temper;
+        s.tamed = tamed;
+        s.owner = owner;
+        if let Some(sd) = saddle {
+            s.saddle = sd;
+        }
+        if self.0 == Which::Horse {
+            s.type_variant = variant;
+        } else {
+            s.chest = chest;
+        }
+    }
+
+    fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
+        let s = st(m);
+        if !s.saddle.is_empty() {
+            let entry = ("saddle".to_owned(), s.saddle.to_nbt());
+            match o.0.iter_mut().find(|(k, _)| k == "equipment") {
+                Some((_, Tag::Compound(eq))) => eq.push(entry),
+                _ => o.put("equipment", Tag::Compound(vec![entry])),
+            }
+        }
+        o.put("EatingHaystack", Tag::Byte(s.eating as i8));
+        o.put("Bred", Tag::Byte(s.bred as i8));
+        o.put("Temper", Tag::Int(s.temper));
+        o.put("Tame", Tag::Byte(s.tamed as i8));
+        if let Some(u) = s.owner {
+            o.put("Owner", uuid_to_tag(u));
+        }
+        if self.0 == Which::Horse {
+            o.put("Variant", Tag::Int(s.type_variant));
+        } else {
+            o.put("ChestedHorse", Tag::Byte(s.chest as i8));
+        }
+    }
+
+    fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {
+        let s = st(m);
+        let flags = (if s.tamed { 2 } else { 0 }) | (if s.bred { 8 } else { 0 }) | (if s.eating { 16 } else { 0 }) | (if s.standing { 32 } else { 0 }) | (if s.open_mouth { 64 } else { 0 });
+        d.set(data::abstract_horse::ID_FLAGS, &DataValue::Byte(flags as i8));
+        if self.0 == Which::Horse {
+            d.set(data::horse::ID_TYPE_VARIANT, &DataValue::Int(s.type_variant));
+        } else {
+            d.set(data::abstract_chested_horse::ID_CHEST, &DataValue::Boolean(s.chest));
+        }
+    }
+}
+
+/// `RunAroundLikeCrazyGoal`: an untamed horse with a rider runs about and, now and then, either
+/// accepts a player rider (its temper against a roll) or throws the rider off.
+#[derive(Clone, Debug)]
+struct RunAroundLikeCrazyGoal {
+    speed: f64,
+    pos: Vec3,
+}
+
+impl CustomGoal for RunAroundLikeCrazyGoal {
+    custom_goal_boilerplate!();
+    fn name(&self) -> &'static str {
+        "RunAroundLikeCrazyGoal"
+    }
+    fn flags(&self) -> u8 {
+        MOVE
+    }
+    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        if st(m).tamed || e.passengers.is_empty() {
+            return false;
+        }
+        match random_pos::default_pos(e, m, level, 5, 4) {
+            Some(p) => {
+                self.pos = p;
+                true
+            }
+            None => false,
+        }
+    }
+    fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
+        !st(m).tamed && !m.nav.is_done() && !e.passengers.is_empty()
+    }
+    fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        path::move_to(e, m, level, self.pos.x, self.pos.y, self.pos.z, self.speed);
+    }
+    fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if st(m).tamed || e.random.next_int_bounded(reduced_tick_delay(50)) != 0 {
+            return;
+        }
+        let Some(&first) = e.passengers.first() else { return };
+        if let Some(p) = level.player(first) {
+            let temper = st(m).temper;
+            if e.random.next_int_bounded(100) < temper {
+                // `tameWithName`.
+                let s = st_mut(m);
+                s.owner = Some(p.uuid);
+                s.tamed = true;
+                level.emit(Event::EntityEvent { entity: e.id, event: 7 });
+                return;
+            }
+            let s = st_mut(m);
+            s.temper = (s.temper + 5).clamp(0, 100);
+        }
+        // `ejectPassengers` (players find out in the level's passenger pass).
+        for id in std::mem::take(&mut e.passengers).into_iter().rev() {
+            if let Some(o) = level.entity_mut(id) {
+                o.vehicle = None;
+            }
+        }
+        make_mad(e, m, level);
+        level.emit(Event::EntityEvent { entity: e.id, event: 6 });
+    }
+}
+
+/// `RandomStandGoal`: now and then the horse rears up with its ambient sound.
+#[derive(Clone, Debug)]
+struct RandomStandGoal {
+    next_stand: i32,
+}
+
+impl CustomGoal for RandomStandGoal {
+    custom_goal_boilerplate!();
+    fn name(&self) -> &'static str {
+        "RandomStandGoal"
+    }
+    fn flags(&self) -> u8 {
+        0
+    }
+    fn every_tick(&self) -> bool {
+        true
+    }
+    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
+        self.next_stand += 1;
+        if self.next_stand > 0 && e.random.next_int_bounded(1000) < self.next_stand {
+            self.next_stand = -400;
+            let s = st(m);
+            return !(s.eating || s.standing) && e.random.next_int_bounded(10) == 0;
+        }
+        false
+    }
+    fn can_continue(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
+        false
+    }
+    fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        stand(m);
+        play(e, level, sound(m, "ambient"), 0.8, 1.0);
+    }
+}
+
+/// `handleStartJump` (a rider's jump key on a saddled mount): the horse rears; its jump sound.
+pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
+    let saddled = !ext::state::<State>(m)?.saddle.is_empty();
+    if !saddled {
+        return None;
+    }
+    st_mut(m).allow_stand_sliding = true;
+    stand(m);
+    Some(sound(m, "jump"))
+}
+
+/// Whether `kind` is one of the horse family.
+pub fn is_equine(kind: MobKind) -> bool {
+    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule)
 }

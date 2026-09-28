@@ -108,6 +108,15 @@ impl RegionWork<'_> {
                 }
                 continue;
             }
+            // Riding: the steered mount moves, the jump key makes it rear.
+            if let PlayIn::MoveVehicle { pos, rot, on_ground } = pkt {
+                entities::move_vehicle(self.entities, &mut self.players, i, pos, rot, on_ground, env.game_time);
+                continue;
+            }
+            if let PlayIn::RidingJump { data } = pkt {
+                entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
+                continue;
+            }
             if let PlayIn::Interact { entity_id, hand, sneaking, .. } = pkt {
                 let p = &mut *self.players[i];
                 if sneaking != p.sneaking {
@@ -343,6 +352,12 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         PlayIn::KeepAlive { id } => {
             if p.keep_alive.is_some_and(|(k, _)| k == id) {
                 p.keep_alive = None;
+            }
+        }
+        // A passenger's moves only turn it (`handlePlayerPositionChange` while riding).
+        PlayIn::Move { rot, .. } if p.vehicle.is_some() => {
+            if let Some(r) = rot.filter(|r| r.iter().all(|a| a.is_finite())) {
+                p.rot = crate::movement::normalize_rotation(r);
             }
         }
         PlayIn::Move { pos, rot, on_ground } => {

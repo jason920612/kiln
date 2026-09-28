@@ -505,7 +505,7 @@ fn every_mob_type_summons_ticks_and_saves() {
         let a = i as f64 * 0.7;
         w.summon(kind.type_name(), [6.0 * a.cos(), 0.0, 6.0 * a.sin()], "{PersistenceRequired:1b}");
     }
-    w.ticks(100);
+    w.ticks(1);
     for kind in kiln_entity::mob::ALL_KINDS {
         // Endermen hunt endermites.
         if kind == kiln_entity::mob::MobKind::Endermite {
@@ -513,6 +513,191 @@ fn every_mob_type_summons_ticks_and_saves() {
         }
         assert!(!w.mobs(kind.type_name()).is_empty(), "{} is gone", kind.type_name());
     }
+    // Then they live together for a while (wolves hunt the sheep, golems fight monsters).
+    w.ticks(100);
+}
+
+/// `Owner` of the test player (`testing::join` gives connection 1 the UUID 0x6b696c6e / 1).
+const OWNER: &str = "Owner:[I;0,1802071150,0,1]";
+
+#[test]
+fn wolves_are_tamed_with_bones_and_sit_when_told() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:bone", 64);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:wolf", [1.5, 0.0, 0.0], "{NoAI:1b}");
+    let wolf = w.mobs("minecraft:wolf")[0].0;
+    assert_eq!(w.mobs("minecraft:wolf")[0].2, 8.0);
+    let mut tries = 0;
+    while w.mobs("minecraft:wolf")[0].2 != 40.0 {
+        assert!(tries < 40, "tamed within 40 bones");
+        w.interact(wolf);
+        w.ticks(1);
+        tries += 1;
+    }
+    // One bone per try; the tamed wolf has 40 health.
+    assert_eq!(w.held().unwrap().1, 64 - tries);
+    // Right-clicking a tamed wolf (with no food) toggles sitting and takes nothing.
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:stick", 1);
+    w.console("gamemode survival Hunter");
+    w.interact(wolf);
+    assert_eq!(w.held().unwrap().1, 1);
+}
+
+#[test]
+fn tamed_wolves_follow_their_owner() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.summon("minecraft:wolf", [11.0, 0.0, 0.0], &format!("{{{OWNER},PersistenceRequired:1b}}"));
+    w.ticks(200);
+    let (_, pos, _) = w.mobs("minecraft:wolf")[0];
+    let p = w.pos();
+    let d = ((pos[0] - p[0]).powi(2) + (pos[2] - p[2]).powi(2)).sqrt();
+    assert!(d < 6.0, "the wolf came to its owner ({d:.1} blocks)");
+    // A wild wolf stays where it wanders.
+    w.summon("minecraft:wolf", [0.0, 0.0, 14.0], "{PersistenceRequired:1b,NoAI:1b}");
+    w.ticks(20);
+    assert_eq!(w.mobs("minecraft:wolf").len(), 2);
+}
+
+#[test]
+fn wild_wolves_hunt_sheep() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.summon("minecraft:wolf", [3.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    w.summon("minecraft:sheep", [6.0, 0.0, 2.0], "{PersistenceRequired:1b}");
+    let mut hurt = false;
+    for _ in 0..60 {
+        w.ticks(10);
+        hurt |= w.mobs("minecraft:sheep").first().is_none_or(|s| s.2 < 8.0);
+    }
+    assert!(hurt, "the wolf bit the sheep");
+}
+
+#[test]
+fn cats_are_tamed_with_fish() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:cod", 64);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:cat", [1.5, 0.0, 0.0], "{NoAI:1b}");
+    let cat = w.mobs("minecraft:cat")[0].0;
+    let mut tries = 0;
+    loop {
+        assert!(tries < 40, "tamed within 40 fish");
+        w.interact(cat);
+        tries += 1;
+        assert_eq!(w.held().unwrap().1, 64 - tries, "each fish is eaten");
+        let all = w.sim.entity_nbt();
+        let tag = all.iter().find(|t| t.get("id").and_then(|v| v.as_str()) == Some("minecraft:cat")).unwrap();
+        if tag.get("Owner").is_some() {
+            assert_eq!(tag.get("Sitting").and_then(|t| t.as_f64()), Some(1.0), "a new tamed cat sits");
+            break;
+        }
+    }
+}
+
+fn player_pos(w: &World) -> [f64; 3] {
+    w.sim.player_level(1).unwrap().1
+}
+
+fn nbt_of(w: &World, kind: &str) -> kiln_proto::nbt::Tag {
+    w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(|v| v.as_str()) == Some(kind)).unwrap()
+}
+
+#[test]
+fn saddled_horses_are_ridden_and_steered() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:stick", 1);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:horse", [1.5, 0.0, 0.0], "{Tame:1b,PersistenceRequired:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1}}}");
+    w.ticks(20);
+    let (horse, hp, _) = w.mobs("minecraft:horse")[0];
+    w.interact(horse);
+    w.ticks(3);
+    // The rider sits on the horse (its seat 1.44375 up, less the player's 0.6).
+    let p = player_pos(&w);
+    assert!((p[1] - (hp[1] + 1.44375 - 0.6)).abs() < 1e-6 && (p[0] - hp[0]).abs() < 1e-6, "seated at {p:?} on {hp:?}");
+    // The rider's client moves the horse.
+    let to = [hp[0] + 1.0, hp[1], hp[2] + 0.5];
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::MoveVehicle { pos: to, rot: [90.0, 0.0], on_ground: true })]));
+    w.ticks(1);
+    let (_, hp2, _) = w.mobs("minecraft:horse")[0];
+    assert_eq!(hp2, to, "the horse went where its rider's client put it");
+    // Sneaking gets the rider off, beside the horse.
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0x20 })]));
+    w.ticks(2);
+    let p = player_pos(&w);
+    assert!(p[1] < hp2[1] + 0.5, "off the horse ({p:?})");
+    // Moves of the horse no longer come from the player.
+    let away = [to[0] + 2.0, to[1], to[2]];
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::MoveVehicle { pos: away, rot: [0.0, 0.0], on_ground: true })]));
+    assert_ne!(w.mobs("minecraft:horse")[0].1, away);
+}
+
+#[test]
+fn wild_horses_throw_riders_until_tamed() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:horse", [1.5, 0.0, 0.0], "{PersistenceRequired:1b}");
+    let horse = w.mobs("minecraft:horse")[0].0;
+    let mut throws = 0;
+    for _ in 0..400 {
+        if nbt_of(&w, "minecraft:horse").get("Tame").and_then(|t| t.as_f64()) == Some(1.0) {
+            break;
+        }
+        let hp = w.mobs("minecraft:horse")[0].1;
+        let p = player_pos(&w);
+        if (p[1] - hp[1]) < 0.5 {
+            // On the ground: walk up to the horse and get on.
+            w.clients[0].pos = [hp[0] - 1.0, hp[1], hp[2]];
+            let pos = w.clients[0].pos;
+            w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: Some(pos), rot: None, on_ground: true })]);
+            w.interact(horse);
+            throws += 1;
+        }
+        w.ticks(5);
+    }
+    let tag = nbt_of(&w, "minecraft:horse");
+    assert_eq!(tag.get("Tame").and_then(|t| t.as_f64()), Some(1.0), "tamed after {throws} rides");
+    assert!(throws >= 1);
+}
+
+#[test]
+fn iron_golems_fight_monsters() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.console("time set 18000");
+    w.summon("minecraft:iron_golem", [4.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    w.summon("minecraft:zombie", [8.0, 0.0, 3.0], "{PersistenceRequired:1b}");
+    let mut hurt = false;
+    for _ in 0..40 {
+        w.ticks(10);
+        hurt |= w.mobs("minecraft:zombie").first().is_none_or(|z| z.2 < 20.0);
+    }
+    assert!(hurt, "the golem hit the zombie");
+}
+
+#[test]
+fn saddled_striders_are_steered_with_a_fungus_on_a_stick() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:warped_fungus_on_a_stick", 1);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:strider", [1.5, 0.0, 0.0], "{PersistenceRequired:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1}}}");
+    w.ticks(5);
+    let (strider, sp, _) = w.mobs("minecraft:strider")[0];
+    w.interact(strider);
+    w.ticks(3);
+    let p = player_pos(&w);
+    assert!((p[1] - (sp[1] + 1.7 - 0.6)).abs() < 0.05, "seated at {p:?} on {sp:?}");
+    let sp = w.mobs("minecraft:strider")[0].1;
+    let to = [sp[0] + 0.5, sp[1], sp[2]];
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::MoveVehicle { pos: to, rot: [0.0, 0.0], on_ground: true })]));
+    assert_eq!(w.mobs("minecraft:strider")[0].1, to, "steered by the rider's client");
 }
 
 #[test]

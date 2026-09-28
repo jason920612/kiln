@@ -321,6 +321,12 @@ struct Player {
     seen_credits: bool,
     /// A trip noticed while touching blocks (the End's exit portal), for the serial phase.
     pending_travel: Option<portal::Travel>,
+    /// The entity the player rides (see [`entities::ride_players`]).
+    vehicle: Option<i32>,
+    /// `getLastHurtByMob` and `getLastHurtMob` with the game time (tamed animals take their
+    /// owner's side).
+    last_hurt_by_mob: Option<(i32, i64)>,
+    last_hurt_mob: Option<(i32, i64)>,
 }
 
 impl Player {
@@ -1731,6 +1737,9 @@ impl Sim {
             won_game: false,
             seen_credits: joining.seen_credits,
             pending_travel: None,
+            vehicle: None,
+            last_hurt_by_mob: None,
+            last_hurt_mob: None,
         };
 
         player.send(packets::play_login(&packets::Login {

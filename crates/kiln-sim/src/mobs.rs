@@ -124,7 +124,11 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
 
 /// Equipment worth showing (main hand, off hand, armor), as (slot ordinal, stack).
 pub(crate) fn shown_equipment(m: &MobData) -> Vec<(u8, kiln_item::ItemStack)> {
-    m.equipment.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i as u8, s.clone())).collect()
+    let mut v: Vec<(u8, kiln_item::ItemStack)> = m.equipment.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i as u8, s.clone())).collect();
+    if let Some(k) = m.kind.ext() {
+        v.extend(k.extra_equipment(m));
+    }
+    v
 }
 
 /// A new mob of `kind` at `pos`, facing `yaw` (the entity's own random decides nothing

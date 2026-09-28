@@ -30,23 +30,64 @@ fn flags(state: u16) -> u8 {
 
 /// `WalkNodeEvaluator.getPathTypeFromState` (a function of the state alone).
 pub fn path_type_from_state(state: u16) -> PathType {
-    let t = PathType::ALL[table().get(state as usize * 2).copied().unwrap_or(0) as usize];
-    // The extracted table saw no fluid states (the extractor's block states had empty fluid
-    // caches), so its liquids came out as their block's type: lava as fire (`isBurningBlock`),
-    // water as open. Vanilla checks lava right after the early block types and water last.
-    let f = crate::physics::fluid_state(state);
-    if f.kind.is_lava() && !matches!(t, PathType::Trapdoor | PathType::PowderSnow | PathType::Damaging | PathType::StickyHoney | PathType::Cocoa | PathType::DamageCautious) {
-        return PathType::Lava;
-    }
-    if f.kind.is_water() && t == PathType::Open {
-        return PathType::Water;
-    }
-    t
+    PathType::ALL[corrected().get(state as usize).copied().unwrap_or(0) as usize]
 }
 
-/// `isPathfindable(LAND)`.
+/// The extracted path types with vanilla's tag checks put back: the extraction ran without
+/// tags bound, so trapdoors, speleothems, fences and walls, fire and lit campfires fell through,
+/// lava came out as fire and water as open. `getPathTypeFromState` checks in this order.
+fn corrected() -> &'static [u8] {
+    static T: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let raw = table();
+        let n = raw.len() / 2;
+        let mut out: Vec<u8> = (0..n).map(|s| raw[s * 2]).collect();
+        let tagged = |tag: &str| -> Vec<u16> {
+            let Some(ids) = kiln_data::registries::TAGS
+                .iter()
+                .find(|(r, _)| *r == "minecraft:block")
+                .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+                .map(|(_, ids)| *ids)
+            else {
+                return Vec::new();
+            };
+            (0..n as u16).filter(|&s| kiln_data::builtin_id("minecraft:block", crate::blocks::block_name(s)).is_some_and(|id| ids.contains(&id))).collect()
+        };
+        let set = |out: &mut Vec<u8>, states: &[u16], t: PathType, only_if: &dyn Fn(PathType) -> bool| {
+            for &s in states {
+                let cur = PathType::ALL[out[s as usize] as usize];
+                if only_if(cur) {
+                    out[s as usize] = t as u8;
+                }
+            }
+        };
+        // Later checks first, so earlier ones win where both apply.
+        let fluid = |s: u16| crate::physics::fluid_state(s).kind;
+        for s in 0..n as u16 {
+            let cur = PathType::ALL[out[s as usize] as usize];
+            if cur == PathType::Open && fluid(s).is_water() {
+                out[s as usize] = PathType::Water as u8;
+            }
+        }
+        let fences: Vec<u16> = tagged("minecraft:fences").into_iter().chain(tagged("minecraft:walls")).collect();
+        set(&mut out, &fences, PathType::Fence, &|c| !matches!(c, PathType::DoorOpen | PathType::DoorWoodClosed | PathType::DoorIronClosed | PathType::Rail | PathType::Leaves));
+        let mut fire = tagged("minecraft:fire");
+        fire.extend(tagged("minecraft:campfires").into_iter().filter(|&s| kiln_data::blocks_types::block_of(s).property(s, "lit") == Some("true")));
+        set(&mut out, &fire, PathType::Fire, &|_| true);
+        for s in 0..n as u16 {
+            if fluid(s).is_lava() {
+                out[s as usize] = PathType::Lava as u8;
+            }
+        }
+        set(&mut out, &tagged("minecraft:speleothems"), PathType::DamageCautious, &|_| true);
+        set(&mut out, &tagged("minecraft:trapdoors"), PathType::Trapdoor, &|_| true);
+        out
+    })
+}
+
+/// `isPathfindable(LAND)` (lava is not: `LiquidBlock` checks the lava tag).
 pub fn pathfindable_land(state: u16) -> bool {
-    flags(state) & 1 != 0
+    flags(state) & 1 != 0 && crate::blocks::block_name(state) != "minecraft:lava"
 }
 
 /// `isValidSpawn` on top of `state` for a monster (`zombie`) or an animal (`pig`).
@@ -462,7 +503,16 @@ impl<'a> Search<'a> {
             return Some(self.start_node(x, y, z));
         }
         let state = self.level.block(at(e.x(), y, e.z()));
-        if self.can_float && e.fluid.is_in_water() {
+        let lava = |s: u16| crate::physics::fluid_state(s).kind.is_lava();
+        if e.stands_on_lava && lava(state) {
+            // `canStandOnFluid`: the start is the top of the fluid.
+            let mut s = state;
+            while lava(s) {
+                y += 1;
+                s = self.level.block(at(e.x(), y, e.z()));
+            }
+            y -= 1;
+        } else if self.can_float && e.fluid.is_in_water() {
             let mut s = state;
             while crate::physics::fluid_state(s).kind.is_water() {
                 y += 1;
@@ -978,6 +1028,9 @@ pub fn amphibious_type(level: &dyn EntityLevel, x: i32, y: i32, z: i32) -> PathT
 
 /// `isStableDestination` of the mob's navigation.
 pub fn stable_destination(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -> bool {
+    if let Some(stable) = m.kind.ext().and_then(|k| k.stable_destination(level, pos)) {
+        return stable;
+    }
     if m.nav.amphibious {
         return !kiln_data::blocks_types::is_air(level.block(pos.below()));
     }

@@ -306,15 +306,20 @@ pub fn target(m: &MobData, level: &dyn EntityLevel) -> Option<Living> {
     if t.player && (t.creative || t.spectator) {
         return None;
     }
-    if !can_attack(level, &t) {
+    if !can_attack(m, level, &t) {
         return None;
     }
     Some(t)
 }
 
-/// `LivingEntity.canAttack`.
-pub fn can_attack(level: &dyn EntityLevel, t: &Living) -> bool {
+/// `LivingEntity.canAttack` (and the type's own vetoes).
+pub fn can_attack(m: &MobData, level: &dyn EntityLevel, t: &Living) -> bool {
     if t.player && level.difficulty() == 0 {
+        return false;
+    }
+    if let Some(k) = m.kind.ext()
+        && !k.can_attack(m, level, t)
+    {
         return false;
     }
     t.seen_as_enemy()
@@ -325,7 +330,7 @@ pub fn targeting_ok(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t: &Li
     if t.id == e.id || !t.seen_by_anyone() {
         return false;
     }
-    if combat && !can_attack(level, t) {
+    if combat && !can_attack(m, level, t) {
         return false;
     }
     if range > 0.0 {
@@ -620,7 +625,7 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
             // `HURT_BY_TARGETING`: combat, ignoring line of sight and invisibility.
             targeting_ok(e, m, level, &t, true, -1.0, false)
         }
-        Goal::NearestAttackable { wanted, interval, target: tg, spider, must_see, .. } => {
+        Goal::NearestAttackable { wanted, interval, target: tg, spider, .. } => {
             if *spider && super::light_magic_value(e, level) >= 0.5 {
                 return false;
             }
@@ -635,7 +640,7 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                     nearest_attackable_player(e, m, level, range, |p| (p.pos.y - y).abs() <= dy).map(|p| p.id)
                 }
                 Wanted::Unsimulated => None,
-                Wanted::Types(types) => nearest_mob(e, m, level, range, *must_see, types),
+                Wanted::Types(types) => nearest_mob(e, m, level, range, true, types),
             };
             tg.is_some()
         }
@@ -705,7 +710,7 @@ fn light_ok_for_spider_to_stop(e: &Entity, level: &dyn EntityLevel) -> bool {
 pub fn continue_target(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, target_mob: Option<i32>, must_see: bool, unseen: &mut i32, memory: i32) -> bool {
     let id = m.target.or(target_mob);
     let Some(t) = id.and_then(|id| living(level, id)) else { return false };
-    if !can_attack(level, &t) {
+    if !can_attack(m, level, &t) {
         return false;
     }
     let follow = m.attrs.value(Attr::FollowRange);
@@ -857,7 +862,7 @@ pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &m
         }
         Goal::Tempt { speed, player, .. } => {
             let Some(p) = player.and_then(|id| living(level, id)) else { return };
-            let (hs, hx) = ((m.kind.max_head_y_rot() + 20) as f32, m.kind.max_head_x_rot() as f32);
+            let (hs, hx) = ((m.kind.max_head_y_rot() + 20) as f32, m.max_head_x_rot() as f32);
             m.look.set_look_at(p.pos.x, p.eye_y, p.pos.z, hs, hx);
             if e.position().distance_to_sqr(p.pos) < 2.5 * 2.5 {
                 m.nav.stop();
@@ -867,7 +872,7 @@ pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &m
         }
         Goal::Breed { speed, partner, love_time } => {
             let Some(p) = partner.and_then(|id| living(level, id)) else { return };
-            let max_x = m.kind.max_head_x_rot() as f32;
+            let max_x = m.max_head_x_rot() as f32;
             m.look.set_look_at(p.pos.x, p.eye_y, p.pos.z, 10.0, max_x);
             path::move_to_entity(e, m, level, p.block_pos(), *speed);
             *love_time += 1;
@@ -1070,13 +1075,13 @@ fn fluid_jump_threshold(e: &Entity) -> f64 {
 }
 
 /// `PanicGoal.shouldPanic`: hurt by a `panic_causes` damage type in the last 40 ticks.
-fn should_panic(m: &MobData, level: &dyn EntityLevel) -> bool {
+pub fn should_panic(m: &MobData, level: &dyn EntityLevel) -> bool {
     m.last_damage_source(level.game_time()).is_some_and(|s| s.kind.is_tag("minecraft:panic_causes"))
 }
 
 /// `BreedGoal.getFreePartner`: the nearest animal of the same type within 8 blocks that can
 /// mate (both in love) and is not panicking.
-fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<i32> {
+pub fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<i32> {
     let area = e.bounding_box().inflate(8.0, 8.0, 8.0);
     let mut best: Option<(f64, i32)> = None;
     for id in level.entities_in(&area, crate::level::EntityFilter::Living, e.id) {
@@ -1087,6 +1092,11 @@ fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<i32>
             continue;
         }
         if !(m.in_love > 0 && om.in_love > 0) || om.goals.is_running(|g| matches!(g, Goal::Panic { .. })) {
+            continue;
+        }
+        if let Some(k) = m.kind.ext()
+            && !k.can_mate(m, om)
+        {
             continue;
         }
         let d = e.position().distance_to_sqr(o.position());
@@ -1167,7 +1177,7 @@ impl MobKind {
             MobKind::Cow => "minecraft:cow_food",
             MobKind::Sheep => "minecraft:sheep_food",
             MobKind::Chicken => "minecraft:chicken_food",
-            _ => return false,
+            _ => return self.ext().is_some_and(|k| k.tempted_by(item)),
         };
         kiln_data::registries::TAGS
             .iter()
