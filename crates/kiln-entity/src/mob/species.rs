@@ -140,24 +140,58 @@ pub fn shoot(p: &mut Entity, x: f64, y: f64, z: f64, velocity: f32, inaccuracy: 
     p.x_rot_o = p.x_rot;
 }
 
-/// `SheepColorSpawnRules` for a temperate biome: black, gray, light gray, brown or the common
-/// white (with a rare pink).
-pub fn sheep_color(r: &mut dyn RandomSource) -> u8 {
+/// The farm animal climate of a biome (`#spawns_warm_variant_farm_animals`, then
+/// `#spawns_cold_variant_farm_animals`, else temperate).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Climate {
+    Temperate,
+    Warm,
+    Cold,
+}
+
+pub fn climate(biome: Option<i32>) -> Climate {
+    let Some(b) = biome else { return Climate::Temperate };
+    if biome_tag(b, "minecraft:spawns_warm_variant_farm_animals") {
+        Climate::Warm
+    } else if biome_tag(b, "minecraft:spawns_cold_variant_farm_animals") {
+        Climate::Cold
+    } else {
+        Climate::Temperate
+    }
+}
+
+/// Whether biome id `biome` is in the `minecraft:worldgen/biome` tag `tag`.
+pub fn biome_tag(biome: i32, tag: &str) -> bool {
+    kiln_data::registries::TAGS
+        .iter()
+        .find(|(r, _)| *r == "minecraft:worldgen/biome")
+        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+        .is_some_and(|(_, ids)| ids.contains(&biome))
+}
+
+/// `SheepColorSpawnRules`: by climate, four rare colors (5, 5, 5, 3 in 100) or the climate's
+/// common color, which is pink one time in 500.
+pub fn sheep_color(r: &mut dyn RandomSource, climate: Climate) -> u8 {
     const WHITE: u8 = 0;
     const PINK: u8 = 6;
     const GRAY: u8 = 7;
     const LIGHT_GRAY: u8 = 8;
     const BROWN: u8 = 12;
     const BLACK: u8 = 15;
+    let (rare, common) = match climate {
+        Climate::Temperate => ([BLACK, GRAY, LIGHT_GRAY, BROWN], WHITE),
+        Climate::Warm => ([GRAY, LIGHT_GRAY, WHITE, BLACK], BROWN),
+        Climate::Cold => ([LIGHT_GRAY, GRAY, WHITE, BROWN], BLACK),
+    };
     let i = r.next_int_bounded(100);
     match i {
-        0..5 => BLACK,
-        5..10 => GRAY,
-        10..15 => LIGHT_GRAY,
-        15..18 => BROWN,
+        0..5 => rare[0],
+        5..10 => rare[1],
+        10..15 => rare[2],
+        15..18 => rare[3],
         _ => {
             if r.next_int_bounded(500) < 499 {
-                WHITE
+                common
             } else {
                 PINK
             }

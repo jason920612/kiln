@@ -224,3 +224,35 @@ pub fn is_food(kind: MobKind, item: i32) -> bool {
     };
     super::item_tag(item, tag)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{GroupData, MobKind, SpawnContext, Species};
+    use kiln_javamath::random::LegacyRandom;
+
+    fn ctx(biome: &str) -> SpawnContext {
+        let biome = kiln_data::synced_id("minecraft:worldgen/biome", biome);
+        SpawnContext { special_multiplier: 0.0, effective_difficulty: 1.5, hard: false, halloween: false, biome, moon_brightness: 1.0 }
+    }
+
+    #[test]
+    fn farm_animals_take_the_climate_variant() {
+        for (biome, want) in [("minecraft:desert", "minecraft:warm"), ("minecraft:snowy_plains", "minecraft:cold"), ("minecraft:plains", "minecraft:temperate")] {
+            for kind in [MobKind::Pig, MobKind::Cow, MobKind::Chicken] {
+                let mut e = super::super::new(kind, 1, 0, 5);
+                super::super::finalize_spawn(&mut e, &mut LegacyRandom::new(9), &ctx(biome), &mut GroupData::default(), true);
+                let v = super::super::data(&e).unwrap().variant;
+                assert_eq!(Some(v), kiln_data::synced_id(&format!("{}_variant", kind.type_name()), want), "{kind:?} in {biome}");
+            }
+        }
+        // Cold biomes' common sheep are black.
+        let blacks = (0..200)
+            .filter(|&s| {
+                let mut e = super::super::new(MobKind::Sheep, 1, 0, 5);
+                super::super::finalize_spawn(&mut e, &mut LegacyRandom::new(s), &ctx("minecraft:snowy_plains"), &mut GroupData::default(), true);
+                matches!(super::super::data(&e).unwrap().species, Species::Sheep { color: 15, .. })
+            })
+            .count();
+        assert!(blacks > 150, "{blacks} of 200 cold sheep are black");
+    }
+}

@@ -1862,6 +1862,17 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     // Types that pick a variant first (from the biome, no randomness) draw their sound
     // variant before `Mob.finalizeSpawn`.
     if matches!(kind, MobKind::Pig | MobKind::Cow | MobKind::Chicken) {
+        // `VariantUtils.selectVariantToSpawn`: the climate's variant wins over the temperate
+        // fallback; one draw among the (single) best candidates.
+        let name = match species::climate(ctx.biome) {
+            species::Climate::Temperate => "minecraft:temperate",
+            species::Climate::Warm => "minecraft:warm",
+            species::Climate::Cold => "minecraft:cold",
+        };
+        let _ = r.next_int_bounded(1);
+        if let Some(v) = kiln_data::synced_id(&format!("{}_variant", kind.type_name()), name) {
+            m.variant = v;
+        }
         m.sound_variant = r.next_int_bounded(sound_variant_count(kind).max(1));
     }
     if breed::is_ageable(kind) {
@@ -1873,7 +1884,7 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     }
     if kind == MobKind::Sheep {
         // `Sheep.finalizeSpawn`: the wool color from the biome's color spawn rules.
-        let color = species::sheep_color(r);
+        let color = species::sheep_color(r, species::climate(ctx.biome));
         if let Species::Sheep { color: c, .. } = &mut m.species {
             *c = color;
         }
