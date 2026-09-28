@@ -45,6 +45,8 @@ pub(crate) struct RegionBlocks {
     /// Generation's post-processing and ticks of new chunks, applied once the chunks around
     /// them are loaded (`LevelChunk.postProcessGeneration`, `unpackTicks`).
     generated: Vec<(ChunkPos, kiln_world::chunk::PendingUpdates)>,
+    /// Container block entities of the region's chunks, live.
+    pub containers: crate::container::Containers,
 }
 
 impl Default for RegionBlocks {
@@ -56,6 +58,7 @@ impl Default for RegionBlocks {
             random: LegacyRandom::new(0),
             sub_tick: 0,
             generated: Vec::new(),
+            containers: Default::default(),
         }
     }
 }
@@ -84,6 +87,7 @@ impl RegionBlocks {
         if let Some(pending) = chunk.take_pending_updates() {
             self.generated.push((pos, pending));
         }
+        self.containers.chunk_loaded(pos, chunk);
         let moving = kiln_data::blocks::default_state::MOVING_PISTON;
         for ((x, y, z), be) in chunk.block_entities() {
             if chunk.get(x, y, z) == moving {
@@ -104,10 +108,12 @@ impl RegionBlocks {
         for p in gone {
             self.data.pistons.remove(p);
         }
+        self.containers.chunk_unloaded(pos);
     }
 
     /// Puts the chunk's scheduled ticks and moving pistons on it in their saved form.
-    pub fn store(&self, pos: ChunkPos, chunk: &mut Chunk, game_time: i64) {
+    pub fn store(&mut self, pos: ChunkPos, chunk: &mut Chunk, game_time: i64) {
+        self.containers.store(pos, chunk);
         let k = key(pos);
         let block = self.block_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
         let fluid = self.fluid_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
@@ -155,6 +161,7 @@ impl RegionPart for RegionBlocks {
         into.data.torch_toggles.append(&mut from.data.torch_toggles);
         into.generated.append(&mut from.generated);
         into.sub_tick = into.sub_tick.max(from.sub_tick);
+        into.containers.merge(std::mem::take(&mut from.containers));
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -187,13 +194,17 @@ impl RegionPart for RegionBlocks {
         for (c, pending) in self.generated.drain(..) {
             parts[owner((c.x, c.z))].generated.push((c, pending));
         }
+        {
+            let mut containers: SmallVec<[&mut crate::container::Containers; 4]> = parts.iter_mut().map(|p| &mut p.containers).collect();
+            self.containers.split_into(&mut containers, |c| owner((c.x, c.z)));
+        }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -228,6 +239,8 @@ pub(crate) struct BlockEnv {
     pub mobs: crate::mobs::MobRules,
     /// Biome spawn lists for natural spawning (`None`: no datapack, no natural spawning).
     pub spawn_table: Option<std::sync::Arc<crate::spawner::SpawnTable>>,
+    /// Recipes and item rules for menus and furnaces.
+    pub menus: std::sync::Arc<kiln_inventory::Rules>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -280,6 +293,11 @@ pub(crate) struct BlockOut {
     /// Crack stages to show others: (breaker entity id, position, stage; outside 0..=9
     /// removes the cracks).
     pub destruction: Vec<(i32, [i32; 3], i32)>,
+    /// Entities block entities spawned (dropped contents, dispensed items, experience).
+    pub spawns: Vec<Spawn>,
+    /// Chests, barrels and ender chests whose openers to recount (their scheduled tick), for
+    /// the region, which knows the players.
+    pub rechecks: Vec<BlockPos>,
 }
 
 /// A region's cells and block machinery as kiln-blocks' [`Level`].
@@ -315,6 +333,9 @@ impl Level for RegionLevel<'_> {
         }
         if flags & flags::CLIENTS != 0 {
             self.out.changed.push([pos.x, pos.y, pos.z]);
+        }
+        if kiln_data::block_props::has_block_entity(old) || kiln_data::block_props::has_block_entity(state) {
+            crate::container::block_set(self, pos, flags);
         }
         Some(old)
     }
@@ -396,6 +417,18 @@ impl Level for RegionLevel<'_> {
             }
         }
         chunk.set_block_entity(x, pos.y, z, be);
+    }
+
+    fn block_entity_analog(&self, pos: BlockPos, state: u16, _dir: Direction) -> i32 {
+        crate::container::analog(self, pos, state)
+    }
+
+    fn container_openers(&self, pos: BlockPos) -> i32 {
+        self.blocks.containers.get(pos).map_or(0, |c| c.openers)
+    }
+
+    fn block_entity_tick(&mut self, pos: BlockPos, state: u16) {
+        crate::container::scheduled_tick(self, pos, state);
     }
 
     fn count_entities(&self, min: [f64; 3], max: [f64; 3], kind: EntityKind) -> usize {
@@ -559,8 +592,9 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
 /// Sends what block work changed and carries out its effects: Block Update / Section Blocks
 /// Update (and block entity data) to players with the chunk, particles, sounds and block
 /// events to players near them, drops, falling blocks and primed TNT to `spawns`.
-pub(crate) fn finish(cells: &CellSet<Cell>, out: BlockOut, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, env: &BlockEnv) {
+pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, env: &BlockEnv) {
     send_changes(cells, &out.changed, players);
+    spawns.append(&mut out.spawns);
     for (breaker, pos, stage) in out.destruction {
         // `ServerLevel.destroyBlockProgress`: other players within 32 blocks.
         let pkt = world_fx::block_destruction(breaker, pos, u8::try_from(stage).ok());
@@ -856,6 +890,7 @@ mod tests {
             damage: crate::health::DamageRules::default(),
             mobs: Default::default(),
             spawn_table: None,
+            menus: Default::default(),
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

@@ -5,6 +5,7 @@
 //! their water on shape updates, as almost every `SimpleWaterloggedBlock` does.
 
 pub mod connect;
+pub mod container;
 pub mod misc;
 pub mod piston;
 pub mod portal;
@@ -42,6 +43,8 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
         C::PistonBaseBlock => piston::check_if_extend(level, s, pos),
         C::PistonHeadBlock => piston::head_neighbor_changed(level, s, pos, source),
+        C::HopperBlock => container::hopper_check_powered(level, s, pos),
+        C::DispenserBlock | C::DropperBlock => container::dispenser_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::TrapDoorBlock) => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::DoorBlock) => components::door_neighbor_changed(level, s, pos, source),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::neighbor_changed(level, s, pos, source, moved_by_piston),
@@ -60,6 +63,9 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     }
     if logic::implements(s, interface::SIMPLE_WATERLOGGED_BLOCK) {
         fluid::tick_water_if_waterlogged(level, s, pos);
+    }
+    if container::is_chest(s) {
+        return container::chest_update_shape(s, dir, neighbor_state);
     }
     match class {
         C::RedstoneWireBlock => return wire::update_shape(level, s, pos, dir, neighbor_state),
@@ -208,6 +214,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::ObserverBlock => devices::observer_on_place(level, s, pos, old),
         C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         C::PistonBaseBlock => piston::on_place(level, s, pos, old),
+        C::HopperBlock => container::hopper_on_place(level, s, pos, old),
         // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it.
         C::FireBlock | C::SoulFireBlock if !state::same_block(old, s) => {
             portal::fire_on_place(level, pos);
@@ -244,6 +251,10 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::RedstoneLampBlock => components::lamp_tick(level, s, pos),
         C::ObserverBlock => devices::observer_tick(level, s, pos),
         C::DetectorRailBlock => rail::detector_tick(level, s, pos),
+        // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
+        // and `DispenserBlock.tick` (dispense): the block entity's.
+        C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock => level.block_entity_tick(pos, s),
+        _ if container::is_chest(s) => level.block_entity_tick(pos, s),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_tick(level, s, pos),
         _ if logic::is_instance(s, C::LeavesBlock) => misc::leaves_tick(level, s, pos),
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_tick(level, s, pos),
@@ -266,6 +277,10 @@ pub fn trigger_event<L: Level>(level: &mut L, s: u16, pos: BlockPos, a: i32, b: 
     match logic::block_class(s) {
         BlockClass::NoteBlock => devices::note_trigger(level, s, pos),
         BlockClass::PistonBaseBlock => piston::trigger_event(level, s, pos, a, b),
+        // `BaseEntityBlock.triggerEvent`: the lids of chests, ender chests and shulker boxes
+        // (their block entities answer event 1 with the openers count).
+        BlockClass::EnderChestBlock | BlockClass::ShulkerBoxBlock => a == 1,
+        _ if container::is_chest(s) => a == 1,
         _ => false,
     }
 }

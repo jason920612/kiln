@@ -123,9 +123,28 @@ impl RegionWork<'_> {
             times[i] += now - lap;
             lap = now;
         };
-        // Menu changes first, like vanilla's container broadcast at the start of a player tick.
-        for p in self.players.iter_mut() {
-            p.with_menu(&env.rules, &mut self.out.spawns, |menu, _, env| menu.broadcast_changes(env));
+        // Menu changes first, like vanilla's container broadcast at the start of a player tick,
+        // then `stillValid`: a menu whose block went away or is out of reach closes.
+        {
+            let bodies = Vec::new();
+            let mut out = BlockOut::default();
+            {
+                let mut level = RegionLevel {
+                    cells: &mut *self.cells,
+                    blocks: &mut *self.blocks,
+                    env: &env.blocks,
+                    out: &mut out,
+                    bodies: &bodies,
+                    actor: None,
+                };
+                for p in self.players.iter_mut() {
+                    crate::container::open::menu_op(p, &mut level, &mut self.out.spawns, |menu, _, env| menu.broadcast_changes(env));
+                    if p.open_menu.is_some() && !p.menu_still_valid(&level) {
+                        p.close_block_menu(&env.rules, &mut self.out.spawns, &mut level, true);
+                    }
+                }
+            }
+            blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         }
         mark(&mut self.out.times, 0);
         // The player tick in vanilla's order: base tick (fire, void, air, effects), using an
@@ -200,6 +219,9 @@ impl RegionWork<'_> {
             }
             blocks::press_plates(&mut level);
             blocks::tick_blocks(&mut level, &ticking);
+            for pos in std::mem::take(&mut level.out.rechecks) {
+                crate::container::open::recheck_openers(&mut level, &self.players, pos);
+            }
             blocks::tick_pistons(&mut level, &ticking);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
@@ -209,6 +231,7 @@ impl RegionWork<'_> {
     /// goes out like block work.
     fn tick_entities(&mut self, env: &Env) {
         if self.entities.list.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
+            self.tick_block_entities(env);
             return;
         }
         let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
@@ -228,6 +251,33 @@ impl RegionWork<'_> {
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        self.tick_block_entities(env);
+    }
+
+    /// `Level.tickBlockEntities`: hoppers and furnaces in ticking chunks. Hoppers take item
+    /// entities; their viewers see the new counts.
+    fn tick_block_entities(&mut self, env: &Env) {
+        if self.blocks.containers.len() == 0 {
+            return;
+        }
+        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let mut out = BlockOut::default();
+        let mut items = crate::container::hopper::EntityItems::new(self.entities);
+        {
+            let mut level = RegionLevel {
+                cells: &mut *self.cells,
+                blocks: &mut *self.blocks,
+                env: &env.blocks,
+                out: &mut out,
+                bodies: &bodies,
+                actor: None,
+            };
+            crate::container::tick_block_entities(&mut level, &mut items, &ticking);
+        }
+        let touched = items.touched();
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        crate::container::hopper::send_item_counts(self.entities, &mut self.players, &touched);
     }
 
     /// Chunks outside every player's view (plus one chunk of margin) can go.
@@ -404,7 +454,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.disconnect("Invalid container click");
                 return;
             };
-            let crashed = p.with_menu(&env.rules, fx.spawns, |menu, _, env| {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            let crashed = crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {
                 kiln_inventory::handle_container_click(menu, env, &click, true).is_err()
             });
             if crashed {
@@ -413,16 +464,15 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         }
         PlayIn::ContainerClose { .. } => {
             if p.open_menu.is_some() {
-                p.with_menu(&env.rules, fx.spawns, |open, inventory_menu, env| {
-                    kiln_inventory::click::close_container(open, inventory_menu, env)
-                });
-                p.open_menu = None;
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                p.close_block_menu(&env.rules, fx.spawns, &mut level, false);
             } else {
                 p.with_menu(&env.rules, fx.spawns, |menu, _, env| kiln_inventory::click::close_container(menu, None, env));
             }
         }
         PlayIn::ContainerButtonClick { container_id, button_id } => {
-            p.with_menu(&env.rules, fx.spawns, |menu, _, env| {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {
                 kiln_inventory::click::handle_container_button_click(menu, env, container_id, button_id, true)
             });
         }
@@ -496,8 +546,12 @@ fn use_item_on(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3]
     let step = dir.step();
     let next = [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]];
     let top = level.env.min_y + level.env.height - 1;
-    if pos[1] <= top && p.awaiting_teleport.is_none() && p.game_mode != 3 {
-        use_on_block(p, level, hand, pos, dir, cursor, spawns);
+    if pos[1] <= top && p.awaiting_teleport.is_none() {
+        if p.game_mode == 3 {
+            crate::container::open::spectator_use(p, level, BlockPos::new(pos[0], pos[1], pos[2]), spawns);
+        } else {
+            use_on_block(p, level, hand, pos, dir, cursor, spawns);
+        }
     }
     p.resend_block(level, pos);
     p.resend_block(level, next);
@@ -524,8 +578,11 @@ fn use_on_block(
     };
     let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
     if !(p.sneaking && have_something) && main_hand && !interact::passes_to_item(level.block(bp), item_name, dir) {
-        let used = interact::use_without_item(level, bp, &actor);
-        if used {
+        if let Some(consumed) = crate::container::open::use_block(p, level, bp, spawns) {
+            if consumed {
+                return;
+            }
+        } else if interact::use_without_item(level, bp, &actor) {
             return;
         }
     }
@@ -565,9 +622,9 @@ fn use_on_block(
     if obstructed(p, level.bodies, at, state) {
         return;
     }
-    if placement::place(level, &item, &ctx).is_none() {
-        return;
-    }
+    let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
+    let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
+    crate::container::open::apply_item_components(level, placed_at, &placed_from);
     if p.game_mode != 1 {
         let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
         kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);

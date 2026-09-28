@@ -5,7 +5,7 @@
 //! `axis` from the clicked face, horizontal `facing` against the player, six-way `facing`
 //! toward the player, `waterlogged` in source water.
 
-use crate::behaviour::{connect, misc, support};
+use crate::behaviour::{connect, container, misc, support};
 use crate::level::{Level, flags};
 use crate::pos::{Axis, BlockPos, Direction};
 use crate::redstone::{diode, has_neighbor_signal, wire};
@@ -53,6 +53,7 @@ struct Ctx<'a, L: ?Sized> {
     click: [f64; 3],
     yaw: f32,
     pitch: f32,
+    sneaking: bool,
 }
 
 /// `Mth.sin` / `Mth.cos` (the 65536-entry table, double-argument versions).
@@ -243,6 +244,9 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
         }
         C::RepeaterBlock | C::ComparatorBlock => diode::placement(level, pos, state::set_dir(d, "facing", c.horizontal().opposite())),
         C::RedstoneWireBlock => wire::placement(level, pos),
+        C::HopperBlock => container::hopper_placement(d, c.face),
+        C::ShulkerBoxBlock => container::shulker_placement(d, c.face),
+        _ if container::is_chest(d) => c.waterlogged(container::chest_placement(level, d, pos, c.horizontal(), c.face, c.sneaking)),
         C::ObserverBlock => state::set_dir(d, "facing", c.nearest()[0]),
         C::RedstoneLampBlock => state::set_bool(d, "lit", has_neighbor_signal(level, pos)),
         C::NoteBlock => crate::redstone::devices::note_instrument(level, pos, d),
@@ -328,7 +332,7 @@ pub fn placement<L: Level + ?Sized>(level: &L, item: &BlockItem, ctx: &PlaceCont
     if !replace_clicked && !can_be_replaced(level, level.block(pos), item.block, ctx.face, ctx.click[1], pos, false) {
         return None;
     }
-    let c = Ctx { level, pos, replace_clicked, face: ctx.face, click: ctx.click, yaw: ctx.yaw, pitch: ctx.pitch };
+    let c = Ctx { level, pos, replace_clicked, face: ctx.face, click: ctx.click, yaw: ctx.yaw, pitch: ctx.pitch, sneaking: ctx.sneaking };
     let state = match item.wall {
         None => state_for_placement(&c, item.block).filter(|&s| support::can_survive(level, s, pos)),
         Some((wall_block, attach)) => {

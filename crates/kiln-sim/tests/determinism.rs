@@ -124,6 +124,25 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
                 }
             }
         }
+        // Beside each group, a chest emptying through a hopper chain into another chest, and
+        // a furnace with ore and fuel: block entities tick in their regions.
+        if tick == 70 {
+            for g in 0..GROUPS {
+                let [ox, oz] = group_offset(g, GROUPS, GROUP_SPACING);
+                let (x, y, z) = ((2.0 + ox) as i32, SURFACE_Y as i32, (14.0 + oz) as i32);
+                inbox.push(ToSim::Console(format!("setblock {x} {y} {z} minecraft:chest")));
+                inbox.push(ToSim::Console(format!("setblock {x} {} {z} minecraft:hopper[facing=down]", y + 1)));
+                inbox.push(ToSim::Console(format!("setblock {x} {} {z} minecraft:hopper[facing=down]", y + 2)));
+                inbox.push(ToSim::Console(format!(
+                    "setblock {x} {} {z} minecraft:chest{{Items:[{{Slot:0b,id:\"minecraft:oak_log\",count:9}},{{Slot:4b,id:\"minecraft:dirt\",count:3}}]}}",
+                    y + 3
+                )));
+                inbox.push(ToSim::Console(format!(
+                    "setblock {} {y} {z} minecraft:furnace{{Items:[{{Slot:0b,id:\"minecraft:raw_iron\",count:2}},{{Slot:1b,id:\"minecraft:coal\",count:1}}]}}",
+                    x + 2
+                )));
+            }
+        }
         // A spring beside each group: water spreads over the next ticks.
         if tick == 60 {
             for g in 0..GROUPS {
@@ -153,6 +172,8 @@ fn run(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> Run {
         sim.block_at(wx + dx, SURFACE_Y as i32, wz + dz).is_some_and(|s| kiln_data::blocks_types::has_fluid(s))
     });
     assert!(flowing.count() > 9, "the water spread");
+    let chest = [(2.0 + ox) as i32, SURFACE_Y as i32, (14.0 + oz) as i32];
+    assert!(sim.container_at(chest).is_some_and(|(items, _)| !items.is_empty()), "the hoppers moved items");
     assert!(walkers.iter().all(|w| !w.client.stats.disconnected.load(std::sync::atomic::Ordering::Relaxed)));
     assert!(hits > 0, "some attacks landed");
     assert!(effects > 0, "players had effects");

@@ -24,6 +24,7 @@ mod blocks;
 mod combat;
 mod commands;
 mod consume;
+mod container;
 mod datapacks;
 pub mod lobby;
 mod digging;
@@ -186,6 +187,8 @@ struct Player {
     menu: kiln_inventory::Menu,
     /// A block or entity menu the player has open.
     open_menu: Option<kiln_inventory::Menu>,
+    /// What the open menu is on, the menu counter and the ender chest items.
+    containers: container::open::PlayerContainers,
     /// Movement packets for this player's viewers.
     tracker: packets::entity::MovementTracker,
     /// Players currently seeing this one (sorted).
@@ -358,39 +361,15 @@ impl Player {
     }
 
     /// Runs `f` on the open menu (or the inventory menu) and carries out its effects: packets
-    /// to the client, dropped items to `spawns`.
+    /// to the client, dropped items to `spawns`. A menu on block containers needs the region's
+    /// containers ([`Player::with_menu_at`]); here `f` gets the inventory menu instead.
     fn with_menu<R>(
         &mut self,
         rules: &kiln_inventory::Rules,
         spawns: &mut Vec<entities::Spawn>,
         f: impl FnOnce(&mut kiln_inventory::Menu, Option<&mut kiln_inventory::Menu>, &mut kiln_inventory::Env) -> R,
     ) -> R {
-        let mut out = Vec::new();
-        let player = self.player_flags();
-        let result = {
-            let Player { inv, menu, open_menu, .. } = self;
-            let mut env = kiln_inventory::Env {
-                inventory: inv,
-                block: None,
-                player,
-                rules,
-                world: &mut kiln_inventory::NoWorld,
-                out: &mut out,
-            };
-            match open_menu {
-                Some(open) => f(open, Some(menu), &mut env),
-                None => f(menu, None, &mut env),
-            }
-        };
-        for effect in out {
-            if let Some(pkt) = effect.encode() {
-                self.send(pkt);
-            }
-            if let kiln_inventory::Effect::Drop { stack, .. } = effect {
-                spawns.push(self.throw(stack));
-            }
-        }
-        result
+        self.with_menu_at(rules, spawns, None, f)
     }
 
     /// Drops one item (or the whole stack) from the selected hotbar slot (`ServerPlayer.drop`).
@@ -996,6 +975,20 @@ impl Sim {
             .collect();
         ents.sort_unstable_by_key(|e| e.0);
         ents.hash(&mut h);
+        // Container block entities by position.
+        let mut containers: Vec<_> = self
+            .dims
+            .iter()
+            .enumerate()
+            .flat_map(|(d, dim)| dim.regions.iter().map(move |r| (d, r)))
+            .flat_map(|(d, r)| r.part().1.containers.map.iter().map(move |(p, c)| (d, *p, c)))
+            .map(|(d, p, c)| {
+                let items: Vec<(i32, i32)> = c.items.iter().map(|s| (s.item(), s.count())).collect();
+                (d, p, items, c.cooldown, [c.lit_remaining, c.lit_total, c.cook_timer, c.cook_total], c.openers)
+            })
+            .collect();
+        containers.sort_unstable_by_key(|c| (c.0, c.1));
+        containers.hash(&mut h);
         for p in players {
             p.uuid.hash(&mut h);
             (p.dim, p.portal_cooldown, p.portal.as_ref().map(|t| t.time)).hash(&mut h);
@@ -1132,6 +1125,48 @@ impl Sim {
         self.players.get(&conn).map(Player::menu_view)
     }
 
+    /// The contents of the container block entity at an overworld position: (slot, item name,
+    /// count) of each non-empty slot, and the furnace values (lit time, lit total, cook
+    /// progress, cook total) for furnaces (for tests and tools).
+    pub fn container_at(&self, pos: [i32; 3]) -> Option<(Vec<(usize, &'static str, i32)>, [i32; 4])> {
+        let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(pos[0], pos[2]).cell())?;
+        let c = region.part().1.containers.get(kiln_blocks::BlockPos::new(pos[0], pos[1], pos[2]))?;
+        let items = c.items.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i, s.item_name(), s.count())).collect();
+        Some((items, [c.lit_remaining, c.lit_total, c.cook_timer, c.cook_total]))
+    }
+
+    /// A player's open menu: its `minecraft:menu` type and its slots as (item name, count) (for
+    /// tests and tools).
+    pub fn open_menu(&self, conn: ConnId) -> Option<(&'static str, Vec<Option<(&'static str, i32)>>)> {
+        let p = self.players.get(&conn)?;
+        let menu = p.open_menu.as_ref()?;
+        let ty = menu.kind.menu_type()?;
+        let items = menu.slots().iter().map(|s| {
+            let stack = match s.source {
+                kiln_inventory::Source::Player => p.inv.items.get(s.index).cloned(),
+                kiln_inventory::Source::Block => match &p.containers.open {
+                    Some(container::open::OpenBlock::EnderChest { .. }) => p.containers.ender.items.get(s.index).cloned(),
+                    Some(container::open::OpenBlock::Containers { first, second }) => {
+                        let region = self.dims[p.dim].regions.at(ChunkPos::of_block(first.0.x, first.0.z).cell());
+                        region.and_then(|r| {
+                            let cs = &r.part().1.containers;
+                            let a = cs.get(first.0)?;
+                            if s.index < a.items.len() {
+                                a.items.get(s.index).cloned()
+                            } else {
+                                cs.get(second.as_ref()?.0)?.items.get(s.index - a.items.len()).cloned()
+                            }
+                        })
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            stack.filter(|s| !s.is_empty()).map(|s| (s.item_name(), s.count()))
+        });
+        Some((ty, items.collect()))
+    }
+
     /// Timing of the last completed statistics window.
     pub fn last_report(&self) -> Option<&str> {
         self.commands.last_report.as_deref()
@@ -1188,6 +1223,7 @@ impl Sim {
                 spawn_point: self.spawn,
             },
             spawn_table: self.spawn_table.clone(),
+            menus: self.rules.clone(),
         }
     }
 
@@ -1636,6 +1672,7 @@ impl Sim {
             inv_extra: joining.inv_extra,
             menu: kiln_inventory::Menu::inventory(),
             open_menu: None,
+            containers: container::open::PlayerContainers::load(joining.saved.raw()),
             tracker: packets::entity::MovementTracker::new(
                 entity_id,
                 kiln_data::entities::types::PLAYER.update_interval,

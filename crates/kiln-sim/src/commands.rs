@@ -243,6 +243,13 @@ impl Sim {
         let [x, y, z] = pos;
         let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
         let chunk_pos = ChunkPos::of_block(x, z);
+        // A live container writes its state into the chunk first.
+        if let Some(region) = self.dims[dim].regions.at_mut(chunk_pos.cell()) {
+            let (cells, part) = region.cells_and_part_mut();
+            if let Some(chunk) = cells.chunk_mut(chunk_pos) {
+                part.1.containers.store(chunk_pos, chunk);
+            }
+        }
         let Some(chunk) = self.dims[dim].regions.chunk_mut(chunk_pos) else { return false };
         let Some(old) = chunk.block_entity(lx, y, lz).cloned() else { return false };
         let mut be = kiln_world::block_entity::BlockEntity::new(old.kind);
@@ -253,6 +260,12 @@ impl Sim {
             return false;
         }
         chunk.set_block_entity(lx, y, lz, be);
+        // A container's live state follows the new data.
+        if let Some(region) = self.dims[dim].regions.at_mut(chunk_pos.cell()) {
+            let (cells, part) = region.cells_and_part_mut();
+            let be = cells.chunk(chunk_pos).and_then(|c| c.block_entity(lx, y, lz));
+            part.1.containers.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+        }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);
         for p in self.players.values_mut().filter(|p| p.dim == dim && p.sent_chunks.contains(&chunk_pos)) {
@@ -827,7 +840,15 @@ impl Host for Sim {
     /// `BlockEntity.saveWithFullMetadata`.
     fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
         let [x, y, z] = pos;
-        let chunk = self.dims[crate::dim_id(dimension)?].regions.chunk(ChunkPos::of_block(x, z))?;
+        let dim = crate::dim_id(dimension)?;
+        // A live container writes its state into the chunk first.
+        if let Some(region) = self.dims[dim].regions.at_mut(ChunkPos::of_block(x, z).cell()) {
+            let (cells, part) = region.cells_and_part_mut();
+            if let Some(chunk) = cells.chunk_mut(ChunkPos::of_block(x, z)) {
+                part.1.containers.store(ChunkPos::of_block(x, z), chunk);
+            }
+        }
+        let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;
         chunk.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| be.saved(pos))
     }
 
