@@ -274,12 +274,34 @@ impl Section {
                 let all = |b: bool| if b { 4096 } else { 0 };
                 (all(!is_air(*s)), all(has_fluid(*s)), all(randomly_ticks(*s)))
             }
-            _ => (0..4096).fold((0u16, 0u16, 0u16), |(n, f, t), i| {
-                let s = blocks.get(i);
+            BlockContainer::Direct(d) => d.iter().fold((0u16, 0u16, 0u16), |(n, f, t), &s| {
                 (n + !is_air(s) as u16, f + has_fluid(s) as u16, t + randomly_ticks(s) as u16)
             }),
+            // Paletted: count each palette entry's blocks, then look each entry up once.
+            BlockContainer::Nibble { palette, indices } => {
+                let mut counts = [0u16; 16];
+                for b in indices.iter() {
+                    counts[(b & 15) as usize] += 1;
+                    counts[(b >> 4) as usize] += 1;
+                }
+                Self::tally(palette, &counts)
+            }
+            BlockContainer::Byte { palette, indices } => {
+                let mut counts = [0u16; 256];
+                for &b in indices.iter() {
+                    counts[b as usize] += 1;
+                }
+                Self::tally(palette, &counts)
+            }
         };
         Self { blocks, biomes, non_air, fluids, ticking }
+    }
+
+    /// (non-air, fluid, randomly ticking) block counts from per-palette-entry counts.
+    fn tally(palette: &[u16], counts: &[u16]) -> (u16, u16, u16) {
+        palette.iter().zip(counts).fold((0, 0, 0), |(n, f, t), (&s, &c)| {
+            (n + c * !is_air(s) as u16, f + c * has_fluid(s) as u16, t + c * randomly_ticks(s) as u16)
+        })
     }
 
     pub fn get(&self, x: usize, y: usize, z: usize) -> u16 {

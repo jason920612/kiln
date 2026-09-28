@@ -4,6 +4,7 @@
 pub mod anvil;
 pub mod entities;
 pub mod level;
+pub mod native;
 pub mod player;
 pub mod region;
 pub mod saved_data;
@@ -11,6 +12,7 @@ pub mod saved_data;
 pub use anvil::AnvilSource;
 pub use entities::EntityStore;
 pub use level::{LevelState, LevelStore, WorldSpawn};
+pub use native::{NativeSource, NativeStore, WorldFormat};
 pub use player::{PlayerData, PlayerStore};
 
 use kiln_proto::nbt::{self, Tag};
