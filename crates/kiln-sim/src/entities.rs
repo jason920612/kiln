@@ -36,7 +36,8 @@ pub(crate) enum Body {
     /// An entity loaded from its chunk's saved data; keeps its UUID (unless it had none).
     Loaded(Box<kiln_entity::Entity>),
     /// A new mob facing `yaw`; `finalize` runs its `finalizeSpawn`.
-    Mob { kind: kiln_entity::mob::MobKind, yaw: f32, finalize: Option<crate::mobs::Finalize> },
+    /// `yaw`: `None` keeps the constructor's random yaw.
+    Mob { kind: kiln_entity::mob::MobKind, yaw: Option<f32>, finalize: Option<crate::mobs::Finalize> },
 }
 
 pub(crate) struct Entity {
@@ -158,6 +159,7 @@ impl Entity {
             Body::Mob { kind, yaw, finalize } => {
                 let mut e = kiln_entity::mob::new(kind, id, u, seed);
                 e.set_pos(pos);
+                let yaw = yaw.unwrap_or(e.y_rot);
                 e.y_rot = yaw;
                 e.set_old_pos_and_rot();
                 if let Some(m) = kiln_entity::mob::data_mut(&mut e) {
@@ -615,6 +617,62 @@ pub(crate) fn tick(
             p.send(entity::set_entity_motion(p.entity_id, arr(pr.delta)));
         }
     }
+    for (n, event) in events.into_iter().enumerate() {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
+/// A player's melee hit on a mob (`Player.attack` → `LivingEntity.hurtServer`), carried out
+/// against the region's entities: damage, the extra knockback, fire aspect, then what the mob
+/// did (death loot, sounds, damage events).
+pub(crate) fn hit_mob(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    hit: &crate::combat::MobHit,
+) {
+    let Ok(i) = entities.list.binary_search_by_key(&hit.target, |e| e.id) else { return };
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: hit.target,
+        seeds: 0x6869_7400,
+    };
+    let Some(mut phys) = sim.list[i].phys.take() else { return };
+    let source = kiln_entity::mob::DamageSource {
+        kind: DamageKind::PlayerAttack,
+        attacker: Some(hit.attacker),
+        direct: Some(hit.attacker),
+        pos: Some(vec3(hit.attacker_pos)),
+        attacker_is_player: true,
+    };
+    let hurt = kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount);
+    if hurt {
+        if hit.knockback > 0.0 {
+            let rad = (hit.yaw * 0.017453292) as f64;
+            let (s, c) = (kiln_entity::mob::mth::sin(rad) as f64, kiln_entity::mob::mth::cos(rad) as f64);
+            kiln_entity::mob::knockback_entity(&mut phys, hit.knockback as f64, s, -c);
+        }
+        if hit.fire_seconds > 0.0 {
+            phys.ignite_for_seconds(hit.fire_seconds);
+        }
+    }
+    let e = &mut sim.list[i];
+    e.phys = Some(phys);
+    e.sync();
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
     for (n, event) in events.into_iter().enumerate() {
         carry_out(event, n, level, list, players, spawns, deaths);
     }

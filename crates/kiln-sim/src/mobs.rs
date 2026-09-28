@@ -124,9 +124,46 @@ pub(crate) fn shown_equipment(m: &MobData) -> Vec<(u8, kiln_item::ItemStack)> {
 
 /// A new mob of `kind` at `pos`, facing `yaw` (the entity's own random decides nothing
 /// here; `finalize` runs `finalizeSpawn` with the given context when set).
-pub(crate) fn spawn(kind: MobKind, pos: [f64; 3], yaw: f32, finalize: Option<Finalize>) -> Spawn {
+pub(crate) fn spawn(kind: MobKind, pos: [f64; 3], yaw: Option<f32>, finalize: Option<Finalize>) -> Spawn {
     let t = kiln_data::entities::by_name(kind.type_name()).expect("mob type");
     Spawn { kind: t, pos, vel: [0.0; 3], body: Body::Mob { kind, yaw, finalize } }
+}
+
+/// `/summon`: a mob at `pos` (with `nbt` merged into its saved form, else initialized by
+/// `finalizeSpawn`), queued for the next id assignment. Returns its display name.
+pub(crate) fn summon(
+    spawns: &mut Vec<Spawn>,
+    entity: &str,
+    pos: [f64; 3],
+    nbt: Option<&kiln_proto::nbt::Tag>,
+    initialize: bool,
+    difficulty: u8,
+    game_time: i64,
+    seed: i64,
+) -> Option<kiln_proto::nbt::Tag> {
+    use kiln_proto::nbt::Tag;
+    let kind = MobKind::by_name(entity)?;
+    let name = Tag::Compound(vec![("translate".into(), Tag::String(format!("entity.minecraft.{}", kind.short_name())))]);
+    match nbt {
+        Some(Tag::Compound(fields)) => {
+            let mut c: Vec<(String, Tag)> = fields.iter().filter(|(k, _)| k != "id" && k != "Pos").cloned().collect();
+            c.push(("id".into(), Tag::String(kind.type_name().into())));
+            c.push(("Pos".into(), Tag::List(pos.iter().map(|&v| Tag::Double(v)).collect())));
+            let e = kiln_entity::persist::load(&Tag::Compound(c), 0, seed).ok()?;
+            let mut e = e;
+            e.set_pos(kiln_entity::math::Vec3::new(pos[0], pos[1], pos[2]));
+            spawns.push(Spawn::loaded(e)?);
+        }
+        _ => {
+            let finalize = initialize.then(|| Finalize {
+                ctx: difficulty_instance(difficulty, game_time, 0, 1.0),
+                seed,
+                persistent: false,
+            });
+            spawns.push(spawn(kind, pos, None, finalize));
+        }
+    }
+    Some(name)
 }
 
 /// How a new mob's `finalizeSpawn` runs.

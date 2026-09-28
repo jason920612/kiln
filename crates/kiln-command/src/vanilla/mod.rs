@@ -5,6 +5,7 @@ mod blocks;
 mod bossbar;
 mod chat;
 mod effect;
+mod summon;
 mod execute;
 mod function;
 pub use function::{run_as_server, run_function};
@@ -75,6 +76,7 @@ pub const COMMANDS: &[&str] = &[
     "bossbar",
     "title",
     "kiln",
+    "summon",
 ];
 
 /// Registers every built-in command.
@@ -92,6 +94,7 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     server::gamerule(d);
     players::give(d);
     effect::effect(d);
+    summon::summon(d);
     server::seed(d);
     server::stop(d);
     players::kick(d);

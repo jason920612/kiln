@@ -1290,6 +1290,16 @@ fn actually_hurt(m: &mut MobData, source: DamageSource, amount: f32) {
     m.set_health(h);
 }
 
+/// `LivingEntity.knockback` on a mob entity (from outside its tick).
+pub fn knockback_entity(e: &mut Entity, strength: f64, dx: f64, dz: f64) {
+    if !matches!(e.kind, EntityKind::Mob(_)) {
+        return;
+    }
+    let m = take(e);
+    knockback(e, &m, strength, dx, dz);
+    put(e, m);
+}
+
 /// `LivingEntity.knockback`.
 pub fn knockback(e: &mut Entity, m: &MobData, strength: f64, mut dx: f64, mut dz: f64) {
     let strength = strength * (1.0 - m.attrs.value(Attr::KnockbackResistance));

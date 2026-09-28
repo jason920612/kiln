@@ -1051,6 +1051,19 @@ impl Sim {
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
     }
 
+    /// Mobs: (network id, type name, position, health), in id order (for tests and tools).
+    pub fn mobs(&self) -> Vec<(i32, &'static str, [f64; 3], f32)> {
+        let mut out: Vec<_> = self
+            .dims
+            .iter()
+            .flat_map(|d| d.regions.iter())
+            .flat_map(|r| r.part().0.list.iter())
+            .filter_map(|e| e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (e.id, e.kind.name, e.pos, m.health))))
+            .collect();
+        out.sort_by_key(|m| m.0);
+        out
+    }
+
     /// A player's health, and whether it is dead (for tests and tools).
     pub fn health(&self, conn: ConnId) -> Option<(f32, bool)> {
         self.players.get(&conn).map(|p| (p.health, p.dead))

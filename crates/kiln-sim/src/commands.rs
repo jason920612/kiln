@@ -676,6 +676,14 @@ impl Host for Sim {
         self.commands.stop_requested = true;
     }
 
+    fn summon(&mut self, entity: &Identifier, pos: [f64; 3], nbt: Option<&Tag>, initialize: bool) -> Result<Text, CommandError> {
+        let dim = crate::dim_id(kiln_command::host::Source::dimension(self)).unwrap_or(0);
+        let seed = crate::mobs::loot_seed(self.config.noise.as_ref().map_or(0, |n| n.seed), self.game_time, self.dims[dim].spawns.len() as i32, 0x73756d6d);
+        let name = crate::mobs::summon(&mut self.dims[dim].spawns, entity.as_str(), pos, nbt, initialize, self.commands.difficulty as u8, self.game_time, seed)
+            .ok_or_else(|| CommandError::new(kiln_command::tr!("commands.summon.failed")))?;
+        Ok(Text::raw(name))
+    }
+
     fn set_spawn_point(&mut self, player: &PlayerRef, spawn: &SpawnPoint) {
         if let Some(p) = self.players.get_mut(&player.conn) {
             p.respawn = Some(spawn.pos);
