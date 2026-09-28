@@ -314,6 +314,13 @@ pub fn kiln<S: Host + 'static>(d: &mut Dispatcher<S>) {
             .then(literal("recipebook").then(argument("targets", ArgumentType::players()).executes(|c, s: &mut S| {
                 let targets = c.selector("targets").players(s)?;
                 Ok(targets.iter().filter(|p| s.kiln_open_recipe_book(p)).count() as i32)
-            }))),
+            })))
+            .then(literal("break").then(argument("targets", ArgumentType::players()).then(
+                argument("pos", ArgumentType::BlockPos).executes(|c, s: &mut S| {
+                    let targets = c.selector("targets").players(s)?;
+                    let pos = s.stack().resolve_block(c.coordinates("pos"));
+                    Ok(targets.iter().filter(|p| s.kiln_break(p, pos)).count() as i32)
+                }),
+            ))),
     );
 }

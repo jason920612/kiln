@@ -599,6 +599,11 @@ pub trait Host: SelectorWorld {
     fn kiln_open_recipe_book(&mut self, _player: &Self::Entity) -> bool {
         false
     }
+    /// `/kiln break <player> <pos>`: the player starts breaking the block at `pos` (a creative
+    /// player breaks it at once), as its client would. Whether it was queued.
+    fn kiln_break(&mut self, _player: &Self::Entity, _pos: [i32; 3]) -> bool {
+        false
+    }
 
     /// Whether chunk `(cx, cz)` of `dimension` is loaded (`ChunkSource.hasChunk`).
     fn is_chunk_loaded(&self, dimension: &str, cx: i32, cz: i32) -> bool;
