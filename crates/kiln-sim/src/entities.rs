@@ -682,6 +682,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.env.mobs.monsters_burn
     }
 
+    fn snow_golem_melts(&self, pos: kiln_entity::math::Vec3) -> bool {
+        crate::golems::snow_golem_melts(&*self.level, pos)
+    }
+
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
         kiln_blocks::Level::raw_brightness(&*self.level, kb(pos), sky_darken)
     }
@@ -1178,11 +1182,14 @@ pub(crate) fn interact_mob(
             for _ in 0..drop.count() {
                 let mut one = drop.clone();
                 one.set_count(1);
-                let push = kiln_entity::mob::species::shear_drop_motion(&mut phys);
+                // Only wool gets the push of `Sheep.shear`; the snow golem's pumpkin drops from its eyes.
+                let sheep = phys.type_name == "minecraft:sheep";
+                let push = if sheep { kiln_entity::mob::species::shear_drop_motion(&mut phys) } else { kiln_entity::math::Vec3::ZERO };
+                let lift = if sheep { 1.0 } else { phys.eye_y() - phys.y() };
                 let h = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_0000 | k) as u64;
                 k += 1;
                 let p = phys.position();
-                let mut s = crate::mobs::drop_item(one, [p.x, p.y + 1.0, p.z], h);
+                let mut s = crate::mobs::drop_item(one, [p.x, p.y + lift, p.z], h);
                 s.vel = [s.vel[0] + push.x, s.vel[1] + push.y, s.vel[2] + push.z];
                 sim.spawns.push(s);
             }

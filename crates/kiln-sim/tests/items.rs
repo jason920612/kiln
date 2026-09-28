@@ -502,3 +502,49 @@ fn firework_rockets_launch_and_burst() {
     assert_eq!(w.count("minecraft:firework_rocket"), 0);
     assert_eq!(w.held(), Some(("minecraft:firework_rocket".into(), 2)));
 }
+
+#[test]
+fn a_pumpkin_on_snow_blocks_builds_a_snow_golem() {
+    let mut w = World::new("creative");
+    let base = w.at(3, 1, 0);
+    w.set(base, "minecraft:snow_block");
+    let body = [base[0], base[1] + 1, base[2]];
+    w.set(body, "minecraft:snow_block");
+    w.hold("minecraft:carved_pumpkin", 1);
+    w.use_on_top(body);
+    assert_eq!(w.count("minecraft:snow_golem"), 1, "{:?}", w.sim.entities());
+    assert_eq!(w.count("minecraft:iron_golem"), 0);
+    assert!(state::is(w.block(body), d::AIR), "the pattern is used up");
+    // It lives on and leaves snow where it stands (on the spot of its first block).
+    w.ticks(20);
+    assert_eq!(w.count("minecraft:snow_golem"), 1);
+    assert!(state::same_block(w.block(base), d::SNOW), "a layer of snow where it was built");
+}
+
+#[test]
+fn sliding_down_honey_earns_the_advancement() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    // A tall column, so the fall along it outlasts the once-in-20-ticks check.
+    let honey = w.at(3, 2, 0);
+    for k in 0..8 {
+        w.set([honey[0], honey[1] + k, honey[2]], "minecraft:honey_block");
+    }
+    let top = honey[1] as f64 + 8.0;
+    // Falling along the side of the column.
+    // (Honey's collision box is 14 pixels wide: stand just outside it, still inside the block.)
+    let x = honey[0] as f64 + 0.5 + 0.75;
+    let z = honey[2] as f64 + 0.5;
+    w.run(&format!("tp User {x} {top} {z}"));
+    w.ticks(3);
+    for i in 0..70 {
+        let pos = [x, top - 0.1 * i as f64, z];
+        let pkt = PlayIn::Move { pos: Some(pos), rot: None, on_ground: false };
+        assert!(w.sim.step([ToSim::Packet(1, pkt), ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+    }
+    if let Some(done) = w.sim.criterion_done(1, "minecraft:adventure/honey_block_slide", "honey_block_slide") {
+        assert!(done, "slid down the honey block");
+    }
+}

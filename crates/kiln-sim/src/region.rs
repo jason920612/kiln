@@ -494,6 +494,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     if inside != 0 && !p.dead {
         p.entered_block(inside);
     }
+    p.tick_honey_slide(&block, env.game_time);
     p.sync_health();
     p.sync_experience();
     t

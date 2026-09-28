@@ -409,6 +409,12 @@ pub trait EntityLevel {
         1.5
     }
 
+    /// The `minecraft:gameplay/snow_golem_melts` environment attribute at `pos`.
+    fn snow_golem_melts(&self, pos: Vec3) -> bool {
+        let _ = pos;
+        false
+    }
+
     /// The `minecraft:monsters_burn` environment attribute.
     fn monsters_burn(&self) -> bool {
         true

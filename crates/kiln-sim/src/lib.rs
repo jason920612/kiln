@@ -34,6 +34,7 @@ mod shield;
 mod tools;
 mod golems;
 mod glide;
+mod slide;
 mod firework;
 mod xp;
 mod container;

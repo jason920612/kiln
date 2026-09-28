@@ -32,6 +32,7 @@ pub mod iron_golem;
 pub mod villager;
 pub mod piglin;
 pub mod hoglin;
+pub mod snow_golem;
 
 /// The behaviour of an extension type; `None` for the shared-code types.
 pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
@@ -61,6 +62,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Villager => &villager::KIND,
         MobKind::Piglin => &piglin::KIND,
         MobKind::Hoglin => &hoglin::KIND,
+        MobKind::SnowGolem => &snow_golem::KIND,
         _ => return None,
     })
 }

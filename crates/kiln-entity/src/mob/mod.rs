@@ -77,6 +77,7 @@ pub enum MobKind {
     Villager,
     Piglin,
     Hoglin,
+    SnowGolem,
 }
 
 /// `MobCategory`.
@@ -117,7 +118,7 @@ impl Category {
     }
 }
 
-pub const ALL_KINDS: [MobKind; 33] = [
+pub const ALL_KINDS: [MobKind; 34] = [
     MobKind::Pig,
     MobKind::Cow,
     MobKind::Sheep,
@@ -151,6 +152,7 @@ pub const ALL_KINDS: [MobKind; 33] = [
     MobKind::Villager,
     MobKind::Piglin,
     MobKind::Hoglin,
+    MobKind::SnowGolem,
 ];
 
 impl MobKind {
