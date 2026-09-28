@@ -28,6 +28,7 @@ pub mod projectile;
 pub mod ride;
 pub mod shape;
 pub mod tnt;
+pub mod vibration;
 pub mod xp_orb;
 
 pub use entity::{Entity, EntityKind, MoverType, RemovalReason};

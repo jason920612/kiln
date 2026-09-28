@@ -39,6 +39,7 @@ pub mod hoglin;
 // -- slice 3: wither and guardians
 
 // -- slice 3: warden
+pub mod warden;
 
 // -- slice 3: common mobs A
 
@@ -80,6 +81,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         // -- slice 3: wither and guardians
 
         // -- slice 3: warden
+        MobKind::Warden => &warden::KIND,
 
         // -- slice 3: common mobs A
 

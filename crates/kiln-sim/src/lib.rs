@@ -51,6 +51,7 @@ pub use plugins::PluginSettings;
 pub(crate) mod portal;
 mod region;
 mod rng;
+mod sculk;
 mod sleep;
 mod stats;
 mod trading;
@@ -60,6 +61,8 @@ pub mod testing;
 mod combat_parity;
 #[cfg(test)]
 mod container_parity;
+#[cfg(test)]
+mod sculk_parity;
 mod enchant;
 #[cfg(test)]
 mod enchant_parity;
@@ -379,6 +382,8 @@ struct Player {
     starting_to_fall: Option<[f64; 3]>,
     entered_nether: Option<[f64; 3]>,
     entered_lava_on_vehicle: Option<[f64; 3]>,
+    /// `ServerPlayer.wardenSpawnTracker`.
+    warden_tracker: sculk::shrieker::WardenSpawnTracker,
     /// `getLastHurtByMob` and `getLastHurtMob` with the game time (tamed animals take their
     /// owner's side).
     last_hurt_by_mob: Option<(i32, i64)>,
@@ -1221,6 +1226,13 @@ impl Sim {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
     }
 
+    /// The saved form of the live sculk block entity (sensor, shrieker, catalyst) at an
+    /// overworld position (for tests and tools).
+    pub fn block_entity_nbt(&self, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
+        let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
+        region.part().1.sculk.map.get(&kiln_blocks::BlockPos::new(x, y, z)).map(|b| b.save())
+    }
+
     /// Block state at a position in the level `dimension` (e.g. `minecraft:the_nether`), if
     /// its chunk is loaded.
     pub fn block_in(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u16> {
@@ -1489,6 +1501,7 @@ impl Sim {
                 drops: self.rule_bool("minecraft:mob_drops"),
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
+                spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,
@@ -2028,6 +2041,7 @@ impl Sim {
         let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).expect("spawn chunk loaded");
         let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
         recipe_book.retain_existing(&self.rules);
+        let warden_tracker = sculk::shrieker::WardenSpawnTracker::load(joining.saved.raw().get("warden_spawn_tracker"));
         let mut player = Player {
             dim,
             conn: j.conn,
@@ -2143,6 +2157,7 @@ impl Sim {
             starting_to_fall: None,
             entered_nether: None,
             entered_lava_on_vehicle: None,
+            warden_tracker,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
             sleep: sleep::Sleep::default(),

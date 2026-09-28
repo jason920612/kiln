@@ -10,6 +10,7 @@ pub mod misc;
 pub mod piston;
 pub mod portal;
 pub mod rail;
+pub mod sculk;
 pub mod support;
 
 use crate::fluid;
@@ -216,6 +217,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::TntBlock => devices::tnt_on_place(level, s, pos, old),
         C::PistonBaseBlock => piston::on_place(level, s, pos, old),
         C::HopperBlock => container::hopper_on_place(level, s, pos, old),
+        C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_on_place(level, s, pos, old),
         // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it; one that cannot
         // survive goes out.
         C::FireBlock | C::SoulFireBlock => {
@@ -243,6 +245,7 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
         C::LeverBlock | C::ButtonBlock => components::attached_removed(level, s, pos, moved_by_piston),
         C::ObserverBlock => devices::observer_removed(level, s, pos),
         C::PistonHeadBlock => piston::head_removed(level, s, pos),
+        C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_removed(level, s, pos),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_removed(level, s, pos, moved_by_piston),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         _ => {}
@@ -261,6 +264,9 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::FireBlock => crate::fire::fire_tick(level, s, pos),
         C::LightningRodBlock | C::WeatheringLightningRodBlock => crate::weather::rod_tick(level, s, pos),
         C::DetectorRailBlock => rail::detector_tick(level, s, pos),
+        C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_tick(level, s, pos),
+        C::SculkShriekerBlock => sculk::shrieker_tick(level, s, pos),
+        C::SculkCatalystBlock => sculk::catalyst_tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.
         C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock => level.block_entity_tick(pos, s),

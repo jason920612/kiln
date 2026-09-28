@@ -385,6 +385,8 @@ struct SimLevel<'a, 'l, 'p> {
     /// The entity being ticked and how many seeds it drew, for partition-independent seeds.
     current: i32,
     seeds: u64,
+    /// The ticking entity as the source of its game events (its state is out for its tick).
+    current_source: Option<kiln_entity::vibration::EventSource>,
     /// The level random as the ticking entity sees it: seeded per entity and tick, so what
     /// one entity draws (explosions, experience orbs) does not depend on the others in its
     /// region (vanilla shares one random per level).
@@ -444,6 +446,17 @@ fn entity_level_random(seed: i64, game_time: i64, id: i32) -> LegacyRandom {
 }
 
 impl SimLevel<'_, '_, '_> {
+    /// Entity or player `id` as the source of a game event.
+    fn game_event_source(&self, id: i32) -> Option<kiln_entity::vibration::EventSource> {
+        if id == self.current
+            && let Some(s) = self.current_source
+        {
+            return Some(s);
+        }
+        let e = self.entity(id)?;
+        Some(kiln_entity::vibration::source_of(e, self))
+    }
+
     fn index(&self, id: i32) -> Option<usize> {
         self.list.binary_search_by_key(&id, |e| e.id).ok()
     }
@@ -610,7 +623,71 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn emit(&mut self, event: Event) {
+        if let Event::GameEvent { event, pos, entity } = event {
+            // `ServerLevel.gameEvent`: listeners hear it now.
+            if crate::sculk::listening(self.level) {
+                let source = entity.and_then(|id| self.game_event_source(id));
+                crate::sculk::post(self.level, event, pos, kiln_entity::vibration::Context { source, affected_state: None });
+            }
+            return;
+        }
         self.events.push(event);
+    }
+
+    fn block_game_event(&mut self, event: &'static str, pos: Vec3, entity: Option<i32>, state: u16) {
+        if crate::sculk::listening(self.level) {
+            let source = entity.and_then(|id| self.game_event_source(id));
+            crate::sculk::post(self.level, event, pos, kiln_entity::vibration::Context { source, affected_state: Some(state) });
+        }
+    }
+
+    fn sculk_step_on(&mut self, pos: BlockPos, entity: i32, at: Vec3) {
+        if let Some(mut source) = self.game_event_source(entity) {
+            source.pos = at;
+            crate::sculk::step_on(self.level, kb(pos), source);
+        }
+    }
+
+    fn sculk_catalyst_near(&self, pos: Vec3) -> bool {
+        crate::sculk::catalyst::nearest(self.level, pos).is_some()
+    }
+
+    fn feed_sculk_catalyst(&mut self, pos: Vec3, charge: i32) {
+        if let Some(at) = crate::sculk::catalyst::nearest(self.level, pos) {
+            crate::sculk::catalyst::feed(self.level, at, pos, charge);
+        }
+    }
+
+    fn take_vibrations(&mut self, id: i32) -> Vec<kiln_entity::vibration::Heard> {
+        self.level.blocks.sculk.take_heard(id)
+    }
+
+    fn set_listener(&mut self, id: i32, ear: Option<kiln_entity::vibration::Ear>) {
+        self.level.blocks.sculk.set_warden(id, ear);
+    }
+
+    fn vibration_particle(&mut self, from: Vec3, entity: i32, y_offset: f32, ticks: i32) {
+        let dest = kiln_proto::packets::world_fx::PositionSource::Entity { id: entity, y_offset };
+        crate::sculk::send_vibration_particle(self.level, from, dest, ticks);
+    }
+
+    fn darkness_around(&mut self, pos: Vec3, radius: f64) {
+        crate::sculk::shrieker::darkness_around(self.players, [pos.x, pos.y, pos.z], radius);
+    }
+
+    fn particle(&mut self, particle: &'static str, pos: Vec3) {
+        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) else { return };
+        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
+            override_limiter: false,
+            always_show: false,
+            pos: [pos.x, pos.y, pos.z],
+            offset: [0.0; 3],
+            max_speed: [0.0; 3],
+            count: 1,
+            randomization: world_fx::ParticleRandomization::Default,
+        });
+        self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
     }
 
     fn mob_griefing(&self) -> bool {
@@ -753,6 +830,7 @@ pub(crate) fn tick(
         next_placeholder: -1_000_000,
         current: 0,
         seeds: 0,
+        current_source: None,
         rng: LegacyRandom::new(0),
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -830,6 +908,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     e.age += 1;
     let Some(mut phys) = e.phys.take() else { return };
     (sim.current, sim.seeds) = (phys.id, 0);
+    sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
     sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
     // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
     // farther apart than the despawn distance, so the region's players decide).
@@ -999,6 +1078,7 @@ pub(crate) fn hit_mob(
         next_placeholder: -1_000_000,
         current: hit.target,
         seeds: 0x6869_7400,
+        current_source: None,
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -1106,6 +1186,7 @@ pub(crate) fn interact_mob(
         next_placeholder: -1_000_000,
         current: target,
         seeds: 0x696e_7400,
+        current_source: None,
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -1250,6 +1331,7 @@ pub(crate) fn with_entity<R>(
         next_placeholder: -1_000_000,
         current: target,
         seeds: salt << 8,
+        current_source: None,
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -1298,6 +1380,7 @@ pub(crate) fn with_level<R>(
         next_placeholder: -1_000_000,
         current: 0,
         seeds: salt << 8,
+        current_source: None,
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -1790,6 +1873,7 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         // -- slice 3: wither and guardians
 
         // -- slice 3: warden
+        DamageKind::SonicBoom => ("minecraft:sonic_boom", "death.attack.sonic_boom"),
 
         // -- slice 3: common mobs A
 

@@ -86,6 +86,7 @@ pub enum MobKind {
     // -- slice 3: wither and guardians
 
     // -- slice 3: warden
+    Warden,
 
     // -- slice 3: common mobs A
 
@@ -172,6 +173,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- slice 3: wither and guardians
 
     // -- slice 3: warden
+    MobKind::Warden,
 
     // -- slice 3: common mobs A
 
@@ -1853,6 +1855,24 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         attacker: source.attacker,
         direct: source.direct.or(source.attacker),
     });
+    // `gameEvent(ENTITY_DIE)`: sculk sensors hear it; the nearest sculk catalyst takes the
+    // experience as charge (`CatalystListener`: `getExperienceReward` if the mob would drop
+    // any, then `skipDropExperience`).
+    level.emit(Event::GameEvent { event: "minecraft:entity_die", pos: e.position(), entity: Some(e.id) });
+    let consumed = level.sculk_catalyst_near(e.position());
+    if consumed {
+        let xp = experience_reward(e, m);
+        let charge = if m.baby() { 0 } else { xp };
+        level.feed_sculk_catalyst(e.position(), charge);
+        // `tryAwardItSpreadsAdvancement`: the player that last hurt it.
+        if charge > 0
+            && let Some(player) = m.last_hurt_by_player
+        {
+            let direct = source.direct.is_none() || source.direct == source.attacker;
+            let criterion = crate::level::Criterion::KillMobNearSculkCatalyst { victim: crate::level::Seen::of_mob(e, m), kind: source.kind, direct };
+            level.emit(Event::Criterion { player, criterion });
+        }
+    }
     if !m.baby() && level.mob_drops() {
         level.emit(Event::DeathLoot {
             entity: e.id,
@@ -1884,7 +1904,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         }
     }
     // `dropExperience`.
-    if killed_by_player && level.mob_drops() {
+    if killed_by_player && level.mob_drops() && !consumed {
         let xp = experience_reward(e, m);
         award_experience(level, e.position(), xp);
     }
@@ -2252,6 +2272,7 @@ impl DamageKind {
             // -- slice 3: wither and guardians
 
             // -- slice 3: warden
+            DamageKind::SonicBoom => "minecraft:sonic_boom",
 
             // -- slice 3: common mobs A
 
