@@ -187,3 +187,20 @@ fn monsters_spawn_naturally_at_night_within_the_cap() {
     // The cap is checked before each chunk; a chunk may add up to its cluster size (4) past it.
     assert!(monsters < 70 + 4, "{monsters} monsters exceed the cap");
 }
+
+#[test]
+fn selectors_see_mobs_and_kill_removes_them() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.summon("minecraft:zombie", [4.0, 0.0, 0.0], "");
+    w.summon("minecraft:pig", [-4.0, 0.0, 0.0], "");
+    w.ticks(5);
+    w.console("kill @e[type=minecraft:zombie]");
+    w.ticks(25);
+    assert!(w.mobs("minecraft:zombie").is_empty(), "the zombie died and was removed");
+    assert_eq!(w.mobs("minecraft:pig").len(), 1, "the pig is untouched");
+    w.console("kill @e[type=!minecraft:player]");
+    w.ticks(25);
+    assert!(w.mobs("minecraft:pig").is_empty());
+    assert!(w.sim.health(1).is_some_and(|h| !h.1), "the player is alive");
+}

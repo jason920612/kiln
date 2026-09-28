@@ -635,6 +635,17 @@ pub fn data(e: &Entity) -> Option<&MobData> {
     }
 }
 
+/// `/kill` outside a level tick: health drops to zero and the mob plays its death (the
+/// death tick removes it). Approximation: no loot, no death event.
+pub fn kill(e: &mut Entity) {
+    if let Some(m) = data_mut(e)
+        && !m.dead
+    {
+        m.health = 0.0;
+        m.dead = true;
+    }
+}
+
 pub fn data_mut(e: &mut Entity) -> Option<&mut MobData> {
     match &mut e.kind {
         EntityKind::Mob(m) => Some(m),

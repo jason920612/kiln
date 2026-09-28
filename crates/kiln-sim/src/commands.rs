@@ -68,7 +68,16 @@ pub struct PlayerRef {
     /// The player's team, and their name as the team formats it.
     team: Option<String>,
     display: Text,
+    /// A non-player entity: its id, type and eye height (`conn` is then [`NO_CONN`]).
+    entity: Option<i32>,
+    kind: &'static str,
+    size: [f64; 2],
+    eye: f64,
+    alive: bool,
 }
+
+/// The connection of a non-player selector target: no player has it.
+const NO_CONN: ConnId = ConnId::MAX;
 
 impl PlayerRef {
     fn of(conn: ConnId, p: &Player, scoreboard: &Scoreboard) -> Self {
@@ -82,6 +91,37 @@ impl PlayerRef {
             mode: game_mode(p.game_mode),
             team: scoreboard.team_of(&p.name).map(|t| t.name.clone()),
             display: scoreboard.player_display_name(&p.name),
+            entity: None,
+            kind: "minecraft:player",
+            size: [0.6, 1.8],
+            eye: 1.62f32 as f64,
+            alive: true,
+        }
+    }
+
+    /// A non-player entity in level `dim`.
+    fn of_entity(dim: usize, e: &crate::entities::Entity, scoreboard: &Scoreboard) -> Self {
+        let key = e.uuid.to_string();
+        let path = e.kind.name.strip_prefix("minecraft:").unwrap_or(e.kind.name);
+        let (rot, eye, alive) = match &e.phys {
+            Some(p) => ([p.y_rot, p.x_rot], p.eye_height as f64, !p.is_removed() && kiln_entity::mob::data(p).is_none_or(|m| !m.is_dead_or_dying())),
+            None => ([0.0, 0.0], e.kind.eye_height as f64, !e.removed),
+        };
+        Self {
+            conn: NO_CONN,
+            uuid: e.uuid,
+            team: scoreboard.team_of(&key).map(|t| t.name.clone()),
+            name: key,
+            pos: e.pos,
+            rot,
+            dim: crate::DIMENSIONS[dim].0,
+            mode: GameMode::Survival,
+            display: Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
+            entity: Some(e.id),
+            kind: e.kind.name,
+            size: [e.kind.width as f64, e.kind.height as f64],
+            eye,
+            alive,
         }
     }
 }
@@ -109,7 +149,7 @@ impl SelectorTarget for PlayerRef {
         self.team.as_deref()
     }
     fn entity_type(&self) -> &str {
-        "minecraft:player"
+        self.kind
     }
     fn position(&self) -> [f64; 3] {
         self.pos
@@ -122,14 +162,18 @@ impl SelectorTarget for PlayerRef {
     }
     fn bounding_box(&self) -> Aabb {
         let [x, y, z] = self.pos;
-        Aabb { min: [x - 0.3, y, z - 0.3], max: [x + 0.3, y + 1.8, z + 0.3] }
+        let (w, h) = (self.size[0] / 2.0, self.size[1]);
+        Aabb { min: [x - w, y, z - w], max: [x + w, y + h, z + w] }
     }
     fn eye_height(&self) -> f64 {
         // `Entity.getEyeHeight` is a float.
-        1.62f32 as f64
+        self.eye
+    }
+    fn is_alive(&self) -> bool {
+        self.alive
     }
     fn game_mode(&self) -> Option<GameMode> {
-        Some(self.mode)
+        self.entity.is_none().then_some(self.mode)
     }
 }
 
@@ -418,8 +462,20 @@ impl SelectorWorld for Sim {
     }
 
     fn entities(&self, dimension: Option<&str>, _area: Option<&Aabb>) -> Vec<PlayerRef> {
-        // Only players exist as entities so far.
+        // Players, then the other entities of each level by id.
         let mut all = self.players();
+        let sb = &self.commands.scoreboard;
+        for (i, d) in self.dims.iter().enumerate() {
+            let mut list: Vec<PlayerRef> = d
+                .regions
+                .iter()
+                .flat_map(|r| r.part().0.list.iter())
+                .filter(|e| !e.removed)
+                .map(|e| PlayerRef::of_entity(i, e, sb))
+                .collect();
+            list.sort_by_key(|p| p.entity);
+            all.extend(list);
+        }
         if let Some(d) = dimension {
             all.retain(|p| p.dim == d);
         }
@@ -520,6 +576,23 @@ impl Host for Sim {
     }
 
     fn kill(&mut self, entity: &PlayerRef) {
+        if let Some(id) = entity.entity {
+            // Mobs die (`hurt(genericKill)`); other entities are discarded.
+            let Some(dim) = crate::dim_id(entity.dim) else { return };
+            for r in self.dims[dim].regions.iter_mut() {
+                if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == id) {
+                    if let Some(p) = e.phys.as_mut() {
+                        if kiln_entity::mob::data(p).is_some() {
+                            kiln_entity::mob::kill(p);
+                        } else {
+                            p.removed = Some(kiln_entity::entity::RemovalReason::Killed);
+                        }
+                    }
+                    break;
+                }
+            }
+            return;
+        }
         let (rules, game_time) = (self.damage_rules(), self.game_time);
         let Some(p) = self.players.get_mut(&entity.conn) else { return };
         let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
