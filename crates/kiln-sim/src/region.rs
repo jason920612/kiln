@@ -759,11 +759,21 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             }
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
-        PlayIn::UseItem { hand, sequence, .. } => {
-            let cells = &*world.cells;
-            let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
-            let mut ctx = damage_ctx(env, fx.spawns, fx.deaths);
-            p.use_item(hand == kiln_proto::packets::serverbound::Hand::Off, &block, &mut ctx);
+        PlayIn::UseItem { hand, sequence, yaw, pitch } => {
+            // `handleUseItem`: the rotation the client used applies first.
+            if yaw.is_finite() && pitch.is_finite() {
+                p.rot = crate::movement::normalize_rotation([yaw, pitch]);
+            }
+            let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+            if p.game_mode != 3 && crate::buckets::is_bucket(p.in_hand(off).item_name()) && !p.in_hand(off).is_empty() {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::buckets::use_bucket(p, &mut level, off, fx.spawns);
+            } else {
+                let cells = &*world.cells;
+                let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
+                let mut ctx = damage_ctx(env, fx.spawns, fx.deaths);
+                p.use_item(off, &block, &mut ctx);
+            }
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {
@@ -841,12 +851,22 @@ fn use_on_block(
     let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     let have_something = !p.inv.selected_item().is_empty() || !p.inv.equipped(EquipmentSlot::OffHand).is_empty();
     let bp = BlockPos::new(pos[0], pos[1], pos[2]);
+    let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
+    // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
+    if !(p.sneaking && have_something) {
+        let used = held.clone();
+        if let Some(true) = crate::buckets::use_cauldron(p, level, bp, !main_hand, spawns) {
+            let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
+            p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &used, &probe);
+            return;
+        }
+    }
+    let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     let item_name = if held.is_empty() {
         None
     } else {
         kiln_data::builtin_entries("minecraft:item").and_then(|e| e.get(held.item() as usize).copied())
     };
-    let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
     if !(p.sneaking && have_something) && main_hand && !interact::passes_to_item(level.block(bp), item_name, dir) {
         if let Some(consumed) = crate::container::open::use_block(p, level, bp, spawns) {
             if consumed {
@@ -905,6 +925,13 @@ fn use_on_block(
     let at = [placed_at.x, placed_at.y, placed_at.z];
     p.used_on_block("minecraft:placed_block", at, placed_state, &placed_from, &probe);
     p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &placed_from, &probe);
+    // `SolidBucketItem.useOn`: the powder snow bucket leaves an empty bucket.
+    if placed_from.item_name() == "minecraft:powder_snow_bucket" {
+        if !p.infinite_materials() {
+            p.set_in_hand(!main_hand, kiln_item::ItemStack::of("minecraft:bucket", 1).unwrap_or_else(kiln_item::ItemStack::empty));
+        }
+        return;
+    }
     if p.game_mode != 1 {
         let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
         kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);

@@ -163,46 +163,16 @@ fn plain(spans: &[Span]) -> String {
     spans.iter().map(|s| s.text.as_str()).collect()
 }
 
-/// `Entity.calculateViewVector(xRot, yRot)`.
-fn view_vector(rot: [f32; 2]) -> [f64; 3] {
-    let f = rot[1] as f64 * std::f64::consts::PI / 180.0;
-    let g = -rot[0] as f64 * std::f64::consts::PI / 180.0;
-    let (h, i, j, k) = (g.cos(), g.sin(), f.cos(), f.sin());
-    [i * j, -k, h * j]
-}
-
-/// The block a bucket aims at: the first non-air block along the look within reach (voxel
-/// traversal), and the block before it (where a filled bucket empties).
-fn bucket_target(p: &Player, rot: [f32; 2], cells: &CellSet<Cell>) -> Option<([i32; 3], [i32; 3])> {
-    let eye = p.eye_position();
-    let dir = view_vector(rot);
-    let reach = if p.game_mode == 1 { 5.0 } else { 4.5 };
-    let mut cur = [eye[0].floor() as i32, eye[1].floor() as i32, eye[2].floor() as i32];
-    let mut prev = cur;
-    let step: [i32; 3] = std::array::from_fn(|i| if dir[i] > 0.0 { 1 } else { -1 });
-    let delta: [f64; 3] = std::array::from_fn(|i| if dir[i] == 0.0 { f64::INFINITY } else { (1.0 / dir[i]).abs() });
-    let mut t_max: [f64; 3] = std::array::from_fn(|i| {
-        if dir[i] == 0.0 {
-            f64::INFINITY
-        } else {
-            let edge = if dir[i] > 0.0 { cur[i] as f64 + 1.0 } else { cur[i] as f64 };
-            (edge - eye[i]) / dir[i]
-        }
-    });
-    for _ in 0..16 {
-        let state = cells.get_block(cur[0], cur[1], cur[2])?;
-        if !kiln_data::blocks_types::is_air(state) {
-            return Some((cur, prev));
-        }
-        let axis = (0..3).min_by(|&a, &b| t_max[a].total_cmp(&t_max[b])).unwrap();
-        if t_max[axis] > reach {
-            return None;
-        }
-        prev = cur;
-        cur[axis] += step[axis];
-        t_max[axis] += delta[axis];
-    }
-    None
+/// The block a bucket aims at (`BucketItem.use`'s ray, [`crate::use_item::pov_hit`]; an empty
+/// bucket stops at fluid sources) and the block in front of the hit face (where a filled
+/// bucket empties).
+fn bucket_target(p: &Player, rot: [f32; 2], cells: &CellSet<Cell>, empty: bool) -> Option<([i32; 3], [i32; 3])> {
+    use crate::use_item::FluidMode;
+    let block = |pos: kiln_blocks::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(kiln_data::blocks::default_state::VOID_AIR);
+    let fluid = if empty { FluidMode::SourceOnly } else { FluidMode::None };
+    let hit = crate::use_item::pov_hit_rot(p, rot, &block, fluid)?;
+    let next = hit.pos.relative(hit.face);
+    Some(([hit.pos.x, hit.pos.y, hit.pos.z], [next.x, next.y, next.z]))
 }
 
 /// The item id in a hand (`None` when empty).
@@ -291,11 +261,11 @@ pub(crate) fn deny_packet(
         PlayIn::UseItem { hand, sequence, yaw, pitch } => {
             let hand = if hand == kiln_proto::packets::serverbound::Hand::Off { 1 } else { 0 };
             let (item, name) = held_item(p, hand);
-            if !name.ends_with("bucket") || name == "minecraft:milk_bucket" {
+            if !crate::buckets::is_bucket(name) {
                 return false;
             }
             // The packet carries the rotation the client used (`handleUseItem` applies it).
-            let Some((hit, before)) = bucket_target(p, [yaw, pitch], cells) else { return false };
+            let Some((hit, before)) = bucket_target(p, [yaw, pitch], cells, name == "minecraft:bucket") else { return false };
             let target = if name == "minecraft:bucket" { hit } else { before };
             let a = actor(p, &hook.ops);
             match hook.rp.block_place(&a, target, hit, item) {

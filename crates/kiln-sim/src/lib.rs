@@ -25,6 +25,8 @@ mod blocks;
 mod combat;
 mod commands;
 mod consume;
+mod buckets;
+mod use_item;
 mod xp;
 mod container;
 mod datapacks;
