@@ -748,6 +748,41 @@ public class MobVectors {
             s.ticks = 800;
             out.add(s);
         }
+        // Endermites: idle, chasing, and the end of a life.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_endermite_" + seed);
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:endermite", 0.5, BY, 0.5, 60f * seed, 3100L * seed + 17));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (int dist : new int[] {4, 9}) {
+            Scenario s = new Scenario("chase_endermite_" + dist);
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:endermite", 0.5, BY, 0.5, 0f, 5350 + dist));
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 160;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("lifetime_endermite");
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:endermite", 0.5, BY, 0.5, 0f, 3501);
+            m.nbt = "{Lifetime:2350}";
+            s.mobs.add(m);
+            MobSpec keep = new MobSpec("minecraft:endermite", 3.5, BY, 0.5, 0f, 3502);
+            keep.nbt = "{Lifetime:2350,PersistenceRequired:1b}";
+            s.mobs.add(keep);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 100;
+            out.add(s);
+        }
         // Water hurts it and makes it teleport.
         {
             Scenario s = new Scenario("water_enderman");
