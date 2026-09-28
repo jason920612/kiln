@@ -144,7 +144,7 @@ fn io(path: &Path) -> impl FnOnce(std::io::Error) -> LoadError + '_ {
 
 /// `(id, file)` of every JSON file under `data/<namespace>/<dir>/`.
 /// Files of `dir` across packs: a later pack's file replaces an earlier one with the same id.
-fn list_pack_files(packs: &[&Path], dir: &str) -> Result<Vec<(Identifier, std::path::PathBuf)>, LoadError> {
+pub(crate) fn list_pack_files(packs: &[&Path], dir: &str) -> Result<Vec<(Identifier, std::path::PathBuf)>, LoadError> {
     let mut by_id: std::collections::HashMap<Identifier, std::path::PathBuf> = std::collections::HashMap::new();
     for pack in packs {
         for (id, path) in list_files(pack, dir)? {
