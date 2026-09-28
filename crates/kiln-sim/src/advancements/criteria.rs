@@ -62,7 +62,7 @@ const ENTITY_KEYS: &[&str] = &["entity", "parent", "partner", "child", "zombie",
 /// Keys that hold a list of them.
 const ENTITY_LIST_KEYS: &[&str] = &["victims", "bystander"];
 /// Keys that hold an item predicate.
-const ITEM_KEYS: &[&str] = &["item", "fired_from_weapon"];
+const ITEM_KEYS: &[&str] = &["item", "fired_from_weapon", "rod"];
 /// Keys that hold a location predicate.
 const LOCATION_KEYS: &[&str] = &["start_position"];
 
@@ -175,6 +175,7 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:cured_zombie_villager",
     "minecraft:player_generates_container_loot",
     "minecraft:brewed_potion",
+    "minecraft:fishing_rod_hooked",
     "minecraft:slept_in_bed",
 ];
 

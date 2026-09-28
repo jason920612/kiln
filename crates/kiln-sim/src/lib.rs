@@ -32,6 +32,7 @@ pub mod lobby;
 mod digging;
 mod effects;
 mod entities;
+mod fishing;
 mod generation;
 mod independent;
 pub use independent::{InjectedDelay, ScheduleMode};
@@ -1301,6 +1302,18 @@ impl Sim {
             _ => return None,
         };
         (!stack.is_empty()).then(|| stack.damage())
+    }
+
+    /// The overworld's fishing bobbers: (owner entity id, biting, bobbing in water) (for tests).
+    pub fn fishing_bobbers(&self) -> Vec<(i32, bool, bool)> {
+        self.dims[OVERWORLD_ID]
+            .regions
+            .iter()
+            .flat_map(|r| r.part().0.list.iter())
+            .filter(|e| !e.removed)
+            .filter_map(|e| e.phys.as_ref().and_then(kiln_entity::ext_entity::fishing_hook::get))
+            .map(|h| (h.owner, h.biting, h.state == kiln_entity::ext_entity::fishing_hook::State::Bobbing))
+            .collect()
     }
 
     /// Whether a player has criterion `criterion` of advancement `id` (for tests); `None` when

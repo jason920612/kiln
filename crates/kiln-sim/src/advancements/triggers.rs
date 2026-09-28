@@ -433,6 +433,17 @@ impl Player {
         }
     }
 
+    /// `FishingRodHookedTrigger.trigger`: the rod, the hooked entity (or the bobber) and what
+    /// came up (the hooked item entity's stack counts too).
+    pub(crate) fn fishing_rod_hooked(&mut self, rod: &ItemStack, entity: Option<&Subject>, items: &[ItemStack]) {
+        self.fire_conds("minecraft:fishing_rod_hooked", None, |c, ok, loot| {
+            let item_ok = |p: &kiln_item::component::ItemPredicate| items.iter().any(|s| kiln_loot::predicate::item_matches(&loot.tags, p, s));
+            c.item("rod").is_none_or(|p| kiln_loot::predicate::item_matches(&loot.tags, p, rod))
+                && c.cap("entity").is_none_or(|cap| entity.is_some_and(|e| ok(cap, e)))
+                && c.item("item").is_none_or(item_ok)
+        });
+    }
+
     /// `StartRidingTrigger.trigger`.
     pub(crate) fn started_riding(&mut self) {
         self.fire("minecraft:started_riding", None, |c, _, _| matches!(c.trigger, Trigger::Player));

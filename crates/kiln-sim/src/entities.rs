@@ -227,7 +227,7 @@ impl Entity {
     }
 
     /// Copies what the rest of the simulation reads from the vanilla state.
-    fn sync(&mut self) {
+    pub(crate) fn sync(&mut self) {
         let p = self.phys();
         let (pos, vel, on_ground, removed) = (arr(p.position()), arr(p.delta), p.on_ground, p.is_removed());
         self.pos = pos;

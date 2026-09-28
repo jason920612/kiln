@@ -9,6 +9,7 @@ use std::any::Any;
 use std::fmt::Debug;
 
 pub mod fireball;
+pub mod fishing_hook;
 pub mod lightning;
 pub mod shulker_bullet;
 pub mod trident;

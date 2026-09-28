@@ -97,9 +97,9 @@ impl RegionWork<'_> {
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut packets = std::mem::take(&mut self.packets).into_iter().peekable();
         while let Some((conn, pkt)) = packets.next() {
-            if self.plugins.is_none() && is_player_packet(&pkt) {
+            if self.plugins.is_none() && is_player_packet(&pkt) && !self.rod_use(conn, &pkt) {
                 let mut run = vec![(conn, pkt)];
-                while let Some(next) = packets.next_if(|(_, p)| is_player_packet(p)) {
+                while let Some(next) = packets.next_if(|(c, p)| is_player_packet(p) && !self.rod_use(*c, p)) {
                     run.push(next);
                 }
                 self.apply_player_packets(run, env, ctx);
@@ -129,6 +129,17 @@ impl RegionWork<'_> {
                         entities::hit_mob(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &hit);
                     }
                 }
+                continue;
+            }
+            // Fishing rods cast and reel in bobbers, which are the region's entities.
+            if let PlayIn::UseItem { hand, sequence, .. } = pkt
+                && self.rod_use(conn, &pkt)
+            {
+                let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+                crate::fishing::use_rod(self.entities, &mut level, &mut self.players, i, off, &mut self.out.spawns);
+                let p = &mut *self.players[i];
+                p.ack_block_changes = p.ack_block_changes.max(sequence);
                 continue;
             }
             // Riding: the steered mount moves, the jump key makes it rear.
@@ -180,6 +191,13 @@ impl RegionWork<'_> {
             crate::plugins::after_packets(h, self.cells, env);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+    }
+
+    /// A Use Item with a fishing rod in that hand, from a living player.
+    fn rod_use(&self, conn: ConnId, pkt: &PlayIn) -> bool {
+        let PlayIn::UseItem { hand, .. } = pkt else { return false };
+        let off = *hand == kiln_proto::packets::serverbound::Hand::Off;
+        self.index_of(conn).is_some_and(|i| !self.players[i].dead && self.players[i].game_mode != 3 && crate::fishing::holds_rod(self.players[i], off))
     }
 
     /// A run of [`is_player_packet`] packets: grouped by player (each keeps its order) and
