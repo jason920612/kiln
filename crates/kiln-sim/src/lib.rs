@@ -32,6 +32,7 @@ mod crossbow;
 mod trident;
 mod shield;
 mod tools;
+mod golems;
 mod xp;
 mod container;
 mod datapacks;

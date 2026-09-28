@@ -183,6 +183,7 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:using_item",
     "minecraft:killed_by_arrow",
     "minecraft:channeled_lightning",
+    "minecraft:summoned_entity",
 ];
 
 fn err<T>(m: impl Into<String>) -> PResult<T> {

@@ -1,7 +1,22 @@
 //! Player item uses in the running simulation: buckets (filling, emptying, waterlogging,
-//! cauldrons).
+//! cauldrons), thrown and shot projectiles, tools on blocks, composters and golems.
 
 use kiln_blocks::state;
+
+#[test]
+fn a_pumpkin_on_iron_blocks_builds_a_golem() {
+    let mut w = World::new("creative");
+    let base = w.at(3, 1, 0);
+    w.set(base, "minecraft:iron_block");
+    let body = [base[0], base[1] + 1, base[2]];
+    w.set(body, "minecraft:iron_block");
+    w.set([body[0] + 1, body[1], body[2]], "minecraft:iron_block");
+    w.set([body[0] - 1, body[1], body[2]], "minecraft:iron_block");
+    w.hold("minecraft:carved_pumpkin", 1);
+    w.use_on_top(body);
+    assert_eq!(w.count("minecraft:iron_golem"), 1, "{:?}", w.sim.entities());
+    assert!(state::is(w.block(body), d::AIR) && state::is(w.block(base), d::AIR), "the pattern is used up");
+}
 use kiln_data::blocks::default_state as d;
 use kiln_link::{PlayIn, ToSim};
 use kiln_proto::packets::ItemStack;
