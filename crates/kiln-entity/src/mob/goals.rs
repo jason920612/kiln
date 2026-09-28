@@ -306,8 +306,8 @@ fn living_entity(level: &dyn EntityLevel, id: i32) -> Option<Living> {
         spectator: false,
         invulnerable: e.invulnerable,
         sneaking: false,
-        invisible: false,
-        armor_cover: 0.0,
+        invisible: super::effects::invisible(m),
+        armor_cover: super::armor_cover(m),
         bb: e.bounding_box(),
     })
 }

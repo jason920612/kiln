@@ -46,6 +46,8 @@ pub struct Info {
     pub sound_source: &'static str,
     /// `entity.<sounds>.ambient` / `.hurt` / `.death` / `.step` (None: no ambient sound).
     pub sounds: Option<&'static str>,
+    /// The class extends `Monster` (`updateNoActionTime`: bright light ages the idle time).
+    pub extends_monster: bool,
 }
 
 impl Info {
@@ -65,6 +67,7 @@ impl Info {
             ambient_interval: 80,
             sound_source: "hostile",
             sounds: None,
+            extends_monster: true,
         }
     }
 
@@ -84,6 +87,7 @@ impl Info {
             ambient_interval: 80,
             sound_source: "neutral",
             sounds: None,
+            extends_monster: false,
         }
     }
 
@@ -103,6 +107,7 @@ impl Info {
             ambient_interval: 120,
             sound_source: "neutral",
             sounds: None,
+            extends_monster: false,
         }
     }
 }
@@ -416,7 +421,18 @@ pub trait Kind: Sync + Send {
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, partner, child, level);
     }
-    /// `LivingEntity.tickEffects` (end of `baseTick`) for a type that keeps effects.
+    /// `Monster.updateNoActionTime` at the start of `aiStep` (`Raider`s: always two more).
+    fn update_no_action_time(&self, e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
+        if self.info().extends_monster && super::light_magic_value(e, level) > 0.5 {
+            m.no_action_time += 2;
+        }
+    }
+    /// `canBeAffected` of the type: `base` is `LivingEntity`'s answer (the type tags).
+    fn can_be_affected(&self, m: &MobData, effect: &crate::effect::Effect, base: bool) -> bool {
+        let _ = (m, effect);
+        base
+    }
+    /// After `LivingEntity.tickEffects` (end of `baseTick`): a type's own per-tick work there.
     fn tick_effects(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, level);
     }

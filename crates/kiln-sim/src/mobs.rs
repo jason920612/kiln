@@ -52,13 +52,22 @@ pub(crate) fn monsters_burn(day_time: i64) -> bool {
 /// Entity data of a mob for its viewers.
 pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
     let mut d = EntityData::new();
-    let flags = (e.is_on_fire() as i8) | if m.aggressive { 0 } else { 0 };
+    // Shared flags: on fire, invisible (5) and glowing (6) from the effects.
+    let effects = kiln_entity::mob::effects::invisible(m) as i8;
+    let flags = (e.is_on_fire() as i8) | (effects << 5) | ((kiln_entity::mob::effects::glowing(m) as i8) << 6);
     d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(flags));
     if e.air_supply != 300 {
         d.set(data::entity::AIR_SUPPLY, &DataValue::Int(e.air_supply));
     }
     if m.is_dead_or_dying() {
         d.set(data::entity::POSE, &DataValue::Pose(kiln_data::entities::pose::DYING));
+    }
+    // `DATA_EFFECT_PARTICLES` (always set: viewers get the empty list when the effects end)
+    // and `DATA_EFFECT_AMBIENCE_ID`.
+    let (particles, ambient) = kiln_entity::mob::effects::particles(m);
+    d.set(data::living_entity::EFFECT_PARTICLES, &DataValue::Particles(particles));
+    if ambient {
+        d.set(data::living_entity::EFFECT_AMBIENCE, &DataValue::Boolean(true));
     }
     d.set(data::living_entity::HEALTH, &DataValue::Float(m.health));
     let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);
