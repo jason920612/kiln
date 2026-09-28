@@ -19,10 +19,11 @@ impl World {
         let (msg, stats) = join(1, "Hunter", 2);
         assert!(sim.step([msg]));
         let mut w = World { sim, clients: vec![Client::new(1, stats)] };
-        w.ticks(5);
         w.console("gamerule minecraft:natural_health_regeneration false");
-        // Only the mobs a test summons (natural spawning has its own test).
+        // Only the mobs a test summons (natural spawning has its own test; slimes spawn in the
+        // superflat world's slime chunks at once).
         w.console("gamerule minecraft:spawn_mobs false");
+        w.ticks(5);
         w
     }
 
@@ -288,4 +289,34 @@ fn every_mob_type_summons_ticks_and_saves() {
     for kind in kiln_entity::mob::ALL_KINDS {
         assert!(!w.mobs(kind.type_name()).is_empty(), "{} is gone", kind.type_name());
     }
+}
+
+#[test]
+fn slimes_hurt_touching_players_and_split_when_killed() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:slime", [0.5, 0.0, 0.5], "{Size:1,PersistenceRequired:1b}");
+    let slimes = w.mobs("minecraft:slime");
+    assert_eq!(slimes.len(), 1);
+    assert_eq!(slimes[0].2, 4.0, "a size 2 slime has 4 health");
+    w.ticks(60);
+    assert!(w.health() < 20.0, "the touching slime hurt the player (health {})", w.health());
+    w.console("gamemode creative Hunter");
+    w.console("kill @e[type=minecraft:slime]");
+    w.ticks(25);
+    let small = w.mobs("minecraft:slime");
+    assert!((2..=4).contains(&small.len()), "split into 2 to 4 slimes: {small:?}");
+    assert!(small.iter().all(|s| s.2 == 1.0), "tiny slimes have 1 health: {small:?}");
+    w.console("kill @e[type=minecraft:slime]");
+    w.ticks(25);
+    assert!(w.mobs("minecraft:slime").is_empty(), "tiny slimes do not split");
+}
+
+#[test]
+fn tiny_magma_cubes_hurt_touching_players() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:magma_cube", [0.3, 0.0, 0.3], "{Size:0,PersistenceRequired:1b}");
+    w.ticks(60);
+    assert!(w.health() < 20.0, "the magma cube hurt the player (health {})", w.health());
 }

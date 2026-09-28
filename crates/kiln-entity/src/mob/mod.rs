@@ -1108,11 +1108,17 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let in_water = e.is_in_water() && h > 0.0;
         let threshold = if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 };
         if in_water && (!e.on_ground || h > threshold) {
-            e.delta = e.delta.add(0.0, 0.03999999910593033, 0.0);
+            if !m.kind.ext().is_some_and(|k| k.jump_in_liquid(e, m, false)) {
+                e.delta = e.delta.add(0.0, 0.03999999910593033, 0.0);
+            }
         } else if e.is_in_lava() && (!e.on_ground || e.fluid_height_lava() > threshold) {
-            e.delta = e.delta.add(0.0, 0.03999999910593033, 0.0);
+            if !m.kind.ext().is_some_and(|k| k.jump_in_liquid(e, m, true)) {
+                e.delta = e.delta.add(0.0, 0.03999999910593033, 0.0);
+            }
         } else if (e.on_ground || (in_water && h <= threshold)) && m.no_jump_delay == 0 {
-            jump_from_ground(e, m, level);
+            if !m.kind.ext().is_some_and(|k| k.jump_from_ground(e, m, level)) {
+                jump_from_ground(e, m, level);
+            }
             m.no_jump_delay = 10;
         }
     } else {
@@ -1128,6 +1134,9 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         e.ticks_frozen = (e.ticks_frozen - 2).max(0);
     }
     push_entities(e, m, level);
+    if m.kind.ext().is_some_and(|k| k.sensitive_to_water()) && (e.is_in_water() || level.is_raining_at(e.block_position())) {
+        hurt(e, m, level, DamageSource::of(DamageKind::Drown), 1.0);
+    }
     // `Mob.aiStep`: burning in daylight.
     if m.kind.burns_in_daylight() && is_alive(e, m) && is_sun_burn_tick(e, level) {
         if m.equipment[HEAD].is_empty() {
@@ -1467,6 +1476,15 @@ pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSo
     let r = hurt(e, &mut m, level, source, amount);
     put(e, m);
     r
+}
+
+/// `Entity.playerTouch`: player `player` touches mob `e` (slimes and magma cubes hurt it).
+pub fn player_touch(e: &mut Entity, level: &mut dyn EntityLevel, player: i32) {
+    let Some(k) = data(e).and_then(|m| m.kind.ext()) else { return };
+    let Some(p) = goals::living(level, player) else { return };
+    let mut m = take(e);
+    k.player_touch(e, &mut m, level, &p);
+    put(e, m);
 }
 
 /// `LivingEntity.hurtServer` for a mob, with the type's overrides around it.

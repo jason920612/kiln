@@ -355,7 +355,8 @@ fn spawn_category_for_chunk(
             } else {
                 -(magic - 0.5)
             };
-            if walk < 0.0 || contains_liquid(level, [fx, y as f64, fz], t.width, t.height) {
+            let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
+            if (walk < 0.0 && !ignores_light) || contains_liquid(level, [fx, y as f64, fz], t.width, t.height) {
                 continue;
             }
             // `finalizeSpawn` draws from the chunk's random.
@@ -367,7 +368,7 @@ fn spawn_category_for_chunk(
             s.add(pc, cat);
             spawned += 1;
             in_group += 1;
-            if spawned >= 4 {
+            if spawned >= kind.ext().map_or(4, |k| k.max_spawn_cluster()) {
                 return;
             }
             let _ = in_group;

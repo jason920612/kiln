@@ -141,14 +141,14 @@ impl PartialEq for Box<dyn MobExt> {
 /// The type state of `m` as `T` (the type's own state struct).
 pub fn state<T: 'static>(m: &MobData) -> Option<&T> {
     match &m.species {
-        super::Species::Ext(s) => s.as_any().downcast_ref::<T>(),
+        super::Species::Ext(s) => (**s).as_any().downcast_ref::<T>(),
         _ => None,
     }
 }
 
 pub fn state_mut<T: 'static>(m: &mut MobData) -> Option<&mut T> {
     match &mut m.species {
-        super::Species::Ext(s) => s.as_any_mut().downcast_mut::<T>(),
+        super::Species::Ext(s) => (**s).as_any_mut().downcast_mut::<T>(),
         _ => None,
     }
 }
@@ -385,6 +385,34 @@ pub trait Kind: Sync + Send {
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         let _ = m;
         None
+    }
+    /// `jumpFromGround` in place of `LivingEntity.jumpFromGround`; true when handled.
+    fn jump_from_ground(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// `jumpInLiquid(water or lava)` in place of the shared rise of 0.04; true when handled.
+    fn jump_in_liquid(&self, e: &mut Entity, m: &mut MobData, lava: bool) -> bool {
+        let _ = (e, m, lava);
+        false
+    }
+    /// `isSensitiveToWater`: hurt (drowning, 1) in water or rain at the end of `LivingEntity.aiStep`.
+    fn sensitive_to_water(&self) -> bool {
+        false
+    }
+    /// `playerTouch`: a player's box inflated by (1, 0.5, 1) touches the mob (vanilla runs it in
+    /// the player's `aiStep`; the simulation calls [`super::player_touch`] after the entity tick).
+    fn player_touch(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, player: &Living) {
+        let _ = (e, m, level, player);
+    }
+    /// `getMaxSpawnClusterSize`.
+    fn max_spawn_cluster(&self) -> i32 {
+        4
+    }
+    /// Natural spawning's walk target test (`isValidPositionForMob` → `checkSpawnRules`) always
+    /// passes: `PathfinderMob`s that are neither monsters nor animals (value 0), plain `Mob`s.
+    fn spawn_ignores_light(&self) -> bool {
+        false
     }
 }
 

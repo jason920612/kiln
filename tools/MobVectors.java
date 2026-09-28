@@ -302,6 +302,7 @@ public class MobVectors {
             if (spec.age != null) ((net.minecraft.world.entity.AgeableMob) m).setAge(spec.age);
             if (spec.inLove != null) ((net.minecraft.world.entity.animal.Animal) m).setInLoveTime(spec.inLove);
             m.getRandom().setSeed(spec.seed);
+            pinCubeMoveYaw(m);
             int eggTime = m instanceof net.minecraft.world.entity.animal.chicken.Chicken c ? (Integer) get(c, "eggTime") : 0;
             if (!level.addFreshEntity(m)) throw new IllegalStateException("could not add " + spec.type);
             tracked.add(m);
@@ -362,6 +363,7 @@ public class MobVectors {
                         nm.setYBodyRot(nm.getYRot());
                         nm.yBodyRotO = nm.getYRot();
                         if (nm instanceof net.minecraft.world.entity.animal.chicken.Chicken) set(nm, "eggTime", 6000 + pinned.size());
+                        pinCubeMoveYaw(nm);
                         pinned.add(nm);
                     }
                 }
@@ -435,6 +437,15 @@ public class MobVectors {
             return sb.append("]}").toString();
         }
         throw new IllegalArgumentException("tag " + t);
+    }
+
+    /// A cube mob's move control remembers its constructor's (random) yaw: both sides pin it to
+    /// the mob's current yaw.
+    static void pinCubeMoveYaw(Mob m) throws Exception {
+        Object mc = m.getMoveControl();
+        if (mc.getClass().getSimpleName().equals("CubeMobMoveControl")) {
+            set(mc, "yRot", 180.0F * m.getYRot() / 3.1415927F);
+        }
     }
 
     static String d(double v) {
@@ -658,6 +669,81 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        scenariosFlyers(out);
         return out;
+    }
+
+    // ---------------------------------------------------------- slice 2: cubes and flyers
+    static void scenariosFlyers(List<Scenario> out) {
+        String[][] cubes = {{"slime", "{Size:0}"}, {"slime", "{Size:1}"}, {"slime", "{Size:3}"}, {"magma_cube", "{Size:0}"}, {"magma_cube", "{Size:1}"}};
+        int n = 0;
+        for (String[] c : cubes) {
+            n++;
+            Scenario s = new Scenario("idle_" + c[0] + "_" + n);
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:" + c[0], 0.5, BY, 0.5, 40f * n, 9100L + n);
+            m.nbt = c[1];
+            s.mobs.add(m);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = n;
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (String[] c : new String[][] {{"slime", "{Size:1}"}, {"magma_cube", "{Size:1}"}, {"slime", "{Size:0}"}}) {
+            Scenario s = new Scenario("chase_" + c[0] + "_" + c[1].charAt(6));
+            floor(s, 20, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:" + c[0], 0.5, BY, 0.5, 0f, 9200 + c[1].charAt(6));
+            m.nbt = c[1];
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 2.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("split_slime");
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:slime", 0.5, BY, 0.5, 0f, 9300);
+            m.nbt = "{Size:3}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.hurts.put(5, new double[] {0, 30.0});
+            s.ticks = 160;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("water_slime");
+            floor(s, 16, "minecraft:stone");
+            for (int x = -3; x <= 3; x++)
+                for (int z = -3; z <= 3; z++) {
+                    block(s, x, BY - 1, z, "minecraft:water");
+                    block(s, x, BY - 2, z, "minecraft:stone");
+                }
+            MobSpec m = new MobSpec("minecraft:slime", 0.5, BY - 1, 0.5, 0f, 9400);
+            m.nbt = "{Size:1}";
+            s.mobs.add(m);
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("lava_magma_cube");
+            floor(s, 16, "minecraft:stone");
+            for (int x = -3; x <= 3; x++)
+                for (int z = -3; z <= 3; z++) {
+                    block(s, x, BY - 1, z, "minecraft:lava");
+                    block(s, x, BY - 2, z, "minecraft:stone");
+                }
+            MobSpec m = new MobSpec("minecraft:magma_cube", 0.5, BY - 1, 0.5, 0f, 9500);
+            m.nbt = "{Size:1}";
+            s.mobs.add(m);
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
     }
 }
