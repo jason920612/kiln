@@ -554,6 +554,54 @@ pub trait Kind: Sync + Send {
         let _ = (e, m);
         None
     }
+    /// `isPushedByFluid` (water animals are not).
+    fn pushed_by_fluid(&self) -> bool {
+        true
+    }
+    /// `getSwimSound` when `getMovementEmission` emits sounds; `None` for `MovementEmission.EVENTS`
+    /// (no step or swim sounds, no pitch draws).
+    fn swim_sound(&self) -> Option<&'static str> {
+        Some("minecraft:entity.generic.swim")
+    }
+    /// After `Mob.baseTick` (the ambient sound roll): `WaterAnimal.handleAirSupply` with the air
+    /// supply from before the base tick.
+    fn after_base_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, air_before: i32) {
+        let _ = (e, m, level, air_before);
+    }
+    /// `getSoundVolume` (squids 0.4, bats 0.1).
+    fn sound_volume(&self, m: &MobData) -> f32 {
+        let _ = m;
+        1.0
+    }
+    /// `getVoicePitch` from the shared one (bats: 0.95 of it).
+    fn voice_pitch(&self, m: &MobData, pitch: f32) -> f32 {
+        let _ = m;
+        pitch
+    }
+    /// `thunderHit` by bolt `bolt` in place of `Entity.thunderHit`; true when handled (mooshrooms
+    /// change color instead of burning).
+    fn thunder_hit(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, bolt: i32) -> bool {
+        let _ = (e, m, level, bolt);
+        false
+    }
+    /// `isPushable` (false: bats neither push nor get pushed).
+    fn pushable(&self) -> bool {
+        true
+    }
+}
+
+/// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the
+/// air runs out a point a tick, then drowning hurts for 2; in the water it is full.
+pub fn water_animal_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, air_before: i32) {
+    if super::is_alive(e, m) && !e.is_in_water() {
+        e.air_supply = air_before - 1;
+        if e.air_supply <= -20 {
+            e.air_supply = 0;
+            super::hurt(e, m, level, DamageSource::of(DamageKind::Drown), 2.0);
+        }
+    } else {
+        e.air_supply = 300;
+    }
 }
 
 /// `Mob.finalizeSpawn`: the follow range bonus and left-handedness, from `r` (the level's random).

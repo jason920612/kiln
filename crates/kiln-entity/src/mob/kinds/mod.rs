@@ -47,6 +47,11 @@ pub mod polar_bear;
 pub mod turtle;
 
 // -- slice 3: common mobs B
+pub mod squid;
+pub mod fish;
+pub mod mooshroom;
+pub mod ocelot;
+pub mod bat;
 
 
 /// The behaviour of an extension type; `None` for the shared-code types.
@@ -91,6 +96,15 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Turtle => &turtle::KIND,
 
         // -- slice 3: common mobs B
+        MobKind::Squid => &squid::KIND,
+        MobKind::GlowSquid => &squid::GLOW,
+        MobKind::Cod => &fish::COD,
+        MobKind::Salmon => &fish::SALMON,
+        MobKind::TropicalFish => &fish::TROPICAL_FISH,
+        MobKind::Pufferfish => &fish::PUFFERFISH,
+        MobKind::Mooshroom => &mooshroom::KIND,
+        MobKind::Ocelot => &ocelot::KIND,
+        MobKind::Bat => &bat::KIND,
 
         _ => return None,
     })
