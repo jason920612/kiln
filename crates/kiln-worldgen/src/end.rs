@@ -39,7 +39,7 @@ pub struct PodiumBlock {
     pub pos: BlockPos,
     pub state: u16,
     /// `dropPreviousAndSetBlock` (the active podium's end stone, air and portal): if the block
-    /// there is not already this block, vanilla first destroys it with drops
+    /// there is already this block vanilla does nothing; otherwise it destroys it with drops
     /// (`destroyBlock(pos, true)`), then sets the state.
     pub drop_previous: bool,
 }
@@ -50,7 +50,8 @@ pub struct PodiumBlock {
 /// 2.5 at the origin's level), end stone below, air above, portal (active) or air in the
 /// middle; then the bedrock pillar (origin up to 3 above) and four wall torches around its
 /// second block. Vanilla writes with `setBlock` flag 3; nothing is read except by
-/// `drop_previous`.
+/// `drop_previous`. Checked against `EndPodiumFeature.place` (both variants, same writes in
+/// the same order).
 pub fn end_podium_blocks(origin: BlockPos, active: bool) -> Vec<PodiumBlock> {
     let mut out = Vec::new();
     let mut put = |pos: BlockPos, state: u16, drop_previous: bool| out.push(PodiumBlock { pos, state, drop_previous });
@@ -160,6 +161,11 @@ mod tests {
             assert!((94.0..=97.0).contains(&r), "{p:?}");
             assert_eq!(p.y, 75);
         }
+        // Vanilla's order for this seed (Util.shuffle on the LCG, Math.cos/sin).
+        let expected = "-92,75,-30 91,75,29 0,75,-96 96,75,0 -57,75,-78 29,75,91 -92,75,29 56,75,-78 77,75,-57 -96,75,-1 \
+                        -57,75,77 -30,75,91 56,75,77 77,75,56 -78,75,56 -30,75,-92 29,75,-92 91,75,-30 -1,75,96 -78,75,-57";
+        let mine: Vec<String> = g.iter().map(|p| format!("{},{},{}", p.x, p.y, p.z)).collect();
+        assert_eq!(mine.join(" "), expected.split_whitespace().collect::<Vec<_>>().join(" "));
         let mut sorted = g.clone();
         sorted.sort_by_key(|p| (p.x, p.z));
         sorted.dedup();
