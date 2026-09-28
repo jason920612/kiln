@@ -381,6 +381,15 @@ pub trait Kind: Sync + Send {
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, partner, child, level);
     }
+    /// `LivingEntity.tickEffects` (end of `baseTick`) for a type that keeps effects.
+    fn tick_effects(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
+    /// `getDamageAfterMagicAbsorb` additions (after armor): mob `id` takes `amount`.
+    fn damage_after_magic_absorb(&self, id: i32, m: &MobData, source: &DamageSource, amount: f32) -> f32 {
+        let _ = (id, m, source);
+        amount
+    }
     /// `playAmbientSound`: the sound (`default`: the type's ambient sound), `None` for silence
     /// (then no pitch is drawn either).
     fn ambient_sound(&self, m: &MobData, default: Option<&'static str>) -> Option<&'static str> {

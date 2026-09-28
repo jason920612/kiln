@@ -48,6 +48,8 @@ pub struct ThrowableData {
     pub left_owner: bool,
     pub(crate) left_owner_checked: bool,
     pub(crate) has_been_shot: bool,
+    /// The thrown item (`DATA_ITEM_STACK`) when known: a splash potion with it splashes here.
+    pub item: Option<kiln_item::ItemStack>,
 }
 
 /// What a projectile hit.
@@ -59,7 +61,7 @@ pub enum Hit {
 
 /// A new throwable at `pos` moving with `delta`.
 pub fn new(id: i32, uuid: u128, kind: Throwable, pos: Vec3, delta: Vec3, owner: Option<i32>, seed: i64) -> Entity {
-    let data = ThrowableData { kind, owner, left_owner: false, left_owner_checked: false, has_been_shot: false };
+    let data = ThrowableData { kind, owner, left_owner: false, left_owner_checked: false, has_been_shot: false, item: None };
     let mut e = Entity::new(kind.type_name(), id, uuid, EntityKind::Throwable(data), seed);
     e.set_pos(pos);
     e.delta = delta;
@@ -271,6 +273,13 @@ pub fn mth_atan2(mut y: f64, mut x: f64) -> f64 {
 /// `onHit`: every throwable breaks on impact; the effect is the simulation's.
 fn on_hit(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
     let (kind_, owner) = { let d = data(e); (d.kind, d.owner) };
+    if kind_ == Throwable::SplashPotion
+        && let Some(item) = data(e).item.clone()
+    {
+        crate::mob::kinds::witch::splash(e, level, hit, &item, owner);
+        e.discard();
+        return;
+    }
     level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: kind_.type_name(), owner, hit });
     if kind_ == Throwable::Snowball || kind_ == Throwable::Egg {
         level.emit(Event::EntityEvent { entity: e.id, event: 3 });

@@ -833,6 +833,38 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        // Witches: idle, throwing potions, drinking swiftness far from the target and healing
+        // when hurt.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_witch_" + seed);
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:witch", 0.5, BY, 0.5, 70f * seed, 3300L * seed + 23));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (int dist : new int[] {6, 9, 14}) {
+            Scenario s = new Scenario("chase_witch_" + dist);
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:witch", 0.5, BY, 0.5, 0f, 5550 + dist));
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_witch");
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:witch", 0.5, BY, 0.5, 0f, 3801));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.hurts.put(5, new double[] {0, 6.0});
+            s.ticks = 300;
+            out.add(s);
+        }
         // Water hurts it and makes it teleport.
         {
             Scenario s = new Scenario("water_enderman");

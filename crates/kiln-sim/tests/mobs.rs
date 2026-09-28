@@ -310,6 +310,24 @@ fn shulker_bullets_hurt_and_levitate() {
 }
 
 #[test]
+fn witches_throw_potions() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:witch", [0.0, 0.0, 9.0], "{PersistenceRequired:1b}");
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..300 {
+        w.ticks(1);
+        for e in w.sim.effects(1).unwrap() {
+            seen.insert(e.0);
+        }
+    }
+    // From 9 blocks away the first potion is slowness; poison and harming follow.
+    assert!(seen.contains("minecraft:slowness"), "splashed with slowness ({seen:?})");
+    assert!(w.health() < 20.0 || seen.contains("minecraft:poison"), "hurt or poisoned ({seen:?}, health {})", w.health());
+}
+
+#[test]
 fn end_city_sentries_load_as_shulkers() {
     use kiln_proto::nbt::Tag;
     // The compound end city generation leaves for a sentry.

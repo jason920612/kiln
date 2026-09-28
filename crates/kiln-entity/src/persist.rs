@@ -285,7 +285,7 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
         name => {
             let kind = THROWABLES.into_iter().find(|t| t.type_name() == name).ok_or(LoadError::NotSimulated)?;
             let (left_owner, has_been_shot) = read_projectile(r);
-            EntityKind::Throwable(ThrowableData { kind, owner: None, left_owner, left_owner_checked: false, has_been_shot })
+            EntityKind::Throwable(ThrowableData { kind, owner: None, left_owner, left_owner_checked: false, has_been_shot, item: None })
         }
     })
 }
