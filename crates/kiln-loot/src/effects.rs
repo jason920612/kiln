@@ -563,6 +563,43 @@ impl LootData {
         value as i32
     }
 
+    /// `EnchantmentHelper.getRandomItemWith(component, entity, filter)`'s candidates: every
+    /// (slot, stack) of `equipment` in [`EQUIPMENT_ORDER`] that passes `filter`, once per
+    /// enchantment on it that has component `c` and applies in that slot. The caller picks one
+    /// with `nextInt(len)` of the entity's random.
+    pub fn items_with<'s>(
+        &self,
+        c: ValueComponent,
+        equipment: &[(EquipmentSlot, &'s ItemStack)],
+        filter: impl Fn(&ItemStack) -> bool,
+    ) -> Vec<(EquipmentSlot, &'s ItemStack)> {
+        let mut out = Vec::new();
+        for slot in EQUIPMENT_ORDER {
+            for &(s, stack) in equipment.iter().filter(|(s, _)| *s == slot) {
+                if !filter(stack) {
+                    continue;
+                }
+                self.for_each_enchantment(stack, |e, _| {
+                    if e.effects.values.iter().any(|(k, _)| *k == c) && e.matching_slot(s) {
+                        out.push((s, stack));
+                    }
+                });
+            }
+        }
+        out
+    }
+
+    /// `EnchantmentHelper.modifyDurabilityToRepairFromXp`: `repair_with_xp` effects on
+    /// `amount` in `itemContext(level, stack)`, truncated, at least 0.
+    pub fn durability_from_xp(&self, stack: &ItemStack, rng: &mut dyn RandomSource, amount: i32) -> i32 {
+        let mut value = amount as f32;
+        self.for_each_enchantment(stack, |e, level| {
+            let ctx = ItemContext { tool: stack, level };
+            value = self.apply_value_effects(e, ValueComponent::RepairWithXp, level, &ctx, rng, value);
+        });
+        (value as i32).max(0)
+    }
+
     /// `EnchantmentHelper.forEachModifier(stack, slot, ...)`: attribute modifiers of the
     /// enchantments that apply in `slot`, as (attribute id, modifier id, amount, operation).
     pub fn enchantment_modifiers(&self, stack: &ItemStack, slot: EquipmentSlot, mut f: impl FnMut(i32, String, f64, AttributeOperation)) {
