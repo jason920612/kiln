@@ -1,9 +1,13 @@
 """WASM plugins seen by the real 26.3 client: the example plugins (spawn protection, chat
 formatter, counter) built for wasm32-wasip2 and loaded with KILN_PLUGINS_DIR. The client
 (not an operator) tries to break and place blocks at the spawn and is refused, chats and
-sees its line formatted, then breaks blocks far from spawn and asks /broken. Input goes to
-the game window with PostMessage (no focus stealing); screenshots of the game window only
-(PrintWindow) go to work/plugins-view-*.png, and the client's chat log is checked.
+sees its line formatted, then breaks blocks far from spawn and asks /broken. Then hot
+reload: the chat formatter's manifest changes and `/kiln plugins reload chat-format` makes the
+next line come out in the new format; the heartbeat plugin gets `/beat 200` (a task that
+follows the player) and is reloaded as `v2` while the task is in flight: the ping arrives from
+v2, exactly once. Input goes to the game window with PostMessage (no focus stealing);
+screenshots of the game window only (PrintWindow) go to work/plugins-view-*.png, and the
+client's chat log is checked.
 
 usage: python tools/plugins_view.py [--port 25588] [--keep]
 """
@@ -22,7 +26,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 import e2e  # noqa: E402
 
 NAME = "KilnView"
-EXAMPLES = {"chat-format": "chat_format", "counter": "counter", "spawn-protection": "spawn_protection"}
+EXAMPLES = {"chat-format": "chat_format", "counter": "counter", "heartbeat": "heartbeat", "spawn-protection": "spawn_protection"}
 
 
 def build_plugins():
@@ -209,10 +213,31 @@ def main():
 
     checks["counter counts breaks far from spawn"] = until(r"You broke [1-9]\d* blocks; everyone: [1-9]", dig)
     shot("far")
+
+    # 5. Hot reload of the chat formatter with a changed manifest: the next line is in the
+    # new format.
+    manifest = plugins / "chat-format" / "plugin.toml"
+    manifest.write_text(manifest.read_text(encoding="utf-8").replace('name_color = "gold"', 'name_color = "aqua"\nprefix = "(v2) "'),
+                        encoding="utf-8")
+    console("kiln plugins reload chat-format", wait=2)
+    checks["reload: new chat format"] = until(r"\(v2\) \[KilnView\] » after the reload", lambda: win.chat("after the reload"))
+    # 6. Hot reload with a task in flight: /beat 200 (10 s), reload the heartbeat as v2 at
+    # once; the ping comes from v2, once.
+    heartbeat = plugins / "heartbeat" / "plugin.toml"
+    checks["heartbeat scheduled"] = until(r"\[v1\] scheduled in 200 ticks", lambda: win.chat("/beat 200"))
+    heartbeat.write_text(heartbeat.read_text(encoding="utf-8").replace('label = "v1"', 'label = "v2"'), encoding="utf-8")
+    console("kiln plugins reload heartbeat", wait=1)
+    deadline = time.time() + 20
+    while time.time() < deadline and not any("[v2] ping" in l for l in chat_log()):
+        time.sleep(0.5)
+    pings = [l for l in chat_log() if "] ping" in l]
+    checks["reload: the task in flight ran once, in v2"] = len(pings) == 1 and "[v2] ping 1" in pings[0]
+    time.sleep(1)
+    shot("reload")
     for l in chat_log()[-10:]:
         print("client:", l)
     for l in e2e.server_log().splitlines():
-        if re.search(r"plugin|panicked|ERROR|WARN", l):
+        if re.search(r"plugin|panicked|ERROR|WARN|reload", l):
             print("server:", l)
     for k, v in checks.items():
         print(f"{'OK  ' if v else 'FAIL'} {k}")

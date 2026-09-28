@@ -60,6 +60,8 @@ pub(crate) struct Frame {
     /// Ordering key of the call's operations, tasks and messages (the acting player).
     pub source: u128,
     pub players: Vec<u128>,
+    /// Names of `players` (by index; the strings keep their capacity across calls).
+    names: Vec<String>,
     pub cells: Vec<CellKey>,
     /// Entities of the event with their plugin data (moved in for the call, moved back out).
     pub entities: Vec<(u128, EntityData)>,
@@ -68,6 +70,8 @@ pub(crate) struct Frame {
     pub messages: Vec<(Option<u128>, Vec<Span>)>,
     pub tasks: Vec<NewTask>,
     pub cancels: Vec<u64>,
+    /// The message for the acting player if the handler denies (`event.deny-message`).
+    pub deny_msg: Option<Vec<Span>>,
     /// Deterministic id block of the call (reserved on first use): tickets, task handles and
     /// the random stream derive from (tick, source, seq, n).
     seq: Option<u32>,
@@ -112,6 +116,18 @@ impl Frame {
         Ok(i)
     }
 
+    /// A player of the call (handle index = position), with their name.
+    pub fn push_player(&mut self, uuid: u128, name: &str) {
+        let i = self.players.len();
+        self.players.push(uuid);
+        if self.names.len() <= i {
+            self.names.push(String::new());
+        }
+        let n = &mut self.names[i];
+        n.clear();
+        n.push_str(name);
+    }
+
     pub fn is_clean(&self) -> bool {
         self.writes.is_empty() && self.ops.is_empty() && self.messages.is_empty() && self.tasks.is_empty() && self.cancels.is_empty()
     }
@@ -129,6 +145,7 @@ impl Frame {
         self.messages.clear();
         self.tasks.clear();
         self.cancels.clear();
+        self.deny_msg = None;
         self.seq = None;
         self.n = 0;
         self.rng = None;
@@ -223,6 +240,30 @@ impl kiln::api::state::Host for HostState {
         })
     }
 
+    fn get_int(&mut self, s: kiln::api::state::Scope, key: String) -> wasmtime::Result<Option<i64>> {
+        self.frame()?;
+        let target = self.target(&s)?;
+        let int = |v: &[u8]| <[u8; 8]>::try_from(v).ok().map(i64::from_le_bytes);
+        let f = &self.frame;
+        if let Some((_, _, v)) = f.writes.iter().rev().find(|(t, k, _)| *t == target && *k == key) {
+            return Ok(v.as_deref().and_then(int));
+        }
+        let plugin = self.plugin;
+        Ok(match target {
+            Target::Player(u) => self.shared.players.lock().unwrap().get(&u).and_then(|ns| ns.get(plugin, &key).and_then(|v| int(v))),
+            Target::Cell(c) => {
+                let mut table = self.shared.cells.lock().unwrap();
+                self.shared.ensure_cell(&mut table, c);
+                table.cells.get(&c).and_then(|ns| ns.get(plugin, &key).and_then(|v| int(v)))
+            }
+            Target::Entity(i) => f.entities[i].1.get(&*self.id).and_then(|kv| kv.get(&key)).and_then(|v| int(v)),
+        })
+    }
+
+    fn put_int(&mut self, s: kiln::api::state::Scope, key: String, val: i64) -> wasmtime::Result<()> {
+        self.put(s, key, Some(val.to_le_bytes().to_vec()))
+    }
+
     fn put(&mut self, s: kiln::api::state::Scope, key: String, val: Option<Vec<u8>>) -> wasmtime::Result<()> {
         self.frame()?;
         let target = self.target(&s)?;
@@ -253,6 +294,20 @@ impl kiln::api::state::Host for HostState {
         let (ticket, _) = self.new_id();
         self.frame.ops.push((ticket, op));
         Ok(ticket)
+    }
+}
+
+impl kiln::api::event::Host for HostState {
+    fn player_name(&mut self, p: u64) -> wasmtime::Result<String> {
+        let generation = self.generation;
+        let f = self.frame()?;
+        let i = f.resolve(generation, KIND_PLAYER, p)?;
+        f.names.get(i).filter(|_| i < f.players.len()).cloned().ok_or_else(|| wasmtime::format_err!("bad player handle"))
+    }
+
+    fn deny_message(&mut self, text: Vec<wit::Span>) -> wasmtime::Result<()> {
+        self.frame()?.deny_msg = Some(text.into_iter().map(from_wit_span).collect());
+        Ok(())
     }
 }
 
@@ -407,6 +462,7 @@ pub(crate) fn linker(engine: &wasmtime::Engine, chat: bool, scheduler: bool) -> 
     let mut linker = Linker::new(engine);
     wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
     kiln::api::state::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
+    kiln::api::event::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     kiln::api::env::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     kiln::api::registry::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;
     kiln::api::log::add_to_linker::<HostState, HasSelf<HostState>>(&mut linker, |s| s)?;

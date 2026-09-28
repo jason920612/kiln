@@ -61,7 +61,7 @@ pub use ns::{CellKey, EntityData, GlobalValue};
 
 use anyhow::{Context, Result, bail};
 use host::{Frame, GlobalGuest, GlobalIndices, HostState, NewTask, Pre, RegionGuest, RegionIndices, wit};
-use ns::{CellTable, Globals, Ns, Persist};
+use ns::{CellTable, FastMap, Globals, Ns, Persist};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -378,7 +378,7 @@ pub(crate) struct Shared {
     pub(crate) strict: bool,
     pub(crate) seed: u64,
     pub(crate) registries: Arc<Registries>,
-    pub(crate) players: Mutex<HashMap<u128, Ns>>,
+    pub(crate) players: Mutex<FastMap<u128, Ns>>,
     pub(crate) cells: Mutex<CellTable>,
     pub(crate) globals: Mutex<Globals>,
     globals_dirty: AtomicBool,
@@ -391,8 +391,9 @@ pub(crate) struct Shared {
     /// Plugins subscribed to op-results (by index; updated by reloads).
     wants_results: Vec<AtomicBool>,
     /// Calls per source this tick (deterministic ids).
-    seqs: Mutex<HashMap<u128, u32>>,
-    buckets: Mutex<HashMap<u128, Bucket>>,
+    seqs: Mutex<FastMap<u128, u32>>,
+    /// Sharded by player: region threads rarely meet on a lock.
+    buckets: Vec<Mutex<FastMap<u128, Bucket>>>,
     /// Epoch ticks so far (ordered mode's clock for per-tick budgets).
     epoch: Arc<AtomicU64>,
     persist: Option<Persist>,
@@ -513,6 +514,11 @@ impl Shared {
         }
     }
 
+    fn bucket_shard(&self, uuid: u128) -> &Mutex<FastMap<u128, Bucket>> {
+        let h = (uuid as u64 ^ (uuid >> 64) as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        &self.buckets[(h >> 58) as usize % self.buckets.len()]
+    }
+
     /// Takes one event from the player's bucket; false when it is empty.
     fn take_token(&self, uuid: u128, burst: u32, per_second: u32) -> bool {
         if per_second == 0 {
@@ -520,7 +526,7 @@ impl Shared {
         }
         let tick = self.tick();
         let cap = burst as u64 * 20;
-        let mut b = self.buckets.lock().unwrap();
+        let mut b = self.bucket_shard(uuid).lock().unwrap();
         let bucket = b.entry(uuid).or_insert(Bucket { units: cap, tick });
         bucket.units = (bucket.units + (tick - bucket.tick) * per_second as u64).min(cap);
         bucket.tick = tick;
@@ -793,7 +799,6 @@ impl Inst {
             Budget::Epoch(_) => shared.epoch.load(Ordering::Relaxed) - start,
             Budget::Fuel(_) => start - self.store.get_fuel().unwrap_or(0),
         };
-        shared.stats.calls.fetch_add(1, Ordering::Relaxed);
         match r {
             Ok(v) => {
                 let st = self.store.data_mut();
@@ -832,12 +837,7 @@ fn wit_pos(p: [i32; 3]) -> wit::BlockPos {
 }
 
 fn wit_player(a: &Actor, handle: u64) -> wit::Player {
-    wit::Player { handle, uuid: host::wit_uuid(a.uuid), name: a.name.to_owned(), operator: a.operator }
-}
-
-/// Moves a player record out, leaving an empty one (no allocation either way).
-fn take(p: &mut wit::Player) -> wit::Player {
-    std::mem::replace(p, wit::Player { handle: 0, uuid: wit::Uuid { hi: 0, lo: 0 }, name: String::new(), operator: false })
+    wit::Player { handle, uuid: host::wit_uuid(a.uuid), operator: a.operator }
 }
 
 fn spans(v: Vec<wit::Span>) -> Vec<Span> {
@@ -870,43 +870,48 @@ pub struct RegionPlugins {
     dim: u32,
     insts: Vec<Option<Inst>>,
     observed: Vec<Observation>,
-    /// The event's player record, reused call after call (its name keeps its capacity).
-    scratch: wit::Player,
+    /// Calls made here (added to the statistics in B0: no shared counter on the hot path).
+    calls: u64,
+}
+
+/// The region instance of plugin `i`, instantiated if missing (after a trap).
+fn ensure(set: &PluginSet, shared: &Arc<Shared>, insts: &mut [Option<Inst>], i: usize) -> bool {
+    if insts[i].is_none() && set.plugins[i].region.is_some() {
+        match Inst::new(set, shared, i, true) {
+            Ok((inst, _)) => insts[i] = Some(inst),
+            Err(e) => warn!("plugin {}: cannot instantiate for a region: {e:#}", set.plugins[i].id),
+        }
+    }
+    insts[i].is_some()
+}
+
+/// A trap or timeout of a region instance: the instance is replaced (its state may be
+/// inconsistent), and a timeout is a strike.
+fn region_failed<R>(set: &PluginSet, shared: &Shared, insts: &mut [Option<Inst>], i: usize, outcome: Outcome<R>) {
+    let id = &set.plugins[i].id;
+    match outcome {
+        Outcome::Timeout => {
+            warn!("plugin {id}: call exceeded its budget");
+            shared.strike(i, id);
+        }
+        Outcome::Trap(e) => warn!("plugin {id} trapped: {e:#}"),
+        Outcome::Ok(_) => return,
+    }
+    insts[i] = None;
 }
 
 impl RegionPlugins {
     fn new(set: Arc<PluginSet>, shared: Arc<Shared>, dim: u32) -> RegionPlugins {
-        let scratch = wit::Player { handle: 0, uuid: wit::Uuid { hi: 0, lo: 0 }, name: String::with_capacity(16), operator: false };
-        let mut r = RegionPlugins { insts: (0..set.plugins.len()).map(|_| None).collect(), set, shared, dim, observed: Vec::new(), scratch };
+        let mut r = RegionPlugins { insts: (0..set.plugins.len()).map(|_| None).collect(), set, shared, dim, observed: Vec::new(), calls: 0 };
         for i in 0..r.insts.len() {
-            r.ensure(i);
+            ensure(&r.set, &r.shared, &mut r.insts, i);
         }
         r
     }
 
-    /// The region instance of plugin `i`, instantiated if missing (after a trap).
-    fn ensure(&mut self, i: usize) -> bool {
-        if self.insts[i].is_none() && self.set.plugins[i].region.is_some() {
-            match Inst::new(&self.set, &self.shared, i, true) {
-                Ok((inst, _)) => self.insts[i] = Some(inst),
-                Err(e) => warn!("plugin {}: cannot instantiate for a region: {e:#}", self.set.plugins[i].id),
-            }
-        }
-        self.insts[i].is_some()
-    }
-
-    fn player(&mut self, a: &Actor, handle: u64) {
-        let p = &mut self.scratch;
-        p.handle = handle;
-        p.uuid = host::wit_uuid(a.uuid);
-        p.name.clear();
-        p.name.push_str(a.name);
-        p.operator = a.operator;
-    }
-
     /// Calls every subscriber of a cancellable event in load order until one denies.
     /// `f` gets the guest, the store, the event's player record and the handles of the cell
-    /// and the entity.
+    /// and the entity; `decide` the result and the denial message the handler left.
     #[allow(clippy::too_many_arguments)]
     fn cancellable<R>(
         &mut self,
@@ -915,10 +920,11 @@ impl RegionPlugins {
         info: EvInfo,
         cell: Option<CellKey>,
         mut entity: Option<&mut EntityRef>,
-        mut f: impl FnMut(&RegionGuest, &mut Store<HostState>, &mut wit::Player, u64, u64) -> wasmtime::Result<R>,
-        mut decide: impl FnMut(R) -> Option<Verdict>,
+        mut f: impl FnMut(&RegionGuest, &mut Store<HostState>, wit::Player, u64, u64) -> wasmtime::Result<R>,
+        mut decide: impl FnMut(R, Option<Vec<Span>>) -> Option<Verdict>,
     ) -> Verdict {
-        let set = self.set.clone();
+        let RegionPlugins { set, shared, insts, calls, .. } = self;
+        let set: &PluginSet = set;
         let subs = set.subscribers(kind);
         if subs.is_empty() {
             return Verdict::Allow;
@@ -927,55 +933,56 @@ impl RegionPlugins {
         if !subs.iter().any(|&i| called(i)) {
             return Verdict::Allow;
         }
+        let policy = |i: usize| set.plugins[i].manifest.subscription(kind).map_or(FailPolicy::Open, |s| s.policy);
         // The acting player's bucket: an empty one keeps the event from every plugin.
-        if !self.shared.take_token(actor.uuid, set.player_burst, set.player_rate) {
-            self.shared.stats.rate_limited.fetch_add(1, Ordering::Relaxed);
-            let closed = subs.iter().any(|&i| called(i) && set.plugins[i].manifest.subscription(kind).is_some_and(|s| s.policy == FailPolicy::Closed));
+        if !shared.take_token(actor.uuid, set.player_burst, set.player_rate) {
+            shared.stats.rate_limited.fetch_add(1, Ordering::Relaxed);
+            let closed = subs.iter().any(|&i| called(i) && policy(i) == FailPolicy::Closed);
             return if closed { Verdict::Deny(None) } else { Verdict::Allow };
         }
         for &i in subs {
             if !called(i) {
                 continue;
             }
-            let policy = set.plugins[i].manifest.subscription(kind).map_or(FailPolicy::Open, |s| s.policy);
-            let fail = if policy == FailPolicy::Closed { Some(Verdict::Deny(None)) } else { None };
-            if self.shared.demoted(i) || !self.ensure(i) {
+            let fail = if policy(i) == FailPolicy::Closed { Some(Verdict::Deny(None)) } else { None };
+            if shared.demoted(i) || !ensure(set, shared, insts, i) {
                 match fail {
                     Some(v) => return v,
                     None => continue,
                 }
             }
-            if self.insts[i].as_ref().expect("instance").over_budget(&self.shared, set.tick_budget) {
-                self.shared.stats.budget_exhausted.fetch_add(1, Ordering::Relaxed);
+            let inst = insts[i].as_mut().expect("instance");
+            if inst.over_budget(shared, set.tick_budget) {
+                shared.stats.budget_exhausted.fetch_add(1, Ordering::Relaxed);
                 match fail {
                     Some(v) => return v,
                     None => continue,
                 }
             }
-            let inst = self.insts[i].as_mut().expect("instance");
             let generation = inst.generation();
             let frame = inst.frame();
             frame.reset(false, actor.uuid);
-            frame.players.push(actor.uuid);
+            frame.push_player(actor.uuid, actor.name);
             frame.cells.extend(cell);
             if let Some(e) = entity.as_deref_mut() {
                 frame.entities.push((e.uuid, std::mem::take(e.data)));
             }
             let (ph, ch, eh) = (frame.player_handle(generation, 0), frame.cell_handle(generation, 0), frame.entity_handle(generation, 0));
-            self.player(actor, ph);
-            let (scratch, inst) = (&mut self.scratch, self.insts[i].as_mut().expect("instance"));
-            let outcome = inst.call(&self.shared, set.call, |store, _, region| f(region.expect("region guest"), store, scratch, ch, eh));
+            let player = wit_player(actor, ph);
+            *calls += 1;
+            let outcome = inst.call(shared, set.call, |store, _, region| f(region.expect("region guest"), store, player, ch, eh));
             if let Some(e) = entity.as_deref_mut() {
                 *e.data = std::mem::take(&mut inst.frame().entities[0].1);
             }
             match outcome {
                 Outcome::Ok(r) => {
-                    if let Some(v) = decide(r) {
+                    let msg = inst.frame().deny_msg.take();
+                    if let Some(v) = decide(r, msg) {
                         return v;
                     }
                 }
                 failed => {
-                    self.failed(i, failed);
+                    region_failed(set, shared, insts, i, failed);
                     if let Some(v) = fail {
                         return v;
                     }
@@ -983,21 +990,6 @@ impl RegionPlugins {
             }
         }
         Verdict::Allow
-    }
-
-    /// A trap or timeout: the instance is replaced (its state may be inconsistent), and a
-    /// timeout is a strike.
-    fn failed<R>(&mut self, i: usize, outcome: Outcome<R>) {
-        let id = &self.set.plugins[i].id;
-        match outcome {
-            Outcome::Timeout => {
-                warn!("plugin {id}: call exceeded its budget");
-                self.shared.strike(i, id);
-            }
-            Outcome::Trap(e) => warn!("plugin {id} trapped: {e:#}"),
-            Outcome::Ok(_) => return,
-        }
-        self.insts[i] = None;
     }
 
     fn info(&self, actor: &Actor, pos: Option<[i32; 3]>) -> EvInfo {
@@ -1015,14 +1007,9 @@ impl RegionPlugins {
             info,
             Some(cell),
             None,
-            |g, store, player, ch, _| {
-                // The record takes the scratch player and gives it back: no allocation.
-                let ev = wit::BlockEvent { player: take(player), level, pos: wit_pos(pos), block, cell: ch };
-                let r = g.call_on_block_break(store, &ev);
-                *player = ev.player;
-                r
-            },
-            verdict,
+            // A flat record: it crosses as plain arguments, nothing is allocated in the guest.
+            |g, store, player, ch, _| g.call_on_block_break(store, wit::BlockEvent { player, level, pos: wit_pos(pos), block, cell: ch }),
+            decision,
         )
     }
 
@@ -1039,12 +1026,9 @@ impl RegionPlugins {
             Some(cell),
             None,
             |g, store, player, ch, _| {
-                let ev = wit::PlaceEvent { player: take(player), level, pos: wit_pos(pos), against: wit_pos(against), item, cell: ch };
-                let r = g.call_on_block_place(store, &ev);
-                *player = ev.player;
-                r
+                g.call_on_block_place(store, wit::PlaceEvent { player, level, pos: wit_pos(pos), against: wit_pos(against), item, cell: ch })
             },
-            verdict,
+            decision,
         )
     }
 
@@ -1061,19 +1045,10 @@ impl RegionPlugins {
             None,
             Some(entity),
             |g, store, player, _, eh| {
-                let ev = wit::EntityEvent {
-                    player: take(player),
-                    level,
-                    entity: eh,
-                    entity_uuid: host::wit_uuid(uuid),
-                    kind,
-                    pos: (p[0], p[1], p[2]),
-                };
-                let r = g.call_on_entity_interact(store, &ev);
-                *player = ev.player;
-                r
+                let ev = wit::EntityEvent { player, level, entity: eh, entity_uuid: host::wit_uuid(uuid), kind, pos: (p[0], p[1], p[2]) };
+                g.call_on_entity_interact(store, ev)
             },
-            verdict,
+            decision,
         )
     }
 
@@ -1086,13 +1061,8 @@ impl RegionPlugins {
             info,
             None,
             None,
-            |g, store, player, _, _| {
-                let ev = wit::CommandEvent { player: take(player), command: command.to_owned() };
-                let r = g.call_on_command(store, &ev);
-                *player = ev.player;
-                r
-            },
-            verdict,
+            |g, store, player, _, _| g.call_on_command(store, &wit::CommandEvent { player, command: command.to_owned() }),
+            decision,
         )
     }
 
@@ -1106,13 +1076,8 @@ impl RegionPlugins {
             info,
             None,
             None,
-            |g, store, player, _, _| {
-                let ev = wit::ChatEvent { player: take(player), message: message.to_owned() };
-                let r = g.call_on_chat(store, &ev);
-                *player = ev.player;
-                r
-            },
-            |r| match r {
+            |g, store, player, _, _| g.call_on_chat(store, &wit::ChatEvent { player, message: message.to_owned() }),
+            |r, _| match r {
                 wit::ChatVerdict::Pass => None,
                 wit::ChatVerdict::Cancel => Some(Verdict::Deny(None)),
                 wit::ChatVerdict::Rewrite(s) => {
@@ -1148,71 +1113,77 @@ impl RegionPlugins {
             return;
         }
         let observed = std::mem::take(&mut self.observed);
-        let set = self.set.clone();
+        let RegionPlugins { set, shared, insts, calls, dim, .. } = self;
+        let set: &PluginSet = set;
         for &i in set.subscribers(EventKind::Observe) {
             let filter = set.plugins[i].filter(EventKind::Observe);
             let mine: Vec<&Observation> = observed
                 .iter()
                 .filter(|o| {
                     filter.is_none_or(|c| {
-                        let info = EvInfo { permission: if o.operator { 4 } else { 0 }, level: self.dim, xz: Some((o.pos[0], o.pos[2])), block: Some(o.block), entity_type: None };
+                        let info = EvInfo { permission: if o.operator { 4 } else { 0 }, level: *dim, xz: Some((o.pos[0], o.pos[2])), block: Some(o.block), entity_type: None };
                         c.passes(&info)
                     })
                 })
                 .collect();
-            if mine.is_empty() || !self.ensure(i) {
+            if mine.is_empty() || !ensure(set, shared, insts, i) {
                 continue;
             }
-            let inst = self.insts[i].as_mut().expect("instance");
+            let inst = insts[i].as_mut().expect("instance");
             let generation = inst.generation();
             let frame = inst.frame();
             frame.reset(false, mine[0].uuid);
             for o in &mine {
                 if !frame.players.contains(&o.uuid) {
-                    frame.players.push(o.uuid);
+                    frame.push_player(o.uuid, &o.name);
                 }
             }
             let batch: Vec<wit::Observed> = mine
                 .iter()
                 .map(|o| {
                     let h = frame.player_handle(generation, frame.players.iter().position(|p| *p == o.uuid).unwrap());
-                    let actor = Actor { uuid: o.uuid, name: &o.name, operator: o.operator };
-                    let b = wit::ObservedBlock { player: wit_player(&actor, h), level: self.dim, pos: wit_pos(o.pos), block: o.block };
+                    let player = wit::Player { handle: h, uuid: host::wit_uuid(o.uuid), operator: o.operator };
+                    let b = wit::ObservedBlock { player, level: *dim, pos: wit_pos(o.pos), block: o.block };
                     if o.broken { wit::Observed::BlockBroken(b) } else { wit::Observed::BlockPlaced(b) }
                 })
                 .collect();
-            let outcome = inst.call(&self.shared, set.call, |store, _, g| g.expect("region guest").call_on_observe(store, &batch));
+            *calls += 1;
+            let outcome = inst.call(shared, set.call, |store, _, g| g.expect("region guest").call_on_observe(store, &batch));
             if !matches!(outcome, Outcome::Ok(())) {
-                self.failed(i, outcome);
+                region_failed(set, shared, insts, i, outcome);
             }
         }
     }
 
     /// A task or results delivery in this region's instance of plugin `i` (B0).
     fn run_in(&mut self, i: usize, player: Option<&PlayerAt>, cell: Option<CellKey>, f: RegionCall) -> bool {
-        if !self.ensure(i) {
+        let RegionPlugins { set, shared, insts, calls, .. } = self;
+        let set: &PluginSet = set;
+        if !ensure(set, shared, insts, i) {
             return false;
         }
-        let set = self.set.clone();
-        let inst = self.insts[i].as_mut().expect("instance");
+        let inst = insts[i].as_mut().expect("instance");
         let generation = inst.generation();
         let frame = inst.frame();
         frame.reset(false, player.map_or(0, |p| p.uuid));
-        frame.players.extend(player.map(|p| p.uuid));
+        if let Some(p) = player {
+            frame.push_player(p.uuid, &p.name);
+        }
         frame.cells.extend(cell);
         let ph = frame.player_handle(generation, 0);
         let ch = frame.cell_handle(generation, 0);
-        let p = player.map(|p| wit_player(&Actor { uuid: p.uuid, name: &p.name, operator: p.operator }, ph));
-        let outcome = inst.call(&self.shared, set.call, |store, _, g| {
+        let p = player.map(|p| wit::Player { handle: ph, uuid: host::wit_uuid(p.uuid), operator: p.operator });
+        *calls += 1;
+        let outcome = inst.call(shared, set.call, |store, _, g| {
             let g = g.expect("region guest");
             match f {
-                RegionCall::Task(handle, id) => g.call_on_task(store, &wit::TaskEvent { handle, id, player: p, cell: cell.map(|_| ch) }),
+                RegionCall::Task(handle, id) => g.call_on_task(store, wit::TaskEvent { handle, id, player: p, cell: cell.map(|_| ch) }),
                 RegionCall::Results(r) => g.call_on_results(store, &r),
             }
         });
         let ok = matches!(outcome, Outcome::Ok(()));
         if !ok {
-            self.failed(i, outcome);
+            region_failed(set, shared, insts, i, outcome);
         }
         ok
     }
@@ -1222,7 +1193,12 @@ impl RegionPlugins {
         self.flush_observed();
         self.set = set;
         self.insts[i] = None;
-        self.ensure(i);
+        ensure(&self.set, &self.shared, &mut self.insts, i);
+    }
+
+    /// Calls made since the last call (the runtime adds them to its statistics).
+    fn take_calls(&mut self) -> u64 {
+        std::mem::take(&mut self.calls)
     }
 }
 
@@ -1231,10 +1207,10 @@ enum RegionCall {
     Results(Vec<wit::OpResult>),
 }
 
-fn verdict(v: wit::Verdict) -> Option<Verdict> {
-    match v {
-        wit::Verdict::Allow => None,
-        wit::Verdict::Deny(m) => Some(Verdict::Deny(m.map(spans))),
+fn decision(d: wit::Decision, msg: Option<Vec<Span>>) -> Option<Verdict> {
+    match d {
+        wit::Decision::Allow => None,
+        wit::Decision::Deny => Some(Verdict::Deny(msg)),
     }
 }
 
@@ -1486,7 +1462,7 @@ impl PluginRuntime {
             strict,
             seed: cfg.seed,
             registries: cfg.registries.clone(),
-            players: Mutex::new(HashMap::new()),
+            players: Mutex::new(FastMap::default()),
             cells: Mutex::new(CellTable::default()),
             snapshot: Mutex::new(Arc::new(globals.clone())),
             globals: Mutex::new(globals),
@@ -1497,8 +1473,8 @@ impl PluginRuntime {
             outbox: Mutex::new(Vec::new()),
             health: defs.iter().map(|_| Health { strikes: Mutex::new(VecDeque::new()), demoted: AtomicBool::new(false) }).collect(),
             wants_results: defs.iter().map(|d| AtomicBool::new(d.manifest.subscription(EventKind::OpResults).is_some())).collect(),
-            seqs: Mutex::new(HashMap::new()),
-            buckets: Mutex::new(HashMap::new()),
+            seqs: Mutex::new(FastMap::default()),
+            buckets: (0..64).map(|_| Mutex::new(FastMap::default())).collect(),
             epoch: epoch.clone(),
             persist,
             stats,
@@ -1585,6 +1561,23 @@ impl PluginRuntime {
         &self.shared.stats
     }
 
+    /// Every statistic by name, with the calls regions made since the last B0.
+    pub fn stat_values(&self) -> Vec<(&'static str, u64)> {
+        let local: u64 = self.regions.values().map(|r| r.calls).sum();
+        self.shared.stats.get().iter().map(|&(k, v)| (k, if k == "calls" { v + local } else { v })).collect()
+    }
+
+    /// One statistic by name (see [`stat_values`](Self::stat_values)).
+    pub fn stat(&self, name: &str) -> u64 {
+        self.stat_values().into_iter().find(|(k, _)| *k == name).map_or(0, |(_, v)| v)
+    }
+
+    /// Adds the regions' call counts to the shared statistics.
+    fn fold_calls(&mut self) {
+        let n: u64 = self.regions.values_mut().map(RegionPlugins::take_calls).sum();
+        self.shared.stats.calls.fetch_add(n, Ordering::Relaxed);
+    }
+
     pub fn is_demoted(&self, plugin: usize) -> bool {
         self.shared.demoted(plugin)
     }
@@ -1605,6 +1598,7 @@ impl PluginRuntime {
     /// is lost; guest memory is not carried over.
     pub fn sync_regions(&mut self, dim: u32, ids: impl IntoIterator<Item = u64>) {
         let ids: std::collections::HashSet<u64> = ids.into_iter().collect();
+        self.fold_calls();
         self.regions.retain(|&(d, r), rp| {
             let keep = d != dim || ids.contains(&r);
             if !keep {
@@ -1612,6 +1606,7 @@ impl PluginRuntime {
             }
             keep
         });
+        self.fold_calls();
         let mut new: Vec<u64> = ids.into_iter().filter(|r| !self.regions.contains_key(&(dim, *r))).collect();
         new.sort_unstable();
         for r in new {
@@ -1646,6 +1641,7 @@ impl PluginRuntime {
     pub fn begin_tick_in(&mut self, world: &dyn World) {
         self.shared.tick.fetch_add(1, Ordering::Relaxed);
         self.shared.seqs.lock().unwrap().clear();
+        self.fold_calls();
         let tick = self.shared.tick();
         let staged = std::mem::take(&mut *self.staged.lock().unwrap());
         for s in staged {
@@ -1791,7 +1787,7 @@ impl PluginRuntime {
                     let id = task.id;
                     let actor = player.as_ref().map(|p| (p.uuid, p.name.clone(), p.operator));
                     self.global_call(task.plugin, actor.as_ref().map(|(u, n, o)| Actor { uuid: *u, name: n, operator: *o }).as_ref(), |store, g, player| {
-                        g.call_on_task(store, &wit::TaskEvent { handle, id, player, cell: None })
+                        g.call_on_task(store, wit::TaskEvent { handle, id, player, cell: None })
                     });
                 }
             }
@@ -1821,8 +1817,11 @@ impl PluginRuntime {
         let generation = inst.generation();
         let frame = inst.frame();
         frame.reset(true, actor.map_or(0, |a| a.uuid));
-        frame.players.extend(actor.map(|a| a.uuid));
+        if let Some(a) = actor {
+            frame.push_player(a.uuid, a.name);
+        }
         let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
+        self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
         let outcome = inst.call(&self.shared, self.set.call, |store, g, _| f(store, g.expect("global guest"), p));
         let ok = matches!(outcome, Outcome::Ok(()));
         self.global_failed(i, outcome);
@@ -1851,11 +1850,12 @@ impl PluginRuntime {
             let generation = inst.generation();
             let frame = inst.frame();
             frame.reset(true, actor.uuid);
-            frame.players.push(actor.uuid);
+            frame.push_player(actor.uuid, actor.name);
             let p = wit_player(actor, frame.player_handle(generation, 0));
+            self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
             let outcome = inst.call(&self.shared, self.set.call, |store, g, _| {
                 let g = g.expect("global guest");
-                if kind == EventKind::Join { g.call_on_join(store, &p) } else { g.call_on_leave(store, &p) }
+                if kind == EventKind::Join { g.call_on_join(store, p) } else { g.call_on_leave(store, p) }
             });
             self.global_failed(i, outcome);
         }
@@ -1889,7 +1889,7 @@ impl PluginRuntime {
     /// A player left: `on-leave` runs, then its namespace is saved and unloaded.
     pub fn player_left(&mut self, actor: &Actor) {
         self.global_event(EventKind::Leave, actor);
-        self.shared.buckets.lock().unwrap().remove(&actor.uuid);
+        self.shared.bucket_shard(actor.uuid).lock().unwrap().remove(&actor.uuid);
         if let Some(p) = &self.shared.persist {
             let ns = self.shared.players.lock().unwrap().remove(&actor.uuid);
             if let Some(ns) = ns {
@@ -1906,9 +1906,12 @@ impl PluginRuntime {
         let generation = inst.generation();
         let frame = inst.frame();
         frame.reset(true, actor.map_or(0, |a| a.uuid));
-        frame.players.extend(actor.map(|a| a.uuid));
+        if let Some(a) = actor {
+            frame.push_player(a.uuid, a.name);
+        }
         let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
-        let outcome = inst.call(&self.shared, self.set.call, |store, g, _| g.expect("global guest").call_on_command(store, p.as_ref(), name, args));
+        self.shared.stats.calls.fetch_add(1, Ordering::Relaxed);
+        let outcome = inst.call(&self.shared, self.set.call, |store, g, _| g.expect("global guest").call_on_command(store, p, name, args));
         match outcome {
             Outcome::Ok(reply) => spans(reply),
             failed => {

@@ -37,10 +37,11 @@ interface types {
 
     record block-pos { x: s32, y: s32, z: s32 }
 
+    /// Flat (no strings): an event record crosses as plain arguments, without allocating
+    /// in the guest. The name is `event.player-name(handle)`.
     record player {
         handle: player-handle,
         uuid: uuid,
-        name: string,
         /// Permission level 4 (an operator).
         operator: bool,
     }
@@ -54,8 +55,9 @@ interface types {
         italic: bool,
     }
 
-    /// A cancellable event's outcome: `deny` may carry a message for the acting player.
-    variant verdict { allow, deny(option<list<span>>) }
+    /// A cancellable event's outcome. A message for the acting player with a denial goes
+    /// through `event.deny-message` (the outcome itself stays a flat value: no cleanup call).
+    enum decision { allow, deny }
 
     /// A chat message's outcome: sent as is, dropped, or replaced by formatted text.
     variant chat-verdict { pass, cancel, rewrite(list<span>) }
@@ -169,6 +171,11 @@ interface state {
     get: func(s: scope, key: string) -> option<list<u8>>;
     /// Writes (none deletes) a key; buffered until the handler returns normally.
     put: func(s: scope, key: string, val: option<list<u8>>);
+    /// A key holding a little-endian `s64` (8 bytes), as a flat value: no list crosses, so
+    /// counters cost no allocation in the guest. Other contents read as none.
+    get-int: func(s: scope, key: string) -> option<s64>;
+    /// Writes the 8 bytes of `val` (buffered like `put`).
+    put-int: func(s: scope, key: string, val: s64);
     /// The plugin's global namespace: the global instance reads the live value, every other
     /// context a snapshot at most one tick old.
     global-get: func(key: string) -> option<global-value>;
@@ -176,6 +183,16 @@ interface state {
     /// instance it applies when the call returns). With the `op-results` subscription the
     /// outcome arrives in `on-results` the next tick.
     submit: func(op: atomic-op) -> ticket;
+}
+
+/// The current event (always linked).
+interface event {
+    use types.{player-handle, span};
+
+    /// A player's name (any player handle of the call).
+    player-name: func(p: player-handle) -> string;
+    /// The message the acting player gets if this handler denies.
+    deny-message: func(text: list<span>);
 }
 
 /// Deterministic environment (always linked): in strict mode the clock follows the tick and
@@ -251,15 +268,15 @@ interface global-hooks {
 
 /// Exports of region instances (optional).
 interface region-hooks {
-    use types.{init-info, block-event, place-event, entity-event, chat-event, command-event, verdict, chat-verdict, observed, task-event, op-result};
+    use types.{init-info, block-event, place-event, entity-event, chat-event, command-event, decision, chat-verdict, observed, task-event, op-result};
 
     /// After each instantiation (a region instance may be replaced at any barrier).
     init: func(info: init-info);
-    on-block-break: func(ev: block-event) -> verdict;
-    on-block-place: func(ev: place-event) -> verdict;
-    on-entity-interact: func(ev: entity-event) -> verdict;
+    on-block-break: func(ev: block-event) -> decision;
+    on-block-place: func(ev: place-event) -> decision;
+    on-entity-interact: func(ev: entity-event) -> decision;
     on-chat: func(ev: chat-event) -> chat-verdict;
-    on-command: func(ev: command-event) -> verdict;
+    on-command: func(ev: command-event) -> decision;
     on-observe: func(events: list<observed>);
     on-task: func(t: task-event);
     on-results: func(results: list<op-result>);
@@ -267,6 +284,7 @@ interface region-hooks {
 
 world global-plugin {
     import state;
+    import event;
     import env;
     import registry;
     import scheduler;
@@ -277,6 +295,7 @@ world global-plugin {
 
 world region-plugin {
     import state;
+    import event;
     import env;
     import registry;
     import scheduler;

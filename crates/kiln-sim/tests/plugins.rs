@@ -8,6 +8,12 @@ use kiln_proto::packets::ItemStack;
 use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 
+/// A call budget no call reaches: tests run next to builds, and a preempted call that runs
+/// out of its 500 µs would be denied (fail-closed) for reasons the test is not about.
+fn settings(dir: impl Into<std::path::PathBuf>) -> kiln_sim::PluginSettings {
+    kiln_sim::PluginSettings { call_budget: std::time::Duration::from_millis(500), ..kiln_sim::PluginSettings::new(dir) }
+}
+
 struct World {
     sim: Sim,
     client: Client,
@@ -20,7 +26,7 @@ fn contains(hay: &[u8], needle: &str) -> bool {
 impl World {
     fn new() -> Self {
         let mut config = SimConfig::new(4, 4, None);
-        config.plugins = Some(kiln_sim::PluginSettings::new(kiln_plugin_host::examples::build().expect("example plugins")));
+        config.plugins = Some(settings(kiln_plugin_host::examples::build().expect("example plugins")));
         let mut sim = Sim::new(config);
         let (msg, stats) = join(1, "Builder", 2);
         *stats.log.lock().unwrap() = Some(Vec::new());
@@ -172,7 +178,7 @@ fn delayed_survival_breaks_are_observed() {
 fn reload_by_command_changes_the_chat_format() {
     let dir = kiln_plugin_host::examples::custom_dir("reload-sim", &["chat-format", "counter"], &[]).expect("example plugins");
     let mut config = SimConfig::new(4, 4, None);
-    config.plugins = Some(kiln_sim::PluginSettings::new(&dir));
+    config.plugins = Some(settings(&dir));
     let mut sim = Sim::new(config);
     let (msg, stats) = join(1, "Talker", 2);
     *stats.log.lock().unwrap() = Some(Vec::new());

@@ -67,11 +67,11 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 }
 
 fn calls(rt: &PluginRuntime) -> u64 {
-    rt.stats().calls.load(std::sync::atomic::Ordering::Relaxed)
+    rt.stat("calls")
 }
 
 fn stat(rt: &PluginRuntime, name: &str) -> u64 {
-    rt.stats().get().iter().find(|(n, _)| *n == name).unwrap().1
+    rt.stat(name)
 }
 
 fn text(spans: &[kiln_plugin_host::Span]) -> String {
@@ -457,18 +457,22 @@ fn call_overhead() {
         let far = [SPAWN[0] + 1000, 0, SPAWN[2]];
         let n = 20_000u32;
         let measure = |name: &str, f: &mut dyn FnMut()| {
+            // The best of 20 batches: other processes only ever add time.
             for _ in 0..1000 {
                 f();
             }
-            let start = Instant::now();
-            for _ in 0..n {
-                f();
+            let mut per = Duration::MAX;
+            for _ in 0..20 {
+                let start = Instant::now();
+                for _ in 0..n / 20 {
+                    f();
+                }
+                per = per.min(start.elapsed() / (n / 20));
             }
-            let per = start.elapsed() / n;
             println!("{mode:?} {name}: {} ns per call", per.as_nanos());
             per
         };
-        let allow = measure("block-break, allowed (no state access)", &mut || {
+        let allow = measure("block-break, allowed (one cell read)", &mut || {
             assert_eq!(r.block_break(&a, far, STONE), Verdict::Allow);
         });
         measure("block-break, denied (cell get/put, message)", &mut || {

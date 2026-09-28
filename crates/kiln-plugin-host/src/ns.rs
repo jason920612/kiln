@@ -15,6 +15,41 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
+/// A multiply-rotate hasher for the host's own small keys (uuids, cells): the maps are
+/// never iterated in hash order where order matters (see [`hash_sorted`]) and their keys do
+/// not come from guests, so SipHash's flooding resistance buys nothing on the hot path.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct FastHasher(u64);
+
+impl Hasher for FastHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.write_u64(*b as u64);
+        }
+    }
+    fn write_u32(&mut self, v: u32) {
+        self.write_u64(v as u64);
+    }
+    fn write_i32(&mut self, v: i32) {
+        self.write_u64(v as u32 as u64);
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x51_7cc1_b727_220a_95);
+    }
+    fn write_u128(&mut self, v: u128) {
+        self.write_u64(v as u64);
+        self.write_u64((v >> 64) as u64);
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+}
+
+pub(crate) type FastMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<FastHasher>>;
+
 /// One plugin's keys in a namespace.
 pub(crate) type Kv = BTreeMap<String, Vec<u8>>;
 
@@ -98,7 +133,7 @@ impl CellKey {
 /// Cell data of every level, loaded one sidecar at a time.
 #[derive(Default)]
 pub(crate) struct CellTable {
-    pub cells: HashMap<CellKey, Ns>,
+    pub cells: FastMap<CellKey, Ns>,
     /// Sidecars read (or found missing) already.
     loaded: HashSet<(u32, i32, i32)>,
 }
@@ -354,7 +389,7 @@ impl Reader<'_> {
 }
 
 /// Hashes a namespace map in key order (for determinism tests).
-pub(crate) fn hash_sorted<K: Ord + Hash, V: Hash, H: Hasher>(map: &HashMap<K, V>, h: &mut H) {
+pub(crate) fn hash_sorted<K: Ord + Hash, V: Hash, H: Hasher, S>(map: &HashMap<K, V, S>, h: &mut H) {
     let mut entries: Vec<_> = map.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
     for (k, v) in entries {

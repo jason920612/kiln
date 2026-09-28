@@ -2,7 +2,7 @@
 //! colours, and cancels lines containing a blocked word. Change `prefix` or `name_color` and
 //! `/kiln plugins reload chat-format` to see a hot reload.
 
-use kiln_plugin_sdk::{ChatEvent, ChatVerdict, InitInfo, Plugin, Span, colored, config, export_plugin};
+use kiln_plugin_sdk::{ChatEvent, ChatVerdict, InitInfo, Plugin, Span, colored, config, event, export_plugin};
 use std::sync::Mutex;
 
 struct Format {
@@ -39,7 +39,7 @@ impl Plugin for ChatFormat {
         }
         line.extend([
             colored("[", "dark_gray"),
-            colored(&ev.player.name, &f.name_color),
+            colored(&event::player_name(ev.player.handle), &f.name_color),
             colored("] \u{bb} ", "dark_gray"),
             colored(&ev.message, "white"),
         ]);

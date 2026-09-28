@@ -17,7 +17,7 @@
 use kiln_plugin_sdk::state::{self, Scope};
 use kiln_plugin_sdk::{
     CancelReason, CancelledTask, CommandSpec, GlobalValue, InitInfo, OpResult, Player, Plugin, Span, TaskEvent, TaskTarget, chat,
-    colored, config, env, export_plugin, scheduler, text,
+    colored, config, env, event, export_plugin, scheduler, text,
 };
 use std::sync::Mutex;
 
@@ -97,7 +97,8 @@ impl Plugin for Heartbeat {
                 let roll = env::random() % 100;
                 state::put_i64(Scope::Player(p.handle), "roll", roll as i64);
                 state::put_i64(Scope::Player(p.handle), "seen-at", env::now_millis() as i64);
-                chat::send(p.handle, &[tag(), text(&format!("welcome, {}! Your roll: {roll}", p.name))]);
+                let name = event::player_name(p.handle);
+                chat::send(p.handle, &[tag(), text(&format!("welcome, {name}! Your roll: {roll}"))]);
             }
             _ => {}
         }

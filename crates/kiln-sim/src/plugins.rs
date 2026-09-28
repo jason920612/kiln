@@ -558,7 +558,7 @@ impl Sim {
             return 0;
         };
         let lines = pl.rt.describe();
-        let stats: Vec<String> = pl.rt.stats().get().iter().map(|(k, v)| format!("{k} {v}")).collect();
+        let stats: Vec<String> = pl.rt.stat_values().iter().map(|(k, v)| format!("{k} {v}")).collect();
         for l in &lines {
             self.plugin_reply(&[Span::colored(l.clone(), "gray")]);
         }
@@ -691,14 +691,12 @@ impl Sim {
     /// Plugin calls, traps and timeouts so far (tests and tools).
     pub fn plugin_stats(&self) -> (u64, u64, u64) {
         let Some(pl) = &self.plugins else { return (0, 0, 0) };
-        let s = pl.rt.stats();
-        let load = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed);
-        (load(&s.calls), load(&s.traps), load(&s.timeouts))
+        (pl.rt.stat("calls"), pl.rt.stat("traps"), pl.rt.stat("timeouts"))
     }
 
     /// Every plugin statistic by name (tests and tools).
     pub fn plugin_stat(&self, name: &str) -> u64 {
-        self.plugins.as_ref().and_then(|pl| pl.rt.stats().get().iter().find(|(n, _)| *n == name).map(|(_, v)| *v)).unwrap_or(0)
+        self.plugins.as_ref().map_or(0, |pl| pl.rt.stat(name))
     }
 
     /// A player's value of a plugin's key (tests and tools).

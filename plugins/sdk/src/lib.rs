@@ -24,22 +24,50 @@ pub mod bindings {
 
 pub use bindings::kiln::api::types::{
     AtomicOp, BlockEvent, BlockPos, CancelReason, CancelledTask, ChatEvent, ChatVerdict, CommandEvent, CommandSpec,
-    CompareAndSet, ConfigEntry, EntityEvent, GlobalValue, InitInfo, Observed, ObservedBlock, OpResult, PlaceEvent, Player,
-    Span, TaskEvent, TaskTarget, Uuid, Verdict,
+    CompareAndSet, ConfigEntry, Decision, EntityEvent, GlobalValue, InitInfo, Observed, ObservedBlock, OpResult, PlaceEvent,
+    Player, Span, TaskEvent, TaskTarget, Uuid,
 };
+
+/// A cancellable event's outcome, with an optional message for the acting player (sent
+/// through `event.deny-message`, so the value crossing back to the host stays flat).
+#[derive(Clone, Debug)]
+pub enum Verdict {
+    Allow,
+    Deny(Option<Vec<Span>>),
+}
+
+impl Verdict {
+    #[doc(hidden)]
+    pub fn into_decision(self) -> Decision {
+        match self {
+            Verdict::Allow => Decision::Allow,
+            Verdict::Deny(msg) => {
+                if let Some(m) = msg {
+                    event::deny_message(&m);
+                }
+                Decision::Deny
+            }
+        }
+    }
+}
+
+/// The current event.
+pub mod event {
+    pub use crate::bindings::kiln::api::event::{deny_message, player_name};
+}
 
 /// Owned namespaces: player, cell, entity and the plugin's global namespace.
 pub mod state {
-    pub use crate::bindings::kiln::api::state::{Scope, get, global_get, put, submit};
+    pub use crate::bindings::kiln::api::state::{Scope, get, get_int, global_get, put, put_int, submit};
     use crate::{AtomicOp, GlobalValue};
 
     /// A little-endian `i64` value (missing or malformed reads as 0).
     pub fn get_i64(s: Scope, key: &str) -> i64 {
-        get(s, key).and_then(|v| v.try_into().ok()).map_or(0, i64::from_le_bytes)
+        get_int(s, key).unwrap_or(0)
     }
 
     pub fn put_i64(s: Scope, key: &str, v: i64) {
-        put(s, key, Some(&v.to_le_bytes()));
+        put_int(s, key, v);
     }
 
     /// A global integer (the live value in the global instance, else a snapshot).
@@ -192,20 +220,20 @@ macro_rules! export_plugin {
             fn init(info: $crate::InitInfo) {
                 <$t as $crate::Plugin>::init_region(info)
             }
-            fn on_block_break(ev: $crate::BlockEvent) -> $crate::Verdict {
-                <$t as $crate::Plugin>::on_block_break(ev)
+            fn on_block_break(ev: $crate::BlockEvent) -> $crate::Decision {
+                <$t as $crate::Plugin>::on_block_break(ev).into_decision()
             }
-            fn on_block_place(ev: $crate::PlaceEvent) -> $crate::Verdict {
-                <$t as $crate::Plugin>::on_block_place(ev)
+            fn on_block_place(ev: $crate::PlaceEvent) -> $crate::Decision {
+                <$t as $crate::Plugin>::on_block_place(ev).into_decision()
             }
-            fn on_entity_interact(ev: $crate::EntityEvent) -> $crate::Verdict {
-                <$t as $crate::Plugin>::on_entity_interact(ev)
+            fn on_entity_interact(ev: $crate::EntityEvent) -> $crate::Decision {
+                <$t as $crate::Plugin>::on_entity_interact(ev).into_decision()
             }
             fn on_chat(ev: $crate::ChatEvent) -> $crate::ChatVerdict {
                 <$t as $crate::Plugin>::on_chat(ev)
             }
-            fn on_command(ev: $crate::CommandEvent) -> $crate::Verdict {
-                <$t as $crate::Plugin>::on_region_command(ev)
+            fn on_command(ev: $crate::CommandEvent) -> $crate::Decision {
+                <$t as $crate::Plugin>::on_region_command(ev).into_decision()
             }
             fn on_observe(events: ::std::vec::Vec<$crate::Observed>) {
                 <$t as $crate::Plugin>::on_observe(events)
