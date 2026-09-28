@@ -2667,9 +2667,10 @@ public class MobVectors {
             Scenario s = new Scenario("attack_snow_golem");
             floor(s, 20, "minecraft:stone");
             s.mobs.add(new MobSpec("minecraft:snow_golem", 0.5, BY, 0.5, 0f, 14100));
-            // Close enough that the snowballs' spread (their own random, not pinnable) cannot miss.
+            // Close enough that the snowballs' spread (their own random, not pinnable) cannot miss,
+            // and immune to knockback so the direction of the hit (the spread again) shows nowhere.
             MobSpec z = new MobSpec("minecraft:zombie", 2.5, BY, 0.5, 90f, 14101);
-            z.nbt = "{NoAI:1b}";
+            z.nbt = "{NoAI:1b,attributes:[{id:\"minecraft:knockback_resistance\",base:1.0d}]}";
             s.mobs.add(z);
             s.player = new double[] {-12.5, BY, 0.5};
             s.playerCreative = true;

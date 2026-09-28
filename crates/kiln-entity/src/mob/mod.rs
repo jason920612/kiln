@@ -1871,8 +1871,8 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         dz *= f;
         dx *= 0.05000000074505806;
         dz *= 0.05000000074505806;
-        // `Entity.push`: vehicles are not pushed.
-        if e.passengers.is_empty() {
+        // `Entity.push`: vehicles and dead (not `isPushable`) mobs are not pushed.
+        if e.passengers.is_empty() && m.health > 0.0 {
             e.delta = e.delta.add(-dx, 0.0, -dz);
             e.needs_sync = true;
         }
