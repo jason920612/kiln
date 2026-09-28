@@ -105,6 +105,8 @@ pub enum Sampler {
     ShiftB(Arc<NoiseStack>),
     Gradient(Gradient),
     DistanceToPoint { point: [i32; 3], metric: DistanceMetric },
+    /// `minecraft:end_outer_islands`: the island noise's height field (independent of y).
+    EndIslands(Arc<crate::simplex::Simplex>),
     /// `minecraft:beardifier`: the context's [`Beardifier`](crate::structure::beard::Beardifier),
     /// 0 without one.
     Beardifier,
@@ -345,6 +347,7 @@ impl Sampler {
             ShiftB(noise) => noise.get3(z as f64 * 0.25, x as f64 * 0.25, 0.0) * 4.0,
             Gradient(g) => g.compute(g.axis.choose(x, y, z)),
             Beardifier => s.beard.as_ref().map_or(0.0, |b| b.sample(x, y, z)),
+            EndIslands(noise) => end_island_value(noise, x, z),
             DistanceToPoint { point, metric } => metric.compute(
                 point[0].wrapping_sub(x) as f32,
                 point[1].wrapping_sub(y) as f32,
@@ -661,6 +664,16 @@ impl Sampler {
                     }
                 }
             },
+            EndIslands(noise) => {
+                let rows = vol.size[1] as usize;
+                for zi in 0..vol.size[2] {
+                    for xi in 0..vol.size[0] {
+                        let v = end_island_value(noise, vol.block_x(xi), vol.block_z(zi));
+                        let start = vol.index(xi, 0, zi);
+                        out[start..start + rows].fill(v);
+                    }
+                }
+            }
             DistanceToPoint { .. } => {
                 for (o, [x, y, z]) in out.iter_mut().zip(vol.positions()) {
                     *o = self.point(s, x, y, z);
@@ -668,6 +681,33 @@ impl Sampler {
             }
         }
     }
+}
+
+/// `EndIslandFunction$Sampler.sampleValue`: `(getHeightValue(x / 8, z / 8) - 8) / 128`.
+fn end_island_value(noise: &crate::simplex::Simplex, x: i32, z: i32) -> f32 {
+    (end_island_height(noise, x / 8, z / 8) - 8.0) / 128.0
+}
+
+/// `EndIslandFunction.getHeightValue`: the highest island cone among the 25x25 island cells
+/// around the (half-resolution) position, islands only farther than 64 cells from the origin
+/// and where the noise is below -0.9.
+pub fn end_island_height(noise: &crate::simplex::Simplex, x: i32, z: i32) -> f32 {
+    let (cx, cz, fx, fz) = (x / 2, z / 2, x % 2, z % 2);
+    let mut best = -100.0f32;
+    for dx in -12..=12 {
+        for dz in -12..=12 {
+            let ix = (cx + dx) as i64;
+            let iz = (cz + dz) as i64;
+            if ix * ix + iz * iz > 4096 && noise.get2(ix as f64, iz as f64) < -0.9 {
+                let size = ((ix as f32).abs() * 3439.0 + (iz as f32).abs() * 147.0) % 13.0 + 9.0;
+                let ox = (fx - dx * 2) as f32;
+                let oz = (fz - dz * 2) as f32;
+                let h = (100.0 - (ox * ox + oz * oz).sqrt() * size).clamp(-100.0, 80.0);
+                best = best.max(h);
+            }
+        }
+    }
+    best
 }
 
 fn eval(s: &mut Scratch, vol: &Volume, f: &Sampler) -> Vec<f32> {

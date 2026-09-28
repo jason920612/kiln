@@ -158,6 +158,8 @@ pub enum Node {
     Beardifier,
     BlendDensity(NodeId),
     DistanceToPoint { point: [i32; 3], metric: DistanceMetric },
+    /// `minecraft:end_outer_islands` (`EndIslandFunction`).
+    EndIslands,
     /// A type this implementation does not support; compiling it fails with its name.
     Unsupported(String),
 }
@@ -385,6 +387,7 @@ impl Graph {
             "blend_alpha" => Node::BlendAlpha,
             "blend_offset" => Node::BlendOffset,
             "beardifier" => Node::Beardifier,
+            "end_outer_islands" => Node::EndIslands,
             "blend_density" => Node::BlendDensity(self.child(json, "input")?),
             "distance_to_point" => {
                 let point = field(json, "point")?
@@ -443,7 +446,7 @@ impl Graph {
                 }
                 d | self.domain(shift[0])? | self.domain(shift[1])? | self.domain(shift[2])?
             }
-            Node::ShiftA(_) | Node::ShiftB(_) | Node::BlendAlpha | Node::BlendOffset => AXIS_X | AXIS_Z,
+            Node::ShiftA(_) | Node::ShiftB(_) | Node::BlendAlpha | Node::BlendOffset | Node::EndIslands => AXIS_X | AXIS_Z,
             Node::Shift(_) | Node::BlendedNoise { .. } | Node::Beardifier | Node::DistanceToPoint { .. } => ALL_AXES,
             Node::Unsupported(ty) => return Err(Error::UnsupportedFunction(ty.clone())),
             Node::Gradient { axis, .. } => axis.bit(),
@@ -524,6 +527,7 @@ impl Graph {
             Node::BlendAlpha => Interval::of(0.0, 1.0),
             Node::BlendOffset | Node::Beardifier => Interval::INFINITE,
             Node::DistanceToPoint { .. } => Interval::of(0.0, f32::INFINITY),
+            Node::EndIslands => Interval::of(-0.84375, 0.5625),
             Node::Unsupported(ty) => return Err(Error::UnsupportedFunction(ty.clone())),
         };
         self.range_cache.borrow_mut().insert(id, r);

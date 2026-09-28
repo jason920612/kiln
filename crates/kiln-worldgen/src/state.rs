@@ -38,6 +38,14 @@ impl NoiseSource for Source<'_> {
         Ok(Arc::new(params.create_legacy_nether_biome(&mut random)))
     }
 
+    /// `createEndIslandRandom` (a `LegacyRandomSource(seed)`), 17292 draws skipped, then
+    /// `new SimplexNoise(random, true)`.
+    fn end_islands(&mut self) -> Arc<crate::simplex::Simplex> {
+        let mut random = LegacyRandom::new(self.state.seed);
+        random.consume_count(17292);
+        Arc::new(crate::simplex::Simplex::new(&mut random, true))
+    }
+
     fn random(&mut self, id: &str) -> WorldgenRandom {
         compile_random(&self.state.factory, self.state.legacy.then_some(self.state.seed), id)
     }

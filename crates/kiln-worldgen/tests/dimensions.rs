@@ -36,3 +36,16 @@ fn nether_chunks_have_netherrack_lava_and_bedrock() {
     assert!(count(&c.blocks, "minecraft:bedrock") >= 256 * 2);
     assert!(count(&c.blocks, "minecraft:lava") > 0);
 }
+
+#[test]
+fn end_chunks_have_the_main_island() {
+    let Some(pack) = pack() else { return };
+    let world = Arc::new(Worldgen::end(&pack, 12345, true).expect("end"));
+    assert_eq!((world.generator.min_y, world.generator.height), (0, 256));
+    assert_eq!(world.generator.possible_biomes().len(), 5);
+    let pipeline = Pipeline::new(world);
+    let mut gs = GenScratch::default();
+    let c = pipeline.full(&mut gs, 0, 0);
+    assert!(count(&c.blocks, "minecraft:end_stone") > 5_000);
+    assert_eq!(count(&c.blocks, "minecraft:bedrock"), 0);
+}
