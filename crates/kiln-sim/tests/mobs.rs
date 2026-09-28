@@ -119,11 +119,15 @@ fn players_kill_pigs() {
     w.ticks(25);
     assert!(w.mobs("minecraft:pig").is_empty(), "removed after the death animation");
     let entities = w.sim.entities();
-    assert!(entities.iter().any(|e| e.0 == "minecraft:experience_orb"), "experience for a player kill: {entities:?}");
     // With the vanilla datapack's loot tables, the pig drops porkchops (1 to 3).
     if std::env::var_os("KILN_DATAPACK").is_some() {
         assert!(entities.iter().any(|e| e.0 == "minecraft:item"), "loot: {entities:?}");
     }
+    // A player kill drops 1 to 3 experience; the orbs spawn in reach and are taken.
+    w.ticks(10);
+    let (level, _, total) = w.sim.experience(1).unwrap();
+    assert!((1..=3).contains(&total) && level == 0, "experience {total}");
+    assert!(!w.sim.entities().iter().any(|e| e.0 == "minecraft:experience_orb"));
 }
 
 #[test]

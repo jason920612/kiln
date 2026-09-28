@@ -526,6 +526,16 @@ pub trait Host: SelectorWorld {
     fn remove_effect(&mut self, _entity: &Self::Entity, _effect: &Identifier) -> Option<bool> {
         None
     }
+    /// `ExperienceCommand.Type.add`: points (`giveExperiencePoints`) or levels.
+    fn add_experience(&mut self, _player: &Self::Entity, _amount: i32, _kind: crate::vanilla::experience::XpKind) {}
+    /// `ExperienceCommand.Type.set`: false when points are not below the level's need.
+    fn set_experience(&mut self, _player: &Self::Entity, _amount: i32, _kind: crate::vanilla::experience::XpKind) -> bool {
+        false
+    }
+    /// `ExperienceCommand.Type.query`: points into the level, or the level.
+    fn query_experience(&mut self, _player: &Self::Entity, _kind: crate::vanilla::experience::XpKind) -> i32 {
+        0
+    }
     /// `LivingEntity.removeAllEffects`; `None` for entities that are not living.
     fn clear_effects(&mut self, _entity: &Self::Entity) -> Option<bool> {
         None

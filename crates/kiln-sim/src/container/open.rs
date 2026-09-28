@@ -746,8 +746,10 @@ fn workstation_effects(p: &mut Player, level: &mut RegionLevel) {
                 super::furnace::award_experience(at, experience, &mut rng, &mut level.out.spawns);
                 level.effect(Effect::LevelEvent { id: 1042, pos, data: 0 });
             }
-            // Kiln keeps no experience levels yet: the `levels` cost is not taken.
-            kiln_inventory::Effect::AnvilUsed { .. } => anvil_wear(p, level, pos),
+            kiln_inventory::Effect::AnvilUsed { levels } => {
+                p.pay_levels(levels);
+                anvil_wear(p, level, pos);
+            }
             kiln_inventory::Effect::LoomUsed => {
                 let now = level.env.game_time;
                 if p.containers.last_loom_sound != now {
@@ -755,7 +757,8 @@ fn workstation_effects(p: &mut Player, level: &mut RegionLevel) {
                     level.effect(Effect::Sound { pos, sound: "minecraft:ui.loom.take_result", volume: 1.0, pitch: 1.0 });
                 }
             }
-            kiln_inventory::Effect::Enchanted { seed, .. } => {
+            kiln_inventory::Effect::Enchanted { levels, seed } => {
+                p.pay_levels(levels);
                 p.containers.enchantment_seed = seed;
                 let pitch = super::pos_random(level, pos, 5).next_float() * 0.1 + 0.9;
                 level.effect(Effect::Sound { pos, sound: "minecraft:block.enchantment_table.use", volume: 1.0, pitch });

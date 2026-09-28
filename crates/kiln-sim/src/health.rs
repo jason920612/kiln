@@ -688,6 +688,12 @@ impl Player {
             }
         }
         self.inv.times_changed += 1;
+        // `LivingEntity.dropExperience` (players always drop it).
+        let xp = self.death_experience(false);
+        if xp > 0 {
+            let at = self.pos;
+            crate::container::furnace::award_experience(at, xp, &mut self.entity_rng, ctx.spawns);
+        }
         self.died = true;
         // `broadcastEntityEvent(DEATH)` reaches the player too.
         self.send(entity::entity_event(self.entity_id, 3));

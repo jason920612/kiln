@@ -657,6 +657,39 @@ impl Host for Sim {
         Some(self.players.get_mut(&entity.conn)?.remove_all_effects())
     }
 
+    fn add_experience(&mut self, player: &PlayerRef, amount: i32, kind: kiln_command::vanilla::experience::XpKind) {
+        let Some(p) = self.players.get_mut(&player.conn) else { return };
+        match kind {
+            kiln_command::vanilla::experience::XpKind::Points => p.give_experience_points(amount),
+            kiln_command::vanilla::experience::XpKind::Levels => p.give_experience_levels(amount),
+        }
+    }
+
+    fn set_experience(&mut self, player: &PlayerRef, amount: i32, kind: kiln_command::vanilla::experience::XpKind) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        match kind {
+            // `ServerPlayer.setExperiencePoints`: the progress into the current level.
+            kiln_command::vanilla::experience::XpKind::Points => {
+                let need = p.xp_needed_for_next_level() as f32;
+                if amount as f32 >= need {
+                    return false;
+                }
+                p.xp_progress = (amount as f32 / need).clamp(0.0, (need - 1.0) / need);
+            }
+            kiln_command::vanilla::experience::XpKind::Levels => p.xp_level = amount,
+        }
+        p.sent_xp = None;
+        true
+    }
+
+    fn query_experience(&mut self, player: &PlayerRef, kind: kiln_command::vanilla::experience::XpKind) -> i32 {
+        let Some(p) = self.players.get(&player.conn) else { return 0 };
+        match kind {
+            kiln_command::vanilla::experience::XpKind::Points => (p.xp_progress * p.xp_needed_for_next_level() as f32).floor() as i32,
+            kiln_command::vanilla::experience::XpKind::Levels => p.xp_level,
+        }
+    }
+
     fn kick(&mut self, player: &PlayerRef, reason: Text) {
         if let Some(p) = self.players.get_mut(&player.conn) {
             p.flush();

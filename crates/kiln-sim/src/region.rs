@@ -168,6 +168,7 @@ impl RegionWork<'_> {
             }
             p.tick_food(env.natural_regen, &mut ctx);
             p.sync_health();
+            p.sync_experience();
         }
         mark(&mut self.out.times, 1);
         for p in self.players.iter_mut().filter(|p| !p.disconnected) {
@@ -182,6 +183,7 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 3);
         self.tick_entities(env);
         entities::pickups(self.entities, &mut self.players);
+        crate::xp::pick_up_orbs(self.entities, &mut self.players);
         mark(&mut self.out.times, 4);
         let movers = crate::players::update_visibility(&mut self.players);
         mark(&mut self.out.times, 5);

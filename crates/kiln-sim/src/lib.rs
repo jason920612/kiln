@@ -24,6 +24,7 @@ mod blocks;
 mod combat;
 mod commands;
 mod consume;
+mod xp;
 mod container;
 mod datapacks;
 pub mod lobby;
@@ -308,6 +309,14 @@ struct Player {
     /// `FoodData.exhaustionLevel` and `tickTimer`.
     exhaustion: f32,
     food_timer: i32,
+    /// `experienceLevel`, `experienceProgress`, `totalExperience`.
+    xp_level: i32,
+    xp_progress: f32,
+    xp_total: i32,
+    /// `takeXpDelay`: ticks until the next orb can be taken.
+    take_xp_delay: i32,
+    /// Experience in the last Set Experience.
+    sent_xp: Option<(u32, i32, i32)>,
     /// Health, food and whether saturation was zero in the last Set Health.
     sent_health: Option<(u32, i32, bool)>,
     /// An item being used (eaten).
@@ -366,7 +375,7 @@ impl Player {
             spectator: self.game_mode == 3,
             dead: false,
             removed: self.disconnected,
-            xp_level: 0,
+            xp_level: self.xp_level,
             enchantment_seed: self.containers.enchantment_seed,
         }
     }
@@ -1128,6 +1137,11 @@ impl Sim {
         self.players.get(&conn).map(|p| (p.fire_ticks, p.air))
     }
 
+    /// A player's experience level, progress and total points (for tests and tools).
+    pub fn experience(&self, conn: ConnId) -> Option<(i32, f32, i32)> {
+        self.players.get(&conn).map(|p| (p.xp_level, p.xp_progress, p.xp_total))
+    }
+
     /// A player's food level and saturation (for tests and tools).
     pub fn food(&self, conn: ConnId) -> Option<(i32, f32)> {
         self.players.get(&conn).map(|p| (p.food, p.saturation))
@@ -1531,6 +1545,9 @@ impl Sim {
             p.saturation = 5.0;
             p.exhaustion = 0.0;
             p.food_timer = 0;
+            p.xp_level = 0;
+            p.xp_progress = 0.0;
+            p.xp_total = 0;
             // A fresh `ServerPlayer`: no cooldowns, credit or tracked hits carry over.
             p.hurt_cooldown = 0;
             p.last_hurt = 0.0;
@@ -1560,6 +1577,8 @@ impl Sim {
         p.send(time);
         p.sent_health = None;
         p.sync_health();
+        p.sent_xp = None;
+        p.sync_experience();
         if keep_all {
             p.send(packets::set_held_slot(p.inv.selected as i32));
             p.send_all_effects();
@@ -1779,6 +1798,11 @@ impl Sim {
             death_dim: OVERWORLD_ID,
             exhaustion: joining.exhaustion,
             food_timer: joining.food_timer,
+            xp_level: joining.xp_level,
+            xp_progress: joining.xp_progress,
+            xp_total: joining.xp_total,
+            take_xp_delay: 0,
+            sent_xp: None,
             sent_health: None,
             using: None,
             digging: None,
