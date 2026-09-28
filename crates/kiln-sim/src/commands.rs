@@ -201,6 +201,8 @@ pub(crate) struct CommandState {
     pub stop_requested: bool,
     /// Last tick statistics report, for `/kiln tick`.
     pub last_report: Option<String>,
+    /// Packets `/kiln use` made for players, handled with the next tick's packets.
+    pub injected: Vec<(ConnId, kiln_link::PlayIn)>,
 }
 
 impl CommandState {
@@ -231,6 +233,7 @@ impl CommandState {
             rng: 0x9E37_79B9_7F4A_7C15,
             stop_requested: false,
             last_report: None,
+            injected: Vec::new(),
         }
     }
 }
@@ -794,6 +797,13 @@ impl Host for Sim {
             None => lines.push(Text::literal("No tick statistics yet (reported every 30 s)")),
         }
         lines
+    }
+
+    fn kiln_use(&mut self, player: &PlayerRef, pos: [i32; 3]) -> bool {
+        let Some(p) = self.players.get(&player.conn) else { return false };
+        let pkt = kiln_link::PlayIn::UseItemOn { hand: 0, pos, face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: p.ack_block_changes.max(0) };
+        self.commands.injected.push((player.conn, pkt));
+        true
     }
 
     fn kiln_regions(&mut self) -> Vec<Text> {

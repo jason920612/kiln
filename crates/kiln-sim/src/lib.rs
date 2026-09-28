@@ -860,6 +860,8 @@ impl Sim {
                 }
             }
         }
+        // `/kiln use` clicks, as if their players had sent them.
+        packets.splice(0..0, std::mem::take(&mut self.commands.injected));
         self.maintain_chunks();
         let joining: Vec<_> = joins.into_iter().map(|j| (self.joining(j.uuid), j)).collect();
         for (jn, _) in &joining {

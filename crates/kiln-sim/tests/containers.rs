@@ -255,3 +255,20 @@ fn shulker_boxes_keep_their_contents_when_broken() {
     let emerald = contents.0.get(3).and_then(|s| s.as_ref()).expect("slot 3");
     assert_eq!(emerald.create().count(), 7);
 }
+
+#[test]
+fn a_comparator_on_a_filled_chest_lights_a_lamp() {
+    let mut w = World::new("creative");
+    let chest = w.at(5, 1, -5);
+    let comparator = [chest[0] + 1, chest[1], chest[2]];
+    let lamp = [chest[0] + 2, chest[1], chest[2]];
+    w.setblock(chest, "minecraft:chest");
+    w.setblock(comparator, "minecraft:comparator[facing=west]");
+    w.setblock(lamp, "minecraft:redstone_lamp");
+    let hopper = [chest[0], chest[1] + 1, chest[2]];
+    w.run(&format!("setblock {} {} {} minecraft:hopper[facing=down]{{Items:[{{Slot:0b,id:\"minecraft:stone\",count:2}}]}}", hopper[0], hopper[1], hopper[2]));
+    w.ticks(10);
+    assert_eq!(w.items(chest), vec![(0, "minecraft:stone", 2)]);
+    assert!(state::get_bool(w.block(comparator), "powered"), "{}", state::state_string(w.block(comparator)));
+    assert!(state::get_bool(w.block(lamp), "lit"), "{}", state::state_string(w.block(lamp)));
+}

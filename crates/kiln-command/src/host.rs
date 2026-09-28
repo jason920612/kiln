@@ -574,6 +574,11 @@ pub trait Host: SelectorWorld {
     fn kiln_tick(&mut self) -> Vec<Text>;
     /// `/kiln regions`: region report lines.
     fn kiln_regions(&mut self) -> Vec<Text>;
+    /// `/kiln use <player> <pos>`: the player right-clicks the block at `pos` with its main
+    /// hand, as its client would (for tools and tests). Whether it was queued.
+    fn kiln_use(&mut self, _player: &Self::Entity, _pos: [i32; 3]) -> bool {
+        false
+    }
 
     /// Whether chunk `(cx, cz)` of `dimension` is loaded (`ChunkSource.hasChunk`).
     fn is_chunk_loaded(&self, dimension: &str, cx: i32, cz: i32) -> bool;
