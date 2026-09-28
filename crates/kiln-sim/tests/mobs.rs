@@ -373,3 +373,70 @@ fn cats_are_tamed_with_fish() {
         }
     }
 }
+
+fn player_pos(w: &World) -> [f64; 3] {
+    w.sim.player_level(1).unwrap().1
+}
+
+fn nbt_of(w: &World, kind: &str) -> kiln_proto::nbt::Tag {
+    w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(|v| v.as_str()) == Some(kind)).unwrap()
+}
+
+#[test]
+fn saddled_horses_are_ridden_and_steered() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:stick", 1);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:horse", [1.5, 0.0, 0.0], "{Tame:1b,PersistenceRequired:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1}}}");
+    w.ticks(20);
+    let (horse, hp, _) = w.mobs("minecraft:horse")[0];
+    w.interact(horse);
+    w.ticks(3);
+    // The rider sits on the horse (its seat 1.44375 up, less the player's 0.6).
+    let p = player_pos(&w);
+    assert!((p[1] - (hp[1] + 1.44375 - 0.6)).abs() < 1e-6 && (p[0] - hp[0]).abs() < 1e-6, "seated at {p:?} on {hp:?}");
+    // The rider's client moves the horse.
+    let to = [hp[0] + 1.0, hp[1], hp[2] + 0.5];
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::MoveVehicle { pos: to, rot: [90.0, 0.0], on_ground: true })]));
+    w.ticks(1);
+    let (_, hp2, _) = w.mobs("minecraft:horse")[0];
+    assert_eq!(hp2, to, "the horse went where its rider's client put it");
+    // Sneaking gets the rider off, beside the horse.
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0x20 })]));
+    w.ticks(2);
+    let p = player_pos(&w);
+    assert!(p[1] < hp2[1] + 0.5, "off the horse ({p:?})");
+    // Moves of the horse no longer come from the player.
+    let away = [to[0] + 2.0, to[1], to[2]];
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::MoveVehicle { pos: away, rot: [0.0, 0.0], on_ground: true })]));
+    assert_ne!(w.mobs("minecraft:horse")[0].1, away);
+}
+
+#[test]
+fn wild_horses_throw_riders_until_tamed() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:horse", [1.5, 0.0, 0.0], "{PersistenceRequired:1b}");
+    let horse = w.mobs("minecraft:horse")[0].0;
+    let mut throws = 0;
+    for _ in 0..400 {
+        if nbt_of(&w, "minecraft:horse").get("Tame").and_then(|t| t.as_f64()) == Some(1.0) {
+            break;
+        }
+        let hp = w.mobs("minecraft:horse")[0].1;
+        let p = player_pos(&w);
+        if (p[1] - hp[1]) < 0.5 {
+            // On the ground: walk up to the horse and get on.
+            w.clients[0].pos = [hp[0] - 1.0, hp[1], hp[2]];
+            let pos = w.clients[0].pos;
+            w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: Some(pos), rot: None, on_ground: true })]);
+            w.interact(horse);
+            throws += 1;
+        }
+        w.ticks(5);
+    }
+    let tag = nbt_of(&w, "minecraft:horse");
+    assert_eq!(tag.get("Tame").and_then(|t| t.as_f64()), Some(1.0), "tamed after {throws} rides");
+    assert!(throws >= 1);
+}

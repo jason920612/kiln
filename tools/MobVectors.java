@@ -787,5 +787,40 @@ public class MobVectors {
             s.ticks = 600;
             out.add(s);
         }
+        String[] equines = {"horse", "horse", "donkey", "mule"};
+        for (int i = 0; i < equines.length; i++) {
+            Scenario s = new Scenario("idle_" + equines[i] + "_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:" + equines[i], 0.5, BY, 0.5, 40f * i, 9800L + 13 * i));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = i + 1;
+            s.ticks = 600;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_horse");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:horse", 0.5, BY, 0.5, 0f, 9850));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerSneaking = true;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.hurts.put(40, new double[] {0, 1.0});
+            s.hurts.put(80, new double[] {0, 1.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_horse");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:horse", 0.5, BY, 0.5, 0f, 9860);
+            m.nbt = "{Tame:1b,Temper:40}";
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:golden_carrot";
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 }

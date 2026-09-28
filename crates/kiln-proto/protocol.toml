@@ -181,7 +181,7 @@ set_experience = { status = "implemented", note = "player::set_experience" }
 set_health = { status = "implemented", note = "player::set_health" }
 set_held_slot = { status = "implemented", note = "packets::set_held_slot: saved selected slot on join" }
 set_objective = { status = "implemented", note = "scoreboard::set_objective with number formats" }
-set_passengers = { status = "deferred", note = "vehicles" }
+set_passengers = { status = "implemented", note = "entity::set_passengers" }
 set_player_inventory = { status = "deferred", note = "inventory" }
 set_player_team = { status = "implemented", note = "scoreboard::set_player_team: every method" }
 set_score = { status = "implemented", note = "scoreboard::set_score" }

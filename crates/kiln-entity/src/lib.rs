@@ -25,6 +25,7 @@ pub mod persist;
 pub mod physics;
 pub mod player;
 pub mod projectile;
+pub mod ride;
 pub mod shape;
 pub mod tnt;
 pub mod xp_orb;

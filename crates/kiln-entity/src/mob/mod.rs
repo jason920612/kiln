@@ -1093,6 +1093,11 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if m.no_jump_delay > 0 {
         m.no_jump_delay -= 1;
     }
+    // A mount steered by a player: its client moves it (`canSimulateMovement` is false).
+    let rider = m.kind.ext().and_then(|k| k.controlling_player(e, m, &*level)).and_then(|id| level.player(id));
+    if rider.is_some() {
+        e.delta = e.delta.scale(0.98);
+    }
     let v = e.delta;
     let (mut x, mut y, mut z) = (v.x, v.y, v.z);
     if x.abs() < 0.003 {
@@ -1108,11 +1113,11 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     // `applyInput`.
     m.xxa *= 0.98;
     m.zza *= 0.98;
-    if m.is_dead_or_dying() {
+    if m.is_dead_or_dying() || m.kind.ext().is_some_and(|k| k.is_immobile(m)) {
         m.jumping = false;
         m.xxa = 0.0;
         m.zza = 0.0;
-    } else if !m.no_ai {
+    } else if !m.no_ai && rider.is_none() {
         server_ai_step(e, m, level);
     }
     if m.jumping {
@@ -1131,7 +1136,13 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.no_jump_delay = 0;
     }
     let input = Vec3::new(m.xxa as f64, m.yya as f64, m.zza as f64);
-    if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
+    if let Some(r) = rider {
+        // `travelRidden`: the rider turns the mount; the move comes from the rider's client.
+        if let Some(k) = m.kind.ext() {
+            k.tick_ridden(e, m, level, &r);
+        }
+        e.delta = Vec3::ZERO;
+    } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
         travel(e, m, level, input);
     }
     e.apply_effects_from_blocks(level);
@@ -1457,9 +1468,15 @@ fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
         dz *= f;
         dx *= 0.05000000074505806;
         dz *= 0.05000000074505806;
-        e.delta = e.delta.add(-dx, 0.0, -dz);
-        e.needs_sync = true;
-        if !player && let Some(o) = level.entity_mut(id) {
+        // `Entity.push`: vehicles are not pushed.
+        if e.passengers.is_empty() {
+            e.delta = e.delta.add(-dx, 0.0, -dz);
+            e.needs_sync = true;
+        }
+        if !player
+            && let Some(o) = level.entity_mut(id)
+            && o.passengers.is_empty()
+        {
             o.delta = o.delta.add(dx, 0.0, dz);
             o.needs_sync = true;
         }

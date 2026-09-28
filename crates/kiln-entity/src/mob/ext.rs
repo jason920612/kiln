@@ -407,6 +407,38 @@ pub trait Kind: Sync + Send {
         let _ = m;
         self.info().head.1
     }
+    /// `isImmobile` beyond dying (a grazing or rearing horse): no AI and no input this tick.
+    fn is_immobile(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
+    /// Whether a player riding first steers the mob (`getControllingPassenger` returns the player:
+    /// a saddled horse, a saddled strider when the rider holds a warped fungus on a stick).
+    fn steerable_by(&self, m: &MobData, rider: &crate::level::PlayerView) -> bool {
+        let _ = (m, rider);
+        false
+    }
+    /// `getControllingPassenger` when it is a player: the player's client moves the mob, the
+    /// server runs no AI for it.
+    fn controlling_player(&self, e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<i32> {
+        let first = level.player(*e.passengers.first()?)?;
+        self.steerable_by(m, &first).then_some(first.id)
+    }
+    /// `tickRidden` with the controlling player (rotations follow the rider).
+    fn tick_ridden(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, rider: &crate::level::PlayerView) {
+        let _ = (e, m, level, rider);
+    }
+    /// Equipment beyond the six hand and armor slots, as (`EquipmentSlot` ordinal, stack): a
+    /// horse's saddle (7).
+    fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
+        let _ = m;
+        Vec::new()
+    }
+    /// The items a `TemptGoal` of the type follows.
+    fn tempted_by(&self, item: i32) -> bool {
+        let _ = item;
+        false
+    }
     /// `positionRider` / `getPassengerAttachmentPoint`: where a passenger sits, relative to the
     /// vehicle's position (`None`: vanilla's default, on top of the box).
     fn passenger_offset(&self, e: &Entity, m: &MobData) -> Option<Vec3> {

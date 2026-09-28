@@ -405,6 +405,8 @@ pub enum PlayIn {
     PlayerInput { flags: u8 },
     /// `player_command` action (1 start sprinting, 2 stop sprinting, ...).
     PlayerCommand { action: i32 },
+    /// `player_command` `START_RIDING_JUMP` (action 3) with the jump strength (0 to 100).
+    RidingJump { data: i32 },
     /// A command without its leading `/` (signed commands arrive here too; signatures are ignored).
     ChatCommand { command: String },
     CommandSuggestion { id: i32, text: String },
@@ -588,8 +590,8 @@ pub fn decode_play(id: i32, r: &mut Reader) -> Result<Option<PlayIn>, DecodeErro
         sb::PLAYER_COMMAND => {
             let _entity = r.varint()?;
             let action = r.varint()?;
-            let _data = r.varint()?;
-            PlayIn::PlayerCommand { action }
+            let data = r.varint()?;
+            if action == 3 { PlayIn::RidingJump { data } } else { PlayIn::PlayerCommand { action } }
         }
         sb::CHAT_COMMAND => PlayIn::ChatCommand { command: commands::decode_chat_command(r)? },
         sb::CHAT_COMMAND_SIGNED => PlayIn::ChatCommand { command: commands::decode_chat_command_signed(r)?.command },

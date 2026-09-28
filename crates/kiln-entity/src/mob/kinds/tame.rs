@@ -417,19 +417,26 @@ impl CustomGoal for NonTameRandomTargetGoal {
 pub struct TamableAnimalPanicGoal {
     pub speed: f64,
     pub tag: &'static str,
+    /// The goal's class (`AbstractHorse.MountPanicGoal` is the same `PanicGoal`).
+    pub name: &'static str,
     pos: Vec3,
 }
 
 impl TamableAnimalPanicGoal {
     pub fn new(speed: f64, tag: &'static str) -> TamableAnimalPanicGoal {
-        TamableAnimalPanicGoal { speed, tag, pos: Vec3::ZERO }
+        TamableAnimalPanicGoal { speed, tag, name: "TamableAnimalPanicGoal", pos: Vec3::ZERO }
+    }
+
+    /// A plain `PanicGoal` subclass named `name` (no owner to teleport to).
+    pub fn named(name: &'static str, speed: f64, tag: &'static str) -> TamableAnimalPanicGoal {
+        TamableAnimalPanicGoal { speed, tag, name, pos: Vec3::ZERO }
     }
 }
 
 impl CustomGoal for TamableAnimalPanicGoal {
     custom_goal_boilerplate!();
     fn name(&self) -> &'static str {
-        "TamableAnimalPanicGoal"
+        self.name
     }
     fn flags(&self) -> u8 {
         MOVE

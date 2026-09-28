@@ -63,6 +63,8 @@ pub(crate) struct Entity {
     section: Option<[i32; 3]>,
     /// A mob's entity data and equipment as its viewers last got them.
     meta_sent: Vec<u8>,
+    /// Passengers as viewers last got them (Set Passengers).
+    passengers_sent: Vec<i32>,
     equipment_sent: Vec<(u8, kiln_item::ItemStack)>,
 }
 
@@ -205,6 +207,7 @@ impl Entity {
             seen_by: Vec::new(),
             section: None,
             meta_sent: Vec::new(),
+            passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
         }
     }
@@ -283,6 +286,9 @@ impl Entity {
                 let slots: Vec<(u8, &kiln_item::ItemStack)> = worn.iter().map(|(i, s)| (*i, s)).collect();
                 out.push(crate::players::set_equipment(self.id, &slots));
             }
+        }
+        if !self.phys().passengers.is_empty() {
+            out.push(entity::set_passengers(self.id, &self.phys().passengers));
         }
         out.push(entity::bundle_delimiter());
         out
@@ -591,7 +597,11 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None };
         let env = self.level.env;
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
-        p.hurt(amount, &source, &mut ctx)
+        let hurt = p.hurt(amount, &source, &mut ctx);
+        if hurt && let Some(a) = source.attacker.as_ref().map(|a| a.id) {
+            p.last_hurt_by_mob = Some((a, env.game_time));
+        }
+        hurt
     }
 
     fn ignite(&mut self, id: i32, seconds: f32) {
@@ -634,12 +644,12 @@ pub(crate) fn tick(
     deaths: &mut Vec<health::Death>,
     any_player: bool,
 ) {
-    if entities.list.is_empty() {
+    if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) {
         return;
     }
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
-    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let mut sim = SimLevel {
         level,
         list: &mut entities.list,
@@ -657,36 +667,28 @@ pub(crate) fn tick(
     };
     sim.grid = Grid::build(sim.list);
     for i in 0..sim.list.len() {
-        let e = &mut sim.list[i];
-        if e.removed || !ticking.contains(chunk_of(e.pos)) {
+        // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
+        let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
+        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
             continue;
         }
-        e.age += 1;
-        let Some(mut phys) = e.phys.take() else { continue };
-        (sim.current, sim.seeds) = (phys.id, 0);
-        sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
-        // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
-        // farther apart than the despawn distance, so the region's players decide).
-        if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
-            let p = phys.position();
-            let nearest = sim.views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b));
-            kiln_entity::mob::check_despawn(&mut phys, &sim, nearest.or(any_player.then_some(f64::MAX)));
+        let me = sim.list[i].id;
+        if let Some(phys) = sim.list[i].phys.as_mut()
+            && let Some(v) = phys.vehicle.take()
+            && let Some(j) = sim.index(v)
+            && let Some(vp) = sim.list[j].phys.as_mut()
+        {
+            kiln_entity::ride::remove_passenger(vp, me);
         }
-        if !phys.is_removed() {
-            phys.common_tick();
-            phys.tick(&mut sim);
-        }
-        let e = &mut sim.list[i];
-        e.phys = Some(phys);
-        e.sync();
-        let pos = e.pos;
-        sim.grid.moved(i, pos);
-        let e = &mut sim.list[i];
-        let cell = chunk_of(e.pos).cell();
-        if sim.level.cells.cell(cell).is_some() {
-            e.cell = cell;
+        tick_entity(&mut sim, i, ticking, any_player, None);
+        let passengers = sim.list[i].phys.as_ref().map(|p| p.passengers.clone()).unwrap_or_default();
+        for id in passengers {
+            if let Some(j) = sim.index(id) {
+                tick_entity(&mut sim, j, ticking, any_player, Some(i));
+            }
         }
     }
+    ride_players(&mut sim);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     // Explosion knockback reaches the pushed player's client (it owns its movement).
     for pr in proxies.iter().filter(|e| e.delta != Vec3::ZERO) {
@@ -698,6 +700,143 @@ pub(crate) fn tick(
     }
     for (n, event) in events.into_iter().enumerate() {
         carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
+/// One entity's tick in the entity phase (`tickNonPassenger`, or `tickPassenger` on the
+/// vehicle at index `vehicle`, which has just ticked).
+fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bool, vehicle: Option<usize>) {
+    let e = &mut sim.list[i];
+    if e.removed || !ticking.contains(chunk_of(e.pos)) {
+        return;
+    }
+    e.age += 1;
+    let Some(mut phys) = e.phys.take() else { return };
+    (sim.current, sim.seeds) = (phys.id, 0);
+    sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
+    // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
+    // farther apart than the despawn distance, so the region's players decide).
+    if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
+        let p = phys.position();
+        let nearest = sim.views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b));
+        kiln_entity::mob::check_despawn(&mut phys, &*sim, nearest.or(any_player.then_some(f64::MAX)));
+    }
+    if !phys.is_removed() {
+        phys.common_tick();
+        match vehicle.and_then(|v| sim.list[v].phys.clone()) {
+            Some(v) => kiln_entity::ride::ride_tick(&mut phys, sim, &v),
+            None => phys.tick(sim),
+        }
+    }
+    let e = &mut sim.list[i];
+    e.phys = Some(phys);
+    e.sync();
+    let pos = e.pos;
+    sim.grid.moved(i, pos);
+    let e = &mut sim.list[i];
+    let cell = chunk_of(e.pos).cell();
+    if sim.level.cells.cell(cell).is_some() {
+        e.cell = cell;
+    }
+}
+
+/// `Player.rideTick` for the region's riding players, after the entities ticked: a sneaking
+/// player (or one whose mount is gone or threw it off) gets off at the mount's dismount
+/// location; the others sit where the mount carries them.
+fn ride_players(sim: &mut SimLevel) {
+    let now = sim.level.env.game_time;
+    for k in 0..sim.players.len() {
+        let Some(v) = sim.players[k].vehicle else { continue };
+        let pid = sim.players[k].entity_id;
+        let idx = sim.index(v).filter(|&j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.is_alive()));
+        let seated = idx.is_some_and(|j| sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&pid)));
+        let p = &*sim.players[k];
+        let leave = !seated || p.sneaking || p.dead || p.disconnected;
+        if !leave {
+            let vp = sim.list[idx.unwrap()].phys.as_ref().expect("vehicle state");
+            let at = vp.passengers.iter().position(|&x| x == pid).unwrap_or(0);
+            let pos = kiln_entity::ride::rider_position(vp, at, "minecraft:player", 1.0);
+            let p = &mut *sim.players[k];
+            p.pos = arr(pos);
+            p.fall_distance = 0.0;
+            p.vel = [0.0; 3];
+            continue;
+        }
+        // `stopRiding` → `dismountVehicle`.
+        let mut to = sim.players[k].pos;
+        if let Some(j) = idx {
+            if let Some(vp) = sim.list[j].phys.as_mut() {
+                kiln_entity::ride::remove_passenger(vp, pid);
+            }
+            let vp = sim.list[j].phys.clone().expect("vehicle state");
+            let height = if sim.players[k].sneaking { 1.5 } else { 1.8 };
+            to = arr(kiln_entity::ride::dismount_location(&*sim, &vp, 0.6, height));
+        }
+        let p = &mut *sim.players[k];
+        p.vehicle = None;
+        if !p.disconnected {
+            let rot = p.rot;
+            p.teleport(to, rot, now);
+        }
+    }
+}
+
+/// `ServerGamePacketListenerImpl.handleMoveVehicle`: player `i` moves the mount it steers to
+/// where its client put it (the mount's own tick leaves it still).
+pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player], i: usize, pos: [f64; 3], rot: [f32; 2], on_ground: bool, now: i64) {
+    let p = &*players[i];
+    let Some(v) = p.vehicle else { return };
+    if pos.iter().any(|c| c.is_nan()) || rot.iter().any(|r| !r.is_finite()) {
+        return;
+    }
+    let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
+    let view = view(p, now);
+    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let steers = phys.passengers.first() == Some(&p.entity_id)
+        && kiln_entity::mob::data(phys).is_some_and(|m| m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)));
+    if !steers {
+        return;
+    }
+    // `moved too quickly`: more than 10 blocks from where the mount was.
+    let old = phys.position();
+    let to = Vec3::new(pos[0].clamp(-3.0e7, 3.0e7), pos[1].clamp(-2.0e7, 2.0e7), pos[2].clamp(-3.0e7, 3.0e7));
+    if to.distance_to_sqr(old) - phys.delta.length_sqr() > 100.0 {
+        return;
+    }
+    phys.set_pos(to);
+    phys.y_rot = kiln_entity::mob::mth::wrap_degrees(rot[0]);
+    phys.x_rot = kiln_entity::mob::mth::wrap_degrees(rot[1]);
+    phys.on_ground = on_ground;
+    let yaw = phys.y_rot;
+    if let Some(m) = kiln_entity::mob::data_mut(phys) {
+        m.y_body_rot = yaw;
+        m.y_head_rot = yaw;
+    }
+    let seat = kiln_entity::ride::rider_position(phys, 0, "minecraft:player", 1.0);
+    entities.list[idx].sync();
+    let p = &mut *players[i];
+    p.pos = arr(seat);
+}
+
+/// `handlePlayerCommand(START_RIDING_JUMP)`: the steered mount rears with its jump sound.
+pub(crate) fn riding_jump(entities: &mut Entities, players: &mut [&mut Player], i: usize, data: i32, env: &blocks::BlockEnv) {
+    let Some(v) = players[i].vehicle else { return };
+    if data <= 0 {
+        return;
+    }
+    let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
+    let pid = players[i].entity_id;
+    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    if phys.passengers.first() != Some(&pid) {
+        return;
+    }
+    let at = arr(phys.position());
+    let silent = phys.silent;
+    let Some(m) = kiln_entity::mob::data_mut(phys) else { return };
+    if let Some(sound) = kiln_entity::mob::kinds::horse::start_jump(m)
+        && !silent
+    {
+        send_sound(players, env, 0, at, sound, world_fx::SoundSource::Neutral, 0.4, 1.0);
     }
 }
 
@@ -715,7 +854,7 @@ pub(crate) fn hit_mob(
     let Ok(i) = entities.list.binary_search_by_key(&hit.target, |e| e.id) else { return };
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
-    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x6869_74, hit.target);
     let mut sim = SimLevel {
         level,
@@ -756,6 +895,9 @@ pub(crate) fn hit_mob(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == hit.attacker) {
+        p.last_hurt_mob = Some((hit.target, level.env.game_time));
+    }
     for (n, event) in events.into_iter().enumerate() {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
@@ -801,7 +943,7 @@ pub(crate) fn interact_mob(
     let who = kiln_entity::mob::interact::Interactor { id: players[i].entity_id, creative: players[i].game_mode == 1, sneaking: players[i].sneaking };
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
-    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x696e_74, target);
     let mut sim = SimLevel {
         level,
@@ -850,6 +992,19 @@ pub(crate) fn interact_mob(
                 sim.spawns.push(s);
             }
         }
+    }
+    // `startRiding` (`Entity.canRide`: not sneaking), then `ServerPlayer.startRiding`: the
+    // rider takes the mount's facing and goes to its seat.
+    if out.ride && sim.players[i].vehicle.is_none() && !sim.players[i].sneaking {
+        let pid = sim.players[i].entity_id;
+        let first_is_player = phys.passengers.first().is_some_and(|f| sim.views.iter().any(|v| v.id == *f));
+        kiln_entity::ride::add_passenger(&mut phys, pid, true, first_is_player);
+        let at = phys.passengers.iter().position(|&x| x == pid).unwrap_or(0);
+        let seat = kiln_entity::ride::rider_position(&phys, at, "minecraft:player", 1.0);
+        let now = sim.level.env.game_time;
+        let p = &mut *sim.players[i];
+        p.vehicle = Some(target);
+        p.teleport(arr(seat), [phys.y_rot, phys.x_rot], now);
     }
     let e = &mut sim.list[idx];
     e.phys = Some(phys);
@@ -1013,8 +1168,8 @@ fn loot_drop(env: &blocks::BlockEnv, spawns: &mut Vec<Spawn>, id: i32, table: &s
     }
 }
 
-/// A player as the entities see it.
-fn view(p: &Player) -> PlayerView {
+/// A player as the entities see it (`now`: the game time).
+fn view(p: &Player, now: i64) -> PlayerView {
     use kiln_item::component::EquipmentSlot as S;
     let armor = [S::Feet, S::Legs, S::Chest, S::Head].iter().filter(|s| !p.inv.equipped(**s).is_empty()).count();
     PlayerView {
@@ -1030,12 +1185,12 @@ fn view(p: &Player) -> PlayerView {
         armor_cover: armor as f32 / 4.0,
         main_hand: p.inv.selected_item().item(),
         off_hand: p.inv.equipped(S::OffHand).item(),
-        last_hurt_by_mob: None,
-        last_hurt_by_mob_time: 0,
-        last_hurt_mob: None,
-        last_hurt_mob_time: 0,
-        hurt_recently: false,
-        vehicle: None,
+        last_hurt_by_mob: p.last_hurt_by_mob.filter(|&(_, t)| now - t <= 100).map(|(id, _)| id),
+        last_hurt_by_mob_time: p.last_hurt_by_mob.map_or(0, |(_, t)| t as i32),
+        last_hurt_mob: p.last_hurt_mob.map(|(id, _)| id),
+        last_hurt_mob_time: p.last_hurt_mob.map_or(0, |(_, t)| t as i32),
+        hurt_recently: p.last_hurt_by_mob.is_some_and(|(_, t)| now - t <= 100),
+        vehicle: p.vehicle,
         rot: p.rot,
     }
 }
@@ -1227,6 +1382,12 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
                 }
                 e.equipment_sent = worn;
             }
+        }
+        if let Some(phys) = e.phys.as_ref()
+            && phys.passengers != e.passengers_sent
+        {
+            e.passengers_sent = phys.passengers.clone();
+            packets.push(entity::set_passengers(e.id, &e.passengers_sent));
         }
         // `ServerEntity.sendChanges`: velocity on update ticks when it changed, or at once
         // after an impulse (explosion knockback).

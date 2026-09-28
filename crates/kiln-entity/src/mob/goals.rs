@@ -1140,7 +1140,7 @@ impl MobKind {
             MobKind::Cow => "minecraft:cow_food",
             MobKind::Sheep => "minecraft:sheep_food",
             MobKind::Chicken => "minecraft:chicken_food",
-            _ => return false,
+            _ => return self.ext().is_some_and(|k| k.tempted_by(item)),
         };
         kiln_data::registries::TAGS
             .iter()

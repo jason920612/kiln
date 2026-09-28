@@ -40,13 +40,15 @@ pub struct Outcome {
     pub shear: Option<String>,
     /// The player to play a sound to (`Player.playSound`: the milking sound).
     pub player_sound: Option<&'static str>,
+    /// The player gets on the mob (`startRiding`).
+    pub ride: bool,
 }
 
 impl Outcome {
-    pub const PASS: Outcome = Outcome { success: false, held: HeldChange::None, shear: None, player_sound: None };
+    pub const PASS: Outcome = Outcome { success: false, held: HeldChange::None, shear: None, player_sound: None, ride: false };
 
     pub fn success(held: HeldChange) -> Outcome {
-        Outcome { success: true, held, shear: None, player_sound: None }
+        Outcome { success: true, held, shear: None, player_sound: None, ride: false }
     }
 }
 
@@ -89,7 +91,7 @@ fn mob_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wh
             let ready = matches!(m.species, Species::Sheep { sheared: false, .. }) && !m.baby();
             if !ready {
                 // `CONSUME`: nothing happens, but the click is taken.
-                return Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None };
+                return Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false };
             }
             let table = super::species::shear_table(m);
             level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.sheep.shear", source: "players", volume: 1.0, pitch: 1.0 });
