@@ -1,6 +1,7 @@
 //! Built-in commands with vanilla 26.3's tree shape (checked against the data generator's
 //! `commands.json`) and feedback, plus Kiln's `/kiln`.
 
+mod advancement;
 mod blocks;
 mod bossbar;
 mod chat;
@@ -80,6 +81,8 @@ pub const COMMANDS: &[&str] = &[
     "title",
     "kiln",
     "summon",
+    "advancement",
+    "recipe",
 ];
 
 /// Registers every built-in command.
@@ -126,6 +129,8 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     bossbar::bossbar(d);
     title::title(d);
     server::kiln(d);
+    advancement::advancement(d);
+    advancement::recipe(d);
 }
 
 /// `getEntityOrException`.

@@ -178,13 +178,30 @@ impl Player {
             self.merchant_events.extend(st.drain().into_iter().map(|e| (v, e)));
         }
         let mut took_result = false;
+        let mut crafted_recipes = Vec::new();
         for effect in out {
             if let Some(pkt) = effect.encode() {
                 self.send(pkt);
             }
             match effect {
-                kiln_inventory::Effect::Drop { stack, .. } => spawns.push(self.throw(stack)),
-                kiln_inventory::Effect::Crafted { .. } => took_result = true,
+                kiln_inventory::Effect::Drop { stack, retain_ownership } => {
+                    // `ServerPlayer.drop` with ownership kept: the dropped statistics.
+                    if retain_ownership && !stack.is_empty() {
+                        self.award_stat(crate::player_stats::Stat::item(crate::player_stats::DROPPED, stack.item()), stack.count());
+                        self.award_stat(*crate::player_stats::stat::DROP, 1);
+                    }
+                    spawns.push(self.throw(stack))
+                }
+                kiln_inventory::Effect::Crafted { item, amount, recipe } => {
+                    took_result = true;
+                    self.award_stat(crate::player_stats::Stat::item(crate::player_stats::CRAFTED, item), amount);
+                    if let Some(r) = recipe {
+                        crafted_recipes.push(r);
+                        let id = rules.recipes.id(r).to_owned();
+                        self.recipe_crafted(&id, &[]);
+                    }
+                }
+                kiln_inventory::Effect::InventoryChanged { stack, .. } => self.inventory_changed(&stack),
                 e @ (kiln_inventory::Effect::GrindstoneUsed { .. }
                 | kiln_inventory::Effect::AnvilUsed { .. }
                 | kiln_inventory::Effect::LoomUsed
@@ -192,14 +209,20 @@ impl Player {
                 _ => {}
             }
         }
-        // `FurnaceResultSlot.checkTakeAchievements`: the furnace's experience pops at the player.
+        // `RecipeCraftingHolder.awardUsedRecipes`.
+        if !crafted_recipes.is_empty() {
+            self.award_recipes(rules, &crafted_recipes);
+        }
+        // `FurnaceResultSlot.checkTakeAchievements`: the furnace's experience pops at the player
+        // and its recipes unlock.
         if took_result
             && let Some(OpenBlock::Containers { first, second: None }) = &self.containers.open
             && let Some(c) = containers.as_deref_mut().and_then(|cs| cs.map.get_mut(&first.0))
             && matches!(c.kind, BeKind::Furnace(_))
         {
             let at = self.pos;
-            super::furnace::pop_experience(c, rules, at, &mut self.entity_rng, spawns);
+            let used = super::furnace::pop_experience(c, rules, at, &mut self.entity_rng, spawns);
+            self.award_recipes(rules, &used);
         }
         // Menu changes to a furnace's input restart its cooking right away.
         if let Some(OpenBlock::Containers { first, second: None }) = &self.containers.open
@@ -375,16 +398,23 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
                 openers: vec![pos],
             };
             open_menu(p, level, provider, spawns);
+            p.award_stat(*crate::player_stats::stat::OPEN_ENDERCHEST, 1);
         }
         return Some(true);
     }
     if let Some(provider) = workstation_provider(s, pos) {
         open_menu(p, level, provider, spawns);
+        if let Some(stat) = crate::player_stats::interact_stat(s) {
+            p.award_stat(stat, 1);
+        }
         return Some(true);
     }
     level.blocks.containers.get(pos)?;
     if let Some(provider) = container_provider(level, pos, s) {
         open_menu(p, level, provider, spawns);
+        if let Some(stat) = crate::player_stats::interact_stat(s) {
+            p.award_stat(stat, 1);
+        }
     }
     Some(true)
 }
@@ -762,6 +792,8 @@ fn workstation_effects(p: &mut Player, level: &mut RegionLevel) {
                 }
             }
             kiln_inventory::Effect::Enchanted { levels, seed } => {
+                p.award_stat(*crate::player_stats::stat::ENCHANT_ITEM, 1);
+                p.enchanted_item(&kiln_item::ItemStack::empty(), levels);
                 p.pay_levels(levels);
                 p.containers.enchantment_seed = seed;
                 let pitch = super::pos_random(level, pos, 5).next_float() * 0.1 + 0.9;

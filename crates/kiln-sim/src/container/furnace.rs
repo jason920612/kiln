@@ -262,9 +262,17 @@ fn orb_value(amount: i32) -> i32 {
 
 /// `AbstractFurnaceBlockEntity.getRecipesToAwardAndPopExperience`: the experience of the
 /// recipes used since the last take, as orbs at `at`; the tally clears.
-pub(crate) fn pop_experience(c: &mut ContainerBe, rules: &Rules, at: [f64; 3], rng: &mut dyn kiln_javamath::random::RandomSource, spawns: &mut Vec<crate::entities::Spawn>) {
+pub(crate) fn pop_experience(
+    c: &mut ContainerBe,
+    rules: &Rules,
+    at: [f64; 3],
+    rng: &mut dyn kiln_javamath::random::RandomSource,
+    spawns: &mut Vec<crate::entities::Spawn>,
+) -> Vec<usize> {
+    let mut used = Vec::new();
     for (id, count) in std::mem::take(&mut c.recipes_used) {
         let Some(i) = rules.recipes.index_of(&id) else { continue };
+        used.push(i);
         let Recipe::Cooking(cook) = &rules.recipes.recipes()[i].recipe else { continue };
         // `createExperience`: the fraction rounds up by chance.
         let f = count as f32 * cook.experience;
@@ -276,6 +284,7 @@ pub(crate) fn pop_experience(c: &mut ContainerBe, rules: &Rules, at: [f64; 3], r
         award_experience(at, amount, rng, spawns);
     }
     c.mark_changed();
+    used
 }
 
 /// `ExperienceOrb.award`: `amount` experience as orbs at `at` (merging into orbs nearby is not

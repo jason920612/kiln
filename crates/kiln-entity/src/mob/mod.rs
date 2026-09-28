@@ -1789,6 +1789,14 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     }
     m.dead = true;
     let killed_by_player = m.last_hurt_by_player_memory > 0;
+    level.emit(Event::Killed {
+        entity: e.id,
+        entity_type: e.type_name,
+        credit: m.last_hurt_by_player.filter(|_| killed_by_player),
+        kind: source.kind,
+        attacker: source.attacker,
+        direct: source.direct.or(source.attacker),
+    });
     if !m.baby() && level.mob_drops() {
         level.emit(Event::DeathLoot {
             entity: e.id,

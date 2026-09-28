@@ -47,6 +47,7 @@ pub(crate) fn open_if_requested(entities: &mut Entities, p: &mut Player, target:
     }
     st.open_for = None;
     let offers = st.offers.clone().unwrap_or_default();
+    p.award_stat(*crate::player_stats::stat::TALKED_TO_VILLAGER, 1);
     let (level, xp, profession) = (st.level, st.xp, st.profession);
     // `ServerPlayer.openMenu`: another open screen closes first.
     if let Some(open) = p.open_menu.as_ref() {
@@ -82,6 +83,13 @@ pub(crate) fn apply_events(
         let salt = 0x7472_0000 | n as u64;
         match event {
             MerchantEvent::Trade { index } => {
+                // `TradeTrigger` (the traded item is not known here: item conditions fail).
+                if let Ok(k) = entities.list.binary_search_by_key(&target, |e| e.id)
+                    && let Some(phys) = entities.list[k].phys.as_ref()
+                {
+                    let subject = crate::advancements::triggers::mob_subject(phys, crate::DIMENSIONS[level.env.dim].0);
+                    players[i].traded(&subject, &kiln_item::ItemStack::empty());
+                }
                 let r = entities::with_entity(entities, level, players, target, spawns, deaths, salt, |e, lvl| {
                     villager::with_villager(e, |e, m| {
                         let t = villager::notify_trade(e, m, lvl, index);
@@ -111,7 +119,7 @@ pub(crate) fn apply_events(
                 });
             }
             MerchantEvent::Closed => stop_trading(entities, target),
-            MerchantEvent::TradedStat => {}
+            MerchantEvent::TradedStat => players[i].award_stat(*crate::player_stats::stat::TRADED_WITH_VILLAGER, 1),
         }
     }
 }

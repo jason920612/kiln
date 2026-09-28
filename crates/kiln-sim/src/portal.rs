@@ -1110,6 +1110,8 @@ impl Sim {
         let mut spawns = Vec::new();
         p.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
         info!("{} went from {} to {} at {pos:?}", p.name, DIMENSIONS[from].0, DIMENSIONS[dim].0);
+        // `triggerDimensionChangeTriggers`.
+        p.changed_dimension(DIMENSIONS[from].0, DIMENSIONS[dim].0);
         self.dims[dim].spawns.extend(spawns);
         self.place_player(conn);
     }

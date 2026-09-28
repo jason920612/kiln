@@ -335,3 +335,34 @@ fn enchanting_tables_keep_one_item_and_lapis_apart() {
     // Without bookshelves the costs are low but positive for the first option.
     assert!(p.out.iter().any(|e| matches!(e, Effect::SetData { id: 3, value, .. } if *value == 12345i32 as i16)));
 }
+
+#[test]
+fn the_recipe_book_places_a_recipe_or_asks_for_its_ghost() {
+    use kiln_inventory::place::PostPlace;
+    let rules = rules();
+    let stick = rules.recipes.index_of("test:stick").unwrap();
+    let mut p = Player::new();
+    p.inv.set_item(0, stack("oak_planks", 5));
+    let mut menu = Menu::crafting(1);
+    menu.open(&mut p.env(&rules));
+    // One craft: a plank in the middle column, top two rows of the 3x3 grid.
+    assert_eq!(menu.place_recipe(&mut p.env(&rules), stick, false, false), PostPlace::Nothing);
+    let items = menu.items(&p.env(&rules));
+    assert_eq!((items[2].count(), items[5].count()), (1, 1));
+    assert_eq!(items[0], stack("stick", 4), "the result shows at once");
+    assert_eq!(p.inv.item(0).count(), 3);
+    // Again: one more of each.
+    menu.place_recipe(&mut p.env(&rules), stick, false, false);
+    let items = menu.items(&p.env(&rules));
+    assert_eq!((items[2].count(), items[5].count(), p.inv.item(0).count()), (2, 2, 1));
+    // As many as possible: the grid comes back first, then 2 + 2 (5 planks, pairs).
+    menu.place_recipe(&mut p.env(&rules), stick, true, false);
+    let items = menu.items(&p.env(&rules));
+    assert_eq!((items[2].count(), items[5].count(), p.inv.item(0).count()), (2, 2, 1));
+    // Without planks the grid empties and the client shows the ghost.
+    let mut q = Player::new();
+    q.inv.set_item(0, stack("stone", 1));
+    let mut menu = Menu::crafting(2);
+    menu.open(&mut q.env(&rules));
+    assert_eq!(menu.place_recipe(&mut q.env(&rules), stick, false, false), PostPlace::PlaceGhostRecipe);
+}

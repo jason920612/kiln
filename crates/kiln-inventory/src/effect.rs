@@ -27,7 +27,7 @@ pub enum Effect {
     Equip { slot: EquipmentSlot, old: ItemStack, new: ItemStack },
     /// `ItemStack.onCraftedBy(player, amount)`: the `crafted` statistic (and map post-processing,
     /// already applied through [`crate::World::post_process_map`]).
-    Crafted { item: i32, amount: i32 },
+    Crafted { item: i32, amount: i32, recipe: Option<usize> },
     /// A player inventory slot changed (`InventoryChangeTrigger`, from the menu's slot listener).
     InventoryChanged { slot: usize, stack: ItemStack },
     /// The grindstone's result was taken: experience orbs at the grindstone and its sound

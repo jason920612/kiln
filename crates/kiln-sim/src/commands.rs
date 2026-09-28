@@ -26,7 +26,7 @@ const MAX_SUGGESTION_LEN: usize = 256;
 
 /// Console rendering of a message: in the language file named by `KILN_LANG` (vanilla's
 /// console prints its bundled `en_us`), else translation keys as `key[args]`.
-fn console_text(text: &Text) -> String {
+pub(crate) fn console_text(text: &Text) -> String {
     static LANG: OnceLock<Option<Language>> = OnceLock::new();
     let lang = LANG.get_or_init(|| {
         let path = std::env::var_os("KILN_LANG")?;
@@ -355,7 +355,7 @@ impl Sim {
 
     /// The stack a command starts with: the player where they stand, or the console at the
     /// world spawn (`MinecraftServer.createCommandSourceStack`).
-    fn source_stack(&self, source: CommandSource) -> SourceStack<Sim> {
+    pub(crate) fn source_stack(&self, source: CommandSource) -> SourceStack<Sim> {
         match source {
             CommandSource::Player(conn) => match self.players.get(&conn) {
                 Some(p) => SourceStack::of_entity(PlayerRef::of(conn, p, &self.commands.scoreboard)),
@@ -433,6 +433,14 @@ impl Source for Sim {
 
     fn stack_mut(&mut self) -> &mut SourceStack<Sim> {
         &mut self.commands.stack
+    }
+
+    fn registry_ids(&self, registry: &str) -> Vec<String> {
+        match registry {
+            "minecraft:advancement" => self.advancements.list.iter().map(|a| a.id.clone()).collect(),
+            "minecraft:recipe" => self.rules.recipes.recipes().iter().map(|r| r.id.clone()).collect(),
+            _ => Vec::new(),
+        }
     }
 
     fn player_names(&self) -> Vec<String> {
@@ -681,6 +689,110 @@ impl Host for Sim {
 
     fn max_players(&self) -> usize {
         self.config.max_players
+    }
+
+    fn advancement_name(&self, id: &str) -> Option<Text> {
+        self.advancements.get(id).map(|i| self.advancements.list[i].name())
+    }
+
+    fn advancement_ids(&self) -> Vec<String> {
+        self.advancements.list.iter().map(|a| a.id.clone()).collect()
+    }
+
+    fn advancement_criteria(&self, id: &str) -> Vec<String> {
+        self.advancements.get(id).map_or_else(Vec::new, |i| self.advancements.list[i].criteria.iter().map(|(n, _)| n.clone()).collect())
+    }
+
+    fn advancement_parents(&self, id: &str) -> Vec<String> {
+        let t = &self.advancements;
+        let mut out = Vec::new();
+        let mut at = t.get(id).and_then(|i| t.parent[i]);
+        while let Some(i) = at {
+            out.push(t.list[i].id.clone());
+            at = t.parent[i];
+        }
+        out
+    }
+
+    fn advancement_descendants(&self, id: &str) -> Vec<String> {
+        fn walk(t: &crate::advancements::Advancements, i: usize, out: &mut Vec<String>) {
+            for &c in &t.children[i] {
+                out.push(t.list[c].id.clone());
+                walk(t, c, out);
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(i) = self.advancements.get(id) {
+            walk(&self.advancements, i, &mut out);
+        }
+        out
+    }
+
+    fn change_advancement(&mut self, player: &PlayerRef, id: &str, revoke: bool) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        let pa = &mut p.advancements;
+        let Some(i) = pa.data.get(id) else { return false };
+        let n = pa.data.list[i].criteria.len();
+        if revoke {
+            if !pa.progress[i].has_progress() {
+                return false;
+            }
+            for c in 0..n {
+                pa.revoke(i, c);
+            }
+        } else {
+            if pa.is_done(i) {
+                return false;
+            }
+            let now = crate::advancements::progress::now_millis();
+            for c in 0..n {
+                if !pa.criterion_done(i, c) {
+                    pa.award(i, c, now);
+                }
+            }
+            self.grant_completed(player.conn);
+        }
+        true
+    }
+
+    fn change_criterion(&mut self, player: &PlayerRef, id: &str, criterion: &str, revoke: bool) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        let pa = &mut p.advancements;
+        let Some(i) = pa.data.get(id) else { return false };
+        let Some(c) = pa.data.list[i].criterion_index(criterion) else { return false };
+        if revoke {
+            return pa.revoke(i, c);
+        }
+        let changed = pa.award(i, c, crate::advancements::progress::now_millis());
+        self.grant_completed(player.conn);
+        changed
+    }
+
+    fn flush_advancements(&mut self, player: &PlayerRef, show: bool) {
+        if let Some(p) = self.players.get_mut(&player.conn)
+            && let Some(pkt) = p.advancements.flush(show)
+        {
+            p.send(pkt);
+        }
+    }
+
+    fn kiln_open_recipe_book(&mut self, player: &PlayerRef) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        p.recipe_book.settings[0] = (true, false);
+        let pkt = kiln_inventory::recipe::book::recipe_book_settings(&p.recipe_book.settings);
+        p.send(pkt);
+        true
+    }
+
+    fn recipe_ids(&self) -> Vec<String> {
+        self.rules.recipes.recipes().iter().filter(|r| !r.recipe.is_special()).map(|r| r.id.clone()).collect()
+    }
+
+    fn change_recipes(&mut self, player: &PlayerRef, recipes: &[String], take: bool) -> i32 {
+        let rules = self.rules.clone();
+        let Some(p) = self.players.get_mut(&player.conn) else { return 0 };
+        let idx: Vec<usize> = recipes.iter().filter_map(|id| rules.recipes.index_of(id)).collect();
+        if take { p.reset_recipes(&rules, &idx) } else { p.award_recipes(&rules, &idx) }
     }
 
     fn find_profile(&mut self, name: &str) -> Option<Profile> {

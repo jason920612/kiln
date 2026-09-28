@@ -517,29 +517,31 @@ impl Menu {
         match self.slots[i].kind {
             SlotKind::CraftResult => {
                 if self.remove_count > 0 {
-                    self.on_crafted_by(env, stack, self.remove_count);
+                    self.on_crafted_by(env, stack, self.remove_count, self.result.recipe_used);
                 }
                 self.remove_count = 0;
             }
             SlotKind::FurnaceResult => {
-                self.on_crafted_by(env, stack, self.remove_count);
+                self.on_crafted_by(env, stack, self.remove_count, None);
                 self.remove_count = 0;
             }
             SlotKind::StonecutterResult | SlotKind::SmithingResult => {
                 let n = stack.count();
-                self.on_crafted_by(env, stack, n);
+                self.on_crafted_by(env, stack, n, self.result.recipe_used);
             }
             SlotKind::MerchantResult => {
                 let n = crate::merchant::take_remove_count(self);
-                self.on_crafted_by(env, stack, n);
+                self.on_crafted_by(env, stack, n, None);
             }
             _ => {}
         }
     }
 
-    /// `ItemStack.onCraftedBy(player, amount)`.
-    fn on_crafted_by(&mut self, env: &mut Env, stack: &mut ItemStack, amount: i32) {
-        env.out.push(Effect::Crafted { item: stack.effective_item(), amount });
+    /// `ItemStack.onCraftedBy(player, amount)`, with the recipe `RecipeCraftingHolder`
+    /// awards (crafting, stonecutting and smithing results; furnaces award theirs with the
+    /// experience).
+    fn on_crafted_by(&mut self, env: &mut Env, stack: &mut ItemStack, amount: i32, recipe: Option<usize>) {
+        env.out.push(Effect::Crafted { item: stack.effective_item(), amount, recipe });
         self.crafted_post_process(env, stack);
     }
 

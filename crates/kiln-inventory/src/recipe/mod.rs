@@ -1,6 +1,7 @@
 //! Recipes loaded from a datapack's `data/*/recipe/**.json` and vanilla's matching
 //! (`RecipeManager`, first match in registry order).
 
+pub mod book;
 pub mod crafting;
 pub mod ingredient;
 pub mod input;
@@ -41,10 +42,11 @@ impl Recipe {
         matches!(self, Recipe::Shaped(_) | Recipe::Shapeless(_) | Recipe::Transmute(_) | Recipe::Special(_))
     }
 
-    /// `Recipe.isSpecial`.
+    /// `Recipe.isSpecial` (`CustomRecipe` and brewing recipes).
     pub fn is_special(&self) -> bool {
         match self {
             Recipe::Special(s) => s.is_special(),
+            Recipe::Brewing(_) => true,
             _ => false,
         }
     }
@@ -85,6 +87,8 @@ pub struct RecipeHolder {
     /// `namespace:path`.
     pub id: String,
     pub recipe: Recipe,
+    /// Category, group and notification for the recipe book.
+    pub book: book::BookInfo,
 }
 
 /// A recipe file that did not load (vanilla logs these and skips the recipe).
@@ -108,6 +112,8 @@ pub struct RecipeManager {
     by_id: HashMap<String, usize>,
     /// `RecipeManager.propertySets`, computed on first use.
     sets: std::sync::OnceLock<Vec<sync::PropertySet>>,
+    /// `RecipeManager.allDisplays`, computed on first use.
+    displays: std::sync::OnceLock<book::Displays>,
     /// Files that failed to parse.
     pub errors: Vec<RecipeError>,
 }
@@ -158,9 +164,11 @@ impl RecipeManager {
     pub fn from_json_entries<'a>(entries: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
         let mut m = RecipeManager::default();
         for (id, text) in entries {
-            let parsed = serde_json::from_str::<Json>(text).map_err(|e| e.to_string()).and_then(|v| parse_recipe(&v));
+            let parsed = serde_json::from_str::<Json>(text)
+                .map_err(|e| e.to_string())
+                .and_then(|v| parse_recipe(&v).map(|r| r.map(|r| (book::BookInfo::from_json(&v, &r), r))));
             match parsed {
-                Ok(Some(recipe)) => m.push(id.to_owned(), recipe),
+                Ok(Some((info, recipe))) => m.push_with_book(id.to_owned(), recipe, info),
                 Ok(None) => {}
                 Err(message) => m.errors.push(RecipeError { id: id.to_owned(), message }),
             }
@@ -169,13 +177,28 @@ impl RecipeManager {
     }
 
     pub fn push(&mut self, id: String, recipe: Recipe) {
+        self.push_with_book(id, recipe, book::BookInfo::default());
+    }
+
+    pub fn push_with_book(&mut self, id: String, recipe: Recipe, info: book::BookInfo) {
         let i = self.recipes.len();
         if recipe.is_crafting() {
             self.crafting.push(i);
         }
         self.by_id.insert(id.clone(), i);
-        self.recipes.push(RecipeHolder { id, recipe });
+        self.recipes.push(RecipeHolder { id, recipe, book: info });
         self.sets = std::sync::OnceLock::new();
+        self.displays = std::sync::OnceLock::new();
+    }
+
+    /// The recipe book displays of every recipe (`RecipeManager.allDisplays`).
+    pub fn displays(&self) -> &book::Displays {
+        self.displays.get_or_init(|| book::build(self))
+    }
+
+    /// `getRecipeFromDisplay`: the recipe a display id belongs to.
+    pub fn recipe_of_display(&self, id: i32) -> Option<usize> {
+        self.displays().entries.get(usize::try_from(id).ok()?).map(|e| e.recipe)
     }
 
     /// The recipe property sets (`RecipePropertySet`s): the items furnaces, smithing tables and

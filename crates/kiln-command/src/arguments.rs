@@ -64,6 +64,9 @@ pub enum ArgumentType {
     Time { min: i32 },
     /// `minecraft:resource`: an entry of `registry`.
     Resource { registry: &'static str },
+    /// `minecraft:resource_key`: an id of `registry`, looked up when the command runs (data
+    /// pack registries: advancements, recipes).
+    ResourceKey { registry: &'static str },
     /// `minecraft:block_state`
     BlockState,
     /// `minecraft:block_predicate`
@@ -205,6 +208,7 @@ impl ArgumentType {
             ArgumentType::GameMode => Parser::Plain("minecraft:gamemode"),
             ArgumentType::Time { min } => Parser::Time { min },
             ArgumentType::Resource { registry } => Parser::Registry { id: "minecraft:resource", registry },
+            ArgumentType::ResourceKey { registry } => Parser::Registry { id: "minecraft:resource_key", registry },
             ArgumentType::BlockState => Parser::Plain("minecraft:block_state"),
             ArgumentType::BlockPredicate => Parser::Plain("minecraft:block_predicate"),
             ArgumentType::Swizzle => Parser::Plain("minecraft:swizzle"),
@@ -327,7 +331,7 @@ impl ArgumentType {
             ArgumentType::Rotation => ArgumentValue::Coordinates(Coordinates::parse_rotation(reader)?),
             ArgumentType::ItemStack => ArgumentValue::Item(parse_item(reader)?),
             ArgumentType::Message => ArgumentValue::Message(MessageArg::parse(reader, allow_selectors)?),
-            ArgumentType::ResourceLocation | ArgumentType::Dimension => {
+            ArgumentType::ResourceLocation | ArgumentType::Dimension | ArgumentType::ResourceKey { .. } => {
                 ArgumentValue::Identifier(Identifier::read(reader)?)
             }
             ArgumentType::Resource { registry } => {
@@ -530,6 +534,10 @@ impl ArgumentType {
                 if let Some(entries) = types::registry_entries(registry) {
                     builder.suggest_resources(entries.iter().copied(), "");
                 }
+            }
+            ArgumentType::ResourceKey { registry } => {
+                let ids = source.registry_ids(registry);
+                builder.suggest_resources(ids.iter().map(String::as_str), "");
             }
             ArgumentType::EntityAnchor => builder.suggest_matching(["feet", "eyes"]),
             ArgumentType::GameMode => builder.suggest_matching(GameMode::ALL.map(GameMode::name)),

@@ -316,6 +316,12 @@ impl LootData {
         Function::parse(&Parser { names: &self.names, tags: &self.tags }, &j)
     }
 
+    /// The decoding state for JSON that refers to this data's registries and tags
+    /// (advancement criteria reuse loot conditions and predicates).
+    pub fn parser(&self) -> Parser<'_> {
+        Parser { names: &self.names, tags: &self.tags }
+    }
+
     /// Decodes a predicate (loot condition) from JSON against this data.
     pub fn parse_predicate(&self, json: &str) -> Result<Condition, ParseError> {
         let j = Json::parse(json).map_err(|e| ParseError::new(e.to_string()))?;

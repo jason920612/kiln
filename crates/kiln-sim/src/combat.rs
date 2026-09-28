@@ -458,7 +458,9 @@ impl Player {
         let damage = stack.damage() + amount;
         stack.insert(keys::DAMAGE, damage.clamp(0, stack.max_damage()));
         if damage >= stack.max_damage() {
+            let broken = stack.item();
             stack.shrink(1);
+            self.award_stat(crate::player_stats::Stat::item(crate::player_stats::BROKEN, broken), 1);
             // `LivingEntity.onEquippedItemBroken`: `entityEventForEquipmentBreak`.
             let event = match slot {
                 EquipmentSlot::MainHand => 47,
@@ -745,6 +747,8 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
             if let Some(n) = per_attack
                 && !players[a].inv.selected_item().is_empty()
             {
+                let item = players[a].inv.selected_item().item();
+                players[a].award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
                 players[a].hurt_and_break(EquipmentSlot::MainHand, n, ctx.level_rng.as_mut());
             }
             players[a].exhaust(0.1);
@@ -804,10 +808,14 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     if let Some(n) = per_attack
         && !players[a].inv.selected_item().is_empty()
     {
+        // `ItemStack.hurtEnemy`: a weapon counts as used.
+        let item = players[a].inv.selected_item().item();
+        players[a].award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
         players[a].hurt_and_break(EquipmentSlot::MainHand, n, ctx.level_rng.as_mut());
     }
-    // `damageStatsAndHearts`: heart particles for more than a heart of damage.
+    // `damageStatsAndHearts`: the damage statistic, heart particles for more than a heart.
     let dealt = health_before - players[t].health;
+    players[a].award_stat(*crate::player_stats::stat::DAMAGE_DEALT, (dealt * 10.0).round() as i32);
     if dealt > 2.0 {
         let count = (dealt as f64 * 0.5) as i32;
         let at = [players[t].pos[0], players[t].pos[1] + 0.9, players[t].pos[2]];

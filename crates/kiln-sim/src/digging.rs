@@ -250,6 +250,11 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     }
     let actor = p.actor();
     let drops = !actor.creative && has_correct_tool(stack, state);
+    // `ItemStack.mineBlock`: a tool counts as used.
+    if !actor.creative && stack.get(keys::TOOL).is_some() {
+        let item = stack.item();
+        p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
+    }
     let previous = level.actor.replace(p.conn);
     crate::container::open::player_will_destroy(level, bp, state, actor.creative);
     let removed = interact::player_destroy(level, bp, &actor, drops);
@@ -264,6 +269,7 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     }
     // `Block.playerDestroy`, which runs when the player can harvest the block.
     if removed && drops {
+        p.award_stat(crate::player_stats::Stat::mined(state), 1);
         p.exhaust(0.005);
     }
     actor.creative || removed

@@ -173,6 +173,9 @@ pub enum Event {
         kind: DamageKind,
         on_fire: bool,
     },
+    /// A mob died (`LivingEntity.die`): `credit` is the player the kill counts for
+    /// (`getKillCredit` when it is a player: statistics, kill criteria, advancements).
+    Killed { entity: i32, entity_type: &'static str, credit: Option<i32>, kind: DamageKind, attacker: Option<i32>, direct: Option<i32> },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
     /// A splash potion (`minecraft:` potion id) reached player `target` at `scale` of its full

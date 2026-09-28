@@ -60,8 +60,6 @@ pub(crate) struct Joining {
     /// `respawn.yaw` and `respawn.forced`.
     pub respawn_angle: f32,
     pub respawn_forced: bool,
-    /// `minecraft:time_since_rest` from the statistics file.
-    pub time_since_rest: i32,
     /// The saved level (`Dimension`).
     pub dim: crate::DimId,
     /// `PortalCooldown` and `seenCredits`.
@@ -126,7 +124,6 @@ impl Sim {
                 _ => 0.0,
             },
             respawn_forced: saved.raw().get("respawn").and_then(|r| r.get("forced")).and_then(Tag::as_i64).is_some_and(|f| f != 0),
-            time_since_rest: self.storage.as_ref().map_or(0, |s| crate::sleep::load_time_since_rest(&s.dir, uuid)),
             dim,
             portal_cooldown: saved.raw().get("PortalCooldown").and_then(Tag::as_i64).map_or(0, |c| c as i32),
             seen_credits: saved.raw().get("seenCredits").and_then(Tag::as_i64) == Some(1),
@@ -176,9 +173,6 @@ impl Sim {
                 None => fields.push(("respawn".into(), r)),
             }
         }
-        if let Err(e) = crate::sleep::save_time_since_rest(&storage.dir, p.uuid, p.sleep.time_since_rest) {
-            warn!("failed to save statistics for {}: {e}", p.name);
-        }
         kiln_inventory::persist::save_player_inventory(&p.inv, &p.inv_extra, &mut nbt);
         p.containers.save_into(&mut nbt);
         if let Tag::Compound(fields) = &mut nbt {
@@ -203,7 +197,8 @@ impl Sim {
                     None => fields.push((key.to_owned(), value)),
                 }
             }
-            fields.retain(|(k, _)| k != "active_effects");
+            fields.retain(|(k, _)| k != "active_effects" && k != "recipeBook");
+            fields.push(("recipeBook".to_owned(), p.recipe_book.to_nbt()));
             if let Some(list) = p.effects_nbt() {
                 fields.push(("active_effects".to_owned(), list));
             }
@@ -211,6 +206,8 @@ impl Sim {
         if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
             warn!("failed to save player data for {}: {e}", p.name);
         }
+        self.save_stats(p);
+        self.save_player_advancements(p);
     }
 
     /// Loads the scoreboard and custom boss bars (`data/minecraft/scoreboard.dat`,

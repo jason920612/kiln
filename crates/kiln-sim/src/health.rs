@@ -443,6 +443,8 @@ fn fall_message(fall: &CombatEntry, killer: Option<&Attacker>, victim: &str) -> 
 pub(crate) struct Death {
     pub conn: kiln_link::ConnId,
     pub message: Tag,
+    /// The player credited with the kill (`awardKillScore` in the serial phase).
+    pub killer: Option<String>,
 }
 
 impl Player {
@@ -501,6 +503,7 @@ impl Player {
         if source.is("minecraft:is_fire") && self.has_effect("minecraft:fire_resistance") {
             return false;
         }
+        let health_before = self.health;
         let mut amount = amount;
         if source.scales_with_difficulty() {
             amount = match rules.difficulty {
@@ -541,6 +544,10 @@ impl Player {
         {
             self.kill_credit = Some((a.name.clone(), KILL_CREDIT_TICKS));
         }
+        // `getKillCredit` falls back to the last mob that hurt the player.
+        if let Some(t) = source.attacker.as_ref().and_then(|a| a.mob) {
+            self.last_mob_attacker = Some((t, ctx.game_time));
+        }
         if full {
             // `broadcastDamageEvent` (to viewers in the movement phase) and `markHurt`.
             let damage_event = (source.type_id(), source.attacker.as_ref().map(|a| a.id), source.direct.or(source.attacker.as_ref().map(|a| a.id)));
@@ -558,9 +565,30 @@ impl Player {
                 self.knockback(0.4000000059604645, dx, dz);
             }
         }
+        // `EntityHurtPlayerTrigger` (dealt before armor and effects, taken after).
+        let taken = health_before - self.health;
+        let attacker_view = source.attacker.as_ref().map(|a| a.view.clone());
+        let killer = attacker_view.as_ref().map(|v| crate::advancements::criteria::Subject {
+            type_id: v.type_id,
+            pos: v.pos,
+            dim: crate::DIMENSIONS[self.dim].0,
+            on_ground: v.on_ground,
+            on_fire: v.on_fire,
+            sneaking: v.sneaking,
+            sprinting: v.sprinting,
+            flying: v.flying,
+            baby: false,
+            equipment: Vec::new(),
+            world: None,
+        });
+        self.hurt_trigger("minecraft:entity_hurt_player", killer.as_ref(), amount, taken, source.cause.damage_type());
         if self.health <= 0.0 {
             let death = self.die(ctx);
             ctx.deaths.push(death);
+            // `KilledTrigger` for the killer's side (`entity_killed_player`).
+            if let Some(k) = &killer {
+                self.killed("minecraft:entity_killed_player", k, source.cause.damage_type(), source.direct.is_none());
+            }
         }
         true
     }
@@ -580,6 +608,10 @@ impl Player {
         let before = damage;
         damage = (damage - self.absorption).max(0.0);
         self.absorption = (self.absorption - (before - damage)).max(0.0);
+        let absorbed = before - damage;
+        if absorbed > 0.0 && absorbed < 3.4028235e37 {
+            self.award_stat(*crate::player_stats::stat::DAMAGE_ABSORBED, (absorbed * 10.0).round() as i32);
+        }
         if damage == 0.0 {
             return;
         }
@@ -590,6 +622,9 @@ impl Player {
         };
         self.combat.record(source, fall, ctx.game_time, self.health > 0.0);
         self.health = (self.health - damage).clamp(0.0, self.max_health());
+        if damage < 3.4028235e37 {
+            self.award_stat(*crate::player_stats::stat::DAMAGE_TAKEN, (damage * 10.0).round() as i32);
+        }
     }
 
     /// `LivingEntity.getDamageAfterArmorAbsorb`: armor takes durability damage and reduces the
@@ -627,7 +662,12 @@ impl Player {
             && !source.is("minecraft:bypasses_resistance")
         {
             let factor = 25 - (amplifier + 1) * 5;
+            let before = damage;
             damage = (damage * factor as f32 / 25.0).max(0.0);
+            let resisted = before - damage;
+            if resisted > 0.0 && resisted < 3.4028235e37 {
+                self.award_stat(*crate::player_stats::stat::DAMAGE_RESISTED, (resisted * 10.0).round() as i32);
+            }
         }
         if damage <= 0.0 {
             return 0.0;
@@ -667,6 +707,19 @@ impl Player {
     fn die(&mut self, ctx: &mut DamageCtx) -> Death {
         self.dead = true;
         let credit = self.kill_credit.as_ref().map(|(name, _)| name.clone());
+        // `ServerPlayer.die`: `deathCount`, `killed_by`, the deaths statistic and the timers.
+        self.update_criterion("deathCount", crate::player_stats::ScoreOp::Add(1));
+        let killer_type = if credit.is_some() {
+            Some("minecraft:player")
+        } else {
+            self.last_mob_attacker.filter(|(_, t)| ctx.game_time - t <= 100).map(|(k, _)| k)
+        };
+        if let Some(id) = killer_type.and_then(|k| kiln_item::registry::ENTITY_TYPE.id(k)) {
+            self.award_stat(crate::player_stats::Stat::entity(crate::player_stats::KILLED_BY, id), 1);
+        }
+        self.award_stat(*crate::player_stats::stat::DEATHS, 1);
+        self.reset_stat(*crate::player_stats::stat::TIME_SINCE_DEATH);
+        self.reset_stat(*crate::player_stats::stat::TIME_SINCE_REST);
         let message = self.combat.death_message(&self.name, credit.as_deref());
         self.fall_distance = 0.0;
         self.send(packets::player::player_combat_kill(self.entity_id, &message));
@@ -695,11 +748,9 @@ impl Player {
             crate::container::furnace::award_experience(at, xp, &mut self.entity_rng, ctx.spawns);
         }
         self.died = true;
-        // `resetStat(TIME_SINCE_DEATH)` and `resetStat(TIME_SINCE_REST)`.
-        self.sleep.time_since_rest = 0;
         // `broadcastEntityEvent(DEATH)` reaches the player too.
         self.send(entity::entity_event(self.entity_id, 3));
-        Death { conn: self.conn, message }
+        Death { conn: self.conn, message, killer: credit }
     }
 
     /// Per-tick damage bookkeeping (`ServerPlayer.tick`'s cooldown, `LivingEntity.baseTick`'s
@@ -825,6 +876,10 @@ impl Player {
         }
         if on_ground {
             let fell = self.fall_distance;
+            // `Player.causeFallDamage`: falls of two blocks or more count, except with `mayfly`.
+            if fell >= 2.0 && !matches!(self.game_mode, 1 | 3) {
+                self.award_stat(*crate::player_stats::stat::FALL_ONE_CM, (fell * 100.0).round() as i32);
+            }
             // `LivingEntity.calculateFallDamage`; creative players (`mayfly`) take none.
             let damage = (fell - SAFE_FALL_DISTANCE).floor();
             if damage > 0.0 && self.game_mode != 1 {

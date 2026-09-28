@@ -142,6 +142,9 @@ impl Player {
         let stack = self.inv.item(slot).clone();
         let Some(consumable) = stack.get(keys::CONSUMABLE).cloned() else { return };
         self.consume_particles_and_sounds(&consumable, 16);
+        // `Consumable.onConsume`.
+        self.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, stack.item()), 1);
+        self.consumed(&stack);
         // Listeners: food, then potion contents, then suspicious stew.
         if let Some(food) = stack.get(keys::FOOD) {
             let r = &mut self.entity_rng;

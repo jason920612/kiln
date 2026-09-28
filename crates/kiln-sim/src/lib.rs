@@ -20,6 +20,7 @@
 //! - **L** (parallel): each region streams chunks, runs block ticks, random ticks and block
 //!   events, tracks entities, sends movement and light, and flushes its players' packets.
 
+mod advancements;
 mod blocks;
 mod combat;
 mod commands;
@@ -39,6 +40,8 @@ mod spawner;
 mod movement;
 mod persist;
 mod players;
+pub(crate) mod player_stats;
+mod recipe_book;
 pub(crate) mod portal;
 mod region;
 mod rng;
@@ -358,6 +361,14 @@ struct Player {
     /// (`/spawnpoint`; beds and anchors are not).
     respawn_angle: f32,
     respawn_forced: bool,
+    /// The type of the last mob that hurt the player and when (`getKillCredit`'s fallback).
+    last_mob_attacker: Option<(&'static str, i64)>,
+    /// `ServerStatsCounter`.
+    stats: player_stats::PlayerStats,
+    /// `ServerRecipeBook`.
+    recipe_book: recipe_book::RecipeBook,
+    /// `PlayerAdvancements`.
+    advancements: advancements::progress::PlayerAdvancements,
 }
 
 impl Player {
@@ -422,6 +433,8 @@ impl Player {
         let dropped = if all { std::mem::replace(slot, kiln_item::ItemStack::empty()) } else { slot.split(1) };
         self.inv.times_changed += 1;
         // `drop(stack, false, true)`: the thrower is kept.
+        self.award_stat(player_stats::Stat::item(player_stats::DROPPED, dropped.item()), dropped.count());
+        self.award_stat(*player_stats::stat::DROP, 1);
         let mut spawn = self.throw(dropped);
         if let entities::Body::Item { thrower, .. } = &mut spawn.body {
             *thrower = Some(self.uuid.as_u128());
@@ -729,6 +742,8 @@ pub struct Sim {
     clock_runs: [weather::ClockRun; 2],
     /// Each level's sleeping players (`ServerLevel.sleepStatus`).
     sleep_status: [sleep::SleepStatus; 3],
+    /// Advancements of the enabled data packs.
+    advancements: std::sync::Arc<advancements::Advancements>,
 }
 
 /// Operator names from `KILN_OPS` (comma separated).
@@ -882,6 +897,7 @@ impl Sim {
             zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
             clock_runs: Default::default(),
             sleep_status: Default::default(),
+            advancements: Default::default(),
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -966,6 +982,8 @@ impl Sim {
             self.run_console_command(command.trim_start_matches('/'));
         }
         self.tick_global();
+        self.flush_stat_scores();
+        self.advancement_upkeep();
         // Players teleported in PX or G tick in their destination's region from now on.
         self.settle_teleported();
         lap(&mut self.stats, "global");
@@ -1092,7 +1110,7 @@ impl Sim {
 
     /// The bed a player sleeps in, and its sleep counter and `time_since_rest`.
     pub fn sleep_state(&self, conn: ConnId) -> Option<(Option<[i32; 3]>, i32, i32)> {
-        self.players.get(&conn).map(|p| (p.sleep.pos, p.sleep.counter, p.sleep.time_since_rest))
+        self.players.get(&conn).map(|p| (p.sleep.pos, p.sleep.counter, p.stats.get(*player_stats::stat::TIME_SINCE_REST)))
     }
 
     /// A player's respawn point and level.
@@ -1579,6 +1597,9 @@ impl Sim {
 
     /// Death messages to everyone (`show_death_messages`), in the order the deaths happened.
     fn announce_deaths(&mut self, deaths: Vec<health::Death>) {
+        for d in &deaths {
+            self.award_kill_score(d);
+        }
         if deaths.is_empty() || !self.rule_bool("minecraft:show_death_messages") {
             return;
         }
@@ -1783,6 +1804,8 @@ impl Sim {
                 self.with_level_in(dim, pos, |level| sleep::stop_sleep_in_bed(&mut p, level, true, false));
             }
             self.sleep_status[p.dim].dirty = true;
+            // `PlayerList.remove`.
+            p.award_stat(*player_stats::stat::LEAVE_GAME, 1);
             self.commands.bossbars.player_left(p.uuid);
             self.save_player(&p);
             self.announce_leave(&p, conn);
@@ -1845,6 +1868,8 @@ impl Sim {
         let dim = joining.dim;
         let dimension_type = kiln_data::synced_id("minecraft:dimension_type", DIMENSIONS[dim].0).expect("dimension type");
         let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).expect("spawn chunk loaded");
+        let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
+        recipe_book.retain_existing(&self.rules);
         let mut player = Player {
             dim,
             conn: j.conn,
@@ -1957,10 +1982,14 @@ impl Sim {
             vehicle: None,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
-            sleep: sleep::Sleep { time_since_rest: joining.time_since_rest, ..Default::default() },
+            sleep: sleep::Sleep::default(),
             woke_up: false,
             respawn_angle: joining.respawn_angle,
             respawn_forced: joining.respawn_forced,
+            last_mob_attacker: None,
+            stats: self.load_stats(j.uuid),
+            recipe_book,
+            advancements: self.load_player_advancements(j.uuid),
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -1991,6 +2020,7 @@ impl Sim {
         // `PlayerList.placeNewPlayer`: the saved effects.
         player.send_all_effects();
         player.send(kiln_inventory::recipe::sync::update_recipes(&self.rules.recipes));
+        player.send_initial_recipe_book(&self.rules);
         let rules = self.rules.clone();
         let mut spawns = Vec::new();
         player.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
