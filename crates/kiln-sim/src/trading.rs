@@ -5,8 +5,8 @@
 //! Approximations: vanilla rolls a trade set from a server-wide random sequence
 //! (`minecraft:trade_set/<profession>/level_<n>`, persisted in the world); Kiln seeds each roll
 //! from the world seed, the tick and the villager, so offers do not depend on region order but
-//! differ from vanilla's. Special prices (gossip, Hero of the Village), demand restocking at job
-//! sites and the trade statistics are not simulated.
+//! differ from vanilla's. Special prices (gossip and Hero of the Village) are the villager's
+//! (kiln-entity); demand restocking at job sites and the trade statistics are not simulated.
 
 use crate::entities::{self, Entities, Spawn};
 use crate::{Player, blocks::RegionLevel, health};

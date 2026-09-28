@@ -1762,6 +1762,41 @@ public class MobVectors {
                 out.add(s);
             }
         }
+        // Silverfish: idle ones merge into the stone floor; a hurt one wakes the infested blocks
+        // around it; infested mobs let silverfish out when hit.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("silverfish_idle_" + seed);
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:silverfish", 0.5, BY, 0.5, 30f * seed, 7600 + seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("silverfish_wakes_friends");
+            floor(s, 16, "minecraft:grass_block");
+            for (int x = -3; x <= 3; x++)
+                for (int z = 2; z <= 3; z++) block(s, BX + x, BY, BZ + z, "minecraft:infested_stone");
+            s.mobs.add(new MobSpec("minecraft:silverfish", 0.5, BY, 0.5, 0f, 7610));
+            s.player = new double[] {0.5, BY, -3.5};
+            s.hurts.put(2, new double[] {0, 1});
+            s.ticks = 60;
+            out.add(s);
+        }
+        for (int k = 0; k < 4; k++) {
+            Scenario s = new Scenario("effect_pig_infested_hits_" + k);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 0f, 7630 + k * 17);
+            m.effects.add(new Object[] {"minecraft:infested", 600, 0});
+            m.nbt = "{Health:10f,attributes:[{id:\"minecraft:max_health\",base:40.0d}]}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            for (int t = 2; t < 240; t += 11) s.hurts.put(t, new double[] {0, 0.25});
+            s.ticks = 240;
+            out.add(s);
+        }
         {
             // The end of a cure: a villager with the zombie villager's data takes its place (the
             // villager is brain-driven: compared loosely).

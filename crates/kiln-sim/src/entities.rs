@@ -1586,6 +1586,7 @@ fn view(p: &Player, now: i64) -> PlayerView {
         last_hurt_mob: p.last_hurt_mob.map(|(id, _)| id),
         last_hurt_mob_time: p.last_hurt_mob.map_or(0, |(_, t)| t as i32),
         hurt_recently: p.last_hurt_by_mob.is_some_and(|(_, t)| now - t <= 100),
+        hero_of_the_village: p.effect_amplifier("minecraft:hero_of_the_village"),
         vehicle: p.vehicle,
     }
 }
