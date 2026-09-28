@@ -46,6 +46,11 @@ impl Seed128 {
     pub fn xor(self, lo: i64, hi: i64) -> Self {
         Self { lo: self.lo ^ lo, hi: self.hi ^ hi }
     }
+
+    /// `Seed128bit.mixed`: both halves through [`mix_stafford13`].
+    pub fn mixed(self) -> Self {
+        Self { lo: mix_stafford13(self.lo), hi: mix_stafford13(self.hi) }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -102,6 +107,11 @@ impl XoroshiroRandom {
     /// Uses the 128-bit state as is.
     pub fn from_seed128(seed: Seed128) -> Self {
         Self { rng: Xoroshiro128PlusPlus::new(seed.lo, seed.hi) }
+    }
+
+    /// The current state (`XoroshiroRandomSource.CODEC`: `[lo, hi]`).
+    pub fn state(&self) -> Seed128 {
+        Seed128 { lo: self.rng.lo, hi: self.rng.hi }
     }
 }
 

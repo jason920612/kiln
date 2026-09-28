@@ -22,7 +22,7 @@ const MAX_SIZE: f64 = 59_999_968.0;
 const MAX_CENTER: f64 = 29_999_984.0;
 
 /// `Double.toString`: the shortest repr, plain between 10^-3 and 10^7, else `d.dddE±n`.
-pub(crate) fn java_double(v: f64) -> String {
+pub fn java_double(v: f64) -> String {
     if v.is_nan() {
         return "NaN".into();
     }
@@ -45,7 +45,7 @@ pub(crate) fn java_double(v: f64) -> String {
 }
 
 /// `Float.toString`.
-pub(crate) fn java_float(v: f32) -> String {
+pub fn java_float(v: f32) -> String {
     if v.is_finite() && v != 0.0 {
         let a = v.abs();
         if (1e-3..1e7).contains(&a) {
@@ -62,7 +62,7 @@ pub(crate) fn java_float(v: f32) -> String {
 
 /// `String.format(Locale.ROOT, "%.<digits>f", v)`: Java rounds the shortest decimal repr of
 /// the value half up.
-pub(crate) fn java_fixed(v: f64, digits: usize) -> String {
+pub fn java_fixed(v: f64, digits: usize) -> String {
     if !v.is_finite() {
         return java_double(v);
     }

@@ -19,6 +19,7 @@ mod server;
 mod team;
 mod title;
 mod world;
+pub use world::{java_double, java_fixed, java_float};
 
 use crate::arguments::GameProfileArg;
 use crate::dispatcher::Dispatcher;

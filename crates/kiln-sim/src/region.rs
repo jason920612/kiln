@@ -42,6 +42,12 @@ pub(crate) struct Env {
     /// Id for keep-alives sent this tick.
     pub keep_alive_id: i64,
     pub blocks: blocks::BlockEnv,
+    /// `/tick freeze`: only players tick (`TickRateManager.runsNormally` is false).
+    pub frozen: bool,
+    /// The level's world border, for players outside it.
+    pub border: crate::world_state::BorderBox,
+    /// Force-loaded chunks of the level, which tick without players near.
+    pub forced: std::sync::Arc<Vec<ChunkPos>>,
 }
 
 /// What a region leaves for the next serial phase.
@@ -325,7 +331,7 @@ impl RegionWork<'_> {
     /// The block phases: players' digging, pressure plates under bodies, then scheduled
     /// ticks, random ticks, block events and moving pistons in chunks near players.
     fn tick_blocks(&mut self, env: &Env) {
-        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let ticking = ticking_chunks(&self.players, env);
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
@@ -347,12 +353,15 @@ impl RegionWork<'_> {
             for p in self.players.iter_mut().filter(|p| !p.disconnected) {
                 crate::sleep::tick_player(p, &mut level);
             }
-            blocks::press_plates(&mut level);
-            blocks::tick_blocks(&mut level, &ticking);
-            for pos in std::mem::take(&mut level.out.rechecks) {
-                crate::container::open::recheck_openers(&mut level, &self.players, pos);
+            // A frozen game (`/tick freeze`) ticks no blocks.
+            if !env.frozen {
+                blocks::press_plates(&mut level);
+                blocks::tick_blocks(&mut level, &ticking);
+                for pos in std::mem::take(&mut level.out.rechecks) {
+                    crate::container::open::recheck_openers(&mut level, &self.players, pos);
+                }
+                blocks::tick_pistons(&mut level, &ticking);
             }
-            blocks::tick_pistons(&mut level, &ticking);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         if let Some(h) = self.plugins.as_mut() {
@@ -363,11 +372,15 @@ impl RegionWork<'_> {
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
     fn tick_entities(&mut self, env: &Env) {
+        // `TickRateManager.isEntityFrozen`: nothing but players ticks while frozen.
+        if env.frozen {
+            return;
+        }
         if self.entities.list.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
             self.tick_block_entities(env);
             return;
         }
-        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let ticking = ticking_chunks(&self.players, env);
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         {
@@ -393,7 +406,7 @@ impl RegionWork<'_> {
         if self.blocks.containers.len() == 0 {
             return;
         }
-        let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
+        let ticking = ticking_chunks(&self.players, env);
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         let mut items = crate::container::hopper::EntityItems::new(self.entities);
@@ -469,7 +482,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     tick_connection(p, env);
     p.tick_damage(env.game_time);
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
-    p.base_tick(&block, env.min_y, &mut ctx);
+    p.base_tick(&block, env.min_y, &env.border, &mut ctx);
     // `Entity.handlePortal` (in `baseTick`).
     if let Some(travel) = p.handle_portal(env) {
         t.portals.push(travel);
@@ -494,6 +507,16 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     }
     p.sync_health();
     p.sync_experience();
+    t
+}
+
+/// Chunks that tick: those within the simulation distance of the region's players and the
+/// level's force-loaded chunks.
+fn ticking_chunks(players: &[&mut Player], env: &Env) -> Ticking {
+    let mut t = Ticking::around(players.iter().map(|p| p.center), env.blocks.simulation_distance);
+    for &c in env.forced.iter() {
+        t.add(c);
+    }
     t
 }
 

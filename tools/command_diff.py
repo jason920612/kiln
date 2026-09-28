@@ -38,7 +38,7 @@ UNKNOWN = "Unknown or incomplete command. See below for error"
 # sections that select entities (Kiln has neither). Periodic animal spawns are turned off.
 CASES = r"""
 ! gamerule spawn_mobs false
-!v forceload add -32 -32 47 47
+! forceload add -32 -32 47 47
 ! kill @e[type=!minecraft:player]
 ! fill -16 100 -16 31 113 31 air
 ! fill -16 114 -16 31 127 31 air
@@ -999,6 +999,163 @@ scoreboard objectives remove st_jump
 scoreboard objectives remove st_mined
 scoreboard objectives remove st_deaths
 scoreboard objectives remove st_health
+
+# worldborder
+worldborder get
+worldborder set 100
+worldborder set 100
+worldborder get
+worldborder set 0.5
+worldborder set 60000000
+worldborder set 59999969
+worldborder add 20
+worldborder add -10
+worldborder get
+worldborder set 200 20
+! worldborder set 100
+worldborder add 10 5s
+! worldborder set 100
+worldborder set 50 1d
+! worldborder set 100
+worldborder add -1000
+worldborder center 10 20
+worldborder center 10 20
+worldborder center 10.5 20.25
+worldborder center 30000000 0
+worldborder center -29999985 0
+worldborder center 0 0
+worldborder damage amount 0.5
+worldborder damage amount 0.5
+worldborder damage amount -1
+worldborder damage amount 0.2
+worldborder damage buffer 2.125
+worldborder damage buffer 2.125
+worldborder damage buffer 5
+worldborder warning distance 10
+worldborder warning distance 10
+worldborder warning distance -1
+worldborder warning distance 5
+worldborder warning time 20s
+worldborder warning time 15
+worldborder warning time 15
+worldborder warning time 300
+worldborder
+worldborder set
+execute store result score #b fn run worldborder get
+worldborder set 59999968
+worldborder get
+
+# tick
+tick rate 20
+tick rate 40
+tick rate 0.5
+tick rate 10001
+tick rate 20
+tick step
+tick step stop
+tick sprint stop
+tick freeze
+tick step
+tick step 100
+tick step stop
+tick step stop
+tick step 0
+tick unfreeze
+tick bogus
+
+# forceload
+forceload query
+forceload query 0 0
+forceload query 100 100
+forceload add 100 100
+forceload add 100 100
+forceload query 100 100
+forceload add 96 96 130 130
+forceload query
+forceload remove 100 100
+forceload remove 100 100
+forceload add 0 0 1000 1000
+forceload add 30000000 0
+forceload add -30000001 0
+forceload remove 96 96 130 130
+execute in minecraft:the_nether run forceload query
+execute in minecraft:the_nether run forceload add 0 0
+execute in minecraft:the_nether run forceload query
+execute in minecraft:the_nether run forceload remove all
+forceload query
+
+# random
+random value 1..1
+random value 1..
+random value ..5
+random value 5
+! random reset *
+random reset *
+random reset kiln:a 42 false true
+random value 1..1000 kiln:a
+random value 1..1000 kiln:a
+random roll 1..6 kiln:a
+random reset kiln:b 7 false false
+random value 1..100 kiln:b
+random reset kiln:b 7 false false
+random value 1..100 kiln:b
+random reset * 3 false true
+random value 1..100 kiln:c
+random value -50..50 kiln:c
+random reset *
+random value 1..2147483647 kiln:d
+random reset kiln:bad:id
+random bogus
+
+# locate
+locate biome minecraft:plains
+locate biome #minecraft:is_overworld
+locate biome minecraft:desert
+locate biome #minecraft:is_nether
+locate biome minecraft:nonexistent
+locate structure minecraft:nonexistent
+locate structure #minecraft:nonexistent
+locate poi minecraft:librarian
+! setblock 3 110 3 lectern
+locate poi minecraft:librarian
+locate poi #minecraft:acquirable_job_site
+locate poi minecraft:nonexistent
+! setblock 3 110 3 air
+execute positioned 100 100 100 run locate biome minecraft:plains
+execute in minecraft:the_nether run locate biome minecraft:plains
+
+# fillbiome
+fillbiome 0 100 0 15 110 15 minecraft:desert
+fillbiome 0 100 0 15 110 15 minecraft:desert
+execute if biome 4 104 4 minecraft:desert
+execute if biome 4 96 4 minecraft:desert
+fillbiome 0 100 0 15 110 15 minecraft:plains replace minecraft:desert
+fillbiome 0 100 0 15 110 15 minecraft:plains replace #minecraft:is_ocean
+fillbiome 2 101 2 3 101 3 minecraft:badlands
+fillbiome 0 100 0 15 110 15 minecraft:plains
+fillbiome 0 0 0 1000 10 1000 minecraft:desert
+fillbiome 100000 100 0 100001 100 0 minecraft:desert
+fillbiome 0 100 0 1 100 1 minecraft:nonexistent
+fillbiome 0 400 0 1 400 1 minecraft:desert
+
+# place
+place feature minecraft:nonexistent
+place template minecraft:nonexistent 0 120 0
+place template minecraft:igloo/top 0 120 0 bogus
+place jigsaw minecraft:nonexistent minecraft:x 1
+place jigsaw minecraft:village/plains/town_centers minecraft:x 21
+place structure minecraft:nonexistent
+place template minecraft:igloo/top 100000 120 0
+
+# spreadplayers
+spreadplayers 0 0 1 10 false Diff0
+spreadplayers 0 0 1 10 true Diff0
+spreadplayers 0 0 1 0.5 false Diff0
+spreadplayers 0 0 -1 10 false Diff0
+spreadplayers 0 0 1 10 under -100 false Diff0
+spreadplayers 0 0 1 10 false @e[type=minecraft:pig]
+spreadplayers 0 0 1 10 false
+! tp Diff0 8 160 8 0 0
 """
 
 

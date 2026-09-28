@@ -439,6 +439,7 @@ impl Source for Sim {
         match registry {
             "minecraft:advancement" => self.advancements.list.iter().map(|a| a.id.clone()).collect(),
             "minecraft:recipe" => self.rules.recipes.recipes().iter().map(|r| r.id.clone()).collect(),
+            "minecraft:worldgen/template_pool" => crate::world_state::worldgen_ids("worldgen/template_pool").clone(),
             _ => Vec::new(),
         }
     }
@@ -1111,6 +1112,120 @@ impl Host for Sim {
     /// Kept in memory only (not saved with the world yet).
     fn storage_mut(&mut self) -> Option<&mut kiln_command::CommandStorage> {
         Some(&mut self.commands.storage)
+    }
+
+    // ---- worldborder, tick, forceload, random, locate, place, fillbiome ----
+
+    fn world_border(&mut self, dimension: &str) -> kiln_command::host::BorderInfo {
+        crate::dim_id(dimension).map(|d| self.world.borders[d].info()).unwrap_or_default()
+    }
+
+    fn change_world_border(&mut self, dimension: &str, change: kiln_command::host::BorderChange) {
+        if let Some(d) = crate::dim_id(dimension) {
+            self.change_border(d, change);
+        }
+    }
+
+    fn tick_rate(&self) -> kiln_command::host::TickRateInfo {
+        let mut info = self.world.tick_rate.info();
+        info.tick_times = self.world.tick_times.clone();
+        let n = self.world.tick_index.clamp(1, 100);
+        info.average_tick_nanos = self.world.tick_times.iter().sum::<i64>() / n as i64;
+        info
+    }
+
+    fn change_tick_rate(&mut self, action: kiln_command::host::TickRateAction) -> bool {
+        let mut news = crate::world_state::TickNews::default();
+        let result = self.world.tick_rate.apply(action, &mut news);
+        self.tick_rate_news(news);
+        result
+    }
+
+    fn forced_chunks(&self, dimension: &str) -> Vec<[i32; 2]> {
+        crate::dim_id(dimension).map(|d| self.world.forced[d].iter().copied().collect()).unwrap_or_default()
+    }
+
+    fn set_chunk_forced(&mut self, dimension: &str, chunk: [i32; 2], forced: bool) -> bool {
+        crate::dim_id(dimension).is_some_and(|d| self.set_forced(d, chunk, forced))
+    }
+
+    fn random_between(&mut self, sequence: Option<&Identifier>, min: i32, max: i32) -> i32 {
+        use kiln_javamath::random::RandomSource;
+        let bound = max.wrapping_sub(min).wrapping_add(1);
+        match sequence {
+            Some(id) => {
+                let seed = self.commands.seed;
+                self.world.sequences.get(id.as_str(), seed).next_int_bounded(bound) + min
+            }
+            None => self.level_random_between(min, max),
+        }
+    }
+
+    fn reset_random_sequence(&mut self, id: &Identifier, params: Option<(i32, bool, bool)>) {
+        let seed = self.commands.seed;
+        self.world.sequences.reset(id.as_str(), seed, params);
+    }
+
+    fn clear_random_sequences(&mut self, defaults: Option<(i32, bool, bool)>) -> i32 {
+        self.world.sequences.clear(defaults)
+    }
+
+    fn random_sequence_ids(&self) -> Vec<String> {
+        self.world.sequences.ids()
+    }
+
+    fn broadcast_system_message(&mut self, text: Text) {
+        info!("{}", console_text(&text));
+        self.broadcast(packets::system_chat(text.to_nbt(), false));
+    }
+
+    fn send_failure(&mut self, text: Text) {
+        if self.commands.stack.silent {
+            return;
+        }
+        self.reply(text.color("red"));
+    }
+
+    fn locate_biome(&mut self, dimension: &str, origin: [i32; 3], matches: &dyn Fn(&str) -> bool) -> Option<kiln_command::host::Located> {
+        let d = crate::dim_id(dimension)?;
+        let (pos, id) = Sim::locate_biome(self, d, origin, matches)?;
+        Some(kiln_command::host::Located { pos, id })
+    }
+
+    fn locate_poi(&mut self, dimension: &str, origin: [i32; 3], matches: &dyn Fn(&str) -> bool) -> Option<kiln_command::host::Located> {
+        let d = crate::dim_id(dimension)?;
+        let (pos, id) = Sim::locate_poi(self, d, origin, matches)?;
+        Some(kiln_command::host::Located { pos, id })
+    }
+
+    fn structure_ids(&self) -> Vec<String> {
+        crate::world_state::worldgen_ids("worldgen/structure").clone()
+    }
+
+    fn structure_tag(&self, tag: &str) -> Option<Vec<String>> {
+        crate::world_state::worldgen_tag("worldgen/structure", tag)
+    }
+
+    fn noise_biome(&mut self, dimension: &str, quart: [i32; 3]) -> Option<String> {
+        self.biome(dimension, quart.map(|q| q << 2))
+    }
+
+    fn fill_biome(&mut self, dimension: &str, min: [i32; 3], max: [i32; 3], biome: &str, filter: &dyn Fn(&str) -> bool) -> Option<i32> {
+        let d = crate::dim_id(dimension)?;
+        Sim::fill_biome(self, d, min, max, biome, filter)
+    }
+
+    fn place(&mut self, dimension: &str, what: &kiln_command::host::Placement, pos: [i32; 3]) -> Result<(), CommandError> {
+        use kiln_command::host::Placement;
+        let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
+        match what {
+            Placement::Template { id, rotation, mirror, integrity, seed, strict } => {
+                self.place_template(dim, id.as_str(), pos, *rotation, *mirror, *integrity, *seed, *strict)
+            }
+            Placement::Feature { .. } => Err(CommandError::unsupported("place feature")),
+            Placement::Jigsaw { .. } => Err(CommandError::unsupported("place jigsaw")),
+            Placement::Structure(_) => Err(CommandError::unsupported("place structure")),
+        }
     }
 }
 

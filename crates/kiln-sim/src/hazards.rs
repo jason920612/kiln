@@ -135,7 +135,7 @@ impl Player {
 
     /// `Entity.baseTick` and `LivingEntity.baseTick` for the parts Kiln models: burning, the
     /// void, the on-fire flag, the air supply and the effects. `commonTick` ages the player.
-    pub(crate) fn base_tick(&mut self, block: BlockAt, min_y: i32, ctx: &mut DamageCtx) {
+    pub(crate) fn base_tick(&mut self, block: BlockAt, min_y: i32, border: &crate::world_state::BorderBox, ctx: &mut DamageCtx) {
         self.tick_count += 1;
         let fluids = self.fluids(block);
         if self.fire_ticks > 0 {
@@ -149,6 +149,13 @@ impl Player {
         }
         self.check_void(min_y, ctx);
         self.sync_on_fire_flag();
+        // `LivingEntity.baseTick`: a player outside the world border past its buffer.
+        if self.alive() {
+            let (w, _, _) = self.dimensions();
+            if let Some(amount) = border.damage(self.pos, w as f64 / 2.0) {
+                self.hurt(amount, &Cause::Other("minecraft:outside_border").into(), ctx);
+            }
+        }
         if self.alive() {
             self.tick_air(&fluids, block, ctx);
         }

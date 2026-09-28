@@ -55,6 +55,7 @@ mod sleep;
 mod stats;
 mod trading;
 mod weather;
+mod world_state;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
@@ -150,7 +151,6 @@ impl SimConfig {
     }
 }
 
-const TICK: Duration = Duration::from_millis(50);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(30);
 const OVERWORLD: &str = "minecraft:overworld";
@@ -803,6 +803,8 @@ pub struct Sim {
     plugins: Option<plugins::SimPlugins>,
     /// Independent scheduling state: regions ticking away, their clocks.
     independent: independent::Independent,
+    /// Borders, tick rate, forced chunks and random sequences (the world commands).
+    world: world_state::WorldState,
 }
 
 /// Operator names from `KILN_OPS` (comma separated).
@@ -824,12 +826,24 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return,
             }
         }
+        // `/tick sprint`: ticks run back to back until the sprint is over.
+        let sprinting = sim.world.tick_rate.is_sprinting() && {
+            let mut news = world_state::TickNews::default();
+            let sprint = sim.world.tick_rate.check_sprint(&mut news);
+            sim.tick_rate_news(news);
+            sprint
+        };
         if !sim.step(inbox.drain(..)) {
             return;
         }
+        if sprinting {
+            sim.world.tick_rate.end_tick_work();
+            next_tick = Instant::now();
+            continue;
+        }
 
-        // Fixed 50 ms cadence; if we fell behind, don't try to catch up.
-        next_tick += TICK;
+        // The tick rate's cadence (50 ms by default); if we fell behind, don't try to catch up.
+        next_tick += Duration::from_nanos(sim.world.tick_rate.nanos_per_tick() as u64);
         let now = Instant::now();
         if next_tick > now {
             std::thread::sleep(next_tick - now);
@@ -871,6 +885,8 @@ impl Sim {
         }
         // A native world's store per dimension, shared by its chunks and entities.
         let mut native_stores: Vec<Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>> = Vec::new();
+        // Each level's generation pipeline, for `/locate` and `/place`.
+        let mut pipelines: Vec<Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>> = Vec::new();
         let providers: Vec<ChunkProvider> = (0..DIMENSIONS.len())
             .map(|id| {
                 let (key, biome_name) = DIMENSIONS[id];
@@ -878,6 +894,7 @@ impl Sim {
                 let dimension = Dimension { min_y: kind.min_y, height: kind.height };
                 let biome = kiln_data::synced_id("minecraft:worldgen/biome", biome_name).expect("default biome") as u16;
                 let generator = generator(id);
+                pipelines.push(generator.as_ref().map(|g| g.pipeline().clone()));
                 match &config.world {
                     Some(dir) => {
                         let source: Box<dyn kiln_world::ChunkSource> = if format == Some(kiln_storage::WorldFormat::Native) {
@@ -975,12 +992,14 @@ impl Sim {
             advancements: Default::default(),
             plugins: None,
             independent: Default::default(),
+            world: world_state::WorldState { pipelines, ..Default::default() },
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.load_scoreboard();
         sim.load_weather();
+        sim.load_world_state();
         sim.init_packs(vanilla_pack);
         sim.load_plugins();
         sim
@@ -997,6 +1016,8 @@ impl Sim {
             mark = now;
         };
 
+        // `ServerTickRateManager.tick`: whether the levels run this tick.
+        self.world.tick_rate.tick();
         // B0: connection events, chunks, topology, joins, membership.
         let (mut packets, mut joins, mut console, mut leaves) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for msg in inbox {
@@ -1110,6 +1131,7 @@ impl Sim {
             self.stats.phase(name, d);
         }
 
+        self.record_tick_time(start.elapsed().as_nanos() as i64);
         if let Some(report) = self.stats.record(start.elapsed()) {
             info!(
                 "{} players, {} regions, {} chunks | {report}",
@@ -1456,6 +1478,9 @@ impl Sim {
             keep_alive_id: self.started.elapsed().as_millis() as i64,
             portal: self.portal_rules(),
             blocks: self.block_env(dim),
+            frozen: !self.world.tick_rate.runs_normally(),
+            border: self.world.borders[dim].bounds(),
+            forced: std::sync::Arc::new(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)).collect()),
         }
     }
 
@@ -1616,7 +1641,9 @@ impl Sim {
         // Entities loaded with a chunk have their ids before the chunk can leave again.
         self.materialize_spawns();
         for dim in 0..self.dims.len() {
-            let keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            let mut keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            // Force-loaded chunks (`/forceload`) stay, and load like a player's own chunk.
+            keep.extend(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)));
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
             let unloaded = self.dims[dim].unload(unloads, &keep);
             if !unloaded.is_empty() {
@@ -1799,7 +1826,7 @@ impl Sim {
         };
         let (spawn, spawn_rot, now) = (self.spawn, self.spawn_rot, self.game_time);
         let time = self.time_packet();
-        let weather = self.weather_packets(dim);
+        let weather = self.level_info_packets(dim);
         let rules = self.rules.clone();
         // Viewers in the old level saw the death (or the player walk into the portal): they
         // forget it and get the entity again once tracking re-evaluates it.
@@ -2011,6 +2038,7 @@ impl Sim {
         }
         self.save_level();
         self.save_weather();
+        self.save_world_state();
         self.save_scoreboard();
         self.save_timers();
         self.save_plugins();
@@ -2173,11 +2201,15 @@ impl Sim {
         player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, spawn_yaw, spawn_pitch));
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
+        player.send(self.world.borders[dim].init_packet());
         player.send(self.time_packet());
         // `PlayerList.sendLevelInfo`: the weather of the player's level.
         for pkt in self.weather_packets(player.dim) {
             player.send(pkt);
         }
+        // `ServerTickRateManager.updateJoiningPlayer`.
+        player.send(self.world.tick_rate.state_packet());
+        player.send(self.world.tick_rate.step_packet());
         player.send(packets::set_held_slot(player.inv.selected as i32));
         player.sync_health();
         // `PlayerList.placeNewPlayer`: the saved effects.
@@ -2239,21 +2271,31 @@ impl Sim {
 
     /// G: world age and time, autosave.
     fn tick_global(&mut self) {
-        self.game_time += 1;
-        for d in &mut self.dims {
-            d.game_time = self.game_time;
+        // A frozen game (`/tick freeze`) keeps its time, weather and border; functions run.
+        let normal = self.world.tick_rate.runs_normally();
+        if normal {
+            self.game_time += 1;
+            for d in &mut self.dims {
+                d.game_time = self.game_time;
+            }
         }
         self.tick_functions();
-        self.tick_clocks();
-        if self.game_time % 20 == 0 {
+        if normal {
+            self.tick_clocks();
+        }
+        if normal && self.game_time % 20 == 0 {
             let pkt = self.time_packet();
             self.broadcast(pkt);
         }
-        // The levels' `tick`: the weather, sleeping, then (in the regions) the blocks.
+        // The levels' `tick`: the border, the weather, sleeping, then (in the regions) the
+        // blocks.
         self.update_sleeping();
-        self.tick_weather();
+        if normal {
+            self.tick_borders();
+            self.tick_weather();
+        }
         self.tick_sleep();
-        if self.game_time % AUTOSAVE_TICKS == 0 {
+        if normal && self.game_time % AUTOSAVE_TICKS == 0 {
             self.save();
         }
     }
