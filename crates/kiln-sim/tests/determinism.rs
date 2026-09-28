@@ -272,7 +272,9 @@ fn crowd_windows_do_not_change_the_result() {
 /// depend on the regions or the workers.
 #[test]
 fn plugins_do_not_change_the_result() {
-    let dir = kiln_plugin_host::examples::custom_dir("determinism", &[], &[("spawn-protection", "center = \"520,-504\"")]).expect("example plugins");
+    // Ordered mode: the heartbeat (wall clock) is not in this set; strict mode below has it.
+    let ids = ["chat-format", "counter", "ledger", "spawn-protection"];
+    let dir = kiln_plugin_host::examples::custom_dir("determinism", &ids, &[("spawn-protection", "center = \"520,-504\"")]).expect("example plugins");
     // Wall-clock timeouts are not deterministic (a preempted call runs out of its budget):
     // the budget here is one no call reaches.
     let settings_dir = dir.clone();
@@ -293,6 +295,32 @@ fn plugins_do_not_change_the_result() {
     eprintln!("plugin calls, traps, timeouts at the default budget: {:?}", tight.plugin_stats);
     // Plugins take part in the state: without them the hashes differ.
     assert_ne!(run(400, 1, true, None).hashes, unified.hashes);
+}
+
+/// Strict mode (design §4 notes, §11.5): budgets are fuel, the plugins' clock follows the
+/// tick and their random streams are seeded, so even budgets tight enough that calls run out
+/// give the same result on any layout and worker count. With every example loaded, the
+/// heartbeat's welcome task (a seeded roll and the tick clock in player state) included.
+#[test]
+fn strict_plugins_replay_exactly_with_tight_budgets() {
+    let dir = kiln_plugin_host::examples::custom_dir("determinism-strict", &[], &[("spawn-protection", "center = \"520,-504\"")])
+        .expect("example plugins");
+    for fuel in [2_000_000, 5_000, 2_000] {
+        let settings = kiln_sim::PluginSettings::strict(dir.clone(), fuel);
+        let unified = run_with(400, 1, true, None, Some(settings.clone()));
+        let split = run_with(400, 4, false, Some(5), Some(settings));
+        assert!(split.max_regions >= GROUPS);
+        assert_eq!(split.hashes, unified.hashes, "fuel {fuel}");
+        assert_eq!(split.traffic, unified.traffic, "fuel {fuel}");
+        assert_eq!(split.counted, unified.counted, "fuel {fuel}");
+        let ((_, traps_u, timeouts_u), (calls, traps, timeouts)) = (unified.plugin_stats, split.plugin_stats);
+        assert_eq!((traps, timeouts), (traps_u, timeouts_u), "the same calls ran out of fuel");
+        assert!(calls > 100 && traps == 0, "{:?}", split.plugin_stats);
+        eprintln!("strict, {fuel} fuel per call: calls, traps, timeouts {:?}", split.plugin_stats);
+        if fuel == 2_000 {
+            assert!(timeouts > 0, "a tight budget: some calls run out");
+        }
+    }
 }
 
 /// Players spread over the three levels: some are sent to the nether and the End with

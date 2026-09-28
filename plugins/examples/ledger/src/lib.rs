@@ -8,7 +8,7 @@
 //! instance): moves the live escrow into the balance.
 
 use kiln_plugin_sdk::state::{self, Scope};
-use kiln_plugin_sdk::{ChatEvent, ChatVerdict, CommandSpec, InitInfo, Player, Plugin, Span, export_plugin, text};
+use kiln_plugin_sdk::{ChatEvent, ChatVerdict, CommandSpec, InitInfo, Player, Plugin, Span, export_plugin, text, uuid_string};
 
 fn escrow(uuid: &str) -> String {
     format!("escrow:{uuid}")
@@ -44,11 +44,11 @@ impl Plugin for Ledger {
                 }
             }
             ["claim"] => {
-                let e = state::global_i64(&escrow(&ev.player.uuid));
+                let e = state::global_i64(&escrow(&uuid_string(&ev.player.uuid)));
                 if e > 0 {
                     let bal = state::get_i64(me, "balance");
                     state::put_i64(Scope::Player(ev.player.handle), "balance", bal + e);
-                    state::add(&escrow(&ev.player.uuid), -e);
+                    state::add(&escrow(&uuid_string(&ev.player.uuid)), -e);
                 }
             }
             _ => return ChatVerdict::Pass,
@@ -58,11 +58,11 @@ impl Plugin for Ledger {
 
     fn on_command(p: Option<Player>, _name: String, _args: String) -> Vec<Span> {
         let Some(p) = p else { return Vec::new() };
-        let e = state::global_i64(&escrow(&p.uuid));
+        let e = state::global_i64(&escrow(&uuid_string(&p.uuid)));
         if e > 0 {
             let bal = state::get_i64(Scope::Player(p.handle), "balance");
             state::put_i64(Scope::Player(p.handle), "balance", bal + e);
-            state::add(&escrow(&p.uuid), -e);
+            state::add(&escrow(&uuid_string(&p.uuid)), -e);
         }
         vec![text(&format!("balance {}", state::get_i64(Scope::Player(p.handle), "balance")))]
     }

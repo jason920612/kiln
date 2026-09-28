@@ -5,6 +5,10 @@
 //!   (32x32 chunks, so 4x4 cells of 8x8 chunks);
 //! - `global.bin`: every plugin's global namespace.
 //!
+//! Entity data is not saved here: it travels with the entity ([`EntityData`], which the
+//! embedder keeps in the entity's NBT under `kiln:plugin`), so it follows the entity across
+//! regions, dimensions and chunk saves.
+//!
 //! Data of plugins that are not loaded is kept and written back unchanged.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -13,6 +17,10 @@ use std::path::{Path, PathBuf};
 
 /// One plugin's keys in a namespace.
 pub(crate) type Kv = BTreeMap<String, Vec<u8>>;
+
+/// An entity's plugin data: plugin id, key, value. Keyed by id (not load order) because it is
+/// stored with the entity and outlives any one load of the plugins.
+pub type EntityData = BTreeMap<String, BTreeMap<String, Vec<u8>>>;
 
 /// A namespace's data by plugin (index in load order), plus data of unknown plugins by id.
 #[derive(Clone, Default, Debug, PartialEq, Eq, Hash)]

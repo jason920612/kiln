@@ -45,11 +45,19 @@ fn main() -> Result<()> {
         sim_config.schedule = kiln_sim::ScheduleMode::Independent;
     }
     // KILN_PLUGINS_DIR: WASM plugins (`<dir>/<plugin>/plugin.toml` + `plugin.wasm`);
-    // KILN_PLUGIN_BUDGET_US: time budget of each cancellable plugin call (default 500).
+    // KILN_PLUGIN_BUDGET_US: time budget of each cancellable plugin call (default 500);
+    // KILN_PLUGIN_MODE=strict: fuel budgets (KILN_PLUGIN_FUEL per call), a tick clock and
+    // seeded random streams, for replays.
     if let Some(dir) = std::env::var_os("KILN_PLUGINS_DIR") {
         let mut plugins = kiln_sim::PluginSettings::new(dir);
         if let Some(us) = std::env::var("KILN_PLUGIN_BUDGET_US").ok().and_then(|v| v.parse().ok()) {
             plugins.call_budget = std::time::Duration::from_micros(us);
+        }
+        if std::env::var("KILN_PLUGIN_MODE").is_ok_and(|v| v == "strict") {
+            plugins.mode = kiln_sim::PluginMode::Strict;
+        }
+        if let Some(fuel) = std::env::var("KILN_PLUGIN_FUEL").ok().and_then(|v| v.parse().ok()) {
+            plugins.call_fuel = fuel;
         }
         sim_config.plugins = Some(plugins);
     }

@@ -4,43 +4,69 @@
 //! # Contract
 //!
 //! - Each plugin has one **global** instance ([`PluginRuntime`]), called only from serial
-//!   phases: `init` (command registration), join, leave, plugin commands.
+//!   phases: `init` (command registration), `on-enable`/`on-disable` (hot reload), join,
+//!   leave, plugin commands, global tasks, results and cancellation notices.
 //! - A plugin exporting `region-hooks` has one instance per region ([`RegionPlugins`]),
 //!   bound to the region and never to a thread; the embedder keeps the set in step with the
 //!   regionizer ([`PluginRuntime::sync_regions`], in B0). Instances are replaced at will
-//!   (split, merge, a trap), so guest memory is only a cache.
-//! - Persistent state lives in host-owned namespaces: player, cell and global. A handler
-//!   reaches only the players and the cell its event names (handles are valid for that call
-//!   only) plus a snapshot of its global namespace at most one tick old; it changes the
-//!   global namespace only through typed atomic operations, applied in B0 in an order that
-//!   does not depend on threads or the region layout ([`PluginRuntime::begin_tick`]).
-//! - Writes, operations and messages of a call are buffered and committed only when the call
-//!   returns normally: a trap or a timeout leaves nothing behind.
-//! - Every cancellable call gets its own epoch deadline (default 500 µs). A timeout is a
-//!   strike; three strikes in 60 s demote the plugin to observe-only. A failed or demoted
-//!   fail-closed subscription denies; fail-open carries on.
-//! - Only capabilities the manifest grants are linked; memory is capped at 64 MiB per
-//!   instance; instances come from the pooling allocator.
+//!   (split, merge, reload, a trap), so guest memory is only a cache.
+//! - Persistent state lives in host-owned namespaces: player, cell, entity and global. A
+//!   handler reaches only the players, the cell and the entity its event names (handles are
+//!   valid for that call only and carry the plugin's generation) plus a snapshot of its global
+//!   namespace at most one tick old; it changes the global namespace only through typed atomic
+//!   operations, applied in B0 in an order that does not depend on threads or the region
+//!   layout ([`PluginRuntime::begin_tick`]); their results arrive the next tick.
+//! - Writes, operations, tasks and messages of a call are buffered and committed only when
+//!   the call returns normally: a trap or a timeout leaves nothing behind.
+//! - Tasks (`scheduler`) run in B0: global ones in the global instance, player ones in the
+//!   region instance holding the player, position ones in the region owning the position.
+//! - Hot reload ([`PluginRuntime::reload`]): the new component is compiled off the tick, then
+//!   in B0 the global instance hands a state blob over (`on-disable` → `on-enable`),
+//!   subscriptions and commands switch at once, every instance is replaced, and tasks of the
+//!   old generation are cancelled with a notice to the new one. Owned namespaces stay as
+//!   they are.
 //!
-//! Not in this slice: hot reload, the WASI 0.3 `async-tasks` world, fuel-based strict mode,
-//! entity-scoped state, host-side event filters, per-player rate limits, `.cwasm` caching.
+//! # Budgets and the two execution modes
+//!
+//! - **Ordered** ([`ExecMode::Ordered`], the default): every cancellable call gets a fresh
+//!   wall-clock deadline (epoch interruption, default 500 µs), region instances a wall-clock
+//!   budget per tick. Fast, and deterministic as long as no call runs out of time: a call
+//!   preempted by the OS can time out on one run and not on another.
+//! - **Strict** ([`ExecMode::Strict`]): budgets are fuel (wasm instructions), so whether a
+//!   call runs out does not depend on the machine; `env.now-millis` and WASI's clocks follow
+//!   the tick, WASI's random streams are fixed. Same seed and inputs give the same results
+//!   on any thread count and region layout (for tests and replays).
+//! - In both modes `env.random`, tickets and task handles derive from the seed, the plugin,
+//!   the tick, the acting player and the call's position among that player's calls, never
+//!   from arrival order. Batched calls (observe) take their first player as the source, so
+//!   operations from them are only layout-independent when they commute (`add`).
+//! - A timeout is a strike; three strikes in 1,200 ticks demote the plugin to observe-only. A
+//!   failed or demoted fail-closed subscription denies; fail-open carries on. Running out of
+//!   the per-tick budget of an instance or the acting player's event bucket (a token bucket
+//!   refilled per tick) applies the policy without a strike.
+//! - Only capabilities the manifest grants are linked; memory is capped at 64 MiB per
+//!   instance; instances come from the pooling allocator; compiled components are cached as
+//!   `.cwasm` files.
+//!
+//! Not here: the WASI 0.3 `async-tasks` world.
 
+mod cache;
 pub mod examples;
 mod host;
 pub mod manifest;
 mod ns;
 
-pub use manifest::{Capability, EventKind, FailPolicy, Manifest};
-pub use ns::{CellKey, GlobalValue};
+pub use manifest::{Area, Capability, EventKind, FailPolicy, Filter, Manifest};
+pub use ns::{CellKey, EntityData, GlobalValue};
 
-use anyhow::{Context, Result};
-use host::{GlobalGuest, GlobalIndices, Pre, RegionGuest, RegionIndices, wit};
+use anyhow::{Context, Result, bail};
+use host::{Frame, GlobalGuest, GlobalIndices, HostState, NewTask, Pre, RegionGuest, RegionIndices, wit};
 use ns::{CellTable, Globals, Ns, Persist};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 use tracing::{info, warn};
 use wasmtime::{Engine, Store};
 
@@ -53,12 +79,24 @@ pub struct Span {
     pub italic: bool,
 }
 
+impl Span {
+    pub fn colored(text: impl Into<String>, color: &str) -> Span {
+        Span { text: text.into(), color: Some(color.to_owned()), bold: false, italic: false }
+    }
+}
+
 /// The player an event is about.
 #[derive(Clone, Copy, Debug)]
 pub struct Actor<'a> {
     pub uuid: u128,
     pub name: &'a str,
     pub operator: bool,
+}
+
+impl Actor<'_> {
+    fn permission(&self) -> u8 {
+        if self.operator { 4 } else { 0 }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,23 +122,125 @@ pub struct Outgoing {
 }
 
 /// A command a plugin registered.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CommandReg {
     pub plugin: usize,
     pub name: String,
     pub permission: u8,
 }
 
+/// Registries whose per-run ids cross the boundary.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegistryKind {
+    Level,
+    Block,
+    Item,
+    EntityType,
+}
+
+/// Members (ids) of a tag, e.g. `(Block, "minecraft:logs")`.
+pub type TagResolver = dyn Fn(RegistryKind, &str) -> Option<Vec<u32>> + Send + Sync;
+
+/// The embedder's registries: keys by per-run id, and tags for manifest filters.
+pub struct Registries {
+    pub levels: Vec<String>,
+    pub blocks: Vec<String>,
+    pub items: Vec<String>,
+    pub entity_types: Vec<String>,
+    pub tags: Option<Arc<TagResolver>>,
+    index: OnceLock<[HashMap<String, u32>; 4]>,
+}
+
+impl Default for Registries {
+    fn default() -> Self {
+        let levels = ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"].map(String::from).to_vec();
+        Registries::new(levels, Vec::new(), Vec::new(), Vec::new())
+    }
+}
+
+impl Registries {
+    pub fn new(levels: Vec<String>, blocks: Vec<String>, items: Vec<String>, entity_types: Vec<String>) -> Self {
+        Registries { levels, blocks, items, entity_types, tags: None, index: OnceLock::new() }
+    }
+
+    pub fn with_tags(mut self, tags: Arc<TagResolver>) -> Self {
+        self.tags = Some(tags);
+        self
+    }
+
+    pub fn list(&self, k: RegistryKind) -> &[String] {
+        match k {
+            RegistryKind::Level => &self.levels,
+            RegistryKind::Block => &self.blocks,
+            RegistryKind::Item => &self.items,
+            RegistryKind::EntityType => &self.entity_types,
+        }
+    }
+
+    pub fn id(&self, k: RegistryKind, key: &str) -> Option<u32> {
+        let index = self.index.get_or_init(|| {
+            [RegistryKind::Level, RegistryKind::Block, RegistryKind::Item, RegistryKind::EntityType]
+                .map(|k| self.list(k).iter().enumerate().map(|(i, s)| (s.clone(), i as u32)).collect())
+        });
+        let key = if key.contains(':') { std::borrow::Cow::Borrowed(key) } else { std::borrow::Cow::Owned(format!("minecraft:{key}")) };
+        index[k as usize].get(key.as_ref()).copied()
+    }
+
+    /// A membership table of keys and `#tags` (unknown ones are reported and ignored).
+    fn resolve(&self, k: RegistryKind, names: &[String], plugin: &str) -> Vec<bool> {
+        let mut set = vec![false; self.list(k).len()];
+        for n in names {
+            let ids = match n.strip_prefix('#') {
+                Some(tag) => self.tags.as_ref().and_then(|t| t(k, tag)),
+                None => self.id(k, n).map(|i| vec![i]),
+            };
+            match ids {
+                Some(ids) => {
+                    for i in ids {
+                        if let Some(s) = set.get_mut(i as usize) {
+                            *s = true;
+                        }
+                    }
+                }
+                None => warn!("plugin {plugin}: filter `{n}` names nothing"),
+            }
+        }
+        set
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ExecMode {
+    /// Wall-clock deadlines: see the crate docs.
+    #[default]
+    Ordered,
+    /// Fuel budgets, a tick clock and fixed random streams: see the crate docs.
+    Strict,
+}
+
 pub struct RuntimeConfig {
     /// Namespace files (`<world>/kiln/plugins`); nothing is saved when `None`.
     pub data_dir: Option<PathBuf>,
-    /// Level keys by dimension index.
-    pub levels: Vec<String>,
+    /// Compiled components (`.cwasm`); compiled every time when `None`.
+    pub cache_dir: Option<PathBuf>,
+    pub registries: Arc<Registries>,
     pub spawn: [i32; 3],
-    /// Fresh time budget of each cancellable call.
+    pub mode: ExecMode,
+    /// Seed of `env.random`, tickets and task handles.
+    pub seed: u64,
+    /// Ordered mode: fresh time budget of each cancellable call.
     pub call_budget: Duration,
-    /// Epoch ticker period.
+    /// Ordered mode: time budget of each region instance per tick.
+    pub tick_budget: Duration,
+    /// Epoch ticker period (ordered mode).
     pub epoch_tick: Duration,
+    /// Strict mode: fresh fuel of each call, and fuel of each region instance per tick.
+    pub call_fuel: u64,
+    pub tick_fuel: u64,
+    /// Per-player token bucket of cancellable events: capacity, and refill per second (20
+    /// ticks); `0` per second turns the limit off.
+    pub player_burst: u32,
+    pub player_events_per_second: u32,
     /// Pooling allocator slots (component instances); `0` uses on-demand allocation.
     pub pool_instances: u32,
 }
@@ -109,10 +249,18 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         RuntimeConfig {
             data_dir: None,
-            levels: vec!["minecraft:overworld".into(), "minecraft:the_nether".into(), "minecraft:the_end".into()],
+            cache_dir: None,
+            registries: Arc::new(Registries::default()),
             spawn: [0, 64, 0],
+            mode: ExecMode::Ordered,
+            seed: 0,
             call_budget: Duration::from_micros(500),
+            tick_budget: Duration::from_millis(10),
             epoch_tick: Duration::from_micros(250),
+            call_fuel: 2_000_000,
+            tick_fuel: 100_000_000,
+            player_burst: 64,
+            player_events_per_second: 80,
             pool_instances: 512,
         }
     }
@@ -125,136 +273,367 @@ pub struct Stats {
     pub traps: AtomicU64,
     pub timeouts: AtomicU64,
     pub instantiations: AtomicU64,
+    /// Events a player's bucket or an instance's tick budget kept from plugins.
+    pub rate_limited: AtomicU64,
+    pub budget_exhausted: AtomicU64,
+    pub tasks_run: AtomicU64,
+    pub tasks_cancelled: AtomicU64,
+    pub results_delivered: AtomicU64,
+    pub reloads: AtomicU64,
+    pub cache_hits: AtomicU64,
+}
+
+fn load(a: &AtomicU64) -> u64 {
+    a.load(Ordering::Relaxed)
+}
+
+impl Stats {
+    pub fn get(&self) -> [(&'static str, u64); 11] {
+        [
+            ("calls", load(&self.calls)),
+            ("traps", load(&self.traps)),
+            ("timeouts", load(&self.timeouts)),
+            ("instantiations", load(&self.instantiations)),
+            ("rate-limited", load(&self.rate_limited)),
+            ("budget-exhausted", load(&self.budget_exhausted)),
+            ("tasks-run", load(&self.tasks_run)),
+            ("tasks-cancelled", load(&self.tasks_cancelled)),
+            ("results", load(&self.results_delivered)),
+            ("reloads", load(&self.reloads)),
+            ("cache-hits", load(&self.cache_hits)),
+        ]
+    }
 }
 
 struct Health {
-    strikes: VecDeque<Instant>,
-    demoted: bool,
+    /// Ticks of recent strikes.
+    strikes: Mutex<VecDeque<u64>>,
+    demoted: AtomicBool,
 }
 
 const STRIKES: usize = 3;
-const STRIKE_WINDOW: Duration = Duration::from_secs(60);
+/// 60 s of ticks.
+const STRIKE_WINDOW: u64 = 1200;
 
 /// A queued atomic operation of a non-global context.
 struct Pending {
     tick: u64,
     source: u128,
     plugin: usize,
+    generation: u32,
+    ticket: u64,
     op: wit::AtomicOp,
+}
+
+/// An operation's outcome waiting for delivery.
+struct Delivery {
+    plugin: usize,
+    generation: u32,
+    source: u128,
+    result: wit::OpResult,
+}
+
+/// Where a task runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TaskTarget {
+    Global,
+    Player(u128),
+    /// Level id, block x, block z.
+    Position(u32, i32, i32),
+}
+
+/// A scheduled task. Tasks due the same tick run in (scheduling tick, source, call order).
+#[derive(Clone, Debug, Hash)]
+struct Task {
+    plugin: usize,
+    generation: u32,
+    handle: u64,
+    id: u64,
+    target: TaskTarget,
+    due: u64,
+}
+
+type TaskKey = (u64, u64, u128, u32, u32);
+
+#[derive(Default)]
+struct Tasks {
+    table: BTreeMap<TaskKey, Task>,
+    by_handle: HashMap<(usize, u64), TaskKey>,
+    /// Committed this tick, not yet in the table.
+    fresh: Vec<(TaskKey, Task)>,
+    cancels: Vec<(usize, u64)>,
+}
+
+/// Per-player token bucket, in 1/20 event units (refilled per tick).
+#[derive(Clone, Copy)]
+struct Bucket {
+    units: u64,
+    tick: u64,
 }
 
 /// State every instance of every plugin reaches (behind short locks; regions touch
 /// disjoint players and cells).
 pub(crate) struct Shared {
     tick: AtomicU64,
+    pub(crate) strict: bool,
+    pub(crate) seed: u64,
+    pub(crate) registries: Arc<Registries>,
     pub(crate) players: Mutex<HashMap<u128, Ns>>,
     pub(crate) cells: Mutex<CellTable>,
     pub(crate) globals: Mutex<Globals>,
     globals_dirty: AtomicBool,
-    snapshot: Mutex<Arc<Globals>>,
+    pub(crate) snapshot: Mutex<Arc<Globals>>,
     pending: Mutex<Vec<Pending>>,
+    deliveries: Mutex<Vec<Delivery>>,
+    tasks: Mutex<Tasks>,
     outbox: Mutex<Vec<(u64, u128, Outgoing)>>,
-    health: Vec<Mutex<Health>>,
-    pub(crate) next_ticket: AtomicU64,
-    serial: AtomicU64,
+    health: Vec<Health>,
+    /// Plugins subscribed to op-results (by index; updated by reloads).
+    wants_results: Vec<AtomicBool>,
+    /// Calls per source this tick (deterministic ids).
+    seqs: Mutex<HashMap<u128, u32>>,
+    buckets: Mutex<HashMap<u128, Bucket>>,
+    /// Epoch ticks so far (ordered mode's clock for per-tick budgets).
+    epoch: Arc<AtomicU64>,
     persist: Option<Persist>,
     pub stats: Stats,
 }
 
 impl Shared {
-    fn frame(&self, global_ctx: bool, source: u128, players: Vec<u128>, cells: Vec<CellKey>) -> host::Frame {
-        if let Some(p) = &self.persist
-            && !cells.is_empty()
-        {
-            let mut table = self.cells.lock().unwrap();
-            for &c in &cells {
-                p.ensure_cell(&mut table, c);
-            }
-        }
-        // 47 bits of serial: handles are (serial << 16) | index.
-        let serial = (self.serial.fetch_add(1, Ordering::Relaxed) + 1) & ((1 << 47) - 1);
-        host::Frame {
-            serial,
-            global_ctx,
-            source,
-            players,
-            cells,
-            snapshot: self.snapshot.lock().unwrap().clone(),
-            writes: Vec::new(),
-            ops: Vec::new(),
-            messages: Vec::new(),
+    pub(crate) fn next_seq(&self, source: u128) -> u32 {
+        let mut s = self.seqs.lock().unwrap();
+        let e = s.entry(source).or_insert(0);
+        *e += 1;
+        *e
+    }
+
+    /// Loads the sidecar holding `cell` (once), when namespaces are persisted.
+    pub(crate) fn ensure_cell(&self, table: &mut CellTable, cell: CellKey) {
+        if let Some(p) = &self.persist {
+            p.ensure_cell(table, cell);
         }
     }
 
-    /// Makes a call's buffered effects real (the call returned normally).
-    fn commit(&self, plugin: usize, f: host::Frame) {
+    pub(crate) fn now_millis(&self) -> u64 {
+        if self.strict {
+            1_600_000_000_000 + self.tick() * 50
+        } else {
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64)
+        }
+    }
+
+    pub(crate) fn task_pending(&self, plugin: usize, handle: u64) -> bool {
+        let t = self.tasks.lock().unwrap();
+        t.by_handle.contains_key(&(plugin, handle)) && !t.cancels.contains(&(plugin, handle))
+            || t.fresh.iter().any(|(_, x)| x.plugin == plugin && x.handle == handle)
+    }
+
+    /// Makes a call's buffered effects real (the call returned normally). Entity writes go
+    /// into the frame's entities, which the caller hands back.
+    fn commit(&self, plugin: usize, generation: u32, id: &str, f: &mut Frame) {
         if !f.writes.is_empty() {
-            let mut players = self.players.lock().unwrap();
-            let mut cells = self.cells.lock().unwrap();
-            for (target, key, val) in f.writes {
+            let mut players = None;
+            let mut cells = None;
+            for (target, key, val) in f.writes.drain(..) {
                 match target {
-                    host::Target::Player(u) => players.entry(u).or_default().put(plugin, key, val),
-                    host::Target::Cell(c) => cells.cells.entry(c).or_default().put(plugin, key, val),
+                    host::Target::Player(u) => {
+                        players.get_or_insert_with(|| self.players.lock().unwrap()).entry(u).or_default().put(plugin, key, val)
+                    }
+                    host::Target::Cell(c) => {
+                        let table = cells.get_or_insert_with(|| self.cells.lock().unwrap());
+                        // The sidecar first, so that a write does not hide the saved data.
+                        self.ensure_cell(table, c);
+                        table.cells.entry(c).or_default().put(plugin, key, val)
+                    }
+                    host::Target::Entity(i) => {
+                        let data = &mut f.entities[i].1;
+                        match val {
+                            Some(v) => drop(data.entry(id.to_owned()).or_default().insert(key, v)),
+                            None => {
+                                if let Some(kv) = data.get_mut(id) {
+                                    kv.remove(&key);
+                                    if kv.is_empty() {
+                                        data.remove(id);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
+        let tick = self.tick();
         if !f.ops.is_empty() {
             if f.global_ctx {
+                let wants = self.wants_results[plugin].load(Ordering::Relaxed);
                 let mut g = self.globals.lock().unwrap();
-                for op in f.ops {
-                    apply_op(g.entry(plugin), op);
+                let mut out = Vec::new();
+                for (ticket, op) in f.ops.drain(..) {
+                    let r = apply_op(g.entry(plugin), ticket, op);
+                    if wants {
+                        out.push(Delivery { plugin, generation, source: f.source, result: r });
+                    }
                 }
+                drop(g);
+                self.deliveries.lock().unwrap().extend(out);
                 self.globals_dirty.store(true, Ordering::Relaxed);
             } else {
-                let tick = self.tick.load(Ordering::Relaxed);
                 let mut pending = self.pending.lock().unwrap();
-                pending.extend(f.ops.into_iter().map(|op| Pending { tick, source: f.source, plugin, op }));
+                pending.extend(f.ops.drain(..).map(|(ticket, op)| Pending { tick, source: f.source, plugin, generation, ticket, op }));
             }
         }
+        if !f.tasks.is_empty() || !f.cancels.is_empty() {
+            let mut t = self.tasks.lock().unwrap();
+            for NewTask { handle, id, target, delay, order } in f.tasks.drain(..) {
+                let due = tick + delay as u64;
+                let key = (due, tick, f.source, order.0, order.1);
+                t.fresh.push((key, Task { plugin, generation, handle, id, target, due }));
+            }
+            t.cancels.extend(f.cancels.drain(..).map(|h| (plugin, h)));
+        }
         if !f.messages.is_empty() {
-            let tick = self.tick.load(Ordering::Relaxed);
             let mut out = self.outbox.lock().unwrap();
-            out.extend(f.messages.into_iter().map(|(to, text)| (tick, f.source, Outgoing { to, text })));
+            out.extend(f.messages.drain(..).map(|(to, text)| (tick, f.source, Outgoing { to, text })));
         }
     }
 
     fn demoted(&self, plugin: usize) -> bool {
-        self.health[plugin].lock().unwrap().demoted
+        self.health[plugin].demoted.load(Ordering::Relaxed)
     }
 
     fn strike(&self, plugin: usize, id: &str) {
-        let now = Instant::now();
-        let mut h = self.health[plugin].lock().unwrap();
-        h.strikes.push_back(now);
-        while h.strikes.front().is_some_and(|t| now.duration_since(*t) > STRIKE_WINDOW) {
-            h.strikes.pop_front();
+        let now = self.tick();
+        let mut s = self.health[plugin].strikes.lock().unwrap();
+        s.push_back(now);
+        while s.front().is_some_and(|t| now - *t > STRIKE_WINDOW) {
+            s.pop_front();
         }
-        if h.strikes.len() >= STRIKES && !h.demoted {
-            h.demoted = true;
-            warn!("plugin {id}: {STRIKES} calls over budget within {}s, demoted to observe-only", STRIKE_WINDOW.as_secs());
+        if s.len() >= STRIKES && !self.health[plugin].demoted.swap(true, Ordering::Relaxed) {
+            warn!("plugin {id}: {STRIKES} calls over budget within {STRIKE_WINDOW} ticks, demoted to observe-only");
+        }
+    }
+
+    /// Takes one event from the player's bucket; false when it is empty.
+    fn take_token(&self, uuid: u128, burst: u32, per_second: u32) -> bool {
+        if per_second == 0 {
+            return true;
+        }
+        let tick = self.tick();
+        let cap = burst as u64 * 20;
+        let mut b = self.buckets.lock().unwrap();
+        let bucket = b.entry(uuid).or_insert(Bucket { units: cap, tick });
+        bucket.units = (bucket.units + (tick - bucket.tick) * per_second as u64).min(cap);
+        bucket.tick = tick;
+        if bucket.units >= 20 {
+            bucket.units -= 20;
+            true
+        } else {
+            false
         }
     }
 }
 
 /// Applies a typed atomic operation; a type mismatch or a failed comparison changes nothing.
-fn apply_op(ns: &mut std::collections::BTreeMap<String, GlobalValue>, op: wit::AtomicOp) {
-    match op {
-        wit::AtomicOp::Add((key, delta)) => match ns.get_mut(&key) {
-            Some(GlobalValue::Int(v)) => *v = v.wrapping_add(delta),
-            Some(GlobalValue::Bytes(_)) => {}
-            None => drop(ns.insert(key, GlobalValue::Int(delta))),
-        },
+fn apply_op(ns: &mut BTreeMap<String, GlobalValue>, ticket: u64, op: wit::AtomicOp) -> wit::OpResult {
+    let (key, applied) = match op {
+        wit::AtomicOp::Add((key, delta)) => {
+            let applied = match ns.get_mut(&key) {
+                Some(GlobalValue::Int(v)) => {
+                    *v = v.wrapping_add(delta);
+                    true
+                }
+                Some(GlobalValue::Bytes(_)) => false,
+                None => {
+                    ns.insert(key.clone(), GlobalValue::Int(delta));
+                    true
+                }
+            };
+            (key, applied)
+        }
         wit::AtomicOp::CompareAndSet(c) => {
             let expected = c.expected.map(host::from_wit_value);
-            if ns.get(&c.key) == expected.as_ref() {
-                ns.insert(c.key, host::from_wit_value(c.new));
+            let applied = ns.get(&c.key) == expected.as_ref();
+            if applied {
+                ns.insert(c.key.clone(), host::from_wit_value(c.new));
+            }
+            (c.key, applied)
+        }
+        wit::AtomicOp::Append((key, bytes)) => {
+            let applied = match ns.get_mut(&key) {
+                Some(GlobalValue::Bytes(v)) => {
+                    v.extend_from_slice(&bytes);
+                    true
+                }
+                Some(GlobalValue::Int(_)) => false,
+                None => {
+                    ns.insert(key.clone(), GlobalValue::Bytes(bytes));
+                    true
+                }
+            };
+            (key, applied)
+        }
+    };
+    wit::OpResult { ticket, applied, value: ns.get(&key).cloned().map(host::to_wit_value) }
+}
+
+/// A subscription's filter, resolved against the registries.
+#[derive(Default)]
+struct Compiled {
+    blocks: Option<Vec<bool>>,
+    entities: Option<Vec<bool>>,
+    /// Level id (any when `None`), centre, radius.
+    area: Option<(Option<u32>, i32, i32, i32)>,
+    bypass: Option<u8>,
+}
+
+/// What a filter sees of an event.
+#[derive(Clone, Copy, Default)]
+struct EvInfo {
+    permission: u8,
+    level: u32,
+    /// Block column of the event, if it has a position.
+    xz: Option<(i32, i32)>,
+    block: Option<u32>,
+    entity_type: Option<u32>,
+}
+
+impl Compiled {
+    fn new(f: &Filter, reg: &Registries, spawn: [i32; 3], plugin: &str) -> Compiled {
+        Compiled {
+            blocks: (!f.blocks.is_empty()).then(|| reg.resolve(RegistryKind::Block, &f.blocks, plugin)),
+            entities: (!f.entities.is_empty()).then(|| reg.resolve(RegistryKind::EntityType, &f.entities, plugin)),
+            area: f.area.as_ref().map(|a| {
+                let level = a.level.as_ref().map(|l| {
+                    reg.id(RegistryKind::Level, l).unwrap_or_else(|| {
+                        warn!("plugin {plugin}: unknown level `{l}` in an area filter");
+                        u32::MAX
+                    })
+                });
+                let (x, z) = a.center.unwrap_or((spawn[0], spawn[2]));
+                (level, x, z, a.radius)
+            }),
+            bypass: f.bypass_permission,
+        }
+    }
+
+    fn passes(&self, ev: &EvInfo) -> bool {
+        if self.bypass.is_some_and(|p| ev.permission >= p) {
+            return false;
+        }
+        let member = |set: &Option<Vec<bool>>, id: Option<u32>| match set {
+            None => true,
+            Some(s) => id.is_some_and(|i| s.get(i as usize).copied().unwrap_or(false)),
+        };
+        if !member(&self.blocks, ev.block) || !member(&self.entities, ev.entity_type) {
+            return false;
+        }
+        match (self.area, ev.xz) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some((level, x, z, r)), Some((ex, ez))) => {
+                level.is_none_or(|l| l == ev.level) && (ex - x).abs() <= r && (ez - z).abs() <= r
             }
         }
-        wit::AtomicOp::Append((key, bytes)) => match ns.get_mut(&key) {
-            Some(GlobalValue::Bytes(v)) => v.extend_from_slice(&bytes),
-            Some(GlobalValue::Int(_)) => {}
-            None => drop(ns.insert(key, GlobalValue::Bytes(bytes))),
-        },
     }
 }
 
@@ -266,19 +645,75 @@ struct PluginDef {
     global: GlobalIndices,
     region: Option<RegionIndices>,
     data_dir: Option<PathBuf>,
+    /// Where it was loaded from (reloads read it again).
+    source: Option<PathBuf>,
     init: wit::InitInfo,
+    generation: u32,
+    /// Filters by event kind (subscribed events only).
+    filters: Vec<Option<Compiled>>,
 }
 
-/// Everything fixed after loading.
+impl PluginDef {
+    fn filter(&self, kind: EventKind) -> Option<&Compiled> {
+        self.filters[kind.index()].as_ref()
+    }
+}
+
+/// A call's budget.
+#[derive(Clone, Copy)]
+enum Budget {
+    /// Epoch ticks of deadline (ordered).
+    Epoch(u64),
+    Fuel(u64),
+}
+
+/// Everything fixed between reloads.
 struct PluginSet {
     engine: Engine,
-    plugins: Vec<PluginDef>,
-    /// Epoch ticks of a cancellable call's deadline.
-    deadline: u64,
+    plugins: Vec<Arc<PluginDef>>,
+    /// Region-hook subscribers of each event kind, in load order.
+    subs: Vec<Vec<usize>>,
+    call: Budget,
+    init: Budget,
+    /// Per region instance and tick, in epoch ticks or fuel.
+    tick_budget: u64,
+    player_burst: u32,
+    player_rate: u32,
 }
 
-/// Epoch ticks for `init` calls (generous: first calls allocate and warm up).
-const INIT_DEADLINE: u64 = 4000;
+impl PluginSet {
+    fn build(engine: Engine, plugins: Vec<Arc<PluginDef>>, cfg: &SetCfg) -> PluginSet {
+        let subs = EventKind::ALL
+            .iter()
+            .map(|k| (0..plugins.len()).filter(|&i| plugins[i].region.is_some() && plugins[i].manifest.subscription(*k).is_some()).collect())
+            .collect();
+        PluginSet {
+            engine,
+            plugins,
+            subs,
+            call: cfg.call,
+            init: cfg.init,
+            tick_budget: cfg.tick_budget,
+            player_burst: cfg.player_burst,
+            player_rate: cfg.player_rate,
+        }
+    }
+
+    fn subscribers(&self, kind: EventKind) -> &[usize] {
+        &self.subs[kind.index()]
+    }
+}
+
+/// The parts of the configuration a [`PluginSet`] keeps.
+#[derive(Clone)]
+struct SetCfg {
+    call: Budget,
+    init: Budget,
+    tick_budget: u64,
+    player_burst: u32,
+    player_rate: u32,
+    spawn: [i32; 3],
+}
 
 enum Outcome<R> {
     Ok(R),
@@ -288,60 +723,87 @@ enum Outcome<R> {
 
 /// One instance of one plugin.
 struct Inst {
-    store: Store<host::HostState>,
+    store: Store<HostState>,
     global: Option<GlobalGuest>,
     region: Option<RegionGuest>,
+    /// Budget spent in `spent_tick` (epoch ticks or fuel).
+    spent_tick: u64,
+    spent: u64,
 }
 
 impl Inst {
     /// Instantiates plugin `i` as a global or region instance and runs its `init`.
     fn new(set: &PluginSet, shared: &Arc<Shared>, i: usize, region: bool) -> Result<(Inst, Vec<wit::CommandSpec>)> {
         let def = &set.plugins[i];
-        let mut store = host::new_store(&set.engine, i, def.id.clone(), shared.clone(), def.data_dir.as_deref());
-        store.set_epoch_deadline(INIT_DEADLINE);
-        let instance = def.pre.instantiate(&mut store)?;
+        let store = host::new_store(&set.engine, i, def.generation, def.id.clone(), shared.clone(), def.data_dir.as_deref());
+        let mut inst = Inst { store, global: None, region: None, spent_tick: 0, spent: 0 };
+        // Instantiation runs guest code too (start functions, allocations).
+        match set.init {
+            Budget::Epoch(d) => inst.store.set_epoch_deadline(d),
+            Budget::Fuel(n) => inst.store.set_fuel(n)?,
+        }
+        let instance = def.pre.instantiate(&mut inst.store)?;
         shared.stats.instantiations.fetch_add(1, Ordering::Relaxed);
-        let mut inst = Inst { store, global: None, region: None };
         let mut commands = Vec::new();
-        let frame = shared.frame(!region, 0, Vec::new(), Vec::new());
-        inst.store.data_mut().frame = Some(frame);
-        let r = if region {
-            let guest = def.region.as_ref().context("no region-hooks export")?.load(&mut inst.store, &instance)?;
-            let r = guest.call_init(&mut inst.store, &def.init);
-            inst.region = Some(guest);
-            r
+        if region {
+            inst.region = Some(def.region.as_ref().context("no region-hooks export")?.load(&mut inst.store, &instance)?);
         } else {
-            let guest = def.global.load(&mut inst.store, &instance)?;
-            let r = guest.call_init(&mut inst.store, &def.init).map(|c| commands = c);
-            inst.global = Some(guest);
-            r
-        };
-        let frame = inst.store.data_mut().frame.take().expect("frame");
-        r.map_err(|e| anyhow::anyhow!("plugin {} init: {e:?}", def.id))?;
-        shared.commit(i, frame);
-        Ok((inst, commands))
+            inst.global = Some(def.global.load(&mut inst.store, &instance)?);
+        }
+        inst.store.data_mut().frame.reset(!region, 0);
+        let r = inst.call(shared, set.init, |store, g, rg| match (g, rg) {
+            (Some(g), _) => g.call_init(store, &def.init).map(|c| commands = c),
+            (_, Some(r)) => r.call_init(store, &def.init),
+            _ => unreachable!(),
+        });
+        match r {
+            Outcome::Ok(()) => Ok((inst, commands)),
+            Outcome::Timeout => bail!("plugin {} init ran out of budget", def.id),
+            Outcome::Trap(e) => bail!("plugin {} init: {e:?}", def.id),
+        }
     }
 
-    /// Runs one call with a fresh deadline; commits its effects if it returned normally.
+    /// Runs one call (its frame set up by the caller) with a fresh budget; commits its
+    /// effects if it returned normally. Budget spent counts towards the instance's tick.
     fn call<R>(
         &mut self,
         shared: &Shared,
-        plugin: usize,
-        deadline: u64,
-        frame: host::Frame,
-        f: impl FnOnce(&mut Store<host::HostState>, Option<&GlobalGuest>, Option<&RegionGuest>) -> wasmtime::Result<R>,
+        budget: Budget,
+        f: impl FnOnce(&mut Store<HostState>, Option<&GlobalGuest>, Option<&RegionGuest>) -> wasmtime::Result<R>,
     ) -> Outcome<R> {
-        self.store.data_mut().frame = Some(frame);
-        self.store.set_epoch_deadline(deadline);
+        let tick = shared.tick();
+        if self.spent_tick != tick {
+            self.spent_tick = tick;
+            self.spent = 0;
+        }
+        let start = match budget {
+            Budget::Epoch(d) => {
+                self.store.set_epoch_deadline(d);
+                shared.epoch.load(Ordering::Relaxed)
+            }
+            Budget::Fuel(n) => {
+                let _ = self.store.set_fuel(n);
+                n
+            }
+        };
+        self.store.data_mut().active = true;
         let r = f(&mut self.store, self.global.as_ref(), self.region.as_ref());
-        let frame = self.store.data_mut().frame.take().expect("frame");
+        self.store.data_mut().active = false;
+        self.spent += match budget {
+            Budget::Epoch(_) => shared.epoch.load(Ordering::Relaxed) - start,
+            Budget::Fuel(_) => start - self.store.get_fuel().unwrap_or(0),
+        };
         shared.stats.calls.fetch_add(1, Ordering::Relaxed);
         match r {
             Ok(v) => {
-                shared.commit(plugin, frame);
+                let st = self.store.data_mut();
+                if !st.frame.is_clean() {
+                    let (plugin, generation, id) = (st.plugin, st.generation, st.id.clone());
+                    shared.commit(plugin, generation, &id, &mut st.frame);
+                }
                 Outcome::Ok(v)
             }
-            Err(e) if e.downcast_ref::<wasmtime::Trap>() == Some(&wasmtime::Trap::Interrupt) => {
+            Err(e) if matches!(e.downcast_ref::<wasmtime::Trap>(), Some(wasmtime::Trap::Interrupt | wasmtime::Trap::OutOfFuel)) => {
                 shared.stats.timeouts.fetch_add(1, Ordering::Relaxed);
                 Outcome::Timeout
             }
@@ -351,14 +813,31 @@ impl Inst {
             }
         }
     }
-}
 
-fn wit_player(a: &Actor, handle: u64) -> wit::Player {
-    wit::Player { handle, uuid: uuid::Uuid::from_u128(a.uuid).hyphenated().to_string(), name: a.name.to_owned(), operator: a.operator }
+    fn frame(&mut self) -> &mut Frame {
+        &mut self.store.data_mut().frame
+    }
+
+    fn generation(&self) -> u32 {
+        self.store.data().generation
+    }
+
+    fn over_budget(&self, shared: &Shared, limit: u64) -> bool {
+        self.spent_tick == shared.tick() && self.spent >= limit
+    }
 }
 
 fn wit_pos(p: [i32; 3]) -> wit::BlockPos {
     wit::BlockPos { x: p[0], y: p[1], z: p[2] }
+}
+
+fn wit_player(a: &Actor, handle: u64) -> wit::Player {
+    wit::Player { handle, uuid: host::wit_uuid(a.uuid), name: a.name.to_owned(), operator: a.operator }
+}
+
+/// Moves a player record out, leaving an empty one (no allocation either way).
+fn take(p: &mut wit::Player) -> wit::Player {
+    std::mem::replace(p, wit::Player { handle: 0, uuid: wit::Uuid { hi: 0, lo: 0 }, name: String::new(), operator: false })
 }
 
 fn spans(v: Vec<wit::Span>) -> Vec<Span> {
@@ -371,9 +850,17 @@ struct Observation {
     uuid: u128,
     name: String,
     operator: bool,
-    level: String,
     pos: [i32; 3],
-    block: String,
+    block: u32,
+}
+
+/// An entity an event is about, with its plugin data (read and written by the handlers).
+pub struct EntityRef<'a> {
+    pub uuid: u128,
+    /// Entity type id (`Registries::entity_types`).
+    pub kind: u32,
+    pub pos: [f64; 3],
+    pub data: &'a mut EntityData,
 }
 
 /// A region's instances, one per plugin that exports `region-hooks`.
@@ -383,13 +870,14 @@ pub struct RegionPlugins {
     dim: u32,
     insts: Vec<Option<Inst>>,
     observed: Vec<Observation>,
-    observers: bool,
+    /// The event's player record, reused call after call (its name keeps its capacity).
+    scratch: wit::Player,
 }
 
 impl RegionPlugins {
     fn new(set: Arc<PluginSet>, shared: Arc<Shared>, dim: u32) -> RegionPlugins {
-        let observers = set.plugins.iter().any(|p| p.region.is_some() && p.manifest.subscription(EventKind::Observe).is_some());
-        let mut r = RegionPlugins { insts: (0..set.plugins.len()).map(|_| None).collect(), set, shared, dim, observed: Vec::new(), observers };
+        let scratch = wit::Player { handle: 0, uuid: wit::Uuid { hi: 0, lo: 0 }, name: String::with_capacity(16), operator: false };
+        let mut r = RegionPlugins { insts: (0..set.plugins.len()).map(|_| None).collect(), set, shared, dim, observed: Vec::new(), scratch };
         for i in 0..r.insts.len() {
             r.ensure(i);
         }
@@ -407,33 +895,79 @@ impl RegionPlugins {
         self.insts[i].is_some()
     }
 
+    fn player(&mut self, a: &Actor, handle: u64) {
+        let p = &mut self.scratch;
+        p.handle = handle;
+        p.uuid = host::wit_uuid(a.uuid);
+        p.name.clear();
+        p.name.push_str(a.name);
+        p.operator = a.operator;
+    }
+
     /// Calls every subscriber of a cancellable event in load order until one denies.
-    /// `f` gets the guest, the store, and the handles of the actor and the event's cell.
+    /// `f` gets the guest, the store, the event's player record and the handles of the cell
+    /// and the entity.
+    #[allow(clippy::too_many_arguments)]
     fn cancellable<R>(
         &mut self,
         kind: EventKind,
         actor: &Actor,
+        info: EvInfo,
         cell: Option<CellKey>,
-        mut f: impl FnMut(&RegionGuest, &mut Store<host::HostState>, u64, u64) -> wasmtime::Result<R>,
+        mut entity: Option<&mut EntityRef>,
+        mut f: impl FnMut(&RegionGuest, &mut Store<HostState>, &mut wit::Player, u64, u64) -> wasmtime::Result<R>,
         mut decide: impl FnMut(R) -> Option<Verdict>,
     ) -> Verdict {
-        for i in 0..self.insts.len() {
-            let def = &self.set.plugins[i];
-            let Some(sub) = def.manifest.subscription(kind) else { continue };
-            if def.region.is_none() {
+        let set = self.set.clone();
+        let subs = set.subscribers(kind);
+        if subs.is_empty() {
+            return Verdict::Allow;
+        }
+        let called = |i: usize| set.plugins[i].filter(kind).is_none_or(|c| c.passes(&info));
+        if !subs.iter().any(|&i| called(i)) {
+            return Verdict::Allow;
+        }
+        // The acting player's bucket: an empty one keeps the event from every plugin.
+        if !self.shared.take_token(actor.uuid, set.player_burst, set.player_rate) {
+            self.shared.stats.rate_limited.fetch_add(1, Ordering::Relaxed);
+            let closed = subs.iter().any(|&i| called(i) && set.plugins[i].manifest.subscription(kind).is_some_and(|s| s.policy == FailPolicy::Closed));
+            return if closed { Verdict::Deny(None) } else { Verdict::Allow };
+        }
+        for &i in subs {
+            if !called(i) {
                 continue;
             }
-            let policy = sub.policy;
+            let policy = set.plugins[i].manifest.subscription(kind).map_or(FailPolicy::Open, |s| s.policy);
+            let fail = if policy == FailPolicy::Closed { Some(Verdict::Deny(None)) } else { None };
             if self.shared.demoted(i) || !self.ensure(i) {
-                if policy == FailPolicy::Closed {
-                    return Verdict::Deny(None);
+                match fail {
+                    Some(v) => return v,
+                    None => continue,
                 }
-                continue;
             }
-            let frame = self.shared.frame(false, actor.uuid, vec![actor.uuid], cell.into_iter().collect());
-            let (ph, ch) = (frame.player_handle(0), frame.cell_handle(0));
+            if self.insts[i].as_ref().expect("instance").over_budget(&self.shared, set.tick_budget) {
+                self.shared.stats.budget_exhausted.fetch_add(1, Ordering::Relaxed);
+                match fail {
+                    Some(v) => return v,
+                    None => continue,
+                }
+            }
             let inst = self.insts[i].as_mut().expect("instance");
-            let outcome = inst.call(&self.shared, i, self.set.deadline, frame, |store, _, region| f(region.expect("region guest"), store, ph, ch));
+            let generation = inst.generation();
+            let frame = inst.frame();
+            frame.reset(false, actor.uuid);
+            frame.players.push(actor.uuid);
+            frame.cells.extend(cell);
+            if let Some(e) = entity.as_deref_mut() {
+                frame.entities.push((e.uuid, std::mem::take(e.data)));
+            }
+            let (ph, ch, eh) = (frame.player_handle(generation, 0), frame.cell_handle(generation, 0), frame.entity_handle(generation, 0));
+            self.player(actor, ph);
+            let (scratch, inst) = (&mut self.scratch, self.insts[i].as_mut().expect("instance"));
+            let outcome = inst.call(&self.shared, set.call, |store, _, region| f(region.expect("region guest"), store, scratch, ch, eh));
+            if let Some(e) = entity.as_deref_mut() {
+                *e.data = std::mem::take(&mut inst.frame().entities[0].1);
+            }
             match outcome {
                 Outcome::Ok(r) => {
                     if let Some(v) = decide(r) {
@@ -442,8 +976,8 @@ impl RegionPlugins {
                 }
                 failed => {
                     self.failed(i, failed);
-                    if policy == FailPolicy::Closed {
-                        return Verdict::Deny(None);
+                    if let Some(v) = fail {
+                        return v;
                     }
                 }
             }
@@ -466,37 +1000,78 @@ impl RegionPlugins {
         self.insts[i] = None;
     }
 
-    pub fn block_break(&mut self, actor: &Actor, level: &str, pos: [i32; 3], block: &str) -> Verdict {
+    fn info(&self, actor: &Actor, pos: Option<[i32; 3]>) -> EvInfo {
+        EvInfo { permission: actor.permission(), level: self.dim, xz: pos.map(|p| (p[0], p[2])), block: None, entity_type: None }
+    }
+
+    /// A player breaks (starts or finishes breaking) `block` at `pos` in this region's level.
+    pub fn block_break(&mut self, actor: &Actor, pos: [i32; 3], block: u32) -> Verdict {
         let cell = CellKey::of_block(self.dim, pos[0], pos[2]);
+        let info = EvInfo { block: Some(block), ..self.info(actor, Some(pos)) };
+        let level = self.dim;
         self.cancellable(
             EventKind::BlockBreak,
             actor,
+            info,
             Some(cell),
-            |g, store, ph, ch| {
-                let ev = wit::BlockEvent { player: wit_player(actor, ph), level: level.to_owned(), pos: wit_pos(pos), block: block.to_owned(), cell: ch };
-                g.call_on_block_break(store, &ev)
+            None,
+            |g, store, player, ch, _| {
+                // The record takes the scratch player and gives it back: no allocation.
+                let ev = wit::BlockEvent { player: take(player), level, pos: wit_pos(pos), block, cell: ch };
+                let r = g.call_on_block_break(store, &ev);
+                *player = ev.player;
+                r
             },
             verdict,
         )
     }
 
-    /// `pos` is where the block would go, `against` the clicked block.
-    pub fn block_place(&mut self, actor: &Actor, level: &str, pos: [i32; 3], against: [i32; 3], item: &str) -> Verdict {
+    /// `pos` is where the block (or fluid) would go, `against` the clicked block; `item` the
+    /// item id in the hand used.
+    pub fn block_place(&mut self, actor: &Actor, pos: [i32; 3], against: [i32; 3], item: Option<u32>) -> Verdict {
         let cell = CellKey::of_block(self.dim, pos[0], pos[2]);
+        let info = self.info(actor, Some(pos));
+        let level = self.dim;
         self.cancellable(
             EventKind::BlockPlace,
             actor,
+            info,
             Some(cell),
-            |g, store, ph, ch| {
-                let ev = wit::PlaceEvent {
-                    player: wit_player(actor, ph),
-                    level: level.to_owned(),
-                    pos: wit_pos(pos),
-                    against: wit_pos(against),
-                    item: item.to_owned(),
-                    cell: ch,
+            None,
+            |g, store, player, ch, _| {
+                let ev = wit::PlaceEvent { player: take(player), level, pos: wit_pos(pos), against: wit_pos(against), item, cell: ch };
+                let r = g.call_on_block_place(store, &ev);
+                *player = ev.player;
+                r
+            },
+            verdict,
+        )
+    }
+
+    /// A player right-clicks an entity. Handlers may read and write the entity's data.
+    pub fn entity_interact(&mut self, actor: &Actor, entity: &mut EntityRef) -> Verdict {
+        let p = entity.pos;
+        let block = [p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32];
+        let info = EvInfo { entity_type: Some(entity.kind), ..self.info(actor, Some(block)) };
+        let (level, uuid, kind) = (self.dim, entity.uuid, entity.kind);
+        self.cancellable(
+            EventKind::EntityInteract,
+            actor,
+            info,
+            None,
+            Some(entity),
+            |g, store, player, _, eh| {
+                let ev = wit::EntityEvent {
+                    player: take(player),
+                    level,
+                    entity: eh,
+                    entity_uuid: host::wit_uuid(uuid),
+                    kind,
+                    pos: (p[0], p[1], p[2]),
                 };
-                g.call_on_block_place(store, &ev)
+                let r = g.call_on_entity_interact(store, &ev);
+                *player = ev.player;
+                r
             },
             verdict,
         )
@@ -504,11 +1079,19 @@ impl RegionPlugins {
 
     /// A vanilla or plugin command a player is about to run (`command` without the slash).
     pub fn command(&mut self, actor: &Actor, command: &str) -> Verdict {
+        let info = self.info(actor, None);
         self.cancellable(
             EventKind::Command,
             actor,
+            info,
             None,
-            |g, store, ph, _| g.call_on_command(store, &wit::CommandEvent { player: wit_player(actor, ph), command: command.to_owned() }),
+            None,
+            |g, store, player, _, _| {
+                let ev = wit::CommandEvent { player: take(player), command: command.to_owned() };
+                let r = g.call_on_command(store, &ev);
+                *player = ev.player;
+                r
+            },
             verdict,
         )
     }
@@ -516,11 +1099,19 @@ impl RegionPlugins {
     /// A chat message: cancelled, rewritten (the last rewrite wins) or passed.
     pub fn chat(&mut self, actor: &Actor, message: &str) -> ChatOutcome {
         let mut rewrite = None;
+        let info = self.info(actor, None);
         let v = self.cancellable(
             EventKind::Chat,
             actor,
+            info,
             None,
-            |g, store, ph, _| g.call_on_chat(store, &wit::ChatEvent { player: wit_player(actor, ph), message: message.to_owned() }),
+            None,
+            |g, store, player, _, _| {
+                let ev = wit::ChatEvent { player: take(player), message: message.to_owned() };
+                let r = g.call_on_chat(store, &ev);
+                *player = ev.player;
+                r
+            },
             |r| match r {
                 wit::ChatVerdict::Pass => None,
                 wit::ChatVerdict::Cancel => Some(Verdict::Deny(None)),
@@ -539,64 +1130,140 @@ impl RegionPlugins {
 
     /// Whether any plugin wants observe batches (callers can skip the bookkeeping).
     pub fn observing(&self) -> bool {
-        self.observers
+        !self.set.subscribers(EventKind::Observe).is_empty()
     }
 
     /// Notes a block broken (`broken`) or placed by `actor`, for the next observe batch.
-    pub fn observe_block(&mut self, broken: bool, actor: &Actor, level: &str, pos: [i32; 3], block: &str) {
-        if self.observers {
-            self.observed.push(Observation {
-                broken,
-                uuid: actor.uuid,
-                name: actor.name.to_owned(),
-                operator: actor.operator,
-                level: level.to_owned(),
-                pos,
-                block: block.to_owned(),
-            });
+    pub fn observe_block(&mut self, broken: bool, actor: &Actor, pos: [i32; 3], block: u32) {
+        if self.observing() {
+            self.observed.push(Observation { broken, uuid: actor.uuid, name: actor.name.to_owned(), operator: actor.operator, pos, block });
         }
     }
 
-    /// Sends the observations of this phase to observe subscribers, one batch per plugin.
-    /// Demoted plugins still observe; failures only replace the instance (and strike).
+    /// Sends the observations of this phase to observe subscribers, one batch per plugin
+    /// (only what its filter lets through). Demoted plugins still observe; failures only
+    /// replace the instance (and strike).
     pub fn flush_observed(&mut self) {
         if self.observed.is_empty() {
             return;
         }
         let observed = std::mem::take(&mut self.observed);
-        let mut players: Vec<u128> = Vec::new();
-        for o in &observed {
-            if !players.contains(&o.uuid) {
-                players.push(o.uuid);
-            }
-        }
-        for i in 0..self.insts.len() {
-            if self.set.plugins[i].manifest.subscription(EventKind::Observe).is_none() || !self.ensure(i) {
+        let set = self.set.clone();
+        for &i in set.subscribers(EventKind::Observe) {
+            let filter = set.plugins[i].filter(EventKind::Observe);
+            let mine: Vec<&Observation> = observed
+                .iter()
+                .filter(|o| {
+                    filter.is_none_or(|c| {
+                        let info = EvInfo { permission: if o.operator { 4 } else { 0 }, level: self.dim, xz: Some((o.pos[0], o.pos[2])), block: Some(o.block), entity_type: None };
+                        c.passes(&info)
+                    })
+                })
+                .collect();
+            if mine.is_empty() || !self.ensure(i) {
                 continue;
             }
-            let frame = self.shared.frame(false, players[0], players.clone(), Vec::new());
-            let batch: Vec<wit::Observed> = observed
+            let inst = self.insts[i].as_mut().expect("instance");
+            let generation = inst.generation();
+            let frame = inst.frame();
+            frame.reset(false, mine[0].uuid);
+            for o in &mine {
+                if !frame.players.contains(&o.uuid) {
+                    frame.players.push(o.uuid);
+                }
+            }
+            let batch: Vec<wit::Observed> = mine
                 .iter()
                 .map(|o| {
-                    let h = frame.player_handle(players.iter().position(|p| *p == o.uuid).unwrap());
+                    let h = frame.player_handle(generation, frame.players.iter().position(|p| *p == o.uuid).unwrap());
                     let actor = Actor { uuid: o.uuid, name: &o.name, operator: o.operator };
-                    let b = wit::ObservedBlock { player: wit_player(&actor, h), level: o.level.clone(), pos: wit_pos(o.pos), block: o.block.clone() };
+                    let b = wit::ObservedBlock { player: wit_player(&actor, h), level: self.dim, pos: wit_pos(o.pos), block: o.block };
                     if o.broken { wit::Observed::BlockBroken(b) } else { wit::Observed::BlockPlaced(b) }
                 })
                 .collect();
-            let inst = self.insts[i].as_mut().expect("instance");
-            let outcome = inst.call(&self.shared, i, self.set.deadline, frame, |store, _, g| g.expect("region guest").call_on_observe(store, &batch));
+            let outcome = inst.call(&self.shared, set.call, |store, _, g| g.expect("region guest").call_on_observe(store, &batch));
             if !matches!(outcome, Outcome::Ok(())) {
                 self.failed(i, outcome);
             }
         }
     }
+
+    /// A task or results delivery in this region's instance of plugin `i` (B0).
+    fn run_in(&mut self, i: usize, player: Option<&PlayerAt>, cell: Option<CellKey>, f: RegionCall) -> bool {
+        if !self.ensure(i) {
+            return false;
+        }
+        let set = self.set.clone();
+        let inst = self.insts[i].as_mut().expect("instance");
+        let generation = inst.generation();
+        let frame = inst.frame();
+        frame.reset(false, player.map_or(0, |p| p.uuid));
+        frame.players.extend(player.map(|p| p.uuid));
+        frame.cells.extend(cell);
+        let ph = frame.player_handle(generation, 0);
+        let ch = frame.cell_handle(generation, 0);
+        let p = player.map(|p| wit_player(&Actor { uuid: p.uuid, name: &p.name, operator: p.operator }, ph));
+        let outcome = inst.call(&self.shared, set.call, |store, _, g| {
+            let g = g.expect("region guest");
+            match f {
+                RegionCall::Task(handle, id) => g.call_on_task(store, &wit::TaskEvent { handle, id, player: p, cell: cell.map(|_| ch) }),
+                RegionCall::Results(r) => g.call_on_results(store, &r),
+            }
+        });
+        let ok = matches!(outcome, Outcome::Ok(()));
+        if !ok {
+            self.failed(i, outcome);
+        }
+        ok
+    }
+
+    /// Replaces the set (a reload) and plugin `i`'s instance.
+    fn swap(&mut self, set: Arc<PluginSet>, i: usize) {
+        self.flush_observed();
+        self.set = set;
+        self.insts[i] = None;
+        self.ensure(i);
+    }
+}
+
+enum RegionCall {
+    Task(u64, u64),
+    Results(Vec<wit::OpResult>),
 }
 
 fn verdict(v: wit::Verdict) -> Option<Verdict> {
     match v {
         wit::Verdict::Allow => None,
         wit::Verdict::Deny(m) => Some(Verdict::Deny(m.map(spans))),
+    }
+}
+
+/// Where the embedder has an online player (tasks and results follow players).
+#[derive(Clone, Debug)]
+pub struct PlayerAt {
+    pub uuid: u128,
+    pub level: u32,
+    pub region: u64,
+    pub name: String,
+    pub operator: bool,
+}
+
+/// What B0 needs to know about the world to route tasks and results.
+pub trait World {
+    fn player(&self, uuid: u128) -> Option<PlayerAt>;
+    /// The region owning block column (x, z) of a level, if it is loaded.
+    fn owner(&self, level: u32, x: i32, z: i32) -> Option<u64>;
+}
+
+/// A world without players or loaded regions (tests).
+pub struct NoWorld;
+
+impl World for NoWorld {
+    fn player(&self, _: u128) -> Option<PlayerAt> {
+        None
+    }
+    fn owner(&self, _: u32, _: i32, _: i32) -> Option<u64> {
+        None
     }
 }
 
@@ -607,7 +1274,7 @@ struct Ticker {
 }
 
 impl Ticker {
-    fn start(engine: Engine, period: Duration) -> Ticker {
+    fn start(engine: Engine, period: Duration, count: Arc<AtomicU64>) -> Ticker {
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
         let thread = std::thread::Builder::new()
@@ -615,7 +1282,7 @@ impl Ticker {
             .spawn(move || {
                 // Sleeps overshoot (about 1 ms on Windows), so the epoch follows elapsed time:
                 // a deadline of n ticks is n periods however coarse the wake-ups are.
-                let start = Instant::now();
+                let start = std::time::Instant::now();
                 let mut epoch = 0u128;
                 while !flag.load(Ordering::Relaxed) {
                     std::thread::sleep(period);
@@ -624,6 +1291,7 @@ impl Ticker {
                         engine.increment_epoch();
                         epoch += 1;
                     }
+                    count.store(epoch as u64, Ordering::Relaxed);
                 }
             })
             .expect("epoch thread");
@@ -640,20 +1308,48 @@ impl Drop for Ticker {
     }
 }
 
+/// A compiled replacement waiting for B0.
+struct Staged {
+    plugin: usize,
+    def: Result<PluginDef>,
+    requester: Option<u128>,
+}
+
+/// What a reload did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reloaded {
+    pub id: String,
+    pub generation: u32,
+    /// Bytes of the state blob handed over.
+    pub blob: Option<usize>,
+    pub cancelled_tasks: usize,
+    pub region_instances: usize,
+    /// The command registrations changed (the embedder re-registers and resends trees).
+    pub commands_changed: bool,
+}
+
 /// All plugins: their global instances, the region instance sets, and the namespaces.
 pub struct PluginRuntime {
     set: Arc<PluginSet>,
+    cfg: SetCfg,
     shared: Arc<Shared>,
     globals: Vec<Option<Inst>>,
     regions: HashMap<(u32, u64), RegionPlugins>,
     commands: Vec<CommandReg>,
-    _ticker: Ticker,
+    cache_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    staged: Arc<Mutex<Vec<Staged>>>,
+    reloaded: Vec<Reloaded>,
+    _ticker: Option<Ticker>,
 }
 
 fn engine(cfg: &RuntimeConfig) -> Result<Engine> {
     let mut c = wasmtime::Config::new();
     c.wasm_component_model(true);
-    c.epoch_interruption(true);
+    match cfg.mode {
+        ExecMode::Ordered => c.epoch_interruption(true),
+        ExecMode::Strict => c.consume_fuel(true),
+    };
     // Synchronous hot path: no component-model-async machinery in the stores.
     c.concurrency_support(false);
     if cfg.pool_instances > 0 {
@@ -672,6 +1368,49 @@ fn engine(cfg: &RuntimeConfig) -> Result<Engine> {
     Engine::new(&c).map_err(anyhow::Error::from)
 }
 
+/// Compiles and links one plugin (off the tick for reloads).
+#[allow(clippy::too_many_arguments)]
+fn prepare(
+    engine: &Engine,
+    manifest: Manifest,
+    wasm: &[u8],
+    source: Option<PathBuf>,
+    generation: u32,
+    cache_dir: Option<&Path>,
+    data_root: Option<&Path>,
+    registries: &Registries,
+    spawn: [i32; 3],
+    stats: Option<&Stats>,
+) -> Result<PluginDef> {
+    let (component, hit) = cache::component(engine, wasm, cache_dir)?;
+    if hit && let Some(s) = stats {
+        s.cache_hits.fetch_add(1, Ordering::Relaxed);
+    }
+    let linker = host::linker(engine, manifest.has(Capability::PlayerMessage), manifest.has(Capability::Scheduler))?;
+    let pre = linker
+        .instantiate_pre(&component)
+        .map_err(|e| e.context("an import is not linked: is a capability missing from the manifest?"))?;
+    let global = GlobalIndices::new(&pre)?;
+    let region = RegionIndices::new(&pre).ok();
+    let data_dir = match (data_root, manifest.has(Capability::FsData)) {
+        (Some(root), true) => Some(root.join("data").join(&manifest.id)),
+        _ => None,
+    };
+    let config = manifest.config.iter().map(|(k, v)| wit::ConfigEntry { key: k.clone(), value: v.clone() }).collect();
+    let init = wit::InitInfo { id: manifest.id.clone(), config, spawn: wit_pos(spawn), levels: registries.levels.clone(), generation };
+    let filters = EventKind::ALL
+        .iter()
+        .map(|k| manifest.subscription(*k).filter(|s| !s.filter.is_empty()).map(|s| Compiled::new(&s.filter, registries, spawn, &manifest.id)))
+        .collect();
+    Ok(PluginDef { id: manifest.id.as_str().into(), manifest, pre, global, region, data_dir, source, init, generation, filters })
+}
+
+fn read_plugin(dir: &Path) -> Result<(Manifest, Vec<u8>)> {
+    let manifest = Manifest::parse(&std::fs::read_to_string(dir.join("plugin.toml"))?)?;
+    let wasm = std::fs::read(dir.join("plugin.wasm")).context("plugin.wasm")?;
+    Ok((manifest, wasm))
+}
+
 impl PluginRuntime {
     /// Loads every `<dir>/<name>/plugin.toml` + `plugin.wasm`, in directory-name order.
     /// A plugin that fails to load is skipped with a warning.
@@ -684,101 +1423,141 @@ impl PluginRuntime {
         dirs.sort();
         let mut found = Vec::new();
         for d in dirs {
-            let r = (|| -> Result<(Manifest, Vec<u8>)> {
-                let manifest = Manifest::parse(&std::fs::read_to_string(d.join("plugin.toml"))?)?;
-                let wasm = std::fs::read(d.join("plugin.wasm")).context("plugin.wasm")?;
-                Ok((manifest, wasm))
-            })();
-            match r {
-                Ok(p) => found.push(p),
+            match read_plugin(&d) {
+                Ok((m, w)) => found.push((m, w, Some(d))),
                 Err(e) => warn!("skipping plugin {}: {e:#}", d.display()),
             }
         }
-        Self::new(found, cfg)
+        Self::build(found, cfg)
     }
 
     /// Compiles, links and instantiates the given plugins (manifest and component bytes).
     pub fn new(plugins: Vec<(Manifest, Vec<u8>)>, cfg: RuntimeConfig) -> Result<PluginRuntime> {
+        Self::build(plugins.into_iter().map(|(m, w)| (m, w, None)).collect(), cfg)
+    }
+
+    fn build(plugins: Vec<(Manifest, Vec<u8>, Option<PathBuf>)>, cfg: RuntimeConfig) -> Result<PluginRuntime> {
         let engine = engine(&cfg)?;
-        let mut defs: Vec<PluginDef> = Vec::new();
-        let spawn = wit_pos(cfg.spawn);
-        for (manifest, wasm) in plugins {
+        let mut defs: Vec<Arc<PluginDef>> = Vec::new();
+        let stats = Stats::default();
+        for (manifest, wasm, source) in plugins {
             if defs.iter().any(|d| d.manifest.id == manifest.id) {
                 warn!("skipping plugin {}: duplicate id", manifest.id);
                 continue;
             }
-            let id: Arc<str> = manifest.id.as_str().into();
-            let r = (|| -> Result<PluginDef> {
-                let component = wasmtime::component::Component::new(&engine, &wasm)?;
-                let linker = host::linker(&engine, manifest.has(Capability::PlayerMessage))?;
-                let pre = linker.instantiate_pre(&component).map_err(|e| {
-                    e.context("an import is not linked: is a capability missing from the manifest?")
-                })?;
-                let global = GlobalIndices::new(&pre)?;
-                let region = RegionIndices::new(&pre).ok();
-                let data_dir = match (&cfg.data_dir, manifest.has(Capability::FsData)) {
-                    (Some(root), true) => Some(root.join("data").join(&manifest.id)),
-                    _ => None,
-                };
-                let config = manifest.config.iter().map(|(k, v)| wit::ConfigEntry { key: k.clone(), value: v.clone() }).collect();
-                let init = wit::InitInfo { id: manifest.id.clone(), config, spawn };
-                Ok(PluginDef { manifest, id: id.clone(), pre, global, region, data_dir, init })
-            })();
+            let id = manifest.id.clone();
+            let r = prepare(&engine, manifest, &wasm, source, 0, cfg.cache_dir.as_deref(), cfg.data_dir.as_deref(), &cfg.registries, cfg.spawn, Some(&stats));
             match r {
-                Ok(d) => defs.push(d),
+                Ok(d) => defs.push(Arc::new(d)),
                 Err(e) => warn!("skipping plugin {id}: {e:#}"),
             }
         }
-        let deadline = (cfg.call_budget.as_nanos() / cfg.epoch_tick.as_nanos().max(1)).max(1) as u64 + 1;
+        let strict = cfg.mode == ExecMode::Strict;
+        let set_cfg = if strict {
+            SetCfg {
+                call: Budget::Fuel(cfg.call_fuel),
+                init: Budget::Fuel(cfg.call_fuel.saturating_mul(500)),
+                tick_budget: cfg.tick_fuel,
+                player_burst: cfg.player_burst,
+                player_rate: cfg.player_events_per_second,
+                spawn: cfg.spawn,
+            }
+        } else {
+            let per = cfg.epoch_tick.as_nanos().max(1);
+            SetCfg {
+                call: Budget::Epoch((cfg.call_budget.as_nanos() / per).max(1) as u64 + 1),
+                // Generous: first calls allocate and warm up.
+                init: Budget::Epoch((Duration::from_secs(1).as_nanos() / per) as u64),
+                tick_budget: (cfg.tick_budget.as_nanos() / per).max(1) as u64,
+                player_burst: cfg.player_burst,
+                player_rate: cfg.player_events_per_second,
+                spawn: cfg.spawn,
+            }
+        };
         let persist = cfg.data_dir.as_ref().map(|root| Persist {
             root: root.clone(),
-            levels: cfg.levels.clone(),
+            levels: cfg.registries.levels.clone(),
             ids: defs.iter().map(|d| d.manifest.id.clone()).collect(),
         });
         let globals = persist.as_ref().map(Persist::load_globals).unwrap_or_default();
+        let epoch = Arc::new(AtomicU64::new(0));
         let shared = Arc::new(Shared {
             tick: AtomicU64::new(0),
+            strict,
+            seed: cfg.seed,
+            registries: cfg.registries.clone(),
             players: Mutex::new(HashMap::new()),
             cells: Mutex::new(CellTable::default()),
             snapshot: Mutex::new(Arc::new(globals.clone())),
             globals: Mutex::new(globals),
             globals_dirty: AtomicBool::new(false),
             pending: Mutex::new(Vec::new()),
+            deliveries: Mutex::new(Vec::new()),
+            tasks: Mutex::new(Tasks::default()),
             outbox: Mutex::new(Vec::new()),
-            health: defs.iter().map(|_| Mutex::new(Health { strikes: VecDeque::new(), demoted: false })).collect(),
-            next_ticket: AtomicU64::new(1),
-            serial: AtomicU64::new(0),
+            health: defs.iter().map(|_| Health { strikes: Mutex::new(VecDeque::new()), demoted: AtomicBool::new(false) }).collect(),
+            wants_results: defs.iter().map(|d| AtomicBool::new(d.manifest.subscription(EventKind::OpResults).is_some())).collect(),
+            seqs: Mutex::new(HashMap::new()),
+            buckets: Mutex::new(HashMap::new()),
+            epoch: epoch.clone(),
             persist,
-            stats: Stats::default(),
+            stats,
         });
-        let set = Arc::new(PluginSet { engine: engine.clone(), plugins: defs, deadline });
-        let ticker = Ticker::start(engine, cfg.epoch_tick);
-        let mut globals = Vec::new();
-        let mut commands = Vec::new();
-        for (i, def) in set.plugins.iter().enumerate() {
-            match Inst::new(&set, &shared, i, false) {
-                Ok((inst, specs)) => {
-                    globals.push(Some(inst));
-                    if def.manifest.has(Capability::CommandRegister) {
-                        commands.extend(specs.into_iter().map(|s| CommandReg { plugin: i, name: s.name, permission: s.permission.min(4) }));
-                    } else if !specs.is_empty() {
-                        warn!("plugin {}: commands ignored without the command.register capability", def.id);
-                    }
-                }
-                Err(e) => {
-                    warn!("plugin {}: global instance failed: {e:#}", def.id);
-                    globals.push(None);
-                }
-            }
-            info!(
-                "plugin {} {} loaded ({})",
-                def.id,
-                def.manifest.version,
-                if def.region.is_some() { "global and region worlds" } else { "global world" }
-            );
+        let set = Arc::new(PluginSet::build(engine.clone(), defs, &set_cfg));
+        let ticker = (!strict).then(|| Ticker::start(engine, cfg.epoch_tick, epoch));
+        let mut rt = PluginRuntime {
+            set,
+            cfg: set_cfg,
+            shared,
+            globals: Vec::new(),
+            regions: HashMap::new(),
+            commands: Vec::new(),
+            cache_dir: cfg.cache_dir,
+            data_dir: cfg.data_dir,
+            staged: Arc::new(Mutex::new(Vec::new())),
+            reloaded: Vec::new(),
+            _ticker: ticker,
+        };
+        for i in 0..rt.set.plugins.len() {
+            let inst = rt.start_global(i, None);
+            rt.globals.push(inst);
+            let def = &rt.set.plugins[i];
+            info!("plugin {} {} loaded ({})", def.id, def.manifest.version, if def.region.is_some() { "global and region worlds" } else { "global world" });
         }
-        *shared.snapshot.lock().unwrap() = Arc::new(shared.globals.lock().unwrap().clone());
-        Ok(PluginRuntime { set, shared, globals, regions: HashMap::new(), commands, _ticker: ticker })
+        *rt.shared.snapshot.lock().unwrap() = Arc::new(rt.shared.globals.lock().unwrap().clone());
+        Ok(rt)
+    }
+
+    /// A global instance of plugin `i`: `init` (its commands replace the plugin's
+    /// registrations), then `on-enable(blob)`.
+    fn start_global(&mut self, i: usize, blob: Option<Vec<u8>>) -> Option<Inst> {
+        let def = self.set.plugins[i].clone();
+        let (mut inst, specs) = match Inst::new(&self.set, &self.shared, i, false) {
+            Ok(x) => x,
+            Err(e) => {
+                warn!("plugin {}: global instance failed: {e:#}", def.id);
+                return None;
+            }
+        };
+        self.commands.retain(|c| c.plugin != i);
+        if def.manifest.has(Capability::CommandRegister) {
+            self.commands.extend(specs.into_iter().map(|s| CommandReg { plugin: i, name: s.name, permission: s.permission.min(4) }));
+        } else if !specs.is_empty() {
+            warn!("plugin {}: commands ignored without the command.register capability", def.id);
+        }
+        inst.frame().reset(true, 0);
+        let outcome = inst.call(&self.shared, self.set.init, |store, g, _| g.expect("global guest").call_on_enable(store, blob.as_deref()));
+        match outcome {
+            Outcome::Ok(()) => Some(inst),
+            Outcome::Timeout => {
+                warn!("plugin {}: on-enable ran out of budget", def.id);
+                None
+            }
+            Outcome::Trap(e) => {
+                warn!("plugin {}: on-enable trapped: {e:#}", def.id);
+                None
+            }
+        }
     }
 
     /// Plugin ids in load order.
@@ -794,6 +1573,10 @@ impl PluginRuntime {
         &self.set.plugins[plugin].manifest
     }
 
+    pub fn generation(&self, plugin: usize) -> u32 {
+        self.set.plugins[plugin].generation
+    }
+
     pub fn commands(&self) -> &[CommandReg] {
         &self.commands
     }
@@ -806,10 +1589,20 @@ impl PluginRuntime {
         self.shared.demoted(plugin)
     }
 
+    pub fn tick(&self) -> u64 {
+        self.shared.tick()
+    }
+
+    /// Tasks scheduled and not yet run.
+    pub fn pending_tasks(&self) -> usize {
+        let t = self.shared.tasks.lock().unwrap();
+        t.table.len() + t.fresh.len()
+    }
+
     /// B0: brings the region instance sets of level `dim` in line with its regions: new
     /// regions (splits, new areas) get fresh instances, regions that merged away or died
-    /// lose theirs. Their queued operations and messages live in the host, so nothing is
-    /// lost; guest memory is not carried over.
+    /// lose theirs. Their queued operations, tasks and messages live in the host, so nothing
+    /// is lost; guest memory is not carried over.
     pub fn sync_regions(&mut self, dim: u32, ids: impl IntoIterator<Item = u64>) {
         let ids: std::collections::HashSet<u64> = ids.into_iter().collect();
         self.regions.retain(|&(d, r), rp| {
@@ -840,23 +1633,200 @@ impl PluginRuntime {
         self.regions.len()
     }
 
-    /// B0: applies the atomic operations queued since the last tick in (tick, source, arrival)
-    /// order, which does not depend on threads or regions, then refreshes the snapshot the
-    /// region contexts read.
+    /// B0 without a world (tests): tasks that follow players are cancelled, position tasks
+    /// wait.
     pub fn begin_tick(&mut self) {
+        self.begin_tick_in(&NoWorld);
+    }
+
+    /// B0: the tick advances; staged reloads swap in; the atomic operations queued since the
+    /// last tick apply in (tick, source, arrival) order, which does not depend on threads or
+    /// regions; the snapshot the region contexts read refreshes; results go back to their
+    /// sources; due tasks run.
+    pub fn begin_tick_in(&mut self, world: &dyn World) {
+        self.shared.tick.fetch_add(1, Ordering::Relaxed);
+        self.shared.seqs.lock().unwrap().clear();
+        let tick = self.shared.tick();
+        let staged = std::mem::take(&mut *self.staged.lock().unwrap());
+        for s in staged {
+            let id = self.set.plugins[s.plugin].id.clone();
+            let r = s.def.and_then(|def| self.swap(s.plugin, def));
+            let text = match &r {
+                Ok(r) => {
+                    info!("plugin {id} reloaded: {r:?}");
+                    format!("Plugin {id} reloaded (generation {}, {} tasks rescheduled or dropped).", r.generation, r.cancelled_tasks)
+                }
+                Err(e) => {
+                    warn!("plugin {id}: reload failed: {e:#}");
+                    format!("Plugin {id} was not reloaded: {e:#}")
+                }
+            };
+            if let Some(to) = s.requester {
+                let color = if r.is_ok() { "green" } else { "red" };
+                self.shared.outbox.lock().unwrap().push((tick, to, Outgoing { to: Some(to), text: vec![Span::colored(text, color)] }));
+            }
+            if let Ok(r) = r {
+                self.reloaded.push(r);
+            }
+        }
         let mut pending = std::mem::take(&mut *self.shared.pending.lock().unwrap());
         let changed = !pending.is_empty() || self.shared.globals_dirty.swap(false, Ordering::Relaxed);
         if !pending.is_empty() {
             pending.sort_by_key(|p| (p.tick, p.source));
             let mut g = self.shared.globals.lock().unwrap();
+            let mut out = Vec::new();
             for p in pending {
-                apply_op(g.entry(p.plugin), p.op);
+                let r = apply_op(g.entry(p.plugin), p.ticket, p.op);
+                if self.shared.wants_results[p.plugin].load(Ordering::Relaxed) {
+                    out.push(Delivery { plugin: p.plugin, generation: p.generation, source: p.source, result: r });
+                }
             }
+            drop(g);
+            self.shared.deliveries.lock().unwrap().extend(out);
         }
         if changed {
             *self.shared.snapshot.lock().unwrap() = Arc::new(self.shared.globals.lock().unwrap().clone());
         }
-        self.shared.tick.fetch_add(1, Ordering::Relaxed);
+        self.deliver_results(world);
+        self.run_tasks(world, tick);
+    }
+
+    /// Results of last tick's operations, to the region holding their source player (else
+    /// the global instance), one call per plugin and destination.
+    fn deliver_results(&mut self, world: &dyn World) {
+        let all = std::mem::take(&mut *self.shared.deliveries.lock().unwrap());
+        if all.is_empty() {
+            return;
+        }
+        type Groups = BTreeMap<(usize, Option<(u32, u64)>), (Option<PlayerAt>, Vec<wit::OpResult>)>;
+        let mut groups = Groups::new();
+        for d in all {
+            if d.generation != self.set.plugins[d.plugin].generation {
+                continue; // drained: the generation that asked is gone
+            }
+            let at = if d.source != 0 { world.player(d.source) } else { None };
+            let region = at.as_ref().filter(|_| self.set.plugins[d.plugin].region.is_some()).map(|p| (p.level, p.region));
+            let e = groups.entry((d.plugin, region)).or_insert_with(|| (at.filter(|_| region.is_some()), Vec::new()));
+            e.1.push(d.result);
+        }
+        for ((plugin, region), (player, results)) in groups {
+            let n = results.len() as u64;
+            let delivered = match region.and_then(|r| self.regions.get_mut(&r)) {
+                Some(rp) => rp.run_in(plugin, player.as_ref(), None, RegionCall::Results(results)),
+                None => self.global_call(plugin, None, |store, g, _| g.call_on_results(store, &results)),
+            };
+            if delivered {
+                self.shared.stats.results_delivered.fetch_add(n, Ordering::Relaxed);
+            }
+        }
+    }
+
+    /// Runs the tasks due this tick; notices of tasks that cannot run go to their global
+    /// instances.
+    fn run_tasks(&mut self, world: &dyn World, tick: u64) {
+        let due = {
+            let mut t = self.shared.tasks.lock().unwrap();
+            let t = &mut *t;
+            for (key, task) in std::mem::take(&mut t.fresh) {
+                t.by_handle.insert((task.plugin, task.handle), key);
+                t.table.insert(key, task);
+            }
+            for c in std::mem::take(&mut t.cancels) {
+                if let Some(key) = t.by_handle.remove(&c) {
+                    t.table.remove(&key);
+                }
+            }
+            let mut due = Vec::new();
+            while let Some(e) = t.table.first_entry() {
+                if e.key().0 > tick {
+                    break;
+                }
+                let task = e.remove();
+                t.by_handle.remove(&(task.plugin, task.handle));
+                due.push(task);
+            }
+            due
+        };
+        let mut notices: BTreeMap<usize, Vec<wit::CancelledTask>> = BTreeMap::new();
+        let mut waiting = Vec::new();
+        for task in due {
+            let def = self.set.plugins[task.plugin].clone();
+            if task.generation != def.generation {
+                continue; // cancelled with a notice at the reload
+            }
+            let (player, cell, region) = match task.target {
+                TaskTarget::Global => (None, None, None),
+                TaskTarget::Player(uuid) => match world.player(uuid) {
+                    Some(p) => {
+                        let r = (p.level, p.region);
+                        (Some(p), None, Some(r))
+                    }
+                    None => {
+                        notices.entry(task.plugin).or_default().push(wit::CancelledTask {
+                            id: task.id,
+                            target: wit::TaskTarget::Player(host::wit_uuid(uuid)),
+                            remaining_ticks: 0,
+                            reason: wit::CancelReason::PlayerLeft,
+                        });
+                        continue;
+                    }
+                },
+                TaskTarget::Position(level, x, z) => match world.owner(level, x, z) {
+                    Some(r) => (None, Some(CellKey::of_block(level, x, z)), Some((level, r))),
+                    None => {
+                        // Not loaded: it runs when a region owns the position.
+                        waiting.push(task);
+                        continue;
+                    }
+                },
+            };
+            self.shared.stats.tasks_run.fetch_add(1, Ordering::Relaxed);
+            let region = region.filter(|_| def.region.is_some()).and_then(|r| self.regions.get_mut(&r));
+            match region {
+                Some(rp) => {
+                    rp.run_in(task.plugin, player.as_ref(), cell, RegionCall::Task(task.handle, task.id));
+                }
+                None => {
+                    let handle = task.handle;
+                    let id = task.id;
+                    let actor = player.as_ref().map(|p| (p.uuid, p.name.clone(), p.operator));
+                    self.global_call(task.plugin, actor.as_ref().map(|(u, n, o)| Actor { uuid: *u, name: n, operator: *o }).as_ref(), |store, g, player| {
+                        g.call_on_task(store, &wit::TaskEvent { handle, id, player, cell: None })
+                    });
+                }
+            }
+        }
+        if !waiting.is_empty() {
+            let mut t = self.shared.tasks.lock().unwrap();
+            for mut task in waiting {
+                task.due = tick + 1;
+                let key = (task.due, tick, 0, 0, t.fresh.len() as u32);
+                t.fresh.push((key, task));
+            }
+        }
+        for (plugin, list) in notices {
+            self.shared.stats.tasks_cancelled.fetch_add(list.len() as u64, Ordering::Relaxed);
+            self.global_call(plugin, None, |store, g, _| g.call_on_cancelled(store, &list));
+        }
+    }
+
+    /// One call in plugin `i`'s global instance; a failure replaces the instance.
+    fn global_call(
+        &mut self,
+        i: usize,
+        actor: Option<&Actor>,
+        f: impl FnOnce(&mut Store<HostState>, &GlobalGuest, Option<wit::Player>) -> wasmtime::Result<()>,
+    ) -> bool {
+        let Some(inst) = self.globals[i].as_mut() else { return false };
+        let generation = inst.generation();
+        let frame = inst.frame();
+        frame.reset(true, actor.map_or(0, |a| a.uuid));
+        frame.players.extend(actor.map(|a| a.uuid));
+        let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
+        let outcome = inst.call(&self.shared, self.set.call, |store, g, _| f(store, g.expect("global guest"), p));
+        let ok = matches!(outcome, Outcome::Ok(()));
+        self.global_failed(i, outcome);
+        ok
     }
 
     /// Messages plugins sent, in a deterministic order.
@@ -866,6 +1836,11 @@ impl PluginRuntime {
         out.into_iter().map(|(_, _, m)| m).collect()
     }
 
+    /// Reloads finished since the last call (the embedder re-registers commands).
+    pub fn take_reloaded(&mut self) -> Vec<Reloaded> {
+        std::mem::take(&mut self.reloaded)
+    }
+
     /// Calls the global instance of every plugin subscribed to `kind`.
     fn global_event(&mut self, kind: EventKind, actor: &Actor) {
         for i in 0..self.globals.len() {
@@ -873,10 +1848,12 @@ impl PluginRuntime {
                 continue;
             }
             let Some(inst) = self.globals[i].as_mut() else { continue };
-            let frame = self.shared.frame(true, actor.uuid, vec![actor.uuid], Vec::new());
-            let ph = frame.player_handle(0);
-            let p = wit_player(actor, ph);
-            let outcome = inst.call(&self.shared, i, self.set.deadline, frame, |store, g, _| {
+            let generation = inst.generation();
+            let frame = inst.frame();
+            frame.reset(true, actor.uuid);
+            frame.players.push(actor.uuid);
+            let p = wit_player(actor, frame.player_handle(generation, 0));
+            let outcome = inst.call(&self.shared, self.set.call, |store, g, _| {
                 let g = g.expect("global guest");
                 if kind == EventKind::Join { g.call_on_join(store, &p) } else { g.call_on_leave(store, &p) }
             });
@@ -894,8 +1871,10 @@ impl PluginRuntime {
             }
             Outcome::Trap(e) => warn!("plugin {id} trapped: {e:#}"),
         }
-        // A fresh global instance (its `init` registrations were taken at load).
-        self.globals[i] = Inst::new(&self.set, &self.shared, i, false).map(|(inst, _)| inst).map_err(|e| warn!("plugin {id}: {e:#}")).ok();
+        // A fresh global instance (its registrations stay as they were).
+        let commands = self.commands.clone();
+        self.globals[i] = self.start_global(i, None);
+        self.commands = commands;
     }
 
     /// A player joined: its namespace is loaded, then `on-join` runs.
@@ -910,6 +1889,7 @@ impl PluginRuntime {
     /// A player left: `on-leave` runs, then its namespace is saved and unloaded.
     pub fn player_left(&mut self, actor: &Actor) {
         self.global_event(EventKind::Leave, actor);
+        self.shared.buckets.lock().unwrap().remove(&actor.uuid);
         if let Some(p) = &self.shared.persist {
             let ns = self.shared.players.lock().unwrap().remove(&actor.uuid);
             if let Some(ns) = ns {
@@ -921,21 +1901,149 @@ impl PluginRuntime {
     /// Runs a registered command in its plugin's global instance; returns the reply.
     pub fn run_command(&mut self, plugin: usize, actor: Option<&Actor>, name: &str, args: &str) -> Vec<Span> {
         let Some(inst) = self.globals.get_mut(plugin).and_then(Option::as_mut) else {
-            return vec![Span { text: "This plugin is not running.".into(), color: Some("red".into()), bold: false, italic: false }];
+            return vec![Span::colored("This plugin is not running.", "red")];
         };
-        let players: Vec<u128> = actor.map(|a| a.uuid).into_iter().collect();
-        let frame = self.shared.frame(true, actor.map_or(0, |a| a.uuid), players, Vec::new());
-        let p = actor.map(|a| wit_player(a, frame.player_handle(0)));
-        let outcome = inst.call(&self.shared, plugin, self.set.deadline, frame, |store, g, _| {
-            g.expect("global guest").call_on_command(store, p.as_ref(), name, args)
-        });
+        let generation = inst.generation();
+        let frame = inst.frame();
+        frame.reset(true, actor.map_or(0, |a| a.uuid));
+        frame.players.extend(actor.map(|a| a.uuid));
+        let p = actor.map(|a| wit_player(a, frame.player_handle(generation, 0)));
+        let outcome = inst.call(&self.shared, self.set.call, |store, g, _| g.expect("global guest").call_on_command(store, p.as_ref(), name, args));
         match outcome {
             Outcome::Ok(reply) => spans(reply),
             failed => {
                 self.global_failed(plugin, failed);
-                vec![Span { text: "The command failed in its plugin.".into(), color: Some("red".into()), bold: false, italic: false }]
+                vec![Span::colored("The command failed in its plugin.", "red")]
             }
         }
+    }
+
+    /// The plugin that registered command `name`, if any.
+    pub fn command_plugin(&self, name: &str) -> Option<&CommandReg> {
+        self.commands.iter().find(|c| c.name == name)
+    }
+
+    /// Hot reload, step one: reads `plugin.toml` and `plugin.wasm` of plugin `id` from where
+    /// it was loaded and compiles them on a background thread; the swap happens in the next
+    /// B0 after the compilation finished ([`begin_tick_in`](Self::begin_tick_in)).
+    /// `requester` hears the outcome.
+    pub fn request_reload(&mut self, id: &str, requester: Option<u128>) -> Result<()> {
+        let i = self.plugin_index(id).with_context(|| format!("no plugin `{id}`"))?;
+        let dir = self.set.plugins[i].source.clone().with_context(|| format!("plugin `{id}` was not loaded from a directory"))?;
+        let (manifest, wasm) = read_plugin(&dir)?;
+        if manifest.id != id {
+            bail!("{} now declares id `{}`", dir.display(), manifest.id);
+        }
+        let engine = self.set.engine.clone();
+        let generation = self.set.plugins[i].generation + 1;
+        let (cache, data) = (self.cache_dir.clone(), self.data_dir.clone());
+        let (registries, spawn, staged) = (self.shared.registries.clone(), self.cfg.spawn, self.staged.clone());
+        let shared = self.shared.clone();
+        std::thread::Builder::new().name(format!("kiln-plugin-compile-{id}")).spawn(move || {
+            let def = prepare(&engine, manifest, &wasm, Some(dir), generation, cache.as_deref(), data.as_deref(), &registries, spawn, Some(&shared.stats));
+            staged.lock().unwrap().push(Staged { plugin: i, def, requester });
+        })?;
+        Ok(())
+    }
+
+    /// Hot reload now (compiles on this thread, then swaps as B0 would): for tests and for
+    /// embedders that call it at a serial point.
+    pub fn reload(&mut self, id: &str, manifest: Manifest, wasm: &[u8]) -> Result<Reloaded> {
+        let i = self.plugin_index(id).with_context(|| format!("no plugin `{id}`"))?;
+        if manifest.id != id {
+            bail!("the new manifest declares id `{}`", manifest.id);
+        }
+        let source = self.set.plugins[i].source.clone();
+        let def = prepare(
+            &self.set.engine,
+            manifest,
+            wasm,
+            source,
+            self.set.plugins[i].generation + 1,
+            self.cache_dir.as_deref(),
+            self.data_dir.as_deref(),
+            &self.shared.registries,
+            self.cfg.spawn,
+            Some(&self.shared.stats),
+        )?;
+        self.swap(i, def)
+    }
+
+    /// Hot reload, the B0 part: the old global instance's `on-disable` blob, the new set of
+    /// subscriptions and commands, new global and region instances, `on-enable(blob)`, and
+    /// notices for the old generation's tasks.
+    fn swap(&mut self, i: usize, def: PluginDef) -> Result<Reloaded> {
+        let id = def.manifest.id.clone();
+        let generation = def.generation;
+        // The old generation's last word.
+        let mut blob = None;
+        if let Some(inst) = self.globals[i].as_mut() {
+            inst.frame().reset(true, 0);
+            match inst.call(&self.shared, self.set.call, |store, g, _| g.expect("global guest").call_on_disable(store)) {
+                Outcome::Ok(b) => blob = b,
+                Outcome::Timeout => warn!("plugin {id}: on-disable ran out of budget; no state handed over"),
+                Outcome::Trap(e) => warn!("plugin {id}: on-disable trapped ({e:#}); no state handed over"),
+            }
+        }
+        // Tasks of the old generation: cancelled, with their remaining delay.
+        let tick = self.shared.tick();
+        let mut cancelled = Vec::new();
+        {
+            let mut t = self.shared.tasks.lock().unwrap();
+            let t = &mut *t;
+            for (key, task) in std::mem::take(&mut t.fresh) {
+                t.by_handle.insert((task.plugin, task.handle), key);
+                t.table.insert(key, task);
+            }
+            let cancels: Vec<(usize, u64)> = std::mem::take(&mut t.cancels);
+            for c in cancels {
+                if let Some(key) = t.by_handle.remove(&c) {
+                    t.table.remove(&key);
+                }
+            }
+            let keys: Vec<TaskKey> = t.table.iter().filter(|(_, x)| x.plugin == i).map(|(k, _)| *k).collect();
+            for k in keys {
+                let task = t.table.remove(&k).expect("task");
+                t.by_handle.remove(&(i, task.handle));
+                let target = match task.target {
+                    TaskTarget::Global => wit::TaskTarget::Global,
+                    TaskTarget::Player(u) => wit::TaskTarget::Player(host::wit_uuid(u)),
+                    TaskTarget::Position(l, x, z) => wit::TaskTarget::Position((l, x, z)),
+                };
+                cancelled.push(wit::CancelledTask {
+                    id: task.id,
+                    target,
+                    remaining_ticks: task.due.saturating_sub(tick).min(u32::MAX as u64) as u32,
+                    reason: wit::CancelReason::Reload,
+                });
+            }
+        }
+        // The swap: one new set for every region.
+        let mut plugins = self.set.plugins.clone();
+        plugins[i] = Arc::new(def);
+        self.set = Arc::new(PluginSet::build(self.set.engine.clone(), plugins, &self.cfg));
+        self.shared.wants_results[i].store(self.set.plugins[i].manifest.subscription(EventKind::OpResults).is_some(), Ordering::Relaxed);
+        {
+            let h = &self.shared.health[i];
+            h.strikes.lock().unwrap().clear();
+            h.demoted.store(false, Ordering::Relaxed);
+        }
+        let before = self.commands.clone();
+        self.globals[i] = None;
+        self.globals[i] = self.start_global(i, blob.clone());
+        let mut keys: Vec<(u32, u64)> = self.regions.keys().copied().collect();
+        keys.sort_unstable();
+        for k in &keys {
+            self.regions.get_mut(k).expect("region").swap(self.set.clone(), i);
+        }
+        let n = cancelled.len();
+        if !cancelled.is_empty() {
+            self.shared.stats.tasks_cancelled.fetch_add(n as u64, Ordering::Relaxed);
+            self.global_call(i, None, |store, g, _| g.call_on_cancelled(store, &cancelled));
+        }
+        self.shared.stats.reloads.fetch_add(1, Ordering::Relaxed);
+        let region_instances = if self.set.plugins[i].region.is_some() { keys.len() } else { 0 };
+        Ok(Reloaded { id, generation, blob: blob.map(|b| b.len()), cancelled_tasks: n, region_instances, commands_changed: before != self.commands })
     }
 
     /// Saves every namespace (autosave and shutdown).
@@ -948,12 +2056,23 @@ impl PluginRuntime {
         p.save_globals(&self.shared.globals.lock().unwrap());
     }
 
-    /// Hashes all plugin state (namespaces and queued operations are what the game sees).
+    /// Hashes all plugin state (namespaces and scheduled tasks are what the game sees).
     pub fn hash_state<H: std::hash::Hasher>(&self, h: &mut H) {
         use std::hash::Hash;
         ns::hash_sorted(&self.shared.players.lock().unwrap(), h);
         ns::hash_sorted(&self.shared.cells.lock().unwrap().cells, h);
         self.shared.globals.lock().unwrap().hash(h);
+        let t = self.shared.tasks.lock().unwrap();
+        for (k, task) in &t.table {
+            k.hash(h);
+            task.hash(h);
+        }
+        let mut fresh: Vec<_> = t.fresh.iter().collect();
+        fresh.sort_by_key(|(k, _)| *k);
+        for (k, task) in fresh {
+            k.hash(h);
+            task.hash(h);
+        }
     }
 
     /// A player's value of a plugin's key (tests and tools).
@@ -984,5 +2103,22 @@ impl PluginRuntime {
         let Some(i) = self.plugin_index(plugin) else { return Vec::new() };
         let g = self.shared.globals.lock().unwrap();
         g.by_plugin.get(i).map(|kv| kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect()).unwrap_or_default()
+    }
+
+    /// One line per plugin for operators (`/kiln plugins`).
+    pub fn describe(&self) -> Vec<String> {
+        let mut lines = Vec::new();
+        for (i, d) in self.set.plugins.iter().enumerate() {
+            let state = if self.globals[i].is_none() {
+                "not running"
+            } else if self.shared.demoted(i) {
+                "demoted"
+            } else {
+                "running"
+            };
+            let events: Vec<String> = d.manifest.subscriptions.iter().map(|s| format!("{:?}", s.event)).collect();
+            lines.push(format!("{} {} (generation {}, {state}): {}", d.id, d.manifest.version, d.generation, events.join(", ")));
+        }
+        lines
     }
 }

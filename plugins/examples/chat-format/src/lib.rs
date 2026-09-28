@@ -1,10 +1,12 @@
-//! Chat formatter: rewrites every chat line as `[name] » message` in the configured colours,
-//! and cancels lines containing a blocked word.
+//! Chat formatter: rewrites every chat line as `prefix[name] » message` in the configured
+//! colours, and cancels lines containing a blocked word. Change `prefix` or `name_color` and
+//! `/kiln plugins reload chat-format` to see a hot reload.
 
 use kiln_plugin_sdk::{ChatEvent, ChatVerdict, InitInfo, Plugin, Span, colored, config, export_plugin};
 use std::sync::Mutex;
 
 struct Format {
+    prefix: String,
     name_color: String,
     blocked: Vec<String>,
 }
@@ -20,7 +22,8 @@ impl Plugin for ChatFormat {
         let blocked = config(&info, "blocked")
             .map(|s| s.split(',').map(|w| w.trim().to_lowercase()).filter(|w| !w.is_empty()).collect())
             .unwrap_or_default();
-        *FORMAT.lock().unwrap() = Some(Format { name_color, blocked });
+        let prefix = config(&info, "prefix").unwrap_or("").to_owned();
+        *FORMAT.lock().unwrap() = Some(Format { prefix, name_color, blocked });
     }
 
     fn on_chat(ev: ChatEvent) -> ChatVerdict {
@@ -30,12 +33,16 @@ impl Plugin for ChatFormat {
         if f.blocked.iter().any(|w| lower.contains(w.as_str())) {
             return ChatVerdict::Cancel;
         }
-        let line: Vec<Span> = vec![
+        let mut line: Vec<Span> = Vec::with_capacity(5);
+        if !f.prefix.is_empty() {
+            line.push(colored(&f.prefix, "light_purple"));
+        }
+        line.extend([
             colored("[", "dark_gray"),
             colored(&ev.player.name, &f.name_color),
             colored("] \u{bb} ", "dark_gray"),
             colored(&ev.message, "white"),
-        ];
+        ]);
         ChatVerdict::Rewrite(line)
     }
 }

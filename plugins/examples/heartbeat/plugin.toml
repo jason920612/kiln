@@ -1,0 +1,12 @@
+id = "heartbeat"
+version = "0.1.0"
+capabilities = ["command.register", "player.message", "scheduler"]
+
+[[subscribe]]
+event = "join"
+
+[[subscribe]]
+event = "op-results"
+
+[config]
+label = "v1"

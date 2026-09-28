@@ -1,29 +1,45 @@
 /// Kiln plugin API (design §11). Internal draft until M7 freezes 1.0.
 ///
 /// Threading contract: a plugin has exactly one `global` instance (serial phases: command
-/// registration, configuration, join/leave, plugin commands) and, when it exports
-/// `region-hooks`, one instance per region (cancellable events at the vanilla points and
-/// batched observe events). Region instances are bound to their region, never to a thread,
-/// and any barrier (split, merge, reload, a trap) may replace them: guest memory is only a
-/// cache. Persistent state lives in host-managed owned namespaces (`state`).
+/// registration, configuration, join/leave, plugin commands, global tasks) and, when it
+/// exports `region-hooks`, one instance per region (cancellable events at the vanilla points,
+/// batched observe events, tasks routed to the region). Region instances are bound to their
+/// region, never to a thread, and any barrier (split, merge, reload, a trap) may replace them:
+/// guest memory is only a cache. Persistent state lives in host-managed owned namespaces
+/// (`state`); the global instance hands a state blob across a hot reload (`on-disable`,
+/// `on-enable`).
 ///
-/// No numeric registry ids cross the boundary: blocks, items and levels are resource keys.
-package kiln:api@0.1.0;
+/// No numeric registry ids are persisted or fixed: blocks, items, entity types and levels are
+/// per-run ids (`registry.key` gives the resource key, `registry.id` the id of a key).
+package kiln:api@0.2.0;
 
 interface types {
     /// A player in the current call; valid only during the call that received it (a stale
-    /// handle traps).
+    /// handle traps). Handles carry the instance generation.
     type player-handle = u64;
     /// The cell (8x8 chunks) of the event's target block; valid only during that call.
     type cell-handle = u64;
-    /// An atomic operation's ticket.
+    /// The entity of the event; valid only during that call.
+    type entity-handle = u64;
+    /// An atomic operation's ticket (its result arrives in `on-results` the next tick).
     type ticket = u64;
+    /// A scheduled task; carries the generation of the instance that scheduled it (a handle
+    /// from before a reload traps).
+    type task-handle = u64;
+    /// A level of this run: an index into `init-info.levels`.
+    type level = u32;
+    /// Per-run registry ids (see `registry`).
+    type block = u32;
+    type item = u32;
+    type entity-type = u32;
+
+    record uuid { hi: u64, lo: u64 }
 
     record block-pos { x: s32, y: s32, z: s32 }
 
     record player {
         handle: player-handle,
-        uuid: string,
+        uuid: uuid,
         name: string,
         /// Permission level 4 (an operator).
         operator: bool,
@@ -46,31 +62,39 @@ interface types {
 
     record block-event {
         player: player,
-        /// Level key, e.g. `minecraft:overworld`.
-        level: string,
+        level: level,
         pos: block-pos,
-        /// Block key of the block being broken, e.g. `minecraft:stone`.
-        block: string,
+        /// The block being broken.
+        block: block,
         cell: cell-handle,
     }
 
     record place-event {
         player: player,
-        level: string,
-        /// Where a block would go (next to `against` on the clicked face).
+        level: level,
+        /// Where a block (or fluid) would go.
         pos: block-pos,
-        /// The clicked block.
+        /// The clicked block (`pos` itself for a bucket aimed at a replaceable block).
         against: block-pos,
-        /// Item key in the hand used, `minecraft:air` when empty.
-        item: string,
+        /// The item in the hand used; none when the hand is empty.
+        item: option<item>,
         cell: cell-handle,
+    }
+
+    record entity-event {
+        player: player,
+        level: level,
+        entity: entity-handle,
+        entity-uuid: uuid,
+        kind: entity-type,
+        pos: tuple<f64, f64, f64>,
     }
 
     record chat-event { player: player, message: string }
 
     record command-event { player: player, command: string }
 
-    record observed-block { player: player, level: string, pos: block-pos, block: string }
+    record observed-block { player: player, level: level, pos: block-pos, block: block }
 
     /// What happened in the region since the last phase boundary (sent in batches).
     variant observed {
@@ -90,6 +114,29 @@ interface types {
         append(tuple<string, list<u8>>),
     }
 
+    /// An atomic operation's outcome: whether it changed the namespace (a failed
+    /// compare-and-set or a type mismatch did not) and the key's value afterwards.
+    record op-result { ticket: ticket, applied: bool, value: option<global-value> }
+
+    /// A task that ran: its handle, the plugin's own id, the player it follows (`for-player`)
+    /// or the cell of its position (`at-position`).
+    record task-event { handle: task-handle, id: u64, player: option<player>, cell: option<cell-handle> }
+
+    variant task-target {
+        global,
+        player(uuid),
+        position(tuple<level, s32, s32>),
+    }
+
+    enum cancel-reason {
+        /// The plugin was reloaded: the new generation may schedule the task again.
+        reload,
+        /// The player a task followed left.
+        player-left,
+    }
+
+    record cancelled-task { id: u64, target: task-target, remaining-ticks: u32, reason: cancel-reason }
+
     record config-entry { key: string, value: string }
 
     record init-info {
@@ -98,6 +145,10 @@ interface types {
         config: list<config-entry>,
         /// The overworld spawn point.
         spawn: block-pos,
+        /// Level keys by level id, e.g. `minecraft:overworld`.
+        levels: list<string>,
+        /// Instance generation (bumped by every hot reload of the plugin).
+        generation: u32,
     }
 
     record command-spec {
@@ -110,9 +161,9 @@ interface types {
 
 /// Owned namespaces (always linked).
 interface state {
-    use types.{player-handle, cell-handle, global-value, atomic-op, ticket};
+    use types.{player-handle, cell-handle, entity-handle, global-value, atomic-op, ticket};
 
-    variant scope { player(player-handle), cell(cell-handle) }
+    variant scope { player(player-handle), cell(cell-handle), entity(entity-handle) }
 
     /// Reads a key of a namespace the current context owns (writes of this call included).
     get: func(s: scope, key: string) -> option<list<u8>>;
@@ -122,8 +173,45 @@ interface state {
     /// context a snapshot at most one tick old.
     global-get: func(key: string) -> option<global-value>;
     /// Queues an atomic operation on the global namespace (applied in B0; from the global
-    /// instance it applies when the call returns).
+    /// instance it applies when the call returns). With the `op-results` subscription the
+    /// outcome arrives in `on-results` the next tick.
     submit: func(op: atomic-op) -> ticket;
+}
+
+/// Deterministic environment (always linked): in strict mode the clock follows the tick and
+/// the random stream is seeded from the server seed, the plugin and the call.
+interface env {
+    /// Ticks since the server started.
+    tick: func() -> u64;
+    /// Milliseconds since the Unix epoch (strict mode: derived from the tick).
+    now-millis: func() -> u64;
+    /// A random 64-bit value.
+    random: func() -> u64;
+}
+
+/// Per-run registry ids and their resource keys (always linked).
+interface registry {
+    enum kind { level, block, item, entity-type }
+
+    key: func(k: kind, id: u32) -> option<string>;
+    id: func(k: kind, key: string) -> option<u32>;
+}
+
+/// `scheduler`: delayed tasks, committed when the scheduling call returns normally. Tasks
+/// run at the start of a tick (B0), in (due tick, scheduling order).
+interface scheduler {
+    use types.{uuid, level, task-handle};
+
+    /// `on-task` in the global instance after `delay-ticks` (at least 1).
+    global: func(delay-ticks: u32, id: u64) -> task-handle;
+    /// `on-task` in the region instance holding the player then (the task follows them;
+    /// cancelled with a notice to the global instance if they are not online then). By uuid,
+    /// so that a new generation can schedule again what a reload cancelled.
+    for-player: func(p: uuid, delay-ticks: u32, id: u64) -> task-handle;
+    /// `on-task` in the region instance owning the position then.
+    at-position: func(level: level, x: s32, z: s32, delay-ticks: u32, id: u64) -> task-handle;
+    /// Cancels a task that has not run; false if it ran or was cancelled already.
+    cancel: func(t: task-handle) -> bool;
 }
 
 /// `player.message`: chat to players, delivered at the next serial point.
@@ -142,31 +230,46 @@ interface log {
 
 /// Exports of the global instance.
 interface global-hooks {
-    use types.{init-info, command-spec, player, span};
+    use types.{init-info, command-spec, player, span, task-event, op-result, cancelled-task};
 
-    /// Once, after instantiation: the commands to register (needs `command.register`).
+    /// After instantiation: the commands to register (needs `command.register`).
     init: func(info: init-info) -> list<command-spec>;
+    /// After `init`: the blob the previous generation returned from `on-disable` (hot
+    /// reload), none on a cold start.
+    on-enable: func(blob: option<list<u8>>);
+    /// Before a hot reload replaces the plugin: state to hand to the next generation.
+    on-disable: func() -> option<list<u8>>;
     on-join: func(p: player);
     on-leave: func(p: player);
     /// A registered command; `args` is the text after the literal. Returns the reply.
     on-command: func(p: option<player>, name: string, args: string) -> list<span>;
+    on-task: func(t: task-event);
+    on-results: func(results: list<op-result>);
+    /// Tasks that will not run (reload, the player left).
+    on-cancelled: func(tasks: list<cancelled-task>);
 }
 
 /// Exports of region instances (optional).
 interface region-hooks {
-    use types.{init-info, block-event, place-event, chat-event, command-event, verdict, chat-verdict, observed};
+    use types.{init-info, block-event, place-event, entity-event, chat-event, command-event, verdict, chat-verdict, observed, task-event, op-result};
 
     /// After each instantiation (a region instance may be replaced at any barrier).
     init: func(info: init-info);
     on-block-break: func(ev: block-event) -> verdict;
     on-block-place: func(ev: place-event) -> verdict;
+    on-entity-interact: func(ev: entity-event) -> verdict;
     on-chat: func(ev: chat-event) -> chat-verdict;
     on-command: func(ev: command-event) -> verdict;
     on-observe: func(events: list<observed>);
+    on-task: func(t: task-event);
+    on-results: func(results: list<op-result>);
 }
 
 world global-plugin {
     import state;
+    import env;
+    import registry;
+    import scheduler;
     import chat;
     import log;
     export global-hooks;
@@ -174,6 +277,9 @@ world global-plugin {
 
 world region-plugin {
     import state;
+    import env;
+    import registry;
+    import scheduler;
     import chat;
     import log;
     export region-hooks;

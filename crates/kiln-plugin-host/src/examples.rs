@@ -9,8 +9,14 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// Example crate directory names and their component file stems.
-pub const EXAMPLES: [(&str, &str); 4] =
-    [("chat-format", "chat_format"), ("counter", "counter"), ("ledger", "ledger"), ("spawn-protection", "spawn_protection")];
+pub const EXAMPLES: [(&str, &str); 6] = [
+    ("chat-format", "chat_format"),
+    ("counter", "counter"),
+    ("heartbeat", "heartbeat"),
+    ("ledger", "ledger"),
+    ("petting", "petting"),
+    ("spawn-protection", "spawn_protection"),
+];
 
 fn plugins_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("plugins")
@@ -74,8 +80,10 @@ pub fn custom_dir(name: &str, ids: &[&str], extra: &[(&str, &str)]) -> Result<Pa
     let out = built.with_file_name(name);
     let _ = std::fs::remove_dir_all(&out);
     for entry in std::fs::read_dir(&built)? {
-        let id = entry?.file_name().to_string_lossy().into_owned();
-        if !ids.is_empty() && !ids.contains(&id.as_str()) {
+        let entry = entry?;
+        let id = entry.file_name().to_string_lossy().into_owned();
+        // Plugin directories only (an embedder may keep its `.cache` next to them).
+        if !entry.path().join("plugin.toml").is_file() || (!ids.is_empty() && !ids.contains(&id.as_str())) {
             continue;
         }
         let add = extra.iter().filter(|(i, _)| *i == id).map(|(_, e)| *e).collect::<Vec<_>>().join("\n");
