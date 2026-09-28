@@ -33,6 +33,7 @@ mod trident;
 mod shield;
 mod tools;
 mod golems;
+mod glide;
 mod xp;
 mod container;
 mod datapacks;
@@ -248,6 +249,9 @@ struct Player {
     section: Option<[i32; 3]>,
     sneaking: bool,
     sprinting: bool,
+    /// Gliding with an elytra (shared flag 7) and the ticks it has lasted.
+    fall_flying: bool,
+    fall_fly_ticks: i32,
     /// Shared flags or pose changed since the last broadcast.
     meta_dirty: bool,
     /// Arm swung this tick.
@@ -2079,6 +2083,8 @@ impl Sim {
             section: None,
             sneaking: false,
             sprinting: false,
+            fall_flying: false,
+            fall_fly_ticks: 0,
             meta_dirty: false,
             swung: false,
             pending_suggestion: None,

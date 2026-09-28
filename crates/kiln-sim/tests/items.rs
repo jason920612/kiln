@@ -452,3 +452,33 @@ fn composters_fill_and_give_bone_meal() {
     w.ticks(1);
     assert_eq!(w.count("minecraft:item"), 1, "the bone meal");
 }
+
+#[test]
+fn elytra_glide_wears_the_wings() {
+    let mut w = World::new("survival");
+    w.run("gamemode creative User");
+    let id = kiln_data::builtin_id("minecraft:item", "minecraft:elytra").unwrap();
+    let stack = ItemStack { item: id, count: 1, added: Vec::new(), removed: Vec::new() };
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot: 6, item: Some(stack) })]));
+    w.run("gamemode survival User");
+    let mut pos = w.client.pos;
+    pos[1] += 5.0;
+    let air = |w: &mut World, on_ground: bool, n: usize| {
+        for _ in 0..n {
+            let pkt = PlayIn::Move { pos: Some(pos), rot: None, on_ground };
+            assert!(w.sim.step([ToSim::Packet(1, pkt), ToSim::Packet(1, PlayIn::ClientTickEnd)]));
+        }
+    };
+    // On the ground the command does nothing: no wear.
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 8 })]));
+    air(&mut w, true, 25);
+    assert_eq!(w.sim.item_damage(1, 6), Some(0));
+    // In the air: one durability every 20 ticks of gliding.
+    air(&mut w, false, 1);
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerCommand { action: 8 })]));
+    air(&mut w, false, 60);
+    assert_eq!(w.sim.item_damage(1, 6), Some(3));
+    // Landing ends the flight.
+    air(&mut w, true, 25);
+    assert_eq!(w.sim.item_damage(1, 6), Some(3));
+}

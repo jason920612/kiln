@@ -470,6 +470,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     p.tick_damage(env.game_time);
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
     p.base_tick(&block, env.min_y, &mut ctx);
+    p.tick_glide();
     // `Entity.handlePortal` (in `baseTick`).
     if let Some(travel) = p.handle_portal(env) {
         t.portals.push(travel);
@@ -644,6 +645,10 @@ pub(crate) fn player_packet(
                 p.sneaking = sneaking;
                 p.meta_dirty = true;
             }
+        }
+        PlayIn::PlayerCommand { action } if action == crate::glide::START_FALL_FLYING => {
+            let fluids = p.fluids(&|pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0));
+            p.try_start_fall_flying(fluids.in_water || fluids.in_lava);
         }
         PlayIn::PlayerCommand { action } if action != STOP_SLEEPING => {
             const START_SPRINTING: i32 = 1;
@@ -1046,7 +1051,7 @@ fn handle_move(
     }
     let to = pos.map_or(p.pos, movement::clamp_position);
     p.move_packets += 1;
-    if env.movement_check && movement::too_fast(p.first_good, to, 0.0, p.move_packets, false) {
+    if env.movement_check && movement::too_fast(p.first_good, to, 0.0, p.move_packets, p.fall_flying) {
         let d = [to[0] - p.first_good[0], to[1] - p.first_good[1], to[2] - p.first_good[2]];
         warn!("{} moved too quickly! {d:?}", p.name);
         p.teleport(p.pos, p.rot, now);
