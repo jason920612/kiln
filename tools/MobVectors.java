@@ -2027,6 +2027,43 @@ public class MobVectors {
             s.dayTime = 18000;
             out.add(s);
         }
+        String[] genes = {"normal", "lazy", "worried", "playful", "aggressive"};
+        for (int i = 0; i < genes.length; i++) {
+            Scenario s = new Scenario("idle_panda_" + genes[i]);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:panda", 0.5, BY, 0.5, 25f * i, 15000L + 13 * i);
+            m.nbt = "{MainGene:\"" + genes[i] + "\",HiddenGene:\"" + genes[i] + "\"}";
+            s.mobs.add(m);
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = !genes[i].equals("worried");
+            s.levelSeed = i;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("cub_panda");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:panda", 0.5, BY, 0.5, 0f, 15100);
+            m.nbt = "{MainGene:\"weak\",HiddenGene:\"weak\"}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.mobs.add(new MobSpec("minecraft:panda", 3.5, BY, 2.5, 90f, 15101));
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_panda");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:panda", 0.5, BY, 0.5, 0f, 15200);
+            m.nbt = "{MainGene:\"aggressive\",HiddenGene:\"normal\"}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 
 

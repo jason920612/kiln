@@ -47,6 +47,7 @@ pub mod rabbit;
 pub mod polar_bear;
 pub mod turtle;
 pub mod fox;
+pub mod panda;
 
 // -- slice 3: common mobs B
 pub mod squid;
@@ -103,6 +104,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::PolarBear => &polar_bear::KIND,
         MobKind::Turtle => &turtle::KIND,
         MobKind::Fox => &fox::KIND,
+        MobKind::Panda => &panda::KIND,
 
         // -- slice 3: common mobs B
         MobKind::Squid => &squid::KIND,

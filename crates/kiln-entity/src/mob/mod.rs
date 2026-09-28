@@ -96,6 +96,7 @@ pub enum MobKind {
     PolarBear,
     Turtle,
     Fox,
+    Panda,
 
     // -- slice 3: common mobs B
     Squid,
@@ -229,6 +230,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::PolarBear,
     MobKind::Turtle,
     MobKind::Fox,
+    MobKind::Panda,
 
     // -- slice 3: common mobs B
     MobKind::Squid,
