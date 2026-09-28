@@ -14,11 +14,23 @@ use kiln_proto::packets::ItemStack;
 use kiln_sim::testing::{Client, join};
 use kiln_sim::{Sim, SimConfig};
 
+/// Whether the vanilla datapack is available (recipes, loot, enchantments). The repository's
+/// `work/generated` is used when `KILN_DATAPACK` is not set, so the simulation (which looks
+/// relative to the working directory, the crate here) finds it too.
 fn have_datapack() -> bool {
-    let dir = std::env::var_os("KILN_DATAPACK")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work/generated"));
-    dir.join("data/minecraft/recipe").is_dir()
+    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| {
+        if let Some(dir) = std::env::var_os("KILN_DATAPACK") {
+            return std::path::Path::new(&dir).join("data/minecraft/recipe").is_dir();
+        }
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work/generated");
+        let found = dir.join("data/minecraft/recipe").is_dir();
+        if found {
+            // Set once, before any simulation in this test binary reads it.
+            unsafe { std::env::set_var("KILN_DATAPACK", dir) };
+        }
+        found
+    })
 }
 
 struct World {
@@ -30,6 +42,7 @@ struct World {
 
 impl World {
     fn new(mode: &str) -> Self {
+        have_datapack();
         let mut sim = Sim::new(SimConfig::new(4, 4, None));
         let (msg, stats) = join(1, "Keeper", 2);
         assert!(sim.step([msg, ToSim::Console(format!("gamemode {mode} Keeper"))]));
