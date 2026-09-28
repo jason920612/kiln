@@ -24,13 +24,26 @@ struct Source<'a> {
 }
 
 impl NoiseSource for Source<'_> {
-    /// `CompileContext.createNoiseSampler`: the two nether biome noises get vanilla's legacy
-    /// octave setup there, which is not implemented.
+    /// `CompileContext.createNoiseSampler`: the two nether biome noises (whatever the random
+    /// source setting) get the legacy octave setup on a `LegacyRandomSource(seed + 0)` and
+    /// `(seed + 1)`; every other noise is the world's shared instance.
     fn noise(&mut self, id: &str) -> Result<Arc<NoiseStack>, Error> {
-        if id == "minecraft:nether/temperature" || id == "minecraft:nether/vegetation" {
-            return Err(Error::UnsupportedFunction(format!("legacy nether biome noise {id}")));
-        }
-        self.state.noise(self.graph, id)
+        let offset = match id {
+            "minecraft:nether/temperature" => 0,
+            "minecraft:nether/vegetation" => 1,
+            _ => return self.state.noise(self.graph, id),
+        };
+        let params = self.graph.noise(id)?;
+        let mut random = LegacyRandom::new(self.state.seed.wrapping_add(offset));
+        Ok(Arc::new(params.create_legacy_nether_biome(&mut random)))
+    }
+
+    /// `createEndIslandRandom` (a `LegacyRandomSource(seed)`), 17292 draws skipped, then
+    /// `new SimplexNoise(random, true)`.
+    fn end_islands(&mut self) -> Arc<crate::simplex::Simplex> {
+        let mut random = LegacyRandom::new(self.state.seed);
+        random.consume_count(17292);
+        Arc::new(crate::simplex::Simplex::new(&mut random, true))
     }
 
     fn random(&mut self, id: &str) -> WorldgenRandom {

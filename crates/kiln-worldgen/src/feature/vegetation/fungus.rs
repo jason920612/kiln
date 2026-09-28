@@ -43,7 +43,7 @@ impl HugeFungus {
         if random.next_int_bounded(12) == 0 {
             height *= 2;
         }
-        if !self.planted && origin.y + height + 1 >= r.height() {
+        if !self.planted && origin.y + height + 1 >= r.generator.gen_height {
             return false;
         }
         let huge = !self.planted && random.next_float() < 0.06;

@@ -279,6 +279,11 @@ impl MaterialSystem {
                     ctx.update_y(stone_above, y - next_ceiling + 1, water_height, y);
                     if let Some(b) = ctx.apply(&self.rule, bx, y, bz) {
                         chunk.set(x, y, z, b);
+                        // `BlockColumn.setBlock`: a placed fluid gets a post-processing mark
+                        // (the nether rule's lava).
+                        if crate::blocks::has_fluid(b) {
+                            chunk.mark_post_processing(bx, y, bz);
+                        }
                     }
                 }
                 if self.frozen_oceans.contains(&column_biome) {

@@ -1,13 +1,13 @@
-// Runs vanilla 26.3's overworld chunk generation in-process (BIOMES, then TERRAIN's fill,
+// Runs vanilla 26.3's chunk generation (overworld, or --dimension nether|end) in-process (BIOMES, then TERRAIN's fill,
 // surface and carver steps, without structures or features) and dumps the results for
 // kiln-worldgen's chunk parity test.
 //
 // Per seed it writes chunks_<seed>.bin:
 //   header   "KWGC", version, seed, min y, height, block state count, biome names,
-//            the overworld parameter list (quantized), chunk count
+//            the multi-noise parameter list (quantized; empty for the end), chunk count
 //   chunks   x, z, then a deflated blob: one biome index byte per quart (sections bottom to
 //            top, each 4x4x4 in y, z, x order) and, for each of the three steps (fill,
-//            surface, carvers), 16*384*16 block state ids as u16 in Kiln's section order
+//            surface, carvers), 16*height*16 block state ids as u16 in Kiln's section order
 //            (sections bottom to top, index y << 8 | z << 4 | x).
 //
 // Canonical order: the climate R-tree keeps a thread-local "last result" that breaks ties,
@@ -15,8 +15,11 @@
 // chunk's biome fill starts from an empty last result (Kiln does the same), and the surface
 // step reads neighbour biomes from the same canonical fills.
 //
+// Nether and end dumps are named chunks_<dimension>_<seed>.bin; their chunks are as tall as the
+// dimension type (256) while the noise fills only the generation depth (128).
+//
 // usage: java -cp <server jar + libraries> tools/ChunkVectors.java <out dir> [--regions N]
-//        [--bench N] [seed...]   (default seeds 0 1 12345 -4172144997902289642; "random" works)
+//        [--bench N] [--dimension overworld|nether|end] [seed...]   (default seeds 0 1 12345 -4172144997902289642; "random" works)
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -98,7 +101,9 @@ public class ChunkVectors {
     final NoiseGeneratorSettings settings;
     final Holder<NoiseGeneratorSettings> settingsHolder;
     final HolderGetter<NormalNoise> noises;
-    final MultiNoiseBiomeSource biomeSource;
+    final String dimension;
+    final net.minecraft.world.level.biome.BiomeSource biomeSource;
+    final net.minecraft.world.level.levelgen.NoiseSettings genSettings;
     final NoiseBasedChunkGenerator generator;
     final PalettedContainerFactory containers;
     final LevelHeightAccessor height;
@@ -109,33 +114,50 @@ public class ChunkVectors {
     final Method doFill, buildSurface, generateCarvers;
 
     @SuppressWarnings("unchecked")
-    ChunkVectors() throws Exception {
+    ChunkVectors(String dimension) throws Exception {
+        this.dimension = dimension;
         registries = loadWorldgen();
         Registry<NoiseGeneratorSettings> settingsRegistry = registries.lookupOrThrow(Registries.NOISE_SETTINGS);
-        settingsHolder = settingsRegistry.getOrThrow(NoiseGeneratorSettings.OVERWORLD);
+        settingsHolder = settingsRegistry.getOrThrow(switch (dimension) {
+            case "nether" -> NoiseGeneratorSettings.NETHER;
+            case "end" -> NoiseGeneratorSettings.END;
+            default -> NoiseGeneratorSettings.OVERWORLD;
+        });
         settings = settingsHolder.value();
         noises = registries.lookupOrThrow(Registries.NOISE);
-        Holder<MultiNoiseBiomeSourceParameterList> preset = registries
-            .lookupOrThrow(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST)
-            .getOrThrow(MultiNoiseBiomeSourceParameterLists.OVERWORLD);
-        biomeSource = MultiNoiseBiomeSource.createFromPreset(preset);
+        if (dimension.equals("end")) {
+            biomeSource = net.minecraft.world.level.biome.TheEndBiomeSource.create(registries.lookupOrThrow(Registries.BIOME));
+        } else {
+            Holder<MultiNoiseBiomeSourceParameterList> preset = registries
+                .lookupOrThrow(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST)
+                .getOrThrow(dimension.equals("nether") ? MultiNoiseBiomeSourceParameterLists.NETHER : MultiNoiseBiomeSourceParameterLists.OVERWORLD);
+            biomeSource = MultiNoiseBiomeSource.createFromPreset(preset);
+        }
         generator = new NoiseBasedChunkGenerator(biomeSource, settingsHolder);
         containers = PalettedContainerFactory.create(registries);
-        height = LevelHeightAccessor.create(settings.noiseSettings().minY(), settings.noiseSettings().height());
+        // The level geometry comes from the dimension type (nether and end: 0..255).
+        height = dimension.equals("overworld")
+            ? LevelHeightAccessor.create(settings.noiseSettings().minY(), settings.noiseSettings().height())
+            : LevelHeightAccessor.create(0, 256);
+        genSettings = settings.noiseSettings().clampToHeightAccessor(height);
         for (var ref : registries.lookupOrThrow(Registries.BIOME).listElements().toList()) {
             biomeIndex.put(ref, biomeNames.size());
             biomeNames.add(ref.key().identifier().toString());
         }
 
-        Method parameters = MultiNoiseBiomeSource.class.getDeclaredMethod("parameters");
-        parameters.setAccessible(true);
-        Object list = parameters.invoke(biomeSource);
-        Field index = Climate.ParameterList.class.getDeclaredField("index");
-        index.setAccessible(true);
-        Object tree = index.get(list);
-        Field last = tree.getClass().getDeclaredField("lastResult");
-        last.setAccessible(true);
-        lastResult = (ThreadLocal<?>) last.get(tree);
+        if (biomeSource instanceof MultiNoiseBiomeSource) {
+            Method parameters = MultiNoiseBiomeSource.class.getDeclaredMethod("parameters");
+            parameters.setAccessible(true);
+            Object list = parameters.invoke(biomeSource);
+            Field index = Climate.ParameterList.class.getDeclaredField("index");
+            index.setAccessible(true);
+            Object tree = index.get(list);
+            Field last = tree.getClass().getDeclaredField("lastResult");
+            last.setAccessible(true);
+            lastResult = (ThreadLocal<?>) last.get(tree);
+        } else {
+            lastResult = new ThreadLocal<>();
+        }
 
         Field picker = NoiseBasedChunkGenerator.class.getDeclaredField("globalFluidPicker");
         picker.setAccessible(true);
@@ -227,7 +249,7 @@ public class ChunkVectors {
 
         NoiseChunk noiseChunk(ProtoChunk chunk) {
             ChunkPos pos = chunk.getPos();
-            DensityVolume volume = new DensityVolume(16, height.getHeight(), 16, pos.getMinBlockX(), height.getMinY(), pos.getMinBlockZ());
+            DensityVolume volume = new DensityVolume(16, genSettings.height(), 16, pos.getMinBlockX(), genSettings.minY(), pos.getMinBlockZ());
             return new NoiseChunk(random, Beardifier.EMPTY, settings, fluidPicker, Blender.empty(), volume);
         }
 
@@ -325,6 +347,10 @@ public class ChunkVectors {
     /** The preset's parameter list as vanilla holds it (quantized), to check Kiln's loader. */
     @SuppressWarnings("unchecked")
     void writeParameters(Writer w) throws Exception {
+        if (!(biomeSource instanceof MultiNoiseBiomeSource)) {
+            w.i32(0);
+            return;
+        }
         Method parameters = MultiNoiseBiomeSource.class.getDeclaredMethod("parameters");
         parameters.setAccessible(true);
         Climate.ParameterList<Holder<Biome>> list = (Climate.ParameterList<Holder<Biome>>) parameters.invoke(biomeSource);
@@ -388,18 +414,21 @@ public class ChunkVectors {
         Files.createDirectories(out);
         int regions = TOTAL_REGIONS;
         int bench = 0;
+        String dimension = "overworld";
         List<Long> seeds = new ArrayList<>();
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
                 case "--regions" -> regions = Integer.parseInt(args[++i]);
                 case "--bench" -> bench = Integer.parseInt(args[++i]);
+                case "--dimension" -> dimension = args[++i];
                 case "random" -> seeds.add(new Random().nextLong());
                 default -> seeds.add(Long.parseLong(args[i]));
             }
         }
         if (seeds.isEmpty() && bench == 0) seeds.addAll(List.of(0L, 1L, 12345L, -4172144997902289642L));
-        ChunkVectors cv = new ChunkVectors();
-        for (long seed : seeds) cv.write(out.resolve("chunks_" + seed + ".bin"), seed, regions);
+        ChunkVectors cv = new ChunkVectors(dimension);
+        String prefix = dimension.equals("overworld") ? "chunks_" : "chunks_" + dimension + "_";
+        for (long seed : seeds) cv.write(out.resolve(prefix + seed + ".bin"), seed, regions);
         if (bench > 0) cv.bench(seeds.isEmpty() ? 0 : seeds.get(0), bench);
     }
 

@@ -160,12 +160,55 @@ pub fn zoomed_biome(seed: i64, x: i32, y: i32, z: i32, noise_biome: &mut dyn FnM
     noise_biome(cx, cy, cz)
 }
 
+/// Which biome source a generator uses.
+#[derive(Clone, Copy, Debug)]
+pub enum BiomeSourceKind<'a> {
+    /// `MultiNoiseBiomeSource` from a `multi_noise_biome_source_parameter_list` id.
+    MultiNoise(&'a str),
+    /// `TheEndBiomeSource`.
+    TheEnd,
+}
+
+/// A generator's biome source.
+pub enum BiomeSource {
+    MultiNoise(ParameterList<u16>),
+    /// `TheEndBiomeSource`: `the_end` within 64 chunks of the origin, elsewhere chosen by the
+    /// router's erosion (the end islands function) at the section's center column.
+    TheEnd { end: u16, highlands: u16, midlands: u16, islands: u16, barrens: u16 },
+}
+
+impl BiomeSource {
+    /// `BiomeSource.possibleBiomes` in order (first occurrence).
+    pub fn possible(&self) -> Vec<u16> {
+        match self {
+            BiomeSource::MultiNoise(list) => {
+                let mut order: Vec<u16> = Vec::new();
+                for (_, b) in list.values() {
+                    if !order.contains(b) {
+                        order.push(*b);
+                    }
+                }
+                order
+            }
+            BiomeSource::TheEnd { end, highlands, midlands, islands, barrens } => vec![*end, *highlands, *midlands, *islands, *barrens],
+        }
+    }
+}
+
+/// Index of the erosion field in [`CLIMATE`].
+const EROSION: usize = 3;
+
 pub struct Generator {
+    /// The level's geometry (`DimensionType` `min_y`/`height`): the chunks' sections.
     pub min_y: i32,
     pub height: i32,
+    /// The generation context (`WorldGenerationContext`: the noise settings clamped to the
+    /// level): what TERRAIN fills, what anchors and carvers resolve against.
+    pub gen_min_y: i32,
+    pub gen_height: i32,
     pub sea_level: i32,
     pub biomes: Vec<BiomeInfo>,
-    parameters: ParameterList<u16>,
+    source: BiomeSource,
     climate: Vec<SamplerRef>,
     pub zoom_seed: i64,
     final_density: SamplerRef,
@@ -190,23 +233,55 @@ pub struct Generator {
 
 impl Generator {
     /// The generator for `noise_settings` entry `settings` with the multi-noise biome source
-    /// `biome_source` (a `multi_noise_biome_source_parameter_list` id), seeded with `seed`.
+    /// `biome_source` (a `multi_noise_biome_source_parameter_list` id), seeded with `seed`,
+    /// building chunks as tall as the noise settings (the overworld's geometry).
     pub fn new(pack: &Datapack, settings: &str, biome_source: &str, seed: i64) -> Result<Generator, Error> {
         let s = pack.settings(settings)?;
+        Self::for_level(pack, settings, BiomeSourceKind::MultiNoise(biome_source), (s.min_y, s.height), seed)
+    }
+
+    /// The generator for noise settings `settings` and `biome_source` in a level of
+    /// `dimension_type` (whose geometry the chunks get), seeded with `seed`.
+    pub fn for_dimension(
+        pack: &Datapack,
+        settings: &str,
+        biome_source: BiomeSourceKind,
+        dimension_type: &str,
+        seed: i64,
+    ) -> Result<Generator, Error> {
+        let level = *pack
+            .dimension_types
+            .get(&crate::function::qualify(dimension_type))
+            .ok_or_else(|| Error::Invalid(format!("unknown dimension type {dimension_type}")))?;
+        Self::for_level(pack, settings, biome_source, level, seed)
+    }
+
+    fn for_level(pack: &Datapack, settings: &str, biome_source: BiomeSourceKind, level: (i32, i32), seed: i64) -> Result<Generator, Error> {
+        let s = pack.settings(settings)?;
+        // `NoiseSettings.clampToHeightAccessor`.
+        let gen_min_y = s.min_y.max(level.0);
+        let gen_height = (s.min_y + s.height).min(level.0 + level.1) - gen_min_y;
         let biomes: Vec<BiomeInfo> =
             pack.biomes.iter().map(|(id, json)| BiomeInfo::parse(id, json).map_err(|e| e.context(id))).collect::<Result<_, _>>()?;
         let index: HashMap<&str, u16> = biomes.iter().enumerate().map(|(i, b)| (b.name.as_str(), i as u16)).collect();
-        let list = pack
-            .parameter_lists
-            .get(&crate::function::qualify(biome_source))
-            .ok_or_else(|| Error::Invalid(format!("no parameter list {biome_source} (reports/biome_parameters missing?)")))?;
-        let values = list
-            .iter()
-            .map(|(space, biome)| {
-                index.get(biome.as_str()).map(|&i| (*space, i)).ok_or_else(|| Error::Invalid(format!("unknown biome {biome}")))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let parameters = ParameterList::new(values)?;
+        let biome = |name: &str| index.get(name).copied().ok_or_else(|| Error::Invalid(format!("unknown biome {name}")));
+        let source = match biome_source {
+            BiomeSourceKind::MultiNoise(id) => {
+                let list = pack
+                    .parameter_lists
+                    .get(&crate::function::qualify(id))
+                    .ok_or_else(|| Error::Invalid(format!("no parameter list {id} (reports/biome_parameters missing?)")))?;
+                let values = list.iter().map(|(space, b)| Ok((*space, biome(b)?))).collect::<Result<Vec<_>, Error>>()?;
+                BiomeSource::MultiNoise(ParameterList::new(values)?)
+            }
+            BiomeSourceKind::TheEnd => BiomeSource::TheEnd {
+                end: biome("minecraft:the_end")?,
+                highlands: biome("minecraft:end_highlands")?,
+                midlands: biome("minecraft:end_midlands")?,
+                islands: biome("minecraft:small_end_islands")?,
+                barrens: biome("minecraft:end_barrens")?,
+            },
+        };
 
         // One compilation for everything a chunk samples, so prepared caches are shared the
         // way vanilla's per-RandomState compiler shares them.
@@ -255,8 +330,8 @@ impl Generator {
                 rule: &s.material_rule,
                 default_block,
                 sea_level: s.sea_level,
-                min_y: s.min_y,
-                height: s.height,
+                min_y: gen_min_y,
+                height: gen_height,
                 preliminary_surface: chunk_surface_level,
                 densities,
                 biome_names: &biome_names,
@@ -286,7 +361,7 @@ impl Generator {
                 Carver::parse(json).map_err(|e| e.context(id))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let mut source_biomes: Vec<u16> = parameters.values().iter().map(|(_, b)| *b).collect();
+        let mut source_biomes: Vec<u16> = source.possible();
         source_biomes.sort_unstable();
         source_biomes.dedup();
         let uniform_carvers = source_biomes
@@ -300,11 +375,13 @@ impl Generator {
             }
         }
         Ok(Generator {
-            min_y: s.min_y,
-            height: s.height,
+            min_y: level.0,
+            height: level.1,
+            gen_min_y,
+            gen_height,
             sea_level: s.sea_level,
             biomes,
-            parameters,
+            source,
             climate,
             zoom_seed: obfuscate_seed(seed),
             seed,
@@ -326,15 +403,46 @@ impl Generator {
         (self.height >> 4) as usize
     }
 
-    pub fn parameters(&self) -> &ParameterList<u16> {
-        &self.parameters
+    /// `WorldGenerationContext` for this generator's level.
+    pub fn gen_context(&self) -> GenContext {
+        GenContext { min_y: self.gen_min_y, height: self.gen_height, sea_level: self.sea_level }
     }
 
-    /// `ChunkGenerator.doCreateBiomes`: the climate on the chunk's quart grid in volume mode,
-    /// then one parameter-list search per quart in `fillBiomesFromNoise` order (sections
-    /// upward, then x, y, z), starting from an empty last result.
+    /// The multi-noise parameter list (`None` for other biome sources).
+    pub fn parameters(&self) -> Option<&ParameterList<u16>> {
+        match &self.source {
+            BiomeSource::MultiNoise(list) => Some(list),
+            BiomeSource::TheEnd { .. } => None,
+        }
+    }
+
+    pub fn biome_source(&self) -> &BiomeSource {
+        &self.source
+    }
+
+    /// `BiomeSource.possibleBiomes`, in the source's order.
+    pub fn possible_biomes(&self) -> Vec<u16> {
+        self.source.possible()
+    }
+
+    /// `ChunkGenerator.doCreateBiomes`: for multi-noise the climate on the chunk's quart grid
+    /// in volume mode, then one parameter-list search per quart in `fillBiomesFromNoise` order
+    /// (sections upward, then x, y, z), starting from an empty last result; other sources
+    /// resolve each quart on its own (caching context).
     pub fn chunk_biomes(&self, s: &mut Scratch, cx: i32, cz: i32) -> Vec<u16> {
         s.reset_caches();
+        if !matches!(self.source, BiomeSource::MultiNoise(_)) {
+            let mut last: LastResult = None;
+            let mut out = vec![0u16; self.sections() * 64];
+            let (qx, qz, qy0) = (cx << 2, cz << 2, self.min_y >> 2);
+            for section in 0..self.sections() {
+                for i in 0..64 {
+                    let (x, y, z) = (i & 3, i >> 4, (i >> 2) & 3);
+                    out[section * 64 + i as usize] = self.point_biome(s, &mut last, qx + x, qy0 + section as i32 * 4 + y, qz + z);
+                }
+            }
+            return out;
+        }
         let quarts_y = self.height >> 2;
         let vol = Volume::new([4, quarts_y, 4], [cx << 4, (self.min_y >> 2) << 2, cz << 4], [4, 4, 4]);
         let climate: Vec<Vec<f32>> = self
@@ -354,7 +462,7 @@ impl Generator {
                     for z in 0..4 {
                         let i = vol.index(x, section as i32 * 4 + y, z);
                         let t = target(climate[0][i], climate[1][i], climate[2][i], climate[3][i], climate[4][i], climate[5][i]);
-                        out[section * 64 + ((y << 4) | (z << 2) | x) as usize] = *self.parameters.find(&t, &mut last);
+                        out[section * 64 + ((y << 4) | (z << 2) | x) as usize] = self.find(&t, &mut last);
                     }
                 }
             }
@@ -392,7 +500,7 @@ impl Generator {
 
     /// Runs the TERRAIN steps on a chunk that passed BIOMES, calling `after` after each.
     pub fn run_steps(&self, gs: &mut GenScratch, chunk: &mut ProtoChunk, after: &mut dyn FnMut(Step, &ProtoChunk)) {
-        let vol = Volume::blocks([16, self.height, 16], [chunk.x << 4, self.min_y, chunk.z << 4]);
+        let vol = Volume::blocks([16, self.gen_height, 16], [chunk.x << 4, self.gen_min_y, chunk.z << 4]);
         // The NoiseChunk: a fresh caching context, then the aquifer (whose constructor samples
         // the surface level).
         let s = &mut gs.noise_context;
@@ -422,9 +530,10 @@ impl Generator {
 
     /// `NoiseBasedChunkGenerator.iterateNoiseColumn`: the terrain of one column as TERRAIN's
     /// fill step would place it (final density over a 1×height×1 volume, then the aquifer),
-    /// before surface rules, carvers and structures. States from `min_y` up.
+    /// before surface rules, carvers and structures. States from `gen_min_y` up (the
+    /// generation depth; vanilla's `NoiseColumn` reads air outside it).
     pub fn base_column(&self, s: &mut Scratch, x: i32, z: i32) -> Vec<u16> {
-        let vol = Volume::blocks([1, self.height, 1], [x, self.min_y, z]);
+        let vol = Volume::blocks([1, self.gen_height, 1], [x, self.gen_min_y, z]);
         s.reset_caches();
         let mut aquifer = match &self.aquifer {
             Some(f) => Aquifer::Noise(Box::new(NoiseAquifer::new(f, self.fluid_picker, s, &vol))),
@@ -432,7 +541,7 @@ impl Generator {
         };
         let mut density = vec![0f32; vol.len()];
         self.final_density.fill(s, &vol, &mut density);
-        let mut out = vec![state::AIR; self.height as usize];
+        let mut out = vec![state::AIR; self.gen_height as usize];
         for yi in (0..vol.size[1]).rev() {
             let y = vol.block_y(yi);
             out[yi as usize] = aquifer.compute_substance(s, x, y, z, density[vol.index(0, yi, 0)] as f64).unwrap_or(self.default_block);
@@ -449,7 +558,7 @@ impl Generator {
         column
             .iter()
             .rposition(|&b| crate::proto::heightmap_flags(b) & bit != 0)
-            .map_or(self.min_y, |i| self.min_y + i as i32 + 1)
+            .map_or(self.gen_min_y, |i| self.gen_min_y + i as i32 + 1)
     }
 
     /// `MultiNoiseBiomeSource.createResolverForChunk`'s sampling: the six climate values on a
@@ -464,17 +573,50 @@ impl Generator {
         (vol, climate)
     }
 
-    /// The biome for six climate values (`Climate.target`, then the parameter list search).
-    pub fn biome_for(&self, c: [f32; 6], last: &mut LastResult) -> u16 {
-        *self.parameters.find(&target(c[0], c[1], c[2], c[3], c[4], c[5]), last)
+    fn find(&self, t: &crate::biome::Target, last: &mut LastResult) -> u16 {
+        match &self.source {
+            BiomeSource::MultiNoise(list) => *list.find(t, last),
+            BiomeSource::TheEnd { .. } => panic!("the end biome source has no parameter list"),
+        }
+    }
+
+    /// The biomes of the quarts `q0..=q1` of a quart column, as `couldStructureExistInColumn`
+    /// samples them (multi-noise: the climate in volume mode, then the parameter list).
+    pub fn column_biomes(&self, s: &mut Scratch, last: &mut LastResult, qx: i32, qz: i32, q0: i32, q1: i32) -> Vec<u16> {
+        if !matches!(self.source, BiomeSource::MultiNoise(_)) {
+            return (q0..=q1).map(|qy| self.point_biome(s, last, qx, qy, qz)).collect();
+        }
+        let (vol, c) = self.climate_volume(s, [qx, q0, qz], [1, q1 - q0 + 1, 1]);
+        (q0..=q1)
+            .map(|qy| {
+                let i = vol.index(0, qy - q0, 0);
+                self.find(&target(c[0][i], c[1][i], c[2][i], c[3][i], c[4][i], c[5][i]), last)
+            })
+            .collect()
     }
 
     /// The biome of a quart from point-sampled climate (`createResolver`/
-    /// `createUncachedResolver`).
+    /// `createUncachedResolver`); `TheEndBiomeSource.getNoiseBiome` for the end.
     pub fn point_biome(&self, s: &mut Scratch, last: &mut LastResult, qx: i32, qy: i32, qz: i32) -> u16 {
         let (x, y, z) = (qx << 2, qy << 2, qz << 2);
+        if let BiomeSource::TheEnd { end, highlands, midlands, islands, barrens } = self.source {
+            let (sx, sz) = (x >> 4, z >> 4);
+            if (sx as i64) * (sx as i64) + (sz as i64) * (sz as i64) <= 4096 {
+                return end;
+            }
+            let e = self.climate[EROSION].point(s, (sx * 2 + 1) * 8, y, (sz * 2 + 1) * 8) as f64;
+            return if e > 0.25 {
+                highlands
+            } else if e >= -0.0625 {
+                midlands
+            } else if e < -0.21875 {
+                islands
+            } else {
+                barrens
+            };
+        }
         let c: Vec<f32> = self.climate.iter().map(|f| f.point(s, x, y, z)).collect();
-        *self.parameters.find(&target(c[0], c[1], c[2], c[3], c[4], c[5]), last)
+        self.find(&target(c[0], c[1], c[2], c[3], c[4], c[5]), last)
     }
 
     /// The carvers of the biome at a chunk's origin (`getBiomeGenerationSettingsForCarver`).
@@ -488,7 +630,7 @@ impl Generator {
     /// `NoiseBasedChunkGenerator.generateCarvers`: carvers started within 8 chunks mark a
     /// carving mask, whose positions the aquifer then fills.
     fn carve(&self, s: &mut Scratch, point: &mut Scratch, aquifer: &mut Aquifer, chunk: &mut ProtoChunk) {
-        let g = GenContext { min_y: self.min_y, height: self.height, sea_level: self.sea_level };
+        let g = self.gen_context();
         let mut mask = CarvingMask::new(g.min_y + 1, g.min_y + g.height - 1 - 7);
         let mut last: LastResult = None;
         let (cx, cz) = (chunk.x, chunk.z);

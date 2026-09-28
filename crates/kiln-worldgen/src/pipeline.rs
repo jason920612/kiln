@@ -26,7 +26,7 @@
 use crate::Error;
 use crate::datapack::Datapack;
 use crate::decorate::Decorator;
-use crate::generator::{GenScratch, Generator};
+use crate::generator::{BiomeSourceKind, GenScratch, Generator};
 use crate::order;
 use crate::proto::{ProtoChunk, Status};
 use crate::region::Region;
@@ -60,7 +60,7 @@ impl Worldgen {
     /// The Nether of `pack` for `seed` (noise settings and multi-noise biome source
     /// `minecraft:nether`).
     pub fn nether(pack: &Datapack, seed: i64, generate_structures: bool) -> Result<Worldgen, Error> {
-        let generator = Generator::new(pack, "minecraft:nether", "minecraft:nether", seed)?;
+        let generator = Generator::for_dimension(pack, "minecraft:nether", BiomeSourceKind::MultiNoise("minecraft:nether"), "minecraft:the_nether", seed)?;
         let loader = Loader::new(pack, generator.biomes.iter().map(|b| b.name.clone()).collect());
         let decorator = Decorator::new(&generator, &loader)?;
         let structures = Structures::load(&generator, &loader)?;
@@ -68,8 +68,12 @@ impl Worldgen {
     }
 
     /// The End of `pack` for `seed` (noise settings `minecraft:end`, the end biome source).
-    pub fn end(_pack: &Datapack, _seed: i64, _generate_structures: bool) -> Result<Worldgen, Error> {
-        Err(Error::Invalid("end generation is not implemented yet".into()))
+    pub fn end(pack: &Datapack, seed: i64, generate_structures: bool) -> Result<Worldgen, Error> {
+        let generator = Generator::for_dimension(pack, "minecraft:end", BiomeSourceKind::TheEnd, "minecraft:the_end", seed)?;
+        let loader = Loader::new(pack, generator.biomes.iter().map(|b| b.name.clone()).collect());
+        let decorator = Decorator::new(&generator, &loader)?;
+        let structures = Structures::load(&generator, &loader)?;
+        Ok(Worldgen { generator, decorator, structures, generate_structures })
     }
 }
 

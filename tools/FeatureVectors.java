@@ -1,4 +1,4 @@
-// Runs vanilla 26.3's overworld generation through FEATURES for sets of chunks, in Kiln's
+// Runs vanilla 26.3's generation (the overworld, or --dimension nether|end) through FEATURES for sets of chunks, in Kiln's
 // canonical decoration order, and dumps what every placed feature (and structure piece
 // placement) wrote, for kiln-worldgen's feature parity test.
 //
@@ -32,12 +32,17 @@
 //            then per target chunk: x, z, deflated final blocks (u16, Kiln section order),
 //            per section the post-processing count + packed positions (u16) after TERRAIN,
 //            the same after FEATURES, then block ticks
-//            and fluid ticks: count, per tick id, x, y, z, delay, priority (version 2).
+//            and fluid ticks: count, per tick id, x, y, z, delay, priority (version 2), then the
+//            entities generation added to the chunk (end crystals, end city shulkers and item
+//            frames...): count, per entity its saved NBT as length + bytes (version 3).
+//
+// Nether and end dumps are features_<dimension>_<seed>...bin; their chunks are 256 tall and
+// TERRAIN fills the generation depth (128) only.
 //
 // usage (through tools/feature_vectors.py):
 //   java --add-opens java.base/java.lang=ALL-UNNAMED -cp <server jar + libraries>
 //        tools/FeatureVectors.java <out dir> <seed> [--regions N] [--size S] [--check]
-//        [--bench N]
+//        [--bench N] [--dimension overworld|nether|end]
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
@@ -152,7 +157,9 @@ public class FeatureVectors {
     final NoiseBasedChunkGenerator generator;
     final RandomState random;
     final NoiseGeneratorSettings settings;
-    final MultiNoiseBiomeSource biomeSource;
+    final net.minecraft.world.level.biome.BiomeSource biomeSource;
+    final net.minecraft.world.level.levelgen.NoiseSettings genSettings;
+    final String dimension;
     final PalettedContainerFactory containers;
     final boolean structures;
     final long seed;
@@ -168,28 +175,38 @@ public class FeatureVectors {
     final Method dataStorage;
 
     @SuppressWarnings("unchecked")
-    FeatureVectors(MinecraftServer server) throws Exception {
+    FeatureVectors(MinecraftServer server, String dimension) throws Exception {
         this.server = server;
-        level = server.overworld();
+        this.dimension = dimension;
+        level = switch (dimension) {
+            case "nether" -> server.getLevel(net.minecraft.world.level.Level.NETHER);
+            case "end" -> server.getLevel(net.minecraft.world.level.Level.END);
+            default -> server.overworld();
+        };
         registries = server.registryAccess();
         generator = (NoiseBasedChunkGenerator) level.getChunkSource().getGenerator();
         random = level.getChunkSource().randomState();
         settings = generator.generatorSettings().value();
-        biomeSource = (MultiNoiseBiomeSource) generator.getBiomeSource();
+        biomeSource = generator.getBiomeSource();
+        genSettings = settings.noiseSettings().clampToHeightAccessor(level);
         containers = PalettedContainerFactory.create(registries);
-        structures = server.overworld().structureManager().shouldGenerateStructures();
+        structures = level.structureManager().shouldGenerateStructures();
         seed = level.getSeed();
         biomeManager = new BiomeManager(this::storedBiome, BiomeManager.obfuscateSeed(seed));
 
-        Method parameters = MultiNoiseBiomeSource.class.getDeclaredMethod("parameters");
-        parameters.setAccessible(true);
-        Object list = parameters.invoke(biomeSource);
-        Field index = Climate.ParameterList.class.getDeclaredField("index");
-        index.setAccessible(true);
-        Object tree = index.get(list);
-        Field last = tree.getClass().getDeclaredField("lastResult");
-        last.setAccessible(true);
-        lastResult = (ThreadLocal<?>) last.get(tree);
+        if (biomeSource instanceof MultiNoiseBiomeSource) {
+            Method parameters = MultiNoiseBiomeSource.class.getDeclaredMethod("parameters");
+            parameters.setAccessible(true);
+            Object list = parameters.invoke(biomeSource);
+            Field index = Climate.ParameterList.class.getDeclaredField("index");
+            index.setAccessible(true);
+            Object tree = index.get(list);
+            Field last = tree.getClass().getDeclaredField("lastResult");
+            last.setAccessible(true);
+            lastResult = (ThreadLocal<?>) last.get(tree);
+        } else {
+            lastResult = new ThreadLocal<>();
+        }
 
         Field picker = NoiseBasedChunkGenerator.class.getDeclaredField("globalFluidPicker");
         picker.setAccessible(true);
@@ -274,7 +291,7 @@ public class FeatureVectors {
         int minQy = minY() >> 2;
         chunk.fillBiomesFromNoise((x, y, z) -> b[((y - minQy) >> 2) * 64 + (((y - minQy) & 3) << 4 | (z & 3) << 2 | (x & 3))]);
         chunk.setPersistedStatus(ChunkStatus.BIOMES);
-        DensityVolume volume = new DensityVolume(16, level.getHeight(), 16, pos.getMinBlockX(), minY(), pos.getMinBlockZ());
+        DensityVolume volume = new DensityVolume(16, genSettings.height(), 16, pos.getMinBlockX(), genSettings.minY(), pos.getMinBlockZ());
         try (NoiseChunk noise = new NoiseChunk(random, beardifier, settings, fluidPicker, Blender.empty(), volume)) {
             doFill.invoke(generator, noise, chunk);
             buildSurface.invoke(generator, chunk, noise, random, biomeManager, biomeSource.possibleBiomes(), settings.materialRule().value());
@@ -697,6 +714,7 @@ public class FeatureVectors {
             w.write(z);
             terrainPost.get(ChunkPos.pack(t[0], t[1])).writeTo(w);
             writePending(w, chunk);
+            writeEntities(w, chunk);
         }
         OUT.printf("  region at %d,%d: %d targets, %d decorated, %d terrain chunks; terrain %.1fs, features (with diffs) %.1fs%n",
             targets.get(0)[0], targets.get(0)[1], targets.size(), order.size(), chunks.size(), (t1 - t0) / 1e9, (t2 - t1) / 1e9);
@@ -731,6 +749,18 @@ public class FeatureVectors {
         var fluidTicks = ((net.minecraft.world.ticks.ProtoChunkTicks<net.minecraft.world.level.material.Fluid>) chunk.getFluidTicks()).scheduledTicks();
         w.writeInt(Integer.reverseBytes(fluidTicks.size()));
         for (var t : fluidTicks) writeTick(w, net.minecraft.core.registries.BuiltInRegistries.FLUID.getKey(t.type()).toString(), t);
+    }
+
+    /** The entities generation stored in the proto-chunk, as saved NBT. */
+    static void writeEntities(DataOutputStream w, ProtoChunk chunk) throws IOException {
+        var entities = chunk.getEntities();
+        w.writeInt(Integer.reverseBytes(entities.size()));
+        for (var tag : entities) {
+            ByteArrayOutputStream nbt = new ByteArrayOutputStream();
+            net.minecraft.nbt.NbtIo.write(tag, new DataOutputStream(nbt));
+            w.writeInt(Integer.reverseBytes(nbt.size()));
+            w.write(nbt.toByteArray());
+        }
     }
 
     void writePost(DataOutputStream w, ProtoChunk chunk) throws IOException {
@@ -823,7 +853,7 @@ public class FeatureVectors {
         try (OutputStream file = new BufferedOutputStream(Files.newOutputStream(path), 1 << 20)) {
             DataOutputStream w = new DataOutputStream(file);
             w.write("KWGF".getBytes(StandardCharsets.US_ASCII));
-            w.writeInt(Integer.reverseBytes(2));
+            w.writeInt(Integer.reverseBytes(3));
             w.writeLong(Long.reverseBytes(seed));
             w.writeInt(Integer.reverseBytes(structures ? 1 : 0));
             w.writeInt(Integer.reverseBytes(Block.BLOCK_STATE_REGISTRY.size()));
@@ -944,6 +974,7 @@ public class FeatureVectors {
         int bench = 0;
         int heights = 0;
         String near = null;
+        String dimension = "overworld";
         boolean check = false;
         for (int i = 2; i < args.length; i++) {
             switch (args[i]) {
@@ -953,6 +984,7 @@ public class FeatureVectors {
                 case "--check" -> check = true;
                 case "--heights" -> heights = Integer.parseInt(args[++i]);
                 case "--near" -> near = args[++i];
+                case "--dimension" -> dimension = args[++i];
                 default -> throw new IllegalArgumentException(args[i]);
             }
         }
@@ -960,13 +992,14 @@ public class FeatureVectors {
         net.minecraft.server.Main.main(new String[] {"--nogui"});
         MinecraftServer server = findServer();
         while (!server.isReady()) Thread.sleep(100);
-        FeatureVectors fv = new FeatureVectors(server);
+        FeatureVectors fv = new FeatureVectors(server, dimension);
         if (fv.seed != seedArg) throw new IllegalStateException("server seed " + fv.seed + " != " + seedArg);
         OUT.printf("server ready, seed %d, structures %b%n", fv.seed, fv.structures);
         try {
             fv.near = near;
             String suffix = (fv.structures ? "_s" : "") + (near == null ? "" : "_" + near.replace("minecraft:", ""));
-            if (regions > 0) fv.write(out.resolve("features_" + seedArg + suffix + ".bin"), regions, size, check);
+            String prefix = dimension.equals("overworld") ? "features_" : "features_" + dimension + "_";
+            if (regions > 0) fv.write(out.resolve(prefix + seedArg + suffix + ".bin"), regions, size, check);
             if (bench > 0) fv.bench(bench);
             if (heights > 0) fv.heights(out.resolve("heights_" + seedArg + ".bin"), heights);
         } catch (Throwable e) {

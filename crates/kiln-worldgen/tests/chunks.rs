@@ -9,7 +9,7 @@
 //! Environment: `KILN_WORK` (default `<workspace>/work`), `KILN_CHUNK_VECTORS` (default
 //! `<work>/wp3-worldgen/chunks`), `KILN_CHUNK_LIMIT` (compare only the first N chunks per seed).
 
-use kiln_worldgen::generator::Step;
+use kiln_worldgen::generator::{BiomeSourceKind, Step};
 use kiln_worldgen::{Datapack, GenScratch, Generator, ProtoChunk};
 use std::collections::BTreeMap;
 use std::fs;
@@ -226,11 +226,19 @@ fn chunks_match_vanilla() {
     let mut total_bad = 0;
     for path in files {
         let dump = read_dump(&path);
-        let generator = Generator::new(&pack, "minecraft:overworld", "minecraft:overworld", dump.seed).expect("generator");
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let generator = if file.starts_with("chunks_nether_") {
+            Generator::for_dimension(&pack, "minecraft:nether", BiomeSourceKind::MultiNoise("minecraft:nether"), "minecraft:the_nether", dump.seed)
+        } else if file.starts_with("chunks_end_") {
+            Generator::for_dimension(&pack, "minecraft:end", BiomeSourceKind::TheEnd, "minecraft:the_end", dump.seed)
+        } else {
+            Generator::new(&pack, "minecraft:overworld", "minecraft:overworld", dump.seed)
+        }
+        .expect("generator");
         assert_eq!((generator.min_y, generator.height), (dump.min_y, dump.height));
 
         // The parameter list as loaded from the report against vanilla's quantized values.
-        let kiln_params = generator.parameters().values();
+        let kiln_params = generator.parameters().map_or(&[][..], |p| p.values());
         assert_eq!(kiln_params.len(), dump.parameters.len(), "parameter list length");
         let mut param_bad = 0;
         for ((space, biome), (vb, vp)) in kiln_params.iter().zip(&dump.parameters) {
