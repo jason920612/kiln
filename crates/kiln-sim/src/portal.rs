@@ -416,6 +416,98 @@ impl Sim {
         }
     }
 
+    /// Non-player entities in portals (basic): an entity touching a nether or end portal block
+    /// moves to the other level at once (their transition time is 0) and then waits out
+    /// `Entity.getDimensionChangingDelay` (300 ticks) before another trip. It arrives as a
+    /// copy with a new network id, as vanilla's `teleportCrossDimension` makes one; end
+    /// gateways and riders are not handled.
+    pub(crate) fn entity_portals(&mut self) {
+        const ENTITY_PORTAL_COOLDOWN: i64 = 300;
+        let now = self.game_time;
+        let mut trips = Vec::new();
+        for (dim, d) in self.dims.iter_mut().enumerate() {
+            d.portal_cooldowns.retain(|_, until| *until > now);
+            for r in d.regions.iter() {
+                for e in r.part().0.list.iter().filter(|e| !e.removed && !d.portal_cooldowns.contains_key(&e.uuid.as_u128())) {
+                    let Some(phys) = e.phys.as_ref() else { continue };
+                    let half = phys.width as f64 / 2.0 - 1.0e-5;
+                    let (min, max) = ([e.pos[0] - half, e.pos[1] + 1.0e-5, e.pos[2] - half], [e.pos[0] + half, e.pos[1] + phys.height as f64 - 1.0e-5, e.pos[2] + half]);
+                    'find: for x in min[0].floor() as i32..=max[0].floor() as i32 {
+                        for y in min[1].floor() as i32..=max[1].floor() as i32 {
+                            for z in min[2].floor() as i32..=max[2].floor() as i32 {
+                                let s = d.regions.get_block(x, y, z).unwrap_or(0);
+                                let first = kiln_data::blocks_types::block_of(s).first;
+                                let kind = if first == block::NETHER_PORTAL && dim != END_ID {
+                                    PortalKind::Nether
+                                } else if first == block::END_PORTAL {
+                                    PortalKind::End
+                                } else {
+                                    continue;
+                                };
+                                trips.push((dim, e.id, kind, BlockPos::new(x, y, z)));
+                                break 'find;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        for (from, id, kind, entry) in trips {
+            let Some((pos, rot, size)) = self.dims[from]
+                .regions
+                .iter()
+                .flat_map(|r| r.part().0.list.iter())
+                .find(|e| e.id == id)
+                .and_then(|e| e.phys.as_ref().map(|p| (e.pos, [p.y_rot, p.x_rot], [p.width, p.height])))
+            else {
+                continue;
+            };
+            let dest = match kind {
+                PortalKind::Nether => {
+                    let to = if from == NETHER_ID { OVERWORLD_ID } else { NETHER_ID };
+                    if to == NETHER_ID && !self.rule_bool("minecraft:allow_entering_nether_using_portals") {
+                        continue;
+                    }
+                    self.nether_exit(from, to, entry, pos, rot, size, false).map(|(p, r)| (to, p, r))
+                }
+                PortalKind::End if from == END_ID => {
+                    // `adjustSpawnLocation`: the world spawn's column.
+                    let [x, y, z] = self.spawn;
+                    Some((OVERWORLD_ID, [x as f64 + 0.5, y as f64, z as f64 + 0.5], rot))
+                }
+                PortalKind::End => {
+                    let [x, y, z] = END_SPAWN_POINT;
+                    self.end_platform(BlockPos::new(x, y - 1, z));
+                    Some((END_ID, [x as f64 + 0.5, y as f64, z as f64 + 0.5], [90.0, rot[1]]))
+                }
+                PortalKind::Gateway => None,
+            };
+            let Some((to, pos, rot)) = dest else { continue };
+            let mut taken = None;
+            for r in self.dims[from].regions.iter_mut() {
+                let list = &mut r.part_mut().0.list;
+                if let Some(i) = list.iter().position(|e| e.id == id) {
+                    taken = Some(list.remove(i));
+                    break;
+                }
+            }
+            let Some(mut e) = taken else { continue };
+            let viewers = std::mem::take(&mut e.seen_by);
+            self.forget_entities(vec![(id, viewers)]);
+            let Some(mut phys) = e.phys.take() else { continue };
+            let v = kiln_entity::math::Vec3::new(pos[0], pos[1], pos[2]);
+            phys.set_pos(v);
+            phys.set_old_pos_and_rot();
+            phys.delta = kiln_entity::math::Vec3::ZERO;
+            (phys.y_rot, phys.x_rot) = (rot[0], rot[1]);
+            // `placePortalTicket`: the arrival chunks load.
+            self.load_area(to, floor_pos(pos), 1);
+            self.dims[to].portal_cooldowns.insert(e.uuid.as_u128(), now + ENTITY_PORTAL_COOLDOWN);
+            self.dims[to].spawns.push(crate::entities::Spawn { kind: e.kind, pos, vel: [0.0; 3], body: crate::entities::Body::Loaded(Box::new(phys)) });
+            info!("{} went from {} to {} at {pos:?}", e.kind.name, DIMENSIONS[from].0, DIMENSIONS[to].0);
+        }
+    }
+
     /// `TeleportTransition.PLAY_PORTAL_SOUND`.
     fn portal_sound(&mut self, conn: ConnId) {
         if let Some(p) = self.players.get_mut(&conn) {
@@ -481,6 +573,21 @@ impl Sim {
         let p = &self.players[&conn];
         let (pos, rot, spectator) = (p.pos, p.rot, p.game_mode == 3);
         let (width, height, _) = p.dimensions();
+        self.nether_exit(from, to, entry, pos, rot, [width, height], spectator)
+    }
+
+    /// [`Sim::nether_destination`] for any entity: its position, rotation and size.
+    #[allow(clippy::too_many_arguments)]
+    fn nether_exit(
+        &mut self,
+        from: DimId,
+        to: DimId,
+        entry: BlockPos,
+        pos: [f64; 3],
+        rot: [f32; 2],
+        [width, height]: [f32; 2],
+        spectator: bool,
+    ) -> Option<([f64; 3], [f32; 2])> {
         let scale = self.dims[from].kind.coordinate_scale / self.dims[to].kind.coordinate_scale;
         // `WorldBorder.clampToBounds`.
         let clamp = |v: f64| v.clamp(-BORDER, BORDER - 1.0);

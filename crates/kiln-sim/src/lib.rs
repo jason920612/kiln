@@ -484,6 +484,8 @@ struct Dim {
     /// End gateways cooling down after a teleport, until this game time
     /// (`TheEndGatewayBlockEntity.teleportCooldown`; gateways do not tick in Kiln).
     gateway_cooldowns: HashMap<[i32; 3], i64>,
+    /// Non-player entities that came through a portal, by UUID, until this game time.
+    portal_cooldowns: HashMap<u128, i64>,
 }
 
 /// Serial access that loads chunks on demand: into their region if the cell has an owner,
@@ -535,6 +537,7 @@ impl Dim {
             entity_store,
             raw_entities: HashMap::new(),
             gateway_cooldowns: HashMap::new(),
+            portal_cooldowns: HashMap::new(),
         }
     }
 
@@ -937,6 +940,8 @@ impl Sim {
         for t in travels {
             self.travel(t);
         }
+        self.entity_portals();
+        self.materialize_spawns();
         lap(&mut self.stats, "regions");
         // CPU time summed over regions (the "regions" phase is wall time).
         for (name, d) in region::SUB_PHASES.iter().zip(times) {
@@ -1032,6 +1037,15 @@ impl Sim {
             .flat_map(|r| r.part().0.list.iter())
             .map(|e| (e.id, e.kind.name, e.pos))
             .collect();
+        out.sort_by_key(|&(id, ..)| id);
+        out.into_iter().map(|(_, k, p)| (k, p)).collect()
+    }
+
+    /// Positions of the non-player entities of one level, by type name (for tests and tools).
+    pub fn entities_in(&self, dimension: &str) -> Vec<(&'static str, [f64; 3])> {
+        let Some(d) = dim_id(dimension) else { return Vec::new() };
+        let mut out: Vec<_> =
+            self.dims[d].regions.iter().flat_map(|r| r.part().0.list.iter()).map(|e| (e.id, e.kind.name, e.pos)).collect();
         out.sort_by_key(|&(id, ..)| id);
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
     }

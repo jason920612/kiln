@@ -123,6 +123,35 @@ fn nether_portal_round_trip() {
 }
 
 #[test]
+fn thrown_items_go_through_portals() {
+    let mut w = World::new("creative");
+    frame(&mut w, 11, -61, 12);
+    w.run("setblock 11 -60 12 minecraft:fire");
+    assert!(state::is(w.sim.block_at(12, -59, 12).unwrap(), d::NETHER_PORTAL));
+    // Facing south (+z) in front of the portal, the dropped stack flies into it.
+    w.run("tp Traveller 11.5 -60 10.8 0 0");
+    w.ticks(3);
+    w.hold("minecraft:diamond");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 4, pos: [0, 0, 0], face: 0, sequence: 0 })]));
+    let mut arrived = None;
+    for _ in 0..40 {
+        w.ticks(1);
+        if let Some(&(_, pos)) = w.sim.entities_in(NETHER).iter().find(|(k, _)| *k == "minecraft:item") {
+            arrived = Some(pos);
+            break;
+        }
+    }
+    let pos = arrived.expect("the item reached the nether");
+    assert!(w.sim.entities_in(OVERWORLD).iter().all(|(k, _)| *k != "minecraft:item"));
+    // It came out of the exit portal Kiln built.
+    let near = |dx: i32, dz: i32| {
+        let (x, y, z) = (pos[0].floor() as i32 + dx, pos[1].floor() as i32, pos[2].floor() as i32 + dz);
+        w.sim.block_in(NETHER, x, y, z).is_some_and(|s| state::is(s, d::NETHER_PORTAL))
+    };
+    assert!((-1..=1).any(|dx| (-1..=1).any(|dz| near(dx, dz))), "{pos:?}");
+}
+
+#[test]
 fn broken_frame_takes_the_portal_down() {
     let mut w = World::new("creative");
     frame(&mut w, 3, -61, 3);
