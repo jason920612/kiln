@@ -246,7 +246,7 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     if let Some(k) = m.kind.ext() {
         k.save(e, m, o);
     }
-    if !e.extra.iter().any(|(k, _)| k == "Brain") {
+    if !e.extra.iter().any(|(k, _)| k == "Brain") && !o.has("Brain") {
         o.put("Brain", Tag::Compound(vec![("memories".into(), Tag::Compound(vec![]))]));
     }
     if let Some(p) = m.last_hurt_by_player.filter(|_| false) {

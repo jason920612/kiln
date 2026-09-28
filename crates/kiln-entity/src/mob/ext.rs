@@ -572,6 +572,11 @@ pub trait Kind: Sync + Send {
         let _ = hard;
         None
     }
+    /// [`Kind::passenger_offset`] for the passenger at `index` (camels seat two).
+    fn passenger_offset_at(&self, e: &Entity, m: &MobData, index: usize) -> Option<Vec3> {
+        let _ = index;
+        self.passenger_offset(e, m)
+    }
 }
 
 /// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the

@@ -13,6 +13,7 @@
 pub mod attributes;
 pub mod breed;
 pub mod ext;
+pub mod fly;
 pub mod control;
 pub mod convert;
 pub mod effects;
@@ -103,6 +104,8 @@ pub enum MobKind {
     SnowGolem,
     Bogged,
     Armadillo,
+    Camel,
+    Allay,
 
 }
 
@@ -229,6 +232,8 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::SnowGolem,
     MobKind::Bogged,
     MobKind::Armadillo,
+    MobKind::Camel,
+    MobKind::Allay,
 
 ];
 

@@ -737,6 +737,9 @@ impl CustomGoal for RandomStandGoal {
 
 /// `handleStartJump` (a rider's jump key on a saddled mount): the horse rears; its jump sound.
 pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
+    if m.kind == MobKind::Camel {
+        return super::camel::start_jump(m);
+    }
     let saddled = !ext::state::<State>(m)?.saddle.is_empty();
     if !saddled {
         return None;
