@@ -82,6 +82,11 @@ impl Kind for Vex {
         t.add(3, super::zombie::nearest(Wanted::Player, true));
     }
 
+    /// `Monster.updateNoActionTime` with the vex's light value of 1: always two more.
+    fn update_no_action_time(&self, _e: &Entity, m: &mut MobData, _level: &dyn EntityLevel) {
+        m.no_action_time += 2;
+    }
+
     /// `Vex.tick` before `super.tick()`: no physics while it ticks.
     fn pre_tick(&self, e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) {
         e.no_physics = true;

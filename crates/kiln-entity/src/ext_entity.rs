@@ -8,6 +8,7 @@ use kiln_proto::packets::entity::EntityData;
 use std::any::Any;
 use std::fmt::Debug;
 
+pub mod area_effect_cloud;
 pub mod evoker_fangs;
 pub mod fireball;
 pub mod fishing_hook;
@@ -73,6 +74,7 @@ pub const TYPES: &[&str] = &[
     "minecraft:fireball",
     "minecraft:small_fireball",
     "minecraft:shulker_bullet",
+    "minecraft:area_effect_cloud",
     // -- slice 3: raids
     "minecraft:evoker_fangs",
 ];
@@ -83,6 +85,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:trident" => trident::load(r),
         "minecraft:fireball" | "minecraft:small_fireball" => fireball::load(type_name, r),
         "minecraft:shulker_bullet" => shulker_bullet::load(r),
+        "minecraft:area_effect_cloud" => area_effect_cloud::load(r),
         "minecraft:evoker_fangs" => evoker_fangs::load(r),
         _ => None,
     }

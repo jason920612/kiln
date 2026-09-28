@@ -84,6 +84,11 @@ impl Kind for Evoker {
         raider::ai_step_before(e, m, level);
     }
 
+    /// `Raider.updateNoActionTime`: two more every tick, whatever the light.
+    fn update_no_action_time(&self, _e: &Entity, m: &mut MobData, _level: &dyn EntityLevel) {
+        m.no_action_time += 2;
+    }
+
     /// `SpellcasterIllager.customServerAiStep`: the casting runs down.
     fn custom_server_ai_step(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
         let s = st_mut(m);
@@ -267,10 +272,7 @@ impl CustomGoal for UseSpellGoal {
                 let vexes = nearby_vexes(e, level);
                 e.random.next_int_bounded(8) + 1 > vexes
             }
-            Spell::Disappear => {
-                // `!hasEffect(INVISIBILITY)`: mobs keep no effects in Kiln yet.
-                self.base_can_use(e, m, level)
-            }
+            Spell::Disappear => self.base_can_use(e, m, level) && !mob::effects::has_named(m, "minecraft:invisibility"),
             Spell::Blindness => {
                 if !self.base_can_use(e, m, level) {
                     return false;
@@ -327,7 +329,9 @@ impl CustomGoal for UseSpellGoal {
                 }
             }
             Spell::Disappear => {
-                level.add_effect(e.id, "minecraft:invisibility", 1200, 0, None);
+                if let Some(fx) = crate::effect::Effect::named("minecraft:invisibility", 1200, 0) {
+                    mob::effects::add(e, m, level, fx, None);
+                }
             }
             Spell::Blindness => {
                 if let Some(t) = m.target {

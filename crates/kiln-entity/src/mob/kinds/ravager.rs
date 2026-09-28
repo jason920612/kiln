@@ -77,6 +77,11 @@ impl Kind for Ravager {
         raider::ai_step_before(e, m, level);
     }
 
+    /// `Raider.updateNoActionTime`: two more every tick, whatever the light.
+    fn update_no_action_time(&self, _e: &Entity, m: &mut MobData, _level: &dyn EntityLevel) {
+        m.no_action_time += 2;
+    }
+
     /// `Ravager.aiStep` after `super.aiStep()`.
     fn ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if !mob::is_alive(e, m) {

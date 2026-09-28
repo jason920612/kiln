@@ -26,6 +26,11 @@ impl Kind for WitherSkeleton {
         &INFO
     }
 
+    /// `WitherSkeleton.canBeAffected`: never withered.
+    fn can_be_affected(&self, _m: &MobData, effect: &crate::effect::Effect, base: bool) -> bool {
+        base && effect.id != crate::effect::ids::wither()
+    }
+
     fn register_goals(&self, m: &mut MobData) {
         skeleton::register_goals(m);
     }

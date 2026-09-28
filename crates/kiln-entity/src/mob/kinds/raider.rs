@@ -178,8 +178,8 @@ pub fn is_captain(m: &MobData) -> bool {
 
 // ---------------------------------------------------------------------- hooks
 
-/// `Raider.aiStep` before `Monster.aiStep`, and `Raider.updateNoActionTime`: a raider that may
-/// join raids looks for one every second; one fighting a player or golem in a raid stays busy.
+/// `Raider.aiStep` before `Monster.aiStep`: a raider that may join raids looks for one every
+/// second; one fighting a player or golem in a raid stays busy.
 pub fn ai_step_before(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if mob::is_alive(e, m) && raider(m).is_some_and(|r| r.can_join_raid) {
         match raider(m).and_then(|r| r.raid) {
@@ -200,7 +200,6 @@ pub fn ai_step_before(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
             }
         }
     }
-    m.no_action_time += 2;
 }
 
 /// `Raider.die`: the raid loses the raider (and its wave's leader); a player killer becomes a

@@ -4,9 +4,9 @@
 
 use crate::custom_goal_boilerplate;
 use crate::entity::{Entity, EntityKind};
-use crate::level::{DamageKind, EntityFilter, EntityLevel, Event};
+use crate::level::{EntityFilter, EntityLevel, Event};
 use crate::math::{Aabb, BlockPos, Vec3};
-use crate::mob::attributes::Attr::{self, *};
+use crate::mob::attributes::Attr::*;
 use crate::mob::attributes::Op;
 use crate::mob::ext::{self, CustomGoal, Info, Kind, MobExt};
 use crate::mob::goals::{self, Goal, Living, LOOK, MOVE, TARGET};
@@ -25,14 +25,6 @@ static INFO: Info = Info::monster("minecraft:witch", &[(MaxHealth, 26.0), (Movem
 /// `SPEED_MODIFIER_DRINKING`.
 const DRINKING: &str = "minecraft:drinking";
 
-/// An active effect of a witch (Kiln's mobs have no general effect system).
-#[derive(Clone, Debug)]
-pub struct MobEffect {
-    pub effect: &'static str,
-    pub duration: i32,
-    pub amplifier: i32,
-}
-
 #[derive(Clone, Debug)]
 pub struct WitchState {
     /// `DATA_USING_ITEM` and `usingTime`.
@@ -42,7 +34,6 @@ pub struct WitchState {
     /// `NearestAttackableWitchTargetGoal.canAttack`.
     pub heal_cooldown: i32,
     pub can_attack: bool,
-    pub effects: Vec<MobEffect>,
     /// `Raider` and `PatrollingMonster` state (witches join raids).
     pub raider: super::raider::RaiderState,
 }
@@ -56,75 +47,7 @@ fn st_mut(m: &mut MobData) -> &mut WitchState {
 }
 
 fn has_effect(m: &MobData, effect: &str) -> bool {
-    st(m).effects.iter().any(|e| e.effect == effect)
-}
-
-/// The attribute modifier of an effect: (attribute, id, amount per level, operation).
-fn effect_modifier(effect: &str) -> Option<(Attr, &'static str, f64, Op)> {
-    Some(match effect {
-        "minecraft:speed" => (MovementSpeed, "minecraft:effect.speed", 0.20000000298023224, Op::AddMultipliedTotal),
-        "minecraft:slowness" => (MovementSpeed, "minecraft:effect.slowness", -0.15000000596046448, Op::AddMultipliedTotal),
-        "minecraft:strength" => (AttackDamage, "minecraft:effect.strength", 3.0, Op::AddValue),
-        "minecraft:weakness" => (AttackDamage, "minecraft:effect.weakness", -4.0, Op::AddValue),
-        _ => return None,
-    })
-}
-
-/// `LivingEntity.addEffect` on a witch: a new effect, or a stronger or longer one replaces the old.
-pub fn add_effect(m: &mut MobData, effect: &'static str, duration: i32, amplifier: i32) {
-    let s = st_mut(m);
-    match s.effects.iter_mut().find(|e| e.effect == effect) {
-        Some(e) => {
-            if amplifier > e.amplifier || (amplifier == e.amplifier && duration > e.duration) {
-                e.amplifier = amplifier;
-                e.duration = duration;
-            } else {
-                return;
-            }
-        }
-        None => s.effects.push(MobEffect { effect, duration, amplifier }),
-    }
-    if let Some((attr, id, amount, op)) = effect_modifier(effect) {
-        m.attrs.set_modifier(attr, id, amount * (amplifier + 1) as f64, op);
-    }
-}
-
-/// `tickEffects`: instant health heals, poison and regeneration tick, all run down.
-fn tick_effects(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-    let mut effects = std::mem::take(&mut st_mut(m).effects);
-    let mut gone = Vec::new();
-    for fx in effects.iter_mut() {
-        // `shouldApplyEffectTickThisTick` then `applyEffectTick`.
-        let every = |base: i32| {
-            let i = base >> fx.amplifier;
-            i <= 0 || fx.duration % i == 0
-        };
-        match fx.effect {
-            "minecraft:instant_health" if fx.duration >= 1 && mob::is_alive(e, m) => {
-                let h = m.health + (4i32 << fx.amplifier).max(0) as f32;
-                m.set_health(h);
-            }
-            "minecraft:poison" if every(25) && m.health > 1.0 => {
-                mob::hurt(e, m, level, DamageSource::of(DamageKind::Magic), 1.0);
-            }
-            "minecraft:regeneration" if every(50) && m.health < m.max_health() => {
-                let h = m.health + 1.0;
-                m.set_health(h);
-            }
-            _ => {}
-        }
-        fx.duration -= 1;
-        if fx.duration <= 0 {
-            gone.push(fx.effect);
-        }
-    }
-    effects.retain(|fx| fx.duration > 0);
-    st_mut(m).effects = effects;
-    for g in gone {
-        if let Some((attr, id, _, _)) = effect_modifier(g) {
-            m.attrs.remove_modifier(attr, id);
-        }
-    }
+    mob::effects::has_named(m, effect)
 }
 
 /// A `minecraft:potion` item stack of `item` (`minecraft:potion`, `minecraft:splash_potion`).
@@ -135,41 +58,8 @@ fn potion_stack(item: &str, potion: &str) -> ItemStack {
     s
 }
 
-fn potion_of(s: &ItemStack) -> Option<&'static str> {
-    s.get(kiln_item::keys::POTION_CONTENTS).and_then(|c| c.potion).and_then(|id| kiln_item::registry::POTION.name(id))
-}
-
-/// The effects of the potions witches use: (effect, duration, amplifier).
-fn potion_effects(potion: &str) -> &'static [(&'static str, i32, i32)] {
-    match potion {
-        "minecraft:water_breathing" => &[("minecraft:water_breathing", 3600, 0)],
-        "minecraft:fire_resistance" => &[("minecraft:fire_resistance", 3600, 0)],
-        "minecraft:healing" => &[("minecraft:instant_health", 1, 0)],
-        "minecraft:harming" => &[("minecraft:instant_damage", 1, 0)],
-        "minecraft:swiftness" => &[("minecraft:speed", 3600, 0)],
-        "minecraft:slowness" => &[("minecraft:slowness", 1800, 0)],
-        "minecraft:poison" => &[("minecraft:poison", 900, 0)],
-        "minecraft:weakness" => &[("minecraft:weakness", 1800, 0)],
-        "minecraft:regeneration" => &[("minecraft:regeneration", 900, 0)],
-        _ => &[],
-    }
-}
-
-/// `PotionContents.getColor` (opaque) for the potions witches use.
-fn potion_color(potion: &str) -> i32 {
-    let rgb = match potion {
-        "minecraft:water_breathing" => 10017472,
-        "minecraft:fire_resistance" => 16750848,
-        "minecraft:healing" => 16262179,
-        "minecraft:harming" => 11101546,
-        "minecraft:swiftness" => 3402751,
-        "minecraft:slowness" => 9154528,
-        "minecraft:poison" => 8889187,
-        "minecraft:weakness" => 4738376,
-        "minecraft:regeneration" => 13458603,
-        _ => 0x385DC6,
-    };
-    (0xFF00_0000u32 as i32) | rgb
+fn potion_color(contents: &kiln_item::component::PotionContents) -> i32 {
+    crate::effect::potion_color(contents)
 }
 
 impl Kind for Witch {
@@ -178,14 +68,7 @@ impl Kind for Witch {
     }
 
     fn new_state(&self, _m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
-        Some(Box::new(WitchState {
-            drinking: false,
-            using_time: 0,
-            heal_cooldown: 0,
-            can_attack: true,
-            effects: Vec::new(),
-            raider: Default::default(),
-        }))
+        Some(Box::new(WitchState { drinking: false, using_time: 0, heal_cooldown: 0, can_attack: true, raider: Default::default() }))
     }
 
     fn register_goals(&self, m: &mut MobData) {
@@ -203,8 +86,9 @@ impl Kind for Witch {
         t.add(3, Goal::Custom(Box::new(AttackPlayers { target: None, unseen: 0 })));
     }
 
-    fn tick_effects(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        tick_effects(e, m, level);
+    /// `Raider.updateNoActionTime`: two more every tick, whatever the light.
+    fn update_no_action_time(&self, _e: &Entity, m: &mut MobData, _level: &dyn EntityLevel) {
+        m.no_action_time += 2;
     }
 
     /// `Witch.aiStep` before `Raider.aiStep`.
@@ -224,10 +108,10 @@ impl Kind for Witch {
                 st_mut(m).drinking = false;
                 let held = std::mem::replace(&mut m.equipment[MAINHAND], ItemStack::empty());
                 if mob::item_name(&held) == "minecraft:potion"
-                    && let Some(p) = potion_of(&held)
+                    && let Some(contents) = held.get(kiln_item::keys::POTION_CONTENTS)
                 {
-                    for &(fx, d, a) in potion_effects(p) {
-                        add_effect(m, fx, d, a);
+                    for fx in crate::effect::potion_effects(contents, 1.0) {
+                        mob::effects::add(e, m, level, fx, None);
                     }
                 }
                 level.emit(Event::GameEvent { event: "minecraft:drink", pos: e.position(), entity: Some(e.id) });
@@ -290,11 +174,6 @@ impl Kind for Witch {
         super::raider::save(m, o);
     }
 
-    fn hurt(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, source: &DamageSource, _amount: f32) -> Option<bool> {
-        // `hurtServer`: fire resistance stops fire damage.
-        (source.kind.is_tag("minecraft:is_fire") && has_effect(m, "minecraft:fire_resistance")).then_some(false)
-    }
-
     fn damage_after_magic_absorb(&self, id: i32, _m: &MobData, source: &DamageSource, amount: f32) -> f32 {
         let mut amount = amount;
         if source.attacker == Some(id) {
@@ -323,8 +202,8 @@ fn target_facts(level: &dyn EntityLevel, t: &Living) -> (Vec3, f32, Box<dyn Fn(&
         Some(o) => {
             let m = mob::data(o);
             let health = m.map_or(20.0, |m| m.health);
-            let effects: Vec<&'static str> = m.and_then(ext::state::<WitchState>).map_or(Vec::new(), |s| s.effects.iter().map(|e| e.effect).collect());
-            (o.delta, health, Box::new(move |fx: &str| effects.contains(&fx)))
+            let effects: Vec<i32> = m.map_or(Vec::new(), |m| m.effects.keys().copied().collect());
+            (o.delta, health, Box::new(move |fx: &str| crate::effect::effect_id(fx).is_some_and(|id| effects.contains(&id))))
         }
         None => (Vec3::ZERO, 20.0, Box::new(|_: &str| false)),
     }
@@ -376,98 +255,100 @@ fn box_distance_sqr(a: &Aabb, b: &Aabb) -> f64 {
     dx * dx + dy * dy + dz * dz
 }
 
-fn inverted_heal_and_harm(type_name: &str) -> bool {
-    let Some(id) = kiln_data::builtin_id("minecraft:entity_type", type_name) else { return false };
-    kiln_data::registries::TAGS
-        .iter()
-        .find(|(r, _)| *r == "minecraft:entity_type")
-        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == "minecraft:inverted_healing_and_harm"))
-        .is_some_and(|(_, ids)| ids.contains(&id))
-}
-
-/// `AbstractThrownPotion.onHit` for a splash potion that knows its item: players in reach get
-/// [`Event::PotionSplash`]; mobs take instant health and harm (undead inverted), witches keep
-/// the other effects too (approximation: other mobs have no effects in Kiln). Then the splash
-/// particles and sound.
+/// `AbstractThrownPotion.onHit` for a splash potion that knows its item
+/// (`ThrownSplashPotion.onHitAsPotion`): every living entity within reach of the hit box
+/// (26.x's box-to-box distance with the projectile margin) gets the instantaneous effects at
+/// the distance's scale and the others with scaled durations (dropped at 20 ticks or less);
+/// then the splash particles and sound.
 pub fn splash(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit, item: &ItemStack, owner: Option<i32>) {
-    let potion = potion_of(item).unwrap_or("minecraft:water");
+    let contents = item.get(kiln_item::keys::POTION_CONTENTS).cloned().unwrap_or_default();
+    let duration_scale = item.get(kiln_item::keys::POTION_DURATION_SCALE).copied().unwrap_or(1.0);
     let location = match hit {
         Hit::Block { location, .. } | Hit::Entity { location, .. } => location,
     };
     let hit_box = e.bounding_box().offset_vec(location - e.position());
     let area = hit_box.inflate(4.0, 2.0, 4.0);
     let margin = kiln_javamath::math::max(0.0, kiln_javamath::math::min(0.3, (e.tick_count - 2) as f32 / 20.0)) as f64;
-    let effects = potion_effects(potion);
+    let effects = crate::effect::potion_effects(&contents, 1.0);
     if !effects.is_empty() {
-        for p in level.players().to_vec() {
+        // Players (their stand-ins join the sections before the mobs around them), then mobs.
+        let mut targets: Vec<(i32, f64)> = Vec::new();
+        for p in level.players() {
             if !p.alive || p.spectator {
                 continue;
             }
             let h = if p.sneaking { 1.5 } else { 1.8 };
             let pb = Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3);
-            if !pb.intersects(&area) {
-                continue;
-            }
-            let d = box_distance_sqr(&hit_box, &pb.inflate_all(margin));
-            if d < 16.0 {
-                level.emit(Event::PotionSplash { target: p.id, potion, scale: 1.0 - d.sqrt() / 4.0, owner });
+            if pb.intersects(&area) {
+                targets.push((p.id, box_distance_sqr(&hit_box, &pb.inflate_all(margin))));
             }
         }
         for id in level.entities_in(&area, EntityFilter::Living, e.id) {
-            let Some(o) = level.entity(id) else { continue };
-            let Some(om) = mob::data(o) else { continue };
-            if om.is_dead_or_dying() {
+            if level.player(id).is_some() {
                 continue;
             }
-            let d = box_distance_sqr(&hit_box, &o.bounding_box().inflate_all(margin));
+            let Some(o) = level.entity(id) else { continue };
+            if mob::data(o).is_none_or(|om| om.is_dead_or_dying()) {
+                continue;
+            }
+            targets.push((id, box_distance_sqr(&hit_box, &o.bounding_box().inflate_all(margin))));
+        }
+        let source = owner.or(Some(e.id));
+        for (id, d) in targets {
             if d >= 16.0 {
                 continue;
             }
             let scale = 1.0 - d.sqrt() / 4.0;
-            let inverted = inverted_heal_and_harm(o.type_name);
-            for &(fx, dur, amp) in effects {
-                match fx {
-                    "minecraft:instant_health" | "minecraft:instant_damage" => {
-                        let harm = fx == "minecraft:instant_damage";
-                        if harm == inverted {
-                            let heal = (scale * (4i32 << amp) as f64 + 0.5) as i32;
-                            if let Some(om) = level.entity_mut(id).and_then(mob::data_mut)
-                                && om.health > 0.0
-                            {
-                                let h = om.health + heal as f32;
-                                om.set_health(h);
-                            }
-                        } else {
-                            let dmg = (scale * (6i32 << amp) as f64 + 0.5) as i32;
-                            let source = DamageSource { kind: DamageKind::IndirectMagic, attacker: owner, direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
-                            if let Some(o) = level.entity_mut(id) {
-                                let mut o2 = std::mem::replace(o, Entity::new("minecraft:marker", 0, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
-                                mob::hurt_entity(&mut o2, level, source, dmg as f32);
-                                if let Some(slot) = level.entity_mut(id) {
-                                    *slot = o2;
-                                }
-                            }
-                        }
-                    }
-                    _ => {
-                        let d = (scale * dur as f64 + 0.5) as i32;
-                        if d > 20
-                            && let Some(om) = level.entity_mut(id).and_then(mob::data_mut)
-                            && om.kind == MobKind::Witch
-                        {
-                            add_effect(om, fx, d, amp);
-                        }
+            for fx in &effects {
+                if fx.kind().instantaneous() {
+                    level.apply_instantaneous_effect(id, fx, Some((e.id, e.position())), owner, scale);
+                } else {
+                    let mut nf = crate::effect::Effect::with_flags(fx.id, fx.duration, fx.amplifier, fx.ambient, fx.visible);
+                    nf.duration = fx.map_duration(|d| (scale * d as f64 * duration_scale as f64 + 0.5) as i32);
+                    if !nf.ends_within(20) {
+                        level.add_effect_instance(id, nf, source);
                     }
                 }
             }
         }
     }
-    let instant = effects.iter().any(|(fx, _, _)| fx.starts_with("minecraft:instant_"));
+    break_effects(e, level, &contents);
+}
+
+/// `AbstractThrownPotion.onHit`'s particles and sound: the instant kind when the base potion
+/// has an instantaneous effect.
+fn break_effects(e: &Entity, level: &mut dyn EntityLevel, contents: &kiln_item::component::PotionContents) {
+    let instant = contents.potion.and_then(|id| kiln_item::registry::POTION.name(id)).is_some_and(|p| {
+        crate::effect::named_potion_effects(p, 1.0).iter().any(|fx| fx.kind().instantaneous())
+    });
+    let color = potion_color(contents);
     let pos = e.block_position();
-    level.emit(Event::LevelEvent { event: if instant { 2007 } else { 2002 }, pos, data: potion_color(potion) });
+    level.emit(Event::LevelEvent { event: if instant { 2007 } else { 2002 }, pos, data: color });
     if !e.silent {
         level.emit(Event::LevelEvent { event: if instant { 1054 } else { 1053 }, pos, data: 0 });
     }
+}
+
+/// `ThrownLingeringPotion.onHitAsPotion`: an area effect cloud at the entity hit, or where the
+/// potion broke; then the particles and sound.
+pub fn linger(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit, item: &ItemStack, owner: Option<i32>) {
+    let contents = item.get(kiln_item::keys::POTION_CONTENTS).cloned().unwrap_or_default();
+    let has_effects = !crate::effect::potion_effects(&contents, 1.0).is_empty();
+    if has_effects {
+        let at = match hit {
+            Hit::Entity { id, .. } => level.player(id).map(|p| p.pos).or_else(|| level.entity(id).map(Entity::position)).unwrap_or(e.position()),
+            Hit::Block { .. } => e.position(),
+        };
+        // `setOwner` takes living owners only.
+        let owner = owner.filter(|&o| level.player(o).is_some() || level.entity(o).is_some_and(|x| mob::data(x).is_some()));
+        let owner_uuid = owner.and_then(|o| level.player(o).map(|p| p.uuid).or_else(|| level.entity(o).map(|x| x.uuid)));
+        let cloud = crate::ext_entity::area_effect_cloud::lingering(item, at, owner, owner_uuid);
+        let id = level.next_entity_id();
+        let seed = level.fresh_seed();
+        let c = crate::ext_entity::area_effect_cloud::new(id, 0, at, cloud, seed);
+        level.add_entity(c);
+    }
+    break_effects(e, level, &contents);
 }
 
 // ---------------------------------------------------------------------- goals

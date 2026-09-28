@@ -71,6 +71,11 @@ impl Kind for Vindicator {
         raider::ai_step_before(e, m, level);
     }
 
+    /// `Raider.updateNoActionTime`: two more every tick, whatever the light.
+    fn update_no_action_time(&self, _e: &Entity, m: &mut MobData, _level: &dyn EntityLevel) {
+        m.no_action_time += 2;
+    }
+
     /// `customServerAiStep`: doors open for it where a raid is on.
     fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if !m.no_ai {
