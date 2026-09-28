@@ -106,6 +106,7 @@ pub enum MobKind {
     Armadillo,
     Camel,
     Allay,
+    Breeze,
 
 }
 
@@ -234,6 +235,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Armadillo,
     MobKind::Camel,
     MobKind::Allay,
+    MobKind::Breeze,
 
 ];
 
@@ -2489,6 +2491,7 @@ impl DamageKind {
             // -- slice 3: common mobs A
 
             // -- slice 3: common mobs B
+            DamageKind::WindCharge => "minecraft:wind_charge",
 
         }
     }

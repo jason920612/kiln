@@ -53,6 +53,7 @@ pub mod bogged;
 pub mod armadillo;
 pub mod camel;
 pub mod allay;
+pub mod breeze;
 
 
 /// The behaviour of an extension type; `None` for the shared-code types.
@@ -108,6 +109,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Armadillo => &armadillo::KIND,
         MobKind::Camel => &camel::KIND,
         MobKind::Allay => &allay::KIND,
+        MobKind::Breeze => &breeze::KIND,
 
         _ => return None,
     })

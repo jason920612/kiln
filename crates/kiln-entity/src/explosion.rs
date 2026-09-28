@@ -40,10 +40,24 @@ pub fn explode(
     fire: bool,
     interaction: Interaction,
 ) -> Vec<BlockPos> {
+    explode_with(level, source, center, radius, fire, interaction, true)
+}
+
+/// [`explode`] with `damage`: false for a calculator that damages no entities (wind bursts:
+/// knockback only).
+pub fn explode_with(
+    level: &mut dyn EntityLevel,
+    source: Option<i32>,
+    center: Vec3,
+    radius: f32,
+    fire: bool,
+    interaction: Interaction,
+    damage: bool,
+) -> Vec<BlockPos> {
     let interaction = interaction.resolved();
     level.emit(Event::GameEvent { event: "minecraft:explode", pos: center, entity: source });
     let mut positions = exploded_positions(level, center, radius);
-    hurt_entities(level, source, center, radius, interaction);
+    hurt_entities(level, source, center, radius, interaction, damage);
     if interaction != Interaction::Keep {
         shuffle(&mut positions, level);
         for &pos in &positions {
@@ -169,7 +183,7 @@ fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, pos: Block
 }
 
 /// `hurtEntities`: damage by exposure and distance, and knockback.
-fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3, radius: f32, interaction: Interaction) {
+fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3, radius: f32, interaction: Interaction, damage_entities: bool) {
     if radius < 1.0e-5 {
         return;
     }
@@ -202,7 +216,9 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3,
         let knockback = (1.0 - dist) * seen as f64;
         let push = dir.scale(knockback);
         let Some(mut e) = level.entity_mut(id).map(|e| std::mem::replace(e, placeholder())) else { continue };
-        e.hurt(level, DamageKind::Explosion, damage, source);
+        if damage_entities {
+            e.hurt(level, DamageKind::Explosion, damage, source);
+        }
         if push.x.is_finite() && push.y.is_finite() && push.z.is_finite() {
             e.delta = e.delta.add(push.x, push.y, push.z);
             e.needs_sync = true;

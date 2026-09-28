@@ -14,6 +14,7 @@ pub mod fishing_hook;
 pub mod lightning;
 pub mod shulker_bullet;
 pub mod trident;
+pub mod wind_charge;
 
 /// An extension entity's state and behaviour.
 pub trait EntityExt: Any + Debug + Send + Sync {
@@ -68,7 +69,7 @@ macro_rules! entity_ext_boilerplate {
 }
 
 /// The extension entity types.
-pub const TYPES: &[&str] = &["minecraft:trident", "minecraft:fireball", "minecraft:small_fireball", "minecraft:shulker_bullet", "minecraft:area_effect_cloud"];
+pub const TYPES: &[&str] = &["minecraft:trident", "minecraft:fireball", "minecraft:small_fireball", "minecraft:shulker_bullet", "minecraft:area_effect_cloud", "minecraft:breeze_wind_charge"];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
 pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
@@ -76,6 +77,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:trident" => trident::load(r),
         "minecraft:fireball" | "minecraft:small_fireball" => fireball::load(type_name, r),
         "minecraft:shulker_bullet" => shulker_bullet::load(r),
+        "minecraft:breeze_wind_charge" => wind_charge::load(r),
         "minecraft:area_effect_cloud" => area_effect_cloud::load(r),
         _ => None,
     }
