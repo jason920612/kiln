@@ -369,6 +369,8 @@ struct Player {
     pending_travel: Option<portal::Travel>,
     /// The entity the player rides (see [`entities::ride_players`]).
     vehicle: Option<i32>,
+    /// The type of that entity (for the vehicle entity predicates of criteria).
+    vehicle_type: Option<&'static str>,
     /// `getLastHurtByMob` and `getLastHurtMob` with the game time (tamed animals take their
     /// owner's side).
     last_hurt_by_mob: Option<(i32, i64)>,
@@ -1294,6 +1296,16 @@ impl Sim {
         (!stack.is_empty()).then(|| stack.damage())
     }
 
+    /// Whether a player has criterion `criterion` of advancement `id` (for tests); `None` when
+    /// the advancement or criterion is unknown.
+    pub fn criterion_done(&self, conn: ConnId, id: &str, criterion: &str) -> Option<bool> {
+        let p = self.players.get(&conn)?;
+        let data = &p.advancements.data;
+        let i = data.get(id)?;
+        let c = data.list[i].criterion_index(criterion)?;
+        Some(p.advancements.criterion_done(i, c))
+    }
+
     /// A player's entity id (for tests and tools that attack or interact with it).
     pub fn entity_id(&self, conn: ConnId) -> Option<i32> {
         self.players.get(&conn).map(|p| p.entity_id)
@@ -2106,6 +2118,7 @@ impl Sim {
             seen_credits: joining.seen_credits,
             pending_travel: None,
             vehicle: None,
+            vehicle_type: None,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
             sleep: sleep::Sleep::default(),

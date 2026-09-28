@@ -466,7 +466,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     }
     p.tick_food(env.natural_regen, &mut ctx);
     p.tick_stats();
-    let probe = crate::advancements::triggers::CellProbe { cells, min_y: env.min_y };
+    let probe = crate::advancements::triggers::CellProbe::new(cells, &env.blocks);
     p.tick_triggers(&probe);
     // `onInsideBlock` (Kiln checks the block at the feet).
     let feet = kiln_entity::math::BlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
@@ -879,7 +879,7 @@ fn use_on_block(
     // and `ServerPlayerGameMode.useItemOn` fire their triggers.
     p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, placed_from.item()), 1);
     let placed_state = level.block(placed_at);
-    let probe = crate::advancements::triggers::CellProbe { cells: &*level.cells, min_y: level.env.min_y };
+    let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     let at = [placed_at.x, placed_at.y, placed_at.z];
     p.used_on_block("minecraft:placed_block", at, placed_state, &placed_from, &probe);
     p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &placed_from, &probe);

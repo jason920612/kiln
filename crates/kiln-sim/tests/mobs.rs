@@ -246,6 +246,12 @@ fn fed_animals_breed_and_babies_grow() {
     assert_eq!(w.held(), Some((kiln_data::builtin_id("minecraft:item", "minecraft:wheat").unwrap(), 62)), "two wheat eaten");
     w.ticks(200);
     assert_eq!(w.mobs("minecraft:cow").len(), 3, "a calf was born");
+    // `bred_animals`: any animal, and the calf's type among all the animals.
+    if w.sim.criterion_done(1, "minecraft:husbandry/breed_an_animal", "bred").is_some() {
+        assert_eq!(w.sim.criterion_done(1, "minecraft:husbandry/breed_an_animal", "bred"), Some(true));
+        assert_eq!(w.sim.criterion_done(1, "minecraft:husbandry/bred_all_animals", "minecraft:cow"), Some(true));
+        assert_eq!(w.sim.criterion_done(1, "minecraft:husbandry/bred_all_animals", "minecraft:pig"), Some(false));
+    }
     // (The orbs may already have reached the player standing next to the cows.)
     let orb = w.sim.entities().iter().any(|e| e.0 == "minecraft:experience_orb");
     assert!(orb || w.sim.experience(1).unwrap().2 > 0, "breeding experience");
@@ -542,6 +548,13 @@ fn wolves_are_tamed_with_bones_and_sit_when_told() {
         w.interact(wolf);
         w.ticks(1);
         tries += 1;
+    }
+    // `tame_animal`, and the wolf's variant (pale: the default) in `whole_pack`.
+    if w.sim.criterion_done(1, "minecraft:husbandry/tame_an_animal", "tamed_animal").is_some() {
+        assert_eq!(w.sim.criterion_done(1, "minecraft:husbandry/tame_an_animal", "tamed_animal"), Some(true));
+        let variants = ["pale", "ashen", "black", "chestnut", "rusty", "snowy", "spotted", "striped", "woods"];
+        let done: Vec<&str> = variants.iter().copied().filter(|v| w.sim.criterion_done(1, "minecraft:husbandry/whole_pack", &format!("minecraft:{v}")) == Some(true)).collect();
+        assert_eq!(done.len(), 1, "one wolf variant: {done:?}");
     }
     // One bone per try; the tamed wolf has 40 health.
     assert_eq!(w.held().unwrap().1, 64 - tries);

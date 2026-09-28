@@ -252,6 +252,8 @@ impl Kind for Cat {
                 tame::tame(m, uuid);
                 tame::set_ordered_to_sit(m, true);
                 level.emit(Event::EntityEvent { entity: e.id, event: 7 });
+                let animal = crate::level::Seen::of_mob(e, m);
+                level.emit(Event::Criterion { player: who.id, criterion: crate::level::Criterion::TameAnimal { animal } });
             } else {
                 level.emit(Event::EntityEvent { entity: e.id, event: 6 });
             }

@@ -887,6 +887,7 @@ fn ride_players(sim: &mut SimLevel) {
         }
         let p = &mut *sim.players[k];
         p.vehicle = None;
+        p.vehicle_type = None;
         if !p.disconnected {
             let rot = p.rot;
             p.teleport(to, rot, now);
@@ -1019,12 +1020,18 @@ pub(crate) fn hit_mob(
             phys.ignite_for_seconds(hit.fire_seconds);
         }
     }
+    let victim = kiln_entity::level::Seen::of(&phys);
+    let health_after = kiln_entity::mob::data(&phys).map(|m| m.health);
     let e = &mut sim.list[i];
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
     if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == hit.attacker) {
         p.last_hurt_mob = Some((hit.target, level.env.game_time));
+        // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
+        let taken = health_before.zip(health_after).map_or(hit.amount, |(b, a)| b - a);
+        let subject = crate::advancements::triggers::seen_subject(&victim, crate::DIMENSIONS[level.env.dim].0);
+        p.player_hurt_entity(&subject, hit.amount, taken, "minecraft:player_attack", true);
     }
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
@@ -1136,6 +1143,7 @@ pub(crate) fn interact_mob(
         let now = sim.level.env.game_time;
         let p = &mut *sim.players[i];
         p.vehicle = Some(target);
+        p.vehicle_type = Some(phys.type_name);
         p.teleport(arr(seat), [phys.y_rot, phys.x_rot], now);
         p.started_riding();
     }
@@ -1439,6 +1447,11 @@ fn carry_out(
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
+        Event::Criterion { player, criterion } => {
+            if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
+                p.entity_criterion(crate::DIMENSIONS[env.dim].0, &criterion);
+            }
+        }
     }
 }
 

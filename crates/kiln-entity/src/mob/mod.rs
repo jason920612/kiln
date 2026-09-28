@@ -637,6 +637,23 @@ pub fn item_tag(item: i32, tag: &str) -> bool {
             .is_some_and(|(_, ids)| ids.contains(&item))
 }
 
+/// The variant components of a mob (`Entity.get(DataComponents.*_VARIANT)`) that entity
+/// predicates' `components` can match.
+pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
+    use kiln_item::Component as C;
+    use kiln_item::component::variant as v;
+    match m.kind {
+        MobKind::Cat => vec![C::CatVariant(v::CatVariant(m.variant)), C::CatSoundVariant(v::CatSoundVariant(m.sound_variant))],
+        MobKind::Wolf => vec![C::WolfVariant(v::WolfVariant(m.variant)), C::WolfSoundVariant(v::WolfSoundVariant(m.sound_variant))],
+        MobKind::Pig => vec![C::PigVariant(v::PigVariant(m.variant)), C::PigSoundVariant(v::PigSoundVariant(m.sound_variant))],
+        MobKind::Cow => vec![C::CowVariant(v::CowVariant(m.variant)), C::CowSoundVariant(v::CowSoundVariant(m.sound_variant))],
+        MobKind::Chicken => {
+            vec![C::ChickenVariant(v::ChickenVariant(m.variant)), C::ChickenSoundVariant(v::ChickenSoundVariant(m.sound_variant))]
+        }
+        _ => Vec::new(),
+    }
+}
+
 pub fn item_name(s: &ItemStack) -> &'static str {
     kiln_data::builtin_entries("minecraft:item").and_then(|e| e.get(s.item() as usize).copied()).unwrap_or("minecraft:air")
 }

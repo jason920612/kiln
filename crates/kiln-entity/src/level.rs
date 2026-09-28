@@ -15,6 +15,62 @@ pub enum EntityFilter {
     Living,
 }
 
+/// An entity as advancement criteria see it, taken when the event that fires them happened
+/// (the entity may be gone, or not yet added, by the time the simulation looks).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Seen {
+    pub id: i32,
+    pub type_name: &'static str,
+    pub pos: Vec3,
+    pub on_ground: bool,
+    pub on_fire: bool,
+    pub baby: bool,
+    /// Entity data components predicates can match exactly (the variant).
+    pub components: Vec<kiln_item::Component>,
+}
+
+impl Seen {
+    pub fn of(e: &Entity) -> Seen {
+        let m = crate::mob::data(e);
+        Seen {
+            id: e.id,
+            type_name: e.type_name,
+            pos: e.position(),
+            on_ground: e.on_ground,
+            on_fire: e.is_on_fire(),
+            baby: m.is_some_and(|m| m.baby()),
+            components: m.map(crate::mob::variant_components).unwrap_or_default(),
+        }
+    }
+
+    /// A mob whose data is taken out for its tick.
+    pub fn of_mob(e: &Entity, m: &crate::mob::MobData) -> Seen {
+        Seen { baby: m.baby(), components: crate::mob::variant_components(m), ..Seen::of(e) }
+    }
+}
+
+/// Criteria triggers about entities this crate simulates, for player `player` of
+/// [`Event::Criterion`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum Criterion {
+    /// `BredAnimalsTrigger`: the parents and the baby.
+    BredAnimals { parent: Seen, partner: Seen, child: Option<Seen> },
+    /// `TameAnimalTrigger`.
+    TameAnimal { animal: Seen },
+    /// `SummonedEntityTrigger` (golems built, the dragon respawned).
+    SummonedEntity { entity: Seen },
+    /// `CuredZombieVillagerTrigger`.
+    CuredZombieVillager { zombie: Seen, villager: Seen },
+    /// `LightningStrikeTrigger`: the bolt and the entities it struck (bystanders).
+    LightningStrike { lightning: Seen, victims: Vec<Seen>, blocks_set_on_fire: i32 },
+    /// `ChanneledLightningTrigger`: the entities a channeling trident's bolt struck.
+    ChanneledLightning { victims: Vec<Seen> },
+    /// `KilledByArrowTrigger` (a crossbow's piercing arrow): the victims and the weapon.
+    KilledByArrow { victims: Vec<Seen>, weapon: Option<kiln_item::ItemStack> },
+    /// `TargetBlockTrigger`: a projectile hit a target block at `pos` for `signal`.
+    TargetHit { projectile: Seen, pos: BlockPos, signal: i32 },
+}
+
 /// A player as the experience orb sees it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlayerView {
@@ -183,6 +239,8 @@ pub enum Event {
     PotionSplash { target: i32, potion: &'static str, scale: f64, owner: Option<i32> },
     /// `dropFromShearingLootTable` (a sheep's wool).
     ShearLoot { entity: i32, table: String, pos: Vec3 },
+    /// A criteria trigger for player `player` (entity id).
+    Criterion { player: i32, criterion: Criterion },
 }
 
 /// World access for entity ticks.

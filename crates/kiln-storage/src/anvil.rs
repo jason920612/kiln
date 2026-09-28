@@ -226,8 +226,12 @@ impl ChunkSource for AnvilSource {
             self.stats.record(start);
         }
         match decoded {
-            Ok(c) => {
+            Ok(mut c) => {
                 if let Ok((_, Tag::Compound(mut fields))) = nbt::read_named(&data) {
+                    // Structure starts and references stay readable (location predicates).
+                    if let Some((_, s)) = fields.iter().find(|(k, _)| k == "structures") {
+                        c.structures = Some(Box::new(s.clone()));
+                    }
                     fields.retain(|(k, _)| k != "sections" && k != "block_entities");
                     self.preserved.insert(pos, Tag::Compound(fields));
                 }

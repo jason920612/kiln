@@ -580,6 +580,9 @@ impl Player {
             baby: false,
             equipment: Vec::new(),
             world: None,
+            components: Default::default(),
+            effects: Vec::new(),
+            vehicle: None,
         });
         self.hurt_trigger("minecraft:entity_hurt_player", killer.as_ref(), amount, taken, source.cause.damage_type());
         if self.health <= 0.0 {
