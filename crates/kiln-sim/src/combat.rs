@@ -247,6 +247,23 @@ enum EntityClass {
     NotAttackable,
     /// Attackable, but hurting it does nothing (primed TNT, thrown items).
     Unhurtable,
+    /// A mob: a living target the simulation hurts after the attack (see [`MobHit`]).
+    Mob,
+}
+
+/// A player's hit on a mob, carried out against the region's entities by
+/// [`crate::entities::hit_mob`].
+#[derive(Debug, Clone)]
+pub(crate) struct MobHit {
+    pub target: i32,
+    pub attacker: i32,
+    pub attacker_pos: [f64; 3],
+    pub amount: f32,
+    /// `causeExtraKnockback` strength (enchantments and sprinting), along `yaw`.
+    pub knockback: f32,
+    pub yaw: f32,
+    /// Fire aspect: seconds the mob burns.
+    pub fire_seconds: f32,
 }
 
 fn classify(e: &kiln_entity::Entity) -> EntityClass {
@@ -255,6 +272,8 @@ fn classify(e: &kiln_entity::Entity) -> EntityClass {
         // `AbstractArrow.isAttackable`: only redirectable projectiles (none of Kiln's arrows).
         EntityKind::Arrow(_) => EntityClass::Invalid,
         EntityKind::FallingBlock(_) => EntityClass::NotAttackable,
+        EntityKind::Mob(m) if m.health > 0.0 => EntityClass::Mob,
+        EntityKind::Mob(_) => EntityClass::NotAttackable,
         _ => EntityClass::Unhurtable,
     }
 }
@@ -465,7 +484,7 @@ impl Player {
     pub(crate) fn as_attacker(&self) -> Attacker {
         let held = self.inv.selected_item();
         let weapon = held.get(keys::CUSTOM_NAME).map(|name| item_display_name(held, name.nbt().clone()));
-        Attacker { id: self.entity_id, name: self.name.clone(), pos: self.pos, creative: self.game_mode == 1, weapon, view: self.view() }
+        Attacker { id: self.entity_id, name: self.name.clone(), pos: self.pos, creative: self.game_mode == 1, weapon, view: self.view(), mob: None }
     }
 
     /// `Player.canCriticalAttack`: falling, in the air, not climbing, in water, riding or
@@ -541,6 +560,7 @@ pub(crate) fn handle_attack(
     entities: &entities::Entities,
     env: &AttackEnv,
     ctx: &mut DamageCtx,
+    mob_hits: &mut Vec<MobHit>,
 ) {
     let attacker = &*players[a];
     if !attacker.client_loaded() || attacker.game_mode == 3 {
@@ -593,7 +613,7 @@ pub(crate) fn handle_attack(
     // The whole attack draws enchantment randomness from the attacker's level random.
     let lent = std::mem::replace(&mut players[a].level_rng, kiln_javamath::random::LegacyRandom::new(0));
     let outer = ctx.level_rng.replace(lent);
-    attack(players, a, target, target_id, env, ctx);
+    attack(players, a, target, target_id, env, ctx, mob_hits);
     if let Some(r) = std::mem::replace(&mut ctx.level_rng, outer) {
         players[a].level_rng = r;
     }
@@ -641,10 +661,11 @@ fn translatable(key: &str) -> kiln_proto::nbt::Tag {
 }
 
 /// `Player.attack`.
-fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32, env: &AttackEnv, ctx: &mut DamageCtx) {
+fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32, env: &AttackEnv, ctx: &mut DamageCtx, mob_hits: &mut Vec<MobHit>) {
     let living = match target {
         Target::Player(_) => true,
         Target::Entity { kind: EntityClass::NotAttackable, .. } => return,
+        Target::Entity { kind: EntityClass::Mob, .. } => true,
         Target::Entity { .. } => false,
     };
     let target_view = match &target {
@@ -686,6 +707,50 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     let yaw = p.rot[0];
     let t = match target {
         Target::Player(t) => t,
+        Target::Entity { kind: EntityClass::Mob, .. } => {
+            // The mob is hurt against the region's entities afterwards; the attacker's side of
+            // the attack (knockback strength, sounds, durability, exhaustion) happens here.
+            let strength =
+                players[a].attack_knockback(&target_view, &source, attack_rng(ctx)) + if sprint_knockback { 0.5 } else { 0.0 };
+            let fire = source
+                .weapon
+                .as_ref()
+                .and_then(kiln_loot::predicate::item::enchantments)
+                .map_or(0, |e| e.level(kiln_item::registry::ENCHANTMENT.id("minecraft:fire_aspect").unwrap_or(-1)));
+            mob_hits.push(MobHit {
+                target: target_id,
+                attacker: players[a].entity_id,
+                attacker_pos: players[a].pos,
+                amount: total,
+                knockback: strength,
+                yaw,
+                fire_seconds: 4.0 * fire as f32,
+            });
+            if strength > 0.0 {
+                let p = &mut *players[a];
+                p.vel = [p.vel[0] * 0.6, p.vel[1], p.vel[2] * 0.6];
+                if p.sprinting {
+                    p.sprinting = false;
+                    p.meta_dirty = true;
+                }
+            }
+            if crit {
+                sounds.push("minecraft:entity.player.attack.crit");
+                let pkt = entity::animate(target_id, entity::animation::CRITICAL_HIT);
+                send_to_trackers_and_self(players, a, &pkt);
+            } else {
+                sounds.push(if full { "minecraft:entity.player.attack.strong" } else { "minecraft:entity.player.attack.weak" });
+            }
+            let per_attack = players[a].inv.selected_item().get(keys::WEAPON).map(|w| w.item_damage_per_attack);
+            if let Some(n) = per_attack
+                && !players[a].inv.selected_item().is_empty()
+            {
+                players[a].hurt_and_break(EquipmentSlot::MainHand, n, ctx.level_rng.as_mut());
+            }
+            players[a].exhaust(0.1);
+            play_sounds(players, a, &sounds, env);
+            return;
+        }
         Target::Entity { .. } => {
             // `hurtOrSimulate` is false for TNT and thrown items.
             sounds.push("minecraft:entity.player.attack.nodamage");

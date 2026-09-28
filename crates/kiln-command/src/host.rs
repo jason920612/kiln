@@ -563,6 +563,11 @@ pub trait Host: SelectorWorld {
             && (-30_000_000..30_000_000).contains(&z)
             && (-20_000_000..20_000_000).contains(&y)
     }
+    /// `SummonCommand.createEntity` + `spawnEntity`: `entity` at `pos` from `nbt`, running a
+    /// mob's `finalizeSpawn` when `initialize`; returns the entity's display name.
+    fn summon(&mut self, _entity: &Identifier, _pos: [f64; 3], _nbt: Option<&kiln_proto::nbt::Tag>, _initialize: bool) -> Result<Text, CommandError> {
+        Err(CommandError::new(crate::tr!("commands.summon.failed")))
+    }
     fn set_spawn_point(&mut self, player: &Self::Entity, spawn: &SpawnPoint);
     fn set_world_spawn(&mut self, spawn: &SpawnPoint) -> Result<(), CommandError>;
     /// `/kiln tick`: tick timing report lines.

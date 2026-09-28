@@ -98,6 +98,32 @@ pub(crate) struct Attacker {
     pub weapon: Option<Tag>,
     /// The attacker as enchantment requirements see it.
     pub view: crate::enchant::EntityView,
+    /// The attacker's entity type when it is a mob (a player otherwise).
+    pub mob: Option<&'static str>,
+}
+
+impl Attacker {
+    /// The attacker's name in death messages: a player's name, or a mob type's translation.
+    fn name_tag(&self) -> Tag {
+        match self.mob {
+            Some(t) => translate_plain(&format!("entity.minecraft.{}", t.trim_start_matches("minecraft:"))),
+            None => text(&self.name),
+        }
+    }
+
+    /// A mob attacker.
+    pub(crate) fn mob(id: i32, type_name: &'static str, pos: [f64; 3]) -> Attacker {
+        let type_id = kiln_item::registry::ENTITY_TYPE.id(type_name).unwrap_or(-1);
+        Attacker {
+            id,
+            name: type_name.to_owned(),
+            pos,
+            creative: false,
+            weapon: None,
+            view: crate::enchant::EntityView { type_id, pos, on_ground: true, on_fire: false, sneaking: false, sprinting: false, flying: false },
+            mob: Some(type_name),
+        }
+    }
 }
 
 /// `DamageSource`: a damage type, who caused it and what dealt it.
@@ -157,7 +183,11 @@ impl Source {
     /// `DamageSource.scalesWithDifficulty`: players hurt by these take more on hard and less on
     /// easy. No living non-player entity (mob) deals damage yet.
     fn scales_with_difficulty(&self) -> bool {
-        self.info().scaling == Scaling::Always
+        match self.info().scaling {
+            Scaling::Always => true,
+            Scaling::WhenCausedByLivingNonPlayer => self.attacker.as_ref().is_some_and(|a| a.mob.is_some()),
+            Scaling::Never => false,
+        }
     }
 
     /// `DamageSource.getLocalizedDeathMessage`, with the victim's kill credit (the last player
@@ -166,8 +196,8 @@ impl Source {
         let key = format!("death.attack.{}", self.info().message_id);
         if let Some(a) = &self.attacker {
             return match &a.weapon {
-                Some(item) => translate(&format!("{key}.item"), vec![text(victim), text(&a.name), item.clone()]),
-                None => translate(&key, vec![text(victim), text(&a.name)]),
+                Some(item) => translate(&format!("{key}.item"), vec![text(victim), a.name_tag(), item.clone()]),
+                None => translate(&key, vec![text(victim), a.name_tag()]),
             };
         }
         match kill_credit {
@@ -399,8 +429,8 @@ fn fall_message(fall: &CombatEntry, killer: Option<&Attacker>, victim: &str) -> 
         return translate("death.fell.accident.generic", vec![text(victim)]);
     }
     let assisted = |a: &Attacker, item: &str, plain: &str| match &a.weapon {
-        Some(w) => translate(item, vec![text(victim), text(&a.name), w.clone()]),
-        None => translate(plain, vec![text(victim), text(&a.name)]),
+        Some(w) => translate(item, vec![text(victim), a.name_tag(), w.clone()]),
+        None => translate(plain, vec![text(victim), a.name_tag()]),
     };
     match (&source.attacker, killer) {
         (Some(a), k) if k.is_none_or(|k| k.name != a.name) => assisted(a, "death.fell.assist.item", "death.fell.assist"),
@@ -521,7 +551,7 @@ impl Player {
             }
             // `dealDefaultKnockback` from the source's position (melee: the attacker's).
             if !source.is("minecraft:no_knockback")
-                && matches!(source.cause, Cause::PlayerAttack | Cause::Other(_))
+                && matches!(source.cause, Cause::PlayerAttack | Cause::Other(_) | Cause::Entity(DamageKind::MobAttack))
                 && let Some(a) = &source.attacker
             {
                 let (dx, dz) = (a.pos[0] - self.pos[0], a.pos[2] - self.pos[2]);
@@ -535,9 +565,9 @@ impl Player {
         true
     }
 
-    /// Whether the damage's attacker is a player (every attacker is, until mobs fight).
+    /// Whether the damage's attacker is a player.
     fn hurt_by_player(&self, source: &Source) -> bool {
-        source.attacker.is_some()
+        source.attacker.as_ref().is_some_and(|a| a.mob.is_none())
     }
 
     /// `Player.actuallyHurt`: armor, absorption, exhaustion and the combat tracker.

@@ -92,7 +92,19 @@ impl RegionWork<'_> {
                 if !self.players[i].dead {
                     let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
                     let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
-                    crate::combat::handle_attack(&mut self.players, i, entity_id, self.entities, &attack_env, &mut ctx);
+                    let mut hits = Vec::new();
+                    crate::combat::handle_attack(&mut self.players, i, entity_id, self.entities, &attack_env, &mut ctx, &mut hits);
+                    for hit in hits {
+                        let mut level = RegionLevel {
+                            cells: &mut *self.cells,
+                            blocks: &mut *self.blocks,
+                            env: &env.blocks,
+                            out: &mut out,
+                            bodies: &bodies,
+                            actor: None,
+                        };
+                        entities::hit_mob(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &hit);
+                    }
                 }
                 continue;
             }
@@ -196,7 +208,7 @@ impl RegionWork<'_> {
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
     fn tick_entities(&mut self, env: &Env) {
-        if self.entities.list.is_empty() {
+        if self.entities.list.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
             return;
         }
         let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
@@ -211,7 +223,9 @@ impl RegionWork<'_> {
                 bodies: &bodies,
                 actor: None,
             };
-            entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths);
+            let any_player = !self.players.is_empty();
+            crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns);
+            entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
@@ -444,7 +458,7 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         }
         PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
-            use_item_on(p, &mut level, hand, pos, face, cursor);
+            use_item_on(p, &mut level, hand, pos, face, cursor, fx.spawns);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         // `handlePunch`: the swing resets the attack strength.
@@ -474,7 +488,7 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
 /// clicked block reacts (levers, doors, ...) unless the player sneaks with something in hand;
 /// otherwise a held block item is placed. The player always gets the clicked block and the
 /// one next to it back, to settle its prediction.
-fn use_item_on(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3], face: i32, cursor: [f32; 3]) {
+fn use_item_on(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3], face: i32, cursor: [f32; 3], spawns: &mut Vec<Spawn>) {
     let Some(dir) = blocks::direction(face) else { return };
     if !p.can_reach_block(pos, 1.0) || cursor.iter().any(|&c| (c as f64 - 0.5).abs() >= 1.0000001) {
         return;
@@ -483,13 +497,21 @@ fn use_item_on(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3]
     let next = [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]];
     let top = level.env.min_y + level.env.height - 1;
     if pos[1] <= top && p.awaiting_teleport.is_none() && p.game_mode != 3 {
-        use_on_block(p, level, hand, pos, dir, cursor);
+        use_on_block(p, level, hand, pos, dir, cursor, spawns);
     }
     p.resend_block(level, pos);
     p.resend_block(level, next);
 }
 
-fn use_on_block(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3], dir: kiln_blocks::Direction, cursor: [f32; 3]) {
+fn use_on_block(
+    p: &mut Player,
+    level: &mut RegionLevel,
+    hand: i32,
+    pos: [i32; 3],
+    dir: kiln_blocks::Direction,
+    cursor: [f32; 3],
+    spawns: &mut Vec<Spawn>,
+) {
     use kiln_item::component::EquipmentSlot;
     let main_hand = hand == 0;
     let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
@@ -509,6 +531,27 @@ fn use_on_block(p: &mut Player, level: &mut RegionLevel, hand: i32, pos: [i32; 3
     }
     if item_name == Some("minecraft:flint_and_steel") && actor.may_build {
         light_fire(p, level, main_hand, pos, dir);
+        return;
+    }
+    // `SpawnEggItem.useOn`: the mob appears in the clicked block if it has no collision,
+    // else next to it, facing a random way.
+    if let Some(kind) = item_name.and_then(|n| n.strip_suffix("_spawn_egg")).and_then(kiln_entity::mob::MobKind::by_name)
+        && p.game_mode != 3
+    {
+        let clicked_empty = kiln_data::block_props::collision(level.block(bp)).is_empty();
+        let at = if clicked_empty { bp } else { bp.relative(dir) };
+        let yaw = kiln_entity::mob::mth::wrap_degrees(kiln_javamath::random::RandomSource::next_float(level.random()) * 360.0);
+        let env = level.env;
+        let finalize = crate::mobs::Finalize {
+            ctx: crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, 1.0),
+            seed: crate::mobs::loot_seed(env.seed, env.game_time, p.entity_id, (at.x as u64) << 32 ^ at.z as u64 ^ (at.y as u64) << 16),
+            persistent: false,
+        };
+        spawns.push(crate::mobs::spawn(kind, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(yaw), Some(finalize)));
+        if p.game_mode != 1 {
+            let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
+            kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
+        }
         return;
     }
     // `ItemStack.useOn` for block items (adventure players cannot place).

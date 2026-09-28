@@ -133,7 +133,7 @@ fn state(e: &Entity) -> Vec<f64> {
         EntityKind::FallingBlock(d) => out.extend([d.time as f64, d.state as f64]),
         EntityKind::ExperienceOrb(d) => out.extend([d.value as f64, d.count as f64, d.age as f64]),
         EntityKind::Arrow(a) => out.extend([a.in_ground as i32 as f64, a.shake_time as f64, a.life as f64]),
-        EntityKind::Player(_) | EntityKind::Throwable(_) | EntityKind::Other { .. } => {}
+        EntityKind::Player(_) | EntityKind::Throwable(_) | EntityKind::Other { .. } | EntityKind::Mob(_) | EntityKind::MobTicking { .. } => {}
     }
     out
 }

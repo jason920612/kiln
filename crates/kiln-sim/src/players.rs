@@ -447,7 +447,7 @@ const SHOWN_SLOTS: usize = 6;
 
 /// `ClientboundSetEquipmentPacket`: (slot ordinal, stack) pairs, each slot byte flagged 0x80
 /// when another follows.
-fn set_equipment(entity_id: i32, slots: &[(u8, &kiln_item::ItemStack)]) -> Bytes {
+pub(crate) fn set_equipment(entity_id: i32, slots: &[(u8, &kiln_item::ItemStack)]) -> Bytes {
     use bytes::BufMut;
     use kiln_proto::WriteExt;
     let mut b = bytes::BytesMut::new();

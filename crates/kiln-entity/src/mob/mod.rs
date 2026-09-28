@@ -1,0 +1,1790 @@
+//! Mobs: vanilla's `LivingEntity` / `Mob` / `PathfinderMob` behaviour for the types Kiln
+//! simulates (pig, cow, sheep, chicken, zombie, skeleton, creeper, spider).
+//!
+//! A mob is an [`Entity`] whose kind is [`EntityKind::Mob`] holding a [`MobData`]: health and
+//! attributes, rotations and movement inputs, the goal and target selectors, the look, move,
+//! jump and body rotation controls, the path navigation and the type's own state. While a mob
+//! ticks, its data is taken out of the entity (the kind becomes [`EntityKind::MobTicking`]) so
+//! the tick can borrow both.
+//!
+//! Randomness follows vanilla: the mob's own random (`Entity.random`) for AI and sounds, the
+//! level's random for spawning decisions.
+
+pub mod attributes;
+pub mod control;
+pub mod goals;
+pub mod mth;
+pub mod path;
+pub mod persist;
+pub mod random_pos;
+pub mod species;
+
+use crate::entity::{Entity, EntityKind, MoverType};
+use crate::level::{DamageKind, EntityFilter, EntityLevel, Event};
+use crate::math::{Aabb, BlockPos, Vec3};
+use attributes::{Attr, Attributes, Op};
+use goals::{Goal, GoalSelector, Living, MeleeKind, Wanted};
+use kiln_item::ItemStack;
+use kiln_javamath::random::RandomSource;
+
+/// Equipment slot indices in [`MobData::equipment`] (`EquipmentSlot` order).
+pub const MAINHAND: usize = 0;
+pub const OFFHAND: usize = 1;
+pub const FEET: usize = 2;
+pub const LEGS: usize = 3;
+pub const CHEST: usize = 4;
+pub const HEAD: usize = 5;
+pub const SLOT_NAMES: [&str; 6] = ["mainhand", "offhand", "feet", "legs", "chest", "head"];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MobKind {
+    Pig,
+    Cow,
+    Sheep,
+    Chicken,
+    Zombie,
+    Skeleton,
+    Creeper,
+    Spider,
+}
+
+/// `MobCategory`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Category {
+    Monster,
+    Creature,
+}
+
+impl Category {
+    pub fn max_instances(self) -> i32 {
+        match self {
+            Category::Monster => 70,
+            Category::Creature => 10,
+        }
+    }
+    pub fn friendly(self) -> bool {
+        self == Category::Creature
+    }
+    pub fn persistent(self) -> bool {
+        self == Category::Creature
+    }
+    pub fn despawn_distance(self) -> i32 {
+        128
+    }
+    pub fn no_despawn_distance(self) -> i32 {
+        32
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Category::Monster => "monster",
+            Category::Creature => "creature",
+        }
+    }
+}
+
+pub const ALL_KINDS: [MobKind; 8] =
+    [MobKind::Pig, MobKind::Cow, MobKind::Sheep, MobKind::Chicken, MobKind::Zombie, MobKind::Skeleton, MobKind::Creeper, MobKind::Spider];
+
+impl MobKind {
+    pub fn by_name(name: &str) -> Option<MobKind> {
+        ALL_KINDS.iter().copied().find(|k| k.type_name() == name)
+    }
+
+    pub fn type_name(self) -> &'static str {
+        match self {
+            MobKind::Pig => "minecraft:pig",
+            MobKind::Cow => "minecraft:cow",
+            MobKind::Sheep => "minecraft:sheep",
+            MobKind::Chicken => "minecraft:chicken",
+            MobKind::Zombie => "minecraft:zombie",
+            MobKind::Skeleton => "minecraft:skeleton",
+            MobKind::Creeper => "minecraft:creeper",
+            MobKind::Spider => "minecraft:spider",
+        }
+    }
+
+    pub fn short_name(self) -> &'static str {
+        &self.type_name()[10..]
+    }
+
+    pub fn category(self) -> Category {
+        match self {
+            MobKind::Pig | MobKind::Cow | MobKind::Sheep | MobKind::Chicken => Category::Creature,
+            _ => Category::Monster,
+        }
+    }
+
+    pub fn is_animal(self) -> bool {
+        self.category() == Category::Creature
+    }
+
+    /// `DefaultAttributes` for the type.
+    pub fn attributes(self) -> Attributes {
+        use Attr::*;
+        let animal = [(FollowRange, 16.0), (TemptRange, 10.0)];
+        let monster = [(FollowRange, 16.0), (AttackDamage, 2.0)];
+        let mut v: Vec<(Attr, f64)> = if self.is_animal() { animal.to_vec() } else { monster.to_vec() };
+        match self {
+            MobKind::Pig => v.extend([(MaxHealth, 10.0), (MovementSpeed, 0.25)]),
+            MobKind::Cow => v.extend([(MaxHealth, 10.0), (MovementSpeed, 0.20000000298023224)]),
+            MobKind::Sheep => v.extend([(MaxHealth, 8.0), (MovementSpeed, 0.23000000417232513)]),
+            MobKind::Chicken => v.extend([(MaxHealth, 4.0), (MovementSpeed, 0.25)]),
+            MobKind::Zombie => v.extend([
+                (FollowRange, 35.0),
+                (MovementSpeed, 0.23000000417232513),
+                (AttackDamage, 3.0),
+                (Armor, 2.0),
+                (SpawnReinforcements, 0.0),
+            ]),
+            MobKind::Skeleton | MobKind::Creeper => v.push((MovementSpeed, 0.25)),
+            MobKind::Spider => v.extend([(MaxHealth, 16.0), (MovementSpeed, 0.30000001192092896)]),
+        }
+        Attributes::new(&v)
+    }
+
+    /// `getAmbientSoundInterval`.
+    pub fn ambient_sound_interval(self) -> i32 {
+        if self.is_animal() { 120 } else { 80 }
+    }
+
+    pub fn max_head_y_rot(self) -> i32 {
+        75
+    }
+    pub fn max_head_x_rot(self) -> i32 {
+        40
+    }
+    pub fn head_rot_speed(self) -> i32 {
+        10
+    }
+
+    /// `EntityTypeTags.BURN_IN_DAYLIGHT`.
+    pub fn burns_in_daylight(self) -> bool {
+        matches!(self, MobKind::Zombie | MobKind::Skeleton)
+    }
+
+    /// `EntityTypeTags.CAN_BREATHE_UNDER_WATER` (undead).
+    pub fn breathes_under_water(self) -> bool {
+        matches!(self, MobKind::Zombie | MobKind::Skeleton)
+    }
+
+    pub fn loot_table(self) -> String {
+        format!("minecraft:entities/{}", self.short_name())
+    }
+
+    fn sound(self, what: &str) -> &'static str {
+        let s = format!("minecraft:entity.{}.{what}", self.short_name());
+        kiln_data::builtin_entries("minecraft:sound_event").and_then(|e| e.iter().find(|x| **x == s).copied()).unwrap_or("minecraft:entity.generic.hurt")
+    }
+
+    pub fn ambient_sound(self) -> Option<&'static str> {
+        (self != MobKind::Creeper).then(|| self.sound("ambient"))
+    }
+    pub fn hurt_sound(self) -> &'static str {
+        self.sound("hurt")
+    }
+    pub fn death_sound(self) -> &'static str {
+        self.sound("death")
+    }
+    pub fn step_sound(self) -> &'static str {
+        self.sound("step")
+    }
+    pub fn sound_source(self) -> &'static str {
+        if self.is_animal() { "neutral" } else { "hostile" }
+    }
+}
+
+/// Why a mob took damage (`DamageSource`): the damage type, who caused it and what dealt it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DamageSource {
+    pub kind: DamageKind,
+    /// `getEntity`: the responsible entity (a player, a skeleton for its arrow).
+    pub attacker: Option<i32>,
+    /// `getDirectEntity` when different (the arrow).
+    pub direct: Option<i32>,
+    /// `getSourcePosition`.
+    pub pos: Option<Vec3>,
+    pub attacker_is_player: bool,
+}
+
+impl DamageSource {
+    pub fn of(kind: DamageKind) -> DamageSource {
+        DamageSource { kind, attacker: None, direct: None, pos: None, attacker_is_player: false }
+    }
+}
+
+/// Type-specific state.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Species {
+    Pig,
+    Cow,
+    Sheep { color: u8, sheared: bool },
+    Chicken { egg_time: i32 },
+    Zombie { can_break_doors: bool },
+    Skeleton,
+    Creeper { swell: i32, old_swell: i32, swell_dir: i32, max_swell: i32, radius: i32, powered: bool, ignited: bool },
+    Spider { climbing: bool },
+}
+
+#[derive(Clone, Debug)]
+pub struct MobData {
+    pub kind: MobKind,
+    pub attrs: Attributes,
+    pub health: f32,
+    pub absorption: f32,
+    pub y_head_rot: f32,
+    pub y_head_rot_o: f32,
+    pub y_body_rot: f32,
+    pub y_body_rot_o: f32,
+    pub xxa: f32,
+    pub yya: f32,
+    pub zza: f32,
+    pub speed: f32,
+    pub jumping: bool,
+    pub no_jump_delay: i32,
+    pub hurt_time: i32,
+    pub hurt_duration: i32,
+    pub damage_cooldown: i32,
+    pub last_hurt: f32,
+    pub death_time: i32,
+    pub dead: bool,
+    pub last_hurt_by_mob: Option<i32>,
+    pub last_hurt_by_mob_timestamp: i32,
+    pub last_hurt_by_player: Option<i32>,
+    pub last_hurt_by_player_memory: i32,
+    pub last_hurt_mob: Option<i32>,
+    pub last_damage_source: Option<DamageSource>,
+    pub last_damage_stamp: i64,
+    pub no_action_time: i32,
+    pub ambient_sound_time: i32,
+    pub persistence_required: bool,
+    pub no_ai: bool,
+    pub left_handed: bool,
+    pub aggressive: bool,
+    pub can_pick_up_loot: bool,
+    /// `AgeableMob.age` (negative for babies); zombies keep a baby flag instead.
+    pub age: i32,
+    pub zombie_baby: bool,
+    pub target: Option<i32>,
+    pub look: control::LookControl,
+    pub mov: control::MoveControl,
+    pub jump: control::JumpControl,
+    pub body: control::BodyRotationControl,
+    pub nav: path::Navigation,
+    pub maluses: Vec<(path::PathType, f32)>,
+    /// `Sensing`: line of sight results of this tick.
+    pub seen: Vec<i32>,
+    pub unseen: Vec<i32>,
+    pub goals: GoalSelector,
+    pub targets: GoalSelector,
+    pub equipment: [ItemStack; 6],
+    pub drop_chances: [f32; 6],
+    /// Ticks the current item (a bow) has been used.
+    pub using_item: Option<i32>,
+    pub species: Species,
+    /// `*_variant` and `*_sound_variant` registry ids (pigs, cows, chickens).
+    pub variant: i32,
+    pub sound_variant: i32,
+    pub is_vehicle: bool,
+    /// Arm swung this tick (for the animation packet).
+    pub swing: bool,
+    /// Entity events for viewers (hurt, death, eating...) are emitted as [`Event::EntityEvent`].
+    pub air_supply_max: i32,
+    /// `ServerEntity` needs the last hurt direction for the damage event.
+    pub hurt_by: Option<(DamageKind, Option<i32>, Option<i32>)>,
+}
+
+impl MobData {
+    /// A mob as its constructor leaves it (`EntityType.create`): full health, default
+    /// attributes, the type's goals. The constructor's random draws (the initial yaw, a
+    /// chicken's egg timer) come from `random`.
+    pub fn new(kind: MobKind, random: &mut dyn RandomSource) -> MobData {
+        let attrs = kind.attributes();
+        let health = attrs.value(Attr::MaxHealth) as f32;
+        let species = match kind {
+            MobKind::Pig => Species::Pig,
+            MobKind::Cow => Species::Cow,
+            MobKind::Sheep => Species::Sheep { color: 0, sheared: false },
+            MobKind::Chicken => Species::Chicken { egg_time: 0 },
+            MobKind::Zombie => Species::Zombie { can_break_doors: false },
+            MobKind::Skeleton => Species::Skeleton,
+            MobKind::Creeper => {
+                Species::Creeper { swell: 0, old_swell: 0, swell_dir: -1, max_swell: 30, radius: 3, powered: false, ignited: false }
+            }
+            MobKind::Spider => Species::Spider { climbing: false },
+        };
+        let mut m = MobData {
+            kind,
+            attrs,
+            health,
+            absorption: 0.0,
+            y_head_rot: 0.0,
+            y_head_rot_o: 0.0,
+            y_body_rot: 0.0,
+            y_body_rot_o: 0.0,
+            xxa: 0.0,
+            yya: 0.0,
+            zza: 0.0,
+            speed: 0.0,
+            jumping: false,
+            no_jump_delay: 0,
+            hurt_time: 0,
+            hurt_duration: 0,
+            damage_cooldown: 0,
+            last_hurt: 0.0,
+            death_time: 0,
+            dead: false,
+            last_hurt_by_mob: None,
+            last_hurt_by_mob_timestamp: 0,
+            last_hurt_by_player: None,
+            last_hurt_by_player_memory: 0,
+            last_hurt_mob: None,
+            last_damage_source: None,
+            last_damage_stamp: 0,
+            no_action_time: 0,
+            ambient_sound_time: 0,
+            persistence_required: false,
+            no_ai: false,
+            left_handed: false,
+            aggressive: false,
+            can_pick_up_loot: false,
+            age: 0,
+            zombie_baby: false,
+            target: None,
+            look: control::LookControl::default(),
+            mov: control::MoveControl::default(),
+            jump: control::JumpControl::default(),
+            body: control::BodyRotationControl::default(),
+            nav: path::Navigation::new(kind == MobKind::Spider),
+            maluses: Vec::new(),
+            seen: Vec::new(),
+            unseen: Vec::new(),
+            goals: GoalSelector::default(),
+            targets: GoalSelector::default(),
+            equipment: std::array::from_fn(|_| ItemStack::empty()),
+            drop_chances: [0.085; 6],
+            using_item: None,
+            species,
+            variant: kiln_data::synced_id(&format!("{}_variant", kind.type_name()), "minecraft:temperate").unwrap_or(0),
+            sound_variant: kiln_data::synced_id(&format!("{}_sound_variant", kind.type_name()), "minecraft:classic").unwrap_or(0),
+            is_vehicle: false,
+            swing: false,
+            air_supply_max: 300,
+            hurt_by: None,
+        };
+        if kind.is_animal() {
+            m.maluses.push((path::PathType::FireInNeighbor, 16.0));
+            m.maluses.push((path::PathType::Fire, -1.0));
+        }
+        if let Species::Chicken { egg_time } = &mut m.species {
+            *egg_time = random.next_int_bounded(6000) + 6000;
+            m.maluses.push((path::PathType::Water, 0.0));
+        }
+        register_goals(&mut m);
+        m
+    }
+
+    pub fn baby(&self) -> bool {
+        if self.kind == MobKind::Zombie { self.zombie_baby } else { self.kind.is_animal() && self.age < 0 }
+    }
+
+    pub fn holding_bow(&self) -> bool {
+        [MAINHAND, OFFHAND].iter().any(|&i| !self.equipment[i].is_empty() && item_name(&self.equipment[i]) == "minecraft:bow")
+    }
+
+    pub fn set_aggressive(&mut self, on: bool) {
+        self.aggressive = on;
+    }
+
+    pub fn swell_dir(&self) -> i32 {
+        match self.species {
+            Species::Creeper { swell_dir, .. } => swell_dir,
+            _ => -1,
+        }
+    }
+
+    pub fn set_swell_dir(&mut self, dir: i32) {
+        if let Species::Creeper { swell_dir, .. } = &mut self.species {
+            *swell_dir = dir;
+        }
+    }
+
+    pub fn start_using_item(&mut self) {
+        if self.using_item.is_none() {
+            self.using_item = Some(0);
+        }
+    }
+
+    pub fn stop_using_item(&mut self) {
+        self.using_item = None;
+    }
+
+    pub fn ticks_using_item(&self) -> i32 {
+        self.using_item.unwrap_or(0)
+    }
+
+    pub fn max_health(&self) -> f32 {
+        self.attrs.value(Attr::MaxHealth) as f32
+    }
+
+    /// `setHealth`: clamped to [0, max health].
+    pub fn set_health(&mut self, h: f32) {
+        self.health = mth::clamp(h, 0.0, self.max_health());
+    }
+
+    pub fn is_dead_or_dying(&self) -> bool {
+        self.health <= 0.0 || self.dead
+    }
+
+    /// `getLastDamageSource`: the last hit if it was within 40 ticks.
+    pub fn last_damage_source(&self, now: i64) -> Option<DamageSource> {
+        if now - self.last_damage_stamp > 40 { None } else { self.last_damage_source }
+    }
+
+    /// Running goal names, for tests and parity traces.
+    pub fn running_goals(&self) -> Vec<&'static str> {
+        let mut v = self.goals.running_names();
+        v.extend(self.targets.running_names());
+        v
+    }
+}
+
+pub fn item_name(s: &ItemStack) -> &'static str {
+    kiln_data::builtin_entries("minecraft:item").and_then(|e| e.get(s.item() as usize).copied()).unwrap_or("minecraft:air")
+}
+
+/// `registerGoals` of each type.
+fn register_goals(m: &mut MobData) {
+    let g = &mut m.goals;
+    let t = &mut m.targets;
+    let stroll = |speed: f64| Goal::RandomStroll { speed, interval: 120, check_no_action: true, water_avoiding: Some(0.001), wanted: Vec3::ZERO, force: false };
+    let look = |dist: f32| Goal::LookAtPlayer { dist, probability: 0.02, look_at: None, look_time: 0 };
+    let around = || Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 };
+    let tempt = |speed: f64| Goal::Tempt { speed, calm_down: 0, player: None };
+    let panic = |speed: f64| Goal::Panic { speed, pos: Vec3::ZERO };
+    let melee = |kind: MeleeKind, speed: f64, follow: bool| Goal::Melee {
+        kind,
+        speed,
+        follow_unseen: follow,
+        path: None,
+        recalc: 0,
+        next_attack: 0,
+        last_can_use: 0,
+        pathed: Vec3::ZERO,
+        raise_arm: 0,
+    };
+    let nearest = |wanted: Wanted, must_see: bool| Goal::NearestAttackable { wanted, interval: mth::reduced_tick_delay(10), must_see, target: None, unseen: 0, spider: false };
+    let hurt_by = |alert: bool| Goal::HurtByTarget { timestamp: 0, alert_others: alert, target_mob: None, unseen: 0, unseen_memory: 60 };
+    match m.kind {
+        MobKind::Pig => {
+            g.add(0, Goal::Float);
+            g.add(1, panic(1.25));
+            g.add(3, Goal::Idle);
+            g.add(4, tempt(1.2));
+            g.add(4, tempt(1.2));
+            g.add(5, Goal::Idle);
+            g.add(6, stroll(1.0));
+            g.add(7, look(6.0));
+            g.add(8, around());
+        }
+        MobKind::Cow => {
+            g.add(0, Goal::Float);
+            g.add(1, panic(2.0));
+            g.add(2, Goal::Idle);
+            g.add(3, tempt(1.25));
+            g.add(4, Goal::Idle);
+            g.add(5, stroll(1.0));
+            g.add(6, look(6.0));
+            g.add(7, around());
+        }
+        MobKind::Sheep => {
+            g.add(0, Goal::Float);
+            g.add(1, panic(1.25));
+            g.add(2, Goal::Idle);
+            g.add(3, tempt(1.1));
+            g.add(4, Goal::Idle);
+            g.add(5, Goal::EatBlock { tick: 0 });
+            g.add(6, stroll(1.0));
+            g.add(7, look(6.0));
+            g.add(8, around());
+        }
+        MobKind::Chicken => {
+            g.add(0, Goal::Float);
+            g.add(1, panic(1.4));
+            g.add(2, Goal::Idle);
+            g.add(3, tempt(1.0));
+            g.add(4, Goal::Idle);
+            g.add(5, stroll(1.0));
+            g.add(6, look(6.0));
+            g.add(7, around());
+        }
+        MobKind::Zombie => {
+            g.add(4, Goal::RemoveTurtleEgg { next_start: 0, block: BlockPos::default(), try_ticks: 0, max_stay: 0, reached: false, since_reached: 0 });
+            g.add(8, look(8.0));
+            g.add(8, around());
+            g.add(2, Goal::Never);
+            g.add(3, melee(MeleeKind::Zombie, 1.0, false));
+            g.add(6, Goal::Never);
+            g.add(7, stroll(1.0));
+            t.add(1, hurt_by(true));
+            t.add(2, nearest(Wanted::Player, true));
+            t.add(3, nearest(Wanted::Unsimulated, false));
+            t.add(3, nearest(Wanted::Unsimulated, true));
+            t.add(5, nearest(Wanted::Unsimulated, true));
+        }
+        MobKind::Skeleton => {
+            g.add(2, Goal::RestrictSun);
+            g.add(3, Goal::FleeSun { speed: 1.0, wanted: Vec3::ZERO });
+            g.add(3, Goal::AvoidEntity);
+            g.add(5, stroll(1.0));
+            g.add(6, look(8.0));
+            g.add(6, around());
+            t.add(1, hurt_by(false));
+            t.add(2, nearest(Wanted::Player, true));
+            t.add(3, nearest(Wanted::Unsimulated, true));
+            t.add(3, nearest(Wanted::Unsimulated, true));
+            // `reassessWeaponGoal` in the constructor: no bow yet, so the melee goal.
+            g.add(4, melee(MeleeKind::Plain, 1.2, false));
+        }
+        MobKind::Creeper => {
+            g.add(1, Goal::Float);
+            g.add(2, Goal::Swell { target: None });
+            g.add(3, Goal::AvoidEntity);
+            g.add(3, Goal::AvoidEntity);
+            g.add(4, melee(MeleeKind::Plain, 1.0, false));
+            g.add(5, stroll(0.8));
+            g.add(6, look(8.0));
+            g.add(6, around());
+            t.add(1, nearest(Wanted::Player, true));
+            t.add(2, hurt_by(false));
+        }
+        MobKind::Spider => {
+            g.add(1, Goal::Float);
+            g.add(2, Goal::AvoidEntity);
+            g.add(3, Goal::LeapAtTarget { yd: 0.4, target: None });
+            g.add(4, melee(MeleeKind::Spider, 1.0, true));
+            g.add(5, stroll(0.8));
+            g.add(6, look(8.0));
+            g.add(6, around());
+            t.add(1, hurt_by(false));
+            let mut sp = nearest(Wanted::Player, true);
+            if let Goal::NearestAttackable { spider, .. } = &mut sp {
+                *spider = true;
+            }
+            t.add(2, sp.clone());
+            if let Goal::NearestAttackable { wanted, .. } = &mut sp {
+                *wanted = Wanted::Unsimulated;
+            }
+            t.add(3, sp);
+        }
+    }
+    // `FloatGoal` makes the navigation float.
+    if m.goals.goals.iter().any(|w| matches!(w.goal, Goal::Float)) {
+        m.nav.can_float = true;
+    }
+}
+
+/// `AbstractSkeleton.reassessWeaponGoal`: the bow goal (priority 4) with a bow, else melee.
+pub fn reassess_weapon_goal(m: &mut MobData, hard: bool) {
+    if m.kind != MobKind::Skeleton {
+        return;
+    }
+    m.goals.goals.retain(|w| !(matches!(w.goal, Goal::Melee { .. } | Goal::RangedBow { .. }) && w.priority == 4 && !w.running));
+    let goal = if m.holding_bow() {
+        Goal::RangedBow {
+            speed: 1.0,
+            interval_min: if hard { 20 } else { 40 },
+            radius_sqr: 15.0 * 15.0,
+            attack_time: -1,
+            see_time: 0,
+            strafing_clockwise: false,
+            strafing_backwards: false,
+            strafing_time: -1,
+        }
+    } else {
+        Goal::Melee {
+            kind: MeleeKind::Plain,
+            speed: 1.2,
+            follow_unseen: false,
+            path: None,
+            recalc: 0,
+            next_attack: 0,
+            last_can_use: 0,
+            pathed: Vec3::ZERO,
+            raise_arm: 0,
+        }
+    };
+    m.goals.add(4, goal);
+}
+
+/// A new mob entity at the origin (before `finalizeSpawn`).
+pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
+    let mut e = Entity::new(kind.type_name(), id, uuid, EntityKind::MobTicking { gravity: 0.08 }, seed);
+    let mut m = MobData::new(kind, &mut e.random);
+    // `LivingEntity`'s constructor: a random yaw (in radians-sized degrees, as vanilla).
+    e.y_rot = e.random.next_float() * 6.2831855;
+    m.y_head_rot = e.y_rot;
+    e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
+    e.kind = EntityKind::Mob(Box::new(m));
+    e
+}
+
+pub fn data(e: &Entity) -> Option<&MobData> {
+    match &e.kind {
+        EntityKind::Mob(m) => Some(m),
+        _ => None,
+    }
+}
+
+/// `/kill` outside a level tick: health drops to zero and the mob plays its death (the
+/// death tick removes it). Approximation: no loot, no death event.
+pub fn kill(e: &mut Entity) {
+    if let Some(m) = data_mut(e)
+        && !m.dead
+    {
+        m.health = 0.0;
+        m.dead = true;
+    }
+}
+
+pub fn data_mut(e: &mut Entity) -> Option<&mut MobData> {
+    match &mut e.kind {
+        EntityKind::Mob(m) => Some(m),
+        _ => None,
+    }
+}
+
+fn take(e: &mut Entity) -> Box<MobData> {
+    let gravity = match &e.kind {
+        EntityKind::Mob(m) => m.attrs.value(Attr::Gravity),
+        _ => 0.08,
+    };
+    match std::mem::replace(&mut e.kind, EntityKind::MobTicking { gravity: if e.no_gravity { 0.0 } else { gravity } }) {
+        EntityKind::Mob(m) => m,
+        _ => unreachable!("not a mob"),
+    }
+}
+
+fn put(e: &mut Entity, m: Box<MobData>) {
+    e.kind = EntityKind::Mob(m);
+}
+
+// ---------------------------------------------------------------------- the tick
+
+/// `Mob.tick` (the level ran `commonTick`): the type's pre-tick, `LivingEntity.tick`, then
+/// `Mob.tick`'s control flags.
+pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
+    let mut m = take(e);
+    m.swing = false;
+    species::pre_tick(e, &mut m, level);
+    living_tick(e, &mut m, level);
+    if e.tick_count % 5 == 0 {
+        // `updateControlFlags`: no mob passengers, no boats.
+        m.goals.set_control_flag(goals::MOVE, true);
+        m.goals.set_control_flag(goals::JUMP, true);
+        m.goals.set_control_flag(goals::LOOK, true);
+    }
+    species::post_tick(e, &mut m, level);
+    put(e, m);
+}
+
+fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    base_tick(e, m, level);
+    if let Some(t) = m.using_item.as_mut() {
+        *t += 1;
+    }
+    if !e.is_removed() {
+        ai_step(e, m, level);
+    }
+    // Body and head rotation (`Mob.tickHeadTurn`), then angle unwinding of the old values.
+    control::tick_body(e, m);
+    while e.y_rot - e.y_rot_o < -180.0 {
+        e.y_rot_o -= 360.0;
+    }
+    while e.y_rot - e.y_rot_o >= 180.0 {
+        e.y_rot_o += 360.0;
+    }
+    while m.y_body_rot - m.y_body_rot_o < -180.0 {
+        m.y_body_rot_o -= 360.0;
+    }
+    while m.y_body_rot - m.y_body_rot_o >= 180.0 {
+        m.y_body_rot_o += 360.0;
+    }
+    while e.x_rot - e.x_rot_o < -180.0 {
+        e.x_rot_o -= 360.0;
+    }
+    while e.x_rot - e.x_rot_o >= 180.0 {
+        e.x_rot_o += 360.0;
+    }
+    while m.y_head_rot - m.y_head_rot_o < -180.0 {
+        m.y_head_rot_o -= 360.0;
+    }
+    while m.y_head_rot - m.y_head_rot_o >= 180.0 {
+        m.y_head_rot_o += 360.0;
+    }
+}
+
+/// `Mob.baseTick` → `LivingEntity.baseTick` → `Entity.baseTick`.
+fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    e.compute_speed();
+    e.was_in_powder_snow = e.is_in_powder_snow;
+    e.is_in_powder_snow = false;
+    e.was_eye_in_water = e.fluid.is_eye_in_water();
+    e.update_fluid_interaction(level);
+    if e.remaining_fire_ticks > 0 {
+        if e.remaining_fire_ticks % 20 == 0 && !e.is_in_lava() {
+            hurt(e, m, level, DamageSource::of(DamageKind::OnFire), 1.0);
+        }
+        e.remaining_fire_ticks -= 1;
+    }
+    if e.is_in_lava() {
+        e.fall_distance *= 0.5;
+    }
+    if e.y() < (level.min_y() - 64) as f64 {
+        hurt(e, m, level, DamageSource::of(DamageKind::OutOfWorld), 4.0);
+    }
+    e.first_tick = false;
+    // `LivingEntity.baseTick`.
+    if is_alive(e, m) {
+        if in_wall(e, level) {
+            hurt(e, m, level, DamageSource::of(DamageKind::InWall), 1.0);
+        }
+        let eye = BlockPos::containing(e.x(), e.eye_y(), e.z());
+        let bubble = crate::blocks::block_name(level.block(eye)) == "minecraft:bubble_column";
+        if e.fluid.is_eye_in_water() && !bubble {
+            if !m.kind.breathes_under_water() {
+                e.air_supply -= 1;
+                if e.air_supply <= -20 {
+                    e.air_supply = 0;
+                    level.emit(Event::EntityEvent { entity: e.id, event: 67 });
+                    hurt(e, m, level, DamageSource::of(DamageKind::Drown), 2.0);
+                }
+            }
+        } else if e.air_supply < m.air_supply_max {
+            e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
+        }
+    }
+    if m.hurt_time > 0 {
+        m.hurt_time -= 1;
+    }
+    if m.damage_cooldown > 0 {
+        m.damage_cooldown -= 1;
+    }
+    if m.is_dead_or_dying() {
+        m.death_time += 1;
+        if m.death_time >= 20 && !e.is_removed() {
+            level.emit(Event::EntityEvent { entity: e.id, event: 60 });
+            e.removed = Some(crate::entity::RemovalReason::Killed);
+        }
+    }
+    if m.last_hurt_by_player_memory > 0 {
+        m.last_hurt_by_player_memory -= 1;
+    } else {
+        m.last_hurt_by_player = None;
+    }
+    if let Some(id) = m.last_hurt_mob
+        && goals::living(level, id).is_none_or(|l| !l.alive)
+    {
+        m.last_hurt_mob = None;
+    }
+    if let Some(id) = m.last_hurt_by_mob {
+        if goals::living(level, id).is_none_or(|l| !l.alive) || e.tick_count - m.last_hurt_by_mob_timestamp > 100 {
+            m.last_hurt_by_mob = None;
+        }
+    }
+    m.y_head_rot_o = m.y_head_rot;
+    m.y_body_rot_o = m.y_body_rot;
+    // `Mob.baseTick`: ambient sounds.
+    if is_alive(e, m) {
+        let t = m.ambient_sound_time;
+        m.ambient_sound_time += 1;
+        if e.random.next_int_bounded(1000) < t {
+            m.ambient_sound_time = -m.kind.ambient_sound_interval();
+            if let Some(s) = m.kind.ambient_sound() {
+                make_sound(e, m, level, s);
+            }
+        }
+    }
+}
+
+/// `Entity.isInWall`.
+fn in_wall(e: &Entity, level: &dyn EntityLevel) -> bool {
+    if e.no_physics {
+        return false;
+    }
+    let f = (e.width * 0.8) as f64;
+    let (x, y, z) = (e.x(), e.eye_y(), e.z());
+    let b = Aabb::new(x - f / 2.0, y - 5.0e-7, z - f / 2.0, x + f / 2.0, y + 5.0e-7, z + f / 2.0);
+    let (x0, y0, z0) = (crate::math::floor(b.min_x), crate::math::floor(b.min_y), crate::math::floor(b.min_z));
+    let (x1, y1, z1) = (crate::math::floor(b.max_x), crate::math::floor(b.max_y), crate::math::floor(b.max_z));
+    for bx in x0..=x1 {
+        for by in y0..=y1 {
+            for bz in z0..=z1 {
+                let p = BlockPos::new(bx, by, bz);
+                let s = level.block(p);
+                if kiln_data::blocks_types::is_air(s) || !crate::physics::is_suffocating(s) {
+                    continue;
+                }
+                let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+                if shape.boxes().iter().any(|sb| sb.offset(p.x as f64, p.y as f64, p.z as f64).intersects(&b)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+pub fn is_alive(e: &Entity, m: &MobData) -> bool {
+    !e.is_removed() && m.health > 0.0
+}
+
+/// `LivingEntity.aiStep` then the mob types' additions.
+fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    if m.no_jump_delay > 0 {
+        m.no_jump_delay -= 1;
+    }
+    let v = e.delta;
+    let (mut x, mut y, mut z) = (v.x, v.y, v.z);
+    if x.abs() < 0.003 {
+        x = 0.0;
+    }
+    if z.abs() < 0.003 {
+        z = 0.0;
+    }
+    if y.abs() < 0.003 {
+        y = 0.0;
+    }
+    e.delta = Vec3::new(x, y, z);
+    // `applyInput`.
+    m.xxa *= 0.98;
+    m.zza *= 0.98;
+    if m.is_dead_or_dying() {
+        m.jumping = false;
+        m.xxa = 0.0;
+        m.zza = 0.0;
+    } else if !m.no_ai {
+        server_ai_step(e, m, level);
+    }
+    if m.jumping {
+        let h = if e.is_in_lava() { e.fluid_height_lava() } else { e.fluid_height_water() };
+        let in_water = e.is_in_water() && h > 0.0;
+        let threshold = if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 };
+        if in_water && (!e.on_ground || h > threshold) {
+            e.delta = e.delta.add(0.0, 0.03999999910593033, 0.0);
+        } else if e.is_in_lava() && (!e.on_ground || e.fluid_height_lava() > threshold) {
+            e.delta = e.delta.add(0.0, 0.03999999910593033, 0.0);
+        } else if (e.on_ground || (in_water && h <= threshold)) && m.no_jump_delay == 0 {
+            jump_from_ground(e, m, level);
+            m.no_jump_delay = 10;
+        }
+    } else {
+        m.no_jump_delay = 0;
+    }
+    let input = Vec3::new(m.xxa as f64, m.yya as f64, m.zza as f64);
+    if !m.no_ai {
+        travel(e, m, level, input);
+    }
+    e.apply_effects_from_blocks(level);
+    // Freezing.
+    if !e.is_in_powder_snow {
+        e.ticks_frozen = (e.ticks_frozen - 2).max(0);
+    }
+    push_entities(e, m, level);
+    // `Mob.aiStep`: burning in daylight.
+    if m.kind.burns_in_daylight() && is_alive(e, m) && is_sun_burn_tick(e, level) {
+        if m.equipment[HEAD].is_empty() {
+            e.ignite_for_seconds(8.0);
+        } else {
+            // `hurtAndBreak(random.nextInt(2))` on the helmet that keeps the sun off.
+            let n = e.random.next_int_bounded(2);
+            let helmet = &mut m.equipment[HEAD];
+            if n > 0 && helmet.is_damageable_item() {
+                let d = helmet.damage() + n;
+                if d >= helmet.max_damage() {
+                    *helmet = ItemStack::empty();
+                    level.emit(Event::EntityEvent { entity: e.id, event: 49 });
+                } else {
+                    helmet.insert(kiln_item::keys::DAMAGE, d);
+                }
+            }
+        }
+    }
+    species::ai_step(e, m, level);
+}
+
+/// `Mob.isSunBurnTick`.
+fn is_sun_burn_tick(e: &mut Entity, level: &dyn EntityLevel) -> bool {
+    if !level.monsters_burn() {
+        return false;
+    }
+    let f = light_magic_value(e, level);
+    let p = BlockPos::containing(e.x(), e.eye_y(), e.z());
+    let wet = e.is_in_water() || level.is_raining_at(e.block_position()) || e.is_in_powder_snow || e.was_in_powder_snow;
+    f > 0.5 && e.random.next_float() * 30.0 < (f - 0.4) * 2.0 && !wet && level.can_see_sky(p)
+}
+
+/// `Entity.getLightLevelDependentMagicValue` at the eyes.
+pub fn light_magic_value(e: &Entity, level: &dyn EntityLevel) -> f32 {
+    let p = BlockPos::containing(e.x(), e.eye_y(), e.z());
+    if !level.is_loaded(p) {
+        return 0.0;
+    }
+    light_magic_value_at(level, p)
+}
+
+/// `LevelReader.getLightLevelDependentMagicValue` (ambient light 0: the overworld).
+pub fn light_magic_value_at(level: &dyn EntityLevel, p: BlockPos) -> f32 {
+    let f = level.raw_brightness(p, level.sky_darken()) as f32 / 15.0;
+    let g = f / (4.0 - 3.0 * f);
+    mth::lerp_f(level.ambient_light(), g, 1.0)
+}
+
+/// `PathfinderMob.getWalkTargetValue` for the type.
+pub fn walk_target_value(m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> f32 {
+    if m.kind.is_animal() {
+        if crate::blocks::block_name(level.block(p.below())) == "minecraft:grass_block" {
+            return 10.0;
+        }
+        return light_magic_value_at(level, p) - 0.5;
+    }
+    -(light_magic_value_at(level, p) - 0.5)
+}
+
+/// `Mob.serverAiStep`.
+fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    m.no_action_time += 1;
+    m.seen.clear();
+    m.unseen.clear();
+    let full = (e.tick_count + e.id) % 2 == 0 || e.tick_count <= 1;
+    let mut targets = std::mem::take(&mut m.targets);
+    if full {
+        goals::tick(&mut targets, e, m, level);
+    } else {
+        goals::tick_running(&mut targets, e, m, level, false);
+    }
+    m.targets = targets;
+    let mut sel = std::mem::take(&mut m.goals);
+    if full {
+        goals::tick(&mut sel, e, m, level);
+    } else {
+        goals::tick_running(&mut sel, e, m, level, false);
+    }
+    m.goals = sel;
+    path::tick(e, m, level);
+    // `Animal.customServerAiStep`: in-love reset (never in love here).
+    control::tick_move(e, m, level);
+    control::tick_look(e, m);
+    control::tick_jump(m);
+}
+
+/// `LivingEntity.jumpFromGround`.
+fn jump_from_ground(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
+    let power = (m.attrs.value(Attr::JumpStrength) as f32) * e.block_jump_factor(level);
+    if power <= 1.0e-5 {
+        return;
+    }
+    e.delta = Vec3::new(e.delta.x, (power as f64).max(e.delta.y), e.delta.z);
+    e.needs_sync = true;
+}
+
+/// `LivingEntity.travel`.
+fn travel(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
+    if e.is_in_water() || e.is_in_lava() {
+        travel_in_fluid(e, m, level, input);
+    } else {
+        travel_in_air(e, m, level, input);
+    }
+}
+
+fn gravity(e: &Entity, m: &MobData) -> f64 {
+    if e.no_gravity { 0.0 } else { m.attrs.value(Attr::Gravity) }
+}
+
+/// `computeModifiedFriction`.
+fn modified_friction(f: f32, modifier: f32) -> f32 {
+    mth::clamp(1.0 - (1.0 - f) * modifier, 0.0, 1.0)
+}
+
+fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
+    let below = e.block_pos_below_that_affects_movement(level);
+    let friction = if e.on_ground {
+        modified_friction(crate::physics::block_factors(level.block(below)).friction, m.attrs.value(Attr::FrictionModifier) as f32)
+    } else {
+        1.0
+    };
+    let v = relative_friction_movement(e, m, level, input, friction);
+    let mut y = v.y;
+    if level.is_loaded(below) {
+        y -= gravity(e, m);
+    } else if e.y() > level.min_y() as f64 {
+        y = -0.1;
+    } else {
+        y = 0.0;
+    }
+    let drag = m.attrs.value(Attr::AirDragModifier) as f32;
+    let h = friction * modified_friction(0.91, drag);
+    let vy = modified_friction(0.98, drag);
+    e.delta = Vec3::new(v.x * h as f64, y * vy as f64, v.z * h as f64);
+}
+
+/// `handleRelativeFrictionAndCalculateMovement`.
+fn relative_friction_movement(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3, friction: f32) -> Vec3 {
+    let speed = if e.on_ground {
+        if friction as f64 <= 0.6 { m.speed } else { m.speed * (0.21600002 / (friction * friction * friction)) }
+    } else {
+        0.02
+    };
+    move_relative(e, speed, input);
+    e.delta = handle_on_climbable(e, m, level, e.delta);
+    let d = e.delta;
+    e.do_move(level, MoverType::SelfMove, d);
+    let mut v = e.delta;
+    if (e.horizontal_collision || m.jumping) && on_climbable(e, m, level) {
+        v = Vec3::new(v.x, 0.2, v.z);
+    }
+    v
+}
+
+/// `Entity.moveRelative`.
+pub fn move_relative(e: &mut Entity, speed: f32, input: Vec3) {
+    let l = input.length_sqr();
+    if l < 1.0e-7 {
+        return;
+    }
+    let v = if l > 1.0 { input.normalize() } else { input }.scale(speed as f64);
+    let s = mth::sin((e.y_rot * 0.017453292) as f64);
+    let c = mth::cos((e.y_rot * 0.017453292) as f64);
+    e.delta = e.delta + Vec3::new(v.x * c as f64 - v.z * s as f64, v.y, v.z * c as f64 + v.x * s as f64);
+}
+
+fn on_climbable(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool {
+    if let Species::Spider { climbing } = m.species {
+        return climbing;
+    }
+    crate::blocks::has_tag(level.block(e.block_position()), crate::blocks::Tag::Climbable)
+}
+
+fn handle_on_climbable(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, v: Vec3) -> Vec3 {
+    if !on_climbable(e, m, level) {
+        return v;
+    }
+    e.fall_distance = 0.0;
+    let x = mth::clamp_d(v.x, -0.15000000596046448, 0.15000000596046448);
+    let z = mth::clamp_d(v.z, -0.15000000596046448, 0.15000000596046448);
+    let y = v.y.max(-0.15000000596046448);
+    Vec3::new(x, y, z)
+}
+
+fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
+    let falling = e.delta.y <= 0.0;
+    let y0 = e.y();
+    let g = if e.delta.y <= 0.0 { gravity(e, m) } else { gravity(e, m) };
+    if e.is_in_water() {
+        let mut slow = 0.8f32;
+        let mut speed = 0.02f32;
+        let mut eff = m.attrs.value(Attr::WaterMovementEfficiency) as f32;
+        if !e.on_ground {
+            eff *= 0.5;
+        }
+        if eff > 0.0 {
+            slow += (0.54600006 - slow) * eff;
+            speed += (m.speed - speed) * eff;
+        }
+        move_relative(e, speed, input);
+        let d = e.delta;
+        e.do_move(level, MoverType::SelfMove, d);
+        let mut v = e.delta;
+        if e.horizontal_collision && on_climbable(e, m, level) {
+            v = Vec3::new(v.x, 0.2, v.z);
+        }
+        v = v.multiply(slow as f64, 0.800000011920929, slow as f64);
+        e.delta = fluid_falling_adjusted(g, falling, v);
+    } else {
+        move_relative(e, 0.02, input);
+        let d = e.delta;
+        e.do_move(level, MoverType::SelfMove, d);
+        let threshold = if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 };
+        if e.fluid_height_lava() <= threshold {
+            e.delta = e.delta.multiply(0.5, 0.800000011920929, 0.5);
+            e.delta = fluid_falling_adjusted(g, falling, e.delta);
+        } else {
+            e.delta = e.delta.scale(0.5);
+        }
+        if g != 0.0 {
+            e.delta = e.delta.add(0.0, -g / 4.0, 0.0);
+        }
+    }
+    // `jumpOutOfFluid`.
+    let v = e.delta;
+    if e.horizontal_collision {
+        let b = e.bounding_box().offset(v.x, v.y + 0.6000000238418579 - e.y() + y0, v.z);
+        let ctx = e.collision_context();
+        if crate::collision::no_collision(level, &ctx, e.id, &b) && !contains_any_liquid(level, &b) {
+            e.delta = Vec3::new(v.x, 0.30000001192092896, v.z);
+        }
+    }
+}
+
+fn contains_any_liquid(level: &dyn EntityLevel, b: &Aabb) -> bool {
+    let (x0, y0, z0) = (crate::math::floor(b.min_x), crate::math::floor(b.min_y), crate::math::floor(b.min_z));
+    let (x1, y1, z1) = (crate::math::ceil(b.max_x), crate::math::ceil(b.max_y), crate::math::ceil(b.max_z));
+    for x in x0..x1 {
+        for y in y0..y1 {
+            for z in z0..z1 {
+                if !crate::physics::fluid_state(level.block(BlockPos::new(x, y, z))).is_empty() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// `getFluidFallingAdjustedMovement`.
+fn fluid_falling_adjusted(g: f64, falling: bool, v: Vec3) -> Vec3 {
+    if g == 0.0 {
+        return v;
+    }
+    let y = if falling && (v.y - 0.005).abs() >= 0.003 && (v.y - g / 16.0).abs() < 0.003 { -0.003 } else { v.y - g / 16.0 };
+    Vec3::new(v.x, y, v.z)
+}
+
+/// `LivingEntity.pushEntities`: pushable living entities touching this one push each other
+/// apart (`Entity.push`). Players push the mob; their own half is their client's.
+fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
+    let _ = m;
+    let bb = e.bounding_box();
+    let mut others: Vec<(i32, f64, f64, bool)> = Vec::new();
+    for id in level.entities_in(&bb, EntityFilter::Living, e.id) {
+        let Some(o) = level.entity(id) else { continue };
+        if let EntityKind::Mob(om) = &o.kind
+            && om.health > 0.0
+        {
+            others.push((id, o.x(), o.z(), false));
+        }
+    }
+    for p in level.players() {
+        if p.spectator || !p.alive {
+            continue;
+        }
+        let h = if p.sneaking { 1.5 } else { 1.8 };
+        let pb = Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3);
+        if pb.intersects(&bb) {
+            others.push((p.id, p.pos.x, p.pos.z, true));
+        }
+    }
+    for (id, ox, oz, player) in others {
+        let (dx, dz) = (ox - e.x(), oz - e.z());
+        let mut d = dx.abs().max(dz.abs());
+        if d < 0.009999999776482582 {
+            continue;
+        }
+        d = d.sqrt();
+        let (mut dx, mut dz) = (dx / d, dz / d);
+        let f = (1.0 / d).min(1.0);
+        dx *= f * 0.05000000074505806;
+        dz *= f * 0.05000000074505806;
+        e.delta = e.delta.add(-dx, 0.0, -dz);
+        e.needs_sync = true;
+        if !player && let Some(o) = level.entity_mut(id) {
+            o.delta = o.delta.add(dx, 0.0, dz);
+            o.needs_sync = true;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------- damage
+
+/// `Entity.playSound` with the mob's sound source.
+fn play_sound(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'static str, volume: f32, pitch: f32) {
+    if !e.silent {
+        level.emit(Event::Sound { pos: e.position(), sound, source: m.kind.sound_source(), volume, pitch });
+    }
+}
+
+/// `LivingEntity.makeSound`: volume 1, the voice pitch.
+fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'static str) {
+    let pitch = if m.baby() {
+        (e.random.next_float() - e.random.next_float()) * 0.2 + 1.5
+    } else {
+        (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0
+    };
+    play_sound(e, m, level, sound, 1.0, pitch);
+}
+
+/// Damage to a mob from outside its own tick (explosions, arrows, players).
+pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSource, amount: f32) -> bool {
+    let mut m = take(e);
+    let r = hurt(e, &mut m, level, source, amount);
+    put(e, m);
+    r
+}
+
+/// `LivingEntity.hurtServer` for a mob.
+pub fn hurt(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: DamageSource, amount: f32) -> bool {
+    let kind = source.kind;
+    if e.is_removed() || (e.invulnerable && !kind.is_tag("minecraft:bypasses_invulnerability")) || m.is_dead_or_dying() {
+        return false;
+    }
+    m.no_action_time = 0;
+    let mut amount = amount.max(0.0);
+    if kind.is_tag("minecraft:damages_helmet") && !m.equipment[HEAD].is_empty() {
+        amount *= 0.75;
+    }
+    if !amount.is_finite() {
+        amount = f32::MAX;
+    }
+    let full = if m.damage_cooldown as f32 > 10.0 && !kind.is_tag("minecraft:bypasses_cooldown") {
+        if amount <= m.last_hurt {
+            return false;
+        }
+        actually_hurt(m, source, amount - m.last_hurt);
+        m.last_hurt = amount;
+        false
+    } else {
+        m.last_hurt = amount;
+        m.damage_cooldown = 20;
+        actually_hurt(m, source, amount);
+        m.hurt_duration = 10;
+        m.hurt_time = 10;
+        true
+    };
+    if let Some(a) = source.attacker
+        && !kind.is_tag("minecraft:no_anger")
+        && goals::living(level, a).is_some()
+    {
+        m.last_hurt_by_mob = Some(a);
+        m.last_hurt_by_mob_timestamp = e.tick_count;
+    }
+    if source.attacker_is_player {
+        m.last_hurt_by_player = source.attacker;
+        m.last_hurt_by_player_memory = 100;
+    }
+    if full {
+        m.hurt_by = Some((kind, source.attacker, source.direct.or(source.attacker)));
+        level.emit(Event::MobHurt { entity: e.id, kind, attacker: source.attacker, direct: source.direct.or(source.attacker) });
+        if !kind.is_tag("minecraft:no_impact") {
+            e.needs_sync = true;
+        }
+        if !kind.is_tag("minecraft:no_knockback") {
+            let (mut dx, mut dz) = (0.0, 0.0);
+            if let Some(p) = source.pos {
+                dx = p.x - e.x();
+                dz = p.z - e.z();
+            }
+            knockback(e, m, 0.4000000059604645, dx, dz);
+        }
+    }
+    if m.is_dead_or_dying() {
+        if full {
+            make_sound(e, m, level, m.kind.death_sound());
+        }
+        die(e, m, level, source);
+    } else if full {
+        m.ambient_sound_time = -m.kind.ambient_sound_interval();
+        make_sound(e, m, level, m.kind.hurt_sound());
+    }
+    m.last_damage_source = Some(source);
+    m.last_damage_stamp = level.game_time();
+    if let Species::Zombie { .. } = m.species {
+        // `Zombie.hurtServer`: reinforcements only on hard difficulty (not simulated).
+    }
+    true
+}
+
+/// `LivingEntity.actuallyHurt`: armor, absorption, health.
+fn actually_hurt(m: &mut MobData, source: DamageSource, amount: f32) {
+    let mut amount = amount;
+    if !source.kind.is_tag("minecraft:bypasses_armor") {
+        let armor = crate::math::floor(m.attrs.value(Attr::Armor)) as f32;
+        let toughness = m.attrs.value(Attr::ArmorToughness) as f32;
+        let f = 2.0 + toughness / 4.0;
+        let g = mth::clamp(armor - amount / f, armor * 0.2, 20.0);
+        amount *= 1.0 - g / 25.0;
+    }
+    let before = amount;
+    amount = (amount - m.absorption).max(0.0);
+    m.absorption = (m.absorption - (before - amount)).max(0.0);
+    if amount == 0.0 {
+        return;
+    }
+    let h = m.health - amount;
+    m.set_health(h);
+}
+
+/// `LivingEntity.knockback` on a mob entity (from outside its tick).
+pub fn knockback_entity(e: &mut Entity, strength: f64, dx: f64, dz: f64) {
+    if !matches!(e.kind, EntityKind::Mob(_)) {
+        return;
+    }
+    let m = take(e);
+    knockback(e, &m, strength, dx, dz);
+    put(e, m);
+}
+
+/// `LivingEntity.knockback`.
+pub fn knockback(e: &mut Entity, m: &MobData, strength: f64, mut dx: f64, mut dz: f64) {
+    let strength = strength * (1.0 - m.attrs.value(Attr::KnockbackResistance));
+    if strength <= 0.0 {
+        return;
+    }
+    e.needs_sync = true;
+    let v = e.delta;
+    while dx * dx + dz * dz < 9.999999747378752e-6 {
+        dx = (e.random.next_double() - e.random.next_double()) * 0.01;
+        dz = (e.random.next_double() - e.random.next_double()) * 0.01;
+    }
+    let k = Vec3::new(dx, 0.0, dz).normalize().scale(strength);
+    let y = if e.on_ground { 0.4f64.min(v.y / 2.0 + strength) } else { v.y };
+    e.delta = Vec3::new(v.x / 2.0 - k.x, y, v.z / 2.0 - k.z);
+}
+
+/// `LivingEntity.die`: loot, experience, the death event.
+fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: DamageSource) {
+    if e.is_removed() || m.dead {
+        return;
+    }
+    m.dead = true;
+    let killed_by_player = m.last_hurt_by_player_memory > 0;
+    if !m.baby() && level.mob_drops() {
+        level.emit(Event::DeathLoot {
+            entity: e.id,
+            table: m.kind.loot_table(),
+            pos: e.position(),
+            killer: m.last_hurt_by_player.filter(|_| killed_by_player),
+            attacker: source.attacker,
+            direct: source.direct.or(source.attacker),
+            kind: source.kind,
+            on_fire: e.is_on_fire(),
+        });
+    }
+    // `Mob.dropCustomDeathLoot`: equipment with its drop chance.
+    for i in 0..6 {
+        let chance = m.drop_chances[i];
+        if chance == 0.0 || m.equipment[i].is_empty() {
+            continue;
+        }
+        let preserved = chance > 1.0;
+        if (killed_by_player || preserved) && e.random.next_float() < chance {
+            let mut stack = std::mem::replace(&mut m.equipment[i], ItemStack::empty());
+            if !preserved && stack.is_damageable_item() {
+                let max = stack.max_damage();
+                let inner = e.random.next_int_bounded((max - 3).max(1));
+                let d = max - e.random.next_int_bounded(1 + inner);
+                stack.insert(kiln_item::keys::DAMAGE, d);
+            }
+            spawn_at_location(e, level, stack);
+        }
+    }
+    // `dropExperience`.
+    if killed_by_player && level.mob_drops() {
+        let xp = experience_reward(e, m);
+        award_experience(level, e.position(), xp);
+    }
+    level.emit(Event::EntityEvent { entity: e.id, event: 3 });
+}
+
+/// `getBaseExperienceReward`.
+fn experience_reward(e: &mut Entity, m: &MobData) -> i32 {
+    if m.kind.is_animal() {
+        return 1 + e.random.next_int_bounded(3);
+    }
+    let mut xp = 5;
+    for i in 0..6 {
+        if !m.equipment[i].is_empty() && m.drop_chances[i] <= 1.0 {
+            xp += 1 + e.random.next_int_bounded(3);
+        }
+    }
+    xp
+}
+
+/// `ExperienceOrb.award`.
+pub fn award_experience(level: &mut dyn EntityLevel, pos: Vec3, mut amount: i32) {
+    const VALUES: [i32; 11] = [2477, 1237, 617, 307, 149, 73, 37, 17, 7, 3, 1];
+    while amount > 0 {
+        let v = *VALUES.iter().find(|&&t| amount >= t).unwrap_or(&1);
+        amount -= v;
+        let b = Aabb::new(pos.x - 0.5, pos.y - 0.5, pos.z - 0.5, pos.x + 0.5, pos.y + 0.5, pos.z + 0.5);
+        let r = level.random().next_int_bounded(40);
+        let merged = level.entities_in(&b, EntityFilter::ExperienceOrb, i32::MIN).into_iter().find(|&id| {
+            level.entity(id).is_some_and(|o| {
+                matches!(&o.kind, EntityKind::ExperienceOrb(d) if d.value == v) && (o.id - r).rem_euclid(40) == 0 && !o.is_removed()
+            })
+        });
+        if let Some(id) = merged {
+            if let Some(o) = level.entity_mut(id)
+                && let EntityKind::ExperienceOrb(d) = &mut o.kind
+            {
+                d.count += 1;
+                d.age = 0;
+            }
+            continue;
+        }
+        let id = level.next_entity_id();
+        let seed = level.fresh_seed();
+        let mut o = Entity::new("minecraft:experience_orb", id, 0, EntityKind::ExperienceOrb(crate::xp_orb::OrbData::new(v)), seed);
+        o.set_pos(pos);
+        o.y_rot = o.random.next_float() * 360.0;
+        let dx = (o.random.next_double() * 0.2 - 0.1) * 2.0;
+        let dy = o.random.next_double() * 0.2 * 2.0;
+        let dz = (o.random.next_double() * 0.2 - 0.1) * 2.0;
+        o.delta = Vec3::new(dx, dy, dz);
+        o.set_old_pos_and_rot();
+        level.add_entity(o);
+    }
+}
+
+/// `Entity.spawnAtLocation(stack)`: an item at the entity's position, offset 0 up, with the
+/// default random throw.
+pub fn spawn_at_location(e: &Entity, level: &mut dyn EntityLevel, stack: ItemStack) {
+    spawn_at_location_offset(e, level, stack, 0.0);
+}
+
+pub fn spawn_at_location_offset(e: &Entity, level: &mut dyn EntityLevel, stack: ItemStack, y_off: f32) {
+    if stack.is_empty() {
+        return;
+    }
+    let id = level.next_entity_id();
+    let seed = level.fresh_seed();
+    let pos = Vec3::new(e.x(), e.y() + y_off as f64, e.z());
+    let mut item = crate::item::new(id, 0, stack, seed);
+    item.set_pos(pos);
+    // `new ItemEntity(level, x, y, z, stack)`: a random throw from the item's own random.
+    let dx = item.random.next_double() * 0.2 - 0.1;
+    let dz = item.random.next_double() * 0.2 - 0.1;
+    item.delta = Vec3::new(dx, 0.2, dz);
+    if let EntityKind::Item(d) = &mut item.kind {
+        d.pickup_delay = 10;
+    }
+    item.set_old_pos_and_rot();
+    level.add_entity(item);
+}
+
+// ---------------------------------------------------------------------- combat helpers
+
+/// `LivingEntity.hasLineOfSight` through the mob's per-tick `Sensing` cache.
+pub fn has_line_of_sight_cached(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t: &Living) -> bool {
+    if m.seen.contains(&t.id) {
+        return true;
+    }
+    if m.unseen.contains(&t.id) {
+        return false;
+    }
+    let from = Vec3::new(e.x(), e.eye_y(), e.z());
+    let to = Vec3::new(t.pos.x, t.eye_y, t.pos.z);
+    let v = to.distance_to_sqr(from).sqrt() <= 128.0 && !clip_blocks(level, from, to);
+    if v { m.seen.push(t.id) } else { m.unseen.push(t.id) }
+    v
+}
+
+/// `Level.clip` with `COLLIDER` shapes and no fluids: whether a block is in the way.
+pub fn clip_blocks(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
+    crate::clip::traverse_blocks(from, to, |p| {
+        let s = level.block(p);
+        let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+        crate::clip::shape_clips(&shape, from, to, p).then_some(())
+    })
+    .is_some()
+}
+
+/// `Mob.isWithinMeleeAttackRange` (`DEFAULT_ATTACK_REACH`: sqrt(2.04) - 0.6).
+pub fn within_melee_range(e: &Entity, t: &Living) -> bool {
+    let reach = 2.04f64.sqrt() - 0.6000000238418579;
+    let b = e.bounding_box().inflate(reach, 0.0, reach);
+    b.intersects(&t.bb)
+}
+
+/// `Mob.lookAt(entity, maxY, maxX)`: turns the body directly.
+pub fn mob_look_at(e: &mut Entity, t: &Living, max_y: f32, max_x: f32) {
+    let dx = t.pos.x - e.x();
+    let dz = t.pos.z - e.z();
+    let dy = t.eye_y - e.eye_y();
+    let d = (dx * dx + dz * dz).sqrt();
+    let yaw = (mth::atan2(dz, dx) * 57.2957763671875) as f32 - 90.0;
+    let pitch = (-(mth::atan2(dy, d) * 57.2957763671875)) as f32;
+    let rot = |from: f32, to: f32, max: f32| {
+        let w = mth::wrap_degrees(to - from).clamp(-max, max);
+        from + w
+    };
+    e.x_rot = rot(e.x_rot, pitch, max_x);
+    e.y_rot = rot(e.y_rot, yaw, max_y);
+}
+
+/// `Mob.doHurtTarget`: hits the target with the attack damage attribute.
+pub fn do_hurt_target(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> bool {
+    let damage = m.attrs.value(Attr::AttackDamage) as f32;
+    let source = DamageSource { kind: DamageKind::MobAttack, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+    let hurt = if t.player {
+        level.hurt_player(t.id, source, damage)
+    } else {
+        match level.entity_mut(t.id) {
+            Some(o) => {
+                let mut o2 = std::mem::replace(o, Entity::new("minecraft:marker", 0, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+                let r = hurt_entity(&mut o2, level, source, damage);
+                if let Some(slot) = level.entity_mut(t.id) {
+                    *slot = o2;
+                }
+                r
+            }
+            None => false,
+        }
+    };
+    if hurt {
+        m.last_hurt_mob = Some(t.id);
+        // `Zombie.doHurtTarget`: a burning, empty-handed zombie sets its target on fire.
+        if m.kind == MobKind::Zombie && m.equipment[MAINHAND].is_empty() && e.is_on_fire() {
+            let difficulty = level.effective_difficulty(e.block_position());
+            if e.random.next_float() < difficulty * 0.3 {
+                level.ignite(t.id, (2 * difficulty as i32) as f32);
+            }
+        }
+    }
+    hurt
+}
+
+// ---------------------------------------------------------------------- spawning
+
+/// What `finalizeSpawn` needs to know about where the mob appears.
+#[derive(Clone, Copy, Debug)]
+pub struct SpawnContext {
+    /// `DifficultyInstance.getSpecialMultiplier`.
+    pub special_multiplier: f32,
+    /// `getEffectiveDifficulty`.
+    pub effective_difficulty: f32,
+    pub hard: bool,
+    pub halloween: bool,
+}
+
+/// Group data shared by the mobs of one spawn group.
+#[derive(Clone, Debug, Default)]
+pub struct GroupData {
+    pub ageable_group_size: i32,
+    pub zombie_baby: Option<bool>,
+    pub sheep_colors: bool,
+    pub spider_effect: Option<Option<&'static str>>,
+}
+
+/// `Mob.finalizeSpawn` and the types' overrides; random draws from `r` (the level's).
+pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData, natural: bool) {
+    let mut m = take(e);
+    let kind = m.kind;
+    // Types that pick a variant first (from the biome, no randomness) draw their sound
+    // variant before `Mob.finalizeSpawn`.
+    if matches!(kind, MobKind::Pig | MobKind::Cow | MobKind::Chicken) {
+        m.sound_variant = r.next_int_bounded(sound_variant_count(kind).max(1));
+    }
+    if kind.is_animal() {
+        // `AgeableMob.finalizeSpawn`: babies only in groups with `shouldSpawnBaby` (off for
+        // animals' default group data).
+        group.ageable_group_size += 1;
+    }
+    if kind == MobKind::Sheep {
+        // `Sheep.finalizeSpawn`: the wool color from the biome's color spawn rules.
+        let color = species::sheep_color(r);
+        if let Species::Sheep { color: c, .. } = &mut m.species {
+            *c = color;
+        }
+    }
+    if kind == MobKind::Zombie {
+        // Drawn before `Mob.finalizeSpawn` (`p0.getRandom()` stored first).
+    }
+    // `Mob.finalizeSpawn`.
+    let bonus = mth::triangle(r, 0.0, 0.11485000000000001);
+    m.attrs.set_modifier(Attr::FollowRange, "minecraft:random_spawn_bonus", bonus, Op::AddMultipliedBase);
+    m.left_handed = r.next_float() < 0.05;
+    match kind {
+        MobKind::Zombie => {
+            m.can_pick_up_loot = r.next_float() < 0.55 * ctx.special_multiplier;
+            let baby = *group.zombie_baby.get_or_insert_with(|| r.next_float() < 0.05);
+            if baby {
+                m.zombie_baby = true;
+                m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
+                // Chicken jockeys (not simulated): the two draws.
+                if r.next_float() < 0.05 {
+                } else {
+                    let _ = r.next_float();
+                }
+            }
+            let doors = r.next_float() < ctx.special_multiplier * 0.1;
+            if let Species::Zombie { can_break_doors } = &mut m.species {
+                *can_break_doors = doors;
+            }
+            populate_equipment(&mut m, r, ctx);
+            if ctx.halloween {
+                halloween(&mut m, r);
+            }
+            // `handleAttributes`, from the zombie's own random.
+            let rr = &mut e.random;
+            let reinf = rr.next_double() * 0.1;
+            if let Some(i) = m.attrs.get_mut(Attr::SpawnReinforcements) {
+                i.base = reinf;
+            }
+            let kb = rr.next_double() * 0.05000000074505806;
+            m.attrs.set_modifier(Attr::KnockbackResistance, "minecraft:random_spawn_bonus", kb, Op::AddValue);
+            let d = rr.next_double() * 1.5 * ctx.special_multiplier as f64;
+            if d > 1.0 {
+                m.attrs.set_modifier(Attr::FollowRange, "minecraft:zombie_random_spawn_bonus", d, Op::AddMultipliedTotal);
+            }
+            if rr.next_float() < ctx.special_multiplier * 0.05 {
+                let a = rr.next_double() * 0.25 + 0.5;
+                m.attrs.set_modifier(Attr::SpawnReinforcements, "minecraft:leader_zombie_bonus", a, Op::AddValue);
+                let b = rr.next_double() * 3.0 + 1.0;
+                m.attrs.set_modifier(Attr::MaxHealth, "minecraft:leader_zombie_bonus", b, Op::AddMultipliedTotal);
+                m.health = m.max_health();
+                if let Species::Zombie { can_break_doors } = &mut m.species {
+                    *can_break_doors = true;
+                }
+            }
+        }
+        MobKind::Skeleton => {
+            populate_equipment(&mut m, r, ctx);
+            m.equipment[MAINHAND] = ItemStack::of("minecraft:bow", 1).unwrap_or_else(ItemStack::empty);
+            reassess_weapon_goal(&mut m, ctx.hard);
+            m.can_pick_up_loot = r.next_float() < 0.55 * ctx.special_multiplier;
+            if ctx.halloween {
+                halloween(&mut m, r);
+            }
+        }
+        MobKind::Spider => {
+            // Spider jockeys (1 in 100) are not simulated; the draw still happens.
+            let _ = r.next_int_bounded(100);
+            if group.spider_effect.is_none() {
+                let mut effect = None;
+                if ctx.hard && r.next_float() < 0.1 * ctx.special_multiplier {
+                    effect = Some(species::spider_effect(r));
+                }
+                group.spider_effect = Some(effect);
+            }
+        }
+        _ => {}
+    }
+    let _ = natural;
+    put(e, m);
+}
+
+fn sound_variant_count(kind: MobKind) -> i32 {
+    let reg = match kind {
+        MobKind::Pig => "minecraft:pig_sound_variant",
+        MobKind::Cow => "minecraft:cow_sound_variant",
+        _ => "minecraft:chicken_sound_variant",
+    };
+    kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == reg).map_or(1, |(_, e)| e.len() as i32)
+}
+
+/// `Mob.populateDefaultEquipmentSlots` (armor) and the zombie's weapon roll.
+fn populate_equipment(m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext) {
+    if r.next_float() < 0.15 * ctx.special_multiplier {
+        let mut tier = r.next_int_bounded(3);
+        for _ in 1..=3 {
+            if r.next_float() < 0.1087 {
+                tier += 1;
+            }
+        }
+        let stop = if ctx.hard { 0.1 } else { 0.25 };
+        let mut first = true;
+        for slot in [HEAD, CHEST, LEGS, FEET] {
+            if !first && r.next_float() < stop {
+                break;
+            }
+            first = false;
+            if m.equipment[slot].is_empty() {
+                let material = ["leather", "golden", "chainmail", "iron", "diamond"][tier.clamp(0, 4) as usize];
+                let piece = ["boots", "leggings", "chestplate", "helmet"][slot - FEET];
+                let name = if material == "golden" { format!("minecraft:golden_{piece}") } else { format!("minecraft:{material}_{piece}") };
+                if let Some(s) = ItemStack::of(&name, 1) {
+                    m.equipment[slot] = s;
+                }
+            }
+        }
+    }
+    if m.kind == MobKind::Zombie && r.next_float() < if ctx.hard { 0.05 } else { 0.01 } {
+        let i = r.next_int_bounded(6);
+        let name = match i {
+            0 => "minecraft:iron_sword",
+            1 => "minecraft:iron_spear",
+            _ => "minecraft:iron_shovel",
+        };
+        if let Some(s) = ItemStack::of(name, 1) {
+            m.equipment[MAINHAND] = s;
+        }
+    }
+}
+
+fn halloween(m: &mut MobData, r: &mut dyn RandomSource) {
+    if m.equipment[HEAD].is_empty() && r.next_float() < 0.25 {
+        let name = if r.next_float() < 0.1 { "minecraft:jack_o_lantern" } else { "minecraft:carved_pumpkin" };
+        if let Some(s) = ItemStack::of(name, 1) {
+            m.equipment[HEAD] = s;
+            m.drop_chances[HEAD] = 0.0;
+        }
+    }
+}
+
+/// `Mob.checkDespawn`: `nearest` is the squared distance to the nearest player (`None`: no
+/// player in the dimension).
+pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f64>) {
+    let Some(m) = data(e) else { return };
+    if level.difficulty() == 0 && !m.kind.is_animal() {
+        e.discard();
+        return;
+    }
+    let persistent = m.persistence_required;
+    let category = m.kind.category();
+    let removable = !category.persistent();
+    let Some(d) = nearest else { return };
+    let far = category.despawn_distance() as f64;
+    if !persistent && removable && d > far * far {
+        e.discard();
+        return;
+    }
+    let near = category.no_despawn_distance() as f64;
+    let no_action = m.no_action_time;
+    if !persistent && removable && no_action > 600 && e.random.next_int_bounded(800) == 0 && d > near * near {
+        e.discard();
+    } else if d < near * near
+        && let Some(m) = data_mut(e)
+    {
+        m.no_action_time = 0;
+    }
+}
+
+impl DamageKind {
+    /// The `minecraft:damage_type` entry.
+    pub fn type_name(self) -> &'static str {
+        match self {
+            DamageKind::OnFire => "minecraft:on_fire",
+            DamageKind::InFire => "minecraft:in_fire",
+            DamageKind::Lava => "minecraft:lava",
+            DamageKind::FallingBlock => "minecraft:falling_block",
+            DamageKind::FallingAnvil => "minecraft:falling_anvil",
+            DamageKind::FallingStalactite => "minecraft:falling_stalactite",
+            DamageKind::Explosion => "minecraft:explosion",
+            DamageKind::Cactus => "minecraft:cactus",
+            DamageKind::SweetBerryBush => "minecraft:sweet_berry_bush",
+            DamageKind::HotFloor => "minecraft:hot_floor",
+            DamageKind::Freeze => "minecraft:freeze",
+            DamageKind::Arrow => "minecraft:arrow",
+            DamageKind::Thrown => "minecraft:thrown",
+            DamageKind::Generic => "minecraft:generic",
+            DamageKind::MobAttack => "minecraft:mob_attack",
+            DamageKind::PlayerAttack => "minecraft:player_attack",
+            DamageKind::Drown => "minecraft:drown",
+            DamageKind::InWall => "minecraft:in_wall",
+            DamageKind::OutOfWorld => "minecraft:out_of_world",
+            DamageKind::Fall => "minecraft:fall",
+            DamageKind::Kill => "minecraft:generic_kill",
+            DamageKind::Cramming => "minecraft:cramming",
+            DamageKind::PlayerExplosion => "minecraft:player_explosion",
+        }
+    }
+
+    /// Whether the damage type is in a `minecraft:damage_type` tag.
+    pub fn is_tag(self, tag: &str) -> bool {
+        let Some(id) = kiln_data::synced_id("minecraft:damage_type", self.type_name()) else { return false };
+        kiln_data::registries::TAGS
+            .iter()
+            .find(|(r, _)| *r == "minecraft:damage_type")
+            .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+            .is_some_and(|(_, ids)| ids.contains(&id))
+    }
+}

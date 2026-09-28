@@ -32,6 +32,8 @@ mod entities;
 mod generation;
 mod hazards;
 mod health;
+mod mobs;
+mod spawner;
 mod movement;
 mod persist;
 mod players;
@@ -668,6 +670,8 @@ pub struct Sim {
     rules: std::sync::Arc<kiln_inventory::Rules>,
     /// Loot tables from the vanilla datapack (block drops), if it was found.
     loot: Option<std::sync::Arc<kiln_loot::LootData>>,
+    /// Biome spawn lists from the vanilla datapack (natural mob spawning).
+    spawn_table: Option<std::sync::Arc<spawner::SpawnTable>>,
     /// The levels, by [`DimId`].
     dims: Vec<Dim>,
     pool: kiln_sched::TickPool,
@@ -814,9 +818,11 @@ impl Sim {
         let vanilla_pack = datapack_dir(datapack);
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
+        let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
         let mut sim = Sim {
             rules,
             loot,
+            spawn_table,
             pool: kiln_sched::TickPool::with_config(config.pool.clone()),
             config,
             dims,
@@ -977,6 +983,19 @@ impl Sim {
         }
         let mut players: Vec<&Player> = self.players.values().collect();
         players.sort_by_key(|p| p.uuid);
+        // Entities (items, mobs, projectiles...) in id order: ids do not depend on the regions.
+        let mut ents: Vec<_> = self
+            .dims
+            .iter()
+            .flat_map(|d| d.regions.iter())
+            .flat_map(|r| r.part().0.list.iter())
+            .map(|e| {
+                let mob = e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
+                (e.id, e.kind.id, e.pos.map(f64::to_bits), e.vel.map(f64::to_bits), mob)
+            })
+            .collect();
+        ents.sort_unstable_by_key(|e| e.0);
+        ents.hash(&mut h);
         for p in players {
             p.uuid.hash(&mut h);
             (p.dim, p.portal_cooldown, p.portal.as_ref().map(|t| t.time)).hash(&mut h);
@@ -1048,6 +1067,19 @@ impl Sim {
             self.dims[d].regions.iter().flat_map(|r| r.part().0.list.iter()).map(|e| (e.id, e.kind.name, e.pos)).collect();
         out.sort_by_key(|&(id, ..)| id);
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
+    }
+
+    /// Mobs: (network id, type name, position, health), in id order (for tests and tools).
+    pub fn mobs(&self) -> Vec<(i32, &'static str, [f64; 3], f32)> {
+        let mut out: Vec<_> = self
+            .dims
+            .iter()
+            .flat_map(|d| d.regions.iter())
+            .flat_map(|r| r.part().0.list.iter())
+            .filter_map(|e| e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (e.id, e.kind.name, e.pos, m.health))))
+            .collect();
+        out.sort_by_key(|m| m.0);
+        out
     }
 
     /// A player's health, and whether it is dead (for tests and tools).
@@ -1143,6 +1175,19 @@ impl Sim {
             seed: self.config.noise.as_ref().map_or(0, |n| n.seed),
             loot: self.loot.clone(),
             damage: self.damage_rules(),
+            mobs: mobs::MobRules {
+                day_time: self.day_time,
+                sky_darken: mobs::sky_darken(self.day_time),
+                monsters_burn: mobs::monsters_burn(self.day_time),
+                griefing: self.rule_bool("minecraft:mob_griefing"),
+                drops: self.rule_bool("minecraft:mob_drops"),
+                spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
+                spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
+                cramming: self.rule_int("minecraft:max_entity_cramming"),
+                difficulty: self.commands.difficulty as u8,
+                spawn_point: self.spawn,
+            },
+            spawn_table: self.spawn_table.clone(),
         }
     }
 

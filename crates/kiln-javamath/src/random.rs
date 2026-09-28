@@ -168,6 +168,11 @@ impl LegacyRandom {
         Self { seed: (seed ^ Self::MULTIPLIER) & Self::MASK }
     }
 
+    /// The raw 48-bit state (`seed` of `LegacyRandomSource`), for tests.
+    pub fn state(&self) -> i64 {
+        self.seed
+    }
+
     pub fn next(&mut self, bits: u32) -> i32 {
         self.seed = self.seed.wrapping_mul(Self::MULTIPLIER).wrapping_add(11) & Self::MASK;
         (self.seed >> (48 - bits)) as i32

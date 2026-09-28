@@ -170,12 +170,68 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
         Some((id, location)) => {
             if e.is_alive() && !e.no_physics {
                 let owner = data(e).owner;
+                if hit_living(e, level, id, owner) {
+                    return;
+                }
                 level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner, hit: Hit::Entity { id, location } });
                 e.needs_sync = true;
                 e.discard();
             }
         }
     }
+}
+
+/// `AbstractArrow.onHitEntity` for a mob or a player: damage from the speed and base damage
+/// (a critical arrow adds a random bonus), then the arrow breaks, or bounces back when the hit
+/// did not land. Returns false for other entities (the simulation handles them).
+fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Option<i32>) -> bool {
+    let is_player = level.player(id).is_some();
+    let target = match level.entity(id) {
+        Some(t) if matches!(t.kind, EntityKind::Mob(_)) || is_player => t.position(),
+        _ => return false,
+    };
+    let v = e.delta;
+    let speed = v.length() as f32;
+    let (base, crit) = { let d = data(e); (d.base_damage, d.crit) };
+    let mut damage = crate::mob::mth::ceil((speed as f64 * base).clamp(0.0, 2.147483647e9));
+    if crit {
+        let bonus = e.random.next_int_bounded(damage / 2 + 2) as i64;
+        damage = (bonus + damage as i64).min(i32::MAX as i64) as i32;
+    }
+    let owner_is_player = owner.is_some_and(|o| level.player(o).is_some());
+    // Knockback goes along the arrow's motion (`calculateHorizontalHurtKnockbackDirection`).
+    let source = crate::mob::DamageSource {
+        kind: crate::level::DamageKind::Arrow,
+        attacker: owner.or(Some(e.id)),
+        direct: Some(e.id),
+        pos: Some(Vec3::new(target.x - v.x, target.y, target.z - v.z)),
+        attacker_is_player: owner_is_player,
+    };
+    if e.is_on_fire() {
+        level.ignite(id, 5.0);
+    }
+    let hurt = if is_player {
+        level.hurt_player(id, source, damage as f32)
+    } else {
+        let Some(slot) = level.entity_mut(id) else { return false };
+        let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+        let r = crate::mob::hurt_entity(&mut t, level, source, damage as f32);
+        if let Some(slot) = level.entity_mut(id) {
+            *slot = t;
+        }
+        r
+    };
+    if hurt {
+        let pitch = 1.2 / (e.random.next_float() * 0.2 + 0.9);
+        e.play_sound(level, "minecraft:entity.arrow.hit", 1.0, pitch);
+        e.discard();
+    } else {
+        e.delta = e.delta.scale(-0.1);
+        e.y_rot += 180.0;
+        e.y_rot_o += 180.0;
+        e.needs_sync = true;
+    }
+    true
 }
 
 /// `AbstractArrow.onHitBlock`: sticks in the block, backed off 0.05 against the motion.
