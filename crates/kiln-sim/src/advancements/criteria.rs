@@ -179,6 +179,10 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:construct_beacon",
     "minecraft:slept_in_bed",
     "minecraft:filled_bucket",
+    "minecraft:shot_crossbow",
+    "minecraft:using_item",
+    "minecraft:killed_by_arrow",
+    "minecraft:channeled_lightning",
 ];
 
 fn err<T>(m: impl Into<String>) -> PResult<T> {

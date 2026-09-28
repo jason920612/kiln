@@ -29,6 +29,10 @@ pub(crate) struct Using {
     pub off_hand: bool,
     pub item: i32,
     pub remaining: i32,
+    /// `getUseDuration` when the use began.
+    pub duration: i32,
+    /// A crossbow's loading sounds played so far (bit 0: start, bit 1: middle).
+    pub sounds: u8,
 }
 
 /// `EntityEvent.USE_ITEM_COMPLETE`.
@@ -73,7 +77,7 @@ impl Player {
             self.finish_using(off_hand, block, ctx);
             return;
         }
-        self.using = Some(Using { off_hand, item, remaining: ticks });
+        self.using = Some(Using { off_hand, item, remaining: ticks, duration: ticks, sounds: 0 });
         self.meta_dirty = true;
     }
 
@@ -94,6 +98,11 @@ impl Player {
             self.stop_using();
             return;
         }
+        let stack = stack.clone();
+        // `UsingItemTrigger` (the spyglass advancement).
+        self.fire_conds("minecraft:using_item", None, |c, _, loot| {
+            c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &stack))
+        });
         if let Some(consumable) = stack.get(keys::CONSUMABLE).cloned() {
             // `Consumable.shouldEmitParticlesAndSounds(remaining)`.
             let total = consume_ticks(&consumable);
@@ -101,12 +110,26 @@ impl Player {
                 self.consume_particles_and_sounds(&consumable, 5);
             }
         }
+        if stack.item_name() == "minecraft:crossbow" {
+            crate::crossbow::on_use_tick(self, &mut u);
+        }
         u.remaining -= 1;
         self.using = Some(u);
-        if u.remaining == 0 {
+        // `useOnRelease`: a crossbow waits for the key to be let go.
+        if u.remaining == 0 && stack.item_name() == "minecraft:spyglass" {
+            // `SpyglassItem.finishUsingItem` → `stopUsing`.
+            self.sound_for_all("minecraft:item.spyglass.stop_using", kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
+            self.stop_using();
+            return;
+        }
+        if u.remaining == 0 && stack.get(keys::CONSUMABLE).is_some() {
             // `ServerPlayer.completeUsingItem` tells the client first.
             self.send(entity::entity_event(self.entity_id, USE_ITEM_COMPLETE));
             self.finish_using(u.off_hand, block, ctx);
+        } else if u.remaining == 0 && stack.item_name() != "minecraft:crossbow" {
+            // Bows, shields and tridents held for their whole use duration.
+            self.send(entity::entity_event(self.entity_id, USE_ITEM_COMPLETE));
+            self.stop_using();
         }
     }
 

@@ -431,6 +431,19 @@ pub trait EntityLevel {
         false
     }
 
+    /// `Level.isThundering` (channeling).
+    fn is_thundering(&self) -> bool {
+        false
+    }
+
+    /// `Entity.push(x, y, z)` on player or entity `id`: added to its motion.
+    fn push(&mut self, id: i32, v: Vec3) {
+        if let Some(e) = self.entity_mut(id) {
+            e.delta = e.delta + v;
+            e.needs_sync = true;
+        }
+    }
+
     /// Sets entity or player `id` on fire for `seconds`.
     fn ignite(&mut self, id: i32, seconds: f32) {
         if let Some(e) = self.entity_mut(id) {

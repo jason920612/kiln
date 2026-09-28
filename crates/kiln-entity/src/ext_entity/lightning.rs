@@ -21,6 +21,19 @@ pub struct LightningBolt {
     pub blocks_set_on_fire: i32,
     /// Entities struck so far (`hitEntities`).
     pub hit: Vec<i32>,
+    /// The player whose channeling trident called the bolt (`cause`).
+    pub cause: Option<i32>,
+}
+
+/// A bolt called by player `cause`'s channeling trident.
+pub fn channeled(id: i32, uuid: u128, pos: Vec3, cause: i32, seed: i64) -> Entity {
+    let mut e = new(id, uuid, pos, false, seed);
+    if let EntityKind::Ext(x) = &mut e.kind
+        && let Some(b) = x.as_any_mut().downcast_mut::<LightningBolt>()
+    {
+        b.cause = Some(cause);
+    }
+    e
 }
 
 /// A bolt at `pos` (`EntityType.create` + `snapTo`): the constructor draws its seed and flash
@@ -32,7 +45,7 @@ pub fn new(id: i32, uuid: u128, pos: Vec3, visual_only: bool, seed: i64) -> Enti
     e.no_physics = true;
     e.set_pos(pos);
     e.set_old_pos_and_rot();
-    e.kind = EntityKind::Ext(Box::new(LightningBolt { life: 2, seed: bolt_seed, flashes, visual_only, blocks_set_on_fire: 0, hit: Vec::new() }));
+    e.kind = EntityKind::Ext(Box::new(LightningBolt { life: 2, seed: bolt_seed, flashes, visual_only, blocks_set_on_fire: 0, hit: Vec::new(), cause: None }));
     e
 }
 
@@ -85,6 +98,11 @@ impl LightningBolt {
         for player in players {
             let criterion = crate::level::Criterion::LightningStrike { lightning: bolt.clone(), victims: near.clone(), blocks_set_on_fire: self.blocks_set_on_fire };
             level.emit(Event::Criterion { player, criterion });
+        }
+        // `ChanneledLightningTrigger`: what the called bolt struck.
+        if let Some(cause) = self.cause {
+            let victims: Vec<crate::level::Seen> = self.hit.iter().filter_map(|&id| level.entity(id).map(crate::level::Seen::of)).collect();
+            level.emit(Event::Criterion { player: cause, criterion: crate::level::Criterion::ChanneledLightning { victims } });
         }
     }
 }

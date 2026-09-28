@@ -518,6 +518,10 @@ impl Player {
         }
         // `LivingEntity.hurtServer`.
         amount = amount.max(0.0);
+        let blocking_with = self.item_blocking_with().map(|(s, _, _)| s);
+        let blocked = self.apply_item_blocking(amount, source);
+        amount -= blocked;
+        let blocked = blocked > 0.0;
         if source.is("minecraft:damages_helmet") && !self.inv.equipped(kiln_item::component::EquipmentSlot::Head).is_empty() {
             self.hurt_equipment(source, amount, &[kiln_item::component::EquipmentSlot::Head], ctx);
             amount *= 0.75;
@@ -549,11 +553,16 @@ impl Player {
             self.last_mob_attacker = Some((t, ctx.game_time));
         }
         if full {
-            // `broadcastDamageEvent` (to viewers in the movement phase) and `markHurt`.
-            let damage_event = (source.type_id(), source.attacker.as_ref().map(|a| a.id), source.direct.or(source.attacker.as_ref().map(|a| a.id)));
-            self.send(entity::damage_event(self.entity_id, damage_event.0, damage_event.1, damage_event.2, None));
-            self.damaged = Some(damage_event);
-            if !source.is("minecraft:no_impact") {
+            // `broadcastDamageEvent` (to viewers in the movement phase) and `markHurt`; a
+            // blocked hit plays the shield's sound instead.
+            if blocked && let Some(stack) = &blocking_with {
+                self.on_blocked(stack);
+            } else {
+                let damage_event = (source.type_id(), source.attacker.as_ref().map(|a| a.id), source.direct.or(source.attacker.as_ref().map(|a| a.id)));
+                self.send(entity::damage_event(self.entity_id, damage_event.0, damage_event.1, damage_event.2, None));
+                self.damaged = Some(damage_event);
+            }
+            if !source.is("minecraft:no_impact") && (!blocked || amount > 0.0) {
                 self.sync_velocity = true;
             }
             // `dealDefaultKnockback` from the source's position (melee: the attacker's).

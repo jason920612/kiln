@@ -475,6 +475,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
         t.portals.push(travel);
     }
     p.tick_using(&block, &mut ctx);
+    p.tick_cooldowns();
     p.tick_combat();
     let (_, h, _) = p.dimensions();
     let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
@@ -742,7 +743,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             const DROP_ITEM: i32 = 5;
             const RELEASE_USE_ITEM: i32 = 6;
             match action {
-                RELEASE_USE_ITEM => p.stop_using(),
+                RELEASE_USE_ITEM => {
+                    let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                    crate::ranged::release_using(p, &mut level, fx.spawns);
+                }
                 DROP_ITEM | DROP_ALL_ITEMS => {
                     if let Some(spawn) = p.drop_held(action == DROP_ALL_ITEMS) {
                         fx.spawns.push(spawn);
@@ -765,9 +769,23 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.rot = crate::movement::normalize_rotation([yaw, pitch]);
             }
             let off = hand == kiln_proto::packets::serverbound::Hand::Off;
-            if p.game_mode != 3 && crate::buckets::is_bucket(p.in_hand(off).item_name()) && !p.in_hand(off).is_empty() {
+            let held = p.in_hand(off).clone();
+            let name = if held.is_empty() { "minecraft:air" } else { held.item_name() };
+            // `ServerPlayerGameMode.useItem`: nothing for spectators or items cooling down.
+            if p.game_mode == 3 || p.dead || held.is_empty() || p.on_cooldown(&held) {
+            } else if crate::buckets::is_bucket(name) {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::buckets::use_bucket(p, &mut level, off, fx.spawns);
+            } else if crate::ranged::handles(name) {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::ranged::use_item(p, &mut level, off, fx.spawns);
+            } else if name == "minecraft:crossbow" {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::crossbow::use_item(p, &mut level, off, fx.spawns);
+            } else if name == "minecraft:trident" {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::trident::use_item(p, &mut level, off);
+            } else if crate::ranged::use_held(p, off, &held) {
             } else {
                 let cells = &*world.cells;
                 let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);

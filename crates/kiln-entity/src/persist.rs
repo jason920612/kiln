@@ -266,7 +266,24 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
             let in_ground = r.bool_or("inGround", false);
             let base_damage = r.num("damage").unwrap_or(2.0);
             let crit = r.bool_or("crit", false);
+            let pickup = r.byte_or("pickup", 0).clamp(0, 2) as u8;
+            let pierce_level = r.byte_or("PierceLevel", 0) as u8;
+            let item = |t: Option<Tag>| t.and_then(|t| kiln_item::ItemStack::from_nbt(&t).ok()).filter(|s| !s.is_empty());
+            let pickup_item = item(r.get("item").cloned());
+            let weapon = item(r.get("weapon").cloned());
+            let glowing = r.get("Duration").and_then(|t| match t {
+                Tag::Int(v) => Some(*v),
+                _ => None,
+            });
             EntityKind::Arrow(ArrowData {
+                pickup,
+                pickup_item,
+                weapon,
+                pierce_level,
+                pierced: Vec::new(),
+                killed: Vec::new(),
+                knockback: 0.0,
+                glowing: glowing.unwrap_or(200),
                 owner: None,
                 left_owner,
                 left_owner_checked: false,
@@ -402,18 +419,18 @@ pub fn save(e: &Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>) -> Tag {
             }
             o.put("shake", Tag::Byte(d.shake_time as i8));
             o.put("inGround", Tag::Byte(d.in_ground as i8));
-            // `Pickup.ALLOWED` for arrows a player shot (Kiln's only shooters), else DISALLOWED.
-            o.put("pickup", extra("pickup").unwrap_or(Tag::Byte(d.owner.is_some() as i8)));
+            o.put("pickup", Tag::Byte(d.pickup as i8));
             o.put("damage", Tag::Double(d.base_damage));
             o.put("crit", Tag::Byte(d.crit as i8));
-            o.put("PierceLevel", extra("PierceLevel").unwrap_or(Tag::Byte(0)));
+            o.put("PierceLevel", Tag::Byte(d.pierce_level as i8));
             o.put("SoundEvent", extra("SoundEvent").unwrap_or_else(|| Tag::String("minecraft:entity.arrow.hit".into())));
-            o.put("item", extra("item").unwrap_or_else(|| item_tag(e.type_name)));
-            if let Some(w) = extra("weapon") {
-                o.put("weapon", w);
+            let item = d.pickup_item.clone().or_else(|| ItemStack::of(e.type_name, 1));
+            o.put("item", item.as_ref().map(ItemStack::to_nbt).unwrap_or_else(|| item_tag(e.type_name)));
+            if let Some(w) = &d.weapon {
+                o.put("weapon", w.to_nbt());
             }
             if e.type_name == "minecraft:spectral_arrow" {
-                o.put("Duration", extra("Duration").unwrap_or(Tag::Int(200)));
+                o.put("Duration", Tag::Int(d.glowing));
             }
         }
         EntityKind::Mob(m) => crate::mob::persist::save(e, m, &mut o),

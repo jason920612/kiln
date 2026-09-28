@@ -187,3 +187,135 @@ fn cauldrons_take_and_give() {
     assert_eq!(w.held(), Some(("minecraft:bucket".into(), 1)));
     w.ticks(1);
 }
+
+impl World {
+    fn release(&mut self) {
+        self.sequence += 1;
+        let pkt = PlayIn::PlayerAction { action: 6, pos: [0, 0, 0], face: 0, sequence: self.sequence };
+        assert!(self.sim.step([ToSim::Packet(1, pkt)]));
+    }
+
+    fn count(&self, kind: &str) -> usize {
+        self.sim.entities().iter().filter(|(k, _)| *k == kind).count()
+    }
+
+    fn inventory_count(&self, item: &str) -> i32 {
+        let id = kiln_data::builtin_id("minecraft:item", item).unwrap();
+        self.sim.inventory(1).unwrap().iter().flatten().filter(|(i, _)| *i == id).map(|(_, n)| n).sum()
+    }
+
+    /// Puts `count` of `item` in inventory menu slot `slot` (9-35 main).
+    fn stash(&mut self, slot: i16, item: &str, count: i32) {
+        let mode = self.mode();
+        self.run("gamemode creative User");
+        let id = kiln_data::builtin_id("minecraft:item", item).unwrap();
+        let stack = ItemStack { item: id, count, added: Vec::new(), removed: Vec::new() };
+        assert!(self.sim.step([ToSim::Packet(1, PlayIn::SetCreativeSlot { slot, item: Some(stack) })]));
+        self.run(&format!("gamemode {mode} User"));
+    }
+}
+
+#[test]
+fn snowballs_and_pearls_fly() {
+    let mut w = World::new("survival");
+    w.hold("minecraft:snowball", 4);
+    w.use_item(30.0);
+    assert_eq!(w.count("minecraft:snowball"), 1, "{:?}", w.sim.entities());
+    assert_eq!(w.held(), Some(("minecraft:snowball".into(), 3)));
+    w.ticks(60);
+    assert_eq!(w.count("minecraft:snowball"), 0, "it hit the ground");
+
+    // An ender pearl lobbed forward takes the player where it lands, for 5 damage.
+    w.run("gamerule minecraft:natural_health_regeneration false");
+    let before = w.sim.player_level(1).unwrap().1;
+    w.hold("minecraft:ender_pearl", 2);
+    w.use_item(-20.0);
+    assert_eq!(w.held(), Some(("minecraft:ender_pearl".into(), 1)));
+    // The pearl cools down for a second.
+    w.use_item(-20.0);
+    assert_eq!(w.held(), Some(("minecraft:ender_pearl".into(), 1)));
+    w.ticks(60);
+    let after = w.sim.player_level(1).unwrap().1;
+    let moved = ((after[0] - before[0]).powi(2) + (after[2] - before[2]).powi(2)).sqrt();
+    assert!(moved > 5.0, "teleported {moved} blocks: {before:?} -> {after:?}");
+    let (health, _) = w.sim.health(1).unwrap();
+    assert_eq!(health, 15.0, "the pearl's fall damage");
+}
+
+#[test]
+fn bows_draw_and_shoot_arrows() {
+    let mut w = World::new("survival");
+    w.hold("minecraft:bow", 1);
+    // Without arrows the bow does not draw.
+    w.use_item(0.0);
+    w.ticks(20);
+    w.release();
+    assert_eq!(w.count("minecraft:arrow"), 0);
+    w.stash(9, "minecraft:arrow", 5);
+    w.use_item(0.0);
+    // A tap is too weak to shoot.
+    w.release();
+    assert_eq!(w.count("minecraft:arrow"), 0);
+    assert_eq!(w.inventory_count("minecraft:arrow"), 5);
+    w.use_item(10.0);
+    w.ticks(25);
+    w.release();
+    assert_eq!(w.count("minecraft:arrow"), 1, "{:?}", w.sim.entities());
+    assert_eq!(w.inventory_count("minecraft:arrow"), 4);
+    assert_eq!(w.sim.item_damage(1, 36), Some(1), "one durability per arrow");
+    // Shot down a little, the arrow sticks in the ground some blocks away; walking over it picks
+    // it up.
+    w.ticks(20);
+    let (_, at) = w.sim.entities().into_iter().find(|(k, _)| *k == "minecraft:arrow").unwrap();
+    assert!((at[1] - (w.ground[1] as f64 + 1.0)).abs() < 0.5, "stuck in the ground: {at:?}");
+    let to = [at[0], w.ground[1] as f64 + 1.0, at[2]];
+    for _ in 0..5 {
+        let mut inbox = Vec::new();
+        w.client.tick(Some(to), &mut inbox);
+        assert!(w.sim.step(inbox));
+    }
+    assert_eq!(w.count("minecraft:arrow"), 0, "picked up");
+    assert_eq!(w.inventory_count("minecraft:arrow"), 5);
+}
+
+#[test]
+fn creative_bows_need_no_arrows() {
+    let mut w = World::new("creative");
+    w.hold("minecraft:bow", 1);
+    w.use_item(0.0);
+    w.ticks(25);
+    w.release();
+    assert_eq!(w.count("minecraft:arrow"), 1);
+    assert_eq!(w.sim.item_damage(1, 36), Some(0), "creative bows do not wear");
+}
+
+#[test]
+fn crossbows_load_then_shoot() {
+    let mut w = World::new("survival");
+    w.hold("minecraft:crossbow", 1);
+    w.stash(9, "minecraft:arrow", 3);
+    w.use_item(0.0);
+    // 1.25 seconds to load.
+    w.ticks(26);
+    w.release();
+    assert_eq!(w.inventory_count("minecraft:arrow"), 2, "one arrow loaded");
+    assert_eq!(w.count("minecraft:arrow"), 0);
+    w.use_item(0.0);
+    assert_eq!(w.count("minecraft:arrow"), 1, "the loaded arrow flies");
+    // An empty crossbow loads again rather than shooting.
+    w.use_item(0.0);
+    w.ticks(5);
+    w.release();
+    assert_eq!(w.inventory_count("minecraft:arrow"), 2, "released too early to load");
+}
+
+#[test]
+fn tridents_throw() {
+    let mut w = World::new("survival");
+    w.hold("minecraft:trident", 1);
+    w.use_item(30.0);
+    w.ticks(12);
+    w.release();
+    assert_eq!(w.count("minecraft:trident"), 1);
+    assert_eq!(w.held(), None, "thrown out of the hand");
+}

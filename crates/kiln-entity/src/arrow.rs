@@ -27,7 +27,28 @@ pub struct ArrowData {
     /// `Arrow` potion effects (`minecraft:mob_effect` name, duration, amplifier): a stray's
     /// slowness. Not saved yet.
     pub effects: Vec<(&'static str, i32, i32)>,
+    /// `AbstractArrow.Pickup` ordinal: 0 disallowed, 1 allowed, 2 creative only.
+    pub pickup: u8,
+    /// `pickupItemStack`: what a player picking the arrow up gets (`None`: the type's item).
+    pub pickup_item: Option<kiln_item::ItemStack>,
+    /// `firedFromWeapon` (the bow or crossbow).
+    pub weapon: Option<kiln_item::ItemStack>,
+    /// `getPierceLevel` and the entities it went through (`piercingIgnoreEntityIds`).
+    pub pierce_level: u8,
+    pub pierced: Vec<i32>,
+    /// Entities a piercing arrow killed (`piercedAndKilledEntities`, `killed_by_arrow`).
+    pub killed: Vec<crate::level::Seen>,
+    /// The weapon's knockback (`EnchantmentHelper.modifyKnockback`, punch), worked out when
+    /// it was shot.
+    pub knockback: f64,
+    /// Spectral arrows: ticks of glowing their hit gives (`duration`).
+    pub glowing: i32,
 }
+
+/// `AbstractArrow.Pickup`.
+pub const PICKUP_DISALLOWED: u8 = 0;
+pub const PICKUP_ALLOWED: u8 = 1;
+pub const PICKUP_CREATIVE_ONLY: u8 = 2;
 
 /// A flying arrow (`minecraft:arrow` or `minecraft:spectral_arrow`).
 pub fn new(id: i32, uuid: u128, type_name: &'static str, pos: Vec3, delta: Vec3, owner: Option<i32>, seed: i64) -> Entity {
@@ -44,6 +65,14 @@ pub fn new(id: i32, uuid: u128, type_name: &'static str, pos: Vec3, delta: Vec3,
         crit: false,
         base_damage: 2.0,
         effects: Vec::new(),
+        pickup: PICKUP_DISALLOWED,
+        pickup_item: None,
+        weapon: None,
+        pierce_level: 0,
+        pierced: Vec::new(),
+        killed: Vec::new(),
+        knockback: 0.0,
+        glowing: 200,
     };
     let mut e = Entity::new(type_name, id, uuid, EntityKind::Arrow(data), seed);
     e.set_pos(pos);
@@ -141,16 +170,17 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
     let end = block.map_or(to, |(_, _, l)| l);
     let margin = kiln_javamath::math::max(0.0, kiln_javamath::math::min(0.3, (e.tick_count - 2) as f32 / 20.0));
     let area = e.bounding_box().expand_towards_vec(e.delta).inflate_all(1.0);
-    let owner = match &e.kind {
-        EntityKind::Arrow(d) if !d.left_owner => d.owner,
-        _ => None,
+    let (owner, pierced) = match &e.kind {
+        EntityKind::Arrow(d) => (if d.left_owner { None } else { d.owner }, d.pierced.clone()),
+        _ => (None, Vec::new()),
     };
-    // Approximation: only the nearest entity on the segment (vanilla collects all for piercing).
+    // Approximation: only the nearest entity on the segment (vanilla collects all for piercing;
+    // a piercing arrow finds the next one on its next tick).
     let mut target: Option<(i32, Vec3)> = None;
     let mut best = f64::MAX;
     for id in level.entities_in(&area, EntityFilter::Any, e.id) {
         let Some(t) = level.entity(id) else { continue };
-        if !can_be_hit_by_projectile(t) || Some(id) == owner {
+        if !can_be_hit_by_projectile(t) || Some(id) == owner || pierced.contains(&id) {
             continue;
         }
         if let Some(p) = t.bounding_box().inflate_all(margin as f64).clip(from, end) {
@@ -198,6 +228,15 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
     let speed = v.length() as f32;
     let (base, crit) = { let d = data(e); (d.base_damage, d.crit) };
     let mut damage = crate::mob::mth::ceil((speed as f64 * base).clamp(0.0, 2.147483647e9));
+    // Piercing: the arrow goes on through up to `pierce_level` entities.
+    let pierce = data(e).pierce_level;
+    if pierce > 0 {
+        if data(e).pierced.len() >= pierce as usize + 1 {
+            e.discard();
+            return true;
+        }
+        data(e).pierced.push(id);
+    }
     if crit {
         let bonus = e.random.next_int_bounded(damage / 2 + 2) as i64;
         damage = (bonus + damage as i64).min(i32::MAX as i64) as i32;
@@ -226,14 +265,48 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
         r
     };
     if hurt {
+        // `doKnockback`: the weapon's knockback along the arrow's horizontal motion.
+        let knockback = data(e).knockback;
+        if knockback > 0.0 {
+            let resistance = level.entity(id).and_then(crate::mob::data).map_or(0.0, |m| m.attrs.value(crate::mob::attributes::Attr::KnockbackResistance));
+            let push = Vec3::new(v.x, 0.0, v.z).normalize().scale(knockback * 0.6 * (1.0 - resistance).max(0.0));
+            if push.length_sqr() > 0.0 {
+                level.push(id, Vec3::new(push.x, 0.1, push.z));
+            }
+        }
         // `Arrow.doPostHurtEffects`: an eighth of each effect's duration.
         let effects = data(e).effects.clone();
         for (effect, duration, amplifier) in effects {
             level.add_effect(id, effect, (duration / 8).max(1), amplifier, owner.or(Some(e.id)));
         }
+        // `SpectralArrow.doPostHurtEffects`.
+        if e.type_name == "minecraft:spectral_arrow" {
+            let ticks = data(e).glowing;
+            level.add_effect(id, "minecraft:glowing", ticks, 0, owner.or(Some(e.id)));
+        }
+        // `killed_by_arrow` for a player's arrow (every kill of a piercing one).
+        if let Some(o) = owner.filter(|&o| level.player(o).is_some()) {
+            let dead = match level.entity(id) {
+                Some(t) => crate::mob::data(t).is_some_and(|m| m.health <= 0.0) || !t.is_alive(),
+                None => true,
+            };
+            let seen = level.entity(id).map(crate::level::Seen::of);
+            let weapon = data(e).weapon.clone();
+            if pierce > 0 {
+                if dead && let Some(s) = seen {
+                    data(e).killed.push(s);
+                }
+                let victims = data(e).killed.clone();
+                level.emit(Event::Criterion { player: o, criterion: crate::level::Criterion::KilledByArrow { victims, weapon } });
+            } else if dead && let Some(s) = seen {
+                level.emit(Event::Criterion { player: o, criterion: crate::level::Criterion::KilledByArrow { victims: vec![s], weapon } });
+            }
+        }
         let pitch = 1.2 / (e.random.next_float() * 0.2 + 0.9);
         e.play_sound(level, "minecraft:entity.arrow.hit", 1.0, pitch);
-        e.discard();
+        if pierce == 0 {
+            e.discard();
+        }
     } else {
         e.delta = e.delta.scale(-0.1);
         e.y_rot += 180.0;

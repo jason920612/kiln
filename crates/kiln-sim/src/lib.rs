@@ -27,6 +27,10 @@ mod commands;
 mod consume;
 mod buckets;
 mod use_item;
+mod ranged;
+mod crossbow;
+mod trident;
+mod shield;
 mod xp;
 mod container;
 mod datapacks;
@@ -352,6 +356,8 @@ struct Player {
     sent_xp: Option<(u32, i32, i32)>,
     /// Health, food and whether saturation was zero in the last Set Health.
     sent_health: Option<(u32, i32, bool)>,
+    /// Item cooldowns (`ItemCooldowns`): group and the `tick_count` it ends at.
+    item_cooldowns: Vec<(String, i32)>,
     /// An item being used (eaten).
     using: Option<consume::Using>,
     /// The block being broken in survival.
@@ -2131,6 +2137,7 @@ impl Sim {
             sent_xp: None,
             sent_health: None,
             using: None,
+            item_cooldowns: Vec::new(),
             digging: None,
             delayed_destroy: None,
             lobby: lobby::PlayerLobby::default(),
