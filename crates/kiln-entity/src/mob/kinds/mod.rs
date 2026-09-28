@@ -44,6 +44,7 @@ pub mod illusioner;
 pub mod villager_poi;
 
 // -- slice 3: the end
+pub mod ender_dragon;
 
 // -- slice 3: wither and guardians
 
@@ -92,6 +93,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Illusioner => &illusioner::KIND,
 
         // -- slice 3: the end
+        MobKind::EnderDragon => &ender_dragon::KIND,
 
         // -- slice 3: wither and guardians
 

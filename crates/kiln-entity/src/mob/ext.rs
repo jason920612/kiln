@@ -316,6 +316,33 @@ pub trait Kind: Sync + Send {
     fn on_killed_removal(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, level);
     }
+    /// `aiStep` overridden without `super.aiStep()` (the ender dragon): runs in place of
+    /// `LivingEntity.aiStep` when it returns true.
+    fn replaces_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// `tickDeath` in place of `LivingEntity.tickDeath` (20 ticks then removal); true when
+    /// handled.
+    fn tick_death(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// `handleKillingBlow` overrides: true when the mob is not marked `dead` (the ender dragon
+    /// starts its dying phase instead).
+    fn handle_killing_blow(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// `knockback` overridden to do nothing (a sitting ender dragon).
+    fn knockback_immune(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
+    /// false: `checkDespawn` overridden to do nothing (never despawns, not even on peaceful).
+    fn despawns(&self) -> bool {
+        true
+    }
     /// `doHurtTarget` in place of the shared one: `Some(hit)` when handled.
     fn do_hurt_target(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> Option<bool> {
         let _ = (e, m, level, t);

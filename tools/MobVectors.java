@@ -140,6 +140,8 @@ public class MobVectors {
         /// Things done to the mobs before the entity ticks of a tick (effects, potions,
         /// player interactions), in order.
         final List<Action> actions = new ArrayList<>();
+        /// Entities that are not mobs (end crystals): ticked after the mobs, not traced.
+        final List<MobSpec> others = new ArrayList<>();
         Scenario(String name) { this.name = name; }
     }
 
@@ -344,6 +346,7 @@ public class MobVectors {
             player.snapTo(0, 300, 0, 0f, 0f);
         }
         level.getRandom().setSeed(s.levelSeed);
+        int tickStamp = player.getLastHurtByMobTimestamp();
         List<Entity> tracked = new ArrayList<>();
         StringBuilder specs = new StringBuilder();
         for (MobSpec spec : s.mobs) {
@@ -396,6 +399,16 @@ public class MobVectors {
         // is not reproducible) and join the trace.
         List<Mob> pinned = new ArrayList<>();
         int initial = tracked.size();
+        StringBuilder others = new StringBuilder();
+        for (MobSpec spec : s.others) {
+            Entity o = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(spec.type)).create(level, EntitySpawnReason.COMMAND);
+            o.snapTo(spec.x, spec.y, spec.z, spec.yaw, 0f);
+            if (!level.addFreshEntity(o)) throw new IllegalStateException("could not add " + spec.type);
+            tracked.add(o);
+            if (others.length() > 0) others.append(',');
+            others.append(String.format(Locale.ROOT, "{\"type\":\"%s\",\"id\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s}",
+                    spec.type, o.getId(), d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw)));
+        }
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
         long startTime = level.getGameTime();
         for (int tick = 0; tick < s.ticks; tick++) {
@@ -458,6 +471,8 @@ public class MobVectors {
             }
             trace.append(']');
         }
+        // Flyers may end outside the cleanup box.
+        for (Entity e : tracked) e.discard();
         StringBuilder blocks = new StringBuilder();
         for (var b : s.blocks.entrySet()) {
             if (blocks.length() > 0) blocks.append(',');
@@ -470,13 +485,13 @@ public class MobVectors {
             hurts.append(String.format(Locale.ROOT, "[%d,%d,%s]", h.getKey(), (int) h.getValue()[0], d(h.getValue()[1])));
         }
         String playerJson = s.player == null ? "null"
-                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s,\"yaw\":%s,\"pitch\":%s,\"head\":%s,\"uuid\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
+                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s,\"yaw\":%s,\"pitch\":%s,\"head\":%s,\"uuid\":%s,\"tick_count\":%d,\"last_hurt_by_mob_time\":%d}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", Float.toString(s.playerYaw), Float.toString(s.playerPitch),
-                        s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())));
+                        s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.levelSeed, s.ticks, startTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"trace\":[%s]}",
+                s.name, s.diverges, s.levelSeed, s.ticks, startTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, trace);
     }
 
     static String effectsJson(List<Object[]> effects) {
@@ -580,6 +595,10 @@ public class MobVectors {
                 if (goals.length() > 0) goals.append(' ');
                 goals.append(g.getGoal().getClass().getSimpleName());
             }
+        }
+        if (m instanceof net.minecraft.world.entity.boss.enderdragon.EnderDragon dragon) {
+            if (goals.length() > 0) goals.append(' ');
+            goals.append("DragonPhase").append(dragon.getPhaseManager().getCurrentPhase().getPhase().getId());
         }
         sb.append(",\"").append(goals).append("\"]");
         return sb.toString();
@@ -1970,7 +1989,105 @@ public class MobVectors {
 
 
     // ---------------------------------------------------------- slice 3: the end fight
+    // The ender dragon outside a fight (`dragonFight` null: no crystals counted, the inner
+    // node rings), a bedrock pad at the origin for its landings (the podium is where it lands).
     static void scenariosEnd(List<Scenario> out) {
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("dragon_hold_" + seed);
+            floor(s, 6, "minecraft:bedrock");
+            MobSpec m = new MobSpec("minecraft:ender_dragon", 0.5, 128, 0.5, 60f * seed, 44000L + seed);
+            m.nbt = "{DragonPhase:0}";
+            s.mobs.add(m);
+            s.levelSeed = seed;
+            s.ticks = 1500;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("dragon_sit_" + seed);
+            floor(s, 6, "minecraft:bedrock");
+            MobSpec m = new MobSpec("minecraft:ender_dragon", 0.5, BY, 0.5, 90f * seed, 45000L + seed);
+            m.nbt = "{DragonPhase:6}";
+            s.mobs.add(m);
+            s.ticks = 700;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("dragon_approach");
+            floor(s, 6, "minecraft:bedrock");
+            MobSpec m = new MobSpec("minecraft:ender_dragon", 30.5, 110, -20.5, 10f, 46001);
+            m.nbt = "{DragonPhase:2}";
+            s.mobs.add(m);
+            s.ticks = 900;
+            out.add(s);
+        }
+        {
+            // Crystals within 32 blocks heal the dragon (one point every 10 ticks).
+            Scenario s = new Scenario("dragon_crystal_heal");
+            floor(s, 6, "minecraft:bedrock");
+            MobSpec m = new MobSpec("minecraft:ender_dragon", 0.5, 110, 0.5, 0f, 47001);
+            m.nbt = "{DragonPhase:10,Health:120f}";
+            s.mobs.add(m);
+            s.others.add(new MobSpec("minecraft:end_crystal", 20.5, 112, 0.5, 0f, 0));
+            s.others.add(new MobSpec("minecraft:end_crystal", -12.5, 104, 8.5, 0f, 0));
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            // A creative player (never targeted) wounds, then kills the dragon: the dying phase
+            // flies to the pad, then the 200-tick death with its experience.
+            Scenario s = new Scenario("dragon_hurt_die");
+            floor(s, 6, "minecraft:bedrock");
+            MobSpec m = new MobSpec("minecraft:ender_dragon", 0.5, 118, 0.5, 30f, 48001);
+            m.nbt = "{DragonPhase:0}";
+            s.mobs.add(m);
+            s.player = new double[] {0.5, BY, 30.5};
+            s.playerCreative = true;
+            s.hurts.put(20, new double[] {0, 30.0});
+            s.hurts.put(40, new double[] {0, 12.0});
+            s.hurts.put(300, new double[] {0, 400.0});
+            s.ticks = 700;
+            out.add(s);
+        }
+        {
+            // Hits while sitting: a quarter of its health and it takes off.
+            Scenario s = new Scenario("dragon_sit_hurt");
+            floor(s, 6, "minecraft:bedrock");
+            MobSpec m = new MobSpec("minecraft:ender_dragon", 0.5, BY, 0.5, 0f, 49001);
+            m.nbt = "{DragonPhase:6}";
+            s.mobs.add(m);
+            s.player = new double[] {0.5, BY, 30.5};
+            s.playerCreative = true;
+            s.hurts.put(10, new double[] {0, 30.0});
+            s.hurts.put(30, new double[] {0, 30.0});
+            s.hurts.put(50, new double[] {0, 30.0});
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            // A survival player in front of the sitting dragon: it turns to face it, roars,
+            // then breathes its flame (a dragon's breath cloud that harms).
+            Scenario s = new Scenario("dragon_sit_player");
+            floor(s, 6, "minecraft:bedrock");
+            MobSpec m = new MobSpec("minecraft:ender_dragon", 0.5, BY, 0.5, 90f, 50001);
+            m.nbt = "{DragonPhase:6}";
+            s.mobs.add(m);
+            s.player = new double[] {0.5, BY, 12.5};
+            s.ticks = 900;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            // A survival player below the holding pattern: strafing runs with fireballs (and
+            // their clouds), landings and charges.
+            Scenario s = new Scenario("dragon_strafe_" + seed);
+            floor(s, 6, "minecraft:bedrock");
+            MobSpec m = new MobSpec("minecraft:ender_dragon", 0.5, 128, 0.5, 45f * seed, 51000L + seed);
+            m.nbt = "{DragonPhase:0}";
+            s.mobs.add(m);
+            s.player = new double[] {30.5, BY, 10.5};
+            s.levelSeed = seed;
+            s.ticks = 1500;
+            out.add(s);
+        }
     }
 
 

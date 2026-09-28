@@ -143,7 +143,7 @@ impl Fireball {
 
 /// `BaseFireBlock.getState`: soul fire on soul blocks, else fire (`FireBlock
 /// .getStateForPlacement`: off a burnable or sturdy floor, a face toward each burnable side).
-fn fire_state(level: &dyn EntityLevel, p: crate::math::BlockPos) -> u16 {
+pub(crate) fn fire_state(level: &dyn EntityLevel, p: crate::math::BlockPos) -> u16 {
     use kiln_data::blocks::default_state as d;
     let below = level.block(p.below());
     if crate::blocks::block_name(below) == "minecraft:soul_sand" || crate::blocks::block_name(below) == "minecraft:soul_soil" {
@@ -270,7 +270,7 @@ pub fn view_vector(x_rot: f32, y_rot: f32) -> Vec3 {
 }
 
 /// `ProjectileUtil.rotateTowardsMovement`.
-fn rotate_towards_movement(e: &mut Entity, amount: f32) {
+pub(crate) fn rotate_towards_movement(e: &mut Entity, amount: f32) {
     let v = e.delta;
     if v.length_sqr() == 0.0 {
         return;

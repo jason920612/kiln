@@ -116,8 +116,12 @@ fn state(e: &kiln_entity::Entity, level: &MemoryLevel) -> (Vec<f64>, String) {
         effects_sig(m) as f64,
         m.absorption as f64,
     ];
-    let mut goals: Vec<&str> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind)).collect();
+    let mut goals: Vec<String> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind).to_owned()).collect();
     goals.retain(|g| !g.is_empty());
+    // The dragon's phase (`EnderDragonPhase` id).
+    if let Some(d) = mob::kinds::ender_dragon::state_of(e) {
+        goals.push(format!("DragonPhase{}", d.phase.id()));
+    }
     (nums, goals.join(" "))
 }
 
@@ -201,6 +205,9 @@ fn replay(s: &Value) -> Result<usize, String> {
             v.head = kiln_data::builtin_id("minecraft:item", item).unwrap();
         }
         v.yaw = p.get("yaw").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        // The recording's player is never ticked: its clock and hurt stamp as they were.
+        v.tick_count = p.get("tick_count").and_then(Value::as_i64).unwrap_or(0) as i32;
+        v.last_hurt_by_mob_time = p.get("last_hurt_by_mob_time").and_then(Value::as_i64).unwrap_or(0) as i32;
         v.pitch = p.get("pitch").and_then(Value::as_f64).unwrap_or(0.0) as f32;
         if let Some(u) = p.get("uuid").and_then(Value::as_array) {
             v.uuid = u.iter().fold(0u128, |acc, x| (acc << 32) | (x.as_i64().unwrap() as u32 as u128));
@@ -266,6 +273,19 @@ fn replay(s: &Value) -> Result<usize, String> {
             level.add_effect_instance(id, fx, None);
         }
     }
+    // Other entities (end crystals), after the mobs: ticked, not traced.
+    let mut other_ids = Vec::new();
+    for o in s.get("others").and_then(Value::as_array).into_iter().flatten() {
+        let id = o["id"].as_i64().unwrap() as i32;
+        let tag = kiln_proto::nbt::Tag::Compound(vec![
+            ("id".into(), kiln_proto::nbt::Tag::String(o["type"].as_str().unwrap().to_owned())),
+            ("Pos".into(), kiln_proto::nbt::Tag::List((0..3).map(|i| kiln_proto::nbt::Tag::Double(f(&o["pos"][i]))).collect())),
+            ("Rotation".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Float(f(&o["yaw"]) as f32), kiln_proto::nbt::Tag::Float(0.0)])),
+        ]);
+        let e = kiln_entity::persist::load(&tag, id, 0).expect("other entity");
+        other_ids.push(id);
+        level.insert(e);
+    }
     let hurts: Vec<(i64, usize, f32)> = s["hurts"]
         .as_array()
         .unwrap()
@@ -277,7 +297,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     let trace = s["trace"].as_array().unwrap();
     let initial = ids.len();
     // Vanilla numbers new entities on from the scenario's mobs (id parity paces the AI).
-    level.set_next_entity_id(ids.iter().copied().max().unwrap_or(0) + 1);
+    level.set_next_entity_id(ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1);
     level.immediate_adds = true;
     let mut known = level.len();
     let mut compared = 0;

@@ -230,10 +230,11 @@ impl EntityLevel for MemoryLevel {
     }
 
     /// `Player.hurtServer` with its hurt cooldown (difficulty scaling at normal: none).
-    fn hurt_player(&mut self, id: i32, _source: crate::mob::DamageSource, amount: f32) -> bool {
+    fn hurt_player(&mut self, id: i32, source: crate::mob::DamageSource, amount: f32) -> bool {
         let Some(p) = self.players.iter().find(|p| p.id == id) else {
             return false;
         };
+        let by_mob = source.attacker.filter(|&a| a != id && self.index.contains_key(&a) && self.player(a).is_none());
         if p.creative || p.spectator || !p.alive {
             return false;
         }
@@ -253,6 +254,12 @@ impl EntityLevel for MemoryLevel {
             amount
         };
         self.player_hits.push((id, dealt));
+        // `setLastHurtByMob`: stamped with the player's own clock.
+        if by_mob.is_some()
+            && let Some(p) = self.players.iter_mut().find(|p| p.id == id)
+        {
+            p.last_hurt_by_mob_time = p.tick_count;
+        }
         true
     }
 
@@ -266,6 +273,17 @@ impl EntityLevel for MemoryLevel {
 
     fn apply_instantaneous_effect(&mut self, id: i32, effect: &crate::effect::Effect, source: Option<(i32, crate::math::Vec3)>, owner: Option<i32>, scale: f64) {
         let owner_is_player = owner.is_some_and(|o| self.player(o).is_some());
+        // A player: instant damage hurts (`indirectMagic(source, owner)`, `magic` without a
+        // source); healing is not tracked.
+        if self.player(id).is_some() {
+            if effect.id == crate::effect::ids::instant_damage() {
+                let amount = (scale * (6i32.wrapping_shl(effect.amplifier as u32)) as f64 + 0.5) as i32 as f32;
+                let kind = if source.is_some() { crate::level::DamageKind::IndirectMagic } else { crate::level::DamageKind::Magic };
+                let src = crate::mob::DamageSource { kind, attacker: owner.or(source.map(|s| s.0)), direct: source.map(|s| s.0), pos: source.map(|s| s.1), attacker_is_player: owner_is_player };
+                self.hurt_player(id, src, amount);
+            }
+            return;
+        }
         crate::mob::effects::apply_instantaneous_to_entity(self, id, effect, source, owner, owner_is_player, scale);
     }
 

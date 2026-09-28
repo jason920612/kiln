@@ -30,6 +30,7 @@ mod container;
 mod datapacks;
 pub mod lobby;
 mod digging;
+mod dragon_fight;
 mod effects;
 mod entities;
 mod fishing;
@@ -810,8 +811,8 @@ pub struct Sim {
     /// The End's clock (`minecraft:the_end`, the End's `default_clock`).
     end_time: i64,
     end_clock: i32,
-    /// The End's exit portal and first gateway were checked this run ([`Sim::prepare_end`]).
-    end_prepared: bool,
+    /// The End's dragon fight (`EnderDragonFight`).
+    dragon_fight: dragon_fight::DragonFight,
     commands: commands::CommandState,
     /// The server-wide weather counters (`weather.dat`).
     weather: weather::WeatherData,
@@ -992,7 +993,7 @@ impl Sim {
             overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
             end_time: 0,
             end_clock: kiln_data::synced_id("minecraft:world_clock", "minecraft:the_end").expect("end clock"),
-            end_prepared: false,
+            dragon_fight: dragon_fight::DragonFight::load(None, seed),
             commands: commands::CommandState::new(ops_from_env()),
             weather: Default::default(),
             level_weather: Default::default(),
@@ -1011,6 +1012,7 @@ impl Sim {
         sim.load_scoreboard();
         sim.load_weather();
         sim.load_raids();
+        sim.load_dragon_fight();
         sim.init_packs(vanilla_pack);
         sim.load_plugins();
         sim
@@ -1060,13 +1062,9 @@ impl Sim {
         let changed = self.apply_topology();
         self.plugins_b0();
         for (jn, j) in joining {
-            let in_end = jn.dim == END_ID;
             let conn = j.conn;
             self.join(j, jn);
             self.plugins_joined(conn);
-            if in_end {
-                self.prepare_end();
-            }
         }
         self.update_membership(changed);
         lap(&mut self.stats, "b0");
@@ -1124,6 +1122,8 @@ impl Sim {
             }
         }
         self.materialize_spawns();
+        // What the dragon and the crystals told the fight.
+        self.dragon_fight_messages();
         // Players whose portal time ran out change level (serially: two levels take part).
         if !travels.is_empty() {
             self.rendezvous();
@@ -1557,6 +1557,7 @@ impl Sim {
                 sea_level: SEA_LEVELS[dim],
             },
             fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
+            dragon_fight: self.fight_env(dim),
             fire_watchers: std::sync::Arc::new({
                 let mut conns: Vec<&ConnId> = self.players.keys().collect();
                 conns.sort_unstable();
@@ -1668,7 +1669,22 @@ impl Sim {
         // Entities loaded with a chunk have their ids before the chunk can leave again.
         self.materialize_spawns();
         for dim in 0..self.dims.len() {
-            let keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            let mut keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),
+            // and the rest of it loads a few chunks a tick.
+            if dim == END_ID && self.dragon_fight.active() {
+                keep.extend(self.dragon_fight.arena());
+                let mut n = 0;
+                for pos in self.dragon_fight.arena() {
+                    if n == 4 {
+                        break;
+                    }
+                    let d = &mut self.dims[dim];
+                    if !d.is_loaded(pos) && d.request(pos) {
+                        n += 1;
+                    }
+                }
+            }
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
             let unloaded = self.dims[dim].unload(unloads, &keep);
             if !unloaded.is_empty() {
@@ -1776,6 +1792,10 @@ impl Sim {
                 };
                 let id = self.next_entity_id;
                 self.next_entity_id += 1;
+                // The ender dragon's parts take the next eight ids (the client numbers them so).
+                if spawn.kind.name == "minecraft:ender_dragon" {
+                    self.next_entity_id += 8;
+                }
                 let uuid = entities::fresh_uuid(world_seed, self.game_time, id);
                 region.part_mut().0.list.push(entities::Entity::new(id, uuid, spawn));
             }
@@ -2002,6 +2022,7 @@ impl Sim {
     }
 
     fn leave(&mut self, conn: ConnId) {
+        self.dragon_fight_left(conn);
         // `ServerPlayer.disconnect`: a sleeper gets out of bed first.
         if let Some(mut p) = self.players.remove(&conn) {
             if p.sleep.pos.is_some() {
@@ -2075,6 +2096,7 @@ impl Sim {
         self.save_raids();
         self.save_scoreboard();
         self.save_timers();
+        self.save_dragon_fight();
         self.save_plugins();
     }
 
@@ -2320,6 +2342,7 @@ impl Sim {
         self.tick_weather();
         self.tick_sleep();
         self.tick_raids();
+        self.tick_dragon_fight();
         if self.game_time % AUTOSAVE_TICKS == 0 {
             self.save();
         }
