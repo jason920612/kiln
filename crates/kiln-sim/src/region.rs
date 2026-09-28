@@ -357,11 +357,13 @@ impl RegionWork<'_> {
                 crate::sleep::tick_player(p, &mut level);
             }
             blocks::press_plates(&mut level);
+            crate::sculk::players_step_on(&mut level, &self.players);
             blocks::tick_blocks(&mut level, &ticking);
             for pos in std::mem::take(&mut level.out.rechecks) {
                 crate::container::open::recheck_openers(&mut level, &self.players, pos);
             }
             blocks::tick_pistons(&mut level, &ticking);
+            crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         if let Some(h) = self.plugins.as_mut() {
@@ -372,6 +374,10 @@ impl RegionWork<'_> {
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
     fn tick_entities(&mut self, env: &Env) {
+        if !self.blocks.sculk.wardens.is_empty() {
+            let list = &self.entities.list;
+            self.blocks.sculk.retain_wardens(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
+        }
         if self.entities.list.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
             self.tick_block_entities(env);
             return;
@@ -395,6 +401,7 @@ impl RegionWork<'_> {
             let any_player = !self.players.is_empty();
             crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns);
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player);
+            crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         self.tick_block_entities(env);
@@ -403,7 +410,7 @@ impl RegionWork<'_> {
     /// `Level.tickBlockEntities`: hoppers and furnaces in ticking chunks. Hoppers take item
     /// entities; their viewers see the new counts.
     fn tick_block_entities(&mut self, env: &Env) {
-        if self.blocks.containers.len() == 0 {
+        if self.blocks.containers.len() == 0 && self.blocks.sculk.len() == 0 {
             return;
         }
         let ticking = Ticking::around(self.players.iter().map(|p| p.center), env.blocks.simulation_distance);
@@ -420,6 +427,8 @@ impl RegionWork<'_> {
                 actor: None,
             };
             crate::container::tick_block_entities(&mut level, &mut items, &ticking);
+            crate::sculk::tick_block_entities(&mut level, &ticking);
+            crate::sculk::requests(&mut level, &mut self.players, items.entities(), &mut self.out.spawns);
         }
         let touched = items.touched();
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
@@ -504,6 +513,8 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     }
     p.tick_food(env.natural_regen, &mut ctx);
     p.tick_stats();
+    // `ServerPlayer.tick`.
+    p.warden_tracker.tick();
     let probe = crate::advancements::triggers::CellProbe::new(cells, &env.blocks);
     p.tick_triggers(&probe);
     // `onInsideBlock` (Kiln checks the block at the feet).
@@ -1003,6 +1014,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         blocks_building: p.game_mode != 3,
         conn: Some(p.conn),
         prevents_rest: false,
+        player_source: None,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];
     let others = bodies.iter().filter(|b| b.conn != Some(p.conn));

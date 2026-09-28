@@ -688,6 +688,12 @@ impl Entity {
         if on_pos != pos {
             ok |= stepped(self, on_state);
         }
+        // The step game event comes from the supporting block (the effect block when they are
+        // the same), with that block as the context.
+        let supporting = if on_pos == pos { state } else { on_state };
+        if stepped(self, supporting) {
+            level.block_game_event("minecraft:step", self.position, Some(self.id), supporting);
+        }
         if ok {
             self.next_step = (self.move_dist as i32 + 1) as f32;
         } else if self.is_in_water() {
@@ -785,7 +791,7 @@ impl Entity {
         if on_ground {
             if self.fall_distance > 0.0 {
                 crate::fall::fall_on(self, level, state, pos);
-                level.emit(Event::GameEvent { event: "minecraft:hit_ground", pos: self.position, entity: Some(self.id) });
+                level.block_game_event("minecraft:hit_ground", self.position, Some(self.id), state);
             }
             self.fall_distance = 0.0;
         }

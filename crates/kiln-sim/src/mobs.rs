@@ -20,6 +20,8 @@ pub(crate) struct MobRules {
     pub drops: bool,
     pub spawn_mobs: bool,
     pub spawn_monsters: bool,
+    /// `minecraft:spawn_wardens`.
+    pub spawn_wardens: bool,
     pub cramming: i32,
     pub difficulty: u8,
     /// The world spawn (no natural spawns within 24 blocks).
@@ -36,6 +38,7 @@ impl Default for MobRules {
             drops: true,
             spawn_mobs: true,
             spawn_monsters: true,
+            spawn_wardens: true,
             cramming: 24,
             difficulty: 2,
             spawn_point: [0, 64, 0],

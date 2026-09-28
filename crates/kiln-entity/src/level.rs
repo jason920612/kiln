@@ -72,6 +72,9 @@ pub enum Criterion {
     KilledByArrow { victims: Vec<Seen>, weapon: Option<kiln_item::ItemStack> },
     /// `TargetBlockTrigger`: a projectile hit a target block at `pos` for `signal`.
     TargetHit { projectile: Seen, pos: BlockPos, signal: i32 },
+    /// `KILL_MOB_NEAR_SCULK_CATALYST` (a `KilledTrigger`): a catalyst took the victim's
+    /// experience; `kind` and `direct` describe the killing blow.
+    KillMobNearSculkCatalyst { victim: Seen, kind: DamageKind, direct: bool },
 }
 
 /// A player as the experience orb sees it.
@@ -217,6 +220,8 @@ pub enum DamageKind {
     Thorns,
 
     // -- slice 3: warden
+    /// `minecraft:sonic_boom` (a warden's sonic boom, through armor).
+    SonicBoom,
 
     // -- slice 3: common mobs A
 
@@ -457,6 +462,63 @@ pub trait EntityLevel {
     }
 
     fn emit(&mut self, event: Event);
+
+    /// `Level.gameEvent(event, pos, Context.of(entity, state))`: a game event about the block
+    /// `state` (steps and landings on `#dampens_vibrations` blocks make no vibration).
+    fn block_game_event(&mut self, event: &'static str, pos: Vec3, entity: Option<i32>, state: u16) {
+        let _ = state;
+        self.emit(Event::GameEvent { event, pos, entity });
+    }
+
+    /// `SculkSensorBlock.stepOn` / `SculkShriekerBlock.stepOn`: entity `entity` at `at` stands
+    /// on the sculk sensor or shrieker at `pos`.
+    fn sculk_step_on(&mut self, pos: BlockPos, entity: i32, at: Vec3) {
+        let _ = (pos, entity, at);
+    }
+
+    /// `GameEvent.ENTITY_DIE` reaching sculk catalysts: whether a catalyst hears a death at
+    /// `pos` (the nearest one takes the dead mob's experience).
+    fn sculk_catalyst_near(&self, pos: Vec3) -> bool {
+        let _ = pos;
+        false
+    }
+
+    /// `SculkCatalystBlockEntity.CatalystListener.handleGameEvent`: the catalyst nearest `pos`
+    /// blooms and takes `charge` (the experience the mob would drop; 0: none) as sculk charge
+    /// at the death's position.
+    fn feed_sculk_catalyst(&mut self, pos: Vec3, charge: i32) {
+        let _ = (pos, charge);
+    }
+
+    /// The vibrations warden `id` heard since its last tick, in order (they reach its
+    /// `VibrationSelector` before its tick).
+    fn take_vibrations(&mut self, id: i32) -> Vec<crate::vibration::Heard> {
+        let _ = id;
+        Vec::new()
+    }
+
+    /// Warden `id`'s listener after its tick (`None`: it no longer listens).
+    fn set_listener(&mut self, id: i32, ear: Option<crate::vibration::Ear>) {
+        let _ = (id, ear);
+    }
+
+    /// `sendParticles(VibrationParticleOption(EntityPositionSource(entity, y_offset), ticks))`
+    /// at `from`.
+    fn vibration_particle(&mut self, from: Vec3, entity: i32, y_offset: f32, ticks: i32) {
+        let _ = (from, entity, y_offset, ticks);
+    }
+
+    /// `Warden.applyDarknessAround`: darkness for survival and adventure players within
+    /// `radius` of `pos` (`MobEffectUtil.addEffectToPlayersAround`).
+    fn darkness_around(&mut self, pos: Vec3, radius: f64) {
+        let _ = (pos, radius);
+    }
+
+    /// `ServerLevel.sendParticles(particle, pos, count 1, no spread)` for a particle without
+    /// options (`minecraft:sonic_boom`).
+    fn particle(&mut self, particle: &'static str, pos: Vec3) {
+        let _ = (particle, pos);
+    }
 
     /// `getRawBrightness(pos, skyDarken)`: the larger of the sky light less `sky_darken` and
     /// the block light.
