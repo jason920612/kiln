@@ -429,6 +429,61 @@ impl NormalNoiseParams {
         }
         stack
     }
+
+    /// `NormalNoise.createForLegacyNetherBiome`: two stacks built by
+    /// `LegacyFbmInitializer.createForLegacyNetherBiome` from `random` in sequence, scaled by
+    /// this noise's normalization times its base amplitude (the second offset in frequency).
+    pub fn create_legacy_nether_biome(&self, random: &mut impl RandomSource) -> NoiseStack {
+        const INPUT_FACTOR: f64 = 1.018_126_888_217_522_7;
+        let amplitudes: Vec<f64> = if self.amplitude_modifiers.is_empty() {
+            vec![1.0; self.octave_count as usize]
+        } else {
+            self.amplitude_modifiers.clone()
+        };
+        let first = legacy_fbm(random, self.base_octave, &amplitudes);
+        let second = legacy_fbm(random, self.base_octave, &amplitudes);
+        let (_, norm, _) = self.setup();
+        let factor = (norm * self.base_amplitude) as f32;
+        let mut stack = NoiseStack::default();
+        for (layers, scale) in [(first, 1.0), (second, INPUT_FACTOR)] {
+            for l in layers {
+                stack.layers.push(Layer { noise: l.noise, frequency: l.frequency * scale, amplitude: l.amplitude * factor });
+            }
+        }
+        stack
+    }
+}
+
+/// `LegacyFbmInitializer.createForLegacyNetherBiome`: the octave at frequency 1 is drawn
+/// first (kept only if it is one of the stack's octaves), then the lower ones in descending
+/// order, each absent octave skipping 262 draws. Layers come out lowest frequency first.
+fn legacy_fbm(random: &mut impl RandomSource, base_octave: i32, amplitudes: &[f64]) -> Vec<Layer> {
+    let n = amplitudes.len() as i32;
+    let top = -base_octave;
+    let mut octaves: Vec<Option<Lattice>> = vec![None; n as usize];
+    let first = Lattice::new(random);
+    if top >= 0 && top < n && amplitudes[top as usize] != 0.0 {
+        octaves[top as usize] = Some(first);
+    }
+    for i in (0..top).rev() {
+        if i < n && amplitudes[i as usize] != 0.0 {
+            octaves[i as usize] = Some(Lattice::new(random));
+        } else {
+            random.consume_count(262);
+        }
+    }
+    assert!(top >= n - 1, "Positive octaves are temporarily disabled");
+    let mut frequency = pow2(-top);
+    let mut amplitude = pow2(n - 1) / (pow2(n) - 1.0);
+    let mut out = Vec::new();
+    for (i, o) in octaves.into_iter().enumerate() {
+        if let Some(lattice) = o {
+            out.push(Layer { noise: LayerNoise::Perlin(lattice), frequency, amplitude: (amplitude * amplitudes[i]) as f32 });
+        }
+        frequency *= 2.0;
+        amplitude /= 2.0;
+    }
+    out
 }
 
 /// `Noises.instantiate`: the noise registered as `key`, seeded from the world's positional

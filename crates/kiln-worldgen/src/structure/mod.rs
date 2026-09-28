@@ -175,8 +175,8 @@ impl Structures {
         }
         // Biomes the source can produce.
         let mut possible_biomes = vec![false; generator.biomes.len()];
-        for (_, b) in generator.parameters().values() {
-            possible_biomes[*b as usize] = true;
+        for b in generator.possible_biomes() {
+            possible_biomes[b as usize] = true;
         }
         let possible: Vec<usize> = (0..sets.len())
             .filter(|&i| {
@@ -365,15 +365,8 @@ impl GenCtx<'_> {
     /// volume sample of its quarts.
     pub fn could_exist_in_column(&mut self, x: i32, z: i32, min_y: i32, max_y: i32) -> bool {
         let (qx, qz, q0, q1) = (x >> 2, z >> 2, min_y >> 2, max_y >> 2);
-        let (vol, c) = self.generator.climate_volume(self.climate, [qx, q0, qz], [1, q1 - q0 + 1, 1]);
-        for qy in q0..=q1 {
-            let i = vol.index(0, qy - q0, 0);
-            let b = self.generator.biome_for([c[0][i], c[1][i], c[2][i], c[3][i], c[4][i], c[5][i]], self.last);
-            if self.structures.structures[self.structure].biomes.contains(b) {
-                return true;
-            }
-        }
-        false
+        let biomes = self.generator.column_biomes(self.climate, self.last, qx, qz, q0, q1);
+        biomes.into_iter().any(|b| self.structures.structures[self.structure].biomes.contains(b))
     }
 
     /// `couldValidBiomeExistOnTopOfChunkCenter`.
