@@ -66,6 +66,9 @@ pub enum EntityKind {
 
 #[derive(Clone, Debug)]
 pub struct Entity {
+    /// A mob's landing (`causeFallDamage(distance, multiplier)`) during its move, applied by
+    /// the mob once its travel is done (its data is out of the entity meanwhile).
+    pub pending_fall: Option<(f64, f32)>,
     pub id: i32,
     pub uuid: u128,
     pub kind: EntityKind,
@@ -127,9 +130,6 @@ pub struct Entity {
     pub passengers: Vec<i32>,
     /// `canStandOnFluid(lava)`: lava sources hold the entity up (striders).
     pub stands_on_lava: bool,
-    /// A mob's `causeFallDamage(distance, multiplier)` from a landing during its own move (its
-    /// data is out for the tick): the mob takes it right after the move.
-    pub pending_fall_damage: Option<(f64, f32)>,
     /// Saved fields Kiln does not model (custom name, tags, passengers, ...), written back
     /// unchanged by [`crate::persist::save`].
     pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
@@ -141,6 +141,7 @@ impl Entity {
     pub fn new(type_name: &'static str, id: i32, uuid: u128, kind: EntityKind, random_seed: i64) -> Entity {
         let t = kiln_data::entities::by_name(type_name).unwrap_or_else(|| panic!("unknown entity type {type_name}"));
         let mut e = Entity {
+            pending_fall: None,
             id,
             uuid,
             kind,
@@ -197,7 +198,6 @@ impl Entity {
             vehicle: None,
             passengers: Vec::new(),
             stands_on_lava: false,
-            pending_fall_damage: None,
             extra: Vec::new(),
         };
         e.set_pos(Vec3::ZERO);

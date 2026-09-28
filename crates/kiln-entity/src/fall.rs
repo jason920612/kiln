@@ -44,7 +44,7 @@ pub fn cause_fall_damage(e: &mut Entity, level: &mut dyn EntityLevel, distance: 
     match e.kind {
         EntityKind::FallingBlock(_) => crate::falling_block::cause_fall_damage(e, level, distance, multiplier),
         EntityKind::MobTicking { .. } => {
-            e.pending_fall_damage = Some((distance, multiplier));
+            e.pending_fall = Some((distance, multiplier));
             false
         }
         _ => false,

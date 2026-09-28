@@ -14,8 +14,8 @@ use crate::level::EntityLevel;
 /// the player-hurt memory, hurt time, body yaw, on-ground, absorption, the baby flag and age,
 /// loot pickup (when preserved), left-handedness, no-AI, persistence, invulnerability, no
 /// gravity, silence and custom name, and for zombie to zombie the door breaking. Not copied:
-/// health (the new type's default), attributes, fire ticks. Riding, leashes, teams and effects
-/// are not simulated on mobs yet.
+/// health (the new type's default), attributes, fire ticks. The effects go over (`addEffect`).
+/// Riding, leashes and teams are not simulated on mobs yet.
 pub fn convert_to(
     e: &mut Entity,
     m: &mut MobData,
@@ -54,6 +54,9 @@ pub fn convert_to(
     ne.on_ground = e.on_ground;
     // `convertCommon`.
     nm.absorption = m.absorption;
+    for fx in m.effects.values() {
+        super::effects::add(&mut ne, &mut nm, level, fx.clone(), None);
+    }
     if m.baby() {
         set_baby(&mut ne, &mut nm, true);
     }

@@ -238,6 +238,10 @@ impl EntityLevel for MemoryLevel {
             return false;
         }
         let (cd, last) = self.player_cooldown.get(&id).copied().unwrap_or((0, 0.0));
+        // `Player.hurtServer`: no damage, no hit.
+        if amount == 0.0 {
+            return false;
+        }
         let dealt = if cd as f32 > 10.0 {
             if amount <= last {
                 return false;
@@ -254,6 +258,15 @@ impl EntityLevel for MemoryLevel {
 
     fn min_y(&self) -> i32 {
         self.min_y
+    }
+
+    fn add_effect_instance(&mut self, id: i32, effect: crate::effect::Effect, source: Option<i32>) -> bool {
+        crate::mob::effects::add_to_entity(self, id, effect, source)
+    }
+
+    fn apply_instantaneous_effect(&mut self, id: i32, effect: &crate::effect::Effect, source: Option<(i32, crate::math::Vec3)>, owner: Option<i32>, scale: f64) {
+        let owner_is_player = owner.is_some_and(|o| self.player(o).is_some());
+        crate::mob::effects::apply_instantaneous_to_entity(self, id, effect, source, owner, owner_is_player, scale);
     }
 
     fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
