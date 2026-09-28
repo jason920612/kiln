@@ -112,14 +112,64 @@ fn state(e: &kiln_entity::Entity) -> (Vec<f64>, String) {
         e.remaining_fire_ticks as f64,
         m.target.map_or(-1.0, |t| t as f64),
         e.random.state() as f64,
+        effects_sig(m) as f64,
+        m.absorption as f64,
     ];
     let mut goals: Vec<&str> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind)).collect();
     goals.retain(|g| !g.is_empty());
     (nums, goals.join(" "))
 }
 
-const FIELDS: &[&str] =
-    &["id", "x", "y", "z", "dx", "dy", "dz", "yaw", "pitch", "head", "body", "on_ground", "health", "hurt_time", "removed", "fire", "target", "random"];
+const FIELDS: &[&str] = &[
+    "id", "x", "y", "z", "dx", "dy", "dz", "yaw", "pitch", "head", "body", "on_ground", "health", "hurt_time", "removed", "fire", "target", "random",
+    "effects", "absorption",
+];
+
+/// `MobVectors.effectsSig`: the sum of (id + 1) * 100000 + duration * 10 + amplifier.
+fn effects_sig(m: &mob::MobData) -> i64 {
+    m.effects.values().map(|e| (e.id as i64 + 1) * 100000 + e.duration as i64 * 10 + e.amplifier as i64).sum()
+}
+
+/// A scenario action (`MobVectors.Action`), run before the entity ticks of its tick.
+fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Value) {
+    let kind = a["kind"].as_str().unwrap();
+    let what = a["what"].as_str().unwrap_or("");
+    let pos = vec3(&a["pos"]);
+    match kind {
+        "effect" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let fx = kiln_entity::effect::Effect::named(what, a["duration"].as_i64().unwrap() as i32, a["amp"].as_i64().unwrap() as i32).unwrap();
+            level.add_effect_instance(id, fx, None);
+        }
+        "splash" | "linger" => {
+            // A potion entity at the spot (it takes an id, as vanilla's constructor does), broken
+            // on a block hit there.
+            let item = if kind == "splash" { "minecraft:splash_potion" } else { "minecraft:lingering_potion" };
+            let mut stack = kiln_item::ItemStack::of(item, 1).unwrap();
+            stack.insert(kiln_item::keys::POTION_CONTENTS, kiln_item::component::PotionContents { potion: kiln_item::registry::POTION.id(what), ..Default::default() });
+            let pid = level.next_entity_id();
+            let throwable = if kind == "splash" { kiln_entity::projectile::Throwable::SplashPotion } else { kiln_entity::projectile::Throwable::LingeringPotion };
+            let mut p = kiln_entity::projectile::new(pid, 0, throwable, pos, Vec3::ZERO, None, 0);
+            let hit = kiln_entity::projectile::Hit::Block { pos: BlockPos::containing(pos.x, pos.y, pos.z), face: kiln_entity::math::Direction::Up, location: pos };
+            if kind == "splash" {
+                mob::kinds::witch::splash(&mut p, level, hit, &stack, None);
+            } else {
+                mob::kinds::witch::linger(&mut p, level, hit, &stack, None);
+            }
+        }
+        "interact" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let p = player.expect("an interacting player");
+            let who = mob::interact::Interactor { id: p.id, creative: p.creative, sneaking: p.sneaking };
+            let stack = kiln_item::ItemStack::of(what, 1).unwrap();
+            let e = level.entity_mut(id).unwrap();
+            let mut e2 = std::mem::replace(e, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+            mob::interact::interact(&mut e2, level, &who, &stack);
+            *level.entity_mut(id).unwrap() = e2;
+        }
+        k => panic!("action {k}"),
+    }
+}
 
 fn replay(s: &Value) -> Result<usize, String> {
     // Diverging (brain-driven) scenarios compare the body only: not the random or the goals.
@@ -211,6 +261,10 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         ids.push(id);
         level.insert(e);
+        for fx in spec.get("effects").and_then(Value::as_array).into_iter().flatten() {
+            let fx = kiln_entity::effect::Effect::named(fx[0].as_str().unwrap(), fx[1].as_i64().unwrap() as i32, fx[2].as_i64().unwrap() as i32).unwrap();
+            level.add_effect_instance(id, fx, None);
+        }
     }
     let hurts: Vec<(i64, usize, f32)> = s["hurts"]
         .as_array()
@@ -231,6 +285,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         let tick = tick as i64;
         level.game_time = start + 1 + tick;
         level.tick_players();
+        // What the hurts and actions spawn is in the level at once but joins the harness's
+        // ticked entities at the end of the tick (vanilla's harness ticks what it tracks).
+        let ticked = level.len();
         for &(t, i, amount) in &hurts {
             if t == tick {
                 let p = player.expect("a hurting player");
@@ -247,9 +304,14 @@ fn replay(s: &Value) -> Result<usize, String> {
                 *level.entity_mut(ids[i]).unwrap() = e2;
             }
         }
+        for a in s.get("actions").and_then(Value::as_array).into_iter().flatten() {
+            if a["tick"].as_i64() == Some(tick) {
+                act(&mut level, &ids, player, a);
+            }
+        }
         let before = level.player_hits.len();
         let nearest = player.filter(|p| !p.spectator);
-        for i in 0..level.len() {
+        for i in 0..ticked {
             level.tick_one(i, |e, level| {
                 if let (Some(p), EntityKind::Mob(_)) = (nearest, &e.kind) {
                     let d = e.position().distance_to_sqr(p.pos);
@@ -320,7 +382,7 @@ fn replay(s: &Value) -> Result<usize, String> {
                     continue;
                 }
                 // Rotations and health are floats, printed by Java's `Float.toString`.
-                let float = matches!(i, 7..=10 | 12);
+                let float = matches!(i, 7..=10 | 12 | 19);
                 let same = if float { (*g as f32).to_bits() == (*w as f32).to_bits() } else { g.to_bits() == w.to_bits() };
                 if !same {
                     return Err(format!(
@@ -373,7 +435,7 @@ fn mobs_match_vanilla() {
     for line in text.lines() {
         let s: Value = serde_json::from_str(line).unwrap();
         let name = s["name"].as_str().unwrap().to_owned();
-        if filter.as_deref().is_some_and(|f| !name.contains(f)) {
+        if filter.as_deref().is_some_and(|f| !f.split('|').any(|f| name.contains(f))) {
             continue;
         }
         if s.get("error").is_some() {

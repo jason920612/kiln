@@ -21,7 +21,7 @@ pub struct Slime;
 
 pub static KIND: Slime = Slime;
 
-static INFO: Info = Info { ageable: true, head: (75, 0, 10), ..Info::monster("minecraft:slime", &[]) };
+static INFO: Info = Info { ageable: true, head: (75, 0, 10), extends_monster: false, ..Info::monster("minecraft:slime", &[]) };
 
 /// The cube state (`AbstractCubeMob` fields and its `CubeMobMoveControl`).
 #[derive(Clone, Debug)]

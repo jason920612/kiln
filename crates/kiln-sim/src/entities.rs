@@ -766,10 +766,50 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         hurt
     }
 
-    fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, _source: Option<i32>) -> bool {
-        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
-        let Some(e) = crate::effects::effect_id(effect) else { return false };
-        p.add_effect(crate::effects::Effect::simple(e, duration, amplifier))
+    fn add_effect_instance(&mut self, id: i32, effect: kiln_entity::effect::Effect, source: Option<i32>) -> bool {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+            return p.add_effect(effect);
+        }
+        kiln_entity::mob::effects::add_to_entity(self, id, effect, source)
+    }
+
+    fn apply_instantaneous_effect(&mut self, id: i32, effect: &kiln_entity::effect::Effect, source: Option<(i32, Vec3)>, owner: Option<i32>, scale: f64) {
+        let owner_is_player = owner.is_some_and(|o| self.players.iter().any(|p| p.entity_id == o));
+        if !self.players.iter().any(|p| p.entity_id == id) {
+            kiln_entity::mob::effects::apply_instantaneous_to_entity(self, id, effect, source, owner, owner_is_player, scale);
+            return;
+        }
+        // `HealOrHarmMobEffect.applyInstantaneousEffect` on a player: healing, or indirect magic
+        // caused by the thrower (magic when nothing carried it).
+        let attacker = owner.and_then(|o| {
+            if let Some(p) = self.players.iter().find(|p| p.entity_id == o) {
+                return Some(p.as_attacker());
+            }
+            let e = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
+            Some(health::Attacker::mob(o, e.type_name, arr(e.position())))
+        });
+        let env = self.level.env;
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return };
+        match effect.kind() {
+            kiln_entity::effect::Kind::HealOrHarm { harm: false } => {
+                p.heal((scale * 4i32.wrapping_shl(effect.amplifier as u32) as f64 + 0.5) as i32 as f32);
+            }
+            kiln_entity::effect::Kind::HealOrHarm { harm: true } => {
+                let amount = (scale * 6i32.wrapping_shl(effect.amplifier as u32) as f64 + 0.5) as i32 as f32;
+                let source = match source {
+                    None => health::Source { cause: health::Cause::Entity(DamageKind::Magic), attacker: None, direct: None, weapon: None },
+                    Some((direct, _)) => health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker, direct: Some(direct), weapon: None },
+                };
+                let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
+                p.hurt(amount, &source, &mut ctx);
+            }
+            kiln_entity::effect::Kind::Saturation => p.eat(effect.amplifier + 1, (effect.amplifier + 1) as f32 * 2.0),
+            _ => {}
+        }
+    }
+
+    fn max_entity_cramming(&self) -> i32 {
+        self.level.env.mobs.cramming
     }
 
     fn ignite(&mut self, id: i32, seconds: f32) {
@@ -1611,6 +1651,7 @@ fn view(p: &Player, now: i64) -> PlayerView {
         last_hurt_mob: p.last_hurt_mob.map(|(id, _)| id),
         last_hurt_mob_time: p.last_hurt_mob.map_or(0, |(_, t)| t as i32),
         hurt_recently: p.last_hurt_by_mob.is_some_and(|(_, t)| now - t <= 100),
+        hero_of_the_village: p.effect_amplifier("minecraft:hero_of_the_village"),
         vehicle: p.vehicle,
     }
 }
@@ -1865,6 +1906,7 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),
         DamageKind::LightningBolt => ("minecraft:lightning_bolt", "death.attack.lightningBolt"),
         // -- slice 3: mob effects
+        DamageKind::Wither => ("minecraft:wither", "death.attack.wither"),
 
         // -- slice 3: raids
 

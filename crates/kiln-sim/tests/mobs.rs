@@ -880,3 +880,54 @@ fn drowned_throw_tridents() {
     assert!(thrown, "the drowned threw a trident");
     assert!(w.health() < 20.0, "and hit (health {})", w.health());
 }
+
+#[test]
+fn curing_a_zombie_villager_makes_its_trades_cheaper() {
+    let item = |n: &str| kiln_data::builtin_id("minecraft:item", n).unwrap();
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:golden_apple", 2);
+    w.console("gamemode survival Hunter");
+    let offers = r#"Offers:{Recipes:[{buy:{id:"minecraft:wheat",count:20},sell:{id:"minecraft:emerald",count:1},maxUses:12,xp:2,priceMultiplier:0.05f}]}"#;
+    let data = r#"VillagerData:{profession:"minecraft:farmer",level:1,type:"minecraft:plains"}"#;
+    // Without weakness the apple is refused (and kept).
+    w.summon("minecraft:zombie_villager", [1.5, 0.0, 0.0], &format!("{{NoAI:1b,PersistenceRequired:1b,{data},{offers}}}"));
+    let zv = w.mobs("minecraft:zombie_villager")[0].0;
+    w.interact(zv);
+    assert_eq!(w.held().unwrap().1, 2, "no weakness: the apple stays");
+    // Weakness, then the apple starts the cure.
+    w.console("effect give @e[type=minecraft:zombie_villager] minecraft:weakness 60");
+    w.interact(zv);
+    assert_eq!(w.held().unwrap().1, 1, "the apple was eaten");
+    let nbt = nbt_of(&w, "minecraft:zombie_villager");
+    let time = nbt.get("ConversionTime").and_then(|t| t.as_f64()).unwrap();
+    assert!((3600.0..=6000.0).contains(&time), "{time}");
+    let effects = format!("{:?}", nbt.get("active_effects"));
+    assert!(effects.contains("strength") && !effects.contains("weakness"), "{effects}");
+    let player = nbt.get("ConversionPlayer").cloned().expect("the player who started it");
+    let kiln_proto::nbt::Tag::IntArray(u) = player else { panic!() };
+    // A cure nearly done: the villager it becomes remembers the player.
+    w.console("kill @e[type=minecraft:zombie_villager]");
+    w.ticks(25);
+    w.summon(
+        "minecraft:zombie_villager",
+        [1.5, 0.0, 0.0],
+        &format!("{{NoAI:1b,{data},{offers},ConversionTime:3,ConversionPlayer:[I;{},{},{},{}]}}", u[0], u[1], u[2], u[3]),
+    );
+    w.ticks(6);
+    let villagers = w.mobs("minecraft:villager");
+    assert_eq!(villagers.len(), 1, "cured");
+    if w.sim.criterion_done(1, "minecraft:story/cure_zombie_villager", "cured_zombie").is_some() {
+        assert_eq!(w.sim.criterion_done(1, "minecraft:story/cure_zombie_villager", "cured_zombie"), Some(true));
+    }
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:wheat", 64);
+    w.console("gamemode survival Hunter");
+    w.interact(villagers[0].0);
+    let (id, _, _) = w.sim.merchant_screen(1).expect("trading with the cured villager");
+    w.packet(PlayIn::SelectTrade { offer: 0 });
+    w.click(id, 2, false);
+    // Reputation 125 (major positive 20 x 5, minor positive 25): 20 - floor(125 * 0.05) = 14.
+    let (_, _, slots) = w.sim.merchant_screen(1).unwrap();
+    assert_eq!(slots[0], Some((item("minecraft:wheat"), 50)), "the cure discount");
+}
