@@ -1088,6 +1088,9 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             m.last_hurt_by_mob = None;
         }
     }
+    if let Some(k) = m.kind.ext() {
+        k.tick_effects(e, m, level);
+    }
     m.y_head_rot_o = m.y_head_rot;
     m.y_body_rot_o = m.y_body_rot;
     // `Mob.baseTick`: ambient sounds.
@@ -1096,7 +1099,8 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.ambient_sound_time += 1;
         if e.random.next_int_bounded(1000) < t {
             m.ambient_sound_time = -m.kind.ambient_sound_interval();
-            if let Some(s) = m.kind.ambient_sound() {
+            let sound = m.kind.ambient_sound();
+            if let Some(s) = m.kind.ext().map_or(sound, |k| k.ambient_sound(m, sound)) {
                 make_sound(e, m, level, s);
             }
         }
@@ -1591,13 +1595,13 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         if amount <= m.last_hurt {
             return false;
         }
-        actually_hurt(m, source, amount - m.last_hurt);
+        actually_hurt(e.id, m, source, amount - m.last_hurt);
         m.last_hurt = amount;
         false
     } else {
         m.last_hurt = amount;
         m.damage_cooldown = 20;
-        actually_hurt(m, source, amount);
+        actually_hurt(e.id, m, source, amount);
         m.hurt_duration = 10;
         m.hurt_time = 10;
         true
@@ -1646,7 +1650,7 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
 }
 
 /// `LivingEntity.actuallyHurt`: armor, absorption, health.
-fn actually_hurt(m: &mut MobData, source: DamageSource, amount: f32) {
+fn actually_hurt(id: i32, m: &mut MobData, source: DamageSource, amount: f32) {
     let mut amount = amount;
     if !source.kind.is_tag("minecraft:bypasses_armor") {
         let armor = crate::math::floor(m.attrs.value(Attr::Armor)) as f32;
@@ -1654,6 +1658,9 @@ fn actually_hurt(m: &mut MobData, source: DamageSource, amount: f32) {
         let f = 2.0 + toughness / 4.0;
         let g = mth::clamp(armor - amount / f, armor * 0.2, 20.0);
         amount *= 1.0 - g / 25.0;
+    }
+    if let Some(k) = m.kind.ext() {
+        amount = k.damage_after_magic_absorb(id, m, &source, amount);
     }
     let before = amount;
     amount = (amount - m.absorption).max(0.0);
@@ -2079,6 +2086,9 @@ impl DamageKind {
             DamageKind::PlayerExplosion => "minecraft:player_explosion",
             DamageKind::Fireball => "minecraft:fireball",
             DamageKind::Trident => "minecraft:trident",
+            DamageKind::MobProjectile => "minecraft:mob_projectile",
+            DamageKind::Magic => "minecraft:magic",
+            DamageKind::IndirectMagic => "minecraft:indirect_magic",
         }
     }
 

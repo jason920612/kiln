@@ -39,6 +39,14 @@ pub struct PlayerView {
     /// `isInWater` when known (`None`: from the blocks around the player, as its own tick
     /// would find).
     pub in_water: Option<bool>,
+    /// The item id on the head (`EquipmentSlot.HEAD`; 0 for none).
+    pub head: i32,
+    /// Rotations: `yHeadRot` (a player's head turns with its body) and `xRot`, in degrees.
+    pub yaw: f32,
+    pub pitch: f32,
+    pub health: f32,
+    /// Active effects: bit `id` for `minecraft:mob_effect` network id `id` (below 64).
+    pub effects: u64,
 }
 
 impl PlayerView {
@@ -59,7 +67,17 @@ impl PlayerView {
             off_hand: 0,
             piglin_safe_armor: false,
             in_water: None,
+            head: 0,
+            yaw: 0.0,
+            pitch: 0.0,
+            health: 20.0,
+            effects: 0,
         }
+    }
+
+    /// `hasEffect` for a `minecraft:` effect id.
+    pub fn has_effect(&self, effect: &str) -> bool {
+        kiln_data::builtin_id("minecraft:mob_effect", effect).is_some_and(|id| (0..64).contains(&id) && self.effects & (1 << id) != 0)
     }
 }
 
@@ -93,6 +111,10 @@ pub enum DamageKind {
     Fireball,
     /// `minecraft:trident` (a thrown trident).
     Trident,
+    /// `mobProjectile` (shulker bullets, llama spit).
+    MobProjectile,
+    Magic,
+    IndirectMagic,
 }
 
 /// Side effects the simulation carries out or broadcasts.
@@ -135,6 +157,12 @@ pub enum Event {
     },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
+    /// `addEffect` on player `target` (a `minecraft:mob_effect` id) from `source`. Mobs have no
+    /// effects in Kiln.
+    MobEffect { target: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32> },
+    /// A splash potion (`minecraft:` potion id) reached player `target` at `scale` of its full
+    /// strength (`ThrownSplashPotion.onHitAsPotion`); `owner` threw it.
+    PotionSplash { target: i32, potion: &'static str, scale: f64, owner: Option<i32> },
     /// `dropFromShearingLootTable` (a sheep's wool).
     ShearLoot { entity: i32, table: String, pos: Vec3 },
 }

@@ -146,6 +146,11 @@ fn replay(s: &Value) -> Result<usize, String> {
         if let Some(item) = p.get("main_hand").and_then(Value::as_str) {
             v.main_hand = kiln_data::builtin_id("minecraft:item", item).unwrap();
         }
+        if let Some(item) = p.get("head").and_then(Value::as_str) {
+            v.head = kiln_data::builtin_id("minecraft:item", item).unwrap();
+        }
+        v.yaw = p.get("yaw").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        v.pitch = p.get("pitch").and_then(Value::as_f64).unwrap_or(0.0) as f32;
         v
     });
     if let Some(p) = player {
@@ -333,7 +338,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     }
     // Vanilla arrows draw their damage and spread from their own random, which is seeded from
     // the clock (not pinnable): skeleton scenarios compare the mob, not where arrows land.
-    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident")));
+    // Shulker bullets likewise steer by their own random.
+    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident")) || matches!(m["type"].as_str(), Some("minecraft:shulker" | "minecraft:witch")));
     let f32s = |v: &[(i64, f64)]| v.iter().map(|&(t, a)| (t, (a as f32).to_bits())).collect::<Vec<_>>();
     if !arrows && f32s(&got_hits) != f32s(&want_hits) {
         return Err(format!("player hits {got_hits:?} (kiln) vs {want_hits:?} (vanilla)"));

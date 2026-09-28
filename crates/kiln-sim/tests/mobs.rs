@@ -429,6 +429,75 @@ fn hoglins_attack_and_breed() {
 }
 
 #[test]
+fn staring_at_an_enderman_angers_it() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:enderman", [0.0, 0.0, 5.0], "{PersistenceRequired:1b}");
+    // Looking straight ahead does not meet its eyes; looking up at them does.
+    w.ticks(60);
+    assert_eq!(w.health(), 20.0, "not stared at");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: None, rot: Some([0.0, -10.5]), on_ground: true })]));
+    // It freezes while looked at; looking away lets it come.
+    w.ticks(30);
+    assert_eq!(w.health(), 20.0, "frozen while stared at");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: None, rot: Some([180.0, 0.0]), on_ground: true })]));
+    w.ticks(200);
+    assert!(w.health() < 20.0, "the enderman attacked (health {})", w.health());
+}
+
+#[test]
+fn shulker_bullets_hurt_and_levitate() {
+    let mut w = World::new();
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:shulker", [0.0, 0.0, 5.0], "");
+    let mut levitated = false;
+    for _ in 0..300 {
+        w.ticks(1);
+        let fx = w.sim.effects(1).unwrap();
+        levitated |= fx.iter().any(|e| e.0 == "minecraft:levitation");
+    }
+    assert!(w.health() < 20.0, "a bullet hit (health {})", w.health());
+    assert!(levitated, "the hit made the player levitate");
+}
+
+#[test]
+fn witches_throw_potions() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:witch", [0.0, 0.0, 9.0], "{PersistenceRequired:1b}");
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..300 {
+        w.ticks(1);
+        for e in w.sim.effects(1).unwrap() {
+            seen.insert(e.0);
+        }
+    }
+    // From 9 blocks away the first potion is slowness; poison and harming follow.
+    assert!(seen.contains("minecraft:slowness"), "splashed with slowness ({seen:?})");
+    assert!(w.health() < 20.0 || seen.contains("minecraft:poison"), "hurt or poisoned ({seen:?}, health {})", w.health());
+}
+
+#[test]
+fn end_city_sentries_load_as_shulkers() {
+    use kiln_proto::nbt::Tag;
+    // The compound end city generation leaves for a sentry.
+    let tag = Tag::Compound(vec![
+        ("id".into(), Tag::String("minecraft:shulker".into())),
+        ("Pos".into(), Tag::List(vec![Tag::Double(3.5), Tag::Double(70.0), Tag::Double(4.5)])),
+        ("Rotation".into(), Tag::List(vec![Tag::Float(0.0), Tag::Float(0.0)])),
+        ("AttachFace".into(), Tag::Byte(1)),
+        ("Peek".into(), Tag::Byte(0)),
+        ("Color".into(), Tag::Byte(16)),
+    ]);
+    let e = kiln_entity::persist::load(&tag, 7, 1).expect("loads");
+    let m = kiln_entity::mob::data(&e).expect("a mob");
+    assert_eq!(m.kind, kiln_entity::mob::MobKind::Shulker);
+    assert_eq!(kiln_entity::mob::kinds::shulker::st(m).attach, kiln_entity::math::Direction::Up);
+}
+
+#[test]
 fn every_mob_type_summons_ticks_and_saves() {
     let mut w = World::new();
     w.console("gamemode creative Hunter");
@@ -438,6 +507,10 @@ fn every_mob_type_summons_ticks_and_saves() {
     }
     w.ticks(100);
     for kind in kiln_entity::mob::ALL_KINDS {
+        // Endermen hunt endermites.
+        if kind == kiln_entity::mob::MobKind::Endermite {
+            continue;
+        }
         assert!(!w.mobs(kind.type_name()).is_empty(), "{} is gone", kind.type_name());
     }
 }
