@@ -17,6 +17,7 @@ pub mod fishing_hook;
 pub mod lightning;
 pub mod shulker_bullet;
 pub mod trident;
+pub mod wither_skull;
 
 /// An extension entity's state and behaviour.
 pub trait EntityExt: Any + Debug + Send + Sync {
@@ -81,6 +82,7 @@ pub const TYPES: &[&str] = &[
     "minecraft:evoker_fangs",
     "minecraft:end_crystal",
     "minecraft:dragon_fireball",
+    "minecraft:wither_skull",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -93,6 +95,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:evoker_fangs" => evoker_fangs::load(r),
         "minecraft:end_crystal" => end_crystal::load(r),
         "minecraft:dragon_fireball" => dragon_fireball::load(r),
+        "minecraft:wither_skull" => wither_skull::load(r),
         _ => None,
     }
 }

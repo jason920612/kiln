@@ -576,6 +576,12 @@ pub trait Kind: Sync + Send {
         let _ = (e, m);
         None
     }
+    /// `checkDespawn` in place of `Mob.checkDespawn` (the wither stays and never idles): true
+    /// when handled.
+    fn check_despawn(&self, e: &mut Entity, level: &dyn EntityLevel) -> bool {
+        let _ = (e, level);
+        false
+    }
 }
 
 /// `Mob.finalizeSpawn`: the follow range bonus and left-handedness, from `r` (the level's random).

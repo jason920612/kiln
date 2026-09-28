@@ -211,6 +211,10 @@ pub enum DamageKind {
     // -- slice 3: the end
 
     // -- slice 3: wither and guardians
+    /// `witherSkull` (a wither skull's direct hit).
+    WitherSkull,
+    /// `thorns` (a guardian's spikes; thorns armor).
+    Thorns,
 
     // -- slice 3: warden
 
@@ -283,6 +287,10 @@ pub enum Event {
     Raid(RaidEvent),
     /// What the ender dragon and end crystals tell the level's dragon fight.
     DragonFight(DragonFightEvent),
+    /// `Level.globalLevelEvent` (the wither's spawn sound heard everywhere).
+    GlobalLevelEvent { event: i32, pos: BlockPos, data: i32 },
+    /// A `ClientboundGameEventPacket` for player `player` (10: the elder guardian's curse).
+    PlayerGameEvent { player: i32, event: u8, param: f32 },
 }
 
 /// The level's `EnderDragonFight` as its dragon and crystals see it
@@ -525,6 +533,12 @@ pub trait EntityLevel {
     fn add_effect_instance(&mut self, id: i32, effect: crate::effect::Effect, source: Option<i32>) -> bool {
         let _ = (id, effect, source);
         false
+    }
+
+    /// Player `id`'s active `effect` as (amplifier, remaining ticks; -1 infinite).
+    fn player_effect(&self, id: i32, effect: &str) -> Option<(i32, i32)> {
+        let _ = (id, effect);
+        None
     }
 
     /// `MobEffect.applyInstantaneousEffect` on player or entity `id` (a splash potion's or a

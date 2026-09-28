@@ -40,9 +40,26 @@ pub fn explode(
     fire: bool,
     interaction: Interaction,
 ) -> Vec<BlockPos> {
+    explode_with(level, source, center, radius, fire, interaction, None)
+}
+
+/// The source entity's `getBlockExplosionResistance(.., state, .., resistance)` (a dangerous
+/// wither skull's weaker blocks), applied to each block's resistance.
+pub type Resistance<'a> = &'a dyn Fn(u16, f32) -> f32;
+
+/// [`explode`] with the source entity's block resistance override.
+pub fn explode_with(
+    level: &mut dyn EntityLevel,
+    source: Option<i32>,
+    center: Vec3,
+    radius: f32,
+    fire: bool,
+    interaction: Interaction,
+    resistance: Option<Resistance>,
+) -> Vec<BlockPos> {
     let interaction = interaction.resolved();
     level.emit(Event::GameEvent { event: "minecraft:explode", pos: center, entity: source });
-    let mut positions = exploded_positions(level, center, radius);
+    let mut positions = exploded_positions(level, center, radius, resistance);
     hurt_entities(level, source, center, radius, interaction);
     if interaction != Interaction::Keep {
         shuffle(&mut positions, level);
@@ -67,7 +84,7 @@ pub fn explode(
 
 /// `calculateExplodedPositions`: 16³ edge rays losing strength through blocks. The result is in
 /// `HashSet<BlockPos>` iteration order, which vanilla's shuffle starts from.
-fn exploded_positions(level: &mut dyn EntityLevel, center: Vec3, radius: f32) -> Vec<BlockPos> {
+fn exploded_positions(level: &mut dyn EntityLevel, center: Vec3, radius: f32, resistance: Option<Resistance>) -> Vec<BlockPos> {
     let mut set: Vec<BlockPos> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for i in 0..16 {
@@ -94,7 +111,10 @@ fn exploded_positions(level: &mut dyn EntityLevel, center: Vec3, radius: f32) ->
                     let f = physics::fluid_state(state);
                     if !(physics::is_air(state) && f.is_empty()) {
                         let fluid_res = if f.is_empty() { 0.0 } else { 100.0 };
-                        let res = physics::block_factors(state).explosion_resistance.max(fluid_res);
+                        let mut res = physics::block_factors(state).explosion_resistance.max(fluid_res);
+                        if let Some(f) = resistance {
+                            res = f(state, res);
+                        }
                         strength -= (res + 0.3) * 0.3;
                     }
                     if strength > 0.0 && seen.insert(pos) {

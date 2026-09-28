@@ -709,7 +709,9 @@ pub(crate) fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level:
         Goal::HurtByTarget { target_mob, unseen, unseen_memory, .. } => {
             continue_target(e, m, level, *target_mob, true, unseen, *unseen_memory)
         }
-        Goal::NearestAttackable { must_see, target: tg, unseen, .. } => continue_target(e, m, level, *tg, *must_see, unseen, 60),
+        // `NearestAttackableTargetGoal` never sets `targetMob`: once the mob's target is cleared
+        // (a guardian's beam fired) the goal stops.
+        Goal::NearestAttackable { must_see, unseen, .. } => continue_target(e, m, level, None, *must_see, unseen, 60),
         _ => can_use(g, e, m, level),
     }
 }

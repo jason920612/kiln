@@ -47,6 +47,8 @@ pub mod villager_poi;
 pub mod ender_dragon;
 
 // -- slice 3: wither and guardians
+pub mod wither;
+pub mod guardian;
 
 // -- slice 3: warden
 
@@ -96,6 +98,9 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::EnderDragon => &ender_dragon::KIND,
 
         // -- slice 3: wither and guardians
+        MobKind::Wither => &wither::KIND,
+        MobKind::Guardian => &guardian::GUARDIAN,
+        MobKind::ElderGuardian => &guardian::ELDER,
 
         // -- slice 3: warden
 

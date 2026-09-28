@@ -94,6 +94,9 @@ pub enum MobKind {
     EnderDragon,
 
     // -- slice 3: wither and guardians
+    Wither,
+    Guardian,
+    ElderGuardian,
 
     // -- slice 3: warden
 
@@ -188,6 +191,9 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::EnderDragon,
 
     // -- slice 3: wither and guardians
+    MobKind::Wither,
+    MobKind::Guardian,
+    MobKind::ElderGuardian,
 
     // -- slice 3: warden
 
@@ -1463,7 +1469,7 @@ fn jump_from_ground(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
 }
 
 /// `LivingEntity.travel`.
-fn travel(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
+pub fn travel(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
     if e.is_in_water() || e.is_in_lava() {
         travel_in_fluid(e, m, level, input);
     } else {
@@ -2301,6 +2307,12 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
     if m.kind.ext().is_some_and(|k| !k.despawns()) {
         return;
     }
+    if let Some(k) = m.kind.ext()
+        && k.check_despawn(e, level)
+    {
+        return;
+    }
+    let Some(m) = data(e) else { return };
     if level.difficulty() == 0 && !m.kind.is_animal() {
         e.discard();
         return;
@@ -2367,6 +2379,8 @@ impl DamageKind {
             // -- slice 3: the end
 
             // -- slice 3: wither and guardians
+            DamageKind::WitherSkull => "minecraft:wither_skull",
+            DamageKind::Thorns => "minecraft:thorns",
 
             // -- slice 3: warden
 
