@@ -129,6 +129,11 @@ pub(crate) fn summon(
     seed: i64,
 ) -> Option<kiln_proto::nbt::Tag> {
     use kiln_proto::nbt::Tag;
+    if entity == "minecraft:lightning_bolt" {
+        let kind = &kiln_data::entities::types::LIGHTNING_BOLT;
+        spawns.push(Spawn { kind, pos, vel: [0.0; 3], body: crate::entities::Body::Lightning { visual_only: false } });
+        return Some(Tag::Compound(vec![("translate".into(), Tag::String("entity.minecraft.lightning_bolt".into()))]));
+    }
     let kind = MobKind::by_name(entity)?;
     let name = Tag::Compound(vec![("translate".into(), Tag::String(format!("entity.minecraft.{}", kind.short_name())))]);
     match nbt {

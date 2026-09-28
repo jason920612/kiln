@@ -218,6 +218,10 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it.
         C::FireBlock | C::SoulFireBlock if !state::same_block(old, s) => {
             portal::fire_on_place(level, pos);
+            // `FireBlock.onPlace`: the burn-out ticks start.
+            if logic::block_class(s) == C::FireBlock {
+                crate::weather::schedule_fire_tick(level, pos);
+            }
         }
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_schedule(level, s, pos),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::on_place(level, s, pos, old, moved_by_piston),
@@ -250,6 +254,8 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::ButtonBlock => components::button_tick(level, s, pos),
         C::RedstoneLampBlock => components::lamp_tick(level, s, pos),
         C::ObserverBlock => devices::observer_tick(level, s, pos),
+        C::FireBlock => crate::weather::fire_tick(level, s, pos),
+        C::LightningRodBlock | C::WeatheringLightningRodBlock => crate::weather::rod_tick(level, s, pos),
         C::DetectorRailBlock => rail::detector_tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.

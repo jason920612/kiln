@@ -56,6 +56,8 @@ mod enchant;
 mod enchant_parity;
 #[cfg(test)]
 mod effect_parity;
+#[cfg(test)]
+mod weather_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -1334,6 +1336,7 @@ impl Sim {
                 fast_lava: kind.fast_lava,
                 water_evaporates: kind.water_evaporates,
                 tnt_explodes: self.rule_bool("minecraft:tnt_explodes"),
+                infiniburn: kind.infiniburn.trim_start_matches('#'),
             },
             dim,
             min_y: d.min_y,

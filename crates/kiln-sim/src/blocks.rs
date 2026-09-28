@@ -260,7 +260,7 @@ pub(crate) struct EntityBox {
 }
 
 impl EntityBox {
-    fn intersects(&self, min: [f64; 3], max: [f64; 3]) -> bool {
+    pub(crate) fn intersects(&self, min: [f64; 3], max: [f64; 3]) -> bool {
         (0..3).all(|i| self.min[i] < max[i] && self.max[i] > min[i])
     }
 }
@@ -283,7 +283,9 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
         .collect();
     out.extend(entities.list.iter().filter(|e| !e.removed && e.phys.is_some()).map(|e| {
         let (min, max, blocks_building) = e.body();
-        EntityBox { min, max, living: false, blocks_building, conn: None, prevents_rest: e.prevents_rest() }
+        // Mobs are living entities (pressure plates, lightning targets).
+        let living = e.phys.as_ref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
+        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest() }
     }));
     out
 }
@@ -469,6 +471,15 @@ impl Level for RegionLevel<'_> {
         crate::weather::climate(self.cells, self.env, biome_pos, pos)
     }
 
+    fn is_raining_at(&self, pos: BlockPos) -> bool {
+        crate::weather::is_raining_at(self.cells, self.env, pos)
+    }
+
+    fn reseed_random(&mut self, pos: BlockPos) {
+        let (random, _) = chunk_random(self.env.seed ^ ((pos.y as i64) << 20), self.env.game_time, ChunkPos::new(pos.x, pos.z));
+        self.blocks.random = random;
+    }
+
     fn block_light(&self, pos: BlockPos) -> i32 {
         self.cells.light_at(LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
     }
@@ -545,12 +556,103 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
             let (random, rand_value) = chunk_random(level.env.seed, level.env.game_time, c);
             let saved = std::mem::replace(&mut level.blocks.random, random);
             let saved_value = std::mem::replace(&mut level.blocks.data.rand_value, rand_value);
+            tick_thunder(level, c);
             kiln_blocks::tick::tick_chunk_blocks(level, key(c), &sections, speed);
             level.blocks.random = saved;
             level.blocks.data.rand_value = saved_value;
         }
     }
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
+}
+
+/// `ServerLevel.tickThunder` for chunk `c`, with the chunk's random: during a thunderstorm one
+/// chance in 100000 per tick of a bolt at a random column's surface (drawn to a lightning rod
+/// within 128 blocks, or to a living entity under open sky near the column). With
+/// `spawn_mobs`, a chance of the effective difficulty in 100 makes it a skeleton trap's
+/// harmless bolt (Kiln does not spawn the trap's skeleton horse).
+fn tick_thunder(level: &mut RegionLevel, c: ChunkPos) {
+    let w = level.env.weather.weather;
+    if !(w.raining && w.thundering) || level.blocks.random.next_int_bounded(100000) != 0 {
+        return;
+    }
+    let pos = kiln_blocks::tick::block_random_pos(level, c.x * 16, 0, c.z * 16, 15);
+    let target = lightning_target(level, pos);
+    if !crate::weather::is_raining_at(level.cells, level.env, target) {
+        return;
+    }
+    let env = level.env;
+    let ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, crate::spawner::moon_brightness(env.mobs.day_time));
+    let trap = env.mobs.spawn_mobs
+        && level.blocks.random.next_double() < ctx.effective_difficulty as f64 * 0.01
+        && !kiln_blocks::tags::is(level.block(target.below()), "minecraft:lightning_rods");
+    let at = [target.x as f64 + 0.5, target.y as f64, target.z as f64 + 0.5];
+    level.out.spawns.push(Spawn { kind: &kiln_data::entities::types::LIGHTNING_BOLT, pos: at, vel: [0.0; 3], body: entities::Body::Lightning { visual_only: trap } });
+}
+
+/// `ServerLevel.findLightningTargetAround`.
+fn lightning_target(level: &mut RegionLevel, pos: BlockPos) -> BlockPos {
+    let top = BlockPos::new(pos.x, crate::weather::motion_blocking_height(level.cells, level.env, pos.x, pos.z), pos.z);
+    if let Some(rod) = find_lightning_rod(level, top) {
+        return rod.above();
+    }
+    let max_y = level.env.min_y + level.env.height - 1;
+    let (min, max) = ([top.x as f64 - 3.0, top.y as f64 - 3.0, top.z as f64 - 3.0], [top.x as f64 + 4.0, max_y as f64 + 2.0 + 3.0, top.z as f64 + 4.0]);
+    let living: Vec<BlockPos> = level
+        .bodies
+        .iter()
+        .filter(|b| b.living && b.intersects(min, max))
+        .map(|b| BlockPos::new(((b.min[0] + b.max[0]) / 2.0).floor() as i32, b.min[1].floor() as i32, ((b.min[2] + b.max[2]) / 2.0).floor() as i32))
+        .filter(|&p| crate::weather::can_see_sky(level.cells, level.env, p))
+        .collect();
+    if !living.is_empty() {
+        let i = level.blocks.random.next_int_bounded(living.len() as i32) as usize;
+        return living[i];
+    }
+    if top.y == level.env.min_y - 1 { top.above().above() } else { top }
+}
+
+/// `findLightningRod`: the nearest lightning rod within 128 blocks that is the top block of its
+/// column (the POI search over loaded chunks).
+fn find_lightning_rod(level: &RegionLevel, center: BlockPos) -> Option<BlockPos> {
+    const R: i32 = 128;
+    let is_rod = |s: u16| kiln_blocks::tags::is(s, "minecraft:lightning_rods");
+    let mut best: Option<(i64, BlockPos)> = None;
+    for cx in (center.x - R) >> 4..=(center.x + R) >> 4 {
+        for cz in (center.z - R) >> 4..=(center.z + R) >> 4 {
+            let Some(chunk) = level.cells.chunk(ChunkPos::new(cx, cz)) else { continue };
+            for (si, section) in chunk.sections.iter().enumerate() {
+                let maybe = match &section.blocks {
+                    kiln_world::section::BlockContainer::Single(s) => is_rod(*s),
+                    kiln_world::section::BlockContainer::Nibble { palette, .. } | kiln_world::section::BlockContainer::Byte { palette, .. } => {
+                        palette.iter().any(|&s| is_rod(s))
+                    }
+                    kiln_world::section::BlockContainer::Direct(_) => true,
+                };
+                if !maybe {
+                    continue;
+                }
+                let y0 = chunk.min_y() + si as i32 * 16;
+                for i in 0..4096usize {
+                    let (x, y, z) = (i & 15, (i >> 8) as i32, (i >> 4) & 15);
+                    if !is_rod(section.get(x, y as usize, z)) {
+                        continue;
+                    }
+                    let p = BlockPos::new(cx * 16 + x as i32, y0 + y, cz * 16 + z as i32);
+                    let d = [(p.x - center.x) as i64, (p.y - center.y) as i64, (p.z - center.z) as i64];
+                    let d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                    if d2 > (R as i64) * (R as i64) || best.is_some_and(|(b, _)| b <= d2) {
+                        continue;
+                    }
+                    // `WORLD_SURFACE`: the rod is the column's top block.
+                    let surface = chunk.column_height(x, z, |s| !kiln_data::blocks_types::is_air(s));
+                    if p.y == surface - 1 {
+                        best = Some((d2, p));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 /// Generation's leftovers for new chunks whose neighbours are all loaded, in chunk order:
@@ -942,6 +1044,7 @@ mod tests {
                 fast_lava: false,
                 water_evaporates: false,
                 tnt_explodes: true,
+                infiniburn: "minecraft:infiniburn_overworld",
             },
             dim: crate::OVERWORLD_ID,
             min_y: -64,

@@ -307,7 +307,7 @@ pub(crate) fn tick_player(p: &mut Player, level: &mut RegionLevel) {
 }
 
 /// `CollisionGetter`-lite: the block collision boxes (in world space) intersecting a box.
-fn collides(level: &RegionLevel, min: [f64; 3], max: [f64; 3]) -> bool {
+fn collides<L: Level + ?Sized>(level: &L, min: [f64; 3], max: [f64; 3]) -> bool {
     let (x0, y0, z0) = (min[0].floor() as i32, min[1].floor() as i32 - 1, min[2].floor() as i32);
     let (x1, y1, z1) = (max[0].floor() as i32, max[1].floor() as i32, max[2].floor() as i32);
     for x in x0..=x1 {
@@ -344,7 +344,7 @@ fn dangerous(s: u16) -> bool {
 }
 
 /// `DismountHelper.findSafeDismountLocation` for a player at block `pos`.
-fn safe_dismount(level: &RegionLevel, pos: BlockPos, check_dangerous: bool) -> Option<[f64; 3]> {
+fn safe_dismount<L: Level + ?Sized>(level: &L, pos: BlockPos, check_dangerous: bool) -> Option<[f64; 3]> {
     if check_dangerous && dangerous(level.block(pos)) {
         return None;
     }
@@ -370,7 +370,7 @@ fn safe_dismount(level: &RegionLevel, pos: BlockPos, check_dangerous: bool) -> O
 }
 
 /// `AbstractBedBlock.findStandUpPosition` (bunk beds are treated as plain beds).
-fn bed_stand_up(level: &RegionLevel, head: BlockPos, dir: Direction, yaw: f32) -> Option<[f64; 3]> {
+pub(crate) fn bed_stand_up<L: Level + ?Sized>(level: &L, head: BlockPos, dir: Direction, yaw: f32) -> Option<[f64; 3]> {
     let cw = dir.clockwise();
     let rot = if facing_angle(cw, yaw) { cw.opposite() } else { cw };
     let (dx, dz) = (dir.step()[0], dir.step()[2]);
@@ -401,15 +401,16 @@ fn bed_stand_up(level: &RegionLevel, head: BlockPos, dir: Direction, yaw: f32) -
 
 /// `Direction.isFacingAngle`.
 fn facing_angle(dir: Direction, yaw: f32) -> bool {
-    let r = yaw.to_radians();
-    let (x, z) = (-r.sin(), r.cos());
+    // `Mth.sin` and `Mth.cos` (the table) of the angle in float radians.
+    let r = (yaw * 0.017_453_292_f32) as f64;
+    let (x, z) = (-kiln_entity::mob::mth::sin(r), kiln_entity::mob::mth::cos(r));
     let s = dir.step();
     s[0] as f32 * x + s[2] as f32 * z > 0.0
 }
 
 /// `RespawnAnchorBlock.RESPAWN_OFFSETS`: around the anchor, then below, then above those,
 /// then straight up.
-fn anchor_stand_up(level: &RegionLevel, pos: BlockPos) -> Option<[f64; 3]> {
+fn anchor_stand_up<L: Level + ?Sized>(level: &L, pos: BlockPos) -> Option<[f64; 3]> {
     const H: [[i32; 2]; 8] = [[0, -1], [-1, 0], [0, 1], [1, 0], [-1, -1], [1, -1], [-1, 1], [1, 1]];
     let mut offsets: Vec<[i32; 3]> = H.iter().map(|h| [h[0], 0, h[1]]).collect();
     offsets.extend(H.iter().map(|h| [h[0], -1, h[1]]));
@@ -633,7 +634,7 @@ impl SleepStatus {
 
 /// The saved `minecraft:time_since_rest` of a player (its statistics file).
 pub(crate) fn load_time_since_rest(world: &std::path::Path, uuid: uuid::Uuid) -> i32 {
-    let path = world.join("stats").join(format!("{uuid}.json"));
+    let path = world.join("players/stats").join(format!("{uuid}.json"));
     let Ok(text) = std::fs::read_to_string(path) else { return 0 };
     let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { return 0 };
     json.pointer("/stats/minecraft:custom/minecraft:time_since_rest").and_then(|v| v.as_i64()).unwrap_or(0) as i32
@@ -641,7 +642,7 @@ pub(crate) fn load_time_since_rest(world: &std::path::Path, uuid: uuid::Uuid) ->
 
 /// Writes `minecraft:time_since_rest` into the player's statistics file, keeping the rest.
 pub(crate) fn save_time_since_rest(world: &std::path::Path, uuid: uuid::Uuid, value: i32) -> std::io::Result<()> {
-    let dir = world.join("stats");
+    let dir = world.join("players/stats");
     let path = dir.join(format!("{uuid}.json"));
     let mut json = std::fs::read_to_string(&path)
         .ok()

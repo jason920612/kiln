@@ -349,6 +349,23 @@ pub(crate) fn in_rain(cells: &CellSet<Cell>, env: &BlockEnv, pos: [f64; 3], top_
     is_raining_at(cells, env, at) || is_raining_at(cells, env, BlockPos::new(at.x, top_y.floor() as i32, at.z))
 }
 
+/// `LightningBolt.spawnFire` at `pos`: `BaseFireBlock.getState` where the block is air and
+/// the fire survives (a sturdy floor; soul fire on its base blocks).
+pub(crate) fn place_lightning_fire(level: &mut crate::blocks::RegionLevel, pos: BlockPos) -> bool {
+    use kiln_blocks::Level;
+    if !kiln_data::blocks_types::is_air(level.block(pos)) {
+        return false;
+    }
+    let fire = kiln_blocks::behaviour::portal::fire_state(level, pos);
+    let below = level.block(pos.below());
+    let survives = if kiln_blocks::state::is(fire, kiln_data::blocks::default_state::SOUL_FIRE) {
+        true
+    } else {
+        kiln_blocks::behaviour::sturdy(below, kiln_blocks::Direction::Up, kiln_data::block_logic::Support::Full)
+    };
+    survives && kiln_blocks::set_block(level, pos, fire, kiln_blocks::flags::ALL)
+}
+
 impl Sim {
     /// Loads the weather counters (`weather.dat`) and prepares each level's weather.
     pub(crate) fn load_weather(&mut self) {

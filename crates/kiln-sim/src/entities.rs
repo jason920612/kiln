@@ -38,6 +38,8 @@ pub(crate) enum Body {
     /// A new mob facing `yaw`; `finalize` runs its `finalizeSpawn`.
     /// `yaw`: `None` keeps the constructor's random yaw.
     Mob { kind: kiln_entity::mob::MobKind, yaw: Option<f32>, finalize: Option<crate::mobs::Finalize> },
+    /// A lightning bolt (`visual_only`: a skeleton trap's, which hurts nothing).
+    Lightning { visual_only: bool },
 }
 
 pub(crate) struct Entity {
@@ -158,6 +160,7 @@ impl Entity {
                 kiln_entity::falling_block::fall(id, u, BlockPos::containing(pos.x, pos.y, pos.z), state, seed)
             }
             Body::Tnt => kiln_entity::tnt::ignite(id, u, pos, None, seed),
+            Body::Lightning { visual_only } => kiln_entity::ext_entity::lightning::new(id, u, pos, visual_only, seed),
             Body::Mob { kind, yaw, finalize } => {
                 let mut e = kiln_entity::mob::new(kind, id, u, seed);
                 e.set_pos(pos);
@@ -591,6 +594,25 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn is_raining_at(&self, pos: BlockPos) -> bool {
         crate::weather::is_raining_at(self.level.cells, self.level.env, kb(pos))
+    }
+
+    fn place_lightning_fire(&mut self, pos: BlockPos) -> bool {
+        crate::weather::place_lightning_fire(&mut *self.level, kb(pos))
+    }
+
+    fn lightning_strike_block(&mut self, pos: BlockPos) {
+        kiln_blocks::weather::lightning_strike(&mut *self.level, kb(pos));
+    }
+
+    fn thunder_hit_player(&mut self, id: i32) {
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return };
+        // `Entity.thunderHit`: one more tick of fire, 8 seconds if that made it 0.
+        let ticks = p.fire_ticks + 1;
+        p.set_fire_ticks(if ticks == 0 { 160 } else { ticks });
+        let source = health::Source { cause: health::Cause::Entity(DamageKind::LightningBolt), attacker: None, direct: None, weapon: None };
+        let env = self.level.env;
+        let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
+        p.hurt(5.0, &source, &mut ctx);
     }
 
     fn monsters_burn(&self) -> bool {
@@ -1640,5 +1662,6 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::MobProjectile => ("minecraft:mob_projectile", "death.attack.mob"),
         DamageKind::Magic => ("minecraft:magic", "death.attack.magic"),
         DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),
+        DamageKind::LightningBolt => ("minecraft:lightning_bolt", "death.attack.lightningBolt"),
     }
 }

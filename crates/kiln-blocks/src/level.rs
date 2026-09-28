@@ -49,12 +49,21 @@ pub struct Rules {
     pub water_evaporates: bool,
     /// `minecraft:tnt_explodes`.
     pub tnt_explodes: bool,
+    /// The dimension's `infiniburn` block tag (fire never burns out on these).
+    pub infiniburn: &'static str,
 }
 
 impl Default for Rules {
     /// Overworld with default game rules.
     fn default() -> Self {
-        Self { water_source_conversion: true, lava_source_conversion: false, fast_lava: false, water_evaporates: false, tnt_explodes: true }
+        Self {
+            water_source_conversion: true,
+            lava_source_conversion: false,
+            fast_lava: false,
+            water_evaporates: false,
+            tnt_explodes: true,
+            infiniburn: "minecraft:infiniburn_overworld",
+        }
     }
 }
 
@@ -208,6 +217,16 @@ pub trait Level {
     fn block_light(&self, _pos: BlockPos) -> i32 {
         0
     }
+
+    /// `Level.isRainingAt`.
+    fn is_raining_at(&self, _pos: BlockPos) -> bool {
+        false
+    }
+
+    /// Makes the level random's next draws for work at `pos` independent of what else the
+    /// level did (a simulation split into regions reseeds it from the position and time;
+    /// the vanilla level keeps its one random, so the default does nothing).
+    fn reseed_random(&mut self, _pos: BlockPos) {}
 }
 
 /// Which entities a block counts.

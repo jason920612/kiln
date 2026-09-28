@@ -160,3 +160,24 @@ fn beds_explode_in_the_nether() {
     assert!(!state::is(block, d::RED_BED), "the bed is gone");
     assert!(w.sim.health(1).unwrap().0 < health_before, "the explosion hurts");
 }
+
+#[test]
+fn lightning_charges_creepers_converts_pigs_and_lights_fire() {
+    let mut w = World::new("creative");
+    let at = w.at(6, 1, 6);
+    w.run(&format!("summon minecraft:creeper {} {} {}", at[0] as f64 + 0.5, at[1], at[2] as f64 + 0.5));
+    w.run(&format!("summon minecraft:pig {} {} {}", at[0] as f64 + 1.5, at[1], at[2] as f64 + 0.5));
+    w.ticks(2);
+    w.run(&format!("summon minecraft:lightning_bolt {} {} {}", at[0] as f64 + 0.5, at[1], at[2] as f64 + 0.5));
+    w.ticks(3);
+    let names: Vec<&str> = w.sim.mobs().iter().map(|m| m.1).collect();
+    assert!(names.contains(&"minecraft:zombified_piglin") && !names.contains(&"minecraft:pig"), "{names:?}");
+    let creeper = w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(|i| i.as_str()) == Some("minecraft:creeper")).expect("creeper");
+    assert_eq!(creeper.get("powered").and_then(|p| p.as_i64()), Some(1));
+    // Normal difficulty: fire where the bolt struck, burning out after a while.
+    assert!(state::is(w.sim.block_at(at[0], at[1], at[2]).unwrap(), d::FIRE));
+    w.ticks(20);
+    assert!(!w.sim.entities().iter().any(|e| e.0 == "minecraft:lightning_bolt"), "the bolt is gone");
+    w.ticks(600);
+    assert!(!state::is(w.sim.block_at(at[0], at[1], at[2]).unwrap(), d::FIRE), "the fire burnt out");
+}
