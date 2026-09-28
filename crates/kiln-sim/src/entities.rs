@@ -238,7 +238,7 @@ impl Entity {
         MoveState { pos: self.pos, yaw: p.y_rot, pitch: p.x_rot, head_yaw, on_ground: self.on_ground }
     }
 
-    fn metadata(&self) -> EntityData {
+    pub(crate) fn metadata(&self) -> EntityData {
         let mut d = EntityData::new();
         match &self.phys().kind {
             EntityKind::Item(item) => {

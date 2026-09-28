@@ -1101,6 +1101,8 @@ impl Sim {
         p.send_all_effects();
         p.sent_health = None;
         p.sync_health();
+        p.sent_xp = None;
+        p.sync_experience();
         p.self_meta_dirty = true;
         p.attributes_dirty = true;
         let mut spawns = Vec::new();

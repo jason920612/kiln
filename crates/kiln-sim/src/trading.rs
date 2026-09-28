@@ -55,7 +55,7 @@ pub(crate) fn open_if_requested(entities: &mut Entities, p: &mut Player, target:
         p.with_menu(rules, spawns, |open, inventory_menu, env| kiln_inventory::click::close_container(open, inventory_menu, env));
         p.open_menu = None;
     }
-    let id = kiln_inventory::click::next_container_id(&mut p.container_counter);
+    let id = kiln_inventory::click::next_container_id(&mut p.containers.counter);
     let menu = kiln_inventory::Menu::merchant(id, MerchantState::new(target, offers.clone()));
     let Some(menu_type) = menu.kind.menu_type_id() else { return };
     p.send(kiln_inventory::effect::open_screen(id, menu_type, &title(profession)));

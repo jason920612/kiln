@@ -892,6 +892,27 @@ gamerule max_command_sequence_length 0
 execute run say quota
 execute as @a run say quota2
 gamerule max_command_sequence_length 65536
+# experience
+xp query Diff0 points
+xp query Diff0 levels
+experience add Diff0 10
+experience add Diff0 5 levels
+xp query Diff0 levels
+xp query Diff0 points
+experience set Diff0 3 levels
+experience set Diff0 100 points
+experience set Diff0 2 points
+xp query Diff0 points
+experience add @a 7
+experience add @a 2 levels
+experience add Diff0 -1000 levels
+xp query Diff0 levels
+experience query Diff0
+experience set Diff0 -1
+xp set Diff0 0 levels
+xp add Other0 30 levels
+xp query Other0 levels
+xp set Other0 0 levels
 """
 
 

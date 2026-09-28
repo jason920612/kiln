@@ -13,6 +13,8 @@ use crate::table::LootTable;
 use crate::tags::{self, Tags};
 use kiln_item::Identifier;
 use kiln_item::registry;
+use crate::context::LootContext;
+use kiln_javamath::random::RandomSource;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
@@ -322,6 +324,19 @@ impl LootData {
 
     pub fn table_index(&self, id: &Identifier) -> Option<usize> {
         self.names.index(Kind::Table, id)
+    }
+
+    /// `ContextIntProvider.getInt` of the `minecraft:context_int_provider` entry `id` (fuel burn
+    /// times, compost layers...); `None` for an unknown id.
+    pub fn context_int(&self, id: &Identifier, ctx: &dyn LootContext, rng: &mut dyn RandomSource) -> Option<i32> {
+        let i = self.names.index(Kind::IntProvider, id)?;
+        Some(crate::eval::Eval::new(self, ctx, rng).int(&crate::parse::Ref::Named(i)))
+    }
+
+    /// `ContextFloatProvider.getFloat` of the `minecraft:context_float_provider` entry `id`.
+    pub fn context_float(&self, id: &Identifier, ctx: &dyn LootContext, rng: &mut dyn RandomSource) -> Option<f32> {
+        let i = self.names.index(Kind::FloatProvider, id)?;
+        Some(crate::eval::Eval::new(self, ctx, rng).float(&crate::parse::Ref::Named(i)))
     }
 
     /// A loaded loot table.

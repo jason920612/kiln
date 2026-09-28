@@ -201,6 +201,8 @@ pub(crate) struct CommandState {
     pub stop_requested: bool,
     /// Last tick statistics report, for `/kiln tick`.
     pub last_report: Option<String>,
+    /// Packets `/kiln use` made for players, handled with the next tick's packets.
+    pub injected: Vec<(ConnId, kiln_link::PlayIn)>,
 }
 
 impl CommandState {
@@ -231,6 +233,7 @@ impl CommandState {
             rng: 0x9E37_79B9_7F4A_7C15,
             stop_requested: false,
             last_report: None,
+            injected: Vec::new(),
         }
     }
 }
@@ -243,6 +246,13 @@ impl Sim {
         let [x, y, z] = pos;
         let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
         let chunk_pos = ChunkPos::of_block(x, z);
+        // A live container writes its state into the chunk first.
+        if let Some(region) = self.dims[dim].regions.at_mut(chunk_pos.cell()) {
+            let (cells, part) = region.cells_and_part_mut();
+            if let Some(chunk) = cells.chunk_mut(chunk_pos) {
+                part.1.containers.store(chunk_pos, chunk);
+            }
+        }
         let Some(chunk) = self.dims[dim].regions.chunk_mut(chunk_pos) else { return false };
         let Some(old) = chunk.block_entity(lx, y, lz).cloned() else { return false };
         let mut be = kiln_world::block_entity::BlockEntity::new(old.kind);
@@ -253,6 +263,12 @@ impl Sim {
             return false;
         }
         chunk.set_block_entity(lx, y, lz, be);
+        // A container's live state follows the new data.
+        if let Some(region) = self.dims[dim].regions.at_mut(chunk_pos.cell()) {
+            let (cells, part) = region.cells_and_part_mut();
+            let be = cells.chunk(chunk_pos).and_then(|c| c.block_entity(lx, y, lz));
+            part.1.containers.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+        }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);
         for p in self.players.values_mut().filter(|p| p.dim == dim && p.sent_chunks.contains(&chunk_pos)) {
@@ -641,6 +657,39 @@ impl Host for Sim {
         Some(self.players.get_mut(&entity.conn)?.remove_all_effects())
     }
 
+    fn add_experience(&mut self, player: &PlayerRef, amount: i32, kind: kiln_command::vanilla::experience::XpKind) {
+        let Some(p) = self.players.get_mut(&player.conn) else { return };
+        match kind {
+            kiln_command::vanilla::experience::XpKind::Points => p.give_experience_points(amount),
+            kiln_command::vanilla::experience::XpKind::Levels => p.give_experience_levels(amount),
+        }
+    }
+
+    fn set_experience(&mut self, player: &PlayerRef, amount: i32, kind: kiln_command::vanilla::experience::XpKind) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        match kind {
+            // `ServerPlayer.setExperiencePoints`: the progress into the current level.
+            kiln_command::vanilla::experience::XpKind::Points => {
+                let need = p.xp_needed_for_next_level() as f32;
+                if amount as f32 >= need {
+                    return false;
+                }
+                p.xp_progress = (amount as f32 / need).clamp(0.0, (need - 1.0) / need);
+            }
+            kiln_command::vanilla::experience::XpKind::Levels => p.xp_level = amount,
+        }
+        p.sent_xp = None;
+        true
+    }
+
+    fn query_experience(&mut self, player: &PlayerRef, kind: kiln_command::vanilla::experience::XpKind) -> i32 {
+        let Some(p) = self.players.get(&player.conn) else { return 0 };
+        match kind {
+            kiln_command::vanilla::experience::XpKind::Points => (p.xp_progress * p.xp_needed_for_next_level() as f32).floor() as i32,
+            kiln_command::vanilla::experience::XpKind::Levels => p.xp_level,
+        }
+    }
+
     fn kick(&mut self, player: &PlayerRef, reason: Text) {
         if let Some(p) = self.players.get_mut(&player.conn) {
             p.flush();
@@ -783,6 +832,13 @@ impl Host for Sim {
         lines
     }
 
+    fn kiln_use(&mut self, player: &PlayerRef, pos: [i32; 3]) -> bool {
+        let Some(p) = self.players.get(&player.conn) else { return false };
+        let pkt = kiln_link::PlayIn::UseItemOn { hand: 0, pos, face: 1, cursor: [0.5, 1.0, 0.5], inside: false, sequence: p.ack_block_changes.max(0) };
+        self.commands.injected.push((player.conn, pkt));
+        true
+    }
+
     fn kiln_regions(&mut self) -> Vec<Text> {
         let mut players: std::collections::BTreeMap<(crate::DimId, kiln_region::RegionId), usize> = Default::default();
         for p in self.players.values() {
@@ -827,7 +883,15 @@ impl Host for Sim {
     /// `BlockEntity.saveWithFullMetadata`.
     fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
         let [x, y, z] = pos;
-        let chunk = self.dims[crate::dim_id(dimension)?].regions.chunk(ChunkPos::of_block(x, z))?;
+        let dim = crate::dim_id(dimension)?;
+        // A live container writes its state into the chunk first.
+        if let Some(region) = self.dims[dim].regions.at_mut(ChunkPos::of_block(x, z).cell()) {
+            let (cells, part) = region.cells_and_part_mut();
+            if let Some(chunk) = cells.chunk_mut(ChunkPos::of_block(x, z)) {
+                part.1.containers.store(ChunkPos::of_block(x, z), chunk);
+            }
+        }
+        let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;
         chunk.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| be.saved(pos))
     }
 

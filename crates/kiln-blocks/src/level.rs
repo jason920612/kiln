@@ -159,6 +159,16 @@ pub trait Level {
         0
     }
 
+    /// Players looking into the container block entity at `pos` (`ContainerOpenersCounter`):
+    /// a trapped chest's signal.
+    fn container_openers(&self, _pos: BlockPos) -> i32 {
+        0
+    }
+
+    /// A scheduled tick of a block whose behaviour lives in its block entity: chests, barrels
+    /// and ender chests recheck their openers, dispensers and droppers dispense.
+    fn block_entity_tick(&mut self, _pos: BlockPos, _state: u16) {}
+
     /// The analog output of the single item frame at `pos` facing `facing`, if exactly one.
     fn item_frame_analog(&self, _pos: BlockPos, _facing: Direction) -> Option<i32> {
         None

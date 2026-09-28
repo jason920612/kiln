@@ -526,6 +526,16 @@ pub trait Host: SelectorWorld {
     fn remove_effect(&mut self, _entity: &Self::Entity, _effect: &Identifier) -> Option<bool> {
         None
     }
+    /// `ExperienceCommand.Type.add`: points (`giveExperiencePoints`) or levels.
+    fn add_experience(&mut self, _player: &Self::Entity, _amount: i32, _kind: crate::vanilla::experience::XpKind) {}
+    /// `ExperienceCommand.Type.set`: false when points are not below the level's need.
+    fn set_experience(&mut self, _player: &Self::Entity, _amount: i32, _kind: crate::vanilla::experience::XpKind) -> bool {
+        false
+    }
+    /// `ExperienceCommand.Type.query`: points into the level, or the level.
+    fn query_experience(&mut self, _player: &Self::Entity, _kind: crate::vanilla::experience::XpKind) -> i32 {
+        0
+    }
     /// `LivingEntity.removeAllEffects`; `None` for entities that are not living.
     fn clear_effects(&mut self, _entity: &Self::Entity) -> Option<bool> {
         None
@@ -574,6 +584,11 @@ pub trait Host: SelectorWorld {
     fn kiln_tick(&mut self) -> Vec<Text>;
     /// `/kiln regions`: region report lines.
     fn kiln_regions(&mut self) -> Vec<Text>;
+    /// `/kiln use <player> <pos>`: the player right-clicks the block at `pos` with its main
+    /// hand, as its client would (for tools and tests). Whether it was queued.
+    fn kiln_use(&mut self, _player: &Self::Entity, _pos: [i32; 3]) -> bool {
+        false
+    }
 
     /// Whether chunk `(cx, cz)` of `dimension` is loaded (`ChunkSource.hasChunk`).
     fn is_chunk_loaded(&self, dimension: &str, cx: i32, cz: i32) -> bool;

@@ -5,6 +5,7 @@ mod blocks;
 mod bossbar;
 mod chat;
 mod effect;
+pub mod experience;
 mod summon;
 mod execute;
 mod function;
@@ -48,6 +49,8 @@ pub const COMMANDS: &[&str] = &[
     "gamerule",
     "give",
     "effect",
+    "experience",
+    "xp",
     "seed",
     "stop",
     "kick",
@@ -94,6 +97,7 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     server::gamerule(d);
     players::give(d);
     effect::effect(d);
+    experience::experience(d);
     summon::summon(d);
     server::seed(d);
     server::stop(d);
