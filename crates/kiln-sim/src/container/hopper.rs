@@ -210,6 +210,11 @@ pub(crate) fn with_target<R>(level: &mut RegionLevel, target: &Target, f: impl F
         let mut view = View { parts: taken.iter_mut().map(|(_, c)| c).collect() };
         f(&mut view)
     };
+    // A furnace's new input item restarts its cooking at once (`setItem`).
+    let rules = level.env.menus.clone();
+    for (_, c) in &mut taken {
+        super::furnace::apply_input_change(c, &rules);
+    }
     for (p, c) in taken {
         level.blocks.containers.map.insert(p, c);
     }

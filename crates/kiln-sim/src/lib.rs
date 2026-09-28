@@ -45,6 +45,8 @@ mod stats;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
+#[cfg(test)]
+mod container_parity;
 mod enchant;
 #[cfg(test)]
 mod enchant_parity;
