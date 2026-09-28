@@ -566,10 +566,18 @@ pub(crate) fn finish(cells: &CellSet<Cell>, out: BlockOut, players: &mut [&mut P
         let pkt = world_fx::block_destruction(breaker, pos, u8::try_from(stage).ok());
         send_near(players, BlockPos::new(pos[0], pos[1], pos[2]), 32.0, &pkt, |p| p.entity_id != breaker);
     }
+    // Drops are seeded per position (not by their place among the region's effects, which
+    // depends on what else the region did that tick).
+    let mut drops_at: std::collections::HashMap<BlockPos, usize> = std::collections::HashMap::new();
     for (i, (actor, effect)) in out.effects.into_iter().enumerate() {
         let others = |p: &&mut Player| Some(p.conn) != actor;
         match effect {
             Effect::Drop { pos, state } => {
+                let i = {
+                    let n = drops_at.entry(pos).or_insert(0);
+                    *n += 1;
+                    *n - 1
+                };
                 if env.drops {
                     // The breaking player's held item is the tool; other breaks use an empty hand.
                     let tool = actor.and_then(|c| players.iter().find(|p| p.conn == c)).map(|p| p.inv.selected_item().clone());

@@ -698,7 +698,7 @@ pub(crate) fn tick(
             p.send(entity::set_entity_motion(p.entity_id, arr(pr.delta)));
         }
     }
-    for (n, event) in events.into_iter().enumerate() {
+    for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
 }
@@ -898,7 +898,7 @@ pub(crate) fn hit_mob(
     if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == hit.attacker) {
         p.last_hurt_mob = Some((hit.target, level.env.game_time));
     }
-    for (n, event) in events.into_iter().enumerate() {
+    for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
 }
@@ -1048,9 +1048,33 @@ pub(crate) fn interact_mob(
         let pkt = world_fx::sound(&world_fx::Sound::Registered(id), world_fx::SoundSource::Players, p.pos, 1.0, 1.0, level.env.game_time);
         p.send(pkt);
     }
-    for (n, event) in events.into_iter().enumerate() {
+    for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
+}
+
+/// Events with the index each gets for its seeds (sounds, loot): counted per source (the
+/// entity, or the position), so they do not depend on what else the region's entities did.
+fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
+    let mut seen: std::collections::HashMap<(u8, u64), usize> = std::collections::HashMap::new();
+    let pos_key = |p: Vec3| p.x.to_bits() ^ p.y.to_bits().rotate_left(21) ^ p.z.to_bits().rotate_left(42);
+    events
+        .into_iter()
+        .map(|ev| {
+            let key = match &ev {
+                Event::DeathLoot { entity, .. } | Event::GiftLoot { entity, .. } | Event::ShearLoot { entity, .. } => (0, *entity as u32 as u64),
+                Event::EntityEvent { entity, .. } | Event::MobHurt { entity, .. } => (1, *entity as u32 as u64),
+                Event::Sound { pos, .. } => (2, pos_key(*pos)),
+                Event::Explosion { pos, .. } => (3, pos_key(*pos)),
+                Event::Hurt { target, .. } => (4, *target as u32 as u64),
+                _ => (5, 0),
+            };
+            let n = seen.entry(key).or_insert(0);
+            let i = *n;
+            *n += 1;
+            (i, ev)
+        })
+        .collect()
 }
 
 fn carry_out(

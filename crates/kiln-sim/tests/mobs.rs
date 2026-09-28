@@ -122,7 +122,10 @@ fn players_kill_pigs() {
     assert!(entities.iter().any(|e| e.0 == "minecraft:experience_orb"), "experience for a player kill: {entities:?}");
     // With the vanilla datapack's loot tables, the pig drops porkchops (1 to 3).
     if std::env::var_os("KILN_DATAPACK").is_some() {
-        assert!(entities.iter().any(|e| e.0 == "minecraft:item"), "loot: {entities:?}");
+        // (dropped, or already picked up by the player standing next to it)
+        let porkchop = kiln_data::builtin_id("minecraft:item", "minecraft:porkchop");
+        let picked = w.sim.inventory(1).unwrap().iter().flatten().any(|s| Some(s.0) == porkchop);
+        assert!(picked || entities.iter().any(|e| e.0 == "minecraft:item"), "loot: {entities:?}");
     }
 }
 
