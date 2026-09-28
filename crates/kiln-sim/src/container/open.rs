@@ -202,6 +202,16 @@ impl Player {
                     }
                 }
                 kiln_inventory::Effect::InventoryChanged { stack, .. } => self.inventory_changed(&stack),
+                // `BrewedPotionTrigger`.
+                kiln_inventory::Effect::BrewedPotion { potion } => {
+                    self.fire_conds("minecraft:brewed_potion", None, |c, _, _| {
+                        c.get("potion").and_then(|v| v.as_str()).is_none_or(|want| {
+                            potion.and_then(|p| kiln_item::registry::POTION.name(p)).is_some_and(|have| {
+                                kiln_item::ident::Identifier::parse(want).is_some_and(|w| w.to_string() == have)
+                            })
+                        })
+                    });
+                }
                 e @ (kiln_inventory::Effect::GrindstoneUsed { .. }
                 | kiln_inventory::Effect::AnvilUsed { .. }
                 | kiln_inventory::Effect::LoomUsed
@@ -361,6 +371,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         BeKind::Hopper => single(Menu::hopper),
         BeKind::Dispenser | BeKind::Dropper => single(Menu::generic_3x3),
         BeKind::Furnace(kind) => single(furnace_menu(kind)),
+        BeKind::BrewingStand => single(Menu::brewing_stand),
         BeKind::EnderChest => return None,
     })
 }

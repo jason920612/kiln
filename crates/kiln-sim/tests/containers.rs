@@ -212,6 +212,40 @@ fn furnaces_smelt_with_fuel() {
     assert_eq!(items, vec![(2, "minecraft:iron_ingot", 2)]);
 }
 
+/// A brewing stand with a water bottle, nether wart and blaze powder: the bottle shows in the
+/// block state, and 400 ticks later the potion is awkward; taking it fires `brewed_potion`.
+#[test]
+fn brewing_stands_brew_with_blaze_powder() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    let stand = w.at(2, 1, 0);
+    let water = "{Slot:0b,id:\"minecraft:potion\",count:1,components:{\"minecraft:potion_contents\":{potion:\"minecraft:water\"}}}";
+    w.run(&format!(
+        "setblock {} {} {} minecraft:brewing_stand{{Items:[{water},{{Slot:3b,id:\"minecraft:nether_wart\",count:1}},{{Slot:4b,id:\"minecraft:blaze_powder\",count:1}}]}}",
+        stand[0], stand[1], stand[2]
+    ));
+    w.ticks(3);
+    assert!(state::get_bool(w.block(stand), "has_bottle_0") && !state::get_bool(w.block(stand), "has_bottle_1"));
+    let (_, data) = w.sim.container_at(stand).unwrap();
+    // (Fuel, total fuel, brew time, total brew time.)
+    assert_eq!((data[0], data[1], data[3]), (19, 20, 400), "blaze powder gives 20 brews, one under way");
+    w.ticks(410);
+    let (items, _) = w.sim.container_at(stand).unwrap();
+    assert_eq!(items.iter().map(|i| (i.0, i.1)).collect::<Vec<_>>(), vec![(0, "minecraft:potion")], "the wart is used up");
+    // Open it and shift-click the potion out.
+    w.use_on(stand);
+    w.ticks(1);
+    w.click(1, 0, 0, ContainerInput::QuickMove);
+    w.ticks(1);
+    let (items, _) = w.sim.container_at(stand).unwrap();
+    assert!(items.is_empty(), "the potion was taken: {items:?}");
+    if let Some(done) = w.sim.criterion_done(1, "minecraft:nether/brew_potion", "potion") {
+        assert!(done, "brewed_potion");
+    }
+}
+
 #[test]
 fn droppers_drop_and_feed_containers() {
     let mut w = World::new("creative");

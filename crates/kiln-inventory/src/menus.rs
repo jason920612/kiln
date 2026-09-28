@@ -48,6 +48,8 @@ pub enum MenuKind {
     CartographyTable,
     /// `EnchantmentMenu`.
     Enchantment,
+    /// `BrewingStandMenu`.
+    BrewingStand,
 }
 
 impl MenuKind {
@@ -75,6 +77,7 @@ impl MenuKind {
             MenuKind::Loom => "minecraft:loom",
             MenuKind::CartographyTable => "minecraft:cartography_table",
             MenuKind::Enchantment => "minecraft:enchantment",
+            MenuKind::BrewingStand => "minecraft:brewing_stand",
         })
     }
 
@@ -101,6 +104,7 @@ impl MenuKind {
             MenuKind::Hopper => 5,
             MenuKind::ShulkerBox => 27,
             MenuKind::Furnace(_) => 3,
+            MenuKind::BrewingStand => 5,
         }
     }
 
@@ -185,6 +189,20 @@ impl Menu {
         ];
         player_slots(&mut slots);
         Menu::with_slots(MenuKind::Furnace(kind), container_id, slots, 4, CraftGrid::default())
+    }
+
+    /// `BrewingStandMenu`: bottles 0-2, ingredient 3, fuel 4 over the brewing stand's container,
+    /// and its four data values (brew time, fuel, total brew time, total fuel).
+    pub fn brewing_stand(container_id: i32) -> Menu {
+        let mut slots = vec![
+            Slot::new(Source::Block, 0, SlotKind::BrewingPotion),
+            Slot::new(Source::Block, 1, SlotKind::BrewingPotion),
+            Slot::new(Source::Block, 2, SlotKind::BrewingPotion),
+            Slot::new(Source::Block, 3, SlotKind::BrewingIngredient),
+            Slot::new(Source::Block, 4, SlotKind::BrewingFuel),
+        ];
+        player_slots(&mut slots);
+        Menu::with_slots(MenuKind::BrewingStand, container_id, slots, 4, CraftGrid::default())
     }
 
     /// `StonecutterMenu`: input 0, result 1, main 2-28, hotbar 29-37, and the selected recipe
@@ -469,6 +487,47 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
                 menu.on_quick_craft(env, i, &stack, &mut old);
             }
             menu.finish_quick_move(env, i, stack, old, false).0
+        }
+        MenuKind::BrewingStand => {
+            // `BrewingStandMenu.quickMoveStack`.
+            let rules = env.rules;
+            let ingredient = rules.recipes.property_set_accepts("minecraft:brewing_reagent", &stack);
+            let ok = match i {
+                0..5 => {
+                    let ok = menu.move_item_stack_to(env, &mut stack, 5, 41, true);
+                    if ok {
+                        let mut old = copy.clone();
+                        menu.on_quick_craft(env, i, &stack, &mut old);
+                    }
+                    ok
+                }
+                _ if copy.has(kiln_item::component::ids::BREWING_FUEL) => {
+                    menu.move_item_stack_to(env, &mut stack, 4, 5, false)
+                        || !ingredient
+                        || menu.move_item_stack_to(env, &mut stack, 3, 4, false)
+                }
+                _ if ingredient => menu.move_item_stack_to(env, &mut stack, 3, 4, false),
+                _ if crate::slot::is_potion_input(&copy, rules) => menu.move_item_stack_to(env, &mut stack, 0, 3, false),
+                5..32 => menu.move_item_stack_to(env, &mut stack, 32, 41, false),
+                32..41 => menu.move_item_stack_to(env, &mut stack, 5, 32, false),
+                _ => menu.move_item_stack_to(env, &mut stack, 5, 41, false),
+            };
+            if !ok {
+                return ItemStack::empty();
+            }
+            *menu.item_mut(env, i) = stack.clone();
+            if stack.is_empty() {
+                menu.set_by_player(env, i, ItemStack::empty());
+            } else {
+                menu.set_changed(env, i);
+            }
+            if stack.count() == copy.count() {
+                return ItemStack::empty();
+            }
+            // `slot.onTake(player, copy)`: the stack as it was (a bottle slot's potion).
+            let mut taken = copy.clone();
+            menu.on_take(env, i, &mut taken);
+            copy
         }
         MenuKind::Stonecutter => {
             if i == 1 {

@@ -533,6 +533,12 @@ impl Menu {
                 let n = crate::merchant::take_remove_count(self);
                 self.on_crafted_by(env, stack, n, None);
             }
+            // `BrewingStandMenu$PotionSlot.onTake`.
+            SlotKind::BrewingPotion => {
+                if let Some(contents) = stack.get(kiln_item::keys::POTION_CONTENTS) {
+                    env.out.push(Effect::BrewedPotion { potion: contents.potion });
+                }
+            }
             _ => {}
         }
     }
