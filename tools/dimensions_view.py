@@ -33,6 +33,11 @@ def main():
     os.environ["KILN_SEED"] = a.seed
     e2e.SERVER_LOG = e2e.WORK / f"server-{a.port}.log"
     server = blocks_view.start_server(a.port)
+    # The simulation sets up generation for three levels and loads the datapack before its
+    # first tick; a client joining earlier times out.
+    deadline = time.time() + 300
+    while time.time() < deadline and "data packs" not in e2e.server_log():
+        time.sleep(0.5)
 
     def console(cmd, wait=0.3):
         server.stdin.write(cmd + "\n")
