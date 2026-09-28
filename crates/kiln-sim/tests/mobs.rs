@@ -277,6 +277,24 @@ fn sheep_shear_and_dye_cows_milk() {
 }
 
 #[test]
+fn staring_at_an_enderman_angers_it() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:enderman", [0.0, 0.0, 5.0], "{PersistenceRequired:1b}");
+    // Looking straight ahead does not meet its eyes; looking up at them does.
+    w.ticks(60);
+    assert_eq!(w.health(), 20.0, "not stared at");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: None, rot: Some([0.0, -10.5]), on_ground: true })]));
+    // It freezes while looked at; looking away lets it come.
+    w.ticks(30);
+    assert_eq!(w.health(), 20.0, "frozen while stared at");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: None, rot: Some([180.0, 0.0]), on_ground: true })]));
+    w.ticks(200);
+    assert!(w.health() < 20.0, "the enderman attacked (health {})", w.health());
+}
+
+#[test]
 fn every_mob_type_summons_ticks_and_saves() {
     let mut w = World::new();
     w.console("gamemode creative Hunter");
@@ -286,6 +304,10 @@ fn every_mob_type_summons_ticks_and_saves() {
     }
     w.ticks(100);
     for kind in kiln_entity::mob::ALL_KINDS {
+        // Endermen hunt endermites.
+        if kind == kiln_entity::mob::MobKind::Endermite {
+            continue;
+        }
         assert!(!w.mobs(kind.type_name()).is_empty(), "{} is gone", kind.type_name());
     }
 }

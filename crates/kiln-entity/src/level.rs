@@ -34,6 +34,11 @@ pub struct PlayerView {
     /// Item ids in the hands (`minecraft:item` protocol ids, 0 for none).
     pub main_hand: i32,
     pub off_hand: i32,
+    /// The item id on the head (`EquipmentSlot.HEAD`; 0 for none).
+    pub head: i32,
+    /// Rotations: `yHeadRot` (a player's head turns with its body) and `xRot`, in degrees.
+    pub yaw: f32,
+    pub pitch: f32,
 }
 
 impl PlayerView {
@@ -52,6 +57,9 @@ impl PlayerView {
             armor_cover: 0.0,
             main_hand: 0,
             off_hand: 0,
+            head: 0,
+            yaw: 0.0,
+            pitch: 0.0,
         }
     }
 }

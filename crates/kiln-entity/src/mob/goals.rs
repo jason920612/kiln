@@ -310,7 +310,7 @@ pub fn target(m: &MobData, level: &dyn EntityLevel) -> Option<Living> {
 }
 
 /// `LivingEntity.canAttack`.
-fn can_attack(level: &dyn EntityLevel, t: &Living) -> bool {
+pub fn can_attack(level: &dyn EntityLevel, t: &Living) -> bool {
     if t.player && level.difficulty() == 0 {
         return false;
     }
@@ -318,7 +318,7 @@ fn can_attack(level: &dyn EntityLevel, t: &Living) -> bool {
 }
 
 /// `TargetingConditions.test` for a mob.
-fn targeting_ok(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t: &Living, combat: bool, range: f64, los: bool) -> bool {
+pub fn targeting_ok(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t: &Living, combat: bool, range: f64, los: bool) -> bool {
     if t.id == e.id || !t.seen_by_anyone() {
         return false;
     }
@@ -346,7 +346,7 @@ fn targeting_ok(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t: &Living
 }
 
 /// `getNearestPlayer(conditions, mob, x, eyeY, z)`.
-fn nearest_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, combat: bool, range: f64, los: bool, filter: impl Fn(&crate::level::PlayerView) -> bool) -> Option<Living> {
+pub fn nearest_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, combat: bool, range: f64, los: bool, filter: impl Fn(&crate::level::PlayerView) -> bool) -> Option<Living> {
     let mut best: Option<(f64, Living)> = None;
     for p in level.players() {
         if !filter(&p) {
@@ -671,7 +671,7 @@ fn light_ok_for_spider_to_stop(e: &Entity, level: &dyn EntityLevel) -> bool {
 }
 
 /// `TargetGoal.canContinueToUse`.
-fn continue_target(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target_mob: Option<i32>, must_see: bool, unseen: &mut i32, memory: i32) -> bool {
+pub fn continue_target(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target_mob: Option<i32>, must_see: bool, unseen: &mut i32, memory: i32) -> bool {
     let id = m.target.or(target_mob);
     let Some(t) = id.and_then(|id| living(level, id)) else { return false };
     if !can_attack(level, &t) {

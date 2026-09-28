@@ -1030,6 +1030,9 @@ fn view(p: &Player) -> PlayerView {
         armor_cover: armor as f32 / 4.0,
         main_hand: p.inv.selected_item().item(),
         off_hand: p.inv.equipped(S::OffHand).item(),
+        head: p.inv.equipped(S::Head).item(),
+        yaw: p.rot[0],
+        pitch: p.rot[1],
     }
 }
 

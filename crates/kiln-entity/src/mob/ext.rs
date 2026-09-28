@@ -128,7 +128,7 @@ impl<T: Any + Debug + Clone + Send + Sync> MobExt for T {
 
 impl Clone for Box<dyn MobExt> {
     fn clone(&self) -> Self {
-        self.box_clone()
+        MobExt::box_clone(&**self)
     }
 }
 
@@ -141,14 +141,14 @@ impl PartialEq for Box<dyn MobExt> {
 /// The type state of `m` as `T` (the type's own state struct).
 pub fn state<T: 'static>(m: &MobData) -> Option<&T> {
     match &m.species {
-        super::Species::Ext(s) => s.as_any().downcast_ref::<T>(),
+        super::Species::Ext(s) => (**s).as_any().downcast_ref::<T>(),
         _ => None,
     }
 }
 
 pub fn state_mut<T: 'static>(m: &mut MobData) -> Option<&mut T> {
     match &mut m.species {
-        super::Species::Ext(s) => s.as_any_mut().downcast_mut::<T>(),
+        super::Species::Ext(s) => (**s).as_any_mut().downcast_mut::<T>(),
         _ => None,
     }
 }

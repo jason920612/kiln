@@ -29,7 +29,17 @@ fn flags(state: u16) -> u8 {
 
 /// `WalkNodeEvaluator.getPathTypeFromState` (a function of the state alone).
 pub fn path_type_from_state(state: u16) -> PathType {
-    PathType::ALL[table().get(state as usize * 2).copied().unwrap_or(0) as usize]
+    let t = PathType::ALL[table().get(state as usize * 2).copied().unwrap_or(0) as usize];
+    // The table was extracted without bound fluid tags: vanilla's `FluidTags.LAVA` and
+    // `FluidTags.WATER` checks make lava `LAVA` and (pathfindable) water `WATER`.
+    let f = crate::physics::fluid_state(state);
+    if f.kind.is_lava() {
+        return PathType::Lava;
+    }
+    if t == PathType::Open && f.kind.is_water() {
+        return PathType::Water;
+    }
+    t
 }
 
 /// `isPathfindable(LAND)`.
