@@ -454,6 +454,14 @@ impl Player {
         if amount == 0 {
             return;
         }
+        // `ItemStack.applyDamage`: `item_durability_changed` with the stack before the change.
+        let before = kiln_inventory::Container::item(&self.inv, index).clone();
+        let new_damage = before.damage() + amount;
+        self.fire_conds("minecraft:item_durability_changed", None, |c, _, loot| {
+            c.item("item").is_none_or(|p| kiln_loot::predicate::item_matches(&loot.tags, p, &before))
+                && kiln_loot::predicate::item::int_bounds(&c.ints("durability"), before.max_damage() - new_damage)
+                && kiln_loot::predicate::item::int_bounds(&c.ints("delta"), before.damage() - new_damage)
+        });
         let stack = kiln_inventory::Container::item_mut(&mut self.inv, index);
         let damage = stack.damage() + amount;
         stack.insert(keys::DAMAGE, damage.clamp(0, stack.max_damage()));

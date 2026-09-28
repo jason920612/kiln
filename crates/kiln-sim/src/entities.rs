@@ -928,11 +928,21 @@ pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player],
     }
     let seat = kiln_entity::ride::rider_position(phys, 0, "minecraft:player", 1.0);
     let vehicle_type = phys.type_name;
+    let in_lava = phys.is_in_lava();
     entities.list[idx].sync();
     let p = &mut *players[i];
     let d = [seat.x - p.pos[0], seat.y - p.pos[1], seat.z - p.pos[2]];
     p.riding_stats(d, vehicle_type);
     p.pos = arr(seat);
+    // `trackEnteredOrExitedLavaOnVehicle`: `ride_entity_in_lava` from where the mount went in.
+    if in_lava {
+        match p.entered_lava_on_vehicle {
+            None => p.entered_lava_on_vehicle = Some(p.pos),
+            Some(start) => p.distance_trigger("minecraft:ride_entity_in_lava", start),
+        }
+    } else {
+        p.entered_lava_on_vehicle = None;
+    }
 }
 
 /// `handlePlayerCommand(START_RIDING_JUMP)`: the steered mount rears with its jump sound.
@@ -1147,11 +1157,20 @@ pub(crate) fn interact_mob(
         p.teleport(arr(seat), [phys.y_rot, phys.x_rot], now);
         p.started_riding();
     }
+    let seen = out.success.then(|| kiln_entity::level::Seen::of(&phys));
     let e = &mut sim.list[idx];
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
     let p = &mut *players[i];
+    // `PlayerInteractTrigger`: the item as it was when the interaction used it.
+    if let Some(seen) = seen {
+        let used = if out.held == kiln_entity::mob::interact::HeldChange::None { kiln_item::ItemStack::empty() } else { stack.clone() };
+        let subject = crate::advancements::triggers::seen_subject(&seen, crate::DIMENSIONS[level.env.dim].0);
+        p.fire_conds("minecraft:player_interacted_with_entity", None, |c, ok, loot| {
+            c.item("item").is_none_or(|ip| kiln_loot::predicate::item_matches(&loot.tags, ip, &used)) && c.cap("entity").is_none_or(|cap| ok(cap, &subject))
+        });
+    }
     let index = kiln_inventory::inventory::equipment_index(slot, p.inv.selected);
     use kiln_entity::mob::interact::HeldChange;
     match &out.held {

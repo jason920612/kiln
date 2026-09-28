@@ -918,12 +918,16 @@ impl Player {
     /// Vanilla `Entity.checkFallDamage` for a reported move by `dy` ending `on_ground`.
     pub(crate) fn check_fall(&mut self, dy: f64, on_ground: bool, in_fluid: bool, ctx: &mut DamageCtx) {
         if in_fluid || self.game_mode == 3 || self.flying {
-            self.fall_distance = 0.0;
+            self.reset_fall_distance();
             return;
         }
         // The move itself counts, landing included.
         if dy < 0.0 {
             self.fall_distance -= dy;
+        }
+        // `trackStartFallingPosition`.
+        if self.fall_distance > 0.0 && self.starting_to_fall.is_none() {
+            self.starting_to_fall = Some(self.pos);
         }
         if on_ground {
             let fell = self.fall_distance;
@@ -937,8 +941,19 @@ impl Player {
                 self.hurt(damage as f32, &Cause::Fall(fell).into(), ctx);
             }
             // `resetFallDistance` after the damage, which the combat tracker records it with.
-            self.fall_distance = 0.0;
+            self.reset_fall_distance();
         }
+    }
+
+    /// `ServerPlayer.resetFallDistance`: a living player who was falling fires
+    /// `fall_from_height` (from where the fall began to here).
+    pub(crate) fn reset_fall_distance(&mut self) {
+        if let Some(start) = self.starting_to_fall.take()
+            && self.health > 0.0
+        {
+            self.distance_trigger("minecraft:fall_from_height", start);
+        }
+        self.fall_distance = 0.0;
     }
 
     /// Void damage every tick below the world (`Entity.checkBelowWorld`).

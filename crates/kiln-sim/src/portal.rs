@@ -1083,6 +1083,10 @@ impl Sim {
         p.send(difficulty);
         self.sleep_status[p.dim].dirty = true;
         self.sleep_status[dim].dirty = true;
+        // `enteredNetherPosition`: where the player left the overworld for the nether.
+        if from == crate::OVERWORLD_ID && dim == crate::NETHER_ID {
+            p.entered_nether = Some(p.pos);
+        }
         p.dim = dim;
         p.using = None;
         p.digging = None;
@@ -1114,7 +1118,15 @@ impl Sim {
         let mut spawns = Vec::new();
         p.with_menu(&rules, &mut spawns, |menu, _, env| menu.open(env));
         info!("{} went from {} to {} at {pos:?}", p.name, DIMENSIONS[from].0, DIMENSIONS[dim].0);
-        // `triggerDimensionChangeTriggers`.
+        // `triggerDimensionChangeTriggers`: back from the nether, how far that took the player.
+        if from == crate::NETHER_ID && dim == crate::OVERWORLD_ID
+            && let Some(start) = p.entered_nether
+        {
+            p.distance_trigger("minecraft:nether_travel", start);
+        }
+        if dim != crate::NETHER_ID {
+            p.entered_nether = None;
+        }
         p.changed_dimension(DIMENSIONS[from].0, DIMENSIONS[dim].0);
         self.dims[dim].spawns.extend(spawns);
         self.place_player(conn);

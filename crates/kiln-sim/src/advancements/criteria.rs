@@ -53,6 +53,7 @@ pub(crate) struct Conds {
     pub caps: Vec<(String, Cap)>,
     pub cap_lists: Vec<(String, Vec<Cap>)>,
     pub items: Vec<(String, ItemPredicate)>,
+    pub locations: Vec<(String, LocationPredicate)>,
     pub json: Json,
 }
 
@@ -62,10 +63,12 @@ const ENTITY_KEYS: &[&str] = &["entity", "parent", "partner", "child", "zombie",
 const ENTITY_LIST_KEYS: &[&str] = &["victims", "bystander"];
 /// Keys that hold an item predicate.
 const ITEM_KEYS: &[&str] = &["item", "fired_from_weapon"];
+/// Keys that hold a location predicate.
+const LOCATION_KEYS: &[&str] = &["start_position"];
 
 impl Conds {
     fn parse(p: &Parser, c: &Json) -> PResult<Conds> {
-        let mut out = Conds { caps: Vec::new(), cap_lists: Vec::new(), items: Vec::new(), json: c.clone() };
+        let mut out = Conds { caps: Vec::new(), cap_lists: Vec::new(), items: Vec::new(), locations: Vec::new(), json: c.clone() };
         let Some(fields) = c.as_object() else { return Ok(out) };
         for (k, v) in fields {
             if ENTITY_KEYS.contains(&k.as_str()) {
@@ -79,6 +82,8 @@ impl Conds {
                 out.cap_lists.push((k.clone(), list.map_err(|e| e.at(k))?));
             } else if ITEM_KEYS.contains(&k.as_str()) {
                 out.items.push((k.clone(), predicate::item_predicate(v).map_err(|e| e.at(k))?));
+            } else if LOCATION_KEYS.contains(&k.as_str()) {
+                out.locations.push((k.clone(), LocationPredicate::parse(p, v).map_err(|e| e.at(k))?));
             }
         }
         Ok(out)
@@ -92,6 +97,10 @@ impl Conds {
         self.cap_lists.iter().find(|(k, _)| k == key).map(|(_, c)| c.as_slice())
     }
 
+    pub fn location(&self, key: &str) -> Option<&LocationPredicate> {
+        self.locations.iter().find(|(k, _)| k == key).map(|(_, c)| c)
+    }
+
     pub fn item(&self, key: &str) -> Option<&ItemPredicate> {
         self.items.iter().find(|(k, _)| k == key).map(|(_, c)| c)
     }
@@ -103,11 +112,6 @@ impl Conds {
     /// An `IntBounds` condition (absent: any).
     pub fn ints(&self, key: &str) -> IntBounds {
         self.get(key).and_then(|v| IntBounds::from_value(&v.to_value()).ok()).unwrap_or(IntBounds::ANY)
-    }
-
-    /// A `DoubleBounds` condition (absent: any).
-    pub fn doubles(&self, key: &str) -> DoubleBounds {
-        self.get(key).and_then(|v| DoubleBounds::from_value(&v.to_value()).ok()).unwrap_or(DoubleBounds::ANY)
     }
 
     /// A `DistancePredicate` (`x`, `y`, `z`, `horizontal`, `absolute`) between two points;
@@ -162,6 +166,11 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:effects_changed",
     "minecraft:levitation",
     "minecraft:used_totem",
+    "minecraft:player_interacted_with_entity",
+    "minecraft:item_durability_changed",
+    "minecraft:fall_from_height",
+    "minecraft:nether_travel",
+    "minecraft:ride_entity_in_lava",
     "minecraft:slept_in_bed",
 ];
 

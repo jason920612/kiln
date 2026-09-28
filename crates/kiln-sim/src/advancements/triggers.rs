@@ -457,6 +457,15 @@ impl Player {
         });
     }
 
+    /// `DistanceTrigger.trigger` (`fall_from_height`, `nether_travel`, `ride_entity_in_lava`):
+    /// `start_position` tested where the trip began, `distance` from there to here.
+    pub(crate) fn distance_trigger(&mut self, trigger: &str, start: [f64; 3]) {
+        let (pos, dim) = (self.pos, crate::DIMENSIONS[self.dim].0);
+        self.fire_conds(trigger, None, |c, _, _| {
+            c.location("start_position").is_none_or(|l| criteria::location_matches(l, start, dim, None)) && c.distance("distance", start, pos)
+        });
+    }
+
     /// The trigger of a criterion event from the entity simulation.
     pub(crate) fn entity_criterion(&mut self, dim: &'static str, c: &kiln_entity::level::Criterion) {
         use kiln_entity::level::Criterion as E;

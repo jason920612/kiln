@@ -373,6 +373,11 @@ struct Player {
     vehicle_type: Option<&'static str>,
     /// `ServerPlayer.levitationStartTime` and `levitationStartPos` (the `levitation` trigger).
     levitation_start: Option<(i32, [f64; 3])>,
+    /// `startingToFallPosition` (`fall_from_height`), `enteredNetherPosition`
+    /// (`nether_travel`) and `enteredLavaOnVehiclePosition` (`ride_entity_in_lava`).
+    starting_to_fall: Option<[f64; 3]>,
+    entered_nether: Option<[f64; 3]>,
+    entered_lava_on_vehicle: Option<[f64; 3]>,
     /// `getLastHurtByMob` and `getLastHurtMob` with the game time (tamed animals take their
     /// owner's side).
     last_hurt_by_mob: Option<(i32, i64)>,
@@ -2122,6 +2127,9 @@ impl Sim {
             vehicle: None,
             vehicle_type: None,
             levitation_start: None,
+            starting_to_fall: None,
+            entered_nether: None,
+            entered_lava_on_vehicle: None,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
             sleep: sleep::Sleep::default(),
