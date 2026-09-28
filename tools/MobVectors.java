@@ -1526,6 +1526,110 @@ public class MobVectors {
 
     // ---------------------------------------------------------- slice 3: raids and illagers
     static void scenariosRaids(List<Scenario> out) {
+        // Illagers, the ravager and the vex idle (a creative player watching) and chasing a
+        // survival player at night.
+        String[][] types = {
+            {"pillager", "minecraft:crossbow"}, {"vindicator", "minecraft:iron_axe"}, {"evoker", null},
+            {"ravager", null}, {"vex", "minecraft:iron_sword"}, {"illusioner", "minecraft:bow"}};
+        for (String[] t : types) {
+            for (int seed = 1; seed <= 2; seed++) {
+                Scenario s = new Scenario("idle_" + t[0] + "_" + seed);
+                floor(s, 16, "minecraft:stone");
+                MobSpec m = new MobSpec("minecraft:" + t[0], 0.5, t[0].equals("vex") ? BY + 1 : BY, 0.5, 50f * seed, 4400L * seed + 31);
+                m.mainHand = t[1];
+                s.mobs.add(m);
+                s.player = new double[] {8.5, BY, 0.5};
+                s.playerCreative = true;
+                s.levelSeed = seed;
+                s.dayTime = 18000;
+                s.ticks = 400;
+                out.add(s);
+            }
+            for (int dist : new int[] {5, 11}) {
+                Scenario s = new Scenario("chase_" + t[0] + "_" + dist);
+                floor(s, 20, "minecraft:stone");
+                MobSpec m = new MobSpec("minecraft:" + t[0], 0.5, t[0].equals("vex") ? BY + 1 : BY, 0.5, 0f, 6600L + dist);
+                m.mainHand = t[1];
+                s.mobs.add(m);
+                s.player = new double[] {0.5 + dist, BY, 0.5};
+                s.dayTime = 18000;
+                s.ticks = 240;
+                out.add(s);
+            }
+        }
+        // Hurt by the player: raiders take revenge (and ignore other raiders' hits).
+        for (String[] t : new String[][] {{"pillager", "minecraft:crossbow"}, {"vindicator", "minecraft:iron_axe"}}) {
+            Scenario s = new Scenario("hurt_" + t[0]);
+            floor(s, 16, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:" + t[0], 0.5, BY, 0.5, 0f, 6700);
+            m.mainHand = t[1];
+            s.mobs.add(m);
+            MobSpec m2 = new MobSpec("minecraft:" + t[0], -3.5, BY, 2.5, 90f, 6701);
+            m2.mainHand = t[1];
+            s.mobs.add(m2);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 2.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        // An evoker turns a blue sheep red.
+        {
+            Scenario s = new Scenario("wololo_evoker");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:evoker", 0.5, BY, 0.5, 0f, 6800));
+            MobSpec sheep = new MobSpec("minecraft:sheep", 5.5, BY, 2.5, 0f, 6801);
+            sheep.nbt = "{Color:11b}";
+            s.mobs.add(sheep);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Johnny attacks a cow.
+        {
+            Scenario s = new Scenario("johnny_vindicator");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec j = new MobSpec("minecraft:vindicator", 0.5, BY, 0.5, 0f, 6900);
+            j.mainHand = "minecraft:iron_axe";
+            j.nbt = "{Johnny:1b}";
+            s.mobs.add(j);
+            s.mobs.add(new MobSpec("minecraft:cow", 5.5, BY, 1.5, 0f, 6901));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // A patrol: the leader walks toward its far target, the others follow; spotting a
+        // survival player they hold their ground.
+        for (boolean player : new boolean[] {false, true}) {
+            Scenario s = new Scenario("patrol_pillagers" + (player ? "_hold" : ""));
+            floor(s, 30, "minecraft:grass_block");
+            MobSpec leader = new MobSpec("minecraft:pillager", 0.5, BY, 0.5, 0f, 7000);
+            leader.mainHand = "minecraft:crossbow";
+            leader.nbt = "{PatrolLeader:1b,Patrolling:1b,patrol_target:[I;300,100,40]}";
+            s.mobs.add(leader);
+            for (int i = 1; i <= 2; i++) {
+                MobSpec f = new MobSpec("minecraft:pillager", 0.5 - 2 * i, BY, 1.5, 0f, 7000 + i);
+                f.mainHand = "minecraft:crossbow";
+                f.nbt = "{Patrolling:1b,patrol_target:[I;300,100,40]}";
+                s.mobs.add(f);
+            }
+            s.player = new double[] {player ? 14.5 : 0.5, BY, player ? 0.5 : 25.5};
+            s.playerCreative = !player;
+            s.dayTime = player ? 18000 : 1000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Two ravagers and a vindicator push and bite.
+        {
+            Scenario s = new Scenario("ravager_bite");
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:ravager", 0.5, BY, 0.5, 0f, 7100));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
     }
 
 

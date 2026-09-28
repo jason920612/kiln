@@ -31,7 +31,7 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
         "breed" => "BreedGoal",
         "follow_parent" => "FollowParentGoal",
         "stroll" => {
-            if kind == MobKind::Drowned {
+            if matches!(kind, MobKind::Drowned | MobKind::Pillager | MobKind::Vindicator | MobKind::Evoker | MobKind::Illusioner) {
                 "RandomStrollGoal"
             } else {
                 "WaterAvoidingRandomStrollGoal"
@@ -88,7 +88,7 @@ fn tag_of(v: &Value) -> kiln_proto::nbt::Tag {
     }
 }
 
-fn state(e: &kiln_entity::Entity) -> (Vec<f64>, String) {
+fn state(e: &kiln_entity::Entity, level: &MemoryLevel) -> (Vec<f64>, String) {
     let m = mob::data(e).expect("a mob");
     let p = e.position();
     let v = e.delta;
@@ -110,7 +110,8 @@ fn state(e: &kiln_entity::Entity) -> (Vec<f64>, String) {
         m.hurt_time as f64,
         b(e.is_removed()),
         e.remaining_fire_ticks as f64,
-        m.target.map_or(-1.0, |t| t as f64),
+        // `getTarget()`: the target while it is still a valid one.
+        mob::goals::target(m, level).map_or(-1.0, |t| t.id as f64),
         e.random.state() as f64,
     ];
     let mut goals: Vec<&str> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind)).collect();
@@ -188,6 +189,12 @@ fn replay(s: &Value) -> Result<usize, String> {
                 *egg_time = spec["egg_time"].as_i64().unwrap() as i32;
             }
             m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
+            // The harness equips the main hand before it reads the NBT (which replaces the
+            // equipment).
+            if let Some(item) = spec["main_hand"].as_str() {
+                m.equipment[mob::MAINHAND] = kiln_item::ItemStack::of(item, 1).unwrap();
+                mob::reassess_weapon_goal(m, false);
+            }
         }
         if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
             mob::persist::apply_nbt(&mut e, &tag_of(nbt));
@@ -200,13 +207,6 @@ fn replay(s: &Value) -> Result<usize, String> {
                     mob::set_age(&mut e, md, age);
                 }
                 e.kind = m;
-            }
-        }
-        {
-            let m = mob::data_mut(&mut e).unwrap();
-            if let Some(item) = spec["main_hand"].as_str() {
-                m.equipment[mob::MAINHAND] = kiln_item::ItemStack::of(item, 1).unwrap();
-                mob::reassess_weapon_goal(m, false);
             }
         }
         ids.push(id);
@@ -268,13 +268,14 @@ fn replay(s: &Value) -> Result<usize, String> {
         let before_flush = known;
         level.flush_spawned();
         known = level.len();
-        // Mobs that appeared get the harness's pinned random and head/body yaw.
-        for i in before_flush..level.len() {
-            let Some(e) = level.entity_at(i) else { continue };
-            if mob::data(e).is_none() {
-                continue;
-            }
-            let id = e.id;
+        // Mobs that appeared get the harness's pinned random and head/body yaw, in the order the
+        // harness finds them (`getEntities` over its box: entity sections, then insertion).
+        let fresh: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| mob::data(e).is_some()).map(|e| e.id).collect();
+        let harness_box = kiln_entity::math::Aabb::new(-60.0, 60.0, -60.0, 60.0, 140.0, 60.0);
+        let order = level.entities_in(&harness_box, kiln_entity::EntityFilter::Any, i32::MIN);
+        let mut fresh = fresh;
+        fresh.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
+        for id in fresh {
             let n = (ids.len() - initial) as i64;
             let e = level.entity_mut(id).unwrap();
             e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
@@ -313,7 +314,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             let want_goals = want.last().unwrap().as_str().unwrap();
             let want: Vec<f64> = want[..want.len() - 1].iter().map(f).collect();
             let e = level.entity(ids[k]).ok_or_else(|| format!("tick {tick}: mob {k} missing"))?;
-            let (got, goals) = state(e);
+            let (got, goals) = state(e, &level);
             for (i, (g, w)) in got.iter().zip(&want).enumerate() {
                 // Mobs that appeared have ids of their own on each side.
                 if (k >= initial && i == 0) || (loose && i == 17) {
@@ -342,7 +343,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     // Vanilla arrows draw their damage and spread from their own random, which is seeded from
     // the clock (not pinnable): skeleton scenarios compare the mob, not where arrows land.
     // Shulker bullets likewise steer by their own random.
-    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident")) || matches!(m["type"].as_str(), Some("minecraft:shulker" | "minecraft:witch")));
+    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident" | "minecraft:crossbow")) || matches!(m["type"].as_str(), Some("minecraft:shulker" | "minecraft:witch")));
     let f32s = |v: &[(i64, f64)]| v.iter().map(|&(t, a)| (t, (a as f32).to_bits())).collect::<Vec<_>>();
     if !arrows && f32s(&got_hits) != f32s(&want_hits) {
         return Err(format!("player hits {got_hits:?} (kiln) vs {want_hits:?} (vanilla)"));

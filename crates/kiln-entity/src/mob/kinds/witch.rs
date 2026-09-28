@@ -43,6 +43,8 @@ pub struct WitchState {
     pub heal_cooldown: i32,
     pub can_attack: bool,
     pub effects: Vec<MobEffect>,
+    /// `Raider` and `PatrollingMonster` state (witches join raids).
+    pub raider: super::raider::RaiderState,
 }
 
 fn st(m: &MobData) -> &WitchState {
@@ -176,26 +178,28 @@ impl Kind for Witch {
     }
 
     fn new_state(&self, _m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
-        Some(Box::new(WitchState { drinking: false, using_time: 0, heal_cooldown: 0, can_attack: true, effects: Vec::new() }))
+        Some(Box::new(WitchState {
+            drinking: false,
+            using_time: 0,
+            heal_cooldown: 0,
+            can_attack: true,
+            effects: Vec::new(),
+            raider: Default::default(),
+        }))
     }
 
     fn register_goals(&self, m: &mut MobData) {
+        // `Raider.registerGoals`: patrols, banners, raids and celebrations.
+        super::raider::register_raider_goals(m);
         let g = &mut m.goals;
-        // `Raider.registerGoals`: patrols, banners, raids and celebrations, none of which a
-        // witch outside a raid ever starts (and none draws randomness).
-        g.add(4, Goal::Never);
-        g.add(1, Goal::Never);
-        g.add(3, Goal::Never);
-        g.add(4, Goal::Never);
-        g.add(5, Goal::Never);
         g.add(1, Goal::Float);
         g.add(2, Goal::Custom(Box::new(RangedAttack { target: None, attack_time: -1, see_time: 0 })));
         g.add(2, Goal::RandomStroll { speed: 1.0, interval: 120, check_no_action: true, water_avoiding: Some(0.001), wanted: Vec3::ZERO, force: false });
         g.add(3, Goal::LookAtPlayer { dist: 8.0, probability: 0.02, look_at: None, look_time: 0 });
         g.add(3, Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 });
         let t = &mut m.targets;
-        t.add(1, Goal::HurtByTarget { timestamp: 0, alert_others: false, target_mob: None, unseen: 0, unseen_memory: 60 });
-        t.add(2, Goal::Custom(Box::new(HealRaiders)));
+        t.add(1, super::raider::hurt_by_ignoring_raiders_alone());
+        t.add(2, Goal::Custom(Box::new(HealRaiders { target: None, unseen: 0 })));
         t.add(3, Goal::Custom(Box::new(AttackPlayers { target: None, unseen: 0 })));
     }
 
@@ -262,6 +266,28 @@ impl Kind for Witch {
         if e.random.next_float() < 7.5e-4 {
             level.emit(Event::EntityEvent { entity: e.id, event: 15 });
         }
+        super::raider::ai_step_before(e, m, level);
+    }
+
+    fn die(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource) {
+        super::raider::die(e, m, level, source);
+    }
+
+    fn remove_when_far_away_at(&self, m: &MobData, dist_sqr: f64) -> Option<bool> {
+        Some(super::raider::remove_when_far_away(m, dist_sqr))
+    }
+
+    fn finalize_spawn(&self, _e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &crate::mob::SpawnContext, group: &mut crate::mob::GroupData) {
+        super::raider::finalize_spawn(m, r, group);
+        ext::mob_finalize(m, r);
+    }
+
+    fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut crate::persist::Input) {
+        super::raider::load(m, r);
+    }
+
+    fn save(&self, _e: &Entity, m: &MobData, o: &mut crate::persist::Output) {
+        super::raider::save(m, o);
     }
 
     fn hurt(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, source: &DamageSource, _amount: f32) -> Option<bool> {
@@ -281,6 +307,7 @@ impl Kind for Witch {
     }
 
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {
+        d.set(kiln_data::entities::data::raider::IS_CELEBRATING, &DataValue::Boolean(st(m).raider.celebrating));
         d.set(kiln_data::entities::data::witch::USING_ITEM, &DataValue::Boolean(st(m).drinking));
     }
 }
@@ -315,7 +342,11 @@ fn perform_ranged_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
     let dz = t.pos.z + tv.z - e.z();
     let dist = (dx * dx + dz * dz).sqrt();
     let mut potion = "minecraft:harming";
-    if dist >= 8.0 && !has("minecraft:slowness") {
+    let raider = level.entity(t.id).and_then(mob::data).is_some_and(|om| super::raider::is_raider(om.kind));
+    if raider {
+        potion = if health <= 4.0 { "minecraft:healing" } else { "minecraft:regeneration" };
+        mob::set_target(e, m, None);
+    } else if dist >= 8.0 && !has("minecraft:slowness") {
         potion = "minecraft:slowness";
     } else if health >= 8.0 && !has("minecraft:poison") {
         potion = "minecraft:poison";
@@ -509,10 +540,14 @@ impl CustomGoal for RangedAttack {
     }
 }
 
-/// `NearestHealableRaiderTargetGoal`: without a raid it never starts, but a lone witch's
-/// cooldown is always run out, so it flips a coin every time it is asked.
+/// `NearestHealableRaiderTargetGoal`: in an active raid, now and then (a coin flip, then a
+/// 10 second cooldown) the witch targets the nearest raider it sees (not another witch) to throw
+/// healing at it.
 #[derive(Clone, Debug)]
-struct HealRaiders;
+struct HealRaiders {
+    target: Option<i32>,
+    unseen: i32,
+}
 
 impl CustomGoal for HealRaiders {
     custom_goal_boilerplate!();
@@ -522,12 +557,45 @@ impl CustomGoal for HealRaiders {
     fn flags(&self) -> u8 {
         TARGET
     }
-    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
+    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         if st(m).heal_cooldown > 0 || !e.random.next_bool() {
             return false;
         }
-        // `hasActiveRaid`: Kiln has no raids.
-        false
+        if !super::raider::has_active_raid(m, level) {
+            return false;
+        }
+        let range = m.attrs.value(FollowRange);
+        let area = e.bounding_box().inflate(range, 4.0, range);
+        let eye = Vec3::new(e.x(), e.eye_y(), e.z());
+        let mut best: Option<(f64, i32)> = None;
+        for id in level.entities_in(&area, EntityFilter::Living, e.id) {
+            let raider = level.entity(id).and_then(mob::data).is_some_and(|om| super::raider::is_raider(om.kind) && om.kind != MobKind::Witch);
+            if !raider {
+                continue;
+            }
+            let Some(t) = goals::living(level, id) else { continue };
+            if !goals::targeting_ok(e, m, level, &t, true, range, true) {
+                continue;
+            }
+            let d = t.pos.distance_to_sqr(eye);
+            if best.is_none_or(|(b, _)| d < b) {
+                best = Some((d, id));
+            }
+        }
+        self.target = best.map(|(_, id)| id);
+        self.target.is_some()
+    }
+    fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        goals::continue_target(e, m, level, self.target, true, &mut self.unseen, 60)
+    }
+    fn start(&mut self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        st_mut(m).heal_cooldown = mth::reduced_tick_delay(200);
+        mob::set_target(e, m, self.target);
+        self.unseen = 0;
+    }
+    fn stop(&mut self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        mob::set_target(e, m, None);
+        self.target = None;
     }
 }
 

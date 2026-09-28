@@ -8,6 +8,7 @@ use kiln_proto::packets::entity::EntityData;
 use std::any::Any;
 use std::fmt::Debug;
 
+pub mod evoker_fangs;
 pub mod fireball;
 pub mod fishing_hook;
 pub mod lightning;
@@ -67,7 +68,14 @@ macro_rules! entity_ext_boilerplate {
 }
 
 /// The extension entity types.
-pub const TYPES: &[&str] = &["minecraft:trident", "minecraft:fireball", "minecraft:small_fireball", "minecraft:shulker_bullet"];
+pub const TYPES: &[&str] = &[
+    "minecraft:trident",
+    "minecraft:fireball",
+    "minecraft:small_fireball",
+    "minecraft:shulker_bullet",
+    // -- slice 3: raids
+    "minecraft:evoker_fangs",
+];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
 pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
@@ -75,6 +83,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:trident" => trident::load(r),
         "minecraft:fireball" | "minecraft:small_fireball" => fireball::load(type_name, r),
         "minecraft:shulker_bullet" => shulker_bullet::load(r),
+        "minecraft:evoker_fangs" => evoker_fangs::load(r),
         _ => None,
     }
 }

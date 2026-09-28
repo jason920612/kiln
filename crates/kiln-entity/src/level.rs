@@ -196,6 +196,8 @@ pub enum DamageKind {
     // -- slice 3: mob effects
 
     // -- slice 3: raids
+    /// `minecraft:starve` (a vex's limited life runs out).
+    Starve,
 
     // -- slice 3: the end
 
@@ -259,6 +261,8 @@ pub enum Event {
     ShearLoot { entity: i32, table: String, pos: Vec3 },
     /// A criteria trigger for player `player` (entity id).
     Criterion { player: i32, criterion: Criterion },
+    /// A raider's news for its raid.
+    Raid(RaidEvent),
 }
 
 /// World access for entity ticks.
@@ -464,6 +468,111 @@ pub trait EntityLevel {
         let _ = (set, merchant);
         Vec::new()
     }
+
+    /// Raid `id` of the level (`Raids.get`), as the simulation last updated it; `None` once
+    /// it stopped and was removed.
+    fn raid(&self, id: i32) -> Option<&RaidView> {
+        let _ = id;
+        None
+    }
+
+    /// The `MOTION_BLOCKING_NO_LEAVES` heightmap at (`x`, `z`): the y above the column's topmost
+    /// block that blocks motion or holds a fluid, leaves not counted.
+    fn motion_blocking_no_leaves_height(&self, x: i32, z: i32) -> i32 {
+        for y in (self.min_y()..=self.max_y()).rev() {
+            let s = self.block(BlockPos::new(x, y, z));
+            if kiln_data::block_props::motion_blocking(s) && !crate::blocks::block_name(s).ends_with("_leaves") {
+                return y + 1;
+            }
+        }
+        self.min_y()
+    }
+
+    /// `ServerLevel.getRaidAt`: the nearest active raid whose center is closer than 96 blocks.
+    fn raid_at(&self, pos: BlockPos) -> Option<&RaidView> {
+        let _ = pos;
+        None
+    }
+
+    /// `ServerLevel.sectionsToVillage` (`PoiManager`'s distance tracker: sections from the
+    /// nearest section with an occupied village point of interest, 7 when farther than 6).
+    fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        let _ = pos;
+        7
+    }
+
+    /// `ServerLevel.isVillage`.
+    fn is_village(&self, pos: BlockPos) -> bool {
+        self.sections_to_village(pos) <= 1
+    }
+
+    /// `PoiManager.getInRange(...).map(getPos)`: points of interest of the `minecraft:point_of_interest_type`
+    /// entries in `types` within `radius` of `center` passing `occupancy`, in storage order.
+    fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: PoiOccupancy) -> Vec<BlockPos> {
+        let _ = (types, center, radius, occupancy);
+        Vec::new()
+    }
+
+    /// `PoiManager.take`: claims a ticket of the first point of interest of `types` with space
+    /// within `radius` of `center` that `accept` takes.
+    fn poi_take(&mut self, types: &[&str], center: BlockPos, radius: i32, accept: &dyn Fn(&str, BlockPos) -> bool) -> Option<BlockPos> {
+        let _ = (types, center, radius, accept);
+        None
+    }
+
+    /// `PoiManager.release`: gives a ticket back.
+    fn poi_release(&mut self, pos: BlockPos) {
+        let _ = pos;
+    }
+
+    /// `PoiManager.getType`: the point of interest type at `pos`.
+    fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
+        let _ = pos;
+        None
+    }
+}
+
+/// `PoiManager.Occupancy`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoiOccupancy {
+    HasSpace,
+    IsOccupied,
+    Any,
+}
+
+/// A raid (`Raid`) as entity behaviour sees it; the simulation refreshes these every tick.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RaidView {
+    pub id: i32,
+    pub center: BlockPos,
+    pub active: bool,
+    /// `isOver` (victory or loss), `isLoss`, `isStarted`.
+    pub over: bool,
+    pub loss: bool,
+    pub started: bool,
+    pub groups_spawned: i32,
+    pub omen_level: i32,
+    /// `groupToLeaderMap`: (wave, entity id).
+    pub leaders: Vec<(i32, i32)>,
+}
+
+impl RaidView {
+    /// `getLeader(wave)`.
+    pub fn leader(&self, wave: i32) -> Option<i32> {
+        self.leaders.iter().find(|(w, _)| *w == wave).map(|(_, id)| *id)
+    }
+}
+
+/// What raiders tell their raid (the simulation's `Raid` bookkeeping).
+#[derive(Clone, Debug, PartialEq)]
+pub enum RaidEvent {
+    /// `Raid.joinRaid(level, wave, raider, null, true)`: an existing raider joined.
+    Joined { raid: i32, entity: i32, wave: i32 },
+    /// `Raider.die`: the raid loses the raider (and its leader for the wave); a player
+    /// killer becomes a hero of the village.
+    Died { raid: i32, entity: i32, wave: i32, leader: bool, hero: Option<i32> },
+    /// `Raid.setLeader`: the raider picked up the ominous banner and leads its wave.
+    Leader { raid: i32, wave: i32, entity: i32 },
 }
 
 /// The merchant a trade set is rolled for (the loot context's `this` entity and origin).

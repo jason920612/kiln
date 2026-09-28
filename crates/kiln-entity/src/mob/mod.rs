@@ -80,6 +80,12 @@ pub enum MobKind {
     // Slice 3 work packages add their types below their own marker (keep the blank lines
     // between markers so parallel additions merge cleanly).
     // -- slice 3: raids
+    Pillager,
+    Vindicator,
+    Evoker,
+    Vex,
+    Ravager,
+    Illusioner,
 
     // -- slice 3: the end
 
@@ -166,6 +172,12 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Piglin,
     MobKind::Hoglin,
     // -- slice 3: raids
+    MobKind::Pillager,
+    MobKind::Vindicator,
+    MobKind::Evoker,
+    MobKind::Vex,
+    MobKind::Ravager,
+    MobKind::Illusioner,
 
     // -- slice 3: the end
 
@@ -985,6 +997,11 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
 
 fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     base_tick(e, m, level);
+    if m.using_item.is_some()
+        && let Some(k) = m.kind.ext()
+    {
+        k.update_using_item(e, m, level);
+    }
     if let Some(t) = m.using_item.as_mut() {
         *t += 1;
     }
@@ -1599,6 +1616,10 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if let Some(k) = m.kind.ext() {
             k.do_push(e, m, &*level, id);
         }
+        // `Entity.push(Entity)`: nothing moves when either side has no physics (a vex).
+        if e.no_physics || (!player && level.entity(id).is_some_and(|o| o.no_physics)) {
+            continue;
+        }
         let (dx, dz) = (ox - e.x(), oz - e.z());
         let mut d = dx.abs().max(dz.abs());
         if d < 0.009999999776482582 {
@@ -1983,6 +2004,10 @@ pub fn has_line_of_sight_cached(e: &Entity, m: &mut MobData, level: &dyn EntityL
     if m.unseen.contains(&t.id) {
         return false;
     }
+    if m.kind.ext().is_some_and(|k| !k.can_see(m)) {
+        m.unseen.push(t.id);
+        return false;
+    }
     let from = Vec3::new(e.x(), e.eye_y(), e.z());
     let to = Vec3::new(t.pos.x, t.eye_y, t.pos.z);
     let v = to.distance_to_sqr(from).sqrt() <= 128.0 && !clip_blocks(level, from, to);
@@ -2003,7 +2028,11 @@ pub fn clip_blocks(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
 /// `Mob.isWithinMeleeAttackRange` (`DEFAULT_ATTACK_REACH`: sqrt(2.04) - 0.6).
 pub fn within_melee_range(e: &Entity, t: &Living) -> bool {
     let reach = 2.04f64.sqrt() - 0.6000000238418579;
-    let b = e.bounding_box().inflate(reach, 0.0, reach);
+    let mut b = e.bounding_box().inflate(reach, 0.0, reach);
+    // `Ravager.getAttackBoundingBox`: a little narrower.
+    if e.type_name == "minecraft:ravager" {
+        b = b.deflate(0.05, 0.0, 0.05);
+    }
     b.intersects(&t.bb)
 }
 
@@ -2100,6 +2129,10 @@ pub struct GroupData {
     pub natural: bool,
     /// The variant the first mob of a group picked (`WolfPackData`, horses' `HorseGroupData`).
     pub variant: Option<i32>,
+    /// `EntitySpawnReason.PATROL`, `EVENT` (raids) and `STRUCTURE`.
+    pub patrol: bool,
+    pub event: bool,
+    pub structure: bool,
 }
 
 /// `Mob.finalizeSpawn` and the types' overrides; random draws from `r` (the level's).
@@ -2192,8 +2225,8 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
     }
     let persistent = m.persistence_required;
     let category = m.kind.category();
-    let removable = m.kind.ext().and_then(|k| k.remove_when_far_away(m)).unwrap_or(!category.persistent());
     let Some(d) = nearest else { return };
+    let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(!category.persistent());
     let far = category.despawn_distance() as f64;
     if !persistent && removable && d > far * far {
         e.discard();
@@ -2246,6 +2279,7 @@ impl DamageKind {
             // -- slice 3: mob effects
 
             // -- slice 3: raids
+            DamageKind::Starve => "minecraft:starve",
 
             // -- slice 3: the end
 

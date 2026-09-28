@@ -1470,6 +1470,7 @@ fn carry_out(
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
+        Event::Raid(_) => {}
         Event::Criterion { player, criterion } => {
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
                 p.entity_criterion(crate::DIMENSIONS[env.dim].0, &criterion);
@@ -1784,6 +1785,7 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         // -- slice 3: mob effects
 
         // -- slice 3: raids
+        DamageKind::Starve => ("minecraft:starve", "death.attack.starve"),
 
         // -- slice 3: the end
 

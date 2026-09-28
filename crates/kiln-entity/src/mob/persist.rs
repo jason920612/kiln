@@ -78,6 +78,9 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
     m.hurt_time = r.short_or("HurtTime", 0);
     m.death_time = r.short_or("DeathTime", 0);
     m.last_hurt_by_mob_timestamp = r.int_or("HurtByTimestamp", 0);
+    // `equipment.setAll(read("equipment").orElseGet(EntityEquipment::new))`: what was worn
+    // before is gone.
+    m.equipment = std::array::from_fn(|_| ItemStack::empty());
     if let Some(Tag::Compound(eq)) = r.get("equipment") {
         for (k, v) in eq {
             if let Some(i) = SLOT_NAMES.iter().position(|s| s == k)

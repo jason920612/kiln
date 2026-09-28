@@ -448,6 +448,13 @@ pub struct AvoidPlayerGoal {
     path: Option<path::Path>,
 }
 
+impl AvoidPlayerGoal {
+    /// `AvoidEntityGoal<Player>(mob, maxDist, walk, sprint)` named `name`.
+    pub fn new(name: &'static str, max_dist: f32, walk: f64, sprint: f64) -> AvoidPlayerGoal {
+        AvoidPlayerGoal { name, max_dist, walk, sprint, to_avoid: None, path: None }
+    }
+}
+
 impl CustomGoal for AvoidPlayerGoal {
     custom_goal_boilerplate!();
     fn name(&self) -> &'static str {

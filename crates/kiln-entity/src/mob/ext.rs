@@ -415,6 +415,22 @@ pub trait Kind: Sync + Send {
         let _ = m;
         None
     }
+    /// `removeWhenFarAway(distSqr)` for a type whose answer depends on the distance to the
+    /// nearest player (patrolling raiders).
+    fn remove_when_far_away_at(&self, m: &MobData, dist_sqr: f64) -> Option<bool> {
+        let _ = dist_sqr;
+        self.remove_when_far_away(m)
+    }
+    /// `LivingEntity.updatingUsingItem` before the use counter advances: the used item's
+    /// `onUseTick` (a crossbow charging).
+    fn update_using_item(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
+    /// `hasLineOfSight` overrides: false when the mob cannot see at all now (a stunned ravager).
+    fn can_see(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
     /// `jumpFromGround` in place of `LivingEntity.jumpFromGround`; true when handled.
     fn jump_from_ground(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) -> bool {
         let _ = (e, m, level);

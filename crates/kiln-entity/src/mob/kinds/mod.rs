@@ -33,6 +33,13 @@ pub mod villager;
 pub mod piglin;
 pub mod hoglin;
 // -- slice 3: raids
+pub mod raider;
+pub mod pillager;
+pub mod vindicator;
+pub mod evoker;
+pub mod vex;
+pub mod ravager;
+pub mod illusioner;
 
 // -- slice 3: the end
 
@@ -74,6 +81,12 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Piglin => &piglin::KIND,
         MobKind::Hoglin => &hoglin::KIND,
         // -- slice 3: raids
+        MobKind::Pillager => &pillager::KIND,
+        MobKind::Vindicator => &vindicator::KIND,
+        MobKind::Evoker => &evoker::KIND,
+        MobKind::Vex => &vex::KIND,
+        MobKind::Ravager => &ravager::KIND,
+        MobKind::Illusioner => &illusioner::KIND,
 
         // -- slice 3: the end
 
