@@ -1,0 +1,186 @@
+/// Kiln plugin API (design §11). Internal draft until M7 freezes 1.0.
+///
+/// Threading contract: a plugin has exactly one `global` instance (serial phases: command
+/// registration, configuration, join/leave, plugin commands) and, when it exports
+/// `region-hooks`, one instance per region (cancellable events at the vanilla points and
+/// batched observe events). Region instances are bound to their region, never to a thread,
+/// and any barrier (split, merge, reload, a trap) may replace them: guest memory is only a
+/// cache. Persistent state lives in host-managed owned namespaces (`state`).
+///
+/// No numeric registry ids cross the boundary: blocks, items and levels are resource keys.
+package kiln:api@0.1.0;
+
+interface types {
+    /// A player in the current call; valid only during the call that received it (a stale
+    /// handle traps).
+    type player-handle = u64;
+    /// The cell (8x8 chunks) of the event's target block; valid only during that call.
+    type cell-handle = u64;
+    /// An atomic operation's ticket.
+    type ticket = u64;
+
+    record block-pos { x: s32, y: s32, z: s32 }
+
+    record player {
+        handle: player-handle,
+        uuid: string,
+        name: string,
+        /// Permission level 4 (an operator).
+        operator: bool,
+    }
+
+    /// A piece of chat text with its style.
+    record span {
+        text: string,
+        /// A named colour (`gold`, `gray`, ...) or `#rrggbb`.
+        color: option<string>,
+        bold: bool,
+        italic: bool,
+    }
+
+    /// A cancellable event's outcome: `deny` may carry a message for the acting player.
+    variant verdict { allow, deny(option<list<span>>) }
+
+    /// A chat message's outcome: sent as is, dropped, or replaced by formatted text.
+    variant chat-verdict { pass, cancel, rewrite(list<span>) }
+
+    record block-event {
+        player: player,
+        /// Level key, e.g. `minecraft:overworld`.
+        level: string,
+        pos: block-pos,
+        /// Block key of the block being broken, e.g. `minecraft:stone`.
+        block: string,
+        cell: cell-handle,
+    }
+
+    record place-event {
+        player: player,
+        level: string,
+        /// Where a block would go (next to `against` on the clicked face).
+        pos: block-pos,
+        /// The clicked block.
+        against: block-pos,
+        /// Item key in the hand used, `minecraft:air` when empty.
+        item: string,
+        cell: cell-handle,
+    }
+
+    record chat-event { player: player, message: string }
+
+    record command-event { player: player, command: string }
+
+    record observed-block { player: player, level: string, pos: block-pos, block: string }
+
+    /// What happened in the region since the last phase boundary (sent in batches).
+    variant observed {
+        block-broken(observed-block),
+        block-placed(observed-block),
+    }
+
+    variant global-value { int(s64), bytes(list<u8>) }
+
+    record compare-and-set { key: string, expected: option<global-value>, new: global-value }
+
+    /// Typed atomic operations on the plugin's global namespace: the only way contexts other
+    /// than the global instance change it. Applied in B0 in a deterministic order.
+    variant atomic-op {
+        add(tuple<string, s64>),
+        compare-and-set(compare-and-set),
+        append(tuple<string, list<u8>>),
+    }
+
+    record config-entry { key: string, value: string }
+
+    record init-info {
+        id: string,
+        /// The manifest's `[config]` table, as strings.
+        config: list<config-entry>,
+        /// The overworld spawn point.
+        spawn: block-pos,
+    }
+
+    record command-spec {
+        /// The literal, e.g. `broken` for `/broken`.
+        name: string,
+        /// Minimum permission level (0-4).
+        permission: u8,
+    }
+}
+
+/// Owned namespaces (always linked).
+interface state {
+    use types.{player-handle, cell-handle, global-value, atomic-op, ticket};
+
+    variant scope { player(player-handle), cell(cell-handle) }
+
+    /// Reads a key of a namespace the current context owns (writes of this call included).
+    get: func(s: scope, key: string) -> option<list<u8>>;
+    /// Writes (none deletes) a key; buffered until the handler returns normally.
+    put: func(s: scope, key: string, val: option<list<u8>>);
+    /// The plugin's global namespace: the global instance reads the live value, every other
+    /// context a snapshot at most one tick old.
+    global-get: func(key: string) -> option<global-value>;
+    /// Queues an atomic operation on the global namespace (applied in B0; from the global
+    /// instance it applies when the call returns).
+    submit: func(op: atomic-op) -> ticket;
+}
+
+/// `player.message`: chat to players, delivered at the next serial point.
+interface chat {
+    use types.{player-handle, span};
+
+    send: func(to: player-handle, text: list<span>);
+    broadcast: func(text: list<span>);
+}
+
+/// Logging to the server console (always linked).
+interface log {
+    info: func(msg: string);
+    warn: func(msg: string);
+}
+
+/// Exports of the global instance.
+interface global-hooks {
+    use types.{init-info, command-spec, player, span};
+
+    /// Once, after instantiation: the commands to register (needs `command.register`).
+    init: func(info: init-info) -> list<command-spec>;
+    on-join: func(p: player);
+    on-leave: func(p: player);
+    /// A registered command; `args` is the text after the literal. Returns the reply.
+    on-command: func(p: option<player>, name: string, args: string) -> list<span>;
+}
+
+/// Exports of region instances (optional).
+interface region-hooks {
+    use types.{init-info, block-event, place-event, chat-event, command-event, verdict, chat-verdict, observed};
+
+    /// After each instantiation (a region instance may be replaced at any barrier).
+    init: func(info: init-info);
+    on-block-break: func(ev: block-event) -> verdict;
+    on-block-place: func(ev: place-event) -> verdict;
+    on-chat: func(ev: chat-event) -> chat-verdict;
+    on-command: func(ev: command-event) -> verdict;
+    on-observe: func(events: list<observed>);
+}
+
+world global-plugin {
+    import state;
+    import chat;
+    import log;
+    export global-hooks;
+}
+
+world region-plugin {
+    import state;
+    import chat;
+    import log;
+    export region-hooks;
+}
+
+/// What the Rust SDK builds: both worlds in one component.
+world plugin {
+    include global-plugin;
+    include region-plugin;
+}
