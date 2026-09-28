@@ -312,16 +312,37 @@ pub fn apply_potion_effect(e: &mut Entity, m: &mut MobData, level: &mut dyn Enti
     }
 }
 
-/// `onMobHurt` of the active effects after a hit landed (infested silverfish).
+/// `onMobHurt` of the active effects after a hit landed: infested bearers let out one or two
+/// silverfish 10% of the time, thrown along their look.
 pub fn on_hurt(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, _source: &DamageSource, _damage: f32) {
-    if let Some(amp) = amplifier(m, ids::infested()) {
-        let _ = amp;
-        // `InfestedMobEffect.onMobHurt`: a 10% chance of one or two silverfish; the draws happen
-        // (silverfish are not simulated yet).
-        if e.random.next_float() <= 0.1 {
-            let _count = super::mth::next_int_between(&mut e.random, 1, 2);
-        }
-        let _ = level;
+    if !has(m, ids::infested()) {
+        return;
+    }
+    if e.random.next_float() > 0.1 {
+        return;
+    }
+    let count = super::mth::next_int_between(&mut e.random, 1, 2);
+    for _ in 0..count {
+        // `spawnSilverfish`: the look vector scaled by (0.3, 0.45, 0.3), turned by a random
+        // angle within a quarter turn either way.
+        let half_pi = std::f32::consts::FRAC_PI_2;
+        let angle = e.random.next_float() * (half_pi - -half_pi) + -half_pi;
+        let look = e.view_vector();
+        let (x, y, z) = (look.x as f32 * 0.3, look.y as f32 * 0.3 * 1.5, look.z as f32 * 0.3);
+        // JOML `Vector3f.rotateY`: the cosine from the sine (`Math.cosFromSin`), in floats.
+        let sin = (angle as f64).sin() as f32;
+        let cos = ((1.0f32 - sin * sin) as f64).sqrt() as f32;
+        let v = Vec3::new((cos * x + sin * z) as f64, y as f64, (-sin * x + cos * z) as f64);
+        let id = level.next_entity_id();
+        let seed = level.fresh_seed();
+        let mut fish = super::new(MobKind::Silverfish, id, 0, seed);
+        fish.set_pos(Vec3::new(e.x(), e.y() + e.height as f64 / 2.0, e.z()));
+        fish.y_rot = level.random().next_float() * 360.0;
+        fish.x_rot = 0.0;
+        fish.set_old_pos_and_rot();
+        fish.delta = v;
+        level.add_entity(fish);
+        level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.silverfish.hurt", source: "hostile", volume: 1.0, pitch: 1.0 });
     }
 }
 
