@@ -3,6 +3,8 @@
 use super::MobKind;
 use super::ext::Kind;
 
+pub mod zombie;
+pub mod skeleton;
 pub mod husk;
 pub mod stray;
 pub mod drowned;

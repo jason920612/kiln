@@ -36,6 +36,9 @@ pub struct PlayerView {
     pub off_hand: i32,
     /// Wears a piece of `#minecraft:piglin_safe_armor` (piglins leave the player alone).
     pub piglin_safe_armor: bool,
+    /// `isInWater` when known (`None`: from the blocks around the player, as its own tick
+    /// would find).
+    pub in_water: Option<bool>,
 }
 
 impl PlayerView {
@@ -55,6 +58,7 @@ impl PlayerView {
             main_hand: 0,
             off_hand: 0,
             piglin_safe_armor: false,
+            in_water: None,
         }
     }
 }
@@ -87,6 +91,8 @@ pub enum DamageKind {
     PlayerExplosion,
     /// A ghast's or blaze's fireball (`DamageSources.fireball`).
     Fireball,
+    /// `minecraft:trident` (a thrown trident).
+    Trident,
 }
 
 /// Side effects the simulation carries out or broadcasts.
@@ -164,7 +170,7 @@ pub trait EntityLevel {
     /// Lowest block y of the dimension.
     fn min_y(&self) -> i32;
 
-    /// `Level.getSeaLevel`.
+    /// `Level.getSeaLevel` (63 in the overworld, 32 in the nether, -63 in a superflat world).
     fn sea_level(&self) -> i32 {
         63
     }
@@ -284,6 +290,14 @@ pub trait EntityLevel {
     fn hurt_player(&mut self, id: i32, source: crate::mob::DamageSource, amount: f32) -> bool {
         self.emit(Event::Hurt { target: id, amount, kind: source.kind, attacker: source.attacker });
         true
+    }
+
+    /// `LivingEntity.addEffect` on player or entity `id` (`effect`: a `minecraft:mob_effect`
+    /// name; `source`: the entity responsible). Returns whether it took (mobs have no effects
+    /// yet).
+    fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32>) -> bool {
+        let _ = (id, effect, duration, amplifier, source);
+        false
     }
 
     /// Sets entity or player `id` on fire for `seconds`.

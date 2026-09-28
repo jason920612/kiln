@@ -118,10 +118,12 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
                 *egg_time = t as i32;
             }
         }
-        Species::Zombie { can_break_doors } => {
+        Species::Zombie { can_break_doors, drowning } => {
             *can_break_doors = r.bool_or("CanBreakDoors", false);
             m.zombie_baby = r.bool_or("IsBaby", false);
+            drowning.load(r, "InWaterTime", "DrownedConversionTime");
         }
+        Species::Skeleton { freezing } => freezing.load(r, "FreezingTime", "StrayConversionTime"),
         Species::Creeper { powered, max_swell, radius, ignited, .. } => {
             *powered = r.bool_or("powered", false);
             if let Some(f) = r.num("Fuse") {
@@ -218,11 +220,10 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
             o.put("IsChickenJockey", Tag::Byte(0));
             o.put("EggLayTime", Tag::Int(*egg_time));
         }
-        Species::Zombie { can_break_doors } => {
+        Species::Zombie { can_break_doors, drowning } => {
             o.put("IsBaby", Tag::Byte(m.zombie_baby as i8));
             o.put("CanBreakDoors", Tag::Byte(*can_break_doors as i8));
-            o.put("InWaterTime", Tag::Int(-1));
-            o.put("DrownedConversionTime", Tag::Int(-1));
+            drowning.save(o, e.fluid.is_eye_in_water(), "InWaterTime", "DrownedConversionTime");
         }
         Species::Creeper { powered, max_swell, radius, ignited, .. } => {
             if *powered {
@@ -232,7 +233,7 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
             o.put("ExplosionRadius", Tag::Byte(*radius as i8));
             o.put("ignited", Tag::Byte(*ignited as i8));
         }
-        Species::Skeleton => o.put("StrayConversionTime", Tag::Int(-1)),
+        Species::Skeleton { freezing } => freezing.save(o, e.is_in_powder_snow, "FreezingTime", "StrayConversionTime"),
         _ => {}
     }
     if let Some(k) = m.kind.ext() {

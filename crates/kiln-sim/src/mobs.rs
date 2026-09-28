@@ -114,7 +114,7 @@ pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
         Species::Spider { climbing } => {
             d.set(data::spider::FLAGS, &DataValue::Byte(*climbing as i8));
         }
-        Species::Skeleton | Species::Plain | Species::Ext(_) => {}
+        Species::Skeleton { .. } | Species::Plain | Species::Ext(_) => {}
     }
     if let Some(k) = m.kind.ext() {
         k.entity_data(e, m, &mut d);

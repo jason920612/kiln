@@ -50,6 +50,8 @@ pub struct MemoryLevel {
     pub game_time: i64,
     pub sky_darken: i32,
     pub difficulty: u8,
+    /// `getSeaLevel` (63; -63 for a superflat world).
+    pub sea_level: i32,
     /// Hits on players: (player id, amount that landed), with each player's hurt cooldown and
     /// last hit (`LivingEntity.damageCooldownTime`, `lastHurt`).
     pub player_hits: Vec<(i32, f32)>,
@@ -83,6 +85,7 @@ impl MemoryLevel {
             game_time: 0,
             sky_darken: 0,
             difficulty: 2,
+            sea_level: 63,
             player_hits: Vec::new(),
             player_cooldown: FastMap::default(),
             slots: Vec::new(),
@@ -199,14 +202,27 @@ impl EntityLevel for MemoryLevel {
         self.sky_darken
     }
 
-    fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
-        // Open sky above the harness floor, darkness below it.
-        let sky = if self.blocks.keys().any(|p| p.x == pos.x && p.z == pos.z && p.y > pos.y) { 0 } else { 15 };
-        (sky - sky_darken).max(0)
+    fn sea_level(&self) -> i32 {
+        self.sea_level
     }
 
+    fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
+        (self.sky_light(pos) - sky_darken).max(0)
+    }
+
+    /// Open sky above the harness floor, darkness below it; water above dims it by one per
+    /// block (its light opacity), as straight down a pool.
     fn sky_light(&self, pos: BlockPos) -> i32 {
-        if self.blocks.keys().any(|p| p.x == pos.x && p.z == pos.z && p.y > pos.y) { 0 } else { 15 }
+        let mut sky = 15;
+        for (p, s) in self.blocks.iter() {
+            if p.x == pos.x && p.z == pos.z && p.y > pos.y && !kiln_data::blocks_types::is_air(*s) {
+                if crate::blocks::block_name(*s) != "minecraft:water" {
+                    return 0;
+                }
+                sky -= 1;
+            }
+        }
+        sky.max(0)
     }
 
     fn difficulty(&self) -> u8 {

@@ -316,6 +316,22 @@ pub trait Kind: Sync + Send {
         let _ = (e, m, level, t);
         None
     }
+    /// `setTarget` overrides, before the target changes to `target` (zombified piglins draw their
+    /// anger timers when they first get one).
+    fn on_set_target(&self, e: &mut Entity, m: &mut MobData, target: Option<i32>) {
+        let _ = (e, m, target);
+    }
+    /// `TargetingConditions` selector of the type's player `NearestAttackableTargetGoal`
+    /// (drowned `okTarget`, zombified piglin `isAngryAt`).
+    fn player_target_ok(&self, e: &Entity, m: &MobData, level: &dyn EntityLevel, t: &Living) -> bool {
+        let _ = (e, m, level, t);
+        true
+    }
+    /// `AbstractSkeleton.getArrow` / `performRangedAttack` extras on the arrow just made
+    /// (stray slowness, wither skeleton fire).
+    fn ranged_arrow(&self, e: &mut Entity, m: &mut MobData, arrow: &mut Entity) {
+        let _ = (e, m, arrow);
+    }
     /// After a successful shared `doHurtTarget` (husk hunger, wither skeleton wither).
     fn after_hurt_target(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) {
         let _ = (e, m, level, t);
@@ -361,6 +377,10 @@ pub trait Kind: Sync + Send {
     }
     fn placement(&self) -> Placement {
         Placement::OnGround
+    }
+    /// `checkSpawnObstruction` lets the type spawn with liquid in its box (drowned).
+    fn spawn_in_liquids(&self) -> bool {
+        false
     }
     /// `getBaseExperienceReward`: `None` for the shared rule.
     fn experience(&self, e: &mut Entity, m: &MobData) -> Option<i32> {

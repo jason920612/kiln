@@ -278,6 +278,7 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
                 last_state,
                 crit,
                 base_damage,
+                effects: Vec::new(),
             })
         }
         name if crate::mob::MobKind::by_name(name).is_some() => EntityKind::MobTicking { gravity: 0.08 },

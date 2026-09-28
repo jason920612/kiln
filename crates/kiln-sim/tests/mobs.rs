@@ -512,3 +512,91 @@ fn phantoms_swoop_at_players_at_night() {
     w.ticks(400);
     assert!(w.health() < 20.0, "the phantom bit the player (health {})", w.health());
 }
+
+// ---------------------------------------------------------------------- the zombie and skeleton families
+
+impl World {
+    fn effects(&self) -> Vec<&'static str> {
+        self.sim.effects(1).unwrap().into_iter().map(|e| e.0).collect()
+    }
+
+    /// Fills the box `from..=to` (offsets from the player) with `block`.
+    fn fill(&mut self, from: [i32; 3], to: [i32; 3], block: &str) {
+        let p = self.pos().map(|v| v.floor() as i32);
+        self.console(&format!(
+            "fill {} {} {} {} {} {} {block}",
+            p[0] + from[0],
+            p[1] + from[1],
+            p[2] + from[2],
+            p[0] + to[0],
+            p[1] + to[1],
+            p[2] + to[2]
+        ));
+    }
+}
+
+#[test]
+fn husks_do_not_burn_and_make_their_target_hungry() {
+    let mut w = World::new();
+    w.console("time set 6000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:husk", [4.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    let mut hungry = false;
+    for _ in 0..40 {
+        w.ticks(10);
+        hungry |= w.effects().contains(&"minecraft:hunger");
+    }
+    assert!(w.health() < 20.0, "the husk hit the player by day");
+    assert!(hungry, "a husk's hit makes its target hungry");
+    let h = w.mobs("minecraft:husk");
+    assert_eq!(h.len(), 1);
+    assert_eq!(h[0].2, 20.0, "husks do not burn in daylight");
+}
+
+#[test]
+fn wither_skeletons_wither_their_target() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:wither_skeleton", [3.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    let mut withered = false;
+    for _ in 0..30 {
+        w.ticks(10);
+        withered |= w.effects().contains(&"minecraft:wither");
+    }
+    assert!(withered, "a wither skeleton's hit withers");
+}
+
+#[test]
+fn zombies_drown_into_drowned_and_skeletons_freeze_into_strays() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode creative Hunter");
+    w.fill([4, 0, -2], [8, 3, 2], "minecraft:water");
+    w.summon("minecraft:zombie", [6.0, 0.0, 0.0], "{PersistenceRequired:1b,DrownedConversionTime:20}");
+    w.fill([-8, 0, -2], [-4, 1, 2], "minecraft:powder_snow");
+    // A saved conversion carries on only while afflicted: the first tick (before the mob moved
+    // into the snow) would cancel it, so the skeleton freezes the full 7 seconds, then 15.
+    w.summon("minecraft:skeleton", [-5.5, 0.0, 0.5], "{PersistenceRequired:1b}");
+    w.ticks(60);
+    assert!(w.mobs("minecraft:zombie").is_empty(), "the zombie converted");
+    assert_eq!(w.mobs("minecraft:drowned").len(), 1, "into a drowned");
+    w.ticks(400);
+    assert!(w.mobs("minecraft:skeleton").is_empty(), "the skeleton converted");
+    assert_eq!(w.mobs("minecraft:stray").len(), 1, "into a stray");
+}
+
+#[test]
+fn drowned_throw_tridents() {
+    let mut w = World::new();
+    w.console("time set 18000");
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:drowned", [8.0, 0.0, 0.0], "{PersistenceRequired:1b,equipment:{mainhand:{id:\"minecraft:trident\",count:1}}}");
+    let mut thrown = false;
+    for _ in 0..40 {
+        w.ticks(5);
+        thrown |= w.sim.entities().iter().any(|e| e.0 == "minecraft:trident");
+    }
+    assert!(thrown, "the drowned threw a trident");
+    assert!(w.health() < 20.0, "and hit (health {})", w.health());
+}

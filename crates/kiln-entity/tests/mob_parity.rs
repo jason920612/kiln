@@ -30,14 +30,21 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
         "tempt" => "TemptGoal",
         "breed" => "BreedGoal",
         "follow_parent" => "FollowParentGoal",
-        "stroll" => "WaterAvoidingRandomStrollGoal",
+        "stroll" => {
+            if kind == MobKind::Drowned {
+                "RandomStrollGoal"
+            } else {
+                "WaterAvoidingRandomStrollGoal"
+            }
+        }
         "look_at_player" => "LookAtPlayerGoal",
         "look_around" => "RandomLookAroundGoal",
         "eat_block" => "EatBlockGoal",
         "melee" => match kind {
-            MobKind::Zombie => "ZombieAttackGoal",
+            k if k.is_zombie() => "ZombieAttackGoal",
             MobKind::Spider => "SpiderAttackGoal",
-            MobKind::Skeleton => "",
+            // `AbstractSkeleton$1` (an anonymous class: no simple name).
+            k if k.is_skeleton() => "",
             _ => "MeleeAttackGoal",
         },
         "bow" => "RangedBowAttackGoal",
@@ -120,6 +127,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     level.sky_darken = s["sky_darken"].as_i64().unwrap() as i32;
+    // The recording world is superflat.
+    level.sea_level = -63;
     let start = s["game_time"].as_i64().unwrap();
     for b in s["blocks"].as_array().unwrap() {
         let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
@@ -132,6 +141,8 @@ fn replay(s: &Value) -> Result<usize, String> {
             v.eye_height = 1.27;
         }
         v.creative = p.get("creative").and_then(Value::as_bool).unwrap_or(false);
+        // The recording's player is never ticked: it never finds itself in water.
+        v.in_water = Some(false);
         if let Some(item) = p.get("main_hand").and_then(Value::as_str) {
             v.main_hand = kiln_data::builtin_id("minecraft:item", item).unwrap();
         }
@@ -287,7 +298,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             && let Some(e) = ids.get(k).and_then(|&id| level.entity(id))
         {
             let m = mob::data(e).unwrap();
-            eprintln!("dbg tick {tick} rnd {} ambient {} noaction {} goals {:?}", e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals());
+            eprintln!("dbg tick {tick} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
         }
         for (k, want) in expected.as_array().unwrap().iter().enumerate() {
             let want = want.as_array().unwrap();
@@ -322,7 +333,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     }
     // Vanilla arrows draw their damage and spread from their own random, which is seeded from
     // the clock (not pinnable): skeleton scenarios compare the mob, not where arrows land.
-    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| m["main_hand"].as_str() == Some("minecraft:bow"));
+    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident")));
     let f32s = |v: &[(i64, f64)]| v.iter().map(|&(t, a)| (t, (a as f32).to_bits())).collect::<Vec<_>>();
     if !arrows && f32s(&got_hits) != f32s(&want_hits) {
         return Err(format!("player hits {got_hits:?} (kiln) vs {want_hits:?} (vanilla)"));
