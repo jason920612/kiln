@@ -1110,6 +1110,7 @@ version = "0.1.0"
 name = "kiln-entity"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "kiln-data",
  "kiln-item",
  "kiln-javamath",

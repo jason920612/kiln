@@ -482,3 +482,23 @@ fn elytra_glide_wears_the_wings() {
     air(&mut w, true, 25);
     assert_eq!(w.sim.item_damage(1, 6), Some(3));
 }
+
+#[test]
+fn firework_rockets_launch_and_burst() {
+    let mut w = World::new("survival");
+    w.hold("minecraft:firework_rocket", 3);
+    let top = w.at(0, 0, 3);
+    w.use_on_top(top);
+    assert_eq!(w.count("minecraft:firework_rocket"), 1, "{:?}", w.sim.entities());
+    assert_eq!(w.held(), Some(("minecraft:firework_rocket".into(), 2)));
+    w.ticks(5);
+    let (_, at) = w.sim.entities().into_iter().find(|(k, _)| *k == "minecraft:firework_rocket").unwrap();
+    assert!(at[1] > top[1] as f64 + 1.5, "rising: {at:?}");
+    // Default rockets fly one duration: gone within 10 + 5 + 6 ticks.
+    w.ticks(20);
+    assert_eq!(w.count("minecraft:firework_rocket"), 0);
+    // Used in the air without wings nothing happens.
+    w.use_item(0.0);
+    assert_eq!(w.count("minecraft:firework_rocket"), 0);
+    assert_eq!(w.held(), Some(("minecraft:firework_rocket".into(), 2)));
+}

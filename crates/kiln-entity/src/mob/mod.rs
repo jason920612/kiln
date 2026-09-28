@@ -2202,6 +2202,7 @@ impl DamageKind {
             DamageKind::PlayerExplosion => "minecraft:player_explosion",
             DamageKind::Fireball => "minecraft:fireball",
             DamageKind::Trident => "minecraft:trident",
+            DamageKind::Fireworks => "minecraft:fireworks",
             DamageKind::MobProjectile => "minecraft:mob_projectile",
             DamageKind::Magic => "minecraft:magic",
             DamageKind::IndirectMagic => "minecraft:indirect_magic",

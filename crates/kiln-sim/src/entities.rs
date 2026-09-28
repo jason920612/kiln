@@ -1915,6 +1915,7 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::PlayerExplosion => ("minecraft:player_explosion", "death.attack.explosion.player"),
         DamageKind::Fireball => ("minecraft:fireball", "death.attack.fireball"),
         DamageKind::Trident => ("minecraft:trident", "death.attack.trident"),
+        DamageKind::Fireworks => ("minecraft:fireworks", "death.attack.fireworks"),
         DamageKind::MobProjectile => ("minecraft:mob_projectile", "death.attack.mob"),
         DamageKind::Magic => ("minecraft:magic", "death.attack.magic"),
         DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),

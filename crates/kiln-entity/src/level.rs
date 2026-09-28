@@ -186,6 +186,8 @@ pub enum DamageKind {
     Fireball,
     /// `minecraft:trident` (a thrown trident).
     Trident,
+    /// `minecraft:fireworks` (a rocket with explosions bursting).
+    Fireworks,
     /// `mobProjectile` (shulker bullets, llama spit).
     MobProjectile,
     Magic,

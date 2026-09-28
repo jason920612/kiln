@@ -781,6 +781,9 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             } else if crate::buckets::is_bucket(name) {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::buckets::use_bucket(p, &mut level, off, fx.spawns);
+            } else if name == crate::firework::ITEM {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::firework::use_item(p, &mut level, off, fx.spawns);
             } else if crate::ranged::handles(name) {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::ranged::use_item(p, &mut level, off, fx.spawns);
@@ -901,6 +904,9 @@ fn use_on_block(
     }
     // `Item.useOn` of tools (hoes, shovels, axes, shears, honeycomb, bone meal, fire charges,
     // flint and steel on campfires and candles).
+    if item_name == Some(crate::firework::ITEM) && actor.may_build && crate::firework::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
+        return;
+    }
     if actor.may_build && crate::tools::item_use_on(p, level, bp, dir, !main_hand, spawns) {
         return;
     }

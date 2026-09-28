@@ -143,12 +143,12 @@ fn throw(p: &mut Player, level: &mut RegionLevel, off_hand: bool, stack: &ItemSt
 
 /// A seed for a projectile's own random (`Entity.random`), independent of how regions split
 /// the world.
-fn projectile_seed(level: &RegionLevel, p: &Player, n: u64) -> i64 {
+pub(crate) fn projectile_seed(level: &RegionLevel, p: &Player, n: u64) -> i64 {
     let at = kiln_blocks::BlockPos::new(p.entity_id, p.tick_count, n as i32);
     crate::container::pos_random(level, at, 0x7072_6f6a).next_long()
 }
 
-fn push_spawn(spawns: &mut Vec<Spawn>, e: kiln_entity::Entity) {
+pub(crate) fn push_spawn(spawns: &mut Vec<Spawn>, e: kiln_entity::Entity) {
     let Some(kind) = kiln_data::entities::by_name(e.type_name) else { return };
     let (pos, vel) = (e.position(), e.delta);
     spawns.push(Spawn { kind, pos: [pos.x, pos.y, pos.z], vel: [vel.x, vel.y, vel.z], body: Body::Ready(Box::new(e)) });
