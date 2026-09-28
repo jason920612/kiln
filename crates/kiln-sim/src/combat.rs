@@ -27,7 +27,7 @@ use kiln_proto::packets::world_fx;
 /// An attribute with the player's base value (`Player.createAttributes`) and its range.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Attr {
-    name: &'static str,
+    pub(crate) name: &'static str,
     base: f64,
     min: f64,
     max: f64,
@@ -57,12 +57,6 @@ pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =
 
 /// The attributes effects change that clients are told about (`Attribute.isClientSyncable`).
 pub(crate) const EFFECT_SYNCED: [Attr; 6] = [MOVEMENT_SPEED, ATTACK_SPEED, SAFE_FALL_DISTANCE, MAX_HEALTH, MAX_ABSORPTION, LUCK];
-
-impl Attr {
-    pub(crate) fn name(&self) -> &'static str {
-        self.name
-    }
-}
 
 /// `Player.CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER_VALUE`.
 const CREATIVE_ENTITY_RANGE: f64 = 2.0;

@@ -54,12 +54,15 @@ fn check_registries(line: &Value) -> Vec<String> {
             effects::Kind::Saturation => "SaturationMobEffect",
             effects::Kind::Absorption => "AbsorptionMobEffect",
             effects::Kind::HealOrHarm { .. } => "HealOrHarmMobEffect",
+            effects::Kind::BadOmen => "BadOmenMobEffect",
+            effects::Kind::RaidOmen => "RaidOmenMobEffect",
+            effects::Kind::Infested => "InfestedMobEffect",
+            effects::Kind::Oozing => "OozingMobEffect",
+            effects::Kind::Weaving => "WeavingMobEffect",
+            effects::Kind::WindCharged => "WindChargedMobEffect",
         };
         let class = e["class"].as_str().unwrap();
-        // Subclasses Kiln has no tick behaviour for (omens, oozing, ...) act on mobs or deaths.
-        if kind != "MobEffect" || matches!(class, "MobEffect" | "HealOrHarmMobEffect" | "RegenerationMobEffect") {
-            eq("class", kind.to_owned(), class.to_owned());
-        }
+        eq("class", kind.to_owned(), class.to_owned());
         let mods: Vec<String> = e["modifiers"]
             .as_array()
             .unwrap()
@@ -72,7 +75,7 @@ fn check_registries(line: &Value) -> Vec<String> {
             kiln_item::component::AttributeOperation::AddMultipliedTotal => "ADD_MULTIPLIED_TOTAL",
         };
         let got: Vec<String> =
-            t.modifier.iter().map(|m| format!("{} {} {:?} {}", m.attr.name(), m.id, m.amount, op(m.op))).collect();
+            t.modifier.iter().map(|m| format!("{} {} {:?} {}", m.attr, m.id, m.amount, op(m.op))).collect();
         eq("modifiers", format!("{got:?}"), format!("{mods:?}"));
     }
     let potions = line["potions"].as_array().unwrap();
@@ -325,7 +328,7 @@ fn run_scenario(line: &Value) -> Vec<String> {
                 crate::combat::WAYPOINT_TRANSMIT_RANGE,
             ]
             .into_iter()
-            .find(|a| a.name() == name.as_str())
+            .find(|a| a.name == name.as_str())
             .unwrap_or_else(|| panic!("attribute {name}"));
             eq(name, format!("{:?}", p.attribute(attr)), format!("{:?}", value.as_f64().unwrap()));
         }

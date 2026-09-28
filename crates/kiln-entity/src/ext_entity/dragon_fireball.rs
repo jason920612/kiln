@@ -45,7 +45,7 @@ pub fn load(r: &mut Input) -> Option<Box<dyn EntityExt>> {
 
 impl DragonFireball {
     /// `ProjectileUtil.getHitResultOnMoveVector` with `canHitEntity` (no physics-less
-    /// entities, not the owner until the fireball left it).
+    /// entities; the owner is no passenger of anything, so it counts from the start).
     fn hit_on_move_vector(&self, e: &Entity, level: &dyn EntityLevel) -> Option<Hit> {
         let from = e.position();
         let delta = e.delta;
@@ -60,15 +60,20 @@ impl DragonFireball {
         }
         let margin = kiln_javamath::math::max(0.0, kiln_javamath::math::min(0.3, (e.tick_count - 2) as f32 / 20.0));
         let area = e.bounding_box().expand_towards_vec(delta).inflate_all(1.0);
-        let owner = if self.left_owner { None } else { self.owner };
         let mut best = f64::MAX;
         let mut hit = None;
         for id in level.entities_in(&area, EntityFilter::Any, e.id) {
             let Some(t) = level.entity(id) else { continue };
-            if !crate::projectile::can_be_hit_by_projectile(t) || Some(id) == owner || t.no_physics {
+            // An ender dragon is hit on its parts (pickable, with physics; even its own: they
+            // are no passengers of it). Other entities without physics are not hit.
+            let clip = if t.type_name == "minecraft:ender_dragon" {
+                crate::mob::kinds::ender_dragon::clip_parts(t, margin as f64, from, to)
+            } else if !crate::projectile::can_be_hit_by_projectile(t) || t.no_physics {
                 continue;
-            }
-            if let Some(p) = t.bounding_box().inflate_all(margin as f64).clip(from, to) {
+            } else {
+                t.bounding_box().inflate_all(margin as f64).clip(from, to)
+            };
+            if let Some(p) = clip {
                 let d = from.distance_to_sqr(p);
                 if d < best {
                     best = d;
@@ -94,8 +99,10 @@ impl DragonFireball {
     /// when there is one.
     fn on_hit(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: "minecraft:dragon_fireball", owner: self.owner, hit });
+        // `ownedBy`: the owner itself (a hit on a dragon is on one of its parts, never owned).
         if let Hit::Entity { id, .. } = hit
             && Some(id) == self.owner
+            && level.entity(id).is_none_or(|t| t.type_name != "minecraft:ender_dragon")
         {
             return;
         }
@@ -114,8 +121,9 @@ impl DragonFireball {
             }
         }
         level.emit(Event::LevelEvent { event: 2006, pos: e.block_position(), data: if e.silent { -1 } else { 1 } });
-        let owner = self.owner.filter(|&o| level.entity(o).is_some_and(|o| crate::mob::data(o).is_some()));
-        crate::mob::kinds::ender_dragon::spawn_breath_cloud(level, owner.unwrap_or(0), at, 3.0, 600, (7.0 - 3.0) / 600.0, 1);
+        // `setOwner` when the owner is a living entity.
+        let owner = self.owner.and_then(|o| level.entity(o).filter(|o| crate::mob::data(o).is_some()).map(|o| (o.id, o.uuid)));
+        crate::mob::kinds::ender_dragon::spawn_breath_cloud(level, owner, at, 3.0, 600, (7.0 - 3.0) / 600.0, 1, 1);
         e.discard();
     }
 }

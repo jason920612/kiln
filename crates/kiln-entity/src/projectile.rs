@@ -302,6 +302,13 @@ fn on_hit(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
         e.discard();
         return;
     }
+    if kind_ == Throwable::LingeringPotion
+        && let Some(item) = data(e).item.clone()
+    {
+        crate::mob::kinds::witch::linger(e, level, hit, &item, owner);
+        e.discard();
+        return;
+    }
     level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: kind_.type_name(), owner, hit });
     // `onHitEntity`: a thrown projectile's hit (no damage) still breaks an end crystal.
     if let Hit::Entity { id, .. } = hit {

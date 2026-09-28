@@ -74,6 +74,10 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
             }
         }
     }
+    // `active_effects` go straight into the map (their modifiers came with the attributes).
+    if let Some(t) = r.get("active_effects") {
+        m.effects = crate::effect::load(t);
+    }
     let health = r.num("Health");
     m.health = health.map_or(m.max_health(), |h| h as f32);
     m.hurt_time = r.short_or("HurtTime", 0);
@@ -179,6 +183,9 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
         })
         .collect();
     o.put("attributes", Tag::List(attrs));
+    if let Some(t) = crate::effect::save(&m.effects) {
+        o.put("active_effects", t);
+    }
     o.put("FallFlying", Tag::Byte(0));
     let eq: Vec<(String, Tag)> =
         m.equipment.iter().zip(SLOT_NAMES).filter(|(s, _)| !s.is_empty()).map(|(s, n)| (n.to_owned(), s.to_nbt())).collect();

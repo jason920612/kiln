@@ -29,6 +29,8 @@ pub static KIND: EnderDragon = EnderDragon;
 static INFO: Info = Info {
     fire_immune: true,
     monster_base: false,
+    // `EnderDragon extends Mob`.
+    extends_monster: false,
     sounds: Some("ender_dragon"),
     ..Info::monster("minecraft:ender_dragon", &[(MaxHealth, 200.0), (CameraDistance, 16.0)])
 };
@@ -338,18 +340,43 @@ fn discard_flame(e: &Entity, level: &mut dyn EntityLevel) {
 }
 
 /// The owner of a dragon breath cloud (the flame of a sitting dragon).
-// TODO(m6-mobs3): the lead's `AreaEffectCloud` (ext_entity/area_effect_cloud.rs) knows its
-// owner; until it lands no clouds exist.
-fn breath_cloud_owner(_c: &Entity) -> Option<i32> {
-    None
+fn breath_cloud_owner(c: &Entity) -> Option<i32> {
+    crate::ext_entity::get::<crate::ext_entity::area_effect_cloud::AreaEffectCloud>(c).and_then(|c| c.owner)
 }
 
-/// `new AreaEffectCloud(level, x, y, z)` with the dragon breath particle, `owner`, `radius`,
-/// `duration`, `radius_per_tick`, `potionDurationScale` 0.25 and `instant_damage` at
-/// `amplifier`, added to the level.
-// TODO(m6-mobs3): builds the lead's `AreaEffectCloud` once it lands.
-pub fn spawn_breath_cloud(level: &mut dyn EntityLevel, owner: i32, pos: Vec3, radius: f32, duration: i32, radius_per_tick: f32, amplifier: i32) {
-    let _ = (level, owner, pos, radius, duration, radius_per_tick, amplifier);
+/// `new AreaEffectCloud(level, x, y, z)` of dragon's breath: the `dragon_breath` particle
+/// (power 1), `owner` (id and UUID), `radius`, `duration`, `radius_per_tick`,
+/// `potionDurationScale` 0.25 and `instant_damage` (`effect_duration`, `amplifier`), added to
+/// the level.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_breath_cloud(
+    level: &mut dyn EntityLevel,
+    owner: Option<(i32, u128)>,
+    pos: Vec3,
+    radius: f32,
+    duration: i32,
+    radius_per_tick: f32,
+    effect_duration: i32,
+    amplifier: i32,
+) {
+    use crate::ext_entity::area_effect_cloud::{self as aec, AreaEffectCloud};
+    let particle = kiln_data::builtin_id("minecraft:particle_type", "minecraft:dragon_breath")
+        .map(|kind| kiln_proto::packets::entity::metadata::Particle { kind, options: 1.0f32.to_be_bytes().to_vec() });
+    let harm = crate::effect::Effect::simple(crate::effect::ids::instant_damage(), effect_duration, amplifier);
+    let cloud = AreaEffectCloud {
+        owner: owner.map(|o| o.0),
+        owner_uuid: owner.map(|o| o.1).filter(|&u| u != 0),
+        radius,
+        duration,
+        radius_per_tick,
+        potion_duration_scale: 0.25,
+        custom_particle: particle,
+        potion: kiln_item::component::PotionContents { custom_effects: vec![harm.to_item()], ..Default::default() },
+        ..AreaEffectCloud::default()
+    };
+    let id = level.next_entity_id();
+    let seed = level.fresh_seed();
+    level.add_entity(aec::new(id, 0, pos, cloud, seed));
 }
 
 fn dragon(m: &MobData) -> &DragonState {
@@ -994,7 +1021,7 @@ fn flaming_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         }
         let y = crate::math::floor(y) as f64 + 1.0;
         s.ph.flame = true;
-        spawn_breath_cloud(level, e.id, Vec3::new(x, y, z), 5.0, 200, 0.0, 0);
+        spawn_breath_cloud(level, Some((e.id, e.uuid)), Vec3::new(x, y, z), 5.0, 200, 0.0, 0, 0);
     }
 }
 
@@ -1176,8 +1203,9 @@ fn knock_back(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, area
             o.delta = o.delta.add(xd / dd * 4.0, 0.20000000298023224, zd / dd * 4.0);
             o.needs_sync = true;
         }
+        // `getLastHurtByMobTimestamp() < tickCount - 2`.
         let recent = match level.player(id) {
-            Some(p) => p.last_hurt_by_mob.is_some() && p.last_hurt_by_mob_time as i64 >= level.game_time() - 2,
+            Some(p) => p.last_hurt_by_mob_time >= p.tick_count - 2,
             None => level.entity(id).and_then(|o| mob::data(o).map(|om| om.last_hurt_by_mob_timestamp >= o.tick_count - 2)).unwrap_or(false),
         };
         if !sitting && !recent {
@@ -1569,6 +1597,10 @@ impl Kind for EnderDragon {
         dragon(m).phase.is_sitting()
     }
     fn despawns(&self) -> bool {
+        false
+    }
+    /// `addEffect` is overridden to refuse every effect.
+    fn can_be_affected(&self, _m: &MobData, _effect: &crate::effect::Effect, _base: bool) -> bool {
         false
     }
     fn hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> Option<bool> {
