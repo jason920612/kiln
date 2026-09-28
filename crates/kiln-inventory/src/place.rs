@@ -24,7 +24,7 @@ pub enum PostPlace {
 fn simple(stack: &ItemStack) -> bool {
     !stack.is_empty()
         && !stack.is_damaged()
-        && !stack.has(kiln_item::component::ids::ENCHANTMENTS)
+        && !stack.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|e| !e.is_empty())
         && !stack.has(kiln_item::component::ids::CUSTOM_NAME)
 }
 
