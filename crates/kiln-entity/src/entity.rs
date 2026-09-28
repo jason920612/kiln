@@ -117,6 +117,10 @@ pub struct Entity {
     pub last_known_speed: Vec3,
     pub(crate) inside: InsideCollector,
     pub random: LegacyRandom,
+    /// The entity this one rides (`Entity.vehicle`) and the ones riding it, first the
+    /// controlling one (`passengers`); players by their network id.
+    pub vehicle: Option<i32>,
+    pub passengers: Vec<i32>,
     /// Saved fields Kiln does not model (custom name, tags, passengers, ...), written back
     /// unchanged by [`crate::persist::save`].
     pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
@@ -178,6 +182,8 @@ impl Entity {
             last_known_speed: Vec3::ZERO,
             inside: InsideCollector::default(),
             random: LegacyRandom::new(random_seed),
+            vehicle: None,
+            passengers: Vec::new(),
             extra: Vec::new(),
         };
         e.set_pos(Vec3::ZERO);

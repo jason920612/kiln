@@ -173,7 +173,7 @@ fn offspring_color(level: &mut dyn EntityLevel, a: u8, b: u8) -> u8 {
 }
 
 /// Dye colors (`DyeColor` ids) whose mix has a crafting recipe (two dyes → two dyes).
-fn mixed_dye(a: u8, b: u8) -> Option<u8> {
+pub fn mixed_dye(a: u8, b: u8) -> Option<u8> {
     const WHITE: u8 = 0;
     const ORANGE: u8 = 1;
     const MAGENTA: u8 = 2;

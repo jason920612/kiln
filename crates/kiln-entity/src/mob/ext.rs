@@ -128,7 +128,7 @@ impl<T: Any + Debug + Clone + Send + Sync> MobExt for T {
 
 impl Clone for Box<dyn MobExt> {
     fn clone(&self) -> Self {
-        self.box_clone()
+        (**self).box_clone()
     }
 }
 
@@ -141,14 +141,14 @@ impl PartialEq for Box<dyn MobExt> {
 /// The type state of `m` as `T` (the type's own state struct).
 pub fn state<T: 'static>(m: &MobData) -> Option<&T> {
     match &m.species {
-        super::Species::Ext(s) => s.as_any().downcast_ref::<T>(),
+        super::Species::Ext(s) => (**s).as_any().downcast_ref::<T>(),
         _ => None,
     }
 }
 
 pub fn state_mut<T: 'static>(m: &mut MobData) -> Option<&mut T> {
     match &mut m.species {
-        super::Species::Ext(s) => s.as_any_mut().downcast_mut::<T>(),
+        super::Species::Ext(s) => (**s).as_any_mut().downcast_mut::<T>(),
         _ => None,
     }
 }
@@ -384,6 +384,33 @@ pub trait Kind: Sync + Send {
     /// `removeWhenFarAway` for a type that despawns differently from its category.
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         let _ = m;
+        None
+    }
+    /// `LivingEntity.canAttack` extras (a tamed animal never attacks its owner): false vetoes `t`.
+    fn can_attack(&self, m: &MobData, level: &dyn EntityLevel, t: &Living) -> bool {
+        let _ = (m, level, t);
+        true
+    }
+    /// `Animal.canMate` beyond both being in love (tamed wolves only, not sitting ...).
+    fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
+        let _ = (m, partner);
+        true
+    }
+    /// `getAmbientSound` when it draws randomness or depends on state: `Some(sound)` replaces the
+    /// type's `ambient` sound (`Some(None)`: silent this time, no pitch draws).
+    fn ambient_sound(&self, e: &mut Entity, m: &MobData, level: &dyn EntityLevel) -> Option<Option<&'static str>> {
+        let _ = (e, m, level);
+        None
+    }
+    /// `getMaxHeadXRot` (wolves look less far up while sitting).
+    fn max_head_x_rot(&self, m: &MobData) -> i32 {
+        let _ = m;
+        self.info().head.1
+    }
+    /// `positionRider` / `getPassengerAttachmentPoint`: where a passenger sits, relative to the
+    /// vehicle's position (`None`: vanilla's default, on top of the box).
+    fn passenger_offset(&self, e: &Entity, m: &MobData) -> Option<Vec3> {
+        let _ = (e, m);
         None
     }
 }

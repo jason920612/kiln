@@ -133,6 +133,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         if let Some(item) = p.get("main_hand").and_then(Value::as_str) {
             v.main_hand = kiln_data::builtin_id("minecraft:item", item).unwrap();
         }
+        if let Some(u) = p.get("uuid").and_then(Value::as_array) {
+            v.uuid = u.iter().fold(0u128, |acc, x| (acc << 32) | (x.as_i64().unwrap() as u32 as u128));
+        }
         v
     });
     if let Some(p) = player {

@@ -573,6 +573,14 @@ impl MobData {
         self.using_item.unwrap_or(0)
     }
 
+    /// `getMaxHeadXRot` of this mob (its type's, or what its state makes it).
+    pub fn max_head_x_rot(&self) -> i32 {
+        match self.kind.ext() {
+            Some(k) => k.max_head_x_rot(self),
+            None => self.kind.max_head_x_rot(),
+        }
+    }
+
     pub fn max_health(&self) -> f32 {
         self.attrs.value(Attr::MaxHealth) as f32
     }
@@ -1034,7 +1042,11 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.ambient_sound_time += 1;
         if e.random.next_int_bounded(1000) < t {
             m.ambient_sound_time = -m.kind.ambient_sound_interval();
-            if let Some(s) = m.kind.ambient_sound() {
+            let sound = match m.kind.ext().and_then(|k| k.ambient_sound(e, m, &*level)) {
+                Some(s) => s,
+                None => m.kind.ambient_sound(),
+            };
+            if let Some(s) = sound {
                 make_sound(e, m, level, s);
             }
         }
@@ -1404,16 +1416,26 @@ fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
     let _ = m;
     let bb = e.bounding_box();
     let mut others: Vec<(i32, f64, f64, bool)> = Vec::new();
+    // In the level's entity order, players (their stand-ins) among the mobs.
     for id in level.entities_in(&bb, EntityFilter::Living, e.id) {
+        if let Some(p) = level.player(id) {
+            if !p.spectator && p.alive && e.vehicle != Some(id) && !e.passengers.contains(&id) {
+                others.push((id, p.pos.x, p.pos.z, true));
+            }
+            continue;
+        }
         let Some(o) = level.entity(id) else { continue };
         if let EntityKind::Mob(om) = &o.kind
             && om.health > 0.0
+            && e.vehicle != Some(id)
+            && !e.passengers.contains(&id)
+            && !(e.vehicle.is_some() && o.vehicle == e.vehicle)
         {
             others.push((id, o.x(), o.z(), false));
         }
     }
     for p in level.players() {
-        if p.spectator || !p.alive {
+        if p.spectator || !p.alive || others.iter().any(|o| o.0 == p.id) || level.entity(p.id).is_some() {
             continue;
         }
         let h = if p.sneaking { 1.5 } else { 1.8 };
@@ -1431,8 +1453,10 @@ fn push_entities(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
         d = d.sqrt();
         let (mut dx, mut dz) = (dx / d, dz / d);
         let f = (1.0 / d).min(1.0);
-        dx *= f * 0.05000000074505806;
-        dz *= f * 0.05000000074505806;
+        dx *= f;
+        dz *= f;
+        dx *= 0.05000000074505806;
+        dz *= 0.05000000074505806;
         e.delta = e.delta.add(-dx, 0.0, -dz);
         e.needs_sync = true;
         if !player && let Some(o) = level.entity_mut(id) {
@@ -1848,6 +1872,8 @@ pub struct GroupData {
     pub zombie_baby: Option<bool>,
     pub sheep_colors: bool,
     pub spider_effect: Option<Option<&'static str>>,
+    /// The variant the first mob of a group picked (`WolfPackData`, horses' `HorseGroupData`).
+    pub variant: Option<i32>,
 }
 
 /// `Mob.finalizeSpawn` and the types' overrides; random draws from `r` (the level's).

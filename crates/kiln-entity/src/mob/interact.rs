@@ -45,7 +45,7 @@ pub struct Outcome {
 impl Outcome {
     pub const PASS: Outcome = Outcome { success: false, held: HeldChange::None, shear: None, player_sound: None };
 
-    fn success(held: HeldChange) -> Outcome {
+    pub fn success(held: HeldChange) -> Outcome {
         Outcome { success: true, held, shear: None, player_sound: None }
     }
 }
@@ -107,7 +107,7 @@ fn mob_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wh
 }
 
 /// `Animal.mobInteract`: food makes an adult fall in love, or a baby grow up faster.
-fn animal_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
+pub fn animal_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
     if stack.is_empty() || !breed::is_food(m.kind, stack.item()) {
         return Outcome::PASS;
     }
@@ -151,7 +151,7 @@ fn item_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, w
 }
 
 /// `DataComponents.DYE` of the vanilla dyes.
-fn dye_color(stack: &ItemStack) -> Option<u8> {
+pub fn dye_color(stack: &ItemStack) -> Option<u8> {
     const NAMES: [&str; 16] = [
         "white",
         "orange",

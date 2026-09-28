@@ -18,6 +18,7 @@ pub mod magma_cube;
 pub mod phantom;
 pub mod ghast;
 pub mod blaze;
+pub mod tame;
 pub mod wolf;
 pub mod cat;
 pub mod horse;

@@ -34,6 +34,16 @@ pub struct PlayerView {
     /// Item ids in the hands (`minecraft:item` protocol ids, 0 for none).
     pub main_hand: i32,
     pub off_hand: i32,
+    /// `getLastHurtByMob` and `getLastHurtByMobTimestamp` (tamed animals defend their owner).
+    pub last_hurt_by_mob: Option<i32>,
+    pub last_hurt_by_mob_time: i32,
+    /// `getLastHurtMob` and `getLastHurtMobTimestamp` (tamed animals join their owner's fight).
+    pub last_hurt_mob: Option<i32>,
+    pub last_hurt_mob_time: i32,
+    /// `getLastDamageSource(100)` is set and not in `no_wolf_retaliation`.
+    pub hurt_recently: bool,
+    /// The entity the player rides.
+    pub vehicle: Option<i32>,
 }
 
 impl PlayerView {
@@ -52,6 +62,12 @@ impl PlayerView {
             armor_cover: 0.0,
             main_hand: 0,
             off_hand: 0,
+            last_hurt_by_mob: None,
+            last_hurt_by_mob_time: 0,
+            last_hurt_mob: None,
+            last_hurt_mob_time: 0,
+            hurt_recently: false,
+            vehicle: None,
         }
     }
 }

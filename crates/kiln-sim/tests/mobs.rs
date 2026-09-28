@@ -284,8 +284,69 @@ fn every_mob_type_summons_ticks_and_saves() {
         let a = i as f64 * 0.7;
         w.summon(kind.type_name(), [6.0 * a.cos(), 0.0, 6.0 * a.sin()], "{PersistenceRequired:1b}");
     }
-    w.ticks(100);
+    w.ticks(1);
     for kind in kiln_entity::mob::ALL_KINDS {
         assert!(!w.mobs(kind.type_name()).is_empty(), "{} is gone", kind.type_name());
     }
+    // Then they live together for a while (wolves hunt the sheep, golems fight monsters).
+    w.ticks(100);
+}
+
+/// `Owner` of the test player (`testing::join` gives connection 1 the UUID 0x6b696c6e / 1).
+const OWNER: &str = "Owner:[I;0,1802071150,0,1]";
+
+#[test]
+fn wolves_are_tamed_with_bones_and_sit_when_told() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:bone", 64);
+    w.console("gamemode survival Hunter");
+    w.summon("minecraft:wolf", [1.5, 0.0, 0.0], "{NoAI:1b}");
+    let wolf = w.mobs("minecraft:wolf")[0].0;
+    assert_eq!(w.mobs("minecraft:wolf")[0].2, 8.0);
+    let mut tries = 0;
+    while w.mobs("minecraft:wolf")[0].2 != 40.0 {
+        assert!(tries < 40, "tamed within 40 bones");
+        w.interact(wolf);
+        w.ticks(1);
+        tries += 1;
+    }
+    // One bone per try; the tamed wolf has 40 health.
+    assert_eq!(w.held().unwrap().1, 64 - tries);
+    // Right-clicking a tamed wolf (with no food) toggles sitting and takes nothing.
+    w.console("gamemode creative Hunter");
+    w.hold("minecraft:stick", 1);
+    w.console("gamemode survival Hunter");
+    w.interact(wolf);
+    assert_eq!(w.held().unwrap().1, 1);
+}
+
+#[test]
+fn tamed_wolves_follow_their_owner() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.summon("minecraft:wolf", [11.0, 0.0, 0.0], &format!("{{{OWNER},PersistenceRequired:1b}}"));
+    w.ticks(200);
+    let (_, pos, _) = w.mobs("minecraft:wolf")[0];
+    let p = w.pos();
+    let d = ((pos[0] - p[0]).powi(2) + (pos[2] - p[2]).powi(2)).sqrt();
+    assert!(d < 6.0, "the wolf came to its owner ({d:.1} blocks)");
+    // A wild wolf stays where it wanders.
+    w.summon("minecraft:wolf", [0.0, 0.0, 14.0], "{PersistenceRequired:1b,NoAI:1b}");
+    w.ticks(20);
+    assert_eq!(w.mobs("minecraft:wolf").len(), 2);
+}
+
+#[test]
+fn wild_wolves_hunt_sheep() {
+    let mut w = World::new();
+    w.console("gamemode creative Hunter");
+    w.summon("minecraft:wolf", [3.0, 0.0, 0.0], "{PersistenceRequired:1b}");
+    w.summon("minecraft:sheep", [6.0, 0.0, 2.0], "{PersistenceRequired:1b}");
+    let mut hurt = false;
+    for _ in 0..60 {
+        w.ticks(10);
+        hurt |= w.mobs("minecraft:sheep").first().is_none_or(|s| s.2 < 8.0);
+    }
+    assert!(hurt, "the wolf bit the sheep");
 }

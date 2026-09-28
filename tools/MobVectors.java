@@ -390,8 +390,8 @@ public class MobVectors {
             hurts.append(String.format(Locale.ROOT, "[%d,%d,%s]", h.getKey(), (int) h.getValue()[0], d(h.getValue()[1])));
         }
         String playerJson = s.player == null ? "null"
-                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
-                        s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"");
+                : String.format(Locale.ROOT, "{\"id\":%d,\"pos\":[%s,%s,%s],\"sneaking\":%b,\"creative\":%b,\"main_hand\":%s,\"uuid\":%s}", player.getId(), d(s.player[0]), d(s.player[1]), d(s.player[2]), s.playerSneaking, s.playerCreative,
+                        s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())));
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"trace\":[%s]}",
@@ -658,6 +658,79 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        scenariosTame(out);
         return out;
+    }
+
+    /// `Owner` of the harness player (`KilnMob`), for tamed animals.
+    static String owner() {
+        int[] u = net.minecraft.core.UUIDUtil.uuidToIntArray(UUID.nameUUIDFromBytes("KilnMob".getBytes()));
+        return String.format(Locale.ROOT, "Owner:[I;%d,%d,%d,%d]", u[0], u[1], u[2], u[3]);
+    }
+
+    // ---------------------------------------------------------- slice 2: tameables, riding, golems
+    static void scenariosTame(List<Scenario> out) {
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_wolf_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 30f * seed, 9000L * seed + 3));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (double dist : new double[] {11, 14}) {
+            Scenario s = new Scenario("follow_owner_wolf_" + (int) dist);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 0f, 9100 + (long) dist);
+            m.nbt = "{" + owner() + "}";
+            s.mobs.add(m);
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("sit_wolf");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 45f, 9200);
+            m.nbt = "{" + owner() + ",Sitting:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("beg_wolf");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 90f, 9300));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:bone";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hunt_wolf");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 0f, 9400));
+            s.mobs.add(new MobSpec("minecraft:sheep", 5.5, BY, 2.5, 0f, 9401));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("anger_wolf");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:wolf", 0.5, BY, 0.5, 0f, 9500));
+            s.mobs.add(new MobSpec("minecraft:wolf", -2.5, BY, 1.5, 0f, 9501));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 }

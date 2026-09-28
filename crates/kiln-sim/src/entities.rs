@@ -1030,6 +1030,12 @@ fn view(p: &Player) -> PlayerView {
         armor_cover: armor as f32 / 4.0,
         main_hand: p.inv.selected_item().item(),
         off_hand: p.inv.equipped(S::OffHand).item(),
+        last_hurt_by_mob: None,
+        last_hurt_by_mob_time: 0,
+        last_hurt_mob: None,
+        last_hurt_mob_time: 0,
+        hurt_recently: false,
+        vehicle: None,
     }
 }
 
