@@ -32,3 +32,5 @@ serde_json.workspace = true
 # Exact float parsing: the parity vectors print Java's shortest round-trip decimals.
 serde_json = { workspace = true, features = ["float_roundtrip"] }
 tracing-subscriber.workspace = true
+# sim_load runs under the server's allocator, so window costs match the server's.
+mimalloc.workspace = true

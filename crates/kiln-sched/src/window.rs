@@ -63,7 +63,8 @@ pub struct Ctx<'a> {
 
 enum Plan {
     Inline,
-    Parallel(usize),
+    /// Chunk size, and the estimated work of the whole window when there is one.
+    Parallel(usize, Option<u64>),
     /// Time a prefix, then decide; carries the chunk-size hint.
     Probe(Option<usize>),
 }
@@ -106,13 +107,13 @@ impl<'a> Ctx<'a> {
         R: Fn(&Ctx<'_>, &In) -> Out + Sync,
     {
         let mut out = Vec::with_capacity(items.len());
-        let chunk = match self.plan(window, items.len()) {
+        let split = match self.plan(window, items.len()) {
             Plan::Inline => None,
-            Plan::Parallel(chunk) => Some(chunk),
+            Plan::Parallel(chunk, est) => Some((chunk, est)),
             Plan::Probe(hint) => self.probe(items, &mut out, &run, hint),
         };
-        match chunk {
-            Some(chunk) => self.parallel(items, &mut out, chunk.max(1), &run),
+        match split {
+            Some((chunk, est)) => self.parallel(items, &mut out, chunk.max(1), est, &run),
             None => out.extend(items[out.len()..].iter().map(|x| run(self, x))),
         }
         out
@@ -156,12 +157,12 @@ impl<'a> Ctx<'a> {
         let even = n.div_ceil(4 * sh.workers);
         match t.phase {
             PhaseMode::Inline => return Plan::Inline,
-            PhaseMode::Parallel => return Plan::Parallel(w.chunk.unwrap_or(even)),
+            PhaseMode::Parallel => return Plan::Parallel(w.chunk.unwrap_or(even), None),
             PhaseMode::Mixed => {
                 return match self.local.rand_below(3) {
                     0 => Plan::Inline,
-                    1 => Plan::Parallel(w.chunk.unwrap_or(even)),
-                    _ => Plan::Parallel(1 + self.local.rand_below(n)),
+                    1 => Plan::Parallel(w.chunk.unwrap_or(even), None),
+                    _ => Plan::Parallel(1 + self.local.rand_below(n), None),
                 };
             }
             PhaseMode::Auto => {}
@@ -171,18 +172,33 @@ impl<'a> Ctx<'a> {
         }
         match (w.strategy, w.item_ns) {
             (Some(Strategy::Inline), _) => Plan::Inline,
+            // Forced parallel: the caller asked for helpers, so they are not rationed.
             (Some(Strategy::Parallel), ns) => {
-                Plan::Parallel(w.chunk.unwrap_or_else(|| ns.map_or(even, |ns| t.chunk_for(ns, n))))
+                Plan::Parallel(w.chunk.unwrap_or_else(|| ns.map_or(even, |ns| t.chunk_for(ns, n))), None)
             }
             (None, Some(ns)) if ns.saturating_mul(n as u64) < t.inline_below_ns => Plan::Inline,
-            (None, Some(ns)) => Plan::Parallel(w.chunk.unwrap_or_else(|| t.chunk_for(ns, n))),
+            (None, Some(ns)) => {
+                Plan::Parallel(w.chunk.unwrap_or_else(|| t.chunk_for(ns, n)), Some(ns.saturating_mul(n as u64)))
+            }
             (None, None) => Plan::Probe(w.chunk),
         }
     }
 
     /// Maps items inline in blocks that double the count done, timing them. Once the prefix
-    /// took long enough to extrapolate, returns a chunk size if the rest is worth splitting.
-    fn probe<In, Out, R>(&self, items: &[In], out: &mut Vec<Out>, run: &R, hint: Option<usize>) -> Option<usize>
+    /// took long enough to extrapolate, returns a chunk size and the estimated rest if the rest
+    /// is worth splitting.
+    ///
+    /// The rate is the fastest of the blocks holding at least an eighth of the prefix (the
+    /// last block always qualifies): on a busy machine a block that lost its core to another
+    /// process would otherwise make a short window look long, and a split window costs more
+    /// CPU than an inline one.
+    fn probe<In, Out, R>(
+        &self,
+        items: &[In],
+        out: &mut Vec<Out>,
+        run: &R,
+        hint: Option<usize>,
+    ) -> Option<(usize, Option<u64>)>
     where
         R: Fn(&Ctx<'_>, &In) -> Out,
     {
@@ -190,25 +206,44 @@ impl<'a> Ctx<'a> {
         let n = items.len();
         let probe_ns = t.chunk_target_ns / 4;
         let start = Instant::now();
+        // (items, ns) of each block so far; blocks double, so 64 always suffice.
+        let mut blocks = [(0u64, 0u64); 64];
+        let mut nblocks = 0;
+        let mut lap = start;
         while out.len() < n {
             let from = out.len();
             let done = (2 * from).clamp(1, n);
             out.extend(items[from..done].iter().map(|x| run(self, x)));
-            let elapsed = start.elapsed().as_nanos() as u64;
-            if elapsed < probe_ns {
+            let now = Instant::now();
+            blocks[nblocks] = ((done - from) as u64, (now - lap).as_nanos() as u64);
+            nblocks += 1;
+            lap = now;
+            if ((now - start).as_nanos() as u64) < probe_ns {
                 continue;
             }
-            let rest = elapsed as u128 * (n - done) as u128 / done as u128;
+            // The block with the lowest ns per item, compared by cross-multiplying.
+            let (bi, bns) = blocks[..nblocks]
+                .iter()
+                .copied()
+                .filter(|&(k, _)| 8 * k >= done as u64)
+                .min_by(|a, b| (a.1 as u128 * b.0 as u128).cmp(&(b.1 as u128 * a.0 as u128)))
+                .expect("the last block holds half the prefix");
+            let rest = bns as u128 * (n - done) as u128 / bi as u128;
             if rest < t.inline_below_ns as u128 {
                 return None;
             }
-            return Some(hint.unwrap_or_else(|| t.chunk_for(elapsed / done as u64, n)));
+            let chunk = hint.unwrap_or_else(|| t.chunk_for(bns / bi, n));
+            return Some((chunk, Some(rest.min(u64::MAX as u128) as u64)));
         }
         None
     }
 
     /// Publishes `items[out.len()..]` as a window, takes part in it and waits for it.
-    fn parallel<In, Out, R>(&self, items: &[In], out: &mut Vec<Out>, size: usize, run: &R)
+    ///
+    /// With an estimate `est` of that work (automatic strategy only), it wakes only as many
+    /// parked helpers as get [`PoolConfig::helper_share`](crate::PoolConfig::helper_share)
+    /// each, and runs inline when that is none; workers already awake still join.
+    fn parallel<In, Out, R>(&self, items: &[In], out: &mut Vec<Out>, size: usize, est: Option<u64>, run: &R)
     where
         In: Sync,
         Out: Send,
@@ -218,6 +253,14 @@ impl<'a> Ctx<'a> {
         let n = items.len();
         let base = out.len();
         let chunks = self.chunking(base, n - base, size);
+        let mut wake = sh.wake_count(self.local, chunks.count.saturating_sub(1));
+        if let Some(est) = est.filter(|_| !self.local.chaos()) {
+            wake = wake.min((est / sh.tuning.helper_share_ns).saturating_sub(1) as usize);
+            if wake == 0 {
+                out.extend(items[base..].iter().map(|x| run(self, x)));
+                return;
+            }
+        }
         let slot_idx = if chunks.count > 1 { sh.reserve_window(self.local) } else { None };
         // One chunk, or every slot taken by other windows: run inline, same result.
         let Some(si) = slot_idx else {
@@ -240,7 +283,7 @@ impl<'a> Ctx<'a> {
         let abort = AbortOnUnwind;
         slot.publish(jp.cast(), self.family, self.local.idx);
         sh.live.fetch_or(1 << si, SeqCst);
-        sh.wake(sh.wake_count(self.local, count - 1));
+        sh.wake(wake);
         while let Some(p) = job.header.claim() {
             // SAFETY: the job is alive and `p` was claimed.
             unsafe { Header::exec(jp, p, self.local) };

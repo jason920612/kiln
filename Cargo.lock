@@ -1287,6 +1287,7 @@ dependencies = [
  "kiln-storage",
  "kiln-world",
  "kiln-worldgen",
+ "mimalloc",
  "serde_json",
  "smallvec",
  "tracing",

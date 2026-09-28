@@ -1246,6 +1246,15 @@ impl Sim {
         self.dims.iter().map(|d| d.regions.len()).sum()
     }
 
+    /// The tick pool's per-worker counters (for load tools).
+    pub fn pool_stats(&self) -> Vec<kiln_sched::WorkerStats> {
+        self.pool.stats()
+    }
+
+    pub fn reset_pool_stats(&self) {
+        self.pool.reset_stats();
+    }
+
     /// Positions of the non-player entities, by type name (for tests and tools).
     pub fn entities(&self) -> Vec<(&'static str, [f64; 3])> {
         let mut out: Vec<_> = self

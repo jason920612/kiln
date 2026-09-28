@@ -4,8 +4,9 @@
 //! # Workers
 //! [`TickPool::new(n)`](TickPool::new) spawns `n - 1` threads; the thread calling into the pool
 //! (the sim's coordinator) is worker 0 while it is inside a pool call, so `TickPool::new(7)`
-//! uses 7 threads in total. Idle workers spin for [`PoolConfig::spin`] and then park, so they
-//! cost no CPU between ticks. Waking parked workers costs tens of microseconds;
+//! uses 7 threads in total. Idle workers spin for at most [`PoolConfig::spin`] and then park,
+//! so they cost no CPU between ticks; each worker shortens its spin while spinning keeps ending
+//! in a park (down to a sixteenth) and lengthens it again when work arrives mid-spin. Waking parked workers costs tens of microseconds;
 //! [`TickPool::prewake`] can hide that at the start of a tick.
 //!
 //! An idle worker always takes the highest-priority work available:
@@ -40,8 +41,11 @@
 //!
 //! **Strategy** ([`Strategy`]): under [`PhaseMode::Auto`] a window runs inline when its
 //! estimate is below [`PoolConfig::inline_below`]. The estimate comes from [`Window::item_ns`];
-//! without one, the window maps a prefix inline while timing it and extrapolates. A single
-//! worker always runs inline. The strategy never changes a result: inline and parallel call
+//! without one, the window maps a prefix inline while timing it (at the rate of its fastest
+//! large block, so a block that lost its core does not inflate it) and extrapolates. A split
+//! window wakes only as many parked helpers as get [`PoolConfig::helper_share`] of the estimate
+//! each, and stays inline when that is none: a helper costs a wake-up and a spin whether or not
+//! it finds much to do. A single worker always runs inline. The strategy never changes a result: inline and parallel call
 //! the same closure on the same items, and outputs land at their index.
 //!
 //! # Determinism, strict and chaos modes

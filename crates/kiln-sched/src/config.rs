@@ -35,6 +35,10 @@ pub struct PoolConfig {
     pub inline_below: Duration,
     /// Target duration of one window chunk.
     pub chunk_target: Duration,
+    /// Estimated work each worker of a split window should get: a window estimated at `w`
+    /// wakes at most `w / helper_share - 1` parked helpers (and runs inline when that is none),
+    /// so a short window does not pay wake-ups and idle spinning of workers with little to do.
+    pub helper_share: Duration,
     /// Units estimated below this are batched with other small units.
     pub small_unit: Duration,
     /// Target duration of one batch of small units.
@@ -55,6 +59,7 @@ impl PoolConfig {
             spin: Duration::from_micros(50),
             inline_below: Duration::from_micros(500),
             chunk_target: Duration::from_micros(100),
+            helper_share: Duration::from_micros(250),
             small_unit: Duration::from_micros(200),
             unit_batch: Duration::from_millis(1),
             phase: PhaseMode::Auto,
@@ -70,6 +75,7 @@ pub(crate) struct Tuning {
     pub spin_ns: u64,
     pub inline_below_ns: u64,
     pub chunk_target_ns: u64,
+    pub helper_share_ns: u64,
     pub small_unit_ns: u64,
     pub unit_batch_ns: u64,
     pub phase: PhaseMode,
@@ -83,6 +89,7 @@ impl Tuning {
             spin_ns: ns(c.spin),
             inline_below_ns: ns(c.inline_below),
             chunk_target_ns: ns(c.chunk_target).max(1),
+            helper_share_ns: ns(c.helper_share).max(1),
             small_unit_ns: ns(c.small_unit),
             unit_batch_ns: ns(c.unit_batch),
             phase: c.phase,
