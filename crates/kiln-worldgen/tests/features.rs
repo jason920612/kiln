@@ -18,7 +18,7 @@
 //! `KILN_FEATURE_REGIONS` (compare only the first N regions per seed).
 
 use kiln_worldgen::decorate::{Decorator, Invocation as Inv, Observer};
-use kiln_worldgen::generator::{GenScratch, Generator};
+use kiln_worldgen::generator::{BiomeSourceKind, GenScratch, Generator};
 use kiln_worldgen::pos::BlockPos;
 use kiln_worldgen::proto::{GenTick, ProtoChunk, Status};
 use kiln_worldgen::region::Region;
@@ -109,6 +109,8 @@ struct RegionDump {
     finals: Vec<(i32, i32, Vec<u16>)>,
     /// Vanilla's post-processing positions and scheduled ticks of the targets (version 2).
     pending: Vec<Option<Pending>>,
+    /// Entities generation stored in each target chunk, as saved NBT (version 3).
+    entities: Vec<Vec<Vec<u8>>>,
 }
 
 type Tick = (String, i32, i32, i32, i32, i32);
@@ -141,7 +143,7 @@ fn read_dump(path: &Path) -> Dump {
     let mut r = Reader { b: &bytes, i: 0 };
     assert_eq!(r.take(4), b"KWGF", "bad magic");
     let version = r.i32();
-    assert!(version == 1 || version == 2, "unsupported dump version {version}");
+    assert!((1..=3).contains(&version), "unsupported dump version {version}");
     let seed = r.i64();
     let structures = r.i32() != 0;
     assert_eq!(r.i32() as u32, kiln_data::blocks::STATE_COUNT, "block state count differs from kiln-data");
@@ -208,6 +210,7 @@ fn read_dump(path: &Path) -> Dump {
         }
         let mut finals = Vec::new();
         let mut pending = Vec::new();
+        let mut entities = Vec::new();
         for _ in &targets {
             let (x, z) = (r.i32(), r.i32());
             finals.push((x, z, r.blocks()));
@@ -220,8 +223,18 @@ fn read_dump(path: &Path) -> Dump {
                 let fluid_ticks = ticks();
                 Pending { terrain_post, post, block_ticks, fluid_ticks }
             }));
+            entities.push(if version >= 3 {
+                (0..r.i32())
+                    .map(|_| {
+                        let n = r.i32() as usize;
+                        r.take(n).to_vec()
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            });
         }
-        regions.push(RegionDump { targets, starts, refs, terrain, decorations, finals, pending });
+        regions.push(RegionDump { targets, starts, refs, terrain, decorations, finals, pending, entities });
     }
     Dump { seed, structures, steps, regions }
 }
@@ -538,7 +551,15 @@ fn features_match_vanilla() {
     let mut total_bad = 0u64;
     for path in files {
         let dump = read_dump(&path);
-        let generator = Generator::new(&pack, "minecraft:overworld", "minecraft:overworld", dump.seed).expect("generator");
+        let file = path.file_name().unwrap().to_string_lossy().into_owned();
+        let generator = if file.starts_with("features_nether_") {
+            Generator::for_dimension(&pack, "minecraft:nether", BiomeSourceKind::MultiNoise("minecraft:nether"), "minecraft:the_nether", dump.seed)
+        } else if file.starts_with("features_end_") {
+            Generator::for_dimension(&pack, "minecraft:end", BiomeSourceKind::TheEnd, "minecraft:the_end", dump.seed)
+        } else {
+            Generator::new(&pack, "minecraft:overworld", "minecraft:overworld", dump.seed)
+        }
+        .expect("generator");
         let loader = Loader::new(&pack, generator.biomes.iter().map(|b| b.name.clone()).collect());
         let decorator = Decorator::new(&generator, &loader).expect("decorator");
         let structures = Structures::load(&generator, &loader).expect("structures");
@@ -574,6 +595,7 @@ fn features_match_vanilla() {
         let (mut terrain_bad, mut terrain_chunks_bad) = (0u64, 0usize);
         let (mut pending_checked, mut post_bad, mut ticks_bad, mut post_vanilla, mut ticks_vanilla) = (0, 0, 0, 0, 0);
         let (mut terrain_post_bad, mut terrain_post_vanilla) = (0, 0);
+        let (mut entities_bad, mut entities_vanilla, mut entity_fields_bad) = (0u64, 0usize, 0u64);
         for region in &dump.regions {
             let order = order::decoration_order(&region.targets);
             let dumped: Vec<(i32, i32)> = region.decorations.iter().map(|d| (d.x, d.z)).collect();
@@ -675,6 +697,42 @@ fn features_match_vanilla() {
                     chunks.insert((c.x, c.z), c);
                 }
             }
+            for (((x, z, _), vanilla), _) in region.finals.iter().zip(&region.entities).zip(&region.pending) {
+                let c = &chunks[&(*x, *z)];
+                let key = |t: &kiln_proto::nbt::Tag| {
+                    let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("?").to_string();
+                    let pos: Vec<String> =
+                        t.get("Pos").and_then(|p| p.as_list()).map_or(Vec::new(), |l| l.iter().map(|v| format!("{:.3}", v.as_f64().unwrap_or(f64::NAN))).collect());
+                    format!("{id} @ {}", pos.join(","))
+                };
+                let theirs: Vec<kiln_proto::nbt::Tag> =
+                    vanilla.iter().map(|b| kiln_proto::nbt::read_named(b).expect("entity nbt").1).collect();
+                let mut a: Vec<String> = theirs.iter().map(key).collect();
+                let mut b: Vec<String> = c.entities.iter().map(key).collect();
+                a.sort();
+                b.sort();
+                entities_vanilla += a.len();
+                if a != b {
+                    entities_bad += 1;
+                    if entities_bad <= 3 {
+                        eprintln!("    entities differ in {x},{z}: vanilla {a:?}, kiln {b:?}");
+                        if let Some(t) = theirs.first() {
+                            eprintln!("      first vanilla entity: {:?}", canonical(t.clone()));
+                        }
+                    }
+                } else {
+                    for (t, k) in theirs.iter().zip(&c.entities) {
+                        for field in ["ShowBottom", "Invulnerable", "Rotation", "Facing", "Item", "Color", "AttachFace", "Peek"] {
+                            if t.get(field).is_some() && k.get(field) != t.get(field) {
+                                entity_fields_bad += 1;
+                                if entity_fields_bad <= 3 {
+                                    eprintln!("    entity field {field} differs in {x},{z}: vanilla {:?}, kiln {:?}", t.get(field), k.get(field));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             for ((x, z, vanilla), pending) in region.finals.iter().zip(&region.pending) {
                 let c = &chunks[&(*x, *z)];
                 let bad = c.blocks.iter().zip(vanilla).filter(|(a, b)| a != b).count() as u64;
@@ -688,7 +746,7 @@ fn features_match_vanilla() {
                         terrain_post_bad += 1;
                         if terrain_post_bad <= 3 {
                             let mine = &terrain_post[&(*x, *z)];
-                            let pos = |sec: usize, p: u16| (x * 16 + (p & 15) as i32, -64 + sec as i32 * 16 + ((p >> 4) & 15) as i32, z * 16 + (p >> 8) as i32);
+                            let pos = |sec: usize, p: u16| (x * 16 + (p & 15) as i32, generator.min_y + sec as i32 * 16 + ((p >> 4) & 15) as i32, z * 16 + (p >> 8) as i32);
                             let mut only_v = Vec::new();
                             let mut only_k = Vec::new();
                             for (sec, (a, b)) in v.terrain_post.iter().zip(mine).enumerate() {
@@ -738,6 +796,8 @@ fn features_match_vanilla() {
                 "  pending updates of {pending_checked} targets: post-TERRAIN post-processing lists differ in {terrain_post_bad} ({terrain_post_vanilla} vanilla positions); final post-processing lists differ in {post_bad} ({post_vanilla} vanilla positions), scheduled ticks differ in {ticks_bad} ({ticks_vanilla} vanilla ticks)"
             );
         }
+        eprintln!("  entities: {entities_vanilla} vanilla, target chunks with different entity lists {entities_bad}, differing fields {entity_fields_bad}");
+        total_bad += entities_bad + entity_fields_bad;
         if dump.structures {
             eprintln!("  beardified terrain: {terrain_bad} blocks differ in {terrain_chunks_bad} chunks (vanilla's used for FEATURES)");
             let gaps = structures.gaps();

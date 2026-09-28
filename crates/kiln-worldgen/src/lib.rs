@@ -21,6 +21,7 @@ pub mod carver;
 pub mod compile;
 pub mod datapack;
 pub mod decorate;
+pub mod end;
 pub mod feature;
 pub mod function;
 pub mod generator;

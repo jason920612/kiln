@@ -156,6 +156,9 @@ pub struct ProtoChunk {
     /// Block entity data by block index (`y - min_y << 8 | z << 4 | x`), in saved form without
     /// position fields.
     pub block_entities: BTreeMap<u32, Tag>,
+    /// Entities generation added (`ProtoChunk.addEntity`: end crystals, end city shulkers and
+    /// item frames...), in saved form (`id`, `Pos`, ...), in the order they were added.
+    pub entities: Vec<Tag>,
 }
 
 impl ProtoChunk {
@@ -176,6 +179,7 @@ impl ProtoChunk {
             block_ticks: Vec::new(),
             fluid_ticks: Vec::new(),
             block_entities: BTreeMap::new(),
+            entities: Vec::new(),
         }
     }
 

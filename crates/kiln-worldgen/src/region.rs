@@ -47,6 +47,19 @@ impl<'a> Region<'a> {
         Self { chunks, cx, cz, generator, scratch, stats: RegionStats::default(), log: None, level_random: None }
     }
 
+    /// `WorldGenRegion.addFreshEntity`: stored in the chunk holding the entity's position
+    /// (`tag` must carry `id` and `Pos`). Returns false (dropped) outside the region.
+    pub fn add_entity(&mut self, x: f64, z: f64, tag: Tag) -> bool {
+        let (cx, cz) = ((x / 16.0).floor() as i32, (z / 16.0).floor() as i32);
+        match self.slot(cx, cz) {
+            Some(i) => {
+                self.chunks[i].entities.push(tag);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn into_chunks(self) -> Vec<Box<ProtoChunk>> {
         self.chunks
     }

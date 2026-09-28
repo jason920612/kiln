@@ -4,7 +4,7 @@
 
 mod blob;
 mod disk;
-mod end;
+pub mod end;
 mod geode;
 mod ice;
 mod iceberg;

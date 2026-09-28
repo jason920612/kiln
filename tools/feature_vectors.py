@@ -6,7 +6,7 @@ port in 25591-25593 on 127.0.0.1). Dumps (Mojang-derived: never commit) go to
 <work>/wp4-features/vectors unless --out is given.
 
 usage: python tools/feature_vectors.py [--out DIR] [--structures] [--regions N] [--size S] [--heights N] [--near SET]
-                                       [--check] [--bench N] [seed...]
+                                       [--check] [--bench N] [--dimension overworld|nether|end] [seed...]
        (default seeds 0 1 12345 -4172144997902289642 and one random seed)
 """
 
@@ -49,6 +49,7 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--bench", type=int)
     ap.add_argument("--heights", type=int)
+    ap.add_argument("--dimension", default="overworld", choices=["overworld", "nether", "end"])
     ap.add_argument("--near", help="center regions on placement chunks of this structure set (random spread)")
     ap.add_argument("seeds", nargs="*")
     a = ap.parse_args()
@@ -56,7 +57,7 @@ def main():
     seeds = [str(random.getrandbits(63) - (1 << 62)) if s == "random" else s for s in seeds]
     status = 0
     for seed in seeds:
-        run = WORK / "wp4-features" / "vanilla" / (seed + ("_s" if a.structures else "") + ("_" + a.near.split(":")[-1] if a.near else ""))
+        run = WORK / "wp4-features" / "vanilla" / (("" if a.dimension == "overworld" else a.dimension + "_") + seed + ("_s" if a.structures else "") + ("_" + a.near.split(":")[-1] if a.near else ""))
         if run.exists():
             shutil.rmtree(run)
         run.mkdir(parents=True)
@@ -89,6 +90,8 @@ def main():
             args += ["--heights", str(a.heights)]
         if a.near:
             args += ["--near", a.near]
+        if a.dimension != "overworld":
+            args += ["--dimension", a.dimension]
         cmd = ["java", "-Xmx10g", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-cp", classpath(),
                str(ROOT / "tools" / "FeatureVectors.java"), *args]
         print(f"seed {seed}: {run}", flush=True)

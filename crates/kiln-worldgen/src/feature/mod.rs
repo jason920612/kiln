@@ -348,3 +348,21 @@ impl Features {
         }
     }
 }
+
+/// The saved form of an entity generation spawns (`Entity.saveWithoutId` plus `id`), with the
+/// fields worldgen decides: position, yaw (pitch 0), no motion, not invulnerable; `extra`
+/// holds the type's own fields. Vanilla also writes a random `UUID` and air, fire and fall
+/// distance defaults; whoever loads the entity supplies those.
+pub fn entity_tag(id: &str, pos: [f64; 3], yaw: f32, extra: Vec<(String, kiln_proto::nbt::Tag)>) -> kiln_proto::nbt::Tag {
+    use kiln_proto::nbt::Tag;
+    let mut fields = vec![
+        ("id".to_string(), Tag::String(id.to_string())),
+        ("Pos".to_string(), Tag::List(pos.iter().map(|&v| Tag::Double(v)).collect())),
+        ("Motion".to_string(), Tag::List(vec![Tag::Double(0.0); 3])),
+        ("Rotation".to_string(), Tag::List(vec![Tag::Float(yaw), Tag::Float(0.0)])),
+        ("Invulnerable".to_string(), Tag::Byte(0)),
+        ("OnGround".to_string(), Tag::Byte(0)),
+    ];
+    fields.extend(extra);
+    Tag::Compound(fields)
+}
