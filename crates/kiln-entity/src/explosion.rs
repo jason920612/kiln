@@ -183,7 +183,8 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3,
         floor(center.z + r2 as f64 + 1.0) as f64,
     );
     let affects_blocklike = level.mob_griefing() || matches!(interaction, Interaction::Destroy | Interaction::DestroyWithDecay);
-    for id in level.entities_in(&area, EntityFilter::Any, source.unwrap_or(i32::MIN)) {
+    let ids = level.entities_in(&area, EntityFilter::Any, source.unwrap_or(i32::MIN));
+    for &id in &ids {
         let Some(e) = level.entity(id) else { continue };
         if matches!(e.kind, EntityKind::Item(_)) && !affects_blocklike {
             continue;
@@ -211,6 +212,36 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3,
             *slot = e;
         }
     }
+    // `Level.getEntities` lists the ender dragons' parts too, after every other entity: each
+    // part takes its own share for the dragon (whose hurt cooldown keeps the largest).
+    for &id in &ids {
+        let Some(parts) = level.entity(id).and_then(crate::mob::kinds::ender_dragon::state_of).map(|s| {
+            (0..crate::mob::kinds::ender_dragon::PARTS.len()).map(|i| (s.part_box(i), s.parts[i])).collect::<Vec<_>>()
+        }) else {
+            continue;
+        };
+        let ctx = level.entity(id).map(Entity::collision_context).unwrap_or(crate::collision::CollisionContext::EMPTY);
+        for (i, (bb, pos)) in parts.into_iter().enumerate() {
+            if !bb.intersects(&area) {
+                continue;
+            }
+            let dist = pos.distance_to_sqr(center).sqrt() / r2 as f64;
+            if dist > 1.0 {
+                continue;
+            }
+            let seen = seen_percent_box(level, center, &bb, &ctx);
+            let damage = {
+                let d = (1.0 - dist) * seen as f64;
+                ((d * d + d) / 2.0 * 7.0 * r2 as f64 + 1.0) as f32
+            };
+            let dsource = crate::mob::DamageSource { kind: DamageKind::Explosion, attacker: source, direct: source, pos: Some(center), attacker_is_player: false };
+            let Some(mut e) = level.entity_mut(id).map(|e| std::mem::replace(e, placeholder())) else { continue };
+            crate::mob::kinds::ender_dragon::hurt_entity_part(&mut e, level, i, dsource, damage);
+            if let Some(slot) = level.entity_mut(id) {
+                *slot = e;
+            }
+        }
+    }
 }
 
 fn placeholder() -> Entity {
@@ -228,7 +259,12 @@ fn distance_to_sqr(e: &Entity, v: Vec3) -> f64 {
 /// `ServerExplosion.getSeenPercent`: the share of sample points in the box with a clear line
 /// (collision shapes) to the center.
 pub fn seen_percent(level: &dyn EntityLevel, center: Vec3, e: &Entity) -> f32 {
-    let bb = e.bounding_box();
+    seen_percent_box(level, center, &e.bounding_box(), &e.collision_context())
+}
+
+/// [`seen_percent`] of a box (an ender dragon part's).
+pub fn seen_percent_box(level: &dyn EntityLevel, center: Vec3, bb: &Aabb, ctx: &crate::collision::CollisionContext) -> f32 {
+    let bb = *bb;
     let sx = 1.0 / ((bb.max_x - bb.min_x) * 2.0 + 1.0);
     let sy = 1.0 / ((bb.max_y - bb.min_y) * 2.0 + 1.0);
     let sz = 1.0 / ((bb.max_z - bb.min_z) * 2.0 + 1.0);
@@ -237,7 +273,6 @@ pub fn seen_percent(level: &dyn EntityLevel, center: Vec3, e: &Entity) -> f32 {
     if sx < 0.0 || sy < 0.0 || sz < 0.0 {
         return 0.0;
     }
-    let ctx = e.collision_context();
     let (mut hits, mut total) = (0, 0);
     let mut x = 0.0;
     while x <= 1.0 {
@@ -247,7 +282,7 @@ pub fn seen_percent(level: &dyn EntityLevel, center: Vec3, e: &Entity) -> f32 {
             while z <= 1.0 {
                 let p = Vec3::new(lerp(x, bb.min_x, bb.max_x) + ox, lerp(y, bb.min_y, bb.max_y), lerp(z, bb.min_z, bb.max_z) + oz);
                 let blocked = clip::traverse_blocks(p, center, |pos| {
-                    let (shape, _) = collision::collision_shape(level.block(pos), pos, &ctx);
+                    let (shape, _) = collision::collision_shape(level.block(pos), pos, ctx);
                     clip::shape_clips(&shape, p, center, pos).then_some(())
                 });
                 if blocked.is_none() {

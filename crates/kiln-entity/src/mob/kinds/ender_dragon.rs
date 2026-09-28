@@ -226,12 +226,10 @@ pub struct DragonState {
 
 impl DragonState {
     fn new() -> DragonState {
-        let mut ph = PhaseData::default();
         // `EnderDragonPhaseManager`'s constructor: `setPhase(HOVERING)`.
-        ph.hover_target = None;
         DragonState {
             phase: Phase::Hover,
-            ph,
+            ph: PhaseData::default(),
             flight: FlightHistory { samples: [(0.0, 0.0); 64], head: -1 },
             parts: [Vec3::ZERO; 8],
             flap_time: 0.0,
@@ -832,8 +830,8 @@ fn strafe_player(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, p
     let ho = crate::math::jmin(0.4000000059604645 + sd / 80.0 - 1.0, 10.0);
     let fy = crate::math::floor(p.pos.y + ho);
     s.ph.strafe_path = find_path(s, alive, cur, target, Some([fx, fy, fz]));
-    if s.ph.strafe_path.is_some() {
-        s.ph.strafe_path.as_mut().unwrap().advance();
+    if let Some(p) = s.ph.strafe_path.as_mut() {
+        p.advance();
         strafe_navigate(e, m);
     }
 }
