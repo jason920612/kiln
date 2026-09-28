@@ -1271,6 +1271,55 @@ enchant Diff0 minecraft:sharpness
 enchant Diff0 minecraft:efficiency
 ! clear @a
 ! kill @e[type=!minecraft:player]
+
+# attributes and damage
+! summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b,Tags:["p1"]}
+attribute Diff0 minecraft:max_health get
+attribute Diff0 minecraft:max_health get 2.5
+attribute Diff0 minecraft:movement_speed get
+attribute Diff0 minecraft:movement_speed get 100
+attribute Diff0 minecraft:attack_speed base get
+attribute Diff0 minecraft:block_interaction_range base get
+attribute Diff0 minecraft:luck get
+attribute Diff0 minecraft:scale get
+attribute Diff0 minecraft:gravity base get 1000
+attribute Diff0 minecraft:follow_range get
+attribute Diff0 minecraft:nonexistent get
+attribute Diff0 minecraft:max_health base set 30
+attribute Diff0 minecraft:max_health get
+attribute Diff0 minecraft:max_health base reset
+attribute Diff0 minecraft:max_health get
+attribute Diff0 minecraft:attack_damage modifier add kiln:boost 2 add_value
+attribute Diff0 minecraft:attack_damage modifier add kiln:boost 2 add_value
+attribute Diff0 minecraft:attack_damage get
+attribute Diff0 minecraft:attack_damage modifier add kiln:mul 0.5 add_multiplied_base
+attribute Diff0 minecraft:attack_damage modifier add kiln:tot 1 add_multiplied_total
+attribute Diff0 minecraft:attack_damage get
+attribute Diff0 minecraft:attack_damage modifier value get kiln:boost
+attribute Diff0 minecraft:attack_damage modifier value get kiln:mul 10
+attribute Diff0 minecraft:attack_damage modifier value get kiln:nope
+attribute Diff0 minecraft:attack_damage modifier remove kiln:boost
+attribute Diff0 minecraft:attack_damage modifier remove kiln:boost
+attribute Diff0 minecraft:attack_damage modifier remove kiln:mul
+attribute Diff0 minecraft:attack_damage modifier remove kiln:tot
+attribute Diff0 minecraft:attack_damage get
+attribute @e[tag=p1,limit=1] minecraft:max_health get
+attribute @e[tag=p1,limit=1] minecraft:max_health base get
+attribute @e[tag=p1,limit=1] minecraft:movement_speed get
+attribute @e[tag=p1,limit=1] minecraft:movement_speed base set 0.5
+attribute @e[tag=p1,limit=1] minecraft:movement_speed get
+attribute @e[tag=p1,limit=1] minecraft:movement_speed base reset
+attribute @e[tag=p1,limit=1] minecraft:max_health modifier add kiln:hp 4 add_value
+attribute @e[tag=p1,limit=1] minecraft:max_health get
+attribute @e[tag=p1,limit=1] minecraft:max_health modifier remove kiln:hp
+attribute @e[tag=p1,limit=1] minecraft:attack_damage get
+attribute @a minecraft:max_health get
+attribute Nobody minecraft:max_health get
+damage Diff0 2
+damage Diff0 1 minecraft:nonexistent
+damage Nobody 1
+data get entity Diff0 Health
+! kill @e[type=!minecraft:player]
 """
 
 
