@@ -88,6 +88,9 @@ pub enum MobKind {
     // -- slice 3: warden
 
     // -- slice 3: common mobs A
+    Rabbit,
+    PolarBear,
+    Turtle,
 
     // -- slice 3: common mobs B
 
@@ -174,6 +177,9 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- slice 3: warden
 
     // -- slice 3: common mobs A
+    MobKind::Rabbit,
+    MobKind::PolarBear,
+    MobKind::Turtle,
 
     // -- slice 3: common mobs B
 
@@ -1376,7 +1382,9 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     if !k.is_some_and(|k| k.tick_look(e, m, level)) {
         control::tick_look(e, m);
     }
-    control::tick_jump(m);
+    if !k.is_some_and(|k| k.tick_jump(e, m, level)) {
+        control::tick_jump(m);
+    }
 }
 
 /// `LivingEntity.jumpFromGround`.
@@ -1482,7 +1490,10 @@ fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     let y0 = e.y();
     let g = if e.delta.y <= 0.0 { gravity(e, m) } else { gravity(e, m) };
     if e.is_in_water() {
-        let mut slow = 0.8f32;
+        if m.kind.ext().is_some_and(|k| k.travel_in_water(e, m, level, input)) {
+            return;
+        }
+        let mut slow = m.kind.ext().map_or(0.8f32, |k| k.water_slow_down(m));
         let mut speed = 0.02f32;
         let mut eff = m.attrs.value(Attr::WaterMovementEfficiency) as f32;
         if !e.on_ground {
@@ -1660,6 +1671,11 @@ pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> b
             {
                 *powered = true;
             }
+            true
+        }
+        // `Turtle.thunderHit`: struck dead.
+        MobKind::Turtle => {
+            hurt_entity(e, level, DamageSource::of(DamageKind::LightningBolt), f32::MAX);
             true
         }
         MobKind::Pig | MobKind::Villager if level.difficulty() != 0 => {

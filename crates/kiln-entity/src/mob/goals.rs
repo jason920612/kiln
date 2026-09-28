@@ -83,7 +83,7 @@ impl Goal {
         }
     }
 
-    fn every_tick(&self) -> bool {
+    pub(crate) fn every_tick(&self) -> bool {
         if let Goal::Custom(c) = self {
             return c.every_tick();
         }

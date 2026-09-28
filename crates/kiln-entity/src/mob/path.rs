@@ -1028,7 +1028,7 @@ pub fn amphibious_type(level: &dyn EntityLevel, x: i32, y: i32, z: i32) -> PathT
 
 /// `isStableDestination` of the mob's navigation.
 pub fn stable_destination(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -> bool {
-    if let Some(stable) = m.kind.ext().and_then(|k| k.stable_destination(level, pos)) {
+    if let Some(stable) = m.kind.ext().and_then(|k| k.stable_destination_for(m, level, pos)) {
         return stable;
     }
     if m.nav.amphibious {

@@ -297,6 +297,12 @@ pub trait EntityLevel {
         63
     }
 
+    /// The `minecraft:worldgen/biome` id at `pos` (`None` when unknown: tests).
+    fn biome(&self, pos: BlockPos) -> Option<i32> {
+        let _ = pos;
+        None
+    }
+
     /// Highest block y of the dimension.
     fn max_y(&self) -> i32 {
         self.min_y() + 383

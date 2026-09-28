@@ -41,6 +41,10 @@ pub mod hoglin;
 // -- slice 3: warden
 
 // -- slice 3: common mobs A
+pub mod common_a;
+pub mod rabbit;
+pub mod polar_bear;
+pub mod turtle;
 
 // -- slice 3: common mobs B
 
@@ -82,6 +86,9 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         // -- slice 3: warden
 
         // -- slice 3: common mobs A
+        MobKind::Rabbit => &rabbit::KIND,
+        MobKind::PolarBear => &polar_bear::KIND,
+        MobKind::Turtle => &turtle::KIND,
 
         // -- slice 3: common mobs B
 

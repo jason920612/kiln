@@ -455,7 +455,7 @@ fn spawn_category_for_chunk(
 }
 
 /// The biome of the stored 4×4×4 cell holding `pos`.
-fn biome_at(level: &RegionLevel, pos: KBlockPos) -> u16 {
+pub(crate) fn biome_at(level: &RegionLevel, pos: KBlockPos) -> u16 {
     let Some(chunk) = level.cells.chunk(ChunkPos::of_block(pos.x, pos.z)) else { return 0 };
     let rel = pos.y - level.env.min_y;
     let Some(section) = chunk.sections.get((rel >> 4).max(0) as usize) else { return 0 };

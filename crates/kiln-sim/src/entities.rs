@@ -471,6 +471,10 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 }
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
+    fn biome(&self, pos: BlockPos) -> Option<i32> {
+        Some(crate::spawner::biome_at(self.level, kb(pos)) as i32)
+    }
+
     fn piglins_zombify(&self) -> bool {
         !self.level.env.rules.fast_lava
     }

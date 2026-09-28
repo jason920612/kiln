@@ -274,6 +274,16 @@ pub trait Kind: Sync + Send {
         let _ = (e, m, level, input);
         false
     }
+    /// `travelInWater` in place of the shared one; true when handled (turtles swim their way).
+    fn travel_in_water(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) -> bool {
+        let _ = (e, m, level, input);
+        false
+    }
+    /// `getWaterSlowDown` (0.8; polar bears 0.98).
+    fn water_slow_down(&self, m: &MobData) -> f32 {
+        let _ = m;
+        0.8
+    }
     /// The type's `MoveControl.tick`; true when handled.
     fn tick_move(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let _ = (e, m, level);
@@ -281,6 +291,11 @@ pub trait Kind: Sync + Send {
     }
     /// The type's `LookControl.tick`; true when handled.
     fn tick_look(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// The type's `JumpControl.tick`; true when handled (rabbits start a hop instead).
+    fn tick_jump(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let _ = (e, m, level);
         false
     }
@@ -505,6 +520,12 @@ pub trait Kind: Sync + Send {
     fn stable_destination(&self, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
         let _ = (level, p);
         None
+    }
+    /// [`Kind::stable_destination`] for types whose answer depends on their state (a turtle
+    /// travelling out wants water).
+    fn stable_destination_for(&self, m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
+        let _ = m;
+        self.stable_destination(level, p)
     }
     /// The items a `TemptGoal` of the type follows.
     fn tempted_by(&self, item: i32) -> bool {

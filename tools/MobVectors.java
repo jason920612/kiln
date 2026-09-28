@@ -1546,6 +1546,149 @@ public class MobVectors {
 
     // ---------------------------------------------------------- slice 3: common mobs A
     static void scenariosCommonA(List<Scenario> out) {
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_rabbit_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:rabbit", 0.5, BY, 0.5, 40f * seed, 11000L * seed + 5));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("flee_rabbit");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:rabbit", 0.5, BY, 0.5, 0f, 11100));
+            s.player = new double[] {4.5, BY, 0.5};
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_rabbit");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:rabbit", 0.5, BY, 0.5, 0f, 11200));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:carrot";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("garden_rabbit");
+            floor(s, 16, "minecraft:grass_block");
+            for (int x = 3; x <= 5; x++) {
+                block(s, x, BY - 1, 2, "minecraft:farmland");
+                block(s, x, BY, 2, "minecraft:carrots[age=7]");
+            }
+            s.mobs.add(new MobSpec("minecraft:rabbit", 0.5, BY, 0.5, 0f, 11300));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("killer_bunny");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:rabbit", 0.5, BY, 0.5, 0f, 11400);
+            m.nbt = "{RabbitType:99}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_polar_bear_" + seed);
+            floor(s, 16, "minecraft:snow_block");
+            s.mobs.add(new MobSpec("minecraft:polar_bear", 0.5, BY, 0.5, 50f * seed, 12000L * seed + 3));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("anger_polar_bear");
+            floor(s, 20, "minecraft:snow_block");
+            s.mobs.add(new MobSpec("minecraft:polar_bear", 0.5, BY, 0.5, 0f, 12100));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("cub_polar_bear");
+            floor(s, 20, "minecraft:snow_block");
+            s.mobs.add(new MobSpec("minecraft:polar_bear", 0.5, BY, 0.5, 0f, 12200));
+            MobSpec cub = new MobSpec("minecraft:polar_bear", -2.5, BY, 1.5, 90f, 12201);
+            cub.age = -24000;
+            s.mobs.add(cub);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_cub_polar_bear");
+            floor(s, 20, "minecraft:snow_block");
+            MobSpec cub = new MobSpec("minecraft:polar_bear", 0.5, BY, 0.5, 0f, 12300);
+            cub.age = -24000;
+            s.mobs.add(cub);
+            s.mobs.add(new MobSpec("minecraft:polar_bear", -4.5, BY, 2.5, 90f, 12301));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = false;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_turtle_" + seed);
+            floor(s, 16, "minecraft:sand");
+            s.mobs.add(new MobSpec("minecraft:turtle", 0.5, BY, 0.5, 70f * seed, 13000L * seed + 9));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            // A beach: sand with a pool; the turtle heads for the water and swims.
+            Scenario s = new Scenario("beach_turtle");
+            floor(s, 16, "minecraft:sand");
+            for (int x = 3; x <= 9; x++)
+                for (int z = -3; z <= 3; z++) {
+                    block(s, x, BY - 2, z, "minecraft:sand");
+                    block(s, x, BY - 1, z, "minecraft:water");
+                }
+            s.mobs.add(new MobSpec("minecraft:turtle", -1.5, BY, 0.5, 0f, 13100));
+            MobSpec baby = new MobSpec("minecraft:turtle", -2.5, BY, 2.5, 90f, 13101);
+            baby.age = -24000;
+            s.mobs.add(baby);
+            s.player = new double[] {-10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_turtle");
+            floor(s, 16, "minecraft:sand");
+            s.mobs.add(new MobSpec("minecraft:turtle", 0.5, BY, 0.5, 0f, 13200));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:seagrass";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("egg_turtle");
+            floor(s, 16, "minecraft:sand");
+            MobSpec m = new MobSpec("minecraft:turtle", 0.5, BY, 0.5, 0f, 13300);
+            m.nbt = "{has_egg:1b,home_pos:[I;0," + BY + ",0]}";
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
     }
 
 
