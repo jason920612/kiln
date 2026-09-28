@@ -361,8 +361,9 @@ impl Player {
         if self.sneaking {
             self.award_stat(*stat::CROUCH_TIME, 1);
         }
-        // Kiln has no sleeping yet: players are always awake.
-        self.award_stat(*stat::TIME_SINCE_REST, 1);
+        if self.sleep.pos.is_none() {
+            self.award_stat(*stat::TIME_SINCE_REST, 1);
+        }
         let armor = self.armor_value();
         let now = ((self.health + self.absorption).to_bits(), self.food, self.air, armor, self.xp_total, self.xp_level);
         let last = self.stats.recorded.unwrap_or((u32::MAX, i32::MIN, i32::MIN, i32::MIN, i32::MIN, i32::MIN));

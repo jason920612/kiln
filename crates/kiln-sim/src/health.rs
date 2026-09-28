@@ -748,8 +748,6 @@ impl Player {
             crate::container::furnace::award_experience(at, xp, &mut self.entity_rng, ctx.spawns);
         }
         self.died = true;
-        // `resetStat(TIME_SINCE_DEATH)` and `resetStat(TIME_SINCE_REST)`.
-        self.sleep.time_since_rest = 0;
         // `broadcastEntityEvent(DEATH)` reaches the player too.
         self.send(entity::entity_event(self.entity_id, 3));
         Death { conn: self.conn, message, killer: credit }

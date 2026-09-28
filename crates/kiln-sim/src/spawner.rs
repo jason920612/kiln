@@ -294,7 +294,7 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
         if !(ctx.effective_difficulty > r.next_float() * 3.0) {
             continue;
         }
-        let since_rest = p.sleep.time_since_rest.max(1);
+        let since_rest = p.stats.get(*crate::player_stats::stat::TIME_SINCE_REST).max(1);
         if r.next_int_bounded(since_rest) < 72000 {
             continue;
         }

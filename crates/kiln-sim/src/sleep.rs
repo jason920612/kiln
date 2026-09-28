@@ -3,8 +3,8 @@
 //! (`SleepStatus`, `ServerLevel.tick`), waking up, respawn anchors (charging with glowstone,
 //! setting the spawn, exploding where they do not work) and respawning at either.
 //!
-//! The insomnia counter (`minecraft:time_since_rest`) is kept on the player here and read by
-//! the phantom spawner; it is saved under that key of the vanilla statistics file.
+//! The insomnia counter is the `minecraft:time_since_rest` statistic ([`crate::player_stats`]),
+//! which the phantom spawner reads.
 
 use crate::blocks::{EntityBox, RegionLevel};
 use crate::{DimId, NETHER_ID, OVERWORLD_ID, Player, Sim};
@@ -20,8 +20,6 @@ pub(crate) struct Sleep {
     pub pos: Option<[i32; 3]>,
     /// `Player.sleepCounter`: up to 100 while asleep, then 101..110 fading out after waking.
     pub counter: i32,
-    /// `minecraft:time_since_rest`.
-    pub time_since_rest: i32,
     /// The level's sleeping list needs updating (`updateSleepingPlayerList`).
     pub list_dirty: bool,
     /// Pose and sleeping position changed for viewers and the player.
@@ -240,7 +238,10 @@ fn start_sleeping(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16
     kiln_blocks::set_block(level, pos, kiln_blocks::state::set_bool(s, "occupied", true), flags::ALL);
     p.sleep.pos = Some([pos.x, pos.y, pos.z]);
     p.sleep.counter = 0;
-    p.sleep.time_since_rest = 0;
+    // `ServerPlayer.startSleepInBed` and `startSleeping`.
+    p.award_stat(*crate::player_stats::stat::SLEEP_IN_BED, 1);
+    p.fire("minecraft:slept_in_bed", None, |c, _, _| matches!(c.trigger, crate::advancements::criteria::Trigger::Player));
+    p.reset_stat(*crate::player_stats::stat::TIME_SINCE_REST);
     p.sleep.list_dirty = true;
     p.sleep.meta_dirty = true;
     p.vel = [0.0; 3];
@@ -300,9 +301,6 @@ pub(crate) fn tick_player(p: &mut Player, level: &mut RegionLevel) {
         if p.sleep.counter >= 110 {
             p.sleep.counter = 0;
         }
-    }
-    if p.sleep.pos.is_none() {
-        p.sleep.time_since_rest = p.sleep.time_since_rest.saturating_add(1);
     }
 }
 
@@ -632,33 +630,3 @@ impl SleepStatus {
     }
 }
 
-/// The saved `minecraft:time_since_rest` of a player (its statistics file).
-pub(crate) fn load_time_since_rest(world: &std::path::Path, uuid: uuid::Uuid) -> i32 {
-    let path = world.join("players/stats").join(format!("{uuid}.json"));
-    let Ok(text) = std::fs::read_to_string(path) else { return 0 };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { return 0 };
-    json.pointer("/stats/minecraft:custom/minecraft:time_since_rest").and_then(|v| v.as_i64()).unwrap_or(0) as i32
-}
-
-/// Writes `minecraft:time_since_rest` into the player's statistics file, keeping the rest.
-pub(crate) fn save_time_since_rest(world: &std::path::Path, uuid: uuid::Uuid, value: i32) -> std::io::Result<()> {
-    let dir = world.join("players/stats");
-    let path = dir.join(format!("{uuid}.json"));
-    let mut json = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .filter(|v| v.is_object())
-        .unwrap_or_else(|| serde_json::json!({ "stats": {}, "DataVersion": kiln_storage::anvil::DATA_VERSION }));
-    let custom = json
-        .as_object_mut()
-        .unwrap()
-        .entry("stats")
-        .or_insert_with(|| serde_json::json!({}))
-        .as_object_mut()
-        .map(|s| s.entry("minecraft:custom").or_insert_with(|| serde_json::json!({})));
-    if let Some(serde_json::Value::Object(c)) = custom {
-        c.insert("minecraft:time_since_rest".into(), serde_json::json!(value));
-    }
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(path, serde_json::to_string(&json).unwrap_or_default())
-}

@@ -1110,7 +1110,7 @@ impl Sim {
 
     /// The bed a player sleeps in, and its sleep counter and `time_since_rest`.
     pub fn sleep_state(&self, conn: ConnId) -> Option<(Option<[i32; 3]>, i32, i32)> {
-        self.players.get(&conn).map(|p| (p.sleep.pos, p.sleep.counter, p.sleep.time_since_rest))
+        self.players.get(&conn).map(|p| (p.sleep.pos, p.sleep.counter, p.stats.get(*player_stats::stat::TIME_SINCE_REST)))
     }
 
     /// A player's respawn point and level.
@@ -1982,7 +1982,7 @@ impl Sim {
             vehicle: None,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
-            sleep: sleep::Sleep { time_since_rest: joining.time_since_rest, ..Default::default() },
+            sleep: sleep::Sleep::default(),
             woke_up: false,
             respawn_angle: joining.respawn_angle,
             respawn_forced: joining.respawn_forced,
