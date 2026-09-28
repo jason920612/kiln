@@ -44,6 +44,7 @@ fn attacker() -> Attacker {
         creative: false,
         weapon: None,
         view: EntityView { type_id: player_type(), ..view("minecraft:player", [0.5, 100.0, 0.5]) },
+        mob: None,
     }
 }
 

@@ -465,7 +465,7 @@ impl Player {
     pub(crate) fn as_attacker(&self) -> Attacker {
         let held = self.inv.selected_item();
         let weapon = held.get(keys::CUSTOM_NAME).map(|name| item_display_name(held, name.nbt().clone()));
-        Attacker { id: self.entity_id, name: self.name.clone(), pos: self.pos, creative: self.game_mode == 1, weapon, view: self.view() }
+        Attacker { id: self.entity_id, name: self.name.clone(), pos: self.pos, creative: self.game_mode == 1, weapon, view: self.view(), mob: None }
     }
 
     /// `Player.canCriticalAttack`: falling, in the air, not climbing, in water, riding or

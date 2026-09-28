@@ -54,7 +54,11 @@ pub enum EntityKind {
     Arrow(crate::arrow::ArrowData),
     /// A player, for the server's movement check (`player::server_move`); not ticked here.
     Player(crate::player::PlayerData),
-    /// An entity simulated elsewhere (mobs, players), present so behaviours can see it.
+    /// A mob (see [`crate::mob`]).
+    Mob(Box<crate::mob::MobData>),
+    /// A mob while its own tick holds its data (only the ticking mob itself sees this).
+    MobTicking { gravity: f64 },
+    /// An entity simulated elsewhere (players), present so behaviours can see it.
     Other { type_name: &'static str },
 }
 
@@ -265,6 +269,8 @@ impl Entity {
             EntityKind::Player(_) => 0.08,
             EntityKind::Throwable(ref d) => crate::projectile::gravity(d),
             EntityKind::Arrow(_) => 0.05,
+            EntityKind::Mob(ref m) => m.attrs.value(crate::mob::attributes::Attr::Gravity),
+            EntityKind::MobTicking { gravity } => gravity,
             EntityKind::Other { .. } => 0.0,
         }
     }
@@ -274,7 +280,7 @@ impl Entity {
     }
 
     fn is_living(&self) -> bool {
-        matches!(self.kind, EntityKind::Player(_))
+        matches!(self.kind, EntityKind::Player(_) | EntityKind::Mob(_) | EntityKind::MobTicking { .. })
     }
 
     /// `fireImmune`.
@@ -354,7 +360,8 @@ impl Entity {
             EntityKind::Tnt(_) => crate::tnt::tick(self, level),
             EntityKind::Throwable(_) => crate::projectile::tick(self, level),
             EntityKind::Arrow(_) => crate::arrow::tick(self, level),
-            EntityKind::Player(_) => {}
+            EntityKind::Player(_) | EntityKind::MobTicking { .. } => {}
+            EntityKind::Mob(_) => crate::mob::tick(self, level),
             EntityKind::Other { .. } => self.base_tick(level),
         }
     }
@@ -385,7 +392,7 @@ impl Entity {
         self.first_tick = false;
     }
 
-    fn compute_speed(&mut self) {
+    pub(crate) fn compute_speed(&mut self) {
         let last = *self.last_known_position.get_or_insert(self.position);
         self.last_known_speed = self.position - last;
         self.last_known_position = Some(self.position);
@@ -435,6 +442,12 @@ impl Entity {
             EntityKind::Item(_) => crate::item::hurt(self, level, kind, amount, attacker),
             EntityKind::ExperienceOrb(_) => crate::xp_orb::hurt(self, level, kind, amount),
             EntityKind::FallingBlock(_) | EntityKind::Tnt(_) | EntityKind::Throwable(_) | EntityKind::Arrow(_) => false,
+            EntityKind::Mob(_) => {
+                let pos = attacker.and_then(|a| level.entity(a)).map(|a| a.position());
+                let source = crate::mob::DamageSource { kind, attacker, direct: attacker, pos, attacker_is_player: false };
+                crate::mob::hurt_entity(self, level, source, amount)
+            }
+            EntityKind::MobTicking { .. } => false,
             EntityKind::Player(_) | EntityKind::Other { .. } => {
                 level.emit(Event::Hurt { target: self.id, amount, kind, attacker });
                 true

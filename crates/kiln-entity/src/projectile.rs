@@ -169,7 +169,12 @@ fn entity_hit(e: &Entity, level: &dyn EntityLevel, from: Vec3, to: Vec3, area: &
 
 /// `canBeHitByProjectile`: alive and pickable.
 pub(crate) fn can_be_hit_by_projectile(e: &Entity) -> bool {
-    e.is_alive() && matches!(e.kind, EntityKind::Tnt(_) | EntityKind::FallingBlock(_) | EntityKind::Player(_) | EntityKind::Other { .. })
+    e.is_alive()
+        && match &e.kind {
+            EntityKind::Tnt(_) | EntityKind::FallingBlock(_) | EntityKind::Player(_) | EntityKind::Other { .. } => true,
+            EntityKind::Mob(m) => m.health > 0.0,
+            _ => false,
+        }
 }
 
 /// `checkLeftOwner`.

@@ -22,6 +22,35 @@ pub struct PlayerView {
     pub pos: Vec3,
     pub eye_height: f32,
     pub spectator: bool,
+    pub creative: bool,
+    pub sneaking: bool,
+    /// Alive (not dead and waiting to respawn).
+    pub alive: bool,
+    pub invisible: bool,
+    /// `getArmorCoverPercentage`.
+    pub armor_cover: f32,
+    /// Item ids in the hands (`minecraft:item` protocol ids, 0 for none).
+    pub main_hand: i32,
+    pub off_hand: i32,
+}
+
+impl PlayerView {
+    /// A standing survival player with empty hands.
+    pub fn new(id: i32, pos: Vec3) -> PlayerView {
+        PlayerView {
+            id,
+            pos,
+            eye_height: 1.62,
+            spectator: false,
+            creative: false,
+            sneaking: false,
+            alive: true,
+            invisible: false,
+            armor_cover: 0.0,
+            main_hand: 0,
+            off_hand: 0,
+        }
+    }
 }
 
 /// Why an entity took damage (the vanilla damage type).
@@ -41,6 +70,15 @@ pub enum DamageKind {
     Arrow,
     Thrown,
     Generic,
+    MobAttack,
+    PlayerAttack,
+    Drown,
+    InWall,
+    OutOfWorld,
+    Fall,
+    Kill,
+    Cramming,
+    PlayerExplosion,
 }
 
 /// Side effects the simulation carries out or broadcasts.
@@ -67,6 +105,24 @@ pub enum Event {
     ProjectileHit { projectile: i32, projectile_type: &'static str, owner: Option<i32>, hit: crate::projectile::Hit },
     /// An explosion at `pos`; `blocks` were destroyed (for the explode packet).
     Explosion { pos: Vec3, power: f32, blocks: Vec<BlockPos>, source: Option<i32> },
+    /// A mob took a full hit (`broadcastDamageEvent`: the hurt animation for viewers).
+    MobHurt { entity: i32, kind: DamageKind, attacker: Option<i32>, direct: Option<i32> },
+    /// A mob died: the simulation drops its loot table (`LivingEntity.dropFromLootTable`).
+    /// `killer`: the player credited with the kill (`last_damage_player`).
+    DeathLoot {
+        entity: i32,
+        table: String,
+        pos: Vec3,
+        killer: Option<i32>,
+        attacker: Option<i32>,
+        direct: Option<i32>,
+        kind: DamageKind,
+        on_fire: bool,
+    },
+    /// `dropFromGiftLootTable` (a chicken's egg).
+    GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
+    /// `dropFromShearingLootTable` (a sheep's wool).
+    ShearLoot { entity: i32, table: String, pos: Vec3 },
 }
 
 /// World access for entity ticks.
@@ -151,4 +207,71 @@ pub trait EntityLevel {
     }
 
     fn emit(&mut self, event: Event);
+
+    /// `getRawBrightness(pos, skyDarken)`: the larger of the sky light less `sky_darken` and
+    /// the block light.
+    fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
+        let _ = pos;
+        15 - sky_darken
+    }
+
+    /// The sky light at `pos`.
+    fn sky_light(&self, pos: BlockPos) -> i32 {
+        let _ = pos;
+        15
+    }
+
+    /// `Level.getSkyDarken`.
+    fn sky_darken(&self) -> i32 {
+        0
+    }
+
+    /// `DimensionType.ambientLight` (0 in the overworld).
+    fn ambient_light(&self) -> f32 {
+        0.0
+    }
+
+    /// `canSeeSky`: full sky light.
+    fn can_see_sky(&self, pos: BlockPos) -> bool {
+        self.sky_light(pos) >= 15
+    }
+
+    /// `Level.isBrightOutside`.
+    fn is_bright_outside(&self) -> bool {
+        self.sky_darken() < 4
+    }
+
+    /// 0 peaceful to 3 hard.
+    fn difficulty(&self) -> u8 {
+        2
+    }
+
+    /// `DifficultyInstance.getEffectiveDifficulty` at `pos`.
+    fn effective_difficulty(&self, pos: BlockPos) -> f32 {
+        let _ = pos;
+        1.5
+    }
+
+    /// The `minecraft:monsters_burn` environment attribute.
+    fn monsters_burn(&self) -> bool {
+        true
+    }
+
+    /// `minecraft:mob_drops`.
+    fn mob_drops(&self) -> bool {
+        true
+    }
+
+    /// A mob hits player `id` (`Player.hurtServer`); returns whether the hit landed.
+    fn hurt_player(&mut self, id: i32, source: crate::mob::DamageSource, amount: f32) -> bool {
+        self.emit(Event::Hurt { target: id, amount, kind: source.kind, attacker: source.attacker });
+        true
+    }
+
+    /// Sets entity or player `id` on fire for `seconds`.
+    fn ignite(&mut self, id: i32, seconds: f32) {
+        if let Some(e) = self.entity_mut(id) {
+            e.ignite_for_seconds(seconds);
+        }
+    }
 }

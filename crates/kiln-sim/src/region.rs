@@ -211,7 +211,8 @@ impl RegionWork<'_> {
                 bodies: &bodies,
                 actor: None,
             };
-            entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths);
+            let any_player = !self.players.is_empty();
+            entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }

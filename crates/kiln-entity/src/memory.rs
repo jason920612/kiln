@@ -46,6 +46,14 @@ pub struct MemoryLevel {
     pub min_y: i32,
     pub events: Vec<Event>,
     pub players: Vec<PlayerView>,
+    /// World age (`game_time`), sky darkening and difficulty for mobs.
+    pub game_time: i64,
+    pub sky_darken: i32,
+    pub difficulty: u8,
+    /// Hits on players: (player id, amount that landed), with each player's hurt cooldown and
+    /// last hit (`LivingEntity.damageCooldownTime`, `lastHurt`).
+    pub player_hits: Vec<(i32, f32)>,
+    pub player_cooldown: FastMap<i32, (i32, f32)>,
     slots: Vec<Slot>,
     index: FastMap<i32, usize>,
     random: LegacyRandom,
@@ -69,6 +77,11 @@ impl MemoryLevel {
             min_y,
             events: Vec::new(),
             players: Vec::new(),
+            game_time: 0,
+            sky_darken: 0,
+            difficulty: 2,
+            player_hits: Vec::new(),
+            player_cooldown: FastMap::default(),
             slots: Vec::new(),
             index: FastMap::default(),
             random: LegacyRandom::new(random_seed),
@@ -129,6 +142,15 @@ impl MemoryLevel {
         }
     }
 
+    /// Players' own tick: their hurt cooldowns run down.
+    pub fn tick_players(&mut self) {
+        for v in self.player_cooldown.values_mut() {
+            if v.0 > 0 {
+                v.0 -= 1;
+            }
+        }
+    }
+
     /// Moves entities added by behaviours into the level.
     pub fn flush_spawned(&mut self) {
         for e in std::mem::take(&mut self.spawned) {
@@ -159,7 +181,46 @@ impl EntityLevel for MemoryLevel {
     }
 
     fn game_time(&self) -> i64 {
-        0
+        self.game_time
+    }
+
+    fn sky_darken(&self) -> i32 {
+        self.sky_darken
+    }
+
+    fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
+        // Open sky above the harness floor, darkness below it.
+        let sky = if self.blocks.keys().any(|p| p.x == pos.x && p.z == pos.z && p.y > pos.y) { 0 } else { 15 };
+        (sky - sky_darken).max(0)
+    }
+
+    fn sky_light(&self, pos: BlockPos) -> i32 {
+        if self.blocks.keys().any(|p| p.x == pos.x && p.z == pos.z && p.y > pos.y) { 0 } else { 15 }
+    }
+
+    fn difficulty(&self) -> u8 {
+        self.difficulty
+    }
+
+    /// `Player.hurtServer` with its hurt cooldown (difficulty scaling at normal: none).
+    fn hurt_player(&mut self, id: i32, _source: crate::mob::DamageSource, amount: f32) -> bool {
+        let Some(p) = self.players.iter().find(|p| p.id == id) else { return false };
+        if p.creative || p.spectator || !p.alive {
+            return false;
+        }
+        let (cd, last) = self.player_cooldown.get(&id).copied().unwrap_or((0, 0.0));
+        let dealt = if cd as f32 > 10.0 {
+            if amount <= last {
+                return false;
+            }
+            self.player_cooldown.insert(id, (cd, amount));
+            amount - last
+        } else {
+            self.player_cooldown.insert(id, (20, amount));
+            amount
+        };
+        self.player_hits.push((id, dealt));
+        true
     }
 
     fn min_y(&self) -> i32 {
@@ -176,7 +237,7 @@ impl EntityLevel for MemoryLevel {
                     EntityFilter::Any => true,
                     EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
                     EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
-                    EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_)),
+                    EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
                 };
                 (wanted && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)).then_some((s.section, s.seq, e.id))
             })

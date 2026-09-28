@@ -32,6 +32,7 @@ mod entities;
 mod generation;
 mod hazards;
 mod health;
+mod mobs;
 mod movement;
 mod persist;
 mod players;
@@ -1143,6 +1144,17 @@ impl Sim {
             seed: self.config.noise.as_ref().map_or(0, |n| n.seed),
             loot: self.loot.clone(),
             damage: self.damage_rules(),
+            mobs: mobs::MobRules {
+                day_time: self.day_time,
+                sky_darken: mobs::sky_darken(self.day_time),
+                monsters_burn: mobs::monsters_burn(self.day_time),
+                griefing: self.rule_bool("minecraft:mob_griefing"),
+                drops: self.rule_bool("minecraft:mob_drops"),
+                spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
+                spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
+                cramming: self.rule_int("minecraft:max_entity_cramming"),
+                difficulty: self.commands.difficulty as u8,
+            },
         }
     }
 

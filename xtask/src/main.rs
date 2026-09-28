@@ -13,6 +13,7 @@ mod entity_physics;
 mod fetch;
 mod http;
 mod items;
+mod mob_blocks;
 mod report;
 mod zip;
 
@@ -39,6 +40,9 @@ tasks:
   entity-physics [--input <entity_physics.json>]
       regenerate only crates/kiln-entity/src/gen/physics.bin (default input:
       <work>/generated/extra/entity_physics.json)
+  mob-blocks
+      run tools/ExtractMobBlocks.java and write crates/kiln-entity/src/gen/mob_blocks.bin
+      (per-state path types and spawn facts for mobs)
   completeness
       check crates/kiln-proto/protocol.toml against the generated packet list
   snapshot-report [<version>]
@@ -77,6 +81,11 @@ fn main() -> Result<()> {
             args.finish()?;
             let input = input.unwrap_or_else(|| work.join("generated/extra/entity_physics.json"));
             entity_physics::write(&root, &input, kiln_state_count(&work)?)
+        }
+        "mob-blocks" => {
+            args.finish()?;
+            let jar = fetch::server_jar(&work)?;
+            mob_blocks::run(&root, &work, &jar, kiln_state_count(&work)?)
         }
         "completeness" => {
             args.finish()?;

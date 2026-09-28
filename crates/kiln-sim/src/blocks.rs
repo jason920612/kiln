@@ -224,6 +224,8 @@ pub(crate) struct BlockEnv {
     pub loot: Option<std::sync::Arc<kiln_loot::LootData>>,
     /// Game rules and difficulty for damage to players.
     pub damage: crate::health::DamageRules,
+    /// Time of day and game rules for mobs.
+    pub mobs: crate::mobs::MobRules,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -850,6 +852,7 @@ mod tests {
             seed: 0,
             loot: None,
             damage: crate::health::DamageRules::default(),
+            mobs: Default::default(),
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {
