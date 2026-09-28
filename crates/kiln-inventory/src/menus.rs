@@ -36,6 +36,16 @@ pub enum MenuKind {
     Stonecutter,
     /// `SmithingMenu`.
     Smithing,
+    /// `GrindstoneMenu`.
+    Grindstone,
+    /// `AnvilMenu`.
+    Anvil,
+    /// `LoomMenu`.
+    Loom,
+    /// `CartographyTableMenu`.
+    CartographyTable,
+    /// `EnchantmentMenu`.
+    Enchantment,
 }
 
 impl MenuKind {
@@ -57,6 +67,11 @@ impl MenuKind {
             MenuKind::Furnace(FurnaceKind::Smoker) => "minecraft:smoker",
             MenuKind::Stonecutter => "minecraft:stonecutter",
             MenuKind::Smithing => "minecraft:smithing",
+            MenuKind::Grindstone => "minecraft:grindstone",
+            MenuKind::Anvil => "minecraft:anvil",
+            MenuKind::Loom => "minecraft:loom",
+            MenuKind::CartographyTable => "minecraft:cartography_table",
+            MenuKind::Enchantment => "minecraft:enchantment",
         })
     }
 
@@ -68,7 +83,15 @@ impl MenuKind {
     /// Slots of the block container, before the player inventory slots.
     pub fn block_size(self) -> usize {
         match self {
-            MenuKind::Inventory | MenuKind::Crafting | MenuKind::Stonecutter | MenuKind::Smithing => 0,
+            MenuKind::Inventory
+            | MenuKind::Crafting
+            | MenuKind::Stonecutter
+            | MenuKind::Smithing
+            | MenuKind::Grindstone
+            | MenuKind::Anvil
+            | MenuKind::Loom
+            | MenuKind::CartographyTable
+            | MenuKind::Enchantment => 0,
             MenuKind::Generic { rows } => rows as usize * 9,
             MenuKind::Generic3x3 => 9,
             MenuKind::Hopper => 5,
@@ -182,6 +205,69 @@ impl Menu {
         menu
     }
 
+    /// `GrindstoneMenu`: inputs 0 and 1, result 2, main 3-29, hotbar 30-38.
+    pub fn grindstone(container_id: i32) -> Menu {
+        let mut slots = vec![Slot::new(Source::Input, 0, SlotKind::GrindstoneInput), Slot::new(Source::Input, 1, SlotKind::GrindstoneInput)];
+        slots.push(Slot::new(Source::Result, 2, SlotKind::GrindstoneResult));
+        player_slots(&mut slots);
+        let mut menu = Menu::with_slots(MenuKind::Grindstone, container_id, slots, 0, CraftGrid::default());
+        menu.input = SimpleContainer::new(2);
+        menu
+    }
+
+    /// `AnvilMenu`: inputs 0 and 1, result 2, main 3-29, hotbar 30-38, and the level cost as
+    /// its data value.
+    pub fn anvil(container_id: i32) -> Menu {
+        let mut slots = vec![Slot::new(Source::Input, 0, SlotKind::Normal), Slot::new(Source::Input, 1, SlotKind::Normal)];
+        slots.push(Slot::new(Source::Result, 2, SlotKind::AnvilResult));
+        player_slots(&mut slots);
+        let mut menu = Menu::with_slots(MenuKind::Anvil, container_id, slots, 1, CraftGrid::default());
+        menu.input = SimpleContainer::new(2);
+        menu.local_data = vec![0];
+        menu
+    }
+
+    /// `LoomMenu`: banner 0, dye 1, pattern 2, result 3, main 4-30, hotbar 31-39, and the
+    /// selected pattern as its data value.
+    pub fn loom(container_id: i32) -> Menu {
+        let mut slots = vec![
+            Slot::new(Source::Input, 0, SlotKind::LoomBanner),
+            Slot::new(Source::Input, 1, SlotKind::LoomDye),
+            Slot::new(Source::Input, 2, SlotKind::LoomPattern),
+            Slot::new(Source::Result, 3, SlotKind::LoomResult),
+        ];
+        player_slots(&mut slots);
+        let mut menu = Menu::with_slots(MenuKind::Loom, container_id, slots, 1, CraftGrid::default());
+        menu.input = SimpleContainer::new(3);
+        menu.local_data = vec![0];
+        menu
+    }
+
+    /// `CartographyTableMenu`: map 0, additional 1, result 2, main 3-29, hotbar 30-38.
+    pub fn cartography_table(container_id: i32) -> Menu {
+        let mut slots = vec![
+            Slot::new(Source::Input, 0, SlotKind::CartographyMap),
+            Slot::new(Source::Input, 1, SlotKind::CartographyAdditional),
+            Slot::new(Source::Result, 2, SlotKind::CartographyResult),
+        ];
+        player_slots(&mut slots);
+        let mut menu = Menu::with_slots(MenuKind::CartographyTable, container_id, slots, 0, CraftGrid::default());
+        menu.input = SimpleContainer::new(2);
+        menu
+    }
+
+    /// `EnchantmentMenu`: item 0, lapis 1, main 2-28, hotbar 29-37, and ten data values (the
+    /// three costs, the seed, the three enchantment clues and their levels).
+    pub fn enchantment(container_id: i32, seed: i32) -> Menu {
+        let mut slots = vec![Slot::new(Source::Input, 0, SlotKind::EnchantItem), Slot::new(Source::Input, 1, SlotKind::EnchantLapis)];
+        player_slots(&mut slots);
+        let mut menu = Menu::with_slots(MenuKind::Enchantment, container_id, slots, 10, CraftGrid::default());
+        menu.input = SimpleContainer::new(2);
+        menu.local_data = vec![0, 0, 0, seed, -1, -1, -1, -1, -1, -1];
+        menu.enchant.seed = seed;
+        menu
+    }
+
     /// Stonecutter recipes the current input offers (indices into the recipe manager), in the
     /// order of the client's list.
     pub fn stonecutter_recipes(&self) -> &[usize] {
@@ -196,8 +282,15 @@ impl Menu {
 
     /// `clickMenuButton`: the stonecutter selects a recipe; other menus here have no buttons.
     pub fn click_menu_button(&mut self, env: &mut Env, button: i32) -> bool {
-        if self.kind != MenuKind::Stonecutter {
-            return false;
+        match self.kind {
+            MenuKind::Loom => return crate::stations::loom_click(self, env, button),
+            MenuKind::Enchantment => {
+                let done = crate::stations::enchantment_click(self, env, button);
+                self.local_data[3] = self.enchant.seed;
+                return done;
+            }
+            MenuKind::Stonecutter => {}
+            _ => return false,
         }
         if self.local_data[0] == button {
             return false;
@@ -410,6 +503,83 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
                 4..31 => menu.move_item_stack_to(env, &mut stack, 31, 40, false),
                 31..40 => menu.move_item_stack_to(env, &mut stack, 4, 31, false),
                 _ => true,
+            };
+            if !ok {
+                return ItemStack::empty();
+            }
+            menu.finish_quick_move(env, i, stack, copy, false).0
+        }
+        MenuKind::Grindstone | MenuKind::Anvil => {
+            let grindstone = menu.kind == MenuKind::Grindstone;
+            let ok = match i {
+                2 => menu.move_item_stack_to(env, &mut stack, 3, 39, true),
+                0 | 1 => menu.move_item_stack_to(env, &mut stack, 3, 39, false),
+                // The grindstone takes an item while an input is free; the anvil always tries.
+                _ if (!grindstone || menu.input.items[0].is_empty() || menu.input.items[1].is_empty()) && (grindstone || (3..39).contains(&i)) => {
+                    menu.move_item_stack_to(env, &mut stack, 0, 2, false)
+                }
+                3..30 => menu.move_item_stack_to(env, &mut stack, 30, 39, false),
+                30..39 => menu.move_item_stack_to(env, &mut stack, 3, 30, false),
+                _ => true,
+            };
+            if !ok {
+                return ItemStack::empty();
+            }
+            let mut old = copy.clone();
+            if i == 2 {
+                menu.on_quick_craft(env, i, &stack, &mut old);
+            }
+            menu.finish_quick_move(env, i, stack, copy, false).0
+        }
+        MenuKind::Loom | MenuKind::CartographyTable => {
+            let loom = menu.kind == MenuKind::Loom;
+            let (result, inv) = if loom { (3, 4) } else { (2, 3) };
+            let (use_row, end) = (inv + 27, inv + 36);
+            if i == result && !loom {
+                // `Item.onCraftedBy` on the result (map post-processing).
+                menu.post_process_result(env, &mut stack);
+            }
+            let ok = if i == result {
+                menu.move_item_stack_to(env, &mut stack, inv, end, true)
+            } else if i < result {
+                menu.move_item_stack_to(env, &mut stack, inv, end, false)
+            } else if loom && crate::stations::is_banner(&stack) {
+                menu.move_item_stack_to(env, &mut stack, 0, 1, false)
+            } else if loom && crate::stations::is_loom_dye(&stack) {
+                menu.move_item_stack_to(env, &mut stack, 1, 2, false)
+            } else if loom && crate::stations::is_loom_pattern(&stack) {
+                menu.move_item_stack_to(env, &mut stack, 2, 3, false)
+            } else if !loom && stack.has(kiln_item::component::ids::MAP_ID) {
+                menu.move_item_stack_to(env, &mut stack, 0, 1, false)
+            } else if !loom && crate::stations::is_cartography_additional(&stack) {
+                menu.move_item_stack_to(env, &mut stack, 1, 2, false)
+            } else if (inv..use_row).contains(&i) {
+                menu.move_item_stack_to(env, &mut stack, use_row, end, false)
+            } else if (use_row..end).contains(&i) {
+                menu.move_item_stack_to(env, &mut stack, inv, use_row, false)
+            } else {
+                true
+            };
+            if !ok {
+                return ItemStack::empty();
+            }
+            let mut old = copy.clone();
+            if i == result {
+                menu.on_quick_craft(env, i, &stack, &mut old);
+            }
+            menu.finish_quick_move(env, i, stack, copy, false).0
+        }
+        MenuKind::Enchantment => {
+            let ok = match i {
+                0 | 1 => menu.move_item_stack_to(env, &mut stack, 2, 38, true),
+                _ if !stack.is_empty() && stack.item_name() == "minecraft:lapis_lazuli" => menu.move_item_stack_to(env, &mut stack, 1, 2, true),
+                _ if menu.input.items[0].is_empty() => {
+                    let one = stack.copy_with_count(1);
+                    stack.shrink_count(1);
+                    menu.set_by_player(env, 0, one);
+                    true
+                }
+                _ => false,
             };
             if !ok {
                 return ItemStack::empty();

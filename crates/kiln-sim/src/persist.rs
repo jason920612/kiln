@@ -146,6 +146,7 @@ impl Sim {
         data.respawn_dimension = Some(crate::DIMENSIONS[p.respawn_dim].0.to_owned());
         let mut nbt = data.to_nbt(p.uuid);
         kiln_inventory::persist::save_player_inventory(&p.inv, &p.inv_extra, &mut nbt);
+        p.containers.save_into(&mut nbt);
         if let Tag::Compound(fields) = &mut nbt {
             for (key, value) in [
                 ("Health", Tag::Float(p.health)),

@@ -154,6 +154,14 @@ pub fn handle_container_button_click(menu: &mut Menu, env: &mut Env, container_i
     accepted
 }
 
+/// `handleRenameItem`: the anvil's name field (ignored unless an anvil menu is open).
+pub fn handle_rename_item(menu: &mut Menu, env: &mut Env, name: &str, still_valid: bool) -> bool {
+    if menu.kind != crate::MenuKind::Anvil || !still_valid {
+        return false;
+    }
+    crate::workstation::anvil_set_item_name(menu, env, name)
+}
+
 /// `handleSetCreativeModeSlot`: `slot` is an inventory-menu slot (1-45), or negative to drop
 /// the stack. Only players with infinite materials may use it; stacks over their maximum size
 /// are ignored. `drop_allowed` is vanilla's drop spam throttle (20 drops per second).

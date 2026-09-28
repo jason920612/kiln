@@ -44,6 +44,25 @@ pub enum SlotKind {
     SmithingInput(u8),
     /// The smithing table's result slot (`ItemCombinerMenu$3`).
     SmithingResult,
+    /// A grindstone input: damageable or enchanted items (`GrindstoneMenu$2`, `$3`).
+    GrindstoneInput,
+    /// The grindstone's result slot (`GrindstoneMenu$4`).
+    GrindstoneResult,
+    /// The anvil's result slot (`ItemCombinerMenu$3` with `AnvilMenu.mayPickup`).
+    AnvilResult,
+    /// The loom's banner, dye and pattern slots, and its result.
+    LoomBanner,
+    LoomDye,
+    LoomPattern,
+    LoomResult,
+    /// The cartography table's map slot (anything with a map id), its additional slot (paper,
+    /// an empty map, a glass pane) and its result.
+    CartographyMap,
+    CartographyAdditional,
+    CartographyResult,
+    /// The enchanting table's item slot (one item) and lapis slot.
+    EnchantItem,
+    EnchantLapis,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +83,22 @@ impl Slot {
         match self.kind {
             SlotKind::Normal | SlotKind::Offhand => true,
             SlotKind::Armor(slot) => rules.is_equippable_in_slot(stack, slot),
-            SlotKind::CraftResult | SlotKind::FurnaceResult | SlotKind::StonecutterResult | SlotKind::SmithingResult => false,
+            SlotKind::CraftResult
+            | SlotKind::FurnaceResult
+            | SlotKind::StonecutterResult
+            | SlotKind::SmithingResult
+            | SlotKind::GrindstoneResult
+            | SlotKind::AnvilResult
+            | SlotKind::LoomResult
+            | SlotKind::CartographyResult => false,
+            SlotKind::LoomBanner => crate::stations::is_banner(stack),
+            SlotKind::LoomDye => crate::stations::is_loom_dye(stack),
+            SlotKind::LoomPattern => crate::stations::is_loom_pattern(stack),
+            SlotKind::CartographyMap => stack.has(kiln_item::component::ids::MAP_ID),
+            SlotKind::CartographyAdditional => crate::stations::is_cartography_additional(stack),
+            SlotKind::EnchantItem => true,
+            SlotKind::EnchantLapis => stack.effective_item_name() == "minecraft:lapis_lazuli",
+            SlotKind::GrindstoneInput => stack.is_damageable_item() || crate::workstation::has_any_enchantments(stack),
             SlotKind::SmithingInput(k) => {
                 let key = ["minecraft:smithing_template", "minecraft:smithing_base", "minecraft:smithing_addition"][k as usize];
                 rules.recipes.property_set_accepts(key, stack)
@@ -85,7 +119,7 @@ impl Slot {
     /// `getMaxStackSize()`, given the container's.
     pub fn max_stack_size(&self, container_max: i32) -> i32 {
         match self.kind {
-            SlotKind::Armor(_) => 1,
+            SlotKind::Armor(_) | SlotKind::EnchantItem => 1,
             _ => container_max,
         }
     }

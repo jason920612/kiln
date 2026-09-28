@@ -26,8 +26,10 @@ pub mod recipe;
 pub mod remote;
 pub mod rules;
 pub mod slot;
+pub mod stations;
 pub mod stack;
 pub mod tags;
+pub mod workstation;
 
 pub use click::{ContainerClick, ContainerInput, handle_container_click, handle_set_creative_slot};
 pub use container::{Container, SimpleContainer};

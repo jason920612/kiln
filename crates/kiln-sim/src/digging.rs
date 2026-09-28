@@ -251,6 +251,7 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     let actor = p.actor();
     let drops = !actor.creative && has_correct_tool(stack, state);
     let previous = level.actor.replace(p.conn);
+    crate::container::open::player_will_destroy(level, bp, state, actor.creative);
     let removed = interact::player_destroy(level, bp, &actor, drops);
     level.actor = previous;
     // `ItemStack.mineBlock` (survival only): a tool loses `damage_per_block` durability for

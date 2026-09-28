@@ -575,6 +575,7 @@ dependencies = [
  "bytes",
  "kiln-data",
  "kiln-item",
+ "kiln-javamath",
  "kiln-proto",
  "serde_json",
  "thiserror",

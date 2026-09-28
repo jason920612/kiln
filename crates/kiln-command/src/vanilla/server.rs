@@ -303,6 +303,13 @@ pub fn kiln<S: Host + 'static>(d: &mut Dispatcher<S>) {
             .then(literal("regions").executes(move |_, s: &mut S| {
                 let lines = s.kiln_regions();
                 Ok(report(lines, s))
-            })),
+            }))
+            .then(literal("use").then(argument("targets", ArgumentType::players()).then(
+                argument("pos", ArgumentType::BlockPos).executes(|c, s: &mut S| {
+                    let targets = c.selector("targets").players(s)?;
+                    let pos = s.stack().resolve_block(c.coordinates("pos"));
+                    Ok(targets.iter().filter(|p| s.kiln_use(p, pos)).count() as i32)
+                }),
+            ))),
     );
 }
