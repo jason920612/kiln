@@ -81,6 +81,7 @@ fn run_phased(
             inbox.push(ToSim::Console(format!("tp {name} {} {SURFACE_Y} {}", center[0], center[1])));
             let item = ItemStack { item: items[i % items.len()], count: 64, added: Vec::new(), removed: Vec::new() };
             inbox.push(ToSim::Packet(conn, PlayIn::SetCreativeSlot { slot: 36, item: Some(item) }));
+            stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
             walkers.push(Walker::new(Client::new(conn, stats), center, conn));
         }
         for (i, w) in walkers.iter_mut().enumerate() {
@@ -193,8 +194,7 @@ fn run_phased(
         mob_ticks += sim.mobs().len();
         if tick % 100 == 99 {
             hashes.push(sim.state_hash());
-            let load = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed);
-            traffic.push(walkers.iter().map(|w| (load(&w.client.stats.packets), load(&w.client.stats.bytes))).collect());
+            traffic.push(walkers.iter().map(|w| game_traffic(&w.client.stats)).collect());
         }
     }
     assert_eq!(sim.player_count(), PLAYERS);
@@ -351,6 +351,7 @@ fn run_levels(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -
             inbox.push(ToSim::Console(format!("execute in {level} run tp {name} {} {y} {}", center[0], center[1])));
             let item = ItemStack { item: stone, count: 64, added: Vec::new(), removed: Vec::new() };
             inbox.push(ToSim::Packet(conn, PlayIn::SetCreativeSlot { slot: 36, item: Some(item) }));
+            stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
             walkers.push(Walker::new(Client::new(conn, stats), center, conn));
         }
         // A portal frame east of the spawn, lit with fire.
@@ -383,8 +384,7 @@ fn run_levels(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
         if tick % 50 == 49 {
             hashes.push(sim.state_hash());
-            let load = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed);
-            traffic.push(walkers.iter().map(|w| (load(&w.client.stats.packets), load(&w.client.stats.bytes))).collect());
+            traffic.push(walkers.iter().map(|w| game_traffic(&w.client.stats)).collect());
         }
     }
     let levels: Vec<&str> = (1..=N as u64).map(|c| sim.player_level(c).unwrap().0).collect();
@@ -402,4 +402,13 @@ fn levels_tick_in_parallel_with_the_same_result() {
     for (workers, seed) in [(4, 3), (7, 42)] {
         assert_eq!(run_levels(200, workers, false, Some(seed)), reference, "{workers} workers, chaos seed {seed}");
     }
+}
+
+/// Packets and bytes a player received, less keep-alives: those follow the wall clock (every
+/// 15 s), so a slow run gets more of them.
+fn game_traffic(stats: &kiln_sim::testing::SinkStats) -> (u64, u64) {
+    let load = |a: &std::sync::atomic::AtomicU64| a.load(std::sync::atomic::Ordering::Relaxed);
+    let keep_alive = kiln_data::packets::play::clientbound::KEEP_ALIVE;
+    let (n, b) = stats.by_id.lock().unwrap().get(&keep_alive).copied().unwrap_or_default();
+    (load(&stats.packets) - n, load(&stats.bytes) - b)
 }
