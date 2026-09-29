@@ -420,6 +420,33 @@ fn suck_in_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Blo
     false
 }
 
+/// A hopper minecart's `HopperBlockEntity.suckInItems` from the container block at `pos`:
+/// one item from the first slot the container gives out downwards goes into `dest` (the
+/// minecart's five slots). `None` when there is no container block there.
+pub(crate) fn take_into_cart(level: &mut RegionLevel, pos: BlockPos, dest: &mut Vec<ItemStack>) -> Option<bool> {
+    let source = container_at(level, pos)?;
+    // The minecart's slots stand in as a hopper for the transfer.
+    let type_id = kiln_world::block_entity::type_id("minecraft:hopper")?;
+    let mut hopper = ContainerBe::load(BeKind::Hopper, type_id, &kiln_proto::nbt::Tag::Compound(Vec::new()));
+    hopper.items = std::mem::take(dest);
+    let moved = with_target(level, &source, |src| {
+        for slot in src.slots(Direction::Down) {
+            if try_take_in_item_from_slot(&mut hopper, src, slot, Direction::Down, None) {
+                return true;
+            }
+        }
+        false
+    });
+    *dest = hopper.items;
+    let moved = moved.unwrap_or(false);
+    if moved {
+        for p in source.positions() {
+            changed(level, p);
+        }
+    }
+    Some(moved)
+}
+
 /// `HopperBlockEntity.tryTakeInItemFromSlot`.
 fn try_take_in_item_from_slot(hopper: &mut ContainerBe, src: &mut View, slot: usize, face: Direction, source_ticked: Option<i64>) -> bool {
     let item = src.item(slot).clone();

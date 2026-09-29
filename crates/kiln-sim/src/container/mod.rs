@@ -756,20 +756,38 @@ pub(crate) fn unpack_loot(c: &mut ContainerBe, pos: BlockPos, loot: Option<&kiln
     let Some(table) = c.loot_table.take() else { return };
     c.mark_changed();
     let Some(loot) = loot else { return };
-    let Some(id) = kiln_item::ident::Identifier::parse(&table) else { return };
-    let seed = if c.loot_seed != 0 {
-        c.loot_seed
+    let origin = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+    fill_from_table(&mut c.items, loot, &table, c.loot_seed, origin, [pos.x, pos.y, pos.z], player, game_time, world_seed);
+}
+
+/// `LootTable.fill` into `items` for a container (a block entity's or a minecart's) at `at`
+/// (whose block position seeds a zero `seed`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_from_table(
+    items: &mut [ItemStack],
+    loot: &kiln_loot::LootData,
+    table: &str,
+    seed: i64,
+    origin: [f64; 3],
+    at: [i32; 3],
+    player: bool,
+    game_time: i64,
+    world_seed: i64,
+) {
+    let Some(id) = kiln_item::ident::Identifier::parse(table) else { return };
+    let seed = if seed != 0 {
+        seed
     } else {
         let mut h = (game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ world_seed as u64;
-        for v in [pos.x as i64, pos.y as i64, pos.z as i64] {
-            h = (h ^ v as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        for v in at {
+            h = (h ^ v as i64 as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
             h ^= h >> 31;
         }
         (h | 1) as i64
     };
-    let ctx = ChestLoot { origin: [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5], player };
+    let ctx = ChestLoot { origin, player };
     let mut rng = kiln_loot::random::seeded(seed);
-    loot.fill(&id, &ctx, &mut rng, &mut c.items);
+    loot.fill(&id, &ctx, &mut rng, items);
 }
 
 #[cfg(test)]

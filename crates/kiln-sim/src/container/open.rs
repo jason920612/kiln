@@ -32,6 +32,10 @@ pub(crate) enum OpenBlock {
     /// A workstation (crafting table, stonecutter, smithing table): valid while the block is
     /// there (`ContainerLevelAccess.stillValid`).
     Workstation { pos: BlockPos, block: BlockId },
+    /// A chest or hopper minecart's slots (entity `entity`), shown through the player's own
+    /// copy [`PlayerContainers::cart`], which the region keeps in step with the minecart
+    /// around every menu operation (see [`crate::carts`]).
+    Cart { entity: i32 },
 }
 
 /// The player's container state: the menu counter, what the open menu is on, and the ender
@@ -42,6 +46,8 @@ pub(crate) struct PlayerContainers {
     pub counter: i32,
     pub open: Option<OpenBlock>,
     pub ender: SimpleContainer,
+    /// The open minecart menu's slots ([`OpenBlock::Cart`]).
+    pub cart: SimpleContainer,
     ender_undecoded: Vec<(i32, Tag)>,
     /// Workstation effects of the last menu operation (grindstone and anvil use), for the
     /// region to carry out at the workstation.
@@ -62,6 +68,7 @@ impl PlayerContainers {
             counter: 0,
             open: None,
             ender: SimpleContainer::from_items(list.stacks),
+            cart: SimpleContainer::default(),
             ender_undecoded: list.undecoded,
             pending: Vec::new(),
             enchantment_seed: player.get("XpSeed").and_then(Tag::as_i64).unwrap_or(0) as i32,
@@ -138,7 +145,7 @@ impl Player {
         let player = self.player_flags();
         let result = {
             let Player { inv, menu, open_menu, containers: pc, loot, level_rng, entity_rng, .. } = self;
-            let PlayerContainers { open, ender, bookshelves, .. } = pc;
+            let PlayerContainers { open, ender, cart, bookshelves, .. } = pc;
             let mut world = super::world::SimWorld { loot: loot.as_deref(), rng: level_rng, player_rng: entity_rng, bookshelves: *bookshelves };
             // A double chest's second half is taken out while the menu works on both.
             let mut second_taken: Option<(BlockPos, ContainerBe)> = None;
@@ -160,6 +167,7 @@ impl Player {
                     },
                     (Some(OpenBlock::Containers { .. }), None) => (None, false),
                     (Some(OpenBlock::EnderChest { .. }), _) => (Some(ender as &mut dyn Container), true),
+                    (Some(OpenBlock::Cart { .. }), _) => (Some(cart as &mut dyn Container), true),
                     _ => (None, true),
                 };
                 let mut env = kiln_inventory::Env { inventory: inv, block, player, rules, world: &mut world, out: &mut out };
@@ -269,6 +277,8 @@ impl Player {
         match *open {
             OpenBlock::Containers { first, second } => be_ok(first) && second.is_none_or(be_ok),
             OpenBlock::EnderChest { pos, serial } => be_ok((pos, serial)),
+            // A minecart's menu is checked against the entity ([`crate::carts::check_menus`]).
+            OpenBlock::Cart { .. } => true,
             OpenBlock::Workstation { pos, block } => {
                 // `AnvilMenu.isValidBlock`: any anvil (it wears while open).
                 let now = level.block(pos);
@@ -607,13 +617,13 @@ fn stop_open(level: &mut RegionLevel, block: &OpenBlock, spectator: bool) {
     let positions: Vec<BlockPos> = match *block {
         OpenBlock::Containers { first, second } => std::iter::once(first.0).chain(second.map(|s| s.0)).collect(),
         OpenBlock::EnderChest { pos, .. } => vec![pos],
-        OpenBlock::Workstation { .. } => Vec::new(),
+        OpenBlock::Workstation { .. } | OpenBlock::Cart { .. } => Vec::new(),
     };
     for pos in positions {
         let serial_ok = match *block {
             OpenBlock::Containers { first, second } => [Some(first), second].into_iter().flatten().any(|(p, sr)| p == pos && level.blocks.containers.get(p).is_some_and(|c| c.serial == sr)),
             OpenBlock::EnderChest { serial, .. } => level.blocks.containers.get(pos).is_some_and(|c| c.serial == serial),
-            OpenBlock::Workstation { .. } => false,
+            OpenBlock::Workstation { .. } | OpenBlock::Cart { .. } => false,
         };
         if serial_ok {
             stop_open_at(level, pos);

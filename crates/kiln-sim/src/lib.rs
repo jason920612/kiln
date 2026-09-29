@@ -38,6 +38,7 @@ mod glide;
 mod slide;
 mod firework;
 mod boats;
+mod carts;
 mod xp;
 mod container;
 mod datapacks;
@@ -1582,6 +1583,7 @@ impl Sim {
                 kiln_inventory::Source::Player => p.inv.items.get(s.index).cloned(),
                 kiln_inventory::Source::Block => match &p.containers.open {
                     Some(container::open::OpenBlock::EnderChest { .. }) => p.containers.ender.items.get(s.index).cloned(),
+                    Some(container::open::OpenBlock::Cart { .. }) => p.containers.cart.items.get(s.index).cloned(),
                     Some(container::open::OpenBlock::Containers { first, second }) => {
                         let region = self.dims[p.dim].regions.at(ChunkPos::of_block(first.0.x, first.0.z).cell());
                         region.and_then(|r| {
@@ -1657,6 +1659,7 @@ impl Sim {
                 monsters_burn: mobs::monsters_burn(self.day_time),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
+                entity_drops: self.rule_bool("minecraft:entity_drops"),
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
                 spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
@@ -2136,7 +2139,9 @@ impl Sim {
                 }
                 let mut world = region::World { cells: &mut *cells, blocks: &mut part.1 };
                 let mut fx = region::Fx { blocks: &mut out, bodies: &bodies, spawns: &mut d.spawns, deaths: &mut deaths };
+                let cart = carts::pull(&part.0, p);
                 region::local_packet(p, &mut world, &env, pkt, &mut fx);
+                carts::push(&mut part.0, p, cart);
                 if let Some(h) = hook.as_mut() {
                     plugins::after_packets(h, cells, &env);
                 }

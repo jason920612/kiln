@@ -185,7 +185,10 @@ impl RegionWork<'_> {
                 }
                 let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
                 let off = hand == kiln_proto::packets::serverbound::Hand::Off;
-                entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, &mut self.out.spawns, &mut self.out.deaths);
+                let open = entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, &mut self.out.spawns, &mut self.out.deaths);
+                if open {
+                    crate::carts::open(self.entities, &mut level, self.players[i], entity_id, &mut self.out.spawns);
+                }
                 crate::trading::open_if_requested(self.entities, self.players[i], entity_id, &env.rules, &mut self.out.spawns);
                 continue;
             }
@@ -202,7 +205,11 @@ impl RegionWork<'_> {
             }
             let mut world = World { cells: &mut *self.cells, blocks: &mut *self.blocks };
             let mut fx = Fx { blocks: &mut out, bodies: &bodies, spawns: &mut self.out.spawns, deaths: &mut self.out.deaths };
+            // A minecart menu works on the player's copy of its slots, brought up to date
+            // first and handed back after.
+            let cart = crate::carts::pull(self.entities, self.players[i]);
             local_packet(self.players[i], &mut world, env, pkt, &mut fx);
+            crate::carts::push(self.entities, self.players[i], cart);
             if !self.players[i].merchant_events.is_empty() {
                 let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
                 crate::trading::apply_events(self.entities, &mut level, &mut self.players, i, &mut self.out.spawns, &mut self.out.deaths);
@@ -290,7 +297,9 @@ impl RegionWork<'_> {
                         self.out.spawns.extend(spawns);
                         continue;
                     }
+                    let cart = crate::carts::pull(self.entities, p);
                     crate::container::open::menu_op(p, &mut level, &mut self.out.spawns, |menu, _, env| menu.broadcast_changes(env));
+                    crate::carts::push(self.entities, p, cart);
                     if p.open_menu.is_some() && !p.menu_still_valid(&level) {
                         p.close_block_menu(&env.rules, &mut self.out.spawns, &mut level, true);
                     }
@@ -326,6 +335,7 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 3);
         self.tick_entities(env);
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
+        crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
         mark(&mut self.out.times, 4);
