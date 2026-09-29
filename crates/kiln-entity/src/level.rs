@@ -675,6 +675,16 @@ pub trait EntityLevel {
         !self.fast_lava()
     }
 
+    /// wp28 nether: the `minecraft:universal_anger` game rule (off by default).
+    fn universal_anger(&self) -> bool {
+        false
+    }
+
+    /// wp28 nether: the `minecraft:forgive_dead_players` game rule (on by default).
+    fn forgive_dead_players(&self) -> bool {
+        true
+    }
+
     /// The `minecraft:gameplay/snow_golem_melts` environment attribute at `pos` (hot biomes,
     /// the nether).
     fn snow_golem_melts(&self, pos: Vec3) -> bool {

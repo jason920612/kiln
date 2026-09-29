@@ -208,7 +208,11 @@ pub fn tracker_pos(cx: &Cx, t: &Tracker) -> Option<Vec3> {
     match *t {
         Tracker::Block { center, .. } => Some(center),
         Tracker::Entity { id, track_eye, .. } => {
-            let l = living(cx, id)?;
+            let Some(l) = living(cx, id) else {
+                // wp28: an entity that is not living (an item to walk to).
+                let e = cx.level.entity(id)?;
+                return Some(if track_eye { Vec3::new(e.x(), e.eye_y(), e.z()) } else { e.position() });
+            };
             Some(if track_eye { Vec3::new(l.pos.x, l.eye_y, l.pos.z) } else { l.pos })
         }
     }
@@ -219,7 +223,10 @@ pub fn tracker_block(cx: &Cx, t: &Tracker) -> Option<BlockPos> {
     match *t {
         Tracker::Block { pos, .. } => Some(pos),
         Tracker::Entity { id, target_eye, .. } => {
-            let l = living(cx, id)?;
+            let Some(l) = living(cx, id) else {
+                let e = cx.level.entity(id)?;
+                return Some(if target_eye { BlockPos::containing(e.x(), e.eye_y(), e.z()) } else { e.block_position() });
+            };
             Some(if target_eye { BlockPos::containing(l.pos.x, l.eye_y, l.pos.z) } else { BlockPos::containing(l.pos.x, l.pos.y, l.pos.z) })
         }
     }

@@ -599,9 +599,15 @@ public class MobVectors {
         if (byPriority.isEmpty()) return;
         long base = ((java.util.concurrent.atomic.AtomicLong) get(m.getRandom(), "seed")).get();
         long[] k = {0};
-        for (Object acts : byPriority.values())
-            for (Object set : ((Map<?, ?>) acts).values())
-                for (Object b : (Iterable<?>) set) seedGate(b, base, k);
+        for (var pe : byPriority.entrySet())
+            for (var ae : ((Map<?, ?>) pe.getValue()).entrySet())
+                for (Object b : (Iterable<?>) ae.getValue()) {
+                    if (System.getenv("MOB_DEBUG") != null)
+                        Files.writeString(Path.of("dbg.txt"), "ORDER prio=" + pe.getKey() + " act=" + ae.getKey() + " " + b.getClass().getSimpleName() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                    if (System.getenv("MOB_DEBUG") != null && b instanceof net.minecraft.world.entity.ai.behavior.GateBehavior<?>)
+                        Files.writeString(Path.of("dbg.txt"), "PIN prio=" + pe.getKey() + " act=" + ae.getKey() + " k=" + k[0] + " base=" + base + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                    seedGate(b, base, k);
+                }
         for (Object sensor : ((Map<?, ?>) get(brain, "sensors")).values())
             ((net.minecraft.world.entity.ai.sensing.Sensor<?>) sensor).randomlyDelayStart(m.getRandom());
     }
@@ -662,6 +668,8 @@ public class MobVectors {
                 StringBuilder dbg = new StringBuilder("DBG mob " + m.getId() + " t=" + m.level().getGameTime() + " nearby=[");
                 if (nl.isPresent()) for (var x : nl.get()) dbg.append(x.getId()).append(x instanceof net.minecraft.world.entity.player.Player ? "P" : "").append(nv.isPresent() && nv.get().contains(x) ? "+" : "-").append(' ');
                 dbg.append("] look=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.LOOK_TARGET).map(Object::toString).orElse("-"));
+                dbg.append(" running=");
+                for (var b : brain.getRunningBehaviors()) dbg.append(b.debugString()).append(' ');
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             }
             // The level's random state too: brain draws from it (`Kiln`: the mob's own stream).
@@ -1702,7 +1710,6 @@ public class MobVectors {
             s.player = new double[] {6.5, BY, 0.5};
             s.playerCreative = true;
             s.ticks = 200;
-            s.diverges = true;
             out.add(s);
         }
         {
@@ -1713,7 +1720,6 @@ public class MobVectors {
             s.mobs.add(m);
             s.player = new double[] {5.5, BY, 0.5};
             s.ticks = 160;
-            s.diverges = true;
             out.add(s);
         }
     }

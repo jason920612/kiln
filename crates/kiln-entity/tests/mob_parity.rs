@@ -209,6 +209,8 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         if let Some(item) = p.get("head").and_then(Value::as_str) {
             v.head = kiln_data::builtin_id("minecraft:item", item).unwrap();
+            // (wp28: `PiglinAi.isWearingSafeArmor` reads the armor tag.)
+            v.piglin_safe_armor = mob::item_tag(v.head, "minecraft:piglin_safe_armor");
         }
         v.yaw = p.get("yaw").and_then(Value::as_f64).unwrap_or(0.0) as f32;
         // The recording's player is never ticked: its clock and hurt stamp as they were.
@@ -236,7 +238,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     for spec in s["mobs"].as_array().unwrap() {
         let kind = MobKind::by_name(spec["type"].as_str().unwrap()).expect("mob type");
         let id = spec["id"].as_i64().unwrap() as i32;
-        let mut e = mob::new(kind, id, 0, 0);
+        // (wp28: a uuid of its own, for the memories that hold entities by uuid: anger.)
+        let mut e = mob::new(kind, id, id as u128 + 0x5eed_0000, 0);
         let yaw = f(&spec["yaw"]) as f32;
         e.set_pos(vec3(&spec["pos"]));
         e.y_rot = yaw;

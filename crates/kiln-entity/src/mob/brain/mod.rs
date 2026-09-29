@@ -20,6 +20,7 @@ pub mod behaviors;
 pub mod combat;
 pub mod gate;
 pub mod memory;
+pub mod nether;
 pub mod persist;
 pub mod sensors;
 pub mod util;
@@ -655,7 +656,10 @@ impl Brain {
         }
         brain.groups.sort_by_key(|g| g.priority);
         for g in brain.groups.iter_mut() {
-            // Stable: same bucket keeps registration order (`HashMap` chains append).
+            // Same bucket: the activity registered last comes first (`HashMap.computeIfAbsent`
+            // puts a new node at the head of its bucket, as `Brain.addActivity` does), so
+            // reverse the registration order before the stable sort by bucket.
+            g.activities.reverse();
             g.activities.sort_by_key(|(a, _)| a.bucket());
         }
         st.set_core_activities(&[Activity::Core]);
