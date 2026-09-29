@@ -125,6 +125,59 @@ fn grid_queries_match_a_scan() {
     }
 }
 
+/// `cargo test -p kiln-entity --test player_index -- --ignored --nocapture`: what one query
+/// costs on a crowd server, scanning every player against going through the grid.
+#[test]
+#[ignore]
+fn crowd_bench() {
+    use std::time::Instant;
+    let mut rng = Rng(3);
+    // A target filter with some cost, as the combat conditions are (about 100 ns).
+    let costly = |p: &PlayerView| {
+        let mut h = p.id as u64;
+        for _ in 0..50 {
+            h = std::hint::black_box(h.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (h >> 7));
+        }
+        p.alive && !p.spectator && h != 1
+    };
+    for (n, spread) in [(100usize, 1000.0), (1000, 1000.0), (1000, 120.0), (5000, 1000.0), (5000, 250.0)] {
+        let views = crowd(&mut rng, n, spread);
+        let level = GridLevel::new(views.clone());
+        let queries: Vec<Vec3> = (0..2000).map(|_| Vec3::new(rng.f(-spread, spread), rng.f(0.0, 200.0), rng.f(-spread, spread))).collect();
+        let t = Instant::now();
+        let mut sink = 0usize;
+        for q in &queries {
+            let best = views.iter().filter(|p| costly(p)).min_by(|a, b| a.pos.distance_to_sqr(*q).total_cmp(&b.pos.distance_to_sqr(*q)));
+            sink += best.map_or(0, |p| p.id as usize);
+        }
+        let scan = t.elapsed();
+        let t = Instant::now();
+        for q in &queries {
+            sink += nearest_player_to(&level, *q, |p| costly(p)).map_or(0, |p| p.id as usize);
+        }
+        let grid = t.elapsed();
+        let t = Instant::now();
+        for q in &queries {
+            let area = Aabb::new(q.x - 10.0, q.y - 10.0, q.z - 10.0, q.x + 10.0, q.y + 10.0, q.z + 10.0);
+            sink += views.iter().filter(|p| player_box(p).intersects(&area)).count();
+        }
+        let scan_area = t.elapsed();
+        let t = Instant::now();
+        for q in &queries {
+            let area = Aabb::new(q.x - 10.0, q.y - 10.0, q.z - 10.0, q.x + 10.0, q.y + 10.0, q.z + 10.0);
+            sink += level.players_in(&area).len();
+        }
+        let grid_area = t.elapsed();
+        eprintln!(
+            "{n:5} players over {spread}: nearest scan {:.2} us grid {:.2} us; players_in scan {:.2} us grid {:.2} us ({sink})",
+            scan.as_secs_f64() * 1e6 / 2000.0,
+            grid.as_secs_f64() * 1e6 / 2000.0,
+            scan_area.as_secs_f64() * 1e6 / 2000.0,
+            grid_area.as_secs_f64() * 1e6 / 2000.0
+        );
+    }
+}
+
 #[test]
 fn nearest_player_matches_a_scan() {
     let mut rng = Rng(11);

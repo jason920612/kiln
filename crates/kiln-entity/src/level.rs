@@ -406,7 +406,10 @@ impl PlayerGrid {
 pub fn nearest_player_to(level: &dyn EntityLevel, at: Vec3, mut accept: impl FnMut(&PlayerView) -> bool) -> Option<PlayerView> {
     // Squared radius already searched: (prev, r²] is what each round looks at.
     let mut prev = -1.0f64;
-    for r in [16.0f64, 64.0, 256.0, 1024.0] {
+    // A handful of players is cheaper to scan; a sparse crowd is decided by the scan after two
+    // rounds, not by boxes that grow over empty sections.
+    let rounds: &[f64] = if level.players().len() <= 32 { &[] } else { &[16.0, 64.0] };
+    for &r in rounds {
         let area = Aabb::new(at.x - r - 1.0, at.y - r - 2.0, at.z - r - 1.0, at.x + r + 1.0, at.y + r + 2.0, at.z + r + 1.0);
         let mut c: Vec<(f64, PlayerView)> = level.players_in(&area).into_iter().map(|p| (p.pos.distance_to_sqr(at), p)).filter(|(d, _)| *d > prev && *d <= r * r).collect();
         // (stable: equal distances stay in player order)
