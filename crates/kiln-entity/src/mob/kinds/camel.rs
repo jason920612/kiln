@@ -53,6 +53,8 @@ pub struct State {
     /// `AbstractHorse` flag 16 and its counter (a camel grazes on grass now and then).
     eating: bool,
     eating_counter: i32,
+    /// `finalizeSpawn` ran: the pose clock starts at "fully standing" with the next tick.
+    fresh: bool,
     /// The game time seen last (pose times need it outside the level).
     now: i64,
 }
@@ -141,6 +143,12 @@ impl Kind for Camel {
 
     fn pre_tick(&self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         st_mut(m).now = level.game_time();
+        if st(m).fresh {
+            // `resetLastPoseChangeTickToFullStand(gameTime)` of `finalizeSpawn`.
+            let s = st_mut(m);
+            s.fresh = false;
+            s.last_pose_change = (level.game_time() - STANDUP_TICKS - 1).max(0);
+        }
     }
 
     /// `AbstractHorse.aiStep` before `LivingEntity.aiStep`: the tail.
@@ -352,6 +360,7 @@ impl Kind for Camel {
     fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &SpawnContext, group: &mut GroupData) {
         ext::ageable_finalize(e, m, r, group, 0.2);
         ext::mob_finalize(m, r);
+        st_mut(m).fresh = true;
     }
 
     /// `checkCamelSpawnRules`.

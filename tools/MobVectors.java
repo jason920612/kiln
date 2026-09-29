@@ -3230,6 +3230,90 @@ public class MobVectors {
             s.ticks = 700;
             out.add(s);
         }
+        // Loaded from NBT: holding an item and liking the player already.
+        {
+            Scenario s = new Scenario("nbt_allay");
+            floor(s, 24, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 0f, 18150);
+            int[] u = net.minecraft.core.UUIDUtil.uuidToIntArray(UUID.nameUUIDFromBytes("KilnMob".getBytes()));
+            m.nbt = String.format(Locale.ROOT, "{equipment:{mainhand:{id:\"minecraft:iron_ingot\",count:1}},Inventory:[{id:\"minecraft:iron_ingot\",count:3}],DuplicationCooldown:100,"
+                    + "Brain:{memories:{\"minecraft:liked_player\":{value:[I;%d,%d,%d,%d]}}}}", u[0], u[1], u[2], u[3]);
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 115;
+            drop(s, 60, "minecraft:iron_ingot", 5, -3.5, BY, -4.5);
+            s.ticks = 800;
+            out.add(s);
+        }
+        // Several items and stacks, other items lying about that it does not want.
+        {
+            Scenario s = new Scenario("stacks_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 200f, 18160));
+            s.player = new double[] {4.5, BY, 4.5};
+            s.playerCreative = true;
+            s.levelSeed = 116;
+            interact(s, 3, 0, "minecraft:diamond");
+            drop(s, 20, "minecraft:diamond", 40, 6.5, BY, -3.5);
+            drop(s, 20, "minecraft:diamond", 40, -6.5, BY, 3.5);
+            drop(s, 20, "minecraft:dirt", 5, 3.5, BY, -6.5);
+            drop(s, 200, "minecraft:diamond", 1, 2.5, BY, 8.5);
+            s.ticks = 900;
+            out.add(s);
+        }
+        // Two allays: the second one likes another player (none here) and the first fetches.
+        {
+            Scenario s = new Scenario("pair_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18170));
+            s.mobs.add(new MobSpec("minecraft:allay", 2.5, BY + 3, 1.5, 250f, 18171));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 117;
+            interact(s, 3, 0, "minecraft:emerald");
+            interact(s, 4, 1, "minecraft:emerald");
+            drop(s, 40, "minecraft:emerald", 4, -5.5, BY, -1.5);
+            s.ticks = 700;
+            out.add(s);
+        }
+        // A survival player, sneaking near: liked players in survival too.
+        {
+            Scenario s = new Scenario("survival_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18180));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerSneaking = true;
+            s.levelSeed = 118;
+            interact(s, 3, 0, "minecraft:cobblestone");
+            drop(s, 40, "minecraft:cobblestone", 3, 7.5, BY, 5.5);
+            s.ticks = 600;
+            out.add(s);
+        }
+        // Sniffer cooldown and explored positions loaded from NBT.
+        {
+            Scenario s = new Scenario("nbt_cooldown_sniffer");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 40f, 16300);
+            m.nbt = "{Brain:{memories:{\"minecraft:sniff_cooldown\":{value:{},ttl:300L},\"minecraft:sniffer_explored_positions\":{value:[{dimension:\"minecraft:overworld\",pos:[I;3,99,4]},{dimension:\"minecraft:overworld\",pos:[I;-2,99,-6]}]}}}}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 76;
+            s.ticks = 1500;
+            out.add(s);
+        }
+        // A whole cooldown: two digs, the second one never on a spot dug before.
+        {
+            Scenario s = new Scenario("cooldown_sniffer");
+            floor(s, 12, "minecraft:dirt");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 40f, 16310));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 77;
+            s.ticks = 11000;
+            out.add(s);
+        }
     }
 
     /// Axolotls, goats, frogs, tadpoles.
