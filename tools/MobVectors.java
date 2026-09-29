@@ -293,6 +293,23 @@ public class MobVectors {
                     BlockPos p = new BlockPos(x, y, z);
                     if (!level.getBlockState(p).isAir()) level.setBlock(p, air, FLAGS);
                 }
+        awaitLight(level);
+    }
+
+    /// The light engine runs on its own thread: what the blocks just placed (or removed) do to
+    /// the light (a pool's water dims the light under it, which the mobs' walk target values and
+    /// light-dependent goals read) has to be settled before the mobs tick, or a vector would
+    /// depend on how fast that thread ran.
+    static void awaitLight(ServerLevel level) {
+        var engine = level.getChunkSource().getLightEngine();
+        for (int i = 0; i < 2; i++) {
+            // (the wait's own task can complete a batch before that batch's light update)
+            engine.tryScheduleUpdate();
+            var done = engine.waitForPendingTasks(0, 0);
+            long deadline = System.nanoTime() + 60_000_000_000L;
+            level.getServer().managedBlock(() -> done.isDone() || System.nanoTime() > deadline);
+            if (!done.isDone()) throw new IllegalStateException("light engine did not settle");
+        }
     }
 
     static Object get(Object o, String field) throws Exception {
@@ -326,6 +343,7 @@ public class MobVectors {
 
     static String run(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
         for (var b : s.blocks.entrySet()) level.setBlock(b.getKey(), b.getValue(), FLAGS);
+        awaitLight(level);
         level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + s.dayTime);
         level.updateSkyBrightness();
         int skyDarken = level.getSkyDarken();
