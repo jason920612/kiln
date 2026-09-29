@@ -324,6 +324,7 @@ fn classify(e: &kiln_entity::Entity) -> EntityClass {
         // `EndCrystal.hurtServer`: an attack breaks it.
         EntityKind::Ext(_) if e.type_name == "minecraft:end_crystal" => EntityClass::Mob,
         EntityKind::Mob(_) => EntityClass::NotAttackable,
+        EntityKind::Ext(x) if x.attackable() => EntityClass::Mob,
         _ => EntityClass::Unhurtable,
     }
 }
@@ -443,12 +444,25 @@ impl Player {
     }
 
     pub(crate) fn eye_position(&self) -> [f64; 3] {
-        [self.pos[0], self.pos[1] + if self.sneaking { 1.27 } else { 1.62 }, self.pos[2]]
+        let eye = if self.fall_flying {
+            0.4
+        } else if self.sneaking {
+            1.27
+        } else {
+            1.62
+        };
+        [self.pos[0], self.pos[1] + eye, self.pos[2]]
     }
 
     /// The player's bounding box (standing or crouching).
     pub(crate) fn bounding_box(&self) -> kiln_entity::math::Aabb {
-        let h = if self.sneaking { 1.5 } else { 1.8 };
+        let h = if self.fall_flying {
+            0.6
+        } else if self.sneaking {
+            1.5
+        } else {
+            1.8
+        };
         kiln_entity::math::Aabb::new(self.pos[0] - 0.3, self.pos[1], self.pos[2] - 0.3, self.pos[0] + 0.3, self.pos[1] + h, self.pos[2] + 0.3)
     }
 

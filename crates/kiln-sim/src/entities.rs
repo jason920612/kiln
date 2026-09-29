@@ -268,6 +268,25 @@ impl Entity {
             }
             EntityKind::Mob(m) => return crate::mobs::metadata(self.phys(), m),
             EntityKind::Ext(x) => x.entity_data(self.phys(), &mut d),
+            EntityKind::Arrow(a) => {
+                let flags = (a.crit as i8) | if self.phys().no_physics { 2 } else { 0 };
+                if flags != 0 {
+                    d.set(data::abstract_arrow::ID_FLAGS, &DataValue::Byte(flags));
+                }
+                if a.pierce_level > 0 {
+                    d.set(data::abstract_arrow::PIERCE_LEVEL, &DataValue::Byte(a.pierce_level as i8));
+                }
+                if a.in_ground {
+                    d.set(data::abstract_arrow::IN_GROUND, &DataValue::Boolean(true));
+                }
+            }
+            EntityKind::Throwable(t) => {
+                if let Some(item) = &t.item {
+                    let mut bytes = bytes::BytesMut::new();
+                    item.write_optional(&mut bytes);
+                    d.set(data::throwable_item_projectile::ITEM_STACK, &DataValue::EncodedItemStack(bytes.freeze()));
+                }
+            }
             _ => {}
         }
         d
@@ -279,6 +298,9 @@ impl Entity {
         let spawn_data = match &self.phys().kind {
             EntityKind::FallingBlock(f) => f.state as i32,
             EntityKind::Ext(x) => x.spawn_data(),
+            // `Projectile.getAddEntityPacket`: the owner's id.
+            EntityKind::Arrow(a) => a.owner.unwrap_or(0),
+            EntityKind::Throwable(t) => t.owner.unwrap_or(0),
             _ => 0,
         };
         let mut out = vec![
@@ -822,8 +844,11 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn hurt_player(&mut self, id: i32, source: kiln_entity::mob::DamageSource, amount: f32) -> bool {
+        // A player's projectile credits the player.
+        let player_attacker = source.attacker.and_then(|a| self.players.iter().find(|p| p.entity_id == a).map(|p| p.as_attacker()));
         let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
-        let attacker = source.attacker.and_then(|a| {
+        let attacker = player_attacker.or_else(|| {
+            let a = source.attacker?;
             let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
             Some(health::Attacker::mob(a, e.type_name, arr(e.position())))
         });
@@ -835,6 +860,29 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             p.last_hurt_by_mob = Some((a, env.game_time));
         }
         hurt
+    }
+
+    fn push(&mut self, id: i32, v: Vec3) {
+        // A player's client owns its motion: it gets the push.
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+            p.vel = [p.vel[0] + v.x, p.vel[1] + v.y, p.vel[2] + v.z];
+            p.sync_velocity = true;
+            return;
+        }
+        if let Some(e) = self.entity_mut(id) {
+            e.delta = e.delta + v;
+            e.needs_sync = true;
+        }
+    }
+
+    fn is_thundering(&self) -> bool {
+        self.level.env.weather.weather.thundering
+    }
+
+    fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, _source: Option<i32>) -> bool {
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
+        let Some(e) = crate::effects::effect_id(effect) else { return false };
+        p.add_effect(crate::effects::Effect::simple(e, duration, amplifier))
     }
 
     fn add_effect_instance(&mut self, id: i32, effect: kiln_entity::effect::Effect, source: Option<i32>) -> bool {
@@ -1115,7 +1163,8 @@ pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player],
     let view = view(p, now);
     let Some(phys) = entities.list[idx].phys.as_mut() else { return };
     let steers = phys.passengers.first() == Some(&p.entity_id)
-        && kiln_entity::mob::data(phys).is_some_and(|m| m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)));
+        && (kiln_entity::mob::data(phys).is_some_and(|m| m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)))
+            || kiln_entity::ext_entity::boat::is_boat(phys.type_name));
     if !steers {
         return;
     }
@@ -1150,6 +1199,20 @@ pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player],
         }
     } else {
         p.entered_lava_on_vehicle = None;
+    }
+}
+
+/// `ServerGamePacketListenerImpl.handlePaddleBoat`: the blades of the boat player `i` steers.
+pub(crate) fn paddle_boat(entities: &mut Entities, players: &[&mut Player], i: usize, left: bool, right: bool) {
+    let p = &*players[i];
+    let Some(v) = p.vehicle else { return };
+    let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
+    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    if phys.passengers.first() != Some(&p.entity_id) {
+        return;
+    }
+    if let Some(b) = kiln_entity::ext_entity::get_mut::<kiln_entity::ext_entity::boat::Boat>(phys) {
+        b.set_paddle_state(left, right);
     }
 }
 
@@ -1235,7 +1298,7 @@ pub(crate) fn hit_mob(
     {
         p.award_stat(*crate::player_stats::stat::DAMAGE_DEALT, ((before - after) * 10.0).round() as i32);
     }
-    if hurt {
+    if hurt && kiln_entity::mob::data(&phys).is_some() {
         if hit.knockback > 0.0 {
             let rad = (hit.yaw * 0.017453292) as f64;
             let (s, c) = (kiln_entity::mob::mth::sin(rad) as f64, kiln_entity::mob::mth::cos(rad) as f64);
@@ -1285,7 +1348,7 @@ pub(crate) fn interact_mob(
             return;
         }
         let Some(phys) = entities.list[idx].phys.as_ref() else { return };
-        if kiln_entity::mob::data(phys).is_none() {
+        if kiln_entity::mob::data(phys).is_none() && !matches!(phys.kind, EntityKind::Ext(_)) {
             return;
         }
         // `canInteractWithEntity(box, 3.0)`: the box within the interaction range plus 3.
@@ -1349,11 +1412,14 @@ pub(crate) fn interact_mob(
             for _ in 0..drop.count() {
                 let mut one = drop.clone();
                 one.set_count(1);
-                let push = kiln_entity::mob::species::shear_drop_motion(&mut phys);
+                // Only wool gets the push of `Sheep.shear`; the snow golem's pumpkin drops from its eyes.
+                let sheep = phys.type_name == "minecraft:sheep";
+                let push = if sheep { kiln_entity::mob::species::shear_drop_motion(&mut phys) } else { kiln_entity::math::Vec3::ZERO };
+                let lift = if sheep { 1.0 } else { phys.eye_y() - phys.y() };
                 let h = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_0000 | k) as u64;
                 k += 1;
                 let p = phys.position();
-                let mut s = crate::mobs::drop_item(one, [p.x, p.y + 1.0, p.z], h);
+                let mut s = crate::mobs::drop_item(one, [p.x, p.y + lift, p.z], h);
                 s.vel = [s.vel[0] + push.x, s.vel[1] + push.y, s.vel[2] + push.z];
                 sim.spawns.push(s);
             }
@@ -1690,6 +1756,20 @@ fn carry_out(
         }
         Event::GiftLoot { entity: id, table, pos } => loot_drop(env, spawns, id, table, pos, n, 0.0),
         Event::ShearLoot { entity: id, table, pos } => loot_drop(env, spawns, id, &table, pos, n, 1.0),
+        // `ThrownEnderpearl.onHit`: its player goes to where the pearl was at the start of the
+        // tick, takes 5 `ender_pearl` damage and hears the teleport.
+        Event::ProjectileHit { projectile, projectile_type: "minecraft:ender_pearl", owner: Some(owner), .. } => {
+            let Some(to) = list.binary_search_by_key(&projectile, |e| e.id).ok().and_then(|i| list[i].phys.as_ref()).map(|e| arr(e.old_pos)) else { return };
+            let Some(p) = players.iter_mut().find(|p| p.entity_id == owner && !p.dead && !p.disconnected) else { return };
+            let now = env.game_time;
+            let rot = p.rot;
+            p.teleport(to, rot, now);
+            p.fall_distance = 0.0;
+            let source = health::Source { cause: health::Cause::Other("minecraft:ender_pearl"), attacker: None, direct: None, weapon: None };
+            let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
+            p.hurt(5.0, &source, &mut ctx);
+            p.sound_for_all("minecraft:entity.player.teleport", world_fx::SoundSource::Players, 1.0, 1.0);
+        }
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
@@ -1825,6 +1905,7 @@ fn send_sound(
 /// Players touching items that can be picked up take them into their inventory. `players`
 /// is the region's, sorted by connection.
 pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
+    arrow_pickups(entities, players);
     for e in &mut entities.list {
         if e.removed {
             continue;
@@ -1872,6 +1953,77 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
                     players[j].send(pkt.clone());
                 }
             }
+        }
+    }
+}
+
+/// `AbstractArrow.playerTouch` for arrows and tridents at rest (stuck, or a loyal trident on
+/// its way back): `tryPickup` by the pickup mode (a returning trident goes to its thrower);
+/// the viewers see it taken.
+fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
+    use kiln_entity::arrow::{PICKUP_ALLOWED, PICKUP_CREATIVE_ONLY};
+    use kiln_entity::ext_entity::trident::Trident;
+    for e in &mut entities.list {
+        if e.removed {
+            continue;
+        }
+        let (lo, hi, _) = e.body();
+        let Some(phys) = e.phys.as_ref() else { continue };
+        // (at rest, pickup mode, the item, a loyal trident's owner)
+        let (resting, mode, item, owner) = match &phys.kind {
+            EntityKind::Arrow(a) => (
+                (a.in_ground || phys.no_physics) && a.shake_time <= 0,
+                a.pickup,
+                a.pickup_item.clone().unwrap_or_else(|| kiln_item::ItemStack::of(phys.type_name, 1).unwrap_or_else(kiln_item::ItemStack::empty)),
+                None,
+            ),
+            _ => match kiln_entity::ext_entity::get::<Trident>(phys) {
+                Some(t) => (
+                    (t.in_ground || phys.no_physics) && t.shake_time <= 0,
+                    if t.creative_only { PICKUP_CREATIVE_ONLY } else if t.pickup { PICKUP_ALLOWED } else { 0 },
+                    t.item.clone().unwrap_or_else(|| kiln_item::ItemStack::of("minecraft:trident", 1).unwrap_or_else(kiln_item::ItemStack::empty)),
+                    t.owner.filter(|_| phys.no_physics),
+                ),
+                None => continue,
+            },
+        };
+        if !resting {
+            continue;
+        }
+        let touching = |p: &Player| {
+            let pmin = [p.pos[0] - 1.3, p.pos[1] - 0.5, p.pos[2] - 1.3];
+            let pmax = [p.pos[0] + 1.3, p.pos[1] + 2.3, p.pos[2] + 1.3];
+            (0..3).all(|i| pmin[i] < hi[i] && pmax[i] > lo[i])
+        };
+        let Some(i) = players.iter().position(|p| !p.disconnected && !p.dead && p.game_mode != 3 && touching(p)) else { continue };
+        let p = &mut *players[i];
+        let mut stack = item;
+        let taken = match mode {
+            PICKUP_ALLOWED => {
+                p.add_to_inventory(&mut stack);
+                stack.is_empty()
+            }
+            PICKUP_CREATIVE_ONLY => p.infinite_materials(),
+            _ => false,
+        } || owner == Some(p.entity_id) && {
+            p.add_to_inventory(&mut stack);
+            stack.is_empty()
+        };
+        if !taken {
+            continue;
+        }
+        let pkt = entity::take_item_entity(e.id, players[i].entity_id, 1);
+        players[i].send(pkt.clone());
+        for v in &e.seen_by {
+            if let Ok(j) = players.binary_search_by_key(v, |q| q.conn)
+                && j != i
+            {
+                players[j].send(pkt.clone());
+            }
+        }
+        e.removed = true;
+        if let Some(p) = e.phys.as_mut() {
+            p.discard();
         }
     }
 }
@@ -2016,6 +2168,16 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
                 e.equipment_sent = worn;
             }
         }
+        // Arrows: crit and in-ground flags change in flight (extension entities: above).
+        if e.phys.as_ref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
+            let meta = e.metadata();
+            if meta.entries() != e.meta_sent.as_slice() {
+                if !e.meta_sent.is_empty() || e.age > 1 {
+                    packets.push(entity::set_entity_data(e.id, &meta));
+                }
+                e.meta_sent = meta.entries().to_vec();
+            }
+        }
         if let Some(phys) = e.phys.as_ref()
             && phys.passengers != e.passengers_sent
         {
@@ -2070,6 +2232,7 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::PlayerExplosion => ("minecraft:player_explosion", "death.attack.explosion.player"),
         DamageKind::Fireball => ("minecraft:fireball", "death.attack.fireball"),
         DamageKind::Trident => ("minecraft:trident", "death.attack.trident"),
+        DamageKind::Fireworks => ("minecraft:fireworks", "death.attack.fireworks"),
         DamageKind::MobProjectile => ("minecraft:mob_projectile", "death.attack.mob"),
         DamageKind::Magic => ("minecraft:magic", "death.attack.magic"),
         DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),

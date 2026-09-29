@@ -293,6 +293,17 @@ impl Player {
         });
     }
 
+    /// `SlideDownBlockTrigger.trigger` (`honey_block_slide`).
+    pub(crate) fn slid_down_block(&mut self, state: u16) {
+        let block = kiln_item::registry::BLOCK.id(kiln_data::builtin_entries("minecraft:block").and_then(|b| b.get(kiln_data::block_logic::block_index(state)).copied()).unwrap_or(""));
+        self.fire("minecraft:slide_down_block", None, |c, _, _| match &c.trigger {
+            Trigger::EnterBlock { blocks, state: props } => {
+                blocks.as_ref().is_none_or(|b| block.is_some_and(|id| b.contains(id))) && props.as_ref().is_none_or(|p| state_matches(state, p))
+            }
+            _ => false,
+        });
+    }
+
     /// `ChangeDimensionTrigger.trigger`.
     pub(crate) fn changed_dimension(&mut self, from: &str, to: &str) {
         self.fire("minecraft:changed_dimension", None, |c, _, _| match &c.trigger {

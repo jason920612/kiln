@@ -58,11 +58,16 @@ impl Player {
         if self.sprinting {
             f |= shared_flags::SPRINTING;
         }
+        if self.fall_flying {
+            f |= shared_flags::FALL_FLYING;
+        }
         f as i8
     }
 
     fn pose(&self) -> i32 {
-        if self.sleep.pos.is_some() {
+        if self.fall_flying {
+            pose::FALL_FLYING
+        } else if self.sleep.pos.is_some() {
             pose::SLEEPING
         } else if self.sneaking {
             pose::CROUCHING

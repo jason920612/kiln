@@ -164,6 +164,10 @@ impl RegionWork<'_> {
                 entities::move_vehicle(self.entities, &mut self.players, i, pos, rot, on_ground, env.game_time);
                 continue;
             }
+            if let PlayIn::PaddleBoat { left, right } = pkt {
+                entities::paddle_boat(self.entities, &self.players, i, left, right);
+                continue;
+            }
             if let PlayIn::RidingJump { data } = pkt {
                 entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
                 continue;
@@ -514,11 +518,14 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
         p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
     }
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
+    p.tick_glide();
+    p.tick_spin();
     // `Entity.handlePortal` (in `baseTick`).
     if let Some(travel) = p.handle_portal(env) {
         t.portals.push(travel);
     }
     p.tick_using(&block, &mut ctx);
+    p.tick_cooldowns();
     p.tick_combat();
     let (_, h, _) = p.dimensions();
     let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
@@ -538,6 +545,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     if inside != 0 && !p.dead {
         p.entered_block(inside);
     }
+    p.tick_honey_slide(&block, env.game_time);
     p.sync_health();
     p.sync_experience();
     t
@@ -700,6 +708,10 @@ pub(crate) fn player_packet(
                 p.meta_dirty = true;
             }
         }
+        PlayIn::PlayerCommand { action } if action == crate::glide::START_FALL_FLYING => {
+            let fluids = p.fluids(&|pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0));
+            p.try_start_fall_flying(fluids.in_water || fluids.in_lava);
+        }
         PlayIn::PlayerCommand { action } if action != STOP_SLEEPING => {
             const START_SPRINTING: i32 = 1;
             const STOP_SPRINTING: i32 = 2;
@@ -798,7 +810,10 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             const DROP_ITEM: i32 = 5;
             const RELEASE_USE_ITEM: i32 = 6;
             match action {
-                RELEASE_USE_ITEM => p.stop_using(),
+                RELEASE_USE_ITEM => {
+                    let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                    crate::ranged::release_using(p, &mut level, fx.spawns);
+                }
                 DROP_ITEM | DROP_ALL_ITEMS => {
                     if let Some(spawn) = p.drop_held(action == DROP_ALL_ITEMS) {
                         fx.spawns.push(spawn);
@@ -820,11 +835,41 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             }
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
-        PlayIn::UseItem { hand, sequence, .. } => {
-            let cells = &*world.cells;
-            let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
-            let mut ctx = damage_ctx(env, fx.spawns, fx.deaths);
-            p.use_item(hand == kiln_proto::packets::serverbound::Hand::Off, &block, &mut ctx);
+        PlayIn::UseItem { hand, sequence, yaw, pitch } => {
+            // `handleUseItem`: the rotation the client used applies first.
+            if yaw.is_finite() && pitch.is_finite() {
+                p.rot = crate::movement::normalize_rotation([yaw, pitch]);
+            }
+            let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+            let held = p.in_hand(off).clone();
+            let name = if held.is_empty() { "minecraft:air" } else { held.item_name() };
+            // `ServerPlayerGameMode.useItem`: nothing for spectators or items cooling down.
+            if p.game_mode == 3 || p.dead || held.is_empty() || p.on_cooldown(&held) {
+            } else if crate::buckets::is_bucket(name) {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::buckets::use_bucket(p, &mut level, off, fx.spawns);
+            } else if name == crate::firework::ITEM {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::firework::use_item(p, &mut level, off, fx.spawns);
+            } else if crate::boats::is_boat_item(name) {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::boats::use_item(p, &mut level, off, fx.spawns);
+            } else if crate::ranged::handles(name) {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::ranged::use_item(p, &mut level, off, fx.spawns);
+            } else if name == "minecraft:crossbow" {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::crossbow::use_item(p, &mut level, off, fx.spawns);
+            } else if name == "minecraft:trident" {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::trident::use_item(p, &mut level, off);
+            } else if crate::ranged::use_held(p, off, &held) {
+            } else {
+                let cells = &*world.cells;
+                let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
+                let mut ctx = damage_ctx(env, fx.spawns, fx.deaths);
+                p.use_item(off, &block, &mut ctx);
+            }
             p.ack_block_changes = p.ack_block_changes.max(sequence);
         }
         PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } => {
@@ -914,20 +959,41 @@ fn use_on_block(
     let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     let have_something = !p.inv.selected_item().is_empty() || !p.inv.equipped(EquipmentSlot::OffHand).is_empty();
     let bp = BlockPos::new(pos[0], pos[1], pos[2]);
+    let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
+    // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
+    if !(p.sneaking && have_something) && !held.is_empty() && actor.may_build {
+        let used = held.clone();
+        if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, !main_hand, spawns) {
+            let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
+            p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &used, &probe);
+            return;
+        }
+    }
+    let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     let item_name = if held.is_empty() {
         None
     } else {
         kiln_data::builtin_entries("minecraft:item").and_then(|e| e.get(held.item() as usize).copied())
     };
-    let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
     if !(p.sneaking && have_something) && main_hand && !interact::passes_to_item(level.block(bp), item_name, dir) {
         if let Some(consumed) = crate::container::open::use_block(p, level, bp, spawns) {
             if consumed {
                 return;
             }
-        } else if interact::use_without_item(level, bp, &actor) {
+        } else if crate::tools::block_use_without_item(level, bp, spawns) || interact::use_without_item(level, bp, &actor) {
             return;
         }
+    }
+    // `Item.useOn` of tools (hoes, shovels, axes, shears, honeycomb, bone meal, fire charges,
+    // flint and steel on campfires and candles).
+    if item_name.is_some_and(crate::boats::is_minecart_item) && actor.may_build && crate::boats::use_minecart_on(p, level, bp, !main_hand, spawns) {
+        return;
+    }
+    if item_name == Some(crate::firework::ITEM) && actor.may_build && crate::firework::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
+        return;
+    }
+    if actor.may_build && crate::tools::item_use_on(p, level, bp, dir, !main_hand, spawns) {
+        return;
     }
     if item_name == Some("minecraft:flint_and_steel") && actor.may_build {
         light_fire(p, level, main_hand, pos, dir);
@@ -1002,6 +1068,7 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    crate::golems::try_spawn_golem(p, level, placed_at, spawns);
     // `WitherSkullBlock.setPlacedBy`.
     crate::wither::check_spawn(level, placed_at, spawns);
     // `ItemStack.useOn`: a successful item interaction counts as a use; `BlockItem.place`
@@ -1017,6 +1084,13 @@ fn use_on_block(
     let at = [placed_at.x, placed_at.y, placed_at.z];
     p.used_on_block("minecraft:placed_block", at, placed_state, &placed_from, &probe);
     p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &placed_from, &probe);
+    // `SolidBucketItem.useOn`: the powder snow bucket leaves an empty bucket.
+    if placed_from.item_name() == "minecraft:powder_snow_bucket" {
+        if !p.infinite_materials() {
+            p.set_in_hand(!main_hand, kiln_item::ItemStack::of("minecraft:bucket", 1).unwrap_or_else(kiln_item::ItemStack::empty));
+        }
+        return;
+    }
     if p.game_mode != 1 {
         let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
         kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
@@ -1108,7 +1182,7 @@ fn handle_move(
     }
     let to = pos.map_or(p.pos, movement::clamp_position);
     p.move_packets += 1;
-    if env.movement_check && movement::too_fast(p.first_good, to, 0.0, p.move_packets, false) {
+    if env.movement_check && movement::too_fast(p.first_good, to, 0.0, p.move_packets, p.fall_flying) {
         let d = [to[0] - p.first_good[0], to[1] - p.first_good[1], to[2] - p.first_good[2]];
         warn!("{} moved too quickly! {d:?}", p.name);
         p.teleport(p.pos, p.rot, now);

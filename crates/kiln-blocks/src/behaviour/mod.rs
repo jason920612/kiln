@@ -265,6 +265,11 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::FireBlock => crate::fire::fire_tick(level, s, pos),
         C::LightningRodBlock | C::WeatheringLightningRodBlock => crate::weather::rod_tick(level, s, pos),
         C::DetectorRailBlock => rail::detector_tick(level, s, pos),
+        // `ComposterBlock.tick`: a full composter's bone meal is ready.
+        C::ComposterBlock if state::get_int(s, "level") == 7 => {
+            crate::update::set_block(level, pos, state::set_int(s, "level", 8), crate::level::flags::ALL);
+            level.effect(crate::level::Effect::Sound { pos, sound: "minecraft:block.composter.ready", volume: 1.0, pitch: 1.0 });
+        }
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_tick(level, s, pos),
         C::SculkShriekerBlock => sculk::shrieker_tick(level, s, pos),
         C::SculkCatalystBlock => sculk::catalyst_tick(level, s, pos),

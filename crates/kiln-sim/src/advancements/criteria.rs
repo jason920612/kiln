@@ -178,6 +178,13 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:fishing_rod_hooked",
     "minecraft:construct_beacon",
     "minecraft:slept_in_bed",
+    "minecraft:filled_bucket",
+    "minecraft:shot_crossbow",
+    "minecraft:using_item",
+    "minecraft:killed_by_arrow",
+    "minecraft:channeled_lightning",
+    "minecraft:summoned_entity",
+    "minecraft:slide_down_block",
     "minecraft:avoid_vibration",
     "minecraft:kill_mob_near_sculk_catalyst",
 ];
@@ -289,7 +296,7 @@ impl Criterion {
             "placed_block" | "item_used_on_block" | "default_block_use" | "any_block_use" | "allay_drop_item_on_block" => {
                 Trigger::Location { location: opt_cap(p, c, "location")? }
             }
-            "enter_block" => Trigger::EnterBlock {
+            "enter_block" | "slide_down_block" => Trigger::EnterBlock {
                 blocks: c.get("blocks").map(|v| p.id_set(v, kiln_item::registry::BLOCK)).transpose()?,
                 state: c.get("state").cloned(),
             },

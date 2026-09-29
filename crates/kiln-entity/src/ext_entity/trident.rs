@@ -32,6 +32,37 @@ pub struct Trident {
     pub dealt_damage: bool,
     /// `pickup == ALLOWED` (a player's trident); mob tridents are `DISALLOWED`.
     pub pickup: bool,
+    /// `pickup == CREATIVE_ONLY` (a creative player's trident).
+    pub creative_only: bool,
+    /// `ID_LOYALTY`: the return acceleration (loyalty's level).
+    pub loyalty: u8,
+    /// The thrown item (`pickupItemStack`), when a player threw it.
+    pub item: Option<kiln_item::ItemStack>,
+    /// Channeling: a hit in a thunderstorm under the open sky calls lightning.
+    pub channeling: bool,
+    /// Damage the weapon's enchantments add to the 8 (without target conditions).
+    pub bonus_damage: f32,
+    /// `clientSideReturnTridentTickCount`.
+    pub returning: i32,
+}
+
+/// A trident a player threw: its item, loyalty, channeling and extra damage.
+#[allow(clippy::too_many_arguments)]
+pub fn thrown_by_player(pos: Vec3, owner: i32, item: kiln_item::ItemStack, loyalty: u8, channeling: bool, bonus_damage: f32, creative: bool, seed: i64) -> Entity {
+    let data = Trident {
+        owner: Some(owner),
+        pickup: !creative,
+        creative_only: creative,
+        loyalty,
+        item: Some(item),
+        channeling,
+        bonus_damage,
+        ..Default::default()
+    };
+    let mut e = Entity::new("minecraft:trident", 0, 0, EntityKind::Ext(Box::new(data)), seed);
+    e.set_pos(pos);
+    e.set_old_pos_and_rot();
+    e
 }
 
 /// A trident thrown by `owner` from `pos` (`new ThrownTrident(level, owner, stack)`: at the
@@ -52,9 +83,37 @@ pub fn load(r: &mut Input) -> Option<Box<dyn EntityExt>> {
     let last_state = r.get("inBlockState").and_then(crate::persist::state_from_tag);
     let shake_time = (r.byte_or("shake", 0) as i32) & 255;
     let in_ground = r.bool_or("inGround", false);
-    let pickup = r.byte_or("pickup", 0) == 1;
+    let pickup_mode = r.byte_or("pickup", 0);
     let dealt_damage = r.bool_or("DealtDamage", false);
-    Some(Box::new(Trident { owner: None, left_owner, left_owner_checked: false, has_been_shot, in_ground, in_ground_time: 0, shake_time, life, last_state, dealt_damage, pickup }))
+    let item = r.get("item").and_then(|t| kiln_item::ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty());
+    let enchanted = |name: &str| item.as_ref().is_some_and(|s| enchantment_level(s, name) > 0);
+    let loyalty = item.as_ref().map_or(0, |s| enchantment_level(s, "minecraft:loyalty").clamp(0, 127) as u8);
+    let channeling = enchanted("minecraft:channeling");
+    Some(Box::new(Trident {
+        owner: None,
+        left_owner,
+        left_owner_checked: false,
+        has_been_shot,
+        in_ground,
+        in_ground_time: 0,
+        shake_time,
+        life,
+        last_state,
+        dealt_damage,
+        pickup: pickup_mode == 1,
+        creative_only: pickup_mode == 2,
+        loyalty,
+        item,
+        channeling,
+        bonus_damage: 0.0,
+        returning: 0,
+    }))
+}
+
+/// The level of enchantment `name` on a stack (loaded tridents keep loyalty and channeling).
+fn enchantment_level(s: &kiln_item::ItemStack, name: &str) -> i32 {
+    let Some(id) = kiln_item::registry::ENCHANTMENT.id(name) else { return 0 };
+    s.get(kiln_item::keys::ENCHANTMENTS).map_or(0, |e| e.level(id))
 }
 
 const GRAVITY: f64 = 0.05;
@@ -70,10 +129,19 @@ impl EntityExt for Trident {
         self.owner.unwrap_or(0)
     }
 
-    fn entity_data(&self, _e: &Entity, d: &mut EntityData) {
-        use kiln_data::entities::data::abstract_arrow;
+    fn entity_data(&self, e: &Entity, d: &mut EntityData) {
+        use kiln_data::entities::data::{abstract_arrow, thrown_trident};
         if self.in_ground {
             d.set(abstract_arrow::IN_GROUND, &DataValue::Boolean(true));
+        }
+        if e.no_physics {
+            d.set(abstract_arrow::ID_FLAGS, &DataValue::Byte(2));
+        }
+        if self.loyalty > 0 {
+            d.set(thrown_trident::ID_LOYALTY, &DataValue::Byte(self.loyalty as i8));
+        }
+        if self.item.as_ref().is_some_and(|s| s.get(kiln_item::keys::ENCHANTMENTS).is_some_and(|e| !e.0.is_empty())) {
+            d.set(thrown_trident::ID_FOIL, &DataValue::Boolean(true));
         }
     }
 
@@ -86,17 +154,56 @@ impl EntityExt for Trident {
         }
         o.put("shake", Tag::Byte(self.shake_time as i8));
         o.put("inGround", Tag::Byte(self.in_ground as i8));
-        o.put("pickup", Tag::Byte(self.pickup as i8));
+        o.put("pickup", Tag::Byte(if self.creative_only { 2 } else { self.pickup as i8 }));
         o.put("damage", Tag::Double(2.0));
         o.put("crit", Tag::Byte(0));
         o.put("DealtDamage", Tag::Byte(self.dealt_damage as i8));
-        o.put("item", Tag::Compound(vec![("id".into(), Tag::String("minecraft:trident".into())), ("count".into(), Tag::Int(1))]));
+        let item = self
+            .item
+            .as_ref()
+            .map(kiln_item::ItemStack::to_nbt)
+            .unwrap_or_else(|| Tag::Compound(vec![("id".into(), Tag::String("minecraft:trident".into())), ("count".into(), Tag::Int(1))]));
+        o.put("item", item);
     }
 
     /// `ThrownTrident.tick` then `AbstractArrow.tick`.
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
         if self.in_ground_time > 4 {
             self.dealt_damage = true;
+        }
+        // Loyalty: back to a living owner once it hit something.
+        if self.loyalty > 0
+            && (self.dealt_damage || e.no_physics)
+            && let Some(owner) = self.owner
+        {
+            match level.player(owner).filter(|v| v.alive && !v.spectator) {
+                None => {
+                    // `spawnAtLocation(pickupItem, 0.1)`.
+                    if self.pickup && let Some(item) = self.item.clone() {
+                        let (id, seed) = (level.next_entity_id(), level.fresh_seed());
+                        let mut it = crate::item::new_at(id, 0, item, e.position().add(0.0, 0.1, 0.0), seed);
+                        if let EntityKind::Item(d) = &mut it.kind {
+                            d.pickup_delay = 10;
+                        }
+                        level.add_entity(it);
+                    }
+                    e.discard();
+                    return;
+                }
+                Some(v) => {
+                    e.no_physics = true;
+                    let eye = v.pos.add(0.0, v.eye_height as f64, 0.0);
+                    let to = eye - e.position();
+                    let p = e.position();
+                    e.set_pos_raw(Vec3::new(p.x, p.y + to.y * 0.015 * self.loyalty as f64, p.z));
+                    let d = 0.05 * self.loyalty as f64;
+                    e.delta = e.delta.scale(0.95) + to.normalize().scale(d);
+                    if self.returning == 0 {
+                        e.play_sound(level, "minecraft:item.trident.return", 10.0, 1.0);
+                    }
+                    self.returning += 1;
+                }
+            }
         }
         let physics = !e.no_physics;
         let v = e.delta;
@@ -177,6 +284,18 @@ impl EntityExt for Trident {
 }
 
 impl Trident {
+    /// Channeling's lightning at `at`: a thundering level and open sky there (approximation:
+    /// full sky light for `canSeeSky`); the bolt credits the thrower.
+    fn call_lightning(&self, level: &mut dyn EntityLevel, at: Vec3) {
+        let Some(owner) = self.owner.filter(|_| self.channeling) else { return };
+        if !level.is_thundering() || level.sky_light(BlockPos::containing(at.x, at.y, at.z)) < 15 {
+            return;
+        }
+        let (id, seed) = (level.next_entity_id(), level.fresh_seed());
+        let bolt = crate::ext_entity::lightning::channeled(id, 0, at, owner, seed);
+        level.add_entity(bolt);
+    }
+
     fn check_left_owner(&mut self, e: &Entity, level: &dyn EntityLevel) {
         if self.left_owner || self.left_owner_checked {
             return;
@@ -247,13 +366,14 @@ impl Trident {
             attacker_is_player: self.owner.is_some_and(|o| level.player(o).is_some()),
         };
         self.dealt_damage = true;
+        let damage = 8.0 + self.bonus_damage;
         let hurt = if is_player {
-            level.hurt_player(id, source, 8.0)
+            level.hurt_player(id, source, damage)
         } else if target.1 {
             let Some(slot) = level.entity_mut(id) else { return };
             let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
             crate::mob::kinds::ender_dragon::aim_at(&mut t, location);
-            let r = crate::mob::hurt_entity(&mut t, level, source, 8.0);
+            let r = crate::mob::hurt_entity(&mut t, level, source, damage);
             if let Some(slot) = level.entity_mut(id) {
                 *slot = t;
             }
@@ -264,7 +384,10 @@ impl Trident {
             level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner: self.owner, hit: Hit::Entity { id, location } });
             false
         };
-        let _ = hurt;
+        // Channeling (`post_attack`: `summon_entity` in a thunderstorm under the open sky).
+        if hurt {
+            self.call_lightning(level, target.0);
+        }
         // `projectileReceivesSideEffectsOnHit`, then `deflect(REVERSE)` from the trident's random.
         e.play_sound(level, "minecraft:item.trident.hit", 1.0, 1.0);
         let yaw = 170.0 + e.random.next_float() * 20.0;
@@ -276,6 +399,10 @@ impl Trident {
     /// `AbstractArrow.onHitBlock`: sticks in the block, backed off 0.05 against the motion.
     fn hit_block(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, pos: BlockPos, face: Direction, location: Vec3) {
         self.last_state = Some(level.block(pos));
+        // Channeling's `hit_block`: a lightning rod calls the bolt.
+        if crate::blocks::block_name(level.block(pos)) == "minecraft:lightning_rod" {
+            self.call_lightning(level, Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 1.0, pos.z as f64 + 0.5));
+        }
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner: self.owner, hit: Hit::Block { pos, face, location } });
         let d = e.delta;
         let back = Vec3::new(signum(d.x), signum(d.y), signum(d.z)).scale(0.05000000074505806);

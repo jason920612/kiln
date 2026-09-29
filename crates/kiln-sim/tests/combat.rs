@@ -272,3 +272,31 @@ fn viewers_see_held_items_and_armor() {
     w.ticks(5);
     assert_eq!(count(), settled);
 }
+
+#[test]
+fn raised_shields_block_until_an_axe_disables_them() {
+    use kiln_proto::packets::serverbound::Hand;
+    let mut w = World::new(&["Attacker", "Target"]);
+    w.give(1, 36, "minecraft:diamond_sword");
+    w.give(1, 37, "minecraft:diamond_axe");
+    w.give(2, 36, "minecraft:shield");
+    w.console("gamemode survival Target");
+    w.place("Target", [0.0, 0.0, 2.0]);
+    // The target faces the attacker (north) and raises the shield.
+    let turn = PlayIn::Move { pos: None, rot: Some([180.0, 0.0]), on_ground: true };
+    let raise = PlayIn::UseItem { hand: Hand::Main, sequence: 1, yaw: 180.0, pitch: 0.0 };
+    w.step(vec![ToSim::Packet(2, turn), ToSim::Packet(2, raise)]);
+    // Blocking starts a quarter second into the use.
+    w.ticks(20);
+    w.attack(1, 2);
+    assert_eq!(w.health(2), 20.0, "the shield took the sword's hit");
+    assert_eq!(w.sim.item_damage(2, 36), Some(8), "1 + the 7 blocked");
+    // An axe knocks the shield down for 5 seconds; the next hit lands.
+    w.step(vec![ToSim::Packet(1, PlayIn::SetCarriedItem { slot: 1 })]);
+    w.ticks(25);
+    w.attack(1, 2);
+    assert_eq!(w.health(2), 20.0, "blocked, but the shield is disabled");
+    w.ticks(20);
+    w.attack(1, 2);
+    assert!(w.health(2) < 20.0, "the lowered shield blocks nothing: {}", w.health(2));
+}

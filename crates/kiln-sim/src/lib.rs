@@ -26,6 +26,18 @@ mod combat;
 mod command_data;
 mod commands;
 mod consume;
+mod buckets;
+mod use_item;
+mod ranged;
+mod crossbow;
+mod trident;
+mod shield;
+mod tools;
+mod golems;
+mod glide;
+mod slide;
+mod firework;
+mod boats;
 mod xp;
 mod container;
 mod datapacks;
@@ -80,6 +92,8 @@ mod enchant_parity;
 mod effect_parity;
 #[cfg(test)]
 mod weather_parity;
+#[cfg(test)]
+mod item_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -275,6 +289,11 @@ struct Player {
     section: Option<[i32; 3]>,
     sneaking: bool,
     sprinting: bool,
+    /// Gliding with an elytra (shared flag 7) and the ticks it has lasted.
+    fall_flying: bool,
+    fall_fly_ticks: i32,
+    /// `autoSpinAttackTicks` (a riptide throw): the spin attack lasts this many more ticks.
+    spin_ticks: i32,
     /// Shared flags or pose changed since the last broadcast.
     meta_dirty: bool,
     /// Arm swung this tick.
@@ -396,6 +415,8 @@ struct Player {
     sent_xp: Option<(u32, i32, i32)>,
     /// Health, food and whether saturation was zero in the last Set Health.
     sent_health: Option<(u32, i32, bool)>,
+    /// Item cooldowns (`ItemCooldowns`): group and the `tick_count` it ends at.
+    item_cooldowns: Vec<(String, i32)>,
     /// An item being used (eaten).
     using: Option<consume::Using>,
     /// The block being broken in survival.
@@ -1380,6 +1401,18 @@ impl Sim {
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
     }
 
+    /// The network ids of the entities of type `name`, in id order (for tests and tools).
+    pub fn entity_ids_of(&self, name: &str) -> Vec<i32> {
+        let mut out: Vec<i32> = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).filter(|e| !e.removed && e.kind.name == name).map(|e| e.id).collect();
+        out.sort_unstable();
+        out
+    }
+
+    /// The entity a player rides (for tests and tools).
+    pub fn vehicle_of(&self, conn: ConnId) -> Option<i32> {
+        self.players.get(&conn)?.vehicle
+    }
+
     /// The raids of a level: (id, status, waves spawned, omen level, center, raiders alive,
     /// boss bar progress) (for tests and tools).
     pub fn raids(&self, dimension: &str) -> Vec<(i32, &'static str, i32, i32, [i32; 3], usize, f32)> {
@@ -2259,6 +2292,9 @@ impl Sim {
             section: None,
             sneaking: false,
             sprinting: false,
+            fall_flying: false,
+            fall_fly_ticks: 0,
+            spin_ticks: 0,
             meta_dirty: false,
             swung: false,
             pending_suggestion: None,
@@ -2321,6 +2357,7 @@ impl Sim {
             sent_xp: None,
             sent_health: None,
             using: None,
+            item_cooldowns: Vec::new(),
             digging: None,
             delayed_destroy: None,
             lobby: lobby::PlayerLobby::default(),

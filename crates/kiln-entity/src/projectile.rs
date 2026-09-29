@@ -8,6 +8,7 @@ use crate::collision;
 use crate::entity::{Entity, EntityKind};
 use crate::level::{EntityFilter, EntityLevel, Event};
 use crate::math::{Aabb, BlockPos, Direction, Vec3};
+use kiln_javamath::random::RandomSource;
 
 /// Which throwable this is (their flight differs only in gravity).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -310,9 +311,10 @@ fn on_hit(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
         return;
     }
     // `Snowball.onHitEntity`: 3 damage to a blaze, a harmless hit (knockback) to anything else.
-    if kind_ == Throwable::Snowball
+    let snowball_on_mob = kind_ == Throwable::Snowball
+        && matches!(hit, Hit::Entity { id, .. } if level.entity(id).is_some_and(|t| matches!(t.kind, EntityKind::Mob(_))));
+    if snowball_on_mob
         && let Hit::Entity { id, .. } = hit
-        && level.entity(id).is_some_and(|t| matches!(t.kind, EntityKind::Mob(_)))
         && let Some(t) = crate::mob::goals::living(level, id)
     {
         let damage = if t.type_name == "minecraft:blaze" { 3.0 } else { 0.0 };
@@ -322,13 +324,98 @@ fn on_hit(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
         let source = crate::mob::DamageSource { kind: crate::level::DamageKind::Thrown, attacker: owner, direct: Some(e.id), pos: Some(from), attacker_is_player: owner.is_some_and(|o| level.player(o).is_some()) };
         crate::mob::hurt_living(level, &t, source, damage);
     }
+    // `onHitEntity` of eggs, pearls and snowballs on players: `thrown` damage (none; the hit
+    // still knocks back).
+    if let Hit::Entity { id, .. } = hit
+        && !snowball_on_mob
+        && matches!(kind_, Throwable::Snowball | Throwable::Egg | Throwable::EnderPearl)
+    {
+        thrown_damage(e, level, id, owner, 0.0);
+    }
     level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: kind_.type_name(), owner, hit });
     // `onHitEntity`: a thrown projectile's hit (no damage) still breaks an end crystal.
     if let Hit::Entity { id, .. } = hit {
         hurt_crystal(level, id, crate::level::DamageKind::Thrown, 0.0, owner.or(Some(e.id)));
     }
+    match kind_ {
+        Throwable::Egg => hatch(e, level),
+        Throwable::ExperienceBottle => {
+            // `ThrownExperienceBottle.onHit`: the splash and 3 to 11 experience.
+            level.emit(Event::LevelEvent { event: 2002, pos: e.block_position(), data: -13083194 });
+            let amount = 3 + e.random.next_int_bounded(5) + e.random.next_int_bounded(5);
+            crate::mob::award_experience(level, e.position(), amount);
+        }
+        Throwable::EnderPearl => {
+            // The portal particles are the client's; their random draws are the pearl's.
+            for _ in 0..32 {
+                e.random.next_double();
+                e.random.next_gaussian();
+                e.random.next_gaussian();
+            }
+            // A player's pearl: one in twenty leaves an endermite where the player was (the
+            // teleport itself is the simulation's).
+            if let Some(v) = owner.and_then(|o| level.player(o)).filter(|v| v.alive)
+                && e.random.next_float() < 0.05
+                && level.difficulty() > 0
+            {
+                let (id, seed) = (level.next_entity_id(), level.fresh_seed());
+                let mut mite = crate::mob::new(crate::mob::MobKind::Endermite, id, 0, seed);
+                mite.set_pos(v.pos);
+                mite.set_old_pos_and_rot();
+                level.add_entity(mite);
+            }
+        }
+        _ => {}
+    }
     if kind_ == Throwable::Snowball || kind_ == Throwable::Egg {
         level.emit(Event::EntityEvent { entity: e.id, event: 3 });
     }
     e.discard();
+}
+
+/// `entity.hurt(damageSources().thrown(this, owner), amount)` on a mob or player.
+fn thrown_damage(e: &Entity, level: &mut dyn EntityLevel, id: i32, owner: Option<i32>, amount: f32) {
+    let source = crate::mob::DamageSource {
+        kind: crate::level::DamageKind::Thrown,
+        attacker: owner.or(Some(e.id)),
+        direct: Some(e.id),
+        pos: Some(e.position()),
+        attacker_is_player: owner.is_some_and(|o| level.player(o).is_some()),
+    };
+    if level.player(id).is_some() {
+        level.hurt_player(id, source, amount);
+        return;
+    }
+    if !level.entity(id).is_some_and(|t| matches!(t.kind, EntityKind::Mob(_))) {
+        return;
+    }
+    let Some(slot) = level.entity_mut(id) else { return };
+    let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+    crate::mob::hurt_entity(&mut t, level, source, amount);
+    if let Some(slot) = level.entity_mut(id) {
+        *slot = t;
+    }
+}
+
+/// `ThrownEgg.onHit`: one in eight eggs hatches a chick (one in 32 of those, four).
+fn hatch(e: &mut Entity, level: &mut dyn EntityLevel) {
+    if e.random.next_int_bounded(8) != 0 {
+        return;
+    }
+    let n = if e.random.next_int_bounded(32) == 0 { 4 } else { 1 };
+    for _ in 0..n {
+        let (id, seed) = (level.next_entity_id(), level.fresh_seed());
+        let mut chick = crate::mob::new(crate::mob::MobKind::Chicken, id, 0, seed);
+        if let Some(mut m) = crate::mob::data(&chick).cloned() {
+            crate::mob::set_age(&mut chick, &mut m, -24000);
+            if let Some(slot) = crate::mob::data_mut(&mut chick) {
+                *slot = m;
+            }
+        }
+        chick.set_pos(e.position());
+        chick.y_rot = e.y_rot;
+        chick.x_rot = 0.0;
+        chick.set_old_pos_and_rot();
+        level.add_entity(chick);
+    }
 }

@@ -43,6 +43,11 @@ pub fn vehicle_attachment(type_name: &str, scale: f32) -> Vec3 {
 /// `getPassengerAttachmentPoint` of `vehicle` for its passenger at `index` (before rotating
 /// by the vehicle's yaw where the type says so).
 pub fn passenger_attachment(vehicle: &Entity, index: usize) -> Vec3 {
+    if let EntityKind::Ext(x) = &vehicle.kind
+        && let Some(v) = x.passenger_offset(vehicle, index, false)
+    {
+        return v;
+    }
     if let EntityKind::Mob(m) = &vehicle.kind {
         if let Some(v) = m.kind.ext().and_then(|k| k.passenger_offset_at(vehicle, m, index)) {
             return v;
@@ -111,6 +116,16 @@ pub fn add_passenger(vehicle: &mut Entity, id: i32, is_player: bool, first_is_pl
         vehicle.passengers.insert(0, id);
     } else {
         vehicle.passengers.push(id);
+    }
+}
+
+/// `Entity.ejectPassengers`: every passenger gets off (players are seen to it by the
+/// simulation, which finds them no longer seated).
+pub fn eject(vehicle: &mut Entity, level: &mut dyn EntityLevel) {
+    for id in std::mem::take(&mut vehicle.passengers) {
+        if let Some(rider) = level.entity_mut(id) {
+            rider.vehicle = None;
+        }
     }
 }
 
