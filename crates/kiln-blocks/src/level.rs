@@ -102,6 +102,9 @@ pub enum Effect {
     PistonMove { pos: BlockPos, piston: MovingPiston, progress: f32 },
     /// `SnifferEggBlock.tick`: a baby sniffer hatches at the egg's center (the egg is gone).
     HatchSniffer { pos: BlockPos },
+    /// `FrogspawnBlock.tick`: the tadpoles that hatch at `pos` (the spawn is gone): for each,
+    /// the x and z offsets in the block and the yaw.
+    HatchFrogspawn { pos: BlockPos, tadpoles: Vec<(f64, f64, i32)> },
 }
 
 pub trait Level {

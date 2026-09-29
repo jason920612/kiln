@@ -383,6 +383,10 @@ public class MobVectors {
             }
             if (spec.age != null) ((net.minecraft.world.entity.AgeableMob) m).setAge(spec.age);
             if (spec.inLove != null) ((net.minecraft.world.entity.animal.Animal) m).setInLoveTime(spec.inLove);
+            if (spec == s.mobs.get(0) && s.name.equals(System.getenv("MOB_TRACE_RANDOM"))) {
+                // Debugging aid: the first mob's random logs who draws from it (to <cwd>/dbg.txt).
+                set(m, "random", new TracingRandom(spec.seed));
+            }
             m.getRandom().setSeed(spec.seed);
             pinCubeMoveYaw(m);
             int eggTime = m instanceof net.minecraft.world.entity.animal.chicken.Chicken c ? (Integer) get(c, "eggTime") : 0;
@@ -431,6 +435,7 @@ public class MobVectors {
         for (int tick = 0; tick < s.ticks; tick++) {
             // `ServerLevel.tickTime`: the world age advances before entities tick.
             levelData.setGameTime(startTime + 1 + tick);
+            traceTick = tick;
             // The player's own tick (not run while the server thread is ours): its hurt cooldown.
             if (s.player != null) {
                 int cd = (Integer) get(player, "damageCooldownTime");
@@ -509,6 +514,29 @@ public class MobVectors {
                 "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"trace\":[%s]}",
                 s.name, s.diverges, s.levelSeed, s.ticks, startTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, trace);
+    }
+
+    /// `MOB_TRACE_RANDOM=<scenario>`: a mob's random that logs the callers of every draw.
+    static int traceTick = -1;
+    static final class TracingRandom extends net.minecraft.world.level.levelgen.LegacyRandomSource {
+        TracingRandom(long seed) { super(seed); }
+        @Override public int next(int bits) {
+            int v = super.next(bits);
+            StringBuilder sb = new StringBuilder("RND tick=" + traceTick + " bits=" + bits + " <-");
+            int n = 0;
+            for (StackTraceElement el : new Throwable().getStackTrace()) {
+                String c = el.getClassName();
+                if (c.contains("Random") || c.contains("MobVectors")) continue;
+                sb.append(' ').append(c.substring(c.lastIndexOf('.') + 1)).append('.').append(el.getMethodName());
+                if (++n == 5) break;
+            }
+            try {
+                Files.writeString(Path.of("dbg.txt"), sb + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            } catch (java.io.IOException e) {
+                throw new RuntimeException(e);
+            }
+            return v;
+        }
     }
 
     static String effectsJson(List<Object[]> effects) {
@@ -604,6 +632,18 @@ public class MobVectors {
                 for (Object b : (Iterable<?>) set) seedGate(b, base, k);
         for (Object sensor : ((Map<?, ?>) get(brain, "sensors")).values())
             ((net.minecraft.world.entity.ai.sensing.Sensor<?>) sensor).randomlyDelayStart(m.getRandom());
+        // Frogs shuffle the long jump angles with `Collections.shuffle(list)`, which draws from a
+        // static `Random` of the JDK (needs `--add-opens java.base/java.util=ALL-UNNAMED`, which
+        // mob_vectors.py passes): pinned to `base + 1000`, as Kiln's `Frog.pin_replay` does.
+        if (m instanceof net.minecraft.world.entity.animal.frog.Frog) {
+            try {
+                Field r = java.util.Collections.class.getDeclaredField("r");
+                r.setAccessible(true);
+                r.set(null, new java.util.Random(base + 1000));
+            } catch (ReflectiveOperationException | RuntimeException ex) {
+                System.err.println("MobVectors: cannot pin Collections.r (" + ex + "); frog long jumps will diverge");
+            }
+        }
     }
 
     static void seedGate(Object b, long base, long[] k) throws Exception {
@@ -662,6 +702,7 @@ public class MobVectors {
                 StringBuilder dbg = new StringBuilder("DBG mob " + m.getId() + " t=" + m.level().getGameTime() + " nearby=[");
                 if (nl.isPresent()) for (var x : nl.get()) dbg.append(x.getId()).append(x instanceof net.minecraft.world.entity.player.Player ? "P" : "").append(nv.isPresent() && nv.get().contains(x) ? "+" : "-").append(' ');
                 dbg.append("] look=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.LOOK_TARGET).map(Object::toString).orElse("-"));
+                dbg.append(" walk=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.WALK_TARGET).map(w -> w.getTarget().currentPosition() + " speed " + w.getSpeedModifier() + " close " + w.getCloseEnoughDist()).orElse("-"));
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             }
             // The level's random state too: brain draws from it (`Kiln`: the mob's own stream).
@@ -2932,6 +2973,273 @@ public class MobVectors {
 
     /// Axolotls, goats, frogs, tadpoles.
     static void scenariosBrainNew(List<Scenario> out) {
+        scenariosFrogTadpole(out);
+    }
+
+    // ------------------------------------------------------------------ wp28: frogs and tadpoles
+
+    /// A pond: stone bottom `depth` below the floor, water above it, over the columns x0..x1, z0..z1.
+    static void pond(Scenario s, int x0, int z0, int x1, int z1, int depth) {
+        BlockState stone = parse("minecraft:stone");
+        BlockState water = parse("minecraft:water");
+        // Walls and bottom of stone (a ring one block wide around the water), then the water.
+        for (int x = x0 - 1; x <= x1 + 1; x++)
+            for (int z = z0 - 1; z <= z1 + 1; z++)
+                for (int y = BY - 1 - depth; y <= BY - 1; y++) s.blocks.put(new BlockPos(BX + x, y, BZ + z), stone);
+        for (int x = x0; x <= x1; x++)
+            for (int z = z0; z <= z1; z++)
+                for (int y = BY - depth; y <= BY - 1; y++) s.blocks.put(new BlockPos(BX + x, y, BZ + z), water);
+    }
+
+    /// The frog's first long jump comes 100 to 140 ticks after `finalizeSpawn`; the harness does not
+    /// run it, so scenarios that are not about jumping set the cooldown memory the way it does.
+    static final String NO_JUMP = "{Brain:{memories:{\"minecraft:long_jump_cooling_down\":{value:2000}}}}";
+
+    static void scenariosFrogTadpole(List<Scenario> out) {
+        // Frogs idling on land (strolling, croaking, looking at the player).
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_frog_land_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec f = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 40f * seed, 28000L + seed);
+            f.nbt = NO_JUMP;
+            s.mobs.add(f);
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 60 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Frogs in a swamp pond (swimming, looking for land).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_frog_water_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -4, -4, 4, 4, 3);
+            MobSpec f = new MobSpec("minecraft:frog", 0.5, BY - 2, 0.5, 70f * seed, 28100L + seed);
+            f.nbt = NO_JUMP;
+            s.mobs.add(f);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 70 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Long jumps between two islands.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("jump_frog_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -3, -4, 8, 4, 1);
+            for (int x = -1; x <= 1; x++)
+                for (int z = -1; z <= 1; z++) block(s, BX + x, BY - 1, BZ + z, "minecraft:grass_block");
+            for (int x = 4; x <= 6; x++)
+                for (int z = -1; z <= 1; z++) block(s, BX + x, BY - 1, BZ + z, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:frog", 0.5, BY, 0.5, 80f * seed, 28200L + seed));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 80 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Eating: a small slime and a small magma cube.
+        for (String food : new String[] {"slime", "magma_cube"}) {
+            Scenario s = new Scenario("tongue_frog_" + food);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec f = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 250f, 28300L);
+            f.nbt = NO_JUMP;
+            s.mobs.add(f);
+            MobSpec c = new MobSpec("minecraft:" + food, 4.5, BY, 1.5, 0f, 28301L);
+            c.nbt = "{Size:0,NoAI:1b}";
+            s.mobs.add(c);
+            s.player = new double[] {8.5, BY, 5.5};
+            s.playerCreative = true;
+            s.levelSeed = 90;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            // A big slime is not food.
+            Scenario s = new Scenario("tongue_frog_big_slime");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec f = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 250f, 28310L);
+            f.nbt = NO_JUMP;
+            s.mobs.add(f);
+            MobSpec c = new MobSpec("minecraft:slime", 4.5, BY, 1.5, 0f, 28311L);
+            c.nbt = "{Size:1,NoAI:1b}";
+            s.mobs.add(c);
+            s.player = new double[] {8.5, BY, 5.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            // A slime behind a wall: the frog cannot reach it.
+            Scenario s = new Scenario("tongue_frog_unreachable");
+            floor(s, 16, "minecraft:grass_block");
+            for (int z = -6; z <= 6; z++)
+                for (int y = 0; y < 4; y++) block(s, BX + 3, BY + y, BZ + z, "minecraft:stone");
+            MobSpec f = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 250f, 28320L);
+            f.nbt = NO_JUMP;
+            s.mobs.add(f);
+            MobSpec c = new MobSpec("minecraft:slime", 5.5, BY, 0.5, 0f, 28321L);
+            c.nbt = "{Size:0,NoAI:1b}";
+            s.mobs.add(c);
+            s.player = new double[] {8.5, BY, 5.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            // Temptation with a slime ball.
+            Scenario s = new Scenario("tempt_frog");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:frog", 0.5, BY, 0.5, 0f, 28400L));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:slime_ball";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            // Breeding: the mother lays frogspawn at the pond.
+            Scenario s = new Scenario("breed_frog");
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, 5, -3, 9, 3, 2);
+            MobSpec m1 = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 20f, 28500L);
+            MobSpec m2 = new MobSpec("minecraft:frog", 2.5, BY, 1.5, 200f, 28501L);
+            m1.nbt = NO_JUMP;
+            m2.nbt = NO_JUMP;
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 95;
+            s.ticks = 700;
+            out.add(s);
+        }
+        {
+            // A pregnant frog on the shore of a pond.
+            Scenario s = new Scenario("lay_frog");
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, 4, -3, 8, 3, 2);
+            MobSpec m1 = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 20f, 28510L);
+            m1.nbt = "{Brain:{memories:{\"minecraft:long_jump_cooling_down\":{value:2000},\"minecraft:is_pregnant\":{value:{}}}}}";
+            s.mobs.add(m1);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 96;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_frog");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec f = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 30f, 28600L);
+            f.nbt = NO_JUMP;
+            s.mobs.add(f);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            // Fall damage (five points less than usual).
+            Scenario s = new Scenario("fall_frog");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec f = new MobSpec("minecraft:frog", 0.5, BY + 14, 0.5, 30f, 28610L);
+            f.nbt = NO_JUMP;
+            s.mobs.add(f);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 120;
+            out.add(s);
+        }
+        // Tadpoles swimming about a pond.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("idle_tadpole_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -4, -4, 4, 4, 3);
+            s.mobs.add(new MobSpec("minecraft:tadpole", 0.5, BY - 2, 0.5, 60f * seed, 29000L + seed));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 100 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_tadpole");
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -5, -5, 5, 5, 3);
+            s.mobs.add(new MobSpec("minecraft:tadpole", -2.5, BY - 2, 0.5, 0f, 29100L));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:slime_ball";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("grow_tadpole");
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -4, -4, 4, 4, 3);
+            MobSpec t = new MobSpec("minecraft:tadpole", 0.5, BY - 2, 0.5, 60f, 29200L);
+            t.nbt = "{Age:23950}";
+            s.mobs.add(t);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("feed_tadpole");
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -4, -4, 4, 4, 3);
+            MobSpec t = new MobSpec("minecraft:tadpole", 0.5, BY - 2, 0.5, 60f, 29300L);
+            t.nbt = "{Age:21000}";
+            s.mobs.add(t);
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            Action a = new Action(10, "interact");
+            a.mob = 0;
+            a.what = "minecraft:slime_ball";
+            s.actions.add(a);
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("lock_tadpole");
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -4, -4, 4, 4, 3);
+            MobSpec t = new MobSpec("minecraft:tadpole", 0.5, BY - 2, 0.5, 60f, 29400L);
+            t.nbt = "{Age:23990}";
+            s.mobs.add(t);
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:golden_dandelion";
+            s.actions.add(a);
+            s.ticks = 200;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("land_tadpole");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:tadpole", 0.5, BY, 0.5, 60f, 29500L));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 150;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_tadpole");
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -4, -4, 4, 4, 3);
+            s.mobs.add(new MobSpec("minecraft:tadpole", 0.5, BY - 2, 0.5, 60f, 29600L));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.ticks = 200;
+            out.add(s);
+        }
     }
 
     /// Wardens, breezes, creakings.

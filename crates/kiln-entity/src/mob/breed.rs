@@ -100,6 +100,34 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         return;
     };
     let Some(pm) = super::data(p) else { return };
+    // `Frog.spawnChildFromBreeding`: `finalizeSpawnChildFromBreeding` with no baby (the caller
+    // makes the mother pregnant).
+    if m.kind.ext().is_some_and(|k| k.breed_as_pregnancy()) {
+        let cause = m.love_cause.or(pm.love_cause);
+        if let Some(player) = cause.filter(|&c| level.player(c).is_some()) {
+            let partner_seen = crate::level::Seen::of(p);
+            let criterion = crate::level::Criterion::BredAnimals { parent: crate::level::Seen::of_mob(e, m), partner: partner_seen, child: None };
+            level.emit(Event::Criterion { player, criterion });
+        }
+        super::set_age(e, m, PARENT_AGE_AFTER_BREEDING);
+        m.in_love = 0;
+        if let Some(p) = level.entity_mut(partner) {
+            let mut pm = super::take(p);
+            super::set_age(p, &mut pm, PARENT_AGE_AFTER_BREEDING);
+            pm.in_love = 0;
+            super::put(p, pm);
+        }
+        level.emit(Event::EntityEvent { entity: e.id, event: 18 });
+        if level.mob_drops() {
+            let value = e.random.next_int_bounded(7) + 1;
+            let id = level.next_entity_id();
+            let seed = level.fresh_seed();
+            let mut orb = crate::xp_orb::new_at(id, 0, e.position(), value, seed);
+            orb.set_old_pos_and_rot();
+            level.add_entity(orb);
+        }
+        return;
+    }
     let partner_variant = pm.variant;
     let partner_color = match pm.species {
         Species::Sheep { color, .. } => Some(color),

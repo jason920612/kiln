@@ -970,6 +970,22 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                 e.set_old_pos_and_rot();
                 spawns.push(Spawn { kind: &kiln_data::entities::types::SNIFFER, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
             }
+            // `FrogspawnBlock.spawnTadpoles`: tadpoles in the water below the spawn, kept forever.
+            Effect::HatchFrogspawn { pos, tadpoles } => {
+                for (k, (dx, dz, yaw)) in tadpoles.into_iter().enumerate() {
+                    let h = effect_hash(env, pos, 0x7470 + k);
+                    let mut e = kiln_entity::mob::new(kiln_entity::mob::MobKind::Tadpole, 0, 0, h as i64);
+                    if let Some(md) = kiln_entity::mob::data_mut(&mut e) {
+                        md.persistence_required = true;
+                    }
+                    let at = [pos.x as f64 + dx, pos.y as f64 - 0.5, pos.z as f64 + dz];
+                    e.set_pos(kiln_entity::math::Vec3::new(at[0], at[1], at[2]));
+                    e.y_rot = yaw as f32;
+                    e.x_rot = 0.0;
+                    e.set_old_pos_and_rot();
+                    spawns.push(Spawn { kind: &kiln_data::entities::types::TADPOLE, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
+                }
+            }
             // Entities carried by pistons are not simulated yet; game events went to their
             // listeners when they happened.
             Effect::PistonMove { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}

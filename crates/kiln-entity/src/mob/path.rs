@@ -355,6 +355,8 @@ struct Search<'a> {
     breaching: bool,
     /// `FlyNodeEvaluator`: open air in 26 directions.
     fly: bool,
+    /// `Frog.FrogNodeEvaluator` (an amphibious evaluator that sees lily pads as open ground).
+    frog: bool,
     /// `PathfindingContext.mobPosition`.
     mob_pos: BlockPos,
     heap: Vec<u32>,
@@ -400,6 +402,10 @@ impl<'a> Search<'a> {
         }
         if !self.amphibious {
             return path_type_static(self.level, x, y, z);
+        }
+        // `FrogNodeEvaluator.getPathType`: a `#frog_prefer_jump_to` block below is open ground.
+        if self.frog && super::kinds::frog::prefers_jump_to(self.level.block(BlockPos::new(x, y - 1, z))) {
+            return PathType::Open;
         }
         amphibious_type(self.level, x, y, z)
     }
@@ -519,7 +525,9 @@ impl<'a> Search<'a> {
         if self.amphibious && e.is_in_water() {
             // `AmphibiousNodeEvaluator.getStart`: the block at the box's low corner, half up.
             let bb = e.bounding_box();
-            let (x, y, z) = (floor(bb.min_x), floor(bb.min_y + 0.5), floor(bb.min_z));
+            // (`FrogNodeEvaluator.getStart`: at the box's low corner itself.)
+            let up = if self.frog { 0.0 } else { 0.5 };
+            let (x, y, z) = (floor(bb.min_x), floor(bb.min_y + up), floor(bb.min_z));
             return Some(self.start_node(x, y, z));
         }
         let state = self.level.block(at(e.x(), y, e.z()));
@@ -1169,6 +1177,8 @@ pub struct Navigation {
     pub allow_breaching: bool,
     /// `FlyingPathNavigation` (the wither).
     pub fly: bool,
+    /// `Frog.FrogPathNavigation` (amphibious; no corner cutting over a water border).
+    pub frog: bool,
 }
 
 impl Navigation {
@@ -1340,7 +1350,13 @@ pub fn stable_destination(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -
 
 /// `PathNavigation.createPath(Set<BlockPos>, regionOffset, offsetUpward, reach, maxPathLength)`.
 fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, region: i32, up: bool, reach: i32) -> Option<Path> {
-    let max_len = max_path_length(m);
+    create_path_len(e, m, level, target, region, up, reach, None)
+}
+
+/// [`create_path_raw`] with a maximum path length of its own (`createPath(pos, reach, maxPathLength)`).
+#[allow(clippy::too_many_arguments)]
+fn create_path_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, region: i32, up: bool, reach: i32, len: Option<f32>) -> Option<Path> {
+    let max_len = len.unwrap_or_else(|| max_path_length(m));
     if e.y() < level.min_y() as f64 || !can_update_path(e, m) {
         return None;
     }
@@ -1353,7 +1369,8 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
     let _ = (region, up);
     // `updatePathfinderMaxVisitedNodes` (the follow range is at least 16 for every mob here, so
     // the constructor's value agrees).
-    let max_visited = (floor((max_len * 16.0) as f64) as f32 * m.nav.max_visited_nodes_multiplier) as i32;
+    // (the pathfinder's own limit: `createPath` with a length of its own leaves it alone)
+    let max_visited = (floor((max_path_length(m) * 16.0) as f64) as f32 * m.nav.max_visited_nodes_multiplier) as i32;
     let mut s = Search {
         level,
         e,
@@ -1373,6 +1390,7 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
         swim: m.nav.water_bound,
         breaching: m.nav.allow_breaching,
         fly: m.nav.fly,
+        frog: m.nav.frog,
         mob_pos: e.block_position(),
         heap: Vec::with_capacity(64),
     };
@@ -1383,6 +1401,15 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
         m.nav.reset_stuck_timeout();
     }
     path
+}
+
+/// `createPath(BlockPos, reach, maxPathLength)`.
+pub fn create_path_max(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: BlockPos, reach: i32, max_len: f32) -> Option<Path> {
+    if !level.is_loaded(pos) {
+        return None;
+    }
+    let pos = if keeps_target_block(m) { pos } else { find_surface(level, pos) };
+    create_path_len(e, m, level, pos, 8, false, reach, Some(max_len))
 }
 
 /// `createPath(BlockPos, reach)`: ground navigation first finds the surface.
@@ -1622,7 +1649,7 @@ fn follow_the_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
     // `getMaxVerticalDistanceToWaypoint`: 0.5 for water-bound navigation.
     let close = dx < md && dz < md && dy < if m.nav.water_bound { 0.5 } else { 1.0 };
     let kind = path.nodes[path.next].kind;
-    let cut = !matches!(kind, PathType::FireInNeighbor | PathType::DamagingInNeighbor | PathType::WalkableDoor);
+    let cut = !matches!(kind, PathType::FireInNeighbor | PathType::DamagingInNeighbor | PathType::WalkableDoor) && !(m.nav.frog && kind == PathType::WaterBorder);
     if close || (cut && should_target_next_node_in_direction(e, m, level, path, cur)) {
         m.nav.path.as_mut().unwrap().next += 1;
     }

@@ -497,7 +497,7 @@ pub fn stroll(speed: f32, kind: StrollKind) -> Box<dyn Control> {
                 let view = view_vector(cx.e.x_rot, cx.e.y_rot);
                 random_pos::air_and_water_pos(cx.e, cx.m, &*cx.level, 10, 7, -2, view.x, view.z, 1.5707963705062866)
             }
-            StrollKind::Swim => crate::mob::path::random_swimmable_pos(cx.e, cx.m, &*cx.level, 10, 7),
+            StrollKind::Swim => target_swim_pos(cx),
         };
         match pos {
             Some(p) => cx.b.mem.set(Mem::WalkTarget, Val::Walk(WalkTarget::vec(p, speed, 0))),
@@ -505,6 +505,30 @@ pub fn stroll(speed: f32, kind: StrollKind) -> Box<dyn Control> {
         }
         true
     })
+}
+
+/// `RandomStroll.getTargetSwimPos`: a swimmable spot at growing distances, each next tier
+/// pushed on along the way to the last (`SWIM_XY_DISTANCE_TIERS`), stopping where the water ends.
+pub fn target_swim_pos(cx: &mut Cx) -> Option<Vec3> {
+    const TIERS: [(i32, i32); 6] = [(1, 1), (3, 3), (5, 5), (6, 5), (7, 7), (10, 7)];
+    let mut previous: Option<Vec3> = None;
+    let mut pos: Option<Vec3> = None;
+    for (h, v) in TIERS {
+        pos = match previous {
+            None => crate::mob::path::random_swimmable_pos(cx.e, cx.m, &*cx.level, h, v),
+            Some(prev) => {
+                let here = cx.e.position();
+                Some(here + (prev - here).normalize().multiply(h as f64, v as f64, h as f64))
+            }
+        };
+        // (`mobRestricted` is false for a mob without a home.)
+        match pos {
+            Some(p) if !crate::physics::fluid_state(cx.level.block(BlockPos::containing(p.x, p.y, p.z))).is_empty() => {}
+            _ => return previous,
+        }
+        previous = pos;
+    }
+    pos
 }
 
 /// `Entity.getViewVector(0)`.
@@ -688,6 +712,10 @@ impl Behavior for AnimalMakeLove {
         }
         if cx.time >= self.spawn_child_at {
             crate::mob::breed::spawn_child(cx.e, cx.m, cx.level, t);
+            // `Frog.spawnChildFromBreeding`: the mother is pregnant.
+            if cx.m.kind.ext().is_some_and(|k| k.breed_as_pregnancy()) {
+                cx.b.mem.set(Mem::IsPregnant, Val::Unit);
+            }
             cx.b.mem.erase(Mem::BreedTarget);
             if let Some(pe) = cx.level.entity_mut(t)
                 && let Some(pm) = crate::mob::data_mut(pe)

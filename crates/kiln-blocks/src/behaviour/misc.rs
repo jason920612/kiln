@@ -139,3 +139,43 @@ pub fn sniffer_egg_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         level.effect(Effect::HatchSniffer { pos });
     }
 }
+
+// ---------------------------------------------------------------------- frogspawn
+
+/// `FrogspawnBlock.mayPlaceOn(level, pos.below())` for a frogspawn at `pos`: a source of water
+/// (`#supports_frogspawn` fluid) or a `#supports_frogspawn` block below, and no fluid in the
+/// frogspawn's own block.
+pub fn frogspawn_can_survive<L: Level + ?Sized>(level: &L, pos: BlockPos) -> bool {
+    let below = level.block(pos.below());
+    let f = logic::fluid(below);
+    let supported = (f.kind == kiln_data::block_logic::FluidKind::Water && f.source) || tags::is(below, "minecraft:supports_frogspawn");
+    supported && logic::fluid(level.block(pos)).is_empty()
+}
+
+/// `FrogspawnBlock.onPlace`: the hatching tick in 3600 to 12000 ticks.
+pub fn frogspawn_on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let delay = 3600 + kiln_javamath::random::RandomSource::next_int_bounded(level.random(), 12000 - 3600);
+    schedule_block_tick(level, pos, BlockId::of(s), delay, TickPriority::Normal);
+}
+
+/// `FrogspawnBlock.tick`: a frogspawn without support breaks; else it hatches into two to five
+/// tadpoles ([`Effect::HatchFrogspawn`] carries the offsets and yaws, drawn from the level's
+/// random in vanilla's order).
+pub fn frogspawn_tick<L: Level>(level: &mut L, pos: BlockPos) {
+    if !frogspawn_can_survive(level, pos) {
+        crate::update::destroy_block(level, pos, false, 512);
+        return;
+    }
+    crate::update::destroy_block(level, pos, false, 512);
+    level.effect(Effect::Sound { pos, sound: "minecraft:block.frogspawn.hatch", volume: 1.0, pitch: 1.0 });
+    use kiln_javamath::random::RandomSource;
+    let count = 2 + level.random().next_int_bounded(4);
+    let mut tadpoles = Vec::new();
+    for _ in 0..count {
+        let dx = level.random().next_double().clamp(0.20000000298023224, 0.7999999970197678);
+        let dz = level.random().next_double().clamp(0.20000000298023224, 0.7999999970197678);
+        let yaw = 1 + level.random().next_int_bounded(360);
+        tadpoles.push((dx, dz, yaw));
+    }
+    level.effect(Effect::HatchFrogspawn { pos, tadpoles });
+}

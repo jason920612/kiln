@@ -135,7 +135,11 @@ pub(crate) fn bucket_release(bucket: &kiln_item::ItemStack, pos: [i32; 3], diffi
     let ctx = difficulty_instance(difficulty, game_time, 0, 1.0);
     let mut r = kiln_javamath::random::LegacyRandom::new(seed);
     mob::finalize_spawn(&mut e, &mut r, &ctx, &mut mob::GroupData::default(), false);
-    kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
+    if kind == MobKind::Tadpole {
+        kiln_entity::mob::kinds::tadpole::apply_bucket(&mut e, bucket);
+    } else {
+        kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
+    }
     let t = kiln_data::entities::by_name(kind.type_name())?;
     Some(Spawn { kind: t, pos: [at.x, at.y, at.z], vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
 }
