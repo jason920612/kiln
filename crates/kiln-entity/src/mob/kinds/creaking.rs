@@ -373,7 +373,8 @@ impl Kind for Creaking {
         level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
         if level.heart_protects(home, e.id, e.uuid) {
             if player.is_some() {
-                level.heart_creaking_hurt(home);
+                let at = e.bounding_box().center();
+                level.heart_creaking_hurt(home, e.id, e.uuid, at);
             }
             mob::make_sound(e, m, level, "minecraft:entity.creaking.sway");
         }

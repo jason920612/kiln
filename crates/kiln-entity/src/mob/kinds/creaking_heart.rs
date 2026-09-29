@@ -243,8 +243,10 @@ pub fn tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut HeartBe) {
     let mut rng = draw(level, pos, 0x4352_4541);
     if be.emitter > 0 {
         if be.emitter > 50 {
-            emit_particles(level, &mut rng.r, pos, be, 1, true);
-            emit_particles(level, &mut rng.r, pos, be, 1, false);
+            let present = protector(level, be).is_some();
+            emit_particles(&mut rng.r, present, 1);
+            let present = protector(level, be).is_some();
+            emit_particles(&mut rng.r, present, 1);
         }
         if be.emitter % 10 == 0 && be.emitter_target.is_some() {
             if let Some(id) = protector(level, be)
@@ -406,9 +408,8 @@ fn move_to_possible_spawn_position(level: &dyn EntityLevel, range: i32, p: &mut 
 
 /// `emitParticles(level, count, reverse)`: the trail particles from the creaking to the heart
 /// (or back); only their random draws are simulated (six doubles and an int a particle).
-fn emit_particles(level: &mut dyn EntityLevel, r: &mut LegacyRandom, pos: BlockPos, be: &mut HeartBe, count: i32, _reverse: bool) {
-    let _ = pos;
-    if protector(level, be).is_none() {
+fn emit_particles(r: &mut LegacyRandom, present: bool, count: i32) {
+    if !present {
         return;
     }
     for _ in 0..count {
@@ -421,13 +422,15 @@ fn emit_particles(level: &mut dyn EntityLevel, r: &mut LegacyRandom, pos: BlockP
 
 /// `creakingHurt`: the heart feels its creaking hit: particles, and resin over the logs of an
 /// awake heart.
-pub fn creaking_hurt(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut HeartBe) {
-    let Some(id) = protector(level, be) else { return };
-    if be.emitter > 0 {
+///
+/// Called by the protector itself while it is hurt (`id`, `uuid` and the centre of its box are
+/// its own: the entity is out of the level meanwhile).
+pub fn creaking_hurt(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut HeartBe, id: i32, uuid: u128, at: Vec3) {
+    if !be.protects(id, uuid) || be.emitter > 0 {
         return;
     }
     let mut rng = draw(level, pos, 0x4352_4855);
-    emit_particles(level, &mut rng.r, pos, be, 20, false);
+    emit_particles(&mut rng.r, true, 20);
     if heart_state(level.block(pos)) == "awake" {
         let n = rng.r.next_int_bounded(2) + 2;
         for _ in 0..n {
@@ -439,7 +442,7 @@ pub fn creaking_hurt(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut HeartB
         }
     }
     be.emitter = 100;
-    be.emitter_target = level.entity(id).map(|e| e.bounding_box().center());
+    be.emitter_target = Some(at);
     finish(level, rng);
 }
 

@@ -51,6 +51,8 @@ pub(crate) struct RegionBlocks {
     pub raid_events: Vec<kiln_entity::level::RaidEvent>,
     /// Game event listeners: sculk block entities and wardens.
     pub sculk: crate::sculk::Sculk,
+    /// Creaking heart block entities.
+    pub hearts: crate::heart::Hearts,
 }
 
 impl Default for RegionBlocks {
@@ -65,6 +67,7 @@ impl Default for RegionBlocks {
             containers: Default::default(),
             raid_events: Vec::new(),
             sculk: Default::default(),
+            hearts: Default::default(),
         }
     }
 }
@@ -95,6 +98,7 @@ impl RegionBlocks {
         }
         self.containers.chunk_loaded(pos, chunk);
         self.sculk.chunk_loaded(pos, chunk);
+        self.hearts.chunk_loaded(pos, chunk);
         let moving = kiln_data::blocks::default_state::MOVING_PISTON;
         for ((x, y, z), be) in chunk.block_entities() {
             if chunk.get(x, y, z) == moving {
@@ -124,12 +128,14 @@ impl RegionBlocks {
         }
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
+        self.hearts.chunk_unloaded(pos);
     }
 
     /// Puts the chunk's scheduled ticks and moving pistons on it in their saved form.
     pub fn store(&mut self, pos: ChunkPos, chunk: &mut Chunk, game_time: i64) {
         self.containers.store(pos, chunk);
         self.sculk.store(pos, chunk);
+        self.hearts.store(pos, chunk);
         let k = key(pos);
         let block = self.block_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
         let fluid = self.fluid_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
@@ -180,6 +186,7 @@ impl RegionPart for RegionBlocks {
         into.containers.merge(std::mem::take(&mut from.containers));
         into.raid_events.append(&mut from.raid_events);
         into.sculk.merge(std::mem::take(&mut from.sculk));
+        into.hearts.merge(std::mem::take(&mut from.hearts));
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -221,13 +228,17 @@ impl RegionPart for RegionBlocks {
             let mut sculk: SmallVec<[&mut crate::sculk::Sculk; 4]> = parts.iter_mut().map(|p| &mut p.sculk).collect();
             self.sculk.split_into(&mut sculk, |c| owner((c.x, c.z)));
         }
+        {
+            let mut hearts: SmallVec<[&mut crate::heart::Hearts; 4]> = parts.iter_mut().map(|p| &mut p.hearts).collect();
+            self.hearts.split_into(&mut hearts, |c| owner((c.x, c.z)));
+        }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -409,6 +420,7 @@ impl Level for RegionLevel<'_> {
         if kiln_data::block_props::has_block_entity(old) || kiln_data::block_props::has_block_entity(state) {
             crate::container::block_set(self, pos, flags);
             crate::sculk::block_set(self, pos);
+            crate::heart::block_set(self, pos);
         }
         Some(old)
     }
@@ -509,6 +521,9 @@ impl Level for RegionLevel<'_> {
         if let Some(v) = crate::sculk::analog(self, pos, state) {
             return v;
         }
+        if let Some(v) = crate::heart::analog(self, pos, state) {
+            return v;
+        }
         crate::container::analog(self, pos, state)
     }
 
@@ -552,6 +567,10 @@ impl Level for RegionLevel<'_> {
 
     fn climate(&self, biome_pos: BlockPos, pos: BlockPos) -> Option<kiln_blocks::weather::Climate> {
         crate::weather::climate(self.cells, self.env, biome_pos, pos)
+    }
+
+    fn creaking_active(&self, _pos: BlockPos) -> bool {
+        self.env.mobs.creaking_active
     }
 
     fn is_raining_at(&self, pos: BlockPos) -> bool {

@@ -71,6 +71,7 @@ pub(crate) mod portal;
 mod region;
 mod rng;
 mod sculk;
+mod heart;
 mod sleep;
 mod stats;
 mod trading;
@@ -1342,7 +1343,9 @@ impl Sim {
     /// overworld position (for tests and tools).
     pub fn block_entity_nbt(&self, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
         let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
-        region.part().1.sculk.map.get(&kiln_blocks::BlockPos::new(x, y, z)).map(|b| b.save())
+        let p = kiln_blocks::BlockPos::new(x, y, z);
+        let part = &region.part().1;
+        part.sculk.map.get(&p).map(|b| b.save()).or_else(|| part.hearts.map.get(&p).map(|h| h.save()))
     }
 
     /// Block state at a position in the level `dimension` (e.g. `minecraft:the_nether`), if
@@ -1655,6 +1658,7 @@ impl Sim {
                 day_time: self.day_time,
                 sky_darken: weather::sky_darken(dim, self.day_time, &self.level_weather[dim]),
                 monsters_burn: mobs::monsters_burn(self.day_time),
+                creaking_active: dim == OVERWORLD_ID && mobs::creaking_active(self.day_time),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),

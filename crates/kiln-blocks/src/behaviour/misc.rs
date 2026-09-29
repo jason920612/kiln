@@ -125,6 +125,38 @@ pub fn sniffer_egg_on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     schedule_block_tick(level, pos, BlockId::of(s), delay + extra, TickPriority::Normal);
 }
 
+/// `CreakingHeartBlock.hasRequiredLogs`: a `#pale_oak_logs` block on both sides along the
+/// heart's axis, standing along the same axis.
+pub fn creaking_heart_has_logs<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool {
+    let axis = state::get(s, "axis").unwrap_or("y");
+    let dirs = match axis {
+        "x" => [Direction::West, Direction::East],
+        "z" => [Direction::North, Direction::South],
+        _ => [Direction::Down, Direction::Up],
+    };
+    dirs.into_iter().all(|d| {
+        let n = level.block(pos.relative(d));
+        tags::is(n, "minecraft:pale_oak_logs") && state::get(n, "axis") == Some(axis)
+    })
+}
+
+/// `CreakingHeartBlock.updateState`: an uprooted heart with its logs wakes (awake at night,
+/// dormant by day).
+pub fn creaking_heart_update_state<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> u16 {
+    if state::get(s, "creaking_heart_state") == Some("uprooted") && creaking_heart_has_logs(level, s, pos) {
+        return state::set(s, "creaking_heart_state", if level.creaking_active(pos) { "awake" } else { "dormant" });
+    }
+    s
+}
+
+/// `CreakingHeartBlock.tick` (scheduled by every shape update): the state follows the logs.
+pub fn creaking_heart_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let new = creaking_heart_update_state(level, s, pos);
+    if new != s {
+        set_block(level, pos, new, flags::ALL);
+    }
+}
+
 /// `SnifferEggBlock.tick`: a crack (hatch 0 to 2), then the hatching: the egg breaks and the
 /// level spawns a baby sniffer from [`Effect::HatchSniffer`].
 pub fn sniffer_egg_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {

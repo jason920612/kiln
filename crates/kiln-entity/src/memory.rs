@@ -392,9 +392,9 @@ impl EntityLevel for MemoryLevel {
         crate::mob::kinds::creaking_heart::is_heart(self.block(home)) && self.hearts.get(&home).is_some_and(|h| h.protects(id, uuid))
     }
 
-    fn heart_creaking_hurt(&mut self, home: BlockPos) {
+    fn heart_creaking_hurt(&mut self, home: BlockPos, id: i32, uuid: u128, at: crate::math::Vec3) {
         if let Some(mut be) = self.hearts.remove(&home) {
-            crate::mob::kinds::creaking_heart::creaking_hurt(self, home, &mut be);
+            crate::mob::kinds::creaking_heart::creaking_hurt(self, home, &mut be, id, uuid, at);
             self.hearts.insert(home, be);
         }
     }

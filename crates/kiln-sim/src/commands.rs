@@ -308,6 +308,7 @@ impl Sim {
             let be = cells.chunk(chunk_pos).and_then(|c| c.block_entity(lx, y, lz));
             part.1.containers.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.sculk.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+            part.1.hearts.reload(kiln_blocks::BlockPos::new(x, y, z), be);
         }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);

@@ -761,10 +761,10 @@ pub trait EntityLevel {
         crate::blocks::block_name(self.block(home)) == "minecraft:creaking_heart"
     }
 
-    /// `CreakingHeartBlockEntity.creakingHurt` (the protector was hurt by a player: the heart
-    /// hurts, spreading resin).
-    fn heart_creaking_hurt(&mut self, home: BlockPos) {
-        let _ = home;
+    /// `CreakingHeartBlockEntity.creakingHurt` (the protector `id` (`uuid`, its box centred on
+    /// `at`) was hurt by a player: the heart hurts, spreading resin).
+    fn heart_creaking_hurt(&mut self, home: BlockPos, id: i32, uuid: u128, at: Vec3) {
+        let _ = (home, id, uuid, at);
     }
 
     /// The entity with this UUID (`ServerLevel.getEntity(UUID)`), among the entities and the
