@@ -2838,7 +2838,6 @@ public class MobVectors {
             s.player = new double[] {12.5, BY, 0.5};
             s.playerCreative = true;
             s.ticks = 300;
-            s.diverges = true;
             out.add(s);
         }
         {
@@ -2928,6 +2927,17 @@ public class MobVectors {
 
     /// Camels, allays, sniffers.
     static void scenariosBrainAnimals(List<Scenario> out) {
+        // ---- sniffers: idle (scenting, sniffing, searching, digging, rising, feeling happy)
+        for (int seed = 1; seed <= 6; seed++) {
+            Scenario s = new Scenario("idle_sniffer_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 40f * seed, 16000L + 7 * seed));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 60 + seed;
+            s.ticks = 900;
+            out.add(s);
+        }
     }
 
     /// Axolotls, goats, frogs, tadpoles.
