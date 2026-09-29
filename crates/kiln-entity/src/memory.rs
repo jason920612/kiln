@@ -67,6 +67,10 @@ pub struct MemoryLevel {
     pub immediate_adds: bool,
     /// Mob AI draws from the level's random, as vanilla's (one stream for all mobs).
     pub share_ai_random: bool,
+    /// The overworld clock (the villagers' schedule reads it).
+    pub day_time: i64,
+    /// Tickets taken at points of interest (`memory_poi`).
+    pub(crate) poi_taken: FastMap<BlockPos, i32>,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -103,6 +107,8 @@ impl MemoryLevel {
             spawned: Vec::new(),
             immediate_adds: false,
             share_ai_random: false,
+            day_time: 1000,
+            poi_taken: FastMap::default(),
         }
     }
 
@@ -208,6 +214,30 @@ impl EntityLevel for MemoryLevel {
 
     fn game_time(&self) -> i64 {
         self.game_time
+    }
+
+    fn day_time(&self) -> i64 {
+        self.day_time
+    }
+
+    fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: crate::level::PoiOccupancy) -> Vec<BlockPos> {
+        self.poi_in_range_impl(types, center, radius, occupancy)
+    }
+
+    fn poi_take(&mut self, types: &[&str], center: BlockPos, radius: i32, accept: &dyn Fn(&str, BlockPos) -> bool) -> Option<BlockPos> {
+        self.poi_take_impl(types, center, radius, accept)
+    }
+
+    fn poi_release(&mut self, pos: BlockPos) {
+        self.poi_release_impl(pos);
+    }
+
+    fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
+        self.poi_type_impl(pos)
+    }
+
+    fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        self.sections_to_village_impl(pos)
     }
 
     fn sky_darken(&self) -> i32 {

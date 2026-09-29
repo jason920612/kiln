@@ -159,6 +159,51 @@ pub enum ReputationEvent {
 }
 
 impl Gossips {
+    /// `transferFrom(other, random, maxEntries)`: up to `max` gossips of `from` picked by weight
+    /// (with repeats) are learned, each a little weaker (the entries that would fall under 2 are
+    /// dropped). Answers how many were picked.
+    pub fn transfer_from(&mut self, from: &Gossips, random: &mut dyn kiln_javamath::random::RandomSource, max: i32) -> usize {
+        // `unpack()`: every (target, type, value).
+        let mut all: Vec<(u128, GossipType, i32)> = Vec::new();
+        for (target, vals) in &from.entries {
+            for t in GossipType::ALL {
+                let v = vals[t.index()];
+                if v != 0 {
+                    all.push((*target, t, v));
+                }
+            }
+        }
+        if all.is_empty() {
+            return 0;
+        }
+        let mut cumulative = Vec::with_capacity(all.len());
+        let mut total = 0;
+        for (_, t, v) in &all {
+            total += (v * t.info().1).abs();
+            cumulative.push(total - 1);
+        }
+        let mut picked: Vec<usize> = Vec::new();
+        for _ in 0..max {
+            let r = random.next_int_bounded(total);
+            let i = match cumulative.binary_search(&r) {
+                Ok(i) => i,
+                Err(i) => i,
+            };
+            if !picked.contains(&i) {
+                picked.push(i);
+            }
+        }
+        for &i in &picked {
+            let (target, t, v) = all[i];
+            let new = v - t.info().4;
+            if new >= 2 {
+                let slot = &mut self.get_or_create(target)[t.index()];
+                *slot = if *slot == 0 { new } else { (*slot).max(new) };
+            }
+        }
+        picked.len()
+    }
+
     /// `Villager.onReputationEventFrom`.
     pub fn on_event(&mut self, event: ReputationEvent, source: u128) {
         match event {

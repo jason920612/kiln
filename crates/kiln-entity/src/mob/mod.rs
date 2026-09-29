@@ -1022,6 +1022,9 @@ pub fn set_age(e: &mut Entity, m: &mut MobData, age: i32) {
     m.age = age;
     if (old < 0) != (age < 0) {
         refresh_dimensions(e, m);
+        if let Some(k) = m.kind.ext() {
+            k.age_boundary_reached(e, m);
+        }
     }
 }
 

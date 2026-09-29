@@ -41,7 +41,6 @@ pub mod evoker;
 pub mod vex;
 pub mod ravager;
 pub mod illusioner;
-pub mod villager_poi;
 
 // -- slice 3: the end
 pub mod ender_dragon;

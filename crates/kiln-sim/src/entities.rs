@@ -612,6 +612,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.env.game_time
     }
 
+    fn day_time(&self) -> i64 {
+        self.level.env.mobs.day_time
+    }
+
     fn min_y(&self) -> i32 {
         self.level.env.min_y
     }

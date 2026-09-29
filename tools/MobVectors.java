@@ -110,6 +110,7 @@ public class MobVectors {
                 Vec3 at = new Vec3(a.x, a.y, a.z);
                 potion.onHitAsPotion(level, stack, new net.minecraft.world.phys.BlockHitResult(at, net.minecraft.core.Direction.UP, BlockPos.containing(at), false));
             }
+            case "daytime" -> level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (long) a.x);
             case "interact" -> {
                 player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what))));
                 player.interactOn(tracked.get(a.mob), net.minecraft.world.InteractionHand.MAIN_HAND, tracked.get(a.mob).position());
@@ -285,6 +286,7 @@ public class MobVectors {
     }
 
     static void cleanup(ServerLevel level, Scenario s) {
+        for (var b : s.blocks.keySet()) level.getPoiManager().remove(b);
         for (Entity e : level.getEntities((Entity) null, box(), e -> !(e instanceof ServerPlayer))) e.discard();
         BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
         for (int x = -40; x <= 40; x++)
@@ -346,6 +348,16 @@ public class MobVectors {
             player.snapTo(0, 300, 0, 0f, 0f);
         }
         level.getRandom().setSeed(s.levelSeed);
+        // The world age is pinned before the mobs are made (wp28: brains read it when they are built:
+        // a villager's schedule, `lastScheduleUpdate`).
+        var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
+        levelData.setGameTime(1000L);
+        // wp28: points of interest (`PoiManager.add`: the level queues it for later, which never comes
+        // while this task runs).
+        for (var b : s.blocks.entrySet()) {
+            var poi = net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(b.getValue());
+            if (poi.isPresent()) level.getPoiManager().add(b.getKey(), poi.get());
+        }
         int tickStamp = player.getLastHurtByMobTimestamp();
         List<Entity> tracked = new ArrayList<>();
         StringBuilder specs = new StringBuilder();
@@ -424,7 +436,6 @@ public class MobVectors {
             counter.setAccessible(true);
             ((java.util.concurrent.atomic.AtomicInteger) counter.get(null)).set(pinId - 1);
         }
-        var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
         // The world age is pinned too: some of the mobs' math depends on it.
         levelData.setGameTime(1000L);
         long startTime = level.getGameTime();
@@ -506,9 +517,9 @@ public class MobVectors {
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", Float.toString(s.playerYaw), Float.toString(s.playerPitch),
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
-                "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
+                "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.levelSeed, s.ticks, startTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, trace);
+                s.name, s.diverges, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, trace);
     }
 
     static String effectsJson(List<Object[]> effects) {
@@ -607,10 +618,30 @@ public class MobVectors {
     }
 
     static void seedGate(Object b, long base, long[] k) throws Exception {
-        if (b instanceof net.minecraft.world.entity.ai.behavior.GateBehavior<?>) {
-            Object list = get(b, "behaviors");
-            set(list, "random", net.minecraft.util.RandomSource.create(base + k[0]++));
-            for (Object e : (List<?>) get(list, "entries")) seedGate(get(e, "data"), base, k);
+        seedShuffles(b, base, k, new java.util.IdentityHashMap<>());
+    }
+
+    /// wp28: the shuffling lists of the gates (`GateBehavior`) and of the one-shot trigger gates
+    /// (`TriggerGate`, which hide theirs in captured lambda arguments), in registration order.
+    static void seedShuffles(Object b, long base, long[] k, java.util.IdentityHashMap<Object, Boolean> seen) throws Exception {
+        if (b == null || seen.put(b, true) != null) return;
+        if (b instanceof net.minecraft.world.entity.ai.behavior.ShufflingList<?> sl) {
+            if (System.getenv("MOB_DEBUG_GATES") != null) {
+                StringBuilder dbg = new StringBuilder("GATE " + k[0] + ":");
+                for (Object e : (List<?>) get(sl, "entries")) dbg.append(' ').append(get(e, "data").getClass().getSimpleName()).append('/').append(get(e, "weight"));
+                Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            }
+            set(sl, "random", net.minecraft.util.RandomSource.create(base + k[0]++));
+            for (Object e : (List<?>) get(sl, "entries")) seedShuffles(get(e, "data"), base, k, seen);
+            return;
+        }
+        if (!b.getClass().getName().startsWith("net.minecraft.world.entity.ai.behavior.")) return;
+        for (Class<?> c = b.getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            for (Field f : c.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers()) || f.getType().isPrimitive()) continue;
+                f.setAccessible(true);
+                seedShuffles(f.get(b), base, k, seen);
+            }
         }
     }
 
@@ -1669,7 +1700,6 @@ public class MobVectors {
             s.playerCreative = true;
             s.levelSeed = seed;
             s.ticks = 200;
-            s.diverges = true;
             out.add(s);
         }
         // Piglins and hoglins without AI: attributes, size, health and hurt.

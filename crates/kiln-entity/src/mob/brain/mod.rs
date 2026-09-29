@@ -23,6 +23,7 @@ pub mod memory;
 pub mod persist;
 pub mod sensors;
 pub mod util;
+pub mod village;
 
 pub use gate::{Gate, OrderPolicy, RunningPolicy, TriggerGate};
 pub use memory::{GlobalPos, Mem, Memories, NearestVisible, Slot, Status, Tracker, Val, WalkTarget};
@@ -291,7 +292,8 @@ impl Control for Timed {
         if has_required(self.b.entry(), &cx.b.mem) && self.b.check_extra_start(cx) {
             self.running = true;
             let (min, max) = self.b.duration();
-            let d = min + cx.rng().next_int_bounded(max + 1 - min);
+            // (`Integer.MAX_VALUE` durations wrap: `max + 1 - min` is 1.)
+            let d = min.wrapping_add(cx.rng().next_int_bounded(max.wrapping_add(1).wrapping_sub(min)));
             self.end = cx.time + d as i64;
             self.b.start(cx);
             true

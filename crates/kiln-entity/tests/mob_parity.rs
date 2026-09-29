@@ -177,6 +177,8 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             mob::interact::interact(&mut e2, level, &who, &stack);
             *level.entity_mut(id).unwrap() = e2;
         }
+        // wp28: `time set` in the middle of a scenario.
+        "daytime" => level.day_time = pos.x as i64,
         k => panic!("action {k}"),
     }
 }
@@ -188,6 +190,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     level.share_ai_random = true;
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     level.sky_darken = s["sky_darken"].as_i64().unwrap() as i32;
+    // wp28: the overworld clock (villagers' schedule).
+    level.day_time = s.get("day_time").and_then(Value::as_i64).unwrap_or(1000);
     // The recording world is superflat.
     level.sea_level = -63;
     let start = s["game_time"].as_i64().unwrap();
@@ -272,6 +276,9 @@ fn replay(s: &Value) -> Result<usize, String> {
                 e.kind = m;
             }
         }
+        // The harness seeds the mob's random after the NBT and the age were read (the reads may draw
+        // from it, a villager's brain being rebuilt).
+        e.random = kiln_javamath::random::LegacyRandom::new(spec["seed"].as_i64().unwrap());
         // A brain mob's random for what vanilla draws from the level's: the recording's level
         // random, seeded per scenario; the sensors and gates pinned as `MobVectors.pinBrain` does.
         if let Some(m) = mob::data_mut(&mut e) {

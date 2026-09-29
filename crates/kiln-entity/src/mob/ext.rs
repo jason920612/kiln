@@ -663,6 +663,11 @@ pub trait Kind: Sync + Send {
         let _ = index;
         self.passenger_offset(e, m)
     }
+    /// `AgeableMob.ageBoundaryReached` (a baby grows up, an adult is made a baby): villagers
+    /// rebuild their brain for the other age.
+    fn age_boundary_reached(&self, e: &mut Entity, m: &mut MobData) {
+        let _ = (e, m);
+    }
 }
 
 /// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the

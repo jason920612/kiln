@@ -750,6 +750,14 @@ pub trait EntityLevel {
         let _ = pos;
         None
     }
+
+    // -- wp28 village
+
+    /// The overworld clock (`minecraft:overworld` world clock ticks), which the villagers'
+    /// schedule timeline (`minecraft:villager_schedule`) reads in every dimension.
+    fn day_time(&self) -> i64 {
+        1000
+    }
 }
 
 /// `PoiManager.Occupancy`.
@@ -774,6 +782,8 @@ pub struct RaidView {
     pub omen_level: i32,
     /// `groupToLeaderMap`: (wave, entity id).
     pub leaders: Vec<(i32, i32)>,
+    /// `isBetweenWaves` (approximation: a wave spawned and the next one's cooldown runs).
+    pub between_waves: bool,
 }
 
 impl RaidView {

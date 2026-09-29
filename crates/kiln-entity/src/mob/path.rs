@@ -1130,6 +1130,113 @@ impl<'a> Search<'a> {
         let nodes = chain.iter().map(|&i| self.n(i).clone()).collect();
         Some(Path::new(nodes, target, reached))
     }
+
+    /// `PathFinder.findPath` for several target blocks (the villagers' points of interest): every
+    /// target keeps its own best node; the path goes to the reached target with the fewest nodes,
+    /// else to the one that came closest (ties: first in the given order).
+    fn find_multi(&mut self, targets: &[BlockPos], max_dist: f32, reach: i32, max_visited: i32) -> Option<Path> {
+        let start = self.start()?;
+        let tnodes: Vec<u32> = targets.iter().map(|t| self.node(floor(t.x as f64), floor(t.y as f64), floor(t.z as f64))).collect();
+        let coords: Vec<(i32, i32, i32)> = tnodes.iter().map(|&t| (self.n(t).x, self.n(t).y, self.n(t).z)).collect();
+        let mut best_h = vec![f32::MAX; targets.len()];
+        let mut best_node: Vec<Option<u32>> = vec![None; targets.len()];
+        let mut reached_t = vec![false; targets.len()];
+        // `getBestH(node, targets)`: updates each target's best, answers the smallest distance.
+        fn best_of(s: &Search, n: u32, tnodes: &[u32], best_h: &mut [f32], best_node: &mut [Option<u32>]) -> f32 {
+            let mut m = f32::MAX;
+            for (i, &t) in tnodes.iter().enumerate() {
+                let d = s.n(n).distance_to(s.n(t));
+                if d < best_h[i] {
+                    best_h[i] = d;
+                    best_node[i] = Some(n);
+                }
+                m = m.min(d);
+            }
+            m
+        }
+        {
+            let h = best_of(self, start, &tnodes, &mut best_h, &mut best_node);
+            let n = self.nm(start);
+            n.g = 0.0;
+            n.h = h;
+            n.f = h;
+        }
+        self.heap.clear();
+        self.heap_insert(start);
+        let mut any_reached = false;
+        let mut visited = 0;
+        let mut neigh = Vec::with_capacity(8);
+        while !self.heap.is_empty() {
+            visited += 1;
+            if visited >= max_visited {
+                break;
+            }
+            let cur = self.heap_pop();
+            self.nm(cur).closed = true;
+            for (i, &(tx, ty, tz)) in coords.iter().enumerate() {
+                if self.n(cur).distance_manhattan(tx, ty, tz) <= reach as f32 {
+                    reached_t[i] = true;
+                    any_reached = true;
+                }
+            }
+            if any_reached {
+                break;
+            }
+            if self.n(cur).distance_to(self.n(start)) >= max_dist {
+                continue;
+            }
+            self.neighbors(&mut neigh, cur);
+            for &nb in &neigh {
+                let d = self.n(cur).distance_to(self.n(nb));
+                let walked = self.n(cur).walked_distance + d;
+                self.nm(nb).walked_distance = walked;
+                let g = self.n(cur).g + d + self.n(nb).cost_malus;
+                if walked < max_dist && (self.n(nb).heap_idx < 0 || g < self.n(nb).g) {
+                    self.nm(nb).came_from = Some(cur);
+                    self.nm(nb).g = g;
+                    let h = best_of(self, nb, &tnodes, &mut best_h, &mut best_node) * 1.5;
+                    self.nm(nb).h = h;
+                    if self.n(nb).heap_idx >= 0 {
+                        self.change_cost(nb, g + h);
+                    } else {
+                        self.nm(nb).f = g + h;
+                        self.heap_insert(nb);
+                    }
+                }
+            }
+        }
+        let build = |s: &Search, i: usize, reached: bool| -> Option<Path> {
+            let mut chain = vec![best_node[i]?];
+            let mut c = chain[0];
+            while let Some(p) = s.n(c).came_from {
+                chain.push(p);
+                c = p;
+            }
+            chain.reverse();
+            Some(Path::new(chain.iter().map(|&k| s.n(k).clone()).collect(), targets[i], reached))
+        };
+        let mut best: Option<Path> = None;
+        if any_reached {
+            for i in (0..targets.len()).filter(|&i| reached_t[i]) {
+                let Some(p) = build(self, i, true) else { continue };
+                if best.as_ref().is_none_or(|b| p.nodes.len() < b.nodes.len()) {
+                    best = Some(p);
+                }
+            }
+        } else {
+            for i in 0..targets.len() {
+                let Some(p) = build(self, i, false) else { continue };
+                let better = match &best {
+                    None => true,
+                    Some(b) => p.dist_to_target < b.dist_to_target || (p.dist_to_target == b.dist_to_target && p.nodes.len() < b.nodes.len()),
+                };
+                if better {
+                    best = Some(p);
+                }
+            }
+        }
+        best
+    }
 }
 
 // ---------------------------------------------------------------------- navigation
@@ -1377,6 +1484,54 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
         heap: Vec::with_capacity(64),
     };
     let path = s.find(target, max_len, reach, max_visited);
+    if let Some(p) = &path {
+        m.nav.target_pos = Some(p.target);
+        m.nav.reach_range = reach;
+        m.nav.reset_stuck_timeout();
+    }
+    path
+}
+
+/// `PathNavigation.createPath(Set<BlockPos>, reach)` (region 8, no upward offset): a path to the
+/// best of several blocks; `None` without targets.
+pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, targets: &[BlockPos], reach: i32) -> Option<Path> {
+    if targets.is_empty() {
+        return None;
+    }
+    let max_len = max_path_length(m);
+    if e.y() < level.min_y() as f64 || !can_update_path(e, m) {
+        return None;
+    }
+    if let Some(p) = &m.nav.path
+        && !p.is_done()
+        && m.nav.target_pos.is_some_and(|t| targets.contains(&t))
+    {
+        return Some(p.clone());
+    }
+    let max_visited = (floor((max_len * 16.0) as f64) as f32 * m.nav.max_visited_nodes_multiplier) as i32;
+    let mut s = Search {
+        level,
+        e,
+        m,
+        nodes: Vec::with_capacity(256),
+        by_hash: HashMap::with_capacity(256),
+        types: HashMap::with_capacity(256),
+        collisions: HashMap::new(),
+        width: floor((e.width + 1.0) as f64),
+        height: floor((e.height + 1.0) as f64),
+        depth: floor((e.width + 1.0) as f64),
+        can_float: m.nav.can_float,
+        can_open_doors: m.nav.can_open_doors,
+        can_pass_doors: m.nav.can_pass_doors,
+        can_walk_over_fences: m.nav.can_walk_over_fences,
+        amphibious: m.nav.amphibious,
+        swim: m.nav.water_bound,
+        breaching: m.nav.allow_breaching,
+        fly: m.nav.fly,
+        mob_pos: e.block_position(),
+        heap: Vec::with_capacity(64),
+    };
+    let path = s.find_multi(targets, max_len, reach, max_visited);
     if let Some(p) = &path {
         m.nav.target_pos = Some(p.target);
         m.nav.reach_range = reach;
