@@ -3091,6 +3091,55 @@ public class MobVectors {
             s.ticks = 330;
             out.add(s);
         }
+        // Two footsteps (70 anger, not angry): it listens, investigates, sniffs, and calms down.
+        {
+            Scenario s = new Scenario("warden_decay");
+            s.playerHealth = 4000f;
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 200f, 16100);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {9.5, BY, 2.5};
+            s.dayTime = 18000;
+            for (int t : new int[] {5, 60}) gameEvent(s, t, "minecraft:step", -2, 9.5, BY, 2.5);
+            s.ticks = 560;
+            out.add(s);
+        }
+        // A player standing in it: a touch.
+        {
+            Scenario s = new Scenario("warden_touch_player");
+            s.playerHealth = 4000f;
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 200f, 16110);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {0.9, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Hunting over uneven ground: its path finder counts steps horizontally.
+        {
+            Scenario s = new Scenario("warden_terrain");
+            s.playerHealth = 4000f;
+            floor(s, 24, "minecraft:stone");
+            for (int z = -4; z <= 4; z++)
+                for (int y = BY; y <= BY + 2; y++) if (z != 3) block(s, 5, y, z, "minecraft:stone");
+            for (int x = 2; x <= 3; x++)
+                for (int z = -2; z <= 2; z++) block(s, x, BY, z, "minecraft:stone");
+            block(s, 3, BY + 1, 0, "minecraft:stone");
+            block(s, 8, BY, 1, "minecraft:stone");
+            block(s, 8, BY, 2, "minecraft:stone_slab[type=bottom]");
+            block(s, 9, BY, 2, "minecraft:stone_slab[type=bottom]");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 90f, 16120);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 260;
+            out.add(s);
+        }
         // A mob bumping into it: it gets angry and looks at where it stands.
         {
             Scenario s = new Scenario("warden_touch");

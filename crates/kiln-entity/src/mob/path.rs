@@ -271,6 +271,12 @@ impl Node {
         mth::sqrt_f(a * a + b * b + c * c)
     }
 
+    /// `Node.distanceToXZ` (the warden's path finder measures steps horizontally).
+    fn distance_to_xz(&self, o: &Node) -> f32 {
+        let (a, c) = ((o.x - self.x) as f32, (o.z - self.z) as f32);
+        mth::sqrt_f(a * a + c * c)
+    }
+
     fn distance_manhattan(&self, x: i32, y: i32, z: i32) -> f32 {
         (x - self.x).abs() as f32 + (y - self.y).abs() as f32 + (z - self.z).abs() as f32
     }
@@ -1083,6 +1089,8 @@ impl<'a> Search<'a> {
         let mut reached = false;
         let mut visited = 0;
         let mut neigh = Vec::with_capacity(8);
+        // `PathFinder.distance(a, b)`: the warden's overrides it with `distanceToXZ`.
+        let xz = self.m.kind.ext().is_some_and(|k| k.path_distance_xz());
         while !self.heap.is_empty() {
             visited += 1;
             if visited >= max_visited {
@@ -1101,7 +1109,7 @@ impl<'a> Search<'a> {
             }
             self.neighbors(&mut neigh, cur);
             for &nb in &neigh {
-                let d = self.n(cur).distance_to(self.n(nb));
+                let d = if xz { self.n(cur).distance_to_xz(self.n(nb)) } else { self.n(cur).distance_to(self.n(nb)) };
                 let walked = self.n(cur).walked_distance + d;
                 self.nm(nb).walked_distance = walked;
                 let g = self.n(cur).g + d + self.n(nb).cost_malus;

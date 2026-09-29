@@ -11,9 +11,6 @@
 //! order. What stays in [`WardenState`] is what is not a memory in vanilla: the pose, the
 //! `AngerManagement`, and the vibration listener (`VibrationSystem.Data` at its eyes, 16 blocks,
 //! `#warden_can_listen`), ticked before the warden's tick like vanilla's.
-//!
-//! Gap: the warden's navigation measures path distances horizontally (`Node.distanceToXZ`);
-//! Kiln's path finder uses the full distance (the same on level ground).
 
 use crate::behavior_boilerplate;
 use crate::entity::Entity;
@@ -956,6 +953,11 @@ impl Kind for Warden {
         }
         update_activity(m);
         sync_target(m);
+    }
+
+    /// `Warden$1$1.distance`: `distanceToXZ`.
+    fn path_distance_xz(&self) -> bool {
+        true
     }
 
     fn is_invulnerable_to(&self, m: &MobData, kind: DamageKind) -> bool {

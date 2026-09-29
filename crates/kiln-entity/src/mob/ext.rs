@@ -586,6 +586,11 @@ pub trait Kind: Sync + Send {
     fn do_push(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, other: i32) {
         let _ = (e, m, level, other);
     }
+    /// The type's path finder measures the cost of a step horizontally (`Node.distanceToXZ`: the
+    /// warden's `Warden$1$1`).
+    fn path_distance_xz(&self) -> bool {
+        false
+    }
     /// `Entity.shouldDiscardFriction`: air travel keeps all its speed (a breeze's long jump).
     fn discards_friction(&self, m: &MobData) -> bool {
         let _ = m;
