@@ -399,6 +399,18 @@ impl<'a> Search<'a> {
             return fly_type(self.level, x, y, z, self.mob_pos);
         }
         if !self.amphibious {
+            // `Creaking.HomeNodeEvaluator.getPathType`: nothing beyond 32 blocks of the home
+            // unless closer to it than the creaking is.
+            if let Some(home) = self.m.kind.ext().and_then(|k| k.path_home(self.m)) {
+                let sqr = |a: BlockPos, b: BlockPos| {
+                    let (dx, dy, dz) = ((a.x - b.x) as f64, (a.y - b.y) as f64, (a.z - b.z) as f64);
+                    dx * dx + dy * dy + dz * dz
+                };
+                let d = sqr(home, BlockPos::new(x, y, z));
+                if d > 1024.0 && d >= sqr(home, self.mob_pos) {
+                    return PathType::Blocked;
+                }
+            }
             return path_type_static(self.level, x, y, z);
         }
         amphibious_type(self.level, x, y, z)

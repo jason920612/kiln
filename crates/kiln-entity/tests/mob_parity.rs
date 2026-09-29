@@ -176,6 +176,32 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             });
             level.destroy_heart(p, source);
         }
+        // wp28 creaking: the player's game mode changes (`what`), or it moves to pos.
+        "gamemode" => {
+            let mut who = Vec::new();
+            for p in level.players.iter_mut() {
+                p.creative = what == "creative";
+                p.spectator = what == "spectator";
+                who.push((p.id, p.creative));
+            }
+            for (id, creative) in who {
+                if let Some(e) = level.entity_mut(id) {
+                    e.invulnerable = creative;
+                }
+            }
+        }
+        "move" => {
+            let mut who = Vec::new();
+            for p in level.players.iter_mut() {
+                p.pos = pos;
+                who.push(p.id);
+            }
+            for id in who {
+                if let Some(e) = level.entity_mut(id) {
+                    e.set_pos(pos);
+                }
+            }
+        }
         // wp28 creaking: the player turns (yaw = pos.x, pitch = pos.y).
         "look" => {
             for p in level.players.iter_mut() {
@@ -369,6 +395,12 @@ fn replay(s: &Value) -> Result<usize, String> {
         for a in s.get("actions").and_then(Value::as_array).into_iter().flatten() {
             if a["tick"].as_i64() == Some(tick) {
                 act(&mut level, &ids, player, a);
+                // The player may have moved or changed game mode.
+                if player.is_some()
+                    && let Some(p) = level.players.first()
+                {
+                    player = Some(*p);
+                }
             }
         }
         let before = level.player_hits.len();

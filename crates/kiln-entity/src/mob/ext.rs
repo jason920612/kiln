@@ -316,6 +316,12 @@ pub trait Kind: Sync + Send {
         let _ = (e, m);
         false
     }
+    /// `Creaking.HomeNodeEvaluator`: the point beyond 32 blocks of which the navigation finds no
+    /// way (unless it leads back toward it).
+    fn path_home(&self, m: &MobData) -> Option<BlockPos> {
+        let _ = m;
+        None
+    }
     /// `PathNavigation.tick` (creakings that cannot move skip it); false skips the tick.
     fn ticks_navigation(&self, m: &MobData) -> bool {
         let _ = m;

@@ -270,3 +270,29 @@ pub(crate) fn with_heart<R>(sim: &mut SimLevel, pos: BlockPos, f: impl FnOnce(&m
     Some(r)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_creaking_uuid_round_trips_through_the_saved_data() {
+        let uuid = 0x0123_4567_89ab_cdef_fedc_ba98_7654_3210u128;
+        let ints = vec![0x0123_4567, 0x89ab_cdefu32 as i32, 0xfedc_ba98u32 as i32, 0x7654_3210];
+        let nbt = Tag::Compound(vec![("id".into(), Tag::String(TYPE.into())), ("creaking".into(), Tag::IntArray(ints.clone()))]);
+        let e = HeartEntry::load(1, &nbt);
+        assert_eq!(e.be.saved_uuid(), Some(uuid));
+        assert_eq!(e.be.link, Some(kiln_entity::mob::kinds::creaking_heart::Link::Uuid(uuid)));
+        assert_eq!(e.save().get("creaking"), Some(&Tag::IntArray(ints)));
+        // No creaking: nothing saved (`clearCreakingInfo` drops the key).
+        let empty = HeartEntry::load(1, &Tag::Compound(vec![("id".into(), Tag::String(TYPE.into()))]));
+        assert_eq!(empty.be.saved_uuid(), None);
+        assert!(empty.save().get("creaking").is_none());
+    }
+
+    #[test]
+    fn a_creaking_uuid_of_another_length_is_ignored() {
+        let nbt = Tag::Compound(vec![("creaking".into(), Tag::IntArray(vec![1, 2, 3]))]);
+        assert_eq!(HeartEntry::load(1, &nbt).be.saved_uuid(), None);
+    }
+}
+

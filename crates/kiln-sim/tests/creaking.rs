@@ -190,14 +190,40 @@ fn breaking_the_heart_takes_its_creaking() {
 #[test]
 fn a_creaking_far_from_its_heart_is_let_go() {
     let mut w = World::new("survival");
+    // No spawning: the creaking is summoned by hand, held by the heart through its UUID.
+    w.run("gamerule minecraft:spawn_monsters false");
+    let heart = w.at(6, 1, 0);
+    w.heart(heart, "awake");
+    w.run(&format!("data merge block {} {} {} {{creaking:[I;1,2,3,4]}}", heart[0], heart[1], heart[2]));
+    assert_eq!(w.holds(heart), Some(vec![1, 2, 3, 4]));
+    let (x, y, z) = (heart[0] as f64 + 0.5, heart[1] as f64, heart[2] as f64 + 40.5);
+    w.run(&format!("summon minecraft:creaking {x} {y} {z} {{UUID:[I;1,2,3,4],home_pos:[I;{},{},{}]}}", heart[0], heart[1], heart[2]));
+    w.ticks(2);
+    assert_eq!(w.creakings().len(), 1, "the heart holds it (else it would have died as its own heart's stray)");
+    // 40 blocks away: the heart drops it at its next check (20 to 24 ticks).
+    w.ticks(30);
+    assert!(w.creakings().is_empty(), "the heart let it go");
+    assert_eq!(w.holds(heart), None);
+}
+
+#[test]
+fn a_player_breaking_the_heart_makes_its_creaking_twitch_and_die() {
+    let mut w = World::new("creative");
     let heart = w.at(6, 1, 0);
     w.heart(heart, "awake");
     assert!(w.wait_for_creaking(200).is_some());
-    // Carried beyond 34 blocks, the heart drops it at its next check.
-    let p = w.creakings()[0].1;
-    w.run(&format!("tp @e[type=minecraft:creaking,limit=1] {} {} {}", p[0] + 40.0, p[1], p[2]));
+    // Start destroying (instant in creative).
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 0, pos: heart, face: 1, sequence: 1 })]));
+    w.ticks(3);
+    assert_eq!(kiln_blocks::BlockId::of(w.block(heart)).name(), "minecraft:air", "the heart is gone");
+    // The creaking died (health 0) and twitches for 45 ticks before it crumbles.
+    let dying = w.creakings();
+    assert_eq!(dying.len(), 1, "still twitching");
+    assert_eq!(dying[0].2, 0.0);
     w.ticks(30);
-    assert!(w.creakings().is_empty() || w.creakings()[0].1[0] < p[0] + 30.0, "the creaking was let go");
+    assert_eq!(w.creakings().len(), 1, "twitching lasts 45 ticks");
+    w.ticks(30);
+    assert!(w.creakings().is_empty(), "then it crumbles");
 }
 
 #[test]

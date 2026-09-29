@@ -121,6 +121,13 @@ public class MobVectors {
                 if ("player".equals(a.what)) state.getBlock().playerWillDestroy(level, bp, state, player);
                 level.setBlock(bp, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
             }
+            // wp28 creaking: the player's game mode changes (`what`), or it moves to pos.
+            case "gamemode" -> player.setGameMode(switch (a.what) {
+                case "creative" -> net.minecraft.world.level.GameType.CREATIVE;
+                case "spectator" -> net.minecraft.world.level.GameType.SPECTATOR;
+                default -> net.minecraft.world.level.GameType.SURVIVAL;
+            });
+            case "move" -> player.snapTo(a.x, a.y, a.z, player.getYRot(), player.getXRot());
             // wp28 creaking: the player turns (yaw = pos.x, pitch = pos.y): where it looks decides
             // whether creakings freeze.
             case "look" -> {

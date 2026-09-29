@@ -64,6 +64,11 @@ pub fn home(m: &MobData) -> Option<BlockPos> {
     st(m).home
 }
 
+/// Whether the creaking `e` is bound to a heart (`isHeartBound`): it cannot use portals.
+pub fn is_heart_bound(e: &Entity) -> bool {
+    mob::data(e).and_then(|m| ext::state::<State>(m)).is_some_and(|s| s.home.is_some())
+}
+
 /// `setTearingDown`.
 pub fn set_tearing_down(m: &mut MobData) {
     st_mut(m).tearing_down = true;
@@ -308,6 +313,10 @@ impl Kind for Creaking {
             }
         }
         sync_target(m);
+    }
+
+    fn path_home(&self, m: &MobData) -> Option<BlockPos> {
+        st(m).home
     }
 
     /// `CreakingNavigation.tick`, `CreakingMoveControl`, `CreakingLookControl` and
