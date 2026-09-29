@@ -181,6 +181,17 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             mob::interact::interact(&mut e2, level, &who, &stack);
             *level.entity_mut(id).unwrap() = e2;
         }
+        // wp28 animals: an item entity (`duration` items, default 1) at rest at the position.
+        "drop" => {
+            let stack = kiln_item::ItemStack::of(what, a["duration"].as_i64().unwrap_or(0).max(1) as i32).unwrap();
+            let id = level.next_entity_id();
+            let seed = level.fresh_seed();
+            let mut item = kiln_entity::item::new(id, 0, stack, seed);
+            item.set_pos(pos);
+            item.delta = Vec3::ZERO;
+            item.set_old_pos_and_rot();
+            level.add_entity(item);
+        }
         k => panic!("action {k}"),
     }
 }

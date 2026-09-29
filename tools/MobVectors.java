@@ -114,6 +114,13 @@ public class MobVectors {
                 player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what))));
                 player.interactOn(tracked.get(a.mob), net.minecraft.world.InteractionHand.MAIN_HAND, tracked.get(a.mob).position());
             }
+            // wp28 animals: an item entity (`duration` items, default 1) at rest at the position.
+            case "drop" -> {
+                ItemStack stack = new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what)), Math.max(1, a.duration));
+                var item = new net.minecraft.world.entity.item.ItemEntity(level, a.x, a.y, a.z, stack);
+                item.setDeltaMovement(Vec3.ZERO);
+                level.addFreshEntity(item);
+            }
             default -> throw new IllegalArgumentException(a.kind);
         }
     }
@@ -2925,6 +2932,25 @@ public class MobVectors {
     static void scenariosBrainVillager(List<Scenario> out) {
     }
 
+    /// `Action` "drop": `count` of `item` at rest at a position at `tick`.
+    static void drop(Scenario s, int tick, String item, int count, double x, double y, double z) {
+        Action a = new Action(tick, "drop");
+        a.what = item;
+        a.duration = count;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        s.actions.add(a);
+    }
+
+    /// `Action` "interact": the player uses `item` (or nothing: "minecraft:air") on mob `mob`.
+    static void interact(Scenario s, int tick, int mob, String item) {
+        Action a = new Action(tick, "interact");
+        a.mob = mob;
+        a.what = item;
+        s.actions.add(a);
+    }
+
     /// Camels, allays, sniffers.
     static void scenariosBrainAnimals(List<Scenario> out) {
         // ---- sniffers: idle (scenting, sniffing, searching, digging, rising, feeling happy)
@@ -3127,6 +3153,81 @@ public class MobVectors {
             s.playerCreative = true;
             s.levelSeed = 95;
             s.ticks = 900;
+            out.add(s);
+        }
+        // ---- allays: flying about, fetching items for the player it likes, giving them
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("idle_allay_" + seed);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 70f * seed, 18000L + 17 * seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 100 + seed;
+            s.ticks = 600;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("give_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18100));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 110;
+            interact(s, 5, 0, "minecraft:cobblestone");
+            drop(s, 40, "minecraft:cobblestone", 3, 5.5, BY, 4.5);
+            drop(s, 40, "minecraft:cobblestone", 2, -4.5, BY, 3.5);
+            s.ticks = 800;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("take_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18110));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 111;
+            interact(s, 5, 0, "minecraft:cobblestone");
+            drop(s, 40, "minecraft:cobblestone", 3, 5.5, BY, 4.5);
+            interact(s, 200, 0, "minecraft:air");
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("far_allay");
+            floor(s, 40, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18120));
+            s.player = new double[] {30.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 112;
+            interact(s, 5, 0, "minecraft:gold_ingot");
+            s.ticks = 500;
+            out.add(s);
+        }
+        for (int variant = 0; variant < 2; variant++) {
+            Scenario s = new Scenario(variant == 0 ? "hurt_allay" : "hurt_liked_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18130 + variant));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerSneaking = true;
+            s.levelSeed = 113;
+            if (variant == 1) interact(s, 2, 0, "minecraft:cobblestone");
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.hurts.put(200, new double[] {0, 2.0});
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("wall_allay");
+            floor(s, 24, "minecraft:stone");
+            for (int z = -8; z <= 8; z++)
+                for (int y = BY; y <= BY + 6; y++) block(s, 4, y, z, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 90f, 18140));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 114;
+            interact(s, 5, 0, "minecraft:cobblestone");
+            drop(s, 30, "minecraft:cobblestone", 2, 8.5, BY, 2.5);
+            s.ticks = 700;
             out.add(s);
         }
     }
