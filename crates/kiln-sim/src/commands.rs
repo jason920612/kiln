@@ -492,6 +492,10 @@ impl Source for Sim {
         self.players.values().map(|p| p.name.clone()).collect()
     }
 
+    fn definition_error(&self, registry: &str, definition: &Tag) -> Option<String> {
+        self.definition_error_of(registry, definition)
+    }
+
     // `dimensions` keeps the default (all three vanilla levels): the nether and the end exist
     // for dimension arguments but never have loaded chunks.
 
@@ -1432,6 +1436,15 @@ impl Host for Sim {
 
     fn give_stack(&mut self, player: &PlayerRef, item: &Tag) -> bool {
         self.give_stack_nbt(player, item)
+    }
+
+    fn compute_provider(
+        &mut self,
+        provider: &kiln_command::host::LootTableArg,
+        float: bool,
+        target: &kiln_command::host::ComputeTarget<PlayerRef>,
+    ) -> Result<f64, kiln_command::host::ComputeError> {
+        self.compute_provider_value(provider, float, target)
     }
 
     fn slot_source_tree(

@@ -53,6 +53,12 @@ pub trait Source {
     fn registry_ids(&self, _registry: &str) -> Vec<String> {
         Vec::new()
     }
+    /// Why an inline definition (SNBT) of a data pack registry entry does not decode
+    /// (`ResourceOrIdArgument` decodes while parsing); `None` when it is fine or Kiln does not
+    /// check `registry`.
+    fn definition_error(&self, _registry: &str, _definition: &Tag) -> Option<String> {
+        None
+    }
     /// Dimension ids, for suggestions.
     fn dimensions(&self) -> Vec<String> {
         ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"].map(String::from).to_vec()
@@ -1101,6 +1107,11 @@ pub trait Host: SelectorWorld {
         let kind = if kiln_data::builtin_id("minecraft:block", id).is_some() { "block" } else { "item" };
         Text::translate(format!("{kind}.{ns}.{path}"), Vec::new())
     }
+    /// `compute`: evaluates a context int or float provider (a registry id or an inline
+    /// definition) in the loot context of `target`.
+    fn compute_provider(&mut self, _provider: &LootTableArg, _float: bool, _target: &ComputeTarget<Self::Entity>) -> Result<f64, ComputeError> {
+        Err(ComputeError::Command(CommandError::unsupported("Context number providers")))
+    }
     /// The slots a slot source (a registry id or an inline definition) selects, evaluated with
     /// `container` as the `container` parameter and the source entity as `this`.
     fn slot_source_tree(&mut self, _source: &LootTableArg, _container: &ItemHolder<Self::Entity>) -> Result<SlotTree<Self::Entity>, CommandError> {
@@ -1236,6 +1247,21 @@ pub enum LootSource<E> {
 pub enum ItemHolder<E> {
     Block { dimension: String, pos: [i32; 3] },
     Entity(E),
+}
+
+/// What `compute` evaluates against (`LootContextSources`).
+pub enum ComputeTarget<E> {
+    Default,
+    Block([i32; 3]),
+    Entity(E),
+}
+
+/// Why `compute` failed.
+pub enum ComputeError {
+    /// The provider threw an `ArithmeticException` with this message, or produced a value
+    /// that is not finite.
+    Invalid(String),
+    Command(CommandError),
 }
 
 /// `SlotCollection`: the slots a slot source selected, in order.

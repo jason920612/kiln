@@ -15,6 +15,7 @@ mod summon;
 mod execute;
 mod function;
 mod items;
+mod compute;
 mod item;
 mod loot;
 pub use function::{run_as_server, run_function};
@@ -139,6 +140,7 @@ pub const COMMANDS: &[&str] = &[
     "spreadplayers",
     "loot",
     "item",
+    "compute",
 ];
 
 /// Registers every built-in command.
@@ -226,6 +228,7 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     world::spreadplayers(d);
     loot::loot(d);
     item::item(d);
+    compute::compute(d);
 }
 
 /// `getEntityOrException`.

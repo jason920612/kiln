@@ -20,6 +20,9 @@ type Result<T> = std::result::Result<T, CommandError>;
 /// A `loot_table` / `loot_modifier` argument.
 pub(super) fn table_arg<S: Host>(c: &CommandContext<S>, name: &str) -> LootTableArg {
     match c.get(name) {
+        Some(ArgumentValue::Nbt(Tag::String(id))) => {
+            LootTableArg::Id(crate::types::Identifier::parse(id).map_or_else(|| id.clone(), |i| i.to_string()))
+        }
         Some(ArgumentValue::Nbt(t)) => LootTableArg::Inline(t.clone()),
         Some(ArgumentValue::Identifier(id)) => LootTableArg::Id(id.to_string()),
         other => unreachable!("loot table argument {other:?}"),

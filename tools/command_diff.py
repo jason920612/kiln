@@ -1788,6 +1788,17 @@ item replace entity Diff0 hotbar.3 with minecraft:carrot
 item modify entity Diff0 kilndiff:hotbar_apples kilndiff:three
 item replace entity Diff0 kilndiff:hotbar_apples with minecraft:air
 data get entity Diff0 Inventory
+item modify entity Diff0 hotbar.0 {type:"minecraft:bogus"}
+item modify entity Diff0 hotbar.0 {}
+item modify entity Diff0 hotbar.0 [1]
+item modify entity Diff0 hotbar.0 "kilndiff:three"
+item modify entity Diff0 hotbar.0 {type:"minecraft:set_count",count:{type:"minecraft:bogus"}}
+execute if slots entity Diff0 {type:"minecraft:bogus"}
+execute if slots entity Diff0 {}
+execute if slots entity Diff0 {type:"minecraft:empty"}
+execute if slots entity Diff0 [{type:"minecraft:empty"}]
+loot give Diff0 loot {pools:[{rolls:1,entries:[{type:"minecraft:bogus"}]}]}
+loot give Diff0 loot {}
 item
 item replace
 item replace block
@@ -1833,6 +1844,67 @@ execute if slots block 7 100 6 container.40
 execute if slots block 6 100 6 container.*
 execute unless slots block 7 100 6 container.99
 ! gamerule show_advancement_messages true
+! gamerule show_advancement_messages true
+
+# compute
+compute default integer 5
+compute default integer -3
+compute default integer minecraft:cooking/time_coal
+compute default integer minecraft:cooking/time_wool
+compute default integer minecraft:compostable/always_add_one
+compute default integer minecraft:nonexistent
+compute default integer nonexistent
+compute default float 2.5
+compute default float 2.5 2
+compute default float 2.5 -3
+compute default float 3 1
+compute default float 0.1 10
+compute default float minecraft:cooking/normal_speed_multiplier
+compute default float minecraft:cooking/normal_speed_multiplier 100
+compute default float minecraft:cooking/nothing
+compute default float {type:"minecraft:constant",value:1.5}
+compute default float {type:"minecraft:uniform",min:1,max:1}
+compute default integer {type:"minecraft:constant",value:7}
+compute default integer {type:"minecraft:add",inputs:[1,2,3]}
+compute default integer {type:"minecraft:div",left:1,right:0}
+compute default integer {type:"minecraft:mul",inputs:[100000,100000]}
+compute default float {type:"minecraft:div",left:1.0,right:0.0}
+compute default integer {type:"minecraft:abs",input:-2147483648}
+compute default integer {type:"minecraft:negate",input:-2147483648}
+compute default integer {type:"minecraft:sub",left:-2147483648,right:1}
+compute default integer {type:"minecraft:mod",left:1,right:0}
+compute default integer {type:"minecraft:floor_div",left:1,right:0}
+compute default integer {type:"minecraft:floor_div",left:-2147483648,right:-1}
+compute default integer {type:"minecraft:floor_mod",left:1,right:0}
+compute default integer {type:"minecraft:pow",base:0,exponent:0}
+compute default integer {type:"minecraft:pow",base:2,exponent:40}
+compute default integer {type:"minecraft:pow",base:2,exponent:-1}
+compute default integer {type:"minecraft:avg",inputs:[]}
+compute default integer {type:"minecraft:add",inputs:[2147483647,1]}
+compute default integer {type:"minecraft:from_float",input:{type:"minecraft:div",left:1.0,right:0.0}}
+compute default integer {type:"minecraft:from_float",input:1.0e20}
+compute default float {type:"minecraft:div",left:0.0,right:0.0}
+compute default float {type:"minecraft:sqrt",input:-1.0}
+compute default float {type:"minecraft:div",left:-1.0,right:0.0}
+compute default float {type:"minecraft:from_int",input:{type:"minecraft:pow",base:2,exponent:40}}
+compute default integer {type:"minecraft:bogus"}
+compute default integer {}
+compute default integer "minecraft:cooking/time_coal"
+compute default integer [1]
+compute block 7 100 6 integer 3
+compute block 7 100 6 integer minecraft:compostable/always_add_one
+compute block 6 100 6 float 0.5 10
+compute block 100000 100 0 integer 1
+compute block 0 -100 0 integer 1
+compute entity Diff0 integer 4
+compute entity Diff0 float 4.5 2
+compute entity Nobody integer 4
+compute entity @a integer 4
+compute
+compute default
+compute default float
+compute default integer
+compute bogus
 ! clear @a
 ! kill @e[type=!minecraft:player]
 """

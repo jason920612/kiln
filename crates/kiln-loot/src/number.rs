@@ -18,9 +18,23 @@ use kiln_command::nbt_path::NbtPath;
 use kiln_item::Identifier;
 use kiln_javamath::math;
 
-/// `ArithmeticException` inside a provider.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Arith;
+/// `ArithmeticException` inside a provider, with the message Java gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Arith(pub String);
+
+impl Arith {
+    fn new(message: impl Into<String>) -> Self {
+        Arith(message.into())
+    }
+
+    fn overflow() -> Self {
+        Arith::new("integer overflow")
+    }
+
+    fn by_zero() -> Self {
+        Arith::new("/ by zero")
+    }
+}
 
 pub type ArithResult<T> = Result<T, Arith>;
 
@@ -357,15 +371,27 @@ fn weighted<T>(j: &Json, mut f: impl FnMut(&Json) -> PResult<T>) -> PResult<Vec<
 
 // ---- evaluation ---------------------------------------------------------------------------
 
+/// `Float.toString` for the finite and non-finite values a provider message shows.
+fn java_float_string(v: f32) -> String {
+    if v.is_nan() {
+        "NaN".into()
+    } else if v.is_infinite() {
+        if v > 0.0 { "Infinity".into() } else { "-Infinity".into() }
+    } else {
+        let s = format!("{v}");
+        if s.contains('.') { s } else { format!("{s}.0") }
+    }
+}
+
 /// `ContextIntProvider.longToIntSafe`.
 fn long_to_int(v: i64) -> ArithResult<i32> {
-    i32::try_from(v).map_err(|_| Arith)
+    i32::try_from(v).map_err(|_| Arith::new(format!("Value {v} can't be safely converted to int")))
 }
 
 /// `ContextIntProvider.floatToIntSafe`: non-finite fails; the float truncates to a long first.
 fn float_to_int(v: f32) -> ArithResult<i32> {
     if !v.is_finite() {
-        return Err(Arith);
+        return Err(Arith::new(format!("Value {} can't be safely converted to int", java_float_string(v))));
     }
     long_to_int(v as i64)
 }
@@ -373,7 +399,7 @@ fn float_to_int(v: f32) -> ArithResult<i32> {
 /// `Math.powExact(int, int)`.
 fn pow_exact(base: i32, exponent: i32) -> ArithResult<i32> {
     if exponent < 0 {
-        return Err(Arith);
+        return Err(Arith::new("negative exponent"));
     }
     match base {
         0 => Ok(if exponent == 0 { 1 } else { 0 }),
@@ -383,7 +409,7 @@ fn pow_exact(base: i32, exponent: i32) -> ArithResult<i32> {
             // |base| >= 2 overflows within 31 multiplications.
             let mut result: i32 = 1;
             for _ in 0..exponent {
-                result = result.checked_mul(base).ok_or(Arith)?;
+                result = result.checked_mul(base).ok_or_else(Arith::overflow)?;
             }
             Ok(result)
         }
@@ -421,7 +447,7 @@ impl Eval<'_> {
     /// `ContextFloatProvider.getFloatOrThrow`.
     pub fn float_or_throw(&mut self, p: &Ref<FloatProvider>) -> ArithResult<f32> {
         let v = self.float_unsafe(p)?;
-        if v.is_finite() { Ok(v) } else { Err(Arith) }
+        if v.is_finite() { Ok(v) } else { Err(Arith::new(java_float_string(v))) }
     }
 
     pub fn int_unsafe(&mut self, p: &Ref<IntProvider>) -> ArithResult<i32> {
@@ -459,14 +485,14 @@ impl Eval<'_> {
                 Some(n) => Ok(n.int_value()),
                 None => self.int_unsafe(fallback),
             },
-            IntProvider::EnvironmentAttribute(attr) => self.ctx.environment_attribute_int(attr).ok_or(Arith),
+            IntProvider::EnvironmentAttribute(attr) => self.ctx.environment_attribute_int(attr).ok_or_else(|| Arith::new("No such environment attribute")),
             IntProvider::Abs(v) => {
                 let v = self.int_unsafe(v)?;
-                v.checked_abs().ok_or(Arith)
+                v.checked_abs().ok_or_else(|| Arith::new("Overflow to represent absolute value of Integer.MIN_VALUE"))
             }
             IntProvider::Negate(v) => {
                 let v = self.int_unsafe(v)?;
-                v.checked_neg().ok_or(Arith)
+                v.checked_neg().ok_or_else(Arith::overflow)
             }
             IntProvider::FromFloat(v) => {
                 let v = self.float_unsafe(v)?;
@@ -479,7 +505,7 @@ impl Eval<'_> {
                     count += 1;
                 }
                 if count == 0 {
-                    return Err(Arith);
+                    return Err(Arith::by_zero());
                 }
                 long_to_int(sum.wrapping_div(count))
             }
@@ -513,28 +539,28 @@ impl Eval<'_> {
             }
             IntProvider::Sub(l, r) => {
                 let (l, r) = (self.int_unsafe(l)?, self.int_unsafe(r)?);
-                l.checked_sub(r).ok_or(Arith)
+                l.checked_sub(r).ok_or_else(Arith::overflow)
             }
             IntProvider::Div(l, r) => {
                 let (l, r) = (self.int_unsafe(l)?, self.int_unsafe(r)?);
-                if r == 0 { Err(Arith) } else { Ok(l.wrapping_div(r)) }
+                if r == 0 { Err(Arith::by_zero()) } else { Ok(l.wrapping_div(r)) }
             }
             IntProvider::Mod(l, r) => {
                 let (l, r) = (self.int_unsafe(l)?, self.int_unsafe(r)?);
-                if r == 0 { Err(Arith) } else { Ok(l.wrapping_rem(r)) }
+                if r == 0 { Err(Arith::by_zero()) } else { Ok(l.wrapping_rem(r)) }
             }
             IntProvider::FloorDiv(l, r) => {
                 let (l, r) = (self.int_unsafe(l)?, self.int_unsafe(r)?);
-                if r == 0 || (l == i32::MIN && r == -1) { Err(Arith) } else { Ok(math::floor_div(l, r)) }
+                if r == 0 { Err(Arith::by_zero()) } else if l == i32::MIN && r == -1 { Err(Arith::overflow()) } else { Ok(math::floor_div(l, r)) }
             }
             IntProvider::FloorMod(l, r) => {
                 let (l, r) = (self.int_unsafe(l)?, self.int_unsafe(r)?);
-                if r == 0 { Err(Arith) } else { Ok(math::floor_mod(l, r)) }
+                if r == 0 { Err(Arith::by_zero()) } else { Ok(math::floor_mod(l, r)) }
             }
             IntProvider::Pow { base, exponent } => {
                 let (b, e) = (self.int_unsafe(base)?, self.int_unsafe(exponent)?);
                 if b == 0 && e == 0 {
-                    return Err(Arith);
+                    return Err(Arith::new("Result of 0 to the power of 0 is undefined"));
                 }
                 pow_exact(b, e)
             }
@@ -578,7 +604,7 @@ impl Eval<'_> {
                 Some(n) => Ok(n.float_value()),
                 None => self.float_unsafe(fallback),
             },
-            FloatProvider::EnvironmentAttribute(attr) => self.ctx.environment_attribute_float(attr).ok_or(Arith),
+            FloatProvider::EnvironmentAttribute(attr) => self.ctx.environment_attribute_float(attr).ok_or_else(|| Arith::new("No such environment attribute")),
             FloatProvider::Abs(v) => Ok(self.float_unsafe(v)?.abs()),
             FloatProvider::Ceil(v) => Ok((self.float_unsafe(v)? as f64).ceil() as i32 as f32),
             FloatProvider::Floor(v) => Ok((self.float_unsafe(v)? as f64).floor() as f32),
@@ -730,9 +756,9 @@ mod tests {
         assert_eq!(java_round(0.49999997), 0);
         assert_eq!(java_round(f32::MAX), i32::MAX);
         assert_eq!(pow_exact(2, 30), Ok(1 << 30));
-        assert_eq!(pow_exact(2, 31), Err(Arith));
+        assert!(pow_exact(2, 31).is_err());
         assert_eq!(pow_exact(-1, i32::MAX), Ok(-1));
-        assert_eq!(pow_exact(5, -1), Err(Arith));
+        assert!(pow_exact(5, -1).is_err());
     }
 
     #[test]

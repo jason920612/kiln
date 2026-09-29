@@ -650,6 +650,126 @@ impl Sim {
     }
 }
 
+/// `Either<number, provider>`'s report of a provider definition that does not decode.
+fn provider_parse_message(tag: &Tag, float: bool, e: &kiln_loot::ParseError) -> String {
+    let inner = match tag {
+        Tag::Compound(_) => match tag.get("type") {
+            None => format!("No key type in MapLike[{}]", sorted_snbt(tag)),
+            Some(Tag::String(ty)) if e.to_string().starts_with("unknown context") => {
+                let ty = kiln_item::Identifier::parse(ty).map_or_else(|| ty.clone(), |i| i.to_string());
+                let kind = if float { "float" } else { "int" };
+                format!("Unknown registry key in ResourceKey[minecraft:root / minecraft:context_{kind}_provider_type]: {ty}")
+            }
+            _ => e.to_string(),
+        },
+        other => format!("Not a map: {}", sorted_snbt(other)),
+    };
+    format!("Failed to parse either. First: Not a number; Second: {inner}")
+}
+
+impl Sim {
+    /// `Source::definition_error`.
+    pub(crate) fn definition_error_of(&self, registry: &str, definition: &Tag) -> Option<String> {
+        let loot = self.loot.as_ref()?;
+        let mut json = String::new();
+        nbt_json(definition, &mut json);
+        // `Either<direct, Either<reference, Either<list, direct>>>` as the codecs of item
+        // modifiers and slot sources report a failure.
+        let either = |e: &kiln_loot::ParseError| {
+            let inner = match definition {
+                Tag::Compound(_) if definition.get("type").is_none() => format!("No key type in MapLike[{}]", sorted_snbt(definition)),
+                _ => dfu_message(e),
+            };
+            match definition {
+                Tag::List(items) => match items.first() {
+                    Some(first) if !matches!(first, Tag::Compound(_)) => format!("Not a map: {}", sorted_snbt(first.unwrap_list_element())),
+                    _ => inner,
+                },
+                _ => format!(
+                    "Failed to parse either. First: {inner}; Second: Failed to parse either. First: Not a string; Second: Failed to parse either. First: Not a list: {}; Second: {inner}",
+                    sorted_snbt(definition)
+                ),
+            }
+        };
+        match registry {
+            "minecraft:loot_table" => loot.parse_table(&json).err().map(|e| dfu_message(&e)),
+            "minecraft:item_modifier" => loot.parse_modifier(&json).err().map(|e| either(&e)),
+            "minecraft:slot_source" => loot.parse_slot_source(&json).err().map(|e| either(&e)),
+            "minecraft:context_int_provider" | "minecraft:context_float_provider" => {
+                let float = registry.ends_with("float_provider");
+                if !matches!(definition, Tag::Compound(_)) {
+                    return Some(provider_parse_message(definition, float, &kiln_loot::ParseError::new("")));
+                }
+                let result = if float { loot.parse_float_provider(&json).err() } else { loot.parse_int_provider(&json).err() };
+                result.map(|e| provider_parse_message(definition, float, &e))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// `Tag.toString()`: SNBT with the keys of every compound sorted.
+fn sorted_snbt(tag: &Tag) -> String {
+    fn sort(tag: &Tag) -> Tag {
+        match tag {
+            Tag::Compound(fields) => {
+                let mut fields: Vec<(String, Tag)> = fields.iter().map(|(k, v)| (k.clone(), sort(v))).collect();
+                fields.sort_by(|a, b| a.0.cmp(&b.0));
+                Tag::Compound(fields)
+            }
+            Tag::List(items) => Tag::List(items.iter().map(sort).collect()),
+            other => other.clone(),
+        }
+    }
+    kiln_command::snbt::to_snbt(&sort(tag))
+}
+
+/// A codec failure as DataFixerUpper words it: no path, and unknown types as registry keys.
+fn dfu_message(e: &kiln_loot::ParseError) -> String {
+    let message = e.message.as_str();
+    if let Some(rest) = message.strip_prefix("unknown ")
+        && let Some((what, id)) = rest.rsplit_once(" type ")
+    {
+        let key = what.replace(' ', "_");
+        let unknown = format!("Unknown registry key in ResourceKey[minecraft:root / minecraft:{key}_type]: {id}");
+        // Number providers are `Either<number, provider>` fields.
+        return if what.starts_with("context ") { format!("Failed to parse either. First: Not a number; Second: {unknown}") } else { unknown };
+    }
+    message.to_owned()
+}
+
+/// The loot context of `compute` (`COMMAND_COMPUTE_*` parameter sets).
+struct ComputeContext {
+    origin: [f64; 3],
+    this: bool,
+    target_entity: bool,
+    block_state: Option<u16>,
+    block_entity: bool,
+}
+
+impl kiln_loot::LootContext for ComputeContext {
+    fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
+        match target {
+            kiln_loot::EntityTarget::This => self.this,
+            kiln_loot::EntityTarget::TargetEntity => self.target_entity,
+            _ => false,
+        }
+    }
+    fn origin(&self) -> Option<[f64; 3]> {
+        Some(self.origin)
+    }
+    fn block_state(&self) -> Option<u16> {
+        self.block_state
+    }
+    fn has_block_entity(&self) -> bool {
+        self.block_entity
+    }
+}
+
+fn stack_dimension(sim: &Sim) -> String {
+    kiln_command::host::Source::stack(sim).dimension.clone()
+}
+
 /// The loot context of `/loot loot` and `/loot fish` (`CHEST` / `FISHING` parameter sets).
 struct CommandLootContext {
     origin: [f64; 3],
@@ -828,6 +948,69 @@ impl Sim {
             }
         };
         Ok((items.into_iter().filter(|s| !s.is_empty()).map(|s| s.to_nbt()).collect(), table))
+    }
+
+    /// `compute`: a context int or float provider in the loot context of `target`.
+    pub(crate) fn compute_provider_value(
+        &mut self,
+        provider: &kiln_command::host::LootTableArg,
+        float: bool,
+        target: &kiln_command::host::ComputeTarget<PlayerRef>,
+    ) -> Result<f64, kiln_command::host::ComputeError> {
+        use kiln_command::host::{ComputeError, ComputeTarget, LootTableArg};
+        let command = |e: CommandError| ComputeError::Command(e);
+        let Some(loot) = self.loot.clone() else { return Err(command(CommandError::unsupported("Context number providers"))) };
+        let registry = if float { "minecraft:context_float_provider" } else { "minecraft:context_int_provider" };
+        let parse_error = |tag: &Tag, e: kiln_loot::ParseError| {
+            command(CommandError::new(kiln_command::tr!("argument.resource_or_id.failed_to_parse", provider_parse_message(tag, float, &e))))
+        };
+        let (int_ref, float_ref);
+        match provider {
+            LootTableArg::Id(id) => {
+                let ident = kiln_item::Identifier::parse(id).ok_or_else(|| command(no_such_element(id, registry)))?;
+                if float {
+                    float_ref = loot.float_provider_ref(&ident).ok_or_else(|| command(no_such_element(id, registry)))?;
+                    int_ref = None;
+                } else {
+                    int_ref = Some(loot.int_provider_ref(&ident).ok_or_else(|| command(no_such_element(id, registry)))?);
+                    float_ref = kiln_loot::parse::Ref::Named(0);
+                }
+            }
+            LootTableArg::Inline(tag) => {
+                if !matches!(tag, Tag::Compound(_)) {
+                    return Err(parse_error(tag, kiln_loot::ParseError::new("")));
+                }
+                let mut json = String::new();
+                nbt_json(tag, &mut json);
+                if float {
+                    float_ref = loot.parse_float_provider(&json).map_err(|e| parse_error(tag, e))?;
+                    int_ref = None;
+                } else {
+                    int_ref = Some(loot.parse_int_provider(&json).map_err(|e| parse_error(tag, e))?);
+                    float_ref = kiln_loot::parse::Ref::Named(0);
+                }
+            }
+        }
+        let stack = kiln_command::host::Source::stack(self);
+        let (this, mut origin) = (stack.entity.is_some(), stack.position);
+        let mut ctx = ComputeContext { origin, this, target_entity: false, block_state: None, block_entity: false };
+        match target {
+            ComputeTarget::Default => {}
+            ComputeTarget::Block(pos) => {
+                let state = kiln_command::Host::block_state(self, &stack_dimension(self), *pos);
+                let has_entity = kiln_command::Host::block_entity(self, &stack_dimension(self), *pos).is_some();
+                origin = [pos[0] as f64, pos[1] as f64, pos[2] as f64];
+                ctx = ComputeContext { origin, block_state: Some(state), block_entity: has_entity, ..ctx };
+            }
+            ComputeTarget::Entity(_) => ctx.target_entity = true,
+        }
+        let mut level = kiln_javamath::random::LegacyRandom::new(self.command_loot_seed());
+        let mut eval = kiln_loot::Eval::new(&loot, &ctx, &mut level);
+        let invalid = |a: kiln_loot::number::Arith| ComputeError::Invalid(a.0);
+        match int_ref {
+            Some(r) => eval.int_unsafe(&r).map(f64::from).map_err(invalid),
+            None => eval.float_unsafe(&float_ref).map(f64::from).map_err(invalid),
+        }
     }
 
     /// `ItemCommands.applyModifier`: the item modifier over one stack (`COMMAND` parameters:

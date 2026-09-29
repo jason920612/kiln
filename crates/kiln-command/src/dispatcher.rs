@@ -552,6 +552,39 @@ impl<S: Source> Dispatcher<S> {
             }
             NodeKind::Argument { name, ty } => {
                 let value = ty.parse(reader, source.permission() >= SELECTOR_PERMISSION)?;
+                // Inline definitions are decoded while parsing, as `ResourceOrIdArgument` does.
+                let inline_registry = match ty {
+                    ArgumentType::LootResource { registry } => Some(*registry),
+                    ArgumentType::ContextProvider { float: true } => Some("minecraft:context_float_provider"),
+                    ArgumentType::ContextProvider { float: false } => Some("minecraft:context_int_provider"),
+                    ArgumentType::SlotSource => Some("minecraft:slot_source"),
+                    _ => None,
+                };
+                if let Some(registry) = inline_registry {
+                    let definition = match &value {
+                        ArgumentValue::Nbt(tag) => Some(tag.clone()),
+                        ArgumentValue::String(text) if text.starts_with(['{', '[', '"', '\'']) => {
+                            crate::snbt::parse_tag(&mut StringReader::new(text)).ok()
+                        }
+                        _ => None,
+                    };
+                    match definition {
+                        // A quoted string names an entry of a registry that takes references.
+                        Some(kiln_proto::nbt::Tag::String(id)) if matches!(registry, "minecraft:item_modifier" | "minecraft:slot_source") => {
+                            let id = Identifier::parse(&id).map_or(id, |i| i.to_string());
+                            let ids = source.registry_ids(registry);
+                            if !ids.is_empty() && !ids.iter().any(|r| *r == id) {
+                                return Err(CommandError::new(crate::tr!("argument.resource_or_id.no_such_element", id, registry)).at(reader));
+                            }
+                        }
+                        Some(d) => {
+                            if let Some(message) = source.definition_error(registry, &d) {
+                                return Err(CommandError::new(crate::tr!("argument.resource_or_id.failed_to_parse", message)).at(reader));
+                            }
+                        }
+                        None => {}
+                    }
+                }
                 // Loot registry ids are looked up while parsing, as `ResourceOrIdArgument` does.
                 if let (ArgumentType::LootResource { registry }, ArgumentValue::Identifier(id)) = (ty, &value)
                     && let ids = source.registry_ids(registry)
@@ -559,6 +592,12 @@ impl<S: Source> Dispatcher<S> {
                     && !ids.iter().any(|r| r == id.as_str())
                 {
                     return Err(CommandError::new(crate::tr!("argument.resource_or_id.no_such_element", id.to_string(), *registry)).at(reader));
+                }
+                if let (ArgumentType::ContextProvider { float }, ArgumentValue::Identifier(id)) = (ty, &value) {
+                    let registry = if *float { "minecraft:context_float_provider" } else { "minecraft:context_int_provider" };
+                    if !source.registry_ids(registry).iter().any(|r| r == id.as_str()) {
+                        return Err(CommandError::new(crate::tr!("argument.resource_or_id.no_such_element", id.to_string(), registry)).at(reader));
+                    }
                 }
                 if let (ArgumentType::SlotSource, ArgumentValue::String(text)) = (ty, &value)
                     && crate::slots::by_name(text).is_none()

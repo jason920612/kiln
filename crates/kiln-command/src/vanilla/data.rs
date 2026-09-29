@@ -364,9 +364,11 @@ fn sources<S: Host + 'static>(b: Builder<S>, kind: Kind, op: Op) -> Builder<S> {
 
 /// `compute default|block|entity (float <provider> [scale] | integer <provider>)`.
 fn compute_node<S: Host + 'static>(kind: Kind, op: Op) -> Builder<S> {
-    let numbers = move |scaled: bool| {
+    use super::compute::{evaluate, provider_arg, Branch};
+    let numbers = move |branch: Branch| {
         let run = move |c: &CommandContext<S>, s: &mut S, float: bool| {
-            let v = constant_provider(c.nbt("provider"))?;
+            let target = branch.target(c, s)?;
+            let v = evaluate(s, &provider_arg(c), float, &target)?;
             let tag = if float {
                 let scale = c.get("scale").map_or(1.0, |_| c.float("scale"));
                 Tag::Float(v as f32 * scale)
@@ -376,41 +378,20 @@ fn compute_node<S: Host + 'static>(kind: Kind, op: Op) -> Builder<S> {
             manipulate(c, s, kind, op, vec![tag])
         };
         [
-            literal("float").then({
-                let p = argument("provider", ArgumentType::ContextProvider { float: true }).executes(move |c, s: &mut S| run(c, s, true));
-                // Only `default` takes a scale.
-                if scaled { p.then(argument("scale", ArgumentType::float()).executes(move |c, s: &mut S| run(c, s, true))) } else { p }
-            }),
+            literal("float").then(argument("provider", ArgumentType::ContextProvider { float: true }).executes(move |c, s: &mut S| run(c, s, true))),
             literal("integer").then(
                 argument("provider", ArgumentType::ContextProvider { float: false }).executes(move |c, s: &mut S| run(c, s, false)),
             ),
         ]
     };
-    let with = |b: Builder<S>, scaled: bool| {
-        let [f, i] = numbers(scaled);
+    let with = |b: Builder<S>, branch: Branch| {
+        let [f, i] = numbers(branch);
         b.then(f).then(i)
     };
     literal("compute")
-        .then(with(literal("default"), false))
-        .then(literal("block").then(with(argument("computePos", ArgumentType::BlockPos), false)))
-        .then(literal("entity").then(with(argument("computeTarget", ArgumentType::entity()), false)))
-}
-
-/// A number provider Kiln can evaluate without a loot context: a plain number or
-/// `{type:"minecraft:constant",value:N}`.
-pub(super) fn constant_provider(tag: &Tag) -> Result<f64> {
-    if let Some(v) = numeric(tag) {
-        return Ok(v);
-    }
-    if let Tag::Compound(f) = tag {
-        let ty = f.iter().find(|(k, _)| k == "type").and_then(|(_, v)| if let Tag::String(s) = v { Some(s.as_str()) } else { None });
-        if matches!(ty, Some("constant" | "minecraft:constant"))
-            && let Some(v) = f.iter().find(|(k, _)| k == "value").and_then(|(_, v)| numeric(v))
-        {
-            return Ok(v);
-        }
-    }
-    Err(CommandError::unsupported("Context number providers"))
+        .then(with(literal("default"), Branch::Default))
+        .then(literal("block").then(with(argument("computePos", ArgumentType::BlockPos), Branch::Block)))
+        .then(literal("entity").then(with(argument("computeTarget", ArgumentType::entity()), Branch::Entity)))
 }
 
 pub fn data<S: Host + 'static>(d: &mut Dispatcher<S>) {

@@ -203,8 +203,12 @@ impl SlotsArg {
         if let Some(ids) = crate::slots::by_name(text) {
             return SlotsArg::Range { name: text.to_owned(), ids };
         }
-        if text.starts_with(['{', '[']) {
+        if text.starts_with(['{', '[', '"', '\'']) {
             let source = crate::snbt::parse_tag(&mut crate::reader::StringReader::new(text)).unwrap_or(Tag::Compound(Vec::new()));
+            if let Tag::String(id) = &source {
+                let id = crate::types::Identifier::parse(id).map_or_else(|| id.clone(), |i| i.to_string());
+                return SlotsArg::Source { name: Some(id.clone()), source: LootTableArg::Id(id) };
+            }
             return SlotsArg::Source { name: None, source: LootTableArg::Inline(source) };
         }
         let id = crate::types::Identifier::parse(text).map_or_else(|| text.to_owned(), |i| i.to_string());

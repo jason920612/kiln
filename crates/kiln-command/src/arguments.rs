@@ -615,15 +615,14 @@ impl ArgumentType {
                 ArgumentValue::Integer(0xFF << 24 | (r & 0xFF) << 16 | (g & 0xFF) << 8 | (b & 0xFF))
             }
             ArgumentType::NbtTag => ArgumentValue::Nbt(snbt::parse_tag(reader)?),
-            ArgumentType::ContextProvider { float } => {
-                let tag = snbt::parse_tag(reader)?;
-                if let Tag::String(id) = &tag {
-                    // An id of a data-driven provider (none are loaded).
-                    let registry = if float { "minecraft:context_float_provider" } else { "minecraft:context_int_provider" };
-                    let id = Identifier::parse(id).map_or_else(|| id.clone(), |i| i.to_string());
-                    return Err(CommandError::new(tr!("argument.resource_or_id.no_such_element", id, registry)).at(reader));
+            // Like `ResourceOrIdArgument`: SNBT is a definition, anything else an id the
+            // dispatcher looks up.
+            ArgumentType::ContextProvider { .. } => {
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    ArgumentValue::Nbt(snbt::parse_tag(reader)?)
+                } else {
+                    ArgumentValue::Identifier(Identifier::read(reader)?)
                 }
-                ArgumentValue::Nbt(tag)
             }
             ArgumentType::ItemSlot | ArgumentType::ItemSlots => {
                 let name = read_until_space(reader).to_owned();
@@ -1153,7 +1152,7 @@ fn parse_item_predicate(reader: &mut StringReader) -> Result<String> {
 /// definition. Kept as text.
 fn parse_slot_source(reader: &mut StringReader) -> Result<String> {
     let start = reader.cursor();
-    if reader.can_read() && matches!(reader.peek(), '{' | '[') {
+    if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
         snbt::parse_tag(reader)?;
     } else {
         while reader.can_read() && (types::is_allowed_in_identifier(reader.peek()) || reader.peek() == '*') {
