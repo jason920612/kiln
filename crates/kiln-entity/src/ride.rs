@@ -119,6 +119,16 @@ pub fn add_passenger(vehicle: &mut Entity, id: i32, is_player: bool, first_is_pl
     }
 }
 
+/// `Entity.ejectPassengers`: every passenger gets off (players are seen to it by the
+/// simulation, which finds them no longer seated).
+pub fn eject(vehicle: &mut Entity, level: &mut dyn EntityLevel) {
+    for id in std::mem::take(&mut vehicle.passengers) {
+        if let Some(rider) = level.entity_mut(id) {
+            rider.vehicle = None;
+        }
+    }
+}
+
 /// `removePassenger`.
 pub fn remove_passenger(vehicle: &mut Entity, id: i32) {
     vehicle.passengers.retain(|&p| p != id);

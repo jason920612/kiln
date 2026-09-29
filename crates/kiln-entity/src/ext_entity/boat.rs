@@ -32,7 +32,9 @@ pub struct Boat {
     pub raft: bool,
     pub chest: bool,
     pub status: Status,
-    old_status: Status,
+    /// `oldStatus` (none before the first tick, as in vanilla's uninitialised field).
+    old_status: Option<Status>,
+    started: bool,
     /// `outOfControlTicks`: ticks spent under water (60 and the riders are thrown off).
     pub out_of_control: f32,
     delta_rotation: f32,
@@ -57,7 +59,8 @@ impl Boat {
             raft: name.ends_with("_raft") || name.ends_with("_chest_raft"),
             chest: name.contains("_chest_"),
             status: Status::InAir,
-            old_status: Status::InAir,
+            old_status: None,
+            started: false,
             out_of_control: 0.0,
             delta_rotation: 0.0,
             water_level: 0.0,
@@ -247,7 +250,7 @@ impl Boat {
         let mut d0 = -0.04;
         let mut d1 = 0.0;
         let f;
-        if self.old_status == Status::InAir && self.status != Status::InAir && self.status != Status::OnLand {
+        if self.old_status == Some(Status::InAir) && self.status != Status::InAir && self.status != Status::OnLand {
             self.water_level = e.y() + e.height as f64;
             d1 = (self.water_level_above(e, level) - e.height) as f64 + 0.101;
             let moved = e.bounding_box().offset(0.0, d1 - e.y(), 0.0);
@@ -290,12 +293,25 @@ impl Boat {
     }
 }
 
+/// `AbstractBoat.checkFallDamage`: no damage; the fall is only counted over dry ground.
+pub(crate) fn check_fall_damage(e: &mut Entity, level: &mut dyn EntityLevel, y: f64, on_ground: bool) {
+    if e.vehicle.is_some() {
+        return;
+    }
+    if on_ground {
+        e.fall_distance = 0.0;
+    } else if !fluid::fluid_at(level, e.block_position().below()).kind.is_water() && y < 0.0 {
+        e.fall_distance -= y as f32 as f64;
+    }
+}
+
 impl EntityExt for Boat {
     crate::entity_ext_boilerplate!();
 
     /// `AbstractBoat.tick`.
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
-        self.old_status = self.status;
+        self.old_status = self.started.then_some(self.status);
+        self.started = true;
         self.status = self.get_status(e, level);
         if matches!(self.status, Status::UnderWater | Status::UnderFlowingWater) {
             self.out_of_control += 1.0;
@@ -315,6 +331,8 @@ impl EntityExt for Boat {
             self.paddles = [false; 2];
             self.float_boat(e, level, false);
             let movement = e.delta;
+            // (`checkFallDamage` remembers the vertical speed it was moved with.)
+            self.last_yd = movement.y;
             e.do_move(level, MoverType::SelfMove, movement);
         } else {
             e.delta = Vec3::ZERO;

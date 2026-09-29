@@ -43,6 +43,7 @@ pub fn is_simulated(type_name: &str) -> bool {
     ) || THROWABLES.iter().any(|t| t.type_name() == type_name)
         || crate::ext_entity::TYPES.contains(&type_name)
         || crate::ext_entity::boat::is_boat(type_name)
+        || crate::ext_entity::minecart::is_minecart(type_name)
         || crate::mob::MobKind::by_name(type_name).is_some()
 }
 

@@ -57,3 +57,30 @@ pub(crate) fn use_item(p: &mut Player, level: &mut RegionLevel, off_hand: bool, 
     }
     p.award_stat(Stat::item(player_stats::USED, stack.item()), 1);
 }
+
+/// Whether `name` is a minecart item.
+pub(crate) fn is_minecart_item(name: &str) -> bool {
+    kiln_entity::ext_entity::minecart::is_minecart(name)
+}
+
+/// `MinecartItem.useOn`: a minecart on the clicked rail (raised half a block on a slope).
+pub(crate) fn use_minecart_on(p: &mut Player, level: &mut RegionLevel, pos: kiln_blocks::BlockPos, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
+    let stack = p.in_hand(off_hand).clone();
+    let state = level.block(pos);
+    let Some(shape) = kiln_entity::ext_entity::minecart::rail_shape(state) else { return false };
+    let Some(kind) = kiln_data::entities::by_name(stack.item_name()) else { return false };
+    let lift = if shape.is_slope() { 0.5 } else { 0.0 };
+    let at = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.0625 + lift, pos.z as f64 + 0.5);
+    let seed = crate::ranged::projectile_seed(level, p, spawns.len() as u64);
+    let cart = kiln_entity::ext_entity::minecart::new(kind.name, at, seed);
+    crate::ranged::push_spawn(spawns, cart);
+    if !p.infinite_materials() {
+        let i = p.hand_index(off_hand);
+        p.inv.item_mut(i).shrink(1);
+        p.inv.times_changed += 1;
+    }
+    p.award_stat(Stat::item(player_stats::USED, stack.item()), 1);
+    let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
+    p.used_on_block("minecraft:item_used_on_block", [pos.x, pos.y, pos.z], level.block(pos), &stack, &probe);
+    true
+}

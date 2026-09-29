@@ -748,6 +748,11 @@ impl Entity {
 
     /// `checkFallDamage`.
     fn check_fall_damage(&mut self, level: &mut dyn EntityLevel, y: f64, on_ground: bool, state: u16, pos: BlockPos) {
+        // `AbstractBoat.checkFallDamage` (a boat is placeholder-typed while it ticks).
+        if crate::ext_entity::boat::is_boat(self.type_name) {
+            crate::ext_entity::boat::check_fall_damage(self, level, y, on_ground);
+            return;
+        }
         // `LivingEntity.checkFallDamage`: out of water, the fluid state is refreshed after the move
         // (a mob falling into water splashes in the same tick).
         if matches!(self.kind, EntityKind::MobTicking { .. } | EntityKind::Mob(_)) && !crate::mob::checks_fall_damage(self.type_name) {

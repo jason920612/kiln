@@ -912,6 +912,9 @@ fn use_on_block(
     }
     // `Item.useOn` of tools (hoes, shovels, axes, shears, honeycomb, bone meal, fire charges,
     // flint and steel on campfires and candles).
+    if item_name.is_some_and(crate::boats::is_minecart_item) && actor.may_build && crate::boats::use_minecart_on(p, level, bp, !main_hand, spawns) {
+        return;
+    }
     if item_name == Some(crate::firework::ITEM) && actor.may_build && crate::firework::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
         return;
     }

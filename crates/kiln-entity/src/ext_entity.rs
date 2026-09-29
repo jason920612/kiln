@@ -10,6 +10,7 @@ use std::fmt::Debug;
 
 pub mod boat;
 pub mod fireball;
+pub mod minecart;
 pub mod firework;
 pub mod fishing_hook;
 pub mod lightning;
@@ -93,6 +94,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:shulker_bullet" => shulker_bullet::load(r),
         "minecraft:firework_rocket" => firework::load(r),
         n if boat::is_boat(n) => boat::load(n, r),
+        n if minecart::is_minecart(n) => minecart::load(n, r),
         _ => None,
     }
 }

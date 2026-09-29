@@ -603,3 +603,34 @@ fn boats_float_carry_and_break() {
     // It dropped its item (left a moment before anyone can pick it up).
     assert!(w.count("minecraft:item") == 1 || w.inventory_count("minecraft:oak_boat") == 1, "drops the boat");
 }
+
+#[test]
+fn minecarts_ride_powered_rails() {
+    let mut w = World::new("creative");
+    // A powered line east from a wall, the first rail on a redstone block.
+    let y = w.ground[1];
+    let (x0, z) = (w.ground[0] + 2, w.ground[2] + 4);
+    w.set([x0 - 1, y + 1, z], "minecraft:stone");
+    w.set([x0, y, z], "minecraft:redstone_block");
+    for i in 0..9 {
+        w.set([x0 + i, y + 1, z], "minecraft:powered_rail[shape=east_west]");
+    }
+    w.ticks(3);
+    w.hold("minecraft:minecart", 1);
+    w.use_on_top([x0, y + 1, z]);
+    let ids = w.sim.entity_ids_of("minecraft:minecart");
+    assert_eq!(ids.len(), 1, "{:?}", w.sim.entities());
+    let start = w.sim.entities().into_iter().find(|(k, _)| *k == "minecraft:minecart").unwrap().1;
+    // A click puts the player in the cart.
+    w.interact(ids[0]);
+    assert_eq!(w.sim.vehicle_of(1), Some(ids[0]));
+    // At the wall the powered rail pushes it off along the line, and it speeds up.
+    w.ticks(40);
+    let at = w.sim.entities().into_iter().find(|(k, _)| *k == "minecraft:minecart").unwrap().1;
+    assert!(at[0] > start[0] + 3.0, "ran along the rail: {start:?} -> {at:?}");
+    assert!((at[2] - (z as f64 + 0.5)).abs() < 0.01, "stays on the line: {at:?}");
+    assert_eq!(w.sim.vehicle_of(1), Some(ids[0]), "the rider went along");
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerInput { flags: 0x20 })]));
+    w.ticks(2);
+    assert_eq!(w.sim.vehicle_of(1), None);
+}

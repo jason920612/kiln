@@ -129,6 +129,7 @@ public class EntityVectors {
         Scenarios.players(out);
         Scenarios.throwables(out);
         Scenarios.arrows(out);
+        Scenarios.vehicles(out);
         return out;
     }
 
@@ -190,7 +191,7 @@ public class EntityVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=25592",
+                "server-port=" + System.getenv().getOrDefault("KILN_HARNESS_PORT", "25592"),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
@@ -386,6 +387,8 @@ public class EntityVectors {
             case "arrow" -> e = new net.minecraft.world.entity.projectile.arrow.Arrow(EntityTypes.ARROW, level);
             case "snowball" -> e = new net.minecraft.world.entity.projectile.throwableitemprojectile.Snowball(EntityTypes.SNOWBALL, level);
             case "ender_pearl" -> e = new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl(EntityTypes.ENDER_PEARL, level);
+            case "minecart" -> e = new net.minecraft.world.entity.vehicle.minecart.Minecart(EntityTypes.MINECART, level);
+            case "oak_boat" -> e = new net.minecraft.world.entity.vehicle.boat.Boat(EntityTypes.OAK_BOAT, level, () -> net.minecraft.world.item.Items.OAK_BOAT);
             case "player" -> {
                 var profile = new com.mojang.authlib.GameProfile(java.util.UUID.nameUUIDFromBytes(new byte[] {1}), "Kiln");
                 var player = new net.minecraft.server.level.ServerPlayer(level.getServer(), level, profile,
@@ -497,6 +500,10 @@ public class EntityVectors {
             }
             sb.append(',').append(inGround ? 1 : 0).append(',').append(arrow.shakeTime)
                     .append(',').append(getInt(net.minecraft.world.entity.projectile.arrow.AbstractArrow.class, arrow, "life"));
+        } else if (e instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart cart) {
+            sb.append(',').append(d(cart.getYRot())).append(',').append(cart.isFlipped() ? 1 : 0);
+        } else if (e instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat) {
+            sb.append(',').append(d(boat.getYRot()));
         } else if (e instanceof ExperienceOrb orb) {
             sb.append(',').append(orb.getValue()).append(',').append(getInt(ExperienceOrb.class, orb, "count"))
                     .append(',').append(getInt(ExperienceOrb.class, orb, "age"));
@@ -955,6 +962,89 @@ class Scenarios {
             String kind = k % 3 == 2 ? "ender_pearl" : "snowball";
             s.entity(kind, rnd(r, -2, 3), rnd(r, 1.5, 5), rnd(r, -2, 3), rnd(r, -0.5, 0.5), rnd(r, -0.3, 0.6), rnd(r, -0.5, 0.5), r.nextLong());
             s.ticks(60);
+            out.add(s);
+        }
+    }
+
+    static final String[] RAILS = {"minecraft:rail", "minecraft:powered_rail", "minecraft:detector_rail", "minecraft:activator_rail"};
+
+    /** Minecarts on straight, sloped and curved track, powered and not, in water and off the rails; boats afloat and aground. */
+    static void vehicles(List<EntityVectors.Scenario> out) {
+        Random r = new Random(14);
+        // Straight tracks along x: the cart runs in with some speed.
+        for (int k = 0; k < 24; k++) {
+            var s = new EntityVectors.Scenario("minecart/straight/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            String rail = RAILS[k % RAILS.length];
+            String props = "[shape=east_west" + (k % 4 != 0 && k % 3 == 1 ? ",powered=true" : "") + (k % 5 == 2 ? ",waterlogged=true" : "") + "]";
+            for (int x = -12; x <= 12; x++) s.block(x, 1, 0, rail + props);
+            s.entity("minecart", rnd(r, -6, 6), 1.0625, 0.5, rnd(r, -0.45, 0.45), 0, 0, r.nextLong());
+            s.ticks(80);
+            out.add(s);
+        }
+        // Powered rails from rest against a wall, and the brake of an unpowered one.
+        for (int k = 0; k < 8; k++) {
+            var s = new EntityVectors.Scenario("minecart/powered/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            s.block(-3, 1, 0, "minecraft:stone");
+            for (int x = -2; x <= 8; x++) s.block(x, 1, 0, "minecraft:powered_rail[shape=east_west,powered=" + (k % 2 == 0) + "]");
+            s.entity("minecart", -1.5 + 0.3 * k, 1.0625, 0.5, 0, 0, 0, r.nextLong());
+            s.ticks(100);
+            out.add(s);
+        }
+        // Slopes: up and down, both ways.
+        for (int k = 0; k < 16; k++) {
+            var s = new EntityVectors.Scenario("minecart/slope/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            String[] up = {"ascending_east", "ascending_west", "ascending_north", "ascending_south"};
+            String shape = up[k % 4];
+            boolean alongX = k % 4 < 2;
+            for (int i = -6; i <= 6; i++) {
+                int x = alongX ? i : 0, z = alongX ? 0 : i;
+                int y = 1 + (k % 4 == 0 || k % 4 == 3 ? Math.max(0, (i + 6) / 3) : Math.max(0, (6 - i) / 3));
+                s.fill(x, 1, z, x, y - 1, z, "minecraft:stone");
+                s.block(x, y, z, "minecraft:rail[shape=" + ((i + 6) % 3 == 1 ? shape : (alongX ? "east_west" : "north_south")) + "]");
+            }
+            double dir = k % 2 == 0 ? 1 : -1;
+            s.entity("minecart", alongX ? rnd(r, -3, 3) : 0.5, 2.0, alongX ? 0.5 : rnd(r, -3, 3), alongX ? dir * rnd(r, 0.05, 0.3) : 0, 0, alongX ? 0 : dir * rnd(r, 0.05, 0.3), r.nextLong());
+            s.ticks(80);
+            out.add(s);
+        }
+        // Curves: a loop of track, the cart circling it.
+        for (int k = 0; k < 12; k++) {
+            var s = new EntityVectors.Scenario("minecart/curve/" + k, r.nextLong());
+            s.fill(-8, 0, -8, 8, 0, 8, "minecraft:stone");
+            for (int x = -3; x <= 3; x++) {
+                s.block(x, 1, -3, x == -3 ? "minecraft:rail[shape=south_east]" : x == 3 ? "minecraft:rail[shape=south_west]" : "minecraft:rail[shape=east_west]");
+                s.block(x, 1, 3, x == -3 ? "minecraft:rail[shape=north_east]" : x == 3 ? "minecraft:rail[shape=north_west]" : "minecraft:rail[shape=east_west]");
+            }
+            for (int z = -2; z <= 2; z++) {
+                s.block(-3, 1, z, "minecraft:rail[shape=north_south]");
+                s.block(3, 1, z, "minecraft:rail[shape=north_south]");
+            }
+            s.entity("minecart", rnd(r, -2, 2), 1.0625, -2.5, rnd(r, 0.1, 0.4), 0, 0, r.nextLong());
+            s.ticks(120);
+            out.add(s);
+        }
+        // Off the rails: on the ground, in the air, in water.
+        for (int k = 0; k < 12; k++) {
+            var s = new EntityVectors.Scenario("minecart/offrail/" + k, r.nextLong());
+            s.fill(-14, 0, -8, 14, 0, 8, k % 3 == 1 ? "minecraft:ice" : "minecraft:stone");
+            if (k % 3 == 2) s.fill(-14, 1, -8, 14, 2, 8, "minecraft:water");
+            s.entity("minecart", rnd(r, -3, 3), rnd(r, 1.0, 4.0), rnd(r, -3, 3), rnd(r, -0.5, 0.5), rnd(r, -0.2, 0.3), rnd(r, -0.5, 0.5), r.nextLong());
+            s.ticks(80);
+            out.add(s);
+        }
+        // Boats: floating, sinking to the surface, sliding on land and ice.
+        for (int k = 0; k < 24; k++) {
+            var s = new EntityVectors.Scenario("boat/" + k, r.nextLong());
+            s.fill(-10, 0, -10, 10, 0, 10, k % 4 == 3 ? "minecraft:ice" : "minecraft:stone");
+            if (k % 4 != 3) s.fill(-6, 0, -6, 6, 2, 6, "minecraft:water");
+            if (k % 6 == 1) s.fill(-6, 1, -6, 6, 1, 6, "minecraft:water[level=3]");
+            if (k % 8 == 5) s.fill(-2, 0, -2, 2, 2, 2, "minecraft:stone");
+            s.entity("oak_boat", rnd(r, -3, 3), rnd(r, 0.4, 4.0), rnd(r, -3, 3), rnd(r, -0.3, 0.3), rnd(r, -0.2, 0.1), rnd(r, -0.3, 0.3), r.nextLong())
+                    .with("yaw", rnd(r, -180, 180));
+            s.ticks(100);
             out.add(s);
         }
     }
