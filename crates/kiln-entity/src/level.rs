@@ -234,6 +234,12 @@ pub enum DamageKind {
     /// `minecraft:wind_charge` (a wind charge's hit).
     WindCharge,
 
+    // -- wp28: axolotl and goat
+    /// `minecraft:dry_out` (an axolotl on land).
+    DryOut,
+    /// `mob_attack_no_aggro` (a ramming goat: the victim does not turn on it).
+    NoAggroMobAttack,
+
 }
 
 /// Side effects the simulation carries out or broadcasts.

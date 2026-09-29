@@ -662,6 +662,16 @@ public class MobVectors {
                 StringBuilder dbg = new StringBuilder("DBG mob " + m.getId() + " t=" + m.level().getGameTime() + " nearby=[");
                 if (nl.isPresent()) for (var x : nl.get()) dbg.append(x.getId()).append(x instanceof net.minecraft.world.entity.player.Player ? "P" : "").append(nv.isPresent() && nv.get().contains(x) ? "+" : "-").append(' ');
                 dbg.append("] look=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.LOOK_TARGET).map(Object::toString).orElse("-"));
+                // The path being followed and where the move control wants to go (wp28).
+                var path = m.getNavigation().getPath();
+                dbg.append(" path=");
+                if (path == null) dbg.append("none");
+                else {
+                    dbg.append('@').append(path.getNextNodeIndex()).append('[');
+                    for (int pi = 0; pi < path.getNodeCount(); pi++) dbg.append(path.getNode(pi).x).append(',').append(path.getNode(pi).y).append(',').append(path.getNode(pi).z).append(' ');
+                    dbg.append(']');
+                }
+                dbg.append(" want=").append(get(m.getMoveControl(), "wantedX")).append(',').append(get(m.getMoveControl(), "wantedY")).append(',').append(get(m.getMoveControl(), "wantedZ"));
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             }
             // The level's random state too: brain draws from it (`Kiln`: the mob's own stream).
@@ -2932,9 +2942,191 @@ public class MobVectors {
 
     /// Axolotls, goats, frogs, tadpoles.
     static void scenariosBrainNew(List<Scenario> out) {
+        scenariosAxolotlGoat(out);
     }
 
     /// Wardens, breezes, creakings.
     static void scenariosBrainSpecial(List<Scenario> out) {
+    }
+
+    // ---------------------------------------------------------------------- wp28: axolotls and goats
+
+    /// A stone slab (`depth + 1` layers) with a water pool in it: the pool spans x0..x1, z0..z1 and is
+    /// `depth` deep (its surface is level with the land at BY - 1).
+    static void poolWorld(Scenario s, int r, int x0, int z0, int x1, int z1, int depth) {
+        BlockState stone = parse("minecraft:stone");
+        BlockState water = parse("minecraft:water");
+        for (int x = -r; x <= r; x++)
+            for (int z = -r; z <= r; z++) {
+                boolean pool = x >= x0 && x <= x1 && z >= z0 && z <= z1;
+                for (int y = BY - 1 - depth; y <= BY - 1; y++)
+                    s.blocks.put(new BlockPos(BX + x, y, BZ + z), pool && y > BY - 1 - depth ? water : stone);
+            }
+    }
+
+    static void scenariosAxolotlGoat(List<Scenario> out) {
+        double W = BY - 2; // y of a mob in the pool
+        // Axolotls idling in a pool (swimming about, looking at the player).
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("axolotl_idle_water_" + seed);
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 40f * seed, 21000L + seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 60 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Idle on land (walking slowly, no water in reach).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("axolotl_idle_land_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, BY, 0.5, 70f * seed, 21100L + seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 70 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // On land with a pool nearby: TryFindLiquid takes it there.
+        {
+            Scenario s = new Scenario("axolotl_find_water");
+            poolWorld(s, 14, 4, -3, 9, 3, 3);
+            s.mobs.add(new MobSpec("minecraft:axolotl", -2.5, BY, 0.5, 90f, 21200));
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 80;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Hunting: a cod (and a tropical fish) in the pool.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("axolotl_hunt_fish_" + seed);
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 20f, 21300L + seed));
+            s.mobs.add(new MobSpec("minecraft:cod", 3.5, W, 1.5, 0f, 21310L + seed));
+            s.mobs.add(new MobSpec("minecraft:tropical_fish", -2.5, W, -1.5, 90f, 21320L + seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 90 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Playing dead: hurt in the water (it takes a 1 in 3 chance per hit).
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("axolotl_play_dead_" + seed);
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 30f * seed, 21400L + seed));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.hurts.put(10, new double[] {0, 2.0});
+            s.hurts.put(40, new double[] {0, 2.0});
+            s.hurts.put(70, new double[] {0, 2.0});
+            s.levelSeed = 100 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // The same at low health (a hard-hit chance of 1 in 3 per hit, whatever the damage).
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("axolotl_play_dead_low_" + seed);
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            MobSpec m = new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 30f * seed, 21450L + seed);
+            m.nbt = "{Health:8.0f}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            for (int t = 10; t < 200; t += 22) s.hurts.put(t, new double[] {0, 0.5});
+            s.levelSeed = 105 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Breeding in the pool.
+        {
+            Scenario s = new Scenario("axolotl_breed");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            MobSpec m1 = new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 20f, 21500);
+            MobSpec m2 = new MobSpec("minecraft:axolotl", 3.5, W, 1.5, 200f, 21501);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 110;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A baby follows an adult.
+        {
+            Scenario s = new Scenario("axolotl_baby_follow");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            MobSpec baby = new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 0f, 21600);
+            baby.age = -24000;
+            s.mobs.add(baby);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 4.5, W, 2.5, 90f, 21601));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 120;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Tempted by a tropical fish bucket, in the water and on land.
+        {
+            Scenario s = new Scenario("axolotl_tempt_water");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", -3.5, W, 0.5, 0f, 21700));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:tropical_fish_bucket";
+            s.levelSeed = 130;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("axolotl_tempt_land");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, BY, 0.5, 0f, 21710));
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:tropical_fish_bucket";
+            s.levelSeed = 131;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Feeding a tropical fish bucket: love mode.
+        {
+            Scenario s = new Scenario("axolotl_feed");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 0f, 21720));
+            s.player = new double[] {3.5, BY, 0.5};
+            Action a = new Action(5, "interact");
+            a.mob = 0; a.what = "minecraft:tropical_fish_bucket";
+            s.actions.add(a);
+            s.levelSeed = 132;
+            s.ticks = 120;
+            out.add(s);
+        }
+        // A water bucket takes the axolotl.
+        {
+            Scenario s = new Scenario("axolotl_bucket");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 0f, 21730));
+            s.player = new double[] {3.5, BY, 0.5};
+            Action a = new Action(5, "interact");
+            a.mob = 0; a.what = "minecraft:water_bucket";
+            s.actions.add(a);
+            s.levelSeed = 133;
+            s.ticks = 40;
+            out.add(s);
+        }
+        // Out of the water for good: 6000 ticks of air, then it dries out.
+        {
+            Scenario s = new Scenario("axolotl_dry_out");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, BY, 0.5, 0f, 21740));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 134;
+            s.ticks = 6200;
+            out.add(s);
+        }
     }
 }

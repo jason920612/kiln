@@ -608,7 +608,7 @@ impl<'a> Search<'a> {
             }
         }
         // `getClockWise`: north->east, east->south, south->west, west->north.
-        const CW: [usize; 4] = [3, 0, 1, 2]; // indexed by the 2D value of the direction
+        const CW: [usize; 4] = [1, 2, 3, 0]; // indexed by the 2D value of the direction (s w n e)
         for &(dx, dz, d2) in &HORIZ {
             let cw = CW[d2];
             let (cx, cz) = match cw {
