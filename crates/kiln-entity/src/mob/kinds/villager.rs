@@ -113,6 +113,10 @@ pub struct VillagerState {
     pub last_restock: i64,
     pub restocks_today: i32,
     pub last_gossip_decay: i64,
+    /// Claimed bed, job site and meeting point (`super::villager_poi`).
+    pub pois: super::villager_poi::VillagerPois,
+    /// `gossips`.
+    pub gossips: crate::mob::gossip::Gossips,
 }
 
 impl Default for VillagerState {
@@ -132,6 +136,8 @@ impl Default for VillagerState {
             last_restock: 0,
             restocks_today: 0,
             last_gossip_decay: 0,
+            pois: Default::default(),
+            gossips: crate::mob::gossip::Gossips::default(),
         }
     }
 }
@@ -206,6 +212,14 @@ pub fn notify_trade(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
     let Some(offer) = st.offers.as_mut().and_then(|o| o.get_mut(index)) else { return Traded { leveled_up: false } };
     offer.increase_uses();
     let (offer_xp, reward) = (offer.xp, offer.reward_exp);
+    // `onReputationEvent(TRADE, tradingPlayer)`.
+    if let Some(u) = st.trading_player.and_then(|id| level.player(id)).map(|p| p.uuid) {
+        st.gossips.on_event(crate::mob::gossip::ReputationEvent::Trade, u);
+        if st.trading_player.is_some() {
+            let hero = st.trading_player.and_then(|id| level.player(id)).and_then(|p| p.hero_of_the_village);
+            update_special_prices(st, u, hero);
+        }
+    }
     // `rewardTradeXp`.
     let mut orb = 3 + e.random.next_int_bounded(4);
     st.xp += offer_xp;
@@ -256,6 +270,68 @@ pub fn with_villager<R>(e: &mut Entity, f: impl FnOnce(&mut Entity, &mut MobData
 pub fn stop_trading(m: &mut MobData) {
     if let Some(st) = state_mut(m) {
         st.trading_player = None;
+        reset_special_prices(st);
+    }
+}
+
+/// `resetSpecialPrices`.
+fn reset_special_prices(st: &mut VillagerState) {
+    for o in st.offers.iter_mut().flatten() {
+        o.special_price_diff = 0;
+    }
+}
+
+/// `updateSpecialPrices(player)`: the player's reputation takes `floor(reputation * price
+/// multiplier)` off each first cost; Hero of the Village takes 30% (+6.25% per level) of the
+/// base cost more, at least one.
+pub fn update_special_prices(st: &mut VillagerState, player: u128, hero: Option<i32>) {
+    reset_special_prices(st);
+    let reputation = st.gossips.reputation(player);
+    let hero_modifier = hero.map_or(0.0, |a| (0.3f32 + 0.0625f32 * a as f32) as f64);
+    for o in st.offers.iter_mut().flatten() {
+        if reputation != 0 {
+            o.special_price_diff += -kiln_javamath::math::floor_f32(reputation as f32 * o.price_multiplier);
+        }
+        if hero_modifier > 0.0 {
+            let reduction = (hero_modifier * o.cost_a.count as f64).floor() as i32;
+            o.special_price_diff += -reduction.max(1);
+        }
+    }
+}
+
+/// `Villager.onReputationEventFrom` on villager `m` (the trading player's prices follow).
+pub fn reputation_event(m: &mut MobData, event: crate::mob::gossip::ReputationEvent, source: u128) {
+    if let Some(st) = state_mut(m) {
+        st.gossips.on_event(event, source);
+    }
+}
+
+/// The UUID of player or entity `id`.
+fn uuid_of(level: &dyn EntityLevel, id: i32) -> Option<u128> {
+    match level.player(id) {
+        Some(p) => Some(p.uuid),
+        None => level.entity(id).map(|o| o.uuid),
+    }
+}
+
+/// `tellWitnessesThatIWasMurdered`: the villagers that could see this one (its visible living
+/// entities: within 16 blocks, in line of sight) remember the killer (`VILLAGER_KILLED`).
+fn tell_witnesses(e: &Entity, level: &mut dyn EntityLevel, source: &DamageSource) {
+    let Some(killer) = source.attacker.and_then(|a| uuid_of(level, a)) else { return };
+    let area = e.bounding_box().inflate(16.0, 16.0, 16.0);
+    let eye = Vec3::new(e.x(), e.eye_y(), e.z());
+    for id in level.entities_in(&area, crate::level::EntityFilter::Living, e.id) {
+        let Some(o) = level.entity(id) else { continue };
+        if o.type_name != "minecraft:villager" || o.position().distance_to_sqr(e.position()) > 256.0 {
+            continue;
+        }
+        let to = Vec3::new(o.x(), o.eye_y(), o.z());
+        if mob::clip_blocks(level, eye, to) {
+            continue;
+        }
+        if let Some(om) = level.entity_mut(id).and_then(mob::data_mut) {
+            reputation_event(om, crate::mob::gossip::ReputationEvent::VillagerKilled, killer);
+        }
     }
 }
 
@@ -419,12 +495,14 @@ impl Kind for Villager {
         let _ = e;
         let now = level.game_time();
         if let Some(st) = state_mut(m) {
-            // `Villager.tick`: the head shake runs out; gossip decays daily (not simulated, but
-            // the clock is kept).
+            // `Villager.tick`: the head shake runs out; gossip decays daily (`maybeDecayGossip`).
             if st.unhappy > 0 {
                 st.unhappy -= 1;
             }
-            if st.last_gossip_decay == 0 || now >= st.last_gossip_decay + 24000 {
+            if st.last_gossip_decay == 0 {
+                st.last_gossip_decay = now;
+            } else if now >= st.last_gossip_decay + 24000 {
+                st.gossips.decay();
                 st.last_gossip_decay = now;
             }
         }
@@ -447,17 +525,28 @@ impl Kind for Villager {
         {
             st.trading_player = None;
         }
+        super::villager_poi::tick(e, m, level);
     }
 
     fn after_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, _amount: f32, hurt: bool) {
-        // `setLastHurtByMob`: angry particles when a player hits the villager.
+        // `setLastHurtByMob`: the attacker is remembered (`VILLAGER_HURT`), and a player makes
+        // the villager angry.
+        if hurt
+            && let Some(u) = source.attacker.and_then(|a| uuid_of(level, a))
+        {
+            reputation_event(m, crate::mob::gossip::ReputationEvent::VillagerHurt, u);
+        }
         if hurt && source.attacker_is_player && mob::is_alive(e, m) {
             level.emit(Event::EntityEvent { entity: e.id, event: 13 });
         }
     }
 
-    fn die(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, _source: &DamageSource) {
+    fn die(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource) {
         stop_trading(m);
+        tell_witnesses(e, level, source);
+        if let Some(st) = state_mut(m) {
+            super::villager_poi::release_all(level, st);
+        }
     }
 
     fn finalize_spawn(&self, _e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, _group: &mut GroupData) {
@@ -482,7 +571,9 @@ impl Kind for Villager {
         let last_decay = r.num("LastGossipDecay").map_or(0, |v| v as i64);
         let restocks = r.int_or("RestocksToday", 0);
         let offers = r.get("Offers").map(trading::offers_from_nbt);
+        let gossips = r.get("Gossips").map(crate::mob::gossip::Gossips::load).unwrap_or_default();
         let Some(st) = state_mut(m) else { return };
+        st.gossips = gossips;
         st.offers = offers;
         if finalized || data.is_some() {
             st.finalized = true;
@@ -503,6 +594,7 @@ impl Kind for Villager {
         st.last_restock = last_restock;
         st.last_gossip_decay = last_decay;
         st.restocks_today = restocks;
+        super::villager_poi::load(st, r);
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
@@ -522,8 +614,10 @@ impl Kind for Villager {
         o.put("FoodLevel", Tag::Byte(st.food_level));
         o.put("Xp", Tag::Int(st.xp));
         o.put("LastRestock", Tag::Long(st.last_restock));
+        o.put("Gossips", st.gossips.save());
         o.put("LastGossipDecay", Tag::Long(st.last_gossip_decay));
         o.put("RestocksToday", Tag::Int(st.restocks_today));
+        super::villager_poi::save(st, o);
     }
 
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {
@@ -553,8 +647,12 @@ impl Kind for Villager {
             set_unhappy(e, m, level);
             return Some(done);
         }
-        // `startTrading`: special prices from gossip and Hero of the Village are not simulated.
+        // `startTrading`: special prices for the player, then the screen.
+        let player = level.player(who.id);
         if let Some(st) = state_mut(m) {
+            if let Some(p) = player {
+                update_special_prices(st, p.uuid, p.hero_of_the_village);
+            }
             st.trading_player = Some(who.id);
             st.open_for = Some(who.id);
         }

@@ -23,6 +23,7 @@ pub static KIND: Ghast = Ghast;
 static INFO: Info = Info {
     fire_immune: true,
     monster_base: false,
+    extends_monster: false,
     ..Info::monster("minecraft:ghast", &[(MaxHealth, 10.0), (FollowRange, 100.0), (CameraDistance, 8.0), (FlyingSpeed, 0.06)])
 };
 

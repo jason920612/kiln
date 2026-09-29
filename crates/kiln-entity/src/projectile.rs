@@ -159,7 +159,7 @@ fn entity_hit(e: &Entity, level: &dyn EntityLevel, from: Vec3, to: Vec3, area: &
         if !can_be_hit_by_projectile(target) || Some(id) == owner {
             continue;
         }
-        if let Some(p) = target.bounding_box().inflate_all(margin as f64).clip(from, to) {
+        if let Some(p) = clip_entity(target, margin as f64, from, to) {
             let d = from.distance_to_sqr(p);
             if d < best {
                 best = d;
@@ -170,12 +170,34 @@ fn entity_hit(e: &Entity, level: &dyn EntityLevel, from: Vec3, to: Vec3, area: &
     hit
 }
 
+/// Where the segment `from..to` meets entity `t`'s box inflated by `margin`; an ender dragon
+/// is hit on its parts (it is not pickable itself, they are).
+pub(crate) fn clip_entity(t: &Entity, margin: f64, from: Vec3, to: Vec3) -> Option<Vec3> {
+    if t.type_name == "minecraft:ender_dragon" {
+        return crate::mob::kinds::ender_dragon::clip_parts(t, margin, from, to);
+    }
+    t.bounding_box().inflate_all(margin).clip(from, to)
+}
+
+/// `hurtServer` on an end crystal struck by a projectile (it explodes); false for other
+/// entities.
+pub(crate) fn hurt_crystal(level: &mut dyn EntityLevel, id: i32, kind: crate::level::DamageKind, amount: f32, attacker: Option<i32>) -> bool {
+    let Some(slot) = level.entity_mut(id).filter(|t| t.type_name == "minecraft:end_crystal") else { return false };
+    let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+    t.hurt(level, kind, amount, attacker);
+    if let Some(slot) = level.entity_mut(id) {
+        *slot = t;
+    }
+    true
+}
+
 /// `canBeHitByProjectile`: alive and pickable.
 pub(crate) fn can_be_hit_by_projectile(e: &Entity) -> bool {
     e.is_alive()
         && match &e.kind {
             EntityKind::Tnt(_) | EntityKind::FallingBlock(_) | EntityKind::Player(_) | EntityKind::Other { .. } => true,
             EntityKind::Mob(m) => m.health > 0.0,
+            EntityKind::Ext(_) => e.type_name == "minecraft:end_crystal",
             _ => false,
         }
 }
@@ -281,16 +303,40 @@ fn on_hit(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
         e.discard();
         return;
     }
-    // `onHitEntity` of snowballs, eggs and pearls: `thrown` damage (3 to blazes from a snowball,
-    // else none; the hit still knocks back).
+    if kind_ == Throwable::LingeringPotion
+        && let Some(item) = data(e).item.clone()
+    {
+        crate::mob::kinds::witch::linger(e, level, hit, &item, owner);
+        e.discard();
+        return;
+    }
+    // `Snowball.onHitEntity`: 3 damage to a blaze, a harmless hit (knockback) to anything else.
+    let snowball_on_mob = kind_ == Throwable::Snowball
+        && matches!(hit, Hit::Entity { id, .. } if level.entity(id).is_some_and(|t| matches!(t.kind, EntityKind::Mob(_))));
+    if snowball_on_mob
+        && let Hit::Entity { id, .. } = hit
+        && let Some(t) = crate::mob::goals::living(level, id)
+    {
+        let damage = if t.type_name == "minecraft:blaze" { 3.0 } else { 0.0 };
+        // `calculateHorizontalHurtKnockbackDirection`: away along the snowball's flight.
+        let v = e.delta;
+        let from = Vec3::new(t.pos.x - v.x, t.pos.y, t.pos.z - v.z);
+        let source = crate::mob::DamageSource { kind: crate::level::DamageKind::Thrown, attacker: owner, direct: Some(e.id), pos: Some(from), attacker_is_player: owner.is_some_and(|o| level.player(o).is_some()) };
+        crate::mob::hurt_living(level, &t, source, damage);
+    }
+    // `onHitEntity` of eggs, pearls and snowballs on players: `thrown` damage (none; the hit
+    // still knocks back).
     if let Hit::Entity { id, .. } = hit
+        && !snowball_on_mob
         && matches!(kind_, Throwable::Snowball | Throwable::Egg | Throwable::EnderPearl)
     {
-        let blaze = level.entity(id).is_some_and(|t| t.type_name == "minecraft:blaze");
-        let amount = if kind_ == Throwable::Snowball && blaze { 3.0 } else { 0.0 };
-        thrown_damage(e, level, id, owner, amount);
+        thrown_damage(e, level, id, owner, 0.0);
     }
     level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: kind_.type_name(), owner, hit });
+    // `onHitEntity`: a thrown projectile's hit (no damage) still breaks an end crystal.
+    if let Hit::Entity { id, .. } = hit {
+        hurt_crystal(level, id, crate::level::DamageKind::Thrown, 0.0, owner.or(Some(e.id)));
+    }
     match kind_ {
         Throwable::Egg => hatch(e, level),
         Throwable::ExperienceBottle => {

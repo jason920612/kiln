@@ -85,15 +85,3 @@ fn build(p: &mut Player, level: &mut RegionLevel, kind: MobKind, blocks: &[Block
         kiln_blocks::update::update_neighbors_at(level, at, kiln_blocks::BlockId::of(d::AIR));
     }
 }
-
-/// The `minecraft:gameplay/snow_golem_melts` attribute: the Nether, and the biomes that set it.
-pub(crate) fn snow_golem_melts(level: &RegionLevel, pos: kiln_entity::math::Vec3) -> bool {
-    if crate::DIMENSIONS[level.env.dim].0 == "minecraft:the_nether" {
-        return true;
-    }
-    let at = kiln_blocks::BlockPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
-    let biome = crate::spawner::biome_at(level, at);
-    const MELTING: [&str; 6] = ["minecraft:desert", "minecraft:savanna", "minecraft:savanna_plateau", "minecraft:windswept_savanna", "minecraft:badlands", "minecraft:eroded_badlands"];
-    const WOODED: &str = "minecraft:wooded_badlands";
-    MELTING.iter().chain([&WOODED]).any(|n| kiln_data::builtin_id("minecraft:worldgen/biome", n) == Some(biome as i32))
-}

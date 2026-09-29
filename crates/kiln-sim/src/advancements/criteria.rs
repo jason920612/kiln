@@ -185,6 +185,8 @@ pub(crate) const FIRED: &[&str] = &[
     "minecraft:channeled_lightning",
     "minecraft:summoned_entity",
     "minecraft:slide_down_block",
+    "minecraft:avoid_vibration",
+    "minecraft:kill_mob_near_sculk_catalyst",
 ];
 
 fn err<T>(m: impl Into<String>) -> PResult<T> {
@@ -286,7 +288,7 @@ impl Criterion {
                     _ => Vec::new(),
                 },
             },
-            "player_killed_entity" | "entity_killed_player" => Trigger::Killed {
+            "player_killed_entity" | "entity_killed_player" | "kill_mob_near_sculk_catalyst" => Trigger::Killed {
                 entity: opt_cap(p, c, "entity")?,
                 killing_blow: c.get("killing_blow").map(|v| DamageSourcePredicate::parse(p, v)).transpose()?,
             },

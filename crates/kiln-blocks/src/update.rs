@@ -308,7 +308,7 @@ pub fn destroy_block<L: Level>(level: &mut L, pos: BlockPos, drop: bool, limit: 
     let legacy = fluid::legacy_block(logic::fluid(state));
     let done = set_block_limit(level, pos, legacy, flags::ALL, limit);
     if done {
-        level.effect(Effect::GameEvent { pos, event: "minecraft:block_destroy" });
+        level.effect(Effect::BlockGameEvent { pos, event: "minecraft:block_destroy", state });
     }
     done
 }

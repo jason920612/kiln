@@ -9,6 +9,7 @@
 pub mod block_entity;
 pub mod chunk;
 pub mod light;
+pub mod poi;
 pub mod section;
 pub mod spawn;
 

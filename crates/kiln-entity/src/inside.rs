@@ -256,6 +256,10 @@ impl Entity {
             }
             _ => {
                 let name = crate::blocks::block_name(state);
+                if matches!(name, "minecraft:sculk_sensor" | "minecraft:calibrated_sculk_sensor" | "minecraft:sculk_shrieker") {
+                    let at = self.position();
+                    level.sculk_step_on(pos, self.id, at);
+                }
                 if (name == "minecraft:redstone_ore" || name == "minecraft:deepslate_redstone_ore") && !self.shift_key_down {
                     let info = kiln_data::blocks_types::block_of(state);
                     if let (Some("false"), Some(lit)) = (info.property(state, "lit"), info.with_property(state, "lit", "true")) {

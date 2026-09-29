@@ -8,6 +8,7 @@
 pub mod arrow;
 pub mod blocks;
 pub mod clip;
+pub mod effect;
 pub mod collision;
 pub mod entity;
 pub mod explosion;
@@ -28,6 +29,7 @@ pub mod projectile;
 pub mod ride;
 pub mod shape;
 pub mod tnt;
+pub mod vibration;
 pub mod xp_orb;
 
 pub use entity::{Entity, EntityKind, MoverType, RemovalReason};

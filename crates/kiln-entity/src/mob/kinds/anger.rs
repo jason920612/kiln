@@ -29,6 +29,7 @@ pub fn get(m: &MobData) -> Option<&Anger> {
     match m.kind {
         MobKind::Wolf => ext::state::<super::wolf::State>(m).map(|s| &s.anger),
         MobKind::IronGolem => ext::state::<super::iron_golem::State>(m).map(|s| &s.anger),
+        MobKind::PolarBear => ext::state::<super::polar_bear::State>(m).map(|s| &s.anger),
         _ => None,
     }
 }
@@ -37,6 +38,7 @@ pub fn get_mut(m: &mut MobData) -> Option<&mut Anger> {
     match m.kind {
         MobKind::Wolf => ext::state_mut::<super::wolf::State>(m).map(|s| &mut s.anger),
         MobKind::IronGolem => ext::state_mut::<super::iron_golem::State>(m).map(|s| &mut s.anger),
+        MobKind::PolarBear => ext::state_mut::<super::polar_bear::State>(m).map(|s| &mut s.anger),
         _ => None,
     }
 }

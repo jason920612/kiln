@@ -191,6 +191,7 @@ impl Sim {
                 ("AbsorptionAmount", Tag::Float(p.absorption)),
                 ("PortalCooldown", Tag::Int(p.portal_cooldown)),
                 ("seenCredits", Tag::Byte(p.seen_credits as i8)),
+                ("warden_spawn_tracker", p.warden_tracker.to_nbt()),
             ] {
                 match fields.iter_mut().find(|(k, _)| k == key) {
                     Some((_, v)) => *v = value,

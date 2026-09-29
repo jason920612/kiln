@@ -448,6 +448,13 @@ pub struct AvoidPlayerGoal {
     path: Option<path::Path>,
 }
 
+impl AvoidPlayerGoal {
+    /// `AvoidEntityGoal<Player>(mob, maxDist, walk, sprint)` named `name`.
+    pub fn new(name: &'static str, max_dist: f32, walk: f64, sprint: f64) -> AvoidPlayerGoal {
+        AvoidPlayerGoal { name, max_dist, walk, sprint, to_avoid: None, path: None }
+    }
+}
+
 impl CustomGoal for AvoidPlayerGoal {
     custom_goal_boilerplate!();
     fn name(&self) -> &'static str {
@@ -649,9 +656,9 @@ impl CustomGoal for MoveToBlock {
 
 /// `OcelotAttackGoal`: runs at the target and swipes at it once a second.
 #[derive(Clone, Debug)]
-struct OcelotAttackGoal {
-    target: Option<i32>,
-    attack_time: i32,
+pub(crate) struct OcelotAttackGoal {
+    pub(crate) target: Option<i32>,
+    pub(crate) attack_time: i32,
 }
 
 impl CustomGoal for OcelotAttackGoal {

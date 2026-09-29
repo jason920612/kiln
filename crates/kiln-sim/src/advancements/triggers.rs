@@ -509,6 +509,9 @@ impl Player {
                     (is("parent", &a) && is("partner", &b)) || (is("parent", &b) && is("partner", &a))
                 });
             }
+            E::KillMobNearSculkCatalyst { victim, kind, direct } => {
+                self.killed("minecraft:kill_mob_near_sculk_catalyst", &s(victim), kind.type_name(), *direct);
+            }
             E::TameAnimal { animal } => {
                 let a = s(animal);
                 self.fire_conds("minecraft:tame_animal", None, |c, ok, _| c.cap("entity").is_none_or(|cap| ok(cap, &a)));

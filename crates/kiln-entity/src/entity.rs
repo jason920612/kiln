@@ -66,6 +66,9 @@ pub enum EntityKind {
 
 #[derive(Clone, Debug)]
 pub struct Entity {
+    /// A mob's landing (`causeFallDamage(distance, multiplier)`) during its move, applied by
+    /// the mob once its travel is done (its data is out of the entity meanwhile).
+    pub pending_fall: Option<(f64, f32)>,
     pub id: i32,
     pub uuid: u128,
     pub kind: EntityKind,
@@ -138,6 +141,7 @@ impl Entity {
     pub fn new(type_name: &'static str, id: i32, uuid: u128, kind: EntityKind, random_seed: i64) -> Entity {
         let t = kiln_data::entities::by_name(type_name).unwrap_or_else(|| panic!("unknown entity type {type_name}"));
         let mut e = Entity {
+            pending_fall: None,
             id,
             uuid,
             kind,
@@ -315,6 +319,9 @@ impl Entity {
     }
 
     pub fn is_pushed_by_fluid(&self) -> bool {
+        if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) {
+            return crate::mob::pushed_by_fluid(self.type_name);
+        }
         !matches!(&self.kind, EntityKind::Arrow(a) if a.in_ground)
     }
 
@@ -366,6 +373,17 @@ impl Entity {
     // ------------------------------------------------------------------ tick
 
     /// `Entity.commonTick`, run by the level before `tick`.
+    /// `getLookAngle` (`calculateViewVector(xRot, yRot)`).
+    pub fn view_vector(&self) -> Vec3 {
+        let f = self.x_rot * 0.017453292;
+        let g = -self.y_rot * 0.017453292;
+        let h = crate::mob::mth::cos(g as f64);
+        let i = crate::mob::mth::sin(g as f64);
+        let j = crate::mob::mth::cos(f as f64);
+        let k = crate::mob::mth::sin(f as f64);
+        Vec3::new((i * j) as f64, (-k) as f64, (h * j) as f64)
+    }
+
     pub fn common_tick(&mut self) {
         if self.invulnerable_time > 0 {
             self.invulnerable_time -= 1;
@@ -673,14 +691,22 @@ impl Entity {
         if on_pos != pos {
             ok |= stepped(self, on_state);
         }
+        // The step game event comes from the supporting block (the effect block when they are
+        // the same), with that block as the context.
+        let supporting = if on_pos == pos { state } else { on_state };
+        if stepped(self, supporting) {
+            level.block_game_event("minecraft:step", self.position, Some(self.id), supporting);
+        }
         if ok {
             self.next_step = (self.move_dist as i32 + 1) as f32;
         } else if self.is_in_water() {
             self.next_step = (self.move_dist as i32 + 1) as f32;
-            let d = self.delta;
-            let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.35);
-            let pitch = 1.0 + (self.random_next_float_pub() - self.random_next_float_pub()) * 0.4;
-            self.play_sound(level, "minecraft:entity.generic.swim", volume, pitch);
+            if let Some(sound) = crate::mob::swim_sound(self.type_name) {
+                let d = self.delta;
+                let volume = (1.0f32).min(((d.x * d.x * 0.20000000298023224 + d.y * d.y + d.z * d.z * 0.20000000298023224).sqrt() as f32) * 0.35);
+                let pitch = 1.0 + (self.random_next_float_pub() - self.random_next_float_pub()) * 0.4;
+                self.play_sound(level, sound, volume, pitch);
+            }
             level.emit(Event::GameEvent { event: "minecraft:swim", pos: self.position, entity: Some(self.id) });
         }
     }
@@ -772,7 +798,7 @@ impl Entity {
         if on_ground {
             if self.fall_distance > 0.0 {
                 crate::fall::fall_on(self, level, state, pos);
-                level.emit(Event::GameEvent { event: "minecraft:hit_ground", pos: self.position, entity: Some(self.id) });
+                level.block_game_event("minecraft:hit_ground", self.position, Some(self.id), state);
             }
             self.fall_distance = 0.0;
         }

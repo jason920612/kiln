@@ -325,7 +325,7 @@ impl Trident {
                 if !can_be_hit_by_projectile(t) || Some(id) == owner {
                     continue;
                 }
-                if let Some(p) = t.bounding_box().inflate_all(margin as f64).clip(from, end) {
+                if let Some(p) = crate::projectile::clip_entity(t, margin as f64, from, end) {
                     let d = from.distance_to_sqr(p);
                     if d < best {
                         best = d;
@@ -372,11 +372,14 @@ impl Trident {
         } else if target.1 {
             let Some(slot) = level.entity_mut(id) else { return };
             let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+            crate::mob::kinds::ender_dragon::aim_at(&mut t, location);
             let r = crate::mob::hurt_entity(&mut t, level, source, damage);
             if let Some(slot) = level.entity_mut(id) {
                 *slot = t;
             }
             r
+        } else if crate::projectile::hurt_crystal(level, id, DamageKind::Trident, 8.0, self.owner.or(Some(e.id))) {
+            true
         } else {
             level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner: self.owner, hit: Hit::Entity { id, location } });
             false

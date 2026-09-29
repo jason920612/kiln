@@ -43,6 +43,10 @@ fn default_fall_on(e: &mut Entity, level: &mut dyn EntityLevel, state: u16, dist
 pub fn cause_fall_damage(e: &mut Entity, level: &mut dyn EntityLevel, distance: f64, multiplier: f32) -> bool {
     match e.kind {
         EntityKind::FallingBlock(_) => crate::falling_block::cause_fall_damage(e, level, distance, multiplier),
+        EntityKind::MobTicking { .. } => {
+            e.pending_fall = Some((distance, multiplier));
+            false
+        }
         _ => false,
     }
 }

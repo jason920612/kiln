@@ -9,6 +9,10 @@ use std::any::Any;
 use std::fmt::Debug;
 
 pub mod boat;
+pub mod area_effect_cloud;
+pub mod evoker_fangs;
+pub mod dragon_fireball;
+pub mod end_crystal;
 pub mod fireball;
 pub mod minecart;
 pub mod firework;
@@ -16,6 +20,8 @@ pub mod fishing_hook;
 pub mod lightning;
 pub mod shulker_bullet;
 pub mod trident;
+pub mod wither_skull;
+pub mod wind_charge;
 
 /// An extension entity's state and behaviour.
 pub trait EntityExt: Any + Debug + Send + Sync {
@@ -84,7 +90,20 @@ macro_rules! entity_ext_boilerplate {
 }
 
 /// The extension entity types.
-pub const TYPES: &[&str] = &["minecraft:trident", "minecraft:fireball", "minecraft:small_fireball", "minecraft:shulker_bullet", "minecraft:firework_rocket"];
+pub const TYPES: &[&str] = &[
+    "minecraft:trident",
+    "minecraft:fireball",
+    "minecraft:small_fireball",
+    "minecraft:shulker_bullet",
+    "minecraft:area_effect_cloud",
+    // -- slice 3: raids
+    "minecraft:evoker_fangs",
+    "minecraft:end_crystal",
+    "minecraft:dragon_fireball",
+    "minecraft:wither_skull",
+    "minecraft:breeze_wind_charge",
+    "minecraft:firework_rocket",
+];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
 pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
@@ -95,6 +114,12 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:firework_rocket" => firework::load(r),
         n if boat::is_boat(n) => boat::load(n, r),
         n if minecart::is_minecart(n) => minecart::load(n, r),
+        "minecraft:breeze_wind_charge" => wind_charge::load(r),
+        "minecraft:area_effect_cloud" => area_effect_cloud::load(r),
+        "minecraft:evoker_fangs" => evoker_fangs::load(r),
+        "minecraft:end_crystal" => end_crystal::load(r),
+        "minecraft:dragon_fireball" => dragon_fireball::load(r),
+        "minecraft:wither_skull" => wither_skull::load(r),
         _ => None,
     }
 }

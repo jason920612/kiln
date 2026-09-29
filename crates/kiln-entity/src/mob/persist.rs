@@ -29,6 +29,7 @@ fn op_of(name: &str) -> Option<Op> {
 pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     let mut m = MobData::new(kind, &mut e.random);
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
+    e.no_physics = kind == MobKind::EnderDragon;
     read_fields(e, &mut m, r);
     e.kind = EntityKind::Mob(Box::new(m));
 }
@@ -73,11 +74,18 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
             }
         }
     }
+    // `active_effects` go straight into the map (their modifiers came with the attributes).
+    if let Some(t) = r.get("active_effects") {
+        m.effects = crate::effect::load(t);
+    }
     let health = r.num("Health");
     m.health = health.map_or(m.max_health(), |h| h as f32);
     m.hurt_time = r.short_or("HurtTime", 0);
     m.death_time = r.short_or("DeathTime", 0);
     m.last_hurt_by_mob_timestamp = r.int_or("HurtByTimestamp", 0);
+    // `equipment.setAll(read("equipment").orElseGet(EntityEquipment::new))`: what was worn
+    // before is gone.
+    m.equipment = std::array::from_fn(|_| ItemStack::empty());
     if let Some(Tag::Compound(eq)) = r.get("equipment") {
         for (k, v) in eq {
             if let Some(i) = SLOT_NAMES.iter().position(|s| s == k)
@@ -178,6 +186,9 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
         })
         .collect();
     o.put("attributes", Tag::List(attrs));
+    if let Some(t) = crate::effect::save(&m.effects) {
+        o.put("active_effects", t);
+    }
     o.put("FallFlying", Tag::Byte(0));
     let eq: Vec<(String, Tag)> =
         m.equipment.iter().zip(SLOT_NAMES).filter(|(s, _)| !s.is_empty()).map(|(s, n)| (n.to_owned(), s.to_nbt())).collect();
@@ -239,7 +250,7 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     if let Some(k) = m.kind.ext() {
         k.save(e, m, o);
     }
-    if !e.extra.iter().any(|(k, _)| k == "Brain") {
+    if !e.extra.iter().any(|(k, _)| k == "Brain") && !o.has("Brain") {
         o.put("Brain", Tag::Compound(vec![("memories".into(), Tag::Compound(vec![]))]));
     }
     if let Some(p) = m.last_hurt_by_player.filter(|_| false) {
