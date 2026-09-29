@@ -785,6 +785,14 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.blocks.sculk.set_warden(id, ear);
     }
 
+    fn take_allay_vibrations(&mut self, id: i32) -> Vec<kiln_entity::vibration::Heard> {
+        self.level.blocks.sculk.take_heard_allay(id)
+    }
+
+    fn set_allay_listener(&mut self, id: i32, ear: Option<kiln_entity::vibration::Ear>) {
+        self.level.blocks.sculk.set_allay(id, ear);
+    }
+
     fn vibration_particle(&mut self, from: Vec3, entity: i32, y_offset: f32, ticks: i32) {
         let dest = kiln_proto::packets::world_fx::PositionSource::Entity { id: entity, y_offset };
         crate::sculk::send_vibration_particle(self.level, from, dest, ticks);

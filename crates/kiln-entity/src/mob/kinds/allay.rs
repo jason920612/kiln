@@ -58,6 +58,8 @@ pub struct State {
     /// `LIKED_PLAYER` as the brain's memory has it (a copy for what runs while the brain is
     /// out of the mob: the sensors' targeting tests).
     liked: Option<u128>,
+    /// `vibrationData` (`listener` in the save): the note block vibration on its way.
+    vibration: crate::vibration::VibrationData,
 }
 
 fn st(m: &MobData) -> &State {
@@ -285,6 +287,15 @@ impl Kind for Allay {
         }
     }
 
+    /// `Allay.tick`: the vibration ticker, and a panicking allay stops dancing.
+    fn post_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        tick_vibrations(e, m, level);
+        if mem(m).is_some_and(|b| b.has(Mem::IsPanicking)) {
+            st_mut(m).dancing = false;
+        }
+        update_listener(e, m, level);
+    }
+
     /// `hurtServer`: the liked player cannot hurt it.
     fn hurt(&self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, _amount: f32) -> Option<bool> {
         let liked = liked_uuid(m);
@@ -363,8 +374,10 @@ impl Kind for Allay {
         };
         let cooldown = r.num("DuplicationCooldown").map_or(0, |v| v as i64);
         let liked = r.get("Brain").and_then(|b| b.get("memories")).and_then(|mm| mm.get("minecraft:liked_player")).and_then(|v| v.get("value")).and_then(crate::persist::uuid_from_tag);
+        let vibration = crate::vibration::VibrationData::from_nbt(r.get("listener"));
         let s = st_mut(m);
         s.liked = liked;
+        s.vibration = vibration;
         if let Some(i) = inv {
             s.inventory = i;
         }
@@ -376,6 +389,7 @@ impl Kind for Allay {
         let inv = if s.inventory.is_empty() { Vec::new() } else { vec![s.inventory.to_nbt()] };
         o.put("Inventory", Tag::List(inv));
         o.put("DuplicationCooldown", Tag::Long(s.duplication_cooldown));
+        o.put("listener", s.vibration.to_nbt());
     }
 
     fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {
@@ -384,6 +398,51 @@ impl Kind for Allay {
         d.set(data::allay::DANCING, &DataValue::Boolean(s.dancing));
         d.set(data::allay::CAN_DUPLICATE, &DataValue::Boolean(s.duplication_cooldown == 0));
     }
+}
+
+/// `VibrationSystem.Ticker.tick` for the allay: what the dispatcher heard reaches its selector,
+/// the current vibration travels and arrives.
+fn tick_vibrations(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    let heard = level.take_allay_vibrations(e.id);
+    let now = level.game_time();
+    let eyes = Vec3::new(e.x(), e.eye_y(), e.z());
+    let liked = mem(m).and_then(|b| b.global_pos(Mem::LikedNoteblockPosition)).map(|g| g.pos);
+    let no_ai = m.no_ai;
+    let s = st_mut(m);
+    for h in heard {
+        // `canReceiveVibration`: AI on, and no liked note block or this one.
+        let at = BlockPos::containing(h.from.x, h.from.y, h.from.z);
+        if !no_ai && liked.is_none_or(|p| p == at) {
+            s.vibration.schedule(h.event, h.from, h.to, h.source, None, h.tick);
+        }
+    }
+    if s.vibration.current.is_none() && s.vibration.selector.current.is_none() {
+        return;
+    }
+    let t = s.vibration.tick(now, eyes, crate::vibration::travel_time);
+    let eye_height = e.eye_height;
+    for (from, ticks) in t.particles {
+        level.vibration_particle(from, e.id, eye_height, ticks);
+    }
+    if !t.arrived {
+        return;
+    }
+    let Some(info) = st(m).vibration.current.clone() else { return };
+    // `AllayVibrationUser.onReceiveVibration`.
+    if info.event == "minecraft:note_block_play" {
+        hear_noteblock(m, BlockPos::containing(info.pos.x, info.pos.y, info.pos.z));
+    }
+    st_mut(m).vibration.received();
+}
+
+/// The allay's `DynamicGameEventListener` after its tick.
+fn update_listener(e: &Entity, m: &MobData, level: &mut dyn EntityLevel) {
+    if e.is_removed() || m.is_dead_or_dying() {
+        level.set_allay_listener(e.id, None);
+        return;
+    }
+    let ear = crate::vibration::Ear { pos: Vec3::new(e.x(), e.eye_y(), e.z()), busy: st(m).vibration.current.is_some(), can_hear: !m.no_ai };
+    level.set_allay_listener(e.id, Some(ear));
 }
 
 /// `Allay.shouldStopDancing`: no jukebox within its radius (10) playing.

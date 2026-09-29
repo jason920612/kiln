@@ -536,6 +536,18 @@ pub trait EntityLevel {
         let _ = (id, ear);
     }
 
+    /// The vibrations allay `id` heard (`#allay_can_listen`: note blocks) since its last tick, in
+    /// order.
+    fn take_allay_vibrations(&mut self, id: i32) -> Vec<crate::vibration::Heard> {
+        let _ = id;
+        Vec::new()
+    }
+
+    /// Allay `id`'s listener after its tick (`None`: it no longer listens).
+    fn set_allay_listener(&mut self, id: i32, ear: Option<crate::vibration::Ear>) {
+        let _ = (id, ear);
+    }
+
     /// `sendParticles(VibrationParticleOption(EntityPositionSource(entity, y_offset), ticks))`
     /// at `from`.
     fn vibration_particle(&mut self, from: Vec3, entity: i32, y_offset: f32, ticks: i32) {
