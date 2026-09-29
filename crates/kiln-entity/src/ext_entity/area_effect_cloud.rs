@@ -217,7 +217,7 @@ fn targets(e: &Entity, level: &dyn EntityLevel) -> Vec<i32> {
             out.push(id);
         }
     }
-    for p in level.players() {
+    for p in level.players_in(&bb).iter() {
         let h = if p.sneaking { 1.5 } else { 1.8 };
         let pb = Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3);
         if pb.intersects(&bb) && p.alive && !p.spectator && !out.contains(&p.id) {

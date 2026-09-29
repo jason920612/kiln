@@ -134,7 +134,8 @@ impl CustomGoal for HoglinTargetGoal {
             return false;
         }
         let mut best: Option<(f64, i32)> = None;
-        for p in level.players() {
+        let range = m.attrs.value(FollowRange);
+        for p in goals::players_around(e, level, range).iter() {
             if let Some(d) = attackable_player(e, m, level, p.id)
                 && best.is_none_or(|b| d < b.0)
             {

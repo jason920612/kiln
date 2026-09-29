@@ -380,7 +380,7 @@ impl CustomGoal for PiglinTargetGoal {
             return true;
         }
         let mut best: Option<(f64, i32)> = None;
-        for p in level.players() {
+        for p in goals::players_around(e, level, 16.0).iter() {
             if let Some(d) = valid_player(e, m, level, p.id, true)
                 && best.is_none_or(|b| d < b.0)
             {

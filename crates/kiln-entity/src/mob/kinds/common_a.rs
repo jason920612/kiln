@@ -84,7 +84,7 @@ impl AvoidEntityGoal {
         };
         match self.avoid {
             Avoid::Players => {
-                for p in level.players() {
+                for p in level.players_in(&area).iter() {
                     let h = if p.sneaking { 1.5 } else { 1.8 };
                     let pb = Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3);
                     if !pb.intersects(&area) || p.creative || p.spectator {
@@ -526,7 +526,7 @@ impl NearestTargetGoal {
         };
         match self.class {
             Avoid::Players => {
-                for p in level.players() {
+                for p in goals::players_around(e, level, range).iter() {
                     consider(goals::living_player(p), m);
                 }
             }

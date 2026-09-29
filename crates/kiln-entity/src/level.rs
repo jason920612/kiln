@@ -328,6 +328,12 @@ pub enum DragonFightEvent {
     CrystalDestroyed { crystal: i32, uuid: u128, pos: Vec3, kind: DamageKind, attacker: Option<i32> },
 }
 
+/// A player's collision box from its view.
+pub fn player_box(p: &PlayerView) -> Aabb {
+    let h = if p.sneaking { 1.5 } else { 1.8 };
+    Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3)
+}
+
 /// World access for entity ticks.
 ///
 /// The entity being ticked is not reachable through `entity_mut` (the caller holds it); every
@@ -462,6 +468,13 @@ pub trait EntityLevel {
     /// times a tick each, and a crowd server has a thousand.
     fn players(&self) -> &[PlayerView] {
         &[]
+    }
+
+    /// The players whose box (0.6 wide, 1.8 tall, 1.5 sneaking) touches `area`, in the order of
+    /// [`EntityLevel::players`]. Crowd servers answer from a section grid: mobs ask for the
+    /// players around them, not for all of them.
+    fn players_in(&self, area: &Aabb) -> Vec<PlayerView> {
+        self.players().iter().filter(|p| player_box(p).intersects(area)).copied().collect()
     }
 
     /// Player `id`, if it is one.

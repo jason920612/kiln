@@ -79,6 +79,9 @@ struct Args {
     inline_below_us: Option<u64>,
     chunk_us: Option<u64>,
     helper_share_us: Option<u64>,
+    /// Mobs summoned around the groups' centres once everyone is in (rabbits, foxes, cats, ocelots,
+    /// zombies, piglins, hoglins, wolves: the ones that look for players).
+    mobs: usize,
 }
 
 fn args() -> Args {
@@ -100,6 +103,7 @@ fn args() -> Args {
         inline_below_us: None,
         chunk_us: None,
         helper_share_us: None,
+        mobs: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -120,6 +124,7 @@ fn args() -> Args {
             "--spin-us" => a.spin_us = Some(value().parse().unwrap()),
             "--inline-below-us" => a.inline_below_us = Some(value().parse().unwrap()),
             "--chunk-us" => a.chunk_us = Some(value().parse().unwrap()),
+            "--mobs" => a.mobs = value().parse().unwrap(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
             other => panic!("unknown argument {other}"),
         }
@@ -200,6 +205,18 @@ fn main() {
         match measuring_since {
             None if warmup_done(&walkers) => {
                 measuring_since = Some(tick);
+                const KINDS: [&str; 8] = ["rabbit", "fox", "cat", "ocelot", "zombie", "piglin", "hoglin", "wolf"];
+                for i in 0..a.mobs {
+                    let [ox, oz] = group_offset(i % a.groups, a.groups, a.spacing);
+                    let ang = i as f64 * 2.399;
+                    let r = 3.0 + (i % 9) as f64;
+                    inbox.push(kiln_link::ToSim::Console(format!(
+                        "summon minecraft:{} {} {SURFACE_Y} {} {{PersistenceRequired:1b}}",
+                        KINDS[i % KINDS.len()],
+                        8.5 + ox + r * ang.cos(),
+                        8.5 + oz + r * ang.sin()
+                    )));
+                }
                 cpu0 = cpu::now();
                 sim.reset_pool_stats();
                 wall0 = Instant::now();

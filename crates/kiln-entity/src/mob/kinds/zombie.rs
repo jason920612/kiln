@@ -434,7 +434,8 @@ pub fn reinforcements(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
             continue;
         }
         ne.set_pos(crate::math::Vec3::new(rx as f64, ry as f64, rz as f64));
-        let near_player = level.players().iter().any(|p| !p.spectator && p.alive && p.pos.distance_to_sqr(ne.position()) < 49.0);
+        let near_area = crate::math::Aabb::new(rx as f64 - 7.0, ry as f64 - 7.0, rz as f64 - 7.0, rx as f64 + 7.0, ry as f64 + 7.0, rz as f64 + 7.0);
+        let near_player = level.players_in(&near_area).iter().any(|p| !p.spectator && p.alive && p.pos.distance_to_sqr(ne.position()) < 49.0);
         let ctx = ne.collision_context();
         let bb = ne.bounding_box();
         let free = crate::collision::no_collision(level, &ctx, ne.id, &bb);
