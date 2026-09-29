@@ -84,8 +84,9 @@ impl Contents {
     fn try_move_in(&mut self, mut stack: ItemStack, slot: usize) -> ItemStack {
         let in_slot = &self.items[slot];
         if in_slot.is_empty() {
+            let max = 99.min(stack.max_stack_size());
             self.items[slot] = stack;
-            self.items[slot].limit_size(99);
+            self.items[slot].limit_size(max);
             return ItemStack::empty();
         }
         // `canMergeItems`.

@@ -1404,7 +1404,7 @@ pub(crate) fn interact_mob(
     let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return false };
     {
         let p = &*players[i];
-        if p.dead || p.game_mode == 3 || entities.list[idx].removed {
+        if p.dead || entities.list[idx].removed {
             return false;
         }
         let Some(phys) = entities.list[idx].phys.as_ref() else { return false };
@@ -1419,6 +1419,12 @@ pub(crate) fn interact_mob(
         let range = p.attribute(crate::combat::ENTITY_INTERACTION_RANGE) + 3.0;
         if dx * dx + dy * dy + dz * dz >= range * range {
             return false;
+        }
+        // `Player.interactOn` for a spectator: a `MenuProvider` opens its menu (a minecart whose
+        // loot table is unrolled has none for them), nothing else reacts.
+        if p.game_mode == 3 {
+            let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(phys);
+            return cart.and_then(|m| m.contents.as_ref()).is_some_and(|c| c.loot_table.is_none());
         }
     }
     let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };

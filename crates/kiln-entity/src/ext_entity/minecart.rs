@@ -135,6 +135,18 @@ pub struct Minecart {
     pub ignition: Option<Option<i32>>,
     pub explosion_power: f32,
     pub explosion_speed_factor: f32,
+    /// `DisplayState` (a block the cart shows instead of its own) and `DisplayOffset`.
+    pub display_state: Option<u16>,
+    pub display_offset: i32,
+}
+
+/// `getDefaultDisplayOffset`: how far the shown block sits in the cart.
+fn default_display_offset(name: &str) -> i32 {
+    match name {
+        "minecraft:chest_minecart" => 8,
+        "minecraft:hopper_minecart" => 1,
+        _ => 6,
+    }
 }
 
 /// Whether `name` is a minecart type.
@@ -167,6 +179,8 @@ impl Minecart {
             ignition: None,
             explosion_power: DEFAULT_EXPLOSION_POWER,
             explosion_speed_factor: 1.0,
+            display_state: None,
+            display_offset: default_display_offset(name),
         }
     }
 
@@ -197,6 +211,8 @@ pub fn new(type_name: &'static str, pos: Vec3, seed: i64) -> Entity {
 pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
     let mut m = Minecart::of(type_name);
     m.flipped = r.bool_or("FlippedRotation", false);
+    m.display_state = r.get("DisplayState").and_then(crate::persist::state_from_tag);
+    m.display_offset = r.int_or("DisplayOffset", m.display_offset);
     // `readChestVehicleSaveData` (chests and hoppers), `Enabled`, `PushX`, `PushZ`, `Fuel`,
     // and the TNT cart's `fuse`, `explosion_power` and `explosion_speed_factor`.
     if let Some(c) = &m.contents {
@@ -696,7 +712,7 @@ impl EntityExt for Minecart {
         Some(seat())
     }
 
-    fn entity_data(&self, _e: &Entity, d: &mut EntityData) {
+    fn entity_data(&self, e: &Entity, d: &mut EntityData) {
         if self.hurt_time != 0 {
             d.set(data::vehicle_entity::ID_HURT, &DataValue::Int(self.hurt_time));
         }
@@ -706,6 +722,12 @@ impl EntityExt for Minecart {
         if self.damage != 0.0 {
             d.set(data::vehicle_entity::ID_DAMAGE, &DataValue::Float(self.damage));
         }
+        if let Some(state) = self.display_state {
+            d.set(data::abstract_minecart::ID_CUSTOM_DISPLAY_BLOCK, &DataValue::OptionalBlockState(Some(state as i32)));
+        }
+        if self.display_offset != default_display_offset(e.type_name) {
+            d.set(data::abstract_minecart::ID_DISPLAY_OFFSET, &DataValue::Int(self.display_offset));
+        }
         // `MinecartFurnace.DATA_ID_FUEL`: the client lights the furnace and smokes.
         if self.furnace {
             d.set(data::minecart_furnace::ID_FUEL, &DataValue::Boolean(self.fuel > 0));
@@ -713,6 +735,12 @@ impl EntityExt for Minecart {
     }
 
     fn save(&self, e: &Entity, o: &mut Output) {
+        if let Some(state) = self.display_state {
+            o.put("DisplayState", crate::persist::state_to_tag(state));
+        }
+        if self.display_offset != default_display_offset(e.type_name) {
+            o.put("DisplayOffset", Tag::Int(self.display_offset));
+        }
         o.put("FlippedRotation", Tag::Byte(self.flipped as i8));
         if let Some(c) = &self.contents {
             c.save(o);

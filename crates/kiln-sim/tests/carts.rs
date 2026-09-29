@@ -353,6 +353,62 @@ fn dispensers_place_minecarts_on_the_rail_in_front() {
 }
 
 #[test]
+fn spectators_open_chest_minecarts_but_not_unrolled_loot_ones() {
+    let mut w = World::new("spectator");
+    let rail = w.at(3, 1, 0);
+    w.set(rail, "minecraft:rail[shape=east_west]");
+    let plain = w.summon("minecraft:chest_minecart", rail, "{Items:[{Slot:0b,id:\"minecraft:diamond\",count:2}]}");
+    w.interact(plain);
+    let (ty, slots) = w.sim.open_menu(1).expect("spectators see what a chest minecart holds");
+    assert_eq!(ty, "minecraft:generic_9x3");
+    assert_eq!(slots[0], Some(("minecraft:diamond", 2)));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::ContainerClose { container_id: 1 })]));
+    w.run("kill @e[type=minecraft:chest_minecart]");
+    let loot = w.summon("minecraft:chest_minecart", rail, "{LootTable:\"minecraft:chests/simple_dungeon\",LootTableSeed:5L}");
+    w.interact(loot);
+    assert!(w.sim.open_menu(1).is_none(), "an unrolled loot table stays shut to spectators");
+    assert_eq!(w.sim.cart_items(loot).unwrap().1.as_deref(), Some("minecraft:chests/simple_dungeon"));
+}
+
+#[test]
+fn carts_keep_the_name_of_their_item_and_their_display_block() {
+    use kiln_proto::nbt::Tag;
+    let mut w = World::new("creative");
+    let rail = w.at(3, 1, 0);
+    w.set(rail, "minecraft:rail[shape=east_west]");
+    // The named item, first in the hotbar, placed on the rail: the minecart carries its name.
+    w.run("give User minecraft:chest_minecart[custom_name='\"Loot Cart\"']");
+    w.ticks(1);
+    w.use_on_top(rail);
+    let saved = |w: &World, name: &str| w.sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some(name));
+    let named = saved(&w, "minecraft:chest_minecart").expect("placed");
+    assert!(named.get("CustomName").is_some(), "{named:?}");
+    // A shown block and its offset survive the load (and go to the clients as entity data).
+    w.summon("minecraft:hopper_minecart", rail, "{DisplayState:{Name:\"minecraft:diamond_block\"},DisplayOffset:9}");
+    let nbt = saved(&w, "minecraft:hopper_minecart").unwrap();
+    assert_eq!(nbt.get("DisplayOffset").and_then(Tag::as_i64), Some(9));
+    assert_eq!(nbt.get("DisplayState").and_then(Tag::as_str), Some("minecraft:diamond_block"));
+}
+
+#[test]
+fn a_hopper_minecart_pulls_from_the_container_above_it_one_item_at_a_time() {
+    let mut w = World::new("creative");
+    let y = w.ground[1];
+    let (x, z) = (w.ground[0] + 2, w.ground[2] + 4);
+    w.set([x, y + 1, z], "minecraft:rail[shape=east_west]");
+    w.set([x, y + 2, z], "minecraft:chest");
+    w.run(&format!("item replace block {x} {} {z} container.0 with minecraft:apple 5", y + 2));
+    let cart = w.summon("minecraft:hopper_minecart", [x, y + 1, z], "{}");
+    // One item per tick at most (`consumedItemThisFrame`), from the chest into the cart's first slot.
+    w.ticks(2);
+    let taken = |w: &World| w.sim.cart_items(cart).unwrap().0.iter().map(|&(_, _, n)| n).sum::<i32>();
+    assert!(taken(&w) >= 1 && taken(&w) <= 3, "a little so far: {}", taken(&w));
+    w.ticks(20);
+    assert_eq!(taken(&w), 5);
+    assert_eq!(w.sim.container_at([x, y + 2, z]).unwrap().0, Vec::new(), "the chest is empty");
+}
+
+#[test]
 fn hopper_blocks_and_minecarts_move_items_between_each_other() {
     let mut w = World::new("creative");
     let y = w.ground[1];
