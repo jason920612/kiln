@@ -470,7 +470,7 @@ impl CustomGoal for AvoidPlayerGoal {
         let d = self.max_dist as f64;
         let area = e.bounding_box().inflate(d, 3.0, d);
         let mut best: Option<(f64, PlayerView)> = None;
-        for p in level.players() {
+        for p in level.players_in(&area).iter() {
             let h = if p.sneaking { 1.5 } else { 1.8 };
             let pb = Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3);
             if !pb.intersects(&area) || p.creative || p.spectator {

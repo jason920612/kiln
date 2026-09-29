@@ -440,7 +440,7 @@ fn sense(e: &Entity, level: &dyn EntityLevel) -> Option<i32> {
             best = Some((player, d, id));
         }
     };
-    for p in level.players() {
+    for p in level.players_in(&area).iter() {
         if area.contains(p.pos) {
             consider(p.id, p.pos, true);
         }

@@ -582,7 +582,7 @@ fn ambient(e: &mut Entity, m: &MobData, level: &dyn EntityLevel) -> &'static str
     if !level.is_bright_outside() && e.random.next_float() < 0.1 {
         let area = e.bounding_box().inflate(16.0, 16.0, 16.0);
         let h = |p: &crate::level::PlayerView| if p.sneaking { 1.5 } else { 1.8 };
-        let players = level.players().iter().any(|p| {
+        let players = level.players_in(&area).iter().any(|p| {
             !p.spectator && crate::math::Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h(p), p.pos.z + 0.3).intersects(&area)
         });
         if !players {

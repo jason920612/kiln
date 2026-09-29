@@ -239,7 +239,7 @@ impl CustomGoal for AttackPlayerTarget {
         self.next_scan = mth::reduced_tick_delay(60);
         let area = e.bounding_box().inflate(16.0, 64.0, 16.0);
         let mut players: Vec<Living> = level
-            .players()
+            .players_in(&area)
             .iter()
             .map(goals::living_player)
             .filter(|t| t.bb.intersects(&area))

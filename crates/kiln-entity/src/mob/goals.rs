@@ -367,11 +367,22 @@ pub fn targeting_ok(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t: &Li
     true
 }
 
+/// The players that can be within `range` of the mob (from the level's player grid, in the order
+/// of `players()`), instead of every player of the level.
+pub fn players_around(e: &Entity, level: &dyn EntityLevel, range: f64) -> Vec<crate::level::PlayerView> {
+    // A range of zero or less has no limit (`targeting_ok`); one under two blocks still sees two.
+    if !range.is_finite() || range <= 0.0 {
+        return level.players().to_vec();
+    }
+    let r = range.max(2.0) + 1.0;
+    level.players_in(&crate::math::Aabb::new(e.x() - r, e.y() - r - 2.0, e.z() - r, e.x() + r, e.eye_y() + r, e.z() + r))
+}
+
 /// `getNearestPlayer(conditions, mob, x, eyeY, z)`.
 pub fn nearest_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, combat: bool, range: f64, los: bool, filter: impl Fn(&crate::level::PlayerView) -> bool) -> Option<Living> {
     let mut best: Option<(f64, Living)> = None;
-    for p in level.players() {
-        if !filter(&p) {
+    for p in players_around(e, level, range).iter() {
+        if !filter(p) {
             continue;
         }
         let t = living_player(p);
@@ -391,8 +402,8 @@ pub fn nearest_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, comb
 fn nearest_attackable_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, range: f64, filter: impl Fn(&crate::level::PlayerView) -> bool) -> Option<Living> {
     let k = m.kind.ext();
     let mut best: Option<(f64, Living)> = None;
-    for p in level.players() {
-        if !filter(&p) {
+    for p in players_around(e, level, range).iter() {
+        if !filter(p) {
             continue;
         }
         let t = living_player(p);

@@ -273,7 +273,7 @@ pub fn splash(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit, item: &Item
     if !effects.is_empty() {
         // Players (their stand-ins join the sections before the mobs around them), then mobs.
         let mut targets: Vec<(i32, f64)> = Vec::new();
-        for p in level.players() {
+        for p in level.players_in(&area).iter() {
             if !p.alive || p.spectator {
                 continue;
             }

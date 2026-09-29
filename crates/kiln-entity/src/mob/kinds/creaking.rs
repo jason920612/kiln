@@ -70,7 +70,7 @@ fn looked_at_by(e: &Entity, level: &dyn EntityLevel, p: &PlayerView) -> bool {
 /// looks at it; the first look within 12 blocks activates it against that player.
 fn check_can_move(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
     let range = m.attrs.value(FollowRange);
-    let players: Vec<PlayerView> = level.players().iter().filter(|p| p.alive && !p.spectator && p.pos.distance_to_sqr(e.position()) <= range * range).copied().collect();
+    let players: Vec<PlayerView> = goals::players_around(e, level, range).iter().filter(|p| p.alive && !p.spectator && p.pos.distance_to_sqr(e.position()) <= range * range).copied().collect();
     let active = st(m).active;
     if players.is_empty() {
         if active {
