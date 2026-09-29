@@ -76,6 +76,14 @@ pub mod breeze;
 pub mod creaking;
 pub mod sniffer;
 
+// -- wp28: brain mobs
+pub mod piglin_brute;
+pub mod zoglin;
+pub mod axolotl;
+pub mod goat;
+pub mod frog;
+pub mod tadpole;
+
 
 /// The behaviour of an extension type; `None` for the shared-code types.
 pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
@@ -150,6 +158,14 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Breeze => &breeze::KIND,
         MobKind::Creaking => &creaking::KIND,
         MobKind::Sniffer => &sniffer::KIND,
+
+        // -- wp28: brain mobs
+        MobKind::PiglinBrute => &piglin_brute::KIND,
+        MobKind::Zoglin => &zoglin::KIND,
+        MobKind::Axolotl => &axolotl::KIND,
+        MobKind::Goat => &goat::KIND,
+        MobKind::Frog => &frog::KIND,
+        MobKind::Tadpole => &tadpole::KIND,
 
         _ => return None,
     })

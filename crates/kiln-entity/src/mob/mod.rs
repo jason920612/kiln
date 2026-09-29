@@ -129,6 +129,14 @@ pub enum MobKind {
     Creaking,
     Sniffer,
 
+    // -- wp28: brain mobs (new types; their modules are stubs until their owners fill them in)
+    PiglinBrute,
+    Zoglin,
+    Axolotl,
+    Goat,
+    Frog,
+    Tadpole,
+
 }
 
 /// `MobCategory`.
@@ -276,6 +284,14 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Breeze,
     MobKind::Creaking,
     MobKind::Sniffer,
+
+    // -- wp28: brain mobs
+    MobKind::PiglinBrute,
+    MobKind::Zoglin,
+    MobKind::Axolotl,
+    MobKind::Goat,
+    MobKind::Frog,
+    MobKind::Tadpole,
 
 ];
 
