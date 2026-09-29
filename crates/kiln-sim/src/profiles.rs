@@ -46,7 +46,7 @@ impl Sim {
     /// Starts `fetchprofile name|id`.
     pub(crate) fn start_profile_lookup(&mut self, query: ProfileQuery) {
         if let Some(profile) = self.online_profile(&query) {
-            self.report_profile(self.commands.source, &query, Some(&profile));
+            self.answer_later(&query, Some(profile));
             return;
         }
         if let (Some(lookup), Some(tx)) = (self.config.profile_lookup.clone(), self.config.replies.clone())
@@ -73,14 +73,32 @@ impl Sim {
             }
             return;
         }
-        // No network: the profile the server would give that name.
+        // No network: the profile the server would give that name (a server that
+        // authenticates players has none for names nobody online has).
         let local = match &query {
-            ProfileQuery::Name(name) => {
-                Host::find_profile(self, name).map(|p| ResolvedProfile { id: p.uuid, name: p.name, properties: Vec::new() })
+            ProfileQuery::Name(name) if !self.config.online_mode => {
+                Some(ResolvedProfile { id: crate::commands::offline_uuid(name), name: name.clone(), properties: Vec::new() })
             }
-            ProfileQuery::Id(_) => None,
+            _ => None,
         };
-        self.report_profile(self.commands.source, &query, local.as_ref());
+        self.answer_later(&query, local);
+    }
+
+    /// An answer known at once is still delivered on the next tick, like one that had to be
+    /// looked up (vanilla answers on the server thread after its lookup task).
+    fn answer_later(&mut self, query: &ProfileQuery, profile: Option<ResolvedProfile>) {
+        let request = self.commands.next_profile_request;
+        self.commands.next_profile_request += 1;
+        self.commands.profile_requests.insert(request, (self.commands.source, query.clone()));
+        let result = profile.map(|p| LookedUpProfile { id: p.id, name: p.name, properties: p.properties.iter().map(|q| Property { name: q.name.clone(), value: q.value.clone(), signature: q.signature.clone() }).collect() });
+        self.commands.profile_results.push((request, result));
+    }
+
+    /// Delivers the answers queued by commands of earlier ticks.
+    pub(crate) fn deliver_profile_answers(&mut self) {
+        for (request, result) in std::mem::take(&mut self.commands.profile_results) {
+            self.profile_lookup_finished(request, result);
+        }
     }
 
     /// A lookup finished: the result goes to the source that asked.

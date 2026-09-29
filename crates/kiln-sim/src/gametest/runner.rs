@@ -84,14 +84,14 @@ impl Info {
 }
 
 impl Runner {
-    pub(super) fn new(source: CommandSource, mut infos: Vec<Info>, batches: Vec<Batch>) -> Runner {
+    pub(super) fn new(origin: Origin, mut infos: Vec<Info>, batches: Vec<Batch>) -> Runner {
         let mut reports = Vec::new();
         for info in &mut infos {
             info.report = reports.len();
             reports.push(Report::default());
         }
         Runner {
-            source,
+            origin,
             infos,
             batches,
             current: 0,
@@ -209,7 +209,7 @@ impl Sim {
         let activation = self.activate_env(&env, dim);
         r.env = Some(activation);
         let name = self.commands.gametests.defs.env_name(&env);
-        self.as_source(r.source, |s| s.send_success(tr!("commands.test.batch.starting", Text::literal(name), batch_index as i32), true));
+        self.as_origin(&r.origin.clone(), |s| s.send_success(tr!("commands.test.batch.starting", Text::literal(name), batch_index as i32), true));
         r.batch_tracked = spawned.clone();
         r.ticking.extend(spawned);
     }
@@ -706,7 +706,7 @@ impl Sim {
         let total = r.tracked.len() as i32;
         let (fr, fo) = (r.failed_required() as i32, r.failed_optional() as i32);
         let dims = r.summary_dims.clone();
-        self.as_source(r.source, |s| {
+        self.as_origin(&r.origin.clone(), |s| {
             s.send_success(tr!("commands.test.summary", total).color("white"), true);
             if fr > 0 {
                 s.send_failure(tr!("commands.test.summary.failed", fr));

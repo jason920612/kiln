@@ -1189,6 +1189,7 @@ impl Sim {
         lap(&mut self.stats, "px");
 
         // G: console, time, autosave.
+        self.deliver_profile_answers();
         for command in console {
             self.run_console_command(command.trim_start_matches('/'));
         }

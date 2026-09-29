@@ -51,9 +51,9 @@ fn template(size: [i32; 3], blocks: &[([i32; 3], &str, &[(&str, &str)], Option<T
     let palette = palette
         .into_iter()
         .map(|(name, props)| {
-            let mut f = vec![("Name", Tag::String(name))];
+            let mut f = vec![("id", Tag::String(name))];
             if !props.is_empty() {
-                f.push(("Properties", Tag::Compound(props.into_iter().map(|(k, v)| (k, Tag::String(v))).collect())));
+                f.push(("properties", Tag::Compound(props.into_iter().map(|(k, v)| (k, Tag::String(v))).collect())));
             }
             compound(f)
         })

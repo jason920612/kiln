@@ -233,6 +233,8 @@ pub(crate) struct CommandState {
     /// `fetchprofile` lookups on their way: who asked, and what for.
     pub profile_requests: HashMap<u64, (CommandSource, kiln_command::host::ProfileQuery)>,
     pub next_profile_request: u64,
+    /// Answers known already, delivered on the next tick.
+    pub profile_results: Vec<(u64, Option<kiln_link::LookedUpProfile>)>,
 }
 
 impl CommandState {
@@ -272,6 +274,7 @@ impl CommandState {
             console_capture: None,
             profile_requests: HashMap::new(),
             next_profile_request: 1,
+            profile_results: Vec::new(),
         }
     }
 }
@@ -1760,7 +1763,7 @@ impl Sim {
 }
 
 /// `UUIDUtil.createOfflinePlayerUUID`: a version 3 UUID of `OfflinePlayer:<name>`.
-fn offline_uuid(name: &str) -> Uuid {
+pub(crate) fn offline_uuid(name: &str) -> Uuid {
     use md5::Digest;
     let mut h: [u8; 16] = md5::Md5::digest(format!("OfflinePlayer:{name}").as_bytes()).into();
     h[6] = (h[6] & 0x0f) | 0x30;

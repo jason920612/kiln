@@ -49,9 +49,9 @@ def structure(size, blocks):
         entries.append(entry)
     pal = []
     for block, props in palette:
-        p = {"Name": (STRING, block)}
+        p = {"id": (STRING, block)}
         if props:
-            p["Properties"] = (COMPOUND, {k: (STRING, v) for k, v in props})
+            p["properties"] = (COMPOUND, {k: (STRING, v) for k, v in props})
         pal.append(p)
     root = {
         "size": (LIST, (INT, list(size))),

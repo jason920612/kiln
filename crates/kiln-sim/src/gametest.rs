@@ -543,7 +543,7 @@ enum Saved {
 }
 
 pub(crate) struct Runner {
-    source: CommandSource,
+    origin: Origin,
     infos: Vec<Info>,
     batches: Vec<Batch>,
     /// The batch running (`runBatch(index)` was called for `current`).
@@ -569,6 +569,13 @@ pub(crate) struct Runner {
     terminated: bool,
     /// The infos being ticked.
     ticking: Vec<usize>,
+}
+
+/// Where a command's output goes and as whom it ran (`CommandSourceStack`).
+#[derive(Clone)]
+pub(crate) struct Origin {
+    pub source: CommandSource,
+    pub stack: kiln_command::SourceStack<Sim>,
 }
 
 /// `TestCommand`'s state: the definitions, the runner, the tests that failed last.
@@ -717,6 +724,22 @@ impl Sim {
         r
     }
 
+    /// The source a command runs as, to answer it later (`CommandSourceStack`): who receives
+    /// the output, and the executing entity and position.
+    pub(crate) fn origin(&self) -> Origin {
+        Origin { source: self.commands.source, stack: self.commands.stack.clone() }
+    }
+
+    /// Runs `f` as `origin` (results that come after the command ended).
+    pub(crate) fn as_origin<R>(&mut self, origin: &Origin, f: impl FnOnce(&mut Sim) -> R) -> R {
+        let previous = std::mem::replace(&mut self.commands.source, origin.source);
+        let stack = std::mem::replace(&mut self.commands.stack, origin.stack.clone());
+        let r = f(self);
+        self.commands.source = previous;
+        self.commands.stack = stack;
+        r
+    }
+
     /// `ReportGameListener.say`: to every player.
     fn say(&mut self, color: &'static str, message: String) {
         let text = Text::literal(message).color(color);
@@ -729,7 +752,12 @@ impl Sim {
     /// The test area's origin (`playerAndTestInfo`): the source's column at the surface of
     /// `dim`.
     fn test_info(&mut self, dim: DimId) -> (Pos, i32) {
-        let [x, _, z] = self.commands.stack.position.map(|v| v.floor() as i32);
+        // `getPlayer() == null ? getPosition() : player.position()`.
+        let at = match self.commands.stack.entity.as_ref().filter(|e| kiln_command::SelectorTarget::is_player(*e)) {
+            Some(player) => kiln_command::SelectorTarget::position(player),
+            None => self.commands.stack.position,
+        };
+        let [x, _, z] = at.map(|v| v.floor() as i32);
         let surface = Host::height(self, DIMENSIONS[dim].0, kiln_command::Heightmap::WorldSurface, x, z);
         ([x, 384, z], surface)
     }

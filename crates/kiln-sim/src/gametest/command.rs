@@ -148,7 +148,7 @@ impl Sim {
         if in_test_dimension(true, pdim, dims) {
             return;
         }
-        let [x, y, z] = self.source_block();
+        let [x, y, z] = player.position().map(|v| v.floor() as i32);
         let [yaw, pitch] = player.rotation();
         let text = tr!("test.player.coordinates", x, y, z, dimension_path(pdim))
             .bracketed()
@@ -259,6 +259,13 @@ impl Sim {
 
     /// `Consumer<Component>` = `source::sendSystemMessage`: to the source only.
     pub(super) fn send_system_to_source(&mut self, text: Text) {
+        // Vanilla's source sends to the executing player when there is one.
+        if let Some(player) = self.source_player_ref() {
+            if let Some(p) = self.players.get_mut(&player.conn) {
+                p.send(kiln_proto::packets::system_chat(text.to_nbt(), false));
+            }
+            return;
+        }
         match self.commands.source {
             CommandSource::Console => self.reply_console(&text),
             CommandSource::Player(conn) => {
@@ -433,7 +440,7 @@ impl Sim {
         self.commands.gametests.last_failed.clear();
         self.send_success(tr!("commands.test.run.running", infos.len() as i32), false);
         let batches = self.batch_infos(&infos, BATCH_SIZE);
-        let mut runner = Runner::new(self.commands.source, infos, batches);
+        let mut runner = Runner::new(self.origin(), infos, batches);
         runner.per_row = per_row;
         self.fill_origins(&mut runner);
         self.track_and_start(runner);
@@ -458,7 +465,7 @@ impl Sim {
                 batches.push(Batch { env: info.def.environment.clone(), dim: info.dim, index: rotation as usize, infos: indexes });
             }
         }
-        let mut runner = Runner::new(self.commands.source, infos, batches);
+        let mut runner = Runner::new(self.origin(), infos, batches);
         runner.per_row = VERIFY_PER_ROW;
         runner.grid_clears_on_batch = true;
         runner.halt_on_error = true;
