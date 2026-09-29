@@ -316,6 +316,17 @@ pub trait Kind: Sync + Send {
         let _ = (e, m);
         false
     }
+    /// `PathNavigation.tick` (creakings that cannot move skip it); false skips the tick.
+    fn ticks_navigation(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
+    /// `isPushable` where it depends on the mob's state (a frozen creaking): false, and
+    /// `Entity.push` moves nothing.
+    fn can_be_pushed(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
     /// `hurtServer` overrides that decide before the shared code: `Some(result)` ends it.
     fn hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> Option<bool> {
         let _ = (e, m, level, source, amount);

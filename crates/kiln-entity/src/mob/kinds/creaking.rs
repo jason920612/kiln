@@ -1,20 +1,27 @@
-//! Creaking: a pale-garden monster that cannot move while a player looks at it (it activates
-//! when first looked at within 12 blocks, then hunts that player, freezing whenever watched).
-//! One bound to a creaking heart (`home_pos`) cannot be hurt — a hit only makes it sway — and
-//! crumbles when its heart is gone.
+//! Creaking: a pale-garden monster that cannot move while a player looks at it. It activates
+//! when first looked at within 12 blocks, then hunts that player, freezing whenever anyone
+//! watches. One bound to a creaking heart (`home_pos`, see [`crate::heart`]) cannot be hurt
+//! (a hit only makes it sway and hurts the heart) and crumbles when its heart is gone.
 //!
-//! Approximations: vanilla drives it with a `Brain` (`CreakingAi`); here idle wandering and the
-//! fight are goals. The creaking heart block entity is not simulated: a heart-bound creaking is
-//! protected while a `creaking_heart` block stands at its home, and hearts do not spawn
-//! creakings or react to hits.
+//! Driven by the brain of `CreakingAi` (core: swim, look sink, move sink; idle: start attacking
+//! an active creaking's player, look about, stroll; fight: walk to the target, melee it every 40
+//! ticks, stop when the player is out of sight), on [`crate::mob::brain`].
+//!
+//! Gaps: the death crumbling particles and the heart's trail particles are not sent (no
+//! particle event yet); the home-anchored node evaluator only blocks pathing through nodes
+//! beyond 32 blocks of the heart (see [`crate::mob::path`]).
 
-use crate::custom_goal_boilerplate;
+use crate::behavior_boilerplate;
 use crate::entity::Entity;
-use crate::level::{DamageKind, EntityLevel, Event, PlayerView};
+use crate::level::{DamageKind, EntityLevel, Event};
 use crate::math::{BlockPos, Vec3};
 use crate::mob::attributes::Attr::*;
-use crate::mob::ext::{self, CustomGoal, Info, Kind, MobExt};
-use crate::mob::goals::{self, Goal, LOOK, Living, MOVE};
+use crate::mob::brain::behaviors::*;
+use crate::mob::brain::combat::*;
+use crate::mob::brain::sensors;
+use crate::mob::brain::{self, Activity, ActivityData, Behavior, Brain, Cx, Mem, Status, Timed, Val};
+use crate::mob::ext::{self, Info, Kind, MobExt};
+use crate::mob::goals::{self, Living};
 use crate::mob::{self, DamageSource, MobData, path};
 use crate::persist::{Input, Output};
 use kiln_javamath::random::RandomSource;
@@ -31,12 +38,17 @@ static INFO: Info = Info {
 
 #[derive(Clone, Debug)]
 pub struct State {
+    /// `CAN_MOVE` (synched).
     pub can_move: bool,
+    /// `IS_ACTIVE`.
     pub active: bool,
+    /// `IS_TEARING_DOWN`.
     pub tearing_down: bool,
+    /// `HOME_POS`: the heart it is bound to.
     pub home: Option<BlockPos>,
     invulnerability_ticks: i32,
     attack_ticks: i32,
+    player_stuck_counter: i32,
 }
 
 fn st(m: &MobData) -> &State {
@@ -47,55 +59,96 @@ fn st_mut(m: &mut MobData) -> &mut State {
     ext::state_mut::<State>(m).expect("creaking state")
 }
 
-/// Whether its heart protects it (a `creaking_heart` block at home).
-fn protected(m: &MobData, level: &dyn EntityLevel) -> bool {
-    st(m).home.is_some_and(|h| crate::blocks::block_name(level.block(h)) == "minecraft:creaking_heart")
+/// The heart the creaking is bound to (`getHomePos`).
+pub fn home(m: &MobData) -> Option<BlockPos> {
+    st(m).home
 }
 
-/// `isLookingAtMe(player, 0.5, false, true, eyes, y + 0.5, middle)`.
-fn looked_at_by(e: &Entity, level: &dyn EntityLevel, p: &PlayerView) -> bool {
+/// `setTearingDown`.
+pub fn set_tearing_down(m: &mut MobData) {
+    st_mut(m).tearing_down = true;
+}
+
+/// `setTransient(home)`: binds the creaking to a heart; hazards cost it less as it cannot be
+/// hurt.
+pub fn set_transient(m: &mut MobData, home: BlockPos) {
+    st_mut(m).home = Some(home);
+    m.maluses.push((path::PathType::Damaging, 8.0));
+    m.maluses.push((path::PathType::PowderSnow, 8.0));
+    m.maluses.push((path::PathType::Lava, 8.0));
+    m.maluses.push((path::PathType::Fire, 0.0));
+    m.maluses.push((path::PathType::FireInNeighbor, 0.0));
+}
+
+fn can_move(m: &MobData) -> bool {
+    st(m).can_move
+}
+
+/// `isLookingAtMe(player, 0.5, false, true, eyes, y + 0.5 * scale, middle)`: the player's view
+/// within 60 degrees of a point of the creaking with a clear line under the visual shapes.
+fn looked_at_by(e: &Entity, level: &dyn EntityLevel, p: &crate::level::PlayerView) -> bool {
     let look = crate::ext_entity::fireball::view_vector(p.pitch, p.yaw).normalize();
     let eye = p.pos.y + p.eye_height as f64;
     for h in [e.eye_y(), e.y() + 0.5, (e.eye_y() + e.y()) / 2.0] {
         let dir = Vec3::new(e.x() - p.pos.x, h - eye, e.z() - p.pos.z).normalize();
         let dot = look.x * dir.x + look.y * dir.y + look.z * dir.z;
-        if dot > 1.0 - 0.5 && !mob::clip_blocks(level, Vec3::new(p.pos.x, eye, p.pos.z), Vec3::new(e.x(), h, e.z())) {
-            return true;
+        if dot > 1.0 - 0.5 {
+            // `hasLineOfSight(entity, VISUAL, NONE, y)` from the player's eyes.
+            let from = Vec3::new(p.pos.x, eye, p.pos.z);
+            let to = Vec3::new(e.x(), h, e.z());
+            if to.distance_to_sqr(from).sqrt() <= 128.0 && !clip_visual(level, from, to) {
+                return true;
+            }
         }
     }
     false
 }
 
-/// `checkCanMove`: frozen while an attackable player (not in a carved pumpkin, once active)
-/// looks at it; the first look within 12 blocks activates it against that player.
+/// `Level.clip(ClipContext(from, to, VISUAL, NONE))`: whether a block's visual shape is in the way.
+/// Glass, bars and powder snow have none; everything else is as its collision shape.
+fn clip_visual(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
+    use kiln_data::block_logic::{BlockClass as C, is_instance};
+    crate::clip::traverse_blocks(from, to, |p| {
+        let s = level.block(p);
+        if is_instance(s, C::TransparentBlock) || is_instance(s, C::IronBarsBlock) || is_instance(s, C::PowderSnowBlock) {
+            return None;
+        }
+        let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+        crate::clip::shape_clips(&shape, from, to, p).then_some(())
+    })
+    .is_some()
+}
+
+/// `checkCanMove`: frozen while an attackable player (not in a carved pumpkin once active) of
+/// the nearest players looks at it; the first look within 12 blocks activates it against that
+/// player. Reads the `NEAREST_PLAYERS` memory the brain's sensor keeps.
 fn check_can_move(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-    let range = m.attrs.value(FollowRange);
-    let players: Vec<PlayerView> = goals::players_around(e, level, range).iter().filter(|p| p.alive && !p.spectator && p.pos.distance_to_sqr(e.position()) <= range * range).copied().collect();
+    let ids: Vec<i32> = m.brain.as_ref().map(|b| b.st.mem.entities(Mem::NearestPlayers).to_vec()).unwrap_or_default();
     let active = st(m).active;
-    if players.is_empty() {
+    if ids.is_empty() {
         if active {
             deactivate(e, m, level);
         }
         return true;
     }
-    let pumpkin = kiln_data::builtin_id("minecraft:item", "minecraft:carved_pumpkin");
     let mut potential = false;
-    for p in &players {
-        let t = goals::living_player(p);
+    for id in ids {
+        let Some(p) = level.player(id) else { continue };
+        let t = goals::living_player(&p);
         if !goals::can_attack(m, level, &t) {
             continue;
         }
         potential = true;
-        if (!active || Some(p.head) != pumpkin) && looked_at_by(e, level, p) {
+        // `isActive && !PLAYER_NOT_WEARING_DISGUISE_ITEM.test(player)`.
+        if active && mob::item_tag(p.head, "minecraft:gaze_disguise_equipment") {
+            continue;
+        }
+        if looked_at_by(e, level, &p) {
             if active {
                 return false;
             }
             if p.pos.distance_to_sqr(e.position()) < 144.0 {
-                // `activate`.
-                mob::set_target(e, m, Some(p.id));
-                level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
-                mob::make_sound(e, m, level, "minecraft:entity.creaking.activate");
-                st_mut(m).active = true;
+                activate(e, m, level, p.id);
                 return false;
             }
         }
@@ -106,11 +159,92 @@ fn check_can_move(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     true
 }
 
+/// `activate(player)`.
+fn activate(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, player: i32) {
+    if let Some(b) = m.brain.as_mut() {
+        b.st.mem.set(Mem::AttackTarget, Val::Entity(player));
+    }
+    // `Mob.getTarget` is the brain's attack target.
+    m.target = Some(player);
+    level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
+    mob::make_sound(e, m, level, "minecraft:entity.creaking.activate");
+    st_mut(m).active = true;
+}
+
+/// `deactivate()`.
 fn deactivate(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-    mob::set_target(e, m, None);
+    if let Some(b) = m.brain.as_mut() {
+        b.st.mem.erase(Mem::AttackTarget);
+    }
+    m.target = None;
     level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
     mob::make_sound(e, m, level, "minecraft:entity.creaking.deactivate");
     st_mut(m).active = false;
+}
+
+/// `Mob.stopInPlace`.
+fn stop_in_place(e: &mut Entity, m: &mut MobData) {
+    m.nav.stop();
+    m.xxa = 0.0;
+    m.yya = 0.0;
+    mob::control::set_speed(m, 0.0);
+    e.delta = Vec3::ZERO;
+}
+
+/// `playerIsStuckInYou`: a nearby player's eyes inside the creaking's box for more than 4 checks.
+pub fn player_is_stuck_in_you(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) -> bool {
+    let ids: Vec<i32> = m.brain.as_ref().map(|b| b.st.mem.entities(Mem::NearestPlayers).to_vec()).unwrap_or_default();
+    if ids.is_empty() {
+        st_mut(m).player_stuck_counter = 0;
+        return false;
+    }
+    let bb = e.bounding_box();
+    for id in ids {
+        let Some(p) = level.player(id) else { continue };
+        if bb.contains(Vec3::new(p.pos.x, p.pos.y + p.eye_height as f64, p.pos.z)) {
+            let s = st_mut(m);
+            s.player_stuck_counter += 1;
+            return s.player_stuck_counter > 4;
+        }
+    }
+    st_mut(m).player_stuck_counter = 0;
+    false
+}
+
+/// `tearDown`: the creaking crumbles away (particles for viewers are not sent) and goes.
+pub fn tear_down(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    mob::make_sound(e, m, level, "minecraft:entity.creaking.death");
+    e.discard();
+    // `LivingEntity.remove`: `brain.clearMemories()`.
+    if let Some(b) = m.brain.as_mut() {
+        b.st.mem.clear_all();
+    }
+    m.target = None;
+}
+
+/// `creakingDeathEffects(source)`: `die` and the twitching sound (a bound creaking whose heart
+/// was broken by a player or an explosion).
+pub fn death_effects(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource) {
+    resolve_blame(e, m, level, source);
+    mob::die(e, m, level, *source);
+    mob::make_sound(e, m, level, "minecraft:entity.creaking.twitch");
+}
+
+/// `resolveMobResponsibleForDamage` and `resolvePlayerResponsibleForDamage`: who the hit blames
+/// (a player, for the heart to feel it).
+fn resolve_blame(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, source: &DamageSource) -> Option<i32> {
+    if let Some(a) = source.attacker
+        && !source.kind.is_tag("minecraft:no_anger")
+        && goals::living(level, a).is_some()
+    {
+        m.last_hurt_by_mob = Some(a);
+        m.last_hurt_by_mob_timestamp = e.tick_count;
+    }
+    if source.attacker_is_player {
+        m.last_hurt_by_player = source.attacker;
+        m.last_hurt_by_player_memory = 100;
+    }
+    m.last_hurt_by_player
 }
 
 impl Kind for Creaking {
@@ -120,19 +254,21 @@ impl Kind for Creaking {
 
     fn new_state(&self, m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
         m.nav.can_float = true;
-        Some(Box::new(State { can_move: true, active: false, tearing_down: false, home: None, invulnerability_ticks: 0, attack_ticks: 0 }))
+        Some(Box::new(State { can_move: true, active: false, tearing_down: false, home: None, invulnerability_ticks: 0, attack_ticks: 0, player_stuck_counter: 0 }))
     }
 
-    fn register_goals(&self, m: &mut MobData) {
-        m.goals.add(0, Goal::Float);
-        m.goals.add(1, Goal::Custom(Box::new(CreakingAttack { cooldown: 0, recalc: 0 })));
-        m.goals.add(5, Goal::RandomStroll { speed: 0.3, interval: 120, check_no_action: true, water_avoiding: None, wanted: Vec3::ZERO, force: false });
-        m.goals.add(6, Goal::LookAtPlayer { dist: 8.0, probability: 0.02, look_at: None, look_time: 0 });
+    /// No goals: the brain does it all.
+    fn register_goals(&self, _m: &mut MobData) {}
+
+    fn make_brain(&self, _m: &MobData, random: &mut dyn RandomSource) -> Option<Brain> {
+        Some(make_brain(random))
     }
 
     /// `Creaking.tick`: without its heart a bound creaking dies.
-    fn pre_tick(&self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        if st(m).home.is_some() && !protected(m, level) {
+    fn pre_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if let Some(h) = st(m).home
+            && !level.heart_protects(h, e.id, e.uuid)
+        {
             m.set_health(0.0);
         }
     }
@@ -140,63 +276,105 @@ impl Kind for Creaking {
     /// `Creaking.aiStep` before `LivingEntity.aiStep`: the animation timers and freezing.
     fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let s = st_mut(m);
-        s.invulnerability_ticks = (s.invulnerability_ticks - 1).max(0);
-        s.attack_ticks = (s.attack_ticks - 1).max(0);
-        let was = st(m).can_move;
+        if s.invulnerability_ticks > 0 {
+            s.invulnerability_ticks -= 1;
+        }
+        if s.attack_ticks > 0 {
+            s.attack_ticks -= 1;
+        }
+        let was = can_move(m);
         let now = check_can_move(e, m, level);
         if now != was {
             level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
             if now {
                 mob::make_sound(e, m, level, "minecraft:entity.creaking.unfreeze");
             } else {
-                // `stopInPlace`.
-                m.nav.stop();
-                m.xxa = 0.0;
-                m.yya = 0.0;
-                mob::control::set_speed(m, 0.0);
-                e.delta = Vec3::new(0.0, e.delta.y, 0.0);
+                stop_in_place(e, m);
                 mob::make_sound(e, m, level, "minecraft:entity.creaking.freeze");
             }
         }
         st_mut(m).can_move = now;
     }
 
-    /// Frozen: no AI, no steps (`CreakingMoveControl`, `CreakingLookControl`, `CreakingJumpControl`).
-    fn is_immobile(&self, m: &MobData) -> bool {
-        !st(m).can_move
+    /// `customServerAiStep`: the brain, then `CreakingAi.updateActivity`.
+    fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        brain::tick_brain(e, m, level);
+        let movable = can_move(m);
+        if let Some(b) = m.brain.as_mut() {
+            if movable {
+                b.st.set_active_activity_to_first_valid(&[Activity::Fight, Activity::Idle]);
+            } else {
+                b.st.use_default_activity();
+            }
+        }
+        sync_target(m);
     }
 
+    /// `CreakingNavigation.tick`, `CreakingMoveControl`, `CreakingLookControl` and
+    /// `CreakingJumpControl`: nothing works while frozen.
+    fn ticks_navigation(&self, m: &MobData) -> bool {
+        can_move(m)
+    }
+
+    fn tick_move(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
+        !can_move(m)
+    }
+
+    fn tick_look(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
+        !can_move(m)
+    }
+
+    fn tick_jump(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
+        if can_move(m) {
+            return false;
+        }
+        m.jumping = false;
+        true
+    }
+
+    /// `CreakingBodyRotationControl`.
     fn tick_body(&self, _e: &mut Entity, m: &mut MobData) -> bool {
-        !st(m).can_move
+        !can_move(m)
     }
 
-    /// Heart-bound: fire cannot hurt it.
+    /// `isPushable`, `push`: a frozen creaking cannot be pushed; nor knocked back.
+    fn can_be_pushed(&self, m: &MobData) -> bool {
+        can_move(m)
+    }
+
+    fn knockback_immune(&self, m: &MobData) -> bool {
+        !can_move(m)
+    }
+
+    /// `fireImmune` while bound: fire cannot hurt it.
     fn is_invulnerable_to(&self, m: &MobData, kind: DamageKind) -> bool {
         st(m).home.is_some() && kind.is_tag("minecraft:is_fire")
     }
 
-    /// `hurtServer`: a heart-bound creaking sways instead of taking damage; a frozen one takes
-    /// no knockback.
+    /// `hurtServer`: a heart-bound creaking sways instead of taking damage (and, when a player
+    /// blamed for it, the heart hurts).
     fn hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> Option<bool> {
-        if st(m).home.is_none() || source.kind.is_tag("minecraft:bypasses_invulnerability") {
-            let delta = e.delta;
-            let r = mob::hurt_base(e, m, level, *source, amount);
-            if !st(m).can_move {
-                e.delta = delta;
-            }
-            return Some(r);
+        let _ = amount;
+        let home = st(m).home?;
+        if source.kind.is_tag("minecraft:bypasses_invulnerability") {
+            return None;
         }
-        if st(m).invulnerability_ticks > 0 || m.is_dead_or_dying() {
+        if e.is_removed() || e.invulnerable || st(m).invulnerability_ticks > 0 || m.is_dead_or_dying() {
             return Some(false);
         }
-        let living_or_player = source.direct.or(source.attacker).is_some_and(|d| goals::living(level, d).is_some() || level.entity(d).is_some());
-        if !living_or_player && !source.attacker_is_player {
+        let player = resolve_blame(e, m, &*level, source);
+        let direct = source.direct.or(source.attacker);
+        let direct_living = direct.is_some_and(|d| goals::living(&*level, d).is_some());
+        if !direct_living && !source.kind.is_tag("minecraft:is_projectile") && player.is_none() {
             return Some(false);
         }
         st_mut(m).invulnerability_ticks = 8;
         level.emit(Event::EntityEvent { entity: e.id, event: 66 });
         level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
-        if protected(m, level) {
+        if level.heart_protects(home, e.id, e.uuid) {
+            if player.is_some() {
+                level.heart_creaking_hurt(home);
+            }
             mob::make_sound(e, m, level, "minecraft:entity.creaking.sway");
         }
         Some(true)
@@ -205,7 +383,31 @@ impl Kind for Creaking {
     fn do_hurt_target(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> Option<bool> {
         st_mut(m).attack_ticks = 15;
         level.emit(Event::EntityEvent { entity: e.id, event: 4 });
-        Some(mob::do_hurt_target_base(e, m, level, t))
+        let hurt = mob::do_hurt_target_base(e, m, level, t);
+        if hurt {
+            // `Mob.doHurtTarget`: `playAttackSound`.
+            mob::make_sound(e, m, level, "minecraft:entity.creaking.attack");
+        }
+        Some(hurt)
+    }
+
+    /// `tickDeath`: a bound creaking whose heart was broken twitches for 45 ticks, then
+    /// crumbles.
+    fn tick_death(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let s = st(m);
+        if s.home.is_none() || !s.tearing_down {
+            return false;
+        }
+        m.death_time += 1;
+        if m.death_time > 45 && !e.is_removed() {
+            tear_down(e, m, level);
+        }
+        true
+    }
+
+    /// `LivingEntity.remove` cleared the brain's memories: no attack target any more.
+    fn on_killed_removal(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        m.target = None;
     }
 
     fn ambient_sound(&self, _e: &mut Entity, m: &MobData, _level: &dyn EntityLevel) -> Option<Option<&'static str>> {
@@ -220,25 +422,13 @@ impl Kind for Creaking {
         Some(0.0)
     }
 
-    /// Heart-bound creakings do not despawn with the others.
-    fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
-        st(m).home.is_some().then_some(false)
-    }
-
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
-        let home = match r.get("home_pos") {
-            Some(Tag::IntArray(a)) if a.len() == 3 => Some(BlockPos::new(a[0], a[1], a[2])),
-            _ => None,
-        };
-        if home.is_some() {
-            // `setTransient`: hazards cost less to a creaking that cannot be hurt.
-            m.maluses.push((path::PathType::Damaging, 8.0));
-            m.maluses.push((path::PathType::PowderSnow, 8.0));
-            m.maluses.push((path::PathType::Lava, 8.0));
-            m.maluses.push((path::PathType::Fire, 0.0));
-            m.maluses.push((path::PathType::FireInNeighbor, 0.0));
+        if let Some(Tag::IntArray(a)) = r.get("home_pos")
+            && a.len() == 3
+        {
+            let home = BlockPos::new(a[0], a[1], a[2]);
+            set_transient(m, home);
         }
-        st_mut(m).home = home;
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
@@ -257,53 +447,56 @@ impl Kind for Creaking {
     }
 }
 
-/// The fight activity: walks at its target (`SetWalkTargetFromAttackTargetIfTargetOutOfReach`)
-/// and hits it every 40 ticks when it can move (`MeleeAttack`), dropping a target it can no
-/// longer see.
-#[derive(Clone, Debug)]
-struct CreakingAttack {
-    cooldown: i32,
-    recalc: i32,
+/// `getTarget` is `getTargetFromBrain`: the attack target memory.
+fn sync_target(m: &mut MobData) {
+    m.target = m.brain.as_ref().and_then(|b| b.st.mem.entity(Mem::AttackTarget));
 }
 
-impl CustomGoal for CreakingAttack {
-    custom_goal_boilerplate!();
+/// `CreakingAi$1`: `Swim(0.8)` that only starts while the creaking can move.
+#[derive(Clone, Debug)]
+struct CreakingSwim(Swim);
+
+impl Behavior for CreakingSwim {
     fn name(&self) -> &'static str {
-        "CreakingAttack"
+        ""
     }
-    fn flags(&self) -> u8 {
-        MOVE | LOOK
+    fn check_extra_start(&mut self, cx: &mut Cx) -> bool {
+        can_move(cx.m) && self.0.check_extra_start(cx)
     }
-    fn every_tick(&self) -> bool {
-        true
+    fn can_still_use(&mut self, cx: &mut Cx) -> bool {
+        self.0.can_still_use(cx)
     }
-    fn can_use(&mut self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        st(m).can_move && goals::target(m, level).is_some()
+    fn tick(&mut self, cx: &mut Cx) {
+        self.0.tick(cx);
     }
-    fn stop(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
-        m.nav.stop();
-    }
-    fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        let Some(t) = goals::target(m, level) else { return };
-        if !mob::has_line_of_sight_cached(e, m, level, &t) {
-            mob::set_target(e, m, None);
-            return;
-        }
-        m.look.set_look_at(t.pos.x, t.eye_y, t.pos.z, 45.0, 90.0);
-        self.cooldown = (self.cooldown - 1).max(0);
-        if mob::within_melee_range(e, &t) {
-            m.nav.stop();
-            if self.cooldown == 0 {
-                self.cooldown = 40;
-                m.swing = true;
-                mob::do_hurt_target(e, m, level, &t);
-            }
-        } else {
-            self.recalc -= 1;
-            if self.recalc <= 0 {
-                self.recalc = 10;
-                path::move_to_entity(e, m, level, BlockPos::containing(t.pos.x, t.pos.y, t.pos.z), 1.0);
-            }
-        }
-    }
+    behavior_boilerplate!();
+}
+
+/// `CreakingAi.getActivities` and the sensors of `Creaking.BRAIN_PROVIDER`.
+fn make_brain(random: &mut dyn RandomSource) -> Brain {
+    let sensors: Vec<Box<dyn brain::Sensor>> = vec![Box::new(sensors::NearestLivingEntities), Box::new(sensors::Players)];
+    let core = ActivityData::create(Activity::Core, 0, vec![Timed::new(CreakingSwim(Swim { chance: 0.8 })), LookAtTargetSink::new(45, 90), MoveToTargetSink::new()]);
+    let idle = ActivityData::create(
+        Activity::Idle,
+        10,
+        vec![
+            start_attacking(|cx| st(cx.m).active, |cx| cx.b.mem.entity(Mem::NearestVisibleAttackablePlayer)),
+            SetEntityLookTargetSometimes::new(None, 8.0, (30, 60)),
+            brain::Gate::run_one(vec![
+                (stroll(0.3, StrollKind::Land { avoid_water: true }), 2),
+                (set_walk_target_from_look_target(0.3, 3), 2),
+                (DoNothing::new(30, 60), 1),
+            ]),
+        ],
+    );
+    let fight = ActivityData::with_conditions(
+        Activity::Fight,
+        vec![
+            (10, set_walk_target_from_attack_target_if_out_of_reach(|_| 1.0)),
+            (11, melee_attack_when(|cx| can_move(cx.m), 40)),
+            (12, stop_attacking_if_target_invalid(|cx, t| !(t.player && cx.b.mem.entities(Mem::NearestVisibleAttackablePlayers).contains(&t.id)), |_, _| {}, true)),
+        ],
+        &[(Mem::AttackTarget, Status::ValuePresent)],
+    );
+    Brain::new(&[], sensors, vec![core, idle, fight], random)
 }

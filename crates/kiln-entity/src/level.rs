@@ -750,6 +750,41 @@ pub trait EntityLevel {
         let _ = pos;
         None
     }
+
+    // -- wp28 creaking: the creaking heart block entity (`crate::heart`) as creakings see it.
+
+    /// `CreakingHeartBlockEntity.isProtector`: whether the heart at `home` holds creaking `id`
+    /// (`uuid`). Levels without heart block entities approximate it with a `creaking_heart`
+    /// block standing there.
+    fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
+        let _ = (id, uuid);
+        crate::blocks::block_name(self.block(home)) == "minecraft:creaking_heart"
+    }
+
+    /// `CreakingHeartBlockEntity.creakingHurt` (the protector was hurt by a player: the heart
+    /// hurts, spreading resin).
+    fn heart_creaking_hurt(&mut self, home: BlockPos) {
+        let _ = home;
+    }
+
+    /// The entity with this UUID (`ServerLevel.getEntity(UUID)`), among the entities and the
+    /// ticking entity's neighbours.
+    fn entity_by_uuid(&self, uuid: u128) -> Option<&Entity> {
+        let _ = uuid;
+        None
+    }
+
+    /// `ServerLevel.isSpawningMonsters` (`spawn_monsters` game rule).
+    fn spawning_monsters(&self) -> bool {
+        true
+    }
+
+    /// The `minecraft:gameplay/creaking_active` environment attribute at `pos` (the overworld's
+    /// night).
+    fn creaking_active(&self, pos: BlockPos) -> bool {
+        let _ = pos;
+        false
+    }
 }
 
 /// `PoiManager.Occupancy`.

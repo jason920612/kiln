@@ -110,6 +110,13 @@ public class MobVectors {
                 Vec3 at = new Vec3(a.x, a.y, a.z);
                 potion.onHitAsPotion(level, stack, new net.minecraft.world.phys.BlockHitResult(at, net.minecraft.core.Direction.UP, BlockPos.containing(at), false));
             }
+            // wp28 creaking: the player turns (yaw = pos.x, pitch = pos.y): where it looks decides
+            // whether creakings freeze.
+            case "look" -> {
+                player.setYRot((float) a.x);
+                player.setYHeadRot((float) a.x);
+                player.setXRot((float) a.y);
+            }
             case "interact" -> {
                 player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what))));
                 player.interactOn(tracked.get(a.mob), net.minecraft.world.InteractionHand.MAIN_HAND, tracked.get(a.mob).position());
@@ -698,6 +705,145 @@ public class MobVectors {
     static void block(Scenario s, int x, int y, int z, String block) {
         BlockState state = parse(block);
         s.blocks.put(new BlockPos(x, y, z), state);
+    }
+
+    // ------------------------------------------------------------------ wp28: creakings
+
+    static Action look(int tick, double yaw, double pitch) {
+        Action a = new Action(tick, "look");
+        a.x = yaw;
+        a.y = pitch;
+        return a;
+    }
+
+    /// Creakings (`CreakingAi`): unwatched, stared at, chasing a survival player that looks
+    /// away and freezing when it looks back, a disguised player, hurt while frozen.
+    static void scenariosCreaking(List<Scenario> out) {
+        // Alone, and with a player that never looks at them.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_creaking_" + seed);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 90f * seed, 14700L + seed));
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("away_creaking_" + seed);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14710L + seed));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 270f;
+            s.playerPitch = -6.6f;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Stared at from beyond 12 blocks: nothing happens.
+        {
+            Scenario s = new Scenario("far_stare_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14720L));
+            s.player = new double[] {16.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Stared at within 12 blocks: it activates, freezes, and hunts once the player looks
+        // away; stares again (freezing mid-chase) and away again.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario(seed == 1 ? "stare_creaking" : "stare_creaking_" + seed);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14730L + seed));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.actions.add(look(60, 270f, 0f));
+            s.actions.add(look(125 + seed * 3, 90f, -6.6f));
+            s.actions.add(look(160 + seed * 3, 270f, 0f));
+            s.ticks = 320;
+            out.add(s);
+        }
+        // Chasing around stone pillars.
+        {
+            Scenario s = new Scenario("chase_creaking_pillars");
+            floor(s, 24, "minecraft:stone");
+            for (int y = 0; y < 3; y++) {
+                block(s, 3, BY + y, 0, "minecraft:stone");
+                block(s, 3, BY + y, 1, "minecraft:stone");
+                block(s, 5, BY + y, -1, "minecraft:stone");
+                block(s, 5, BY + y, 0, "minecraft:stone");
+            }
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14740L));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.actions.add(look(40, 270f, 0f));
+            s.ticks = 320;
+            out.add(s);
+        }
+        // A pumpkin on the head does not stop an active creaking.
+        {
+            Scenario s = new Scenario("pumpkin_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14750L));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.playerHead = "minecraft:carved_pumpkin";
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A creative player cannot be attacked: it never activates.
+        {
+            Scenario s = new Scenario("creative_stare_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14760L));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Hurt while frozen (no knockback, dies at 1 health) and while it chases.
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario(i == 0 ? "hurt_frozen_creaking" : "hurt_chasing_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14770L + i));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            if (i == 1) s.actions.add(look(50, 270f, 0f));
+            s.hurts.put(i == 0 ? 60 : 90, new double[] {0, 0.5});
+            s.hurts.put(i == 0 ? 90 : 120, new double[] {0, 3.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Two creakings watched by one player (they share the level random).
+        {
+            Scenario s = new Scenario("two_creakings");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14780L));
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 5.5, 200f, 14781L));
+            s.player = new double[] {8.5, BY, 2.5};
+            s.playerYaw = 90f;
+            s.playerPitch = 0f;
+            s.dayTime = 18000;
+            s.actions.add(look(70, 270f, 0f));
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 
     static List<Scenario> scenarios() {
@@ -2817,19 +2963,6 @@ public class MobVectors {
             s.diverges = true;
             out.add(s);
         }
-        // Creakings (brain in vanilla): stared at by a survival player, and unwatched.
-        for (boolean stare : new boolean[] {true, false}) {
-            Scenario s = new Scenario(stare ? "stare_creaking" : "idle_creaking");
-            floor(s, 20, "minecraft:stone");
-            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14700));
-            s.player = new double[] {8.5, BY, 0.5};
-            s.playerYaw = stare ? 90f : 270f;
-            s.playerPitch = -6.6f;
-            s.dayTime = 18000;
-            s.ticks = 200;
-            s.diverges = true;
-            out.add(s);
-        }
         // Sniffers (brain in vanilla): wandering and sniffing on grass.
         {
             Scenario s = new Scenario("idle_sniffer");
@@ -2936,5 +3069,6 @@ public class MobVectors {
 
     /// Wardens, breezes, creakings.
     static void scenariosBrainSpecial(List<Scenario> out) {
+        scenariosCreaking(out);
     }
 }

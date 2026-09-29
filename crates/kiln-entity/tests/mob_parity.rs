@@ -167,6 +167,13 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
                 mob::kinds::witch::linger(&mut p, level, hit, &stack, None);
             }
         }
+        // wp28 creaking: the player turns (yaw = pos.x, pitch = pos.y).
+        "look" => {
+            for p in level.players.iter_mut() {
+                p.yaw = pos.x as f32;
+                p.pitch = pos.y as f32;
+            }
+        }
         "interact" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];
             let p = player.expect("an interacting player");
