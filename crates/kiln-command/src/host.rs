@@ -1210,8 +1210,83 @@ pub trait Host: SelectorWorld {
     fn fill_biome(&mut self, _dimension: &str, _min: [i32; 3], _max: [i32; 3], _biome: &str, _filter: &dyn Fn(&str) -> bool) -> Option<i32> {
         None
     }
+    // ---- test and fetchprofile ----
+
+    /// `TestCommand`: runs one `/test` subcommand (feedback included; runs go on over the
+    /// following ticks and report to the source when they finish).
+    fn test_command(&mut self, _command: &TestCommand) -> Result<i32, CommandError> {
+        Err(CommandError::unsupported("test"))
+    }
+    /// `Avatar.getProfile`: the profile of a player (or mannequin); `None` for other entities.
+    fn entity_profile(&mut self, _entity: &Self::Entity) -> Option<ResolvedProfile> {
+        None
+    }
+    /// `fetchprofile name|id`: starts the lookup, which may take a while (the network); the
+    /// host reports the result to the source with
+    /// [`lookup_success_text`](crate::vanilla::profile::lookup_success_text) or
+    /// [`failure_text`](crate::vanilla::profile::failure_text). Hosts that cannot look
+    /// profiles up report the failure at once.
+    fn fetch_profile(&mut self, query: ProfileQuery) {
+        self.send_failure(crate::vanilla::profile::failure_text(&query));
+    }
 }
 
+
+/// How `/test` picks what it acts on (`TestFinder.Builder`).
+#[derive(Debug, Clone, PartialEq)]
+pub enum TestSelection {
+    /// `byResourceSelection`: the ids of the selected `minecraft:test_instance` entries.
+    Ids(Vec<String>),
+    /// `allNearby`: test instance blocks within 250 blocks of the source.
+    Nearby,
+    /// `nearest`: the closest test instance block within 15 blocks (by Manhattan distance).
+    Nearest,
+    /// `lookedAt`: test structures the source player's view crosses.
+    LookedAt,
+    /// `failedTests`: the tests that failed in the last run (only required ones when set).
+    Failed { only_required: bool },
+    /// `radius`: test instance blocks within this many blocks (`clearall`).
+    Radius(i32),
+}
+
+/// A parsed `/test` command (`TestCommand`), for [`Host::test_command`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum TestCommand {
+    /// `run`, `runmultiple`, `runthese`, `runclosest`, `runthat`, `runfailed`. `copies` is
+    /// `runmultiple`'s amount (1 otherwise); `tries` and `halt_on_failure` are the
+    /// `RetryOptions` (`numberOfTimes`, `untilFailed`; `tries` below 1 means without limit).
+    Run { select: TestSelection, copies: i32, tries: i32, halt_on_failure: bool, rotation_steps: i32, per_row: i32 },
+    Verify { ids: Vec<String> },
+    Locate { ids: Vec<String> },
+    Reset(TestSelection),
+    Clear(TestSelection),
+    Create { id: Identifier, size: [i32; 3] },
+    /// `pos [var]`: shows where the looked-at test structure's origin is.
+    Pos(String),
+    Stop,
+}
+
+/// A game profile as `fetchprofile` shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedProfile {
+    pub id: Uuid,
+    pub name: String,
+    pub properties: Vec<ProfileProperty>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfileProperty {
+    pub name: String,
+    pub value: String,
+    pub signature: Option<String>,
+}
+
+/// What `fetchprofile name|id` looks up.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProfileQuery {
+    Name(String),
+    Id(Uuid),
+}
 
 /// An entity's attribute instance as `/attribute` reads it.
 #[derive(Debug, Clone, PartialEq)]

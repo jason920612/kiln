@@ -169,6 +169,12 @@ impl Source for Mock {
             _ => 65536,
         }
     }
+    fn registry_ids(&self, registry: &str) -> Vec<String> {
+        match registry {
+            "minecraft:test_instance" => ["kiln:pass", "kiln:slow/one", "kiln:slow/two", "minecraft:always_pass"].map(String::from).to_vec(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 impl SelectorWorld for Mock {
@@ -185,6 +191,10 @@ impl SelectorWorld for Mock {
 }
 
 impl Host for Mock {
+    fn test_command(&mut self, command: &crate::host::TestCommand) -> Result<i32, CommandError> {
+        self.effects.push(format!("test {command:?}"));
+        Ok(1)
+    }
     fn send_success(&mut self, text: Text, broadcast: bool) {
         if self.stack.silent {
             return;
@@ -988,7 +998,7 @@ fn commands_packet_flags() {
                         "brigadier:string" => drop(r.varint().unwrap()),
                         "minecraft:entity" | "minecraft:score_holder" => drop(r.u8().unwrap()),
                         "minecraft:time" => drop(r.i32().unwrap()),
-                        "minecraft:resource" | "minecraft:resource_key" | "minecraft:resource_or_tag" | "minecraft:resource_or_tag_key" => drop(r.string(32767).unwrap()),
+                        "minecraft:resource" | "minecraft:resource_key" | "minecraft:resource_or_tag" | "minecraft:resource_or_tag_key" | "minecraft:resource_selector" => drop(r.string(32767).unwrap()),
                         _ => {}
                     }
                     if flags & 0x10 != 0 {
@@ -1019,7 +1029,7 @@ fn commands_packet_flags() {
     let (n4, lit4, ask4, res4) = decode(4);
     assert!(n4 > n0 + 100);
     assert!(lit4.contains(&"kiln".to_owned()));
-    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective", "members", "name", "function", "existing", "criterion", "rate", "time", "sequence"];
+    let allowed = ["targets", "timemarker", "timeline", "target", "source", "id", "objective", "members", "name", "function", "existing", "criterion", "rate", "time", "sequence", "tests"];
     ask4.iter().for_each(|a| assert!(allowed.contains(&a.as_str()), "{a}"));
     // op, deop, time's markers/timelines at both levels, execute's score holders (if and
     // unless: target + 5 sources each; store result and success: targets) and boss bars, and
@@ -1030,9 +1040,10 @@ fn commands_packet_flags() {
     // Advancement criteria: grant and revoke only.
     // tick rate, step and sprint times; random value, roll and reset sequences.
     // Whitelist add and remove, pardon and pardon-ip; stopwatch query, restart and remove.
+    // Test selectors: run, runmultiple, verify and locate.
     // Data storage ids: 4 targets (get, merge, remove, modify) and the from/string sources of
     // 5 modifications on 3 target kinds; tag remove's names.
-    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2 + 2 + 4 + 3 + 4 + 30 + 1 + 3 + 3);
+    assert_eq!(ask4.len(), 6 + 2 * 6 + 2 * 2 + 11 + 1 + 1 + 2 + 3 + 1 + 2 + 4 + 2 + 2 + 4 + 3 + 4 + 30 + 1 + 3 + 3 + 4);
     assert!(res4.contains(&"stop".to_owned()) && res4.contains(&"tp".to_owned()) && !res4.contains(&"msg".to_owned()));
 }
 
