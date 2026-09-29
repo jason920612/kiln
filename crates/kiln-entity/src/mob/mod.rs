@@ -1025,6 +1025,9 @@ pub fn set_age(e: &mut Entity, m: &mut MobData, age: i32) {
     m.age = age;
     if (old < 0) != (age < 0) {
         refresh_dimensions(e, m);
+        if let Some(k) = m.kind.ext() {
+            k.age_boundary_reached(m);
+        }
     }
 }
 
@@ -1662,7 +1665,7 @@ fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         return;
     }
     let power = distance + 1.0e-6 - m.attrs.value(Attr::SafeFallDistance);
-    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier));
+    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier)) - m.kind.ext().map_or(0, |k| k.fall_damage_reduction());
     if dmg <= 0 {
         return;
     }
@@ -1726,6 +1729,11 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         y = -0.1;
     } else {
         y = 0.0;
+    }
+    // `shouldDiscardFriction`: no drag.
+    if m.kind.ext().is_some_and(|k| k.discard_friction(m)) {
+        e.delta = Vec3::new(v.x, y, v.z);
+        return;
     }
     let drag = m.attrs.value(Attr::AirDragModifier) as f32;
     let h = friction * modified_friction(0.91, drag);
@@ -2133,12 +2141,14 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     if m.is_dead_or_dying() {
         if full {
-            make_sound(e, m, level, m.kind.death_sound());
+            let sound = m.kind.ext().and_then(|k| k.death_sound_for(m)).unwrap_or_else(|| m.kind.death_sound());
+            make_sound(e, m, level, sound);
         }
         die(e, m, level, source);
     } else if full {
         m.ambient_sound_time = -m.kind.ambient_sound_interval();
-        make_sound(e, m, level, m.kind.hurt_sound());
+        let sound = m.kind.ext().and_then(|k| k.hurt_sound_for(m)).unwrap_or_else(|| m.kind.hurt_sound());
+        make_sound(e, m, level, sound);
     }
     m.last_damage_source = Some(source);
     m.last_damage_stamp = level.game_time();

@@ -30,7 +30,7 @@ def main():
     if not args.skip_java:
         server_dir = out.parent / "server"
         server_dir.mkdir(parents=True, exist_ok=True)
-        cmd = ["java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-cp", classpath(),
+        cmd = ["java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "--add-opens", "java.base/java.util=ALL-UNNAMED", "-cp", classpath(),
                str(ROOT / "tools" / "MobVectors.java"), str(out)]
         if args.filter:
             cmd.append(args.filter)

@@ -244,7 +244,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         e.random = kiln_javamath::random::LegacyRandom::new(spec["seed"].as_i64().unwrap());
         {
             let m = mob::data_mut(&mut e).unwrap();
-            m.y_head_rot = yaw;
+            // The harness calls `setYHeadRot` (types like goats clamp it to their body, which is at 0
+            // then) before it sets the body.
+            m.y_head_rot = m.kind.ext().map_or(yaw, |k| k.set_head_rot(0.0, yaw));
             m.y_body_rot = yaw;
             m.y_head_rot_o = yaw;
             m.y_body_rot_o = yaw;
@@ -261,6 +263,10 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
             mob::persist::apply_nbt(&mut e, &tag_of(nbt));
+        }
+        // The harness sets the love time after it read the NBT.
+        if let Some(m) = mob::data_mut(&mut e) {
+            m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
         }
         {
             let age = spec.get("age").and_then(Value::as_i64).unwrap_or(0) as i32;

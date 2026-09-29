@@ -1340,6 +1340,13 @@ pub fn stable_destination(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -
 
 /// `PathNavigation.createPath(Set<BlockPos>, regionOffset, offsetUpward, reach, maxPathLength)`.
 fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, region: i32, up: bool, reach: i32) -> Option<Path> {
+    create_path_raw_len(e, m, level, target, region, up, reach, None)
+}
+
+/// [`create_path_raw`] with `PathNavigation.createPath(pos, reach, maxPathLength)`'s own path length
+/// (the search still visits at most as many nodes as the follow range allows).
+#[allow(clippy::too_many_arguments)]
+fn create_path_raw_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, region: i32, up: bool, reach: i32, length: Option<f32>) -> Option<Path> {
     let max_len = max_path_length(m);
     if e.y() < level.min_y() as f64 || !can_update_path(e, m) {
         return None;
@@ -1376,7 +1383,7 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
         mob_pos: e.block_position(),
         heap: Vec::with_capacity(64),
     };
-    let path = s.find(target, max_len, reach, max_visited);
+    let path = s.find(target, length.unwrap_or(max_len), reach, max_visited);
     if let Some(p) = &path {
         m.nav.target_pos = Some(p.target);
         m.nav.reach_range = reach;
@@ -1395,6 +1402,18 @@ pub fn create_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: Bl
     }
     let pos = if keeps_target_block(m) { pos } else { find_surface(level, pos) };
     create_path_raw(e, m, level, pos, 8, false, reach)
+}
+
+/// `createPath(BlockPos, reach, maxPathLength)`.
+pub fn create_path_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: BlockPos, reach: i32, length: f32) -> Option<Path> {
+    if m.nav.climber {
+        m.nav.path_to_position = Some(pos);
+    }
+    if !level.is_loaded(pos) {
+        return None;
+    }
+    let pos = if keeps_target_block(m) { pos } else { find_surface(level, pos) };
+    create_path_raw_len(e, m, level, pos, 8, false, reach, Some(length))
 }
 
 /// `createPath(Entity, reach)`.

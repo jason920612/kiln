@@ -599,6 +599,14 @@ public class MobVectors {
         if (byPriority.isEmpty()) return;
         long base = ((java.util.concurrent.atomic.AtomicLong) get(m.getRandom(), "seed")).get();
         long[] k = {0};
+        // Goats' LongJumpToRandomPos shuffles its angles with `Collections.shuffle`, whose random is
+        // unseedable: pinned through the JDK's static (needs --add-opens java.base/java.util). Kiln seeds
+        // the goat's own shuffle stream with the same value (`goat::SHUFFLE_SEED_XOR`).
+        if (m instanceof net.minecraft.world.entity.animal.goat.Goat) {
+            java.lang.reflect.Field r = java.util.Collections.class.getDeclaredField("r");
+            r.setAccessible(true);
+            r.set(null, new java.util.Random(base ^ 0x5DEECE66DL));
+        }
         for (Object acts : byPriority.values())
             for (Object set : ((Map<?, ?>) acts).values())
                 for (Object b : (Iterable<?>) set) seedGate(b, base, k);
@@ -3126,6 +3134,198 @@ public class MobVectors {
             s.playerCreative = true;
             s.levelSeed = 134;
             s.ticks = 6200;
+            out.add(s);
+        }
+        scenariosGoat(out);
+    }
+
+    /// The memories of a goat that idles: both cooldowns running (else it rams or long jumps).
+    static final String GOAT_IDLE = "{Brain:{memories:{\"minecraft:ram_cooldown_ticks\":{value:3000},\"minecraft:long_jump_cooling_down\":{value:3000}}}}";
+
+    static String goatNbt(boolean ramReady, boolean jumpReady, String extra) {
+        StringBuilder sb = new StringBuilder("{");
+        if (extra != null) sb.append(extra).append(',');
+        sb.append("Brain:{memories:{");
+        boolean first = true;
+        if (!ramReady) { sb.append("\"minecraft:ram_cooldown_ticks\":{value:3000}"); first = false; }
+        if (!jumpReady) { if (!first) sb.append(','); sb.append("\"minecraft:long_jump_cooling_down\":{value:3000}"); }
+        return sb.append("}}}").toString();
+    }
+
+    static void scenariosGoat(List<Scenario> out) {
+        // Idle goats on grass: strolling, looking at the player.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("goat_idle_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 50f * seed, 22000L + seed);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 140 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A goat with no memories at all: it is ready to ram (and to jump), with nothing to ram.
+        {
+            Scenario s = new Scenario("goat_fresh");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:goat", 0.5, BY, 0.5, 20f, 22010));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 150;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Ramming a cow that stands still (NoAI), then again after the cooldown.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("goat_ram_cow_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec g = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 30f * seed, 22100L + seed);
+            g.nbt = goatNbt(true, false, null);
+            s.mobs.add(g);
+            MobSpec c = new MobSpec("minecraft:cow", 7.5, BY, 1.5, 90f, 22110L + seed);
+            c.nbt = "{NoAI:1b}";
+            s.mobs.add(c);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 160 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A screaming goat rams again and again.
+        {
+            Scenario s = new Scenario("goat_ram_screaming");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec g = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 30f, 22150);
+            g.nbt = goatNbt(true, false, "IsScreamingGoat:1b");
+            s.mobs.add(g);
+            MobSpec c = new MobSpec("minecraft:cow", 7.5, BY, 1.5, 90f, 22151);
+            c.nbt = "{NoAI:1b,attributes:[{id:\"minecraft:max_health\",base:100.0d}],Health:100.0f}";
+            s.mobs.add(c);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 165;
+            s.ticks = 700;
+            out.add(s);
+        }
+        // Ramming a player.
+        {
+            Scenario s = new Scenario("goat_ram_player");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec g = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 30f, 22200);
+            g.nbt = goatNbt(true, false, null);
+            s.mobs.add(g);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.levelSeed = 170;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Tempted by wheat, and fed it.
+        {
+            Scenario s = new Scenario("goat_tempt");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 0f, 22300);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:wheat";
+            s.levelSeed = 180;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("goat_feed");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 0f, 22310);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {2.5, BY, 0.5};
+            Action a = new Action(5, "interact");
+            a.mob = 0; a.what = "minecraft:wheat";
+            s.actions.add(a);
+            s.levelSeed = 181;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Milked with a bucket.
+        {
+            Scenario s = new Scenario("goat_milk");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 0f, 22320);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {2.5, BY, 0.5};
+            Action a = new Action(5, "interact");
+            a.mob = 0; a.what = "minecraft:bucket";
+            s.actions.add(a);
+            s.levelSeed = 182;
+            s.ticks = 60;
+            out.add(s);
+        }
+        // Breeding.
+        {
+            Scenario s = new Scenario("goat_breed");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 20f, 22400);
+            MobSpec m2 = new MobSpec("minecraft:goat", 3.5, BY, 1.5, 200f, 22401);
+            m1.nbt = GOAT_IDLE;
+            m2.nbt = GOAT_IDLE;
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 190;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A baby follows an adult, and grows up (its attack damage changes).
+        {
+            Scenario s = new Scenario("goat_baby_follow");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec baby = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 0f, 22500);
+            baby.age = -24000;
+            baby.nbt = GOAT_IDLE;
+            s.mobs.add(baby);
+            MobSpec adult = new MobSpec("minecraft:goat", 7.5, BY, 2.5, 90f, 22501);
+            adult.nbt = GOAT_IDLE;
+            s.mobs.add(adult);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 200;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Hurt: it panics (fast), the fall does not hurt.
+        {
+            Scenario s = new Scenario("goat_hurt");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 30f, 22600);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 210;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Long jumping over a trench (the goat is ready to jump, not to ram).
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("goat_long_jump_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            for (int x = 4; x <= 5; x++)
+                for (int z = -20; z <= 20; z++) s.blocks.put(new BlockPos(x, BY - 1, z), parse("minecraft:air"));
+            MobSpec m = new MobSpec("minecraft:goat", 2.5, BY, 0.5, 90f, 22700L + seed);
+            // (the jump cooldown runs out after 10 ticks: on its first tick a mob is not on the ground yet)
+            m.nbt = "{Brain:{memories:{\"minecraft:ram_cooldown_ticks\":{value:3000},\"minecraft:long_jump_cooling_down\":{value:10}}}}";
+            s.mobs.add(m);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 220 + seed;
+            s.ticks = 400;
             out.add(s);
         }
     }
