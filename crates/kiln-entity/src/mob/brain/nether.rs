@@ -43,8 +43,16 @@ pub fn is_baby(cx: &Cx, id: i32) -> bool {
     mob_data(cx, id).is_some_and(|m| m.baby())
 }
 
+/// `goals::living` (`util::living`), also for the mob that is ticking.
+pub fn living_now(cx: &Cx, id: i32) -> Option<Living> {
+    living_or_ticking(&*cx.level, id)
+}
+
 /// `Level.getEntity(uuid)` for a living entity near this mob (players first).
 pub fn living_by_uuid(cx: &Cx, uuid: u128) -> Option<Living> {
+    if let Some(l) = TICKING.with(|t| t.borrow().as_ref().filter(|(_, u)| *u == uuid).map(|(l, _)| l.clone())) {
+        return Some(l);
+    }
     let area = cx.e.bounding_box().inflate(128.0, 128.0, 128.0);
     for p in cx.level.players_in(&area) {
         if p.uuid == uuid {
@@ -69,7 +77,10 @@ pub fn living_from_uuid_memory(cx: &Cx, mem: Mem) -> Option<Living> {
 pub fn uuid_of(level: &dyn EntityLevel, id: i32) -> u128 {
     match level.player(id) {
         Some(p) => p.uuid,
-        None => level.entity(id).map_or(0, |e| e.uuid),
+        None => match level.entity(id) {
+            Some(e) => e.uuid,
+            None => TICKING.with(|t| t.borrow().as_ref().filter(|(l, _)| l.id == id).map_or(0, |(_, u)| *u)),
+        },
     }
 }
 
@@ -95,6 +106,41 @@ pub fn item_stack_of(level: &dyn EntityLevel, id: i32) -> Option<ItemStack> {
         crate::entity::EntityKind::Item(d) => Some(d.stack.clone()),
         _ => None,
     }
+}
+
+thread_local! {
+    /// The mob whose brain is ticking now (its entity is out of the level): hits it lands reach
+    /// mobs that look the attacker up, which the level cannot show.
+    static TICKING: std::cell::RefCell<Option<(Living, u128)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// `LivingEntity` view of a mob out of the level (`goals::living` for a mob in it).
+pub fn living_of_mob(e: &crate::entity::Entity, m: &MobData) -> Living {
+    Living {
+        id: e.id,
+        type_name: e.type_name,
+        pos: e.position(),
+        eye_y: e.eye_y(),
+        alive: e.is_alive() && m.health > 0.0,
+        player: false,
+        creative: false,
+        spectator: false,
+        invulnerable: e.invulnerable,
+        sneaking: false,
+        invisible: mob::effects::invisible(m),
+        armor_cover: mob::armor_cover(m),
+        bb: e.bounding_box(),
+    }
+}
+
+/// Marks the mob as the one that ticks (`None`: nobody).
+pub fn set_ticking(mob: Option<(&crate::entity::Entity, &MobData)>) {
+    TICKING.with(|t| *t.borrow_mut() = mob.map(|(e, m)| (living_of_mob(e, m), e.uuid)));
+}
+
+/// `goals::living`, also for the mob that is ticking.
+pub fn living_or_ticking(level: &dyn EntityLevel, id: i32) -> Option<Living> {
+    goals::living(level, id).or_else(|| TICKING.with(|t| t.borrow().as_ref().filter(|(l, _)| l.id == id).map(|(l, _)| l.clone())))
 }
 
 /// A placeholder entity standing in a level's slot while its real entity is taken out.

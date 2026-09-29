@@ -135,6 +135,8 @@ public class MobVectors {
         /// Brain-driven mobs Kiln approximates with goals: the replay reports where Kiln
         /// diverges instead of failing.
         boolean diverges;
+        /// The `mob_drops` game rule is off for this scenario (Kiln's replay drops no loot).
+        boolean noMobDrops;
         // tick -> [mob index, amount]; the player (or nobody) hurts the mob.
         final Map<Integer, double[]> hurts = new HashMap<>();
         /// Things done to the mobs before the entity ticks of a tick (effects, potions,
@@ -228,7 +230,7 @@ public class MobVectors {
     }
 
     static MinecraftServer awaitServer() throws Exception {
-        for (int i = 0; i < 600; i++) {
+        for (int i = 0; i < 3000; i++) {
             for (Thread t : Thread.getAllStackTraces().keySet()) {
                 if (!t.getName().equals("Server thread")) continue;
                 Field holderField = Thread.class.getDeclaredField("holder");
@@ -327,6 +329,7 @@ public class MobVectors {
     static String run(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
         for (var b : s.blocks.entrySet()) level.setBlock(b.getKey(), b.getValue(), FLAGS);
         level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + s.dayTime);
+        if (s.noMobDrops) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:mob_drops false");
         level.updateSkyBrightness();
         int skyDarken = level.getSkyDarken();
         if (s.player != null) {
@@ -411,11 +414,15 @@ public class MobVectors {
             Entity o = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(spec.type)).create(level, EntitySpawnReason.COMMAND);
             o.setId(pinId++);
             o.snapTo(spec.x, spec.y, spec.z, spec.yaw, 0f);
+            // wp28: an item entity's stack is `mainHand` (an item id, count 1).
+            if (o instanceof net.minecraft.world.entity.item.ItemEntity ie && spec.mainHand != null)
+                ie.setItem(new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(spec.mainHand))));
             if (!level.addFreshEntity(o)) throw new IllegalStateException("could not add " + spec.type);
             tracked.add(o);
             if (others.length() > 0) others.append(',');
-            others.append(String.format(Locale.ROOT, "{\"type\":\"%s\",\"id\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s}",
-                    spec.type, o.getId(), d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw)));
+            others.append(String.format(Locale.ROOT, "{\"type\":\"%s\",\"id\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"item\":%s}",
+                    spec.type, o.getId(), d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
+                    spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\""));
         }
         // What appears during the scenario takes the ids after the pinned ones (Kiln continues after
         // the highest id it has been given).
@@ -490,6 +497,7 @@ public class MobVectors {
         }
         // Flyers may end outside the cleanup box.
         for (Entity e : tracked) e.discard();
+        if (s.noMobDrops) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:mob_drops true");
         StringBuilder blocks = new StringBuilder();
         for (var b : s.blocks.entrySet()) {
             if (blocks.length() > 0) blocks.append(',');
@@ -668,6 +676,7 @@ public class MobVectors {
                 StringBuilder dbg = new StringBuilder("DBG mob " + m.getId() + " t=" + m.level().getGameTime() + " nearby=[");
                 if (nl.isPresent()) for (var x : nl.get()) dbg.append(x.getId()).append(x instanceof net.minecraft.world.entity.player.Player ? "P" : "").append(nv.isPresent() && nv.get().contains(x) ? "+" : "-").append(' ');
                 dbg.append("] look=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.LOOK_TARGET).map(Object::toString).orElse("-"));
+                dbg.append(" noAction=").append(get(m, "noActionTime")).append(" persistent=").append(m.isPersistenceRequired());
                 dbg.append(" running=");
                 for (var b : brain.getRunningBehaviors()) dbg.append(b.debugString()).append(' ');
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
@@ -2924,8 +2933,350 @@ public class MobVectors {
         }
     }
 
+    /// A nether scenario: netherrack floor, the mobs given as {type, x, z, yaw, nbt, age} rows.
+    static Scenario nether(String name, int ticks) {
+        Scenario s = new Scenario("nether_" + name);
+        floor(s, 30, "minecraft:netherrack");
+        s.ticks = ticks;
+        return s;
+    }
+
+    static MobSpec netherMob(Scenario s, String type, double x, double z, float yaw, long seed, String nbt) {
+        MobSpec m = new MobSpec("minecraft:" + type, x, BY, z, yaw, seed);
+        m.nbt = nbt;
+        s.mobs.add(m);
+        return m;
+    }
+
     /// Piglins, piglin brutes, hoglins, zoglins.
     static void scenariosBrainNether(List<Scenario> out) {
+        final String immune = "IsImmuneToZombification:1b";
+        final String sword = "equipment:{mainhand:{id:\"minecraft:golden_sword\",count:1}}";
+        final String crossbow = "equipment:{mainhand:{id:\"minecraft:crossbow\",count:1}}";
+        // ---- piglins: idle, several seeds; babies; a pair
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = nether("piglin_idle_" + seed, 400);
+            netherMob(s, "piglin", 0.5, 0.5, 20f * seed, 21000L + seed, "{" + immune + "}");
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = nether("piglin_baby_idle_" + seed, 400);
+            netherMob(s, "piglin", 0.5, 0.5, 70f * seed, 21100L + seed, "{" + immune + ",IsBaby:1b}");
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 10 + seed;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_pair_idle", 300);
+            netherMob(s, "piglin", 0.5, 0.5, 20f, 21200, "{" + immune + "}");
+            netherMob(s, "piglin", 3.5, 2.5, 200f, 21201, "{" + immune + "}");
+            netherMob(s, "piglin", -3.5, 1.5, 100f, 21202, "{" + immune + ",IsBaby:1b}");
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 21;
+            out.add(s);
+        }
+        // ---- piglins and players: attack, gold armor peace, jealousy, admiring
+        {
+            Scenario s = nether("piglin_attack_sword", 200);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21300, "{" + immune + "," + sword + "}");
+            s.player = new double[] {7.5, BY, 0.5};
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_attack_crossbow", 200);
+            // (the main hand marks a scenario that shoots: the arrows' own random is not compared)
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21310, "{" + immune + "," + crossbow + "}").mainHand = "minecraft:crossbow";
+            s.player = new double[] {7.5, BY, 0.5};
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_gold_peace", 200);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21320, "{" + immune + "," + sword + "}");
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerHead = "minecraft:golden_helmet";
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_jealous", 200);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21330, "{" + immune + "}");
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerHead = "minecraft:golden_helmet";
+            s.playerMainHand = "minecraft:gold_ingot";
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_admire", 125);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21340, "{" + immune + "}");
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerHead = "minecraft:golden_helmet";
+            Action a = new Action(10, "interact");
+            a.mob = 0;
+            a.what = "minecraft:gold_ingot";
+            s.actions.add(a);
+            out.add(s);
+        }
+        {
+            // The bartering loot draws from the level's random, which Kiln's loot events do not:
+            // only the body is compared.
+            Scenario s = nether("piglin_barter", 145);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21341, "{" + immune + "}");
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerHead = "minecraft:golden_helmet";
+            Action a = new Action(10, "interact");
+            a.mob = 0;
+            a.what = "minecraft:gold_ingot";
+            s.actions.add(a);
+            s.diverges = true;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_pickup_gold", 130);
+            netherMob(s, "piglin", 0.5, 0.5, 90f, 21350, "{" + immune + "}");
+            MobSpec item = new MobSpec("minecraft:item", 4.5, BY, 0.5, 0f, 0);
+            item.mainHand = "minecraft:gold_ingot";
+            s.others.add(item);
+            s.player = new double[] {9.5, BY, 5.5};
+            s.playerCreative = true;
+            s.levelSeed = 31;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_pickup_nugget", 200);
+            netherMob(s, "piglin", 0.5, 0.5, 90f, 21351, "{" + immune + "}");
+            MobSpec item = new MobSpec("minecraft:item", 3.5, BY, 0.5, 0f, 0);
+            item.mainHand = "minecraft:gold_nugget";
+            s.others.add(item);
+            s.player = new double[] {9.5, BY, 5.5};
+            s.playerCreative = true;
+            s.levelSeed = 32;
+            out.add(s);
+        }
+        // ---- zombified piglins, repellents, fleeing
+        {
+            Scenario s = nether("piglin_avoid_zombified", 200);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21400, "{" + immune + "}");
+            netherMob(s, "zombified_piglin", 3.5, 0.5, 90f, 21401, "{NoAI:1b}");
+            s.player = new double[] {9.5, BY, 5.5};
+            s.playerCreative = true;
+            s.levelSeed = 33;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_repellent", 200);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21410, "{" + immune + "}");
+            block(s, 3, BY, 0, "minecraft:soul_torch");
+            s.player = new double[] {9.5, BY, 5.5};
+            s.playerCreative = true;
+            s.levelSeed = 34;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_hurt_retaliate", 200);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21420, "{" + immune + "," + sword + "}");
+            netherMob(s, "piglin", 3.5, 2.5, 180f, 21421, "{" + immune + "," + sword + "}");
+            netherMob(s, "piglin", -2.5, 3.5, 90f, 21422, "{" + immune + "," + sword + "}");
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerHead = "minecraft:golden_helmet";
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.levelSeed = 35;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_baby_hurt", 200);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21430, "{" + immune + ",IsBaby:1b}");
+            netherMob(s, "piglin", 3.5, 2.5, 180f, 21431, "{" + immune + "," + sword + "}");
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerHead = "minecraft:golden_helmet";
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.levelSeed = 36;
+            out.add(s);
+        }
+        // ---- piglins and hoglins
+        {
+            Scenario s = nether("piglin_hunt_hoglin", 300);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21500, "{" + immune + "," + sword + "}");
+            netherMob(s, "hoglin", 7.5, 0.5, 180f, 21501, "{" + immune + "}");
+            s.player = new double[] {12.5, BY, 8.5};
+            s.playerCreative = true;
+            s.levelSeed = 37;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_hunt_kill", 250);
+            s.noMobDrops = true;
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21510, "{" + immune + "," + sword + "}");
+            netherMob(s, "hoglin", 5.5, 0.5, 180f, 21511, "{" + immune + ",Health:3.0f}");
+            s.player = new double[] {12.5, BY, 8.5};
+            s.playerCreative = true;
+            s.levelSeed = 38;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("piglin_outnumbered", 300);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 21520, "{" + immune + "," + sword + "}");
+            netherMob(s, "hoglin", 6.5, 0.5, 180f, 21521, "{" + immune + "}");
+            netherMob(s, "hoglin", 7.5, 2.5, 180f, 21522, "{" + immune + "}");
+            netherMob(s, "hoglin", 7.5, -2.5, 180f, 21523, "{" + immune + "}");
+            s.player = new double[] {12.5, BY, 8.5};
+            s.playerCreative = true;
+            s.levelSeed = 39;
+            out.add(s);
+        }
+        // ---- piglin brutes
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = nether("brute_idle_" + seed, 400);
+            netherMob(s, "piglin_brute", 0.5, 0.5, 40f * seed, 22000L + seed, "{" + immune + "}");
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 40 + seed;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("brute_fight", 200);
+            netherMob(s, "piglin_brute", 0.5, 0.5, 0f, 22100, "{" + immune + ",equipment:{mainhand:{id:\"minecraft:golden_axe\",count:1}}}");
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerHead = "minecraft:golden_helmet";
+            s.levelSeed = 43;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("brute_hurt", 200);
+            netherMob(s, "piglin_brute", 0.5, 0.5, 0f, 22110, "{" + immune + ",equipment:{mainhand:{id:\"minecraft:golden_axe\",count:1}}}");
+            netherMob(s, "piglin", 3.5, 2.5, 180f, 22111, "{" + immune + "," + sword + "}");
+            s.player = new double[] {9.5, BY, 0.5};
+            s.hurts.put(10, new double[] {0, 1.0});
+            s.levelSeed = 44;
+            out.add(s);
+        }
+        // ---- hoglins
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = nether("hoglin_idle_" + seed, 400);
+            netherMob(s, "hoglin", 0.5, 0.5, 60f * seed, 23000L + seed, "{" + immune + "}");
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 50 + seed;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("hoglin_baby_idle", 400);
+            MobSpec m = netherMob(s, "hoglin", 0.5, 0.5, 60f, 23010, "{" + immune + "}");
+            m.age = -24000;
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 54;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("hoglin_fight", 200);
+            netherMob(s, "hoglin", 0.5, 0.5, 0f, 23100, "{" + immune + "}");
+            s.player = new double[] {6.5, BY, 0.5};
+            s.levelSeed = 55;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("hoglin_repellent", 200);
+            netherMob(s, "hoglin", 0.5, 0.5, 0f, 23110, "{" + immune + "}");
+            block(s, 2, BY, 0, "minecraft:warped_fungus");
+            s.player = new double[] {6.5, BY, 0.5};
+            s.levelSeed = 56;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("hoglin_avoid_piglins", 250);
+            netherMob(s, "hoglin", 0.5, 0.5, 0f, 23120, "{" + immune + "}");
+            netherMob(s, "piglin", 5.5, 0.5, 90f, 23121, "{NoAI:1b}");
+            netherMob(s, "piglin", 5.5, 2.5, 90f, 23122, "{NoAI:1b}");
+            s.player = new double[] {12.5, BY, 8.5};
+            s.playerCreative = true;
+            s.levelSeed = 57;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("hoglin_breed", 300);
+            MobSpec a = netherMob(s, "hoglin", 0.5, 0.5, 20f, 23130, "{" + immune + "}");
+            MobSpec b = netherMob(s, "hoglin", 3.5, 1.5, 200f, 23131, "{" + immune + "}");
+            a.inLove = 600;
+            b.inLove = 590;
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 58;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("hoglin_baby_follow", 300);
+            MobSpec baby = netherMob(s, "hoglin", 0.5, 0.5, 0f, 23140, "{" + immune + "}");
+            baby.age = -24000;
+            netherMob(s, "hoglin", 6.5, 2.5, 90f, 23141, "{" + immune + "}");
+            s.player = new double[] {12.5, BY, 8.5};
+            s.playerCreative = true;
+            s.levelSeed = 59;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("hoglin_hurt", 200);
+            netherMob(s, "hoglin", 0.5, 0.5, 0f, 23150, "{" + immune + "}");
+            netherMob(s, "hoglin", 3.5, 2.5, 180f, 23151, "{" + immune + "}");
+            netherMob(s, "hoglin", -2.5, 3.5, 90f, 23152, "{" + immune + "}");
+            s.player = new double[] {5.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.levelSeed = 60;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("hoglin_baby_hurt", 200);
+            MobSpec baby = netherMob(s, "hoglin", 0.5, 0.5, 0f, 23160, "{" + immune + "}");
+            baby.age = -24000;
+            netherMob(s, "hoglin", 3.5, 2.5, 180f, 23161, "{" + immune + "}");
+            s.player = new double[] {5.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.levelSeed = 61;
+            out.add(s);
+        }
+        {
+            // In the overworld a hoglin that is not immune turns into a zoglin after 300 ticks.
+            Scenario s = nether("hoglin_zoglin", 200);
+            netherMob(s, "hoglin", 0.5, 0.5, 0f, 23170, "{TimeInOverworld:295}");
+            s.player = new double[] {7.5, BY, 0.5};
+            s.levelSeed = 62;
+            out.add(s);
+        }
+        // ---- zoglins
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = nether("zoglin_idle_" + seed, 400);
+            netherMob(s, "zoglin", 0.5, 0.5, 50f * seed, 24000L + seed, null);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 70 + seed;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("zoglin_fight", 200);
+            netherMob(s, "zoglin", 0.5, 0.5, 0f, 24100, null);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.levelSeed = 73;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("zoglin_baby_fight", 200);
+            netherMob(s, "zoglin", 0.5, 0.5, 0f, 24110, "{IsBaby:1b}");
+            s.player = new double[] {6.5, BY, 0.5};
+            s.levelSeed = 74;
+            out.add(s);
+        }
+        {
+            Scenario s = nether("zoglin_vs_piglin", 200);
+            netherMob(s, "zoglin", 0.5, 0.5, 0f, 24120, null);
+            netherMob(s, "piglin", 6.5, 0.5, 90f, 24121, "{NoAI:1b}");
+            s.player = new double[] {12.5, BY, 8.5};
+            s.playerCreative = true;
+            s.levelSeed = 75;
+            out.add(s);
+        }
     }
 
     /// Villagers.

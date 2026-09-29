@@ -40,6 +40,8 @@ static INFO: Info = Info {
     sounds: Some("hoglin"),
     sound_source: "hostile",
     extends_monster: false,
+    // `Animal.getAmbientSoundInterval`.
+    ambient_interval: 120,
     ..Info::monster("minecraft:hoglin", &[(MaxHealth, 40.0), (MovementSpeed, 0.30000001192092896), (KnockbackResistance, 0.6000000238418579), (AttackKnockback, 1.0), (AttackDamage, 6.0)])
 };
 
@@ -183,7 +185,7 @@ fn set_attack_target_if_closer_than_current(cx: &mut Cx, target: &Living) {
     if is_pacified(cx) {
         return;
     }
-    let current = cx.b.mem.entity(Mem::AttackTarget).and_then(|id| util::living(cx, id));
+    let current = cx.b.mem.entity(Mem::AttackTarget).and_then(|id| living_now(cx, id));
     let n = match &current {
         None => target.id,
         Some(c) => util::nearest_of(cx, c, target),
@@ -212,13 +214,13 @@ fn set_avoid_target(cx: &mut Cx, target: &Living) {
 /// `HoglinAi.retreatFromNearestTarget`.
 fn retreat_from_nearest_target(cx: &mut Cx, target: &Living) {
     let mut t = target.clone();
-    let avoid = cx.b.mem.entity(Mem::AvoidTarget).and_then(|id| util::living(cx, id));
+    let avoid = cx.b.mem.entity(Mem::AvoidTarget).and_then(|id| living_now(cx, id));
     if let Some(a) = avoid
         && util::nearest_of(cx, &a, &t) != t.id
     {
         t = a;
     }
-    let attack = cx.b.mem.entity(Mem::AttackTarget).and_then(|id| util::living(cx, id));
+    let attack = cx.b.mem.entity(Mem::AttackTarget).and_then(|id| living_now(cx, id));
     if let Some(a) = attack
         && util::nearest_of(cx, &a, &t) != t.id
     {
@@ -291,7 +293,7 @@ fn melee(cooldown: i32) -> Box<dyn Control> {
         ],
         move |cx| {
             let Some(id) = cx.b.mem.entity(Mem::AttackTarget) else { return false };
-            let Some(t) = util::living(cx, id) else { return false };
+            let Some(t) = living_now(cx, id) else { return false };
             if util::within_melee(cx, &t) && util::visible_contains(cx, id) {
                 cx.b.mem.set(Mem::LookTarget, Val::Look(brain::Tracker::entity(id, true)));
                 cx.m.swing = true;
@@ -418,7 +420,7 @@ fn update_activity(cx: &mut Cx) {
 fn process_pending_hurt(cx: &mut Cx) {
     let pending = state_mut(cx.m).map(|s| std::mem::take(&mut s.pending_hurt)).unwrap_or_default();
     for id in pending {
-        if let Some(a) = util::living(cx, id) {
+        if let Some(a) = living_now(cx, id) {
             was_hurt_by(cx, &a);
         }
     }
@@ -466,7 +468,9 @@ impl Kind for Hoglin {
             }
             m.brain = Some(b);
         }
+        set_ticking(Some((&*e, &*m)));
         brain::tick_brain(e, m, level);
+        set_ticking(None);
         if let Some(mut b) = m.brain.take() {
             let time = level.game_time();
             {
@@ -495,7 +499,7 @@ impl Kind for Hoglin {
             return;
         }
         let Some(a) = source.attacker else { return };
-        match crate::mob::goals::living(&*level, a) {
+        match living_or_ticking(&*level, a) {
             None => {
                 if let Some(s) = state_mut(m) {
                     s.pending_hurt.push(a);

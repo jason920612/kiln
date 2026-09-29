@@ -11,7 +11,7 @@ use crate::mob::attributes::Attr::*;
 use crate::mob::brain::behaviors::*;
 use crate::mob::brain::combat::{melee_attack, set_walk_target_from_attack_target_if_out_of_reach, start_attacking, stop_attacking_if_target_invalid_default};
 use crate::mob::brain::memory::Val;
-use crate::mob::brain::nether::trigger_if;
+use crate::mob::brain::nether::{living_now, living_or_ticking, set_ticking, trigger_if};
 use crate::mob::brain::sensors;
 use crate::mob::brain::util;
 use crate::mob::brain::{self, Activity, ActivityData, Brain, Cx, Gate, Mem, Status};
@@ -63,7 +63,7 @@ fn is_baby(cx: &mut Cx) -> bool {
 /// `Zoglin.findNearestValidAttackTarget`: not a zoglin or a creeper, and attackable.
 fn find_nearest_valid_attack_target(cx: &mut Cx) -> Option<i32> {
     util::find_closest_visible(cx, |cx, id| {
-        let Some(l) = util::living(cx, id) else { return false };
+        let Some(l) = living_now(cx, id) else { return false };
         l.type_name != "minecraft:zoglin" && l.type_name != "minecraft:creeper" && util::is_entity_attackable(cx, &l)
     })
 }
@@ -110,7 +110,7 @@ fn make_brain(random: &mut dyn RandomSource) -> Brain {
 fn process_pending_hurt(cx: &mut Cx) {
     let pending = state_mut(cx.m).map(|s| std::mem::take(&mut s.pending_hurt)).unwrap_or_default();
     for id in pending {
-        if let Some(a) = util::living(cx, id) {
+        if let Some(a) = living_now(cx, id) {
             was_hurt_by(cx, &a);
         }
     }
@@ -172,7 +172,9 @@ impl Kind for Zoglin {
             }
             m.brain = Some(b);
         }
+        set_ticking(Some((&*e, &*m)));
         brain::tick_brain(e, m, level);
+        set_ticking(None);
         if let Some(mut b) = m.brain.take() {
             let time = level.game_time();
             {
@@ -189,7 +191,7 @@ impl Kind for Zoglin {
             return;
         }
         let Some(a) = source.attacker else { return };
-        match crate::mob::goals::living(&*level, a) {
+        match living_or_ticking(&*level, a) {
             None => {
                 if let Some(s) = state_mut(m) {
                     s.pending_hurt.push(a);

@@ -624,7 +624,7 @@ fn nearest_visible_targetable_player(cx: &Cx) -> Option<i32> {
 
 /// `PiglinAi.setAngerTargetToNearestTargetablePlayerIfFound`.
 fn set_anger_target_to_nearest_targetable_player_if_found(cx: &mut Cx, fallback: &Living) {
-    match nearest_visible_targetable_player(cx).and_then(|id| util::living(cx, id)) {
+    match nearest_visible_targetable_player(cx).and_then(|id| living_now(cx, id)) {
         Some(p) => set_anger_target(cx, &p),
         None => set_anger_target(cx, fallback),
     }
@@ -635,7 +635,7 @@ pub fn broadcast_universal_anger(cx: &mut Cx) {
     let others = cx.b.mem.entities(Mem::NearbyAdultPiglins).to_vec();
     for id in others {
         as_mob(cx, id, |c| {
-            if let Some(p) = nearest_visible_targetable_player(c).and_then(|pid| util::living(c, pid)) {
+            if let Some(p) = nearest_visible_targetable_player(c).and_then(|pid| living_now(c, pid)) {
                 set_anger_target(c, &p);
             }
         });
@@ -681,13 +681,13 @@ fn set_avoid_target_and_dont_hunt_for_a_while(cx: &mut Cx, target: &Living) {
 
 /// `PiglinAi.retreatFromNearestTarget`.
 fn retreat_from_nearest_target(cx: &mut Cx, target: &Living) {
-    let avoid = cx.b.mem.entity(Mem::AvoidTarget).and_then(|id| util::living(cx, id));
+    let avoid = cx.b.mem.entity(Mem::AvoidTarget).and_then(|id| living_now(cx, id));
     let mut t = target.clone();
     let n = nearest_target(cx, avoid.as_ref(), &t);
     if n != t.id {
         t = avoid.expect("avoid is the nearest");
     }
-    let attack = cx.b.mem.entity(Mem::AttackTarget).and_then(|id| util::living(cx, id));
+    let attack = cx.b.mem.entity(Mem::AttackTarget).and_then(|id| living_now(cx, id));
     let n = nearest_target(cx, attack.as_ref(), &t);
     if n != t.id {
         t = attack.expect("attack is the nearest");
@@ -722,7 +722,7 @@ pub fn was_hurt_by(cx: &mut Cx, attacker: &Living) {
         cx.b.mem.set_expiring(Mem::AdmiringDisabled, Val::Bool(true), 400);
     }
     if let Some(avoid) = cx.b.mem.entity(Mem::AvoidTarget)
-        && util::living(cx, avoid).is_none_or(|a| a.type_name != attacker.type_name)
+        && living_now(cx, avoid).is_none_or(|a| a.type_name != attacker.type_name)
     {
         cx.b.mem.erase(Mem::AvoidTarget);
     }
@@ -760,7 +760,7 @@ pub fn anger_nearby_piglins(level: &mut dyn EntityLevel, player: i32, needs_line
             let idle = cx.b.is_active(Activity::Idle);
             let sees = !needs_line_of_sight || util::can_see(&mut cx, player);
             if idle && sees
-                && let Some(t) = util::living(&cx, player)
+                && let Some(t) = living_now(&cx, player)
             {
                 if cx.level.universal_anger() {
                     set_anger_target_to_nearest_targetable_player_if_found(&mut cx, &t);
@@ -806,7 +806,7 @@ fn find_nearest_valid_attack_target(cx: &mut Cx) -> Option<i32> {
         return Some(n);
     }
     if let Some(p) = cx.b.mem.entity(Mem::NearestTargetablePlayerNotWearingGold)
-        && let Some(l) = util::living(cx, p)
+        && let Some(l) = living_now(cx, p)
         && util::is_entity_attackable(cx, &l)
     {
         return Some(p);
@@ -905,7 +905,7 @@ fn start_hunting_hoglin() -> Box<dyn Control> {
                 return false;
             }
             let Some(h) = cx.b.mem.entity(Mem::NearestVisibleHuntableHoglin) else { return false };
-            let Some(l) = util::living(cx, h) else { return false };
+            let Some(l) = living_now(cx, h) else { return false };
             set_anger_target(cx, &l);
             dont_kill_any_more_hoglins_for_a_while(cx);
             broadcast_anger_target(cx, &l);
@@ -992,11 +992,11 @@ fn look_at_player_holding_loved(cx: &Cx, id: i32) -> bool {
 }
 
 fn look_is_player(cx: &Cx, id: i32) -> bool {
-    util::living(cx, id).is_some_and(|l| l.type_name == PLAYER)
+    living_now(cx, id).is_some_and(|l| l.type_name == PLAYER)
 }
 
 fn look_is_piglin(cx: &Cx, id: i32) -> bool {
-    util::living(cx, id).is_some_and(|l| l.type_name == PIGLIN)
+    living_now(cx, id).is_some_and(|l| l.type_name == PIGLIN)
 }
 
 fn look_any(_cx: &Cx, _id: i32) -> bool {
@@ -1342,7 +1342,7 @@ fn is_baby_riding_baby(cx: &Cx) -> bool {
 fn process_pending_hurt(cx: &mut Cx) {
     let pending = state_mut(cx.m).map(|s| std::mem::take(&mut s.pending_hurt)).unwrap_or_default();
     for id in pending {
-        if let Some(a) = util::living(cx, id) {
+        if let Some(a) = living_now(cx, id) {
             if cx.m.kind == MobKind::PiglinBrute {
                 crate::mob::kinds::piglin_brute::was_hurt_by(cx, &a);
             } else {
@@ -1359,7 +1359,7 @@ pub fn on_hurt(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, sou
         return;
     }
     let Some(a) = source.attacker else { return };
-    let Some(attacker) = crate::mob::goals::living(&*level, a) else {
+    let Some(attacker) = living_or_ticking(&*level, a) else {
         // The attacker is not in the level (it is being ticked): react next tick, unless it is
         // not a living entity at all.
         if let Some(s) = state_mut(m) {
@@ -1423,7 +1423,9 @@ impl Kind for Piglin {
             }
             m.brain = Some(b);
         }
+        set_ticking(Some((&*e, &*m)));
         brain::tick_brain(e, m, level);
+        set_ticking(None);
         if let Some(mut b) = m.brain.take() {
             let time = level.game_time();
             {

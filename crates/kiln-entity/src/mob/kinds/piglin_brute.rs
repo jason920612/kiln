@@ -53,15 +53,15 @@ fn find_nearest_valid_attack_target(cx: &mut Cx) -> Option<i32> {
 }
 
 fn is_player(cx: &Cx, id: i32) -> bool {
-    util::living(cx, id).is_some_and(|l| l.type_name == PLAYER)
+    living_now(cx, id).is_some_and(|l| l.type_name == PLAYER)
 }
 
 fn is_piglin(cx: &Cx, id: i32) -> bool {
-    util::living(cx, id).is_some_and(|l| l.type_name == PIGLIN)
+    living_now(cx, id).is_some_and(|l| l.type_name == PIGLIN)
 }
 
 fn is_brute(cx: &Cx, id: i32) -> bool {
-    util::living(cx, id).is_some_and(|l| l.type_name == PIGLIN_BRUTE)
+    living_now(cx, id).is_some_and(|l| l.type_name == PIGLIN_BRUTE)
 }
 
 fn any(_cx: &Cx, _id: i32) -> bool {
@@ -153,7 +153,7 @@ fn update_activity(cx: &mut Cx) {
 fn process_pending_hurt(cx: &mut Cx) {
     let pending = piglin::state_mut(cx.m).map(|s| std::mem::take(&mut s.pending_hurt)).unwrap_or_default();
     for id in pending {
-        if let Some(a) = util::living(cx, id) {
+        if let Some(a) = living_now(cx, id) {
             was_hurt_by(cx, &a);
         }
     }
@@ -199,7 +199,9 @@ impl Kind for PiglinBrute {
             }
             m.brain = Some(b);
         }
+        set_ticking(Some((&*e, &*m)));
         brain::tick_brain(e, m, level);
+        set_ticking(None);
         if let Some(mut b) = m.brain.take() {
             let time = level.game_time();
             {
