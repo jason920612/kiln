@@ -3039,6 +3039,46 @@ public class MobVectors {
             s.ticks = 400;
             out.add(s);
         }
+        // Lily pads on a pond: `#frog_prefer_jump_to` blocks are open ground for the frog's paths
+        // and the landing spots it likes.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("lily_frog_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, -3, -4, 9, 4, 2);
+            for (int x = -1; x <= 1; x++)
+                for (int z = -1; z <= 1; z++) block(s, BX + x, BY - 1, BZ + z, "minecraft:grass_block");
+            int[][] pads = {{3, 0}, {5, 1}, {6, -1}, {8, 0}, {4, -2}, {7, 2}};
+            for (int[] p : pads) block(s, BX + p[0], BY, BZ + p[1], "minecraft:lily_pad");
+            s.mobs.add(new MobSpec("minecraft:frog", 0.5, BY, 0.5, 90f * seed, 28250L + seed));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 85 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Fed slime balls, two frogs fall in love, mate and lay frogspawn at the pond.
+        {
+            Scenario s = new Scenario("feed_frog");
+            floor(s, 16, "minecraft:grass_block");
+            pond(s, 5, -3, 9, 3, 2);
+            MobSpec m1 = new MobSpec("minecraft:frog", 0.5, BY, 0.5, 20f, 28520L);
+            MobSpec m2 = new MobSpec("minecraft:frog", 2.5, BY, 1.5, 200f, 28521L);
+            m1.nbt = NO_JUMP;
+            m2.nbt = NO_JUMP;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {-6.5, BY, 0.5};
+            s.playerCreative = true;
+            for (int i = 0; i < 2; i++) {
+                Action a = new Action(5 + i, "interact");
+                a.mob = i;
+                a.what = "minecraft:slime_ball";
+                s.actions.add(a);
+            }
+            s.levelSeed = 97;
+            s.ticks = 900;
+            out.add(s);
+        }
         // Eating: a small slime and a small magma cube.
         for (String food : new String[] {"slime", "magma_cube"}) {
             Scenario s = new Scenario("tongue_frog_" + food);

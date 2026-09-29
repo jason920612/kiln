@@ -172,6 +172,10 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             let p = player.expect("an interacting player");
             let who = mob::interact::Interactor { id: p.id, creative: p.creative, sneaking: p.sneaking };
             let stack = kiln_item::ItemStack::of(what, 1).unwrap();
+            // The harness puts the item in the player's hand, where it stays.
+            for p in level.players.iter_mut() {
+                p.main_hand = stack.item();
+            }
             let e = level.entity_mut(id).unwrap();
             let mut e2 = std::mem::replace(e, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
             mob::interact::interact(&mut e2, level, &who, &stack);
@@ -251,7 +255,6 @@ fn replay(s: &Value) -> Result<usize, String> {
             if let mob::Species::Chicken { egg_time } = &mut m.species {
                 *egg_time = spec["egg_time"].as_i64().unwrap() as i32;
             }
-            m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
             // The harness equips the main hand before it reads the NBT (which replaces the
             // equipment).
             if let Some(item) = spec["main_hand"].as_str() {
@@ -261,6 +264,13 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
             mob::persist::apply_nbt(&mut e, &tag_of(nbt));
+        }
+        // `setInLoveTime` comes after the NBT is read (and the age set).
+        {
+            let love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
+            if love != 0 {
+                mob::data_mut(&mut e).unwrap().in_love = love;
+            }
         }
         {
             let age = spec.get("age").and_then(Value::as_i64).unwrap_or(0) as i32;
