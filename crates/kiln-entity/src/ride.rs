@@ -21,7 +21,7 @@ pub fn y_rot(v: Vec3, angle: f32) -> Vec3 {
 fn age_scale(e: &Entity) -> f32 {
     match crate::mob::data(e) {
         Some(m) if m.baby() => match m.kind {
-            crate::mob::MobKind::Horse | crate::mob::MobKind::Donkey | crate::mob::MobKind::Mule => 1.0,
+            k if crate::mob::kinds::horse::is_equine(k) => 1.0,
             _ => 0.5,
         },
         _ => 1.0,
@@ -33,8 +33,9 @@ fn age_scale(e: &Entity) -> f32 {
 pub fn vehicle_attachment(type_name: &str, scale: f32) -> Vec3 {
     let y = match type_name {
         "minecraft:player" => 0.6,
-        "minecraft:zombie" | "minecraft:husk" | "minecraft:drowned" | "minecraft:zombie_villager" | "minecraft:zombified_piglin" => 0.7 * scale as f64,
-        "minecraft:skeleton" | "minecraft:stray" | "minecraft:wither_skeleton" | "minecraft:bogged" => 0.7 * scale as f64,
+        // (`ridingOffset(-0.7F)`: a float attachment, scaled in double.)
+        "minecraft:zombie" | "minecraft:husk" | "minecraft:drowned" | "minecraft:zombie_villager" | "minecraft:zombified_piglin" => 0.699_999_988_079_071 * scale as f64,
+        "minecraft:skeleton" | "minecraft:stray" | "minecraft:wither_skeleton" | "minecraft:bogged" => 0.699_999_988_079_071 * scale as f64,
         _ => 0.0,
     };
     Vec3::new(0.0, y, 0.0)
@@ -90,7 +91,7 @@ pub fn position_rider(e: &mut Entity, vehicle: &Entity) {
     e.set_pos(p);
     // `AbstractHorse.positionRider`: the rider's body faces the horse's way.
     if let (EntityKind::Mob(vm), EntityKind::Mob(rm)) = (&vehicle.kind, &mut e.kind)
-        && matches!(vm.kind, crate::mob::MobKind::Horse | crate::mob::MobKind::Donkey | crate::mob::MobKind::Mule)
+        && crate::mob::kinds::horse::is_equine(vm.kind)
     {
         rm.y_body_rot = vm.y_body_rot;
     }
@@ -104,7 +105,19 @@ pub fn start_riding(rider: &mut Entity, vehicle: &mut Entity, rider_is_player: b
     }
     rider.vehicle = Some(vehicle.id);
     add_passenger(vehicle, rider.id, rider_is_player, false);
+    if matches!(&vehicle.kind, EntityKind::Mob(vm) if crate::mob::kinds::horse::is_equine(vm.kind)) {
+        snap_rotation_to_mount(rider, vehicle);
+    }
     true
+}
+
+/// `AbstractHorse.addPassenger`: the new rider snaps to the mount's view rotation
+/// (`absSnapRotationTo(getViewYRot(0), getViewXRot(0))`: the mount's rotation of the last tick).
+pub fn snap_rotation_to_mount(rider: &mut Entity, mount: &Entity) {
+    rider.y_rot = mount.y_rot_o % 360.0;
+    rider.x_rot = mount.x_rot_o.clamp(-90.0, 90.0) % 360.0;
+    rider.y_rot_o = rider.y_rot;
+    rider.x_rot_o = rider.x_rot;
 }
 
 /// `addPassenger`: a player jumps to the front unless a player is already first.
@@ -184,7 +197,7 @@ pub fn horse_dismount(level: &dyn EntityLevel, vehicle: &Entity, rider_width: f6
 /// `Entity.getDismountLocationForPassenger` (on top of the vehicle's box), or the type's own.
 pub fn dismount_location(level: &dyn EntityLevel, vehicle: &Entity, rider_width: f64, rider_height: f64) -> Vec3 {
     if let EntityKind::Mob(m) = &vehicle.kind
-        && matches!(m.kind, crate::mob::MobKind::Horse | crate::mob::MobKind::Donkey | crate::mob::MobKind::Mule)
+        && crate::mob::kinds::horse::is_equine(m.kind)
     {
         return horse_dismount(level, vehicle, rider_width, rider_height);
     }

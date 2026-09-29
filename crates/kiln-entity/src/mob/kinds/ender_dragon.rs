@@ -670,18 +670,12 @@ fn combat_ok(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, p: &Living, r
 
 /// `level.getNearestPlayer(conditions, dragon, x, y, z)`.
 fn nearest_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, at: Vec3, range: f64, los: bool, filter: impl Fn(&Living) -> bool) -> Option<Living> {
-    let mut best: Option<(f64, Living)> = None;
-    for p in level.players() {
+    // The nearest to `at` through the players' section grid, not every player of the level.
+    crate::level::nearest_player_to(level, at, |p| {
         let t = goals::living_player(p);
-        if !filter(&t) || !combat_ok(e, m, level, &t, range, los) {
-            continue;
-        }
-        let d = t.pos.distance_to_sqr(at);
-        if best.as_ref().is_none_or(|(b, _)| d < *b) {
-            best = Some((d, t));
-        }
-    }
-    best.map(|(_, t)| t)
+        filter(&t) && combat_ok(e, m, level, &t, range, los)
+    })
+    .map(|p| goals::living_player(&p))
 }
 
 /// `LivingEntity.hasLineOfSight` (not cached).
@@ -1532,20 +1526,11 @@ pub fn on_crystal_destroyed(e: &mut Entity, level: &mut dyn EntityLevel, crystal
         None => {
             // `CRYSTAL_DESTROY_TARGETING` without a targeter: combat conditions only.
             let at = Vec3::new(crate::math::floor(crystal_pos.x) as f64, crate::math::floor(crystal_pos.y) as f64, crate::math::floor(crystal_pos.z) as f64);
-            let mut best: Option<(f64, Living)> = None;
             if level.difficulty() != 0 {
-                for p in level.players() {
-                    let t = goals::living_player(p);
-                    if !seen_as_enemy(&t) {
-                        continue;
-                    }
-                    let d = t.pos.distance_to_sqr(at);
-                    if best.as_ref().is_none_or(|(b, _)| d < *b) {
-                        best = Some((d, t));
-                    }
-                }
+                crate::level::nearest_player_to(&*level, at, |p| seen_as_enemy(&goals::living_player(p))).map(|p| goals::living_player(&p))
+            } else {
+                None
             }
-            best.map(|(_, t)| t)
         }
     };
     if s.nearest_crystal == Some(crystal) {

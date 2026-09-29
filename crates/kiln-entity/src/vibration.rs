@@ -243,7 +243,7 @@ pub fn source_of(e: &crate::Entity, level: &dyn crate::EntityLevel) -> EventSour
     } else if let Some(o) = owner.filter(|&o| level.player(o).is_some()) {
         Some(o)
     } else if let EntityKind::Item(i) = &e.kind {
-        i.thrower.and_then(|u| level.players().iter().find(|p| p.uuid == u).map(|p| p.id))
+        i.thrower.and_then(|u| level.player_by_uuid(u).map(|p| p.id))
     } else {
         None
     };

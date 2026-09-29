@@ -289,7 +289,7 @@ fn update_persistent_anger(e: &mut Entity, m: &mut MobData, level: &mut dyn Enti
     if r.is_some() && !is_angry(m, level) && (target.is_none_or(|t| !valid_player_target(level, &t)) || !always_refresh) {
         stop_being_angry(e, m);
     }
-    let resolved = r.and_then(|r| r.id.or_else(|| level.players().into_iter().find(|p| p.uuid == r.uuid).map(|p| p.id)));
+    let resolved = r.and_then(|r| r.id.or_else(|| level.player_by_uuid(r.uuid).map(|p| p.id)));
     if let Some(p) = resolved.and_then(|id| level.player(id))
         && (p.creative || p.spectator || level.difficulty() == 0)
     {
@@ -573,7 +573,8 @@ impl CustomGoal for LookForPlayer {
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let range = m.attrs.value(FollowRange);
         let mm: &MobData = m;
-        let wanted: Vec<i32> = level.players().iter().map(goals::living_player).filter(|t| anger_inducing(e, mm, level, t)).map(|t| t.id).collect();
+        // (only the players in range can be picked below)
+        let wanted: Vec<i32> = goals::players_around(e, level, range).iter().map(goals::living_player).filter(|t| anger_inducing(e, mm, level, t)).map(|t| t.id).collect();
         self.pending = goals::nearest_player(e, m, level, true, range, true, |p| wanted.contains(&p.id)).map(|t| t.id);
         self.pending.is_some()
     }
@@ -697,7 +698,8 @@ fn can_place(e: &Entity, level: &dyn EntityLevel, pos: BlockPos, carried: u16, t
     }
     let b = Aabb::new(pos.x as f64, pos.y as f64, pos.z as f64, pos.x as f64 + 1.0, pos.y as f64 + 1.0, pos.z as f64 + 1.0);
     level.entities_in(&b, EntityFilter::Any, e.id).is_empty()
-        && !level.players().iter().any(|p| !p.spectator && Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + 1.8, p.pos.z + 0.3).intersects(&b))
+        // (a sneaking player's box is 0.3 shorter: the wider query only narrows the candidates)
+        && !level.players_in(&Aabb::new(b.min_x, b.min_y - 0.5, b.min_z, b.max_x, b.max_y, b.max_z)).iter().any(|p| !p.spectator && Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + 1.8, p.pos.z + 0.3).intersects(&b))
 }
 
 /// `BlockState.canSurvive` for the holdable blocks, on a full block. Approximation: plants

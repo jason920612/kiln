@@ -128,6 +128,8 @@ pub enum MobKind {
     Creaking,
     Sniffer,
 
+    // -- wp25: the skeleton trap
+    SkeletonHorse,
 }
 
 /// `MobCategory`.
@@ -276,6 +278,8 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Creaking,
     MobKind::Sniffer,
 
+    // -- wp25: the skeleton trap
+    MobKind::SkeletonHorse,
 ];
 
 impl MobKind {
@@ -1153,6 +1157,25 @@ fn put(e: &mut Entity, m: Box<MobData>) {
 
 // ---------------------------------------------------------------------- the tick
 
+/// `Mob.getControllingPassenger() instanceof Mob`: the first passenger when it is a mob that
+/// can steer (not the slimes and magma cubes of `#minecraft:non_controlling_rider`), unless
+/// the vehicle has no AI.
+pub fn controlling_mob_passenger(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<i32> {
+    if m.no_ai {
+        return None;
+    }
+    let first = *e.passengers.first()?;
+    let rider = level.entity(first)?;
+    (matches!(rider.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) && !entity_type_tag(rider.type_name, "minecraft:non_controlling_rider")).then_some(first)
+}
+
+/// `Mob.hasControllingPassenger`: a saddled mount's player rider, or a mob rider that steers.
+/// (Kiln's mob riders do not steer their mounts yet: what the check switches off, such as a
+/// mount's own strolls, is switched off all the same.)
+pub fn has_controlling_passenger(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool {
+    !e.passengers.is_empty() && (m.kind.ext().and_then(|k| k.controlling_player(e, m, level)).is_some() || controlling_mob_passenger(e, m, level).is_some())
+}
+
 /// `Mob.tick` (the level ran `commonTick`): the type's pre-tick, `LivingEntity.tick`, then
 /// `Mob.tick`'s control flags.
 pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
@@ -1826,13 +1849,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         }
     }
     // Players without a stand-in among the entities.
-    for p in level.players() {
-        // The box test first: the lookups below scan the level's players.
-        let h = if p.sneaking { 1.5 } else { 1.8 };
-        let pb = Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3);
-        if !pb.intersects(&bb) {
-            continue;
-        }
+    for p in &level.players_in(&bb) {
         if p.spectator || !p.alive || others.iter().any(|o| o.0 == p.id) || level.entity(p.id).is_some() || riding(p.id, p.vehicle) {
             continue;
         }
@@ -1846,6 +1863,8 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if let EntityKind::Mob(om) = &o.kind
             && om.health > 0.0
             && om.kind.ext().is_none_or(|k| k.pushable())
+            // `AbstractHorse.isPushable` (horses, donkeys, camels...): `!isVehicle()`.
+            && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || om.kind == MobKind::Camel))
             && !riding(id, o.vehicle)
         {
             others.push((id, o.x(), o.z(), false));

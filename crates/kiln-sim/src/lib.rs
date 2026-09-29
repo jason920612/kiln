@@ -1408,6 +1408,21 @@ impl Sim {
         out
     }
 
+    /// Every simulated entity's vehicle and passengers: (network id, vehicle, passengers), in id
+    /// order (for tests and tools).
+    pub fn riding(&self) -> Vec<(i32, Option<i32>, Vec<i32>)> {
+        let mut out: Vec<_> = self
+            .dims
+            .iter()
+            .flat_map(|d| d.regions.iter())
+            .flat_map(|r| r.part().0.list.iter())
+            .filter(|e| !e.removed)
+            .filter_map(|e| e.phys.as_ref().map(|p| (e.id, p.vehicle, p.passengers.clone())))
+            .collect();
+        out.sort_by_key(|r| r.0);
+        out
+    }
+
     /// The entity a player rides (for tests and tools).
     pub fn vehicle_of(&self, conn: ConnId) -> Option<i32> {
         self.players.get(&conn)?.vehicle
@@ -1897,6 +1912,9 @@ impl Sim {
         let world_seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
         for d in &mut self.dims {
             let mut later = Vec::new();
+            // Entities built during a tick carry placeholder (negative) ids that other new
+            // entities refer to as their vehicle or passengers: (placeholder, id, chunk).
+            let mut placeholders: Vec<(i32, i32, ChunkPos)> = Vec::new();
             for spawn in entities::canonical(std::mem::take(&mut d.spawns)) {
                 let chunk = entities::chunk_of(spawn.pos);
                 // Into a region ticking away: once it is back.
@@ -1919,9 +1937,46 @@ impl Sim {
                     self.next_entity_id += 8;
                 }
                 let uuid = entities::fresh_uuid(world_seed, self.game_time, id);
+                if let entities::Body::Ready(e) = &spawn.body
+                    && e.id < 0
+                {
+                    placeholders.push((e.id, id, chunk));
+                }
                 region.part_mut().0.list.push(entities::Entity::new(id, uuid, spawn));
             }
             d.spawns = later;
+            if !placeholders.is_empty() {
+                Self::resolve_placeholders(d, &placeholders);
+            }
+        }
+    }
+
+    /// Replaces the placeholder ids of `placeholders` in the vehicles and passengers of the
+    /// entities just added (and of the vehicles they ride, which may be older entities of the
+    /// same region: a skeleton trap's rider sits on the trap horse).
+    fn resolve_placeholders(d: &mut Dim, placeholders: &[(i32, i32, ChunkPos)]) {
+        let real = |id: i32| placeholders.iter().find(|p| p.0 == id).map_or(id, |p| p.1);
+        for &(placeholder, id, chunk) in placeholders {
+            let Some(region) = d.regions.at_mut(chunk.cell()) else { continue };
+            let list = &mut region.part_mut().0.list;
+            let Ok(i) = list.binary_search_by_key(&id, |e| e.id) else { continue };
+            let vehicle = list[i].phys.as_mut().and_then(|p| {
+                p.vehicle = p.vehicle.map(real);
+                for x in p.passengers.iter_mut() {
+                    *x = real(*x);
+                }
+                p.vehicle
+            });
+            if let Some(v) = vehicle
+                && let Ok(j) = list.binary_search_by_key(&v, |e| e.id)
+                && let Some(vp) = list[j].phys.as_mut()
+            {
+                for x in vp.passengers.iter_mut() {
+                    if *x == placeholder {
+                        *x = id;
+                    }
+                }
+            }
         }
     }
 

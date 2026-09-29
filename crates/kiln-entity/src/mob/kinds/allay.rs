@@ -55,7 +55,7 @@ fn st_mut(m: &mut MobData) -> &mut State {
 /// The liked player, if in the level.
 fn liked(m: &MobData, level: &dyn EntityLevel) -> Option<crate::level::PlayerView> {
     let u = st(m).liked_player?;
-    level.players().iter().find(|p| p.uuid == u && p.alive).copied()
+    level.player_by_uuid(u).filter(|p| p.alive)
 }
 
 /// `wantsToPickUp`: the same item as the one held, room in the inventory, griefing on.

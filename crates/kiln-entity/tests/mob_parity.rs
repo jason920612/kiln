@@ -179,6 +179,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
 fn replay(s: &Value) -> Result<usize, String> {
     // Diverging (brain-driven) scenarios compare the body only: not the random or the goals.
     let loose = s.get("diverges").and_then(Value::as_bool) == Some(true);
+    let pin_yaw = s.get("pin_yaw").and_then(Value::as_bool) == Some(true);
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     level.sky_darken = s["sky_darken"].as_i64().unwrap() as i32;
@@ -301,7 +302,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     level.immediate_adds = true;
     let mut known = level.len();
     let mut compared = 0;
-    for (tick, expected) in trace.iter().enumerate() {
+    let window = s.get("compare_ticks").and_then(Value::as_u64).filter(|&n| n > 0).map_or(usize::MAX, |n| n as usize);
+    for (tick, expected) in trace.iter().enumerate().take(window) {
         let tick = tick as i64;
         level.game_time = start + 1 + tick;
         level.tick_players();
@@ -343,8 +345,21 @@ fn replay(s: &Value) -> Result<usize, String> {
                 if matches!(e.kind, EntityKind::Other { .. }) {
                     return;
                 }
+                // Riders are ticked with their vehicle (`ServerLevel.tickPassenger`).
+                if e.vehicle.is_some() {
+                    return;
+                }
                 e.common_tick();
                 e.tick(level);
+                for pid in e.passengers.clone() {
+                    let Some(slot) = level.entity_mut(pid) else { continue };
+                    let mut p = std::mem::replace(slot, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+                    if p.vehicle == Some(e.id) && !p.is_removed() {
+                        p.common_tick();
+                        kiln_entity::ride::ride_tick(&mut p, level, e);
+                    }
+                    *level.entity_mut(pid).unwrap() = p;
+                }
             });
         }
         let before_flush = known;
@@ -361,6 +376,11 @@ fn replay(s: &Value) -> Result<usize, String> {
             let n = (ids.len() - initial) as i64;
             let e = level.entity_mut(id).unwrap();
             e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
+            if pin_yaw {
+                // (`Scenario.pinYaw`)
+                e.y_rot = 10.0 * (n + 1) as f32;
+                e.y_rot_o = e.y_rot;
+            }
             let yaw = e.y_rot;
             let m = mob::data_mut(e).unwrap();
             m.y_head_rot = yaw;
@@ -425,7 +445,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     // Vanilla arrows draw their damage and spread from their own random, which is seeded from
     // the clock (not pinnable): skeleton scenarios compare the mob, not where arrows land.
     // Shulker bullets likewise steer by their own random.
-    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident" | "minecraft:crossbow")) || matches!(m["type"].as_str(), Some("minecraft:shulker" | "minecraft:witch")));
+    // (The skeleton trap's horsemen shoot too.)
+    let arrows = s["name"].as_str().is_some_and(|n| n.contains("skeleton_trap")) || s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident" | "minecraft:crossbow")) || matches!(m["type"].as_str(), Some("minecraft:shulker" | "minecraft:witch")));
     let f32s = |v: &[(i64, f64)]| v.iter().map(|&(t, a)| (t, (a as f32).to_bits())).collect::<Vec<_>>();
     if !arrows && f32s(&got_hits) != f32s(&want_hits) {
         return Err(format!("player hits {got_hits:?} (kiln) vs {want_hits:?} (vanilla)"));
