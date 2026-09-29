@@ -336,6 +336,98 @@ pub fn player_box(p: &PlayerView) -> Aabb {
     Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3)
 }
 
+/// Index of a level's [`PlayerView`]s for the queries mobs make several times a tick each: by
+/// entity id, by UUID and by the 16-block section a player stands in. Every answer is the one a
+/// scan of the views would give (same players, same order).
+#[derive(Default)]
+pub struct PlayerGrid {
+    by_id: std::collections::HashMap<i32, usize>,
+    by_uuid: std::collections::HashMap<u128, usize>,
+    cells: std::collections::HashMap<(i32, i32, i32), Vec<usize>>,
+}
+
+fn section_of(x: f64, y: f64, z: f64) -> (i32, i32, i32) {
+    ((x.floor() as i32) >> 4, (y.floor() as i32) >> 4, (z.floor() as i32) >> 4)
+}
+
+impl PlayerGrid {
+    pub fn build(views: &[PlayerView]) -> PlayerGrid {
+        let mut g = PlayerGrid::default();
+        for (i, v) in views.iter().enumerate() {
+            g.by_id.insert(v.id, i);
+            g.by_uuid.entry(v.uuid).or_insert(i);
+            g.cells.entry(section_of(v.pos.x, v.pos.y, v.pos.z)).or_default().push(i);
+        }
+        g
+    }
+
+    /// The view with entity id `id`.
+    pub fn by_id(&self, views: &[PlayerView], id: i32) -> Option<PlayerView> {
+        self.by_id.get(&id).map(|&i| views[i])
+    }
+
+    /// The first view with UUID `uuid`.
+    pub fn by_uuid(&self, views: &[PlayerView], uuid: u128) -> Option<PlayerView> {
+        self.by_uuid.get(&uuid).map(|&i| views[i])
+    }
+
+    /// The views whose box touches `area`, in the views' order (what
+    /// `views.filter(|p| player_box(p).intersects(area))` gives).
+    pub fn in_area(&self, views: &[PlayerView], area: &Aabb) -> Vec<PlayerView> {
+        // A player's box reaches at most 1.8 up and 0.3 to the sides of its position.
+        let lo = section_of(area.min_x - 0.3, area.min_y - 1.8, area.min_z - 0.3);
+        let hi = section_of(area.max_x + 0.3, area.max_y, area.max_z + 0.3);
+        let span = (hi.0 as i64 - lo.0 as i64 + 1) * (hi.1 as i64 - lo.1 as i64 + 1) * (hi.2 as i64 - lo.2 as i64 + 1);
+        let mut at: Vec<usize> = Vec::new();
+        if self.cells.is_empty() || span > self.cells.len() as i64 * 4 {
+            at.extend(0..views.len());
+        } else {
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        if let Some(v) = self.cells.get(&(x, y, z)) {
+                            at.extend_from_slice(v);
+                        }
+                    }
+                }
+            }
+            // The views' own order.
+            at.sort_unstable();
+        }
+        at.into_iter().map(|i| views[i]).filter(|p| player_box(p).intersects(area)).collect()
+    }
+}
+
+/// The player nearest `at` (by squared distance to its position; the first in
+/// [`EntityLevel::players`] order among equals) that `accept` takes, without visiting every player:
+/// the section grid answers boxes of growing radius, and the nearest accepted player inside a
+/// box's inscribed sphere is the nearest of all. Players beyond the last box are scanned.
+/// `accept` runs once per player at most, in order of distance.
+pub fn nearest_player_to(level: &dyn EntityLevel, at: Vec3, mut accept: impl FnMut(&PlayerView) -> bool) -> Option<PlayerView> {
+    // Squared radius already searched: (prev, r²] is what each round looks at.
+    let mut prev = -1.0f64;
+    for r in [16.0f64, 64.0, 256.0, 1024.0] {
+        let area = Aabb::new(at.x - r - 1.0, at.y - r - 2.0, at.z - r - 1.0, at.x + r + 1.0, at.y + r + 2.0, at.z + r + 1.0);
+        let mut c: Vec<(f64, PlayerView)> = level.players_in(&area).into_iter().map(|p| (p.pos.distance_to_sqr(at), p)).filter(|(d, _)| *d > prev && *d <= r * r).collect();
+        // (stable: equal distances stay in player order)
+        c.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (_, p) in c {
+            if accept(&p) {
+                return Some(p);
+            }
+        }
+        prev = r * r;
+    }
+    let mut best: Option<(f64, PlayerView)> = None;
+    for p in level.players() {
+        let d = p.pos.distance_to_sqr(at);
+        if d > prev && best.as_ref().is_none_or(|(b, _)| d < *b) && accept(p) {
+            best = Some((d, *p));
+        }
+    }
+    best.map(|(_, p)| p)
+}
+
 /// World access for entity ticks.
 ///
 /// The entity being ticked is not reachable through `entity_mut` (the caller holds it); every
@@ -482,6 +574,12 @@ pub trait EntityLevel {
     /// Player `id`, if it is one.
     fn player(&self, id: i32) -> Option<PlayerView> {
         self.players().iter().find(|p| p.id == id).copied()
+    }
+
+    /// The player with `uuid` (the first, if the view holds several): owners, liked players and
+    /// conversion starters, by index on crowd servers instead of a scan of every player.
+    fn player_by_uuid(&self, uuid: u128) -> Option<PlayerView> {
+        self.players().iter().find(|p| p.uuid == uuid).copied()
     }
 
     fn emit(&mut self, event: Event);

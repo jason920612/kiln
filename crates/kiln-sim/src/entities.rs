@@ -418,14 +418,14 @@ struct SimLevel<'a, 'l, 'p> {
     rng: LegacyRandom,
     /// Entity sections (16³) → indices in `list`, for area queries.
     grid: Grid,
-    /// Player entity id → index in `proxies` / `views` ([`SimLevel::index_players`]; mobs look
-    /// players up several times a tick, and a crowd has a thousand).
+    /// Player entity id → index in `proxies` ([`SimLevel::index_players`]; mobs look players up
+    /// several times a tick, and a crowd has a thousand).
     proxy_at: HashMap<i32, usize>,
-    view_at: HashMap<i32, usize>,
     /// Player stand-ins by entity section (like `grid`), so area queries skip far players.
     proxy_grid: HashMap<(i32, i32, i32), Vec<usize>>,
-    /// Player views (spectators too) by the section they stand in, for [`EntityLevel::players_in`].
-    view_grid: HashMap<(i32, i32, i32), Vec<usize>>,
+    /// Player views (spectators too) by id, UUID and section, for [`EntityLevel::player`],
+    /// [`EntityLevel::player_by_uuid`] and [`EntityLevel::players_in`].
+    view_index: kiln_entity::level::PlayerGrid,
 }
 
 /// Entities by section, like vanilla's `EntitySectionStorage`.
@@ -490,15 +490,11 @@ impl SimLevel<'_, '_, '_> {
 
     fn index_players(&mut self) {
         self.proxy_at = self.proxies.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
-        self.view_at = self.views.iter().enumerate().map(|(i, v)| (v.id, i)).collect();
+        self.view_index = kiln_entity::level::PlayerGrid::build(&self.views);
         self.proxy_grid.clear();
         for (i, e) in self.proxies.iter().enumerate() {
             let p = e.position();
             self.proxy_grid.entry(section_of([p.x, p.y, p.z])).or_default().push(i);
-        }
-        self.view_grid.clear();
-        for (i, v) in self.views.iter().enumerate() {
-            self.view_grid.entry(section_of([v.pos.x, v.pos.y, v.pos.z])).or_default().push(i);
         }
     }
 
@@ -711,34 +707,15 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn players_in(&self, area: &Aabb) -> Vec<PlayerView> {
-        // A player's box reaches at most 1.8 up and 0.3 to the sides of its position.
-        let lo = section_of([area.min_x - 0.3, area.min_y - 1.8, area.min_z - 0.3]);
-        let hi = section_of([area.max_x + 0.3, area.max_y, area.max_z + 0.3]);
-        let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
-        let mut at: Vec<usize> = Vec::new();
-        if self.view_grid.is_empty() || span > self.view_grid.len() as i64 * 4 {
-            at.extend(0..self.views.len());
-        } else {
-            for x in lo.0..=hi.0 {
-                for y in lo.1..=hi.1 {
-                    for z in lo.2..=hi.2 {
-                        if let Some(v) = self.view_grid.get(&(x, y, z)) {
-                            at.extend_from_slice(v);
-                        }
-                    }
-                }
-            }
-            // The players' own order, as `players()` iterates.
-            at.sort_unstable();
-        }
-        at.into_iter().map(|i| self.views[i]).filter(|p| kiln_entity::level::player_box(p).intersects(area)).collect()
+        self.view_index.in_area(&self.views, area)
     }
 
     fn player(&self, id: i32) -> Option<PlayerView> {
-        if self.view_at.is_empty() {
-            return self.views.iter().find(|p| p.id == id).copied();
-        }
-        self.view_at.get(&id).map(|&i| self.views[i])
+        self.view_index.by_id(&self.views, id)
+    }
+
+    fn player_by_uuid(&self, uuid: u128) -> Option<PlayerView> {
+        self.view_index.by_uuid(&self.views, uuid)
     }
 
     fn emit(&mut self, event: Event) {
@@ -1037,9 +1014,8 @@ pub(crate) fn tick(
         rng: LegacyRandom::new(0),
         grid: Grid::default(),
         proxy_at: HashMap::new(),
-        view_at: HashMap::new(),
         proxy_grid: HashMap::new(),
-        view_grid: HashMap::new(),
+        view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -1302,9 +1278,8 @@ pub(crate) fn hit_mob(
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
-        view_at: HashMap::new(),
         proxy_grid: HashMap::new(),
-        view_grid: HashMap::new(),
+        view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -1416,9 +1391,8 @@ pub(crate) fn interact_mob(
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
-        view_at: HashMap::new(),
         proxy_grid: HashMap::new(),
-        view_grid: HashMap::new(),
+        view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -1566,9 +1540,8 @@ pub(crate) fn with_entity<R>(
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
-        view_at: HashMap::new(),
         proxy_grid: HashMap::new(),
-        view_grid: HashMap::new(),
+        view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -1616,9 +1589,8 @@ pub(crate) fn with_level<R>(
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
-        view_at: HashMap::new(),
         proxy_grid: HashMap::new(),
-        view_grid: HashMap::new(),
+        view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();

@@ -70,7 +70,7 @@ pub fn set_sitting(m: &mut MobData, on: bool) {
 /// `getOwner`: the owner player, if it is in the level.
 pub fn owner(m: &MobData, level: &dyn EntityLevel) -> Option<PlayerView> {
     let u = get(m)?.owner?;
-    level.players().iter().find(|p| p.uuid == u).copied()
+    level.player_by_uuid(u)
 }
 
 /// `isOwnedBy(player)`.

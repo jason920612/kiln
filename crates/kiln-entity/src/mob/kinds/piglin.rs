@@ -156,7 +156,7 @@ fn stop_holding_offhand(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityL
         // blocks that way instead of throwing it.
         m.swing = true;
         let p = e.position();
-        let toward = level.players().into_iter().filter(|v| v.alive && !v.spectator).map(|v| v.pos).min_by(|a, b| a.distance_to_sqr(p).total_cmp(&b.distance_to_sqr(p)));
+        let toward = crate::level::nearest_player_to(&*level, p, |v| v.alive && !v.spectator).map(|v| v.pos);
         let dir = match toward {
             Some(t) => Vec3::new(t.x - p.x, 0.0, t.z - p.z).normalize(),
             None => {

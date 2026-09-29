@@ -1,0 +1,156 @@
+//! The players' section grid (`PlayerGrid`) and the searches built on it answer exactly what a
+//! scan of every player would: the same players in the same order, the same nearest player.
+
+use kiln_entity::Entity;
+use kiln_entity::level::{EntityFilter, EntityLevel, Event, PlayerGrid, PlayerView, nearest_player_to, player_box};
+use kiln_entity::math::{Aabb, BlockPos, Vec3};
+use kiln_entity::memory::MemoryLevel;
+use kiln_javamath::random::LegacyRandom;
+
+/// A level whose player queries go through a `PlayerGrid`; the rest is a `MemoryLevel`.
+struct GridLevel {
+    inner: MemoryLevel,
+    grid: PlayerGrid,
+}
+
+impl GridLevel {
+    fn new(views: Vec<PlayerView>) -> GridLevel {
+        let grid = PlayerGrid::build(&views);
+        let mut inner = MemoryLevel::new(-64, 1);
+        inner.players = views;
+        GridLevel { inner, grid }
+    }
+}
+
+impl EntityLevel for GridLevel {
+    fn block(&self, pos: BlockPos) -> u16 {
+        self.inner.block(pos)
+    }
+    fn set_block(&mut self, pos: BlockPos, state: u16, flags: u32) -> bool {
+        self.inner.set_block(pos, state, flags)
+    }
+    fn random(&mut self) -> &mut LegacyRandom {
+        self.inner.random()
+    }
+    fn game_time(&self) -> i64 {
+        self.inner.game_time()
+    }
+    fn min_y(&self) -> i32 {
+        self.inner.min_y()
+    }
+    fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
+        self.inner.entities_in(area, filter, exclude)
+    }
+    fn entity_mut(&mut self, id: i32) -> Option<&mut Entity> {
+        self.inner.entity_mut(id)
+    }
+    fn entity(&self, id: i32) -> Option<&Entity> {
+        self.inner.entity(id)
+    }
+    fn add_entity(&mut self, entity: Entity) {
+        self.inner.add_entity(entity)
+    }
+    fn next_entity_id(&mut self) -> i32 {
+        self.inner.next_entity_id()
+    }
+    fn fresh_seed(&mut self) -> i64 {
+        self.inner.fresh_seed()
+    }
+    fn emit(&mut self, event: Event) {
+        self.inner.emit(event)
+    }
+    fn players(&self) -> &[PlayerView] {
+        &self.inner.players
+    }
+    fn players_in(&self, area: &Aabb) -> Vec<PlayerView> {
+        self.grid.in_area(&self.inner.players, area)
+    }
+    fn player(&self, id: i32) -> Option<PlayerView> {
+        self.grid.by_id(&self.inner.players, id)
+    }
+    fn player_by_uuid(&self, uuid: u128) -> Option<PlayerView> {
+        self.grid.by_uuid(&self.inner.players, uuid)
+    }
+}
+
+/// splitmix64.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+    fn f(&mut self, lo: f64, hi: f64) -> f64 {
+        lo + (self.next() >> 11) as f64 / (1u64 << 53) as f64 * (hi - lo)
+    }
+}
+
+fn crowd(rng: &mut Rng, n: usize, spread: f64) -> Vec<PlayerView> {
+    (0..n)
+        .map(|i| {
+            let mut p = PlayerView::new(100 + i as i32, Vec3::new(rng.f(-spread, spread), rng.f(-20.0, 200.0), rng.f(-spread, spread)));
+            // Duplicated UUIDs on purpose: the first one wins, as a scan finds it.
+            p.uuid = (rng.next() % (n as u64 / 2 + 1)) as u128;
+            p.sneaking = rng.next() % 3 == 0;
+            p.spectator = rng.next() % 7 == 0;
+            p.alive = rng.next() % 9 != 0;
+            p
+        })
+        .collect()
+}
+
+#[test]
+fn grid_queries_match_a_scan() {
+    let mut rng = Rng(7);
+    for (n, spread) in [(0, 10.0), (1, 10.0), (5, 30.0), (200, 100.0), (1000, 2000.0), (300, 20.0)] {
+        let views = crowd(&mut rng, n, spread);
+        let grid = PlayerGrid::build(&views);
+        for _ in 0..300 {
+            let (x, y, z) = (rng.f(-spread, spread), rng.f(-30.0, 210.0), rng.f(-spread, spread));
+            let (w, h, d) = (rng.f(0.1, 60.0), rng.f(0.1, 60.0), rng.f(0.1, 60.0));
+            let area = Aabb::new(x, y, z, x + w, y + h, z + d);
+            let want: Vec<PlayerView> = views.iter().filter(|p| player_box(p).intersects(&area)).copied().collect();
+            assert_eq!(grid.in_area(&views, &area), want, "area {area:?} of {n} players");
+        }
+        for v in &views {
+            assert_eq!(grid.by_id(&views, v.id), Some(*v));
+            assert_eq!(grid.by_uuid(&views, v.uuid), views.iter().find(|p| p.uuid == v.uuid).copied());
+        }
+        assert_eq!(grid.by_id(&views, -5), None);
+        assert_eq!(grid.by_uuid(&views, u128::MAX), None);
+    }
+}
+
+#[test]
+fn nearest_player_matches_a_scan() {
+    let mut rng = Rng(11);
+    for (n, spread) in [(0, 10.0), (1, 10.0), (6, 50.0), (200, 100.0), (500, 3000.0), (40, 20000.0)] {
+        let level = GridLevel::new(crowd(&mut rng, n, spread));
+        for round in 0..200 {
+            let at = Vec3::new(rng.f(-spread, spread), rng.f(-30.0, 210.0), rng.f(-spread, spread));
+            // Accept everyone, alive survivors, or a sparse subset (which pushes the search outward).
+            let pick = round % 3;
+            let modulo = 1 + rng.next() % 9;
+            let accept = |p: &PlayerView| match pick {
+                0 => true,
+                1 => p.alive && !p.spectator,
+                _ => p.id as u64 % modulo == 0,
+            };
+            let want = level.players().iter().filter(|p| accept(p)).fold(None::<PlayerView>, |best, p| match best {
+                Some(b) if b.pos.distance_to_sqr(at) <= p.pos.distance_to_sqr(at) => Some(b),
+                _ => Some(*p),
+            });
+            let mut calls = 0;
+            let got = nearest_player_to(&level, at, |p| {
+                calls += 1;
+                accept(p)
+            });
+            assert_eq!(got, want, "nearest to {at:?} of {n} players (filter {pick})");
+            assert!(calls <= n.max(1) * 2, "{calls} accept calls for {n} players");
+        }
+    }
+}
