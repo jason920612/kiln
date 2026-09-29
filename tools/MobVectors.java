@@ -2938,6 +2938,95 @@ public class MobVectors {
             s.ticks = 900;
             out.add(s);
         }
+        // Digging on dirt and mud, and on sand (not diggable: it sniffs but never digs).
+        for (String[] f : new String[][] {{"dirt", "minecraft:dirt"}, {"mud", "minecraft:mud"}, {"sand", "minecraft:sand"}, {"moss", "minecraft:moss_block"}}) {
+            for (int seed = 1; seed <= 2; seed++) {
+                Scenario s = new Scenario("dig_sniffer_" + f[0] + "_" + seed);
+                floor(s, 20, f[1]);
+                s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 90f * seed, 16100L + 11 * seed));
+                s.player = new double[] {14.5, BY, 0.5};
+                s.playerCreative = true;
+                s.levelSeed = 70 + seed;
+                s.ticks = 900;
+                out.add(s);
+            }
+        }
+        // Hurt while searching and while digging (the idle_sniffer_2 run up to then).
+        for (int at : new int[] {300, 500}) {
+            Scenario s = new Scenario("hurt_sniffer_" + at);
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 80f, 16014L));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 62;
+            s.hurts.put(at, new double[] {0, 1.0});
+            s.ticks = 800;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_sniffer");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 0f, 16200));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:torchflower_seeds";
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("breed_sniffer");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 20f, 16210);
+            MobSpec m2 = new MobSpec("minecraft:sniffer", 4.5, BY, 1.5, 200f, 16211);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("feed_sniffer");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 20f, 16220));
+            MobSpec other = new MobSpec("minecraft:sniffer", 5.5, BY, 0.5, 250f, 16221);
+            other.inLove = 900;
+            s.mobs.add(other);
+            s.player = new double[] {2.5, BY, 0.5};
+            s.playerCreative = true;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:torchflower_seeds";
+            s.actions.add(a);
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("baby_sniffer");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec baby = new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 0f, 16230);
+            baby.age = -48000;
+            s.mobs.add(baby);
+            s.mobs.add(new MobSpec("minecraft:sniffer", 6.5, BY, 2.5, 90f, 16231));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("pond_sniffer");
+            floor(s, 20, "minecraft:grass_block");
+            for (int x = -3; x <= 3; x++)
+                for (int z = 2; z <= 6; z++) block(s, x, BY - 1, z, "minecraft:water");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 0f, 16240));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 75;
+            s.ticks = 700;
+            out.add(s);
+        }
     }
 
     /// Axolotls, goats, frogs, tadpoles.

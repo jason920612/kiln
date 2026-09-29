@@ -172,6 +172,10 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             let p = player.expect("an interacting player");
             let who = mob::interact::Interactor { id: p.id, creative: p.creative, sneaking: p.sneaking };
             let stack = kiln_item::ItemStack::of(what, 1).unwrap();
+            // The harness leaves the item in the player's hand (wp28 animals: it goes on tempting).
+            if let Some(pv) = level.players.iter_mut().find(|q| q.id == p.id) {
+                pv.main_hand = kiln_data::builtin_id("minecraft:item", what).unwrap();
+            }
             let e = level.entity_mut(id).unwrap();
             let mut e2 = std::mem::replace(e, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
             mob::interact::interact(&mut e2, level, &who, &stack);

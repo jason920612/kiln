@@ -19,6 +19,8 @@ use crate::mob::brain::memory::GlobalPos;
 use crate::mob::brain::sensors;
 use crate::mob::brain::{self, Activity, ActivityData, Behavior, Brain, Cx, Gate, Mem, Status, Timed, Val, WalkTarget, util};
 use crate::mob::ext::{self, Info, Kind, MobExt};
+use crate::mob::interact::{Interactor, Outcome};
+use kiln_item::ItemStack;
 use crate::mob::{self, MobData, path, random_pos};
 use crate::persist::{Input, Output};
 use kiln_javamath::random::RandomSource;
@@ -208,6 +210,24 @@ impl Kind for Sniffer {
     fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
         let ok = |x: &MobData| ext::state::<State>(x).is_some_and(|s| matches!(s.state, IDLING | SCENTING | FEELING_HAPPY));
         ok(m) && ok(partner)
+    }
+
+    /// `mobInteract`: feeding, then the eating sound (its pitch from the level's random).
+    fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+        let food = !stack.is_empty() && self.is_food(stack.item());
+        let out = mob::interact::animal_interact(e, m, level, who, stack);
+        if out.success && food {
+            // `Animal.mobInteract` plays the eating sound and `Sniffer.mobInteract` plays it again.
+            for _ in 0..2 {
+                let r = match level.shared_ai_random() {
+                    Some(r) => r,
+                    None => &mut m.brain_random,
+                };
+                let pitch = r.next_float() * (1.2f32 - 0.8f32) + 0.8f32;
+                level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.sniffer.eat", source: "neutral", volume: 1.0, pitch });
+            }
+        }
+        Some(out)
     }
 
     /// `spawnChildFromBreeding`: an egg, not a baby.
