@@ -710,6 +710,12 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.view_index.in_area(&self.views, area)
     }
 
+    fn enchant_from_provider(&self, stack: &mut kiln_item::ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
+        if let Some(loot) = self.level.env.loot.as_deref() {
+            crate::enchant::enchant_from_provider(loot, stack, provider, special_multiplier, random);
+        }
+    }
+
     fn player(&self, id: i32) -> Option<PlayerView> {
         self.view_index.by_id(&self.views, id)
     }

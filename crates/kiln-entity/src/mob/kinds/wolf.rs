@@ -71,7 +71,7 @@ pub fn wants_to_attack(level: &dyn EntityLevel, t: &Living, owner: &PlayerView) 
     if om.kind == MobKind::Wolf {
         return !tame::is_tame(om) || tame::get(om).and_then(|x| x.owner) != Some(owner.uuid);
     }
-    if matches!(om.kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule) && super::horse::is_tamed(om) {
+    if super::horse::is_equine(om.kind) && super::horse::is_tamed(om) {
         return false;
     }
     !tame::is_tame(om)

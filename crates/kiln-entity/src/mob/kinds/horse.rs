@@ -26,6 +26,8 @@ pub enum Which {
     Horse,
     Donkey,
     Mule,
+    /// `SkeletonHorse` (the trap horse of thunderstorms, see [`super::skeleton_horse`]).
+    Skeleton,
 }
 
 pub struct Equine(pub Which);
@@ -33,6 +35,7 @@ pub struct Equine(pub Which);
 pub static KIND: Equine = Equine(Which::Horse);
 pub static DONKEY: Equine = Equine(Which::Donkey);
 pub static MULE: Equine = Equine(Which::Mule);
+pub static SKELETON: Equine = Equine(Which::Skeleton);
 
 static HORSE_INFO: Info = Info {
     ambient_interval: 400,
@@ -45,6 +48,11 @@ static DONKEY_INFO: Info = Info {
 static MULE_INFO: Info = Info {
     ambient_interval: 400,
     ..Info::animal("minecraft:mule", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
+};
+
+static SKELETON_INFO: Info = Info {
+    ambient_interval: 400,
+    ..Info::animal("minecraft:skeleton_horse", &[(JumpStrength, 0.7), (MaxHealth, 15.0), (MovementSpeed, 0.20000000298023224), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5)])
 };
 
 #[derive(Clone, Debug)]
@@ -74,13 +82,16 @@ pub struct State {
     pub chest: bool,
     /// `Horse.DATA_ID_TYPE_VARIANT`: variant | markings << 8.
     pub type_variant: i32,
+    /// `SkeletonHorse.isTrap` and `trapTime`.
+    pub trap: bool,
+    pub trap_time: i32,
 }
 
-fn st(m: &MobData) -> &State {
+pub(super) fn st(m: &MobData) -> &State {
     ext::state::<State>(m).expect("horse state")
 }
 
-fn st_mut(m: &mut MobData) -> &mut State {
+pub(super) fn st_mut(m: &mut MobData) -> &mut State {
     ext::state_mut::<State>(m).expect("horse state")
 }
 
@@ -123,12 +134,16 @@ fn clear_standing(m: &mut MobData) {
     s.stand_counter = 0;
 }
 
-/// `makeMad`: rears up and makes its angry sound.
+/// `makeMad`: rears up and makes its angry sound (skeleton horses have none: `getAngrySound`
+/// is null, and no voice pitch is drawn).
 fn make_mad(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if st(m).standing {
         return;
     }
     stand(m);
+    if m.kind == MobKind::SkeletonHorse {
+        return;
+    }
     let pitch = voice_pitch(e, m);
     play(e, level, sound(m, "angry"), 0.8, pitch);
 }
@@ -145,7 +160,8 @@ fn eating(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let s = st_mut(m);
     s.mouth_counter = 1;
     s.open_mouth = true;
-    if !e.silent {
+    // (`getEatingSound` is null for skeleton horses: no sound, no draws.)
+    if !e.silent && m.kind != MobKind::SkeletonHorse {
         let pitch = 1.0 + (e.random.next_float() - e.random.next_float()) * 0.2;
         level.emit(Event::Sound { pos: e.position(), sound: sound(m, "eat"), source: "neutral", volume: 1.0, pitch });
     }
@@ -235,7 +251,7 @@ fn offspring_attribute(a: f64, b: f64, min: f64, max: f64, r: &mut dyn RandomSou
 
 impl Equine {
     fn chested(&self) -> bool {
-        self.0 != Which::Horse
+        matches!(self.0, Which::Donkey | Which::Mule)
     }
 
     /// The type's passenger attachment height (`passengerAttachments`).
@@ -245,6 +261,8 @@ impl Equine {
             (Which::Horse, true) => (((1.6f32 - 0.125) * 0.7) as f64, 0.0),
             (Which::Donkey, false) => (1.1125, 0.0),
             (Which::Mule, false) => (1.2125, 0.0),
+            (Which::Skeleton, false) => (1.31875f32 as f64, 0.0),
+            (Which::Skeleton, true) => (((1.6f32 - 0.25) * 0.7) as f64, 0.0),
             (_, true) => (((1.5f32 + 0.03125) * 0.5) as f64, (-0.3125f32 * 0.5) as f64),
         }
     }
@@ -256,6 +274,7 @@ impl Kind for Equine {
             Which::Horse => &HORSE_INFO,
             Which::Donkey => &DONKEY_INFO,
             Which::Mule => &MULE_INFO,
+            Which::Skeleton => &SKELETON_INFO,
         }
     }
 
@@ -283,6 +302,8 @@ impl Kind for Equine {
             saddle: ItemStack::empty(),
             chest: false,
             type_variant: 0,
+            trap: false,
+            trap_time: 0,
         }))
     }
 
@@ -295,6 +316,10 @@ impl Kind for Equine {
         g.add(7, Goal::LookAtPlayer { dist: 6.0, probability: 0.02, look_at: None, look_time: 0 });
         g.add(8, Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 });
         g.add(9, Goal::Custom(Box::new(RandomStandGoal { next_stand: -400 })));
+        if self.0 == Which::Skeleton {
+            // `SkeletonHorse.addBehaviourGoals` is empty: no float, panic or tempt goals.
+            return;
+        }
         g.add(0, Goal::Float);
         g.add(1, Goal::Custom(Box::new(TamableAnimalPanicGoal::named("MountPanicGoal", 1.2, "minecraft:panic_causes"))));
         g.add(3, Goal::Tempt { speed: 1.25, calm_down: 0, player: None });
@@ -302,6 +327,10 @@ impl Kind for Equine {
 
     fn tempted_by(&self, item: i32) -> bool {
         item_tag(item, "minecraft:horse_tempt_items")
+    }
+
+    fn water_slow_down(&self, _m: &MobData) -> f32 {
+        if self.0 == Which::Skeleton { 0.96 } else { 0.8 }
     }
 
     fn is_food(&self, item: i32) -> bool {
@@ -343,6 +372,16 @@ impl Kind for Equine {
             }
         }
         // `followMommy` only creates a path it does not follow (not modelled).
+        if self.0 == Which::Skeleton {
+            super::skeleton_horse::ai_step(e, m);
+        }
+    }
+
+    fn custom_server_ai_step(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        if self.0 == Which::Skeleton {
+            // The trap goal that fired took itself off the selector (`setTrap(false)`).
+            super::skeleton_horse::drop_spent_goal(m);
+        }
     }
 
     fn post_tick(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
@@ -450,6 +489,14 @@ impl Kind for Equine {
     }
 
     fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &SpawnContext, group: &mut GroupData) {
+        if self.0 == Which::Skeleton {
+            // `SkeletonHorse.randomizeAttributes`: only the jump strength.
+            let jump = random_jump(r);
+            set_base(m, JumpStrength, jump);
+            ext::ageable_finalize(e, m, r, group, 0.2);
+            ext::mob_finalize(m, r);
+            return;
+        }
         let chance = if self.0 == Which::Horse {
             // `HorseGroupData`: one coat for the group, markings each.
             let variant = match group.variant {
@@ -482,11 +529,12 @@ impl Kind for Equine {
     fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
         // `canParent` on both (vehicles are not checked here); mules never breed.
         let parent = |x: &MobData| is_tamed(x) && !x.baby() && x.health >= x.max_health() && x.in_love > 0;
-        self.0 != Which::Mule && parent(m) && parent(partner)
+        // (`AbstractHorse.canMate` is false: skeleton horses never mate.)
+        !matches!(self.0, Which::Mule | Which::Skeleton) && parent(m) && parent(partner)
     }
 
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, _level: &mut dyn EntityLevel) {
-        if self.0 == Which::Mule {
+        if matches!(self.0, Which::Mule | Which::Skeleton) {
             return;
         }
         if self.0 == Which::Horse {
@@ -522,6 +570,10 @@ impl Kind for Equine {
     }
 
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+        // `SkeletonHorse.mobInteract`: a wild one ignores everybody.
+        if self.0 == Which::Skeleton && !st(m).tamed {
+            return Some(Outcome::PASS);
+        }
         let vehicle = !e.passengers.is_empty();
         let open_inventory = !m.baby() && st(m).tamed && who.sneaking;
         let dandelion = m.baby() && is(stack, "minecraft:golden_dandelion");
@@ -584,6 +636,7 @@ impl Kind for Equine {
         let owner = r.uuid("Owner");
         let variant = r.int_or("Variant", 0);
         let chest = r.bool_or("ChestedHorse", false);
+        let (trap, trap_time) = if self.0 == Which::Skeleton { (r.bool_or("SkeletonTrap", false), r.int_or("SkeletonTrapTime", 0)) } else { (false, 0) };
         let s = st_mut(m);
         s.eating = eating;
         s.bred = bred;
@@ -595,8 +648,12 @@ impl Kind for Equine {
         }
         if self.0 == Which::Horse {
             s.type_variant = variant;
-        } else {
+        } else if self.chested() {
             s.chest = chest;
+        }
+        if self.0 == Which::Skeleton {
+            s.trap_time = trap_time;
+            super::skeleton_horse::set_trap(m, trap);
         }
     }
 
@@ -618,8 +675,12 @@ impl Kind for Equine {
         }
         if self.0 == Which::Horse {
             o.put("Variant", Tag::Int(s.type_variant));
-        } else {
+        } else if self.chested() {
             o.put("ChestedHorse", Tag::Byte(s.chest as i8));
+        }
+        if self.0 == Which::Skeleton {
+            o.put("SkeletonTrap", Tag::Byte(s.trap as i8));
+            o.put("SkeletonTrapTime", Tag::Int(s.trap_time));
         }
     }
 
@@ -629,7 +690,7 @@ impl Kind for Equine {
         d.set(data::abstract_horse::ID_FLAGS, &DataValue::Byte(flags as i8));
         if self.0 == Which::Horse {
             d.set(data::horse::ID_TYPE_VARIANT, &DataValue::Int(s.type_variant));
-        } else {
+        } else if self.chested() {
             d.set(data::abstract_chested_horse::ID_CHEST, &DataValue::Boolean(s.chest));
         }
     }
@@ -751,5 +812,5 @@ pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
 
 /// Whether `kind` is one of the horse family.
 pub fn is_equine(kind: MobKind) -> bool {
-    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule)
+    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule | MobKind::SkeletonHorse)
 }

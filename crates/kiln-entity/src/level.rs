@@ -576,6 +576,14 @@ pub trait EntityLevel {
         self.players().iter().find(|p| p.id == id).copied()
     }
 
+    /// `EnchantmentHelper.enchantItemFromProvider(stack, registries, provider, difficulty,
+    /// random)` for an enchantment provider of the datapack (`minecraft:mob_spawn_equipment`
+    /// for the skeleton trap's gear); `special_multiplier` is the difficulty's. A level
+    /// without the enchantment data leaves the stack as it is.
+    fn enchant_from_provider(&self, stack: &mut kiln_item::ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
+        let _ = (stack, provider, special_multiplier, random);
+    }
+
     /// The player with `uuid` (the first, if the view holds several): owners, liked players and
     /// conversion starters, by index on crowd servers instead of a scan of every player.
     fn player_by_uuid(&self, uuid: u128) -> Option<PlayerView> {
