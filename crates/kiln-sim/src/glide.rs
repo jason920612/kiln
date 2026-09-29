@@ -64,6 +64,12 @@ impl Player {
 
     /// `LivingEntity.updateFallFlying` plus the `fallFlyTicks` counter of `aiStep`.
     pub(crate) fn tick_glide(&mut self) {
+        if self.fall_flying {
+            // `checkFallDistanceAccumulation`: a slow glide keeps the fall short.
+            if self.known_movement[1] > -0.5 && self.fall_distance > 1.0 {
+                self.fall_distance = 1.0;
+            }
+        }
         if self.fall_flying && !self.can_glide() {
             self.set_fall_flying(false);
         } else if self.fall_flying {
