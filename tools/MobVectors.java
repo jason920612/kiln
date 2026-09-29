@@ -586,6 +586,32 @@ public class MobVectors {
             set(mc, "yRot", 180.0F * m.getYRot() / 3.1415927F);
         }
         pinCommonB(m);
+        pinBrain(m);
+    }
+
+    /// Brain mobs: vanilla draws the sensors' first delays and the gates' shuffles from randoms
+    /// that cannot be pinned any other way. Pinned here (Kiln does the same in `brain::pin`):
+    /// the gates (in registration order) get `RandomSource.create(base + k)` with `base` the mob's
+    /// pinned seed state, then every sensor delays its start by a draw from the mob's random.
+    static void pinBrain(Mob m) throws Exception {
+        var brain = m.getBrain();
+        Map<?, ?> byPriority = (Map<?, ?>) get(brain, "availableBehaviorsByPriority");
+        if (byPriority.isEmpty()) return;
+        long base = ((java.util.concurrent.atomic.AtomicLong) get(m.getRandom(), "seed")).get();
+        long[] k = {0};
+        for (Object acts : byPriority.values())
+            for (Object set : ((Map<?, ?>) acts).values())
+                for (Object b : (Iterable<?>) set) seedGate(b, base, k);
+        for (Object sensor : ((Map<?, ?>) get(brain, "sensors")).values())
+            ((net.minecraft.world.entity.ai.sensing.Sensor<?>) sensor).randomlyDelayStart(m.getRandom());
+    }
+
+    static void seedGate(Object b, long base, long[] k) throws Exception {
+        if (b instanceof net.minecraft.world.entity.ai.behavior.GateBehavior<?>) {
+            Object list = get(b, "behaviors");
+            set(list, "random", net.minecraft.util.RandomSource.create(base + k[0]++));
+            for (Object e : (List<?>) get(list, "entries")) seedGate(get(e, "data"), base, k);
+        }
     }
 
     static String d(double v) {
@@ -612,6 +638,37 @@ public class MobVectors {
                 if (!g.isRunning()) continue;
                 if (goals.length() > 0) goals.append(' ');
                 goals.append(g.getGoal().getClass().getSimpleName());
+            }
+        }
+        var brain = m.getBrain();
+        if (!((Map<?, ?>) get(brain, "availableBehaviorsByPriority")).isEmpty()) {
+            List<String> acts = new ArrayList<>();
+            for (var a : brain.getActiveActivities()) acts.add("act:" + a.getName());
+            for (var b : brain.getRunningBehaviors()) {
+                String n = b.getClass().getSimpleName();
+                if (!n.isEmpty()) acts.add("run:" + n);
+            }
+            // The memories that hold a value (with the ticks left of expiring ones).
+            for (var en : ((Map<?, ?>) get(brain, "memories")).entrySet()) {
+                Object slot = en.getValue();
+                if ((Boolean) slot.getClass().getMethod("hasValue").invoke(slot)) {
+                    long ttl = (Long) slot.getClass().getMethod("timeToLive").invoke(slot);
+                    acts.add("m:" + en.getKey() + (ttl == Long.MAX_VALUE ? "" : "@" + ttl));
+                }
+            }
+            if (System.getenv("MOB_DEBUG") != null) {
+                var nl = brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.NEAREST_LIVING_ENTITIES);
+                var nv = brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.NEAREST_VISIBLE_LIVING_ENTITIES);
+                StringBuilder dbg = new StringBuilder("DBG mob " + m.getId() + " t=" + m.level().getGameTime() + " nearby=[");
+                if (nl.isPresent()) for (var x : nl.get()) dbg.append(x.getId()).append(x instanceof net.minecraft.world.entity.player.Player ? "P" : "").append(nv.isPresent() && nv.get().contains(x) ? "+" : "-").append(' ');
+                dbg.append("] look=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.LOOK_TARGET).map(Object::toString).orElse("-"));
+                Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            }
+            // The level's random state too: brain draws from it (`Kiln`: the mob's own stream).
+            acts.add("lr:" + ((java.util.concurrent.atomic.AtomicLong) get(m.level().getRandom(), "seed")).get());
+            for (String a : acts) {
+                if (goals.length() > 0) goals.append(' ');
+                goals.append(a);
             }
         }
         if (m instanceof net.minecraft.world.entity.boss.enderdragon.EnderDragon dragon) {
@@ -833,6 +890,13 @@ public class MobVectors {
         scenariosCommonA(out);
 
         scenariosCommonB(out);
+        // -- wp28: brain mobs (one function per group so that parallel work merges cleanly)
+        scenariosBrainCore(out);
+        scenariosBrainNether(out);
+        scenariosBrainVillager(out);
+        scenariosBrainAnimals(out);
+        scenariosBrainNew(out);
+        scenariosBrainSpecial(out);
 
         return out;
     }
@@ -2728,7 +2792,6 @@ public class MobVectors {
             s.player = new double[] {8.5, BY, 0.5};
             s.playerCreative = true;
             s.ticks = 300;
-            s.diverges = true;
             out.add(s);
         }
         {
@@ -2741,7 +2804,6 @@ public class MobVectors {
             s.player = new double[] {12.5, BY, 0.5};
             s.playerCreative = true;
             s.ticks = 300;
-            s.diverges = true;
             out.add(s);
         }
         // Breezes (a brain in vanilla, a fight goal in Kiln): idle, and fighting a player.
@@ -2793,4 +2855,86 @@ public class MobVectors {
         }
     }
 
+
+    // ---------------------------------------------------------------------- wp28: brain mobs
+
+    /// The brain framework's own scenarios and armadillos.
+    static void scenariosBrainCore(List<Scenario> out) {
+        // Armadillos: love, temptation, following an adult, hurt (rolls up).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle2_armadillo_" + seed);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:armadillo", 0.5, BY, 0.5, 50f * seed, 15000L + seed));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 40 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_armadillo");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:armadillo", 0.5, BY, 0.5, 0f, 15010));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:spider_eye";
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("breed_armadillo");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:armadillo", 0.5, BY, 0.5, 20f, 15020);
+            MobSpec m2 = new MobSpec("minecraft:armadillo", 3.5, BY, 1.5, 200f, 15021);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("follow_adult_armadillo");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec baby = new MobSpec("minecraft:armadillo", 0.5, BY, 0.5, 0f, 15030);
+            baby.age = -24000;
+            s.mobs.add(baby);
+            s.mobs.add(new MobSpec("minecraft:armadillo", 6.5, BY, 2.5, 90f, 15031));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("hurt_armadillo");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:armadillo", 0.5, BY, 0.5, 30f, 15040));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.ticks = 400;
+            out.add(s);
+        }
+    }
+
+    /// Piglins, piglin brutes, hoglins, zoglins.
+    static void scenariosBrainNether(List<Scenario> out) {
+    }
+
+    /// Villagers.
+    static void scenariosBrainVillager(List<Scenario> out) {
+    }
+
+    /// Camels, allays, sniffers.
+    static void scenariosBrainAnimals(List<Scenario> out) {
+    }
+
+    /// Axolotls, goats, frogs, tadpoles.
+    static void scenariosBrainNew(List<Scenario> out) {
+    }
+
+    /// Wardens, breezes, creakings.
+    static void scenariosBrainSpecial(List<Scenario> out) {
+    }
 }

@@ -3,17 +3,20 @@
 //! danger has been gone 80 ticks; hurt while rolled up it takes (damage - 1) / 2. It sheds a
 //! scute every 5 to 10 minutes and gives one to a brush.
 //!
-//! Approximation: vanilla drives it with a `Brain` (`ArmadilloAi`); here the same behaviours are
-//! goals in the brain's priority order (panic, the ball-up, love, temptation, following an
-//! adult, looking about, strolling). The scare sensor runs every 5 ticks from the mob's tick.
+//! Driven by the brain of `ArmadilloAi` (core: swim, panic, look sink, move sink, cooldowns;
+//! idle: look at players, love, temptation or following an adult, looking about, strolling;
+//! panic: the ball-up), on [`crate::mob::brain`].
 
-use crate::custom_goal_boilerplate;
+use crate::behavior_boilerplate;
 use crate::entity::Entity;
 use crate::level::{EntityLevel, Event};
 use crate::math::{BlockPos, Vec3};
 use crate::mob::attributes::Attr::*;
-use crate::mob::ext::{self, CustomGoal, Info, Kind, MobExt, SpawnView};
-use crate::mob::goals::{self, Goal, JUMP, LOOK, MOVE};
+use crate::mob::brain::behaviors::*;
+use crate::mob::brain::sensors::{self, MobSensor};
+use crate::mob::brain::{self, Activity, ActivityData, Behavior, Brain, Cx, Gate, Mem, Status, shot};
+use crate::mob::ext::{self, Info, Kind, MobExt, SpawnView};
+use crate::mob::goals::{self, Living};
 use crate::mob::interact::{HeldChange, Interactor, Outcome};
 use crate::mob::{self, DamageSource, MobData};
 use crate::persist::{Input, Output};
@@ -40,8 +43,6 @@ pub struct State {
     pub state: u8,
     in_state_ticks: i64,
     scute_time: i32,
-    /// `DANGER_DETECTED_RECENTLY`'s expiry (game time).
-    danger_until: Option<i64>,
 }
 
 fn st(m: &MobData) -> &State {
@@ -65,8 +66,7 @@ fn switch_to(m: &mut MobData, state: u8) {
 }
 
 /// `canStayRolledUp`: not panicking, in a liquid or riding.
-fn can_stay_rolled_up(e: &Entity, m: &MobData) -> bool {
-    let panicking = m.goals.is_running(|g| matches!(g, Goal::Panic { .. }));
+fn can_stay_rolled_up(e: &Entity, panicking: bool) -> bool {
     !panicking && !e.is_in_water() && !e.is_in_lava() && e.vehicle.is_none() && e.passengers.is_empty()
 }
 
@@ -80,6 +80,7 @@ fn roll_up(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     m.xxa = 0.0;
     m.yya = 0.0;
     mob::control::set_speed(m, 0.0);
+    e.delta = Vec3::ZERO;
     m.in_love = 0;
     level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
     mob::make_sound(e, m, level, "minecraft:entity.armadillo.roll");
@@ -102,17 +103,31 @@ fn pick_scute_time(r: &mut dyn RandomSource) -> i32 {
 
 /// `isScaredBy`: within 7 (2 up and down), undead, the last attacker, or a sprinting or
 /// riding player.
-fn scared_by(e: &Entity, m: &MobData, level: &dyn EntityLevel, id: i32) -> bool {
-    let area = e.bounding_box().inflate(7.0, 2.0, 7.0);
-    if let Some(p) = level.player(id) {
-        let t = goals::living_player(&p);
-        return t.bb.intersects(&area) && !p.spectator && (m.last_hurt_by_mob == Some(id) || p.vehicle.is_some());
-    }
-    let Some(o) = level.entity(id) else { return false };
-    if !o.bounding_box().intersects(&area) {
+fn scared_by(cx: &mut Cx, t: &Living) -> bool {
+    if !cx.e.bounding_box().inflate(7.0, 2.0, 7.0).intersects(&t.bb) {
         return false;
     }
-    mob::entity_type_tag(o.type_name, "minecraft:undead") || m.last_hurt_by_mob == Some(id)
+    if !t.player && mob::entity_type_tag(t.type_name, "minecraft:undead") {
+        return true;
+    }
+    if cx.m.last_hurt_by_mob == Some(t.id) {
+        return true;
+    }
+    if t.player {
+        if t.spectator {
+            return false;
+        }
+        return cx.level.player(t.id).is_some_and(|p| p.sprinting || p.vehicle.is_some());
+    }
+    false
+}
+
+fn ready(cx: &Cx) -> bool {
+    can_stay_rolled_up(cx.e, cx.b.mem.has(Mem::IsPanicking))
+}
+
+fn panicking(m: &MobData) -> bool {
+    m.brain.as_ref().is_some_and(|b| b.st.mem.has(Mem::IsPanicking))
 }
 
 impl Kind for Armadillo {
@@ -122,21 +137,14 @@ impl Kind for Armadillo {
 
     fn new_state(&self, m: &mut MobData, random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
         m.nav.can_float = true;
-        Some(Box::new(State { state: IDLE, in_state_ticks: 0, scute_time: pick_scute_time(random), danger_until: None }))
+        Some(Box::new(State { state: IDLE, in_state_ticks: 0, scute_time: pick_scute_time(random) }))
     }
 
-    /// The brain's activities as goals.
-    fn register_goals(&self, m: &mut MobData) {
-        let g = &mut m.goals;
-        g.add(0, Goal::Float);
-        g.add(1, Goal::Panic { speed: 2.0, pos: Vec3::ZERO });
-        g.add(2, Goal::Custom(Box::new(BallUpGoal { next_peek: 0, danger_was_around: false })));
-        g.add(3, Goal::Breed { speed: 1.0, partner: None, love_time: 0 });
-        g.add(4, Goal::Tempt { speed: 1.25, calm_down: 0, player: None });
-        g.add(5, Goal::FollowParent { speed: 1.25, parent: None, recalc: 0 });
-        g.add(6, Goal::RandomStroll { speed: 1.0, interval: 120, check_no_action: true, water_avoiding: None, wanted: Vec3::ZERO, force: false });
-        g.add(7, Goal::LookAtPlayer { dist: 6.0, probability: 0.02, look_at: None, look_time: 0 });
-        g.add(8, Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 });
+    /// No goals: the brain does it all.
+    fn register_goals(&self, _m: &mut MobData) {}
+
+    fn make_brain(&self, _m: &MobData, random: &mut dyn RandomSource) -> Option<Brain> {
+        Some(make_brain(random))
     }
 
     fn is_food(&self, item: i32) -> bool {
@@ -148,29 +156,13 @@ impl Kind for Armadillo {
     }
 
 
-    /// The scare sensor (every 5 ticks), the danger running out (`ARMADILLO_ROLLING_OUT`) and
-    /// the scute (`customServerAiStep`).
+    /// The brain, `ArmadilloAi.updateActivity`, then the scute (`customServerAiStep`).
     fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        let now = level.game_time();
-        if e.tick_count % 5 == 0 {
-            if !can_stay_rolled_up(e, m) {
-                st_mut(m).danger_until = None;
-            } else {
-                let area = e.bounding_box().inflate(16.0, 16.0, 16.0);
-                let scary = level.entities_in(&area, crate::level::EntityFilter::Living, e.id).into_iter().any(|id| scared_by(e, m, level, id));
-                if scary {
-                    st_mut(m).danger_until = Some(now + 80);
-                }
-            }
+        brain::tick_brain(e, m, level);
+        if let Some(b) = m.brain.as_mut() {
+            b.st.set_active_activity_to_first_valid(&[Activity::Panic, Activity::Idle]);
         }
-        if st(m).danger_until.is_some_and(|t| t <= now) {
-            st_mut(m).danger_until = None;
-        }
-        if st(m).danger_until.is_none() && is_scared(m) {
-            roll_out(e, m, level);
-        }
-        let s = st_mut(m);
-        s.scute_time -= 1;
+        st_mut(m).scute_time -= 1;
         if mob::is_alive(e, m) && st(m).scute_time <= 0 {
             if level.mob_drops() {
                 level.emit(Event::GiftLoot { entity: e.id, table: "minecraft:gameplay/armadillo_shed", pos: e.position() });
@@ -197,22 +189,27 @@ impl Kind for Armadillo {
         is_scared(m)
     }
 
-    /// `hurtServer`: the shell halves the damage (less one); `actuallyHurt`: an attacker scares
-    /// it, fire and the like make it unroll.
+    /// `hurtServer`: the shell halves the damage (less one).
     fn hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> Option<bool> {
         let amount = if is_scared(m) { (amount - 1.0) / 2.0 } else { amount };
-        let r = mob::hurt_base(e, m, level, *source, amount);
-        if r && !m.no_ai && !m.is_dead_or_dying() {
-            if source.attacker.is_some_and(|a| goals::living(level, a).is_some()) {
-                st_mut(m).danger_until = Some(level.game_time() + 80);
-                if can_stay_rolled_up(e, m) {
-                    roll_up(e, m, level);
-                }
-            } else if source.kind.is_tag("minecraft:panic_environmental_causes") {
-                roll_out(e, m, level);
-            }
+        Some(mob::hurt_base(e, m, level, *source, amount))
+    }
+
+    /// `actuallyHurt`: an attacker scares it, fire and the like make it unroll.
+    fn actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, _amount: f32) {
+        if m.no_ai || m.is_dead_or_dying() {
+            return;
         }
-        Some(r)
+        if source.attacker.is_some_and(|a| goals::living(level, a).is_some()) {
+            if let Some(b) = m.brain.as_mut() {
+                b.st.mem.set_expiring(Mem::DangerDetectedRecently, brain::Val::Bool(true), 80);
+            }
+            if can_stay_rolled_up(e, panicking(m)) {
+                roll_up(e, m, level);
+            }
+        } else if source.kind.is_tag("minecraft:panic_environmental_causes") {
+            roll_out(e, m, level);
+        }
     }
 
     /// A brush takes a scute off an adult (16 durability).
@@ -269,78 +266,181 @@ impl Kind for Armadillo {
     }
 }
 
+/// `ArmadilloAi.getActivities` and the sensors of `Armadillo.BRAIN_PROVIDER`.
+fn make_brain(random: &mut dyn RandomSource) -> Brain {
+    let sensors: Vec<Box<dyn brain::Sensor>> = vec![
+        Box::new(sensors::NearestLivingEntities),
+        Box::new(sensors::HurtBy),
+        Box::new(sensors::Tempting::for_animal()),
+        Box::new(sensors::Adult { any_type: false }),
+        Box::new(MobSensor { scan_rate: 5, mob_test: scared_by, ready_test: ready, to_set: Mem::DangerDetectedRecently, ttl: 80 }),
+    ];
+    let core = ActivityData::create(
+        Activity::Core,
+        0,
+        vec![
+            Swim::new(0.8),
+            brain::Timed::new(ArmadilloPanic(AnimalPanic { speed: 2.0, causes: "minecraft:panic_environmental_causes", air: None })),
+            LookAtTargetSink::new(45, 90),
+            MoveToTargetSink::vetoed(|cx| is_scared(cx.m)),
+            CountDownCooldownTicks::new(Mem::TemptationCooldownTicks),
+            CountDownCooldownTicks::new(Mem::GazeCooldownTicks),
+            rolling_out(),
+        ],
+    );
+    let idle = ActivityData::with_priorities(
+        Activity::Idle,
+        vec![
+            (0, SetEntityLookTargetSometimes::new(Some("minecraft:player"), 6.0, (30, 60))),
+            (1, AnimalMakeLove::new("minecraft:armadillo", 1.0, 1)),
+            (
+                2,
+                Gate::run_one(vec![
+                    (FollowTemptation::with(|_| 1.25, |cx| if cx.m.baby() { 1.0 } else { 2.0 }, false), 1),
+                    (baby_follow_adult((5, 16), |_| 1.25, Mem::NearestVisibleAdult, false), 1),
+                ]),
+            ),
+            (3, RandomLookAround::new((150, 250), 30.0, 0.0, 0.0)),
+            (
+                4,
+                Gate::run_one_when(
+                    &[(Mem::WalkTarget, Status::ValueAbsent)],
+                    vec![
+                        (stroll(1.0, StrollKind::Land { avoid_water: true }), 1),
+                        (set_walk_target_from_look_target(1.0, 3), 1),
+                        (DoNothing::new(30, 60), 1),
+                    ],
+                ),
+            ),
+        ],
+    );
+    let scared = ActivityData::with_conditions(
+        Activity::Panic,
+        vec![(0, brain::Timed::new(BallUp { next_peek: 0, danger_was_around: false }))],
+        &[(Mem::DangerDetectedRecently, Status::ValuePresent), (Mem::IsPanicking, Status::ValueAbsent)],
+    );
+    Brain::new(&[], sensors, vec![core, idle, scared], random)
+}
+
+/// `ArmadilloAi.ARMADILLO_ROLLING_OUT`: no danger any more: unroll.
+fn rolling_out() -> Box<dyn brain::Control> {
+    shot("", &[(Mem::DangerDetectedRecently, Status::ValueAbsent)], |cx| {
+        if is_scared(cx.m) {
+            roll_out(cx.e, cx.m, cx.level);
+            true
+        } else {
+            false
+        }
+    })
+}
+
+/// `ArmadilloAi.ArmadilloPanic`: unrolls, then panics.
+#[derive(Clone, Debug)]
+struct ArmadilloPanic(AnimalPanic);
+
+impl Behavior for ArmadilloPanic {
+    fn name(&self) -> &'static str {
+        "ArmadilloPanic"
+    }
+    fn entry(&self) -> &'static [(Mem, Status)] {
+        self.0.entry()
+    }
+    fn duration(&self) -> (i32, i32) {
+        self.0.duration()
+    }
+    fn check_extra_start(&mut self, cx: &mut Cx) -> bool {
+        self.0.check_extra_start(cx)
+    }
+    fn can_still_use(&mut self, cx: &mut Cx) -> bool {
+        self.0.can_still_use(cx)
+    }
+    fn start(&mut self, cx: &mut Cx) {
+        roll_out(cx.e, cx.m, cx.level);
+        self.0.start(cx);
+    }
+    fn stop(&mut self, cx: &mut Cx) {
+        self.0.stop(cx);
+    }
+    fn tick(&mut self, cx: &mut Cx) {
+        self.0.tick(cx);
+    }
+    behavior_boilerplate!();
+}
+
 /// `ArmadilloAi.ArmadilloBallUp`: while danger was detected recently, on the ground and dry:
 /// rolled up, peeking out, unrolling when the danger fades.
 #[derive(Clone, Debug)]
-struct BallUpGoal {
+struct BallUp {
     next_peek: i32,
     danger_was_around: bool,
 }
 
-impl BallUpGoal {
+impl BallUp {
     fn pick_peek(e: &mut Entity) -> i32 {
         STATES[SCARED as usize].2 as i32 + mob::mth::next_int_between(&mut e.random, 100, 400)
     }
 }
 
-impl CustomGoal for BallUpGoal {
-    custom_goal_boilerplate!();
+impl Behavior for BallUp {
     fn name(&self) -> &'static str {
         "ArmadilloBallUp"
     }
-    fn flags(&self) -> u8 {
-        MOVE | LOOK | JUMP
+    /// `BALL_UP_STAY_IN_STATE`: 5 minutes.
+    fn duration(&self) -> (i32, i32) {
+        (6000, 6000)
     }
-    fn every_tick(&self) -> bool {
-        true
+    fn check_extra_start(&mut self, cx: &mut Cx) -> bool {
+        cx.e.on_ground && !cx.e.is_in_water() && !cx.e.is_in_lava()
     }
-    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        st(m).danger_until.is_some_and(|t| t > level.game_time()) && e.on_ground && !e.is_in_water() && !e.is_in_lava()
+    fn can_still_use(&mut self, cx: &mut Cx) -> bool {
+        STATES[st(cx.m).state as usize].1
     }
-    fn can_continue(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
-        STATES[st(m).state as usize].1
+    fn start(&mut self, cx: &mut Cx) {
+        roll_up(cx.e, cx.m, cx.level);
     }
-    fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        roll_up(e, m, level);
-    }
-    fn stop(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        if !can_stay_rolled_up(e, m) {
-            roll_out(e, m, level);
+    fn stop(&mut self, cx: &mut Cx) {
+        if !can_stay_rolled_up(cx.e, cx.b.mem.has(Mem::IsPanicking)) {
+            roll_out(cx.e, cx.m, cx.level);
         }
     }
-    fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    fn tick(&mut self, cx: &mut Cx) {
         if self.next_peek > 0 {
             self.next_peek -= 1;
         }
-        let s = st(m);
+        let s = st(cx.m);
         if s.state == ROLLING && s.in_state_ticks > STATES[ROLLING as usize].2 {
-            switch_to(m, SCARED);
-            if e.on_ground && !e.silent {
-                level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.armadillo.land", source: "neutral", volume: 1.0, pitch: 1.0 });
+            switch_to(cx.m, SCARED);
+            if cx.e.on_ground && !cx.e.silent {
+                let pos = cx.e.position();
+                cx.level.emit(Event::Sound { pos, sound: "minecraft:entity.armadillo.land", source: "neutral", volume: 1.0, pitch: 1.0 });
             }
             return;
         }
-        let left = st(m).danger_until.map_or(0, |t| t - level.game_time());
+        let state = st(cx.m).state;
+        let left = cx.b.mem.time_until_expiry(Mem::DangerDetectedRecently);
         let danger = left > 75;
         if danger != self.danger_was_around {
-            self.next_peek = Self::pick_peek(e);
+            self.next_peek = Self::pick_peek(cx.e);
         }
         self.danger_was_around = danger;
-        match st(m).state {
+        match state {
             SCARED => {
-                if self.next_peek == 0 && e.on_ground && danger {
-                    level.emit(Event::EntityEvent { entity: e.id, event: 64 });
-                    self.next_peek = Self::pick_peek(e);
+                if self.next_peek == 0 && cx.e.on_ground && danger {
+                    let id = cx.e.id;
+                    cx.level.emit(Event::EntityEvent { entity: id, event: 64 });
+                    self.next_peek = Self::pick_peek(cx.e);
                 }
                 if left < STATES[UNROLLING as usize].2 {
-                    if !e.silent {
-                        level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.armadillo.unroll_start", source: "neutral", volume: 1.0, pitch: 1.0 });
+                    if !cx.e.silent {
+                        let pos = cx.e.position();
+                        cx.level.emit(Event::Sound { pos, sound: "minecraft:entity.armadillo.unroll_start", source: "neutral", volume: 1.0, pitch: 1.0 });
                     }
-                    switch_to(m, UNROLLING);
+                    switch_to(cx.m, UNROLLING);
                 }
             }
-            UNROLLING if left > STATES[UNROLLING as usize].2 => switch_to(m, SCARED),
+            UNROLLING if left > STATES[UNROLLING as usize].2 => switch_to(cx.m, SCARED),
             _ => {}
         }
     }
+    behavior_boilerplate!();
 }

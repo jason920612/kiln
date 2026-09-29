@@ -107,6 +107,9 @@ pub struct MoveToTargetSink {
     path_some: bool,
     last_target_pos: Option<BlockPos>,
     speed: f32,
+    /// An anonymous subclass overriding `checkExtraStartConditions` to refuse (armadillos that
+    /// are rolled up): it has no class name.
+    veto: Option<fn(&Cx) -> bool>,
 }
 
 impl MoveToTargetSink {
@@ -115,7 +118,12 @@ impl MoveToTargetSink {
     }
 
     pub fn with_durations(min: i32, max: i32) -> Box<dyn Control> {
-        Timed::new(MoveToTargetSink { min, max, remaining_cooldown: 0, path: None, path_some: false, last_target_pos: None, speed: 0.0 })
+        Timed::new(MoveToTargetSink { min, max, remaining_cooldown: 0, path: None, path_some: false, last_target_pos: None, speed: 0.0, veto: None })
+    }
+
+    /// An anonymous `MoveToTargetSink` that does not start while `veto` holds.
+    pub fn vetoed(veto: fn(&Cx) -> bool) -> Box<dyn Control> {
+        Timed::new(MoveToTargetSink { min: 150, max: 250, remaining_cooldown: 0, path: None, path_some: false, last_target_pos: None, speed: 0.0, veto: Some(veto) })
     }
 
     fn reached(cx: &Cx, w: &WalkTarget) -> bool {
@@ -160,7 +168,7 @@ impl MoveToTargetSink {
 
 impl Behavior for MoveToTargetSink {
     fn name(&self) -> &'static str {
-        "MoveToTargetSink"
+        if self.veto.is_some() { "" } else { "MoveToTargetSink" }
     }
     fn entry(&self) -> &'static [(Mem, Status)] {
         &[(Mem::CantReachWalkTargetSince, Registered), (Mem::Path, ValueAbsent), (Mem::WalkTarget, ValuePresent)]
@@ -169,6 +177,9 @@ impl Behavior for MoveToTargetSink {
         (self.min, self.max)
     }
     fn check_extra_start(&mut self, cx: &mut Cx) -> bool {
+        if self.veto.is_some_and(|v| v(cx)) {
+            return false;
+        }
         if self.remaining_cooldown > 0 {
             self.remaining_cooldown -= 1;
             return false;
@@ -364,13 +375,14 @@ impl Behavior for RandomLookAround {
 
 /// `Vec3.directionFromRotation(pitch, yaw)`.
 pub fn direction_from_rotation(pitch: f32, yaw: f32) -> Vec3 {
-    let f = pitch * 0.017453292;
-    let g = -yaw * 0.017453292;
-    let h = crate::mob::mth::cos(g as f64);
-    let i = crate::mob::mth::sin(g as f64);
-    let j = crate::mob::mth::cos(f as f64);
-    let k = crate::mob::mth::sin(f as f64);
-    Vec3::new((i * j) as f64, (-k) as f64, (h * j) as f64)
+    use crate::mob::mth::{cos, sin};
+    let a = (-yaw) * 0.017453292f32 - 3.1415927f32;
+    let b = (-pitch) * 0.017453292f32;
+    let f = cos(a as f64);
+    let f1 = sin(a as f64);
+    let f2 = -cos(b as f64);
+    let f3 = sin(b as f64);
+    Vec3::new((f1 * f2) as f64, f3 as f64, (f * f2) as f64)
 }
 
 /// `SetEntityLookTarget.create(predicate, maxDist)`: the closest visible entity that passes
@@ -424,7 +436,8 @@ impl ShotBehavior for SetEntityLookTargetSometimes {
         let Some(found) = found else { return false };
         // `Ticker.tickDownAndCheck`.
         let fire = if self.ticks == 0 {
-            self.ticks = uniform(&mut cx.e.random, self.interval.0, self.interval.1) - 1;
+            // `tickDownAndCheck(level.getRandom())`.
+            self.ticks = uniform(cx.rng(), self.interval.0, self.interval.1) - 1;
             false
         } else {
             self.ticks -= 1;
@@ -496,7 +509,7 @@ pub fn stroll(speed: f32, kind: StrollKind) -> Box<dyn Control> {
 
 /// `Entity.getViewVector(0)`.
 pub fn view_vector(x_rot: f32, y_rot: f32) -> Vec3 {
-    direction_from_rotation(x_rot, y_rot)
+    crate::ext_entity::fireball::view_vector(x_rot, y_rot)
 }
 
 // ---------------------------------------------------------------------------- temptation and animals
@@ -553,7 +566,7 @@ impl Behavior for FollowTemptation {
         if cx.e.position().distance_to_sqr(p.pos) < d * d {
             cx.b.mem.erase(Mem::WalkTarget);
         } else {
-            let t = Tracker::Entity { id, eye: self.look_in_the_eyes };
+            let t = Tracker::entity3(id, self.look_in_the_eyes, self.look_in_the_eyes);
             let speed = (self.speed)(cx);
             cx.b.mem.set(Mem::WalkTarget, Val::Walk(WalkTarget { target: t, speed, close_enough: 2 }));
         }
@@ -577,8 +590,8 @@ pub fn baby_follow_adult(range: (i32, i32), speed: fn(&Cx) -> f32, adult_mem: Me
         let max = (range.1 + 1) as f64;
         let min = range.0 as f64;
         if d < max * max && !(d < min * min) {
-            let w = WalkTarget { target: Tracker::Entity { id: adult, eye: look_in_the_eyes }, speed: speed(cx), close_enough: range.0 - 1 };
-            cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::Entity { id: adult, eye: look_in_the_eyes }));
+            let w = WalkTarget { target: Tracker::entity3(adult, look_in_the_eyes, look_in_the_eyes), speed: speed(cx), close_enough: range.0 - 1 };
+            cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::entity3(adult, true, look_in_the_eyes)));
             cx.b.mem.set(Mem::WalkTarget, Val::Walk(w));
             return true;
         }

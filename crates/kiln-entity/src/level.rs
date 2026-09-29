@@ -88,6 +88,8 @@ pub struct PlayerView {
     pub spectator: bool,
     pub creative: bool,
     pub sneaking: bool,
+    /// `isSprinting`.
+    pub sprinting: bool,
     /// Alive (not dead and waiting to respawn).
     pub alive: bool,
     pub invisible: bool,
@@ -137,6 +139,7 @@ impl PlayerView {
             spectator: false,
             creative: false,
             sneaking: false,
+            sprinting: false,
             alive: true,
             invisible: false,
             armor_cover: 0.0,
@@ -361,6 +364,14 @@ pub trait EntityLevel {
 
     /// The level's shared random source (`Level.random`).
     fn random(&mut self) -> &mut LegacyRandom;
+
+    /// The random for what vanilla's mob AI draws from `level.getRandom()` (behaviour durations,
+    /// ...). `None`: each mob uses its own stream (`MobData::brain_random`), so the outcome does not
+    /// depend on which entities share a region; a test replaying vanilla's single shared
+    /// stream returns that.
+    fn shared_ai_random(&mut self) -> Option<&mut LegacyRandom> {
+        None
+    }
 
     /// `getHeightmapPos(MOTION_BLOCKING_NO_LEAVES or MOTION_BLOCKING, (x, z))`: the y above the
     /// highest motion blocking block of the column (`min_y` for an empty one).

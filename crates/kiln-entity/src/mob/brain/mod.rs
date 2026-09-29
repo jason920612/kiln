@@ -160,7 +160,10 @@ pub struct Cx<'a> {
 impl Cx<'_> {
     /// The random vanilla draws from `level.getRandom()` (the mob's own stream, see the module doc).
     pub fn rng(&mut self) -> &mut LegacyRandom {
-        &mut self.m.brain_random
+        match self.level.shared_ai_random() {
+            Some(r) => r,
+            None => &mut self.m.brain_random,
+        }
     }
 
     /// Shorthand for the memories.
@@ -656,6 +659,9 @@ impl Brain {
         st.set_core_activities(&[Activity::Core]);
         st.use_default_activity();
         brain.st = st;
+        // The shuffles of the gates draw from randoms of their own (vanilla: unseeded ones).
+        let base = random.next_long();
+        brain.seed_gates(base);
         brain
     }
 
@@ -663,6 +669,9 @@ impl Brain {
     pub fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let time = level.game_time();
         let mut cx = Cx { e, m, level, b: &mut self.st, time };
+        if debug_on() {
+            eprintln!("brain t={time} tick begins rnd {}", cx.e.random.state());
+        }
         cx.b.mem.tick();
         for s in self.sensors.iter_mut() {
             s.time_to_tick -= 1;
@@ -677,7 +686,11 @@ impl Brain {
                 if cx.b.is_active(*act) {
                     for b in bs.iter_mut() {
                         if !b.running() {
-                            b.try_start(&mut cx);
+                            let (r0, l0) = (cx.e.random.state(), cx.rng().state());
+                            if b.try_start(&mut cx) && debug_on() {
+                                let (r1, l1, t) = (cx.e.random.state(), cx.rng().state(), cx.time);
+                                eprintln!("brain t={t} start {} rnd {r0}->{r1} lr {l0}->{l1}", b.name());
+                            }
                         }
                     }
                 }
@@ -751,4 +764,23 @@ pub fn tick_brain(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
         b.tick(e, m, level);
         m.brain = Some(b);
     }
+}
+
+/// The parity harness' pin: the gates' shuffles seeded from the mob's random state and every
+/// sensor's first scan delayed by a draw from it (`MobVectors.pinBrain` does the same).
+pub fn pin(e: &mut Entity) {
+    let base = e.random.state();
+    let mut random = e.random.clone();
+    if let Some(m) = super::data_mut(e)
+        && let Some(b) = m.brain.as_mut()
+    {
+        b.seed_gates(base);
+        b.randomly_delay_sensors(&mut random);
+    }
+    e.random = random;
+}
+
+fn debug_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KILN_BRAIN_DEBUG").is_some())
 }

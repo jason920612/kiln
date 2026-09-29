@@ -321,6 +321,11 @@ pub trait Kind: Sync + Send {
         let _ = (e, m, level, source, amount);
         None
     }
+    /// The type's `actuallyHurt` additions, right after the shared health and absorption change
+    /// (and before the hurt time, the attacker bookkeeping and the knockback).
+    fn actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) {
+        let _ = (e, m, level, source, amount);
+    }
     /// After the shared `hurtServer` (reinforcements, anger, ...), with its result.
     fn after_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32, hurt: bool) {
         let _ = (e, m, level, source, amount, hurt);

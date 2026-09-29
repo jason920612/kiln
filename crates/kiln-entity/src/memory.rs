@@ -65,6 +65,8 @@ pub struct MemoryLevel {
     /// New entities join the level at once (vanilla's `addFreshEntity`: other entities see
     /// them the same tick; they tick from the next), instead of at [`MemoryLevel::flush_spawned`].
     pub immediate_adds: bool,
+    /// Mob AI draws from the level's random, as vanilla's (one stream for all mobs).
+    pub share_ai_random: bool,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -75,6 +77,11 @@ fn section_of(e: &Entity) -> (i32, i64) {
 }
 
 impl MemoryLevel {
+    /// The level random's state (`Random.seed` in Java terms), for traces.
+    pub fn random_state(&self) -> i64 {
+        self.random.state()
+    }
+
     pub fn new(min_y: i32, random_seed: i64) -> Self {
         MemoryLevel {
             blocks: FastMap::default(),
@@ -95,6 +102,7 @@ impl MemoryLevel {
             next_seq: 0,
             spawned: Vec::new(),
             immediate_adds: false,
+            share_ai_random: false,
         }
     }
 
@@ -192,6 +200,10 @@ impl EntityLevel for MemoryLevel {
 
     fn random(&mut self) -> &mut LegacyRandom {
         &mut self.random
+    }
+
+    fn shared_ai_random(&mut self) -> Option<&mut LegacyRandom> {
+        if self.share_ai_random { Some(&mut self.random) } else { None }
     }
 
     fn game_time(&self) -> i64 {

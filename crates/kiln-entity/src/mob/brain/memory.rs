@@ -364,13 +364,13 @@ impl Mem {
             Mem::PotentialJobSite => "minecraft:potential_job_site",
             Mem::MeetingPoint => "minecraft:meeting_point",
             Mem::SecondaryJobSite => "minecraft:secondary_job_site",
-            Mem::NearestLivingEntities => "minecraft:nearest_living_entities",
-            Mem::NearestVisibleLivingEntities => "minecraft:nearest_visible_living_entities",
+            Mem::NearestLivingEntities => "minecraft:mobs",
+            Mem::NearestVisibleLivingEntities => "minecraft:visible_mobs",
             Mem::VisibleVillagerBabies => "minecraft:visible_villager_babies",
             Mem::NearestPlayers => "minecraft:nearest_players",
             Mem::NearestVisiblePlayer => "minecraft:nearest_visible_player",
-            Mem::NearestVisibleAttackablePlayer => "minecraft:nearest_visible_attackable_player",
-            Mem::NearestVisibleAttackablePlayers => "minecraft:nearest_visible_attackable_players",
+            Mem::NearestVisibleAttackablePlayer => "minecraft:nearest_visible_targetable_player",
+            Mem::NearestVisibleAttackablePlayers => "minecraft:nearest_visible_targetable_players",
             Mem::WalkTarget => "minecraft:walk_target",
             Mem::LookTarget => "minecraft:look_target",
             Mem::AttackTarget => "minecraft:attack_target",
@@ -401,7 +401,7 @@ impl Mem {
             Mem::TemptingPlayer => "minecraft:tempting_player",
             Mem::TemptationCooldownTicks => "minecraft:temptation_cooldown_ticks",
             Mem::GazeCooldownTicks => "minecraft:gaze_cooldown_ticks",
-            Mem::LongJumpCooldownTicks => "minecraft:long_jump_cooldown_ticks",
+            Mem::LongJumpCooldownTicks => "minecraft:long_jump_cooling_down",
             Mem::LongJumpMidJump => "minecraft:long_jump_mid_jump",
             Mem::HasHuntingCooldown => "minecraft:has_hunting_cooldown",
             Mem::RamCooldownTicks => "minecraft:ram_cooldown_ticks",
@@ -458,7 +458,7 @@ impl Mem {
             Mem::SonicBoomSoundCooldown => "minecraft:sonic_boom_sound_cooldown",
             Mem::SonicBoomSoundDelay => "minecraft:sonic_boom_sound_delay",
             Mem::LikedPlayer => "minecraft:liked_player",
-            Mem::LikedNoteblockPosition => "minecraft:liked_noteblock_position",
+            Mem::LikedNoteblockPosition => "minecraft:liked_noteblock",
             Mem::LikedNoteblockCooldownTicks => "minecraft:liked_noteblock_cooldown_ticks",
             Mem::ItemPickupCooldownTicks => "minecraft:item_pickup_cooldown_ticks",
             Mem::SnifferExploredPositions => "minecraft:sniffer_explored_positions",
@@ -468,12 +468,20 @@ impl Mem {
             Mem::BreezeJumpCooldown => "minecraft:breeze_jump_cooldown",
             Mem::BreezeShoot => "minecraft:breeze_shoot",
             Mem::BreezeShootCharging => "minecraft:breeze_shoot_charging",
-            Mem::BreezeShootRecovering => "minecraft:breeze_shoot_recovering",
+            Mem::BreezeShootRecovering => "minecraft:breeze_shoot_recover",
             Mem::BreezeShootCooldown => "minecraft:breeze_shoot_cooldown",
             Mem::BreezeJumpInhaling => "minecraft:breeze_jump_inhaling",
             Mem::BreezeJumpTarget => "minecraft:breeze_jump_target",
             Mem::BreezeLeavingWater => "minecraft:breeze_leaving_water",
         }
+    }
+
+    /// Whether the memory has a codec (`canSerialize`): only those are saved.
+    pub fn serializable(self) -> bool {
+        matches!(
+            self,
+            Mem::Home | Mem::JobSite | Mem::PotentialJobSite | Mem::MeetingPoint | Mem::GolemDetectedRecently | Mem::DangerDetectedRecently | Mem::LastSlept | Mem::LastWoken | Mem::LastWorkedAtPoi | Mem::PlayDeadTicks | Mem::TemptationCooldownTicks | Mem::GazeCooldownTicks | Mem::LongJumpCooldownTicks | Mem::HasHuntingCooldown | Mem::RamCooldownTicks | Mem::IsInWater | Mem::IsPregnant | Mem::IsPanicking | Mem::VisitedBlockPositions | Mem::UnreachableTransportBlockPositions | Mem::ChargeCooldownTicks | Mem::AttackTargetCooldown | Mem::AngryAt | Mem::UniversalAnger | Mem::AdmiringItem | Mem::AdmiringDisabled | Mem::HuntedRecently | Mem::RecentProjectile | Mem::IsSniffing | Mem::IsEmerging | Mem::RoarSoundDelay | Mem::DigCooldown | Mem::RoarSoundCooldown | Mem::SniffCooldown | Mem::TouchCooldown | Mem::VibrationCooldown | Mem::SonicBoomCooldown | Mem::SonicBoomSoundCooldown | Mem::SonicBoomSoundDelay | Mem::LikedPlayer | Mem::LikedNoteblockPosition | Mem::LikedNoteblockCooldownTicks | Mem::ItemPickupCooldownTicks | Mem::SnifferExploredPositions | Mem::BreezeJumpCooldown | Mem::BreezeShoot | Mem::BreezeShootCharging | Mem::BreezeShootRecovering | Mem::BreezeShootCooldown | Mem::BreezeJumpInhaling | Mem::BreezeJumpTarget | Mem::BreezeLeavingWater
+        )
     }
 
     pub fn by_name(name: &str) -> Option<Mem> {
@@ -507,8 +515,8 @@ impl GlobalPos {
 pub enum Tracker {
     /// `BlockPosTracker(pos)` (centre of the block) or `(Vec3)`.
     Block { pos: BlockPos, center: Vec3 },
-    /// `EntityTracker(entity, trackEyeHeight)`.
-    Entity { id: i32, eye: bool },
+    /// `EntityTracker(entity, trackEyeHeight, targetEyeHeight)`.
+    Entity { id: i32, track_eye: bool, target_eye: bool },
 }
 
 impl Tracker {
@@ -520,8 +528,14 @@ impl Tracker {
         Tracker::Block { pos: BlockPos::containing(v.x, v.y, v.z), center: v }
     }
 
-    pub fn entity(id: i32, eye: bool) -> Tracker {
-        Tracker::Entity { id, eye }
+    /// `new EntityTracker(entity, trackEyeHeight)`.
+    pub fn entity(id: i32, track_eye: bool) -> Tracker {
+        Tracker::Entity { id, track_eye, target_eye: false }
+    }
+
+    /// `new EntityTracker(entity, trackEyeHeight, targetEyeHeight)`.
+    pub fn entity3(id: i32, track_eye: bool, target_eye: bool) -> Tracker {
+        Tracker::Entity { id, track_eye, target_eye }
     }
 }
 

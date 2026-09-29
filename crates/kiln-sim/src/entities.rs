@@ -1867,6 +1867,7 @@ fn view(p: &Player, now: i64) -> PlayerView {
         spectator: p.game_mode == 3,
         creative: p.game_mode == 1,
         sneaking: p.sneaking,
+        sprinting: p.sprinting,
         alive: !p.dead && !p.disconnected,
         invisible: p.has_effect("minecraft:invisibility"),
         armor_cover: armor as f32 / 4.0,

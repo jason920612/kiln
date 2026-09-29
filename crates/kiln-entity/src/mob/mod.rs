@@ -761,6 +761,17 @@ impl MobData {
         let mut run: Vec<String> = b.running_names().into_iter().filter(|n| !n.is_empty()).map(|n| format!("run:{n}")).collect();
         run.sort();
         acts.extend(run);
+        // The memories that hold a value, with the ticks left of expiring ones.
+        let mut mems: Vec<String> = b
+            .st
+            .mem
+            .iter()
+            .map(|(m, _, ttl)| if ttl == i64::MAX { format!("m:{}", m.name()) } else { format!("m:{}@{ttl}", m.name()) })
+            .collect();
+        mems.sort();
+        acts.extend(mems);
+        // The stream vanilla's level random plays (`MobVectors` prints it as `lr:`).
+        acts.push(format!("lr:{}", self.brain_random.state()));
         acts
     }
 
@@ -2053,13 +2064,20 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         if amount <= m.last_hurt {
             return false;
         }
-        actually_hurt(e.id, m, source, amount - m.last_hurt);
+        let dealt = amount - m.last_hurt;
+        actually_hurt(e.id, m, source, dealt);
+        if let Some(k) = m.kind.ext() {
+            k.actually_hurt(e, m, level, &source, dealt);
+        }
         m.last_hurt = amount;
         false
     } else {
         m.last_hurt = amount;
         m.damage_cooldown = 20;
         actually_hurt(e.id, m, source, amount);
+        if let Some(k) = m.kind.ext() {
+            k.actually_hurt(e, m, level, &source, amount);
+        }
         m.hurt_duration = 10;
         m.hurt_time = 10;
         true

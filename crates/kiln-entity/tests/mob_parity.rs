@@ -88,7 +88,7 @@ fn tag_of(v: &Value) -> kiln_proto::nbt::Tag {
     }
 }
 
-fn state(e: &kiln_entity::Entity, level: &dyn EntityLevel) -> (Vec<f64>, String) {
+fn state(e: &kiln_entity::Entity, level: &MemoryLevel) -> (Vec<f64>, String) {
     let m = mob::data(e).expect("a mob");
     let p = e.position();
     let v = e.delta;
@@ -118,6 +118,11 @@ fn state(e: &kiln_entity::Entity, level: &dyn EntityLevel) -> (Vec<f64>, String)
     ];
     let mut goals: Vec<String> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind).to_owned()).collect();
     goals.retain(|g| !g.is_empty());
+    goals.extend(m.brain_trace().into_iter().filter(|t| !t.starts_with("lr:")));
+    if m.brain.is_some() {
+        let lr = level.random_state();
+        goals.push(format!("lr:{lr}"));
+    }
     // The dragon's phase (`EnderDragonPhase` id).
     if let Some(d) = mob::kinds::ender_dragon::state_of(e) {
         goals.push(format!("DragonPhase{}", d.phase.id()));
@@ -180,6 +185,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     // Diverging (brain-driven) scenarios compare the body only: not the random or the goals.
     let loose = s.get("diverges").and_then(Value::as_bool) == Some(true);
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
+    level.share_ai_random = true;
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     level.sky_darken = s["sky_darken"].as_i64().unwrap() as i32;
     // The recording world is superflat.
@@ -266,6 +272,12 @@ fn replay(s: &Value) -> Result<usize, String> {
                 e.kind = m;
             }
         }
+        // A brain mob's random for what vanilla draws from the level's: the recording's level
+        // random, seeded per scenario; the sensors and gates pinned as `MobVectors.pinBrain` does.
+        if let Some(m) = mob::data_mut(&mut e) {
+            m.brain_random = kiln_javamath::random::LegacyRandom::new(s["level_seed"].as_i64().unwrap());
+        }
+        kiln_entity::mob::brain::pin(&mut e);
         ids.push(id);
         level.insert(e);
         for fx in spec.get("effects").and_then(Value::as_array).into_iter().flatten() {
@@ -361,6 +373,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             let n = (ids.len() - initial) as i64;
             let e = level.entity_mut(id).unwrap();
             e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
+            kiln_entity::mob::brain::pin(e);
             let yaw = e.y_rot;
             let m = mob::data_mut(e).unwrap();
             m.y_head_rot = yaw;
@@ -389,7 +402,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             && let Some(e) = ids.get(k).and_then(|&id| level.entity(id))
         {
             let m = mob::data(e).unwrap();
-            eprintln!("dbg tick {tick} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
+            eprintln!("dbg tick {tick} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
         }
         for (k, want) in expected.as_array().unwrap().iter().enumerate() {
             let want = want.as_array().unwrap();

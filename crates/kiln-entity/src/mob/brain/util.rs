@@ -207,9 +207,9 @@ pub fn entity_is_visible(cx: &mut Cx, id: i32) -> bool {
 pub fn tracker_pos(cx: &Cx, t: &Tracker) -> Option<Vec3> {
     match *t {
         Tracker::Block { center, .. } => Some(center),
-        Tracker::Entity { id, eye } => {
+        Tracker::Entity { id, track_eye, .. } => {
             let l = living(cx, id)?;
-            Some(if eye { Vec3::new(l.pos.x, l.eye_y, l.pos.z) } else { l.pos })
+            Some(if track_eye { Vec3::new(l.pos.x, l.eye_y, l.pos.z) } else { l.pos })
         }
     }
 }
@@ -218,9 +218,9 @@ pub fn tracker_pos(cx: &Cx, t: &Tracker) -> Option<Vec3> {
 pub fn tracker_block(cx: &Cx, t: &Tracker) -> Option<BlockPos> {
     match *t {
         Tracker::Block { pos, .. } => Some(pos),
-        Tracker::Entity { id, .. } => {
+        Tracker::Entity { id, target_eye, .. } => {
             let l = living(cx, id)?;
-            Some(BlockPos::containing(l.pos.x, l.pos.y, l.pos.z))
+            Some(if target_eye { BlockPos::containing(l.pos.x, l.eye_y, l.pos.z) } else { BlockPos::containing(l.pos.x, l.pos.y, l.pos.z) })
         }
     }
 }
@@ -229,7 +229,11 @@ pub fn tracker_block(cx: &Cx, t: &Tracker) -> Option<BlockPos> {
 pub fn tracker_visible(cx: &mut Cx, t: &Tracker) -> bool {
     match *t {
         Tracker::Block { .. } => true,
-        Tracker::Entity { id, .. } => visible_contains(cx, id),
+        Tracker::Entity { id, .. } => match living(cx, id) {
+            None => true,
+            Some(l) if !l.alive => false,
+            Some(_) => visible_contains(cx, id),
+        },
     }
 }
 
