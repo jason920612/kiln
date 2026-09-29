@@ -655,25 +655,7 @@ pub(crate) fn handle_attack(
     if !attacker.client_loaded() || attacker.game_mode == 3 {
         return;
     }
-    let target = if target_id == attacker.entity_id {
-        None
-    } else if let Some(t) = players.iter().position(|p| p.entity_id == target_id && !p.dead) {
-        Some(Target::Player(t))
-    } else {
-        entities
-            .list
-            .iter()
-            .find(|e| e.id == target_id && !e.removed)
-            .and_then(|e| e.phys.as_ref())
-            .map(|e| Target::Entity {
-                bb: e.bounding_box(),
-                kind: classify(e),
-                type_id: kiln_item::registry::ENTITY_TYPE.id(e.type_name).unwrap_or(-1),
-                pos: { let v = e.position(); [v.x, v.y, v.z] },
-                part: None,
-            })
-            .or_else(|| dragon_part(entities, target_id))
-    };
+    let target = find_target(players, a, target_id, entities);
     // `handleAttack` disconnects for attacking itself.
     if target_id == attacker.entity_id {
         players[a].disconnect_text(translatable("multiplayer.disconnect.invalid_entity_attacked"));
@@ -704,7 +686,87 @@ pub(crate) fn handle_attack(
     // The whole attack draws enchantment randomness from the attacker's level random.
     let lent = std::mem::replace(&mut players[a].level_rng, kiln_javamath::random::LegacyRandom::new(0));
     let outer = ctx.level_rng.replace(lent);
-    attack(players, a, target, target_id, env, ctx, mob_hits);
+    // `Player.attack` reads the spin's damage and weapon whoever asks (a click while spinning).
+    let p = &*players[a];
+    let spin = (p.spin_ticks > 0).then(|| Spin { damage: p.spin_damage, item: p.spin_item.clone(), off_hand: p.spin_off_hand });
+    attack(players, a, target, target_id, env, ctx, mob_hits, spin.as_ref());
+    if let Some(r) = std::mem::replace(&mut ctx.level_rng, outer) {
+        players[a].level_rng = r;
+    }
+}
+
+/// The target of an attack by player `a` on entity `target_id`: another player, a
+/// kiln-entity entity or an ender dragon's part.
+fn find_target(players: &[&mut Player], a: usize, target_id: i32, entities: &entities::Entities) -> Option<Target> {
+    if target_id == players[a].entity_id {
+        None
+    } else if let Some(t) = players.iter().position(|p| p.entity_id == target_id && !p.dead) {
+        Some(Target::Player(t))
+    } else {
+        entities
+            .list
+            .iter()
+            .find(|e| e.id == target_id && !e.removed)
+            .and_then(|e| e.phys.as_ref())
+            .map(|e| Target::Entity {
+                bb: e.bounding_box(),
+                kind: classify(e),
+                type_id: kiln_item::registry::ENTITY_TYPE.id(e.type_name).unwrap_or(-1),
+                pos: { let v = e.position(); [v.x, v.y, v.z] },
+                part: None,
+            })
+            .or_else(|| dragon_part(entities, target_id))
+    }
+}
+
+/// What a riptide spin hits with (`autoSpinAttackDmg`, `autoSpinAttackItemStack`).
+struct Spin {
+    damage: f32,
+    item: ItemStack,
+    off_hand: bool,
+}
+
+/// The entity player `a`'s riptide spin runs into first (`checkAutoSpinAttack`: the first
+/// living entity among those whose box meets the player's own, spectators left out, in the
+/// order of their ids), if any.
+pub(crate) fn spin_touch(players: &[&mut Player], a: usize, entities: &entities::Entities) -> Option<i32> {
+    let bb = players[a].bounding_box();
+    let mut found: Vec<i32> = Vec::new();
+    for (i, p) in players.iter().enumerate() {
+        if i != a && !p.dead && !p.disconnected && p.game_mode != 3 && p.bounding_box().intersects(&bb) {
+            found.push(p.entity_id);
+        }
+    }
+    for e in entities.list.iter().filter(|e| !e.removed) {
+        let Some(phys) = e.phys.as_ref() else { continue };
+        // Living entities only (mobs); the others are looked at and passed over.
+        if matches!(phys.kind, EntityKind::Mob(_)) && phys.bounding_box().intersects(&bb) {
+            found.push(e.id);
+        }
+    }
+    found.into_iter().min()
+}
+
+/// `LivingEntity.doAutoAttackOnTouch` for player `a` on entity `target_id`: `Player.attack`
+/// with the spin's damage and its trident as the weapon.
+pub(crate) fn spin_attack(
+    players: &mut [&mut Player],
+    a: usize,
+    target_id: i32,
+    entities: &entities::Entities,
+    env: &AttackEnv,
+    ctx: &mut DamageCtx,
+    mob_hits: &mut Vec<MobHit>,
+) {
+    let Some(target) = find_target(players, a, target_id, entities) else { return };
+    if let Target::Entity { kind: EntityClass::Invalid, .. } = target {
+        return;
+    }
+    let p = &*players[a];
+    let spin = Spin { damage: p.spin_damage, item: p.spin_item.clone(), off_hand: p.spin_off_hand };
+    let lent = std::mem::replace(&mut players[a].level_rng, kiln_javamath::random::LegacyRandom::new(0));
+    let outer = ctx.level_rng.replace(lent);
+    attack(players, a, target, target_id, env, ctx, mob_hits, Some(&spin));
     if let Some(r) = std::mem::replace(&mut ctx.level_rng, outer) {
         players[a].level_rng = r;
     }
@@ -752,7 +814,8 @@ fn translatable(key: &str) -> kiln_proto::nbt::Tag {
 }
 
 /// `Player.attack`.
-fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32, env: &AttackEnv, ctx: &mut DamageCtx, mob_hits: &mut Vec<MobHit>) {
+#[allow(clippy::too_many_arguments)]
+fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32, env: &AttackEnv, ctx: &mut DamageCtx, mob_hits: &mut Vec<MobHit>, spin: Option<&Spin>) {
     let living = match target {
         Target::Player(_) => true,
         Target::Entity { kind: EntityClass::NotAttackable, .. } => return,
@@ -772,8 +835,12 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
         },
     };
     let p = &mut *players[a];
-    let mut damage = p.attribute(ATTACK_DAMAGE) as f32;
-    let source = Source::melee(p.as_attacker(), p.inv.selected_item().clone());
+    // `isAutoSpinAttack ? autoSpinAttackDmg : ATTACK_DAMAGE`, and `getWeaponItem` (the trident
+    // of the spin, else what is held).
+    let mut damage = spin.map_or_else(|| p.attribute(ATTACK_DAMAGE) as f32, |s| s.damage);
+    let weapon = spin.map_or_else(|| p.inv.selected_item().clone(), |s| s.item.clone());
+    let slot = if spin.is_some_and(|s| s.off_hand) { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
+    let source = Source::melee(p.as_attacker(), weapon.clone());
     let scale = p.attack_strength_scale(0.5);
     // `scale * (getEnchantedDamage(target, damage, source) - damage)`.
     let enchant_bonus = scale * (p.enchanted_damage(&target_view, damage, &source, attack_rng(ctx)) - damage);
@@ -833,13 +900,15 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
             } else {
                 sounds.push(if full { "minecraft:entity.player.attack.strong" } else { "minecraft:entity.player.attack.weak" });
             }
-            let per_attack = players[a].inv.selected_item().get(keys::WEAPON).map(|w| w.item_damage_per_attack);
+            let per_attack = weapon.get(keys::WEAPON).map(|w| w.item_damage_per_attack);
             if let Some(n) = per_attack
-                && !players[a].inv.selected_item().is_empty()
+                && !weapon.is_empty()
             {
-                let item = players[a].inv.selected_item().item();
-                players[a].award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
-                players[a].hurt_and_break(EquipmentSlot::MainHand, n, ctx.level_rng.as_mut());
+                players[a].award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, weapon.item()), 1);
+                // The stack lives where it was held: a spin's trident wears in its hand.
+                if players[a].inv.equipped(slot).item() == weapon.item() {
+                    players[a].hurt_and_break(slot, n, ctx.level_rng.as_mut());
+                }
             }
             players[a].exhaust(0.1);
             play_sounds(players, a, &sounds, env);
@@ -893,15 +962,16 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     }
     // `itemAttackInteraction`: the post-attack enchantment effects (any held item, even
     // none), then a weapon (the `weapon` component, `hurtEnemy`) loses durability.
-    let per_attack = players[a].inv.selected_item().get(keys::WEAPON).map(|w| w.item_damage_per_attack);
+    let per_attack = weapon.get(keys::WEAPON).map(|w| w.item_damage_per_attack);
     post_attack(players, a, t, &source, ctx);
     if let Some(n) = per_attack
-        && !players[a].inv.selected_item().is_empty()
+        && !weapon.is_empty()
     {
         // `ItemStack.hurtEnemy`: a weapon counts as used.
-        let item = players[a].inv.selected_item().item();
-        players[a].award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
-        players[a].hurt_and_break(EquipmentSlot::MainHand, n, ctx.level_rng.as_mut());
+        players[a].award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, weapon.item()), 1);
+        if players[a].inv.equipped(slot).item() == weapon.item() {
+            players[a].hurt_and_break(slot, n, ctx.level_rng.as_mut());
+        }
     }
     // `damageStatsAndHearts`: the damage statistic, heart particles for more than a heart.
     let dealt = health_before - players[t].health;

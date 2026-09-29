@@ -165,9 +165,46 @@ fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Blo
     stack
 }
 
+/// `MinecartDispenseItemBehavior.execute`: the minecart lands on the rail in front (or on
+/// the one below the empty block in front); anything else is dispensed as an item.
+fn dispense_minecart(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, mut stack: ItemStack) -> ItemStack {
+    use kiln_entity::ext_entity::minecart::rail_shape;
+    let st = facing.step();
+    let (x, y, z) = (pos.x as f64 + 0.5 + st[0] as f64 * 1.125, (pos.y as f64 + 0.5).floor() + st[1] as f64, pos.z as f64 + 0.5 + st[2] as f64 * 1.125);
+    let front = pos.relative(facing);
+    let state = level.block(front);
+    let y_offset = if let Some(shape) = rail_shape(state) {
+        if shape.is_slope() { 0.6 } else { 0.1 }
+    } else if kiln_data::blocks_types::is_air(state)
+        && let Some(below) = rail_shape(level.block(front.below()))
+    {
+        if facing == Direction::Down || !below.is_slope() { -0.9 } else { -0.4 }
+    } else {
+        // `DefaultDispenseItemBehavior.dispense`, then this behaviour's own sound and animation.
+        let out = default_dispense(level, rng, pos, facing, stack);
+        level.effect(Effect::LevelEvent { id: 1000, pos, data: 0 });
+        level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
+        return out;
+    };
+    if let Some(kind) = kiln_data::entities::by_name(stack.item_name()) {
+        let cart = crate::boats::new_cart(kind.name, kiln_entity::math::Vec3::new(x, y + y_offset, z), rng.next_long(), &stack);
+        level.out.spawns.push(crate::entities::Spawn {
+            kind,
+            pos: [x, y + y_offset, z],
+            vel: [0.0; 3],
+            body: crate::entities::Body::Ready(Box::new(cart)),
+        });
+        stack.shrink_count(1);
+    }
+    level.effect(Effect::LevelEvent { id: 1000, pos, data: 0 });
+    level.effect(Effect::LevelEvent { id: 2000, pos, data: facing as i32 });
+    stack
+}
+
 fn dispense_behaviour(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: BlockPos, facing: Direction, stack: ItemStack) -> ItemStack {
     let target = pos.relative(facing);
     match stack.item_name() {
+        name if kiln_entity::ext_entity::minecart::is_minecart(name) => dispense_minecart(level, rng, pos, facing, stack),
         "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:snowball" | "minecraft:egg" => dispense_projectile(level, rng, pos, facing, stack),
         "minecraft:water_bucket" | "minecraft:lava_bucket" => {
             // `DispenseItemBehavior` for filled buckets: `BucketItem.emptyContents`, then an

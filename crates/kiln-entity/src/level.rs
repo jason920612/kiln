@@ -706,6 +706,33 @@ pub trait EntityLevel {
         true
     }
 
+    /// `minecraft:entity_drops` (vehicles drop their items).
+    fn entity_drops(&self) -> bool {
+        true
+    }
+
+    /// `minecraft:tnt_explodes`.
+    fn tnt_explodes(&self) -> bool {
+        true
+    }
+
+    /// `ContainerEntity.unpackChestVehicleLootTable`: rolls the loot table `table` (`seed` 0:
+    /// the table's own random sequence) into the empty slots of `items`. `origin` is the
+    /// entity's position; `player` opened the container (its luck counts, and its
+    /// `player_generates_container_loot` criterion fires). Levels without loot data leave
+    /// the slots as they are.
+    fn fill_container_loot(&mut self, items: &mut [kiln_item::ItemStack], table: &str, seed: i64, origin: Vec3, player: Option<i32>) {
+        let _ = (items, table, seed, origin, player);
+    }
+
+    /// A hopper minecart's `HopperBlockEntity.suckInItems` from the container block at `pos`
+    /// (the block above it): one item goes from the first slot the container gives out
+    /// downwards into `dest` (the minecart's slots). `None`: there is no container block.
+    fn hopper_take_from_block(&mut self, pos: BlockPos, dest: &mut Vec<kiln_item::ItemStack>) -> Option<bool> {
+        let _ = (pos, dest);
+        None
+    }
+
     /// A mob hits player `id` (`Player.hurtServer`); returns whether the hit landed.
     fn hurt_player(&mut self, id: i32, source: crate::mob::DamageSource, amount: f32) -> bool {
         self.emit(Event::Hurt { target: id, amount, kind: source.kind, attacker: source.attacker });

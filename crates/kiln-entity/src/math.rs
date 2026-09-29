@@ -273,6 +273,23 @@ impl Vec3 {
     pub fn is_zero(self) -> bool {
         self == Vec3::ZERO
     }
+
+    pub fn dot(self, o: Vec3) -> f64 {
+        self.x * o.x + self.y * o.y + self.z * o.z
+    }
+
+    /// `Vec3.horizontal`: the same without the height.
+    pub fn horizontal(self) -> Self {
+        Self::new(self.x, 0.0, self.z)
+    }
+
+    /// `Vec3.projectedOn`: this vector's shadow along `o` (`o` itself when it has no length).
+    pub fn projected_on(self, o: Vec3) -> Self {
+        if o.length_sqr() == 0.0 {
+            return o;
+        }
+        o.scale(self.dot(o)).scale(1.0 / o.length_sqr())
+    }
 }
 
 impl Add for Vec3 {

@@ -311,6 +311,13 @@ pub fn kiln<S: Host + 'static>(d: &mut Dispatcher<S>) {
                     Ok(targets.iter().filter(|p| s.kiln_use(p, pos)).count() as i32)
                 }),
             )))
+            .then(literal("interact").then(argument("targets", ArgumentType::players()).then(
+                argument("pos", ArgumentType::BlockPos).executes(|c, s: &mut S| {
+                    let targets = c.selector("targets").players(s)?;
+                    let pos = s.stack().resolve_block(c.coordinates("pos"));
+                    Ok(targets.iter().filter(|p| s.kiln_interact(p, pos)).count() as i32)
+                }),
+            )))
             .then(literal("recipebook").then(argument("targets", ArgumentType::players()).executes(|c, s: &mut S| {
                 let targets = c.selector("targets").players(s)?;
                 Ok(targets.iter().filter(|p| s.kiln_open_recipe_book(p)).count() as i32)

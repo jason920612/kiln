@@ -804,6 +804,34 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.env.mobs.drops
     }
 
+    fn entity_drops(&self) -> bool {
+        self.level.env.mobs.entity_drops
+    }
+
+    fn tnt_explodes(&self) -> bool {
+        self.level.env.rules.tnt_explodes
+    }
+
+    fn fill_container_loot(&mut self, items: &mut [kiln_item::ItemStack], table: &str, seed: i64, origin: Vec3, player: Option<i32>) {
+        let env = self.level.env;
+        let Some(loot) = env.loot.clone() else { return };
+        let at = [origin.x.floor() as i32, origin.y.floor() as i32, origin.z.floor() as i32];
+        crate::container::fill_from_table(items, &loot, table, seed, arr(origin), at, player.is_some(), env.game_time, env.seed);
+        // `unpackChestVehicleLootTable(player)`: `player_generates_container_loot`.
+        if let Some(pid) = player
+            && let Some(p) = self.players.iter_mut().find(|p| p.entity_id == pid)
+        {
+            let table = kiln_item::ident::Identifier::parse(table).map_or(table.to_owned(), |i| i.to_string());
+            p.fire_conds("minecraft:player_generates_container_loot", None, |c, _, _| {
+                c.get("loot_tables").and_then(|v| v.as_str()).and_then(kiln_item::ident::Identifier::parse).is_some_and(|i| i.to_string() == table)
+            });
+        }
+    }
+
+    fn hopper_take_from_block(&mut self, pos: BlockPos, dest: &mut Vec<kiln_item::ItemStack>) -> Option<bool> {
+        crate::container::hopper::take_into_cart(self.level, kb(pos), dest)
+    }
+
     fn difficulty(&self) -> u8 {
         self.level.env.mobs.difficulty
     }
@@ -1352,17 +1380,17 @@ pub(crate) fn interact_mob(
     off_hand: bool,
     spawns: &mut Vec<Spawn>,
     deaths: &mut Vec<health::Death>,
-) {
+) -> bool {
     use kiln_item::component::EquipmentSlot;
-    let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
+    let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return false };
     {
         let p = &*players[i];
-        if p.dead || p.game_mode == 3 || entities.list[idx].removed {
-            return;
+        if p.dead || entities.list[idx].removed {
+            return false;
         }
-        let Some(phys) = entities.list[idx].phys.as_ref() else { return };
+        let Some(phys) = entities.list[idx].phys.as_ref() else { return false };
         if kiln_entity::mob::data(phys).is_none() && !matches!(phys.kind, EntityKind::Ext(_)) {
-            return;
+            return false;
         }
         // `canInteractWithEntity(box, 3.0)`: the box within the interaction range plus 3.
         let bb = phys.bounding_box();
@@ -1371,7 +1399,13 @@ pub(crate) fn interact_mob(
         let (dx, dy, dz) = (d(eye[0], bb.min_x, bb.max_x), d(eye[1], bb.min_y, bb.max_y), d(eye[2], bb.min_z, bb.max_z));
         let range = p.attribute(crate::combat::ENTITY_INTERACTION_RANGE) + 3.0;
         if dx * dx + dy * dy + dz * dz >= range * range {
-            return;
+            return false;
+        }
+        // `Player.interactOn` for a spectator: a `MenuProvider` opens its menu (a minecart whose
+        // loot table is unrolled has none for them), nothing else reacts.
+        if p.game_mode == 3 {
+            let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(phys);
+            return cart.and_then(|m| m.contents.as_ref()).is_some_and(|c| c.loot_table.is_none());
         }
     }
     let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
@@ -1402,7 +1436,7 @@ pub(crate) fn interact_mob(
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
-    let Some(mut phys) = sim.list[idx].phys.take() else { return };
+    let Some(mut phys) = sim.list[idx].phys.take() else { return false };
     let out = kiln_entity::mob::interact::interact(&mut phys, &mut sim, &who, &stack);
     // Sheared wool: each item on its own, thrown up from the sheep with a push from its random.
     if let Some(table) = &out.shear
@@ -1507,6 +1541,8 @@ pub(crate) fn interact_mob(
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
+    // A chest or hopper minecart's click opens its menu (the caller opens it).
+    out.open_container
 }
 
 /// Runs `f` on entity `target` with the region as its level (outside the entity tick: menu

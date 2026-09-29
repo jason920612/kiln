@@ -38,6 +38,7 @@ mod glide;
 mod slide;
 mod firework;
 mod boats;
+mod carts;
 mod xp;
 mod container;
 mod datapacks;
@@ -294,6 +295,13 @@ struct Player {
     fall_fly_ticks: i32,
     /// `autoSpinAttackTicks` (a riptide throw): the spin attack lasts this many more ticks.
     spin_ticks: i32,
+    /// `autoSpinAttackDmg` and `autoSpinAttackItemStack`: what the spin hits with (the trident
+    /// as thrown, from the hand `spin_off_hand` names).
+    spin_damage: f32,
+    spin_item: kiln_item::ItemStack,
+    spin_off_hand: bool,
+    /// The tick counted down this tick, so the region checks what the spin touched.
+    spin_check: bool,
     /// Shared flags or pose changed since the last broadcast.
     meta_dirty: bool,
     /// Arm swung this tick.
@@ -1423,6 +1431,23 @@ impl Sim {
         out
     }
 
+    /// A chest or hopper minecart's slots as (slot, item name, count), and the loot table it
+    /// still holds unrolled (for tests and tools).
+    pub fn cart_items(&self, id: i32) -> Option<(Vec<(usize, &'static str, i32)>, Option<String>)> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
+        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_ref()?)?;
+        let c = cart.contents.as_ref()?;
+        Some((c.items.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i, s.item_name(), s.count())).collect(), c.loot_table.clone()))
+    }
+
+    /// A minecart's own numbers: the furnace's fuel, the TNT's fuse (-1: not primed) and
+    /// the hopper's `enabled` (for tests and tools).
+    pub fn cart_state(&self, id: i32) -> Option<(i32, i32, bool)> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
+        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_ref()?)?;
+        Some((cart.fuel, cart.fuse, cart.enabled))
+    }
+
     /// The entity a player rides (for tests and tools).
     pub fn vehicle_of(&self, conn: ConnId) -> Option<i32> {
         self.players.get(&conn)?.vehicle
@@ -1460,6 +1485,11 @@ impl Sim {
             .collect();
         out.sort_by_key(|m| m.0);
         out
+    }
+
+    /// The ticks a player's riptide spin has left (for tests and tools).
+    pub fn spin_ticks(&self, conn: ConnId) -> Option<i32> {
+        Some(self.players.get(&conn)?.spin_ticks)
     }
 
     /// A player's health, and whether it is dead (for tests and tools).
@@ -1597,6 +1627,7 @@ impl Sim {
                 kiln_inventory::Source::Player => p.inv.items.get(s.index).cloned(),
                 kiln_inventory::Source::Block => match &p.containers.open {
                     Some(container::open::OpenBlock::EnderChest { .. }) => p.containers.ender.items.get(s.index).cloned(),
+                    Some(container::open::OpenBlock::Cart { .. }) => p.containers.cart.items.get(s.index).cloned(),
                     Some(container::open::OpenBlock::Containers { first, second }) => {
                         let region = self.dims[p.dim].regions.at(ChunkPos::of_block(first.0.x, first.0.z).cell());
                         region.and_then(|r| {
@@ -1672,6 +1703,7 @@ impl Sim {
                 monsters_burn: mobs::monsters_burn(self.day_time),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
+                entity_drops: self.rule_bool("minecraft:entity_drops"),
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
                 spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
@@ -2191,7 +2223,9 @@ impl Sim {
                 }
                 let mut world = region::World { cells: &mut *cells, blocks: &mut part.1 };
                 let mut fx = region::Fx { blocks: &mut out, bodies: &bodies, spawns: &mut d.spawns, deaths: &mut deaths };
+                let cart = carts::pull(&part.0, p);
                 region::local_packet(p, &mut world, &env, pkt, &mut fx);
+                carts::push(&mut part.0, p, cart);
                 if let Some(h) = hook.as_mut() {
                     plugins::after_packets(h, cells, &env);
                 }
@@ -2350,6 +2384,10 @@ impl Sim {
             fall_flying: false,
             fall_fly_ticks: 0,
             spin_ticks: 0,
+            spin_damage: 0.0,
+            spin_item: kiln_item::ItemStack::empty(),
+            spin_off_hand: false,
+            spin_check: false,
             meta_dirty: false,
             swung: false,
             pending_suggestion: None,

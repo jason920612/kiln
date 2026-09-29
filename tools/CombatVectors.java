@@ -114,6 +114,8 @@ public class CombatVectors {
         final String name;
         final Side attacker = new Side(), target = new Side();
         Side bystander;
+        /** The attacker is in a riptide spin (`startAutoSpinAttack(20, 8.0F, main hand)`). */
+        boolean spin;
         boolean pvp = true;
         String difficulty = "normal";
         // The level's random and each player's entity random are reseeded before the attack.
@@ -467,7 +469,76 @@ public class CombatVectors {
         s.attacker.mainHandDamage = 58;
         out.add(s);
         enchantedScenarios(out);
+        spinScenarios(out);
         return out;
+    }
+
+    /**
+     * Riptide spin attacks: `Player.attack` while `startAutoSpinAttack(20, 8.0F, trident)` is on,
+     * so the base damage is the spin's 8 (attack cooldown and armor still apply) and the weapon
+     * is the trident (its enchantments, its durability).
+     */
+    static void spinScenarios(List<Scenario> out) {
+        Scenario s;
+        s = new Scenario("spin_full");
+        s.attacker.mainHand = "minecraft:trident";
+        s.spin = true;
+        out.add(s);
+        for (int t : new int[] {0, 4, 9, 14, 18}) {
+            s = new Scenario("spin_ticker_" + t);
+            s.attacker.mainHand = "minecraft:trident";
+            s.attacker.ticker = t;
+            s.spin = true;
+            out.add(s);
+        }
+        s = new Scenario("spin_armor");
+        s.attacker.mainHand = "minecraft:trident";
+        s.target.armor = new String[] {"minecraft:iron_boots", "minecraft:iron_leggings", "minecraft:diamond_chestplate", "minecraft:iron_helmet"};
+        s.spin = true;
+        out.add(s);
+        s = new Scenario("spin_crit");
+        s.attacker.mainHand = "minecraft:trident";
+        s.attacker.onGround = false;
+        s.attacker.fallDistance = 1.0;
+        s.spin = true;
+        out.add(s);
+        s = new Scenario("spin_sprinting");
+        s.attacker.mainHand = "minecraft:trident";
+        s.attacker.sprinting = true;
+        s.spin = true;
+        out.add(s);
+        s = new Scenario("spin_sharpness_knockback");
+        s.attacker.mainHand = "minecraft:trident";
+        s.attacker.ench("minecraft:sharpness", 5).ench("minecraft:knockback", 2);
+        s.spin = true;
+        out.add(s);
+        s = new Scenario("spin_fire_aspect");
+        s.attacker.mainHand = "minecraft:trident";
+        s.attacker.ench("minecraft:fire_aspect", 2);
+        s.spin = true;
+        out.add(s);
+        s = new Scenario("spin_kills_target");
+        s.attacker.mainHand = "minecraft:trident";
+        s.target.health = 6.0f;
+        s.spin = true;
+        out.add(s);
+        s = new Scenario("spin_worn_trident");
+        s.attacker.mainHand = "minecraft:trident";
+        s.attacker.mainHandDamage = 249;
+        s.spin = true;
+        out.add(s);
+        s = new Scenario("spin_thorns");
+        s.attacker.mainHand = "minecraft:trident";
+        s.target.armor = new String[] {null, null, "minecraft:diamond_chestplate", null};
+        s.target.armorEnch(2, "minecraft:thorns", 3);
+        s.levelSeed = 2;
+        s.spin = true;
+        out.add(s);
+        s = new Scenario("spin_with_a_sword");
+        // Whatever is in hand when the spin starts is its weapon (a sword's enchantments and wear).
+        s.attacker.mainHand = "minecraft:diamond_sword";
+        s.spin = true;
+        out.add(s);
     }
 
     // ---------------------------------------------------------------- runner
@@ -545,7 +616,7 @@ public class CombatVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=25594",
+                "server-port=" + System.getenv().getOrDefault("KILN_HARNESS_PORT", "25594"),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
@@ -703,6 +774,7 @@ public class CombatVectors {
         target.getRandom().setSeed(s.levelSeed + 2);
         if (bystander != null) bystander.getRandom().setSeed(s.levelSeed + 3);
 
+        if (s.spin) attacker.startAutoSpinAttack(20, 8.0f, attacker.getMainHandItem());
         attacker.attack(target);
 
         Map<String, Object> result = new LinkedHashMap<>();
@@ -722,6 +794,7 @@ public class CombatVectors {
         line.put("pvp", s.pvp);
         line.put("difficulty", s.difficulty);
         line.put("level_seed", s.levelSeed);
+        line.put("spin", s.spin);
         line.put("attacker", s.attacker.json());
         line.put("target", s.target.json());
         line.put("bystander", s.bystander != null ? s.bystander.json() : null);
