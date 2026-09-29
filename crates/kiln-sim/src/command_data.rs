@@ -312,6 +312,8 @@ impl Sim {
             98 => inv.selected_item().clone(),
             99..=103 | 105 | 106 => inv.equipment[equipment_index(slot)?].clone(),
             200..227 => p.containers.ender.items.get((slot - 200) as usize)?.clone(),
+            499 => p.open_menu.as_ref().unwrap_or(&p.menu).carried().clone(),
+            500..504 => p.command_slots[(slot - 500) as usize].clone(),
             _ => return None,
         })
     }
@@ -375,6 +377,14 @@ impl Sim {
                     200..227 => {
                         p.containers.ender.items[(slot - 200) as usize] = stack;
                         p.containers.ender.changes += 1;
+                        return true;
+                    }
+                    499 => {
+                        p.open_menu.as_mut().unwrap_or(&mut p.menu).set_carried(stack);
+                        return true;
+                    }
+                    500..504 => {
+                        p.command_slots[(slot - 500) as usize] = stack;
                         return true;
                     }
                     _ => return false,
@@ -820,6 +830,127 @@ impl Sim {
         Ok((items.into_iter().filter(|s| !s.is_empty()).map(|s| s.to_nbt()).collect(), table))
     }
 
+    /// `ItemCommands.applyModifier`: the item modifier over one stack (`COMMAND` parameters:
+    /// the source position and entity), limited to the stack's maximum size.
+    pub(crate) fn apply_modifier_nbt(
+        &mut self,
+        modifier: &kiln_command::host::LootTableArg,
+        item: &Tag,
+    ) -> Result<Tag, CommandError> {
+        use kiln_command::host::LootTableArg;
+        let Some(loot) = self.loot.clone() else { return Err(CommandError::unsupported("Item modifiers")) };
+        let function = match modifier {
+            LootTableArg::Id(id) => {
+                let ident = kiln_item::Identifier::parse(id).ok_or_else(|| no_such_element(id, "minecraft:item_modifier"))?;
+                loot.modifier_ref(&ident).ok_or_else(|| no_such_element(id, "minecraft:item_modifier"))?
+            }
+            LootTableArg::Inline(tag) => {
+                let mut json = String::new();
+                nbt_json(tag, &mut json);
+                let f = loot.parse_modifier(&json).map_err(|e| {
+                    CommandError::new(kiln_command::tr!("argument.resource_or_id.failed_to_parse", e.to_string()))
+                })?;
+                kiln_loot::parse::Ref::direct(f)
+            }
+        };
+        let stack = stack_of(Some(item));
+        let stack_state = kiln_command::host::Source::stack(self);
+        let ctx = CommandLootContext { origin: stack_state.position, this: stack_state.entity.is_some(), tool: None };
+        let mut level = kiln_javamath::random::LegacyRandom::new(self.command_loot_seed());
+        let mut eval = kiln_loot::Eval::new(&loot, &ctx, &mut level);
+        let mut out = eval.apply_fn(&function, stack);
+        let max = out.max_stack_size();
+        if out.count() > max {
+            out.set_count(max);
+        }
+        Ok(if out.is_empty() { Tag::Compound(vec![("id".into(), Tag::String("minecraft:air".into())), ("count".into(), Tag::Int(0))]) } else { out.to_nbt() })
+    }
+
+    /// The slots a slot source selects (`getSlotsFromProvider`): `container` is the owner being
+    /// accessed, `this` the source entity.
+    pub(crate) fn slot_tree_nbt(
+        &mut self,
+        source: &kiln_command::host::LootTableArg,
+        container: &kiln_command::host::ItemHolder<PlayerRef>,
+    ) -> Result<kiln_command::host::SlotTree<PlayerRef>, CommandError> {
+        use kiln_command::host::LootTableArg;
+        let Some(loot) = self.loot.clone() else { return Err(CommandError::unsupported("Slot sources")) };
+        let parsed;
+        let root: &kiln_loot::slot::SlotSource = match source {
+            LootTableArg::Id(id) => {
+                let ident = kiln_item::Identifier::parse(id).ok_or_else(|| no_such_element(id, "minecraft:slot_source"))?;
+                loot.slot_source(&ident).ok_or_else(|| no_such_element(id, "minecraft:slot_source"))?
+            }
+            LootTableArg::Inline(tag) => {
+                let mut json = String::new();
+                nbt_json(tag, &mut json);
+                parsed = loot.parse_slot_source(&json).map_err(|e| {
+                    CommandError::new(kiln_command::tr!("argument.resource_or_id.failed_to_parse", e.to_string()))
+                })?;
+                &parsed
+            }
+        };
+        let this = kiln_command::host::Source::stack(self).entity.clone();
+        self.slot_tree_of(&loot, root, container, this.as_ref())
+    }
+
+    fn slot_tree_of(
+        &mut self,
+        loot: &std::sync::Arc<kiln_loot::LootData>,
+        source: &kiln_loot::slot::SlotSource,
+        container: &kiln_command::host::ItemHolder<PlayerRef>,
+        this: Option<&PlayerRef>,
+    ) -> Result<kiln_command::host::SlotTree<PlayerRef>, CommandError> {
+        use kiln_command::host::{ItemHolder, SlotTree};
+        use kiln_loot::slot::SlotSource as Src;
+        let nested = |s: &mut Self, r: &kiln_loot::parse::Ref<Src>| -> Result<SlotTree<PlayerRef>, CommandError> {
+            match loot.resolve_slot_source(r) {
+                Some(inner) => s.slot_tree_of(loot, inner, container, this),
+                None => Ok(SlotTree::Empty),
+            }
+        };
+        Ok(match source {
+            Src::Empty => SlotTree::Empty,
+            Src::Group(terms) => {
+                let mut parts = Vec::new();
+                for t in terms {
+                    parts.push(nested(self, t)?);
+                }
+                SlotTree::Concat(parts)
+            }
+            Src::Filtered { source, filter } => {
+                let inner = nested(self, source)?;
+                let (loot, filter) = (loot.clone(), filter.clone());
+                SlotTree::Filtered(
+                    Box::new(inner),
+                    std::rc::Rc::new(move |t: &Tag| kiln_loot::predicate::item_matches(&loot.tags, &filter, &stack_of(Some(t)))),
+                )
+            }
+            Src::Limit { source, limit } => SlotTree::Limited(Box::new(nested(self, source)?), *limit),
+            Src::Range { owner, slots } => {
+                use kiln_loot::context::SlotOwner;
+                let holder: Option<ItemHolder<PlayerRef>> = match owner {
+                    SlotOwner::Container => Some(container.clone()),
+                    SlotOwner::Entity(kiln_loot::EntityTarget::This) => this.map(|e| ItemHolder::Entity(e.clone())),
+                    _ => None,
+                };
+                match (holder, kiln_command::slots::by_name(slots)) {
+                    (Some(h), Some(ids)) => {
+                        let mut out = Vec::new();
+                        for &id in ids {
+                            if kiln_command::Host::slot_item(self, &h, id).is_some() {
+                                out.push((h.clone(), id));
+                            }
+                        }
+                        SlotTree::Slots(out)
+                    }
+                    _ => SlotTree::Empty,
+                }
+            }
+            Src::Contents { .. } => return Err(CommandError::unsupported("Slot sources over container contents")),
+        })
+    }
+
     /// `getItemBySlot(MAINHAND / OFFHAND)`.
     pub(crate) fn hand_item_nbt(&mut self, target: &PlayerRef, offhand: bool) -> Option<Option<Tag>> {
         let stack = if target.entity.is_none() {
@@ -921,7 +1052,7 @@ fn container_size(id: &str) -> Option<i32> {
 }
 
 /// `ItemStack.getHoverName`: the item's name (custom names are not read yet).
-fn hover_name(stack: &kiln_item::ItemStack) -> kiln_command::Text {
+pub(crate) fn hover_name(stack: &kiln_item::ItemStack) -> kiln_command::Text {
     let name = stack.item_name();
     let (ns, path) = name.split_once(':').unwrap_or(("minecraft", name));
     let kind = if kiln_data::builtin_id("minecraft:block", name).is_some() { "block" } else { "item" };

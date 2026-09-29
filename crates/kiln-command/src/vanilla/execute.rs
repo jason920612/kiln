@@ -147,7 +147,6 @@ fn expect<S: Host>(s: &S, positive: bool, passed: bool) -> Vec<SourceStack<S>> {
 }
 
 type Test<S> = fn(&CommandContext<S>, &mut S) -> Result<bool>;
-type Count<S> = fn(&CommandContext<S>, &mut S) -> Result<i32>;
 
 /// `addConditional`: forks when the test matches, or reports it when the command ends here.
 fn conditional<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool, test: Test<S>) -> Builder<S> {
@@ -166,9 +165,13 @@ fn conditional<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool, t
 }
 
 /// A conditional over a count (`createNumericConditionalHandler`).
-fn numeric_conditional<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool, count: Count<S>) -> Builder<S> {
+fn numeric_conditional<S: Host + 'static, F>(exec: NodeId, b: Builder<S>, positive: bool, count: F) -> Builder<S>
+where
+    F: Fn(&CommandContext<S>, &mut S) -> Result<i32> + Clone + Send + Sync + 'static,
+{
+    let fork_count = count.clone();
     b.fork(exec, move |c, s: &mut S| {
-        let n = count(c, s)?;
+        let n = fork_count(c, s)?;
         Ok(expect(s, positive, n > 0))
     })
     .executes(move |c, s: &mut S| {
@@ -190,6 +193,32 @@ fn numeric_result<S: Host>(s: &mut S, positive: bool, n: i32) -> Result<i32> {
         }
         (false, n) => Err(CommandError::new(tr!("commands.execute.conditional.fail_count", n))),
     }
+}
+
+/// `execute if items block|entity <source> <slots> <item_predicate>` (`countItems`).
+fn items_branch<S: Host + 'static>(exec: NodeId, positive: bool, block: bool) -> Builder<S> {
+    let count = move |c: &CommandContext<S>, s: &mut S| -> Result<i32> {
+        let source = super::item::Accessor::read(c, s, block, "source")?;
+        let arg = super::item::SlotsArg::read(c, "slots");
+        let tree = source.slots(s, &arg, true)?;
+        let test = super::items::ItemTest::parse(c.string("item_predicate"))?;
+        Ok(super::item::item_copies(&tree, s).iter().filter(|t| test.test(t)).map(super::items::item_count).sum())
+    };
+    literal(if block { "block" } else { "entity" }).then(argument("source", if block { ArgumentType::BlockPos } else { ArgumentType::entities() }).then(
+        argument("slots", ArgumentType::SlotSource).then(numeric_conditional(exec, argument("item_predicate", ArgumentType::ItemPredicate), positive, count)),
+    ))
+}
+
+/// `execute if slots block|entity <source> <slots>` (`countSlots`).
+fn slots_branch<S: Host + 'static>(exec: NodeId, positive: bool, block: bool) -> Builder<S> {
+    let count = move |c: &CommandContext<S>, s: &mut S| -> Result<i32> {
+        let source = super::item::Accessor::read(c, s, block, "source")?;
+        let arg = super::item::SlotsArg::read(c, "slots");
+        let tree = source.slots(s, &arg, true)?;
+        Ok(super::item::tree_size(&tree, s))
+    };
+    literal(if block { "block" } else { "entity" })
+        .then(argument("source", if block { ArgumentType::BlockPos } else { ArgumentType::entities() }).then(numeric_conditional(exec, argument("slots", ArgumentType::SlotSource), positive, count)))
 }
 
 /// `addConditionals`: every `if`/`unless` test.
@@ -261,34 +290,8 @@ fn conditionals<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool) 
         argument("name", ArgumentType::Function).suggests_server(super::function::suggest_functions)
             .fork(exec, move |c, s: &mut S| super::function::function_condition(c, s, positive)),
     ))
-    .then(literal("items").then(
-        literal("block").then(argument("source", ArgumentType::BlockPos).then(argument("slots", ArgumentType::SlotSource).then(
-            numeric_conditional(exec, argument("item_predicate", ArgumentType::ItemPredicate), positive, |_, _| {
-                Err(CommandError::unsupported("Container contents"))
-            }),
-        ))),
-    )
-    .then(
-        literal("entity").then(argument("source", ArgumentType::entities()).then(argument("slots", ArgumentType::SlotSource).then(
-            numeric_conditional(exec, argument("item_predicate", ArgumentType::ItemPredicate), positive, |_, _| {
-                Err(CommandError::unsupported("Entity inventories"))
-            }),
-        ))),
-    ))
-    .then(literal("slots").then(
-        literal("block").then(argument("source", ArgumentType::BlockPos).then(numeric_conditional(
-            exec,
-            argument("slots", ArgumentType::SlotSource),
-            positive,
-            |_, _| Err(CommandError::unsupported("Container contents")),
-        ))),
-    )
-    .then(literal("entity").then(argument("source", ArgumentType::entities()).then(numeric_conditional(
-        exec,
-        argument("slots", ArgumentType::SlotSource),
-        positive,
-        |_, _| Err(CommandError::unsupported("Entity inventories")),
-    )))))
+    .then(literal("items").then(items_branch(exec, positive, true)).then(items_branch(exec, positive, false)))
+    .then(literal("slots").then(slots_branch(exec, positive, true)).then(slots_branch(exec, positive, false)))
     .then(literal("stopwatch").then(argument("id", ArgumentType::ResourceLocation).then(conditional(
         exec,
         argument("range", ArgumentType::FloatRange),

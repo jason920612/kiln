@@ -552,6 +552,25 @@ impl<S: Source> Dispatcher<S> {
             }
             NodeKind::Argument { name, ty } => {
                 let value = ty.parse(reader, source.permission() >= SELECTOR_PERMISSION)?;
+                // Loot registry ids are looked up while parsing, as `ResourceOrIdArgument` does.
+                if let (ArgumentType::LootResource { registry }, ArgumentValue::Identifier(id)) = (ty, &value)
+                    && let ids = source.registry_ids(registry)
+                    && !ids.is_empty()
+                    && !ids.iter().any(|r| r == id.as_str())
+                {
+                    return Err(CommandError::new(crate::tr!("argument.resource_or_id.no_such_element", id.to_string(), *registry)).at(reader));
+                }
+                if let (ArgumentType::SlotSource, ArgumentValue::String(text)) = (ty, &value)
+                    && crate::slots::by_name(text).is_none()
+                    && !text.starts_with(['{', '['])
+                    && let ids = source.registry_ids("minecraft:slot_source")
+                    && !ids.is_empty()
+                {
+                    let id = Identifier::parse(text).map_or_else(|| text.clone(), |i| i.to_string());
+                    if !ids.iter().any(|r| *r == id) {
+                        return Err(CommandError::new(crate::tr!("argument.resource_or_id.no_such_element", id, "minecraft:slot_source")).at(reader));
+                    }
+                }
                 let end = reader.cursor();
                 ctx.args.push(ParsedArgument { name: name.clone(), start, end, value });
                 ctx.with_node(id, start, end);

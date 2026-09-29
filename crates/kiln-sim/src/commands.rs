@@ -122,7 +122,10 @@ impl PlayerRef {
             rot,
             dim: crate::DIMENSIONS[dim].0,
             mode: GameMode::Survival,
-            display: Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
+            display: match e.phys.as_ref().map(|p| &p.kind) {
+                Some(kiln_entity::EntityKind::Item(d)) => crate::command_data::hover_name(&d.stack),
+                _ => Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
+            },
             entity: Some(e.id),
             kind: e.kind.name,
             size: [e.kind.width as f64, e.kind.height as f64],
@@ -474,6 +477,9 @@ impl Source for Sim {
             }
             "minecraft:context_float_provider" => {
                 self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::FloatProvider).iter().map(|i| i.to_string()).collect())
+            }
+            "minecraft:slot_source" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::SlotSource).iter().map(|i| i.to_string()).collect())
             }
             "minecraft:item_modifier" => {
                 self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::Modifier).iter().map(|i| i.to_string()).collect())
@@ -1426,6 +1432,18 @@ impl Host for Sim {
 
     fn give_stack(&mut self, player: &PlayerRef, item: &Tag) -> bool {
         self.give_stack_nbt(player, item)
+    }
+
+    fn slot_source_tree(
+        &mut self,
+        source: &kiln_command::host::LootTableArg,
+        container: &kiln_command::host::ItemHolder<PlayerRef>,
+    ) -> Result<kiln_command::host::SlotTree<PlayerRef>, CommandError> {
+        self.slot_tree_nbt(source, container)
+    }
+
+    fn apply_item_modifier(&mut self, modifier: &kiln_command::host::LootTableArg, item: &Tag) -> Result<Tag, CommandError> {
+        self.apply_modifier_nbt(modifier, item)
     }
 
     fn spawn_item(&mut self, dimension: &str, pos: [f64; 3], item: &Tag) {

@@ -1101,6 +1101,11 @@ pub trait Host: SelectorWorld {
         let kind = if kiln_data::builtin_id("minecraft:block", id).is_some() { "block" } else { "item" };
         Text::translate(format!("{kind}.{ns}.{path}"), Vec::new())
     }
+    /// The slots a slot source (a registry id or an inline definition) selects, evaluated with
+    /// `container` as the `container` parameter and the source entity as `this`.
+    fn slot_source_tree(&mut self, _source: &LootTableArg, _container: &ItemHolder<Self::Entity>) -> Result<SlotTree<Self::Entity>, CommandError> {
+        Err(CommandError::unsupported("Slot sources"))
+    }
     /// Applies an item modifier (`/item modify`, `/item ... from ... <modifier>`) to item stack
     /// NBT; `None` when the modifier is unknown.
     fn apply_item_modifier(&mut self, _modifier: &LootTableArg, _item: &Tag) -> Result<Tag, CommandError> {
@@ -1231,6 +1236,17 @@ pub enum LootSource<E> {
 pub enum ItemHolder<E> {
     Block { dimension: String, pos: [i32; 3] },
     Entity(E),
+}
+
+/// `SlotCollection`: the slots a slot source selected, in order.
+#[derive(Clone)]
+pub enum SlotTree<E> {
+    Empty,
+    /// Existing slots (holder and slot id).
+    Slots(Vec<(ItemHolder<E>, i32)>),
+    Concat(Vec<SlotTree<E>>),
+    Filtered(Box<SlotTree<E>>, std::rc::Rc<dyn Fn(&Tag) -> bool>),
+    Limited(Box<SlotTree<E>>, usize),
 }
 
 /// What `/enchant` did to one target.

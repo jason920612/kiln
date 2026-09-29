@@ -1504,10 +1504,12 @@ attribute @e[tag=p1,limit=1] minecraft:max_health modifier remove kiln:hp
 attribute @e[tag=p1,limit=1] minecraft:attack_damage get
 attribute @a minecraft:max_health get
 attribute Nobody minecraft:max_health get
+! gamerule natural_health_regeneration false
 damage Diff0 2
 damage Diff0 1 minecraft:nonexistent
 damage Nobody 1
 data get entity Diff0 Health
+! gamerule natural_health_regeneration true
 ! kill @e[type=!minecraft:player]
 # worldborder
 worldborder get
@@ -1698,6 +1700,139 @@ loot give Diff0 kill Other0
 loot give Diff0 kill @e[type=minecraft:item,limit=1]
 loot give Diff0 loot {pools:[{rolls:1,entries:[{type:"minecraft:item",name:"minecraft:apple"}]}]}
 loot give Diff0 fish minecraft:blocks/stone 6 100 6
+! clear @a
+! kill @e[type=!minecraft:player]
+
+# item
+! gamerule show_advancement_messages false
+! setblock 6 100 6 stone
+! setblock 7 100 6 air
+! setblock 7 100 6 chest
+! setblock 8 100 6 furnace
+item replace block 7 100 6 container.0 with minecraft:diamond 5
+item replace block 7 100 6 container.1 with minecraft:stone 100
+item replace block 7 100 6 container.1 with minecraft:stone 64
+item replace block 7 100 6 container.1 with minecraft:air
+item replace block 7 100 6 container.30 with minecraft:dirt
+item replace block 7 100 6 container.99 with minecraft:dirt
+item replace block 6 100 6 container.0 with minecraft:dirt
+item replace block 9 100 6 container.0 with minecraft:dirt
+item replace block 7 100 6 container.* with minecraft:apple
+item replace block 7 100 6 container.* with minecraft:apple 2
+item fill block 7 100 6 container.* with minecraft:cobblestone 3
+item override block 7 100 6 container.* with minecraft:dirt
+item override block 7 100 6 container.3 with minecraft:air
+data get block 7 100 6 Items
+item replace block 8 100 6 container.1 with minecraft:coal 5
+item replace block 8 100 6 container.3 with minecraft:coal 5
+item replace block 8 100 6 container.* with minecraft:coal 5
+data get block 8 100 6 Items
+item replace block 7 100 6 foo.bar with minecraft:dirt
+item replace block 7 100 6 kilndiff:nothing with minecraft:dirt
+item replace block 7 100 6 kilndiff:first_two with minecraft:emerald 2
+item fill block 7 100 6 kilndiff:first_two with minecraft:emerald 2
+item override block 7 100 6 kilndiff:both with minecraft:gold_ingot
+item replace block 7 100 6 {type:"minecraft:slot_range",slots:"container.7"} with minecraft:iron_ingot
+data get block 7 100 6 Items
+item modify block 7 100 6 container.0 kilndiff:three
+item modify block 7 100 6 container.* kilndiff:three
+item modify block 7 100 6 container.* kilndiff:nothing
+item modify block 6 100 6 container.0 kilndiff:three
+item modify block 7 100 6 container.0 {type:"minecraft:set_count",count:7}
+data get block 7 100 6 Items
+item replace block 7 100 6 container.20 with minecraft:air
+item modify block 7 100 6 container.20 kilndiff:three
+item replace entity Diff0 hotbar.0 with minecraft:golden_apple 2
+item replace entity Diff0 hotbar.1 with minecraft:stone 65
+item replace entity Diff0 hotbar.* with minecraft:stick
+item replace entity Diff0 hotbar.* with minecraft:stick 3
+item fill entity Diff0 hotbar.* with minecraft:arrow
+item override entity Diff0 hotbar.* with minecraft:bow
+item override entity Diff0 hotbar.4 with minecraft:air
+data get entity Diff0 Inventory
+item replace entity @a hotbar.1 from entity Diff0 hotbar.0
+item replace entity Other0 hotbar.* from entity Diff0 hotbar.*
+item replace entity Diff0 hotbar.* from block 7 100 6 container.*
+item replace entity Diff0 hotbar.2 from block 7 100 6 container.0 kilndiff:three
+item replace entity Diff0 armor.head with minecraft:iron_helmet
+item replace entity Diff0 armor.* with minecraft:diamond_chestplate
+item replace entity Diff0 weapon.offhand with minecraft:shield
+item replace entity Diff0 weapon.mainhand with minecraft:stone
+item replace entity Diff0 inventory.5 with minecraft:cake
+item replace entity Diff0 enderchest.3 with minecraft:cake
+item replace entity Diff0 horse.3 with minecraft:cake
+item replace entity Diff0 contents with minecraft:cake
+item replace entity Nobody hotbar.0 with minecraft:cake
+item replace entity @e[type=minecraft:pig] hotbar.0 with minecraft:cake
+item replace block 7 100 6 container.0 from entity Diff0 hotbar.0
+item replace block 7 100 6 container.0 from entity Diff0 horse.3
+item replace block 7 100 6 container.0 from entity Diff0 hotbar.* kilndiff:three
+item replace block 7 100 6 container.* from entity Diff0 armor.*
+item replace block 7 100 6 container.0 from block 8 100 6 container.0
+item replace block 7 100 6 container.0 from block 6 100 6 container.0
+item replace block 7 100 6 container.0 from block 8 100 6 container.20
+item replace block 7 100 6 container.0 from entity Nobody hotbar.0
+item replace entity Diff0 hotbar.0 from entity Diff0 hotbar.0 kilndiff:nothing
+item modify entity Diff0 hotbar.0 kilndiff:three
+item modify entity @a hotbar.* kilndiff:three
+item modify entity Diff0 hotbar.8 kilndiff:three
+item modify entity Diff0 armor.* kilndiff:name
+item modify entity Nobody hotbar.0 kilndiff:three
+item modify entity Diff0 hotbar.0 kilndiff:missing
+item replace entity Diff0 kilndiff:hotbar_apples with minecraft:carrot
+item replace entity Diff0 kilndiff:first_two with minecraft:carrot
+item modify entity Diff0 kilndiff:hotbar_apples kilndiff:three
+data get entity Diff0 Inventory
+item replace entity Diff0 hotbar.* with minecraft:apple 1
+item replace entity Diff0 hotbar.3 with minecraft:carrot
+item modify entity Diff0 kilndiff:hotbar_apples kilndiff:three
+item replace entity Diff0 kilndiff:hotbar_apples with minecraft:air
+data get entity Diff0 Inventory
+item
+item replace
+item replace block
+item replace block 7 100 6
+item replace block 7 100 6 container.0
+item replace block 7 100 6 container.0 with
+item replace block 7 100 6 container.0 with minecraft:dirt 0
+item replace block 7 100 6 container.0 with minecraft:dirt 100
+item replace block 7 100 6 container.0 with minecraft:nonexistent
+item bogus
+
+# execute if items
+execute if items entity Diff0 hotbar.* minecraft:apple
+execute if items entity Diff0 hotbar.* minecraft:bow
+execute if items entity Diff0 hotbar.0 *
+execute if items entity Diff0 hotbar.8 minecraft:air
+execute if items entity Diff0 hotbar.* #minecraft:logs
+execute if items entity @a hotbar.* minecraft:apple
+execute if items entity Nobody hotbar.0 *
+execute if items entity Diff0 horse.3 *
+execute if items entity Diff0 kilndiff:hotbar_apples *
+execute unless items entity Diff0 hotbar.* minecraft:apple
+execute unless items entity Diff0 hotbar.* minecraft:bow
+execute store result score Diff0 kilndiff run execute if items entity Diff0 hotbar.* *
+execute if items block 7 100 6 container.* *
+execute if items block 7 100 6 container.0 minecraft:dirt
+execute if items block 6 100 6 container.0 *
+execute unless items block 7 100 6 container.* minecraft:emerald
+execute if items block 7 100 6 kilndiff:both *
+execute if items block 7 100 6 foo *
+
+# execute if slots
+execute if slots entity Diff0 hotbar.*
+execute if slots entity Diff0 hotbar.3
+execute if slots entity Diff0 horse.3
+execute if slots entity @a hotbar.*
+execute if slots entity Nobody hotbar.*
+execute if slots entity Diff0 kilndiff:hotbar_apples
+execute unless slots entity Diff0 kilndiff:hotbar_apples
+execute if slots block 7 100 6 container.*
+execute if slots block 7 100 6 kilndiff:first_two
+execute if slots block 7 100 6 container.40
+execute if slots block 6 100 6 container.*
+execute unless slots block 7 100 6 container.99
+! gamerule show_advancement_messages true
 ! clear @a
 ! kill @e[type=!minecraft:player]
 """

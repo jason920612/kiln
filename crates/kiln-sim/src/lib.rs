@@ -257,6 +257,8 @@ struct Player {
     merchant_events: Vec<(i32, kiln_inventory::merchant::MerchantEvent)>,
     /// What the open menu is on, the menu counter and the ender chest items.
     containers: container::open::PlayerContainers,
+    /// The crafting grid slots (500..504) `/item` reaches through `player.crafting.N`.
+    command_slots: [kiln_item::ItemStack; 4],
     /// Movement packets for this player's viewers.
     tracker: packets::entity::MovementTracker,
     /// Players currently seeing this one (sorted).
@@ -2138,6 +2140,7 @@ impl Sim {
             open_menu: None,
             merchant_events: Vec::new(),
             containers: container::open::PlayerContainers::load(joining.saved.raw()),
+            command_slots: Default::default(),
             tracker: packets::entity::MovementTracker::new(
                 entity_id,
                 kiln_data::entities::types::PLAYER.update_interval,
