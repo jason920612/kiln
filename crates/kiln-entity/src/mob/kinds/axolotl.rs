@@ -167,6 +167,12 @@ pub fn smooth_swim_look(e: &mut Entity, m: &mut MobData, max_y_from_center: i32)
     }
 }
 
+/// `Axolotl.rehydrate` (a splash water bottle breaking near it): 1800 ticks of air more, at most
+/// the maximum.
+pub fn rehydrate(e: &mut Entity) {
+    e.air_supply = (e.air_supply + 1800).min(TOTAL_AIR_SUPPLY);
+}
+
 // ---------------------------------------------------------------------- the sensor
 
 /// `AxolotlAttackablesSensor`: the nearest visible living entity in the water within 8 blocks that
