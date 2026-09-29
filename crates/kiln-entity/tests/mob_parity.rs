@@ -31,7 +31,7 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
         "breed" => "BreedGoal",
         "follow_parent" => "FollowParentGoal",
         "stroll" => {
-            if kind == MobKind::Drowned {
+            if matches!(kind, MobKind::Drowned | MobKind::Pillager | MobKind::Vindicator | MobKind::Evoker | MobKind::Illusioner) {
                 "RandomStrollGoal"
             } else {
                 "WaterAvoidingRandomStrollGoal"
@@ -88,7 +88,7 @@ fn tag_of(v: &Value) -> kiln_proto::nbt::Tag {
     }
 }
 
-fn state(e: &kiln_entity::Entity) -> (Vec<f64>, String) {
+fn state(e: &kiln_entity::Entity, level: &dyn EntityLevel) -> (Vec<f64>, String) {
     let m = mob::data(e).expect("a mob");
     let p = e.position();
     let v = e.delta;
@@ -110,16 +110,71 @@ fn state(e: &kiln_entity::Entity) -> (Vec<f64>, String) {
         m.hurt_time as f64,
         b(e.is_removed()),
         e.remaining_fire_ticks as f64,
-        m.target.map_or(-1.0, |t| t as f64),
+        // `Mob.getTarget`: the target while it can be attacked (not once it died).
+        mob::goals::target(m, level).map_or(-1.0, |t| t.id as f64),
         e.random.state() as f64,
+        effects_sig(m) as f64,
+        m.absorption as f64,
     ];
-    let mut goals: Vec<&str> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind)).collect();
+    let mut goals: Vec<String> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind).to_owned()).collect();
     goals.retain(|g| !g.is_empty());
+    // The dragon's phase (`EnderDragonPhase` id).
+    if let Some(d) = mob::kinds::ender_dragon::state_of(e) {
+        goals.push(format!("DragonPhase{}", d.phase.id()));
+    }
     (nums, goals.join(" "))
 }
 
-const FIELDS: &[&str] =
-    &["id", "x", "y", "z", "dx", "dy", "dz", "yaw", "pitch", "head", "body", "on_ground", "health", "hurt_time", "removed", "fire", "target", "random"];
+const FIELDS: &[&str] = &[
+    "id", "x", "y", "z", "dx", "dy", "dz", "yaw", "pitch", "head", "body", "on_ground", "health", "hurt_time", "removed", "fire", "target", "random",
+    "effects", "absorption",
+];
+
+/// `MobVectors.effectsSig`: the sum of (id + 1) * 100000 + duration * 10 + amplifier.
+fn effects_sig(m: &mob::MobData) -> i64 {
+    m.effects.values().map(|e| (e.id as i64 + 1) * 100000 + e.duration as i64 * 10 + e.amplifier as i64).sum()
+}
+
+/// A scenario action (`MobVectors.Action`), run before the entity ticks of its tick.
+fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Value) {
+    let kind = a["kind"].as_str().unwrap();
+    let what = a["what"].as_str().unwrap_or("");
+    let pos = vec3(&a["pos"]);
+    match kind {
+        "effect" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let fx = kiln_entity::effect::Effect::named(what, a["duration"].as_i64().unwrap() as i32, a["amp"].as_i64().unwrap() as i32).unwrap();
+            level.add_effect_instance(id, fx, None);
+        }
+        "splash" | "linger" => {
+            // A potion entity at the spot (it takes an id, as vanilla's constructor does), broken
+            // on a block hit there.
+            let item = if kind == "splash" { "minecraft:splash_potion" } else { "minecraft:lingering_potion" };
+            let mut stack = kiln_item::ItemStack::of(item, 1).unwrap();
+            stack.insert(kiln_item::keys::POTION_CONTENTS, kiln_item::component::PotionContents { potion: kiln_item::registry::POTION.id(what), ..Default::default() });
+            let pid = level.next_entity_id();
+            let throwable = if kind == "splash" { kiln_entity::projectile::Throwable::SplashPotion } else { kiln_entity::projectile::Throwable::LingeringPotion };
+            let mut p = kiln_entity::projectile::new(pid, 0, throwable, pos, Vec3::ZERO, None, 0);
+            let hit = kiln_entity::projectile::Hit::Block { pos: BlockPos::containing(pos.x, pos.y, pos.z), face: kiln_entity::math::Direction::Up, location: pos };
+            if kind == "splash" {
+                mob::kinds::witch::splash(&mut p, level, hit, &stack, None);
+            } else {
+                mob::kinds::witch::linger(&mut p, level, hit, &stack, None);
+            }
+        }
+        "interact" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let p = player.expect("an interacting player");
+            let who = mob::interact::Interactor { id: p.id, creative: p.creative, sneaking: p.sneaking };
+            let stack = kiln_item::ItemStack::of(what, 1).unwrap();
+            let e = level.entity_mut(id).unwrap();
+            let mut e2 = std::mem::replace(e, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+            mob::interact::interact(&mut e2, level, &who, &stack);
+            *level.entity_mut(id).unwrap() = e2;
+        }
+        k => panic!("action {k}"),
+    }
+}
 
 fn replay(s: &Value) -> Result<usize, String> {
     // Diverging (brain-driven) scenarios compare the body only: not the random or the goals.
@@ -150,6 +205,9 @@ fn replay(s: &Value) -> Result<usize, String> {
             v.head = kiln_data::builtin_id("minecraft:item", item).unwrap();
         }
         v.yaw = p.get("yaw").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+        // The recording's player is never ticked: its clock and hurt stamp as they were.
+        v.tick_count = p.get("tick_count").and_then(Value::as_i64).unwrap_or(0) as i32;
+        v.last_hurt_by_mob_time = p.get("last_hurt_by_mob_time").and_then(Value::as_i64).unwrap_or(0) as i32;
         v.pitch = p.get("pitch").and_then(Value::as_f64).unwrap_or(0.0) as f32;
         if let Some(u) = p.get("uuid").and_then(Value::as_array) {
             v.uuid = u.iter().fold(0u128, |acc, x| (acc << 32) | (x.as_i64().unwrap() as u32 as u128));
@@ -188,6 +246,12 @@ fn replay(s: &Value) -> Result<usize, String> {
                 *egg_time = spec["egg_time"].as_i64().unwrap() as i32;
             }
             m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
+            // The harness equips the main hand before it reads the NBT (which replaces the
+            // equipment).
+            if let Some(item) = spec["main_hand"].as_str() {
+                m.equipment[mob::MAINHAND] = kiln_item::ItemStack::of(item, 1).unwrap();
+                mob::reassess_weapon_goal(m, false);
+            }
         }
         if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
             mob::persist::apply_nbt(&mut e, &tag_of(nbt));
@@ -202,14 +266,24 @@ fn replay(s: &Value) -> Result<usize, String> {
                 e.kind = m;
             }
         }
-        {
-            let m = mob::data_mut(&mut e).unwrap();
-            if let Some(item) = spec["main_hand"].as_str() {
-                m.equipment[mob::MAINHAND] = kiln_item::ItemStack::of(item, 1).unwrap();
-                mob::reassess_weapon_goal(m, false);
-            }
-        }
         ids.push(id);
+        level.insert(e);
+        for fx in spec.get("effects").and_then(Value::as_array).into_iter().flatten() {
+            let fx = kiln_entity::effect::Effect::named(fx[0].as_str().unwrap(), fx[1].as_i64().unwrap() as i32, fx[2].as_i64().unwrap() as i32).unwrap();
+            level.add_effect_instance(id, fx, None);
+        }
+    }
+    // Other entities (end crystals), after the mobs: ticked, not traced.
+    let mut other_ids = Vec::new();
+    for o in s.get("others").and_then(Value::as_array).into_iter().flatten() {
+        let id = o["id"].as_i64().unwrap() as i32;
+        let tag = kiln_proto::nbt::Tag::Compound(vec![
+            ("id".into(), kiln_proto::nbt::Tag::String(o["type"].as_str().unwrap().to_owned())),
+            ("Pos".into(), kiln_proto::nbt::Tag::List((0..3).map(|i| kiln_proto::nbt::Tag::Double(f(&o["pos"][i]))).collect())),
+            ("Rotation".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Float(f(&o["yaw"]) as f32), kiln_proto::nbt::Tag::Float(0.0)])),
+        ]);
+        let e = kiln_entity::persist::load(&tag, id, 0).expect("other entity");
+        other_ids.push(id);
         level.insert(e);
     }
     let hurts: Vec<(i64, usize, f32)> = s["hurts"]
@@ -223,7 +297,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     let trace = s["trace"].as_array().unwrap();
     let initial = ids.len();
     // Vanilla numbers new entities on from the scenario's mobs (id parity paces the AI).
-    level.set_next_entity_id(ids.iter().copied().max().unwrap_or(0) + 1);
+    level.set_next_entity_id(ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1);
     level.immediate_adds = true;
     let mut known = level.len();
     let mut compared = 0;
@@ -231,6 +305,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         let tick = tick as i64;
         level.game_time = start + 1 + tick;
         level.tick_players();
+        // What the hurts and actions spawn is in the level at once but joins the harness's
+        // ticked entities at the end of the tick (vanilla's harness ticks what it tracks).
+        let ticked = level.len();
         for &(t, i, amount) in &hurts {
             if t == tick {
                 let p = player.expect("a hurting player");
@@ -247,9 +324,14 @@ fn replay(s: &Value) -> Result<usize, String> {
                 *level.entity_mut(ids[i]).unwrap() = e2;
             }
         }
+        for a in s.get("actions").and_then(Value::as_array).into_iter().flatten() {
+            if a["tick"].as_i64() == Some(tick) {
+                act(&mut level, &ids, player, a);
+            }
+        }
         let before = level.player_hits.len();
         let nearest = player.filter(|p| !p.spectator);
-        for i in 0..level.len() {
+        for i in 0..ticked {
             level.tick_one(i, |e, level| {
                 if let (Some(p), EntityKind::Mob(_)) = (nearest, &e.kind) {
                     let d = e.position().distance_to_sqr(p.pos);
@@ -268,13 +350,14 @@ fn replay(s: &Value) -> Result<usize, String> {
         let before_flush = known;
         level.flush_spawned();
         known = level.len();
-        // Mobs that appeared get the harness's pinned random and head/body yaw.
-        for i in before_flush..level.len() {
-            let Some(e) = level.entity_at(i) else { continue };
-            if mob::data(e).is_none() {
-                continue;
-            }
-            let id = e.id;
+        // Mobs that appeared get the harness's pinned random and head/body yaw, in the order the
+        // harness finds them (`getEntities` over its box: entity sections, then insertion).
+        let fresh: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| mob::data(e).is_some()).map(|e| e.id).collect();
+        let harness_box = kiln_entity::math::Aabb::new(-60.0, 60.0, -60.0, 60.0, 140.0, 60.0);
+        let order = level.entities_in(&harness_box, kiln_entity::EntityFilter::Any, i32::MIN);
+        let mut fresh = fresh;
+        fresh.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
+        for id in fresh {
             let n = (ids.len() - initial) as i64;
             let e = level.entity_mut(id).unwrap();
             e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
@@ -313,14 +396,14 @@ fn replay(s: &Value) -> Result<usize, String> {
             let want_goals = want.last().unwrap().as_str().unwrap();
             let want: Vec<f64> = want[..want.len() - 1].iter().map(f).collect();
             let e = level.entity(ids[k]).ok_or_else(|| format!("tick {tick}: mob {k} missing"))?;
-            let (got, goals) = state(e);
+            let (got, goals) = state(e, &level);
             for (i, (g, w)) in got.iter().zip(&want).enumerate() {
                 // Mobs that appeared have ids of their own on each side.
                 if (k >= initial && i == 0) || (loose && i == 17) {
                     continue;
                 }
                 // Rotations and health are floats, printed by Java's `Float.toString`.
-                let float = matches!(i, 7..=10 | 12);
+                let float = matches!(i, 7..=10 | 12 | 19);
                 let same = if float { (*g as f32).to_bits() == (*w as f32).to_bits() } else { g.to_bits() == w.to_bits() };
                 if !same {
                     return Err(format!(
@@ -342,7 +425,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     // Vanilla arrows draw their damage and spread from their own random, which is seeded from
     // the clock (not pinnable): skeleton scenarios compare the mob, not where arrows land.
     // Shulker bullets likewise steer by their own random.
-    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident")) || matches!(m["type"].as_str(), Some("minecraft:shulker" | "minecraft:witch")));
+    let arrows = s["mobs"].as_array().unwrap().iter().any(|m| matches!(m["main_hand"].as_str(), Some("minecraft:bow" | "minecraft:trident" | "minecraft:crossbow")) || matches!(m["type"].as_str(), Some("minecraft:shulker" | "minecraft:witch")));
     let f32s = |v: &[(i64, f64)]| v.iter().map(|&(t, a)| (t, (a as f32).to_bits())).collect::<Vec<_>>();
     if !arrows && f32s(&got_hits) != f32s(&want_hits) {
         return Err(format!("player hits {got_hits:?} (kiln) vs {want_hits:?} (vanilla)"));
@@ -373,7 +456,11 @@ fn mobs_match_vanilla() {
     for line in text.lines() {
         let s: Value = serde_json::from_str(line).unwrap();
         let name = s["name"].as_str().unwrap().to_owned();
-        if filter.as_deref().is_some_and(|f| !name.contains(f)) {
+        if filter.as_deref().is_some_and(|f| !f.split('|').any(|f| name.contains(f))) {
+            continue;
+        }
+        // Raid wave compositions are checked by kiln-sim's raid tests.
+        if s.get("raid_waves").is_some() {
             continue;
         }
         if s.get("error").is_some() {

@@ -6,6 +6,7 @@ pub mod entities;
 pub mod level;
 pub mod native;
 pub mod player;
+pub mod poi;
 pub mod region;
 pub mod saved_data;
 
@@ -14,6 +15,7 @@ pub use entities::EntityStore;
 pub use level::{LevelState, LevelStore, WorldSpawn};
 pub use native::{NativeSource, NativeStore, WorldFormat};
 pub use player::{PlayerData, PlayerStore};
+pub use poi::PoiStore;
 
 use kiln_proto::nbt::{self, Tag};
 use std::io::{Read, Write};

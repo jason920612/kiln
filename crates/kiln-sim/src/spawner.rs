@@ -37,12 +37,15 @@ pub(crate) struct SpawnerData {
     pub constant: bool,
 }
 
-/// Each biome's `minecraft:gameplay/natural_mob_spawns` for the monster and creature
-/// categories, by biome network id.
+/// Each biome's `minecraft:gameplay/natural_mob_spawns` for the spawning categories
+/// ([`Category::SPAWNING`] order), by biome network id.
 #[derive(Debug, Default)]
 pub(crate) struct SpawnTable {
-    biomes: HashMap<u16, [Vec<SpawnerData>; 2]>,
+    biomes: HashMap<u16, [Vec<SpawnerData>; N]>,
 }
+
+/// The number of spawning categories.
+const N: usize = Category::SPAWNING.len();
 
 impl SpawnTable {
     /// Reads `worldgen/biome/*.json` of the datapack at `dir`.
@@ -74,13 +77,13 @@ impl SpawnTable {
                     })
                     .unwrap_or_default()
             };
-            t.biomes.insert(id as u16, [list("monster"), list("creature")]);
+            t.biomes.insert(id as u16, Category::SPAWNING.map(|c| list(c.name())));
         }
         Some(t)
     }
 
     fn list(&self, biome: u16, category: Category) -> &[SpawnerData] {
-        self.biomes.get(&biome).map_or(&[], |b| &b[if category == Category::Monster { 0 } else { 1 }])
+        self.biomes.get(&biome).map_or(&[], |b| &b[cat_index(category)])
     }
 }
 
@@ -100,8 +103,8 @@ fn pick<'a>(list: &'a [SpawnerData], r: &mut LegacyRandom) -> Option<&'a Spawner
     None
 }
 
-/// `NaturalSpawner.SPAWNING_CATEGORIES` Kiln spawns.
-const CATEGORIES: [Category; 2] = [Category::Monster, Category::Creature];
+/// `NaturalSpawner.SPAWNING_CATEGORIES`.
+const CATEGORIES: [Category; N] = Category::SPAWNING;
 
 fn chunk_random(seed: i64, game_time: i64, c: ChunkPos) -> LegacyRandom {
     let mut h = (seed as u64 ^ 0x7370_6177_6e21) ^ (game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
@@ -115,12 +118,12 @@ fn chunk_random(seed: i64, game_time: i64, c: ChunkPos) -> LegacyRandom {
 struct Spawner<'a> {
     pos: Vec<[f64; 3]>,
     /// Per player, mobs per category nearby (`LocalMobCapCalculator.MobCounts`).
-    local: Vec<[i32; 2]>,
+    local: Vec<[i32; N]>,
     /// Players whose spawning squares (8 chunks around them) overlap form a cluster; each
     /// cluster has vanilla's category cap for its chunks, so how players are grouped into
     /// regions does not matter. Per cluster, mobs per category and the cap.
-    counts: Vec<[i32; 2]>,
-    caps: Vec<[i32; 2]>,
+    counts: Vec<[i32; N]>,
+    caps: Vec<[i32; N]>,
     table: &'a SpawnTable,
     /// The distinct chunks players stand in and each one's cluster.
     stands: Vec<ChunkPos>,
@@ -131,7 +134,7 @@ struct Spawner<'a> {
 }
 
 fn cat_index(c: Category) -> usize {
-    if c == Category::Monster { 0 } else { 1 }
+    CATEGORIES.iter().position(|&x| x == c).unwrap_or(0)
 }
 
 /// Chunk distance (chessboard) at most 8 around a player's chunk: `getPlayersCloseForSpawning`
@@ -172,6 +175,10 @@ impl Spawner<'_> {
     }
 
     fn add(&mut self, c: ChunkPos, cat: Category) {
+        // `MISC` mobs are not counted.
+        if !CATEGORIES.contains(&cat) {
+            return;
+        }
         let i = cat_index(cat);
         if let Some(k) = self.cluster(c) {
             self.counts[k][i] += 1;
@@ -244,12 +251,12 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
             }
         }
     }
-    let caps: Vec<[i32; 2]> =
+    let caps: Vec<[i32; N]> =
         near.iter().map(|n| CATEGORIES.map(|cat| cat.max_instances() * n.len() as i32 / 289)).collect();
     let mut s = Spawner {
         pos: players.clone(),
-        local: vec![[0; 2]; players.len()],
-        counts: vec![[0; 2]; ids.len()],
+        local: vec![[0; N]; players.len()],
+        counts: vec![[0; N]; ids.len()],
         caps,
         table: &table,
         stands,
@@ -455,7 +462,7 @@ fn spawn_category_for_chunk(
 }
 
 /// The biome of the stored 4×4×4 cell holding `pos`.
-fn biome_at(level: &RegionLevel, pos: KBlockPos) -> u16 {
+pub(crate) fn biome_at(level: &RegionLevel, pos: KBlockPos) -> u16 {
     let Some(chunk) = level.cells.chunk(ChunkPos::of_block(pos.x, pos.z)) else { return 0 };
     let rel = pos.y - level.env.min_y;
     let Some(section) = chunk.sections.get((rel >> 4).max(0) as usize) else { return 0 };

@@ -266,6 +266,18 @@ impl CommandState {
 }
 
 impl Sim {
+    /// Runs `f` on the data of the mob a command targets (`None`: not a live mob).
+    fn with_mob<R>(&mut self, entity: &PlayerRef, f: impl FnOnce(&mut kiln_entity::mob::MobData) -> R) -> Option<R> {
+        let id = entity.entity?;
+        let dim = crate::dim_id(entity.dim)?;
+        for r in self.dims[dim].regions.iter_mut() {
+            if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == id) {
+                return e.phys.as_mut().and_then(kiln_entity::mob::data_mut).map(f);
+            }
+        }
+        None
+    }
+
     /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
     /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
     /// the contents changed.
@@ -295,6 +307,7 @@ impl Sim {
             let (cells, part) = region.cells_and_part_mut();
             let be = cells.chunk(chunk_pos).and_then(|c| c.block_entity(lx, y, lz));
             part.1.containers.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+            part.1.sculk.reload(kiln_blocks::BlockPos::new(x, y, z), be);
         }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);
@@ -641,6 +654,17 @@ impl Host for Sim {
                             kiln_entity::mob::kill(p);
                         } else {
                             p.removed = Some(kiln_entity::entity::RemovalReason::Killed);
+                            // `EndCrystal.kill`: the fight hears of it.
+                            if p.type_name == "minecraft:end_crystal" && dim == crate::END_ID {
+                                let ev = kiln_entity::level::DragonFightEvent::CrystalDestroyed {
+                                    crystal: p.id,
+                                    uuid: p.uuid,
+                                    pos: p.position(),
+                                    kind: kiln_entity::level::DamageKind::Generic,
+                                    attacker: None,
+                                };
+                                self.dragon_fight.send(crate::dragon_fight::FightMsg::Entity(ev));
+                            }
                         }
                     }
                     break;
@@ -700,16 +724,26 @@ impl Host for Sim {
 
     fn add_effect(&mut self, entity: &PlayerRef, effect: &Identifier, duration: i32, amplifier: i32, show_particles: bool) -> Option<bool> {
         let id = crate::effects::effect_id(effect.as_str())?;
+        let fx = crate::effects::Effect::new(id, duration, amplifier, false, show_particles, show_particles);
+        if entity.entity.is_some() {
+            return self.with_mob(entity, |m| kiln_entity::mob::effects::add_quiet(m, fx));
+        }
         let p = self.players.get_mut(&entity.conn)?;
-        Some(p.add_effect(crate::effects::Effect::new(id, duration, amplifier, false, show_particles, show_particles)))
+        Some(p.add_effect(fx))
     }
 
     fn remove_effect(&mut self, entity: &PlayerRef, effect: &Identifier) -> Option<bool> {
         let id = crate::effects::effect_id(effect.as_str())?;
+        if entity.entity.is_some() {
+            return self.with_mob(entity, |m| kiln_entity::mob::effects::remove(m, id));
+        }
         Some(self.players.get_mut(&entity.conn)?.remove_effect(id))
     }
 
     fn clear_effects(&mut self, entity: &PlayerRef) -> Option<bool> {
+        if entity.entity.is_some() {
+            return self.with_mob(entity, kiln_entity::mob::effects::remove_all);
+        }
         Some(self.players.get_mut(&entity.conn)?.remove_all_effects())
     }
 

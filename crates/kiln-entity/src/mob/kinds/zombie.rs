@@ -219,7 +219,7 @@ pub fn register_goals(m: &mut MobData) {
     t.add(3, nearest(Wanted::Types(VILLAGERS), false));
     t.add(3, nearest(Wanted::Types(IRON_GOLEM), true));
     // Baby turtles on land (turtles are not simulated).
-    t.add(5, nearest(Wanted::Unsimulated, true));
+    t.add(5, nearest(Wanted::BabyTurtlesOnLand, true));
 }
 
 // ---------------------------------------------------------------------- tick

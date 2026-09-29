@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 #[derive(Default)]
 pub struct SinkStats {
+    /// Packets and bytes received, keep-alives left out: those go out every 15 s of wall
+    /// time, so on a slow run they would make the counts depend on the machine, not the inputs.
     pub packets: AtomicU64,
     pub bytes: AtomicU64,
     pub disconnected: AtomicBool,
@@ -37,10 +39,12 @@ impl SinkStats {
         if let Some(log) = self.log.lock().unwrap().as_mut() {
             log.push(p.clone());
         }
-        self.packets.fetch_add(1, Relaxed);
-        self.bytes.fetch_add(p.len() as u64, Relaxed);
         let mut r = Reader::new(p);
         let id = r.varint().ok();
+        if id != Some(kiln_data::packets::play::clientbound::KEEP_ALIVE) {
+            self.packets.fetch_add(1, Relaxed);
+            self.bytes.fetch_add(p.len() as u64, Relaxed);
+        }
         if (track_ids() || self.count_ids.load(Relaxed)) && let Some(id) = id {
             let mut m = self.by_id.lock().unwrap();
             let e = m.entry(id).or_default();

@@ -137,7 +137,7 @@ pub fn player_destroy<L: Level>(level: &mut L, pos: BlockPos, actor: &Actor, dro
         }
     }
     level.effect(Effect::ActorLevelEvent { id: 2001, pos, data: s as i32 });
-    level.effect(Effect::GameEvent { pos, event: "minecraft:block_destroy" });
+    level.effect(Effect::BlockGameEvent { pos, event: "minecraft:block_destroy", state: s });
     let removed = remove_block(level, pos, false);
     if removed && drops && !actor.creative && !double_plant {
         level.effect(Effect::Drop { pos, state: s });

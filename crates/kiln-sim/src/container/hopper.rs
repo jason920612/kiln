@@ -469,6 +469,11 @@ pub(crate) struct EntityItems<'a> {
 }
 
 impl<'a> EntityItems<'a> {
+    /// The region's entities.
+    pub fn entities(&self) -> &crate::entities::Entities {
+        self.entities
+    }
+
     pub fn new(entities: &'a mut crate::entities::Entities) -> Self {
         let items = entities
             .list

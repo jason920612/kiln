@@ -112,3 +112,30 @@ pub fn powered_open_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: Block
         fluid::tick_water_if_waterlogged(level, new, pos);
     }
 }
+
+/// `SnifferEggBlock.onPlace`: the first crack in 8000 ticks (4000 on moss) plus up to 300.
+pub fn sniffer_egg_on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let boosted = tags::is(level.block(pos.below()), "minecraft:sniffer_egg_hatch_boost");
+    if boosted {
+        level.effect(Effect::LevelEvent { id: 3009, pos, data: 0 });
+    }
+    let delay = if boosted { 12000 } else { 24000 } / 3;
+    level.effect(Effect::GameEvent { pos, event: "minecraft:block_place" });
+    let extra = kiln_javamath::random::RandomSource::next_int_bounded(level.random(), 300);
+    schedule_block_tick(level, pos, BlockId::of(s), delay + extra, TickPriority::Normal);
+}
+
+/// `SnifferEggBlock.tick`: a crack (hatch 0 to 2), then the hatching: the egg breaks and the
+/// level spawns a baby sniffer from [`Effect::HatchSniffer`].
+pub fn sniffer_egg_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let hatch = state::get_int(s, "hatch");
+    let pitch = 0.9 + kiln_javamath::random::RandomSource::next_float(level.random()) * 0.2;
+    if hatch < 2 {
+        level.effect(Effect::Sound { pos, sound: "minecraft:block.sniffer_egg.crack", volume: 0.7, pitch });
+        set_block(level, pos, state::set_int(s, "hatch", hatch + 1), flags::CLIENTS);
+    } else {
+        level.effect(Effect::Sound { pos, sound: "minecraft:block.sniffer_egg.hatch", volume: 0.7, pitch });
+        crate::update::destroy_block(level, pos, false, 512);
+        level.effect(Effect::HatchSniffer { pos });
+    }
+}

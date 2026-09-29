@@ -72,6 +72,9 @@ pub enum Criterion {
     KilledByArrow { victims: Vec<Seen>, weapon: Option<kiln_item::ItemStack> },
     /// `TargetBlockTrigger`: a projectile hit a target block at `pos` for `signal`.
     TargetHit { projectile: Seen, pos: BlockPos, signal: i32 },
+    /// `KILL_MOB_NEAR_SCULK_CATALYST` (a `KilledTrigger`): a catalyst took the victim's
+    /// experience; `kind` and `direct` describe the killing blow.
+    KillMobNearSculkCatalyst { victim: Seen, kind: DamageKind, direct: bool },
 }
 
 /// A player as the experience orb sees it.
@@ -106,6 +109,9 @@ pub struct PlayerView {
     pub health: f32,
     /// Active effects: bit `id` for `minecraft:mob_effect` network id `id` (below 64).
     pub effects: u64,
+    /// The player's `tickCount`, the clock of its hurt timestamps (the simulation uses the
+    /// game time for both).
+    pub tick_count: i32,
     /// `getLastHurtByMob` and `getLastHurtByMobTimestamp` (tamed animals defend their owner).
     pub last_hurt_by_mob: Option<i32>,
     pub last_hurt_by_mob_time: i32,
@@ -116,6 +122,8 @@ pub struct PlayerView {
     pub hurt_recently: bool,
     /// The entity the player rides.
     pub vehicle: Option<i32>,
+    /// The amplifier of the player's Hero of the Village effect.
+    pub hero_of_the_village: Option<i32>,
 }
 
 impl PlayerView {
@@ -142,11 +150,13 @@ impl PlayerView {
             health: 20.0,
             effects: 0,
             last_hurt_by_mob: None,
+            tick_count: 0,
             last_hurt_by_mob_time: 0,
             last_hurt_mob: None,
             last_hurt_mob_time: 0,
             hurt_recently: false,
             vehicle: None,
+            hero_of_the_village: None,
         }
     }
 
@@ -192,6 +202,33 @@ pub enum DamageKind {
     IndirectMagic,
     /// `minecraft:lightning_bolt`.
     LightningBolt,
+    // Slice 3 work packages add damage types below their own marker.
+    // -- slice 3: mob effects
+    /// `minecraft:wither` (the wither effect).
+    Wither,
+
+    // -- slice 3: raids
+    /// `minecraft:starve` (a vex's limited life runs out).
+    Starve,
+
+    // -- slice 3: the end
+
+    // -- slice 3: wither and guardians
+    /// `witherSkull` (a wither skull's direct hit).
+    WitherSkull,
+    /// `thorns` (a guardian's spikes; thorns armor).
+    Thorns,
+
+    // -- slice 3: warden
+    /// `minecraft:sonic_boom` (a warden's sonic boom, through armor).
+    SonicBoom,
+
+    // -- slice 3: common mobs A
+
+    // -- slice 3: common mobs B
+    /// `minecraft:wind_charge` (a wind charge's hit).
+    WindCharge,
+
 }
 
 /// Side effects the simulation carries out or broadcasts.
@@ -234,7 +271,16 @@ pub enum Event {
     },
     /// A mob died (`LivingEntity.die`): `credit` is the player the kill counts for
     /// (`getKillCredit` when it is a player: statistics, kill criteria, advancements).
-    Killed { entity: i32, entity_type: &'static str, credit: Option<i32>, kind: DamageKind, attacker: Option<i32>, direct: Option<i32> },
+    /// `equipment`: what it wore when it died (by slot name), before any of it dropped.
+    Killed {
+        entity: i32,
+        entity_type: &'static str,
+        credit: Option<i32>,
+        kind: DamageKind,
+        attacker: Option<i32>,
+        direct: Option<i32>,
+        equipment: Vec<(&'static str, kiln_item::ItemStack)>,
+    },
     /// `dropFromGiftLootTable` (a chicken's egg).
     GiftLoot { entity: i32, table: &'static str, pos: Vec3 },
     /// A splash potion (`minecraft:` potion id) reached player `target` at `scale` of its full
@@ -244,6 +290,42 @@ pub enum Event {
     ShearLoot { entity: i32, table: String, pos: Vec3 },
     /// A criteria trigger for player `player` (entity id).
     Criterion { player: i32, criterion: Criterion },
+    /// A raider's news for its raid.
+    Raid(RaidEvent),
+    /// What the ender dragon and end crystals tell the level's dragon fight.
+    DragonFight(DragonFightEvent),
+    /// `Level.globalLevelEvent` (the wither's spawn sound heard everywhere).
+    GlobalLevelEvent { event: i32, pos: BlockPos, data: i32 },
+    /// A `ClientboundGameEventPacket` for player `player` (10: the elder guardian's curse).
+    PlayerGameEvent { player: i32, event: u8, param: f32 },
+}
+
+/// The level's `EnderDragonFight` as its dragon and crystals see it
+/// ([`EntityLevel::dragon_fight`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragonFightView {
+    /// `dragonUUID`: the fight's dragon.
+    pub dragon: Option<u128>,
+    /// `aliveCrystals` (counted every 100 ticks).
+    pub alive_crystals: i32,
+    /// `hasPreviouslyKilledDragon`.
+    pub previously_killed: bool,
+    /// The fight's origin (`BlockPos.ZERO` in the End).
+    pub origin: BlockPos,
+}
+
+/// Calls from the dragon and the crystals into `EnderDragonFight`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DragonFightEvent {
+    /// `updateDragon`: the fight's dragon is alive with this health (the boss bar).
+    Update { dragon: i32, uuid: u128, pos: Vec3, health: f32, max_health: f32 },
+    /// `setDragonKilled`: the dragon finished dying (or was killed by `/kill`).
+    Killed { dragon: i32, uuid: u128 },
+    /// `globalLevelEvent(1028)`: the dragon's death roar for every player.
+    DeathRoar { pos: BlockPos },
+    /// `onCrystalDestroyed`: end crystal `crystal` at `pos` was destroyed by `kind` from
+    /// `attacker`.
+    CrystalDestroyed { crystal: i32, uuid: u128, pos: Vec3, kind: DamageKind, attacker: Option<i32> },
 }
 
 /// World access for entity ticks.
@@ -272,6 +354,26 @@ pub trait EntityLevel {
     /// The level's shared random source (`Level.random`).
     fn random(&mut self) -> &mut LegacyRandom;
 
+    /// `getHeightmapPos(MOTION_BLOCKING_NO_LEAVES or MOTION_BLOCKING, (x, z))`: the y above the
+    /// highest motion blocking block of the column (`min_y` for an empty one).
+    fn heightmap(&self, x: i32, z: i32, no_leaves: bool) -> i32 {
+        let mut y = self.max_y();
+        while y >= self.min_y() {
+            let s = self.block(BlockPos::new(x, y, z));
+            let blocks = if no_leaves { kiln_data::block_props::motion_blocking_no_leaves(s) } else { kiln_data::block_props::motion_blocking(s) };
+            if blocks {
+                return y + 1;
+            }
+            y -= 1;
+        }
+        self.min_y()
+    }
+
+    /// `ServerLevel.getDragonFight`: the level's ender dragon fight (the End's), if any.
+    fn dragon_fight(&self) -> Option<DragonFightView> {
+        None
+    }
+
     fn game_time(&self) -> i64;
 
     /// Lowest block y of the dimension.
@@ -280,6 +382,12 @@ pub trait EntityLevel {
     /// `Level.getSeaLevel` (63 in the overworld, 32 in the nether, -63 in a superflat world).
     fn sea_level(&self) -> i32 {
         63
+    }
+
+    /// The `minecraft:worldgen/biome` id at `pos` (`None` when unknown: tests).
+    fn biome(&self, pos: BlockPos) -> Option<i32> {
+        let _ = pos;
+        None
     }
 
     /// Highest block y of the dimension.
@@ -363,6 +471,63 @@ pub trait EntityLevel {
 
     fn emit(&mut self, event: Event);
 
+    /// `Level.gameEvent(event, pos, Context.of(entity, state))`: a game event about the block
+    /// `state` (steps and landings on `#dampens_vibrations` blocks make no vibration).
+    fn block_game_event(&mut self, event: &'static str, pos: Vec3, entity: Option<i32>, state: u16) {
+        let _ = state;
+        self.emit(Event::GameEvent { event, pos, entity });
+    }
+
+    /// `SculkSensorBlock.stepOn` / `SculkShriekerBlock.stepOn`: entity `entity` at `at` stands
+    /// on the sculk sensor or shrieker at `pos`.
+    fn sculk_step_on(&mut self, pos: BlockPos, entity: i32, at: Vec3) {
+        let _ = (pos, entity, at);
+    }
+
+    /// `GameEvent.ENTITY_DIE` reaching sculk catalysts: whether a catalyst hears a death at
+    /// `pos` (the nearest one takes the dead mob's experience).
+    fn sculk_catalyst_near(&self, pos: Vec3) -> bool {
+        let _ = pos;
+        false
+    }
+
+    /// `SculkCatalystBlockEntity.CatalystListener.handleGameEvent`: the catalyst nearest `pos`
+    /// blooms and takes `charge` (the experience the mob would drop; 0: none) as sculk charge
+    /// at the death's position.
+    fn feed_sculk_catalyst(&mut self, pos: Vec3, charge: i32) {
+        let _ = (pos, charge);
+    }
+
+    /// The vibrations warden `id` heard since its last tick, in order (they reach its
+    /// `VibrationSelector` before its tick).
+    fn take_vibrations(&mut self, id: i32) -> Vec<crate::vibration::Heard> {
+        let _ = id;
+        Vec::new()
+    }
+
+    /// Warden `id`'s listener after its tick (`None`: it no longer listens).
+    fn set_listener(&mut self, id: i32, ear: Option<crate::vibration::Ear>) {
+        let _ = (id, ear);
+    }
+
+    /// `sendParticles(VibrationParticleOption(EntityPositionSource(entity, y_offset), ticks))`
+    /// at `from`.
+    fn vibration_particle(&mut self, from: Vec3, entity: i32, y_offset: f32, ticks: i32) {
+        let _ = (from, entity, y_offset, ticks);
+    }
+
+    /// `Warden.applyDarknessAround`: darkness for survival and adventure players within
+    /// `radius` of `pos` (`MobEffectUtil.addEffectToPlayersAround`).
+    fn darkness_around(&mut self, pos: Vec3, radius: f64) {
+        let _ = (pos, radius);
+    }
+
+    /// `ServerLevel.sendParticles(particle, pos, count 1, no spread)` for a particle without
+    /// options (`minecraft:sonic_boom`).
+    fn particle(&mut self, particle: &'static str, pos: Vec3) {
+        let _ = (particle, pos);
+    }
+
     /// `getRawBrightness(pos, skyDarken)`: the larger of the sky light less `sky_darken` and
     /// the block light.
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
@@ -424,11 +589,39 @@ pub trait EntityLevel {
     }
 
     /// `LivingEntity.addEffect` on player or entity `id` (`effect`: a `minecraft:mob_effect`
-    /// name; `source`: the entity responsible). Returns whether it took (mobs have no effects
-    /// yet).
+    /// name; `source`: the entity responsible). Returns whether it took. The default reaches
+    /// the level's mobs; implementations handle players first.
     fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, source: Option<i32>) -> bool {
-        let _ = (id, effect, duration, amplifier, source);
+        match crate::effect::Effect::named(effect, duration, amplifier) {
+            Some(fx) => self.add_effect_instance(id, fx, source),
+            None => false,
+        }
+    }
+
+    /// `LivingEntity.addEffect` with a full instance (flags, hidden effects) on player or entity
+    /// `id`. Implementations reach mobs through [`crate::mob::effects::add_to_entity`].
+    fn add_effect_instance(&mut self, id: i32, effect: crate::effect::Effect, source: Option<i32>) -> bool {
+        let _ = (id, effect, source);
         false
+    }
+
+    /// Player `id`'s active `effect` as (amplifier, remaining ticks; -1 infinite).
+    fn player_effect(&self, id: i32, effect: &str) -> Option<(i32, i32)> {
+        let _ = (id, effect);
+        None
+    }
+
+    /// `MobEffect.applyInstantaneousEffect` on player or entity `id` (a splash potion's or a
+    /// cloud's instant health or harm at `scale`; `source`: the potion or cloud and its
+    /// position, `owner`: who threw it). Implementations reach mobs through
+    /// [`crate::mob::effects::apply_instantaneous_to_entity`].
+    fn apply_instantaneous_effect(&mut self, id: i32, effect: &crate::effect::Effect, source: Option<(i32, Vec3)>, owner: Option<i32>, scale: f64) {
+        let _ = (id, effect, source, owner, scale);
+    }
+
+    /// `minecraft:max_entity_cramming`.
+    fn max_entity_cramming(&self) -> i32 {
+        24
     }
 
     /// Sets entity or player `id` on fire for `seconds`.
@@ -443,12 +636,124 @@ pub trait EntityLevel {
         !self.fast_lava()
     }
 
+    /// The `minecraft:gameplay/snow_golem_melts` environment attribute at `pos` (hot biomes,
+    /// the nether).
+    fn snow_golem_melts(&self, pos: Vec3) -> bool {
+        let _ = pos;
+        self.fast_lava()
+    }
+
     /// `AbstractVillager.addOffersFromTradeSet`: the offers the datapack trade set `set` (a
     /// `minecraft:trade_set` id) rolls for `merchant`; none without trade data.
     fn trade_offers(&mut self, set: &str, merchant: &TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
         let _ = (set, merchant);
         Vec::new()
     }
+
+    /// Raid `id` of the level (`Raids.get`), as the simulation last updated it; `None` once
+    /// it stopped and was removed.
+    fn raid(&self, id: i32) -> Option<&RaidView> {
+        let _ = id;
+        None
+    }
+
+    /// The `MOTION_BLOCKING_NO_LEAVES` heightmap at (`x`, `z`): the y above the column's topmost
+    /// block that blocks motion or holds a fluid, leaves not counted.
+    fn motion_blocking_no_leaves_height(&self, x: i32, z: i32) -> i32 {
+        for y in (self.min_y()..=self.max_y()).rev() {
+            let s = self.block(BlockPos::new(x, y, z));
+            if kiln_data::block_props::motion_blocking(s) && !crate::blocks::block_name(s).ends_with("_leaves") {
+                return y + 1;
+            }
+        }
+        self.min_y()
+    }
+
+    /// `ServerLevel.getRaidAt`: the nearest active raid whose center is closer than 96 blocks.
+    fn raid_at(&self, pos: BlockPos) -> Option<&RaidView> {
+        let _ = pos;
+        None
+    }
+
+    /// `ServerLevel.sectionsToVillage` (`PoiManager`'s distance tracker: sections from the
+    /// nearest section with an occupied village point of interest, 7 when farther than 6).
+    fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        let _ = pos;
+        7
+    }
+
+    /// `ServerLevel.isVillage`.
+    fn is_village(&self, pos: BlockPos) -> bool {
+        self.sections_to_village(pos) <= 1
+    }
+
+    /// `PoiManager.getInRange(...).map(getPos)`: points of interest of the `minecraft:point_of_interest_type`
+    /// entries in `types` within `radius` of `center` passing `occupancy`, in storage order.
+    fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: PoiOccupancy) -> Vec<BlockPos> {
+        let _ = (types, center, radius, occupancy);
+        Vec::new()
+    }
+
+    /// `PoiManager.take`: claims a ticket of the first point of interest of `types` with space
+    /// within `radius` of `center` that `accept` takes.
+    fn poi_take(&mut self, types: &[&str], center: BlockPos, radius: i32, accept: &dyn Fn(&str, BlockPos) -> bool) -> Option<BlockPos> {
+        let _ = (types, center, radius, accept);
+        None
+    }
+
+    /// `PoiManager.release`: gives a ticket back.
+    fn poi_release(&mut self, pos: BlockPos) {
+        let _ = pos;
+    }
+
+    /// `PoiManager.getType`: the point of interest type at `pos`.
+    fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
+        let _ = pos;
+        None
+    }
+}
+
+/// `PoiManager.Occupancy`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PoiOccupancy {
+    HasSpace,
+    IsOccupied,
+    Any,
+}
+
+/// A raid (`Raid`) as entity behaviour sees it; the simulation refreshes these every tick.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RaidView {
+    pub id: i32,
+    pub center: BlockPos,
+    pub active: bool,
+    /// `isOver` (victory or loss), `isLoss`, `isStarted`.
+    pub over: bool,
+    pub loss: bool,
+    pub started: bool,
+    pub groups_spawned: i32,
+    pub omen_level: i32,
+    /// `groupToLeaderMap`: (wave, entity id).
+    pub leaders: Vec<(i32, i32)>,
+}
+
+impl RaidView {
+    /// `getLeader(wave)`.
+    pub fn leader(&self, wave: i32) -> Option<i32> {
+        self.leaders.iter().find(|(w, _)| *w == wave).map(|(_, id)| *id)
+    }
+}
+
+/// What raiders tell their raid (the simulation's `Raid` bookkeeping).
+#[derive(Clone, Debug, PartialEq)]
+pub enum RaidEvent {
+    /// `Raid.joinRaid(level, wave, raider, null, true)`: an existing raider joined.
+    Joined { raid: i32, entity: i32, wave: i32 },
+    /// `Raider.die`: the raid loses the raider (and its leader for the wave); a player
+    /// killer becomes a hero of the village.
+    Died { raid: i32, entity: i32, wave: i32, leader: bool, hero: Option<i32> },
+    /// `Raid.setLeader`: the raider picked up the ominous banner and leads its wave.
+    Leader { raid: i32, wave: i32, entity: i32 },
 }
 
 /// The merchant a trade set is rolled for (the loot context's `this` entity and origin).

@@ -43,9 +43,8 @@ pub fn vehicle_attachment(type_name: &str, scale: f32) -> Vec3 {
 /// `getPassengerAttachmentPoint` of `vehicle` for its passenger at `index` (before rotating
 /// by the vehicle's yaw where the type says so).
 pub fn passenger_attachment(vehicle: &Entity, index: usize) -> Vec3 {
-    let _ = index;
     if let EntityKind::Mob(m) = &vehicle.kind {
-        if let Some(v) = m.kind.ext().and_then(|k| k.passenger_offset(vehicle, m)) {
+        if let Some(v) = m.kind.ext().and_then(|k| k.passenger_offset_at(vehicle, m, index)) {
             return v;
         }
         let s = age_scale(vehicle) as f64;

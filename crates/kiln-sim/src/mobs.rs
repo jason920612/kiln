@@ -20,6 +20,8 @@ pub(crate) struct MobRules {
     pub drops: bool,
     pub spawn_mobs: bool,
     pub spawn_monsters: bool,
+    /// `minecraft:spawn_wardens`.
+    pub spawn_wardens: bool,
     pub cramming: i32,
     pub difficulty: u8,
     /// The world spawn (no natural spawns within 24 blocks).
@@ -36,6 +38,7 @@ impl Default for MobRules {
             drops: true,
             spawn_mobs: true,
             spawn_monsters: true,
+            spawn_wardens: true,
             cramming: 24,
             difficulty: 2,
             spawn_point: [0, 64, 0],
@@ -52,13 +55,22 @@ pub(crate) fn monsters_burn(day_time: i64) -> bool {
 /// Entity data of a mob for its viewers.
 pub(crate) fn metadata(e: &kiln_entity::Entity, m: &MobData) -> EntityData {
     let mut d = EntityData::new();
-    let flags = (e.is_on_fire() as i8) | if m.aggressive { 0 } else { 0 };
+    // Shared flags: on fire, invisible (5) and glowing (6) from the effects.
+    let effects = kiln_entity::mob::effects::invisible(m) as i8;
+    let flags = (e.is_on_fire() as i8) | (effects << 5) | ((kiln_entity::mob::effects::glowing(m) as i8) << 6);
     d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(flags));
     if e.air_supply != 300 {
         d.set(data::entity::AIR_SUPPLY, &DataValue::Int(e.air_supply));
     }
     if m.is_dead_or_dying() {
         d.set(data::entity::POSE, &DataValue::Pose(kiln_data::entities::pose::DYING));
+    }
+    // `DATA_EFFECT_PARTICLES` (always set: viewers get the empty list when the effects end)
+    // and `DATA_EFFECT_AMBIENCE_ID`.
+    let (particles, ambient) = kiln_entity::mob::effects::particles(m);
+    d.set(data::living_entity::EFFECT_PARTICLES, &DataValue::Particles(particles));
+    if ambient {
+        d.set(data::living_entity::EFFECT_AMBIENCE, &DataValue::Boolean(true));
     }
     d.set(data::living_entity::HEALTH, &DataValue::Float(m.health));
     let mob_flags = (m.no_ai as i8) | ((m.left_handed as i8) << 1) | ((m.aggressive as i8) << 2);
@@ -107,6 +119,25 @@ pub(crate) fn shown_equipment(m: &MobData) -> Vec<(u8, kiln_item::ItemStack)> {
         v.extend(k.extra_equipment(m));
     }
     v
+}
+
+/// `MobBucketItem.checkExtraContent`: the fish of a mob bucket (`cod_bucket`, ...) emptied at
+/// block `pos` (`EntitySpawnReason.BUCKET`: `finalizeSpawn`, then the bucket's components and
+/// `bucket_entity_data`, `FromBucket`). `seed` seeds the spawn's random draws. `None` for other
+/// items.
+#[allow(dead_code)]
+pub(crate) fn bucket_release(bucket: &kiln_item::ItemStack, pos: [i32; 3], difficulty: u8, game_time: i64, seed: i64) -> Option<Spawn> {
+    let kind = kiln_entity::mob::kinds::fish::bucket_mob(kiln_entity::mob::item_name(bucket))?;
+    let mut e = kiln_entity::mob::new(kind, 0, 0, seed);
+    let at = kiln_entity::math::Vec3::new(pos[0] as f64 + 0.5, pos[1] as f64, pos[2] as f64 + 0.5);
+    e.set_pos(at);
+    e.set_old_pos_and_rot();
+    let ctx = difficulty_instance(difficulty, game_time, 0, 1.0);
+    let mut r = kiln_javamath::random::LegacyRandom::new(seed);
+    mob::finalize_spawn(&mut e, &mut r, &ctx, &mut mob::GroupData::default(), false);
+    kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
+    let t = kiln_data::entities::by_name(kind.type_name())?;
+    Some(Spawn { kind: t, pos: [at.x, at.y, at.z], vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
 }
 
 /// A new mob of `kind` at `pos`, facing `yaw` (the entity's own random decides nothing
@@ -228,6 +259,8 @@ pub(crate) struct DeathContext {
     pub damage_type: &'static str,
     /// The killer's main hand item (looting), if a player.
     pub weapon: Option<kiln_item::ItemStack>,
+    /// A raider's `type_specific/raider` facts: (has a raid, is a captain).
+    pub raider: Option<(bool, bool)>,
 }
 
 impl kiln_loot::LootContext for DeathContext {
@@ -269,6 +302,10 @@ impl kiln_loot::LootContext for DeathContext {
         };
         use kiln_loot::predicate::world::EntitySubPredicate as P;
         predicate.parts.iter().all(|part| match part {
+            P::Raider { has_raid, is_captain } => {
+                let (raid, captain) = self.raider.unwrap_or((false, false));
+                self.raider.is_some() && has_raid.is_none_or(|h| h == raid) && is_captain.is_none_or(|c| c == captain)
+            }
             P::Flags(f) if f.is_baby.is_some() => f.is_baby == Some(self.baby) && {
                 let mut f2 = f.clone();
                 f2.is_baby = None;

@@ -139,6 +139,15 @@ impl RegionWork<'_> {
                 }
                 continue;
             }
+            // A glass bottle by a cloud of the dragon's breath fills with it.
+            if let PlayIn::UseItem { hand, sequence, .. } = pkt {
+                let off = hand == kiln_proto::packets::serverbound::Hand::Off;
+                if crate::dragon_fight::bottle_breath(self.entities, self.players[i], off, &mut self.out.spawns, &env.blocks) {
+                    let p = &mut *self.players[i];
+                    p.ack_block_changes = p.ack_block_changes.max(sequence);
+                    continue;
+                }
+            }
             // Fishing rods cast and reel in bobbers, which are the region's entities.
             if let PlayIn::UseItem { hand, sequence, .. } = pkt
                 && self.rod_use(conn, &pkt)
@@ -358,11 +367,13 @@ impl RegionWork<'_> {
             // A frozen game (`/tick freeze`) ticks no blocks.
             if !env.frozen {
                 blocks::press_plates(&mut level);
+                crate::sculk::players_step_on(&mut level, &self.players);
                 blocks::tick_blocks(&mut level, &ticking);
                 for pos in std::mem::take(&mut level.out.rechecks) {
                     crate::container::open::recheck_openers(&mut level, &self.players, pos);
                 }
                 blocks::tick_pistons(&mut level, &ticking);
+                crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
             }
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
@@ -378,11 +389,19 @@ impl RegionWork<'_> {
         if env.frozen {
             return;
         }
+        if !self.blocks.sculk.wardens.is_empty() {
+            let list = &self.entities.list;
+            self.blocks.sculk.retain_wardens(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
+        }
         if self.entities.list.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
             self.tick_block_entities(env);
             return;
         }
-        let ticking = ticking_chunks(&self.players, env);
+        let mut ticking = ticking_chunks(&self.players, env);
+        // `TicketType.DRAGON`: the fight's arena ticks while its boss bar has players.
+        if let Some(f) = env.blocks.dragon_fight.as_ref().filter(|f| f.active) {
+            ticking.add(f.arena_center, f.arena_radius);
+        }
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         {
@@ -397,6 +416,7 @@ impl RegionWork<'_> {
             let any_player = !self.players.is_empty();
             crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns);
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player);
+            crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
         self.tick_block_entities(env);
@@ -405,7 +425,7 @@ impl RegionWork<'_> {
     /// `Level.tickBlockEntities`: hoppers and furnaces in ticking chunks. Hoppers take item
     /// entities; their viewers see the new counts.
     fn tick_block_entities(&mut self, env: &Env) {
-        if self.blocks.containers.len() == 0 {
+        if self.blocks.containers.len() == 0 && self.blocks.sculk.len() == 0 {
             return;
         }
         let ticking = ticking_chunks(&self.players, env);
@@ -422,6 +442,8 @@ impl RegionWork<'_> {
                 actor: None,
             };
             crate::container::tick_block_entities(&mut level, &mut items, &ticking);
+            crate::sculk::tick_block_entities(&mut level, &ticking);
+            crate::sculk::requests(&mut level, &mut self.players, items.entities(), &mut self.out.spawns);
         }
         let touched = items.touched();
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
@@ -484,6 +506,13 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     tick_connection(p, env);
     p.tick_damage(env.game_time);
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
+    // What bad omen asks of the level (only looked up while the player has it).
+    if p.has_effect("minecraft:bad_omen") {
+        let at = [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32];
+        p.omen_village = crate::poi::sections_to_village(cells, at) <= 1;
+        let bp = kiln_entity::math::BlockPos::new(at[0], at[1], at[2]);
+        p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
+    }
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
     // `Entity.handlePortal` (in `baseTick`).
     if let Some(travel) = p.handle_portal(env) {
@@ -499,6 +528,8 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     }
     p.tick_food(env.natural_regen, &mut ctx);
     p.tick_stats();
+    // `ServerPlayer.tick`.
+    p.warden_tracker.tick();
     let probe = crate::advancements::triggers::CellProbe::new(cells, &env.blocks);
     p.tick_triggers(&probe);
     // `onInsideBlock` (Kiln checks the block at the feet).
@@ -517,7 +548,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
 fn ticking_chunks(players: &[&mut Player], env: &Env) -> Ticking {
     let mut t = Ticking::around(players.iter().map(|p| p.center), env.blocks.simulation_distance);
     for &c in env.forced.iter() {
-        t.add(c);
+        t.add_chunk(c);
     }
     t
 }
@@ -925,6 +956,38 @@ fn use_on_block(
         }
         return;
     }
+    // `EndCrystalItem.useOn`: on obsidian or bedrock with air above and no entity in the two
+    // blocks there; the fight looks for its respawn crystals.
+    if item_name == Some("minecraft:end_crystal") {
+        let s = level.block(bp);
+        if !kiln_blocks::state::is(s, kiln_data::blocks::default_state::OBSIDIAN) && !kiln_blocks::state::is(s, kiln_data::blocks::default_state::BEDROCK) {
+            return;
+        }
+        let above = bp.relative(kiln_blocks::Direction::Up);
+        if !kiln_data::blocks_types::is_air(level.block(above)) {
+            return;
+        }
+        let (x, y, z) = (above.x as f64, above.y as f64, above.z as f64);
+        if level.bodies.iter().any(|b| b.intersects([x, y, z], [x + 1.0, y + 2.0, z + 1.0])) {
+            return;
+        }
+        let env = level.env;
+        let seed = crate::mobs::loot_seed(env.seed, env.game_time, p.entity_id, (above.x as u64) << 32 ^ above.z as u64 ^ (above.y as u64) << 16);
+        let crystal = kiln_entity::ext_entity::end_crystal::new(0, kiln_entity::math::Vec3::new(x + 0.5, y, z + 0.5), false, seed);
+        if let Some(kind) = kiln_data::entities::by_name("minecraft:end_crystal") {
+            spawns.push(Spawn { kind, pos: [x + 0.5, y, z + 0.5], vel: [0.0; 3], body: crate::entities::Body::Ready(Box::new(crystal)) });
+        }
+        if let Some(f) = &env.dragon_fight {
+            f.send(crate::dragon_fight::FightMsg::TryRespawn);
+        }
+        let item = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
+        p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
+        if p.game_mode != 1 {
+            let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
+            kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
+        }
+        return;
+    }
     // `ItemStack.useOn` for block items (adventure players cannot place).
     let Some(item) = item_name.and_then(BlockItem::of_item) else { return };
     if !actor.may_build {
@@ -939,9 +1002,16 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    // `WitherSkullBlock.setPlacedBy`.
+    crate::wither::check_spawn(level, placed_at, spawns);
     // `ItemStack.useOn`: a successful item interaction counts as a use; `BlockItem.place`
     // and `ServerPlayerGameMode.useItemOn` fire their triggers.
     p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, placed_from.item()), 1);
+    let placed_state = level.block(placed_at);
+    // `CarvedPumpkinBlock.onPlace`: a pumpkin may finish a golem.
+    if matches!(kiln_data::blocks_types::block_of(placed_state).name, "minecraft:carved_pumpkin" | "minecraft:jack_o_lantern") {
+        crate::golem::try_spawn(level, placed_at, p, spawns);
+    }
     let placed_state = level.block(placed_at);
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     let at = [placed_at.x, placed_at.y, placed_at.z];
@@ -991,6 +1061,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         blocks_building: p.game_mode != 3,
         conn: Some(p.conn),
         prevents_rest: false,
+        player_source: None,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];
     let others = bodies.iter().filter(|b| b.conn != Some(p.conn));

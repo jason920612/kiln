@@ -13,9 +13,12 @@
 pub mod attributes;
 pub mod breed;
 pub mod ext;
+pub mod fly;
 pub mod control;
 pub mod convert;
+pub mod effects;
 pub mod goals;
+pub mod gossip;
 pub mod interact;
 pub mod kinds;
 pub mod mth;
@@ -77,6 +80,54 @@ pub enum MobKind {
     Villager,
     Piglin,
     Hoglin,
+    Silverfish,
+    // Slice 3 work packages add their types below their own marker (keep the blank lines
+    // between markers so parallel additions merge cleanly).
+    // -- slice 3: raids
+    Pillager,
+    Vindicator,
+    Evoker,
+    Vex,
+    Ravager,
+    Illusioner,
+
+    // -- slice 3: the end
+    EnderDragon,
+
+    // -- slice 3: wither and guardians
+    Wither,
+    Guardian,
+    ElderGuardian,
+
+    // -- slice 3: warden
+    Warden,
+
+    // -- slice 3: common mobs A
+    Rabbit,
+    PolarBear,
+    Turtle,
+    Fox,
+    Panda,
+
+    // -- slice 3: common mobs B
+    Squid,
+    GlowSquid,
+    Cod,
+    Salmon,
+    TropicalFish,
+    Pufferfish,
+    Mooshroom,
+    Ocelot,
+    Bat,
+    SnowGolem,
+    Bogged,
+    Armadillo,
+    Camel,
+    Allay,
+    Breeze,
+    Creaking,
+    Sniffer,
+
 }
 
 /// `MobCategory`.
@@ -86,24 +137,47 @@ pub enum Category {
     Creature,
     /// Villagers and golems: never spawned by the natural spawner, never despawn.
     Misc,
+    /// Bats.
+    Ambient,
+    Axolotls,
+    /// Glow squids.
+    UndergroundWaterCreature,
+    /// Squids, dolphins.
+    WaterCreature,
+    /// Fish.
+    WaterAmbient,
 }
 
 impl Category {
+    /// `NaturalSpawner.SPAWNING_CATEGORIES` (every category but `MISC`, in `MobCategory` order).
+    pub const SPAWNING: [Category; 7] = [
+        Category::Monster,
+        Category::Creature,
+        Category::Ambient,
+        Category::Axolotls,
+        Category::UndergroundWaterCreature,
+        Category::WaterCreature,
+        Category::WaterAmbient,
+    ];
+
     pub fn max_instances(self) -> i32 {
         match self {
             Category::Monster => 70,
             Category::Creature => 10,
             Category::Misc => -1,
+            Category::Ambient => 15,
+            Category::Axolotls | Category::UndergroundWaterCreature | Category::WaterCreature => 5,
+            Category::WaterAmbient => 20,
         }
     }
     pub fn friendly(self) -> bool {
         self != Category::Monster
     }
     pub fn persistent(self) -> bool {
-        self != Category::Monster
+        matches!(self, Category::Creature | Category::Misc)
     }
     pub fn despawn_distance(self) -> i32 {
-        128
+        if self == Category::WaterAmbient { 64 } else { 128 }
     }
     pub fn no_despawn_distance(self) -> i32 {
         32
@@ -113,11 +187,16 @@ impl Category {
             Category::Monster => "monster",
             Category::Creature => "creature",
             Category::Misc => "misc",
+            Category::Ambient => "ambient",
+            Category::Axolotls => "axolotls",
+            Category::UndergroundWaterCreature => "underground_water_creature",
+            Category::WaterCreature => "water_creature",
+            Category::WaterAmbient => "water_ambient",
         }
     }
 }
 
-pub const ALL_KINDS: [MobKind; 33] = [
+pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Pig,
     MobKind::Cow,
     MobKind::Sheep,
@@ -151,11 +230,59 @@ pub const ALL_KINDS: [MobKind; 33] = [
     MobKind::Villager,
     MobKind::Piglin,
     MobKind::Hoglin,
+    MobKind::Silverfish,
+    // -- slice 3: raids
+    MobKind::Pillager,
+    MobKind::Vindicator,
+    MobKind::Evoker,
+    MobKind::Vex,
+    MobKind::Ravager,
+    MobKind::Illusioner,
+
+    // -- slice 3: the end
+    MobKind::EnderDragon,
+
+    // -- slice 3: wither and guardians
+    MobKind::Wither,
+    MobKind::Guardian,
+    MobKind::ElderGuardian,
+
+    // -- slice 3: warden
+    MobKind::Warden,
+
+    // -- slice 3: common mobs A
+    MobKind::Rabbit,
+    MobKind::PolarBear,
+    MobKind::Turtle,
+    MobKind::Fox,
+    MobKind::Panda,
+
+    // -- slice 3: common mobs B
+    MobKind::Squid,
+    MobKind::GlowSquid,
+    MobKind::Cod,
+    MobKind::Salmon,
+    MobKind::TropicalFish,
+    MobKind::Pufferfish,
+    MobKind::Mooshroom,
+    MobKind::Ocelot,
+    MobKind::Bat,
+    MobKind::SnowGolem,
+    MobKind::Bogged,
+    MobKind::Armadillo,
+    MobKind::Camel,
+    MobKind::Allay,
+    MobKind::Breeze,
+    MobKind::Creaking,
+    MobKind::Sniffer,
+
 ];
 
 impl MobKind {
     pub fn by_name(name: &str) -> Option<MobKind> {
-        ALL_KINDS.iter().copied().find(|k| k.type_name() == name)
+        // Called per move (fall damage, fluids): a table rather than a scan of the types.
+        static BY_NAME: std::sync::OnceLock<std::collections::HashMap<&'static str, MobKind>> = std::sync::OnceLock::new();
+        BY_NAME.get_or_init(|| ALL_KINDS.iter().map(|&k| (k.type_name(), k)).collect()).get(name).copied()
     }
 
     /// The extension type's behaviour (`None` for the shared-code types).
@@ -284,7 +411,7 @@ impl MobKind {
 
     /// `instanceof AbstractSkeleton`.
     pub fn is_skeleton(self) -> bool {
-        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton)
+        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton | MobKind::Bogged)
     }
 
     pub fn loot_table(self) -> String {
@@ -439,6 +566,8 @@ pub struct MobData {
     pub hurt_by: Option<(DamageKind, Option<i32>, Option<i32>)>,
     /// The attribute modifiers the equipment added (`collectEquipmentChanges`).
     pub equip_mods: Vec<(Attr, String)>,
+    /// `activeEffects` (see [`effects`]).
+    pub effects: crate::effect::Effects,
 }
 
 impl MobData {
@@ -526,6 +655,7 @@ impl MobData {
             air_supply_max: 300,
             hurt_by: None,
             equip_mods: Vec::new(),
+            effects: crate::effect::Effects::new(),
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -622,6 +752,12 @@ impl MobData {
     }
 }
 
+/// `getArmorCoverPercentage`: the share of the four armor slots that hold something.
+pub fn armor_cover(m: &MobData) -> f32 {
+    let worn = [FEET, LEGS, CHEST, HEAD].iter().filter(|&&i| !m.equipment[i].is_empty()).count();
+    worn as f32 / 4.0
+}
+
 /// A `minecraft:sound_event` id as a static name (the generic hurt sound if unknown).
 pub fn sound_event(name: &str) -> &'static str {
     kiln_data::builtin_entries("minecraft:sound_event").and_then(|e| e.iter().find(|x| **x == name).copied()).unwrap_or("minecraft:entity.generic.hurt")
@@ -637,6 +773,17 @@ pub fn item_tag(item: i32, tag: &str) -> bool {
             .is_some_and(|(_, ids)| ids.contains(&item))
 }
 
+/// Whether entity type `type_name` is in the `minecraft:entity_type` tag `tag` (e.g.
+/// `minecraft:undead`, `minecraft:raiders`).
+pub fn entity_type_tag(type_name: &str, tag: &str) -> bool {
+    let Some(id) = kiln_data::builtin_id("minecraft:entity_type", type_name) else { return false };
+    kiln_data::registries::TAGS
+        .iter()
+        .find(|(r, _)| *r == "minecraft:entity_type")
+        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+        .is_some_and(|(_, ids)| ids.contains(&id))
+}
+
 /// The variant components of a mob (`Entity.get(DataComponents.*_VARIANT)`) that entity
 /// predicates' `components` can match.
 pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
@@ -650,6 +797,7 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
         MobKind::Chicken => {
             vec![C::ChickenVariant(v::ChickenVariant(m.variant)), C::ChickenSoundVariant(v::ChickenSoundVariant(m.sound_variant))]
         }
+        MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -776,7 +924,7 @@ pub fn reassess_weapon_goal(m: &mut MobData, hard: bool) {
     let goal = if m.holding_bow() {
         Goal::RangedBow {
             speed: 1.0,
-            interval_min: if hard { 20 } else { 40 },
+            interval_min: m.kind.ext().and_then(|k| k.bow_interval(hard)).unwrap_or(if hard { 20 } else { 40 }),
             radius_sqr: 15.0 * 15.0,
             attack_time: -1,
             see_time: 0,
@@ -808,6 +956,10 @@ pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     e.y_rot = e.random.next_float() * 6.2831855;
     m.y_head_rot = e.y_rot;
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
+    // `EnderDragon`'s constructor: `noPhysics`.
+    e.no_physics = kind == MobKind::EnderDragon;
+    // Constructors that size the mob by its state (salmon, pufferfish: `refreshDimensions`).
+    refresh_dimensions(&mut e, &m);
     e.kind = EntityKind::Mob(Box::new(m));
     e
 }
@@ -866,6 +1018,78 @@ pub fn refresh_dimensions(e: &mut Entity, m: &MobData) {
     e.eye_height = eye;
     let p = e.position();
     e.set_pos(p);
+}
+
+/// `Entity.refreshDimensions` with the level at hand: a mob that grew (outside its first tick)
+/// is moved to the free spot nearest its old center (`fudgePositionAfterSizeChange`).
+pub fn refresh_dimensions_in(e: &mut Entity, m: &MobData, level: &dyn EntityLevel) {
+    let (old_w, old_h) = (e.width, e.height);
+    refresh_dimensions(e, m);
+    let (w, h) = (e.width, e.height);
+    if e.first_tick || e.no_physics || w > 4.0 || h > 4.0 || !(w > old_w || h > old_h) {
+        return;
+    }
+    let old_center = e.position().add(0.0, old_h as f64 / 2.0, 0.0);
+    let wd = (w - old_w).max(0.0) as f64 + 1.0e-6;
+    let hd = (h - old_h).max(0.0) as f64 + 1.0e-6;
+    if let Some(p) = find_free_position(e, level, old_center, wd, hd, w as f64, h as f64) {
+        e.set_pos(p.add(0.0, -(h as f64) / 2.0, 0.0));
+        return;
+    }
+    if w > old_w && h > old_h
+        && let Some(p) = find_free_position(e, level, old_center, wd, 1.0e-6, w as f64, old_h as f64)
+    {
+        e.set_pos(p.add(0.0, -(old_h as f64) / 2.0 + 1.0e-6, 0.0));
+    }
+}
+
+/// `CollisionGetter.findFreePosition` over an allowed box of centers (`wd` by `hd` around
+/// `center`): the point of it nearest `center` where a `w` by `h` box touches no block.
+fn find_free_position(e: &Entity, level: &dyn EntityLevel, center: Vec3, wd: f64, hd: f64, w: f64, h: f64) -> Option<Vec3> {
+    let allowed = Aabb::new(center.x - wd / 2.0, center.y - hd / 2.0, center.z - wd / 2.0, center.x + wd / 2.0, center.y + hd / 2.0, center.z + wd / 2.0);
+    let search = allowed.inflate(w, h, w);
+    let mut blocked: Vec<Aabb> = Vec::new();
+    let ctx = e.collision_context();
+    crate::collision::for_each_block_collision(level, &ctx, &search, |pos, shape, _| {
+        for b in shape.boxes() {
+            blocked.push(b.offset(pos.x as f64, pos.y as f64, pos.z as f64).inflate(w / 2.0, h / 2.0, w / 2.0));
+        }
+        true
+    });
+    // The free part of the allowed box, cut along every blocked face, nearest cell first.
+    let cuts = |lo: f64, hi: f64, f: &dyn Fn(&Aabb) -> [f64; 2]| {
+        let mut v = vec![lo, hi];
+        for b in &blocked {
+            for c in f(b) {
+                if c > lo && c < hi {
+                    v.push(c);
+                }
+            }
+        }
+        v.sort_by(f64::total_cmp);
+        v.dedup();
+        v
+    };
+    let xs = cuts(allowed.min_x, allowed.max_x, &|b| [b.min_x, b.max_x]);
+    let ys = cuts(allowed.min_y, allowed.max_y, &|b| [b.min_y, b.max_y]);
+    let zs = cuts(allowed.min_z, allowed.max_z, &|b| [b.min_z, b.max_z]);
+    let mut best: Option<(f64, Vec3)> = None;
+    for i in 0..xs.len() - 1 {
+        for j in 0..ys.len() - 1 {
+            for k in 0..zs.len() - 1 {
+                let mid = Vec3::new((xs[i] + xs[i + 1]) / 2.0, (ys[j] + ys[j + 1]) / 2.0, (zs[k] + zs[k + 1]) / 2.0);
+                if blocked.iter().any(|b| b.min_x < mid.x && mid.x < b.max_x && b.min_y < mid.y && mid.y < b.max_y && b.min_z < mid.z && mid.z < b.max_z) {
+                    continue;
+                }
+                let p = Vec3::new(center.x.clamp(xs[i], xs[i + 1]), center.y.clamp(ys[j], ys[j + 1]), center.z.clamp(zs[k], zs[k + 1]));
+                let d = p.distance_to_sqr(center);
+                if best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, p));
+                }
+            }
+        }
+    }
+    best.map(|(_, p)| p)
 }
 
 pub fn data(e: &Entity) -> Option<&MobData> {
@@ -948,6 +1172,11 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
 
 fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     base_tick(e, m, level);
+    if m.using_item.is_some()
+        && let Some(k) = m.kind.ext()
+    {
+        k.update_using_item(e, m, level);
+    }
     if let Some(t) = m.using_item.as_mut() {
         *t += 1;
     }
@@ -1040,6 +1269,7 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
 
 /// `Mob.baseTick` → `LivingEntity.baseTick` → `Entity.baseTick`.
 fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    let air_before = e.air_supply;
     e.compute_speed();
     e.was_in_powder_snow = e.is_in_powder_snow;
     e.is_in_powder_snow = false;
@@ -1070,13 +1300,15 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let eye = BlockPos::containing(e.x(), e.eye_y(), e.z());
         let bubble = crate::blocks::block_name(level.block(eye)) == "minecraft:bubble_column";
         if e.fluid.is_eye_in_water() && !bubble {
-            if !m.kind.breathes_under_water() {
+            if !m.kind.breathes_under_water() && !effects::has_water_breathing(m) {
                 e.air_supply -= 1;
                 if e.air_supply <= -20 {
                     e.air_supply = 0;
                     level.emit(Event::EntityEvent { entity: e.id, event: 67 });
                     hurt(e, m, level, DamageSource::of(DamageKind::Drown), 2.0);
                 }
+            } else if e.air_supply < m.air_supply_max && effects::effects_refill_air(m) {
+                e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
             }
         } else if e.air_supply < m.air_supply_max {
             e.air_supply = (e.air_supply + 4).min(m.air_supply_max);
@@ -1088,11 +1320,12 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if m.damage_cooldown > 0 {
         m.damage_cooldown -= 1;
     }
-    if m.is_dead_or_dying() {
+    if m.is_dead_or_dying() && !m.kind.ext().is_some_and(|k| k.tick_death(e, m, level)) {
         m.death_time += 1;
         if m.death_time >= 20 && !e.is_removed() {
             level.emit(Event::EntityEvent { entity: e.id, event: 60 });
             e.removed = Some(crate::entity::RemovalReason::Killed);
+            effects::on_killed_removal(e, m, level);
             if let Some(k) = m.kind.ext() {
                 k.on_killed_removal(e, m, level);
             }
@@ -1113,6 +1346,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             m.last_hurt_by_mob = None;
         }
     }
+    effects::tick(e, m, level);
     if let Some(k) = m.kind.ext() {
         k.tick_effects(e, m, level);
     }
@@ -1132,6 +1366,9 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
                 make_sound(e, m, level, s);
             }
         }
+    }
+    if let Some(k) = m.kind.ext() {
+        k.after_base_tick(e, m, level, air_before);
     }
 }
 
@@ -1170,7 +1407,14 @@ pub fn is_alive(e: &Entity, m: &MobData) -> bool {
 /// `LivingEntity.aiStep` then the mob types' additions.
 fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if let Some(k) = m.kind.ext() {
+        if k.replaces_ai_step(e, m, level) {
+            return;
+        }
         k.ai_step_before(e, m, level);
+        k.update_no_action_time(e, m, &*level);
+    } else if m.kind.category() == Category::Monster && light_magic_value(e, level) > 0.5 {
+        // `Monster.updateNoActionTime` (zombies, skeletons, creepers, spiders).
+        m.no_action_time += 2;
     }
     if m.no_jump_delay > 0 {
         m.no_jump_delay -= 1;
@@ -1226,6 +1470,9 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.no_jump_delay = 0;
     }
     let input = Vec3::new(m.xxa as f64, m.yya as f64, m.zza as f64);
+    if effects::has(m, crate::effect::ids::slow_falling()) || effects::has(m, crate::effect::ids::levitation()) {
+        e.fall_distance = 0.0;
+    }
     if let Some(r) = rider {
         // `travelRidden`: the rider turns the mount; the move comes from the rider's client.
         if let Some(k) = m.kind.ext() {
@@ -1234,6 +1481,9 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         e.delta = Vec3::ZERO;
     } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
         travel(e, m, level, input);
+    }
+    if let Some((distance, multiplier)) = e.pending_fall.take() {
+        cause_fall_damage(e, m, level, distance, multiplier);
     }
     e.apply_effects_from_blocks(level);
     // Freezing.
@@ -1339,12 +1589,36 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     if !k.is_some_and(|k| k.tick_look(e, m, level)) {
         control::tick_look(e, m);
     }
-    control::tick_jump(m);
+    if !k.is_some_and(|k| k.tick_jump(e, m, level)) {
+        control::tick_jump(m);
+    }
+}
+
+/// `LivingEntity.causeFallDamage` (the landing happened in the move just done): the fall
+/// power above the safe fall distance, scaled by the multiplier attribute, as fall damage
+/// with the small or big fall sound. Approximation: the landing block's fall sound is not
+/// played.
+fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, distance: f64, multiplier: f32) {
+    if entity_type_tag(e.type_name, "minecraft:fall_damage_immune") {
+        return;
+    }
+    let power = distance + 1.0e-6 - m.attrs.value(Attr::SafeFallDistance);
+    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier));
+    if dmg <= 0 {
+        return;
+    }
+    let (small, big) = if m.kind.category() == Category::Monster {
+        ("minecraft:entity.hostile.small_fall", "minecraft:entity.hostile.big_fall")
+    } else {
+        ("minecraft:entity.generic.small_fall", "minecraft:entity.generic.big_fall")
+    };
+    play_sound(e, m, level, if dmg > 4 { big } else { small }, 1.0, 1.0);
+    hurt(e, m, level, DamageSource::of(DamageKind::Fall), dmg as f32);
 }
 
 /// `LivingEntity.jumpFromGround`.
 fn jump_from_ground(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
-    let power = (m.attrs.value(Attr::JumpStrength) as f32) * e.block_jump_factor(level);
+    let power = (m.attrs.value(Attr::JumpStrength) as f32) * e.block_jump_factor(level) + effects::jump_boost_power(m);
     if power <= 1.0e-5 {
         return;
     }
@@ -1353,7 +1627,7 @@ fn jump_from_ground(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
 }
 
 /// `LivingEntity.travel`.
-fn travel(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
+pub fn travel(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
     if e.is_in_water() || e.is_in_lava() {
         travel_in_fluid(e, m, level, input);
     } else {
@@ -1363,6 +1637,12 @@ fn travel(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: V
 
 fn gravity(e: &Entity, m: &MobData) -> f64 {
     if e.no_gravity { 0.0 } else { m.attrs.value(Attr::Gravity) }
+}
+
+/// `getEffectiveGravity`: slow falling caps it at 0.01 while falling.
+pub fn effective_gravity(e: &Entity, m: &MobData) -> f64 {
+    let g = gravity(e, m);
+    if e.delta.y <= 0.0 && effects::has(m, crate::effect::ids::slow_falling()) { g.min(0.01) } else { g }
 }
 
 /// `computeModifiedFriction`.
@@ -1379,8 +1659,10 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
     };
     let v = relative_friction_movement(e, m, level, input, friction);
     let mut y = v.y;
-    if level.is_loaded(below) {
-        y -= gravity(e, m);
+    if let Some(a) = effects::amplifier(m, crate::effect::ids::levitation()) {
+        y += (0.05 * (a + 1) as f64 - v.y) * 0.2;
+    } else if level.is_loaded(below) {
+        y -= effective_gravity(e, m);
     } else if e.y() > level.min_y() as f64 {
         y = -0.1;
     } else {
@@ -1443,9 +1725,12 @@ fn handle_on_climbable(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, v: 
 fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) {
     let falling = e.delta.y <= 0.0;
     let y0 = e.y();
-    let g = if e.delta.y <= 0.0 { gravity(e, m) } else { gravity(e, m) };
+    let g = effective_gravity(e, m);
     if e.is_in_water() {
-        let mut slow = 0.8f32;
+        if m.kind.ext().is_some_and(|k| k.travel_in_water(e, m, level, input)) {
+            return;
+        }
+        let mut slow = m.kind.ext().map_or(0.8f32, |k| k.water_slow_down(m));
         let mut speed = 0.02f32;
         let mut eff = m.attrs.value(Attr::WaterMovementEfficiency) as f32;
         if !e.on_ground {
@@ -1454,6 +1739,9 @@ fn travel_in_fluid(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         if eff > 0.0 {
             slow += (0.54600006 - slow) * eff;
             speed += (m.speed - speed) * eff;
+        }
+        if effects::has(m, crate::effect::ids::dolphins_grace()) {
+            slow = 0.96;
         }
         move_relative(e, speed, input);
         let d = e.delta;
@@ -1517,6 +1805,10 @@ fn fluid_falling_adjusted(g: f64, falling: bool, v: Vec3) -> Vec3 {
 /// `LivingEntity.pushEntities`: pushable living entities touching this one push each other
 /// apart (`Entity.push`). Players push the mob; their own half is their client's.
 fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    // `pushEntities` overridden with nothing (bats).
+    if m.kind.ext().is_some_and(|k| !k.pushable()) {
+        return;
+    }
     let bb = e.bounding_box();
     let mut others: Vec<(i32, f64, f64, bool)> = Vec::new();
     // Players first: they joined the entity sections before the mobs around them (the order
@@ -1553,6 +1845,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let Some(o) = level.entity(id) else { continue };
         if let EntityKind::Mob(om) = &o.kind
             && om.health > 0.0
+            && om.kind.ext().is_none_or(|k| k.pushable())
             && !riding(id, o.vehicle)
         {
             others.push((id, o.x(), o.z(), false));
@@ -1561,6 +1854,10 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     for (id, ox, oz, player) in others {
         if let Some(k) = m.kind.ext() {
             k.do_push(e, m, &*level, id);
+        }
+        // `Entity.push(Entity)`: nothing moves when either side has no physics (a vex).
+        if e.no_physics || (!player && level.entity(id).is_some_and(|o| o.no_physics)) {
+            continue;
         }
         let (dx, dz) = (ox - e.x(), oz - e.z());
         let mut d = dx.abs().max(dz.abs());
@@ -1574,8 +1871,8 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         dz *= f;
         dx *= 0.05000000074505806;
         dz *= 0.05000000074505806;
-        // `Entity.push`: vehicles are not pushed.
-        if e.passengers.is_empty() {
+        // `Entity.push`: vehicles and dead (not `isPushable`) mobs are not pushed.
+        if e.passengers.is_empty() && m.health > 0.0 {
             e.delta = e.delta.add(-dx, 0.0, -dz);
             e.needs_sync = true;
         }
@@ -1600,12 +1897,17 @@ fn play_sound(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'sta
 
 /// `LivingEntity.makeSound`: volume 1, the voice pitch.
 pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, sound: &'static str) {
-    let pitch = if m.baby() {
+    let mut pitch = if m.baby() {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.5
     } else {
         (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0
     };
-    play_sound(e, m, level, sound, 1.0, pitch);
+    let mut volume = 1.0;
+    if let Some(k) = m.kind.ext() {
+        volume = k.sound_volume(m);
+        pitch = k.voice_pitch(m, pitch);
+    }
+    play_sound(e, m, level, sound, volume, pitch);
 }
 
 /// Damage to a mob from outside its own tick (explosions, arrows, players).
@@ -1615,6 +1917,14 @@ pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, soun
 /// when the plain `Entity.thunderHit` applies.
 pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> bool {
     let Some(kind) = data(e).map(|m| m.kind) else { return false };
+    if let Some(k) = kind.ext() {
+        let mut m = take(e);
+        let handled = k.thunder_hit(e, &mut m, level, _bolt);
+        put(e, m);
+        if handled {
+            return true;
+        }
+    }
     match kind {
         MobKind::Creeper => {
             crate::ext_entity::lightning::base_thunder_hit(e, level);
@@ -1623,6 +1933,11 @@ pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> b
             {
                 *powered = true;
             }
+            true
+        }
+        // `Turtle.thunderHit`: struck dead.
+        MobKind::Turtle => {
+            hurt_entity(e, level, DamageSource::of(DamageKind::LightningBolt), f32::MAX);
             true
         }
         MobKind::Pig | MobKind::Villager if level.difficulty() != 0 => {
@@ -1649,6 +1964,19 @@ pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSo
     let r = hurt(e, &mut m, level, source, amount);
     put(e, m);
     r
+}
+
+/// `isPushedByFluid` of mob type `type_name`.
+pub fn pushed_by_fluid(type_name: &str) -> bool {
+    MobKind::by_name(type_name).and_then(MobKind::ext).is_none_or(|k| k.pushed_by_fluid())
+}
+
+/// The swim sound of mob type `type_name` (`None`: it makes no movement sounds).
+pub fn swim_sound(type_name: &str) -> Option<&'static str> {
+    match MobKind::by_name(type_name).and_then(MobKind::ext) {
+        Some(k) => k.swim_sound(),
+        None => Some("minecraft:entity.generic.swim"),
+    }
 }
 
 /// Whether mob type `type_name` runs `checkFallDamage` (flying types override it with nothing).
@@ -1683,6 +2011,9 @@ pub fn hurt(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source
 pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: DamageSource, amount: f32) -> bool {
     let kind = source.kind;
     if e.is_removed() || (e.invulnerable && !kind.is_tag("minecraft:bypasses_invulnerability")) || m.is_dead_or_dying() {
+        return false;
+    }
+    if kind.is_tag("minecraft:is_fire") && effects::has(m, crate::effect::ids::fire_resistance()) {
         return false;
     }
     m.no_action_time = 0;
@@ -1745,6 +2076,7 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     m.last_damage_source = Some(source);
     m.last_damage_stamp = level.game_time();
+    effects::on_hurt(e, m, level, &source, amount);
     if m.kind == MobKind::Zombie {
         kinds::zombie::reinforcements(e, m, level, &source);
     }
@@ -1761,6 +2093,8 @@ fn actually_hurt(id: i32, m: &mut MobData, source: DamageSource, amount: f32) {
         let g = mth::clamp(armor - amount / f, armor * 0.2, 20.0);
         amount *= 1.0 - g / 25.0;
     }
+    // `getDamageAfterMagicAbsorb`: resistance, then the type's additions.
+    amount = effects::resist(m, &source, amount);
     if let Some(k) = m.kind.ext() {
         amount = k.damage_after_magic_absorb(id, m, &source, amount);
     }
@@ -1786,6 +2120,9 @@ pub fn knockback_entity(e: &mut Entity, strength: f64, dx: f64, dz: f64) {
 
 /// `LivingEntity.knockback`.
 pub fn knockback(e: &mut Entity, m: &MobData, strength: f64, mut dx: f64, mut dz: f64) {
+    if m.kind.ext().is_some_and(|k| k.knockback_immune(m)) {
+        return;
+    }
     let strength = strength * (1.0 - m.attrs.value(Attr::KnockbackResistance));
     if strength <= 0.0 {
         return;
@@ -1806,7 +2143,9 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     if e.is_removed() || m.dead {
         return;
     }
-    m.dead = true;
+    if !m.kind.ext().is_some_and(|k| k.handle_killing_blow(e, m, level)) {
+        m.dead = true;
+    }
     let killed_by_player = m.last_hurt_by_player_memory > 0;
     level.emit(Event::Killed {
         entity: e.id,
@@ -1815,7 +2154,26 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         kind: source.kind,
         attacker: source.attacker,
         direct: source.direct.or(source.attacker),
+        equipment: m.equipment.iter().zip(SLOT_NAMES).filter(|(s, _)| !s.is_empty()).map(|(s, n)| (n, s.clone())).collect(),
     });
+    // `gameEvent(ENTITY_DIE)`: sculk sensors hear it; the nearest sculk catalyst takes the
+    // experience as charge (`CatalystListener`: `getExperienceReward` if the mob would drop
+    // any, then `skipDropExperience`).
+    level.emit(Event::GameEvent { event: "minecraft:entity_die", pos: e.position(), entity: Some(e.id) });
+    let consumed = level.sculk_catalyst_near(e.position());
+    if consumed {
+        let xp = experience_reward(e, m);
+        let charge = if m.baby() { 0 } else { xp };
+        level.feed_sculk_catalyst(e.position(), charge);
+        // `tryAwardItSpreadsAdvancement`: the player that last hurt it.
+        if charge > 0
+            && let Some(player) = m.last_hurt_by_player
+        {
+            let direct = source.direct.is_none() || source.direct == source.attacker;
+            let criterion = crate::level::Criterion::KillMobNearSculkCatalyst { victim: crate::level::Seen::of_mob(e, m), kind: source.kind, direct };
+            level.emit(Event::Criterion { player, criterion });
+        }
+    }
     if !m.baby() && level.mob_drops() {
         level.emit(Event::DeathLoot {
             entity: e.id,
@@ -1847,7 +2205,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         }
     }
     // `dropExperience`.
-    if killed_by_player && level.mob_drops() {
+    if killed_by_player && level.mob_drops() && !consumed {
         let xp = experience_reward(e, m);
         award_experience(level, e.position(), xp);
     }
@@ -1946,6 +2304,10 @@ pub fn has_line_of_sight_cached(e: &Entity, m: &mut MobData, level: &dyn EntityL
     if m.unseen.contains(&t.id) {
         return false;
     }
+    if m.kind.ext().is_some_and(|k| !k.can_see(m)) {
+        m.unseen.push(t.id);
+        return false;
+    }
     let from = Vec3::new(e.x(), e.eye_y(), e.z());
     let to = Vec3::new(t.pos.x, t.eye_y, t.pos.z);
     let v = to.distance_to_sqr(from).sqrt() <= 128.0 && !clip_blocks(level, from, to);
@@ -1966,7 +2328,11 @@ pub fn clip_blocks(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
 /// `Mob.isWithinMeleeAttackRange` (`DEFAULT_ATTACK_REACH`: sqrt(2.04) - 0.6).
 pub fn within_melee_range(e: &Entity, t: &Living) -> bool {
     let reach = 2.04f64.sqrt() - 0.6000000238418579;
-    let b = e.bounding_box().inflate(reach, 0.0, reach);
+    let mut b = e.bounding_box().inflate(reach, 0.0, reach);
+    // `Ravager.getAttackBoundingBox`: a little narrower.
+    if e.type_name == "minecraft:ravager" {
+        b = b.deflate(0.05, 0.0, 0.05);
+    }
     b.intersects(&t.bb)
 }
 
@@ -2063,6 +2429,10 @@ pub struct GroupData {
     pub natural: bool,
     /// The variant the first mob of a group picked (`WolfPackData`, horses' `HorseGroupData`).
     pub variant: Option<i32>,
+    /// `EntitySpawnReason.PATROL`, `EVENT` (raids) and `STRUCTURE`.
+    pub patrol: bool,
+    pub event: bool,
+    pub structure: bool,
 }
 
 /// `Mob.finalizeSpawn` and the types' overrides; random draws from `r` (the level's).
@@ -2149,14 +2519,23 @@ fn sound_variant_count(kind: MobKind) -> i32 {
 /// player in the dimension).
 pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f64>) {
     let Some(m) = data(e) else { return };
+    if m.kind.ext().is_some_and(|k| !k.despawns()) {
+        return;
+    }
+    if let Some(k) = m.kind.ext()
+        && k.check_despawn(e, level)
+    {
+        return;
+    }
+    let Some(m) = data(e) else { return };
     if level.difficulty() == 0 && !m.kind.is_animal() {
         e.discard();
         return;
     }
     let persistent = m.persistence_required;
     let category = m.kind.category();
-    let removable = m.kind.ext().and_then(|k| k.remove_when_far_away(m)).unwrap_or(!category.persistent());
     let Some(d) = nearest else { return };
+    let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(!category.persistent());
     let far = category.despawn_distance() as f64;
     if !persistent && removable && d > far * far {
         e.discard();
@@ -2206,6 +2585,26 @@ impl DamageKind {
             DamageKind::Magic => "minecraft:magic",
             DamageKind::IndirectMagic => "minecraft:indirect_magic",
             DamageKind::LightningBolt => "minecraft:lightning_bolt",
+            // -- slice 3: mob effects
+            DamageKind::Wither => "minecraft:wither",
+
+            // -- slice 3: raids
+            DamageKind::Starve => "minecraft:starve",
+
+            // -- slice 3: the end
+
+            // -- slice 3: wither and guardians
+            DamageKind::WitherSkull => "minecraft:wither_skull",
+            DamageKind::Thorns => "minecraft:thorns",
+
+            // -- slice 3: warden
+            DamageKind::SonicBoom => "minecraft:sonic_boom",
+
+            // -- slice 3: common mobs A
+
+            // -- slice 3: common mobs B
+            DamageKind::WindCharge => "minecraft:wind_charge",
+
         }
     }
 

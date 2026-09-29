@@ -596,8 +596,8 @@ mod tests {
         assert_eq!(e.uuid, 0);
         let pig = Tag::Compound(vec![("id".into(), Tag::String("minecraft:pig".into()))]);
         assert!(matches!(load(&pig, 1, 0).map(|e| e.kind), Ok(EntityKind::Mob(_))));
-        let cod = Tag::Compound(vec![("id".into(), Tag::String("minecraft:cod".into()))]);
-        assert_eq!(load(&cod, 1, 0).err(), Some(LoadError::NotSimulated));
+        let display = Tag::Compound(vec![("id".into(), Tag::String("minecraft:interaction".into()))]);
+        assert_eq!(load(&display, 1, 0).err(), Some(LoadError::NotSimulated));
         let nan = Tag::Compound(vec![
             ("id".into(), Tag::String("minecraft:snowball".into())),
             ("Pos".into(), doubles([f64::NAN, 0.0, 0.0])),

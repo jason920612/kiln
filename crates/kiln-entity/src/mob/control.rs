@@ -75,6 +75,11 @@ pub struct MoveControl {
     pub strafe_forwards: f32,
     pub strafe_right: f32,
     pub operation: Operation,
+    /// `setWantedPosition` calls so far, and those with a positive speed and the last such
+    /// speed (types that override `setWantedPosition` catch up on them: rabbits).
+    pub sets: u32,
+    pub positive_sets: u32,
+    pub last_positive_speed: f64,
 }
 
 impl MoveControl {
@@ -85,6 +90,11 @@ impl MoveControl {
     pub fn set_wanted_position(&mut self, x: f64, y: f64, z: f64, speed: f64) {
         self.wanted = [x, y, z];
         self.speed_modifier = speed;
+        self.sets = self.sets.wrapping_add(1);
+        if speed > 0.0 {
+            self.positive_sets = self.positive_sets.wrapping_add(1);
+            self.last_positive_speed = speed;
+        }
         if self.operation != Operation::Jumping {
             self.operation = Operation::MoveTo;
         }

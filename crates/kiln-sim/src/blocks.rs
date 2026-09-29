@@ -47,6 +47,10 @@ pub(crate) struct RegionBlocks {
     generated: Vec<(ChunkPos, kiln_world::chunk::PendingUpdates)>,
     /// Container block entities of the region's chunks, live.
     pub containers: crate::container::Containers,
+    /// Raider news for the level's raids, until the next raid tick takes them.
+    pub raid_events: Vec<kiln_entity::level::RaidEvent>,
+    /// Game event listeners: sculk block entities and wardens.
+    pub sculk: crate::sculk::Sculk,
 }
 
 impl Default for RegionBlocks {
@@ -59,6 +63,8 @@ impl Default for RegionBlocks {
             sub_tick: 0,
             generated: Vec::new(),
             containers: Default::default(),
+            raid_events: Vec::new(),
+            sculk: Default::default(),
         }
     }
 }
@@ -88,6 +94,7 @@ impl RegionBlocks {
             self.generated.push((pos, pending));
         }
         self.containers.chunk_loaded(pos, chunk);
+        self.sculk.chunk_loaded(pos, chunk);
         let moving = kiln_data::blocks::default_state::MOVING_PISTON;
         for ((x, y, z), be) in chunk.block_entities() {
             if chunk.get(x, y, z) == moving {
@@ -116,11 +123,13 @@ impl RegionBlocks {
             self.data.pistons.remove(p);
         }
         self.containers.chunk_unloaded(pos);
+        self.sculk.chunk_unloaded(pos);
     }
 
     /// Puts the chunk's scheduled ticks and moving pistons on it in their saved form.
     pub fn store(&mut self, pos: ChunkPos, chunk: &mut Chunk, game_time: i64) {
         self.containers.store(pos, chunk);
+        self.sculk.store(pos, chunk);
         let k = key(pos);
         let block = self.block_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
         let fluid = self.fluid_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
@@ -169,6 +178,8 @@ impl RegionPart for RegionBlocks {
         into.generated.append(&mut from.generated);
         into.sub_tick = into.sub_tick.max(from.sub_tick);
         into.containers.merge(std::mem::take(&mut from.containers));
+        into.raid_events.append(&mut from.raid_events);
+        into.sculk.merge(std::mem::take(&mut from.sculk));
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -205,13 +216,18 @@ impl RegionPart for RegionBlocks {
             let mut containers: SmallVec<[&mut crate::container::Containers; 4]> = parts.iter_mut().map(|p| &mut p.containers).collect();
             self.containers.split_into(&mut containers, |c| owner((c.x, c.z)));
         }
+        parts[0].raid_events = std::mem::take(&mut self.raid_events);
+        {
+            let mut sculk: SmallVec<[&mut crate::sculk::Sculk; 4]> = parts.iter_mut().map(|p| &mut p.sculk).collect();
+            self.sculk.split_into(&mut sculk, |c| owner((c.x, c.z)));
+        }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -255,6 +271,10 @@ pub(crate) struct BlockEnv {
     /// Where the level's non-spectator players stood when the tick began (fire spreads near
     /// them; the same in every region).
     pub fire_watchers: std::sync::Arc<Vec<[f64; 3]>>,
+    /// The level's raids as they stood when the tick began.
+    pub raids: std::sync::Arc<Vec<kiln_entity::level::RaidView>>,
+    /// The End's dragon fight as the level's entities see it (`None` elsewhere).
+    pub dragon_fight: Option<crate::dragon_fight::FightEnv>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -269,6 +289,8 @@ pub(crate) struct EntityBox {
     pub conn: Option<ConnId>,
     /// A monster that keeps players from sleeping nearby (`Monster.isPreventingPlayerRest`).
     pub prevents_rest: bool,
+    /// A player as the source of the game events it causes.
+    pub player_source: Option<kiln_entity::vibration::EventSource>,
 }
 
 impl EntityBox {
@@ -290,6 +312,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
                 blocks_building: true,
                 conn: Some(p.conn),
                 prevents_rest: false,
+                player_source: Some(player_source(p)),
             }
         })
         .collect();
@@ -297,9 +320,15 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_ref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
-        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest() }
+        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None }
     }));
     out
+}
+
+/// Player `p` as the source of a game event.
+pub(crate) fn player_source(p: &Player) -> kiln_entity::vibration::EventSource {
+    let pos = kiln_entity::math::Vec3::new(p.pos[0], p.pos[1], p.pos[2]);
+    kiln_entity::vibration::EventSource::player(p.entity_id, p.uuid.as_u128(), pos, p.sneaking, p.game_mode == 3, p.game_mode == 1)
 }
 
 /// What block work leaves behind: positions to send to clients and effects to carry out.
@@ -322,6 +351,17 @@ pub(crate) struct BlockOut {
     pub removed_components: Vec<(BlockPos, Vec<kiln_item::component::Component>)>,
     /// What block entities do to the players in a box (beacons).
     pub player_fx: Vec<PlayerFx>,
+    /// Packets for the players within a distance of a point (particles block entities send).
+    pub packets: Vec<([f64; 3], f64, Bytes)>,
+    /// Criteria triggers for players (by entity id) with only the player condition
+    /// (`avoid_vibration`).
+    pub triggers: Vec<(i32, &'static str)>,
+    /// Sculk shriekers a player (by entity id) set off (`SculkShriekerBlockEntity.tryShriek`),
+    /// for the region, which knows the players.
+    pub shrieks: Vec<(BlockPos, i32)>,
+    /// Sculk shriekers whose shriek ended (`tryRespond`) and their warning level: the region
+    /// answers with darkness and maybe a warden.
+    pub responds: Vec<(BlockPos, i32)>,
 }
 
 /// A block entity's effect on the players whose box meets `min..max`.
@@ -368,6 +408,7 @@ impl Level for RegionLevel<'_> {
         }
         if kiln_data::block_props::has_block_entity(old) || kiln_data::block_props::has_block_entity(state) {
             crate::container::block_set(self, pos, flags);
+            crate::sculk::block_set(self, pos);
         }
         Some(old)
     }
@@ -428,7 +469,20 @@ impl Level for RegionLevel<'_> {
     }
 
     fn effect(&mut self, effect: Effect) {
-        self.out.effects.push((self.actor, effect));
+        let (pos, event, state) = match effect {
+            Effect::GameEvent { pos, event } => (pos, event, None),
+            Effect::BlockGameEvent { pos, event, state } => (pos, event, Some(state)),
+            _ => {
+                self.out.effects.push((self.actor, effect));
+                return;
+            }
+        };
+        // `level.gameEvent(player, event, pos)`: the acting player is the source.
+        if crate::sculk::listening(self) {
+            let source = self.actor.and_then(|c| self.bodies.iter().find(|b| b.conn == Some(c))).and_then(|b| b.player_source);
+            let at = kiln_entity::math::Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
+            crate::sculk::post(self, event, at, kiln_entity::vibration::Context { source, affected_state: state });
+        }
     }
 
     fn comparator_output(&self, pos: BlockPos) -> i32 {
@@ -452,6 +506,9 @@ impl Level for RegionLevel<'_> {
     }
 
     fn block_entity_analog(&self, pos: BlockPos, state: u16, _dir: Direction) -> i32 {
+        if let Some(v) = crate::sculk::analog(self, pos, state) {
+            return v;
+        }
         crate::container::analog(self, pos, state)
     }
 
@@ -460,6 +517,10 @@ impl Level for RegionLevel<'_> {
     }
 
     fn block_entity_tick(&mut self, pos: BlockPos, state: u16) {
+        if kiln_data::block_logic::block_class(state) == kiln_data::block_logic::BlockClass::SculkShriekerBlock {
+            crate::sculk::shrieker::try_respond(self, pos);
+            return;
+        }
         crate::container::scheduled_tick(self, pos, state);
     }
 
@@ -547,9 +608,17 @@ impl Ticking {
     }
 
     /// Adds one chunk (a force-loaded one).
-    pub fn add(&mut self, c: ChunkPos) {
+    pub fn add_chunk(&mut self, c: ChunkPos) {
         let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
         *self.0.entry(c.cell()).or_default() |= 1 << bit;
+    }
+
+    /// Chunks within `r` of `center` tick too (the dragon fight's arena).
+    pub fn add(&mut self, center: ChunkPos, r: i32) {
+        let other = Ticking::around(std::iter::once(center), r);
+        for (cell, mask) in other.0 {
+            *self.0.entry(cell).or_default() |= mask;
+        }
     }
 
     pub fn contains(&self, c: ChunkPos) -> bool {
@@ -774,6 +843,16 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
 pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&mut Player], spawns: &mut Vec<Spawn>, env: &BlockEnv) {
     send_changes(cells, &out.changed, players);
     spawns.append(&mut out.spawns);
+    for (at, range, pkt) in std::mem::take(&mut out.packets) {
+        for p in players.iter_mut().filter(|p| !p.disconnected && (0..3).map(|i| (p.pos[i] - at[i]).powi(2)).sum::<f64>() < range * range) {
+            p.send(pkt.clone());
+        }
+    }
+    for (id, trigger) in std::mem::take(&mut out.triggers) {
+        if let Some(p) = players.iter_mut().find(|p| p.entity_id == id) {
+            p.fire(trigger, None, |c, _, _| matches!(c.trigger, crate::advancements::criteria::Trigger::Player));
+        }
+    }
     for fx in std::mem::take(&mut out.player_fx) {
         let (min, max) = match &fx {
             PlayerFx::Effect { min, max, .. } | PlayerFx::BeaconActivated { min, max, .. } => (*min, *max),
@@ -816,6 +895,15 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     // The breaking player's held item is the tool; other breaks use an empty hand.
                     let tool = actor.and_then(|c| players.iter().find(|p| p.conn == c)).map(|p| p.inv.selected_item().clone());
                     let components = out.removed_components.iter().rev().find(|(p, _)| *p == pos).map(|(_, c)| c.clone());
+                    // `InfestedBlock.spawnAfterBreak`: a silverfish comes out unless the tool has
+                    // silk touch (`#prevents_infested_spawns`).
+                    let silk = tool.as_ref().and_then(|t| t.get(kiln_item::keys::ENCHANTMENTS)).is_some_and(|e| {
+                        kiln_item::registry::ENCHANTMENT.id("minecraft:silk_touch").is_some_and(|id| e.level(id) > 0)
+                    });
+                    if !silk && kiln_entity::mob::kinds::silverfish::is_infested(state) {
+                        let at = [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5];
+                        spawns.push(crate::mobs::spawn(kiln_entity::mob::MobKind::Silverfish, at, Some(0.0), None));
+                    }
                     match &env.loot {
                         Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i)),
                         None => spawns.extend(drop_stand_in(pos, state, env, i)),
@@ -863,8 +951,28 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                 vel: [0.0; 3],
                 body: entities::Body::Tnt,
             }),
-            // Entities carried by pistons and vibrations are not simulated yet.
-            Effect::PistonMove { .. } | Effect::GameEvent { .. } => {}
+            // `SnifferEggBlock.tick`: a baby sniffer at the egg's center, facing a random way.
+            Effect::HatchSniffer { pos } => {
+                let h = effect_hash(env, pos, 0x736e);
+                let yaw = kiln_entity::mob::mth::wrap_degrees((h >> 40) as f32 / (1u64 << 24) as f32 * 360.0);
+                let mut e = kiln_entity::mob::new(kiln_entity::mob::MobKind::Sniffer, 0, 0, h as i64);
+                if let Some(mut md) = kiln_entity::mob::data(&e).cloned() {
+                    kiln_entity::mob::set_age(&mut e, &mut md, -48000);
+                    md.y_head_rot = yaw;
+                    md.y_body_rot = yaw;
+                    if let Some(slot) = kiln_entity::mob::data_mut(&mut e) {
+                        *slot = md;
+                    }
+                }
+                let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+                e.set_pos(kiln_entity::math::Vec3::new(at[0], at[1], at[2]));
+                e.y_rot = yaw;
+                e.set_old_pos_and_rot();
+                spawns.push(Spawn { kind: &kiln_data::entities::types::SNIFFER, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
+            }
+            // Entities carried by pistons are not simulated yet; game events went to their
+            // listeners when they happened.
+            Effect::PistonMove { .. } | Effect::GameEvent { .. } | Effect::BlockGameEvent { .. } => {}
         }
     }
 }
@@ -1124,6 +1232,8 @@ mod tests {
             weather: Default::default(),
             fire_spread_radius: 128,
             fire_watchers: Default::default(),
+            raids: Default::default(),
+            dragon_fight: None,
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

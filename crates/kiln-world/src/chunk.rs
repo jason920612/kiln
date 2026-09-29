@@ -82,6 +82,9 @@ pub struct Chunk {
     /// Entities generation placed (end crystals, ...), in saved form, for the simulation to
     /// add when the chunk loads.
     pub generated_entities: Vec<kiln_proto::nbt::Tag>,
+    /// Points of interest once the simulation took the chunk in ([`Chunk::init_pois`]); block
+    /// changes keep them up to date from then on.
+    pub pois: Option<Box<crate::poi::ChunkPois>>,
 }
 
 /// Work a freshly generated chunk leaves for the simulation, to run once the chunk (and its
@@ -138,6 +141,7 @@ impl Chunk {
             structures: None,
             pending: None,
             generated_entities: Vec::new(),
+            pois: None,
         };
         for x in 0..16 {
             for z in 0..16 {
@@ -296,8 +300,59 @@ impl Chunk {
             {
                 self.block_entities.insert(key, BlockEntity::new(kind));
             }
+            // `ServerLevel.updatePOIOnBlockStateChange`.
+            if let Some(p) = self.pois.as_mut() {
+                let (a, b) = (crate::poi::type_of(old), crate::poi::type_of(state));
+                if a != b {
+                    let pos = [p.cx * 16 + x as i32, y, p.cz * 16 + z as i32];
+                    if a.is_some() {
+                        p.remove(pos);
+                    }
+                    if let Some(k) = b {
+                        p.add(pos, k);
+                    }
+                }
+            }
         }
         Some(old)
+    }
+
+    /// Takes the chunk's points of interest in (`PoiManager.checkConsistencyWithBlocks` for
+    /// each section): `stored` as saved, sections saved invalid rescanned from the blocks,
+    /// sections with no saved data scanned when their palette holds a point of interest.
+    pub fn init_pois(&mut self, cx: i32, cz: i32, stored: Option<crate::poi::ChunkPois>) {
+        let mut p = stored.unwrap_or_default();
+        p.cx = cx;
+        p.cz = cz;
+        let min_section = self.min_y >> 4;
+        for (i, section) in self.sections.iter().enumerate() {
+            let sy = min_section + i as i32;
+            let known = p.sections.get(&sy).map(|s| s.valid);
+            if known == Some(true) {
+                continue;
+            }
+            if known.is_none() && !section.blocks.maybe_has(crate::poi::has_poi) {
+                continue;
+            }
+            // A saved invalid section keeps its records' tickets where they still apply.
+            let old = p.sections.remove(&sy).map(|s| s.records).unwrap_or_default();
+            let mut fresh = crate::poi::Section { valid: true, records: Default::default() };
+            for ly in 0..16 {
+                for lz in 0..16 {
+                    for lx in 0..16 {
+                        let s = section.get(lx, ly, lz);
+                        let Some(kind) = crate::poi::type_of(s) else { continue };
+                        let pos = [cx * 16 + lx as i32, sy * 16 + ly as i32, cz * 16 + lz as i32];
+                        let key = ((lx << 8) | (lz << 4) | ly) as u16;
+                        let r = old.get(&key).filter(|r| r.kind == kind).cloned().unwrap_or_else(|| crate::poi::Record::new(pos, kind));
+                        fresh.records.insert(key, r);
+                    }
+                }
+            }
+            p.sections.insert(sy, fresh);
+            p.dirty = true;
+        }
+        self.pois = Some(Box::new(p));
     }
 
     fn block_index(&self, x: usize, y: i32, z: usize) -> u32 {

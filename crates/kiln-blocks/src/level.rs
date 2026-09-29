@@ -85,6 +85,9 @@ pub enum Effect {
     ActorLevelEvent { id: i32, pos: BlockPos, data: i32 },
     /// A vibration game event (`minecraft:block_activate`, ...).
     GameEvent { pos: BlockPos, event: &'static str },
+    /// A game event about the block `state` (`GameEvent.Context.of(entity, state)`): a
+    /// `#dampens_vibrations` block (wool, carpets) makes no vibration.
+    BlockGameEvent { pos: BlockPos, event: &'static str, state: u16 },
     /// `FallingBlockEntity.fall`: the block left `pos` as a falling entity (already removed).
     FallingBlock { pos: BlockPos, state: u16 },
     /// `TntBlock.prime`: spawn a primed TNT at `pos` (the block is removed).
@@ -97,6 +100,8 @@ pub enum Effect {
     /// (`moveCollidedEntities`) and stuck to honey or slime (`moveStuckEntities`) are
     /// carried to `progress`.
     PistonMove { pos: BlockPos, piston: MovingPiston, progress: f32 },
+    /// `SnifferEggBlock.tick`: a baby sniffer hatches at the egg's center (the egg is gone).
+    HatchSniffer { pos: BlockPos },
 }
 
 pub trait Level {

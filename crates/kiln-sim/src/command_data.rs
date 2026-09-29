@@ -935,6 +935,10 @@ impl Sim {
                     }
                 };
                 let weapon = killer.as_ref().filter(|k| k.entity.is_none()).and_then(|k| self.players.get(&k.conn)).map(|p| p.inv.selected_item().clone());
+                let raider = self.entity_mut(target).and_then(|e| e.phys.as_ref()).and_then(kiln_entity::mob::data).and_then(|m| {
+                    let r = kiln_entity::mob::kinds::raider::raider(m)?;
+                    Some((r.raid.is_some(), r.patrol_leader && m.drop_chances[kiln_entity::mob::HEAD] >= 2.0))
+                });
                 let ctx = crate::mobs::DeathContext {
                     type_name,
                     origin: *origin,
@@ -943,6 +947,7 @@ impl Sim {
                     killed_by_player: weapon.is_some(),
                     damage_type: "minecraft:magic",
                     weapon,
+                    raider,
                 };
                 self.roll_table(&kiln_command::host::LootTableArg::Id(table), &ctx)?
             }

@@ -32,6 +32,7 @@ static INFO: Info = Info {
     ageable: true,
     sounds: Some("hoglin"),
     sound_source: "hostile",
+    extends_monster: false,
     ..Info::monster("minecraft:hoglin", &[(MaxHealth, 40.0), (MovementSpeed, 0.30000001192092896), (KnockbackResistance, 0.6000000238418579), (AttackKnockback, 1.0), (AttackDamage, 6.0)])
 };
 
