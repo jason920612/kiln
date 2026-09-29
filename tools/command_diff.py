@@ -31,6 +31,13 @@ WORK = Path(os.environ.get("KILN_WORK", ROOT / "work"))
 SCRATCH = Path(os.environ.get("KILN_DIFF_SCRATCH", WORK / "wp2-commands" / "diff"))
 VERSION = "26.3"
 DATAPACK = ROOT / "tools" / "datapacks" / "kilndiff"
+# A zip pack (vanilla reads `.zip` packs in the world's datapacks directory in place).
+ZIP_PACK = {
+    "pack.mcmeta": '{"pack":{"description":"zipped","min_format":121,"max_format":121}}',
+    "data/kilnzip/function/hi.mcfunction": "say hello from a zip\n",
+}
+# Both worlds are created with a feature pack enabled (`initial-enabled-packs`).
+INITIAL_PACKS = "vanilla,minecart_improvements"
 UNKNOWN = "Unknown or incomplete command. See below for error"
 
 # Test area: chunks -1..1 around 0,0, y 100..170, cleared to air first. Vanilla's flat world
@@ -38,7 +45,7 @@ UNKNOWN = "Unknown or incomplete command. See below for error"
 # sections that select entities (Kiln has neither). Periodic animal spawns are turned off.
 CASES = r"""
 ! gamerule spawn_mobs false
-!v forceload add -32 -32 47 47
+! forceload add -32 -32 47 47
 ! kill @e[type=!minecraft:player]
 ! fill -16 100 -16 31 113 31 air
 ! fill -16 114 -16 31 127 31 air
@@ -801,6 +808,26 @@ datapack enable "file/kilndiff"
 datapack enable "file/nope"
 datapack enable minecart_improvements
 datapack disable minecart_improvements
+datapack enable trade_rebalance
+datapack enable redstone_experiments
+datapack list available
+function kilnzip:hi
+datapack disable "file/kilnzip.zip"
+function kilnzip:hi
+datapack enable "file/kilnzip.zip"
+function kilnzip:hi
+function kilndiff:ent with entity Diff0
+function kilndiff:abil with entity Diff0 abilities
+function kilndiff:ent with entity Diff0 abilities
+function kilndiff:macro with entity Diff0
+function kilndiff:ent with entity Diff0 Air
+function kilndiff:ent with entity Diff0 nope
+function kilndiff:ent with entity @a
+function kilndiff:ent with entity Nobody
+execute as Other0 run function kilndiff:ent with entity @s
+! summon minecraft:pig 8 101 8 {NoAI:1b,Invulnerable:1b}
+function kilndiff:ent with entity @e[type=minecraft:pig,limit=1]
+! kill @e[type=minecraft:pig]
 datapack enable file/kilndiff
 datapack enable "file/kilndiff" first
 datapack disable "file/kilndiff"
@@ -999,6 +1026,887 @@ scoreboard objectives remove st_jump
 scoreboard objectives remove st_mined
 scoreboard objectives remove st_deaths
 scoreboard objectives remove st_health
+
+# whitelist
+whitelist list
+whitelist add Diff0
+whitelist add Diff0
+whitelist add @a
+whitelist list
+whitelist on
+whitelist on
+whitelist reload
+whitelist remove Other0
+whitelist remove Other0
+whitelist add Zqx9NoAcct1
+whitelist remove Zqx9NoAcct1
+whitelist add @e[type=minecraft:pig]
+whitelist list
+whitelist off
+whitelist off
+whitelist remove @a
+whitelist list
+whitelist bogus
+
+# bans
+banlist
+banlist players
+banlist ips
+ban Zqx9NoAcct1
+ban Zqx9NoAcct2 griefing a lot
+pardon Zqx9NoAcct1
+ban @e[type=minecraft:pig]
+banlist players
+ban-ip 10.0.0.1
+ban-ip 10.0.0.1
+ban-ip 10.0.0.2 spam
+ban-ip 192.168.1.20 a b  c
+ban-ip 172.16.0.1
+ban-ip notanip
+ban-ip 10.0.0.300
+ban-ip ::1
+ban-ip Zqx9NoAcct1
+banlist ips
+banlist
+banlist players
+pardon-ip 10.0.0.1
+pardon-ip 10.0.0.1
+pardon-ip notanip
+pardon-ip 10.0.0.2
+pardon-ip ::1
+banlist
+pardon-ip 192.168.1.20
+pardon-ip 172.16.0.1
+banlist
+pardon @a
+banlist bogus
+
+# server settings
+save-off
+save-off
+save-on
+save-on
+save-all
+save-all flush
+defaultgamemode survival
+defaultgamemode creative
+defaultgamemode adventure
+defaultgamemode survival
+defaultgamemode bogus
+gamemode creatve
+gamemode creatve Diff0
+setidletimeout 0
+setidletimeout 10
+setidletimeout 0
+setidletimeout -1
+! version
+publish
+publish true
+publish false 25599
+unpublish
+jfr stop
+perf stop
+debug stop
+
+# particles and sounds
+particle minecraft:flame
+particle minecraft:flame 8 160 8
+particle flame 0 100 0
+particle flame 0 100 0 1 1 1 0.5 10
+particle flame 0 100 0 1 1 1 0.5 10 force
+particle flame 8 160 8 1 1 1 0.5 10 normal
+particle flame 8 160 8 1 1 1 0.5 10 normal Diff0
+particle flame 8 160 8 1 1 1 0.5 10 force @a
+particle minecraft:dust{color:[1.0,0.0,0.0],scale:1.0} 8 160 8
+particle minecraft:dust 8 160 8
+particle minecraft:block{block_state:"minecraft:stone"} 8 160 8
+particle minecraft:nope 8 160 8
+particle flame 8 160 8 1 1 1 0.5 -1
+playsound minecraft:entity.pig.ambient master Diff0
+playsound minecraft:entity.pig.ambient master @a
+playsound minecraft:entity.pig.ambient master @a 8 160 8
+playsound minecraft:entity.pig.ambient master @a 0 100 0
+playsound minecraft:entity.pig.ambient master @a 0 100 0 1 1 0.5
+playsound minecraft:entity.pig.ambient master @a 0 100 0 1 1 1
+playsound minecraft:entity.pig.ambient music Diff0 8 160 8 2 0.5
+playsound minecraft:entity.pig.ambient bogus Diff0
+playsound minecraft:not.a.sound master Diff0
+playsound minecraft:entity.pig.ambient master Nobody
+playsound minecraft:entity.pig.ambient master @a ~ ~ ~ 1 3
+playsound minecraft:entity.pig.ambient master @a ~ ~ ~ 1 1 2
+stopsound Diff0
+stopsound @a
+stopsound Diff0 master
+stopsound Diff0 * minecraft:entity.pig.ambient
+stopsound Diff0 music minecraft:entity.pig.ambient
+stopsound Nobody
+stopsound Diff0 bogus
+
+# stopwatch
+stopwatch create kiln:sw
+stopwatch create kiln:sw
+stopwatch restart kiln:sw
+stopwatch restart kiln:nope
+stopwatch query kiln:nope
+stopwatch remove kiln:sw
+stopwatch remove kiln:sw
+stopwatch create sw2
+stopwatch remove sw2
+
+# post effects and waypoints
+posteffect list Diff0
+posteffect add Diff0 minecraft:creeper
+posteffect add Diff0 minecraft:creeper
+posteffect add @a minecraft:spider
+posteffect list Diff0
+posteffect list Other0
+posteffect remove Diff0 minecraft:creeper
+posteffect remove Diff0 minecraft:creeper
+posteffect remove @a minecraft:spider
+posteffect clear @a
+posteffect clear Diff0
+posteffect list Diff0
+waypoint list
+waypoint modify Diff0 color red
+waypoint modify Diff0 color hex FF00AA
+waypoint modify Diff0 color reset
+waypoint modify Diff0 style set minecraft:bowtie
+waypoint modify Diff0 style reset
+waypoint modify Diff0 color hex F0A
+waypoint modify Diff0 color hex GGGGGG
+waypoint modify Diff0 color hex 12345
+waypoint modify Diff0 color blurple
+waypoint modify Other0 color reset
+waypoint modify Nobody color reset
+waypoint modify @a color reset
+waypoint modify Diff0 color hex 1G2345
+waypoint modify Diff0 color hex +F0000
+waypoint list
+execute in minecraft:the_nether run waypoint list
+gamerule locator_bar false
+waypoint list
+gamerule locator_bar true
+! summon minecraft:pig 8 160 8
+waypoint modify @e[type=minecraft:pig,limit=1] color red
+! kill @e[type=minecraft:pig]
+# data storage
+data get storage kiln:t
+data get storage kiln:t a
+data merge storage kiln:t {a:1,b:{c:"x",d:2.5d},l:[1,2,3],s:"hello world",f:1.5f,by:3b}
+data merge storage kiln:t {a:1}
+data get storage kiln:t
+data get storage kiln:t a
+data get storage kiln:t b
+data get storage kiln:t b.c
+data get storage kiln:t b.d
+data get storage kiln:t b.d 10
+data get storage kiln:t b.d -0.5
+data get storage kiln:t f 3
+data get storage kiln:t by
+data get storage kiln:t l
+data get storage kiln:t l[]
+data get storage kiln:t l[1]
+data get storage kiln:t l[-1]
+data get storage kiln:t l[5]
+data get storage kiln:t s
+data get storage kiln:t s 2
+data get storage kiln:t nope
+data get storage kiln:t b.nope.deep
+data get storage kiln:t b.c.deep
+data get storage kiln:t {a:1}
+data get storage kiln:t {a:2}
+data get storage kiln:other
+data modify storage kiln:t l append value 4
+data modify storage kiln:t l prepend value 0
+data modify storage kiln:t l insert 2 value 9
+data modify storage kiln:t l insert -1 value 8
+data modify storage kiln:t l insert 100 value 8
+data get storage kiln:t l
+data modify storage kiln:t l[0] set value 7
+data modify storage kiln:t l[0] set value 7
+data modify storage kiln:t l[] set value 1
+data get storage kiln:t l
+data modify storage kiln:t b merge value {e:1b}
+data modify storage kiln:t b merge value {e:1b}
+data modify storage kiln:t a merge value {e:1b}
+data modify storage kiln:t b merge value 5
+data modify storage kiln:t new.path set value "v"
+data get storage kiln:t new
+data modify storage kiln:t a append value 1
+data modify storage kiln:t s2 set string storage kiln:t s
+data modify storage kiln:t s3 set string storage kiln:t s 6
+data modify storage kiln:t s4 set string storage kiln:t s 0 5
+data modify storage kiln:t s5 set string storage kiln:t s -5
+data modify storage kiln:t s6 set string storage kiln:t s 3 1
+data modify storage kiln:t s7 set string storage kiln:t a
+data modify storage kiln:t s8 set string storage kiln:t f
+data modify storage kiln:t s9 set string storage kiln:t b
+data modify storage kiln:t s10 set string storage kiln:t
+data get storage kiln:t s4
+data get storage kiln:t s5
+data get storage kiln:t s7
+data get storage kiln:t s8
+data modify storage kiln:t copy set from storage kiln:t b
+data modify storage kiln:t copy2 set from storage kiln:t
+data modify storage kiln:t copy set from storage kiln:t nope
+data get storage kiln:t copy
+data modify storage kiln:t l append from storage kiln:t l[]
+data get storage kiln:t l
+data modify storage kiln:t merged merge from storage kiln:t b
+data get storage kiln:t merged
+data remove storage kiln:t l[0]
+data remove storage kiln:t l[]
+data remove storage kiln:t l[]
+data remove storage kiln:t nope
+data remove storage kiln:t b.c
+data get storage kiln:t b
+data modify storage kiln:t x set value [B;1b,2b]
+data get storage kiln:t x
+data modify storage kiln:t x append value 3
+data get storage kiln:t x
+data modify storage kiln:t y set value [1L,2L]
+data get storage kiln:t y
+data modify storage kiln:t z set value 'it"s'
+data get storage kiln:t z
+data get storage kiln:t z 1
+execute store result storage kiln:t n int 1 run data get storage kiln:t y
+data get storage kiln:t n
+execute if data storage kiln:t n
+execute if data storage kiln:t nope
+data merge storage kiln:t {}
+data get storage kiln:t missing 1
+data get
+
+# data blocks
+! setblock 4 100 4 chest{Items:[{Slot:0b,id:"minecraft:stone",count:3}]}
+data get block 4 100 4 Items
+data get block 4 100 4 Items[0].count
+data get block 4 100 4 Items[0].count 2.5
+data get block 4 100 4 Items[0].id
+data get block 4 100 4 Items[0].id 1
+data get block 4 100 4 Items[5]
+data get block 4 100 4 id
+data get block 5 100 4
+data get block 100000 100 4
+data merge block 4 100 4 {CustomName:"Box"}
+data merge block 4 100 4 {CustomName:"Box"}
+data get block 4 100 4 CustomName
+data remove block 4 100 4 CustomName
+data remove block 4 100 4 CustomName
+data modify block 4 100 4 Items[0].count set value 5
+data get block 4 100 4 Items[0].count
+data modify block 4 100 4 Items append value {Slot:1b,id:"minecraft:dirt",count:1}
+data get block 4 100 4 Items[1].id
+data modify storage kiln:t fromblock set from block 4 100 4 Items[0]
+data get storage kiln:t fromblock
+execute store result block 4 100 4 Items[0].count byte 1 run data get storage kiln:t a
+data get block 4 100 4 Items[0].count
+execute if data block 4 100 4 Items[{id:"minecraft:dirt"}]
+execute unless data block 4 100 4 Items[{id:"minecraft:dirt"}]
+
+# data entities
+data get entity Diff0 XpLevel
+data get entity Diff0 foodLevel
+data get entity Diff0 Health
+data get entity Diff0 Health 2
+data get entity Diff0 SelectedItemSlot
+data get entity Diff0 Dimension
+data get entity Diff0 nope
+data merge entity Diff0 {Health:5f}
+data modify entity Diff0 Health set value 5f
+data remove entity Diff0 Health
+data remove entity Diff0 nope
+data get entity Nobody
+data get entity @e[type=minecraft:pig]
+execute if data entity Diff0 Health
+execute if data entity Diff0 nope
+! kill @e[type=!minecraft:player]
+! summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b}
+data get entity @e[type=minecraft:pig,limit=1] Health
+data get entity @e[type=minecraft:pig,limit=1] NoAI
+data merge entity @e[type=minecraft:pig,limit=1] {Health:5f}
+data merge entity @e[type=minecraft:pig,limit=1] {Health:5f}
+data get entity @e[type=minecraft:pig,limit=1] Health
+data modify entity @e[type=minecraft:pig,limit=1] Health set value 7f
+data get entity @e[type=minecraft:pig,limit=1] Health
+execute store result entity @e[type=minecraft:pig,limit=1] Health float 0.5 run data get storage kiln:t a
+data get entity @e[type=minecraft:pig,limit=1] Health
+execute if data entity @e[type=minecraft:pig,limit=1] {NoAI:1b}
+
+# tags
+tag Diff0 list
+tag @a list
+tag Diff0 add a
+tag Diff0 add a
+tag Diff0 add b
+tag Diff0 list
+tag @a add a
+tag @a add c
+tag @a list
+tag Other0 list
+execute if entity @a[tag=a]
+execute if entity @a[tag=b]
+execute if entity @a[tag=!b]
+execute if entity @a[tag=]
+tag Diff0 remove a
+tag Diff0 remove a
+tag @a remove zz
+tag @a remove c
+tag @a list
+tag @e[type=minecraft:pig] add pigtag
+tag @e[type=minecraft:pig] list
+data get entity @e[type=minecraft:pig,limit=1] Tags
+execute if entity @e[tag=pigtag]
+tag @e list
+tag Nobody add x
+tag Diff0 add "quoted"
+tag Diff0 add x y
+data get entity Diff0 Tags
+! tag @a remove a
+! tag @a remove b
+! kill @e[type=!minecraft:player]
+
+# rotate, swing, spectate, ride
+! gamemode survival @a
+! summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b,Tags:["p1"]}
+! summon minecraft:pig 7 101 5 {NoAI:1b,Silent:1b,Tags:["p2"]}
+rotate Diff0 90 0
+rotate Diff0 ~10 ~
+rotate Diff0 facing 0 100 0
+rotate Diff0 facing entity Other0
+rotate Diff0 facing entity Other0 eyes
+rotate Nobody 0 0
+rotate @a 0 0
+rotate @e[tag=p1,limit=1] 45 10
+data get entity @e[tag=p1,limit=1] Rotation
+rotate @e[tag=p1,limit=1] facing 5 101 10
+data get entity @e[tag=p1,limit=1] Rotation[0]
+swing Diff0
+swing @a mainhand
+swing @a offhand stab
+swing @a offhand whack 10
+swing @e[type=minecraft:pig]
+swing @e[type=minecraft:pig,limit=1] mainhand none
+swing Diff0 mainhand bogus
+swing Diff0 mainhand whack 0
+swing
+spectate
+spectate Diff0
+spectate Diff0 Other0
+spectate Other0 Other0
+! gamemode spectator Other0
+spectate Diff0 Other0
+spectate Other0 Other0
+spectate @e[tag=p1,limit=1] Other0
+! gamemode survival Other0
+ride Diff0 dismount
+ride Diff0 mount @e[tag=p1,limit=1]
+ride Diff0 mount @e[tag=p1,limit=1]
+ride Diff0 mount @e[tag=p2,limit=1]
+ride Diff0 dismount
+ride Diff0 dismount
+ride @e[tag=p1,limit=1] mount Diff0
+ride @e[tag=p1,limit=1] mount @e[tag=p1,limit=1]
+ride @e[tag=p2,limit=1] mount @e[tag=p1,limit=1]
+ride @e[tag=p1,limit=1] mount @e[tag=p2,limit=1]
+ride @e[tag=p2,limit=1] dismount
+ride Nobody dismount
+ride @e[type=minecraft:pig] dismount
+
+# clear and enchant
+! clear @a
+clear Diff0
+clear @a
+clear Diff0 minecraft:stone
+! give Diff0 minecraft:stone 10
+! give Diff0 minecraft:dirt 5
+! give Other0 minecraft:stone 2
+clear Diff0 minecraft:stone 0
+clear @a minecraft:stone 0
+clear Diff0 minecraft:stone 3
+clear Diff0 minecraft:stone 0
+clear @a minecraft:stone 1
+clear @a minecraft:stone
+clear @a minecraft:stone
+! give Diff0 minecraft:oak_log 2
+clear Diff0 #minecraft:logs 0
+clear Diff0 #minecraft:logs
+clear Diff0 * 0
+clear @a * 0
+clear Diff0
+clear Diff0 minecraft:nonexistent
+clear Diff0 #minecraft:nonexistent
+clear @e[type=minecraft:pig]
+! give Diff0 minecraft:diamond_sword
+enchant Diff0 minecraft:sharpness
+enchant Diff0 minecraft:sharpness 3
+enchant Diff0 minecraft:smite
+enchant Diff0 minecraft:unbreaking 10
+enchant Diff0 minecraft:unbreaking 2
+enchant @a minecraft:mending
+enchant Other0 minecraft:mending
+enchant @e[tag=p1,limit=1] minecraft:mending
+enchant @e[type=minecraft:pig] minecraft:mending
+enchant Diff0 minecraft:nonexistent
+enchant Diff0 minecraft:binding_curse
+enchant Diff0 minecraft:fire_aspect 0
+data get entity Diff0 SelectedItem.components."minecraft:enchantments"."minecraft:sharpness"
+data get entity Diff0 SelectedItem.components."minecraft:enchantments"."minecraft:unbreaking"
+! clear @a
+! give Diff0 minecraft:stick
+enchant Diff0 minecraft:sharpness
+! give Diff0 minecraft:book
+! clear Diff0 minecraft:stick
+enchant Diff0 minecraft:efficiency
+! clear @a
+! kill @e[type=!minecraft:player]
+
+# attributes and damage
+! summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b,Tags:["p1"]}
+attribute Diff0 minecraft:max_health get
+attribute Diff0 minecraft:max_health get 2.5
+attribute Diff0 minecraft:movement_speed get
+attribute Diff0 minecraft:movement_speed get 100
+attribute Diff0 minecraft:attack_speed base get
+attribute Diff0 minecraft:block_interaction_range base get
+attribute Diff0 minecraft:luck get
+attribute Diff0 minecraft:scale get
+attribute Diff0 minecraft:gravity base get 1000
+attribute Diff0 minecraft:follow_range get
+attribute Diff0 minecraft:nonexistent get
+attribute Diff0 minecraft:max_health base set 30
+attribute Diff0 minecraft:max_health get
+attribute Diff0 minecraft:max_health base reset
+attribute Diff0 minecraft:max_health get
+attribute Diff0 minecraft:attack_damage modifier add kiln:boost 2 add_value
+attribute Diff0 minecraft:attack_damage modifier add kiln:boost 2 add_value
+attribute Diff0 minecraft:attack_damage get
+attribute Diff0 minecraft:attack_damage modifier add kiln:mul 0.5 add_multiplied_base
+attribute Diff0 minecraft:attack_damage modifier add kiln:tot 1 add_multiplied_total
+attribute Diff0 minecraft:attack_damage get
+attribute Diff0 minecraft:attack_damage modifier value get kiln:boost
+attribute Diff0 minecraft:attack_damage modifier value get kiln:mul 10
+attribute Diff0 minecraft:attack_damage modifier value get kiln:nope
+attribute Diff0 minecraft:attack_damage modifier remove kiln:boost
+attribute Diff0 minecraft:attack_damage modifier remove kiln:boost
+attribute Diff0 minecraft:attack_damage modifier remove kiln:mul
+attribute Diff0 minecraft:attack_damage modifier remove kiln:tot
+attribute Diff0 minecraft:attack_damage get
+attribute @e[tag=p1,limit=1] minecraft:max_health get
+attribute @e[tag=p1,limit=1] minecraft:max_health base get
+attribute @e[tag=p1,limit=1] minecraft:movement_speed get
+attribute @e[tag=p1,limit=1] minecraft:movement_speed base set 0.5
+attribute @e[tag=p1,limit=1] minecraft:movement_speed get
+attribute @e[tag=p1,limit=1] minecraft:movement_speed base reset
+attribute @e[tag=p1,limit=1] minecraft:max_health modifier add kiln:hp 4 add_value
+attribute @e[tag=p1,limit=1] minecraft:max_health get
+attribute @e[tag=p1,limit=1] minecraft:max_health modifier remove kiln:hp
+attribute @e[tag=p1,limit=1] minecraft:attack_damage get
+attribute @a minecraft:max_health get
+attribute Nobody minecraft:max_health get
+! gamerule natural_health_regeneration false
+damage Diff0 2
+damage Diff0 1 minecraft:nonexistent
+damage Nobody 1
+data get entity Diff0 Health
+! gamerule natural_health_regeneration true
+! kill @e[type=!minecraft:player]
+# worldborder
+worldborder get
+worldborder set 100
+worldborder set 100
+worldborder get
+worldborder set 0.5
+worldborder set 60000000
+worldborder set 59999969
+worldborder add 20
+worldborder add -10
+worldborder get
+worldborder set 200 20
+! worldborder set 100
+worldborder add 10 5s
+! worldborder set 100
+worldborder set 50 1d
+! worldborder set 100
+worldborder add -1000
+worldborder center 10 20
+worldborder center 10 20
+worldborder center 10.5 20.25
+worldborder center 30000000 0
+worldborder center 0 0
+worldborder damage amount 0.5
+worldborder damage amount 0.5
+worldborder damage amount -1
+worldborder damage amount 0.2
+worldborder damage buffer 2.125
+worldborder damage buffer 2.125
+worldborder damage buffer 5
+worldborder warning distance 10
+worldborder warning distance 10
+worldborder warning distance -1
+worldborder warning distance 5
+worldborder warning time 20s
+worldborder warning time 15
+worldborder warning time 15
+worldborder warning time 300
+worldborder
+worldborder set
+execute store result score #b fn run worldborder get
+worldborder set 59999968
+worldborder get
+
+# tick
+tick rate 20
+tick rate 40
+tick rate 0.5
+tick rate 10001
+tick rate 20
+tick step
+tick step stop
+tick sprint stop
+tick freeze
+tick step
+tick step 100
+tick step stop
+tick step stop
+tick step 0
+tick unfreeze
+tick bogus
+
+# forceload
+forceload query
+forceload query 0 0
+forceload query 100 100
+forceload add 100 100
+forceload add 100 100
+forceload query 100 100
+forceload add 96 96 130 130
+forceload query
+forceload remove 100 100
+forceload remove 100 100
+forceload add 0 0 1000 1000
+forceload add 30000000 0
+forceload add -30000001 0
+forceload remove 96 96 130 130
+execute in minecraft:the_nether run forceload query
+execute in minecraft:the_nether run forceload add 0 0
+execute in minecraft:the_nether run forceload query
+execute in minecraft:the_nether run forceload remove all
+forceload query
+
+# random
+random value 1..1
+random value ..5
+random value 5
+! random reset *
+random reset *
+random reset kiln:a 42 false true
+random value 1..1000 kiln:a
+random value 1..1000 kiln:a
+random roll 1..6 kiln:a
+random reset kiln:b 7 false false
+random value 1..100 kiln:b
+random reset kiln:b 7 false false
+random value 1..100 kiln:b
+random reset * 3 false true
+random value 1..100 kiln:c
+random value -50..50 kiln:c
+random reset *
+random value 1..2147483647 kiln:d
+random reset kiln:bad:id
+random bogus
+
+# locate
+execute positioned 0 -60 0 run locate biome minecraft:plains
+execute positioned 0 -60 0 run locate biome #minecraft:is_overworld
+locate biome minecraft:desert
+locate biome #minecraft:is_nether
+locate biome minecraft:nonexistent
+locate structure minecraft:nonexistent
+locate structure #minecraft:nonexistent
+locate poi minecraft:librarian
+! setblock 3 110 3 lectern
+execute positioned 0 100 0 run locate poi minecraft:librarian
+execute positioned 0 100 0 run locate poi #minecraft:acquirable_job_site
+locate poi minecraft:nonexistent
+! setblock 3 110 3 air
+execute positioned 100 100 100 run locate biome minecraft:plains
+execute in minecraft:the_nether run locate biome minecraft:plains
+
+# fillbiome
+fillbiome 0 100 0 15 110 15 minecraft:desert
+fillbiome 0 100 0 15 110 15 minecraft:desert
+execute if biome 4 104 4 minecraft:desert
+execute if biome 4 96 4 minecraft:desert
+fillbiome 0 100 0 15 110 15 minecraft:plains replace minecraft:desert
+fillbiome 0 100 0 15 110 15 minecraft:plains replace #minecraft:is_ocean
+fillbiome 2 101 2 3 101 3 minecraft:badlands
+fillbiome 0 100 0 15 110 15 minecraft:plains
+fillbiome 0 0 0 1000 10 1000 minecraft:desert
+fillbiome 100000 100 0 100001 100 0 minecraft:desert
+fillbiome 0 100 0 1 100 1 minecraft:nonexistent
+fillbiome 0 400 0 1 400 1 minecraft:desert
+
+# place
+place feature minecraft:nonexistent
+place template minecraft:nonexistent 0 120 0
+place template minecraft:igloo/top 0 120 0 bogus
+place jigsaw minecraft:nonexistent minecraft:x 1
+place jigsaw minecraft:village/plains/town_centers minecraft:x 21
+place structure minecraft:nonexistent
+place template minecraft:igloo/top 100000 120 0
+
+# spreadplayers
+spreadplayers 0 0 1 10 false Diff0
+spreadplayers 0 0 1 10 true Diff0
+spreadplayers 0 0 1 0.5 false Diff0
+spreadplayers 0 0 -1 10 false Diff0
+spreadplayers 0 0 1 10 under -100 false Diff0
+spreadplayers 0 0 1 10 false @e[type=minecraft:pig]
+spreadplayers 0 0 1 10 false
+! tp Diff0 8 160 8 0 0
+
+# loot
+! clear @a
+! setblock 6 100 6 stone
+! setblock 7 100 6 chest
+! setblock 8 100 6 air
+loot give Diff0 mine 6 100 6
+loot give Diff0 mine 6 100 6 minecraft:diamond_pickaxe[minecraft:enchantments={"minecraft:silk_touch":1}]
+loot give @a mine 6 100 6
+loot give Diff0 mine 8 100 6
+loot give Diff0 mine 6 100 6 mainhand
+execute as Diff0 run loot give Diff0 mine 6 100 6 mainhand
+loot give Diff0 loot minecraft:blocks/stone
+loot give Diff0 loot minecraft:blocks/dirt
+loot give Diff0 loot minecraft:nonexistent
+loot give Nobody loot minecraft:blocks/stone
+loot insert 7 100 6 loot minecraft:blocks/stone
+loot insert 7 100 6 loot minecraft:blocks/dirt
+loot insert 7 100 6 mine 6 100 6
+data get block 7 100 6 Items
+loot insert 6 100 6 loot minecraft:blocks/stone
+loot replace block 7 100 6 container.3 loot minecraft:blocks/dirt
+loot replace block 7 100 6 container.30 loot minecraft:blocks/dirt
+loot replace block 7 100 6 container.4 2 loot minecraft:blocks/dirt
+loot replace block 7 100 6 container.5 0 loot minecraft:blocks/dirt
+data get block 7 100 6 Items
+loot replace entity Diff0 hotbar.8 loot minecraft:blocks/cobblestone
+loot replace entity @a armor.head loot minecraft:blocks/carved_pumpkin
+data get entity Diff0 Inventory[{Slot:8b}].id
+loot spawn 5 101 5 loot minecraft:blocks/stone
+loot spawn 5 101 5 mine 6 100 6
+loot give Diff0 kill Other0
+loot give Diff0 kill @e[type=minecraft:item,limit=1]
+loot give Diff0 loot {pools:[{rolls:1,entries:[{type:"minecraft:item",name:"minecraft:apple"}]}]}
+loot give Diff0 fish minecraft:blocks/stone 6 100 6
+! clear @a
+! kill @e[type=!minecraft:player]
+
+# item
+! gamerule show_advancement_messages false
+! setblock 6 100 6 stone
+! setblock 7 100 6 air
+! setblock 7 100 6 chest
+! setblock 8 100 6 furnace
+item replace block 7 100 6 container.0 with minecraft:diamond 5
+item replace block 7 100 6 container.1 with minecraft:stone 100
+item replace block 7 100 6 container.1 with minecraft:stone 64
+item replace block 7 100 6 container.1 with minecraft:air
+item replace block 7 100 6 container.30 with minecraft:dirt
+item replace block 7 100 6 container.99 with minecraft:dirt
+item replace block 6 100 6 container.0 with minecraft:dirt
+item replace block 9 100 6 container.0 with minecraft:dirt
+item replace block 7 100 6 container.* with minecraft:apple
+item replace block 7 100 6 container.* with minecraft:apple 2
+item fill block 7 100 6 container.* with minecraft:cobblestone 3
+item override block 7 100 6 container.* with minecraft:dirt
+item override block 7 100 6 container.3 with minecraft:air
+data get block 7 100 6 Items
+item replace block 8 100 6 container.1 with minecraft:coal 5
+item replace block 8 100 6 container.3 with minecraft:coal 5
+item replace block 8 100 6 container.* with minecraft:coal 5
+data get block 8 100 6 Items
+item replace block 7 100 6 foo.bar with minecraft:dirt
+item replace block 7 100 6 kilndiff:nothing with minecraft:dirt
+item replace block 7 100 6 kilndiff:first_two with minecraft:emerald 2
+item fill block 7 100 6 kilndiff:first_two with minecraft:emerald 2
+item override block 7 100 6 kilndiff:both with minecraft:gold_ingot
+item replace block 7 100 6 {type:"minecraft:slot_range",slots:"container.7"} with minecraft:iron_ingot
+data get block 7 100 6 Items
+item modify block 7 100 6 container.0 kilndiff:three
+item modify block 7 100 6 container.* kilndiff:three
+item modify block 7 100 6 container.* kilndiff:nothing
+item modify block 6 100 6 container.0 kilndiff:three
+item modify block 7 100 6 container.0 {type:"minecraft:set_count",count:7}
+data get block 7 100 6 Items
+item replace block 7 100 6 container.20 with minecraft:air
+item modify block 7 100 6 container.20 kilndiff:three
+item replace entity Diff0 hotbar.0 with minecraft:golden_apple 2
+item replace entity Diff0 hotbar.1 with minecraft:stone 65
+item replace entity Diff0 hotbar.* with minecraft:stick
+item replace entity Diff0 hotbar.* with minecraft:stick 3
+item fill entity Diff0 hotbar.* with minecraft:arrow
+item override entity Diff0 hotbar.* with minecraft:bow
+item override entity Diff0 hotbar.4 with minecraft:air
+data get entity Diff0 Inventory
+item replace entity @a hotbar.1 from entity Diff0 hotbar.0
+item replace entity Other0 hotbar.* from entity Diff0 hotbar.*
+item replace entity Diff0 hotbar.* from block 7 100 6 container.*
+item replace entity Diff0 hotbar.2 from block 7 100 6 container.0 kilndiff:three
+item replace entity Diff0 armor.head with minecraft:iron_helmet
+item replace entity Diff0 armor.* with minecraft:diamond_chestplate
+item replace entity Diff0 weapon.offhand with minecraft:shield
+item replace entity Diff0 weapon.mainhand with minecraft:stone
+item replace entity Diff0 inventory.5 with minecraft:cake
+item replace entity Diff0 enderchest.3 with minecraft:cake
+item replace entity Diff0 horse.3 with minecraft:cake
+item replace entity Diff0 contents with minecraft:cake
+item replace entity Nobody hotbar.0 with minecraft:cake
+item replace entity @e[type=minecraft:pig] hotbar.0 with minecraft:cake
+item replace block 7 100 6 container.0 from entity Diff0 hotbar.0
+item replace block 7 100 6 container.0 from entity Diff0 horse.3
+item replace block 7 100 6 container.0 from entity Diff0 hotbar.* kilndiff:three
+item replace block 7 100 6 container.* from entity Diff0 armor.*
+item replace block 7 100 6 container.0 from block 8 100 6 container.0
+item replace block 7 100 6 container.0 from block 6 100 6 container.0
+item replace block 7 100 6 container.0 from block 8 100 6 container.20
+item replace block 7 100 6 container.0 from entity Nobody hotbar.0
+item replace entity Diff0 hotbar.0 from entity Diff0 hotbar.0 kilndiff:nothing
+item modify entity Diff0 hotbar.0 kilndiff:three
+item modify entity @a hotbar.* kilndiff:three
+item modify entity Diff0 hotbar.8 kilndiff:three
+item modify entity Diff0 armor.* kilndiff:name
+item modify entity Nobody hotbar.0 kilndiff:three
+item modify entity Diff0 hotbar.0 kilndiff:missing
+item replace entity Diff0 kilndiff:hotbar_apples with minecraft:carrot
+item replace entity Diff0 kilndiff:first_two with minecraft:carrot
+item modify entity Diff0 kilndiff:hotbar_apples kilndiff:three
+data get entity Diff0 Inventory
+item replace entity Diff0 hotbar.* with minecraft:apple 1
+item replace entity Diff0 hotbar.3 with minecraft:carrot
+item modify entity Diff0 kilndiff:hotbar_apples kilndiff:three
+item replace entity Diff0 kilndiff:hotbar_apples with minecraft:air
+data get entity Diff0 Inventory
+item modify entity Diff0 hotbar.0 {type:"minecraft:bogus"}
+item modify entity Diff0 hotbar.0 {}
+item modify entity Diff0 hotbar.0 [1]
+item modify entity Diff0 hotbar.0 "kilndiff:three"
+item modify entity Diff0 hotbar.0 {type:"minecraft:set_count",count:{type:"minecraft:bogus"}}
+execute if slots entity Diff0 {type:"minecraft:bogus"}
+execute if slots entity Diff0 {}
+execute if slots entity Diff0 {type:"minecraft:empty"}
+execute if slots entity Diff0 [{type:"minecraft:empty"}]
+loot give Diff0 loot {pools:[{rolls:1,entries:[{type:"minecraft:bogus"}]}]}
+loot give Diff0 loot {}
+item
+item replace
+item replace block
+item replace block 7 100 6
+item replace block 7 100 6 container.0
+item replace block 7 100 6 container.0 with
+item replace block 7 100 6 container.0 with minecraft:dirt 0
+item replace block 7 100 6 container.0 with minecraft:dirt 100
+item replace block 7 100 6 container.0 with minecraft:nonexistent
+item bogus
+
+# execute if items
+execute if items entity Diff0 hotbar.* minecraft:apple
+execute if items entity Diff0 hotbar.* minecraft:bow
+execute if items entity Diff0 hotbar.0 *
+execute if items entity Diff0 hotbar.8 minecraft:air
+execute if items entity Diff0 hotbar.* #minecraft:logs
+execute if items entity @a hotbar.* minecraft:apple
+execute if items entity Nobody hotbar.0 *
+execute if items entity Diff0 horse.3 *
+execute if items entity Diff0 kilndiff:hotbar_apples *
+execute unless items entity Diff0 hotbar.* minecraft:apple
+execute unless items entity Diff0 hotbar.* minecraft:bow
+execute store result score Diff0 kilndiff run execute if items entity Diff0 hotbar.* *
+execute if items block 7 100 6 container.* *
+execute if items block 7 100 6 container.0 minecraft:dirt
+execute if items block 6 100 6 container.0 *
+execute unless items block 7 100 6 container.* minecraft:emerald
+execute if items block 7 100 6 kilndiff:both *
+execute if items block 7 100 6 foo *
+
+# execute if slots
+execute if slots entity Diff0 hotbar.*
+execute if slots entity Diff0 hotbar.3
+execute if slots entity Diff0 horse.3
+execute if slots entity @a hotbar.*
+execute if slots entity Nobody hotbar.*
+execute if slots entity Diff0 kilndiff:hotbar_apples
+execute unless slots entity Diff0 kilndiff:hotbar_apples
+execute if slots block 7 100 6 container.*
+execute if slots block 7 100 6 kilndiff:first_two
+execute if slots block 7 100 6 container.40
+execute if slots block 6 100 6 container.*
+execute unless slots block 7 100 6 container.99
+! gamerule show_advancement_messages true
+! gamerule show_advancement_messages true
+
+# compute
+compute default integer 5
+compute default integer -3
+compute default integer minecraft:cooking/time_coal
+compute default integer minecraft:cooking/time_wool
+compute default integer minecraft:compostable/always_add_one
+compute default integer minecraft:nonexistent
+compute default integer nonexistent
+compute default float 2.5
+compute default float 2.5 2
+compute default float 2.5 -3
+compute default float 3 1
+compute default float 0.1 10
+compute default float minecraft:cooking/normal_speed_multiplier
+compute default float minecraft:cooking/normal_speed_multiplier 100
+compute default float minecraft:cooking/nothing
+compute default float {type:"minecraft:constant",value:1.5}
+compute default float {type:"minecraft:uniform",min:1,max:1}
+compute default integer {type:"minecraft:constant",value:7}
+compute default integer {type:"minecraft:add",inputs:[1,2,3]}
+compute default integer {type:"minecraft:div",left:1,right:0}
+compute default integer {type:"minecraft:mul",inputs:[100000,100000]}
+compute default float {type:"minecraft:div",left:1.0,right:0.0}
+compute default integer {type:"minecraft:abs",input:-2147483648}
+compute default integer {type:"minecraft:negate",input:-2147483648}
+compute default integer {type:"minecraft:sub",left:-2147483648,right:1}
+compute default integer {type:"minecraft:mod",left:1,right:0}
+compute default integer {type:"minecraft:floor_div",left:1,right:0}
+compute default integer {type:"minecraft:floor_div",left:-2147483648,right:-1}
+compute default integer {type:"minecraft:floor_mod",left:1,right:0}
+compute default integer {type:"minecraft:pow",base:0,exponent:0}
+compute default integer {type:"minecraft:pow",base:2,exponent:40}
+compute default integer {type:"minecraft:pow",base:2,exponent:-1}
+compute default integer {type:"minecraft:avg",inputs:[]}
+compute default integer {type:"minecraft:add",inputs:[2147483647,1]}
+compute default integer {type:"minecraft:from_float",input:{type:"minecraft:div",left:1.0,right:0.0}}
+compute default integer {type:"minecraft:from_float",input:1.0e20}
+compute default float {type:"minecraft:div",left:0.0,right:0.0}
+compute default float {type:"minecraft:sqrt",input:-1.0}
+compute default float {type:"minecraft:div",left:-1.0,right:0.0}
+compute default float {type:"minecraft:from_int",input:{type:"minecraft:pow",base:2,exponent:40}}
+compute default integer {type:"minecraft:bogus"}
+compute default integer {}
+compute default integer "minecraft:cooking/time_coal"
+compute default integer [1]
+compute block 7 100 6 integer 3
+compute block 7 100 6 integer minecraft:compostable/always_add_one
+compute block 6 100 6 float 0.5 10
+compute block 100000 100 0 integer 1
+compute block 0 -100 0 integer 1
+compute entity Diff0 integer 4
+compute entity Diff0 float 4.5 2
+compute entity Nobody integer 4
+compute entity @a integer 4
+compute
+compute default
+compute default float
+compute default integer
+compute bogus
+! clear @a
+! kill @e[type=!minecraft:player]
 """
 
 
@@ -1100,12 +2008,24 @@ class Server:
         self.log.close()
 
 
+def reset_lists(base: Path):
+    """Both servers keep the whitelist and ban lists next to the world; each run starts empty."""
+    for name in ("whitelist.json", "banned-players.json", "banned-ips.json", "usercache.json"):
+        (base / name).unlink(missing_ok=True)
+def write_zip_pack(dest: Path):
+    with zipfile.ZipFile(dest / "kilnzip.zip", "w", zipfile.ZIP_DEFLATED) as z:
+        for name, text in ZIP_PACK.items():
+            z.writestr(name, text)
+
+
 def start_vanilla(port: int) -> Server:
     base = SCRATCH / "vanilla"
     base.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(base / "world", ignore_errors=True)
+    reset_lists(base)
     # The test functions: a world pack, found and enabled when the world is created.
     shutil.copytree(DATAPACK, base / "world" / "datapacks" / DATAPACK.name)
+    write_zip_pack(base / "world" / "datapacks")
     (base / "eula.txt").write_text("eula=true\n", encoding="utf-8")
     props = [
         f"server-port={port}",
@@ -1124,6 +2044,7 @@ def start_vanilla(port: int) -> Server:
         "sync-chunk-writes=false",
         "enable-rcon=false",
         "enable-query=false",
+        f"initial-enabled-packs={INITIAL_PACKS}",
     ]
     (base / "server.properties").write_text("\n".join(props) + "\n", encoding="utf-8")
     argv = ["java", "-Xmx2G", "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8", "-Dfile.encoding=UTF-8",
@@ -1134,6 +2055,7 @@ def start_vanilla(port: int) -> Server:
 def start_kiln(port: int, exe: Path, lang: Path) -> Server:
     base = SCRATCH / "kiln"
     base.mkdir(parents=True, exist_ok=True)
+    reset_lists(base)
     copy = SCRATCH / "kiln-diff.exe"
     shutil.copy2(exe, copy)
     env = os.environ.copy()
@@ -1142,7 +2064,11 @@ def start_kiln(port: int, exe: Path, lang: Path) -> Server:
     packs = SCRATCH / "kiln-datapacks"
     shutil.rmtree(packs, ignore_errors=True)
     shutil.copytree(DATAPACK, packs / DATAPACK.name)
+    write_zip_pack(packs)
     env["KILN_DATAPACKS"] = str(packs)
+    env["KILN_INITIAL_PACKS"] = INITIAL_PACKS
+    # The vanilla pack (recipes, loot, advancements, the feature packs).
+    env.setdefault("KILN_DATAPACK", str(WORK / "generated"))
     env.pop("KILN_OPS", None)
     return Server("kiln", [str(copy)], base, env, KILN_LINE, SCRATCH / "kiln.log")
 

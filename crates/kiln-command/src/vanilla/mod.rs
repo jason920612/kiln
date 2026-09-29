@@ -1,23 +1,37 @@
 //! Built-in commands with vanilla 26.3's tree shape (checked against the data generator's
 //! `commands.json`) and feedback, plus Kiln's `/kiln`.
 
+mod admin;
 mod advancement;
 mod blocks;
+mod attribute;
 mod bossbar;
 mod chat;
+mod data;
 mod effect;
+mod entity;
 pub mod experience;
 mod summon;
 mod execute;
 mod function;
+mod items;
+mod compute;
+mod item;
+mod loot;
 pub use function::{run_as_server, run_function};
 pub mod gamerules;
 mod players;
 mod protocol;
+pub mod misc;
 mod scoreboard;
+pub(crate) mod sound;
 mod server;
+mod tag;
 mod team;
 mod title;
+mod tracker;
+mod world;
+pub use world::{java_double, java_fixed, java_float};
 
 use crate::arguments::GameProfileArg;
 use crate::dispatcher::Dispatcher;
@@ -83,6 +97,50 @@ pub const COMMANDS: &[&str] = &[
     "summon",
     "advancement",
     "recipe",
+    "whitelist",
+    "ban",
+    "ban-ip",
+    "banlist",
+    "pardon",
+    "pardon-ip",
+    "save-all",
+    "save-on",
+    "save-off",
+    "defaultgamemode",
+    "setidletimeout",
+    "version",
+    "debug",
+    "perf",
+    "jfr",
+    "particle",
+    "playsound",
+    "stopsound",
+    "stopwatch",
+    "posteffect",
+    "waypoint",
+    // data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing, fetchprofile
+    "data",
+    "tag",
+    "rotate",
+    "spectate",
+    "swing",
+    "ride",
+    "damage",
+    "clear",
+    "enchant",
+    "attribute",
+    "worldborder",
+    "tick",
+    "forceload",
+    "random",
+    "locate",
+    "place",
+    "fillbiome",
+    "spreadplayers",
+    "loot",
+    "item",
+    "compute",
 ];
 
 /// Registers every built-in command.
@@ -131,6 +189,46 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     server::kiln(d);
     advancement::advancement(d);
     advancement::recipe(d);
+    admin::whitelist(d);
+    admin::ban(d);
+    admin::ban_ip(d);
+    admin::banlist(d);
+    admin::pardon(d);
+    admin::pardon_ip(d);
+    admin::save(d);
+    admin::defaultgamemode(d);
+    admin::setidletimeout(d);
+    admin::version(d);
+    admin::profilers(d);
+    sound::particle_command(d);
+    sound::playsound(d);
+    sound::stopsound(d);
+    misc::stopwatch(d);
+    misc::posteffect(d);
+    misc::waypoint(d);
+    // data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing, fetchprofile
+    data::data(d);
+    tag::tag(d);
+    entity::rotate(d);
+    entity::spectate(d);
+    entity::swing(d);
+    entity::ride(d);
+    entity::damage(d);
+    items::clear(d);
+    items::enchant(d);
+    attribute::attribute(d);
+    world::worldborder(d);
+    world::tick(d);
+    world::forceload(d);
+    world::random(d);
+    world::locate(d);
+    world::place(d);
+    world::fillbiome(d);
+    world::spreadplayers(d);
+    loot::loot(d);
+    item::item(d);
+    compute::compute(d);
 }
 
 /// `getEntityOrException`.

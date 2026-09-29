@@ -160,6 +160,14 @@ impl PlayerData {
         &self.raw
     }
 
+    /// The loaded compound, for fields Kiln keeps only in the saved form (`Tags`).
+    pub fn raw_mut(&mut self) -> &mut Tag {
+        if !matches!(self.raw, Tag::Compound(_)) {
+            self.raw = Tag::Compound(Vec::new());
+        }
+        &mut self.raw
+    }
+
     /// Kiln's view of the inventory: item id and count per menu slot (unknown items read as
     /// empty; they are kept on save while the slot stays empty).
     pub fn slots(&self) -> Vec<Option<(i32, i32)>> {

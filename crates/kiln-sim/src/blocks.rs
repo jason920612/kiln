@@ -607,6 +607,12 @@ impl Ticking {
         Self(cells)
     }
 
+    /// Adds one chunk (a force-loaded one).
+    pub fn add_chunk(&mut self, c: ChunkPos) {
+        let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
+        *self.0.entry(c.cell()).or_default() |= 1 << bit;
+    }
+
     /// Chunks within `r` of `center` tick too (the dragon fight's arena).
     pub fn add(&mut self, center: ChunkPos, r: i32) {
         let other = Ticking::around(std::iter::once(center), r);
@@ -1056,13 +1062,13 @@ fn block_drops(
 }
 
 /// The loot context of a block broken at `origin` (`LootContextParamSets.BLOCK`).
-struct BreakContext {
-    tool: kiln_item::ItemStack,
-    player: bool,
-    state: u16,
-    origin: [f64; 3],
+pub(crate) struct BreakContext {
+    pub tool: kiln_item::ItemStack,
+    pub player: bool,
+    pub state: u16,
+    pub origin: [f64; 3],
     /// The components of the block's block entity (`collectComponents`), if it had one.
-    block_entity: Option<Vec<kiln_item::component::Component>>,
+    pub block_entity: Option<Vec<kiln_item::component::Component>>,
 }
 
 impl kiln_loot::LootContext for BreakContext {

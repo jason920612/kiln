@@ -31,9 +31,18 @@ fn main() -> Result<()> {
 
     let (to_sim, sim_rx) = crossbeam_channel::unbounded();
     let shutdown = to_sim.clone();
-    let shared = Arc::new(kiln_net::Shared::new(net_config, to_sim));
+    // whitelist.json, banned-players.json and banned-ips.json in the working directory, as
+    // vanilla keeps them; KILN_WHITELIST / KILN_ENFORCE_WHITELIST (true/false) are
+    // `white-list` and `enforce-whitelist`.
+    let mut access = kiln_link::access::AccessLists::new(Some(std::env::current_dir()?));
+    access.use_whitelist = std::env::var("KILN_WHITELIST").is_ok_and(|v| v == "true");
+    access.enforce_whitelist = std::env::var("KILN_ENFORCE_WHITELIST").is_ok_and(|v| v == "true");
+    let access = access.shared();
+    let shared = Arc::new(kiln_net::Shared::new(net_config, to_sim).with_access(access.clone()));
     let mut sim_config = kiln_sim::SimConfig::new(max_players, view_distance, std::env::var_os("KILN_WORLD").map(Into::into));
     sim_config.simulation_distance = simulation_distance;
+    sim_config.access = access;
+    sim_config.data_sync = shared.data_sync.clone();
     sim_config.online_mode = shared.authenticates();
     sim_config.require_resource_pack = shared.resource_pack_required();
     // KILN_TICK_THREADS: tick pool size; KILN_REGIONS=unified: one region (vanilla profile).

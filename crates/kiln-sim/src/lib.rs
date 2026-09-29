@@ -23,11 +23,14 @@
 mod advancements;
 mod blocks;
 mod combat;
+mod command_data;
 mod commands;
 mod consume;
 mod xp;
 mod container;
 mod datapacks;
+mod tags;
+mod zip_pack;
 pub mod lobby;
 mod digging;
 mod dragon_fight;
@@ -59,7 +62,9 @@ mod sculk;
 mod sleep;
 mod stats;
 mod trading;
+mod waypoints;
 mod weather;
+mod world_state;
 mod wither;
 pub mod testing;
 #[cfg(test)]
@@ -125,6 +130,13 @@ pub struct SimConfig {
     /// Storage format of a new world (an existing world keeps its own: Anvil unless marked
     /// native, see `kiln_storage::WorldFormat`).
     pub world_format: kiln_storage::WorldFormat,
+    /// Whitelist and ban lists, shared with the login checks.
+    pub access: kiln_link::access::SharedAccess,
+    /// Keep-alives every 15 s of wall-clock time; `false` sends none (replays and
+    /// determinism tests, whose packet streams must not depend on how fast they run).
+    pub keep_alive: bool,
+    /// Where the data packs publish the feature flags and tags that logins send.
+    pub data_sync: std::sync::Arc<kiln_link::DataSync>,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -154,11 +166,13 @@ impl SimConfig {
             schedule: ScheduleMode::Lockstep,
             inject_delay: None,
             world_format: kiln_storage::WorldFormat::Anvil,
+            access: kiln_link::access::AccessLists::new(None).shared(),
+            keep_alive: true,
+            data_sync: Default::default(),
         }
     }
 }
 
-const TICK: Duration = Duration::from_millis(50);
 const KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(15);
 const KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(30);
 const OVERWORLD: &str = "minecraft:overworld";
@@ -206,6 +220,19 @@ struct Player {
     client: ClientInfo,
     game_mode: u8,
     sink: Box<dyn Sink>,
+    /// The client's address, for `/ban-ip`.
+    address: Option<std::net::IpAddr>,
+    /// `ServerPlayer.lastActionTime`, for `/setidletimeout`.
+    last_action: Instant,
+    /// `ServerPlayer.postEffects` and whether the client has them (`postEffectsDirty`).
+    post_effects: Vec<String>,
+    post_effects_dirty: bool,
+    /// The locator bar: the icon (`locatorBarIcon`), the level whose waypoint manager has the
+    /// player, `firstTick`, and the position waypoints were last updated for.
+    waypoint_icon: waypoints::Icon,
+    waypoint_dim: Option<DimId>,
+    waypoint_first_tick: bool,
+    waypoint_last_pos: [f64; 3],
     /// Packets queued this tick; flushed in the egress phase.
     outbox: Vec<Bytes>,
     /// Set once the connection was told to close; the player leaves when it does.
@@ -238,6 +265,8 @@ struct Player {
     merchant_events: Vec<(i32, kiln_inventory::merchant::MerchantEvent)>,
     /// What the open menu is on, the menu counter and the ender chest items.
     containers: container::open::PlayerContainers,
+    /// The crafting grid slots (500..504) `/item` reaches through `player.crafting.N`.
+    command_slots: [kiln_item::ItemStack; 4],
     /// Movement packets for this player's viewers.
     tracker: packets::entity::MovementTracker,
     /// Players currently seeing this one (sorted).
@@ -418,6 +447,8 @@ struct Player {
     recipe_book: recipe_book::RecipeBook,
     /// `PlayerAdvancements`.
     advancements: advancements::progress::PlayerAdvancements,
+    /// Base values and permanent modifiers `/attribute` set.
+    command_attributes: combat::CommandAttributes,
 }
 
 impl Player {
@@ -835,11 +866,15 @@ pub struct Sim {
     clock_runs: [weather::ClockRun; 2],
     /// Each level's sleeping players (`ServerLevel.sleepStatus`).
     sleep_status: [sleep::SleepStatus; 3],
+    /// Each level's locator bar waypoints (`ServerWaypointManager`).
+    waypoints: [waypoints::WaypointManager; 3],
     /// Advancements of the enabled data packs.
     advancements: std::sync::Arc<advancements::Advancements>,
     plugins: Option<plugins::SimPlugins>,
     /// Independent scheduling state: regions ticking away, their clocks.
     independent: independent::Independent,
+    /// Borders, tick rate, forced chunks and random sequences (the world commands).
+    world: world_state::WorldState,
 }
 
 /// Operator names from `KILN_OPS` (comma separated).
@@ -851,6 +886,7 @@ fn ops_from_env() -> HashSet<String> {
 
 pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
     let mut sim = Sim::new(config);
+    sim.sync_ops();
     let mut next_tick = Instant::now();
     let mut inbox = Vec::new();
     loop {
@@ -861,12 +897,24 @@ pub fn run(config: SimConfig, rx: Receiver<ToSim>) {
                 Err(crossbeam_channel::TryRecvError::Disconnected) => return,
             }
         }
+        // `/tick sprint`: ticks run back to back until the sprint is over.
+        let sprinting = sim.world.tick_rate.is_sprinting() && {
+            let mut news = world_state::TickNews::default();
+            let sprint = sim.world.tick_rate.check_sprint(&mut news);
+            sim.tick_rate_news(news);
+            sprint
+        };
         if !sim.step(inbox.drain(..)) {
             return;
         }
+        if sprinting {
+            sim.world.tick_rate.end_tick_work();
+            next_tick = Instant::now();
+            continue;
+        }
 
-        // Fixed 50 ms cadence; if we fell behind, don't try to catch up.
-        next_tick += TICK;
+        // The tick rate's cadence (50 ms by default); if we fell behind, don't try to catch up.
+        next_tick += Duration::from_nanos(sim.world.tick_rate.nanos_per_tick() as u64);
         let now = Instant::now();
         if next_tick > now {
             std::thread::sleep(next_tick - now);
@@ -908,6 +956,8 @@ impl Sim {
         }
         // A native world's store per dimension, shared by its chunks and entities.
         let mut native_stores: Vec<Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>> = Vec::new();
+        // Each level's generation pipeline, for `/locate` and `/place`.
+        let mut pipelines: Vec<Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>> = Vec::new();
         let providers: Vec<ChunkProvider> = (0..DIMENSIONS.len())
             .map(|id| {
                 let (key, biome_name) = DIMENSIONS[id];
@@ -915,6 +965,7 @@ impl Sim {
                 let dimension = Dimension { min_y: kind.min_y, height: kind.height };
                 let biome = kiln_data::synced_id("minecraft:worldgen/biome", biome_name).expect("default biome") as u16;
                 let generator = generator(id);
+                pipelines.push(generator.as_ref().map(|g| g.pipeline().clone()));
                 match &config.world {
                     Some(dir) => {
                         let source: Box<dyn kiln_world::ChunkSource> = if format == Some(kiln_storage::WorldFormat::Native) {
@@ -1009,15 +1060,19 @@ impl Sim {
             zoom_seed: kiln_worldgen::generator::obfuscate_seed(seed),
             clock_runs: Default::default(),
             sleep_status: Default::default(),
+            waypoints: Default::default(),
             advancements: Default::default(),
             plugins: None,
             independent: Default::default(),
+            world: world_state::WorldState { pipelines, ..Default::default() },
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.load_scoreboard();
+        sim.load_stopwatches();
         sim.load_weather();
+        sim.load_world_state();
         sim.load_raids();
         sim.load_dragon_fight();
         sim.init_packs(vanilla_pack);
@@ -1036,6 +1091,8 @@ impl Sim {
             mark = now;
         };
 
+        // `ServerTickRateManager.tick`: whether the levels run this tick.
+        self.world.tick_rate.tick();
         // B0: connection events, chunks, topology, joins, membership.
         let (mut packets, mut joins, mut console, mut leaves) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for msg in inbox {
@@ -1060,6 +1117,7 @@ impl Sim {
         // Independent mode: regions back from ticking away rejoin; anything that needs the
         // whole server waits for all of them.
         let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
+        self.track_idle(&packets);
         self.maintain_chunks();
         self.rendezvous_for_topology();
         let joining: Vec<_> = joins.into_iter().map(|j| (self.joining(j.uuid), j)).collect();
@@ -1147,6 +1205,7 @@ impl Sim {
             self.stats.phase(name, d);
         }
 
+        self.record_tick_time(start.elapsed().as_nanos() as i64);
         if let Some(report) = self.stats.record(start.elapsed()) {
             info!(
                 "{} players, {} regions, {} chunks | {report}",
@@ -1528,8 +1587,12 @@ impl Sim {
             biome_count: self.dims[dim].provider.biome_count,
             now: Instant::now(),
             keep_alive_id: self.started.elapsed().as_millis() as i64,
+            keep_alive: self.config.keep_alive,
             portal: self.portal_rules(),
             blocks: self.block_env(dim),
+            frozen: !self.world.tick_rate.runs_normally(),
+            border: self.world.borders[dim].bounds(),
+            forced: std::sync::Arc::new(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)).collect()),
         }
     }
 
@@ -1694,6 +1757,8 @@ impl Sim {
         self.materialize_spawns();
         for dim in 0..self.dims.len() {
             let mut keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            // Force-loaded chunks (`/forceload`) stay, and load like a player's own chunk.
+            keep.extend(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)));
             // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),
             // and the rest of it loads a few chunks a tick.
             if dim == END_ID && self.dragon_fight.active() {
@@ -1895,13 +1960,17 @@ impl Sim {
         };
         let (spawn, spawn_rot, now) = (self.spawn, self.spawn_rot, self.game_time);
         let time = self.time_packet();
-        let weather = self.weather_packets(dim);
+        let weather = self.level_info_packets(dim);
         let rules = self.rules.clone();
         // Viewers in the old level saw the death (or the player walk into the portal): they
         // forget it and get the entity again once tracking re-evaluates it.
         self.untrack_everywhere(conn);
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info_packet);
+        // `PlayerList.respawn` sends the post effects again; the new player starts its first
+        // tick (no waypoint until it has moved).
+        p.post_effects_dirty = true;
+        p.waypoint_first_tick = true;
         self.sleep_status[p.dim].dirty = true;
         self.sleep_status[dim].dirty = true;
         p.dim = dim;
@@ -2057,6 +2126,9 @@ impl Sim {
             // `PlayerList.remove`.
             p.award_stat(*player_stats::stat::LEAVE_GAME, 1);
             self.commands.bossbars.player_left(p.uuid);
+            if let Some(dim) = p.waypoint_dim {
+                self.waypoints_remove_player(dim, conn, p.uuid);
+            }
             self.save_player(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
@@ -2117,8 +2189,10 @@ impl Sim {
         }
         self.save_level();
         self.save_weather();
+        self.save_world_state();
         self.save_raids();
         self.save_scoreboard();
+        self.save_stopwatches();
         self.save_timers();
         self.save_dragon_fight();
         self.save_plugins();
@@ -2147,6 +2221,14 @@ impl Sim {
             client: j.client,
             game_mode: joining.game_mode,
             sink: j.sink,
+            address: j.address,
+            last_action: Instant::now(),
+            post_effects: persist::saved_post_effects(joining.saved.raw()),
+            post_effects_dirty: true,
+            waypoint_icon: persist::saved_waypoint_icon(joining.saved.raw()),
+            waypoint_dim: None,
+            waypoint_first_tick: true,
+            waypoint_last_pos: spawn,
             outbox: Vec::new(),
             disconnected: false,
             region,
@@ -2167,6 +2249,7 @@ impl Sim {
             open_menu: None,
             merchant_events: Vec::new(),
             containers: container::open::PlayerContainers::load(joining.saved.raw()),
+            command_slots: Default::default(),
             tracker: packets::entity::MovementTracker::new(
                 entity_id,
                 kiln_data::entities::types::PLAYER.update_interval,
@@ -2267,6 +2350,7 @@ impl Sim {
             stats: self.load_stats(j.uuid),
             recipe_book,
             advancements: self.load_player_advancements(j.uuid),
+            command_attributes: combat::CommandAttributes::default(),
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -2287,11 +2371,15 @@ impl Sim {
         player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, spawn_yaw, spawn_pitch));
         player.send(packets::game_event(packets::GAME_EVENT_START_WAITING_FOR_CHUNKS, 0.0));
         player.send(packets::set_chunk_cache_center(player.center.x, player.center.z));
+        player.send(self.world.borders[dim].init_packet());
         player.send(self.time_packet());
         // `PlayerList.sendLevelInfo`: the weather of the player's level.
         for pkt in self.weather_packets(player.dim) {
             player.send(pkt);
         }
+        // `ServerTickRateManager.updateJoiningPlayer`.
+        player.send(self.world.tick_rate.state_packet());
+        player.send(self.world.tick_rate.step_packet());
         player.send(packets::set_held_slot(player.inv.selected as i32));
         player.sync_health();
         // `PlayerList.placeNewPlayer`: the saved effects.
@@ -2353,23 +2441,37 @@ impl Sim {
 
     /// G: world age and time, autosave.
     fn tick_global(&mut self) {
-        self.game_time += 1;
-        for d in &mut self.dims {
-            d.game_time = self.game_time;
+        // A frozen game (`/tick freeze`) keeps its time, weather and border; functions run.
+        let normal = self.world.tick_rate.runs_normally();
+        if normal {
+            self.game_time += 1;
+            for d in &mut self.dims {
+                d.game_time = self.game_time;
+            }
         }
         self.tick_functions();
-        self.tick_clocks();
-        if self.game_time % 20 == 0 {
+        if normal {
+            self.tick_clocks();
+        }
+        if normal && self.game_time % 20 == 0 {
             let pkt = self.time_packet();
             self.broadcast(pkt);
         }
-        // The levels' `tick`: the weather, sleeping, then (in the regions) the blocks.
+        // The levels' `tick`: the border, the weather, sleeping, then (in the regions) the
+        // blocks.
         self.update_sleeping();
-        self.tick_weather();
+        if normal {
+            self.tick_borders();
+            self.tick_weather();
+        }
         self.tick_sleep();
+        self.send_post_effects();
+        self.tick_waypoints();
         self.tick_raids();
         self.tick_dragon_fight();
-        if self.game_time % AUTOSAVE_TICKS == 0 {
+        // `save-all` asks for a save; `save-off` stops the autosave.
+        let autosave = normal && self.commands.auto_save && self.game_time % AUTOSAVE_TICKS == 0;
+        if std::mem::take(&mut self.commands.save_requested) || autosave {
             self.save();
         }
     }

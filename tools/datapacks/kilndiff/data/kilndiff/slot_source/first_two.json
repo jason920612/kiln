@@ -1,0 +1,1 @@
+{"type":"minecraft:limit_slots","slot_source":{"type":"minecraft:slot_range","slots":"container.*"},"limit":2}

@@ -53,6 +53,12 @@ pub trait Source {
     fn registry_ids(&self, _registry: &str) -> Vec<String> {
         Vec::new()
     }
+    /// Why an inline definition (SNBT) of a data pack registry entry does not decode
+    /// (`ResourceOrIdArgument` decodes while parsing); `None` when it is fine or Kiln does not
+    /// check `registry`.
+    fn definition_error(&self, _registry: &str, _definition: &Tag) -> Option<String> {
+        None
+    }
     /// Dimension ids, for suggestions.
     fn dimensions(&self) -> Vec<String> {
         ["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"].map(String::from).to_vec()
@@ -493,10 +499,125 @@ impl ChatMessage {
     }
 }
 
+/// A change to a waypoint's icon (`/waypoint modify`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaypointChange {
+    /// `0xRRGGBB`, or `None` to reset.
+    Color(Option<i32>),
+    /// A `waypoint_style` asset id, or `None` for the default.
+    Style(Option<String>),
+}
+
+/// A level's world border as `/worldborder` reads it (`WorldBorder`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BorderInfo {
+    pub center: [f64; 2],
+    /// The current size (`getSize`, mid-move while it moves).
+    pub size: f64,
+    /// Ticks left of a size change (`getLerpTime`), 0 when still.
+    pub lerp_time: i64,
+    pub damage_per_block: f64,
+    pub safe_zone: f64,
+    /// Ticks.
+    pub warning_time: i32,
+    pub warning_blocks: i32,
+}
+
+impl Default for BorderInfo {
+    /// `WorldBorder.Settings.DEFAULT`.
+    fn default() -> Self {
+        BorderInfo {
+            center: [0.0, 0.0],
+            size: 59_999_968.0,
+            lerp_time: 0,
+            damage_per_block: 0.2,
+            safe_zone: 5.0,
+            warning_time: 300,
+            warning_blocks: 5,
+        }
+    }
+}
+
+/// A change `/worldborder` makes (the `WorldBorder` setters).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BorderChange {
+    Center(f64, f64),
+    Size(f64),
+    /// `lerpSizeBetween(from, to, ticks, gameTime)`.
+    Lerp { from: f64, to: f64, ticks: i64 },
+    DamagePerBlock(f64),
+    SafeZone(f64),
+    WarningTime(i32),
+    WarningBlocks(i32),
+}
+
+/// The server's tick rate state (`ServerTickRateManager`), for `/tick query`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TickRateInfo {
+    pub rate: f32,
+    pub nanos_per_tick: i64,
+    pub frozen: bool,
+    pub sprinting: bool,
+    /// `getAverageTickTimeNanos`.
+    pub average_tick_nanos: i64,
+    /// `getTickTimesNanos`: the last 100 tick times.
+    pub tick_times: Vec<i64>,
+}
+
+impl Default for TickRateInfo {
+    fn default() -> Self {
+        TickRateInfo {
+            rate: 20.0,
+            nanos_per_tick: 50_000_000,
+            frozen: false,
+            sprinting: false,
+            average_tick_nanos: 0,
+            tick_times: vec![0; 100],
+        }
+    }
+}
+
+/// What `/tick` asks of the tick rate manager.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TickRateAction {
+    Rate(f32),
+    /// `setFrozen`, after stopping a sprint or steps when freezing.
+    Freeze(bool),
+    /// `stepGameIfPaused`: false unless frozen.
+    Step(i32),
+    /// `stopStepping`: whether it was stepping.
+    StopStepping,
+    /// `requestGameToSprint`: whether a sprint was already running.
+    Sprint(i32),
+    /// `stopSprinting`: whether it was sprinting.
+    StopSprinting,
+}
+
+/// A located element (`locate`): its position and registered name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Located {
+    pub pos: [i32; 3],
+    pub id: String,
+}
+
+/// What `/place` places.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Placement {
+    /// A configured feature by id, or inline (SNBT) when `inline`.
+    Feature { id: Option<Identifier>, inline: Option<Tag> },
+    Jigsaw { pool: Identifier, target: Identifier, max_depth: i32 },
+    Structure(Identifier),
+    Template { id: Identifier, rotation: u8, mirror: u8, integrity: f32, seed: i32, strict: bool },
+}
+
 /// Effects of the built-in commands. `Self::Entity` handles come from selectors.
 pub trait Host: SelectorWorld {
     /// `sendSuccess`: feedback to the source; `broadcast` also informs operators and the log.
     fn send_success(&mut self, text: Text, broadcast: bool);
+    /// `sendFailure` without failing the command: red feedback to the source.
+    fn send_failure(&mut self, text: Text) {
+        self.send_success(text.color("red"), false);
+    }
     /// A system message to one player.
     fn send_system(&mut self, player: &Self::Entity, text: Text);
     /// `say` and `me`: to every player.
@@ -622,6 +743,11 @@ pub trait Host: SelectorWorld {
     /// The block entity data at `pos` (`saveWithFullMetadata`) if the block has an entity.
     /// Hosts without block entity storage return `None`.
     fn block_entity(&mut self, _dimension: &str, _pos: [i32; 3]) -> Option<Tag> {
+        None
+    }
+    /// An entity's data (`EntityDataAccessor.getData`: `saveWithoutId`, with a player's held
+    /// item as `SelectedItem`). Hosts without entity data return `None`.
+    fn entity_data(&mut self, _entity: &Self::Entity) -> Option<Tag> {
         None
     }
     /// `Level.setBlock` (`BlockInput.place` when `nbt` is given): returns whether the state
@@ -757,6 +883,406 @@ pub trait Host: SelectorWorld {
     }
     /// Sends a play packet to one player (titles and the action bar).
     fn send_packet(&mut self, _player: &Self::Entity, _packet: Bytes) {}
+
+    // ---- server administration: whitelist, bans, saving, defaults ----
+
+    /// The whitelist and ban lists, shared with the login checks; `None` when the host keeps
+    /// none (the commands then fail).
+    fn access(&self) -> Option<kiln_link::access::SharedAccess> {
+        None
+    }
+    /// `ServerPlayer.getIpAddress`.
+    fn player_ip(&self, _player: &Self::Entity) -> Option<String> {
+        None
+    }
+    /// `MinecraftServer.setAutoSave`: whether it changed.
+    fn set_auto_save(&mut self, _on: bool) -> bool {
+        false
+    }
+    /// `MinecraftServer.saveEverything`: whether saving worked.
+    fn save_all(&mut self, _flush: bool) -> bool {
+        true
+    }
+    /// `setDefaultGameType` + `enforceGameTypeForPlayers`: players whose mode changed.
+    fn set_default_game_mode(&mut self, _mode: GameMode) -> i32 {
+        0
+    }
+    /// `setPlayerIdleTimeout` (minutes, 0 = off).
+    fn set_idle_timeout(&mut self, _minutes: i32) {}
+    /// A sound's variant seed (`level.getRandom().nextLong()`).
+    fn random_seed(&mut self) -> i64 {
+        0
+    }
+
+    // ---- stopwatches and post effects ----
+
+    /// Stopwatch ids (`Stopwatches.ids`).
+    fn stopwatch_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Starts a stopwatch; false if `id` exists.
+    fn stopwatch_create(&mut self, _id: &str) -> bool {
+        false
+    }
+    /// Seconds the stopwatch has run.
+    fn stopwatch_seconds(&self, _id: &str) -> Option<f64> {
+        None
+    }
+    /// Restarts it from zero; false if there is none.
+    fn stopwatch_restart(&mut self, _id: &str) -> bool {
+        false
+    }
+    fn stopwatch_remove(&mut self, _id: &str) -> bool {
+        false
+    }
+    /// `ServerPlayer.getPostEffects`.
+    fn post_effects(&self, _player: &Self::Entity) -> Vec<String> {
+        Vec::new()
+    }
+    /// `addPostEffect`: whether it was added.
+    fn add_post_effect(&mut self, _player: &Self::Entity, _id: &str) -> bool {
+        false
+    }
+    fn remove_post_effect(&mut self, _player: &Self::Entity, _id: &str) -> bool {
+        false
+    }
+    fn clear_post_effects(&mut self, _player: &Self::Entity) -> bool {
+        false
+    }
+
+    // ---- waypoints (the locator bar) ----
+
+    /// The display names of `dimension`'s waypoint transmitters
+    /// (`ServerWaypointManager.transmitters`).
+    fn waypoints(&self, _dimension: &str) -> Vec<Text> {
+        Vec::new()
+    }
+    /// Whether `entity` can be a waypoint (a living entity, `WaypointArgument`).
+    fn is_waypoint(&self, entity: &Self::Entity) -> bool {
+        entity.is_player()
+    }
+    /// `WaypointCommand.mutateIcon`: whether the host keeps icons for `entity`.
+    fn modify_waypoint(&mut self, _entity: &Self::Entity, _change: &WaypointChange) -> bool {
+        false
+    }
+    // ---- data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing and fetchprofile (`entity_data` is above, with `function ... with entity`) -----
+
+    /// `EntityDataAccessor.setData` for a non-player: `Entity.load(data)` keeping its UUID.
+    fn set_entity_data(&mut self, _entity: &Self::Entity, _data: &Tag) -> Result<(), CommandError> {
+        Err(CommandError::unsupported("Entity data"))
+    }
+    /// `BlockDataAccessor.setData`: loads `data` into the block entity at `pos`.
+    fn set_block_entity_data(&mut self, _dimension: &str, _pos: [i32; 3], _data: &Tag) -> Result<(), CommandError> {
+        Err(CommandError::unsupported("Block entity data"))
+    }
+    /// Command storage ids with data (`/data ... storage` suggestions).
+    fn storage_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// `Entity.entityTags`.
+    fn entity_tags(&mut self, entity: &Self::Entity) -> Vec<String> {
+        entity.tags().to_vec()
+    }
+    /// `Entity.addTag`: false when present or the entity has 1024 tags.
+    fn add_entity_tag(&mut self, _entity: &Self::Entity, _tag: &str) -> bool {
+        false
+    }
+    /// `Entity.removeTag`.
+    fn remove_entity_tag(&mut self, _entity: &Self::Entity, _tag: &str) -> bool {
+        false
+    }
+    /// `Entity.forceSetRotation` to an absolute `[yaw, pitch]`.
+    fn rotate_entity(&mut self, _entity: &Self::Entity, _rotation: [f32; 2]) {}
+    /// `LivingEntity.swing(hand, animation)`; false for entities that are not living.
+    fn swing_arm(&mut self, _entity: &Self::Entity, _offhand: bool, _animation: &str, _duration: i32) -> bool {
+        false
+    }
+    /// `Entity.getVehicle`.
+    fn vehicle_of(&mut self, _entity: &Self::Entity) -> Option<Self::Entity> {
+        None
+    }
+    /// `getSelfAndPassengers` (recursively).
+    fn self_and_passengers(&mut self, entity: &Self::Entity) -> Vec<Self::Entity> {
+        vec![entity.clone()]
+    }
+    /// `Entity.startRiding(vehicle, force, true)`: whether the entity now rides.
+    fn start_riding(&mut self, _entity: &Self::Entity, _vehicle: &Self::Entity) -> bool {
+        false
+    }
+    /// `Entity.stopRiding`.
+    fn stop_riding(&mut self, _entity: &Self::Entity) {}
+    /// `hurtServer` with a damage source of `damage_type` (`at` a position, `by` a direct
+    /// entity, `from` a causing entity); whether the entity was hurt.
+    fn damage_entity(
+        &mut self,
+        _entity: &Self::Entity,
+        _amount: f32,
+        _damage_type: &str,
+        _at: Option<[f64; 3]>,
+        _by: Option<&Self::Entity>,
+        _from: Option<&Self::Entity>,
+    ) -> Result<bool, CommandError> {
+        Err(CommandError::unsupported("Damage"))
+    }
+    /// `EntityType.clientTrackingRange() != 0`: whether a player may spectate it.
+    fn can_spectate(&self, _entity: &Self::Entity) -> bool {
+        true
+    }
+    /// `ServerPlayer.setCamera` (`None`: back to the player itself).
+    fn set_camera(&mut self, _player: &Self::Entity, _target: Option<&Self::Entity>) {}
+    /// The item in `slot` (a [`slots`](crate::slots) id) of a container block or entity, as
+    /// item stack NBT (`None` for an empty slot); `None` when there is no such slot. Callers
+    /// check [`is_container`](Self::is_container) for blocks first.
+    fn slot_item(&mut self, _holder: &ItemHolder<Self::Entity>, _slot: i32) -> Option<Option<Tag>> {
+        None
+    }
+    /// Puts an item (stack NBT, `None` to empty it) into `slot`; false when the slot does not
+    /// exist or refuses the item.
+    fn set_slot_item(&mut self, _holder: &ItemHolder<Self::Entity>, _slot: i32, _item: Option<&Tag>) -> bool {
+        false
+    }
+    /// Whether the block at `pos` is a container (`Container` block entity).
+    fn is_container(&mut self, _dimension: &str, _pos: [i32; 3]) -> bool {
+        false
+    }
+    /// The inventory slots `/clear` goes through for a player, in `Inventory` order (main,
+    /// equipment), then the crafting grid and the cursor.
+    fn clear_slots(&self, _player: &Self::Entity) -> Vec<i32> {
+        Vec::new()
+    }
+    /// Sends inventory changes made by commands (`containerMenu.broadcastChanges`).
+    fn inventory_changed(&mut self, _player: &Self::Entity) {}
+    /// Enchantment definitions: `max_level`; `None` for unknown enchantments.
+    fn enchantment_max_level(&self, _enchantment: &str) -> Option<i32> {
+        None
+    }
+    /// An attribute of a living entity: `Err(())` for entities that are not living, `Ok(None)`
+    /// when it lacks the attribute.
+    #[allow(clippy::result_unit_err)]
+    fn attribute(&mut self, _entity: &Self::Entity, _attribute: &str) -> Result<Option<AttributeState>, ()> {
+        Err(())
+    }
+    /// `AttributeInstance.setBaseValue` (the attribute exists).
+    fn set_attribute_base(&mut self, _entity: &Self::Entity, _attribute: &str, _value: f64) {}
+    /// `AttributeMap.resetBaseValue` to the type's default (the attribute exists).
+    fn reset_attribute_base(&mut self, _entity: &Self::Entity, _attribute: &str) {}
+    /// `addPermanentModifier` (`operation`: 0 add_value, 1 add_multiplied_base, 2
+    /// add_multiplied_total; the id is not present yet).
+    fn add_attribute_modifier(&mut self, _entity: &Self::Entity, _attribute: &str, _id: &str, _amount: f64, _operation: u8) {}
+    /// `removeModifier`: whether it was there.
+    fn remove_attribute_modifier(&mut self, _entity: &Self::Entity, _attribute: &str, _id: &str) -> bool {
+        false
+    }
+    /// Rolls loot for `/loot` (stacks as item stack NBT, already split to stack sizes) and the
+    /// table used, if it was named.
+    fn roll_loot(&mut self, _source: &LootSource<Self::Entity>) -> Result<(Vec<Tag>, Option<String>), CommandError> {
+        Err(CommandError::unsupported("Loot"))
+    }
+    /// `LivingEntity.getItemBySlot(MAINHAND/OFFHAND)`: `None` for entities that are not living.
+    fn hand_item(&mut self, _entity: &Self::Entity, _offhand: bool) -> Option<Option<Tag>> {
+        None
+    }
+    /// `Inventory.add(copy)`: whether anything was added.
+    fn give_stack(&mut self, _player: &Self::Entity, _item: &Tag) -> bool {
+        false
+    }
+    /// Spawns an item entity at `pos` with the default pickup delay.
+    fn spawn_item(&mut self, _dimension: &str, _pos: [f64; 3], _item: &Tag) {}
+    /// `Container.getContainerSize` of the container at `pos`.
+    fn container_size(&mut self, _dimension: &str, _pos: [i32; 3]) -> Option<i32> {
+        None
+    }
+    /// `ItemStack.getMaxStackSize` of item stack NBT.
+    fn item_max_stack(&self, _item: &Tag) -> i32 {
+        64
+    }
+    /// `ItemStack.getHoverName` of item stack NBT.
+    fn item_name(&self, item: &Tag) -> Text {
+        let id = match item.get("id") {
+            Some(Tag::String(s)) => s.as_str(),
+            _ => "minecraft:air",
+        };
+        let (ns, path) = id.split_once(':').unwrap_or(("minecraft", id));
+        let kind = if kiln_data::builtin_id("minecraft:block", id).is_some() { "block" } else { "item" };
+        Text::translate(format!("{kind}.{ns}.{path}"), Vec::new())
+    }
+    /// `compute`: evaluates a context int or float provider (a registry id or an inline
+    /// definition) in the loot context of `target`.
+    fn compute_provider(&mut self, _provider: &LootTableArg, _float: bool, _target: &ComputeTarget<Self::Entity>) -> Result<f64, ComputeError> {
+        Err(ComputeError::Command(CommandError::unsupported("Context number providers")))
+    }
+    /// The slots a slot source (a registry id or an inline definition) selects, evaluated with
+    /// `container` as the `container` parameter and the source entity as `this`.
+    fn slot_source_tree(&mut self, _source: &LootTableArg, _container: &ItemHolder<Self::Entity>) -> Result<SlotTree<Self::Entity>, CommandError> {
+        Err(CommandError::unsupported("Slot sources"))
+    }
+    /// Applies an item modifier (`/item modify`, `/item ... from ... <modifier>`) to item stack
+    /// NBT; `None` when the modifier is unknown.
+    fn apply_item_modifier(&mut self, _modifier: &LootTableArg, _item: &Tag) -> Result<Tag, CommandError> {
+        Err(CommandError::unsupported("Item modifiers"))
+    }
+    /// `EnchantCommand` on one entity's main hand item.
+    fn enchant_held(&mut self, _entity: &Self::Entity, _enchantment: &str, _level: i32) -> EnchantOutcome {
+        EnchantOutcome::NotLiving
+    }
+    // ---- worldborder, tick, forceload, random, locate, place, fillbiome, spreadplayers ----
+
+    /// The world border of `dimension`.
+    fn world_border(&mut self, _dimension: &str) -> BorderInfo {
+        BorderInfo::default()
+    }
+    /// Applies a border change (players in the level are told, the level saves it).
+    fn change_world_border(&mut self, _dimension: &str, _change: BorderChange) {}
+    /// The level's game time, for border moves.
+    fn level_game_time(&self, _dimension: &str) -> i64 {
+        self.game_time()
+    }
+    fn tick_rate(&self) -> TickRateInfo {
+        TickRateInfo::default()
+    }
+    /// Applies `/tick` actions; the returned flag is the manager method's result.
+    fn change_tick_rate(&mut self, _action: TickRateAction) -> bool {
+        false
+    }
+    /// `ServerLevel.getForceLoadedChunks` of `dimension`.
+    fn forced_chunks(&self, _dimension: &str) -> Vec<[i32; 2]> {
+        Vec::new()
+    }
+    /// `ServerLevel.setChunkForced`: whether it changed.
+    fn set_chunk_forced(&mut self, _dimension: &str, _chunk: [i32; 2], _forced: bool) -> bool {
+        false
+    }
+    /// `Mth.randomBetweenInclusive` on random sequence `sequence` (the server's, seeded from
+    /// the world seed) or, without one, the level random.
+    fn random_between(&mut self, _sequence: Option<&Identifier>, min: i32, _max: i32) -> i32 {
+        min
+    }
+    /// `RandomSequences.reset(id, seed, salt, includeWorldSeed, includeSequenceId)`, with the
+    /// sequence defaults when `params` is `None`.
+    fn reset_random_sequence(&mut self, _id: &Identifier, _params: Option<(i32, bool, bool)>) {}
+    /// `RandomSequences.clear` (after `setSeedDefaults` when `defaults` is given): how many
+    /// sequences there were.
+    fn clear_random_sequences(&mut self, _defaults: Option<(i32, bool, bool)>) -> i32 {
+        0
+    }
+    /// Ids of the existing random sequences, for suggestions.
+    fn random_sequence_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// `PlayerList.broadcastSystemMessage`: to every player and the server log.
+    fn broadcast_system_message(&mut self, text: Text) {
+        self.send_success(text, false);
+    }
+    /// `ServerLevel.findClosestBiome3d(origin, 6400, 32, 64)` over the generator's biome
+    /// source, for biomes `matches` accepts. `None` when nothing matches.
+    fn locate_biome(&mut self, _dimension: &str, _origin: [i32; 3], _matches: &dyn Fn(&str) -> bool) -> Option<Located> {
+        None
+    }
+    /// `ChunkGenerator.findNearestMapStructure(level, structures, origin, 100, false)`.
+    fn locate_structure(&mut self, _dimension: &str, _origin: [i32; 3], _structures: &[String]) -> Option<Located> {
+        None
+    }
+    /// Structure ids of the level's registry (`minecraft:worldgen/structure`).
+    fn structure_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// Structure ids in tag `tag`, if the tag exists.
+    fn structure_tag(&self, _tag: &str) -> Option<Vec<String>> {
+        None
+    }
+    /// `PoiManager.findClosestWithType(types, origin, 256, ANY)`.
+    fn locate_poi(&mut self, _dimension: &str, _origin: [i32; 3], _matches: &dyn Fn(&str) -> bool) -> Option<Located> {
+        None
+    }
+    /// `/place`: places at `pos` (chunks already checked loaded where vanilla checks before
+    /// placing); the error is vanilla's failure.
+    fn place(&mut self, _dimension: &str, _what: &Placement, _pos: [i32; 3]) -> Result<(), CommandError> {
+        Err(CommandError::unsupported("place"))
+    }
+    /// The biome id at quart position `quart` of a loaded chunk.
+    fn noise_biome(&mut self, _dimension: &str, _quart: [i32; 3]) -> Option<String> {
+        None
+    }
+    /// `/fillbiome`: sets `biome` in the quart cells of loaded chunks inside `[min, max]` (block
+    /// coordinates, quantized) whose biome `filter` accepts and differs; resends the chunks.
+    /// Returns how many cells changed, or `None` when a chunk is not loaded.
+    fn fill_biome(&mut self, _dimension: &str, _min: [i32; 3], _max: [i32; 3], _biome: &str, _filter: &dyn Fn(&str) -> bool) -> Option<i32> {
+        None
+    }
+}
+
+
+/// An entity's attribute instance as `/attribute` reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttributeState {
+    pub base: f64,
+    /// `getAttributeValue`.
+    pub value: f64,
+    /// Modifier ids and amounts.
+    pub modifiers: Vec<(String, f64)>,
+}
+
+/// A `loot_table` / `loot_modifier` argument: a registry id or an inline definition (SNBT).
+#[derive(Debug, Clone, PartialEq)]
+pub enum LootTableArg {
+    Id(String),
+    Inline(Tag),
+}
+
+/// Where `/loot` takes items from.
+pub enum LootSource<E> {
+    /// `loot <table>`: the chest parameter set at the source's position.
+    Table { table: LootTableArg, origin: [f64; 3], dimension: String, this: Option<E> },
+    /// `fish <table> <pos> [tool]`.
+    Fish { table: LootTableArg, pos: [i32; 3], dimension: String, tool: Option<Tag>, this: Option<E> },
+    /// `kill <target>`: the entity's loot table, as killed by the source (magic damage).
+    Kill { target: E, origin: [f64; 3], killer: Option<E> },
+    /// `mine <pos> [tool]`: the block's drops.
+    Mine { pos: [i32; 3], dimension: String, tool: Option<Tag>, this: Option<E> },
+}
+
+/// Where `/item` and `/loot` put items: a container block or an entity.
+#[derive(Clone)]
+pub enum ItemHolder<E> {
+    Block { dimension: String, pos: [i32; 3] },
+    Entity(E),
+}
+
+/// What `compute` evaluates against (`LootContextSources`).
+pub enum ComputeTarget<E> {
+    Default,
+    Block([i32; 3]),
+    Entity(E),
+}
+
+/// Why `compute` failed.
+pub enum ComputeError {
+    /// The provider threw an `ArithmeticException` with this message, or produced a value
+    /// that is not finite.
+    Invalid(String),
+    Command(CommandError),
+}
+
+/// `SlotCollection`: the slots a slot source selected, in order.
+#[derive(Clone)]
+pub enum SlotTree<E> {
+    Empty,
+    /// Existing slots (holder and slot id).
+    Slots(Vec<(ItemHolder<E>, i32)>),
+    Concat(Vec<SlotTree<E>>),
+    Filtered(Box<SlotTree<E>>, std::rc::Rc<dyn Fn(&Tag) -> bool>),
+    Limited(Box<SlotTree<E>>, usize),
+}
+
+/// What `/enchant` did to one target.
+#[derive(Debug, Clone, PartialEq)]
+pub enum EnchantOutcome {
+    NotLiving,
+    NoItem,
+    /// The item cannot take the enchantment (unsupported or incompatible); its hover name.
+    Incompatible(Text),
+    Applied,
 }
 
 #[cfg(test)]

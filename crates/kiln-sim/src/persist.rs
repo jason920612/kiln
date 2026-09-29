@@ -68,10 +68,28 @@ pub(crate) struct Joining {
     pub saved: PlayerData,
 }
 
+/// `locator_bar_icon` of saved player data.
+pub(crate) fn saved_waypoint_icon(data: &Tag) -> crate::waypoints::Icon {
+    let mut icon = crate::waypoints::Icon::default();
+    if let Some(saved) = data.get("locator_bar_icon") {
+        if let Some(style) = saved.get("style").and_then(Tag::as_str) {
+            icon.style = style.to_owned();
+        }
+        icon.color = saved.get("color").and_then(Tag::as_i64).map(|c| c as i32);
+    }
+    icon
+}
+
+/// `post_effects` of saved player data.
+pub(crate) fn saved_post_effects(data: &Tag) -> Vec<String> {
+    data.get("post_effects").and_then(Tag::as_list).unwrap_or(&[]).iter().filter_map(|t| t.as_str().map(str::to_owned)).collect()
+}
+
 impl Sim {
     /// The default game mode for new players: the world's `GameType`.
     pub(crate) fn default_game_mode(&self) -> u8 {
-        self.storage.as_ref().and_then(|s| s.level.game_type()).unwrap_or(KILN_DEFAULT_GAME_MODE)
+        let saved = self.storage.as_ref().and_then(|s| s.level.game_type());
+        saved.or(self.commands.default_game_mode).unwrap_or(KILN_DEFAULT_GAME_MODE)
     }
 
     /// Vanilla `PrepareSpawnTask`: saved position and rotation if present, else the spawn
@@ -149,6 +167,16 @@ impl Sim {
 
     pub(crate) fn save_player(&self, p: &Player) {
         let Some(storage) = &self.storage else { return };
+        let nbt = self.player_nbt(p);
+        if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
+            warn!("failed to save player data for {}: {e}", p.name);
+        }
+        self.save_stats(p);
+        self.save_player_advancements(p);
+    }
+
+    /// A player's saved data (`ServerPlayer.saveWithoutId`), as `playerdata` stores it.
+    pub(crate) fn player_nbt(&self, p: &Player) -> Tag {
         let mut data = p.saved.clone();
         data.pos = Some(p.pos);
         data.rot = Some(p.rot);
@@ -198,17 +226,79 @@ impl Sim {
                     None => fields.push((key.to_owned(), value)),
                 }
             }
+            fields.retain(|(k, _)| k != "active_effects" && k != "recipeBook" && k != "post_effects");
+            fields.push(("post_effects".to_owned(), Tag::List(p.post_effects.iter().cloned().map(Tag::String).collect())));
+            // `locator_bar_icon` when it is not the default (`Icon.hasData`).
+            fields.retain(|(k, _)| k != "locator_bar_icon");
+            let icon = &p.waypoint_icon;
+            if icon.style != crate::waypoints::DEFAULT_STYLE || icon.color.is_some() {
+                let mut c = vec![("style".to_owned(), Tag::String(icon.style.clone()))];
+                if let Some(color) = icon.color {
+                    c.push(("color".to_owned(), Tag::Int(color)));
+                }
+                fields.push(("locator_bar_icon".to_owned(), Tag::Compound(c)));
+            }
+            // `Entity.saveWithoutId`: Kiln has no invulnerable players.
+            if !fields.iter().any(|(k, _)| k == "Invulnerable") {
+                fields.push(("Invulnerable".to_owned(), Tag::Byte(0)));
+            }
+            fields.retain(|(k, _)| k != "fall_distance");
+            fields.push(("fall_distance".to_owned(), Tag::Double(p.fall_distance)));
+            // `Abilities.addSaveData`, from the game mode (`GameType.updatePlayerAbilities`).
+            let (creative, spectator) = (p.game_mode == 1, p.game_mode == 3);
+            let abilities = Tag::Compound(vec![
+                ("invulnerable".into(), Tag::Byte((creative || spectator) as i8)),
+                ("flying".into(), Tag::Byte((p.flying || spectator) as i8)),
+                ("mayfly".into(), Tag::Byte((creative || spectator) as i8)),
+                ("instabuild".into(), Tag::Byte(creative as i8)),
+                ("mayBuild".into(), Tag::Byte((p.game_mode == 0 || creative) as i8)),
+                ("flySpeed".into(), Tag::Float(0.05)),
+                ("walkSpeed".into(), Tag::Float(0.1)),
+            ]);
+            fields.retain(|(k, _)| k != "abilities");
+            fields.push(("abilities".to_owned(), abilities));
             fields.retain(|(k, _)| k != "active_effects" && k != "recipeBook");
             fields.push(("recipeBook".to_owned(), p.recipe_book.to_nbt()));
             if let Some(list) = p.effects_nbt() {
                 fields.push(("active_effects".to_owned(), list));
             }
         }
-        if let Err(e) = storage.players.save_nbt(p.uuid, &nbt) {
-            warn!("failed to save player data for {}: {e}", p.name);
+        nbt
+    }
+
+    /// `NbtPredicate.getEntityTagAllowingPlayer`: an entity's saved data; a player's also
+    /// has its held item as `SelectedItem`.
+    pub(crate) fn entity_data_of(&self, conn: ConnId, entity: Option<i32>, dim: &str) -> Option<Tag> {
+        match entity {
+            None => {
+                let p = self.players.get(&conn)?;
+                let mut nbt = self.player_nbt(p);
+                let selected = p.inv.selected;
+                if let Tag::Compound(fields) = &mut nbt
+                    && let Some(Tag::List(items)) = fields.iter().find(|(k, _)| k == "Inventory").map(|(_, v)| v)
+                    && let Some(item) = items.iter().find(|i| i.get("Slot").and_then(Tag::as_i64) == Some(selected as i64))
+                {
+                    let mut item = item.clone();
+                    if let Tag::Compound(f) = &mut item {
+                        f.retain(|(k, _)| k != "Slot");
+                    }
+                    fields.push(("SelectedItem".to_owned(), item));
+                }
+                Some(nbt)
+            }
+            Some(id) => {
+                let dim = crate::dim_id(dim)?;
+                let owners = self.owner_uuids();
+                let owner = |id: i32| owners.get(&id).copied();
+                let e = self.dims[dim].regions.iter().flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
+                let mut nbt = e.save(&owner);
+                // `saveWithoutId`: no type id.
+                if let Tag::Compound(fields) = &mut nbt {
+                    fields.retain(|(k, _)| k != "id");
+                }
+                Some(nbt)
+            }
         }
-        self.save_stats(p);
-        self.save_player_advancements(p);
     }
 
     /// Loads the scoreboard and custom boss bars (`data/minecraft/scoreboard.dat`,
@@ -245,6 +335,7 @@ impl Sim {
             day_time: self.day_time,
             spawn: WorldSpawn { dimension: OVERWORLD.to_owned(), pos: self.spawn, yaw: self.spawn_rot[0], pitch: self.spawn_rot[1] },
             data_packs: Some((self.commands.packs.selected.clone(), self.commands.packs.disabled.clone())),
+            enabled_features: Some(self.commands.packs.features.clone()),
         };
         let Some(storage) = &mut self.storage else { return };
         if let Err(e) = storage.level.save(&state) {

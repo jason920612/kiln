@@ -58,6 +58,28 @@ pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =
 /// The attributes effects change that clients are told about (`Attribute.isClientSyncable`).
 pub(crate) const EFFECT_SYNCED: [Attr; 6] = [MOVEMENT_SPEED, ATTACK_SPEED, SAFE_FALL_DISTANCE, MAX_HEALTH, MAX_ABSORPTION, LUCK];
 
+impl Attr {
+    pub(crate) fn name(&self) -> &'static str {
+        self.name
+    }
+
+    pub(crate) const fn new(name: &'static str, base: f64, min: f64, max: f64) -> Attr {
+        Attr { name, base, min, max }
+    }
+
+    pub(crate) fn default_base(&self) -> f64 {
+        self.base
+    }
+}
+
+/// What `/attribute` changed on a player: base values and permanent modifiers (attribute
+/// name, modifier id, amount, operation), kept in the order they were added.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct CommandAttributes {
+    pub bases: Vec<(&'static str, f64)>,
+    pub modifiers: Vec<(&'static str, String, f64, AttributeOperation)>,
+}
+
 /// `Player.CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER_VALUE`.
 const CREATIVE_ENTITY_RANGE: f64 = 2.0;
 /// `LivingEntity.SPEED_MODIFIER_SPRINTING` (multiplies the total).
@@ -336,12 +358,27 @@ impl Player {
             mods.retain(|m| m.0 != id);
             mods.push((id.to_owned(), amount, op));
         }
+        for (a, id, amount, op) in &self.command_attributes.modifiers {
+            if *a == attr.name {
+                mods.retain(|m| m.0 != *id);
+                mods.push((id.clone(), *amount, *op));
+            }
+        }
         mods
+    }
+
+    /// The attribute with the base value `/attribute` set, if any.
+    pub(crate) fn with_base(&self, attr: Attr) -> Attr {
+        match self.command_attributes.bases.iter().find(|(a, _)| *a == attr.name) {
+            Some((_, b)) => Attr { base: *b, ..attr },
+            None => attr,
+        }
     }
 
     /// `getAttributeValue`: the modifiers of each operation in the order vanilla's per-operation
     /// hash maps hold them.
     pub(crate) fn attribute(&self, attr: Attr) -> f64 {
+        let attr = self.with_base(attr);
         let mut mods = self.attribute_modifiers(attr);
         sort_like_open_hash_map(&mut mods);
         attribute_value(attr, mods.iter().map(|m| (m.1, m.2)))
@@ -353,7 +390,7 @@ impl Player {
         type Listed = (i32, f64, Vec<(String, f64, AttributeOperation)>);
         let lists: Vec<Listed> = EFFECT_SYNCED
             .iter()
-            .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, a.base, self.attribute_modifiers(*a))))
+            .filter_map(|a| Some((kiln_data::builtin_id("minecraft:attribute", a.name)?, self.with_base(*a).base, self.attribute_modifiers(*a))))
             .collect();
         let op = |o: AttributeOperation| match o {
             AttributeOperation::AddValue => ModifierOperation::AddValue,

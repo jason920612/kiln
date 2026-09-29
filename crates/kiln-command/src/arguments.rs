@@ -93,6 +93,14 @@ pub enum ArgumentType {
     NbtPath,
     /// `minecraft:resource_or_tag`: an entry or `#tag` of `registry`.
     ResourceOrTag { registry: &'static str },
+    /// `minecraft:resource_or_tag_key`: an id or `#tag` of `registry`, looked up when used.
+    ResourceOrTagKey { registry: &'static str },
+    /// `minecraft:feature` (`ResourceOrIdArgument`): a configured feature id or an inline one.
+    Feature,
+    /// `minecraft:template_rotation`: `none`, `clockwise_90`, `180`, `counterclockwise_90`.
+    TemplateRotation,
+    /// `minecraft:template_mirror`: `none`, `left_right`, `front_back`.
+    TemplateMirror,
     /// `minecraft:function`: a function id or `#tag`.
     Function,
     /// `minecraft:item_predicate`
@@ -114,6 +122,29 @@ pub enum ArgumentType {
     /// `minecraft:dialog`: a `minecraft:dialog` registry id ([`ArgumentValue::Identifier`]) or
     /// an inline definition ([`ArgumentValue::Nbt`]).
     Dialog,
+    /// `minecraft:particle`: a particle type id and its options as SNBT (checked when the
+    /// command runs).
+    Particle,
+    /// `minecraft:hex_color`: `RGB` or `RRGGBB`, as an [`ArgumentValue::Integer`] `0xRRGGBB`.
+    HexColor,
+    /// `minecraft:nbt_tag`: any SNBT value.
+    NbtTag,
+    /// `minecraft:context_int_provider` / `minecraft:context_float_provider`: an inline number
+    /// provider ([`ArgumentValue::Nbt`]); ids name data-driven providers, which Kiln has none of.
+    ContextProvider { float: bool },
+    /// `minecraft:item_slot`: a slot name such as `container.5` or `weapon.mainhand`
+    /// ([`ArgumentValue::Integer`]).
+    ItemSlot,
+    /// `minecraft:item_slots`: a slot range such as `container.*` ([`ArgumentValue::String`]
+    /// with the name; see [`item_slots`]).
+    ItemSlots,
+    /// `minecraft:loot_table`, `minecraft:loot_modifier`: an id or an inline definition
+    /// ([`ArgumentValue::Identifier`] or [`ArgumentValue::Nbt`]).
+    LootResource { registry: &'static str },
+    /// `minecraft:uuid`.
+    Uuid,
+    /// `minecraft:swing_animation`: `whack` or `stab`... ([`ArgumentValue::String`]).
+    SwingAnimation,
 }
 
 impl ArgumentType {
@@ -222,6 +253,12 @@ impl ArgumentType {
             ArgumentType::FloatRange => Parser::Plain("minecraft:float_range"),
             ArgumentType::NbtPath => Parser::Plain("minecraft:nbt_path"),
             ArgumentType::ResourceOrTag { registry } => Parser::Registry { id: "minecraft:resource_or_tag", registry },
+            ArgumentType::ResourceOrTagKey { registry } => {
+                Parser::Registry { id: "minecraft:resource_or_tag_key", registry }
+            }
+            ArgumentType::Feature => Parser::Plain("minecraft:feature"),
+            ArgumentType::TemplateRotation => Parser::Plain("minecraft:template_rotation"),
+            ArgumentType::TemplateMirror => Parser::Plain("minecraft:template_mirror"),
             ArgumentType::Function => Parser::Plain("minecraft:function"),
             ArgumentType::ItemPredicate => Parser::Plain("minecraft:item_predicate"),
             ArgumentType::SlotSource => Parser::Plain("minecraft:slot_source"),
@@ -232,6 +269,19 @@ impl ArgumentType {
             ArgumentType::NbtCompound => Parser::Plain("minecraft:nbt_compound_tag"),
             ArgumentType::TeamColor => Parser::Plain("minecraft:team_color"),
             ArgumentType::Dialog => Parser::Plain("minecraft:dialog"),
+            ArgumentType::Particle => Parser::Plain("minecraft:particle"),
+            ArgumentType::HexColor => Parser::Plain("minecraft:hex_color"),
+            ArgumentType::NbtTag => Parser::Plain("minecraft:nbt_tag"),
+            ArgumentType::ContextProvider { float: false } => Parser::Plain("minecraft:context_int_provider"),
+            ArgumentType::ContextProvider { float: true } => Parser::Plain("minecraft:context_float_provider"),
+            ArgumentType::ItemSlot => Parser::Plain("minecraft:item_slot"),
+            ArgumentType::ItemSlots => Parser::Plain("minecraft:item_slots"),
+            ArgumentType::LootResource { registry } => Parser::Plain(match registry {
+                "minecraft:loot_table" => "minecraft:loot_table",
+                _ => "minecraft:loot_modifier",
+            }),
+            ArgumentType::Uuid => Parser::Plain("minecraft:uuid"),
+            ArgumentType::SwingAnimation => Parser::Plain("minecraft:swing_animation"),
         }
     }
 
@@ -352,7 +402,8 @@ impl ArgumentType {
                 let s = reader.read_unquoted_string();
                 match GameMode::by_name(s) {
                     Some(m) => ArgumentValue::GameMode(m),
-                    None => return too(reader, CommandError::invalid_game_mode(s)),
+                    // `GameModeArgument`: the error points after the word.
+                    None => return Err(CommandError::invalid_game_mode(s).at(reader)),
                 }
             }
             ArgumentType::Time { min } => {
@@ -446,6 +497,42 @@ impl ArgumentType {
                     ArgumentValue::ResourceOrTag(ResourceOrTag::Resource(id))
                 }
             }
+            ArgumentType::ResourceOrTagKey { .. } => {
+                if reader.can_read() && reader.peek() == '#' {
+                    reader.skip();
+                    ArgumentValue::ResourceOrTag(ResourceOrTag::Tag(Identifier::read(reader)?))
+                } else {
+                    ArgumentValue::ResourceOrTag(ResourceOrTag::Resource(Identifier::read(reader)?))
+                }
+            }
+            ArgumentType::Feature => {
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    ArgumentValue::Nbt(snbt::parse_tag(reader)?)
+                } else {
+                    let id = Identifier::read(reader)?;
+                    if configured_features().is_some_and(|ids| !ids.iter().any(|i| i == id.as_str())) {
+                        let e = tr!(
+                            "argument.resource_or_id.no_such_element",
+                            id.to_string(),
+                            "minecraft:worldgen/feature"
+                        );
+                        return Err(CommandError::new(e).at(reader));
+                    }
+                    ArgumentValue::Identifier(id)
+                }
+            }
+            ArgumentType::TemplateRotation | ArgumentType::TemplateMirror => {
+                let s = reader.read_unquoted_string();
+                let names: &[&str] = if *self == ArgumentType::TemplateRotation {
+                    &["none", "clockwise_90", "180", "counterclockwise_90"]
+                } else {
+                    &["none", "left_right", "front_back"]
+                };
+                if !names.contains(&s) {
+                    return Err(CommandError::new(tr!("argument.enum.invalid", s)).at(reader));
+                }
+                ArgumentValue::String(s.to_owned())
+            }
             ArgumentType::Function => {
                 let tag = reader.can_read() && reader.peek() == '#';
                 if tag {
@@ -484,6 +571,99 @@ impl ArgumentType {
                     }
                     ArgumentValue::Identifier(id)
                 }
+            }
+            ArgumentType::Particle => {
+                // `ParticleArgument.readParticle`: the type, then its options through the codec
+                // (whose errors carry no position).
+                let id = Identifier::read(reader)?;
+                if kiln_data::builtin_id("minecraft:particle_type", id.as_str()).is_none() {
+                    return Err(CommandError::new(tr!("particle.notFound", id.to_string())).at(reader));
+                }
+                let options = if reader.can_read() && reader.peek() == '{' {
+                    snbt::parse_tag(reader)?
+                } else {
+                    Tag::Compound(Vec::new())
+                };
+                let arg = ParticleArg { id, options };
+                if let Err(message) = crate::vanilla::sound::decode_particle(&arg) {
+                    return Err(CommandError::new(tr!("particle.invalidOptions", message)));
+                }
+                ArgumentValue::Particle(arg)
+            }
+            ArgumentType::HexColor => {
+                // `HexColorArgument`: `Integer.parseInt` of each digit (doubled) or pair; its
+                // `NumberFormatException` reaches brigadier, which reports it as a parse failure.
+                let s = reader.read_unquoted_string();
+                let width = match s.len() {
+                    3 => 1,
+                    6 => 2,
+                    _ => return Err(CommandError::new(tr!("argument.hexcolor.invalid", s)).at(reader)),
+                };
+                let mut channels = [0i32; 3];
+                for (i, part) in s.as_bytes().chunks(width).enumerate() {
+                    match java_parse_hex(part) {
+                        Ok(v) => channels[i] = if width == 1 { v * 17 } else { v },
+                        Err(at) => {
+                            let text = std::str::from_utf8(part).unwrap_or("");
+                            let message = format!("Error at index {at} in: \"{text}\"");
+                            return Err(CommandError::new(tr!("command.exception", message)).at(reader));
+                        }
+                    }
+                }
+                // `ARGB.color(r, g, b)`: opaque.
+                let [r, g, b] = channels;
+                ArgumentValue::Integer(0xFF << 24 | (r & 0xFF) << 16 | (g & 0xFF) << 8 | (b & 0xFF))
+            }
+            ArgumentType::NbtTag => ArgumentValue::Nbt(snbt::parse_tag(reader)?),
+            // Like `ResourceOrIdArgument`: SNBT is a definition, anything else an id the
+            // dispatcher looks up.
+            ArgumentType::ContextProvider { .. } => {
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    ArgumentValue::Nbt(snbt::parse_tag(reader)?)
+                } else {
+                    ArgumentValue::Identifier(Identifier::read(reader)?)
+                }
+            }
+            ArgumentType::ItemSlot | ArgumentType::ItemSlots => {
+                let name = read_until_space(reader).to_owned();
+                let Some(slots) = crate::slots::by_name(&name) else {
+                    return Err(CommandError::new(tr!("slot.unknown", name.as_str())).at(reader));
+                };
+                if matches!(self, ArgumentType::ItemSlot) {
+                    if slots.len() != 1 {
+                        return Err(CommandError::new(tr!("slot.only_single_allowed", name.as_str())).at(reader));
+                    }
+                    ArgumentValue::Integer(slots[0])
+                } else {
+                    ArgumentValue::String(name)
+                }
+            }
+            ArgumentType::LootResource { .. } => {
+                // Ids are looked up when the command runs (the host has the loot data).
+                if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
+                    ArgumentValue::Nbt(snbt::parse_tag(reader)?)
+                } else {
+                    ArgumentValue::Identifier(Identifier::read(reader)?)
+                }
+            }
+            ArgumentType::Uuid => {
+                let rest = reader.remaining();
+                let len = rest.find(|c: char| !(c == '-' || c.is_ascii_hexdigit())).unwrap_or(rest.len());
+                match crate::selector::java_uuid_from_string(&rest[..len]) {
+                    Some(u) if len > 0 => {
+                        reader.set_cursor(reader.cursor() + len);
+                        ArgumentValue::String(u.to_string())
+                    }
+                    _ => return Err(CommandError::new(tr!("argument.uuid.invalid")).at(reader)),
+                }
+            }
+            ArgumentType::SwingAnimation => {
+                let s = reader.read_unquoted_string();
+                if !["none", "whack", "stab"].contains(&s) {
+                    let s = s.to_owned();
+                    return Err(CommandError::new(tr!("argument.swing_animation.invalid", s)).at(reader));
+                }
+                ArgumentValue::String(s.to_owned())
             }
             ArgumentType::Component => ArgumentValue::Component(Box::new(component::parse(reader)?)),
             ArgumentType::Style => {
@@ -838,6 +1018,23 @@ impl ResourceOrTag {
     }
 }
 
+/// Configured feature ids of the vanilla datapack (`KILN_DATAPACK` or `work/generated`), if
+/// it is there.
+pub(crate) fn configured_features() -> Option<&'static Vec<String>> {
+    static IDS: std::sync::OnceLock<Option<Vec<String>>> = std::sync::OnceLock::new();
+    IDS.get_or_init(|| {
+        let root = std::env::var_os("KILN_DATAPACK").map(std::path::PathBuf::from).unwrap_or_else(|| "work/generated".into());
+        let dir = root.join("data/minecraft/worldgen/feature");
+        let mut ids: Vec<String> = std::fs::read_dir(&dir)
+            .ok()?
+            .filter_map(|e| e.ok()?.file_name().to_str()?.strip_suffix(".json").map(|n| format!("minecraft:{n}")))
+            .collect();
+        ids.sort();
+        Some(ids)
+    })
+    .as_ref()
+}
+
 /// `ScoreHolderArgument.Result`: a selector, `*` or a name.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScoreHolderArg {
@@ -914,13 +1111,11 @@ fn parse_item_predicate(reader: &mut StringReader) -> Result<String> {
         reader.skip();
         let id = Identifier::read(reader)?;
         if blocks::registry_tag("minecraft:item", id.as_str()).is_none() {
-            reader.set_cursor(start);
             return Err(CommandError::new(tr!("arguments.item.tag.unknown", id.to_string())).at(reader));
         }
     } else {
         let id = Identifier::read(reader)?;
         if kiln_data::builtin_id("minecraft:item", id.as_str()).is_none() {
-            reader.set_cursor(start);
             return Err(CommandError::unknown_item(id.as_str()).at(reader));
         }
     }
@@ -957,7 +1152,7 @@ fn parse_item_predicate(reader: &mut StringReader) -> Result<String> {
 /// definition. Kept as text.
 fn parse_slot_source(reader: &mut StringReader) -> Result<String> {
     let start = reader.cursor();
-    if reader.can_read() && matches!(reader.peek(), '{' | '[') {
+    if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
         snbt::parse_tag(reader)?;
     } else {
         while reader.can_read() && (types::is_allowed_in_identifier(reader.peek()) || reader.peek() == '*') {
@@ -1005,6 +1200,35 @@ pub enum ArgumentValue {
     Component(Box<Component>),
     /// Inline NBT (`loot_predicate` definitions, `style`).
     Nbt(Tag),
+    Particle(ParticleArg),
+}
+
+/// `Integer.parseInt(s, 16)` of a short run: the value, or the index `NumberFormatException`
+/// reports (a sign is allowed first, as in Java).
+fn java_parse_hex(s: &[u8]) -> std::result::Result<i32, usize> {
+    let (negative, start) = match s.first() {
+        Some(b'-') => (true, 1),
+        Some(b'+') => (false, 1),
+        _ => (false, 0),
+    };
+    if start == s.len() {
+        return Err(start);
+    }
+    let mut v = 0i32;
+    for (i, &c) in s.iter().enumerate().skip(start) {
+        match (c as char).to_digit(16) {
+            Some(d) => v = v * 16 + d as i32,
+            None => return Err(i),
+        }
+    }
+    Ok(if negative { -v } else { v })
+}
+
+/// `ParticleArgument`: the type and its options compound (empty when none was given).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParticleArg {
+    pub id: Identifier,
+    pub options: Tag,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1151,7 +1375,7 @@ mod tests {
     #[test]
     fn simple_enums_and_ids() {
         assert_eq!(parse(ArgumentType::GameMode, "creative").unwrap(), ArgumentValue::GameMode(GameMode::Creative));
-        assert_eq!(err(ArgumentType::GameMode, "god"), ("argument.gamemode.invalid".into(), Some(0)));
+        assert_eq!(err(ArgumentType::GameMode, "god"), ("argument.gamemode.invalid".into(), Some(3)));
         assert_eq!(parse(ArgumentType::EntityAnchor, "eyes").unwrap(), ArgumentValue::Anchor(Anchor::Eyes));
         assert_eq!(err(ArgumentType::EntityAnchor, "head"), ("argument.anchor.invalid".into(), Some(0)));
         assert_eq!(

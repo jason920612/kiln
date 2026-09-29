@@ -147,7 +147,6 @@ fn expect<S: Host>(s: &S, positive: bool, passed: bool) -> Vec<SourceStack<S>> {
 }
 
 type Test<S> = fn(&CommandContext<S>, &mut S) -> Result<bool>;
-type Count<S> = fn(&CommandContext<S>, &mut S) -> Result<i32>;
 
 /// `addConditional`: forks when the test matches, or reports it when the command ends here.
 fn conditional<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool, test: Test<S>) -> Builder<S> {
@@ -166,9 +165,13 @@ fn conditional<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool, t
 }
 
 /// A conditional over a count (`createNumericConditionalHandler`).
-fn numeric_conditional<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool, count: Count<S>) -> Builder<S> {
+fn numeric_conditional<S: Host + 'static, F>(exec: NodeId, b: Builder<S>, positive: bool, count: F) -> Builder<S>
+where
+    F: Fn(&CommandContext<S>, &mut S) -> Result<i32> + Clone + Send + Sync + 'static,
+{
+    let fork_count = count.clone();
     b.fork(exec, move |c, s: &mut S| {
-        let n = count(c, s)?;
+        let n = fork_count(c, s)?;
         Ok(expect(s, positive, n > 0))
     })
     .executes(move |c, s: &mut S| {
@@ -190,6 +193,32 @@ fn numeric_result<S: Host>(s: &mut S, positive: bool, n: i32) -> Result<i32> {
         }
         (false, n) => Err(CommandError::new(tr!("commands.execute.conditional.fail_count", n))),
     }
+}
+
+/// `execute if items block|entity <source> <slots> <item_predicate>` (`countItems`).
+fn items_branch<S: Host + 'static>(exec: NodeId, positive: bool, block: bool) -> Builder<S> {
+    let count = move |c: &CommandContext<S>, s: &mut S| -> Result<i32> {
+        let source = super::item::Accessor::read(c, s, block, "source")?;
+        let arg = super::item::SlotsArg::read(c, "slots");
+        let tree = source.slots(s, &arg, true)?;
+        let test = super::items::ItemTest::parse(c.string("item_predicate"))?;
+        Ok(super::item::item_copies(&tree, s).iter().filter(|t| test.test(t)).map(super::items::item_count).sum())
+    };
+    literal(if block { "block" } else { "entity" }).then(argument("source", if block { ArgumentType::BlockPos } else { ArgumentType::entities() }).then(
+        argument("slots", ArgumentType::SlotSource).then(numeric_conditional(exec, argument("item_predicate", ArgumentType::ItemPredicate), positive, count)),
+    ))
+}
+
+/// `execute if slots block|entity <source> <slots>` (`countSlots`).
+fn slots_branch<S: Host + 'static>(exec: NodeId, positive: bool, block: bool) -> Builder<S> {
+    let count = move |c: &CommandContext<S>, s: &mut S| -> Result<i32> {
+        let source = super::item::Accessor::read(c, s, block, "source")?;
+        let arg = super::item::SlotsArg::read(c, "slots");
+        let tree = source.slots(s, &arg, true)?;
+        Ok(super::item::tree_size(&tree, s))
+    };
+    literal(if block { "block" } else { "entity" })
+        .then(argument("source", if block { ArgumentType::BlockPos } else { ArgumentType::entities() }).then(numeric_conditional(exec, argument("slots", ArgumentType::SlotSource), positive, count)))
 }
 
 /// `addConditionals`: every `if`/`unless` test.
@@ -261,34 +290,8 @@ fn conditionals<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool) 
         argument("name", ArgumentType::Function).suggests_server(super::function::suggest_functions)
             .fork(exec, move |c, s: &mut S| super::function::function_condition(c, s, positive)),
     ))
-    .then(literal("items").then(
-        literal("block").then(argument("source", ArgumentType::BlockPos).then(argument("slots", ArgumentType::SlotSource).then(
-            numeric_conditional(exec, argument("item_predicate", ArgumentType::ItemPredicate), positive, |_, _| {
-                Err(CommandError::unsupported("Container contents"))
-            }),
-        ))),
-    )
-    .then(
-        literal("entity").then(argument("source", ArgumentType::entities()).then(argument("slots", ArgumentType::SlotSource).then(
-            numeric_conditional(exec, argument("item_predicate", ArgumentType::ItemPredicate), positive, |_, _| {
-                Err(CommandError::unsupported("Entity inventories"))
-            }),
-        ))),
-    ))
-    .then(literal("slots").then(
-        literal("block").then(argument("source", ArgumentType::BlockPos).then(numeric_conditional(
-            exec,
-            argument("slots", ArgumentType::SlotSource),
-            positive,
-            |_, _| Err(CommandError::unsupported("Container contents")),
-        ))),
-    )
-    .then(literal("entity").then(argument("source", ArgumentType::entities()).then(numeric_conditional(
-        exec,
-        argument("slots", ArgumentType::SlotSource),
-        positive,
-        |_, _| Err(CommandError::unsupported("Entity inventories")),
-    )))))
+    .then(literal("items").then(items_branch(exec, positive, true)).then(items_branch(exec, positive, false)))
+    .then(literal("slots").then(slots_branch(exec, positive, true)).then(slots_branch(exec, positive, false)))
     .then(literal("stopwatch").then(argument("id", ArgumentType::ResourceLocation).then(conditional(
         exec,
         argument("range", ArgumentType::FloatRange),
@@ -320,8 +323,9 @@ fn data_conditionals<S: Host + 'static>(exec: NodeId, positive: bool) -> Builder
             argument("path", ArgumentType::NbtPath),
             positive,
             |c: &CommandContext<S>, s: &mut S| {
-                c.selector("source").entity(s)?;
-                Err(CommandError::unsupported("Entity data"))
+                let e = c.selector("source").entity(s)?;
+                let data = super::data::Accessor::Entity(e).get(s)?;
+                Ok(c.nbt_path("path").count_matching(&data) as i32)
             },
         ))))
         .then(literal("storage").then(argument("source", ArgumentType::ResourceLocation).then(numeric_conditional(
@@ -428,13 +432,44 @@ pub(super) fn score_holder_arg<S: Host + 'static>(name: &str, multiple: bool) ->
     })
 }
 
-/// `<path> (byte|short|int|long|float|double) <scale>` under an NBT store target.
-fn nbt_target<S: Host + 'static>(exec: NodeId, target: Builder<S>, check: Test<S>) -> Builder<S> {
+/// Resolves the accessor of an NBT store target (`ArgProvider.access`).
+type AccessFn<S> = fn(&CommandContext<S>, &mut S) -> Result<super::data::Accessor<<S as crate::host::Source>::Entity>>;
+
+/// `<path> (byte|short|int|long|float|double) <scale>` under an NBT store target:
+/// `storeData`, whose failures (no such parent, player data) are dropped as in vanilla.
+fn nbt_target<S: Host + 'static>(exec: NodeId, target: Builder<S>, access: AccessFn<S>, result: bool) -> Builder<S> {
+    use super::data::Accessor;
+    /// The accessor without the entity handle (callbacks must be `Send`).
+    enum Key {
+        Block(String, [i32; 3]),
+        Entity(uuid::Uuid),
+        Storage(String),
+    }
     let path = NUMERIC_TYPES.into_iter().fold(argument("path", ArgumentType::NbtPath), |p, ty| {
         p.then(literal(ty).then(argument("scale", ArgumentType::double()).redirect_with(exec, move |c, s: &mut S| {
-            check(c, s)?;
-            // Only reached for targets whose writes vanilla drops silently (players).
-            Ok(s.stack().clone())
+            let key = match access(c, s)? {
+                Accessor::Block { dimension, pos } => Key::Block(dimension, pos),
+                Accessor::Entity(e) => Key::Entity(e.uuid()),
+                Accessor::Storage(id) => Key::Storage(id),
+            };
+            let path = c.nbt_path("path").clone();
+            let scale = c.double("scale");
+            Ok(s.stack().clone().with_callback(Arc::new(move |s: &mut S, success, value| {
+                let v = if result { value } else { success as i32 };
+                let acc = match &key {
+                    Key::Block(dimension, pos) => Accessor::Block { dimension: dimension.clone(), pos: *pos },
+                    Key::Entity(uuid) => match s.entity_by_uuid(*uuid) {
+                        Some(e) => Accessor::Entity(e),
+                        None => return,
+                    },
+                    Key::Storage(id) => Accessor::Storage(id.clone()),
+                };
+                if let Ok(mut data) = acc.get(s)
+                    && path.set(&mut data, &numeric_tag(ty, v, scale)).is_ok()
+                {
+                    let _ = acc.set(s, data);
+                }
+            })))
         })))
     });
     target.then(path)
@@ -477,16 +512,23 @@ fn stores<S: Host + 'static>(exec: NodeId, b: Builder<S>, result: bool) -> Build
             .then(literal("value").redirect_with(exec, bar(false)))
             .then(literal("max").redirect_with(exec, bar(true)))
     }))
-    .then(literal("block").then(nbt_target(exec, argument("target", ArgumentType::BlockPos), |c, s| {
-        let dimension = s.dimension().to_owned();
-        let pos = loaded_block_pos(c, s, "target", &dimension)?;
-        s.block_entity(&dimension, pos).ok_or_else(block_not_entity)?;
-        Err(CommandError::unsupported("Storing into block entity data"))
-    })))
-    .then(literal("entity").then(nbt_target(exec, argument("target", ArgumentType::entity()), |c, s| {
-        let target = c.selector("target").entity(s)?;
-        if target.is_player() { Ok(true) } else { Err(CommandError::unsupported("Storing into entity data")) }
-    })))
+    .then(literal("block").then(nbt_target(
+        exec,
+        argument("target", ArgumentType::BlockPos),
+        |c, s| {
+            let dimension = s.dimension().to_owned();
+            let pos = loaded_block_pos(c, s, "target", &dimension)?;
+            s.block_entity(&dimension, pos).ok_or_else(block_not_entity)?;
+            Ok(super::data::Accessor::Block { dimension, pos })
+        },
+        result,
+    )))
+    .then(literal("entity").then(nbt_target(
+        exec,
+        argument("target", ArgumentType::entity()),
+        |c, s| Ok(super::data::Accessor::Entity(c.selector("target").entity(s)?)),
+        result,
+    )))
     .then(literal("storage").then(storage_target(exec, result)))
 }
 

@@ -63,24 +63,28 @@ pub struct PlayerRef {
     pos: [f64; 3],
     rot: [f32; 2],
     /// The player's level.
-    dim: &'static str,
+    pub(crate) dim: &'static str,
     mode: GameMode,
     /// The player's team, and their name as the team formats it.
     team: Option<String>,
     display: Text,
     /// A non-player entity: its id, type and eye height (`conn` is then [`NO_CONN`]).
-    entity: Option<i32>,
+    pub(crate) entity: Option<i32>,
     kind: &'static str,
     size: [f64; 2],
     eye: f64,
     alive: bool,
+    /// A `LivingEntity` (players and mobs).
+    living: bool,
+    /// `Entity.entityTags`.
+    tags: Vec<String>,
 }
 
 /// The connection of a non-player selector target: no player has it.
 const NO_CONN: ConnId = ConnId::MAX;
 
 impl PlayerRef {
-    fn of(conn: ConnId, p: &Player, scoreboard: &Scoreboard) -> Self {
+    pub(crate) fn of(conn: ConnId, p: &Player, scoreboard: &Scoreboard) -> Self {
         Self {
             conn,
             uuid: p.uuid,
@@ -96,6 +100,8 @@ impl PlayerRef {
             size: [0.6, 1.8],
             eye: 1.62f32 as f64,
             alive: true,
+            living: true,
+            tags: p.tags(),
         }
     }
 
@@ -116,12 +122,17 @@ impl PlayerRef {
             rot,
             dim: crate::DIMENSIONS[dim].0,
             mode: GameMode::Survival,
-            display: Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
+            display: match e.phys.as_ref().map(|p| &p.kind) {
+                Some(kiln_entity::EntityKind::Item(d)) => crate::command_data::hover_name(&d.stack),
+                _ => Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
+            },
             entity: Some(e.id),
             kind: e.kind.name,
             size: [e.kind.width as f64, e.kind.height as f64],
             eye,
             alive,
+            living: e.phys.as_ref().is_some_and(|p| kiln_entity::mob::data(p).is_some()),
+            tags: e.phys.as_ref().map_or_else(Vec::new, |p| crate::command_data::tags_in(&Tag::Compound(p.extra.clone()))),
         }
     }
 }
@@ -175,6 +186,9 @@ impl SelectorTarget for PlayerRef {
     fn game_mode(&self) -> Option<GameMode> {
         self.entity.is_none().then_some(self.mode)
     }
+    fn tags(&self) -> &[String] {
+        &self.tags
+    }
 }
 
 /// Server-wide state the commands change.
@@ -201,6 +215,17 @@ pub(crate) struct CommandState {
     pub last_report: Option<String>,
     /// Packets `/kiln use` made for players, handled with the next tick's packets.
     pub injected: Vec<(ConnId, kiln_link::PlayIn)>,
+    /// `save-on` / `save-off`.
+    pub auto_save: bool,
+    /// `save-all`: saved at the end of the tick's serial phase.
+    pub save_requested: bool,
+    /// `setidletimeout` in minutes (0: off).
+    pub idle_timeout: i32,
+    /// `defaultgamemode` for worlds without a `level.dat`.
+    pub default_game_mode: Option<u8>,
+    /// `Stopwatches`: id, start and time accumulated before this run, in load order.
+    pub stopwatches: Vec<(String, std::time::Instant, u64)>,
+    pub stopwatches_dirty: bool,
 }
 
 impl CommandState {
@@ -221,7 +246,7 @@ impl CommandState {
             scoreboard: Scoreboard::default(),
             bossbars: BossBars::default(),
             storage: kiln_command::CommandStorage::default(),
-            packs: crate::datapacks::Packs::new(None, "work/generated".into(), None),
+            packs: crate::datapacks::Packs::new(None, "work/generated".into(), crate::datapacks::PackConfig { enabled: vec!["vanilla".into()], disabled: Vec::new(), features: None }),
             ops,
             difficulty: Difficulty::Normal,
             game_rules: HashMap::new(),
@@ -230,6 +255,12 @@ impl CommandState {
             stop_requested: false,
             last_report: None,
             injected: Vec::new(),
+            auto_save: true,
+            save_requested: false,
+            idle_timeout: 0,
+            default_game_mode: None,
+            stopwatches: Vec::new(),
+            stopwatches_dirty: false,
         }
     }
 }
@@ -250,7 +281,7 @@ impl Sim {
     /// Replaces the contents of the block entity at `pos` with `fields` (position and id kept)
     /// and sends Block Entity Data to players with the chunk if vanilla would. Returns whether
     /// the contents changed.
-    fn load_block_entity(&mut self, dim: crate::DimId, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
+    pub(crate) fn load_block_entity(&mut self, dim: crate::DimId, pos: [i32; 3], fields: &[(String, Tag)]) -> bool {
         let [x, y, z] = pos;
         let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
         let chunk_pos = ChunkPos::of_block(x, z);
@@ -452,12 +483,30 @@ impl Source for Sim {
         match registry {
             "minecraft:advancement" => self.advancements.list.iter().map(|a| a.id.clone()).collect(),
             "minecraft:recipe" => self.rules.recipes.recipes().iter().map(|r| r.id.clone()).collect(),
+            "minecraft:worldgen/template_pool" => crate::world_state::worldgen_ids("worldgen/template_pool").clone(),
+            "minecraft:loot_table" => self.loot.as_ref().map_or_else(Vec::new, |l| l.table_ids().iter().map(|i| i.to_string()).collect()),
+            "minecraft:context_int_provider" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::IntProvider).iter().map(|i| i.to_string()).collect())
+            }
+            "minecraft:context_float_provider" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::FloatProvider).iter().map(|i| i.to_string()).collect())
+            }
+            "minecraft:slot_source" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::SlotSource).iter().map(|i| i.to_string()).collect())
+            }
+            "minecraft:item_modifier" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::Modifier).iter().map(|i| i.to_string()).collect())
+            }
             _ => Vec::new(),
         }
     }
 
     fn player_names(&self) -> Vec<String> {
         self.players.values().map(|p| p.name.clone()).collect()
+    }
+
+    fn definition_error(&self, registry: &str, definition: &Tag) -> Option<String> {
+        self.definition_error_of(registry, definition)
     }
 
     // `dimensions` keeps the default (all three vanilla levels): the nether and the end exist
@@ -846,11 +895,18 @@ impl Host for Sim {
         if take { p.reset_recipes(&rules, &idx) } else { p.award_recipes(&rules, &idx) }
     }
 
+    /// Online players, then (offline mode) the offline profile vanilla falls back to when the
+    /// name has no Mojang account: the name in lower case and its offline UUID. Kiln does not
+    /// look names up at Mojang, so names of real accounts resolve offline too.
     fn find_profile(&mut self, name: &str) -> Option<Profile> {
         if let Some(p) = self.players.values().find(|p| p.name.eq_ignore_ascii_case(name)) {
             return Some(Profile { uuid: p.uuid, name: p.name.clone() });
         }
-        None
+        if self.config.online_mode {
+            return None;
+        }
+        let lower = name.to_ascii_lowercase();
+        Some(Profile { uuid: offline_uuid(&lower), name: lower })
     }
 
     fn is_operator(&self, profile: &Profile) -> bool {
@@ -869,6 +925,7 @@ impl Host for Sim {
         } else {
             self.commands.ops.remove(&profile.name);
         }
+        self.sync_ops();
         let conn = self.players.iter().find(|(_, p)| p.name == profile.name).map(|(c, _)| *c);
         if let Some(c) = conn {
             self.send_command_tree(c);
@@ -914,6 +971,10 @@ impl Host for Sim {
         if rule == "minecraft:advance_time" {
             let pkt = self.time_packet();
             self.broadcast(pkt);
+        }
+        // The locator bar's connections break or are made again.
+        if rule == "minecraft:locator_bar" {
+            self.locator_bar_changed();
         }
     }
 
@@ -1017,6 +1078,10 @@ impl Host for Sim {
     }
 
     /// `BlockEntity.saveWithFullMetadata`.
+    fn entity_data(&mut self, entity: &PlayerRef) -> Option<Tag> {
+        self.entity_data_of(entity.conn, entity.entity, entity.dim)
+    }
+
     fn block_entity(&mut self, dimension: &str, pos: [i32; 3]) -> Option<Tag> {
         let [x, y, z] = pos;
         let dim = crate::dim_id(dimension)?;
@@ -1146,6 +1211,519 @@ impl Host for Sim {
     fn storage_mut(&mut self) -> Option<&mut kiln_command::CommandStorage> {
         Some(&mut self.commands.storage)
     }
+
+    // ---- server administration ----
+
+    fn access(&self) -> Option<kiln_link::access::SharedAccess> {
+        Some(self.config.access.clone())
+    }
+
+    fn player_ip(&self, player: &PlayerRef) -> Option<String> {
+        self.players.get(&player.conn)?.address.map(|a| a.to_string())
+    }
+
+    fn set_auto_save(&mut self, on: bool) -> bool {
+        std::mem::replace(&mut self.commands.auto_save, on) != on
+    }
+
+    fn save_all(&mut self, _flush: bool) -> bool {
+        self.commands.save_requested = true;
+        true
+    }
+
+    /// Without `force-gamemode`, players keep their modes (`enforceGameTypeForPlayers(null)`).
+    fn set_default_game_mode(&mut self, mode: GameMode) -> i32 {
+        self.commands.default_game_mode = Some(mode.id() as u8);
+        if let Some(s) = self.storage.as_mut() {
+            s.level.set_game_type(mode.id() as u8);
+        }
+        0
+    }
+
+    fn set_idle_timeout(&mut self, minutes: i32) {
+        self.commands.idle_timeout = minutes;
+    }
+
+    fn random_seed(&mut self) -> i64 {
+        // xorshift64, as for `@r`.
+        let r = &mut self.commands.rng;
+        *r ^= *r << 13;
+        *r ^= *r >> 7;
+        *r ^= *r << 17;
+        *r as i64
+    }
+
+    // ---- stopwatches and post effects ----
+
+    fn stopwatch_ids(&self) -> Vec<String> {
+        self.commands.stopwatches.iter().map(|(id, ..)| id.clone()).collect()
+    }
+
+    fn stopwatch_create(&mut self, id: &str) -> bool {
+        if self.commands.stopwatches.iter().any(|(i, ..)| i == id) {
+            return false;
+        }
+        self.commands.stopwatches.push((id.to_owned(), std::time::Instant::now(), 0));
+        self.commands.stopwatches_dirty = true;
+        true
+    }
+
+    fn stopwatch_seconds(&self, id: &str) -> Option<f64> {
+        let (_, start, before) = self.commands.stopwatches.iter().find(|(i, ..)| i == id)?;
+        let ms = *before + start.elapsed().as_millis() as u64;
+        Some(ms as f64 / 1000.0)
+    }
+
+    fn stopwatch_restart(&mut self, id: &str) -> bool {
+        let Some(w) = self.commands.stopwatches.iter_mut().find(|(i, ..)| i == id) else { return false };
+        w.1 = std::time::Instant::now();
+        w.2 = 0;
+        self.commands.stopwatches_dirty = true;
+        true
+    }
+
+    fn stopwatch_remove(&mut self, id: &str) -> bool {
+        let before = self.commands.stopwatches.len();
+        self.commands.stopwatches.retain(|(i, ..)| i != id);
+        self.commands.stopwatches_dirty |= self.commands.stopwatches.len() != before;
+        self.commands.stopwatches.len() != before
+    }
+
+    fn post_effects(&self, player: &PlayerRef) -> Vec<String> {
+        self.players.get(&player.conn).map_or_else(Vec::new, |p| p.post_effects.clone())
+    }
+
+    fn add_post_effect(&mut self, player: &PlayerRef, id: &str) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        if p.post_effects.iter().any(|e| e == id) {
+            return false;
+        }
+        p.post_effects.push(id.to_owned());
+        p.post_effects_dirty = true;
+        true
+    }
+
+    fn remove_post_effect(&mut self, player: &PlayerRef, id: &str) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        let Some(i) = p.post_effects.iter().position(|e| e == id) else { return false };
+        p.post_effects.remove(i);
+        p.post_effects_dirty = true;
+        true
+    }
+
+    fn waypoints(&self, dimension: &str) -> Vec<Text> {
+        crate::dim_id(dimension).map_or_else(Vec::new, |d| self.waypoint_names(d))
+    }
+
+    fn is_waypoint(&self, entity: &PlayerRef) -> bool {
+        entity.living
+    }
+
+    /// Players' icons; mobs keep none in Kiln (they transmit no waypoint without the
+    /// `waypoint_transmit_range` attribute anyway).
+    fn modify_waypoint(&mut self, entity: &PlayerRef, change: &kiln_command::host::WaypointChange) -> bool {
+        use kiln_command::host::WaypointChange;
+        if !entity.is_player() {
+            return false;
+        }
+        self.set_waypoint_icon(entity.conn, |icon| match change {
+            WaypointChange::Color(c) => icon.color = *c,
+            WaypointChange::Style(s) => icon.style = s.clone().unwrap_or_else(|| crate::waypoints::DEFAULT_STYLE.to_owned()),
+        })
+    }
+
+    fn clear_post_effects(&mut self, player: &PlayerRef) -> bool {
+        let Some(p) = self.players.get_mut(&player.conn) else { return false };
+        if p.post_effects.is_empty() {
+            return false;
+        }
+        p.post_effects.clear();
+        p.post_effects_dirty = true;
+        true
+    }
+
+    // ---- data, tag, item, loot, clear, enchant, attribute, damage, ride, rotate, spectate,
+    // swing and fetchprofile (see `command_data`; `entity_data` is above) ----------------------
+
+    fn set_entity_data(&mut self, entity: &PlayerRef, data: &Tag) -> Result<(), CommandError> {
+        self.load_entity_data(entity, data)
+    }
+
+    fn set_block_entity_data(&mut self, dimension: &str, pos: [i32; 3], data: &Tag) -> Result<(), CommandError> {
+        self.set_block_entity_nbt(dimension, pos, data);
+        Ok(())
+    }
+
+    fn storage_ids(&self) -> Vec<String> {
+        self.commands.storage.keys().map(str::to_owned).collect()
+    }
+
+    fn entity_tags(&mut self, entity: &PlayerRef) -> Vec<String> {
+        match entity.entity {
+            None => self.players.get(&entity.conn).map_or_else(Vec::new, Player::tags),
+            Some(_) => entity.tags.clone(),
+        }
+    }
+
+    fn add_entity_tag(&mut self, entity: &PlayerRef, tag: &str) -> bool {
+        self.change_entity_tag(entity, tag, true)
+    }
+
+    fn remove_entity_tag(&mut self, entity: &PlayerRef, tag: &str) -> bool {
+        self.change_entity_tag(entity, tag, false)
+    }
+
+    fn rotate_entity(&mut self, entity: &PlayerRef, rotation: [f32; 2]) {
+        self.rotate_target(entity, rotation);
+    }
+
+    fn swing_arm(&mut self, entity: &PlayerRef, offhand: bool, animation: &str, duration: i32) -> bool {
+        self.swing_target(entity, offhand, animation, duration)
+    }
+
+    fn vehicle_of(&mut self, entity: &PlayerRef) -> Option<PlayerRef> {
+        self.vehicle_of_target(entity)
+    }
+
+    fn self_and_passengers(&mut self, entity: &PlayerRef) -> Vec<PlayerRef> {
+        self.self_and_passengers_of(entity)
+    }
+
+    fn start_riding(&mut self, entity: &PlayerRef, vehicle: &PlayerRef) -> bool {
+        self.start_riding_target(entity, vehicle)
+    }
+
+    fn stop_riding(&mut self, entity: &PlayerRef) {
+        self.stop_riding_target(entity);
+    }
+
+    fn damage_entity(
+        &mut self,
+        entity: &PlayerRef,
+        amount: f32,
+        damage_type: &str,
+        _at: Option<[f64; 3]>,
+        _by: Option<&PlayerRef>,
+        _from: Option<&PlayerRef>,
+    ) -> Result<bool, CommandError> {
+        self.damage_target(entity, amount, damage_type)
+    }
+
+    fn can_spectate(&self, entity: &PlayerRef) -> bool {
+        kiln_data::entities::by_name(entity.kind).is_none_or(|t| t.tracking_range != 0)
+    }
+
+    fn set_camera(&mut self, player: &PlayerRef, target: Option<&PlayerRef>) {
+        self.set_camera_of(player, target);
+    }
+
+    fn slot_item(&mut self, holder: &kiln_command::host::ItemHolder<PlayerRef>, slot: i32) -> Option<Option<Tag>> {
+        self.slot_item_nbt(holder, slot)
+    }
+
+    fn set_slot_item(&mut self, holder: &kiln_command::host::ItemHolder<PlayerRef>, slot: i32, item: Option<&Tag>) -> bool {
+        self.set_slot_item_nbt(holder, slot, item)
+    }
+
+    fn is_container(&mut self, dimension: &str, pos: [i32; 3]) -> bool {
+        self.is_container_at(dimension, pos)
+    }
+
+    /// Main inventory, armor (feet first), off hand, body and saddle; the crafting grid and
+    /// cursor are not modeled here.
+    fn clear_slots(&self, _player: &PlayerRef) -> Vec<i32> {
+        (0..36).chain([100, 101, 102, 103, 99, 105, 106]).collect()
+    }
+
+    fn inventory_changed(&mut self, player: &PlayerRef) {
+        self.broadcast_inventory(player);
+    }
+
+    fn attribute(&mut self, entity: &PlayerRef, attribute: &str) -> Result<Option<kiln_command::host::AttributeState>, ()> {
+        self.attribute_state(entity, attribute)
+    }
+
+    fn set_attribute_base(&mut self, entity: &PlayerRef, attribute: &str, value: f64) {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::Base(Some(value)));
+    }
+
+    fn reset_attribute_base(&mut self, entity: &PlayerRef, attribute: &str) {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::Base(None));
+    }
+
+    fn add_attribute_modifier(&mut self, entity: &PlayerRef, attribute: &str, id: &str, amount: f64, operation: u8) {
+        let change = crate::command_data::AttributeChange::AddModifier(id.to_owned(), amount, operation);
+        self.change_attribute(entity, attribute, change);
+    }
+
+    fn remove_attribute_modifier(&mut self, entity: &PlayerRef, attribute: &str, id: &str) -> bool {
+        self.change_attribute(entity, attribute, crate::command_data::AttributeChange::RemoveModifier(id.to_owned()))
+    }
+
+    fn roll_loot(&mut self, source: &kiln_command::host::LootSource<PlayerRef>) -> Result<(Vec<Tag>, Option<String>), CommandError> {
+        self.roll_command_loot(source)
+    }
+
+    fn hand_item(&mut self, entity: &PlayerRef, offhand: bool) -> Option<Option<Tag>> {
+        self.hand_item_nbt(entity, offhand)
+    }
+
+    fn give_stack(&mut self, player: &PlayerRef, item: &Tag) -> bool {
+        self.give_stack_nbt(player, item)
+    }
+
+    fn compute_provider(
+        &mut self,
+        provider: &kiln_command::host::LootTableArg,
+        float: bool,
+        target: &kiln_command::host::ComputeTarget<PlayerRef>,
+    ) -> Result<f64, kiln_command::host::ComputeError> {
+        self.compute_provider_value(provider, float, target)
+    }
+
+    fn slot_source_tree(
+        &mut self,
+        source: &kiln_command::host::LootTableArg,
+        container: &kiln_command::host::ItemHolder<PlayerRef>,
+    ) -> Result<kiln_command::host::SlotTree<PlayerRef>, CommandError> {
+        self.slot_tree_nbt(source, container)
+    }
+
+    fn apply_item_modifier(&mut self, modifier: &kiln_command::host::LootTableArg, item: &Tag) -> Result<Tag, CommandError> {
+        self.apply_modifier_nbt(modifier, item)
+    }
+
+    fn spawn_item(&mut self, dimension: &str, pos: [f64; 3], item: &Tag) {
+        self.spawn_item_nbt(dimension, pos, item);
+    }
+
+    fn container_size(&mut self, dimension: &str, pos: [i32; 3]) -> Option<i32> {
+        self.container_size_at(dimension, pos)
+    }
+
+    fn item_max_stack(&self, item: &Tag) -> i32 {
+        kiln_item::ItemStack::from_nbt(item).map_or(64, |s| s.max_stack_size())
+    }
+
+    fn enchantment_max_level(&self, enchantment: &str) -> Option<i32> {
+        self.enchantment_max(enchantment)
+    }
+
+    fn enchant_held(&mut self, entity: &PlayerRef, enchantment: &str, level: i32) -> kiln_command::host::EnchantOutcome {
+        self.enchant_target(entity, enchantment, level)
+    }
+    // ---- worldborder, tick, forceload, random, locate, place, fillbiome ----
+
+    fn world_border(&mut self, dimension: &str) -> kiln_command::host::BorderInfo {
+        crate::dim_id(dimension).map(|d| self.world.borders[d].info()).unwrap_or_default()
+    }
+
+    fn change_world_border(&mut self, dimension: &str, change: kiln_command::host::BorderChange) {
+        if let Some(d) = crate::dim_id(dimension) {
+            self.change_border(d, change);
+        }
+    }
+
+    fn tick_rate(&self) -> kiln_command::host::TickRateInfo {
+        let mut info = self.world.tick_rate.info();
+        info.tick_times = self.world.tick_times.clone();
+        let n = self.world.tick_index.clamp(1, 100);
+        info.average_tick_nanos = self.world.tick_times.iter().sum::<i64>() / n as i64;
+        info
+    }
+
+    fn change_tick_rate(&mut self, action: kiln_command::host::TickRateAction) -> bool {
+        let mut news = crate::world_state::TickNews::default();
+        let result = self.world.tick_rate.apply(action, &mut news);
+        self.tick_rate_news(news);
+        result
+    }
+
+    fn forced_chunks(&self, dimension: &str) -> Vec<[i32; 2]> {
+        crate::dim_id(dimension).map(|d| self.world.forced[d].iter().copied().collect()).unwrap_or_default()
+    }
+
+    fn set_chunk_forced(&mut self, dimension: &str, chunk: [i32; 2], forced: bool) -> bool {
+        crate::dim_id(dimension).is_some_and(|d| self.set_forced(d, chunk, forced))
+    }
+
+    fn random_between(&mut self, sequence: Option<&Identifier>, min: i32, max: i32) -> i32 {
+        use kiln_javamath::random::RandomSource;
+        let bound = max.wrapping_sub(min).wrapping_add(1);
+        match sequence {
+            Some(id) => {
+                let seed = self.commands.seed;
+                self.world.sequences.get(id.as_str(), seed).next_int_bounded(bound) + min
+            }
+            None => self.level_random_between(min, max),
+        }
+    }
+
+    fn reset_random_sequence(&mut self, id: &Identifier, params: Option<(i32, bool, bool)>) {
+        let seed = self.commands.seed;
+        self.world.sequences.reset(id.as_str(), seed, params);
+    }
+
+    fn clear_random_sequences(&mut self, defaults: Option<(i32, bool, bool)>) -> i32 {
+        self.world.sequences.clear(defaults)
+    }
+
+    fn random_sequence_ids(&self) -> Vec<String> {
+        self.world.sequences.ids()
+    }
+
+    fn broadcast_system_message(&mut self, text: Text) {
+        info!("{}", console_text(&text));
+        self.broadcast(packets::system_chat(text.to_nbt(), false));
+    }
+
+    fn send_failure(&mut self, text: Text) {
+        if self.commands.stack.silent {
+            return;
+        }
+        self.reply(text.color("red"));
+    }
+
+    fn locate_biome(&mut self, dimension: &str, origin: [i32; 3], matches: &dyn Fn(&str) -> bool) -> Option<kiln_command::host::Located> {
+        let d = crate::dim_id(dimension)?;
+        let (pos, id) = Sim::locate_biome(self, d, origin, matches)?;
+        Some(kiln_command::host::Located { pos, id })
+    }
+
+    fn locate_poi(&mut self, dimension: &str, origin: [i32; 3], matches: &dyn Fn(&str) -> bool) -> Option<kiln_command::host::Located> {
+        let d = crate::dim_id(dimension)?;
+        let (pos, id) = Sim::locate_poi(self, d, origin, matches)?;
+        Some(kiln_command::host::Located { pos, id })
+    }
+
+    fn structure_ids(&self) -> Vec<String> {
+        crate::world_state::worldgen_ids("worldgen/structure").clone()
+    }
+
+    fn structure_tag(&self, tag: &str) -> Option<Vec<String>> {
+        crate::world_state::worldgen_tag("worldgen/structure", tag)
+    }
+
+    fn noise_biome(&mut self, dimension: &str, quart: [i32; 3]) -> Option<String> {
+        self.biome(dimension, quart.map(|q| q << 2))
+    }
+
+    fn fill_biome(&mut self, dimension: &str, min: [i32; 3], max: [i32; 3], biome: &str, filter: &dyn Fn(&str) -> bool) -> Option<i32> {
+        let d = crate::dim_id(dimension)?;
+        Sim::fill_biome(self, d, min, max, biome, filter)
+    }
+
+    fn place(&mut self, dimension: &str, what: &kiln_command::host::Placement, pos: [i32; 3]) -> Result<(), CommandError> {
+        use kiln_command::host::Placement;
+        let dim = crate::dim_id(dimension).unwrap_or(crate::OVERWORLD_ID);
+        match what {
+            Placement::Template { id, rotation, mirror, integrity, seed, strict } => {
+                self.place_template(dim, id.as_str(), pos, *rotation, *mirror, *integrity, *seed, *strict)
+            }
+            Placement::Feature { .. } => Err(CommandError::unsupported("place feature")),
+            Placement::Jigsaw { .. } => Err(CommandError::unsupported("place jigsaw")),
+            Placement::Structure(_) => Err(CommandError::unsupported("place structure")),
+        }
+    }
+}
+
+impl Sim {
+    /// `ServerPlayer.sendPostEffects` for players whose post effects changed (and after
+    /// joining).
+    pub(crate) fn send_post_effects(&mut self) {
+        for p in self.players.values_mut() {
+            if std::mem::take(&mut p.post_effects_dirty) {
+                let ids: Vec<&str> = p.post_effects.iter().map(String::as_str).collect();
+                let pkt = packets::post_effects(&ids);
+                p.send(pkt);
+            }
+        }
+    }
+
+    /// `Stopwatches` from `data/minecraft/stopwatches.dat` (elapsed milliseconds by id).
+    pub(crate) fn load_stopwatches(&mut self) {
+        let Some(storage) = &self.storage else { return };
+        let Some(data) = kiln_storage::saved_data::read(&storage.dir, "stopwatches") else { return };
+        let now = std::time::Instant::now();
+        if let Some(Tag::Compound(entries)) = data.get("stopwatches") {
+            for (id, t) in entries {
+                if let Some(ms) = t.as_i64() {
+                    self.commands.stopwatches.push((id.clone(), now, ms.max(0) as u64));
+                }
+            }
+        }
+    }
+
+    /// Saves the stopwatches (their elapsed time) when they changed, and with every autosave
+    /// while any run.
+    pub(crate) fn save_stopwatches(&mut self) {
+        let Some(storage) = &self.storage else { return };
+        if !self.commands.stopwatches_dirty && self.commands.stopwatches.is_empty() {
+            return;
+        }
+        self.commands.stopwatches_dirty = false;
+        let entries = self
+            .commands
+            .stopwatches
+            .iter()
+            .map(|(id, start, before)| (id.clone(), Tag::Long((*before + start.elapsed().as_millis() as u64) as i64)))
+            .collect();
+        let data = Tag::Compound(vec![("stopwatches".to_owned(), Tag::Compound(entries))]);
+        if let Err(e) = kiln_storage::saved_data::write(&storage.dir.clone(), "stopwatches", data) {
+            tracing::warn!("failed to save stopwatches: {e}");
+        }
+    }
+
+    /// Copies the operator names to the login checks (operators bypass the whitelist).
+    pub(crate) fn sync_ops(&mut self) {
+        let ops = self.commands.ops.clone();
+        self.config.access.write().unwrap_or_else(std::sync::PoisonError::into_inner).ops = ops;
+    }
+
+    /// `ServerPlayer.resetLastActionTime` on what the player does, and the idle kick
+    /// (`ServerGamePacketListenerImpl.tick` with a `player-idle-timeout`).
+    pub(crate) fn track_idle(&mut self, packets: &[(ConnId, kiln_link::PlayIn)]) {
+        use kiln_link::PlayIn;
+        let now = std::time::Instant::now();
+        for (conn, pkt) in packets {
+            let Some(p) = self.players.get_mut(conn) else { continue };
+            let active = match pkt {
+                PlayIn::KeepAlive { .. }
+                | PlayIn::ChunkBatchReceived { .. }
+                | PlayIn::ClientTickEnd
+                | PlayIn::ClientInformation(_)
+                | PlayIn::AcceptTeleport { .. }
+                | PlayIn::PlayerLoaded => false,
+                PlayIn::Move { pos, rot, .. } => pos.is_some_and(|v| v != p.pos) || rot.is_some_and(|r| r != p.rot),
+                _ => true,
+            };
+            if active {
+                p.last_action = now;
+            }
+        }
+        let minutes = self.commands.idle_timeout;
+        if minutes <= 0 {
+            return;
+        }
+        let limit = std::time::Duration::from_secs(minutes as u64 * 60);
+        let idle: Vec<ConnId> =
+            self.players.iter().filter(|(_, p)| !p.disconnected && now.duration_since(p.last_action) > limit).map(|(c, _)| *c).collect();
+        for conn in idle {
+            if let Some(p) = self.players.get_mut(&conn) {
+                p.flush();
+                p.sink.disconnect(packets::play_disconnect_text(kiln_command::tr!("multiplayer.disconnect.idling").to_nbt()));
+            }
+        }
+    }
+}
+
+/// `UUIDUtil.createOfflinePlayerUUID`: a version 3 UUID of `OfflinePlayer:<name>`.
+fn offline_uuid(name: &str) -> Uuid {
+    use md5::Digest;
+    let mut h: [u8; 16] = md5::Md5::digest(format!("OfflinePlayer:{name}").as_bytes()).into();
+    h[6] = (h[6] & 0x0f) | 0x30;
+    h[8] = (h[8] & 0x3f) | 0x80;
+    Uuid::from_bytes(h)
 }
 
 fn block_pos(p: [i32; 3]) -> kiln_blocks::BlockPos {

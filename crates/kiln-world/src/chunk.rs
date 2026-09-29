@@ -205,6 +205,11 @@ impl Chunk {
         self.edits != 0
     }
 
+    /// Biomes changed in place (`/fillbiome`): the chunk saves and re-encodes.
+    pub fn mark_biomes_changed(&mut self) {
+        self.version += 1;
+    }
+
     pub fn needs_save(&self) -> bool {
         self.version != self.saved_version
     }

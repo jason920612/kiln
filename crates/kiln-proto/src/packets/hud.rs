@@ -127,3 +127,59 @@ pub fn tab_list(header: &Tag, footer: &Tag) -> Bytes {
     footer.write_network(&mut b);
     b.freeze()
 }
+
+// ---- locator bar ---------------------------------------------------------------------------
+
+/// `ClientboundTrackedWaypointPacket.Operation`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaypointOp {
+    Track = 0,
+    Untrack = 1,
+    Update = 2,
+}
+
+/// Where a tracked waypoint is (`TrackedWaypoint.Type` and its contents).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum WaypointAt {
+    Empty,
+    Block([i32; 3]),
+    Chunk([i32; 2]),
+    /// Radians.
+    Azimuth(f32),
+}
+
+/// Tracked Waypoint: `op` on the waypoint of entity `id`, drawn with `style` (a
+/// `waypoint_style` asset id) in `color` (`0xRRGGBB`, or the client's default).
+pub fn tracked_waypoint(op: WaypointOp, id: Uuid, style: &str, color: Option<i32>, at: WaypointAt) -> Bytes {
+    let mut b = packet(ids::WAYPOINT);
+    b.put_varint(op as i32);
+    // `Either<UUID, String>`: left.
+    b.put_bool(true);
+    b.put_uuid(id);
+    b.put_string(style);
+    b.put_bool(color.is_some());
+    if let Some(c) = color {
+        b.put_u8((c >> 16) as u8);
+        b.put_u8((c >> 8) as u8);
+        b.put_u8(c as u8);
+    }
+    match at {
+        WaypointAt::Empty => b.put_varint(0),
+        WaypointAt::Block([x, y, z]) => {
+            b.put_varint(1);
+            b.put_varint(x);
+            b.put_varint(y);
+            b.put_varint(z);
+        }
+        WaypointAt::Chunk([x, z]) => {
+            b.put_varint(2);
+            b.put_varint(x);
+            b.put_varint(z);
+        }
+        WaypointAt::Azimuth(angle) => {
+            b.put_varint(3);
+            b.put_f32(angle);
+        }
+    }
+    b.freeze()
+}

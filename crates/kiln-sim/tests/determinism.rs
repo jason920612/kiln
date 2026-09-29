@@ -51,6 +51,8 @@ fn run_phased(
 ) -> Run {
     let with_plugins = plugins.is_some();
     let mut config = SimConfig::new(PLAYERS, 4, None);
+    // Keep-alives follow the wall clock, which a slow run would see in its packets.
+    config.keep_alive = false;
     config.plugins = plugins;
     config.pool.workers = workers;
     config.pool.chaos = chaos;
@@ -334,6 +336,7 @@ fn strict_plugins_replay_exactly_with_tight_budgets() {
 fn run_levels(ticks: usize, workers: usize, unified: bool, chaos: Option<u64>) -> (Vec<u64>, Vec<Vec<(u64, u64)>>) {
     const N: usize = 9;
     let mut config = SimConfig::new(N, 4, None);
+    config.keep_alive = false;
     config.pool.workers = workers;
     config.pool.chaos = chaos;
     config.unified_regions = unified;

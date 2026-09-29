@@ -31,6 +31,8 @@ pub struct LevelState {
     /// `Data.DataPacks`: enabled packs in load order and disabled ones; `None` keeps the
     /// saved lists.
     pub data_packs: Option<(Vec<String>, Vec<String>)>,
+    /// `Data.enabled_features`: the world's feature flags; `None` keeps the saved list.
+    pub enabled_features: Option<Vec<String>>,
 }
 
 pub struct LevelStore {
@@ -102,7 +104,14 @@ impl LevelStore {
                 pitch: float("pitch"),
             },
             data_packs: self.data_packs(),
+            enabled_features: self.enabled_features(),
         }
+    }
+
+    /// `Data.enabled_features`, if saved.
+    pub fn enabled_features(&self) -> Option<Vec<String>> {
+        let list = self.data()?.get("enabled_features")?.as_list()?;
+        Some(list.iter().filter_map(|t| t.as_str().map(str::to_owned)).collect())
     }
 
     /// `Data.DataPacks` (`Enabled`, `Disabled`), if saved.
@@ -117,6 +126,12 @@ impl LevelStore {
     /// The default game mode for new players (`Data.GameType`), if the world has one.
     pub fn game_type(&self) -> Option<u8> {
         self.data()?.get("GameType")?.as_i64().map(|g| g as u8)
+    }
+
+    /// Sets `Data.GameType` (`/defaultgamemode`), written with the next save.
+    pub fn set_game_type(&mut self, game_type: u8) {
+        let root = self.level.get_or_insert_with(|| Tag::Compound(Vec::new()));
+        put(child(root, "Data"), "GameType", Tag::Int(i32::from(game_type)));
     }
 
     /// A saved game rule (`minecraft:respawn_radius`, ...) as a number (booleans are 0 or 1).
@@ -158,6 +173,9 @@ fn update_level(data: &mut Tag, state: &LevelState) {
         let packs = child(data, "DataPacks");
         put(packs, "Enabled", strings(enabled));
         put(packs, "Disabled", strings(disabled));
+    }
+    if let Some(features) = &state.enabled_features {
+        put(data, "enabled_features", Tag::List(features.iter().cloned().map(Tag::String).collect()));
     }
     put(data, "DataVersion", Tag::Int(DATA_VERSION as i32));
     let version = child(data, "Version");
@@ -227,6 +245,7 @@ mod tests {
             day_time: 7000,
             spawn: WorldSpawn { dimension: "minecraft:overworld".into(), pos: [8, 64, 8], yaw: 90.0, pitch: 0.0 },
             data_packs: Some((vec!["vanilla".into(), "file/p".into()], vec!["trade_rebalance".into()])),
+            enabled_features: Some(vec!["minecraft:vanilla".into(), "minecraft:minecart_improvements".into()]),
         };
         store.save(&state).unwrap();
         let back = LevelStore::open(&dir);

@@ -7,7 +7,7 @@ use crate::enchant::Enchantment;
 use crate::function::Function;
 use crate::json::Json;
 use crate::number::{FloatProvider, IntProvider};
-use crate::parse::{IdSet, ParseError, Parser};
+use crate::parse::{IdSet, ParseError, Parser, Ref};
 use crate::slot::SlotSource;
 use crate::table::LootTable;
 use crate::tags::{self, Tags};
@@ -381,6 +381,52 @@ impl LootData {
     /// A loaded item modifier (`item_modifier/`).
     pub fn modifier(&self, id: &Identifier) -> Option<&Function> {
         self.names.index(Kind::Modifier, id).and_then(|i| self.modifiers.get(i))
+    }
+
+    /// Decodes a slot source from JSON against this data (`/item` with an inline definition).
+    pub fn parse_slot_source(&self, json: &str) -> Result<SlotSource, ParseError> {
+        let j = Json::parse(json).map_err(|e| ParseError::new(e.to_string()))?;
+        SlotSource::parse(&Parser { names: &self.names, tags: &self.tags }, &j)
+    }
+
+    /// Decodes a context int provider (`ContextIntProviders.CODEC`) from JSON.
+    pub fn parse_int_provider(&self, json: &str) -> Result<Ref<IntProvider>, ParseError> {
+        let j = Json::parse(json).map_err(|e| ParseError::new(e.to_string()))?;
+        IntProvider::parse_ref(&Parser { names: &self.names, tags: &self.tags }, &j)
+    }
+
+    /// Decodes a context float provider (`ContextFloatProviders.CODEC`) from JSON.
+    pub fn parse_float_provider(&self, json: &str) -> Result<Ref<FloatProvider>, ParseError> {
+        let j = Json::parse(json).map_err(|e| ParseError::new(e.to_string()))?;
+        FloatProvider::parse_ref(&Parser { names: &self.names, tags: &self.tags }, &j)
+    }
+
+    /// A reference to the loaded context int provider `id`.
+    pub fn int_provider_ref(&self, id: &Identifier) -> Option<Ref<IntProvider>> {
+        self.names.index(Kind::IntProvider, id).map(Ref::Named)
+    }
+
+    /// A reference to the loaded context float provider `id`.
+    pub fn float_provider_ref(&self, id: &Identifier) -> Option<Ref<FloatProvider>> {
+        self.names.index(Kind::FloatProvider, id).map(Ref::Named)
+    }
+
+    /// A loaded slot source (`slot_source/`).
+    pub fn slot_source(&self, id: &Identifier) -> Option<&SlotSource> {
+        self.names.index(Kind::SlotSource, id).and_then(|i| self.slot_sources.get(i))
+    }
+
+    /// The slot source a reference stands for.
+    pub fn resolve_slot_source<'a>(&'a self, r: &'a Ref<SlotSource>) -> Option<&'a SlotSource> {
+        match r {
+            Ref::Direct(v) => Some(v),
+            Ref::Named(i) => self.slot_sources.get(*i),
+        }
+    }
+
+    /// A reference to the loaded item modifier `id`.
+    pub fn modifier_ref(&self, id: &Identifier) -> Option<Ref<Function>> {
+        self.names.index(Kind::Modifier, id).map(Ref::Named)
     }
 
     /// The definition of a `minecraft:enchantment` id.

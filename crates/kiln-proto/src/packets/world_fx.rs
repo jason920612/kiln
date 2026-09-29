@@ -300,7 +300,7 @@ pub struct WorldBorder {
     /// Vanilla: 29999984.
     pub absolute_max_size: i32,
     pub warning_blocks: i32,
-    /// Seconds.
+    /// Ticks.
     pub warning_time: i32,
 }
 
@@ -338,10 +338,42 @@ pub fn set_border_size(size: f64) -> Bytes {
     b.freeze()
 }
 
-/// Warning time in seconds.
-pub fn set_border_warning_delay(seconds: i32) -> Bytes {
+/// Warning time in ticks (`WorldBorder.getWarningTime`).
+pub fn set_border_warning_delay(ticks: i32) -> Bytes {
     let mut b = packet(ids::SET_BORDER_WARNING_DELAY);
-    b.put_varint(seconds);
+    b.put_varint(ticks);
+    b.freeze()
+}
+
+// ---- tick rate ----------------------------------------------------------------------------
+
+/// `ClientboundTickingStatePacket`: the tick rate and whether the game is frozen.
+pub fn ticking_state(rate: f32, frozen: bool) -> Bytes {
+    let mut b = packet(ids::TICKING_STATE);
+    b.put_f32(rate);
+    b.put_bool(frozen);
+    b.freeze()
+}
+
+/// `ClientboundTickingStepPacket`: frozen ticks left to run.
+pub fn ticking_step(steps: i32) -> Bytes {
+    let mut b = packet(ids::TICKING_STEP);
+    b.put_varint(steps);
+    b.freeze()
+}
+
+// ---- biomes -------------------------------------------------------------------------------
+
+/// `ClientboundChunksBiomesPacket`: each chunk's position and its sections' biome containers
+/// (as [`kiln_world`-style] paletted containers, already encoded).
+pub fn chunks_biomes(chunks: &[([i32; 2], Vec<u8>)]) -> Bytes {
+    let mut b = packet(ids::CHUNKS_BIOMES);
+    b.put_varint(chunks.len() as i32);
+    for ([x, z], data) in chunks {
+        b.put_i64(((*z as i64) << 32) | (*x as u32 as i64));
+        b.put_varint(data.len() as i32);
+        b.put_slice(data);
+    }
     b.freeze()
 }
 

@@ -1023,12 +1023,14 @@ impl Sim {
         let difficulty = packets::change_difficulty(self.commands.difficulty as u8, false);
         let (spawn, spawn_rot) = (self.spawn, self.spawn_rot);
         let time = self.time_packet();
-        let weather = self.weather_packets(dim);
+        let weather = self.level_info_packets(dim);
         let rules = self.rules.clone();
         self.untrack_everywhere(conn);
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info);
         p.send(difficulty);
+        // `ServerPlayer.teleport` to another level sends the post effects again.
+        p.post_effects_dirty = true;
         self.sleep_status[p.dim].dirty = true;
         self.sleep_status[dim].dirty = true;
         // `enteredNetherPosition`: where the player left the overworld for the nether.
