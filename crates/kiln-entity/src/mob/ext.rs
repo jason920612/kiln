@@ -249,6 +249,13 @@ pub trait Kind: Sync + Send {
         None
     }
 
+    /// `makeBrain`: the brain of a brain-driven type (built after the constructor's yaw draw;
+    /// its sensors' first scans are delayed by draws from `random`). `None` for goal-driven types.
+    fn make_brain(&self, m: &MobData, random: &mut dyn RandomSource) -> Option<super::brain::Brain> {
+        let _ = (m, random);
+        None
+    }
+
     /// `registerGoals` (and goals the constructor adds).
     fn register_goals(&self, m: &mut MobData) {
         default_goals(m, self.info());

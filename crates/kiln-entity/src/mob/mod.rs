@@ -11,6 +11,7 @@
 //! level's random for spawning decisions.
 
 pub mod attributes;
+pub mod brain;
 pub mod breed;
 pub mod ext;
 pub mod fly;
@@ -568,6 +569,11 @@ pub struct MobData {
     pub equip_mods: Vec<(Attr, String)>,
     /// `activeEffects` (see [`effects`]).
     pub effects: crate::effect::Effects,
+    /// The `Brain` of brain-driven types (taken out of the mob while it ticks).
+    pub brain: Option<Box<brain::Brain>>,
+    /// The mob's own stream for what vanilla draws from `level.getRandom()` in its AI (per entity,
+    /// so the outcome does not depend on which entities share a region).
+    pub brain_random: kiln_javamath::random::LegacyRandom,
 }
 
 impl MobData {
@@ -656,6 +662,8 @@ impl MobData {
             hurt_by: None,
             equip_mods: Vec::new(),
             effects: crate::effect::Effects::new(),
+            brain: None,
+            brain_random: kiln_javamath::random::LegacyRandom::new(0),
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -742,6 +750,18 @@ impl MobData {
     /// `getLastDamageSource`: the last hit if it was within 40 ticks.
     pub fn last_damage_source(&self, now: i64) -> Option<DamageSource> {
         if now - self.last_damage_stamp > 40 { None } else { self.last_damage_source }
+    }
+
+    /// A brain's active activities and running behaviours (`act:idle`, `run:MoveToTargetSink`),
+    /// for parity traces (anonymous behaviours have no name and are left out).
+    pub fn brain_trace(&self) -> Vec<String> {
+        let Some(b) = &self.brain else { return Vec::new() };
+        let mut acts: Vec<String> = b.st.active_activities().iter().map(|a| format!("act:{}", a.name())).collect();
+        acts.sort();
+        let mut run: Vec<String> = b.running_names().into_iter().filter(|n| !n.is_empty()).map(|n| format!("run:{n}")).collect();
+        run.sort();
+        acts.extend(run);
+        acts
     }
 
     /// Running goal names, for tests and parity traces.
@@ -955,6 +975,11 @@ pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     // `LivingEntity`'s constructor: a random yaw (in radians-sized degrees, as vanilla).
     e.y_rot = e.random.next_float() * 6.2831855;
     m.y_head_rot = e.y_rot;
+    // ... then the brain (its sensors' first scans are delayed by draws from the mob's random).
+    m.brain_random = kiln_javamath::random::LegacyRandom::new(seed ^ 0x2545_F491_4F6C_DD1D);
+    if let Some(k) = kind.ext() {
+        m.brain = k.make_brain(&m, &mut e.random).map(Box::new);
+    }
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
     // `EnderDragon`'s constructor: `noPhysics`.
     e.no_physics = kind == MobKind::EnderDragon;
