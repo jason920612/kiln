@@ -221,6 +221,43 @@ impl RegionWork<'_> {
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
 
+    /// `LivingEntity.checkAutoSpinAttack` for the players whose riptide spin counted down this
+    /// tick: the first living entity their box meets is hit (`Player.attack` with the spin's
+    /// damage and its trident) and the spin ends there; a finished spin forgets its damage.
+    fn spin_attacks(&mut self, env: &Env) {
+        for i in 0..self.players.len() {
+            if !std::mem::take(&mut self.players[i].spin_check) {
+                continue;
+            }
+            if !self.players[i].dead && let Some(target) = crate::combat::spin_touch(&self.players, i, self.entities) {
+                let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
+                let mut hits = Vec::new();
+                {
+                    let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
+                    crate::combat::spin_attack(&mut self.players, i, target, self.entities, &attack_env, &mut ctx, &mut hits);
+                }
+                self.players[i].stop_spin_on_hit();
+                if !hits.is_empty() {
+                    let bodies = Vec::new();
+                    let mut out = BlockOut::default();
+                    let mut level = RegionLevel {
+                        cells: &mut *self.cells,
+                        blocks: &mut *self.blocks,
+                        env: &env.blocks,
+                        out: &mut out,
+                        bodies: &bodies,
+                        actor: None,
+                    };
+                    for hit in hits {
+                        entities::hit_mob(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &hit);
+                    }
+                    blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+                }
+            }
+            self.players[i].spin_finished();
+        }
+    }
+
     /// A Use Item with a fishing rod in that hand, from a living player.
     fn rod_use(&self, conn: ConnId, pkt: &PlayIn) -> bool {
         let PlayIn::UseItem { hand, .. } = pkt else { return false };
@@ -319,6 +356,7 @@ impl RegionWork<'_> {
             self.out.deaths.extend(t.deaths);
             self.out.portals.extend(t.portals);
         }
+        self.spin_attacks(env);
         mark(&mut self.out.times, 1);
         // Which chunks each player lacks is its own business (a window); sending them needs
         // the chunks' packet caches, so that part runs in connection order here.

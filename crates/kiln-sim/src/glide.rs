@@ -44,22 +44,46 @@ impl Player {
         }
     }
 
-    /// `startAutoSpinAttack`: the riptide spin lasts `ticks` (the client moves the player).
-    pub(crate) fn start_spin_attack(&mut self, ticks: i32) {
+    /// `startAutoSpinAttack`: the riptide spin lasts `ticks` (the client moves the player) and
+    /// hits what it touches for `damage` with `item` (the trident, thrown from `off_hand`).
+    pub(crate) fn start_spin_attack(&mut self, ticks: i32, damage: f32, item: ItemStack, off_hand: bool) {
         self.spin_ticks = ticks;
+        self.spin_damage = damage;
+        self.spin_item = item;
+        self.spin_off_hand = off_hand;
         self.meta_dirty = true;
         self.self_meta_dirty = true;
     }
 
-    /// The countdown of the spin attack (`aiStep`'s `autoSpinAttackTicks`).
+    /// The countdown of the spin attack (`aiStep`'s `autoSpinAttackTicks`); what the spin
+    /// touched is looked at afterwards with the region's entities ([`Player::spin_finished`]).
     pub(crate) fn tick_spin(&mut self) {
         if self.spin_ticks > 0 {
             self.spin_ticks -= 1;
+            self.spin_check = true;
             if self.spin_ticks == 0 {
                 self.meta_dirty = true;
                 self.self_meta_dirty = true;
             }
         }
+    }
+
+    /// The end of `checkAutoSpinAttack`: a finished spin (its ticks ran out, or it hit
+    /// something) forgets its damage and item.
+    pub(crate) fn spin_finished(&mut self) {
+        if self.spin_ticks <= 0 {
+            self.spin_damage = 0.0;
+            self.spin_item = ItemStack::empty();
+        }
+    }
+
+    /// The spin hit something (`autoSpinAttackTicks = 0`, `setDeltaMovement(delta * -0.2)`): the
+    /// flag goes down and the player bounces back.
+    pub(crate) fn stop_spin_on_hit(&mut self) {
+        self.spin_ticks = 0;
+        self.vel = self.vel.map(|v| v * -0.2);
+        self.meta_dirty = true;
+        self.self_meta_dirty = true;
     }
 
     /// `LivingEntity.updateFallFlying` plus the `fallFlyTicks` counter of `aiStep`.

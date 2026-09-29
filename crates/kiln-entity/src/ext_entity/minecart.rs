@@ -25,6 +25,9 @@ use kiln_proto::packets::entity::{DataValue, EntityData};
 pub mod cargo;
 pub use cargo::Contents;
 
+#[cfg(test)]
+mod tests;
+
 /// `MinecartFurnace`: what a piece of fuel is worth, and how much a cart can hold.
 const FUEL_TICKS_PER_ITEM: i32 = 3600;
 const MAX_FUEL_TICKS: i32 = 32000;

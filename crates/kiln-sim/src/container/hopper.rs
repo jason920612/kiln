@@ -20,6 +20,11 @@ pub(crate) trait ItemEntities {
     fn stack_mut(&mut self, i: usize) -> &mut ItemStack;
     /// `ItemEntity.setItem` happened (an empty stack discards the entity).
     fn changed(&mut self, i: usize);
+    /// Alive chest and hopper minecarts whose box meets `lo..hi`, in the level's order
+    /// (`EntitySelector.CONTAINER_ENTITY_SELECTOR`).
+    fn carts_in(&self, lo: [f64; 3], hi: [f64; 3]) -> Vec<usize>;
+    /// The slots of minecart `i` (from [`ItemEntities::carts_in`]) and where it is.
+    fn cart(&mut self, i: usize) -> Option<(&mut kiln_entity::ext_entity::minecart::Contents, [f64; 3])>;
 }
 
 /// A container a hopper moves items into or out of: one block entity, or a double chest.
@@ -318,7 +323,7 @@ fn try_move_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Bl
     }
     let mut moved = false;
     if !h.is_empty() {
-        moved = eject_items(level, pos, s);
+        moved = eject_items(level, items, pos, s);
     }
     if level.blocks.containers.get(pos).is_some_and(|h| !inventory_full(h)) {
         moved |= suck_in_items(level, items, pos);
@@ -335,9 +340,9 @@ fn try_move_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Bl
 }
 
 /// `HopperBlockEntity.ejectItems`: one item into the container it faces.
-fn eject_items(level: &mut RegionLevel, pos: BlockPos, s: u16) -> bool {
+fn eject_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: BlockPos, s: u16) -> bool {
     let facing = state::get_dir(s, "facing").unwrap_or(Direction::Down);
-    let Some(target) = container_at(level, pos.relative(facing)) else { return false };
+    let Some(target) = container_at(level, pos.relative(facing)) else { return eject_into_cart(level, items, pos, facing) };
     let face = facing.opposite();
     let Some(mut hopper) = level.blocks.containers.map.remove(&pos) else { return false };
     let ticked = hopper.ticked_game_time;
@@ -378,10 +383,98 @@ fn eject_items(level: &mut RegionLevel, pos: BlockPos, s: u16) -> bool {
     moved
 }
 
+/// `getEntityContainer`: the minecart among `carts` a hopper deals with (`level.random` picks
+/// one of several), with its loot table rolled.
+fn pick_cart(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: BlockPos, carts: &[usize]) -> usize {
+    use kiln_javamath::random::RandomSource;
+    let pick = super::pos_random(level, pos, 9).next_int_bounded(carts.len() as i32) as usize;
+    let idx = carts[pick];
+    let (loot, game_time, seed) = (level.env.loot.clone(), level.env.game_time, level.env.seed);
+    if let Some((c, at)) = items.cart(idx)
+        && let Some(table) = c.loot_table.take()
+        && let Some(loot) = loot
+    {
+        let cell = [at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32];
+        super::fill_from_table(&mut c.items, &loot, &table, c.loot_seed, at, cell, false, game_time, seed);
+    }
+    idx
+}
+
+/// `HopperBlockEntity.ejectItems` into a container minecart in the block the hopper faces.
+fn eject_into_cart(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: BlockPos, facing: Direction) -> bool {
+    let target = pos.relative(facing);
+    let (lo, hi) = ([target.x as f64, target.y as f64, target.z as f64], [target.x as f64 + 1.0, target.y as f64 + 1.0, target.z as f64 + 1.0]);
+    let carts = items.carts_in(lo, hi);
+    if carts.is_empty() {
+        return false;
+    }
+    let idx = pick_cart(level, items, pos, &carts);
+    let Some((cart, _)) = items.cart(idx) else { return false };
+    // `isFullContainer`.
+    if cart.items.iter().all(|s| !s.is_empty() && s.count() >= s.max_stack_size()) {
+        return false;
+    }
+    let Some(hopper) = level.blocks.containers.get_mut(pos) else { return false };
+    for slot in 0..hopper.items.len() {
+        let item = hopper.items[slot].clone();
+        if item.is_empty() {
+            continue;
+        }
+        let count = item.count();
+        let one = hopper.remove_item(slot, 1);
+        if cart.add_stack(one).is_empty() {
+            return true;
+        }
+        // `original.setCount(count)`: the stack in the slot is restored in place.
+        let mut back = item;
+        back.set_count(count);
+        if count == 1 {
+            hopper.set_item(slot, back);
+        } else {
+            hopper.items[slot] = back;
+        }
+    }
+    false
+}
+
+/// `HopperBlockEntity.suckInItems` from a container minecart in the block above.
+fn suck_from_cart(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: BlockPos) -> Option<bool> {
+    let above = pos.above();
+    let (lo, hi) = ([above.x as f64, above.y as f64, above.z as f64], [above.x as f64 + 1.0, above.y as f64 + 1.0, above.z as f64 + 1.0]);
+    let carts = items.carts_in(lo, hi);
+    if carts.is_empty() {
+        return None;
+    }
+    let idx = pick_cart(level, items, pos, &carts);
+    let (cart, _) = items.cart(idx)?;
+    let hopper = level.blocks.containers.get_mut(pos)?;
+    for slot in 0..cart.items.len() {
+        let item = cart.items[slot].clone();
+        if item.is_empty() {
+            continue;
+        }
+        let count = item.count();
+        let one = cart.items[slot].split_count(1);
+        let left = add_item(&mut View::one(hopper), one, None, None);
+        if left.is_empty() {
+            return Some(true);
+        }
+        let mut back = item;
+        back.set_count(count);
+        cart.items[slot] = back;
+    }
+    Some(false)
+}
+
 /// `HopperBlockEntity.suckInItems`.
 fn suck_in_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: BlockPos) -> bool {
     let above = pos.above();
     let above_state = level.block(above);
+    if container_at(level, above).is_none()
+        && let Some(moved) = suck_from_cart(level, items, pos)
+    {
+        return moved;
+    }
     if let Some(source) = container_at(level, above) {
         let Some(mut hopper) = level.blocks.containers.map.remove(&pos) else { return false };
         let source_is_hopper = matches!(source, Target::One(p) if level.blocks.containers.get(p).is_some_and(|c| c.kind == BeKind::Hopper));
@@ -492,6 +585,8 @@ pub(crate) struct EntityItems<'a> {
     /// The item entities at the start of the phase with their boxes (hoppers only look at
     /// these, not at every entity).
     items: Vec<(usize, [f64; 3], [f64; 3])>,
+    /// The container minecarts, likewise.
+    carts: Vec<(usize, [f64; 3], [f64; 3])>,
     touched: Vec<usize>,
 }
 
@@ -512,7 +607,17 @@ impl<'a> EntityItems<'a> {
                 (i, min, max)
             })
             .collect();
-        EntityItems { entities, items, touched: Vec::new() }
+        let carts = entities
+            .list
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| !e.removed && e.phys.as_ref().is_some_and(is_container_cart))
+            .map(|(i, e)| {
+                let (min, max, _) = e.body();
+                (i, min, max)
+            })
+            .collect();
+        EntityItems { entities, items, carts, touched: Vec::new() }
     }
 
     /// Indices of the item entities whose stack changed.
@@ -538,6 +643,21 @@ impl ItemEntities for EntityItems<'_> {
         self.touched.push(i);
         self.entities.changed(i);
     }
+    fn carts_in(&self, lo: [f64; 3], hi: [f64; 3]) -> Vec<usize> {
+        self.carts
+            .iter()
+            .filter(|(i, min, max)| !self.entities.list[*i].removed && (0..3).all(|k| min[k] < hi[k] && max[k] > lo[k]))
+            .map(|(i, _, _)| *i)
+            .collect()
+    }
+    fn cart(&mut self, i: usize) -> Option<(&mut kiln_entity::ext_entity::minecart::Contents, [f64; 3])> {
+        self.entities.cart(i)
+    }
+}
+
+/// A chest or hopper minecart.
+fn is_container_cart(e: &kiln_entity::Entity) -> bool {
+    kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e).is_some_and(|m| m.contents.is_some())
 }
 
 /// Viewers of item entities a hopper took from see the remaining count (removed ones leave
@@ -577,6 +697,26 @@ impl ItemEntities for crate::entities::Entities {
             Some(kiln_entity::EntityKind::Item(d)) => &mut d.stack,
             _ => unreachable!("not an item entity"),
         }
+    }
+
+    fn carts_in(&self, lo: [f64; 3], hi: [f64; 3]) -> Vec<usize> {
+        self.list
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| !e.removed && e.phys.as_ref().is_some_and(is_container_cart))
+            .filter(|(_, e)| {
+                let (min, max, _) = e.body();
+                (0..3).all(|k| min[k] < hi[k] && max[k] > lo[k])
+            })
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn cart(&mut self, i: usize) -> Option<(&mut kiln_entity::ext_entity::minecart::Contents, [f64; 3])> {
+        let phys = self.list.get_mut(i)?.phys.as_mut()?;
+        let p = phys.position();
+        let contents = kiln_entity::ext_entity::get_mut::<kiln_entity::ext_entity::minecart::Minecart>(phys)?.contents.as_mut()?;
+        Some((contents, [p.x, p.y, p.z]))
     }
 
     fn changed(&mut self, i: usize) {
