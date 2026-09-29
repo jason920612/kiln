@@ -45,14 +45,153 @@ fn generate(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, mut next: impl
 
 /// `DefaultRandomPos.getPos(mob, h, v)`.
 pub fn default_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32) -> Option<Vec3> {
+    default_pos_home(e, m, level, h, v, None)
+}
+
+/// A mob's home (`Mob.homePosition`, `homeRadius`): a block and a radius (-1: anywhere).
+pub type Home = Option<(BlockPos, i32)>;
+
+/// `Mob.isWithinHome(pos)`.
+pub fn within_home(home: Home, p: BlockPos) -> bool {
+    match home {
+        None => true,
+        Some((_, -1)) => true,
+        Some((c, r)) => {
+            let (dx, dy, dz) = ((c.x - p.x) as f64, (c.y - p.y) as f64, (c.z - p.z) as f64);
+            dx * dx + dy * dy + dz * dz < (r * r) as f64
+        }
+    }
+}
+
+/// `GoalUtils.mobRestricted(mob, h)`: the mob is near enough to its home to keep to it.
+fn mob_restricted(e: &Entity, home: Home, h: f64) -> bool {
+    let Some((c, r)) = home else { return false };
+    let d = r as f64 + h + 1.0;
+    let (dx, dy, dz) = (c.x as f64 + 0.5 - e.x(), c.y as f64 + 0.5 - e.y(), c.z as f64 + 0.5 - e.z());
+    dx * dx + dy * dy + dz * dz < d * d
+}
+
+/// `RandomPos.generateRandomPosTowardDirection`: pulled toward the home, if any.
+fn toward_home(e: &mut Entity, h: f64, dir: BlockPos, home: Home) -> BlockPos {
+    let (mut x, mut z) = (dir.x as f64, dir.z as f64);
+    if let Some((c, _)) = home
+        && h > 1.0
+    {
+        if e.x() > c.x as f64 {
+            x -= e.random.next_double() * h / 2.0;
+        } else {
+            x += e.random.next_double() * h / 2.0;
+        }
+        if e.z() > c.z as f64 {
+            z -= e.random.next_double() * h / 2.0;
+        } else {
+            z += e.random.next_double() * h / 2.0;
+        }
+    }
+    BlockPos::containing(x + e.x(), dir.y as f64 + e.y(), z + e.z())
+}
+
+/// `DefaultRandomPos.generateRandomPosTowardDirection`.
+fn default_toward(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, restrict: bool, dir: BlockPos, home: Home) -> Option<BlockPos> {
+    let p = toward_home(e, h as f64, dir, home);
+    if outside_limits(level, p) || (restrict && !within_home(home, p)) || !path::stable_destination(m, level, p) || has_malus(m, level, p) {
+        return None;
+    }
+    Some(p)
+}
+
+/// `DefaultRandomPos.getPos(mob, h, v)` for a mob with a home.
+pub fn default_pos_home(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, home: Home) -> Option<Vec3> {
+    let restrict = mob_restricted(e, home, h as f64);
     generate(e, m, level, |e| {
         let dir = random_direction(e, h, v);
-        let p = toward(e, dir);
-        if outside_limits(level, p) || !path::stable_destination(m, level, p) || has_malus(m, level, p) {
+        default_toward(e, m, level, h, restrict, dir, home)
+    })
+}
+
+/// `DefaultRandomPos.getPosTowards(mob, h, v, target, angle)` for a mob with a home.
+#[allow(clippy::too_many_arguments)]
+pub fn default_pos_towards_home(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, target: Vec3, angle: f64, home: Home) -> Option<Vec3> {
+    let d = target - e.position();
+    let restrict = mob_restricted(e, home, h as f64);
+    generate(e, m, level, |e| {
+        let dir = direction_within_radians(e, 0.0, h as f64, v, 0, d.x, d.z, angle)?;
+        default_toward(e, m, level, h, restrict, dir, home)
+    })
+}
+
+/// `HoverRandomPos.getPos(mob, h, v, x, z, angle, maxHover, minHover)`: a stable block toward the
+/// direction, raised a few blocks over the solid ground.
+#[allow(clippy::too_many_arguments)]
+pub fn hover_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, dx: f64, dz: f64, angle: f32, max_hover: i32, min_hover: i32) -> Option<Vec3> {
+    generate(e, m, level, |e| {
+        let dir = direction_within_radians(e, 0.0, h as f64, v, 0, dx, dz, angle as f64)?;
+        // `LandRandomPos.generateRandomPosTowardDirection` (no home).
+        let p = toward_home(e, h as f64, dir, None);
+        if outside_limits(level, p) || !path::stable_destination(m, level, p) {
+            return None;
+        }
+        let above = e.random.next_int_bounded(max_hover - min_hover + 1) + min_hover;
+        let p = move_up_to_above_solid(level, p, above);
+        if crate::physics::fluid_state(level.block(p)).kind.is_water() || has_malus(m, level, p) {
             return None;
         }
         Some(p)
     })
+}
+
+/// `AirAndWaterRandomPos.getPos(mob, h, v, flyingHeight, x, z, angle)`.
+#[allow(clippy::too_many_arguments)]
+pub fn air_and_water_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, flying_height: i32, dx: f64, dz: f64, angle: f64) -> Option<Vec3> {
+    generate(e, m, level, |e| {
+        let dir = direction_within_radians(e, 0.0, h as f64, v, flying_height, dx, dz, angle)?;
+        let p = toward_home(e, h as f64, dir, None);
+        if outside_limits(level, p) {
+            return None;
+        }
+        let p = move_up_out_of_solid_raw(level, p);
+        if has_malus(m, level, p) {
+            return None;
+        }
+        Some(p)
+    })
+}
+
+fn is_solid(level: &dyn EntityLevel, p: BlockPos) -> bool {
+    kiln_data::block_logic::is_solid(level.block(p))
+}
+
+/// `RandomPos.moveUpOutOfSolid`.
+fn move_up_out_of_solid_raw(level: &dyn EntityLevel, p: BlockPos) -> BlockPos {
+    if !is_solid(level, p) {
+        return p;
+    }
+    let mut q = p.above();
+    while q.y <= level.max_y() && is_solid(level, q) {
+        q = q.above();
+    }
+    q
+}
+
+/// `RandomPos.moveUpToAboveSolid`: out of the solid blocks, then up to `above` more while the
+/// way is clear.
+fn move_up_to_above_solid(level: &dyn EntityLevel, p: BlockPos, above: i32) -> BlockPos {
+    if !is_solid(level, p) {
+        return p;
+    }
+    let mut q = p.above();
+    while q.y <= level.max_y() && is_solid(level, q) {
+        q = q.above();
+    }
+    let first = q.y;
+    while q.y <= level.max_y() && q.y - first < above {
+        q = q.above();
+        if is_solid(level, q) {
+            q = q.below();
+            break;
+        }
+    }
+    q
 }
 
 /// `DefaultRandomPos.getPosTowards(mob, h, v, target, angle)`.

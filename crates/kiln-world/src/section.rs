@@ -67,6 +67,16 @@ impl BlockContainer {
         }
     }
 
+    /// `PalettedContainer.maybeHas`: whether a palette entry passes (a direct container
+    /// always may).
+    pub fn maybe_has(&self, pred: impl Fn(u16) -> bool) -> bool {
+        match self {
+            Self::Single(s) => pred(*s),
+            Self::Nibble { palette, .. } | Self::Byte { palette, .. } => palette.iter().any(|&s| pred(s)),
+            Self::Direct(_) => true,
+        }
+    }
+
     pub fn get(&self, i: usize) -> u16 {
         match self {
             Self::Single(s) => *s,

@@ -32,6 +32,50 @@ pub mod iron_golem;
 pub mod villager;
 pub mod piglin;
 pub mod hoglin;
+pub mod silverfish;
+// -- slice 3: raids
+pub mod raider;
+pub mod pillager;
+pub mod vindicator;
+pub mod evoker;
+pub mod vex;
+pub mod ravager;
+pub mod illusioner;
+pub mod villager_poi;
+
+// -- slice 3: the end
+pub mod ender_dragon;
+
+// -- slice 3: wither and guardians
+pub mod wither;
+pub mod guardian;
+
+// -- slice 3: warden
+pub mod warden;
+
+// -- slice 3: common mobs A
+pub mod common_a;
+pub mod rabbit;
+pub mod polar_bear;
+pub mod turtle;
+pub mod fox;
+pub mod panda;
+
+// -- slice 3: common mobs B
+pub mod squid;
+pub mod fish;
+pub mod mooshroom;
+pub mod ocelot;
+pub mod bat;
+pub mod snow_golem;
+pub mod bogged;
+pub mod armadillo;
+pub mod camel;
+pub mod allay;
+pub mod breeze;
+pub mod creaking;
+pub mod sniffer;
+
 
 /// The behaviour of an extension type; `None` for the shared-code types.
 pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
@@ -61,6 +105,52 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Villager => &villager::KIND,
         MobKind::Piglin => &piglin::KIND,
         MobKind::Hoglin => &hoglin::KIND,
+        MobKind::Silverfish => &silverfish::KIND,
+        // -- slice 3: raids
+        MobKind::Pillager => &pillager::KIND,
+        MobKind::Vindicator => &vindicator::KIND,
+        MobKind::Evoker => &evoker::KIND,
+        MobKind::Vex => &vex::KIND,
+        MobKind::Ravager => &ravager::KIND,
+        MobKind::Illusioner => &illusioner::KIND,
+
+        // -- slice 3: the end
+        MobKind::EnderDragon => &ender_dragon::KIND,
+
+        // -- slice 3: wither and guardians
+        MobKind::Wither => &wither::KIND,
+        MobKind::Guardian => &guardian::GUARDIAN,
+        MobKind::ElderGuardian => &guardian::ELDER,
+
+        // -- slice 3: warden
+        MobKind::Warden => &warden::KIND,
+
+        // -- slice 3: common mobs A
+        MobKind::Rabbit => &rabbit::KIND,
+        MobKind::PolarBear => &polar_bear::KIND,
+        MobKind::Turtle => &turtle::KIND,
+        MobKind::Fox => &fox::KIND,
+        MobKind::Panda => &panda::KIND,
+
+        // -- slice 3: common mobs B
+        MobKind::Squid => &squid::KIND,
+        MobKind::GlowSquid => &squid::GLOW,
+        MobKind::Cod => &fish::COD,
+        MobKind::Salmon => &fish::SALMON,
+        MobKind::TropicalFish => &fish::TROPICAL_FISH,
+        MobKind::Pufferfish => &fish::PUFFERFISH,
+        MobKind::Mooshroom => &mooshroom::KIND,
+        MobKind::Ocelot => &ocelot::KIND,
+        MobKind::Bat => &bat::KIND,
+        MobKind::SnowGolem => &snow_golem::KIND,
+        MobKind::Bogged => &bogged::KIND,
+        MobKind::Armadillo => &armadillo::KIND,
+        MobKind::Camel => &camel::KIND,
+        MobKind::Allay => &allay::KIND,
+        MobKind::Breeze => &breeze::KIND,
+        MobKind::Creaking => &creaking::KIND,
+        MobKind::Sniffer => &sniffer::KIND,
+
         _ => return None,
     })
 }

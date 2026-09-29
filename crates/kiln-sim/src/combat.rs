@@ -27,7 +27,7 @@ use kiln_proto::packets::world_fx;
 /// An attribute with the player's base value (`Player.createAttributes`) and its range.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Attr {
-    name: &'static str,
+    pub(crate) name: &'static str,
     base: f64,
     min: f64,
     max: f64,
@@ -57,12 +57,6 @@ pub(crate) const WAYPOINT_TRANSMIT_RANGE: Attr =
 
 /// The attributes effects change that clients are told about (`Attribute.isClientSyncable`).
 pub(crate) const EFFECT_SYNCED: [Attr; 6] = [MOVEMENT_SPEED, ATTACK_SPEED, SAFE_FALL_DISTANCE, MAX_HEALTH, MAX_ABSORPTION, LUCK];
-
-impl Attr {
-    pub(crate) fn name(&self) -> &'static str {
-        self.name
-    }
-}
 
 /// `Player.CREATIVE_ENTITY_INTERACTION_RANGE_MODIFIER_VALUE`.
 const CREATIVE_ENTITY_RANGE: f64 = 2.0;
@@ -236,7 +230,37 @@ fn attribute_value(attr: Attr, mods: impl Iterator<Item = (f64, AttributeOperati
 enum Target {
     Player(usize),
     /// A kiln-entity entity: its bounding box, what it is and its entity type id.
-    Entity { bb: kiln_entity::math::Aabb, kind: EntityClass, type_id: i32, pos: [f64; 3] },
+    /// `part`: an ender dragon part (the entity is its dragon).
+    Entity { bb: kiln_entity::math::Aabb, kind: EntityClass, type_id: i32, pos: [f64; 3], part: Option<usize> },
+}
+
+impl Target {
+    fn part(&self) -> Option<usize> {
+        match self {
+            Target::Entity { part, .. } => *part,
+            Target::Player(_) => None,
+        }
+    }
+}
+
+/// An ender dragon part by its id (the dragon's id plus 1 to 8): the part's box, the dragon.
+fn dragon_part(entities: &entities::Entities, id: i32) -> Option<Target> {
+    let i = entities.list.partition_point(|e| e.id < id).checked_sub(1)?;
+    let e = &entities.list[i];
+    let part = (id - e.id - 1) as usize;
+    if e.removed || part >= kiln_entity::mob::kinds::ender_dragon::PARTS.len() {
+        return None;
+    }
+    let phys = e.phys.as_ref()?;
+    let s = kiln_entity::mob::kinds::ender_dragon::state_of(phys)?;
+    let p = s.parts[part];
+    Some(Target::Entity {
+        bb: s.part_box(part),
+        kind: classify(phys),
+        type_id: kiln_item::registry::ENTITY_TYPE.id(phys.type_name).unwrap_or(-1),
+        pos: [p.x, p.y, p.z],
+        part: Some(part),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -256,6 +280,8 @@ enum EntityClass {
 #[derive(Debug, Clone)]
 pub(crate) struct MobHit {
     pub target: i32,
+    /// The ender dragon part hit (`target` is the part's id, the dragon's plus one plus this).
+    pub part: Option<usize>,
     pub attacker: i32,
     pub attacker_pos: [f64; 3],
     pub amount: f32,
@@ -273,6 +299,8 @@ fn classify(e: &kiln_entity::Entity) -> EntityClass {
         EntityKind::Arrow(_) => EntityClass::Invalid,
         EntityKind::FallingBlock(_) => EntityClass::NotAttackable,
         EntityKind::Mob(m) if m.health > 0.0 => EntityClass::Mob,
+        // `EndCrystal.hurtServer`: an attack breaks it.
+        EntityKind::Ext(_) if e.type_name == "minecraft:end_crystal" => EntityClass::Mob,
         EntityKind::Mob(_) => EntityClass::NotAttackable,
         _ => EntityClass::Unhurtable,
     }
@@ -591,7 +619,9 @@ pub(crate) fn handle_attack(
                 kind: classify(e),
                 type_id: kiln_item::registry::ENTITY_TYPE.id(e.type_name).unwrap_or(-1),
                 pos: { let v = e.position(); [v.x, v.y, v.z] },
+                part: None,
             })
+            .or_else(|| dragon_part(entities, target_id))
     };
     // `handleAttack` disconnects for attacking itself.
     if target_id == attacker.entity_id {
@@ -729,6 +759,7 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
                 .map_or(0, |e| e.level(kiln_item::registry::ENCHANTMENT.id("minecraft:fire_aspect").unwrap_or(-1)));
             mob_hits.push(MobHit {
                 target: target_id,
+                part: target.part(),
                 attacker: players[a].entity_id,
                 attacker_pos: players[a].pos,
                 amount: total,

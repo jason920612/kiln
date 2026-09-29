@@ -200,10 +200,15 @@ fn run_phased(
     assert_eq!(sim.player_count(), PLAYERS);
     let air = kiln_data::blocks::default_state::AIR;
     let built = placed.iter().filter(|(p, _)| sim.block_at(p[0], p[1], p[2]).is_some_and(|s| s != air)).count();
-    // (The group's spring may have flowed there.)
+    // (The group's spring may have flowed there, and its fire spread there.)
     let protected_built = placed
         .iter()
-        .filter(|(p, g)| *g == 1 && sim.block_at(p[0], p[1], p[2]).is_some_and(|s| s != air && !kiln_data::blocks_types::has_fluid(s)))
+        .filter(|(p, g)| {
+            *g == 1
+                && sim
+                    .block_at(p[0], p[1], p[2])
+                    .is_some_and(|s| s != air && !kiln_data::blocks_types::has_fluid(s) && !kiln_blocks::tags::is(s, "minecraft:fire"))
+        })
         .count();
     let counted = (0..PLAYERS as u64)
         .filter_map(|c| sim.plugin_player_value(uuid::Uuid::from_u64_pair(0x6b69_6c6e, c + 1), "counter", "broken"))

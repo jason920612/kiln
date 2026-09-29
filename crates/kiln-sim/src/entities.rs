@@ -14,7 +14,7 @@ use kiln_entity::{EntityFilter, EntityKind, EntityLevel, Event};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
 use kiln_link::ConnId;
 use kiln_proto::packets::entity::{self, DataValue, EntityData, MoveState, MovementTracker};
-use kiln_proto::packets::world_fx;
+use kiln_proto::packets::{hud, world_fx};
 use kiln_region::{CellPos, RegionPart};
 use kiln_world::{CellStore, ChunkPos};
 use smallvec::SmallVec;
@@ -69,6 +69,8 @@ pub(crate) struct Entity {
     /// Passengers as viewers last got them (Set Passengers).
     passengers_sent: Vec<i32>,
     equipment_sent: Vec<(u8, kiln_item::ItemStack)>,
+    /// A boss's bar fill as its viewers last got it (`ServerBossEvent`, the wither).
+    boss_sent: Option<f32>,
 }
 
 /// A spawn requested during a phase; ids are handed out afterwards in canonical order.
@@ -213,6 +215,7 @@ impl Entity {
             meta_sent: Vec::new(),
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
+            boss_sent: None,
         }
     }
 
@@ -312,7 +315,7 @@ impl Entity {
     pub fn body(&self) -> ([f64; 3], [f64; 3], bool) {
         let p = self.phys();
         let bb = p.bounding_box();
-        let blocks_building = matches!(p.kind, EntityKind::Tnt(_) | EntityKind::FallingBlock(_));
+        let blocks_building = matches!(p.kind, EntityKind::Tnt(_) | EntityKind::FallingBlock(_)) || p.type_name == "minecraft:end_crystal";
         ([bb.min_x, bb.min_y, bb.min_z], [bb.max_x, bb.max_y, bb.max_z], blocks_building)
     }
 }
@@ -385,6 +388,8 @@ struct SimLevel<'a, 'l, 'p> {
     /// The entity being ticked and how many seeds it drew, for partition-independent seeds.
     current: i32,
     seeds: u64,
+    /// The ticking entity as the source of its game events (its state is out for its tick).
+    current_source: Option<kiln_entity::vibration::EventSource>,
     /// The level random as the ticking entity sees it: seeded per entity and tick, so what
     /// one entity draws (explosions, experience orbs) does not depend on the others in its
     /// region (vanilla shares one random per level).
@@ -444,6 +449,17 @@ fn entity_level_random(seed: i64, game_time: i64, id: i32) -> LegacyRandom {
 }
 
 impl SimLevel<'_, '_, '_> {
+    /// Entity or player `id` as the source of a game event.
+    fn game_event_source(&self, id: i32) -> Option<kiln_entity::vibration::EventSource> {
+        if id == self.current
+            && let Some(s) = self.current_source
+        {
+            return Some(s);
+        }
+        let e = self.entity(id)?;
+        Some(kiln_entity::vibration::source_of(e, self))
+    }
+
     fn index(&self, id: i32) -> Option<usize> {
         self.list.binary_search_by_key(&id, |e| e.id).ok()
     }
@@ -471,13 +487,77 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 }
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
+    fn biome(&self, pos: BlockPos) -> Option<i32> {
+        Some(crate::spawner::biome_at(self.level, kb(pos)) as i32)
+    }
+
     fn piglins_zombify(&self) -> bool {
         !self.level.env.rules.fast_lava
+    }
+
+    fn snow_golem_melts(&self, pos: Vec3) -> bool {
+        if self.level.env.rules.fast_lava {
+            return true;
+        }
+        // The biomes whose `minecraft:gameplay/snow_golem_melts` is on.
+        const HOT: [&str; 7] = [
+            "minecraft:badlands",
+            "minecraft:desert",
+            "minecraft:eroded_badlands",
+            "minecraft:savanna",
+            "minecraft:savanna_plateau",
+            "minecraft:windswept_savanna",
+            "minecraft:wooded_badlands",
+        ];
+        let b = crate::spawner::biome_at(self.level, kb(BlockPos::containing(pos.x, pos.y, pos.z))) as i32;
+        HOT.iter().any(|n| kiln_data::synced_id("minecraft:worldgen/biome", n) == Some(b))
     }
 
     fn trade_offers(&mut self, set: &str, merchant: &kiln_entity::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
         let env = self.level.env;
         crate::trading::roll_offers(env.loot.as_deref(), env.seed, env.game_time, set, merchant)
+    }
+
+    fn raid(&self, id: i32) -> Option<&kiln_entity::level::RaidView> {
+        self.level.env.raids.iter().find(|r| r.id == id)
+    }
+
+    fn raid_at(&self, pos: BlockPos) -> Option<&kiln_entity::level::RaidView> {
+        crate::raid::raid_at_view(&self.level.env.raids, pos)
+    }
+
+    fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        crate::poi::sections_to_village(&*self.level.cells, [pos.x, pos.y, pos.z])
+    }
+
+    fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: kiln_entity::level::PoiOccupancy) -> Vec<BlockPos> {
+        let kinds = crate::poi::kinds_of(types);
+        crate::poi::in_range(&*self.level.cells, &kinds, [center.x, center.y, center.z], radius, occupancy_of(occupancy))
+            .into_iter()
+            .map(|r| BlockPos::new(r.pos[0], r.pos[1], r.pos[2]))
+            .collect()
+    }
+
+    fn poi_take(&mut self, types: &[&str], center: BlockPos, radius: i32, accept: &dyn Fn(&str, BlockPos) -> bool) -> Option<BlockPos> {
+        let kinds = crate::poi::kinds_of(types);
+        let accept = |k: u8, p: [i32; 3]| accept(kiln_world::poi::TYPES[k as usize].name, BlockPos::new(p[0], p[1], p[2]));
+        crate::poi::take(&mut *self.level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]))
+    }
+
+    fn poi_release(&mut self, pos: BlockPos) {
+        crate::poi::release(&mut *self.level.cells, [pos.x, pos.y, pos.z]);
+    }
+
+    fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
+        crate::poi::type_at(&*self.level.cells, [pos.x, pos.y, pos.z]).map(|k| kiln_world::poi::TYPES[k as usize].name)
+    }
+
+    fn motion_blocking_no_leaves_height(&self, x: i32, z: i32) -> i32 {
+        use kiln_world::Blocks;
+        let Some(chunk) = self.level.cells.chunk(ChunkPos::of_block(x, z)) else { return self.level.env.min_y };
+        chunk.column_height((x & 15) as usize, (z & 15) as usize, |s| {
+            kiln_data::block_props::motion_blocking(s) && !kiln_data::blocks_types::block_of(s).name.ends_with("_leaves")
+        })
     }
 
     fn block(&self, pos: BlockPos) -> u16 {
@@ -610,11 +690,79 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn emit(&mut self, event: Event) {
+        if let Event::GameEvent { event, pos, entity } = event {
+            // `ServerLevel.gameEvent`: listeners hear it now.
+            if crate::sculk::listening(self.level) {
+                let source = entity.and_then(|id| self.game_event_source(id));
+                crate::sculk::post(self.level, event, pos, kiln_entity::vibration::Context { source, affected_state: None });
+            }
+            return;
+        }
         self.events.push(event);
+    }
+
+    fn block_game_event(&mut self, event: &'static str, pos: Vec3, entity: Option<i32>, state: u16) {
+        if crate::sculk::listening(self.level) {
+            let source = entity.and_then(|id| self.game_event_source(id));
+            crate::sculk::post(self.level, event, pos, kiln_entity::vibration::Context { source, affected_state: Some(state) });
+        }
+    }
+
+    fn sculk_step_on(&mut self, pos: BlockPos, entity: i32, at: Vec3) {
+        if let Some(mut source) = self.game_event_source(entity) {
+            source.pos = at;
+            crate::sculk::step_on(self.level, kb(pos), source);
+        }
+    }
+
+    fn sculk_catalyst_near(&self, pos: Vec3) -> bool {
+        crate::sculk::catalyst::nearest(self.level, pos).is_some()
+    }
+
+    fn feed_sculk_catalyst(&mut self, pos: Vec3, charge: i32) {
+        if let Some(at) = crate::sculk::catalyst::nearest(self.level, pos) {
+            crate::sculk::catalyst::feed(self.level, at, pos, charge);
+        }
+    }
+
+    fn take_vibrations(&mut self, id: i32) -> Vec<kiln_entity::vibration::Heard> {
+        self.level.blocks.sculk.take_heard(id)
+    }
+
+    fn set_listener(&mut self, id: i32, ear: Option<kiln_entity::vibration::Ear>) {
+        self.level.blocks.sculk.set_warden(id, ear);
+    }
+
+    fn vibration_particle(&mut self, from: Vec3, entity: i32, y_offset: f32, ticks: i32) {
+        let dest = kiln_proto::packets::world_fx::PositionSource::Entity { id: entity, y_offset };
+        crate::sculk::send_vibration_particle(self.level, from, dest, ticks);
+    }
+
+    fn darkness_around(&mut self, pos: Vec3, radius: f64) {
+        crate::sculk::shrieker::darkness_around(self.players, [pos.x, pos.y, pos.z], radius);
+    }
+
+    fn particle(&mut self, particle: &'static str, pos: Vec3) {
+        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) else { return };
+        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
+            override_limiter: false,
+            always_show: false,
+            pos: [pos.x, pos.y, pos.z],
+            offset: [0.0; 3],
+            max_speed: [0.0; 3],
+            count: 1,
+            randomization: world_fx::ParticleRandomization::Default,
+        });
+        self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
     }
 
     fn mob_griefing(&self) -> bool {
         self.level.env.mobs.griefing
+    }
+
+    fn dragon_fight(&self) -> Option<kiln_entity::level::DragonFightView> {
+        self.level.env.dragon_fight.as_ref().map(|f| f.view)
     }
 
     fn mob_drops(&self) -> bool {
@@ -689,10 +837,56 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         hurt
     }
 
-    fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, _source: Option<i32>) -> bool {
-        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
-        let Some(e) = crate::effects::effect_id(effect) else { return false };
-        p.add_effect(crate::effects::Effect::simple(e, duration, amplifier))
+    fn add_effect_instance(&mut self, id: i32, effect: kiln_entity::effect::Effect, source: Option<i32>) -> bool {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+            return p.add_effect(effect);
+        }
+        kiln_entity::mob::effects::add_to_entity(self, id, effect, source)
+    }
+
+    fn apply_instantaneous_effect(&mut self, id: i32, effect: &kiln_entity::effect::Effect, source: Option<(i32, Vec3)>, owner: Option<i32>, scale: f64) {
+        let owner_is_player = owner.is_some_and(|o| self.players.iter().any(|p| p.entity_id == o));
+        if !self.players.iter().any(|p| p.entity_id == id) {
+            kiln_entity::mob::effects::apply_instantaneous_to_entity(self, id, effect, source, owner, owner_is_player, scale);
+            return;
+        }
+        // `HealOrHarmMobEffect.applyInstantaneousEffect` on a player: healing, or indirect magic
+        // caused by the thrower (magic when nothing carried it).
+        let attacker = owner.and_then(|o| {
+            if let Some(p) = self.players.iter().find(|p| p.entity_id == o) {
+                return Some(p.as_attacker());
+            }
+            let e = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
+            Some(health::Attacker::mob(o, e.type_name, arr(e.position())))
+        });
+        let env = self.level.env;
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return };
+        match effect.kind() {
+            kiln_entity::effect::Kind::HealOrHarm { harm: false } => {
+                p.heal((scale * 4i32.wrapping_shl(effect.amplifier as u32) as f64 + 0.5) as i32 as f32);
+            }
+            kiln_entity::effect::Kind::HealOrHarm { harm: true } => {
+                let amount = (scale * 6i32.wrapping_shl(effect.amplifier as u32) as f64 + 0.5) as i32 as f32;
+                let source = match source {
+                    None => health::Source { cause: health::Cause::Entity(DamageKind::Magic), attacker: None, direct: None, weapon: None },
+                    Some((direct, _)) => health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker, direct: Some(direct), weapon: None },
+                };
+                let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
+                p.hurt(amount, &source, &mut ctx);
+            }
+            kiln_entity::effect::Kind::Saturation => p.eat(effect.amplifier + 1, (effect.amplifier + 1) as f32 * 2.0),
+            _ => {}
+        }
+    }
+
+    fn max_entity_cramming(&self) -> i32 {
+        self.level.env.mobs.cramming
+    }
+
+    fn player_effect(&self, id: i32, effect: &str) -> Option<(i32, i32)> {
+        let p = self.players.iter().find(|p| p.entity_id == id)?;
+        let e = p.effects.get(&crate::effects::effect_id(effect)?)?;
+        Some((e.amplifier, e.duration))
     }
 
     fn ignite(&mut self, id: i32, seconds: f32) {
@@ -706,6 +900,14 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         if let Some(e) = self.entity_mut(id) {
             e.ignite_for_seconds(seconds);
         }
+    }
+}
+
+fn occupancy_of(o: kiln_entity::level::PoiOccupancy) -> kiln_world::poi::Occupancy {
+    match o {
+        kiln_entity::level::PoiOccupancy::HasSpace => kiln_world::poi::Occupancy::HasSpace,
+        kiln_entity::level::PoiOccupancy::IsOccupied => kiln_world::poi::Occupancy::IsOccupied,
+        kiln_entity::level::PoiOccupancy::Any => kiln_world::poi::Occupancy::Any,
     }
 }
 
@@ -753,6 +955,7 @@ pub(crate) fn tick(
         next_placeholder: -1_000_000,
         current: 0,
         seeds: 0,
+        current_source: None,
         rng: LegacyRandom::new(0),
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -830,6 +1033,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     e.age += 1;
     let Some(mut phys) = e.phys.take() else { return };
     (sim.current, sim.seeds) = (phys.id, 0);
+    sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
     sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
     // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
     // farther apart than the despawn distance, so the region's players decide).
@@ -982,7 +1186,8 @@ pub(crate) fn hit_mob(
     deaths: &mut Vec<health::Death>,
     hit: &crate::combat::MobHit,
 ) {
-    let Ok(i) = entities.list.binary_search_by_key(&hit.target, |e| e.id) else { return };
+    let target = hit.target - hit.part.map_or(0, |p| p as i32 + 1);
+    let Ok(i) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
@@ -999,6 +1204,7 @@ pub(crate) fn hit_mob(
         next_placeholder: -1_000_000,
         current: hit.target,
         seeds: 0x6869_7400,
+        current_source: None,
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -1016,7 +1222,12 @@ pub(crate) fn hit_mob(
         attacker_is_player: true,
     };
     let health_before = kiln_entity::mob::data(&phys).map(|m| m.health);
-    let hurt = kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount);
+    // `EnderDragonPart.hurtServer` → `EnderDragon.hurt(part)`; an end crystal explodes.
+    let hurt = match hit.part {
+        Some(part) => kiln_entity::mob::kinds::ender_dragon::hurt_entity_part(&mut phys, &mut sim, part, source, hit.amount),
+        None if kiln_entity::mob::data(&phys).is_none() => phys.hurt(&mut sim, DamageKind::PlayerAttack, hit.amount, Some(hit.attacker)),
+        None => kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount),
+    };
     // `Player.damageStatsAndHearts`.
     if hurt
         && let (Some(before), Some(after)) = (health_before, kiln_entity::mob::data(&phys).map(|m| m.health))
@@ -1106,6 +1317,7 @@ pub(crate) fn interact_mob(
         next_placeholder: -1_000_000,
         current: target,
         seeds: 0x696e_7400,
+        current_source: None,
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -1129,6 +1341,7 @@ pub(crate) fn interact_mob(
             killed_by_player: false,
             damage_type: "minecraft:generic",
             weapon: Some(stack.clone()),
+            raider: None,
         };
         let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
         let mut k = 0u64;
@@ -1250,6 +1463,7 @@ pub(crate) fn with_entity<R>(
         next_placeholder: -1_000_000,
         current: target,
         seeds: salt << 8,
+        current_source: None,
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -1298,6 +1512,7 @@ pub(crate) fn with_level<R>(
         next_placeholder: -1_000_000,
         current: 0,
         seeds: salt << 8,
+        current_source: None,
         rng,
         grid: Grid::default(),
         proxy_at: HashMap::new(),
@@ -1421,6 +1636,12 @@ fn carry_out(
                 killed_by_player: killer.is_some(),
                 damage_type: kind.type_name(),
                 weapon,
+                // `Raider.isCaptain` as it died: the leader still wore the banner (its drop
+                // chance of 2 marks it; the banner itself dropped with the equipment).
+                raider: kiln_entity::mob::data(phys).and_then(|m| {
+                    let r = kiln_entity::mob::kinds::raider::raider(m)?;
+                    Some((r.raid.is_some(), r.patrol_leader && m.drop_chances[kiln_entity::mob::HEAD] >= 2.0))
+                }),
             };
             let _ = attacker;
             let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
@@ -1455,12 +1676,14 @@ fn carry_out(
                 }
             }
         }
-        Event::Killed { entity, entity_type, credit, kind, attacker, direct } => {
+        Event::Killed { entity, entity_type, credit, kind, attacker, direct, equipment } => {
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
                 p.killed_entity(entity_type);
                 let dim = crate::DIMENSIONS[env.dim].0;
                 if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_ref()) {
-                    let subject = crate::advancements::triggers::mob_subject(e, dim);
+                    let mut subject = crate::advancements::triggers::mob_subject(e, dim);
+                    // `minecraft:equipment` as the mob wore it when it died (a captain's banner).
+                    subject.equipment = equipment.iter().map(|(slot, s)| (*slot, s)).collect();
                     p.killed("minecraft:player_killed_entity", &subject, kind.type_name(), direct == attacker);
                 }
             }
@@ -1470,9 +1693,28 @@ fn carry_out(
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
+        Event::Raid(ev) => level.blocks.raid_events.push(ev),
+        // `globalLevelEvent`: approximation, every player of the region hears it (vanilla: every
+        // player on the server).
+        Event::GlobalLevelEvent { event, pos, data } => {
+            let pkt = world_fx::level_event(event, [pos.x, pos.y, pos.z], data, true);
+            for p in players.iter_mut() {
+                p.send(pkt.clone());
+            }
+        }
+        Event::PlayerGameEvent { player, event, param } => {
+            if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
+                p.send(kiln_proto::packets::game_event(event, param));
+            }
+        }
         Event::Criterion { player, criterion } => {
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == player) {
                 p.entity_criterion(crate::DIMENSIONS[env.dim].0, &criterion);
+            }
+        }
+        Event::DragonFight(ev) => {
+            if let Some(f) = &env.dragon_fight {
+                f.send(crate::dragon_fight::FightMsg::Entity(ev));
             }
         }
     }
@@ -1489,6 +1731,7 @@ fn loot_drop(env: &blocks::BlockEnv, spawns: &mut Vec<Spawn>, id: i32, table: &s
         killed_by_player: false,
         damage_type: "minecraft:generic",
         weapon: None,
+        raider: None,
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {
@@ -1524,10 +1767,12 @@ fn view(p: &Player, now: i64) -> PlayerView {
         health: p.health,
         effects: p.effects.keys().filter(|&&id| (0..64).contains(&id)).fold(0u64, |b, &id| b | 1 << id),
         last_hurt_by_mob: p.last_hurt_by_mob.filter(|&(_, t)| now - t <= 100).map(|(id, _)| id),
+        tick_count: now as i32,
         last_hurt_by_mob_time: p.last_hurt_by_mob.map_or(0, |(_, t)| t as i32),
         last_hurt_mob: p.last_hurt_mob.map(|(id, _)| id),
         last_hurt_mob_time: p.last_hurt_mob.map_or(0, |(_, t)| t as i32),
         hurt_recently: p.last_hurt_by_mob.is_some_and(|(_, t)| now - t <= 100),
+        hero_of_the_village: p.effect_amplifier("minecraft:hero_of_the_village"),
         vehicle: p.vehicle,
     }
 }
@@ -1667,6 +1912,42 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
                 }
             }
         }
+        // `ServerBossEvent`: a boss's bar for the players that see it.
+        let boss = e.phys.as_ref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
+        let bar_id = Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72);
+        if let Some(progress) = boss {
+            let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
+            let op = hud::BossEvent::Add {
+                name: &name,
+                progress,
+                color: hud::BossBarColor::Purple,
+                overlay: hud::BossBarOverlay::Progress,
+                flags: hud::boss_flags::DARKEN_SCREEN,
+            };
+            let add = hud::boss_event(bar_id, &op);
+            for &c in &added {
+                if let Some(i) = index(players, c) {
+                    players[i].send(add.clone());
+                }
+            }
+            if e.boss_sent.is_some_and(|p| p != progress) {
+                let pkt = hud::boss_event(bar_id, &hud::BossEvent::Progress(progress));
+                for v in e.seen_by.iter().filter(|v| !added.contains(v) && !removed.contains(v)) {
+                    if let Some(i) = index(players, *v) {
+                        players[i].send(pkt.clone());
+                    }
+                }
+            }
+            e.boss_sent = Some(progress);
+        }
+        if (boss.is_some() || e.boss_sent.is_some()) && !removed.is_empty() {
+            let pkt = hud::boss_event(bar_id, &hud::BossEvent::Remove);
+            for &c in &removed {
+                if let Some(i) = index(players, c) {
+                    players[i].send(pkt.clone());
+                }
+            }
+        }
         if !added.is_empty() {
             let spawn = e.spawn_packets();
             for &c in &added {
@@ -1696,6 +1977,18 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
         if let Some(EntityKind::Mob(m)) = e.phys.as_mut().map(|p| &mut p.kind) {
             if std::mem::take(&mut m.swing) {
                 packets.push(entity::swing_animation(e.id, false, entity::swing::WHACK, entity::swing::DEFAULT_DURATION));
+            }
+        }
+        if let Some(phys) = e.phys.as_ref()
+            && let EntityKind::Ext(x) = &phys.kind
+        {
+            let mut meta = EntityData::new();
+            x.entity_data(phys, &mut meta);
+            if meta.entries() != e.meta_sent.as_slice() {
+                if !e.meta_sent.is_empty() {
+                    packets.push(entity::set_entity_data(e.id, &meta));
+                }
+                e.meta_sent = meta.entries().to_vec();
             }
         }
         if let Some(phys) = e.phys.as_ref()
@@ -1781,5 +2074,25 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::Magic => ("minecraft:magic", "death.attack.magic"),
         DamageKind::IndirectMagic => ("minecraft:indirect_magic", "death.attack.indirectMagic"),
         DamageKind::LightningBolt => ("minecraft:lightning_bolt", "death.attack.lightningBolt"),
+        // -- slice 3: mob effects
+        DamageKind::Wither => ("minecraft:wither", "death.attack.wither"),
+
+        // -- slice 3: raids
+        DamageKind::Starve => ("minecraft:starve", "death.attack.starve"),
+
+        // -- slice 3: the end
+
+        // -- slice 3: wither and guardians
+        DamageKind::WitherSkull => ("minecraft:wither_skull", "death.attack.witherSkull"),
+        DamageKind::Thorns => ("minecraft:thorns", "death.attack.thorns"),
+
+        // -- slice 3: warden
+        DamageKind::SonicBoom => ("minecraft:sonic_boom", "death.attack.sonic_boom"),
+
+        // -- slice 3: common mobs A
+
+        // -- slice 3: common mobs B
+        DamageKind::WindCharge => ("minecraft:wind_charge", "death.attack.mob"),
+
     }
 }

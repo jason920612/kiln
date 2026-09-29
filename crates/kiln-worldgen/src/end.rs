@@ -16,7 +16,7 @@ use crate::pos::BlockPos;
 use kiln_javamath::math::floor;
 use kiln_javamath::random::LegacyRandom;
 
-pub use crate::feature::terrain::end::end_gateway_entity;
+pub use crate::feature::terrain::end::{EndSpike, end_gateway_entity, spike_with, spikes_for_seed};
 
 /// `EnderDragonFight.END_PODIUM_LOCATION` (the fight's origin offset, `BlockPos.ZERO`).
 pub const PODIUM_COLUMN: (i32, i32) = (0, 0);
@@ -99,6 +99,12 @@ pub fn end_podium_blocks(origin: BlockPos, active: bool) -> Vec<PodiumBlock> {
 /// last remaining index. Index `i` is at `floor(96 cos(2(-pi + 0.15707963267948966 i)))`,
 /// same with `sin` for z.
 pub fn end_gateway_positions(seed: i64) -> Vec<BlockPos> {
+    end_gateway_order(seed).iter().rev().map(|&i| end_gateway_position(i)).collect()
+}
+
+/// `EnderDragonFight.init`'s `gateways` list: the indices 0..20 shuffled (`Util.shuffle` on
+/// the LCG seeded with the world seed); each kill takes the last.
+pub fn end_gateway_order(seed: i64) -> Vec<i32> {
     use kiln_javamath::random::RandomSource;
     let mut list: Vec<i32> = (0..20).collect();
     let mut random = LegacyRandom::new(seed);
@@ -106,13 +112,13 @@ pub fn end_gateway_positions(seed: i64) -> Vec<BlockPos> {
         let j = random.next_int_bounded(i as i32) as usize;
         list.swap(i - 1, j);
     }
-    list.iter()
-        .rev()
-        .map(|&i| {
-            let angle = 2.0 * (-std::f64::consts::PI + 0.157_079_632_679_489_66 * i as f64);
-            BlockPos::new(floor(96.0 * kiln_javamath::trig::cos(angle)), 75, floor(96.0 * kiln_javamath::trig::sin(angle)))
-        })
-        .collect()
+    list
+}
+
+/// Where gateway `index` goes: `floor(96 cos(2(-pi + pi/20 index)))`, y 75, same with `sin`.
+pub fn end_gateway_position(index: i32) -> BlockPos {
+    let angle = 2.0 * (-std::f64::consts::PI + 0.157_079_632_679_489_66 * index as f64);
+    BlockPos::new(floor(96.0 * kiln_javamath::trig::cos(angle)), 75, floor(96.0 * kiln_javamath::trig::sin(angle)))
 }
 
 /// `EndGatewayFeature.place` at `origin`: 45 blocks in vanilla's order (flag 3). The gateway

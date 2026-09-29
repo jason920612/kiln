@@ -153,7 +153,7 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
         if !can_be_hit_by_projectile(t) || Some(id) == owner {
             continue;
         }
-        if let Some(p) = t.bounding_box().inflate_all(margin as f64).clip(from, end) {
+        if let Some(p) = crate::projectile::clip_entity(t, margin as f64, from, end) {
             let d = from.distance_to_sqr(t.position());
             if d < best {
                 best = d;
@@ -190,6 +190,11 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
 /// did not land. Returns false for other entities (the simulation handles them).
 fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Option<i32>) -> bool {
     let is_player = level.player(id).is_some();
+    // An end crystal explodes; the arrow is gone.
+    if crate::projectile::hurt_crystal(level, id, crate::level::DamageKind::Arrow, 0.0, owner.or(Some(e.id))) {
+        e.discard();
+        return true;
+    }
     let target = match level.entity(id) {
         Some(t) if matches!(t.kind, EntityKind::Mob(_)) || is_player => t.position(),
         _ => return false,
@@ -219,6 +224,7 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
     } else {
         let Some(slot) = level.entity_mut(id) else { return false };
         let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+        crate::mob::kinds::ender_dragon::aim_at(&mut t, e.position());
         let r = crate::mob::hurt_entity(&mut t, level, source, damage as f32);
         if let Some(slot) = level.entity_mut(id) {
             *slot = t;

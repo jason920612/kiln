@@ -108,13 +108,13 @@ pub fn end_gateway_entity(exit: Option<(BlockPos, bool)>) -> Tag {
 }
 
 /// `EndSpikeFeature.EndSpike`.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EndSpike {
-    center_x: i32,
-    center_z: i32,
-    radius: i32,
-    height: i32,
-    guarded: bool,
+    pub center_x: i32,
+    pub center_z: i32,
+    pub radius: i32,
+    pub height: i32,
+    pub guarded: bool,
 }
 
 /// `EndSpikeFeature`: obsidian pillars (from the configuration, or the level's ten), iron
@@ -160,7 +160,7 @@ impl EndSpikes {
 }
 
 /// `EndSpikeFeature.getSpikesForLevel` and `SpikeCacheLoader.load`.
-fn spikes_for_seed(seed: i64) -> Vec<EndSpike> {
+pub fn spikes_for_seed(seed: i64) -> Vec<EndSpike> {
     let key = LegacyRandom::new(seed).next_long() & 0xFFFF;
     let mut random = LegacyRandom::new(key);
     let mut order: Vec<i32> = (0..10).collect();
@@ -185,15 +185,29 @@ fn spikes_for_seed(seed: i64) -> Vec<EndSpike> {
 
 /// `EndSpikeFeature.placeSpike`.
 fn place_spike(r: &mut Region, random: &mut WorldgenRandom, s: EndSpike) {
+    let min_y = r.min_y();
+    spike_with(s, min_y, &mut |p, state| r.set_block(p, state));
+    let yaw = random.next_float() * 360.0;
+    let crystal = BlockPos::new(s.center_x, s.height + 1, s.center_z);
+    let (x, y, z) = (crystal.x as f64 + 0.5, crystal.y as f64, crystal.z as f64 + 0.5);
+    r.add_entity(x, z, crate::feature::entity_tag("minecraft:end_crystal", [x, y, z], yaw, vec![("ShowBottom".into(), Tag::Byte(1))]));
+    r.set_block(crystal.below(), state::BEDROCK);
+    // `BaseFireBlock.getState` on bedrock: plain fire, sturdy floor so no side flags.
+    r.set_block(crystal, state::FIRE);
+}
+
+/// The blocks of `placeSpike` in its order (the obsidian column, air above 65 around it, the
+/// iron bar cage of a guarded one), before its crystal; `set` gets each write.
+pub fn spike_with(s: EndSpike, min_y: i32, set: &mut dyn FnMut(BlockPos, u16)) {
     let rad = s.radius;
-    let from = BlockPos::new(s.center_x - rad, r.min_y(), s.center_z - rad);
+    let from = BlockPos::new(s.center_x - rad, min_y, s.center_z - rad);
     let to = BlockPos::new(s.center_x + rad, s.height + 10, s.center_z + rad);
     for p in super::between_closed(from, to) {
         let (dx, dz) = ((p.x - s.center_x) as f64, (p.z - s.center_z) as f64);
         if dx * dx + dz * dz <= (rad * rad + 1) as f64 && p.y < s.height {
-            r.set_block(p, state::OBSIDIAN);
+            set(p, state::OBSIDIAN);
         } else if p.y > 65 {
-            r.set_block(p, state::AIR);
+            set(p, state::AIR);
         }
     }
     if s.guarded {
@@ -211,18 +225,11 @@ fn place_spike(r: &mut Region, random: &mut WorldgenRandom, s: EndSpike) {
                     bars = with_prop(bars, "south", bool_str(ns && dz != 2));
                     bars = with_prop(bars, "west", bool_str(ew && dx != -2));
                     bars = with_prop(bars, "east", bool_str(ew && dx != 2));
-                    r.set_block(BlockPos::new(s.center_x + dx, s.height + dy, s.center_z + dz), bars);
+                    set(BlockPos::new(s.center_x + dx, s.height + dy, s.center_z + dz), bars);
                 }
             }
         }
     }
-    let yaw = random.next_float() * 360.0;
-    let crystal = BlockPos::new(s.center_x, s.height + 1, s.center_z);
-    let (x, y, z) = (crystal.x as f64 + 0.5, crystal.y as f64, crystal.z as f64 + 0.5);
-    r.add_entity(x, z, crate::feature::entity_tag("minecraft:end_crystal", [x, y, z], yaw, vec![("ShowBottom".into(), Tag::Byte(1))]));
-    r.set_block(crystal.below(), state::BEDROCK);
-    // `BaseFireBlock.getState` on bedrock: plain fire, sturdy floor so no side flags.
-    r.set_block(crystal, state::FIRE);
 }
 
 /// `ChorusPlantFeature.place`: `ChorusFlowerBlock.generatePlant(level, origin, random, 8)` on

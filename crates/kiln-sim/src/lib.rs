@@ -30,10 +30,12 @@ mod container;
 mod datapacks;
 pub mod lobby;
 mod digging;
+mod dragon_fight;
 mod effects;
 mod entities;
 mod fishing;
 mod generation;
+mod golem;
 mod independent;
 pub use independent::{InjectedDelay, ScheduleMode};
 mod hazards;
@@ -43,6 +45,8 @@ mod spawner;
 mod movement;
 mod persist;
 mod players;
+mod poi;
+mod raid;
 pub(crate) mod player_stats;
 mod recipe_book;
 mod plugins;
@@ -51,15 +55,19 @@ pub use plugins::PluginSettings;
 pub(crate) mod portal;
 mod region;
 mod rng;
+mod sculk;
 mod sleep;
 mod stats;
 mod trading;
 mod weather;
+mod wither;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
 #[cfg(test)]
 mod container_parity;
+#[cfg(test)]
+mod sculk_parity;
 mod enchant;
 #[cfg(test)]
 mod enchant_parity;
@@ -309,6 +317,15 @@ struct Player {
     dead: bool,
     /// Died this tick: viewers see the death animation.
     died: bool,
+    /// `ServerPlayer.raidOmenPosition`: where bad omen turned into raid omen.
+    raid_omen_position: Option<[i32; 3]>,
+    /// The raid omen ran out this tick at this position with this amplifier: the serial phase
+    /// starts or extends a raid (`Raids.createOrExtendRaid`).
+    raid_omen_trigger: Option<([i32; 3], i32)>,
+    /// What bad omen needs to know this tick: in a village, and the raid there already has
+    /// the most omen levels.
+    omen_village: bool,
+    omen_raid_full: bool,
     /// A hit this tick for viewers' damage effect: damage type, attacker, direct entity.
     damaged: Option<(i32, Option<i32>, Option<i32>)>,
     /// Entity events for viewers this tick (item breaks).
@@ -379,6 +396,8 @@ struct Player {
     starting_to_fall: Option<[f64; 3]>,
     entered_nether: Option<[f64; 3]>,
     entered_lava_on_vehicle: Option<[f64; 3]>,
+    /// `ServerPlayer.wardenSpawnTracker`.
+    warden_tracker: sculk::shrieker::WardenSpawnTracker,
     /// `getLastHurtByMob` and `getLastHurtMob` with the game time (tamed animals take their
     /// owner's side).
     last_hurt_by_mob: Option<(i32, i64)>,
@@ -543,6 +562,10 @@ struct Dim {
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
     entity_store: Option<kiln_storage::EntityStore>,
+    /// Point of interest chunks (`poi/`), when the world is saved somewhere.
+    poi_store: Option<kiln_storage::PoiStore>,
+    /// The level's raids (`raids.dat`) and patrol spawner.
+    raids: raid::Raids,
     /// The dimension's store when the world is in the native format.
     native: Option<std::sync::Arc<std::sync::Mutex<kiln_storage::NativeStore>>>,
     /// Saved entities of loaded chunks that Kiln does not simulate (mobs, ...), written back
@@ -595,6 +618,10 @@ impl Dim {
             Some(store) => Some(kiln_storage::EntityStore::native(store)),
             None => world.map(|dir| kiln_storage::EntityStore::new(dir.join(dimension_dir(key)).join("entities"))),
         };
+        let poi_store = match native.clone() {
+            Some(store) => Some(kiln_storage::PoiStore::native(store)),
+            None => world.map(|dir| kiln_storage::PoiStore::new(dir.join(dimension_dir(key)).join("poi"))),
+        };
         Dim {
             key,
             kind,
@@ -609,6 +636,8 @@ impl Dim {
             generation,
             game_time,
             entity_store,
+            poi_store,
+            raids: raid::Raids::new(),
             native,
             raw_entities: HashMap::new(),
             gateway_cooldowns: HashMap::new(),
@@ -653,6 +682,9 @@ impl Dim {
         let (cells, part) = region.cells_and_part_mut();
         let Some(cell) = cells.get_mut(pos.cell()) else { return Err(chunk) };
         part.1.chunk_loaded(pos, &mut chunk, self.game_time);
+        // `PoiManager`: the chunk's saved points of interest, checked against its blocks.
+        let stored = self.poi_store.as_mut().and_then(|s| s.load(pos)).map(|t| kiln_world::poi::ChunkPois::from_nbt(&t));
+        chunk.init_pois(pos.x, pos.z, stored);
         let new = chunk.is_new();
         let generated = std::mem::take(&mut chunk.generated_entities);
         cell.insert(pos, chunk);
@@ -717,6 +749,11 @@ impl Dim {
             }
             if let Some(mut chunk) = cell.remove(pos) {
                 part.1.chunk_unloaded(pos, &mut chunk, self.game_time);
+                if let (Some(store), Some(p)) = (self.poi_store.as_mut(), chunk.pois.as_deref())
+                    && p.dirty
+                {
+                    store.store(pos, Some(p.to_nbt(kiln_storage::anvil::DATA_VERSION as i32)));
+                }
                 self.provider.unload(pos, &mut chunk);
                 unloaded.push(pos);
             }
@@ -781,8 +818,8 @@ pub struct Sim {
     /// The End's clock (`minecraft:the_end`, the End's `default_clock`).
     end_time: i64,
     end_clock: i32,
-    /// The End's exit portal and first gateway were checked this run ([`Sim::prepare_end`]).
-    end_prepared: bool,
+    /// The End's dragon fight (`EnderDragonFight`).
+    dragon_fight: dragon_fight::DragonFight,
     commands: commands::CommandState,
     /// The server-wide weather counters (`weather.dat`).
     weather: weather::WeatherData,
@@ -963,7 +1000,7 @@ impl Sim {
             overworld_clock: kiln_data::synced_id("minecraft:world_clock", OVERWORLD).expect("overworld clock"),
             end_time: 0,
             end_clock: kiln_data::synced_id("minecraft:world_clock", "minecraft:the_end").expect("end clock"),
-            end_prepared: false,
+            dragon_fight: dragon_fight::DragonFight::load(None, seed),
             commands: commands::CommandState::new(ops_from_env()),
             weather: Default::default(),
             level_weather: Default::default(),
@@ -981,6 +1018,8 @@ impl Sim {
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.load_scoreboard();
         sim.load_weather();
+        sim.load_raids();
+        sim.load_dragon_fight();
         sim.init_packs(vanilla_pack);
         sim.load_plugins();
         sim
@@ -1030,13 +1069,9 @@ impl Sim {
         let changed = self.apply_topology();
         self.plugins_b0();
         for (jn, j) in joining {
-            let in_end = jn.dim == END_ID;
             let conn = j.conn;
             self.join(j, jn);
             self.plugins_joined(conn);
-            if in_end {
-                self.prepare_end();
-            }
         }
         self.update_membership(changed);
         lap(&mut self.stats, "b0");
@@ -1094,6 +1129,8 @@ impl Sim {
             }
         }
         self.materialize_spawns();
+        // What the dragon and the crystals told the fight.
+        self.dragon_fight_messages();
         // Players whose portal time ran out change level (serially: two levels take part).
         if !travels.is_empty() {
             self.rendezvous();
@@ -1221,6 +1258,13 @@ impl Sim {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
     }
 
+    /// The saved form of the live sculk block entity (sensor, shrieker, catalyst) at an
+    /// overworld position (for tests and tools).
+    pub fn block_entity_nbt(&self, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
+        let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
+        region.part().1.sculk.map.get(&kiln_blocks::BlockPos::new(x, y, z)).map(|b| b.save())
+    }
+
     /// Block state at a position in the level `dimension` (e.g. `minecraft:the_nether`), if
     /// its chunk is loaded.
     pub fn block_in(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u16> {
@@ -1275,6 +1319,27 @@ impl Sim {
             self.dims[d].regions.iter().flat_map(|r| r.part().0.list.iter()).map(|e| (e.id, e.kind.name, e.pos)).collect();
         out.sort_by_key(|&(id, ..)| id);
         out.into_iter().map(|(_, k, p)| (k, p)).collect()
+    }
+
+    /// The raids of a level: (id, status, waves spawned, omen level, center, raiders alive,
+    /// boss bar progress) (for tests and tools).
+    pub fn raids(&self, dimension: &str) -> Vec<(i32, &'static str, i32, i32, [i32; 3], usize, f32)> {
+        let Some(d) = dim_id(dimension) else { return Vec::new() };
+        raid::summary(&self.dims[d])
+    }
+
+    /// `ServerLevel.sectionsToVillage` at a position of a level (for tests and tools).
+    pub fn sections_to_village(&self, dimension: &str, pos: [i32; 3]) -> i32 {
+        dim_id(dimension).map_or(7, |d| poi::sections_to_village(&self.dims[d].regions, pos))
+    }
+
+    /// The raider state of a mob: (raid id, wave, patrol leader, patrolling, wears the ominous
+    /// banner) (for tests and tools).
+    pub fn raider(&self, id: i32) -> Option<(Option<i32>, i32, bool, bool, bool)> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id)?;
+        let m = kiln_entity::mob::data(e.phys.as_ref()?)?;
+        let r = kiln_entity::mob::kinds::raider::raider(m)?;
+        Some((r.raid, r.wave, r.patrol_leader, r.patrolling, kiln_entity::mob::kinds::raider::is_ominous_banner(&m.equipment[kiln_entity::mob::HEAD])))
     }
 
     /// Mobs: (network id, type name, position, health), in id order (for tests and tools).
@@ -1498,6 +1563,7 @@ impl Sim {
                 drops: self.rule_bool("minecraft:mob_drops"),
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
+                spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,
@@ -1515,11 +1581,13 @@ impl Sim {
                 sea_level: SEA_LEVELS[dim],
             },
             fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
+            dragon_fight: self.fight_env(dim),
             fire_watchers: std::sync::Arc::new({
                 let mut conns: Vec<&ConnId> = self.players.keys().collect();
                 conns.sort_unstable();
                 conns.into_iter().filter_map(|c| self.players.get(c)).filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()
             }),
+            raids: self.dims[dim].raids.views.clone(),
         }
     }
 
@@ -1625,7 +1693,22 @@ impl Sim {
         // Entities loaded with a chunk have their ids before the chunk can leave again.
         self.materialize_spawns();
         for dim in 0..self.dims.len() {
-            let keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            let mut keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),
+            // and the rest of it loads a few chunks a tick.
+            if dim == END_ID && self.dragon_fight.active() {
+                keep.extend(self.dragon_fight.arena());
+                let mut n = 0;
+                for pos in self.dragon_fight.arena() {
+                    if n == 4 {
+                        break;
+                    }
+                    let d = &mut self.dims[dim];
+                    if !d.is_loaded(pos) && d.request(pos) {
+                        n += 1;
+                    }
+                }
+            }
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
             let unloaded = self.dims[dim].unload(unloads, &keep);
             if !unloaded.is_empty() {
@@ -1733,6 +1816,10 @@ impl Sim {
                 };
                 let id = self.next_entity_id;
                 self.next_entity_id += 1;
+                // The ender dragon's parts take the next eight ids (the client numbers them so).
+                if spawn.kind.name == "minecraft:ender_dragon" {
+                    self.next_entity_id += 8;
+                }
                 let uuid = entities::fresh_uuid(world_seed, self.game_time, id);
                 region.part_mut().0.list.push(entities::Entity::new(id, uuid, spawn));
             }
@@ -1959,6 +2046,7 @@ impl Sim {
     }
 
     fn leave(&mut self, conn: ConnId) {
+        self.dragon_fight_left(conn);
         // `ServerPlayer.disconnect`: a sleeper gets out of bed first.
         if let Some(mut p) = self.players.remove(&conn) {
             if p.sleep.pos.is_some() {
@@ -1999,6 +2087,12 @@ impl Sim {
                 for (cell_pos, cell) in cells.iter_mut() {
                     for (pos, chunk) in cell.chunks_mut(cell_pos) {
                         part.1.store(pos, chunk, self.game_time);
+                        if let (Some(store), Some(p)) = (d.poi_store.as_mut(), chunk.pois.as_deref_mut())
+                            && p.dirty
+                        {
+                            store.store(pos, Some(p.to_nbt(kiln_storage::anvil::DATA_VERSION as i32)));
+                            p.dirty = false;
+                        }
                     }
                 }
             }
@@ -2014,14 +2108,19 @@ impl Sim {
                 Ok(n) => debug!("saved {n} entity chunks"),
                 Err(e) => warn!("saving entities failed: {e}"),
             }
+            if let Some(Err(e)) = self.dims[dim].poi_store.as_mut().map(kiln_storage::PoiStore::flush) {
+                warn!("saving points of interest failed: {e}");
+            }
         }
         for p in self.players.values() {
             self.save_player(p);
         }
         self.save_level();
         self.save_weather();
+        self.save_raids();
         self.save_scoreboard();
         self.save_timers();
+        self.save_dragon_fight();
         self.save_plugins();
     }
 
@@ -2037,6 +2136,7 @@ impl Sim {
         let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).expect("spawn chunk loaded");
         let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
         recipe_book.retain_existing(&self.rules);
+        let warden_tracker = sculk::shrieker::WardenSpawnTracker::load(joining.saved.raw().get("warden_spawn_tracker"));
         let mut player = Player {
             dim,
             conn: j.conn,
@@ -2149,9 +2249,14 @@ impl Sim {
             vehicle: None,
             vehicle_type: None,
             levitation_start: None,
+            raid_omen_position: None,
+            raid_omen_trigger: None,
+            omen_village: false,
+            omen_raid_full: false,
             starting_to_fall: None,
             entered_nether: None,
             entered_lava_on_vehicle: None,
+            warden_tracker,
             last_hurt_by_mob: None,
             last_hurt_mob: None,
             sleep: sleep::Sleep::default(),
@@ -2262,6 +2367,8 @@ impl Sim {
         self.update_sleeping();
         self.tick_weather();
         self.tick_sleep();
+        self.tick_raids();
+        self.tick_dragon_fight();
         if self.game_time % AUTOSAVE_TICKS == 0 {
             self.save();
         }

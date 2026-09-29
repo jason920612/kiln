@@ -173,6 +173,17 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
         orb.set_old_pos_and_rot();
         level.add_entity(orb);
     }
+    // Sniffers lay an egg (`Sniffer.spawnChildFromBreeding`) with its plop.
+    if let Some(item) = m.kind.ext().and_then(|k| k.breed_as_item()) {
+        let pitch = (e.random.next_float() - e.random.next_float()) * 0.2 + 0.5;
+        if !e.silent {
+            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.sniffer.egg_plop", source: "neutral", volume: 1.0, pitch });
+        }
+        if let Some(stack) = kiln_item::ItemStack::of(item, 1) {
+            super::spawn_at_location(e, level, stack);
+        }
+        return;
+    }
     level.add_entity(child);
 }
 

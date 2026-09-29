@@ -46,6 +46,8 @@ pub struct Info {
     pub sound_source: &'static str,
     /// `entity.<sounds>.ambient` / `.hurt` / `.death` / `.step` (None: no ambient sound).
     pub sounds: Option<&'static str>,
+    /// The class extends `Monster` (`updateNoActionTime`: bright light ages the idle time).
+    pub extends_monster: bool,
 }
 
 impl Info {
@@ -65,6 +67,7 @@ impl Info {
             ambient_interval: 80,
             sound_source: "hostile",
             sounds: None,
+            extends_monster: true,
         }
     }
 
@@ -84,6 +87,7 @@ impl Info {
             ambient_interval: 80,
             sound_source: "neutral",
             sounds: None,
+            extends_monster: false,
         }
     }
 
@@ -103,6 +107,7 @@ impl Info {
             ambient_interval: 120,
             sound_source: "neutral",
             sounds: None,
+            extends_monster: false,
         }
     }
 }
@@ -274,6 +279,16 @@ pub trait Kind: Sync + Send {
         let _ = (e, m, level, input);
         false
     }
+    /// `travelInWater` in place of the shared one; true when handled (turtles swim their way).
+    fn travel_in_water(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, input: Vec3) -> bool {
+        let _ = (e, m, level, input);
+        false
+    }
+    /// `getWaterSlowDown` (0.8; polar bears 0.98).
+    fn water_slow_down(&self, m: &MobData) -> f32 {
+        let _ = m;
+        0.8
+    }
     /// The type's `MoveControl.tick`; true when handled.
     fn tick_move(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let _ = (e, m, level);
@@ -281,6 +296,11 @@ pub trait Kind: Sync + Send {
     }
     /// The type's `LookControl.tick`; true when handled.
     fn tick_look(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// The type's `JumpControl.tick`; true when handled (rabbits start a hop instead).
+    fn tick_jump(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let _ = (e, m, level);
         false
     }
@@ -310,6 +330,33 @@ pub trait Kind: Sync + Send {
     /// `remove(KILLED)` work (slimes split).
     fn on_killed_removal(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, level);
+    }
+    /// `aiStep` overridden without `super.aiStep()` (the ender dragon): runs in place of
+    /// `LivingEntity.aiStep` when it returns true.
+    fn replaces_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// `tickDeath` in place of `LivingEntity.tickDeath` (20 ticks then removal); true when
+    /// handled.
+    fn tick_death(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// `handleKillingBlow` overrides: true when the mob is not marked `dead` (the ender dragon
+    /// starts its dying phase instead).
+    fn handle_killing_blow(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let _ = (e, m, level);
+        false
+    }
+    /// `knockback` overridden to do nothing (a sitting ender dragon).
+    fn knockback_immune(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
+    /// false: `checkDespawn` overridden to do nothing (never despawns, not even on peaceful).
+    fn despawns(&self) -> bool {
+        true
     }
     /// `doHurtTarget` in place of the shared one: `Some(hit)` when handled.
     fn do_hurt_target(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> Option<bool> {
@@ -401,7 +448,18 @@ pub trait Kind: Sync + Send {
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, partner, child, level);
     }
-    /// `LivingEntity.tickEffects` (end of `baseTick`) for a type that keeps effects.
+    /// `Monster.updateNoActionTime` at the start of `aiStep` (`Raider`s: always two more).
+    fn update_no_action_time(&self, e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
+        if self.info().extends_monster && super::light_magic_value(e, level) > 0.5 {
+            m.no_action_time += 2;
+        }
+    }
+    /// `canBeAffected` of the type: `base` is `LivingEntity`'s answer (the type tags).
+    fn can_be_affected(&self, m: &MobData, effect: &crate::effect::Effect, base: bool) -> bool {
+        let _ = (m, effect);
+        base
+    }
+    /// After `LivingEntity.tickEffects` (end of `baseTick`): a type's own per-tick work there.
     fn tick_effects(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, level);
     }
@@ -414,6 +472,22 @@ pub trait Kind: Sync + Send {
     fn remove_when_far_away(&self, m: &MobData) -> Option<bool> {
         let _ = m;
         None
+    }
+    /// `removeWhenFarAway(distSqr)` for a type whose answer depends on the distance to the
+    /// nearest player (patrolling raiders).
+    fn remove_when_far_away_at(&self, m: &MobData, dist_sqr: f64) -> Option<bool> {
+        let _ = dist_sqr;
+        self.remove_when_far_away(m)
+    }
+    /// `LivingEntity.updatingUsingItem` before the use counter advances: the used item's
+    /// `onUseTick` (a crossbow charging).
+    fn update_using_item(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
+    /// `hasLineOfSight` overrides: false when the mob cannot see at all now (a stunned ravager).
+    fn can_see(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
     }
     /// `jumpFromGround` in place of `LivingEntity.jumpFromGround`; true when handled.
     fn jump_from_ground(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) -> bool {
@@ -506,6 +580,12 @@ pub trait Kind: Sync + Send {
         let _ = (level, p);
         None
     }
+    /// [`Kind::stable_destination`] for types whose answer depends on their state (a turtle
+    /// travelling out wants water).
+    fn stable_destination_for(&self, m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
+        let _ = m;
+        self.stable_destination(level, p)
+    }
     /// The items a `TemptGoal` of the type follows.
     fn tempted_by(&self, item: i32) -> bool {
         let _ = item;
@@ -516,6 +596,74 @@ pub trait Kind: Sync + Send {
     fn passenger_offset(&self, e: &Entity, m: &MobData) -> Option<Vec3> {
         let _ = (e, m);
         None
+    }
+    /// `checkDespawn` in place of `Mob.checkDespawn` (the wither stays and never idles): true
+    /// when handled.
+    fn check_despawn(&self, e: &mut Entity, level: &dyn EntityLevel) -> bool {
+        let _ = (e, level);
+        false
+    }
+    /// `isPushedByFluid` (water animals are not).
+    fn pushed_by_fluid(&self) -> bool {
+        true
+    }
+    /// `getSwimSound` when `getMovementEmission` emits sounds; `None` for `MovementEmission.EVENTS`
+    /// (no step or swim sounds, no pitch draws).
+    fn swim_sound(&self) -> Option<&'static str> {
+        Some("minecraft:entity.generic.swim")
+    }
+    /// After `Mob.baseTick` (the ambient sound roll): `WaterAnimal.handleAirSupply` with the air
+    /// supply from before the base tick.
+    fn after_base_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, air_before: i32) {
+        let _ = (e, m, level, air_before);
+    }
+    /// `getSoundVolume` (squids 0.4, bats 0.1).
+    fn sound_volume(&self, m: &MobData) -> f32 {
+        let _ = m;
+        1.0
+    }
+    /// `getVoicePitch` from the shared one (bats: 0.95 of it).
+    fn voice_pitch(&self, m: &MobData, pitch: f32) -> f32 {
+        let _ = m;
+        pitch
+    }
+    /// `thunderHit` by bolt `bolt` in place of `Entity.thunderHit`; true when handled (mooshrooms
+    /// change color instead of burning).
+    fn thunder_hit(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, bolt: i32) -> bool {
+        let _ = (e, m, level, bolt);
+        false
+    }
+    /// `isPushable` (false: bats neither push nor get pushed).
+    fn pushable(&self) -> bool {
+        true
+    }
+    /// `AbstractSkeleton.getAttackInterval` / `getHardAttackInterval` (`None`: 40 and 20).
+    fn bow_interval(&self, hard: bool) -> Option<i32> {
+        let _ = hard;
+        None
+    }
+    /// `spawnChildFromBreeding` dropping an item instead of a baby (sniffers lay an egg).
+    fn breed_as_item(&self) -> Option<&'static str> {
+        None
+    }
+    /// [`Kind::passenger_offset`] for the passenger at `index` (camels seat two).
+    fn passenger_offset_at(&self, e: &Entity, m: &MobData, index: usize) -> Option<Vec3> {
+        let _ = index;
+        self.passenger_offset(e, m)
+    }
+}
+
+/// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the
+/// air runs out a point a tick, then drowning hurts for 2; in the water it is full.
+pub fn water_animal_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, air_before: i32) {
+    if super::is_alive(e, m) && !e.is_in_water() {
+        e.air_supply = air_before - 1;
+        if e.air_supply <= -20 {
+            e.air_supply = 0;
+            super::hurt(e, m, level, DamageSource::of(DamageKind::Drown), 2.0);
+        }
+    } else {
+        e.air_supply = 300;
     }
 }
 
