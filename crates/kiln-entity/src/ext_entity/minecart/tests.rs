@@ -86,3 +86,49 @@ fn a_hopper_minecart_takes_in_item_entities_unless_switched_off() {
         assert_eq!(level.entity_at(1).unwrap().is_removed(), enabled);
     }
 }
+
+/// What a tick costs per minecart of each kind: 1000 of them on rails, half of them rolling.
+/// `cargo test -p kiln-entity minecart_tick_cost -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn minecart_tick_cost() {
+    let rail = kiln_data::blocks_types::block_by_name("minecraft:rail").unwrap();
+    let rail = rail.with_property(rail.default, "shape", "east_west").unwrap();
+    for kind in ["minecraft:minecart", "minecraft:chest_minecart", "minecraft:hopper_minecart", "minecraft:furnace_minecart", "minecraft:tnt_minecart"] {
+        let mut level = MemoryLevel::new(-64, 0);
+        level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
+        let mut id = 1;
+        for row in 0..40 {
+            for x in -60..60 {
+                level.blocks.insert(crate::math::BlockPos::new(x, 0, row * 3), rail);
+            }
+            for k in 0..25 {
+                let mut e = new(kind, Vec3::new(-50.0 + k as f64 * 4.0, 0.0625, (row * 3) as f64 + 0.5), id as i64);
+                e.id = id;
+                id += 1;
+                if k % 2 == 0 {
+                    e.delta = Vec3::new(0.2, 0.0, 0.0);
+                }
+                if let Some(m) = crate::ext_entity::get_mut::<Minecart>(&mut e) {
+                    m.fuel = 5000;
+                    m.push = Vec3::new(0.5, 0.0, 0.0);
+                    if let Some(c) = &mut m.contents {
+                        for (i, s) in c.items.iter_mut().enumerate().step_by(2) {
+                            *s = ItemStack::of("minecraft:stone", 12 + i as i32).unwrap();
+                        }
+                    }
+                }
+                level.insert(e);
+            }
+        }
+        for _ in 0..10 {
+            level.tick();
+        }
+        let start = std::time::Instant::now();
+        for _ in 0..50 {
+            level.tick();
+        }
+        let per = start.elapsed().as_nanos() as f64 / (50.0 * 1000.0);
+        eprintln!("{kind:32} {per:8.0} ns per minecart tick");
+    }
+}
