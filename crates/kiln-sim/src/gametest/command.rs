@@ -160,10 +160,7 @@ impl Sim {
 
     /// `outputTestCoordinates`: where the tests of each dimension were put.
     pub(super) fn output_test_coordinates(&mut self, dims: &[DimId]) {
-        let has_player = self.source_player_ref().is_some();
-        let source_dim = self.source_dim();
-        let here = if has_player { self.source_player_ref().and_then(|p| dim_id(p.dimension())) } else { None };
-        let _ = source_dim;
+        let here = self.source_player_ref().and_then(|p| dim_id(p.dimension()));
         for &dim in dims {
             if here.is_some_and(|d| in_test_dimension(true, d, dims)) {
                 return;
@@ -285,9 +282,7 @@ impl Sim {
         let block = self.test_position_around(dim);
         let dimension = DIMENSIONS[dim].0;
         let layout = Layout { block, size, rotation: 0, padding: 0 };
-        let sp = [block[0] + STRUCTURE_OFFSET[0], block[1] + STRUCTURE_OFFSET[1], block[2] + STRUCTURE_OFFSET[2]];
-        self.clear_space(dim, Layout { block, size, rotation: 0, padding: 0 }.structure_bounds());
-        let _ = sp;
+        self.clear_space(dim, layout.structure_bounds());
         self.dims[dim].load_chunk(kiln_world::ChunkPos::of_block(block[0], block[2]));
         self.set_block(dimension, block, kiln_data::blocks::default_state::TEST_INSTANCE_BLOCK, None, UpdateFlags(3));
         let mut data = BlockData::empty();
@@ -372,9 +367,9 @@ impl Sim {
         let look = [-yaw.sin() * pitch.cos(), -pitch.sin(), yaw.cos() * pitch.cos()];
         // `pick(10, 0, false)`: the first solid block along the view, else the point 10 away.
         let mut hit = None;
-        for i in 0..=200 {
-            let t = f64::from(i) * 0.05;
-            let p = [0, 1, 2].map(|k| (eye[k] + look[k] * t * 10.0 / 10.0 * (10.0 / 10.0)).floor() as i32);
+        for i in 0..=100 {
+            let t = f64::from(i) * 0.1;
+            let p = [0, 1, 2].map(|k| (eye[k] + look[k] * t).floor() as i32);
             let state = Host::block_state(self, DIMENSIONS[dim].0, p);
             if state != kiln_data::blocks::default_state::AIR && state != kiln_data::blocks::default_state::VOID_AIR {
                 hit = Some(p);
@@ -408,7 +403,6 @@ impl Sim {
             c.style.bold = Some(true);
             c
         };
-        let _ = name.clone();
         self.send_success(tr!("commands.test.relative_position", Text::literal(name), component), false);
         if let Some(conn) = match self.commands.source {
             CommandSource::Player(c) => Some(c),

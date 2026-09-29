@@ -62,6 +62,7 @@ Settings come from the environment until there is a config file:
 | `KILN_TICK_THREADS` | tick pool size (all cores but one, at most 7) |
 | `KILN_REGIONS` | `unified` for one region per dimension (vanilla profile) |
 | `KILN_ONLINE_MODE` | authenticate with Mojang (`true`/`false`) |
+| `KILN_PROFILE_LOOKUP` | `fetchprofile` looks names and ids up through the session service (default: on in online mode); a lookup sends only the name or id asked for |
 | `KILN_PROXY` | `none`, `velocity` or `bungeecord` |
 | `KILN_VELOCITY_SECRET`, `KILN_VELOCITY_SECRET_FILE` | Velocity modern forwarding secret |
 | `KILN_BUNGEEGUARD_TOKENS` | accepted BungeeGuard tokens |
@@ -77,6 +78,12 @@ loads and saves faster and is smaller; conversion is lossless both ways:
 kiln world convert --to native <world> <new world>   # and --to anvil to go back
 kiln world compare <anvil world> <anvil world>       # chunk NBT byte for byte, other files
 ```
+
+A native cell file is a log: saves append records and a new index. When stale records take
+more than half of a file, it is compacted on a background thread (a copy of the live records is
+written next to it and swapped in by rename, with whatever was appended meanwhile), so saving
+never waits for a rewrite; a copy left by a crash is deleted when the world opens, and the
+cell file itself is never modified in place.
 
 ## Testing
 

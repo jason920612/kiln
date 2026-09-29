@@ -330,7 +330,8 @@ impl NativeStore {
             remaps: HashMap::new(),
             sync: true,
             stats: LoadStats::new("native chunk storage"),
-            mode: CompactionMode::Background,
+            // KILN_COMPACTION=inline compacts in the flush, as before (for comparisons).
+            mode: if std::env::var("KILN_COMPACTION").is_ok_and(|v| v == "inline") { CompactionMode::Inline } else { CompactionMode::Background },
             compaction: CompactionStats::default(),
             inflight: HashMap::new(),
             stale: HashSet::new(),
