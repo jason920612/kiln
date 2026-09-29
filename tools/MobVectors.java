@@ -349,9 +349,16 @@ public class MobVectors {
         int tickStamp = player.getLastHurtByMobTimestamp();
         List<Entity> tracked = new ArrayList<>();
         StringBuilder specs = new StringBuilder();
+        // Entity ids feed the mobs' own math (`tickCount + id` in the goal phase and the guardians'
+        // wobble): pinned per scenario, so that a vector does not depend on which scenarios ran
+        // before it (the entity id counter is static).
+        // (from a base of the scenario's name, so that a scenario's entities cannot meet the
+        // still-tracked ones of the one before)
+        int pinId = 2 + (s.name.hashCode() & 0xFFFFF) * 64;
         for (MobSpec spec : s.mobs) {
             EntityType<?> type = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(spec.type));
             Mob m = (Mob) type.create(level, EntitySpawnReason.COMMAND);
+            m.setId(pinId++);
             m.snapTo(spec.x, spec.y, spec.z, spec.yaw, 0f);
             m.setYHeadRot(spec.yaw);
             m.setYBodyRot(spec.yaw);
@@ -402,6 +409,7 @@ public class MobVectors {
         StringBuilder others = new StringBuilder();
         for (MobSpec spec : s.others) {
             Entity o = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(spec.type)).create(level, EntitySpawnReason.COMMAND);
+            o.setId(pinId++);
             o.snapTo(spec.x, spec.y, spec.z, spec.yaw, 0f);
             if (!level.addFreshEntity(o)) throw new IllegalStateException("could not add " + spec.type);
             tracked.add(o);
@@ -409,7 +417,16 @@ public class MobVectors {
             others.append(String.format(Locale.ROOT, "{\"type\":\"%s\",\"id\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s}",
                     spec.type, o.getId(), d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw)));
         }
+        // What appears during the scenario takes the ids after the pinned ones (Kiln continues after
+        // the highest id it has been given).
+        {
+            Field counter = net.minecraft.server.level.ServerLevel.class.getDeclaredField("ENTITY_COUNTER");
+            counter.setAccessible(true);
+            ((java.util.concurrent.atomic.AtomicInteger) counter.get(null)).set(pinId - 1);
+        }
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
+        // The world age is pinned too: some of the mobs' math depends on it.
+        levelData.setGameTime(1000L);
         long startTime = level.getGameTime();
         for (int tick = 0; tick < s.ticks; tick++) {
             // `ServerLevel.tickTime`: the world age advances before entities tick.

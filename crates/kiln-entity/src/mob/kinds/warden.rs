@@ -1006,7 +1006,8 @@ mod tests {
         a.tick(|_| true);
         assert_eq!(a.anger_of(1), MAX_ANGER - 1);
         a.clear(1);
-        assert_eq!(a.highest, 30);
+        // The tick before took one point off the player's 30.
+        assert_eq!(a.highest, 29);
         let back = AngerManagement::from_nbt(Some(&a.to_nbt()));
         assert_eq!(back.by_uuid, vec![(22, 29)]);
     }
