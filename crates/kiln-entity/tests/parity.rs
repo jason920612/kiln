@@ -82,6 +82,14 @@ fn spawn(spec: &Value) -> Entity {
             e.id = id;
             e
         }
+        "firework" => {
+            let mut e = kiln_entity::ext_entity::firework::new(vec3(&spec["pos"]), ItemStack::of("minecraft:firework_rocket", 1).unwrap(), None, None, false, seed);
+            e.id = id;
+            if let Some(x) = kiln_entity::ext_entity::get_mut::<kiln_entity::ext_entity::firework::Firework>(&mut e) {
+                x.lifetime = int("lifetime", 20);
+            }
+            e
+        }
         "oak_boat" => {
             let mut e = kiln_entity::ext_entity::boat::new("minecraft:oak_boat", vec3(&spec["pos"]), f(&spec["yaw"]) as f32, seed);
             e.id = id;
@@ -143,6 +151,10 @@ fn state(e: &Entity) -> Vec<f64> {
         EntityKind::FallingBlock(d) => out.extend([d.time as f64, d.state as f64]),
         EntityKind::ExperienceOrb(d) => out.extend([d.value as f64, d.count as f64, d.age as f64]),
         EntityKind::Arrow(a) => out.extend([a.in_ground as i32 as f64, a.shake_time as f64, a.life as f64]),
+        EntityKind::Ext(_) if kiln_entity::ext_entity::get::<kiln_entity::ext_entity::firework::Firework>(e).is_some() => {
+            let r = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::firework::Firework>(e).unwrap();
+            out.extend([r.life as f64, r.lifetime as f64]);
+        }
         EntityKind::Ext(_) if kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e).is_some() => {
             let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e).unwrap();
             out.extend([e.y_rot as f64, b(cart.flipped)]);

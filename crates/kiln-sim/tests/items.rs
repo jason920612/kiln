@@ -634,3 +634,21 @@ fn minecarts_ride_powered_rails() {
     w.ticks(2);
     assert_eq!(w.sim.vehicle_of(1), None);
 }
+
+#[test]
+fn riptide_tridents_launch_instead_of_flying() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    // The player stands in water.
+    let feet = [w.client.pos[0].floor() as i32, w.client.pos[1].floor() as i32, w.client.pos[2].floor() as i32];
+    w.set(feet, "minecraft:water");
+    w.run("give User minecraft:trident[enchantments={\"minecraft:riptide\":1}]");
+    w.ticks(2);
+    w.use_item(30.0);
+    w.ticks(12);
+    w.release();
+    assert_eq!(w.count("minecraft:trident"), 0, "riptide keeps the trident");
+    assert_eq!(w.sim.item_damage(1, 36), Some(1), "one durability for the throw");
+}

@@ -255,6 +255,8 @@ struct Player {
     /// Gliding with an elytra (shared flag 7) and the ticks it has lasted.
     fall_flying: bool,
     fall_fly_ticks: i32,
+    /// `autoSpinAttackTicks` (a riptide throw): the spin attack lasts this many more ticks.
+    spin_ticks: i32,
     /// Shared flags or pose changed since the last broadcast.
     meta_dirty: bool,
     /// Arm swung this tick.
@@ -2100,6 +2102,7 @@ impl Sim {
             sprinting: false,
             fall_flying: false,
             fall_fly_ticks: 0,
+            spin_ticks: 0,
             meta_dirty: false,
             swung: false,
             pending_suggestion: None,

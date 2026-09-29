@@ -387,6 +387,12 @@ public class EntityVectors {
             case "arrow" -> e = new net.minecraft.world.entity.projectile.arrow.Arrow(EntityTypes.ARROW, level);
             case "snowball" -> e = new net.minecraft.world.entity.projectile.throwableitemprojectile.Snowball(EntityTypes.SNOWBALL, level);
             case "ender_pearl" -> e = new net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl(EntityTypes.ENDER_PEARL, level);
+            case "firework" -> {
+                var rocket = new net.minecraft.world.entity.projectile.FireworkRocketEntity(level, spec.x, spec.y, spec.z,
+                        new ItemStack(net.minecraft.world.item.Items.FIREWORK_ROCKET));
+                setInt(net.minecraft.world.entity.projectile.FireworkRocketEntity.class, rocket, "lifetime", (Integer) spec.extra.getOrDefault("lifetime", 20));
+                e = rocket;
+            }
             case "minecart" -> e = new net.minecraft.world.entity.vehicle.minecart.Minecart(EntityTypes.MINECART, level);
             case "oak_boat" -> e = new net.minecraft.world.entity.vehicle.boat.Boat(EntityTypes.OAK_BOAT, level, () -> net.minecraft.world.item.Items.OAK_BOAT);
             case "player" -> {
@@ -500,6 +506,9 @@ public class EntityVectors {
             }
             sb.append(',').append(inGround ? 1 : 0).append(',').append(arrow.shakeTime)
                     .append(',').append(getInt(net.minecraft.world.entity.projectile.arrow.AbstractArrow.class, arrow, "life"));
+        } else if (e instanceof net.minecraft.world.entity.projectile.FireworkRocketEntity rocket) {
+            sb.append(',').append(getInt(net.minecraft.world.entity.projectile.FireworkRocketEntity.class, rocket, "life"))
+                    .append(',').append(getInt(net.minecraft.world.entity.projectile.FireworkRocketEntity.class, rocket, "lifetime"));
         } else if (e instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart cart) {
             sb.append(',').append(d(cart.getYRot())).append(',').append(cart.isFlipped() ? 1 : 0);
         } else if (e instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat) {
@@ -1033,6 +1042,17 @@ class Scenarios {
             if (k % 3 == 2) s.fill(-14, 1, -8, 14, 2, 8, "minecraft:water");
             s.entity("minecart", rnd(r, -3, 3), rnd(r, 1.0, 4.0), rnd(r, -3, 3), rnd(r, -0.5, 0.5), rnd(r, -0.2, 0.3), rnd(r, -0.5, 0.5), r.nextLong());
             s.ticks(80);
+            out.add(s);
+        }
+        // Firework rockets: rising, bumping into ceilings and walls, some at an angle.
+        for (int k = 0; k < 16; k++) {
+            var s = new EntityVectors.Scenario("firework/" + k, r.nextLong());
+            s.fill(-8, 0, -8, 8, 0, 8, "minecraft:stone");
+            if (k % 2 == 0) s.fill(-8, 6 + k % 5, -8, 8, 6 + k % 5, 8, "minecraft:stone");
+            if (k % 3 == 1) s.fill(2, 1, -8, 2, 12, 8, "minecraft:stone");
+            s.entity("firework", rnd(r, -3, 1.5), 1.2, rnd(r, -3, 3), rnd(r, -0.05, 0.05), 0.05, rnd(r, -0.05, 0.05), r.nextLong())
+                    .with("lifetime", 15 + r.nextInt(30));
+            s.ticks(40);
             out.add(s);
         }
         // Boats: floating, sinking to the surface, sliding on land and ice.

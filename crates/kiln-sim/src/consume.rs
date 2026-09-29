@@ -52,10 +52,12 @@ impl Player {
 
     /// `LivingEntity.DATA_LIVING_ENTITY_FLAGS`: using an item, and with which hand.
     pub(crate) fn living_flags(&self) -> i8 {
-        match self.using {
+        let using = match self.using {
             Some(u) => 1 | if u.off_hand { 2 } else { 0 },
             None => 0,
-        }
+        };
+        // `LivingEntity.FLAG_SPIN_ATTACK`.
+        using | if self.spin_ticks > 0 { 4 } else { 0 }
     }
 
     /// `ServerPlayerGameMode.useItem` for consumables: food the player can eat (hungry,

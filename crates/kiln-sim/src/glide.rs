@@ -44,6 +44,24 @@ impl Player {
         }
     }
 
+    /// `startAutoSpinAttack`: the riptide spin lasts `ticks` (the client moves the player).
+    pub(crate) fn start_spin_attack(&mut self, ticks: i32) {
+        self.spin_ticks = ticks;
+        self.meta_dirty = true;
+        self.self_meta_dirty = true;
+    }
+
+    /// The countdown of the spin attack (`aiStep`'s `autoSpinAttackTicks`).
+    pub(crate) fn tick_spin(&mut self) {
+        if self.spin_ticks > 0 {
+            self.spin_ticks -= 1;
+            if self.spin_ticks == 0 {
+                self.meta_dirty = true;
+                self.self_meta_dirty = true;
+            }
+        }
+    }
+
     /// `LivingEntity.updateFallFlying` plus the `fallFlyTicks` counter of `aiStep`.
     pub(crate) fn tick_glide(&mut self) {
         if self.fall_flying && !self.can_glide() {

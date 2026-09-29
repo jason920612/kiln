@@ -475,6 +475,7 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     let mut ctx = damage_ctx(env, &mut t.spawns, &mut t.deaths);
     p.base_tick(&block, env.min_y, &mut ctx);
     p.tick_glide();
+    p.tick_spin();
     // `Entity.handlePortal` (in `baseTick`).
     if let Some(travel) = p.handle_portal(env) {
         t.portals.push(travel);

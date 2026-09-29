@@ -101,7 +101,22 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
         p.sound_for_all(sound, SoundSource::Players, 1.0, 1.0);
         return;
     }
-    // Riptide: the client launches itself; the spin attack is not simulated.
+    // Riptide: `Player.push` along the view (the strength spread over its three components),
+    // sent to the player's client, which launches itself; the spin lasts 20 ticks. (The
+    // spin's damage to what it touches is not simulated.)
+    use kiln_entity::mob::mth::{cos, sin};
+    const RAD: f32 = 0.017453292;
+    let (yaw, pitch) = (p.rot[0], p.rot[1]);
+    let mut x = -sin((yaw * RAD) as f64) * cos((pitch * RAD) as f64);
+    let mut y = -sin((pitch * RAD) as f64);
+    let mut z = cos((yaw * RAD) as f64) * cos((pitch * RAD) as f64);
+    let len = (x * x + y * y + z * z).sqrt();
+    x = x * (spin / len);
+    y = y * (spin / len);
+    z = z * (spin / len);
+    p.vel = [p.vel[0] + x as f64, p.vel[1] + y as f64, p.vel[2] + z as f64];
+    p.sync_velocity = true;
+    p.start_spin_attack(20);
     p.sound_for_all(sound, SoundSource::Players, 1.0, 1.0);
 }
 
