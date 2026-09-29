@@ -44,6 +44,13 @@ fn main() -> Result<()> {
     sim_config.access = access;
     sim_config.data_sync = shared.data_sync.clone();
     sim_config.online_mode = shared.authenticates();
+    // `fetchprofile` looks accounts up through the session service in online mode
+    // (KILN_PROFILE_LOOKUP=true|false overrides); offline servers make no such requests.
+    let lookup = std::env::var("KILN_PROFILE_LOOKUP").map_or(shared.authenticates(), |v| v == "true");
+    if lookup {
+        sim_config.profile_lookup = Some(kiln_net::SessionProfiles::new());
+    }
+    sim_config.replies = Some(shutdown.clone());
     sim_config.require_resource_pack = shared.resource_pack_required();
     // KILN_TICK_THREADS: tick pool size; KILN_REGIONS=unified: one region (vanilla profile).
     if let Some(n) = std::env::var("KILN_TICK_THREADS").ok().and_then(|v| v.parse().ok()) {

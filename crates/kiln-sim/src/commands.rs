@@ -226,6 +226,13 @@ pub(crate) struct CommandState {
     /// `Stopwatches`: id, start and time accumulated before this run, in load order.
     pub stopwatches: Vec<(String, std::time::Instant, u64)>,
     pub stopwatches_dirty: bool,
+    /// The game test framework's definitions and the run in progress.
+    pub gametests: crate::gametest::GameTests,
+    /// Console lines kept for tests ([`Sim::capture_console`]).
+    pub console_capture: Option<Vec<String>>,
+    /// `fetchprofile` lookups on their way: who asked, and what for.
+    pub profile_requests: HashMap<u64, (CommandSource, kiln_command::host::ProfileQuery)>,
+    pub next_profile_request: u64,
 }
 
 impl CommandState {
@@ -261,6 +268,10 @@ impl CommandState {
             default_game_mode: None,
             stopwatches: Vec::new(),
             stopwatches_dirty: false,
+            gametests: Default::default(),
+            console_capture: None,
+            profile_requests: HashMap::new(),
+            next_profile_request: 1,
         }
     }
 }
@@ -443,9 +454,27 @@ impl Sim {
     }
 
     /// System message to the current command source.
+    /// A message to the console (and to the lines a test keeps).
+    pub(crate) fn reply_console(&mut self, text: &Text) {
+        info!("{}", console_text(text));
+        if let Some(lines) = self.commands.console_capture.as_mut() {
+            lines.push(console_text(text));
+        }
+    }
+
+    /// Starts keeping what the console prints (for tests).
+    pub fn capture_console(&mut self) {
+        self.commands.console_capture = Some(Vec::new());
+    }
+
+    /// The console lines printed since the last call (empty unless [`Sim::capture_console`]).
+    pub fn take_console(&mut self) -> Vec<String> {
+        self.commands.console_capture.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
     fn reply(&mut self, text: Text) {
         match self.commands.source {
-            CommandSource::Console => info!("{}", console_text(&text)),
+            CommandSource::Console => self.reply_console(&text),
             CommandSource::Player(conn) => {
                 if let Some(p) = self.players.get_mut(&conn) {
                     p.send(packets::system_chat(text.to_nbt(), false));
@@ -484,6 +513,7 @@ impl Source for Sim {
             "minecraft:advancement" => self.advancements.list.iter().map(|a| a.id.clone()).collect(),
             "minecraft:recipe" => self.rules.recipes.recipes().iter().map(|r| r.id.clone()).collect(),
             "minecraft:worldgen/template_pool" => crate::world_state::worldgen_ids("worldgen/template_pool").clone(),
+            "minecraft:test_instance" => self.commands.gametests.defs.test_ids(),
             "minecraft:loot_table" => self.loot.as_ref().map_or_else(Vec::new, |l| l.table_ids().iter().map(|i| i.to_string()).collect()),
             "minecraft:context_int_provider" => {
                 self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::IntProvider).iter().map(|i| i.to_string()).collect())
@@ -1611,6 +1641,18 @@ impl Host for Sim {
     fn fill_biome(&mut self, dimension: &str, min: [i32; 3], max: [i32; 3], biome: &str, filter: &dyn Fn(&str) -> bool) -> Option<i32> {
         let d = crate::dim_id(dimension)?;
         Sim::fill_biome(self, d, min, max, biome, filter)
+    }
+
+    fn test_command(&mut self, command: &kiln_command::host::TestCommand) -> Result<i32, CommandError> {
+        self.gametest_command(command)
+    }
+
+    fn entity_profile(&mut self, entity: &PlayerRef) -> Option<kiln_command::host::ResolvedProfile> {
+        self.player_entity_profile(entity)
+    }
+
+    fn fetch_profile(&mut self, query: kiln_command::host::ProfileQuery) {
+        self.start_profile_lookup(query);
     }
 
     fn place(&mut self, dimension: &str, what: &kiln_command::host::Placement, pos: [i32; 3]) -> Result<(), CommandError> {

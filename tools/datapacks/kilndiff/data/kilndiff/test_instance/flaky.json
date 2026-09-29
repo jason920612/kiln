@@ -1,0 +1,8 @@
+{
+  "type": "minecraft:block_based",
+  "environment": "minecraft:default",
+  "structure": "kilndiff:accept",
+  "max_ticks": 10,
+  "max_attempts": 3,
+  "required_successes": 1
+}

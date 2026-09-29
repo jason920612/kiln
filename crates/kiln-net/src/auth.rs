@@ -80,6 +80,8 @@ fn java_signed_hex(mut digest: [u8; 20]) -> String {
 
 const DISCOVERY_URL: &str = "https://discovery.minecraftservices.com/minecraft/client";
 const FALLBACK_HAS_JOINED: &str = "https://sessionserver.mojang.com/session/minecraft/hasJoined";
+const FALLBACK_PROFILE_BY_ID: &str = "https://sessionserver.mojang.com/session/minecraft/profile/{profileId}";
+const FALLBACK_PROFILE_BY_NAME: &str = "https://api.mojang.com/users/profiles/minecraft/{name}";
 const DISCOVERY_TTL: Duration = Duration::from_secs(3600);
 const DISCOVERY_RETRY: Duration = Duration::from_secs(60);
 /// Per HTTP request; a login does at most a discovery fetch and a `hasJoined`.
@@ -98,6 +100,8 @@ pub struct SessionService {
     any: ureq::Agent,
     discovery_url: String,
     endpoint: Mutex<Option<(String, Instant)>>,
+    /// The discovery document, for the profile endpoints.
+    document: Mutex<Option<(Option<serde_json::Value>, Instant)>>,
 }
 
 impl Default for SessionService {
@@ -121,6 +125,7 @@ impl SessionService {
             any: agent(ureq::config::IpFamily::Any),
             discovery_url: discovery_url.to_owned(),
             endpoint: Mutex::new(None),
+            document: Mutex::new(None),
         }
     }
 
@@ -146,6 +151,66 @@ impl SessionService {
             return Ok(None);
         }
         parse_profile(&body).map(Some)
+    }
+
+    /// The profile with `id` and its properties (textures), signed. `Ok(None)`: no such
+    /// profile. The request carries the id and nothing else about this server.
+    pub fn profile_by_id(&self, id: Uuid) -> Result<Option<GameProfile>> {
+        let url = self.endpoint("/discovery/session/endpoints/getProfileById/uri", FALLBACK_PROFILE_BY_ID).replace("{profileId}", &id.simple().to_string());
+        match self.get_optional(&url, &[("unsigned", "false")])? {
+            Some(body) => parse_profile(&body).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// The profile of the account with this name: the name is looked up for its id, then the
+    /// profile fetched with its properties. Names that no account can have are not asked about.
+    pub fn profile_by_name(&self, name: &str) -> Result<Option<GameProfile>> {
+        if name.is_empty() || name.len() > 16 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return Ok(None);
+        }
+        let url = self.endpoint("/discovery/profiles/endpoints/getByName/uri", FALLBACK_PROFILE_BY_NAME).replace("{name}", name);
+        let Some(body) = self.get_optional(&url, &[])? else { return Ok(None) };
+        let found = parse_profile(&body)?;
+        match self.profile_by_id(found.uuid) {
+            Ok(Some(full)) => Ok(Some(full)),
+            // The profile server may be slow to have it: the name and id are what we know.
+            Ok(None) | Err(_) => Ok(Some(found)),
+        }
+    }
+
+    /// An endpoint of the services discovery document (`{placeholders}` still in it), or
+    /// `fallback` when discovery does not answer.
+    fn endpoint(&self, pointer: &str, fallback: &str) -> String {
+        let mut cache = self.document.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        let fresh = cache.as_ref().is_some_and(|(_, until)| now < *until);
+        if !fresh {
+            let doc = self.get(&self.discovery_url, &[]).ok().and_then(|(_, body)| serde_json::from_str(&body).ok());
+            let ttl = if doc.is_some() { DISCOVERY_TTL } else { DISCOVERY_RETRY };
+            *cache = Some((doc, now + ttl));
+        }
+        cache
+            .as_ref()
+            .and_then(|(doc, _)| doc.as_ref())
+            .and_then(|d| d.pointer(pointer))
+            .and_then(|v| v.as_str())
+            .filter(|u| u.starts_with("https://"))
+            .unwrap_or(fallback)
+            .to_owned()
+    }
+
+    /// GET; `None` for the statuses that mean "no such profile" (204, 404) and empty bodies.
+    fn get_optional(&self, url: &str, query: &[(&str, &str)]) -> Result<Option<String>> {
+        match self.get(url, query) {
+            Ok((204, _)) => Ok(None),
+            Ok((_, body)) if body.trim().is_empty() => Ok(None),
+            Ok((_, body)) => Ok(Some(body)),
+            Err(e) => match e.downcast_ref::<ureq::Error>() {
+                Some(ureq::Error::StatusCode(404 | 204)) => Ok(None),
+                _ => Err(e),
+            },
+        }
     }
 
     fn has_joined_endpoint(&self) -> String {

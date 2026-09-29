@@ -103,6 +103,11 @@ impl Difficulty {
         ["peaceful", "easy", "normal", "hard"][self as usize]
     }
 
+    /// `Difficulty.byName`.
+    pub fn by_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.name() == name)
+    }
+
     pub fn id(self) -> i32 {
         self as i32
     }

@@ -49,6 +49,8 @@ mod dragon_fight;
 mod effects;
 mod entities;
 mod fishing;
+mod gametest;
+mod profiles;
 mod generation;
 mod golem;
 mod independent;
@@ -151,6 +153,11 @@ pub struct SimConfig {
     pub keep_alive: bool,
     /// Where the data packs publish the feature flags and tags that logins send.
     pub data_sync: std::sync::Arc<kiln_link::DataSync>,
+    /// Looks game profiles up for `fetchprofile` (the session service); without one only
+    /// online players and offline names resolve.
+    pub profile_lookup: Option<std::sync::Arc<dyn kiln_link::ProfileLookup>>,
+    /// The simulation's own inbox, for answers that arrive from other threads.
+    pub replies: Option<crossbeam_channel::Sender<ToSim>>,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -183,6 +190,8 @@ impl SimConfig {
             access: kiln_link::access::AccessLists::new(None).shared(),
             keep_alive: true,
             data_sync: Default::default(),
+            profile_lookup: None,
+            replies: None,
         }
     }
 }
@@ -1116,6 +1125,7 @@ impl Sim {
         self.world.tick_rate.tick();
         // B0: connection events, chunks, topology, joins, membership.
         let (mut packets, mut joins, mut console, mut leaves) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut profile_results = Vec::new();
         for msg in inbox {
             match msg {
                 ToSim::Join(j) => joins.push(j),
@@ -1131,6 +1141,7 @@ impl Sim {
                     let _ = done.send(());
                     return false;
                 }
+                ToSim::ProfileLookup { request, result } => profile_results.push((request, result)),
             }
         }
         // `/kiln use` clicks, as if their players had sent them.
@@ -1180,6 +1191,9 @@ impl Sim {
         // G: console, time, autosave.
         for command in console {
             self.run_console_command(command.trim_start_matches('/'));
+        }
+        for (request, result) in profile_results {
+            self.profile_lookup_finished(request, result);
         }
         self.tick_global();
         self.flush_stat_scores();
@@ -2487,6 +2501,7 @@ impl Sim {
             }
         }
         self.tick_functions();
+        self.tick_gametests();
         if normal {
             self.tick_clocks();
         }
