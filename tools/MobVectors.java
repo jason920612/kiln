@@ -3027,6 +3027,108 @@ public class MobVectors {
             s.ticks = 700;
             out.add(s);
         }
+        // ---- camels: idle (strolling, sitting down and standing up), sitting from the start
+        for (int seed = 1; seed <= 6; seed++) {
+            Scenario s = new Scenario("idle_camel_" + seed);
+            floor(s, 24, "minecraft:sand");
+            s.mobs.add(new MobSpec("minecraft:camel", 0.5, BY, 0.5, 55f * seed, 17000L + 13 * seed));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 80 + seed;
+            s.ticks = 900;
+            out.add(s);
+        }
+        for (long pose : new long[] {-100L, -990L, 5L}) {
+            Scenario s = new Scenario("pose_camel_" + (pose < 0 ? "m" : "p") + Math.abs(pose));
+            floor(s, 24, "minecraft:sand");
+            MobSpec m = new MobSpec("minecraft:camel", 0.5, BY, 0.5, 20f, 17100L + pose);
+            m.nbt = "{LastPoseTick:" + pose + "L}";
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 90;
+            s.ticks = 900;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_camel");
+            floor(s, 20, "minecraft:sand");
+            s.mobs.add(new MobSpec("minecraft:camel", 0.5, BY, 0.5, 0f, 17200));
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:cactus";
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("breed_camel");
+            floor(s, 20, "minecraft:sand");
+            MobSpec m1 = new MobSpec("minecraft:camel", 0.5, BY, 0.5, 20f, 17210);
+            MobSpec m2 = new MobSpec("minecraft:camel", 4.5, BY, 1.5, 200f, 17211);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("feed_camel");
+            floor(s, 20, "minecraft:sand");
+            s.mobs.add(new MobSpec("minecraft:camel", 0.5, BY, 0.5, 20f, 17220));
+            MobSpec other = new MobSpec("minecraft:camel", 5.5, BY, 0.5, 250f, 17221);
+            other.inLove = 900;
+            s.mobs.add(other);
+            s.player = new double[] {2.5, BY, 0.5};
+            s.playerCreative = true;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:cactus";
+            s.actions.add(a);
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("follow_adult_camel");
+            floor(s, 20, "minecraft:sand");
+            MobSpec baby = new MobSpec("minecraft:camel", 0.5, BY, 0.5, 0f, 17230);
+            baby.age = -24000;
+            s.mobs.add(baby);
+            s.mobs.add(new MobSpec("minecraft:camel", 8.5, BY, 2.5, 90f, 17231));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Hurt: panics (standing up at once when it was sitting).
+        for (int variant = 0; variant < 2; variant++) {
+            Scenario s = new Scenario(variant == 0 ? "hurt_camel" : "hurt_sitting_camel");
+            floor(s, 24, "minecraft:sand");
+            MobSpec m = new MobSpec("minecraft:camel", 0.5, BY, 0.5, 30f, 17240 + variant);
+            if (variant == 1) m.nbt = "{LastPoseTick:-100L}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerSneaking = true;
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.hurts.put(300, new double[] {0, 1.0});
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("terrain_camel");
+            floor(s, 24, "minecraft:sand");
+            for (int x = -4; x <= 4; x++) block(s, x, BY - 1, 4, "minecraft:water");
+            for (int x = -3; x <= 3; x++) block(s, x, BY, -4, "minecraft:sandstone");
+            for (int z = -6; z <= 6; z++) block(s, 6, BY + 1, z, "minecraft:sandstone");
+            s.mobs.add(new MobSpec("minecraft:camel", 0.5, BY, 0.5, 200f, 17250));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 95;
+            s.ticks = 900;
+            out.add(s);
+        }
     }
 
     /// Axolotls, goats, frogs, tadpoles.

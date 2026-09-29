@@ -1748,6 +1748,8 @@ fn relative_friction_movement(e: &mut Entity, m: &mut MobData, level: &mut dyn E
 pub fn move_relative(e: &mut Entity, speed: f32, input: Vec3) {
     let l = input.length_sqr();
     if l < 1.0e-7 {
+        // `getInputVector` is `Vec3.ZERO`, and adding it still turns a -0.0 into +0.0.
+        e.delta = e.delta + Vec3::ZERO;
         return;
     }
     let v = if l > 1.0 { input.normalize() } else { input }.scale(speed as f64);
