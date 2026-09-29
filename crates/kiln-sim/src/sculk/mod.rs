@@ -517,7 +517,16 @@ fn hear_allay(level: &mut RegionLevel, id: i32, event: &'static str, from: Vec3,
     let Some(ear) = level.blocks.sculk.allays.get(&id).copied() else { return };
     let (c, e) = (containing(from), containing(ear.pos));
     let d = [(c.x - e.x) as i64, (c.y - e.y) as i64, (c.z - e.z) as i64];
-    if ear.busy || d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 16 * 16 {
+    let dist = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    // `Allay.JukeboxListener` (radius 10): a jukebox starting or stopping, heard at once.
+    if matches!(event, "minecraft:jukebox_play" | "minecraft:jukebox_stop_play") {
+        if dist <= 10 * 10 {
+            let now = level.env.game_time;
+            level.blocks.sculk.allay_heard.push((id, Heard { event, from, to: ear.pos, source: ctx.source, tick: now }));
+        }
+        return;
+    }
+    if ear.busy || dist > 16 * 16 {
         return;
     }
     if vibration::is_valid_vibration(event, ctx, "minecraft:allay_can_listen", false) != Validity::Valid {

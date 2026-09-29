@@ -409,13 +409,22 @@ fn tick_vibrations(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel)
     let liked = mem(m).and_then(|b| b.global_pos(Mem::LikedNoteblockPosition)).map(|g| g.pos);
     let no_ai = m.no_ai;
     let s = st_mut(m);
+    let mut jukeboxes: Vec<(BlockPos, bool)> = Vec::new();
     for h in heard {
-        // `canReceiveVibration`: AI on, and no liked note block or this one.
         let at = BlockPos::containing(h.from.x, h.from.y, h.from.z);
-        if !no_ai && liked.is_none_or(|p| p == at) {
-            s.vibration.schedule(h.event, h.from, h.to, h.source, None, h.tick);
+        match h.event {
+            // `JukeboxListener.handleGameEvent`.
+            "minecraft:jukebox_play" => jukeboxes.push((at, true)),
+            "minecraft:jukebox_stop_play" => jukeboxes.push((at, false)),
+            // `canReceiveVibration`: AI on, and no liked note block or this one.
+            _ if !no_ai && liked.is_none_or(|p| p == at) => s.vibration.schedule(h.event, h.from, h.to, h.source, None, h.tick),
+            _ => {}
         }
     }
+    for (at, playing) in jukeboxes {
+        set_jukebox_playing(m, at, playing);
+    }
+    let s = st_mut(m);
     if s.vibration.current.is_none() && s.vibration.selector.current.is_none() {
         return;
     }
@@ -453,7 +462,7 @@ fn should_stop_dancing(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool
 }
 
 /// `Allay.setJukeboxPlaying`: a jukebox nearby starts or stops the dance.
-pub fn set_jukebox_playing(e: &Entity, m: &mut MobData, pos: BlockPos, playing: bool) {
+pub fn set_jukebox_playing(m: &mut MobData, pos: BlockPos, playing: bool) {
     let panicking = mem(m).is_some_and(|b| b.has(Mem::IsPanicking));
     let s = st_mut(m);
     if playing {
@@ -470,7 +479,16 @@ pub fn set_jukebox_playing(e: &Entity, m: &mut MobData, pos: BlockPos, playing: 
             st_mut(m).dancing = false;
         }
     }
-    let _ = e;
+}
+
+/// A jukebox game event at `at` for allay `e` if it is within the listener's 10 blocks
+/// (`JukeboxListener`): for callers that deliver game events themselves (the parity harness).
+pub fn hear_jukebox(e: &Entity, m: &mut MobData, playing: bool, at: BlockPos) {
+    let c = BlockPos::containing(e.x(), e.eye_y(), e.z());
+    let d = [(at.x - c.x) as i64, (at.y - c.y) as i64, (at.z - c.z) as i64];
+    if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= 10 * 10 {
+        set_jukebox_playing(m, at, playing);
+    }
 }
 
 /// `duplicateAllay`: a copy at its place, both start a 5 minute cooldown.
@@ -478,8 +496,8 @@ fn duplicate(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let id = level.next_entity_id();
     let seed = level.fresh_seed();
     let mut c = mob::new(mob::MobKind::Allay, id, 0, seed);
+    // `snapTo(position())` keeps the copy's own random yaw.
     c.set_pos(e.position());
-    c.y_rot = e.y_rot;
     if let Some(cm) = mob::data_mut(&mut c) {
         cm.persistence_required = true;
         st_mut(cm).duplication_cooldown = DUPLICATION_COOLDOWN_TICKS;
