@@ -751,7 +751,7 @@ pub trait EntityLevel {
         None
     }
 
-    // -- wp28 creaking: the creaking heart block entity (`crate::heart`) as creakings see it.
+    // -- wp28 creaking: the creaking heart block entity (`crate::mob::kinds::creaking_heart`) as creakings see it.
 
     /// `CreakingHeartBlockEntity.isProtector`: whether the heart at `home` holds creaking `id`
     /// (`uuid`). Levels without heart block entities approximate it with a `creaking_heart`
@@ -772,6 +772,39 @@ pub trait EntityLevel {
     fn entity_by_uuid(&self, uuid: u128) -> Option<&Entity> {
         let _ = uuid;
         None
+    }
+
+    /// A random for the block entity at `pos` this tick, standing in for the level random
+    /// (`salt` tells the users apart): seeded by the position and the game time, so what
+    /// block entities draw does not depend on how the world is split into regions.
+    fn pos_random(&mut self, pos: BlockPos, salt: i64) -> LegacyRandom {
+        let mut h = (self.game_time() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (salt as u64);
+        for v in [pos.x as u32 as u64, pos.y as u32 as u64, pos.z as u32 as u64] {
+            h = (h ^ v).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            h ^= h >> 31;
+        }
+        LegacyRandom::new(h as i64)
+    }
+
+    /// `Level.updateNeighbourForOutputSignal(pos, block)`: comparators next to a block entity
+    /// whose analog output changed re-read it.
+    fn update_neighbours_for_output_signal(&mut self, pos: BlockPos) {
+        let _ = pos;
+    }
+
+    /// A fresh UUID for a block entity's new entity at `pos`.
+    fn fresh_uuid_at(&mut self, pos: BlockPos) -> u128 {
+        use kiln_javamath::random::RandomSource;
+        let mut r = self.pos_random(pos, 0x5555);
+        let hi = (r.next_long() as u64 & !0xF000) | 0x4000;
+        let lo = (r.next_long() as u64 & !(0xC000u64 << 48)) | (0x8000u64 << 48);
+        ((hi as u128) << 64) | lo as u128
+    }
+
+    /// `addFreshEntity` of an entity that keeps the UUID it was made with (a block entity
+    /// holds on to what it spawned by UUID).
+    fn add_entity_with_uuid(&mut self, entity: Entity) {
+        self.add_entity(entity);
     }
 
     /// `ServerLevel.isSpawningMonsters` (`spawn_monsters` game rule).

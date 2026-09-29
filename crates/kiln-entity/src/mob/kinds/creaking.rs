@@ -1,6 +1,6 @@
 //! Creaking: a pale-garden monster that cannot move while a player looks at it. It activates
 //! when first looked at within 12 blocks, then hunts that player, freezing whenever anyone
-//! watches. One bound to a creaking heart (`home_pos`, see [`crate::heart`]) cannot be hurt
+//! watches. One bound to a creaking heart (`home_pos`, see [`crate::mob::kinds::creaking_heart`]) cannot be hurt
 //! (a hit only makes it sway and hurts the heart) and crumbles when its heart is gone.
 //!
 //! Driven by the brain of `CreakingAi` (core: swim, look sink, move sink; idle: start attacking

@@ -67,6 +67,10 @@ pub struct MemoryLevel {
     pub immediate_adds: bool,
     /// Mob AI draws from the level's random, as vanilla's (one stream for all mobs).
     pub share_ai_random: bool,
+    /// The creaking hearts (their block entities) by position.
+    pub hearts: FastMap<BlockPos, crate::mob::kinds::creaking_heart::HeartBe>,
+    /// The `minecraft:gameplay/creaking_active` attribute.
+    pub creaking_active: bool,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -103,6 +107,37 @@ impl MemoryLevel {
             spawned: Vec::new(),
             immediate_adds: false,
             share_ai_random: false,
+            hearts: FastMap::default(),
+            creaking_active: false,
+        }
+    }
+
+    /// The creaking heart at `pos` goes away: a player breaking it (`source`: `playerWillDestroy`)
+    /// makes its creaking twitch and die; either way removing the block entity lets the creaking
+    /// go (`preRemoveSideEffects`).
+    pub fn destroy_heart(&mut self, pos: BlockPos, source: Option<crate::mob::DamageSource>) {
+        use crate::mob::kinds::creaking_heart::remove_protector;
+        if source.is_some()
+            && let Some(mut be) = self.hearts.remove(&pos)
+        {
+            remove_protector(self, pos, &mut be, source);
+            self.hearts.insert(pos, be);
+        }
+        self.blocks.insert(pos, 0);
+        if let Some(mut be) = self.hearts.remove(&pos) {
+            remove_protector(self, pos, &mut be, None);
+        }
+    }
+
+    /// Ticks the creaking hearts (`Level.tickBlockEntities`), in position order.
+    pub fn tick_hearts(&mut self) {
+        let mut at: Vec<BlockPos> = self.hearts.keys().copied().collect();
+        at.sort_by_key(|p| (p.x, p.y, p.z));
+        for p in at {
+            if let Some(mut be) = self.hearts.remove(&p) {
+                crate::mob::kinds::creaking_heart::tick(self, p, &mut be);
+                self.hearts.insert(p, be);
+            }
         }
     }
 
@@ -351,5 +386,24 @@ impl EntityLevel for MemoryLevel {
 
     fn emit(&mut self, event: Event) {
         self.events.push(event);
+    }
+
+    fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
+        crate::mob::kinds::creaking_heart::is_heart(self.block(home)) && self.hearts.get(&home).is_some_and(|h| h.protects(id, uuid))
+    }
+
+    fn heart_creaking_hurt(&mut self, home: BlockPos) {
+        if let Some(mut be) = self.hearts.remove(&home) {
+            crate::mob::kinds::creaking_heart::creaking_hurt(self, home, &mut be);
+            self.hearts.insert(home, be);
+        }
+    }
+
+    fn entity_by_uuid(&self, uuid: u128) -> Option<&Entity> {
+        self.slots.iter().filter_map(|s| s.entity.as_ref()).find(|e| e.uuid == uuid && !e.is_removed())
+    }
+
+    fn creaking_active(&self, _pos: BlockPos) -> bool {
+        self.creaking_active
     }
 }
