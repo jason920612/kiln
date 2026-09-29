@@ -586,6 +586,11 @@ pub trait Kind: Sync + Send {
     fn do_push(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, other: i32) {
         let _ = (e, m, level, other);
     }
+    /// [`Kind::do_push`] with the level at hand for changes (wp28: the warden gets angry at what
+    /// bumps it, which plays a sound and changes its brain).
+    fn do_push_mut(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, other: i32) {
+        let _ = (e, m, level, other);
+    }
     /// `isStableDestination` of the type's navigation (striders stand on lava): `None` for
     /// the ground navigation's.
     fn stable_destination(&self, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {

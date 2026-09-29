@@ -114,6 +114,13 @@ public class MobVectors {
                 player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what))));
                 player.interactOn(tracked.get(a.mob), net.minecraft.world.InteractionHand.MAIN_HAND, tracked.get(a.mob).position());
             }
+            // wp28: `Level.gameEvent(source, event, pos)`; `mob` is the source: an index into the
+            // scenario's mobs, -1 nobody, -2 the player (wardens hear it).
+            case "gameevent" -> {
+                Entity src = a.mob >= 0 ? tracked.get(a.mob) : a.mob == -2 ? player : null;
+                var holder = BuiltInRegistries.GAME_EVENT.get(Identifier.parse(a.what)).orElseThrow();
+                level.gameEvent(src, holder, new Vec3(a.x, a.y, a.z));
+            }
             default -> throw new IllegalArgumentException(a.kind);
         }
     }
@@ -128,6 +135,7 @@ public class MobVectors {
         String playerMainHand;
         /// The player's look direction (yaw also turns its head) and head item.
         float playerYaw, playerPitch;
+        float playerHealth = 20f;
         String playerHead;
         long dayTime = 1000;
         long levelSeed = 1;
@@ -337,7 +345,9 @@ public class MobVectors {
                     : new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(s.playerHead))));
             player.setShiftKeyDown(s.playerSneaking);
             player.setPose(s.playerSneaking ? net.minecraft.world.entity.Pose.CROUCHING : net.minecraft.world.entity.Pose.STANDING);
-            player.setHealth(20f);
+            // wp28: a player who survives what a warden does to him (`playerHealth`, 20 by default).
+            player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH).setBaseValue(s.playerHealth);
+            player.setHealth(s.playerHealth);
             set(player, "damageCooldownTime", 0);
             player.setItemSlot(EquipmentSlot.MAINHAND, s.playerMainHand == null ? ItemStack.EMPTY
                     : new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(s.playerMainHand))));
@@ -455,7 +465,7 @@ public class MobVectors {
             if (s.player != null && player.getHealth() < healthBefore) {
                 if (hits.length() > 0) hits.append(',');
                 hits.append(String.format(Locale.ROOT, "[%d,%s]", tick, Float.toString(healthBefore - player.getHealth())));
-                player.setHealth(20f);
+                player.setHealth(s.playerHealth);
             }
             for (Entity e : level.getEntities((Entity) null, box(), e -> !(e instanceof ServerPlayer))) {
                 if (!tracked.contains(e)) {
@@ -662,6 +672,14 @@ public class MobVectors {
                 StringBuilder dbg = new StringBuilder("DBG mob " + m.getId() + " t=" + m.level().getGameTime() + " nearby=[");
                 if (nl.isPresent()) for (var x : nl.get()) dbg.append(x.getId()).append(x instanceof net.minecraft.world.entity.player.Player ? "P" : "").append(nv.isPresent() && nv.get().contains(x) ? "+" : "-").append(' ');
                 dbg.append("] look=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.LOOK_TARGET).map(Object::toString).orElse("-"));
+                // wp28: the running behaviours with their end times.
+                dbg.append(" running=[");
+                for (var b : brain.getRunningBehaviors()) {
+                    dbg.append(b.getClass().getSimpleName());
+                    try { dbg.append('@').append(get(b, "endTimestamp")); } catch (Exception ignored) { }
+                    dbg.append(' ');
+                }
+                dbg.append(']');
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             }
             // The level's random state too: brain draws from it (`Kiln`: the mob's own stream).
@@ -2936,5 +2954,175 @@ public class MobVectors {
 
     /// Wardens, breezes, creakings.
     static void scenariosBrainSpecial(List<Scenario> out) {
+        scenariosWardenBreeze(out);
+    }
+
+    // ---------------------------------------------------------------------- wp28: warden and breeze
+
+    static void gameEvent(Scenario s, int tick, String event, int source, double x, double y, double z) {
+        Action a = new Action(tick, "gameevent");
+        a.what = event;
+        a.mob = source;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        s.actions.add(a);
+    }
+
+    /// The saved `Brain` of a warden that has just been spawned (`finalizeSpawn`'s dig cooldown), plus more.
+    static String wardenBrain(String more) {
+        return "{Brain:{memories:{\"minecraft:dig_cooldown\":{value:{},ttl:1200L}" + more + "}}}";
+    }
+
+    static void scenariosWardenBreeze(List<Scenario> out) {
+        // A calm warden strolls and stands about (a creative player is nobody it can target).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("warden_idle_" + seed);
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 40f * seed, 16000L + seed);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 60 + seed;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Emerging from the ground for 134 ticks.
+        {
+            Scenario s = new Scenario("warden_emerge");
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 20f, 16010);
+            w.nbt = wardenBrain(",\"minecraft:is_emerging\":{value:{},ttl:134L}");
+            s.mobs.add(w);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 260;
+            out.add(s);
+        }
+        // No dig cooldown: it digs back down at once (100 ticks) and is gone; with 60 ticks left of
+        // the cooldown, after that.
+        for (int left : new int[] {0, 60}) {
+            Scenario s = new Scenario(left == 0 ? "warden_dig" : "warden_dig_late");
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 70f, 16020 + left);
+            if (left > 0) w.nbt = "{Brain:{memories:{\"minecraft:dig_cooldown\":{value:{},ttl:" + left + "L}}}}";
+            s.mobs.add(w);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 260;
+            out.add(s);
+        }
+        // Sniffing out a survival player: from afar (a disturbance to investigate) and close (angry).
+        for (int dist : new int[] {11, 4}) {
+            Scenario s = new Scenario("warden_sniff_" + dist);
+            s.playerHealth = 4000f;
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 90f, 16030 + dist);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A vibration nobody made (a block placed): it investigates; then another elsewhere.
+        {
+            Scenario s = new Scenario("warden_investigate");
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 0f, 16040);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {20.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            gameEvent(s, 10, "minecraft:block_place", -1, 8.5, BY, 6.5);
+            gameEvent(s, 160, "minecraft:block_place", -1, -7.5, BY, -6.5);
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Three footsteps of a survival player make it roar at him and hunt him.
+        {
+            Scenario s = new Scenario("warden_roar");
+            s.playerHealth = 4000f;
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 30f, 16050);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.dayTime = 18000;
+            for (int t : new int[] {5, 50, 95}) gameEvent(s, t, "minecraft:step", -2, 8.5, BY, 0.5);
+            s.ticks = 480;
+            out.add(s);
+        }
+        // Hurt by a player: angry at once, it walks up to him and hits.
+        {
+            Scenario s = new Scenario("warden_hurt");
+            s.playerHealth = 4000f;
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 30f, 16060);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Out of reach behind glass, it shoots sonic booms at the player (the first after 200 ticks).
+        {
+            Scenario s = new Scenario("warden_boom");
+            s.playerHealth = 4000f;
+            floor(s, 24, "minecraft:stone");
+            for (int x = 6; x <= 10; x++)
+                for (int z = -2; z <= 2; z++)
+                    for (int y = BY; y <= BY + 3; y++) {
+                        boolean wall = x == 6 || x == 10 || z == -2 || z == 2 || y == BY + 3;
+                        if (wall) block(s, x, y, z, "minecraft:glass");
+                    }
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 90f, 16070);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 330;
+            out.add(s);
+        }
+        // A mob bumping into it: it gets angry and looks at where it stands.
+        {
+            Scenario s = new Scenario("warden_touch");
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 30f, 16080);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            MobSpec z = new MobSpec("minecraft:zombie", 0.9, BY, 0.5, 90f, 16081);
+            z.nbt = "{NoAI:1b}";
+            s.mobs.add(z);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Sniffing out a mob (the player is creative).
+        {
+            Scenario s = new Scenario("warden_sniff_mob");
+            floor(s, 24, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 30f, 16090);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            MobSpec z = new MobSpec("minecraft:zombie", 5.5, BY, 0.5, 90f, 16091);
+            z.nbt = "{NoAI:1b}";
+            s.mobs.add(z);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 }

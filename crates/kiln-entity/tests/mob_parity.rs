@@ -177,6 +177,22 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             mob::interact::interact(&mut e2, level, &who, &stack);
             *level.entity_mut(id).unwrap() = e2;
         }
+        // wp28: `Level.gameEvent(source, event, pos)`: `mob` is the source (an index into the
+        // scenario's mobs, -1 nobody, -2 the player); wardens hear it.
+        "gameevent" => {
+            let event = kiln_entity::vibration::intern(what).expect("game event");
+            let m = a["mob"].as_i64().unwrap();
+            let source = if m == -2 {
+                let p = player.expect("a player source");
+                Some(kiln_entity::vibration::EventSource::player(p.id, p.uuid, p.pos, p.sneaking, p.spectator, p.creative))
+            } else if m >= 0 {
+                let e = level.entity(ids[m as usize]).unwrap();
+                Some(kiln_entity::vibration::source_of(e, level))
+            } else {
+                None
+            };
+            level.game_event(event, pos, kiln_entity::vibration::Context { source, affected_state: None });
+        }
         k => panic!("action {k}"),
     }
 }

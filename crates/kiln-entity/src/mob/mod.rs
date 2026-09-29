@@ -1906,6 +1906,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     for (id, ox, oz, player) in others {
         if let Some(k) = m.kind.ext() {
             k.do_push(e, m, &*level, id);
+            k.do_push_mut(e, m, level, id);
         }
         // `Entity.push(Entity)`: nothing moves when either side has no physics (a vex).
         if e.no_physics || (!player && level.entity(id).is_some_and(|o| o.no_physics)) {
