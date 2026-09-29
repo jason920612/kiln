@@ -126,8 +126,6 @@ pub struct VillagerState {
     pub last_restock_check_day: i64,
     /// `getSleepingPos`: the bed the villager lies in.
     pub sleeping_pos: Option<BlockPos>,
-    /// A behaviour changed the profession: the brain is rebuilt after this tick (`refreshBrain`).
-    pub refresh_brain: bool,
     /// The brain was built since the last tick: its schedule has yet to be read.
     pub schedule_pending: bool,
     /// The 8 slot inventory (`SimpleContainer(8)`).
@@ -155,7 +153,6 @@ impl Default for VillagerState {
             last_gossip_time: 0,
             last_restock_check_day: 0,
             sleeping_pos: None,
-            refresh_brain: false,
             schedule_pending: true,
             inventory: (0..8).map(|_| ItemStack::empty()).collect(),
         }
@@ -820,19 +817,6 @@ fn rebuild_brain(e: &mut Entity, m: &mut MobData) {
     if let Some(st) = state_mut(m) {
         st.schedule_pending = true;
     }
-}
-
-/// `Villager.refreshBrain(level)`: the running behaviours stop, then the new brain reads the
-/// schedule at once.
-fn refresh_brain(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-    let Some(mut old) = m.brain.take() else { return };
-    old.stop_all(e, m, level);
-    let packed = brain::persist::save(&old);
-    let mut new = build_brain(m, &mut e.random);
-    brain::persist::load(&mut new, &packed);
-    let t = level.game_time();
-    new.st.update_activity_from_schedule(t, &*level);
-    m.brain = Some(Box::new(new));
 }
 
 // ---------------------------------------------------------------------------- inventory
@@ -1603,6 +1587,7 @@ impl Kind for Villager {
         m.maluses.push((path::PathType::Fire, -1.0));
         m.nav.can_open_doors = true;
         m.nav.can_float = true;
+        m.nav.required_path_length = 48.0;
         m.can_pick_up_loot = true;
         Some(Box::new(VillagerState::default()))
     }
@@ -1612,6 +1597,26 @@ impl Kind for Villager {
 
     fn make_brain(&self, m: &MobData, random: &mut dyn RandomSource) -> Option<Brain> {
         Some(build_brain(m, random))
+    }
+
+    /// A brain built since the last tick reads its schedule (vanilla's `registerBrainGoals` did so
+    /// when the brain was made, one tick before its first tick).
+    fn pre_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if let Some(b) = m.brain.as_mut()
+            && b.needs_pin
+        {
+            b.needs_pin = false;
+            b.seed_gates(e.random.state());
+        }
+        if state(m).is_some_and(|s| s.schedule_pending) {
+            if let Some(st) = state_mut(m) {
+                st.schedule_pending = false;
+            }
+            let t = level.game_time();
+            if let Some(b) = m.brain.as_mut() {
+                b.st.update_activity_from_schedule(t - 1, &*level);
+            }
+        }
     }
 
     /// `Villager.tick` after `super.tick()`: the head shake runs out, the gossip decays daily
@@ -1646,24 +1651,7 @@ impl Kind for Villager {
     /// `Villager.customServerAiStep`: the brain, then the trade celebration, the raid check and
     /// the end of a trade without offers.
     fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        // A brain built since the last tick reads its schedule (vanilla's `registerBrainGoals`
-        // did so when the brain was made, one tick before its first).
-        if state(m).is_some_and(|s| s.schedule_pending) {
-            if let Some(st) = state_mut(m) {
-                st.schedule_pending = false;
-            }
-            let t = level.game_time();
-            if let Some(b) = m.brain.as_mut() {
-                b.st.update_activity_from_schedule(t - 1, &*level);
-            }
-        }
         brain::tick_brain(e, m, level);
-        if state(m).is_some_and(|s| s.refresh_brain) {
-            if let Some(st) = state_mut(m) {
-                st.refresh_brain = false;
-            }
-            refresh_brain(e, m, level);
-        }
         if let Some(st) = state_mut(m)
             && st.last_traded_player.take().is_some()
         {
@@ -1842,6 +1830,17 @@ impl Kind for Villager {
             st.open_for = Some(who.id);
         }
         Some(done)
+    }
+
+    /// `Villager.getAmbientSound`: none asleep, the trading sound while trading.
+    fn ambient_sound(&self, _e: &mut Entity, m: &MobData, _level: &dyn EntityLevel) -> Option<Option<&'static str>> {
+        if is_sleeping(m) {
+            return Some(None);
+        }
+        if state(m).is_some_and(|s| s.trading_player.is_some()) {
+            return Some(Some("minecraft:entity.villager.trade"));
+        }
+        None
     }
 
     fn dimensions(&self, m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {

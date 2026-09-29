@@ -486,6 +486,9 @@ pub struct BrainState {
     requirements: Vec<Vec<(Mem, Status)>>,
     has_requirements: u32,
     erase_when_stopped: Vec<Vec<Mem>>,
+    /// A behaviour asks for `refreshBrain` (a villager changed profession): the brain rebuilds
+    /// itself for the mob as it is now, right after that behaviour.
+    pub refresh_requested: bool,
 }
 
 impl BrainState {
@@ -590,6 +593,12 @@ pub struct Brain {
     pub st: BrainState,
     sensors: Vec<SensorSlot>,
     groups: Vec<Group>,
+    /// The brain a `refreshBrain` made during this tick: the rest of the tick still runs on this one
+    /// (vanilla's loops hold the old `Brain`), the next one on the new.
+    refreshed: Option<Box<Brain>>,
+    /// Made by a refresh: its gates still get their seed (`Brain::seed_gates`) at the start of the
+    /// next tick, from the mob's random as it is then (the parity harness does the same).
+    pub needs_pin: bool,
 }
 
 impl Brain {
@@ -619,8 +628,9 @@ impl Brain {
             requirements: vec![Vec::new(); Activity::COUNT],
             has_requirements: 0,
             erase_when_stopped: vec![Vec::new(); Activity::COUNT],
+            refresh_requested: false,
         };
-        let mut brain = Brain { st: st.clone(), sensors: slots, groups: Vec::new() };
+        let mut brain = Brain { st: st.clone(), sensors: slots, groups: Vec::new(), refreshed: None, needs_pin: false };
         // Registration order of (priority, activity): the first sighting of an activity in a
         // priority decides where it goes among those sharing a hash bucket.
         let mut firsts: Vec<(i32, Activity)> = Vec::new();
@@ -685,31 +695,72 @@ impl Brain {
             }
         }
         // startEachNonRunningBehavior
-        for g in self.groups.iter_mut() {
-            for (act, bs) in g.activities.iter_mut() {
-                if cx.b.is_active(*act) {
-                    for b in bs.iter_mut() {
-                        if !b.running() {
-                            let (r0, l0) = (cx.e.random.state(), cx.rng().state());
-                            if b.try_start(&mut cx) && debug_on() {
-                                let (r1, l1, t) = (cx.e.random.state(), cx.rng().state(), cx.time);
-                                eprintln!("brain t={t} start {} rnd {r0}->{r1} lr {l0}->{l1}", b.name());
-                            }
+        for gi in 0..self.groups.len() {
+            for ai in 0..self.groups[gi].activities.len() {
+                let act = self.groups[gi].activities[ai].0;
+                if !cx.b.is_active(act) {
+                    continue;
+                }
+                for bi in 0..self.groups[gi].activities[ai].1.len() {
+                    let b = &mut self.groups[gi].activities[ai].1[bi];
+                    if !b.running() {
+                        let (r0, l0) = (cx.e.random.state(), cx.rng().state());
+                        if b.try_start(&mut cx) && debug_on() {
+                            let (r1, l1, t) = (cx.e.random.state(), cx.rng().state(), cx.time);
+                            eprintln!("brain t={t} start {} rnd {r0}->{r1} lr {l0}->{l1}", b.name());
+                        }
+                        if cx.b.refresh_requested {
+                            Self::refresh_now(&mut self.groups, &mut self.refreshed, &mut cx);
                         }
                     }
                 }
             }
         }
         // tickEachRunningBehavior: the running ones as of now (behaviours started above included).
-        for g in self.groups.iter_mut() {
-            for (_, bs) in g.activities.iter_mut() {
-                for b in bs.iter_mut() {
+        for gi in 0..self.groups.len() {
+            for ai in 0..self.groups[gi].activities.len() {
+                for bi in 0..self.groups[gi].activities[ai].1.len() {
+                    let b = &mut self.groups[gi].activities[ai].1[bi];
                     if b.running() {
                         b.tick_or_stop(&mut cx);
+                        if cx.b.refresh_requested {
+                            Self::refresh_now(&mut self.groups, &mut self.refreshed, &mut cx);
+                        }
                     }
                 }
             }
         }
+        // A `refreshBrain` of this tick: the new brain, holding the memories the rest of the tick
+        // left, takes over.
+        if let Some(mut new) = self.refreshed.take() {
+            new.st.mem = std::mem::take(&mut self.st.mem);
+            *self = *new;
+            self.needs_pin = true;
+        }
+    }
+
+    /// `Villager.refreshBrain`: every running behaviour stops, a new brain (`Kind::make_brain`) is
+    /// made with the memories that have a codec carried over and its schedule read; the rest of
+    /// the tick goes on with the old behaviours on the new memories (vanilla's behaviours reach
+    /// them through `entity.getBrain()`).
+    fn refresh_now(groups: &mut [Group], refreshed: &mut Option<Box<Brain>>, cx: &mut Cx) {
+        cx.b.refresh_requested = false;
+        for g in groups.iter_mut() {
+            for (_, bs) in g.activities.iter_mut() {
+                for b in bs.iter_mut() {
+                    if b.running() {
+                        b.do_stop(cx);
+                    }
+                }
+            }
+        }
+        let Some(kind) = cx.m.kind.ext() else { return };
+        let Some(mut new) = kind.make_brain(&*cx.m, &mut PeekLong(&mut cx.e.random)) else { return };
+        persist::load_state(&mut new.st, &persist::save_state(cx.b));
+        new.st.update_activity_from_schedule(cx.time, &*cx.level);
+        // What the rest of the tick works on: the new memories.
+        std::mem::swap(&mut cx.b.mem, &mut new.st.mem);
+        *refreshed = Some(Box::new(new));
     }
 
     /// `Brain.stopAll`.
@@ -767,6 +818,35 @@ pub fn tick_brain(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     if let Some(mut b) = m.brain.take() {
         b.tick(e, m, level);
         m.brain = Some(b);
+    }
+}
+
+/// A mob's random for building a brain in the middle of its life: everything as usual, except that
+/// the seed of the gates' shuffles is read off the state (a real brain draws no seed of its own:
+/// its `ShufflingList`s are unseeded).
+struct PeekLong<'a>(&'a mut LegacyRandom);
+
+impl RandomSource for PeekLong<'_> {
+    fn next_long(&mut self) -> i64 {
+        self.0.state()
+    }
+    fn next_int(&mut self) -> i32 {
+        self.0.next_int()
+    }
+    fn next_int_bounded(&mut self, bound: i32) -> i32 {
+        self.0.next_int_bounded(bound)
+    }
+    fn next_bool(&mut self) -> bool {
+        self.0.next_bool()
+    }
+    fn next_float(&mut self) -> f32 {
+        self.0.next_float()
+    }
+    fn next_double(&mut self) -> f64 {
+        self.0.next_double()
+    }
+    fn fork_positional(&mut self) -> kiln_javamath::random::PositionalRandomFactory {
+        self.0.fork_positional()
     }
 }
 

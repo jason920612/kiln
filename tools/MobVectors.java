@@ -457,6 +457,7 @@ public class MobVectors {
                 if (a.tick == tick) act(level, player, tracked, a);
             }
             float healthBefore = player.getHealth();
+            repinBrains(tracked);
             for (Entity e : new ArrayList<>(tracked)) {
                 if (e.isRemoved()) continue;
                 // `ServerLevel.tick`: the despawn check, then the tick.
@@ -604,15 +605,43 @@ public class MobVectors {
     /// that cannot be pinned any other way. Pinned here (Kiln does the same in `brain::pin`):
     /// the gates (in registration order) get `RandomSource.create(base + k)` with `base` the mob's
     /// pinned seed state, then every sensor delays its start by a draw from the mob's random.
-    static void pinBrain(Mob m) throws Exception {
+    /// The brains the gates were last pinned on (a `refreshBrain` makes a new one).
+    static final java.util.IdentityHashMap<Object, Object> pinnedBrain = new java.util.IdentityHashMap<>();
+
+    static void pinGates(Mob m) throws Exception {
         var brain = m.getBrain();
         Map<?, ?> byPriority = (Map<?, ?>) get(brain, "availableBehaviorsByPriority");
         if (byPriority.isEmpty()) return;
         long base = ((java.util.concurrent.atomic.AtomicLong) get(m.getRandom(), "seed")).get();
         long[] k = {0};
+        if (System.getenv("MOB_DEBUG_GATES") != null) {
+            StringBuilder dbg = new StringBuilder("ORDER");
+            for (var en : byPriority.entrySet()) {
+                dbg.append(" ").append(en.getKey()).append(":");
+                for (Object a : ((Map<?, ?>) en.getValue()).keySet()) dbg.append(a).append(",");
+            }
+            Files.writeString(Path.of("dbg.txt"), dbg + "
+", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        }
         for (Object acts : byPriority.values())
             for (Object set : ((Map<?, ?>) acts).values())
                 for (Object b : (Iterable<?>) set) seedGate(b, base, k);
+        pinnedBrain.put(m, brain);
+    }
+
+    /// Before the entities tick: a brain made since (a villager changing profession) gets its gates
+    /// pinned from the mob's random as it is now (Kiln: `Brain::needs_pin`, in `pre_tick`).
+    static void repinBrains(List<Entity> tracked) throws Exception {
+        for (Entity e : tracked) {
+            if (e instanceof Mob m && !m.isRemoved() && pinnedBrain.containsKey(m) && pinnedBrain.get(m) != m.getBrain()) pinGates(m);
+        }
+    }
+
+    static void pinBrain(Mob m) throws Exception {
+        var brain = m.getBrain();
+        Map<?, ?> byPriority = (Map<?, ?>) get(brain, "availableBehaviorsByPriority");
+        if (byPriority.isEmpty()) return;
+        pinGates(m);
         for (Object sensor : ((Map<?, ?>) get(brain, "sensors")).values())
             ((net.minecraft.world.entity.ai.sensing.Sensor<?>) sensor).randomlyDelayStart(m.getRandom());
     }
@@ -693,6 +722,9 @@ public class MobVectors {
                 StringBuilder dbg = new StringBuilder("DBG mob " + m.getId() + " t=" + m.level().getGameTime() + " nearby=[");
                 if (nl.isPresent()) for (var x : nl.get()) dbg.append(x.getId()).append(x instanceof net.minecraft.world.entity.player.Player ? "P" : "").append(nv.isPresent() && nv.get().contains(x) ? "+" : "-").append(' ');
                 dbg.append("] look=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.LOOK_TARGET).map(Object::toString).orElse("-"));
+                var navPath = m.getNavigation().getPath();
+                dbg.append(" navpath=").append(navPath == null ? "-" : navPath.getNodeCount() + " reach=" + navPath.canReach() + " target=" + navPath.getTarget() + " end=" + navPath.getEndNode() + " next=" + navPath.getNextNodeIndex());
+                dbg.append(" walk=").append(brain.getMemory(net.minecraft.world.entity.ai.memory.MemoryModuleType.WALK_TARGET).map(w -> w.getTarget().currentBlockPosition() + " speed " + w.getSpeedModifier() + " close " + w.getCloseEnoughDist()).orElse("-"));
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             }
             // The level's random state too: brain draws from it (`Kiln`: the mob's own stream).
@@ -2954,6 +2986,205 @@ public class MobVectors {
 
     /// Villagers.
     static void scenariosBrainVillager(List<Scenario> out) {
+        String plains = "VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:none\",level:1}";
+        // Idle wandering (the day's idle hours), with a survival player near or none at all.
+        for (int seed = 3; seed <= 6; seed++) {
+            Scenario s = new Scenario("villager_wander_" + seed);
+            floor(s, 24, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 47f * seed, 9300L + seed);
+            s.mobs.add(m);
+            if (seed % 2 == 0) s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = false;
+            s.levelSeed = 10 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // The schedule: the activity at every hour of the villagers' day (and the baby's).
+        long[] hours = {0, 5, 10, 1500, 2000, 3000, 6000, 9000, 9500, 11000, 11500, 12000, 13000, 20000};
+        for (long t : hours) {
+            for (boolean baby : new boolean[] {false, true}) {
+                Scenario s = new Scenario("villager_day_" + (baby ? "baby_" : "") + t);
+                floor(s, 16, "minecraft:grass_block");
+                MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9400L + t + (baby ? 7 : 0));
+                m.nbt = "{" + plains + "}";
+                if (baby) m.age = -24000;
+                s.mobs.add(m);
+                s.dayTime = t;
+                s.levelSeed = 3;
+                s.ticks = 120;
+                out.add(s);
+            }
+        }
+        // The time of day changes while it runs: dusk, then dawn.
+        {
+            Scenario s = new Scenario("villager_dusk");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9450);
+            m.nbt = "{" + plains + "}";
+            s.mobs.add(m);
+            s.dayTime = 11500;
+            Action a = new Action(40, "daytime");
+            a.x = 12500;
+            s.actions.add(a);
+            Action b = new Action(140, "daytime");
+            b.x = 100;
+            s.actions.add(b);
+            s.ticks = 260;
+            out.add(s);
+        }
+        // A bed at night: the villager claims it (home), walks to it and sleeps; wakes at dawn.
+        for (int variant = 0; variant < 3; variant++) {
+            Scenario s = new Scenario("villager_bed_" + variant);
+            floor(s, 20, "minecraft:grass_block");
+            block(s, 5 + variant, BY, 0, "minecraft:red_bed[facing=east,part=foot,occupied=false]");
+            block(s, 6 + variant, BY, 0, "minecraft:red_bed[facing=east,part=head,occupied=false]");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 2.5, 30f + 20 * variant, 9500L + variant);
+            m.nbt = "{" + plains + "}";
+            s.mobs.add(m);
+            s.dayTime = variant == 2 ? 23000 : 13000;
+            s.levelSeed = 5 + variant;
+            s.ticks = variant == 2 ? 1500 : 700;
+            if (variant == 1) s.player = new double[] {3.5, BY, 8.5};
+            out.add(s);
+        }
+        // Two villagers, one bed.
+        {
+            Scenario s = new Scenario("villager_bed_shared");
+            floor(s, 20, "minecraft:grass_block");
+            block(s, 6, BY, 0, "minecraft:blue_bed[facing=east,part=foot,occupied=false]");
+            block(s, 7, BY, 0, "minecraft:blue_bed[facing=east,part=head,occupied=false]");
+            for (int i = 0; i < 2; i++) {
+                MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 1.5 + 2 * i, 30f, 9520L + i);
+                m.nbt = "{" + plains + "}";
+                s.mobs.add(m);
+            }
+            s.dayTime = 13000;
+            s.ticks = 700;
+            out.add(s);
+        }
+        // A job site by day: an unemployed villager takes it and the profession.
+        String[][] sites = {{"lectern", "minecraft:lectern[facing=north,has_book=false,powered=false]"}, {"smithing_table", "minecraft:smithing_table"}, {"composter", "minecraft:composter[level=0]"}};
+        for (int i = 0; i < sites.length; i++) {
+            Scenario s = new Scenario("villager_job_" + sites[i][0]);
+            floor(s, 20, "minecraft:grass_block");
+            block(s, 4, BY, 1, sites[i][1]);
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9540L + i);
+            m.nbt = "{" + plains + "}";
+            s.mobs.add(m);
+            s.dayTime = 3000;
+            s.levelSeed = 7 + i;
+            s.ticks = 600;
+            out.add(s);
+        }
+        // Employed already: works at its job site (or loses the profession without one).
+        {
+            Scenario s = new Scenario("villager_works");
+            floor(s, 20, "minecraft:grass_block");
+            block(s, 3, BY, 1, "minecraft:lectern[facing=north,has_book=false,powered=false]");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9560);
+            m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:librarian\",level:1},Xp:0,Brain:{memories:{\"minecraft:job_site\":{value:{dimension:\"minecraft:overworld\",pos:[I;3,100,1]}}}}}";
+            s.mobs.add(m);
+            s.dayTime = 3000;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("villager_lose_job");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9561);
+            m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:armorer\",level:1},Xp:0}";
+            s.mobs.add(m);
+            s.dayTime = 3000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // The bell: meeting at it in the afternoon.
+        {
+            Scenario s = new Scenario("villager_bell");
+            floor(s, 20, "minecraft:grass_block");
+            block(s, 4, BY, 0, "minecraft:bell[attachment=floor,facing=north,powered=false]");
+            for (int i = 0; i < 2; i++) {
+                MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5 + 3 * i, 30f + i * 90, 9580L + i);
+                m.nbt = "{" + plains + "}";
+                s.mobs.add(m);
+            }
+            s.dayTime = 9500;
+            s.ticks = 700;
+            out.add(s);
+        }
+        // Danger: a zombie near, and a blow from a player.
+        {
+            Scenario s = new Scenario("villager_zombie");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9600);
+            m.nbt = "{" + plains + "}";
+            s.mobs.add(m);
+            MobSpec z = new MobSpec("minecraft:zombie", 5.5, BY, 0.5, 90f, 9601);
+            z.nbt = "{NoAI:1b}";
+            s.mobs.add(z);
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("villager_hurt");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9610);
+            m.nbt = "{" + plains + "}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(30, new double[] {0, 1.0});
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Babies play; an adult near.
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("villager_kids_" + i);
+            floor(s, 20, "minecraft:grass_block");
+            if (i == 1) {
+                block(s, 4, BY, 3, "minecraft:green_bed[facing=east,part=foot,occupied=false]");
+                block(s, 5, BY, 3, "minecraft:green_bed[facing=east,part=head,occupied=false]");
+            }
+            for (int k = 0; k < 3; k++) {
+                MobSpec m = new MobSpec("minecraft:villager", 0.5 + 2 * k, BY, 0.5 + k, 30f + 60 * k, 9620L + 10 * i + k);
+                m.nbt = "{" + plains + "}";
+                if (k < 2) m.age = -24000;
+                s.mobs.add(m);
+            }
+            s.dayTime = 4000;
+            s.levelSeed = 20 + i;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Breeding: two willing villagers and a free bed.
+        {
+            Scenario s = new Scenario("villager_breed");
+            floor(s, 20, "minecraft:grass_block");
+            for (int i = 0; i < 3; i++) {
+                block(s, 8 + 2 * i, BY, 4, "minecraft:white_bed[facing=east,part=foot,occupied=false]");
+                block(s, 9 + 2 * i, BY, 4, "minecraft:white_bed[facing=east,part=head,occupied=false]");
+            }
+            for (int i = 0; i < 2; i++) {
+                MobSpec m = new MobSpec("minecraft:villager", 0.5 + 2 * i, BY, 0.5, 30f + 90 * i, 9640L + i);
+                m.nbt = "{" + plains + ",FoodLevel:12b}";
+                s.mobs.add(m);
+            }
+            s.dayTime = 1000;
+            s.ticks = 1200;
+            out.add(s);
+        }
+        // Two villagers talk: gossip changes hands.
+        {
+            Scenario s = new Scenario("villager_gossip");
+            floor(s, 20, "minecraft:grass_block");
+            for (int i = 0; i < 2; i++) {
+                MobSpec m = new MobSpec("minecraft:villager", 0.5 + 3 * i, BY, 0.5, 30f + 90 * i, 9660L + i);
+                m.nbt = "{" + plains + (i == 0 ? ",Gossips:[{Target:[I;1,2,3,4],Type:\"major_positive\",Value:20}]" : "") + "}";
+                s.mobs.add(m);
+            }
+            s.dayTime = 1000;
+            s.ticks = 800;
+            out.add(s);
+        }
     }
 
     /// Camels, allays, sniffers.

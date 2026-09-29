@@ -463,7 +463,7 @@ pub fn assign_profession_from_job_site() -> Box<dyn Control> {
             && let Some(st) = villager::state_mut(cx.m)
         {
             st.set_profession(p);
-            st.refresh_brain = true;
+            cx.b.refresh_requested = true;
         }
         true
     })
@@ -476,7 +476,7 @@ pub fn reset_profession() -> Box<dyn Control> {
         let has_profession = st.profession != "minecraft:none" && st.profession != "minecraft:nitwit";
         if has_profession && st.xp == 0 && st.level <= 1 {
             st.set_profession("minecraft:none");
-            st.refresh_brain = true;
+            cx.b.refresh_requested = true;
             return true;
         }
         false

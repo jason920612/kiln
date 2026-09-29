@@ -66,8 +66,13 @@ fn decode(m: Mem, t: &Tag) -> Option<Val> {
 
 /// `Brain.pack`: `{memories: {<type>: {value, ttl?}}}`.
 pub fn save(b: &Brain) -> Tag {
+    save_state(&b.st)
+}
+
+/// [`save`] for a brain's state alone.
+pub fn save_state(st: &super::BrainState) -> Tag {
     let mut mems = Vec::new();
-    for (m, v, ttl) in b.st.mem.iter() {
+    for (m, v, ttl) in st.mem.iter() {
         if !m.serializable() {
             continue;
         }
@@ -84,13 +89,18 @@ pub fn save(b: &Brain) -> Tag {
 /// Reads `Brain.Packed` into the brain's memories (unregistered ones are dropped, as vanilla's
 /// `setMemoryInternal` does).
 pub fn load(b: &mut Brain, t: &Tag) {
+    load_state(&mut b.st, t);
+}
+
+/// [`load`] for a brain's state alone.
+pub fn load_state(st: &mut super::BrainState, t: &Tag) {
     let Some(Tag::Compound(mems)) = t.get("memories") else { return };
     for (name, entry) in mems {
         let Some(m) = Mem::by_name(name) else { continue };
         let Some(value) = entry.get("value").and_then(|v| decode(m, v)) else { continue };
         match entry.get("ttl").and_then(Tag::as_i64) {
-            Some(ttl) => b.st.mem.set_expiring(m, value, ttl),
-            None => b.st.mem.set(m, value),
+            Some(ttl) => st.mem.set_expiring(m, value, ttl),
+            None => st.mem.set(m, value),
         }
     }
 }
