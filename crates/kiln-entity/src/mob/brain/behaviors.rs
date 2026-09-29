@@ -121,6 +121,11 @@ impl MoveToTargetSink {
         Timed::new(MoveToTargetSink { min, max, remaining_cooldown: 0, path: None, path_some: false, last_target_pos: None, speed: 0.0, veto: None })
     }
 
+    /// The behaviour itself, for a subclass that wraps it (`BreezeAi.SlideToTargetSink`).
+    pub fn plain(min: i32, max: i32) -> MoveToTargetSink {
+        MoveToTargetSink { min, max, remaining_cooldown: 0, path: None, path_some: false, last_target_pos: None, speed: 0.0, veto: None }
+    }
+
     /// An anonymous `MoveToTargetSink` that does not start while `veto` holds.
     pub fn vetoed(veto: fn(&Cx) -> bool) -> Box<dyn Control> {
         Timed::new(MoveToTargetSink { min: 150, max: 250, remaining_cooldown: 0, path: None, path_some: false, last_target_pos: None, speed: 0.0, veto: Some(veto) })

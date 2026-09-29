@@ -586,6 +586,16 @@ pub trait Kind: Sync + Send {
     fn do_push(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, other: i32) {
         let _ = (e, m, level, other);
     }
+    /// `Entity.shouldDiscardFriction`: air travel keeps all its speed (a breeze's long jump).
+    fn discards_friction(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
+    /// `getFluidJumpThreshold` when the type overrides it (the breeze: its eye height).
+    fn fluid_jump_threshold(&self, e: &Entity) -> Option<f64> {
+        let _ = e;
+        None
+    }
     /// [`Kind::do_push`] with the level at hand for changes (wp28: the warden gets angry at what
     /// bumps it, which plays a sound and changes its brain).
     fn do_push_mut(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, other: i32) {

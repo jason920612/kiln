@@ -378,6 +378,20 @@ fn replay(s: &Value) -> Result<usize, String> {
         let before_flush = known;
         level.flush_spawned();
         known = level.len();
+        // wp28: what a breeze shot flies as the recording's did (vanilla draws the shot's spread
+        // from the projectile's own random, seeded from the clock, which cannot be pinned).
+        {
+            let recorded: Vec<&Value> = s["spawned"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:breeze_wind_charge"))
+                .collect();
+            let charges: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:breeze_wind_charge").map(|e| e.id).collect();
+            for (id, rec) in charges.iter().zip(recorded) {
+                level.entity_mut(*id).unwrap().delta = vec3(&rec["motion"]);
+            }
+        }
         // Mobs that appeared get the harness's pinned random and head/body yaw, in the order the
         // harness finds them (`getEntities` over its box: entity sections, then insertion).
         let fresh: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| mob::data(e).is_some()).map(|e| e.id).collect();
@@ -403,6 +417,11 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         // Explosions hurt the player through events (it is not an entity of the harness).
         for ev in std::mem::take(&mut level.events) {
+            if std::env::var_os("KILN_MOB_DEBUG").is_some()
+                && let kiln_entity::level::Event::Explosion { pos, power, blocks, .. } = &ev
+            {
+                eprintln!("dbg tick {tick} explosion at {pos:?} power {power} ({} positions)", blocks.len());
+            }
             if let kiln_entity::level::Event::Hurt { target, amount, kind, attacker } = ev
                 && Some(target) == player.map(|p| p.id)
             {

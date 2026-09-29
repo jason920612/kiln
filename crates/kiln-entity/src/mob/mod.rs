@@ -1501,7 +1501,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if m.jumping {
         let h = if e.is_in_lava() { e.fluid_height_lava() } else { e.fluid_height_water() };
         let in_water = e.is_in_water() && h > 0.0;
-        let threshold = if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 };
+        let threshold = m.kind.ext().and_then(|k| k.fluid_jump_threshold(e)).unwrap_or(if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 });
         // `Mob.jumpInLiquid`: a mob whose navigation cannot float gets a strong push instead.
         let lift = if m.nav.can_float { 0.03999999910593033 } else { 0.3 };
         if in_water && (!e.on_ground || h > threshold) {
@@ -1719,6 +1719,10 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         y = -0.1;
     } else {
         y = 0.0;
+    }
+    if m.kind.ext().is_some_and(|k| k.discards_friction(m)) {
+        e.delta = Vec3::new(v.x, y, v.z);
+        return;
     }
     let drag = m.attrs.value(Attr::AirDragModifier) as f32;
     let h = friction * modified_friction(0.91, drag);

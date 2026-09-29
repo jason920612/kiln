@@ -2824,7 +2824,7 @@ public class MobVectors {
             s.ticks = 300;
             out.add(s);
         }
-        // Breezes (a brain in vanilla, a fight goal in Kiln): idle, and fighting a player.
+        // Breezes (wp28: a brain on both sides): idle, and fighting a player.
         for (int dist : new int[] {0, 8}) {
             Scenario s = new Scenario(dist == 0 ? "idle_breeze" : "fight_breeze");
             floor(s, 20, "minecraft:stone");
@@ -2832,7 +2832,6 @@ public class MobVectors {
             s.player = new double[] {0.5 + (dist == 0 ? 14 : dist), BY, 0.5};
             s.playerCreative = dist == 0;
             s.ticks = 200;
-            s.diverges = true;
             out.add(s);
         }
         // Creakings (brain in vanilla): stared at by a survival player, and unwatched.
@@ -3108,6 +3107,59 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        // ------------------------------------------------------------------ breezes
+        // Fighting a survival player from several distances (long jump, shots, slides).
+        for (int dist : new int[] {3, 6, 12, 18}) {
+            Scenario s = new Scenario("breeze_fight_" + dist);
+            s.playerHealth = 4000f;
+            floor(s, 30, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:breeze", 0.5, BY, 0.5, 20f * dist, 17000L + dist));
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.playerYaw = 90f;
+            s.levelSeed = 70 + dist;
+            s.dayTime = 18000;
+            s.ticks = 360;
+            out.add(s);
+        }
+        // A low ceiling: no room to jump, it slides and shoots.
+        {
+            Scenario s = new Scenario("breeze_low_ceiling");
+            s.playerHealth = 4000f;
+            floor(s, 20, "minecraft:stone");
+            for (int x = -16; x <= 16; x++)
+                for (int z = -16; z <= 16; z++) block(s, x, BY + 3, z, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:breeze", 0.5, BY, 0.5, 45f, 17010));
+            s.player = new double[] {9.5, BY, 3.5};
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Standing in shallow water (not on dry ground: no sliding, shots when stuck).
+        for (int dist : new int[] {3, 10}) {
+            Scenario s = new Scenario("breeze_pool_" + dist);
+            s.playerHealth = 4000f;
+            floor(s, 30, "minecraft:stone");
+            for (int x = -3; x <= 3; x++)
+                for (int z = -3; z <= 3; z++) block(s, x, BY, z, "minecraft:water");
+            s.mobs.add(new MobSpec("minecraft:breeze", 0.5, BY, 0.5, 90f, 17020L + dist));
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Hurt by a player it cannot see as a target (out of range): it fights back all the same.
+        {
+            Scenario s = new Scenario("breeze_hurt");
+            s.playerHealth = 4000f;
+            floor(s, 40, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:breeze", 0.5, BY, 0.5, 0f, 17030));
+            s.player = new double[] {28.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
+        }
+
         // Sniffing out a mob (the player is creative).
         {
             Scenario s = new Scenario("warden_sniff_mob");

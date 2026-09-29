@@ -845,7 +845,7 @@ fn make_brain(random: &mut dyn RandomSource) -> Brain {
         vec![
             set_roar_target(),
             try_to_sniff(),
-            Gate::run_one_when(&[(Mem::IsSniffing, ValueAbsent)], vec![(stroll(0.5, StrollKind::Land { avoid_water: true }), 2), (DoNothing::new(30, 60), 1)]),
+            Gate::run_one_when(&[(Mem::IsSniffing, ValueAbsent)], vec![(stroll(0.5, StrollKind::Land { avoid_water: false }), 2), (DoNothing::new(30, 60), 1)]),
         ],
     );
     let roar = activity_for(Activity::Roar, 10, vec![Timed::new(Roar)], Mem::RoarTarget);
