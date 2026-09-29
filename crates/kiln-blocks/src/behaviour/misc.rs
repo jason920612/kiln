@@ -179,3 +179,48 @@ pub fn frogspawn_tick<L: Level>(level: &mut L, pos: BlockPos) {
     }
     level.effect(Effect::HatchFrogspawn { pos, tadpoles });
 }
+
+#[cfg(test)]
+mod frogspawn_tests {
+    use super::*;
+    use crate::test_level::TestLevel;
+    use kiln_data::blocks::default_state as d;
+
+    #[test]
+    fn frogspawn_sits_on_water_and_hatches_into_tadpoles() {
+        let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK]);
+        let water = BlockPos::new(0, 64, 0);
+        let spawn = water.above();
+        level.set_raw(water, d::WATER, 3);
+        assert!(set_block_and_update(&mut level, spawn, d::FROGSPAWN));
+        assert!(frogspawn_can_survive(&level, spawn));
+        // `onPlace`: the hatching tick 3600 to 12000 ticks away.
+        assert!(level.block_ticks().has_scheduled_tick(spawn, BlockId::of(d::FROGSPAWN)));
+        frogspawn_tick(&mut level, spawn);
+        assert!(is_air(level.block(spawn)));
+        let hatched: Vec<_> = level
+            .effects
+            .iter()
+            .filter_map(|e| if let Effect::HatchFrogspawn { pos, tadpoles } = e { Some((*pos, tadpoles.clone())) } else { None })
+            .collect();
+        assert_eq!(hatched.len(), 1);
+        let (pos, tadpoles) = &hatched[0];
+        assert_eq!(*pos, spawn);
+        assert!((2..=5).contains(&tadpoles.len()));
+        for (dx, dz, yaw) in tadpoles {
+            assert!((0.2..=0.8).contains(dx) && (0.2..=0.8).contains(dz) && (1..=360).contains(yaw));
+        }
+        assert!(level.effects.iter().any(|e| matches!(e, Effect::Sound { sound: "minecraft:block.frogspawn.hatch", .. })));
+    }
+
+    #[test]
+    fn frogspawn_without_water_below_breaks_instead_of_hatching() {
+        let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK, d::STONE]);
+        let spawn = BlockPos::new(0, -62, 0);
+        level.set_raw(spawn, d::FROGSPAWN, 3);
+        assert!(!frogspawn_can_survive(&level, spawn));
+        frogspawn_tick(&mut level, spawn);
+        assert!(is_air(level.block(spawn)));
+        assert!(!level.effects.iter().any(|e| matches!(e, Effect::HatchFrogspawn { .. })));
+    }
+}

@@ -771,7 +771,12 @@ impl AnimalPanic {
     }
 
     fn panic_pos(&self, cx: &mut Cx) -> Option<Vec3> {
-        // Burning mobs look for water first: not simulated (falls through to the usual spot).
+        // A burning mob looks for water first (`lookForWater`: within 5 blocks, one up and down).
+        if cx.e.is_on_fire()
+            && let Some(p) = crate::mob::kinds::turtle::look_for_water(cx.e, &*cx.level, 5)
+        {
+            return Some(Vec3::new(p.x as f64 + 0.5, p.y as f64, p.z as f64 + 0.5));
+        }
         match self.air {
             None => random_pos::land_pos(cx.e, cx.m, &*cx.level, 5, 4),
             Some(h) => {

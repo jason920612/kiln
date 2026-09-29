@@ -4,7 +4,7 @@
 //! `SmoothSwimmingMoveControl` / `SmoothSwimmingLookControl` of swimmers that also walk.
 
 use super::memory::{Tracker, Val, WalkTarget};
-use super::{Behavior, Control, Cx, Mem, Status, Timed, shot};
+use super::{Behavior, Control, Cx, Mem, Shot, ShotBehavior, Status, Timed, shot};
 use crate::behavior_boilerplate;
 use crate::entity::Entity;
 use crate::level::{EntityLevel, Event};
@@ -13,7 +13,6 @@ use crate::mob::attributes::Attr;
 use crate::mob::control::{self, Operation};
 use crate::mob::{self, MobData, mth};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
-use std::sync::Arc;
 
 use Status::{Registered, ValueAbsent, ValuePresent};
 
@@ -368,78 +367,111 @@ fn can_stand_on(cx: &Cx, pos: BlockPos, state: u16, ctx: &crate::collision::Coll
 
 /// `TryFindLand.create(range, speed)`: a mob in the water looks for dry land within `range`
 /// (re-checked at most once a minute).
+#[derive(Clone, Debug)]
+struct TryFindLand {
+    range: i32,
+    speed: f32,
+    /// The `MutableLong` of the behaviour: when it may look again.
+    next_ok: i64,
+}
+
 pub fn try_find_land(range: i32, speed: f32) -> Box<dyn Control> {
-    let next_ok = Arc::new(std::sync::atomic::AtomicI64::new(0));
-    shot(
-        "TryFindLand",
-        &[(Mem::AttackTarget, ValueAbsent), (Mem::WalkTarget, ValueAbsent), (Mem::LookTarget, Registered)],
-        move |cx| {
-            use std::sync::atomic::Ordering::Relaxed;
-            let here = cx.e.block_position();
-            if !crate::physics::fluid_state(cx.level.block(here)).kind.is_water() {
-                return false;
-            }
-            if cx.time < next_ok.load(Relaxed) {
-                next_ok.store(cx.time + 60, Relaxed);
-                return true;
-            }
-            let ctx = cx.e.collision_context();
-            let found = mob::kinds::turtle::within_manhattan(here, range, range, range)
-                .filter(|p| differs_horizontally(*p, here))
-                .filter(|p| crate::physics::fluid_state(cx.level.block(*p)).is_empty())
-                .find(|&p| can_stand_on(cx, p, cx.level.block(p), &ctx));
-            if let Some(p) = found {
-                cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::block(p)));
-                cx.b.mem.set(Mem::WalkTarget, Val::Walk(WalkTarget { target: Tracker::block(p), speed, close_enough: 1 }));
-            }
-            next_ok.store(cx.time + 60, Relaxed);
-            true
-        },
-    )
+    Shot::new(TryFindLand { range, speed, next_ok: 0 })
+}
+
+impl ShotBehavior for TryFindLand {
+    fn name(&self) -> &'static str {
+        "TryFindLand"
+    }
+    fn entry(&self) -> &'static [(Mem, Status)] {
+        &[(Mem::AttackTarget, ValueAbsent), (Mem::WalkTarget, ValueAbsent), (Mem::LookTarget, Registered)]
+    }
+    fn trigger(&mut self, cx: &mut Cx) -> bool {
+        let here = cx.e.block_position();
+        if !crate::physics::fluid_state(cx.level.block(here)).kind.is_water() {
+            return false;
+        }
+        if cx.time < self.next_ok {
+            self.next_ok = cx.time + 60;
+            return true;
+        }
+        let ctx = cx.e.collision_context();
+        let range = self.range;
+        let found = mob::kinds::turtle::within_manhattan(here, range, range, range)
+            .filter(|p| differs_horizontally(*p, here))
+            .filter(|p| crate::physics::fluid_state(cx.level.block(*p)).is_empty())
+            .find(|&p| can_stand_on(cx, p, cx.level.block(p), &ctx));
+        if let Some(p) = found {
+            cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::block(p)));
+            cx.b.mem.set(Mem::WalkTarget, Val::Walk(WalkTarget { target: Tracker::block(p), speed: self.speed, close_enough: 1 }));
+        }
+        self.next_ok = cx.time + 60;
+        true
+    }
+    fn box_clone(&self) -> Box<dyn ShotBehavior> {
+        Box::new(self.clone())
+    }
 }
 
 /// `TryFindLandNearLiquid.create(range, speed, fluid)`: a mob out of the fluid looks for dry land
 /// with that fluid beside it (`is_fluid` is the fluid tag).
+#[derive(Clone, Debug)]
+struct TryFindLandNearLiquid {
+    range: i32,
+    speed: f32,
+    is_fluid: fn(u16) -> bool,
+    next_ok: i64,
+}
+
 pub fn try_find_land_near_liquid(range: i32, speed: f32, is_fluid: fn(u16) -> bool) -> Box<dyn Control> {
-    let next_ok = Arc::new(std::sync::atomic::AtomicI64::new(0));
-    shot(
-        "TryFindLandNearLiquid",
-        &[(Mem::AttackTarget, ValueAbsent), (Mem::WalkTarget, ValueAbsent), (Mem::LookTarget, Registered)],
-        move |cx| {
-            use std::sync::atomic::Ordering::Relaxed;
-            let here = cx.e.block_position();
-            if is_fluid(cx.level.block(here)) {
+    Shot::new(TryFindLandNearLiquid { range, speed, is_fluid, next_ok: 0 })
+}
+
+impl ShotBehavior for TryFindLandNearLiquid {
+    fn name(&self) -> &'static str {
+        "TryFindLandNearLiquid"
+    }
+    fn entry(&self) -> &'static [(Mem, Status)] {
+        &[(Mem::AttackTarget, ValueAbsent), (Mem::WalkTarget, ValueAbsent), (Mem::LookTarget, Registered)]
+    }
+    fn trigger(&mut self, cx: &mut Cx) -> bool {
+        let is_fluid = self.is_fluid;
+        let here = cx.e.block_position();
+        if is_fluid(cx.level.block(here)) {
+            return false;
+        }
+        if cx.time < self.next_ok {
+            self.next_ok = cx.time + 40;
+            return true;
+        }
+        let ctx = cx.e.collision_context();
+        let level: &dyn EntityLevel = &*cx.level;
+        let range = self.range;
+        let found = mob::kinds::turtle::within_manhattan(here, range, range, range).filter(|p| differs_horizontally(*p, here)).find(|&p| {
+            let (shape, _) = crate::collision::collision_shape(level.block(p), p, &ctx);
+            if !shape.is_empty() {
                 return false;
             }
-            if cx.time < next_ok.load(Relaxed) {
-                next_ok.store(cx.time + 40, Relaxed);
-                return true;
+            let (below, _) = crate::collision::collision_shape(level.block(p.below()), p, &ctx);
+            if below.is_empty() {
+                return false;
             }
-            let ctx = cx.e.collision_context();
-            let level: &dyn EntityLevel = &*cx.level;
-            let found = mob::kinds::turtle::within_manhattan(here, range, range, range).filter(|p| differs_horizontally(*p, here)).find(|&p| {
-                let (shape, _) = crate::collision::collision_shape(level.block(p), p, &ctx);
-                if !shape.is_empty() {
-                    return false;
-                }
-                let (below, _) = crate::collision::collision_shape(level.block(p.below()), p, &ctx);
-                if below.is_empty() {
-                    return false;
-                }
-                use crate::math::Direction::{East, North, South, West};
-                [North, East, South, West].iter().any(|&d| {
-                    let n = p.relative(d);
-                    kiln_data::blocks_types::is_air(level.block(n)) && is_fluid(level.block(n.below()))
-                })
-            });
-            if let Some(p) = found {
-                cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::block(p)));
-                cx.b.mem.set(Mem::WalkTarget, Val::Walk(WalkTarget { target: Tracker::block(p), speed, close_enough: 0 }));
-            }
-            next_ok.store(cx.time + 40, Relaxed);
-            true
-        },
-    )
+            use crate::math::Direction::{East, North, South, West};
+            [North, East, South, West].iter().any(|&d| {
+                let n = p.relative(d);
+                kiln_data::blocks_types::is_air(level.block(n)) && is_fluid(level.block(n.below()))
+            })
+        });
+        if let Some(p) = found {
+            cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::block(p)));
+            cx.b.mem.set(Mem::WalkTarget, Val::Walk(WalkTarget { target: Tracker::block(p), speed: self.speed, close_enough: 0 }));
+        }
+        self.next_ok = cx.time + 40;
+        true
+    }
+    fn box_clone(&self) -> Box<dyn ShotBehavior> {
+        Box::new(self.clone())
+    }
 }
 
 /// `VoxelShape.getFaceShape(UP).isEmpty()` for a collision shape: nothing reaches the top of the block.

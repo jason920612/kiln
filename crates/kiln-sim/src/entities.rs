@@ -1438,6 +1438,7 @@ pub(crate) fn interact_mob(
             damage_type: "minecraft:generic",
             weapon: Some(stack.clone()),
             raider: None,
+            attacker: None,
         };
         let seed = crate::mobs::loot_seed(env.seed, env.game_time, target, 0x7368_6561);
         let mut k = 0u64;
@@ -1729,6 +1730,15 @@ fn carry_out(
             let Ok(i) = list.binary_search_by_key(&id, |e| e.id) else { return };
             let Some(phys) = list[i].phys.as_ref() else { return };
             let weapon = killer.and_then(|k| players.iter().find(|p| p.entity_id == k)).map(|p| p.inv.selected_item().clone());
+            // The killer as `damage_source_properties` sees it (a frog's variant decides the froglight).
+            let attacker_view = attacker.and_then(|a| {
+                if players.iter().any(|p| p.entity_id == a) {
+                    return Some(crate::mobs::AttackerView { type_name: "minecraft:player", components: Vec::new() });
+                }
+                let i = list.binary_search_by_key(&a, |e| e.id).ok()?;
+                let e = list[i].phys.as_ref()?;
+                Some(crate::mobs::AttackerView { type_name: e.type_name, components: kiln_entity::mob::data(e).map(kiln_entity::mob::variant_components).unwrap_or_default() })
+            });
             let ctx = crate::mobs::DeathContext {
                 type_name: phys.type_name,
                 origin: arr(pos),
@@ -1743,8 +1753,8 @@ fn carry_out(
                     let r = kiln_entity::mob::kinds::raider::raider(m)?;
                     Some((r.raid.is_some(), r.patrol_leader && m.drop_chances[kiln_entity::mob::HEAD] >= 2.0))
                 }),
+                attacker: attacker_view,
             };
-            let _ = attacker;
             let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174);
             for (k, stack) in crate::mobs::roll(&loot, &table, &ctx, seed).into_iter().enumerate() {
                 let h = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6465_6174_00 | k as u64) as u64;
@@ -1847,6 +1857,7 @@ fn loot_drop(env: &blocks::BlockEnv, spawns: &mut Vec<Spawn>, id: i32, table: &s
         damage_type: "minecraft:generic",
         weapon: None,
         raider: None,
+        attacker: None,
     };
     let seed = crate::mobs::loot_seed(env.seed, env.game_time, id, 0x6966 ^ n as u64);
     for (k, stack) in crate::mobs::roll(&loot, table, &ctx, seed).into_iter().enumerate() {
