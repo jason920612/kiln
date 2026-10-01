@@ -1,0 +1,7 @@
+{
+  "type": "minecraft:block_based",
+  "environment": "minecraft:default",
+  "structure": "kilndiff:wide",
+  "max_ticks": 10,
+  "rotation": "clockwise_90"
+}

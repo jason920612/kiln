@@ -125,6 +125,30 @@ impl LoginConfig {
     }
 }
 
+/// Profile lookups for `fetchprofile` through the session service (Minecraft services
+/// discovery, then the profile endpoints). A request names only the account looked up.
+pub struct SessionProfiles(SessionService);
+
+impl SessionProfiles {
+    pub fn new() -> Arc<dyn kiln_link::ProfileLookup> {
+        Arc::new(SessionProfiles(SessionService::default()))
+    }
+}
+
+impl kiln_link::ProfileLookup for SessionProfiles {
+    fn by_name(&self, name: &str) -> Result<Option<kiln_link::LookedUpProfile>, String> {
+        self.0.profile_by_name(name).map(|p| p.map(looked_up)).map_err(|e| format!("{e:#}"))
+    }
+
+    fn by_id(&self, id: Uuid) -> Result<Option<kiln_link::LookedUpProfile>, String> {
+        self.0.profile_by_id(id).map(|p| p.map(looked_up)).map_err(|e| format!("{e:#}"))
+    }
+}
+
+fn looked_up(p: profile::GameProfile) -> kiln_link::LookedUpProfile {
+    kiln_link::LookedUpProfile { id: p.uuid, name: p.name, properties: p.properties }
+}
+
 /// Online-mode state: the RSA key pair and the session server client.
 struct Authenticator {
     key: ServerKey,

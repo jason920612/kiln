@@ -2,7 +2,11 @@
 //! file. Writes append records, then an index of every live record and a trailer pointing at
 //! it, in one write; a file is only ever read through its last complete index, so a write cut
 //! short by a crash leaves the previous state. Rewriting a file (compaction, conversion) goes
-//! through a temporary file renamed over the old one.
+//! through a temporary file renamed over the old one. Compaction can run off the thread that
+//! owns the file: [`CellFile::plan_compaction`] takes a snapshot, [`CompactionPlan::run`]
+//! writes the compacted copy on any thread (the old file stays untouched and keeps taking
+//! appends), and [`CellFile::finish_compaction`] carries the appends since the snapshot over
+//! and renames the copy into place.
 //!
 //! Layout (little-endian):
 //! - header: `KILNCELL`, format `u16`, 6 reserved bytes;
@@ -107,7 +111,7 @@ fn record_crc(header: &[u8], payload: &[u8]) -> u32 {
     h.finalize()
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Entry {
     offset: u64,
     /// Whole record, header included.
@@ -310,6 +314,161 @@ impl CellFile {
         write_raw(&path, raws, sync)?;
         CellFile::open(&path)
     }
+
+    /// A snapshot of the live records, to compact on another thread while this file goes on
+    /// taking appends.
+    pub fn plan_compaction(&self) -> CompactionPlan {
+        CompactionPlan { path: self.path.clone(), snapshot: self.index.clone() }
+    }
+
+    /// Appends records as stored (headers included) and drops keys, with a new index, in one
+    /// write.
+    fn commit_raw(&mut self, put: Vec<(Key, Vec<u8>)>, remove: &[Key], sync: bool) -> io::Result<()> {
+        let mut buf = Vec::new();
+        for (key, raw) in put {
+            let offset = self.end + buf.len() as u64;
+            self.index.insert(key, Entry { offset, len: raw.len() as u32 });
+            buf.extend_from_slice(&raw);
+        }
+        for key in remove {
+            self.index.remove(key);
+        }
+        let index_at = self.end + buf.len() as u64;
+        append_index(&self.index, index_at, &mut buf);
+        if self.file.metadata()?.len() != self.end {
+            self.file.set_len(self.end)?;
+        }
+        self.file.seek(SeekFrom::Start(self.end))?;
+        self.file.write_all(&buf)?;
+        if sync {
+            self.file.sync_data()?;
+        }
+        self.end += buf.len() as u64;
+        Ok(())
+    }
+
+    /// Ends a compaction: the records written since the plan was taken (new, replaced or
+    /// removed) are carried into the compacted copy with a fresh index, and the copy is renamed
+    /// over this file. Returns the new file (`None` when nothing is left, then both files are
+    /// gone). On an error this file is untouched and the copy is removed.
+    pub fn finish_compaction(self, done: Compacted, sync: bool) -> io::Result<Option<CellFile>> {
+        let path = self.path.clone();
+        let result = self.swap_in(&done, sync);
+        if result.as_ref().map_or(true, Option::is_none) {
+            let _ = std::fs::remove_file(&done.tmp);
+        }
+        if let Ok(None) = result {
+            let _ = std::fs::remove_file(&path);
+        }
+        result
+    }
+
+    fn swap_in(mut self, done: &Compacted, sync: bool) -> io::Result<Option<CellFile>> {
+        // What differs from the snapshot: appended and replaced records, removed keys.
+        let mut put = Vec::new();
+        for (k, e) in self.index.clone() {
+            if done.snapshot.get(&k) != Some(&e) {
+                put.push((k, self.read_raw(e)?));
+            }
+        }
+        let removed: Vec<Key> = done.snapshot.keys().filter(|k| !self.index.contains_key(k)).copied().collect();
+        if self.index.is_empty() {
+            return Ok(None);
+        }
+        let mut copy = CellFile::open(&done.tmp)?.ok_or_else(|| corrupt("compacted copy is gone"))?;
+        if !put.is_empty() || !removed.is_empty() {
+            copy.commit_raw(put, &removed, sync)?;
+        }
+        drop(copy);
+        // Windows cannot replace a file this process still has open for writing.
+        let path = self.path.clone();
+        drop(self);
+        std::fs::rename(&done.tmp, &path)?;
+        CellFile::open(&path)
+    }
+}
+
+/// The work of a compaction that does not need the file's owner: which records are live.
+pub struct CompactionPlan {
+    path: PathBuf,
+    snapshot: BTreeMap<Key, Entry>,
+}
+
+/// A compacted copy waiting to be swapped in ([`CellFile::finish_compaction`]).
+pub struct Compacted {
+    tmp: PathBuf,
+    snapshot: BTreeMap<Key, Entry>,
+}
+
+impl CompactionPlan {
+    /// The temporary copy's path (`<cell file>.compact`); leftovers are deleted when a store
+    /// opens.
+    pub fn temp_path(path: &Path) -> PathBuf {
+        let mut tmp = path.as_os_str().to_owned();
+        tmp.push(".compact");
+        PathBuf::from(tmp)
+    }
+
+    /// Where this plan's copy is written.
+    pub fn temp_file(&self) -> PathBuf {
+        CompactionPlan::temp_path(&self.path)
+    }
+
+    /// Writes the compacted copy: reads the snapshot's records through its own handle (records
+    /// are never modified in place, so appends to the file meanwhile do not matter), writes
+    /// them and a complete index to the temporary path and syncs it. The cell file itself is
+    /// not touched.
+    pub fn run(self, sync: bool) -> io::Result<Compacted> {
+        self.run_limited(sync, None)
+    }
+
+    /// [`CompactionPlan::run`] that stops after writing `torn_at` bytes of the copy and reports
+    /// an error, leaving the torn copy behind: what a crash in the middle of a compaction
+    /// leaves (for tests).
+    #[doc(hidden)]
+    pub fn run_torn(self, torn_at: usize) -> io::Result<Compacted> {
+        self.run_limited(false, Some(torn_at))
+    }
+
+    fn run_limited(self, sync: bool, torn_at: Option<usize>) -> io::Result<Compacted> {
+        let mut src = File::open(&self.path)?;
+        let mut buf = Vec::new();
+        buf.extend_from_slice(FILE_MAGIC);
+        buf.extend_from_slice(&FORMAT.to_le_bytes());
+        buf.extend_from_slice(&[0; 6]);
+        let mut index = BTreeMap::new();
+        for (k, e) in &self.snapshot {
+            let mut raw = vec![0u8; e.len as usize];
+            src.seek(SeekFrom::Start(e.offset))?;
+            src.read_exact(&mut raw)?;
+            // A record that no longer checks out must not be carried into the copy.
+            match Record::decode(&raw) {
+                Some((key, _, n)) if key == *k && n == raw.len() => {}
+                _ => return Err(corrupt("record fails its checksum")),
+            }
+            index.insert(*k, Entry { offset: buf.len() as u64, len: raw.len() as u32 });
+            buf.extend_from_slice(&raw);
+        }
+        append_index(&index, buf.len() as u64, &mut buf);
+        let tmp = CompactionPlan::temp_path(&self.path);
+        let mut f = File::create(&tmp)?;
+        if let Some(n) = torn_at {
+            f.write_all(&buf[..n.min(buf.len())])?;
+            return Err(io::Error::other("compaction interrupted"));
+        }
+        f.write_all(&buf)?;
+        if sync {
+            f.sync_all()?;
+        }
+        Ok(Compacted { tmp, snapshot: self.snapshot })
+    }
+}
+
+impl Compacted {
+    /// Deletes the copy (a compaction that will not be finished).
+    pub fn discard(self) {
+        let _ = std::fs::remove_file(&self.tmp);
+    }
 }
 
 /// Writes a new cell file holding `records`, through a temporary file renamed into place.
@@ -449,6 +608,91 @@ mod tests {
         std::fs::write(&path, &bad).unwrap();
         let mut f = CellFile::open(&path).unwrap().unwrap();
         assert!(f.read(a).is_err());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    fn key(slot: u8) -> Key {
+        Key { kind: CHUNK, slot }
+    }
+
+    /// A file with 20 generations of 8 records, mostly stale.
+    fn stale_file(path: &Path) -> CellFile {
+        let mut f = CellFile::create(path).unwrap();
+        for i in 0..20u8 {
+            f.commit((0..8u8).map(|s| (key(s), Some(rec(i, 4000)))), false).unwrap();
+        }
+        f
+    }
+
+    #[test]
+    fn background_compaction_carries_appends_over() {
+        let d = dir("bg");
+        let path = d.join("c.0.0.kcell");
+        let mut f = stale_file(&path);
+        let before = f.file_len();
+        let plan = f.plan_compaction();
+        // Writes after the snapshot: a replaced record, a new one, a removed one, in two commits.
+        f.commit([(key(0), Some(rec(100, 500))), (key(9), Some(rec(101, 600)))], false).unwrap();
+        f.commit([(key(1), None)], false).unwrap();
+        let copy = plan.run(true).unwrap();
+        // ... and one more while the copy waits to be swapped in.
+        f.commit([(key(2), Some(rec(102, 700)))], false).unwrap();
+        let mut f = f.finish_compaction(copy, true).unwrap().unwrap();
+        assert!(f.file_len() < before / 5, "{} of {before}", f.file_len());
+        assert!(!CompactionPlan::temp_path(&path).exists());
+        assert_eq!(f.read(key(0)).unwrap(), Some(rec(100, 500)));
+        assert_eq!(f.read(key(1)).unwrap(), None);
+        assert_eq!(f.read(key(2)).unwrap(), Some(rec(102, 700)));
+        assert_eq!(f.read(key(3)).unwrap(), Some(rec(19, 4000)));
+        assert_eq!(f.read(key(9)).unwrap(), Some(rec(101, 600)));
+        // The swapped-in file is an ordinary one: it takes appends and reopens.
+        f.commit([(key(3), Some(rec(103, 10)))], false).unwrap();
+        drop(f);
+        let mut f = CellFile::open(&path).unwrap().unwrap();
+        assert_eq!(f.keys().map(|k| k.slot).collect::<Vec<_>>(), vec![0, 2, 3, 4, 5, 6, 7, 9]);
+        assert_eq!(f.read(key(3)).unwrap(), Some(rec(103, 10)));
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn compaction_of_a_file_emptied_meanwhile_removes_it() {
+        let d = dir("bg-empty");
+        let path = d.join("c.0.0.kcell");
+        let mut f = stale_file(&path);
+        let plan = f.plan_compaction();
+        f.commit((0..8u8).map(|s| (key(s), None)), false).unwrap();
+        let copy = plan.run(false).unwrap();
+        assert!(f.finish_compaction(copy, false).unwrap().is_none());
+        assert!(!path.exists());
+        assert!(!CompactionPlan::temp_path(&path).exists());
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    #[test]
+    fn a_copy_torn_anywhere_leaves_the_file_intact() {
+        let d = dir("torn");
+        let path = d.join("c.0.0.kcell");
+        drop(stale_file(&path));
+        let copy_len = 16 + 8 * (REC_HEADER + 4000);
+        for cut in [0, 1, 15, 16, 100, copy_len / 2, copy_len - 1, copy_len + 10] {
+            let f = CellFile::open(&path).unwrap().unwrap();
+            assert!(f.plan_compaction().run_torn(cut).is_err());
+            drop(f);
+            // The crash left a torn copy behind; the cell file is what it was.
+            assert!(CompactionPlan::temp_path(&path).exists());
+            let mut f = CellFile::open(&path).unwrap().unwrap();
+            for s in 0..8u8 {
+                assert_eq!(f.read(key(s)).unwrap(), Some(rec(19, 4000)), "cut at {cut}");
+            }
+        }
+        // A later compaction starts over on the same temporary path.
+        let f = CellFile::open(&path).unwrap().unwrap();
+        let copy = f.plan_compaction().run(false).unwrap();
+        let mut f = f.finish_compaction(copy, false).unwrap().unwrap();
+        for s in 0..8u8 {
+            assert_eq!(f.read(key(s)).unwrap(), Some(rec(19, 4000)));
+        }
+        assert!(!CompactionPlan::temp_path(&path).exists());
         std::fs::remove_dir_all(&d).unwrap();
     }
 

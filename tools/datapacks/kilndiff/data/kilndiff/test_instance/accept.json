@@ -1,0 +1,6 @@
+{
+  "type": "minecraft:block_based",
+  "environment": "minecraft:default",
+  "structure": "kilndiff:accept",
+  "max_ticks": 20
+}

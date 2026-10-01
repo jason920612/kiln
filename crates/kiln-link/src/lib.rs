@@ -33,6 +33,25 @@ pub enum ToSim {
     Console(String),
     /// Save the world and stop; `done` is signalled when finished.
     Shutdown { done: std::sync::mpsc::Sender<()> },
+    /// The answer to a profile lookup the simulation started (`request` is its number);
+    /// `None` when the profile does not exist or the lookup failed.
+    ProfileLookup { request: u64, result: Option<LookedUpProfile> },
+}
+
+/// A game profile a lookup found, with its properties (skin textures).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LookedUpProfile {
+    pub id: Uuid,
+    pub name: String,
+    pub properties: Vec<Property>,
+}
+
+/// Looks game profiles up by name or id (the session service). Calls block for as long as the
+/// network takes, so the simulation makes them on another thread. A lookup sends only the name
+/// or id asked for: nothing about the server's operator or its players.
+pub trait ProfileLookup: Send + Sync {
+    fn by_name(&self, name: &str) -> Result<Option<LookedUpProfile>, String>;
+    fn by_id(&self, id: Uuid) -> Result<Option<LookedUpProfile>, String>;
 }
 
 pub struct JoinInfo {

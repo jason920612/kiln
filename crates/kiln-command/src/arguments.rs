@@ -67,6 +67,10 @@ pub enum ArgumentType {
     /// `minecraft:resource_key`: an id of `registry`, looked up when the command runs (data
     /// pack registries: advancements, recipes).
     ResourceKey { registry: &'static str },
+    /// `minecraft:resource_selector`: a glob (`*`, `?`) over the ids of `registry`, made
+    /// namespaced; [`ArgumentValue::String`] with the pattern. The dispatcher rejects patterns
+    /// that select nothing while parsing.
+    ResourceSelector { registry: &'static str },
     /// `minecraft:block_state`
     BlockState,
     /// `minecraft:block_predicate`
@@ -240,6 +244,7 @@ impl ArgumentType {
             ArgumentType::Time { min } => Parser::Time { min },
             ArgumentType::Resource { registry } => Parser::Registry { id: "minecraft:resource", registry },
             ArgumentType::ResourceKey { registry } => Parser::Registry { id: "minecraft:resource_key", registry },
+            ArgumentType::ResourceSelector { registry } => Parser::Registry { id: "minecraft:resource_selector", registry },
             ArgumentType::BlockState => Parser::Plain("minecraft:block_state"),
             ArgumentType::BlockPredicate => Parser::Plain("minecraft:block_predicate"),
             ArgumentType::Swizzle => Parser::Plain("minecraft:swizzle"),
@@ -383,6 +388,17 @@ impl ArgumentType {
             ArgumentType::Message => ArgumentValue::Message(MessageArg::parse(reader, allow_selectors)?),
             ArgumentType::ResourceLocation | ArgumentType::Dimension | ArgumentType::ResourceKey { .. } => {
                 ArgumentValue::Identifier(Identifier::read(reader)?)
+            }
+            ArgumentType::ResourceSelector { .. } => {
+                // `ResourceSelectorArgument.readPattern`: identifier characters and wildcards.
+                let from = reader.cursor();
+                while reader.can_read()
+                    && matches!(reader.peek(), 'a'..='z' | '0'..='9' | '_' | '-' | '.' | '/' | ':' | '*' | '?')
+                {
+                    reader.skip();
+                }
+                let pattern = reader.string()[from..reader.cursor()].to_owned();
+                ArgumentValue::String(if pattern.contains(':') { pattern } else { format!("minecraft:{pattern}") })
             }
             ArgumentType::Resource { registry } => {
                 let id = Identifier::read(reader)?;
@@ -715,7 +731,7 @@ impl ArgumentType {
                     builder.suggest_resources(entries.iter().copied(), "");
                 }
             }
-            ArgumentType::ResourceKey { registry } => {
+            ArgumentType::ResourceKey { registry } | ArgumentType::ResourceSelector { registry } => {
                 let ids = source.registry_ids(registry);
                 builder.suggest_resources(ids.iter().map(String::as_str), "");
             }

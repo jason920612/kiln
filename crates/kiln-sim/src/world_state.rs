@@ -1186,7 +1186,8 @@ impl Sim {
         use kiln_worldgen::pos::BlockPos;
         use kiln_worldgen::structure::template::transform;
         use kiln_worldgen::structure::transform::{Mirror, Rotation, mirror as mirror_state, rotate};
-        let template = templates().get(id);
+        let roots = self.commands.packs.roots();
+        let template = templates().find_in(&roots, id).unwrap_or_default();
         if template.palettes.is_empty() && template.size == [0, 0, 0] {
             return Err(kiln_command::CommandError::new(tr!("commands.place.template.invalid", id)));
         }
@@ -1239,5 +1240,12 @@ impl Sim {
     /// Whether the levels run this tick (`/tick freeze` stops them).
     pub fn runs_normally(&self) -> bool {
         self.world.tick_rate.runs_normally()
+    }
+}
+
+impl Sim {
+    /// `StructureTemplateManager.get`: a template of the enabled packs or the vanilla data.
+    pub(crate) fn find_template(&self, id: &str) -> Option<std::sync::Arc<kiln_worldgen::structure::template::Template>> {
+        templates().find_in(&self.commands.packs.roots(), id)
     }
 }
