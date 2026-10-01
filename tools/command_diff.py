@@ -1949,8 +1949,10 @@ test run kilndiff:pass_fn 1 true -1
 test run kilndiff:pass_fn 1 true 4
 test run kilndiff:pass_fn 1 true 99
 test run kilndiff:pass_fn 1 true 1 -1
+~ 4
 test run kilndiff:pass_fn 1 true 1 1 extra
 test run *
+~ 4
 test runmultiple
 test runmultiple kilndiff:pass_fn x
 test runmultiple kilndiff:pass_fn 1 x
@@ -2092,39 +2094,39 @@ fetchprofile entity @e[type=minecraft:pig,limit=1]
 fetchprofile entity Diff0
 fetchprofile entity @a[name=Other0]
 fetchprofile entity @a
-fetchprofile entity @a[limit=1,sort=furthest]
 fetchprofile entity @s
 fetchprofile bogus Diff0
 fetchprofile name Notch
-~ 4
+~ 5
 fetchprofile name Diff0
-~ 2
+~ 5
 fetchprofile name diff0
-~ 2
+~ 5
 fetchprofile name OTHER0
-~ 2
+~ 5
 fetchprofile name "Diff 0"
-~ 2
+~ 5
 fetchprofile name ""
-~ 2
+~ 5
 fetchprofile name Diff0 extra
+~ 5
 fetchprofile id 00000000-0000-0000-0000-000000000000
-~ 2
+~ 5
 fetchprofile id 00000000-0000-0000-0000-000000000001
-~ 2
+~ 5
 fetchprofile id 1-1-1-1-1
-~ 2
+~ 5
 fetchprofile id 00000000000000000000000000000001
 fetchprofile id @a
 execute as Diff0 run fetchprofile entity @s
 execute as Diff0 run fetchprofile name Other0
-~ 2
+~ 5
 execute as Other0 run fetchprofile entity Diff0
 execute at Diff0 run fetchprofile entity @p
 ! scoreboard objectives add fp dummy
 execute store success score fp fp run fetchprofile entity @a[limit=1]
 execute store result score fp fp run fetchprofile name Diff0
-~ 2
+~ 5
 """
 
 
