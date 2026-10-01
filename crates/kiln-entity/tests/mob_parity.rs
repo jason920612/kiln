@@ -213,6 +213,8 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         if let Some(item) = p.get("head").and_then(Value::as_str) {
             v.head = kiln_data::builtin_id("minecraft:item", item).unwrap();
+            // (wp28: `PiglinAi.isWearingSafeArmor` reads the armor tag.)
+            v.piglin_safe_armor = mob::item_tag(v.head, "minecraft:piglin_safe_armor");
         }
         v.yaw = p.get("yaw").and_then(Value::as_f64).unwrap_or(0.0) as f32;
         // The recording's player is never ticked: its clock and hurt stamp as they were.
@@ -240,7 +242,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     for spec in s["mobs"].as_array().unwrap() {
         let kind = MobKind::by_name(spec["type"].as_str().unwrap()).expect("mob type");
         let id = spec["id"].as_i64().unwrap() as i32;
-        let mut e = mob::new(kind, id, 0, 0);
+        // (wp28: a uuid of its own, for the memories that hold entities by uuid: anger.)
+        let mut e = mob::new(kind, id, id as u128 + 0x5eed_0000, 0);
         let yaw = f(&spec["yaw"]) as f32;
         e.set_pos(vec3(&spec["pos"]));
         e.y_rot = yaw;
@@ -255,7 +258,6 @@ fn replay(s: &Value) -> Result<usize, String> {
             if let mob::Species::Chicken { egg_time } = &mut m.species {
                 *egg_time = spec["egg_time"].as_i64().unwrap() as i32;
             }
-            m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
             // The harness equips the main hand before it reads the NBT (which replaces the
             // equipment).
             if let Some(item) = spec["main_hand"].as_str() {
@@ -265,6 +267,10 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
             mob::persist::apply_nbt(&mut e, &tag_of(nbt));
+        }
+        // (wp28: the harness sets the love time after it read the NBT.)
+        if let Some(m) = mob::data_mut(&mut e) {
+            m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
         }
         {
             let age = spec.get("age").and_then(Value::as_i64).unwrap_or(0) as i32;
@@ -296,11 +302,19 @@ fn replay(s: &Value) -> Result<usize, String> {
     let mut other_ids = Vec::new();
     for o in s.get("others").and_then(Value::as_array).into_iter().flatten() {
         let id = o["id"].as_i64().unwrap() as i32;
-        let tag = kiln_proto::nbt::Tag::Compound(vec![
+        let mut fields = vec![
             ("id".into(), kiln_proto::nbt::Tag::String(o["type"].as_str().unwrap().to_owned())),
             ("Pos".into(), kiln_proto::nbt::Tag::List((0..3).map(|i| kiln_proto::nbt::Tag::Double(f(&o["pos"][i]))).collect())),
             ("Rotation".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Float(f(&o["yaw"]) as f32), kiln_proto::nbt::Tag::Float(0.0)])),
-        ]);
+        ];
+        // (wp28: an item entity's stack.)
+        if let Some(item) = o.get("item").and_then(Value::as_str) {
+            fields.push((
+                "Item".into(),
+                kiln_proto::nbt::Tag::Compound(vec![("id".into(), kiln_proto::nbt::Tag::String(item.to_owned())), ("count".into(), kiln_proto::nbt::Tag::Int(1))]),
+            ));
+        }
+        let tag = kiln_proto::nbt::Tag::Compound(fields);
         let e = kiln_entity::persist::load(&tag, id, 0).expect("other entity");
         other_ids.push(id);
         level.insert(e);

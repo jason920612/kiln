@@ -1222,6 +1222,14 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
         m.goals.set_control_flag(goals::LOOK, true);
     }
     species::post_tick(e, &mut m, level);
+    // `LivingEntity.remove`: a mob that was removed (killed, converted, discarded) forgets what
+    // its brain remembered.
+    if e.is_removed()
+        && let Some(b) = m.brain.as_mut()
+    {
+        b.st.mem.clear_all();
+        m.target = None;
+    }
     put(e, m);
 }
 

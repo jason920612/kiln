@@ -20,6 +20,7 @@ pub mod behaviors;
 pub mod combat;
 pub mod gate;
 pub mod memory;
+pub mod nether;
 pub mod persist;
 pub mod sensors;
 pub mod util;
