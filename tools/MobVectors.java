@@ -988,6 +988,53 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
+        // The game mode of the watched player changes: a creative player cannot be attacked (the
+        // creaking stays quiet), a survival one can; spectators do not count.
+        {
+            Scenario s = new Scenario("gamemode_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14790L));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerYaw = 270f;
+            s.playerPitch = 0f;
+            s.dayTime = 18000;
+            Action g1 = new Action(60, "gamemode");
+            g1.what = "survival";
+            s.actions.add(g1);
+            Action g2 = new Action(140, "gamemode");
+            g2.what = "spectator";
+            s.actions.add(g2);
+            Action g3 = new Action(200, "gamemode");
+            g3.what = "survival";
+            s.actions.add(g3);
+            s.ticks = 280;
+            out.add(s);
+        }
+        // A creaking bound to a heart never walks beyond 32 blocks of it (`HomeNodeEvaluator`),
+        // however far its player goes.
+        {
+            Scenario s = new Scenario("heart_home_creaking");
+            floor(s, 48, "minecraft:stone");
+            heartTree(s, 0, 0, "awake", "false");
+            MobSpec c = new MobSpec("minecraft:creaking", 3.5, BY, 0.5, 270f, 14830L);
+            c.nbt = "{home_pos:[I;0," + BY + ",0]}";
+            c.heart = new BlockPos(0, BY, 0);
+            s.mobs.add(c);
+            s.hearts.add(c.heart);
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = 0f;
+            s.dayTime = 18000;
+            s.actions.add(look(20, 270f, 0f));
+            Action m = new Action(30, "move");
+            m.x = 40.5;
+            m.y = BY;
+            m.z = 0.5;
+            s.actions.add(m);
+            s.ticks = 400;
+            out.add(s);
+        }
         // Two creakings watched by one player (they share the level random).
         {
             Scenario s = new Scenario("two_creakings");

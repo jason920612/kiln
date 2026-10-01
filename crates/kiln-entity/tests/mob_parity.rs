@@ -237,7 +237,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
         level.blocks.insert(p, b[3].as_u64().unwrap() as u16);
     }
-    let player = s.get("player").filter(|p| !p.is_null()).map(|p| {
+    let mut player = s.get("player").filter(|p| !p.is_null()).map(|p| {
         let mut v = PlayerView::new(p["id"].as_i64().unwrap() as i32, vec3(&p["pos"]));
         v.sneaking = p["sneaking"].as_bool().unwrap_or(false);
         if v.sneaking {

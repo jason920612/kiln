@@ -69,6 +69,7 @@ fn run_phased(
     let mut hits = 0;
     let (mut effects, mut burning) = (0, 0);
     let mut mob_ticks = 0;
+    let mut hoppers_moved = false;
     // Players in odd rows of the groups can be hurt; the ones in even rows hit them.
     let victim = |i: usize| (i / GROUPS) % 2 == 1;
     for tick in 0..ticks {
@@ -144,6 +145,13 @@ fn run_phased(
                     inbox.push(ToSim::Console(format!("setblock {x} {SURFACE_Y} {z} minecraft:fire")));
                 }
             }
+        }
+        // Before the mobs come (they may knock the rig down): the hoppers have moved items into
+        // the chest below them.
+        if tick == 99 {
+            let [ox, oz] = group_offset(0, GROUPS, GROUP_SPACING);
+            let chest = [(2.0 + ox) as i32, SURFACE_Y as i32, (14.0 + oz) as i32];
+            hoppers_moved = sim.container_at(chest).is_some_and(|(items, _)| !items.is_empty());
         }
         // The mobs of each group, at night so the undead do not burn.
         if tick == 100 {
@@ -223,8 +231,7 @@ fn run_phased(
         sim.block_at(wx + dx, SURFACE_Y as i32, wz + dz).is_some_and(|s| kiln_data::blocks_types::has_fluid(s))
     });
     assert!(flowing.count() > 9, "the water spread");
-    let chest = [(2.0 + ox) as i32, SURFACE_Y as i32, (14.0 + oz) as i32];
-    assert!(sim.container_at(chest).is_some_and(|(items, _)| !items.is_empty()), "the hoppers moved items");
+    assert!(hoppers_moved, "the hoppers moved items");
     assert!(walkers.iter().all(|w| !w.client.stats.disconnected.load(std::sync::atomic::Ordering::Relaxed)));
     assert!(hits > 0, "some attacks landed");
     assert!(effects > 0, "players had effects");
