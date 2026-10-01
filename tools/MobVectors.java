@@ -3140,6 +3140,25 @@ public class MobVectors {
             s.ticks = 260;
             out.add(s);
         }
+        // A long staircase up to its target: climbing it costs vertical distance too if the path
+        // finder counts steps in 3D (about 19.8 blocks walked, beyond its range of 16); the warden
+        // counts them horizontally (14).
+        {
+            Scenario s = new Scenario("warden_stairs");
+            s.playerHealth = 4000f;
+            floor(s, 24, "minecraft:stone");
+            for (int i = 1; i <= 14; i++)
+                for (int z = -2; z <= 2; z++)
+                    for (int h = 0; h < i; h++) block(s, 1 + i, BY + h, z, "minecraft:stone");
+            MobSpec w = new MobSpec("minecraft:warden", 0.5, BY, 0.5, 90f, 16130);
+            w.nbt = wardenBrain("");
+            s.mobs.add(w);
+            s.player = new double[] {15.5, BY + 14, 0.5};
+            s.dayTime = 18000;
+            s.hurts.put(5, new double[] {0, 1.0});
+            s.ticks = 300;
+            out.add(s);
+        }
         // A mob bumping into it: it gets angry and looks at where it stands.
         {
             Scenario s = new Scenario("warden_touch");
