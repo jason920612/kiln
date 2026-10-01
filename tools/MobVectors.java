@@ -664,11 +664,19 @@ public class MobVectors {
         pinBrain(m);
     }
 
+    /// Mobs whose Kiln version is a goal stand-in (no brain to pin or trace).
+    static boolean standIn(Mob m) {
+        return m instanceof net.minecraft.world.entity.npc.villager.Villager || m instanceof net.minecraft.world.entity.monster.piglin.Piglin || m instanceof net.minecraft.world.entity.monster.hoglin.Hoglin;
+    }
+
     /// Brain mobs: vanilla draws the sensors' first delays and the gates' shuffles from randoms
     /// that cannot be pinned any other way. Pinned here (Kiln does the same in `brain::pin`):
     /// the gates (in registration order) get `RandomSource.create(base + k)` with `base` the mob's
     /// pinned seed state, then every sensor delays its start by a draw from the mob's random.
     static void pinBrain(Mob m) throws Exception {
+        // Villagers, piglins and hoglins have goal stand-ins in Kiln, no brain to pin: their scenarios
+        // compare as before the framework (a brain-driven one is `diverges`).
+        if (standIn(m)) return;
         var brain = m.getBrain();
         Map<?, ?> byPriority = (Map<?, ?>) get(brain, "availableBehaviorsByPriority");
         if (byPriority.isEmpty()) return;
@@ -716,7 +724,7 @@ public class MobVectors {
             }
         }
         var brain = m.getBrain();
-        if (!((Map<?, ?>) get(brain, "availableBehaviorsByPriority")).isEmpty()) {
+        if (!standIn(m) && !((Map<?, ?>) get(brain, "availableBehaviorsByPriority")).isEmpty()) {
             List<String> acts = new ArrayList<>();
             for (var a : brain.getActiveActivities()) acts.add("act:" + a.getName());
             for (var b : brain.getRunningBehaviors()) {
