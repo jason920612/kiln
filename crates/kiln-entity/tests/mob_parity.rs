@@ -192,6 +192,21 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             item.set_old_pos_and_rot();
             level.add_entity(item);
         }
+        // wp28 animals: a jukebox starts or stops playing; every allay within 10 blocks hears it.
+        "jukebox" => {
+            let at = BlockPos::containing(pos.x, pos.y, pos.z);
+            let playing = what == "play";
+            let allays: Vec<i32> = level.entities().filter(|e| mob::data(e).is_some_and(|m| m.kind == MobKind::Allay)).map(|e| e.id).collect();
+            for id in allays {
+                let e = level.entity_mut(id).unwrap();
+                // The mob data out of the entity, as the mob tick has it.
+                let mut k = std::mem::replace(&mut e.kind, EntityKind::MobTicking { gravity: 0.08 });
+                if let EntityKind::Mob(m) = &mut k {
+                    mob::kinds::allay::hear_jukebox(e, m, playing, at);
+                }
+                e.kind = k;
+            }
+        }
         k => panic!("action {k}"),
     }
 }
@@ -384,9 +399,26 @@ fn replay(s: &Value) -> Result<usize, String> {
         let order = level.entities_in(&harness_box, kiln_entity::EntityFilter::Any, i32::MIN);
         let mut fresh = fresh;
         fresh.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
+        // The yaw a mob gets from its constructor is `Math.random() * 2 pi` (unseeded): where both
+        // sides drew one, Kiln takes the recording's.
+        let mut recorded_yaws = s
+            .get("spawned")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|sp| sp["tick"].as_i64() == Some(tick) && sp["mob"].as_bool() == Some(true))
+            .map(|sp| f(&sp["yaw"]) as f32);
         for id in fresh {
             let n = (ids.len() - initial) as i64;
+            let recorded = recorded_yaws.next();
             let e = level.entity_mut(id).unwrap();
+            if let Some(y) = recorded
+                && (0.0..6.2832).contains(&y)
+                && (0.0..6.2832).contains(&e.y_rot)
+            {
+                e.y_rot = y;
+                e.y_rot_o = y;
+            }
             e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
             kiln_entity::mob::brain::pin(e);
             let yaw = e.y_rot;

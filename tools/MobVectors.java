@@ -121,6 +121,13 @@ public class MobVectors {
                 item.setDeltaMovement(Vec3.ZERO);
                 level.addFreshEntity(item);
             }
+            // wp28 animals: a jukebox starts or stops playing at the position ("play" / "stop" in
+            // `what`): the game event allays listen for.
+            case "jukebox" -> {
+                BlockPos at = BlockPos.containing(a.x, a.y, a.z);
+                level.gameEvent(a.what.equals("play") ? net.minecraft.world.level.gameevent.GameEvent.JUKEBOX_PLAY : net.minecraft.world.level.gameevent.GameEvent.JUKEBOX_STOP_PLAY,
+                        at, net.minecraft.world.level.gameevent.GameEvent.Context.of(level.getBlockState(at)));
+            }
             default -> throw new IllegalArgumentException(a.kind);
         }
     }
@@ -468,9 +475,9 @@ public class MobVectors {
                 if (!tracked.contains(e)) {
                     tracked.add(e);
                     if (spawned.length() > 0) spawned.append(',');
-                    spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"%s\",\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s]}", tick,
+                    spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"%s\",\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s],\"mob\":%b,\"yaw\":%s}", tick,
                             BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()), d(e.getX()), d(e.getY()), d(e.getZ()),
-                            d(e.getDeltaMovement().x), d(e.getDeltaMovement().y), d(e.getDeltaMovement().z)));
+                            d(e.getDeltaMovement().x), d(e.getDeltaMovement().y), d(e.getDeltaMovement().z), e instanceof Mob, Float.toString(e.getYRot())));
                     if (e instanceof Mob nm) {
                         nm.getRandom().setSeed(7777L * (tick + 1) + pinned.size());
                         nm.setYHeadRot(nm.getYRot());
@@ -2943,6 +2950,16 @@ public class MobVectors {
         s.actions.add(a);
     }
 
+    /// `Action` "jukebox": the jukebox at the position starts ("play") or stops playing.
+    static void jukebox(Scenario s, int tick, String what, int x, int y, int z) {
+        Action a = new Action(tick, "jukebox");
+        a.what = what;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        s.actions.add(a);
+    }
+
     /// `Action` "interact": the player uses `item` (or nothing: "minecraft:air") on mob `mob`.
     static void interact(Scenario s, int tick, int mob, String item) {
         Action a = new Action(tick, "interact");
@@ -3288,6 +3305,40 @@ public class MobVectors {
             interact(s, 3, 0, "minecraft:cobblestone");
             drop(s, 40, "minecraft:cobblestone", 3, 7.5, BY, 5.5);
             s.ticks = 600;
+            out.add(s);
+        }
+        // Jukeboxes: an allay within 10 blocks dances while it plays, and a dancing allay is
+        // duplicated by an amethyst shard (a copy appears, both start the 5 minute cooldown).
+        for (String[] v : new String[][] {{"near", "3", "play", "-1", "0"}, {"stop", "3", "play", "6", "0"}, {"far", "14", "play", "-1", "0"}}) {
+            Scenario s = new Scenario("dance_" + v[0] + "_allay");
+            floor(s, 24, "minecraft:stone");
+            int jx = Integer.parseInt(v[1]);
+            block(s, jx, BY, 3, "minecraft:jukebox");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18200 + jx));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 120 + jx;
+            jukebox(s, 3, "play", jx, BY, 3);
+            if (Integer.parseInt(v[3]) > 0) jukebox(s, Integer.parseInt(v[3]), "stop", jx, BY, 3);
+            interact(s, 10, 0, "minecraft:amethyst_shard");
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Dancing for a while, then the player gives the allay an item and it goes on fetching.
+        {
+            Scenario s = new Scenario("dance_fetch_allay");
+            floor(s, 24, "minecraft:stone");
+            block(s, 3, BY, 3, "minecraft:jukebox");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18210));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 130;
+            jukebox(s, 3, "play", 3, BY, 3);
+            interact(s, 20, 0, "minecraft:emerald");
+            drop(s, 40, "minecraft:emerald", 4, -5.5, BY, -1.5);
+            jukebox(s, 200, "stop", 3, BY, 3);
+            interact(s, 220, 0, "minecraft:amethyst_shard");
+            s.ticks = 500;
             out.add(s);
         }
         // Sniffer cooldown and explored positions loaded from NBT.
