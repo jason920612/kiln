@@ -123,7 +123,6 @@ fn axolotls_play_dead_and_cannot_be_attacked_then() {
     let mut a = mob::new(MobKind::Axolotl, 10, 0, 3);
     a.set_pos(Vec3::new(0.5, 100.0, 0.5));
     let zombie = mob::new(MobKind::Zombie, 11, 0, 3);
-    let target = |a: &Entity| mob::goals::living(&level, a.id);
     let mut lv = level;
     lv.insert(a);
     let z = zombie;
@@ -133,7 +132,6 @@ fn axolotls_play_dead_and_cannot_be_attacked_then() {
     with_mob(lv.entity_mut(10).unwrap(), |_, m| ext::state_mut::<axolotl::State>(m).unwrap().playing_dead = true);
     let dead = mob::goals::living(&lv, 10).unwrap();
     assert!(!mob::goals::can_attack(zm, &lv, &dead), "a playing dead axolotl is not seen as an enemy");
-    let _ = target;
 }
 
 #[test]
@@ -191,7 +189,9 @@ fn bred_axolotls_take_a_parents_variant() {
             seen[axolotl::variant(m) as usize] += 1;
         }
     }
-    assert_eq!(seen[0] + seen[3] + seen[4], 0, "babies take a parent's color (a blue one 1 time in 1200)");
+    // The seeds are fixed, so this is deterministic: one blue baby (1 in 1200 each) turns up.
+    assert_eq!(seen[0] + seen[3], 0, "babies take a parent's color or, rarely, blue: {seen:?}");
+    assert!(seen[4] <= 2, "blue is 1 in 1200: {seen:?}");
     assert!(seen[1] > 5 && seen[2] > 5, "both parents' colors turn up: {seen:?}");
 }
 
