@@ -523,8 +523,9 @@ fn every_mob_type_summons_ticks_and_saves() {
     }
     w.ticks(1);
     for &kind in &kinds {
-        // Endermen hunt endermites.
-        if kind == kiln_entity::mob::MobKind::Endermite {
+        // Endermen hunt endermites, and the golems hunt the phantom (the longer the zoo takes to
+        // summon, the likelier it is gone).
+        if matches!(kind, kiln_entity::mob::MobKind::Endermite | kiln_entity::mob::MobKind::Phantom) {
             continue;
         }
         assert!(!w.mobs(kind.type_name()).is_empty(), "{} is gone", kind.type_name());
