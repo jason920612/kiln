@@ -590,6 +590,8 @@ pub struct MobData {
     /// The mob's own stream for what vanilla draws from `level.getRandom()` in its AI (per entity,
     /// so the outcome does not depend on which entities share a region).
     pub brain_random: kiln_javamath::random::LegacyRandom,
+    /// `LivingEntity.discardFriction` (long-jumping frogs and goats keep their momentum).
+    pub discard_friction: bool,
 }
 
 impl MobData {
@@ -680,6 +682,7 @@ impl MobData {
             effects: crate::effect::Effects::new(),
             brain: None,
             brain_random: kiln_javamath::random::LegacyRandom::new(0),
+            discard_friction: false,
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -704,7 +707,8 @@ impl MobData {
     }
 
     pub fn baby(&self) -> bool {
-        self.zombie_baby || (breed::is_ageable(self.kind) && self.age < 0)
+        // (`canBeABaby`: frogs never are.)
+        self.zombie_baby || (breed::is_ageable(self.kind) && self.age < 0 && self.kind != MobKind::Frog)
     }
 
     pub fn holding_bow(&self) -> bool {
@@ -846,6 +850,7 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
         }
         MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
         MobKind::Axolotl => kinds::axolotl::variant_components(m).unwrap_or_default(),
+        MobKind::Frog => vec![C::FrogVariant(v::FrogVariant(m.variant))],
         _ => Vec::new(),
     }
 }
@@ -1739,7 +1744,7 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         y = 0.0;
     }
     // `shouldDiscardFriction`: no drag.
-    if m.kind.ext().is_some_and(|k| k.discard_friction(m)) {
+    if m.discard_friction || m.kind.ext().is_some_and(|k| k.discard_friction(m)) {
         e.delta = Vec3::new(v.x, y, v.z);
         return;
     }

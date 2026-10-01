@@ -89,6 +89,10 @@ pub fn convert_to(
     super::put(&mut ne, nm);
     level.add_entity(ne);
     e.discard();
+    // `LivingEntity.remove`: the brain forgets everything.
+    if let Some(b) = m.brain.as_mut() {
+        b.st.mem.clear_all();
+    }
     Some(id)
 }
 

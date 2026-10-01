@@ -201,6 +201,11 @@ impl EntityLevel for MemoryLevel {
     }
 
     fn set_block(&mut self, pos: BlockPos, state: u16, _flags: u32) -> bool {
+        // `FrogspawnBlock.onPlace` schedules its hatching with a draw from the level's random
+        // (the real level runs the block's behaviour; this one only keeps the states).
+        if state == kiln_data::blocks::default_state::FROGSPAWN {
+            let _ = kiln_javamath::random::RandomSource::next_int_bounded(&mut self.random, 12000 - 3600);
+        }
         self.blocks.insert(pos, state).unwrap_or(0) != state
     }
 

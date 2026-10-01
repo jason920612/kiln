@@ -658,6 +658,19 @@ pub trait Kind: Sync + Send {
     fn breed_as_item(&self) -> Option<&'static str> {
         None
     }
+    /// `calculateFallDamage` overridden to take points off (frogs: 5, goats: 10).
+    fn fall_damage_reduction(&self) -> i32 {
+        0
+    }
+    /// `spawnChildFromBreeding` without a child: the mother is pregnant (frogs lay frogspawn).
+    fn breed_as_pregnancy(&self) -> bool {
+        false
+    }
+    /// The parity replay's pin (`brain::pin`): seeds the randoms vanilla cannot seed
+    /// (`Collections.shuffle`) from `base`, the mob's random state.
+    fn pin_replay(&self, m: &mut MobData, base: i64) {
+        let _ = (m, base);
+    }
     /// [`Kind::passenger_offset`] for the passenger at `index` (camels seat two).
     fn passenger_offset_at(&self, e: &Entity, m: &MobData, index: usize) -> Option<Vec3> {
         let _ = index;
@@ -688,10 +701,6 @@ pub trait Kind: Sync + Send {
     fn set_head_rot(&self, body: f32, head: f32) -> f32 {
         let _ = body;
         head
-    }
-    /// `calculateFallDamage` less this many points (goats: 10).
-    fn fall_damage_reduction(&self) -> i32 {
-        0
     }
 }
 

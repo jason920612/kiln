@@ -16,6 +16,7 @@
 //! `brain_random` for those (so the outcome does not depend on which entities share a region),
 //! and `Entity.random` where vanilla uses the entity's random.
 
+pub mod amphibian;
 pub mod behaviors;
 pub mod combat;
 pub mod gate;
@@ -870,6 +871,11 @@ pub fn pin(e: &mut Entity) {
     {
         b.seed_gates(base);
         b.randomly_delay_sensors(&mut random);
+    }
+    if let Some(m) = super::data_mut(e)
+        && let Some(k) = m.kind.ext()
+    {
+        k.pin_replay(m, base);
     }
     e.random = random;
 }

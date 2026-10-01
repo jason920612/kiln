@@ -575,7 +575,7 @@ pub fn bucket_pickup(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
 }
 
 /// `saveToBucketTag`: `Bucketable.saveDefaultDataToBucketTag` and the type's components.
-fn save_to_bucket(e: &Entity, m: &MobData, bucket: &mut ItemStack) {
+pub fn save_to_bucket(e: &Entity, m: &MobData, bucket: &mut ItemStack) {
     let mut tag: Vec<(String, Tag)> = Vec::new();
     if m.no_ai {
         tag.push(("NoAI".into(), Tag::Byte(1)));
@@ -626,6 +626,7 @@ pub fn bucket_mob(item: &str) -> Option<MobKind> {
         "minecraft:salmon_bucket" => MobKind::Salmon,
         "minecraft:tropical_fish_bucket" => MobKind::TropicalFish,
         "minecraft:pufferfish_bucket" => MobKind::Pufferfish,
+        "minecraft:tadpole_bucket" => MobKind::Tadpole,
         _ => return None,
     })
 }

@@ -139,3 +139,88 @@ pub fn sniffer_egg_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         level.effect(Effect::HatchSniffer { pos });
     }
 }
+
+// ---------------------------------------------------------------------- frogspawn
+
+/// `FrogspawnBlock.mayPlaceOn(level, pos.below())` for a frogspawn at `pos`: a source of water
+/// (`#supports_frogspawn` fluid) or a `#supports_frogspawn` block below, and no fluid in the
+/// frogspawn's own block.
+pub fn frogspawn_can_survive<L: Level + ?Sized>(level: &L, pos: BlockPos) -> bool {
+    let below = level.block(pos.below());
+    let f = logic::fluid(below);
+    let supported = (f.kind == kiln_data::block_logic::FluidKind::Water && f.source) || tags::is(below, "minecraft:supports_frogspawn");
+    supported && logic::fluid(level.block(pos)).is_empty()
+}
+
+/// `FrogspawnBlock.onPlace`: the hatching tick in 3600 to 12000 ticks.
+pub fn frogspawn_on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let delay = 3600 + kiln_javamath::random::RandomSource::next_int_bounded(level.random(), 12000 - 3600);
+    schedule_block_tick(level, pos, BlockId::of(s), delay, TickPriority::Normal);
+}
+
+/// `FrogspawnBlock.tick`: a frogspawn without support breaks; else it hatches into two to five
+/// tadpoles ([`Effect::HatchFrogspawn`] carries the offsets and yaws, drawn from the level's
+/// random in vanilla's order).
+pub fn frogspawn_tick<L: Level>(level: &mut L, pos: BlockPos) {
+    if !frogspawn_can_survive(level, pos) {
+        crate::update::destroy_block(level, pos, false, 512);
+        return;
+    }
+    crate::update::destroy_block(level, pos, false, 512);
+    level.effect(Effect::Sound { pos, sound: "minecraft:block.frogspawn.hatch", volume: 1.0, pitch: 1.0 });
+    use kiln_javamath::random::RandomSource;
+    let count = 2 + level.random().next_int_bounded(4);
+    let mut tadpoles = Vec::new();
+    for _ in 0..count {
+        let dx = level.random().next_double().clamp(0.20000000298023224, 0.7999999970197678);
+        let dz = level.random().next_double().clamp(0.20000000298023224, 0.7999999970197678);
+        let yaw = 1 + level.random().next_int_bounded(360);
+        tadpoles.push((dx, dz, yaw));
+    }
+    level.effect(Effect::HatchFrogspawn { pos, tadpoles });
+}
+
+#[cfg(test)]
+mod frogspawn_tests {
+    use super::*;
+    use crate::test_level::TestLevel;
+    use kiln_data::blocks::default_state as d;
+
+    #[test]
+    fn frogspawn_sits_on_water_and_hatches_into_tadpoles() {
+        let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK]);
+        let water = BlockPos::new(0, 64, 0);
+        let spawn = water.above();
+        level.set_raw(water, d::WATER, 3);
+        assert!(set_block_and_update(&mut level, spawn, d::FROGSPAWN));
+        assert!(frogspawn_can_survive(&level, spawn));
+        // `onPlace`: the hatching tick 3600 to 12000 ticks away.
+        assert!(level.block_ticks().has_scheduled_tick(spawn, BlockId::of(d::FROGSPAWN)));
+        frogspawn_tick(&mut level, spawn);
+        assert!(is_air(level.block(spawn)));
+        let hatched: Vec<_> = level
+            .effects
+            .iter()
+            .filter_map(|e| if let Effect::HatchFrogspawn { pos, tadpoles } = e { Some((*pos, tadpoles.clone())) } else { None })
+            .collect();
+        assert_eq!(hatched.len(), 1);
+        let (pos, tadpoles) = &hatched[0];
+        assert_eq!(*pos, spawn);
+        assert!((2..=5).contains(&tadpoles.len()));
+        for (dx, dz, yaw) in tadpoles {
+            assert!((0.2..=0.8).contains(dx) && (0.2..=0.8).contains(dz) && (1..=360).contains(yaw));
+        }
+        assert!(level.effects.iter().any(|e| matches!(e, Effect::Sound { sound: "minecraft:block.frogspawn.hatch", .. })));
+    }
+
+    #[test]
+    fn frogspawn_without_water_below_breaks_instead_of_hatching() {
+        let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK, d::STONE]);
+        let spawn = BlockPos::new(0, -62, 0);
+        level.set_raw(spawn, d::FROGSPAWN, 3);
+        assert!(!frogspawn_can_survive(&level, spawn));
+        frogspawn_tick(&mut level, spawn);
+        assert!(is_air(level.block(spawn)));
+        assert!(!level.effects.iter().any(|e| matches!(e, Effect::HatchFrogspawn { .. })));
+    }
+}

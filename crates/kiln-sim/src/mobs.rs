@@ -135,7 +135,11 @@ pub(crate) fn bucket_release(bucket: &kiln_item::ItemStack, pos: [i32; 3], diffi
     let ctx = difficulty_instance(difficulty, game_time, 0, 1.0);
     let mut r = kiln_javamath::random::LegacyRandom::new(seed);
     mob::finalize_spawn(&mut e, &mut r, &ctx, &mut mob::GroupData::default(), false);
-    kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
+    if kind == MobKind::Tadpole {
+        kiln_entity::mob::kinds::tadpole::apply_bucket(&mut e, bucket);
+    } else {
+        kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
+    }
     let t = kiln_data::entities::by_name(kind.type_name())?;
     Some(Spawn { kind: t, pos: [at.x, at.y, at.z], vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
 }
@@ -274,6 +278,30 @@ pub(crate) struct DeathContext {
     pub weapon: Option<kiln_item::ItemStack>,
     /// A raider's `type_specific/raider` facts: (has a raid, is a captain).
     pub raider: Option<(bool, bool)>,
+    /// Whoever dealt the damage (`damage_source_properties`' `source_entity`): its type and the
+    /// components entity predicates match (a frog's variant).
+    pub attacker: Option<AttackerView>,
+}
+
+/// The killer as a `source_entity` predicate sees it.
+#[derive(Clone, Debug)]
+pub(crate) struct AttackerView {
+    pub type_name: &'static str,
+    pub components: Vec<kiln_item::Component>,
+}
+
+impl AttackerView {
+    /// `EntityPredicate.matches` for the parts Kiln can answer about a killer: its type and
+    /// components.
+    fn matches(&self, p: &kiln_loot::predicate::world::EntityPredicate) -> bool {
+        use kiln_loot::predicate::world::EntitySubPredicate as P;
+        let type_id = kiln_item::registry::ENTITY_TYPE.id(self.type_name).unwrap_or(-1);
+        p.parts.iter().all(|part| match part {
+            P::EntityType(set) => set.contains(type_id),
+            P::Components(cs) => cs.iter().all(|c| self.components.contains(c)),
+            _ => false,
+        })
+    }
 }
 
 impl kiln_loot::LootContext for DeathContext {
@@ -295,8 +323,12 @@ impl kiln_loot::LootContext for DeathContext {
     fn damage_source_matches(&self, p: &kiln_loot::predicate::world::DamageSourcePredicate) -> bool {
         // Only the damage type tags are known here; entity sub-predicates fail.
         let id = kiln_data::synced_id("minecraft:damage_type", self.damage_type).unwrap_or(0);
-        p.direct_entity.is_none()
-            && p.source_entity.is_none()
+        let entity_ok = |pred: &Option<kiln_loot::predicate::world::EntityPredicate>| match pred {
+            None => true,
+            Some(pr) => self.attacker.as_ref().is_some_and(|a| a.matches(pr)),
+        };
+        entity_ok(&p.direct_entity)
+            && entity_ok(&p.source_entity)
             && p.tags.iter().all(|t| crate::health::damage_type_tag(id, t.tag.as_str()) == t.expected)
     }
     fn entity_matches(&self, target: kiln_loot::EntityTarget, predicate: &kiln_loot::predicate::EntityPredicate) -> bool {

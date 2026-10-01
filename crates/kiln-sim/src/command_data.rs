@@ -948,6 +948,7 @@ impl Sim {
                     damage_type: "minecraft:magic",
                     weapon,
                     raider,
+                    attacker: None,
                 };
                 self.roll_table(&kiln_command::host::LootTableArg::Id(table), &ctx)?
             }
