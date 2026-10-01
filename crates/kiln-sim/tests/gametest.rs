@@ -289,3 +289,14 @@ fn verify_runs_every_rotation() {
     assert!(out.iter().any(|l| l.contains("commands.test.batch.starting[minecraft:default, 3]")), "{out:?}");
     assert!(out.iter().any(|l| l == "commands.test.summary[400]"), "{out:?}");
 }
+
+#[test]
+fn rotation_steps_outside_0_to_3_fail_like_vanillas_exception() {
+    let Some(mut g) = Game::new("rotation-steps", &[], &[], &[]) else { return };
+    for steps in ["-1", "4", "99"] {
+        let out = g.run(&format!("test run minecraft:always_pass 1 true {steps}"));
+        assert_eq!(out, ["command.failed"], "steps {steps}");
+    }
+    let out = g.run("test run minecraft:always_pass 1 true 3");
+    assert_eq!(out[0], "commands.test.run.running[1]");
+}

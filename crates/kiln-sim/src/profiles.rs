@@ -8,6 +8,13 @@
 //! (offline mode, no network) a name resolves to the profile the server would give a player of
 //! that name (its offline UUID, no textures), and an id nobody online has fails, as vanilla's
 //! command does for a profile it cannot find.
+//!
+//! An offline server that was given a lookup (`KILN_PROFILE_LOOKUP=true`) behaves like vanilla's
+//! offline server, which resolves a name through its user cache (the players it has seen, with
+//! the ids they logged in with) and asks the session service for the profile of that id, or for
+//! the id of a name it has not seen. A player of an offline server is no account there, so the
+//! lookup of their id fails like anyone else's; only online mode and servers without a lookup
+//! answer for the players they have.
 
 use crate::Sim;
 use crate::commands::{CommandSource, PlayerRef};
@@ -45,7 +52,8 @@ impl Sim {
 
     /// Starts `fetchprofile name|id`.
     pub(crate) fn start_profile_lookup(&mut self, query: ProfileQuery) {
-        if let Some(profile) = self.online_profile(&query) {
+        let asks_everyone = self.config.profile_lookup.is_some() && !self.config.online_mode;
+        if !asks_everyone && let Some(profile) = self.online_profile(&query) {
             self.answer_later(&query, Some(profile));
             return;
         }
@@ -55,7 +63,14 @@ impl Sim {
             let request = self.commands.next_profile_request;
             self.commands.next_profile_request += 1;
             self.commands.profile_requests.insert(request, (self.commands.source, query.clone()));
-            let asked = query.clone();
+            // The id a name already has here (offline servers: the id the player logged in with).
+            let known_id = match &query {
+                ProfileQuery::Name(n) if !self.config.online_mode => {
+                    self.players.values().find(|p| p.name.eq_ignore_ascii_case(n)).map(|p| p.uuid)
+                }
+                _ => None,
+            };
+            let asked = known_id.map_or_else(|| query.clone(), ProfileQuery::Id);
             let spawned = std::thread::Builder::new().name("kiln-profile".into()).spawn(move || {
                 let result = match &asked {
                     ProfileQuery::Name(name) => lookup.by_name(name),

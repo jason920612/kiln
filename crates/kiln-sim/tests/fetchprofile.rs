@@ -112,3 +112,43 @@ fn offline_servers_answer_from_the_name() {
     let out = sim.take_console();
     assert_eq!(out, [format!("commands.fetchprofile.id.failure[{ALICE}]")]);
 }
+
+/// Answers by id only, and remembers which ids were asked.
+struct IdsOnly(std::sync::Mutex<Vec<Uuid>>);
+
+impl ProfileLookup for IdsOnly {
+    fn by_name(&self, name: &str) -> Result<Option<LookedUpProfile>, String> {
+        panic!("a player the server has seen is looked up by id, not by the name {name}");
+    }
+
+    fn by_id(&self, id: Uuid) -> Result<Option<LookedUpProfile>, String> {
+        self.0.lock().unwrap().push(id);
+        Ok(None)
+    }
+}
+
+#[test]
+fn offline_servers_with_a_lookup_ask_for_their_players_by_id() {
+    // Vanilla's offline server takes the id of a name it has seen from its user cache and asks
+    // the session service for that profile; the id of a player of an offline server is no
+    // account there. (An account that happens to have the same name is never asked about.)
+    let (tx, rx) = crossbeam_channel::unbounded();
+    let fake = Arc::new(IdsOnly(Default::default()));
+    let mut config = SimConfig::new(4, 2, None);
+    config.profile_lookup = Some(fake.clone());
+    config.replies = Some(tx);
+    let mut sim = Sim::new(config);
+    sim.capture_console();
+    let (msg, _stats) = join(1, "Steve", 2);
+    assert!(sim.step([msg]));
+    sim.take_console();
+    console(&mut sim, "fetchprofile name steve");
+    assert_eq!(wait_lines(&mut sim, &rx, 1), ["commands.fetchprofile.name.failure[steve]"]);
+    assert_eq!(fake.0.lock().unwrap().len(), 1);
+    // An id goes to the service as it is.
+    console(&mut sim, &format!("fetchprofile id {ALICE}"));
+    assert_eq!(wait_lines(&mut sim, &rx, 1), [format!("commands.fetchprofile.id.failure[{ALICE}]")]);
+    let asked = fake.0.lock().unwrap().clone();
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[1], ALICE);
+}

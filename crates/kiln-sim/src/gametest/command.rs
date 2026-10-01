@@ -125,7 +125,7 @@ impl Sim {
     }
 
     /// `toGameTestInfo`: one run per selected test whose structure exists.
-    fn infos_of_tests(&mut self, ids: &[String], retry: Retry, rotation_steps: i32) -> Vec<Info> {
+    fn infos_of_tests(&mut self, ids: &[String], retry: Retry, rotation_steps: i32) -> Result<Vec<Info>, CommandError> {
         let mut out = Vec::new();
         for id in ids {
             let Some(def) = self.commands.gametests.defs.tests.get(id).cloned() else { continue };
@@ -136,9 +136,13 @@ impl Sim {
                 self.send_failure(Text::literal(format!("Could not resolve level for dimension: {}", def.dimension)));
                 continue;
             };
-            out.push(Info::new(id.clone(), def, (rotation_steps.rem_euclid(4)) as u8, dim, retry));
+            // `StructureUtils.getRotationForRotationSteps` throws for anything but 0..=3.
+            if !(0..4).contains(&rotation_steps) {
+                return Err(command_failed());
+            }
+            out.push(Info::new(id.clone(), def, rotation_steps as u8, dim, retry));
         }
-        out
+        Ok(out)
     }
 
     /// A player-facing dimension list for the summary and locate: `outputPlayerCoordinates`.
@@ -426,7 +430,7 @@ impl Sim {
         }
         let ids = self.selection_tests(sel);
         let repeated: Vec<String> = (0..copies.max(0)).flat_map(|_| ids.iter().cloned()).collect();
-        infos.extend(self.infos_of_tests(&repeated, retry, rotation_steps));
+        infos.extend(self.infos_of_tests(&repeated, retry, rotation_steps)?);
         if infos.is_empty() {
             self.send_success(tr!("commands.test.no_tests"), false);
             return Ok(0);
@@ -444,7 +448,7 @@ impl Sim {
     /// `verify`: every test in each rotation, 100 copies at a time.
     fn test_verify(&mut self, ids: &[String]) -> Result<i32, CommandError> {
         self.stop_tests();
-        let base = self.infos_of_tests(ids, (1, true), 0);
+        let base = self.infos_of_tests(ids, (1, true), 0)?;
         self.commands.gametests.last_failed.clear();
         let mut infos: Vec<Info> = Vec::new();
         let mut batches = Vec::new();

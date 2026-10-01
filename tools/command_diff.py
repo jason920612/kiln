@@ -1942,6 +1942,33 @@ test runthese
 test runclosest
 test stop
 test verify kilndiff:nope
+test verify
+test run kilndiff:pass_fn abc
+test run kilndiff:pass_fn 1 maybe
+test run kilndiff:pass_fn 1 true -1
+test run kilndiff:pass_fn 1 true 4
+test run kilndiff:pass_fn 1 true 99
+test run kilndiff:pass_fn 1 true 1 -1
+test run kilndiff:pass_fn 1 true 1 1 extra
+test run *
+test runmultiple
+test runmultiple kilndiff:pass_fn x
+test runmultiple kilndiff:pass_fn 1 x
+test runfailed maybe
+test runfailed true x
+test runfailed true 2 maybe
+test locate kilndiff:pass_fn extra
+test create kilndiff:box 0
+test create kilndiff:box 1 1
+test create kilndiff:box 1 1 0
+test create kilndiff:box 1 1 1 1
+test pos extra
+test pos kilnx
+test run kilndiff:pass_fn 1 true 3
+~ 3
+test run kilndiff:pass_fn 2 false 1 1
+~ 4
+test clearall
 test run kilndiff:missing_structure
 test clearall
 
@@ -2042,7 +2069,16 @@ test clearall
 publish
 publish true
 publish true 25565
+publish false 25599
+publish survival
+publish survival true 25565
 unpublish
+unpublish now
+execute run publish
+execute as Diff0 run publish true
+execute run unpublish
+help publish
+help unpublish
 
 # fetchprofile
 fetchprofile
@@ -2055,8 +2091,40 @@ fetchprofile entity Nobody
 fetchprofile entity @e[type=minecraft:pig,limit=1]
 fetchprofile entity Diff0
 fetchprofile entity @a[name=Other0]
+fetchprofile entity @a
+fetchprofile entity @a[limit=1,sort=furthest]
+fetchprofile entity @s
+fetchprofile bogus Diff0
 fetchprofile name Notch
 ~ 4
+fetchprofile name Diff0
+~ 2
+fetchprofile name diff0
+~ 2
+fetchprofile name OTHER0
+~ 2
+fetchprofile name "Diff 0"
+~ 2
+fetchprofile name ""
+~ 2
+fetchprofile name Diff0 extra
+fetchprofile id 00000000-0000-0000-0000-000000000000
+~ 2
+fetchprofile id 00000000-0000-0000-0000-000000000001
+~ 2
+fetchprofile id 1-1-1-1-1
+~ 2
+fetchprofile id 00000000000000000000000000000001
+fetchprofile id @a
+execute as Diff0 run fetchprofile entity @s
+execute as Diff0 run fetchprofile name Other0
+~ 2
+execute as Other0 run fetchprofile entity Diff0
+execute at Diff0 run fetchprofile entity @p
+! scoreboard objectives add fp dummy
+execute store success score fp fp run fetchprofile entity @a[limit=1]
+execute store result score fp fp run fetchprofile name Diff0
+~ 2
 """
 
 
@@ -2229,6 +2297,9 @@ def start_kiln(port: int, exe: Path, lang: Path) -> Server:
     # The vanilla pack (recipes, loot, advancements, the feature packs).
     env.setdefault("KILN_DATAPACK", str(WORK / "generated"))
     env.pop("KILN_OPS", None)
+    # Vanilla's offline server asks the session service about every name and id; so does Kiln
+    # when told to (its default is to answer offline servers without the network).
+    env["KILN_PROFILE_LOOKUP"] = "true"
     return Server("kiln", [str(copy)], base, env, KILN_LINE, SCRATCH / "kiln.log")
 
 
