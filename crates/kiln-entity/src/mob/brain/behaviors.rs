@@ -494,7 +494,7 @@ pub fn stroll(speed: f32, kind: StrollKind) -> Box<dyn Control> {
             StrollKind::Land { .. } => random_pos::land_pos(cx.e, cx.m, &*cx.level, 10, 7),
             StrollKind::LandRange { h, v } => random_pos::land_pos(cx.e, cx.m, &*cx.level, h, v),
             StrollKind::Fly => {
-                let view = view_vector(cx.e.x_rot, cx.e.y_rot);
+                let view = view_vector(cx.e.x_rot_o, cx.m.y_head_rot_o);
                 random_pos::air_and_water_pos(cx.e, cx.m, &*cx.level, 10, 7, -2, view.x, view.z, 1.5707963705062866)
             }
             StrollKind::Swim => target_swim_pos(cx),
@@ -531,7 +531,7 @@ pub fn target_swim_pos(cx: &mut Cx) -> Option<Vec3> {
     pos
 }
 
-/// `Entity.getViewVector(0)`.
+/// `Entity.getViewVector(0)`: the old pitch and the old head yaw (`LivingEntity.getViewYRot`).
 pub fn view_vector(x_rot: f32, y_rot: f32) -> Vec3 {
     crate::ext_entity::fireball::view_vector(x_rot, y_rot)
 }
@@ -780,7 +780,7 @@ impl AnimalPanic {
         match self.air {
             None => random_pos::land_pos(cx.e, cx.m, &*cx.level, 5, 4),
             Some(h) => {
-                let view = view_vector(cx.e.x_rot, cx.e.y_rot);
+                let view = view_vector(cx.e.x_rot_o, cx.m.y_head_rot_o);
                 random_pos::air_and_water_pos(cx.e, cx.m, &*cx.level, 5, 4, h, view.x, view.z, 1.5707963705062866)
             }
         }

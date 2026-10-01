@@ -17,6 +17,7 @@
 //! and `Entity.random` where vanilla uses the entity's random.
 
 pub mod amphibian;
+pub mod animals;
 pub mod behaviors;
 pub mod combat;
 pub mod gate;
@@ -238,6 +239,12 @@ pub trait Behavior: Debug + Send + Sync {
     fn stop(&mut self, cx: &mut Cx) {
         let _ = cx;
     }
+    /// `stop(level, body, gameTime)` of a behaviour that asks `timedOut(gameTime)` in it
+    /// (wp28 animals): `timed_out` is that answer; the default is plain `stop`.
+    fn stop_timed(&mut self, cx: &mut Cx, timed_out: bool) {
+        let _ = timed_out;
+        self.stop(cx);
+    }
     /// `timedOut(gameTime)` (`gameTime > endTimestamp`).
     fn timed_out(&self, time: i64, end: i64) -> bool {
         time > end
@@ -313,7 +320,8 @@ impl Control for Timed {
     }
     fn do_stop(&mut self, cx: &mut Cx) {
         self.running = false;
-        self.b.stop(cx);
+        let timed_out = self.b.timed_out(cx.time, self.end);
+        self.b.stop_timed(cx, timed_out);
     }
     fn box_clone(&self) -> Box<dyn Control> {
         Box::new(self.clone())

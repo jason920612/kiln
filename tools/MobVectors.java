@@ -115,6 +115,20 @@ public class MobVectors {
                 player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what))));
                 player.interactOn(tracked.get(a.mob), net.minecraft.world.InteractionHand.MAIN_HAND, tracked.get(a.mob).position());
             }
+            // wp28 animals: an item entity (`duration` items, default 1) at rest at the position.
+            case "drop" -> {
+                ItemStack stack = new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what)), Math.max(1, a.duration));
+                var item = new net.minecraft.world.entity.item.ItemEntity(level, a.x, a.y, a.z, stack);
+                item.setDeltaMovement(Vec3.ZERO);
+                level.addFreshEntity(item);
+            }
+            // wp28 animals: a jukebox starts or stops playing at the position ("play" / "stop" in
+            // `what`): the game event allays listen for.
+            case "jukebox" -> {
+                BlockPos at = BlockPos.containing(a.x, a.y, a.z);
+                level.gameEvent(a.what.equals("play") ? net.minecraft.world.level.gameevent.GameEvent.JUKEBOX_PLAY : net.minecraft.world.level.gameevent.GameEvent.JUKEBOX_STOP_PLAY,
+                        at, net.minecraft.world.level.gameevent.GameEvent.Context.of(level.getBlockState(at)));
+            }
             default -> throw new IllegalArgumentException(a.kind);
         }
     }
@@ -485,9 +499,9 @@ public class MobVectors {
                 if (!tracked.contains(e)) {
                     tracked.add(e);
                     if (spawned.length() > 0) spawned.append(',');
-                    spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"%s\",\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s]}", tick,
+                    spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"%s\",\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s],\"mob\":%b,\"yaw\":%s}", tick,
                             BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()), d(e.getX()), d(e.getY()), d(e.getZ()),
-                            d(e.getDeltaMovement().x), d(e.getDeltaMovement().y), d(e.getDeltaMovement().z)));
+                            d(e.getDeltaMovement().x), d(e.getDeltaMovement().y), d(e.getDeltaMovement().z), e instanceof Mob, Float.toString(e.getYRot())));
                     if (e instanceof Mob nm) {
                         nm.getRandom().setSeed(7777L * (tick + 1) + pinned.size());
                         nm.setYHeadRot(nm.getYRot());
@@ -2967,7 +2981,6 @@ public class MobVectors {
             s.player = new double[] {12.5, BY, 0.5};
             s.playerCreative = true;
             s.ticks = 300;
-            s.diverges = true;
             out.add(s);
         }
         {
@@ -3640,8 +3653,432 @@ public class MobVectors {
         }
     }
 
+    /// `Action` "drop": `count` of `item` at rest at a position at `tick`.
+    static void drop(Scenario s, int tick, String item, int count, double x, double y, double z) {
+        Action a = new Action(tick, "drop");
+        a.what = item;
+        a.duration = count;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        s.actions.add(a);
+    }
+
+    /// `Action` "jukebox": the jukebox at the position starts ("play") or stops playing.
+    static void jukebox(Scenario s, int tick, String what, int x, int y, int z) {
+        Action a = new Action(tick, "jukebox");
+        a.what = what;
+        a.x = x;
+        a.y = y;
+        a.z = z;
+        s.actions.add(a);
+    }
+
+    /// `Action` "interact": the player uses `item` (or nothing: "minecraft:air") on mob `mob`.
+    static void interact(Scenario s, int tick, int mob, String item) {
+        Action a = new Action(tick, "interact");
+        a.mob = mob;
+        a.what = item;
+        s.actions.add(a);
+    }
+
     /// Camels, allays, sniffers.
     static void scenariosBrainAnimals(List<Scenario> out) {
+        // ---- sniffers: idle (scenting, sniffing, searching, digging, rising, feeling happy)
+        for (int seed = 1; seed <= 6; seed++) {
+            Scenario s = new Scenario("idle_sniffer_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 40f * seed, 16000L + 7 * seed));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 60 + seed;
+            s.ticks = 900;
+            out.add(s);
+        }
+        // Digging on dirt and mud, and on sand (not diggable: it sniffs but never digs).
+        for (String[] f : new String[][] {{"dirt", "minecraft:dirt"}, {"mud", "minecraft:mud"}, {"sand", "minecraft:sand"}, {"moss", "minecraft:moss_block"}}) {
+            for (int seed = 1; seed <= 2; seed++) {
+                Scenario s = new Scenario("dig_sniffer_" + f[0] + "_" + seed);
+                floor(s, 20, f[1]);
+                s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 90f * seed, 16100L + 11 * seed));
+                s.player = new double[] {14.5, BY, 0.5};
+                s.playerCreative = true;
+                s.levelSeed = 70 + seed;
+                s.ticks = 900;
+                out.add(s);
+            }
+        }
+        // Hurt while searching and while digging (the idle_sniffer_2 run up to then).
+        for (int at : new int[] {300, 500}) {
+            Scenario s = new Scenario("hurt_sniffer_" + at);
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 80f, 16014L));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 62;
+            s.hurts.put(at, new double[] {0, 1.0});
+            s.ticks = 800;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_sniffer");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 0f, 16200));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:torchflower_seeds";
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("breed_sniffer");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 20f, 16210);
+            MobSpec m2 = new MobSpec("minecraft:sniffer", 4.5, BY, 1.5, 200f, 16211);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("feed_sniffer");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 20f, 16220));
+            MobSpec other = new MobSpec("minecraft:sniffer", 5.5, BY, 0.5, 250f, 16221);
+            other.inLove = 900;
+            s.mobs.add(other);
+            s.player = new double[] {2.5, BY, 0.5};
+            s.playerCreative = true;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:torchflower_seeds";
+            s.actions.add(a);
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("baby_sniffer");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec baby = new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 0f, 16230);
+            baby.age = -48000;
+            s.mobs.add(baby);
+            s.mobs.add(new MobSpec("minecraft:sniffer", 6.5, BY, 2.5, 90f, 16231));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("pond_sniffer");
+            floor(s, 20, "minecraft:grass_block");
+            for (int x = -3; x <= 3; x++)
+                for (int z = 2; z <= 6; z++) block(s, x, BY - 1, z, "minecraft:water");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 0f, 16240));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 75;
+            s.ticks = 700;
+            out.add(s);
+        }
+        // ---- camels: idle (strolling, sitting down and standing up), sitting from the start
+        for (int seed = 1; seed <= 6; seed++) {
+            Scenario s = new Scenario("idle_camel_" + seed);
+            floor(s, 24, "minecraft:sand");
+            s.mobs.add(new MobSpec("minecraft:camel", 0.5, BY, 0.5, 55f * seed, 17000L + 13 * seed));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 80 + seed;
+            s.ticks = 900;
+            out.add(s);
+        }
+        for (long pose : new long[] {-100L, -990L, 5L}) {
+            Scenario s = new Scenario("pose_camel_" + (pose < 0 ? "m" : "p") + Math.abs(pose));
+            floor(s, 24, "minecraft:sand");
+            MobSpec m = new MobSpec("minecraft:camel", 0.5, BY, 0.5, 20f, 17100L + pose);
+            m.nbt = "{LastPoseTick:" + pose + "L}";
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 90;
+            s.ticks = 900;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("tempt_camel");
+            floor(s, 20, "minecraft:sand");
+            s.mobs.add(new MobSpec("minecraft:camel", 0.5, BY, 0.5, 0f, 17200));
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:cactus";
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("breed_camel");
+            floor(s, 20, "minecraft:sand");
+            MobSpec m1 = new MobSpec("minecraft:camel", 0.5, BY, 0.5, 20f, 17210);
+            MobSpec m2 = new MobSpec("minecraft:camel", 4.5, BY, 1.5, 200f, 17211);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("feed_camel");
+            floor(s, 20, "minecraft:sand");
+            s.mobs.add(new MobSpec("minecraft:camel", 0.5, BY, 0.5, 20f, 17220));
+            MobSpec other = new MobSpec("minecraft:camel", 5.5, BY, 0.5, 250f, 17221);
+            other.inLove = 900;
+            s.mobs.add(other);
+            s.player = new double[] {2.5, BY, 0.5};
+            s.playerCreative = true;
+            Action a = new Action(5, "interact");
+            a.mob = 0;
+            a.what = "minecraft:cactus";
+            s.actions.add(a);
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("follow_adult_camel");
+            floor(s, 20, "minecraft:sand");
+            MobSpec baby = new MobSpec("minecraft:camel", 0.5, BY, 0.5, 0f, 17230);
+            baby.age = -24000;
+            s.mobs.add(baby);
+            s.mobs.add(new MobSpec("minecraft:camel", 8.5, BY, 2.5, 90f, 17231));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Hurt: panics (standing up at once when it was sitting).
+        for (int variant = 0; variant < 2; variant++) {
+            Scenario s = new Scenario(variant == 0 ? "hurt_camel" : "hurt_sitting_camel");
+            floor(s, 24, "minecraft:sand");
+            MobSpec m = new MobSpec("minecraft:camel", 0.5, BY, 0.5, 30f, 17240 + variant);
+            if (variant == 1) m.nbt = "{LastPoseTick:-100L}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerSneaking = true;
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.hurts.put(300, new double[] {0, 1.0});
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("terrain_camel");
+            floor(s, 24, "minecraft:sand");
+            for (int x = -4; x <= 4; x++) block(s, x, BY - 1, 4, "minecraft:water");
+            for (int x = -3; x <= 3; x++) block(s, x, BY, -4, "minecraft:sandstone");
+            for (int z = -6; z <= 6; z++) block(s, 6, BY + 1, z, "minecraft:sandstone");
+            s.mobs.add(new MobSpec("minecraft:camel", 0.5, BY, 0.5, 200f, 17250));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 95;
+            s.ticks = 900;
+            out.add(s);
+        }
+        // ---- allays: flying about, fetching items for the player it likes, giving them
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("idle_allay_" + seed);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 70f * seed, 18000L + 17 * seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 100 + seed;
+            s.ticks = 600;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("give_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18100));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 110;
+            interact(s, 5, 0, "minecraft:cobblestone");
+            drop(s, 40, "minecraft:cobblestone", 3, 5.5, BY, 4.5);
+            drop(s, 40, "minecraft:cobblestone", 2, -4.5, BY, 3.5);
+            s.ticks = 800;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("take_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18110));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 111;
+            interact(s, 5, 0, "minecraft:cobblestone");
+            drop(s, 40, "minecraft:cobblestone", 3, 5.5, BY, 4.5);
+            interact(s, 200, 0, "minecraft:air");
+            s.ticks = 500;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("far_allay");
+            floor(s, 40, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18120));
+            s.player = new double[] {30.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 112;
+            interact(s, 5, 0, "minecraft:gold_ingot");
+            s.ticks = 500;
+            out.add(s);
+        }
+        for (int variant = 0; variant < 2; variant++) {
+            Scenario s = new Scenario(variant == 0 ? "hurt_allay" : "hurt_liked_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18130 + variant));
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerSneaking = true;
+            s.levelSeed = 113;
+            if (variant == 1) interact(s, 2, 0, "minecraft:cobblestone");
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.hurts.put(200, new double[] {0, 2.0});
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("wall_allay");
+            floor(s, 24, "minecraft:stone");
+            for (int z = -8; z <= 8; z++)
+                for (int y = BY; y <= BY + 6; y++) block(s, 4, y, z, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 90f, 18140));
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 114;
+            interact(s, 5, 0, "minecraft:cobblestone");
+            drop(s, 30, "minecraft:cobblestone", 2, 8.5, BY, 2.5);
+            s.ticks = 700;
+            out.add(s);
+        }
+        // Loaded from NBT: holding an item and liking the player already.
+        {
+            Scenario s = new Scenario("nbt_allay");
+            floor(s, 24, "minecraft:stone");
+            MobSpec m = new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 0f, 18150);
+            int[] u = net.minecraft.core.UUIDUtil.uuidToIntArray(UUID.nameUUIDFromBytes("KilnMob".getBytes()));
+            m.nbt = String.format(Locale.ROOT, "{equipment:{mainhand:{id:\"minecraft:iron_ingot\",count:1}},Inventory:[{id:\"minecraft:iron_ingot\",count:3}],DuplicationCooldown:100,"
+                    + "Brain:{memories:{\"minecraft:liked_player\":{value:[I;%d,%d,%d,%d]}}}}", u[0], u[1], u[2], u[3]);
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 115;
+            drop(s, 60, "minecraft:iron_ingot", 5, -3.5, BY, -4.5);
+            s.ticks = 800;
+            out.add(s);
+        }
+        // Several items and stacks, other items lying about that it does not want.
+        {
+            Scenario s = new Scenario("stacks_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 200f, 18160));
+            s.player = new double[] {4.5, BY, 4.5};
+            s.playerCreative = true;
+            s.levelSeed = 116;
+            interact(s, 3, 0, "minecraft:diamond");
+            drop(s, 20, "minecraft:diamond", 40, 6.5, BY, -3.5);
+            drop(s, 20, "minecraft:diamond", 40, -6.5, BY, 3.5);
+            drop(s, 20, "minecraft:dirt", 5, 3.5, BY, -6.5);
+            drop(s, 200, "minecraft:diamond", 1, 2.5, BY, 8.5);
+            s.ticks = 900;
+            out.add(s);
+        }
+        // Two allays: the second one likes another player (none here) and the first fetches.
+        {
+            Scenario s = new Scenario("pair_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18170));
+            s.mobs.add(new MobSpec("minecraft:allay", 2.5, BY + 3, 1.5, 250f, 18171));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 117;
+            interact(s, 3, 0, "minecraft:emerald");
+            interact(s, 4, 1, "minecraft:emerald");
+            drop(s, 40, "minecraft:emerald", 4, -5.5, BY, -1.5);
+            s.ticks = 700;
+            out.add(s);
+        }
+        // A survival player, sneaking near: liked players in survival too.
+        {
+            Scenario s = new Scenario("survival_allay");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18180));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerSneaking = true;
+            s.levelSeed = 118;
+            interact(s, 3, 0, "minecraft:cobblestone");
+            drop(s, 40, "minecraft:cobblestone", 3, 7.5, BY, 5.5);
+            s.ticks = 600;
+            out.add(s);
+        }
+        // Jukeboxes: an allay within 10 blocks dances while it plays, and a dancing allay is
+        // duplicated by an amethyst shard (a copy appears, both start the 5 minute cooldown).
+        for (String[] v : new String[][] {{"near", "3", "play", "-1", "0"}, {"stop", "3", "play", "6", "0"}, {"far", "14", "play", "-1", "0"}}) {
+            Scenario s = new Scenario("dance_" + v[0] + "_allay");
+            floor(s, 24, "minecraft:stone");
+            int jx = Integer.parseInt(v[1]);
+            block(s, jx, BY, 3, "minecraft:jukebox");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18200 + jx));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 120 + jx;
+            jukebox(s, 3, "play", jx, BY, 3);
+            if (Integer.parseInt(v[3]) > 0) jukebox(s, Integer.parseInt(v[3]), "stop", jx, BY, 3);
+            interact(s, 10, 0, "minecraft:amethyst_shard");
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Dancing for a while, then the player gives the allay an item and it goes on fetching.
+        {
+            Scenario s = new Scenario("dance_fetch_allay");
+            floor(s, 24, "minecraft:stone");
+            block(s, 3, BY, 3, "minecraft:jukebox");
+            s.mobs.add(new MobSpec("minecraft:allay", 0.5, BY + 2, 0.5, 20f, 18210));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 130;
+            jukebox(s, 3, "play", 3, BY, 3);
+            interact(s, 20, 0, "minecraft:emerald");
+            drop(s, 40, "minecraft:emerald", 4, -5.5, BY, -1.5);
+            jukebox(s, 200, "stop", 3, BY, 3);
+            interact(s, 220, 0, "minecraft:amethyst_shard");
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Sniffer cooldown and explored positions loaded from NBT.
+        {
+            Scenario s = new Scenario("nbt_cooldown_sniffer");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 40f, 16300);
+            m.nbt = "{Brain:{memories:{\"minecraft:sniff_cooldown\":{value:{},ttl:300L},\"minecraft:sniffer_explored_positions\":{value:[{dimension:\"minecraft:overworld\",pos:[I;3,99,4]},{dimension:\"minecraft:overworld\",pos:[I;-2,99,-6]}]}}}}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 76;
+            s.ticks = 1500;
+            out.add(s);
+        }
+        // A whole cooldown: two digs, the second one never on a spot dug before.
+        {
+            Scenario s = new Scenario("cooldown_sniffer");
+            floor(s, 12, "minecraft:dirt");
+            s.mobs.add(new MobSpec("minecraft:sniffer", 0.5, BY, 0.5, 40f, 16310));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 77;
+            s.ticks = 11000;
+            out.add(s);
+        }
     }
 
     /// Axolotls, goats, frogs, tadpoles.
