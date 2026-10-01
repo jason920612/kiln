@@ -7,9 +7,8 @@
 //! an active creaking's player, look about, stroll; fight: walk to the target, melee it every 40
 //! ticks, stop when the player is out of sight), on [`crate::mob::brain`].
 //!
-//! Gaps: the death crumbling particles and the heart's trail particles are not sent (no
-//! particle event yet); the home-anchored node evaluator only blocks pathing through nodes
-//! beyond 32 blocks of the heart (see [`crate::mob::path`]).
+//! Gaps: the home-anchored node evaluator only blocks pathing through nodes beyond 32 blocks
+//! of the heart (see [`crate::mob::path`]).
 
 use crate::behavior_boilerplate;
 use crate::entity::Entity;
@@ -216,8 +215,14 @@ pub fn player_is_stuck_in_you(e: &Entity, m: &mut MobData, level: &dyn EntityLev
     false
 }
 
-/// `tearDown`: the creaking crumbles away (particles for viewers are not sent) and goes.
+/// `tearDown`: the creaking crumbles away (pale oak wood and awake-heart crumbles) and goes.
 pub fn tear_down(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    let b = e.bounding_box();
+    let c = b.center();
+    let spread = Vec3::new((b.max_x - b.min_x) * 0.3, (b.max_y - b.min_y) * 0.3, (b.max_z - b.min_z) * 0.3);
+    level.crumble_particles(c, kiln_data::blocks::default_state::PALE_OAK_WOOD, 100, spread);
+    let awake = super::creaking_heart::with_state(kiln_data::blocks::default_state::CREAKING_HEART, "awake");
+    level.crumble_particles(c, awake, 10, spread);
     mob::make_sound(e, m, level, "minecraft:entity.creaking.death");
     e.discard();
     // `LivingEntity.remove`: `brain.clearMemories()`.

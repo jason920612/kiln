@@ -87,6 +87,12 @@ impl World {
         }
     }
 
+    /// Level particle packets received since counting began.
+    fn particles(&self) -> u64 {
+        self.client.stats.count_ids.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.client.stats.by_id.lock().unwrap().get(&kiln_data::packets::play::clientbound::LEVEL_PARTICLES).map_or(0, |e| e.0)
+    }
+
     fn resin_around(&self, heart: [i32; 3]) -> usize {
         let mut n = 0;
         for dx in -3..=3 {
@@ -182,9 +188,12 @@ fn breaking_the_heart_takes_its_creaking() {
     let heart = w.at(6, 1, 0);
     w.heart(heart, "awake");
     assert!(w.wait_for_creaking(200).is_some());
+    let before = w.particles();
     w.setblock(heart, "minecraft:air destroy");
     w.ticks(3);
     assert!(w.creakings().is_empty(), "no heart, no creaking");
+    // `tearDown`: the pale oak wood crumble (100) and the awake heart crumble (10).
+    assert!(w.particles() >= before + 2, "the creaking crumbled in front of the player");
 }
 
 #[test]
@@ -238,8 +247,11 @@ fn a_hurt_creaking_sways_and_its_heart_spreads_resin() {
     w.run(&format!("tp Keeper {} {} {}", pos[0] - 1.5, pos[1], pos[2]));
     w.ticks(2);
     let (_, pos2, _) = w.creakings()[0];
+    let before = w.particles();
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: id }), ToSim::Packet(1, PlayIn::Punch)]));
     w.ticks(2);
+    // `creakingHurt` sends 20 trail particles at once; the emitter then sends two a tick.
+    assert!(w.particles() >= before + 20 + 2, "the hurt heart's trails reached the player ({} -> {})", before, w.particles());
     let list = w.creakings();
     assert_eq!(list.len(), 1, "the creaking sways instead of dying (at {pos2:?})");
     assert_eq!(list[0].2, 1.0, "no damage while it is heart-bound");

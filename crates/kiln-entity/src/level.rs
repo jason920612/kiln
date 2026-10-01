@@ -554,6 +554,17 @@ pub trait EntityLevel {
         let _ = (particle, pos);
     }
 
+    /// `sendParticles(TrailParticleOption(target, color, duration), overrideLimiter, alwaysShow,
+    /// pos, 1, 0, 0, 0, 0)` (the creaking heart's trails).
+    fn trail_particle(&mut self, pos: Vec3, target: Vec3, color: i32, duration: i32) {
+        let _ = (pos, target, color, duration);
+    }
+
+    /// `sendParticles(BlockParticleOption(block_crumble, state), pos, count, dx, dy, dz, 0)`.
+    fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
+        let _ = (pos, state, count, spread);
+    }
+
     /// `getRawBrightness(pos, skyDarken)`: the larger of the sky light less `sky_darken` and
     /// the block light.
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {

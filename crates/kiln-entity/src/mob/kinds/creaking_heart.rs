@@ -10,8 +10,7 @@
 //! The block itself (`CreakingHeartBlock`: state updates from its logs, placement, experience)
 //! is the block layer's; here `state` is read from the level.
 //!
-//! Gaps: the trail and crumble particles are not sent (no particle event; the random draws they
-//! make are), `isUnobstructed` for entities that block building is not checked for the spawn.
+//! Gaps: `isUnobstructed` for entities that block building is not checked for the spawn.
 
 use super::creaking;
 use crate::entity::{Entity, EntityKind};
@@ -133,7 +132,7 @@ pub fn update_state(level: &dyn EntityLevel, state: u16, pos: BlockPos) -> u16 {
     state
 }
 
-fn with_state(state: u16, value: &str) -> u16 {
+pub(super) fn with_state(state: u16, value: &str) -> u16 {
     block_of(state).with_property(state, "creaking_heart_state", value).unwrap_or(state)
 }
 
@@ -243,10 +242,10 @@ pub fn tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut HeartBe) {
     let mut rng = draw(level, pos, 0x4352_4541);
     if be.emitter > 0 {
         if be.emitter > 50 {
-            let present = protector(level, be).is_some();
-            emit_particles(&mut rng.r, present, 1);
-            let present = protector(level, be).is_some();
-            emit_particles(&mut rng.r, present, 1);
+            for reverse in [true, false] {
+                let bounds = protector(level, be).and_then(|id| level.entity(id)).map(|e| e.bounding_box());
+                emit_particles(level, &mut rng.r, pos, bounds, 1, reverse);
+            }
         }
         if be.emitter % 10 == 0 && be.emitter_target.is_some() {
             if let Some(id) = protector(level, be)
@@ -406,18 +405,24 @@ fn move_to_possible_spawn_position(level: &dyn EntityLevel, range: i32, p: &mut 
     false
 }
 
-/// `emitParticles(level, count, reverse)`: the trail particles from the creaking to the heart
-/// (or back); only their random draws are simulated (six doubles and an int a particle).
-fn emit_particles(r: &mut LegacyRandom, present: bool, count: i32) {
-    if !present {
-        return;
-    }
+/// `emitParticles(level, count, reverse)`: trail particles from a random point of the creaking's
+/// box to a random point of the heart block (or back, `reverse`); `bounds` is the creaking's
+/// box (`None`: no creaking, nothing happens). Six doubles and an int a particle.
+fn emit_particles(level: &mut dyn EntityLevel, r: &mut LegacyRandom, pos: BlockPos, bounds: Option<Aabb>, count: i32, reverse: bool) {
+    let Some(b) = bounds else { return };
+    let color = if reverse { 16545810 } else { 6250335 };
     for _ in 0..count {
-        for _ in 0..6 {
-            r.next_double();
-        }
-        r.next_int_bounded(40);
+        let from = Vec3::new(b.min_x + r.next_double() * (b.max_x - b.min_x), b.min_y + r.next_double() * (b.max_y - b.min_y), b.min_z + r.next_double() * (b.max_z - b.min_z));
+        let to = Vec3::new(pos.x as f64 + r.next_double(), pos.y as f64 + r.next_double(), pos.z as f64 + r.next_double());
+        let (at, target) = if reverse { (to, from) } else { (from, to) };
+        let duration = r.next_int_bounded(40) + 10;
+        level.trail_particle(at, target, color, duration);
     }
+}
+
+/// The box of a creaking centred at `c` (0.9 by 2.7).
+fn creaking_box_at(c: Vec3) -> Aabb {
+    Aabb { min_x: c.x - 0.45, min_y: c.y - 1.35, min_z: c.z - 0.45, max_x: c.x + 0.45, max_y: c.y + 1.35, max_z: c.z + 0.45 }
 }
 
 /// `creakingHurt`: the heart feels its creaking hit: particles, and resin over the logs of an
@@ -430,7 +435,7 @@ pub fn creaking_hurt(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut HeartB
         return;
     }
     let mut rng = draw(level, pos, 0x4352_4855);
-    emit_particles(&mut rng.r, true, 20);
+    emit_particles(level, &mut rng.r, pos, Some(creaking_box_at(at)), 20, false);
     if heart_state(level.block(pos)) == "awake" {
         let n = rng.r.next_int_bounded(2) + 2;
         for _ in 0..n {

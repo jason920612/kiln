@@ -809,6 +809,37 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
     }
 
+    fn trail_particle(&mut self, pos: Vec3, target: Vec3, color: i32, duration: i32) {
+        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:trail") else { return };
+        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Trail { target: [target.x, target.y, target.z], color, duration } },
+            override_limiter: true,
+            always_show: true,
+            pos: [pos.x, pos.y, pos.z],
+            offset: [0.0; 3],
+            max_speed: [0.0; 3],
+            count: 1,
+            randomization: world_fx::ParticleRandomization::Default,
+        });
+        // `overrideLimiter`: players within 512 blocks.
+        self.level.out.packets.push(([pos.x, pos.y, pos.z], 512.0, pkt));
+    }
+
+    fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
+        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:block_crumble") else { return };
+        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Block(state as i32) },
+            override_limiter: false,
+            always_show: false,
+            pos: [pos.x, pos.y, pos.z],
+            offset: [spread.x as f32, spread.y as f32, spread.z as f32],
+            max_speed: [0.0; 3],
+            count,
+            randomization: world_fx::ParticleRandomization::Default,
+        });
+        self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
+    }
+
     fn mob_griefing(&self) -> bool {
         self.level.env.mobs.griefing
     }
