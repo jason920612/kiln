@@ -214,47 +214,6 @@ impl Control for TriggerIf {
     }
 }
 
-/// `TriggerGate.triggerOneShuffled` (which Java's pin cannot reach: it does not take a place in the
-/// numbering of the gates).
-#[derive(Clone, Debug)]
-pub struct ShuffledTriggers {
-    list: super::gate::Shuffled<Box<dyn Control>>,
-}
-
-impl ShuffledTriggers {
-    pub fn new(triggers: Vec<(Box<dyn Control>, i32)>) -> Box<dyn Control> {
-        Box::new(ShuffledTriggers { list: super::gate::Shuffled::new(triggers) })
-    }
-}
-
-impl Control for ShuffledTriggers {
-    fn name(&self) -> &'static str {
-        "TriggerGate"
-    }
-    fn running(&self) -> bool {
-        false
-    }
-    fn required(&self, out: &mut Vec<Mem>) {
-        for (b, _, _) in &self.list.entries {
-            b.required(out);
-        }
-    }
-    fn try_start(&mut self, cx: &mut Cx) -> bool {
-        self.list.shuffle();
-        for (b, _, _) in self.list.entries.iter_mut() {
-            if b.try_start(cx) {
-                break;
-            }
-        }
-        true
-    }
-    fn tick_or_stop(&mut self, _cx: &mut Cx) {}
-    fn do_stop(&mut self, _cx: &mut Cx) {}
-    fn box_clone(&self) -> Box<dyn Control> {
-        Box::new(self.clone())
-    }
-}
-
 /// `UniformInt.sample(random)`.
 pub fn sample(r: &mut dyn RandomSource, min: i32, max: i32) -> i32 {
     uniform(r, min, max)

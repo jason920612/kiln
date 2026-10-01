@@ -22,7 +22,7 @@ use crate::mob::brain::memory::{Memories, Val};
 use crate::mob::brain::nether::*;
 use crate::mob::brain::sensors;
 use crate::mob::brain::util;
-use crate::mob::brain::{self, Activity, ActivityData, Brain, Control, Cx, Gate, Mem, Shot, ShotBehavior, Status, shot};
+use crate::mob::brain::{self, Activity, ActivityData, Brain, Control, Cx, Gate, Mem, Shot, ShotBehavior, Status, TriggerGate, shot};
 use crate::mob::ext::{self, Info, Kind, MobExt, SpawnView};
 use crate::mob::goals::Living;
 use crate::mob::interact::{HeldChange, Interactor, Outcome};
@@ -1203,7 +1203,7 @@ fn make_brain(random: &mut dyn RandomSource) -> Brain {
             vec![
                 mount(0.8),
                 set_entity_look_target(look_at_player_holding_loved, 8.0),
-                trigger_if(is_passenger, ShuffledTriggers::new(ride_triggers())),
+                trigger_if(is_passenger, TriggerGate::one_shuffled(ride_triggers())),
                 dismount_or_skip_mounting(8, wants_to_stop_riding),
             ],
         ),
