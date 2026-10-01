@@ -195,7 +195,7 @@ impl SessionService {
             .and_then(|(doc, _)| doc.as_ref())
             .and_then(|d| d.pointer(pointer))
             .and_then(|v| v.as_str())
-            .filter(|u| u.starts_with("https://"))
+            .filter(|u| u.starts_with("https://") || (cfg!(test) && u.starts_with("http://127.0.0.1")))
             .unwrap_or(fallback)
             .to_owned()
     }
@@ -421,5 +421,69 @@ pub(crate) mod tests {
         let discovered = "https://session.example/hasJoined".to_string();
         *svc.endpoint.lock().unwrap() = Some((discovered.clone(), Instant::now()));
         assert_eq!(svc.has_joined_endpoint(), discovered);
+    }
+
+    /// A local server that records every request (head and headers) and answers each path with
+    /// the next canned body (empty body: 404).
+    fn recording_server(answers: Vec<(&'static str, String)>) -> (String, std::sync::Arc<Mutex<Vec<String>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                let path = request.split_whitespace().nth(1).unwrap_or("").to_owned();
+                log.lock().unwrap().push(request);
+                let body = answers.iter().find(|(p, _)| path.starts_with(p)).map(|(_, b)| b.clone()).unwrap_or_default();
+                let status = if body.is_empty() { "404 Not Found" } else { "200 OK" };
+                let head = format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                let _ = stream.write_all(head.as_bytes());
+                let _ = stream.write_all(body.as_bytes());
+            }
+        });
+        (base, seen)
+    }
+
+    /// `fetchprofile` lookups name the account asked for and nothing about the operator or
+    /// this server: no credentials, no cookies, no forwarded address, no extra query.
+    #[test]
+    fn profile_lookups_send_only_what_was_asked() {
+        let id = "069a79f444e94726a5befca90e38aaf5";
+        let profile = format!(r#"{{"id":"{id}","name":"Notch","properties":[]}}"#);
+        let (base, seen) = recording_server(vec![("/byname/Notch", profile.clone()), ("/byid/069a79f4", profile)]);
+        let doc = format!(
+            r#"{{"discovery":{{"session":{{"endpoints":{{"getProfileById":{{"uri":"{base}/byid/{{profileId}}"}}}}}},"profiles":{{"endpoints":{{"getByName":{{"uri":"{base}/byname/{{name}}"}}}}}}}}}}"#
+        );
+        let svc = SessionService::new("http://127.0.0.1:9/unused");
+        *svc.document.lock().unwrap() = Some((serde_json::from_str(&doc).ok(), Instant::now() + Duration::from_secs(60)));
+        let found = svc.profile_by_name("Notch").unwrap().unwrap();
+        assert_eq!(found.uuid.simple().to_string(), id);
+        assert!(svc.profile_by_id(found.uuid).unwrap().is_some());
+        assert!(svc.profile_by_name("not a name").unwrap().is_none(), "names no account can have are not sent");
+        assert!(svc.profile_by_id(Uuid::from_u128(1)).unwrap().is_none());
+        let requests = seen.lock().unwrap().clone();
+        assert!(requests.len() >= 3, "{requests:?}");
+        assert!(!requests.iter().any(|r| r.contains("not a name") || r.contains("not%20a")), "{requests:?}");
+        for r in &requests {
+            let mut lines = r.split("\r\n");
+            let head = lines.next().unwrap();
+            let path = head.split_whitespace().nth(1).unwrap();
+            let by_id = path.strip_prefix("/byid/").is_some_and(|rest| {
+                rest.strip_suffix("?unsigned=false").is_some_and(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit()))
+            });
+            assert!(path == "/byname/Notch" || by_id, "unexpected request {head}");
+            for h in lines.take_while(|l| !l.is_empty()) {
+                let name = h.split(':').next().unwrap().to_ascii_lowercase();
+                assert!(
+                    ["host", "user-agent", "accept", "accept-encoding"].contains(&name.as_str()),
+                    "unexpected header {h:?} in {r:?}"
+                );
+            }
+        }
     }
 }

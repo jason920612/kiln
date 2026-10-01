@@ -62,6 +62,7 @@ Settings come from the environment until there is a config file:
 | `KILN_TICK_THREADS` | tick pool size (all cores but one, at most 7) |
 | `KILN_REGIONS` | `unified` for one region per dimension (vanilla profile) |
 | `KILN_ONLINE_MODE` | authenticate with Mojang (`true`/`false`) |
+| `KILN_COMPACTION` | `inline` compacts native cell files on the saving thread (for comparisons); default is a background thread |
 | `KILN_PROFILE_LOOKUP` | `fetchprofile` looks names and ids up through the session service (default: on in online mode); a lookup sends only the name or id asked for |
 | `KILN_PROXY` | `none`, `velocity` or `bungeecord` |
 | `KILN_VELOCITY_SECRET`, `KILN_VELOCITY_SECRET_FILE` | Velocity modern forwarding secret |
