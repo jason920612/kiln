@@ -11,14 +11,15 @@ pub mod convert;
 pub mod registry;
 
 use crate::anvil::AnvilSource;
-use crate::native::cellfile::{CHUNK, CellFile, Key, Record};
+use crate::native::cellfile::{CHUNK, CellFile, Compacted, CompactionPlan, Key, Record};
 use crate::native::chunk::NativeChunk;
 use crate::native::registry::{Registry, Remap};
 use kiln_proto::nbt::{self, Tag};
 use kiln_world::chunk::Chunk;
 use kiln_world::{ChunkPos, ChunkSource, Dimension};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tracing::{info, warn};
@@ -241,6 +242,51 @@ pub fn cell_path(dir: &Path, (cx, cz): (i32, i32)) -> PathBuf {
     dir.join(format!("c.{cx}.{cz}.kcell"))
 }
 
+/// Compactions running at once per store (more wait for a later flush).
+const MAX_COMPACTIONS: usize = 2;
+
+/// Where a store rewrites cell files that hold mostly stale records.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompactionMode {
+    /// On a background thread, one task per cell; the flush that noticed the waste only takes a
+    /// snapshot, and a later flush swaps the compacted copy in (a rename plus the records
+    /// appended meanwhile).
+    Background,
+    /// In the flush itself (the original behaviour; for comparisons).
+    Inline,
+}
+
+/// What compaction has done in a store.
+#[derive(Clone, Debug, Default)]
+pub struct CompactionStats {
+    pub started: u64,
+    pub finished: u64,
+    pub failed: u64,
+    /// Results dropped because their file was replaced meanwhile.
+    pub discarded: u64,
+    /// Bytes of files before and after compaction.
+    pub bytes_before: u64,
+    pub bytes_after: u64,
+    /// Time the flushing thread spent on compaction: the snapshot and thread start, and the
+    /// swap (in `Inline` mode all of it), in microseconds; and the worst single piece.
+    pub owner_us: u64,
+    pub owner_max_us: u64,
+    /// Time the background threads spent copying, in microseconds.
+    pub background_us: u64,
+}
+
+impl CompactionStats {
+    fn owner(&mut self, start: Instant) {
+        let us = start.elapsed().as_micros() as u64;
+        self.owner_us += us;
+        self.owner_max_us = self.owner_max_us.max(us);
+    }
+}
+
+/// A finished background copy: its cell, the copy (or why there is none), the size of the file
+/// it was taken from and the microseconds it took.
+type CompactionResult = ((i32, i32), std::io::Result<Compacted>, u64, u64);
+
 /// A dimension's native store, shared by its chunk source and entity store.
 pub struct NativeStore {
     dir: PathBuf,
@@ -256,6 +302,14 @@ pub struct NativeStore {
     /// Sync each flush to disk.
     pub sync: bool,
     pub stats: LoadStats,
+    pub mode: CompactionMode,
+    pub compaction: CompactionStats,
+    /// Cells being compacted on a thread, with the file size they started from.
+    inflight: HashMap<(i32, i32), u64>,
+    /// Cells whose file was replaced or removed while compacting: their result is dropped.
+    stale: HashSet<(i32, i32)>,
+    done_tx: Sender<CompactionResult>,
+    done_rx: Receiver<CompactionResult>,
 }
 
 impl NativeStore {
@@ -263,6 +317,8 @@ impl NativeStore {
         let dir = dir.into();
         let dict = Dictionaries::current(&dir);
         let compressor = Compressor::new(ZSTD_LEVEL, dict.as_ref().map(|(id, d)| (*id, &d[..])));
+        remove_stale_copies(&dir);
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
         NativeStore {
             samples: dict.is_none().then(Vec::new),
             dicts: Dictionaries::new(&dir),
@@ -274,6 +330,13 @@ impl NativeStore {
             remaps: HashMap::new(),
             sync: true,
             stats: LoadStats::new("native chunk storage"),
+            // KILN_COMPACTION=inline compacts in the flush, as before (for comparisons).
+            mode: if std::env::var("KILN_COMPACTION").is_ok_and(|v| v == "inline") { CompactionMode::Inline } else { CompactionMode::Background },
+            compaction: CompactionStats::default(),
+            inflight: HashMap::new(),
+            stale: HashSet::new(),
+            done_tx,
+            done_rx,
         }
     }
 
@@ -301,6 +364,9 @@ impl NativeStore {
                 warn!("cannot open {}: {e}", path.display());
                 // A corrupt file is moved aside, so the next write starts a new one.
                 if e.kind() == std::io::ErrorKind::InvalidData {
+                    if self.inflight.contains_key(&cell) {
+                        self.stale.insert(cell);
+                    }
                     let aside = path.with_extension(format!("kcell.corrupt-{}", now()));
                     match std::fs::rename(&path, &aside) {
                         Ok(()) => warn!("moved to {}", aside.display()),
@@ -419,6 +485,7 @@ impl NativeStore {
         }
         std::fs::create_dir_all(&self.dir)?;
         Registry::save_current(&self.dir)?;
+        self.poll_compactions();
         let mut written = 0;
         let mut cells: Vec<_> = std::mem::take(&mut self.pending).into_iter().collect();
         cells.sort_unstable_by_key(|(c, _)| *c);
@@ -437,18 +504,162 @@ impl NativeStore {
                     self.pending.insert(cell, updates);
                     continue;
                 }
+                if self.inflight.contains_key(&cell) {
+                    self.stale.insert(cell);
+                }
                 let f = CellFile::create(&path)?;
                 self.files.insert(cell, (Some(f), self.clock));
             }
             let file = self.file(cell).expect("just created");
             file.commit(updates, sync)?;
-            if file.wants_compaction() || file.is_empty() {
-                let (f, t) = self.files.remove(&cell).unwrap();
-                let f = f.unwrap().compact(sync)?;
-                self.files.insert(cell, (f, t));
-            }
+            self.compact_if_wasteful(cell)?;
         }
         Ok(written)
+    }
+
+    /// After a commit: an emptied file is deleted, and a file that is mostly stale records is
+    /// compacted, in the background unless the store is in `Inline` mode.
+    fn compact_if_wasteful(&mut self, cell: (i32, i32)) -> std::io::Result<()> {
+        let sync = self.sync;
+        let running = self.inflight.contains_key(&cell);
+        let (empty, wasteful, before) = {
+            let file = self.file(cell).expect("just committed");
+            (file.is_empty(), file.wants_compaction(), file.file_len())
+        };
+        // A copy in progress finds an emptied file empty when it ends, and removes it.
+        if running || !(empty || wasteful) {
+            return Ok(());
+        }
+        let start = Instant::now();
+        if self.mode == CompactionMode::Inline || empty {
+            let (f, t) = self.files.remove(&cell).unwrap();
+            let f = f.unwrap().compact(sync)?;
+            self.compaction.started += 1;
+            self.compaction.finished += 1;
+            self.compaction.bytes_before += before;
+            self.compaction.bytes_after += f.as_ref().map_or(0, CellFile::file_len);
+            self.files.insert(cell, (f, t));
+        } else if self.inflight.len() < MAX_COMPACTIONS {
+            let plan = self.file(cell).expect("just committed").plan_compaction();
+            let tx = self.done_tx.clone();
+            let spawned = std::thread::Builder::new().name("kiln-compact".into()).spawn(move || {
+                let start = Instant::now();
+                let copy = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_plan(plan, sync)))
+                    .unwrap_or_else(|_| Err(std::io::Error::other("compaction panicked")));
+                let _ = tx.send((cell, copy, before, start.elapsed().as_micros() as u64));
+            });
+            match spawned {
+                Ok(_) => {
+                    self.inflight.insert(cell, before);
+                    self.compaction.started += 1;
+                }
+                Err(e) => warn!("cannot start a compaction thread: {e}"),
+            }
+        }
+        self.compaction.owner(start);
+        Ok(())
+    }
+
+    /// Swaps in the compacted copies that background threads have finished.
+    pub fn poll_compactions(&mut self) {
+        while let Ok(done) = self.done_rx.try_recv() {
+            self.finish_compaction(done);
+        }
+    }
+
+    /// Waits for the running compactions and swaps their copies in (shutdown, tests).
+    pub fn finish_compactions(&mut self) {
+        while !self.inflight.is_empty() {
+            match self.done_rx.recv() {
+                Ok(done) => self.finish_compaction(done),
+                Err(_) => break,
+            }
+        }
+    }
+
+    /// Cells being compacted on background threads.
+    pub fn compactions_running(&self) -> usize {
+        self.inflight.len()
+    }
+
+    fn finish_compaction(&mut self, (cell, copy, before, took_us): CompactionResult) {
+        let start = Instant::now();
+        self.inflight.remove(&cell);
+        self.compaction.background_us += took_us;
+        let sync = self.sync;
+        let path = cell_path(&self.dir, cell);
+        let copy = match copy {
+            Ok(c) => c,
+            Err(e) => {
+                warn!("compacting {}: {e}", path.display());
+                self.compaction.failed += 1;
+                self.stale.remove(&cell);
+                return;
+            }
+        };
+        if self.stale.remove(&cell) {
+            self.compaction.discarded += 1;
+            copy.discard();
+            return;
+        }
+        // The file as it is now: the records written since the snapshot come along.
+        self.file(cell);
+        let (file, t) = self.files.remove(&cell).unwrap_or((None, self.clock));
+        let Some(file) = file else {
+            copy.discard();
+            self.files.insert(cell, (None, t));
+            return;
+        };
+        match file.finish_compaction(copy, sync) {
+            Ok(f) => {
+                self.compaction.finished += 1;
+                self.compaction.bytes_before += before;
+                self.compaction.bytes_after += f.as_ref().map_or(0, CellFile::file_len);
+                info!(
+                    "compacted {}: {} KiB to {} KiB ({:.1} ms in the background, {:.2} ms to swap in)",
+                    path.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
+                    before / 1024,
+                    f.as_ref().map_or(0, CellFile::file_len) / 1024,
+                    took_us as f64 / 1e3,
+                    start.elapsed().as_secs_f64() * 1e3
+                );
+                self.files.insert(cell, (f, t));
+            }
+            Err(e) => {
+                // The file stays as it was; it is opened again on next use.
+                warn!("swapping in the compacted {}: {e}", path.display());
+                self.compaction.failed += 1;
+            }
+        }
+        self.compaction.owner(start);
+    }
+}
+
+impl Drop for NativeStore {
+    fn drop(&mut self) {
+        self.finish_compactions();
+    }
+}
+
+/// Runs a compaction plan, removing its copy again when it fails.
+fn run_plan(plan: CompactionPlan, sync: bool) -> std::io::Result<Compacted> {
+    let tmp = plan.temp_file();
+    let r = plan.run(sync);
+    if r.is_err() {
+        let _ = std::fs::remove_file(tmp);
+    }
+    r
+}
+
+/// Copies left behind by a compaction that a crash cut short are of no use: the cell files
+/// they were made from were never touched.
+fn remove_stale_copies(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        if name.to_str().is_some_and(|n| n.ends_with(".kcell.compact")) {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }
 

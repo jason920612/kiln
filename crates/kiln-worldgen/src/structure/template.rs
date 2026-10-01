@@ -758,6 +758,26 @@ impl TemplateManager {
         self.cache.lock().unwrap().entry(id.to_string()).or_insert(t).clone()
     }
 
+    /// A template that exists, from the data pack directories `roots` (the last one wins,
+    /// as later packs replace earlier ones; read afresh, packs reload) or else the manager's
+    /// own sources. `StructureTemplateManager.get`, which does not make up an empty template.
+    pub fn find_in(&self, roots: &[PathBuf], id: &str) -> Option<Arc<Template>> {
+        let (ns, path) = id.split_once(':').unwrap_or(("minecraft", id));
+        let rel = format!("data/{ns}/structure/{path}.nbt");
+        for root in roots.iter().rev() {
+            if let Ok(b) = std::fs::read(root.join(&rel))
+                && let Some(tag) = decode_template(&b)
+            {
+                return Some(Arc::new(Template::load(&tag)));
+            }
+        }
+        if let Some(t) = self.cache.lock().unwrap().get(id) {
+            return Some(t.clone());
+        }
+        let t = Arc::new(Template::load(&self.read(id)?));
+        Some(self.cache.lock().unwrap().entry(id.to_string()).or_insert(t).clone())
+    }
+
     fn read(&self, id: &str) -> Option<Tag> {
         let (ns, path) = id.split_once(':').unwrap_or(("minecraft", id));
         let rel = format!("data/{ns}/structure/{path}.nbt");
@@ -767,13 +787,18 @@ impl TemplateManager {
                 Source::Jar { path, entries } => entries.get(&rel).and_then(|e| read_zip_entry(path, *e).ok()),
             };
             if let Some(b) = bytes {
-                let mut raw = Vec::new();
-                flate2::read::GzDecoder::new(&b[..]).read_to_end(&mut raw).ok()?;
-                return kiln_proto::nbt::read_named(&raw).ok().map(|(_, t)| t);
+                return decode_template(&b);
             }
         }
         None
     }
+}
+
+/// A template file: gzipped named NBT.
+fn decode_template(bytes: &[u8]) -> Option<Tag> {
+    let mut raw = Vec::new();
+    flate2::read::GzDecoder::new(bytes).read_to_end(&mut raw).ok()?;
+    kiln_proto::nbt::read_named(&raw).ok().map(|(_, t)| t)
 }
 
 impl std::fmt::Debug for TemplateManager {

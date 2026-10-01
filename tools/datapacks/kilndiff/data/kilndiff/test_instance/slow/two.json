@@ -1,0 +1,8 @@
+{
+  "type": "minecraft:function",
+  "function": "minecraft:always_pass",
+  "environment": "kilndiff:rules",
+  "structure": "minecraft:empty",
+  "max_ticks": 1,
+  "setup_ticks": 2
+}

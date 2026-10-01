@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:block_based",
+  "environment": {
+    "type": "minecraft:game_rules",
+    "rules": {
+      "minecraft:random_tick_speed": 7
+    }
+  },
+  "structure": "kilndiff:accept",
+  "max_ticks": 10
+}

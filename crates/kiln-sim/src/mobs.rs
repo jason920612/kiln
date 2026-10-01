@@ -20,6 +20,8 @@ pub(crate) struct MobRules {
     pub creaking_active: bool,
     pub griefing: bool,
     pub drops: bool,
+    /// `minecraft:entity_drops` (vehicles and other non-mob entities drop their items).
+    pub entity_drops: bool,
     pub spawn_mobs: bool,
     pub spawn_monsters: bool,
     /// `minecraft:spawn_wardens`.
@@ -39,6 +41,7 @@ impl Default for MobRules {
             creaking_active: false,
             griefing: true,
             drops: true,
+            entity_drops: true,
             spawn_mobs: true,
             spawn_monsters: true,
             spawn_wardens: true,

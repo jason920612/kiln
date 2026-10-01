@@ -14,6 +14,7 @@ pub mod experience;
 mod summon;
 mod execute;
 mod function;
+mod gametest;
 mod items;
 mod compute;
 mod item;
@@ -22,6 +23,7 @@ pub use function::{run_as_server, run_function};
 pub mod gamerules;
 mod players;
 mod protocol;
+pub mod profile;
 pub mod misc;
 mod scoreboard;
 pub(crate) mod sound;
@@ -141,6 +143,8 @@ pub const COMMANDS: &[&str] = &[
     "loot",
     "item",
     "compute",
+    "test",
+    "fetchprofile",
 ];
 
 /// Registers every built-in command.
@@ -229,6 +233,8 @@ pub fn register_all<S: Host + 'static>(d: &mut Dispatcher<S>) {
     loot::loot(d);
     item::item(d);
     compute::compute(d);
+    gametest::test(d);
+    profile::fetchprofile(d);
 }
 
 /// `getEntityOrException`.
@@ -268,3 +274,5 @@ fn format_double(v: f64) -> String {
 mod tests;
 #[cfg(test)]
 mod world_tests;
+#[cfg(test)]
+mod gametest_tests;

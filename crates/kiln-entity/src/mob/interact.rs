@@ -42,13 +42,15 @@ pub struct Outcome {
     pub player_sound: Option<&'static str>,
     /// The player gets on the mob (`startRiding`).
     pub ride: bool,
+    /// The player opens the entity's container menu (a chest or hopper minecart).
+    pub open_container: bool,
 }
 
 impl Outcome {
-    pub const PASS: Outcome = Outcome { success: false, held: HeldChange::None, shear: None, player_sound: None, ride: false };
+    pub const PASS: Outcome = Outcome { success: false, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false };
 
     pub fn success(held: HeldChange) -> Outcome {
-        Outcome { success: true, held, shear: None, player_sound: None, ride: false }
+        Outcome { success: true, held, shear: None, player_sound: None, ride: false, open_container: false }
     }
 }
 
@@ -62,7 +64,7 @@ pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, s
         // Extension entities with a click of their own (boats).
         let placeholder = crate::entity::EntityKind::Other { type_name: e.type_name };
         if let crate::entity::EntityKind::Ext(mut x) = std::mem::replace(&mut e.kind, placeholder) {
-            let out = x.interact(e, level, who);
+            let out = x.interact(e, level, who, stack);
             e.kind = crate::entity::EntityKind::Ext(x);
             if let Some(out) = out {
                 if out.success {
@@ -103,7 +105,7 @@ fn mob_interact(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wh
             let ready = matches!(m.species, Species::Sheep { sheared: false, .. }) && !m.baby();
             if !ready {
                 // `CONSUME`: nothing happens, but the click is taken.
-                return Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false };
+                return Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false };
             }
             let table = super::species::shear_table(m);
             level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.sheep.shear", source: "players", volume: 1.0, pitch: 1.0 });

@@ -419,7 +419,7 @@ impl EntityExt for Boat {
 
     /// `AbstractBoat.interact`: a click gets the player aboard unless sneaking, under water
     /// too long, or the boat is full.
-    fn interact(&mut self, e: &mut Entity, _level: &mut dyn EntityLevel, who: &Interactor) -> Option<Outcome> {
+    fn interact(&mut self, e: &mut Entity, _level: &mut dyn EntityLevel, who: &Interactor, _stack: &kiln_item::ItemStack) -> Option<Outcome> {
         if who.sneaking || self.out_of_control >= 60.0 || e.passengers.len() >= self.max_passengers() {
             return Some(Outcome::PASS);
         }

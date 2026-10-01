@@ -1809,7 +1809,7 @@ impl Kind for Villager {
         if spawn_egg || !mob::is_alive(e, m) || trading {
             return None;
         }
-        let done = Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false };
+        let done = Outcome { success: true, held: HeldChange::None, shear: None, player_sound: None, ride: false, open_container: false };
         if m.baby() {
             set_unhappy(e, m, level);
             return Some(done);

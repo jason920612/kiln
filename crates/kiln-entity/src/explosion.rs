@@ -47,6 +47,16 @@ pub fn explode(
 /// wither skull's weaker blocks), applied to each block's resistance.
 pub type Resistance<'a> = &'a dyn Fn(u16, f32) -> f32;
 
+/// The source entity's say over blocks beyond [`Resistance`] (a primed TNT minecart lets
+/// rails and what they lie on be): `resistance(state, above, resistance)` for
+/// `getBlockExplosionResistance` and `should_explode(state, above)` for `shouldBlockExplode`,
+/// with `above` the state of the block over the one asked about.
+#[derive(Clone, Copy, Default)]
+pub struct BlockRules<'a> {
+    pub resistance: Option<&'a dyn Fn(u16, u16, f32) -> f32>,
+    pub should_explode: Option<&'a dyn Fn(u16, u16) -> bool>,
+}
+
 /// [`explode`] with the source entity's block resistance override.
 /// `damage`: false for a calculator that damages no entities (wind bursts: knockback only).
 pub fn explode_with(
@@ -59,9 +69,25 @@ pub fn explode_with(
     resistance: Option<Resistance>,
     damage: bool,
 ) -> Vec<BlockPos> {
+    let wrapped = resistance.map(|f| move |state: u16, _above: u16, res: f32| f(state, res));
+    let rules = BlockRules { resistance: wrapped.as_ref().map(|f| f as &dyn Fn(u16, u16, f32) -> f32), should_explode: None };
+    explode_ruled(level, source, center, radius, fire, interaction, rules, damage)
+}
+
+/// [`explode_with`] with the source entity's [`BlockRules`].
+pub fn explode_ruled(
+    level: &mut dyn EntityLevel,
+    source: Option<i32>,
+    center: Vec3,
+    radius: f32,
+    fire: bool,
+    interaction: Interaction,
+    rules: BlockRules,
+    damage: bool,
+) -> Vec<BlockPos> {
     let interaction = interaction.resolved();
     level.emit(Event::GameEvent { event: "minecraft:explode", pos: center, entity: source });
-    let mut positions = exploded_positions(level, center, radius, resistance);
+    let mut positions = exploded_positions(level, center, radius, rules);
     hurt_entities(level, source, center, radius, interaction, damage);
     if interaction != Interaction::Keep {
         shuffle(&mut positions, level);
@@ -86,7 +112,7 @@ pub fn explode_with(
 
 /// `calculateExplodedPositions`: 16³ edge rays losing strength through blocks. The result is in
 /// `HashSet<BlockPos>` iteration order, which vanilla's shuffle starts from.
-fn exploded_positions(level: &mut dyn EntityLevel, center: Vec3, radius: f32, resistance: Option<Resistance>) -> Vec<BlockPos> {
+fn exploded_positions(level: &mut dyn EntityLevel, center: Vec3, radius: f32, rules: BlockRules) -> Vec<BlockPos> {
     let mut set: Vec<BlockPos> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for i in 0..16 {
@@ -114,12 +140,13 @@ fn exploded_positions(level: &mut dyn EntityLevel, center: Vec3, radius: f32, re
                     if !(physics::is_air(state) && f.is_empty()) {
                         let fluid_res = if f.is_empty() { 0.0 } else { 100.0 };
                         let mut res = physics::block_factors(state).explosion_resistance.max(fluid_res);
-                        if let Some(f) = resistance {
-                            res = f(state, res);
+                        if let Some(f) = rules.resistance {
+                            res = f(state, level.block(pos.above()), res);
                         }
                         strength -= (res + 0.3) * 0.3;
                     }
-                    if strength > 0.0 && seen.insert(pos) {
+                    let blocks = rules.should_explode.is_none_or(|f| f(state, level.block(pos.above())));
+                    if strength > 0.0 && blocks && seen.insert(pos) {
                         set.push(pos);
                     }
                     x += dx * 0.30000001192092896;

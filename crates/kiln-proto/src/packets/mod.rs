@@ -402,6 +402,15 @@ pub fn block_entity_data(pos: [i32; 3], kind: i32, tag: &Tag) -> Bytes {
     b.freeze()
 }
 
+/// Game Test Highlight Pos: a block to highlight, and its position relative to the test
+/// structure (`/test pos`).
+pub fn game_test_highlight_pos(absolute: [i32; 3], relative: [i32; 3]) -> Bytes {
+    let mut b = packet(ids::play::clientbound::GAME_TEST_HIGHLIGHT_POS);
+    b.put_position(absolute[0], absolute[1], absolute[2]);
+    b.put_position(relative[0], relative[1], relative[2]);
+    b.freeze()
+}
+
 /// Set Container Slot with a stack already encoded with `ItemStack.OPTIONAL_STREAM_CODEC`
 /// (kiln-item's `ItemStack::write_optional`).
 pub fn container_set_slot_encoded(window: i32, state: i32, slot: i16, stack: &[u8]) -> Bytes {

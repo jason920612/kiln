@@ -13,7 +13,7 @@ pub mod saved_data;
 pub use anvil::AnvilSource;
 pub use entities::EntityStore;
 pub use level::{LevelState, LevelStore, WorldSpawn};
-pub use native::{NativeSource, NativeStore, WorldFormat};
+pub use native::{CompactionMode, CompactionStats, NativeSource, NativeStore, WorldFormat};
 pub use player::{PlayerData, PlayerStore};
 pub use poi::PoiStore;
 

@@ -238,7 +238,7 @@ impl Packs {
     }
 
     /// Directories of the enabled packs, in load order.
-    fn roots(&self) -> Vec<PathBuf> {
+    pub(crate) fn roots(&self) -> Vec<PathBuf> {
         self.selected.iter().filter_map(|id| self.find(id)?.root.clone()).collect()
     }
 
@@ -517,6 +517,7 @@ impl Sim {
             }
         }
         self.commands.packs.library = self.load_functions(&roots);
+        self.commands.gametests.defs = crate::gametest::Defs::load(&roots);
         self.load_advancements(&roots);
         self.commands.packs.load_pending = true;
     }
@@ -621,7 +622,7 @@ impl Sim {
 
     /// Runs a function as the server (`getGameLoopSender`): at the world spawn, silent, at
     /// permission level 2.
-    fn run_server_function(&mut self, f: &CommandFunction) {
+    pub(crate) fn run_server_function(&mut self, f: &CommandFunction) {
         let dispatcher = self.commands.dispatcher.clone();
         let previous = std::mem::replace(&mut self.commands.source, crate::commands::CommandSource::Console);
         let stack = SourceStack::new(Text::literal("Server"), crate::commands::OVERWORLD, self.spawn.map(|v| v as f64));

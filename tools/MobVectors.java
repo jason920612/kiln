@@ -185,6 +185,14 @@ public class MobVectors {
         boolean diverges;
         /// The `mob_drops` game rule is off for this scenario (Kiln's replay drops no loot).
         boolean noMobDrops;
+        /// Mobs that appear get a yaw of their own (10 degrees times their number): where the
+        /// constructor's random yaw stands (a trap's new horses, which their riders copy) the
+        /// vanilla one cannot be reproduced.
+        boolean pinYaw;
+        /// The replay compares only this many ticks (0: all): mob riders steer their mounts in
+        /// vanilla (the mount's goals go off at its next fifth tick, the rider's navigation and
+        /// move control are the mount's), which Kiln does not do yet.
+        int compareTicks;
         // tick -> [mob index, amount]; the player (or nobody) hurts the mob.
         final Map<Integer, double[]> hurts = new HashMap<>();
         /// Things done to the mobs before the entity ticks of a tick (effects, potions,
@@ -349,6 +357,23 @@ public class MobVectors {
                     BlockPos p = new BlockPos(x, y, z);
                     if (!level.getBlockState(p).isAir()) level.setBlock(p, air, FLAGS);
                 }
+        awaitLight(level);
+    }
+
+    /// The light engine runs on its own thread: what the blocks just placed (or removed) do to
+    /// the light (a pool's water dims the light under it, which the mobs' walk target values and
+    /// light-dependent goals read) has to be settled before the mobs tick, or a vector would
+    /// depend on how fast that thread ran.
+    static void awaitLight(ServerLevel level) {
+        var engine = level.getChunkSource().getLightEngine();
+        for (int i = 0; i < 2; i++) {
+            // (the wait's own task can complete a batch before that batch's light update)
+            engine.tryScheduleUpdate();
+            var done = engine.waitForPendingTasks(0, 0);
+            long deadline = System.nanoTime() + 60_000_000_000L;
+            level.getServer().managedBlock(() -> done.isDone() || System.nanoTime() > deadline);
+            if (!done.isDone()) throw new IllegalStateException("light engine did not settle");
+        }
     }
 
     static Object get(Object o, String field) throws Exception {
@@ -382,6 +407,7 @@ public class MobVectors {
 
     static String run(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
         for (var b : s.blocks.entrySet()) level.setBlock(b.getKey(), b.getValue(), FLAGS);
+        awaitLight(level);
         level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + s.dayTime);
         if (s.noMobDrops) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:mob_drops false");
         level.updateSkyBrightness();
@@ -541,7 +567,8 @@ public class MobVectors {
                 if (e.isRemoved()) continue;
                 // `ServerLevel.tick`: the despawn check, then the tick.
                 e.checkDespawn();
-                if (!e.isRemoved()) level.tickNonPassenger(e);
+                // Riders are ticked with their vehicle (`tickPassenger`).
+                if (!e.isRemoved() && !e.isPassenger()) level.tickNonPassenger(e);
             }
             // wp28 creaking: `Level.tickBlockEntities` for the scenario's creaking hearts (their
             // ticker skips uprooted ones).
@@ -571,6 +598,11 @@ public class MobVectors {
                             d(e.getDeltaMovement().x), d(e.getDeltaMovement().y), d(e.getDeltaMovement().z), e instanceof Mob, Float.toString(e.getYRot())));
                     if (e instanceof Mob nm) {
                         nm.getRandom().setSeed(7777L * (tick + 1) + pinned.size());
+                        if (s.pinYaw) {
+                            float y = 10f * (pinned.size() + 1);
+                            nm.setYRot(y);
+                            nm.yRotO = y;
+                        }
                         nm.setYHeadRot(nm.getYRot());
                         nm.yHeadRotO = nm.getYRot();
                         nm.setYBodyRot(nm.getYRot());
@@ -630,9 +662,9 @@ public class MobVectors {
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", Float.toString(s.playerYaw), Float.toString(s.playerPitch),
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
-                "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
+                "{\"name\":\"%s\",\"diverges\":%b,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"trace\":[%s]}",
-                s.name, s.diverges, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, heartsJson, creakingActive, endBlocks, heartTrace, nextId, trace);
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, heartsJson, creakingActive, endBlocks, heartTrace, nextId, trace);
     }
 
     /// `MOB_TRACE_RANDOM=<scenario>`: a mob's random that logs the callers of every draw.
@@ -1413,7 +1445,92 @@ public class MobVectors {
         scenariosBrainNew(out);
         scenariosBrainSpecial(out);
 
+        // -- wp25: the skeleton trap
+        scenariosTrap(out);
+
         return out;
+    }
+
+    // ---------------------------------------------------------- wp25: skeleton horses and the trap
+    static void scenariosTrap(List<Scenario> out) {
+        // A wild skeleton horse idling, and a tamed one.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_skeleton_horse_" + seed);
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 40f * seed, 21000L + seed));
+            s.player = new double[] {18.5, BY, 8.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("idle_tamed_skeleton_horse");
+            solidGround(s);
+            MobSpec m = new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 70f, 21100L);
+            m.nbt = "{Tame:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {18.5, BY, 8.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A trap horse with a player out of reach: it idles, the trap goal not yet running.
+        {
+            Scenario s = new Scenario("waiting_skeleton_trap");
+            solidGround(s);
+            MobSpec m = new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 20f, 21200L);
+            m.nbt = "{SkeletonTrap:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {21.5, BY, 8.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Sprung by a player within 10 blocks: a bolt, a skeleton on the horse and three more
+        // horsemen. The player is in creative mode: the skeleton that rides the trap horse ticks
+        // in the tick the trap springs, on a random the harness cannot pin yet, and would
+        // pick a survival player as its target by chance. (Its arrows' spread comes from the
+        // clock too.)
+        {
+            Scenario s = new Scenario("skeleton_trap_creative");
+            s.pinYaw = true;
+            s.compareTicks = 5;
+            solidGround(s);
+            MobSpec m = new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 20f, 21300L);
+            m.nbt = "{SkeletonTrap:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {14.5, BY, 8.5};
+            s.playerCreative = true;
+            s.ticks = 160;
+            out.add(s);
+        }
+        // The edge of the trap's reach: a player 9.9 blocks away springs it, one 10.1 away does not.
+        for (double dx : new double[] {9.9, 10.1}) {
+            Scenario s = new Scenario("skeleton_trap_edge_" + (dx < 10 ? "in" : "out"));
+            s.pinYaw = true;
+            s.compareTicks = dx < 10 ? 5 : 0;
+            solidGround(s);
+            MobSpec m = new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 200f, 21400L + (dx < 10 ? 0 : 1));
+            m.nbt = "{SkeletonTrap:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {8.5 + dx, BY, 8.5};
+            s.playerCreative = true;
+            s.ticks = 120;
+            out.add(s);
+        }
+        // An unsprung trap vanishes after 18000 ticks.
+        {
+            Scenario s = new Scenario("expiring_skeleton_trap");
+            solidGround(s);
+            MobSpec m = new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 20f, 21500L);
+            m.nbt = "{SkeletonTrap:1b,SkeletonTrapTime:17900}";
+            s.mobs.add(m);
+            s.player = new double[] {22.5, BY, 8.5};
+            s.playerCreative = true;
+            s.ticks = 200;
+            out.add(s);
+        }
     }
 
     /// `Owner` of the harness player (`KilnMob`), for tamed animals.

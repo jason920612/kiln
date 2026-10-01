@@ -698,8 +698,8 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
 /// `ServerLevel.tickThunder` for chunk `c`, with the chunk's random: during a thunderstorm one
 /// chance in 100000 per tick of a bolt at a random column's surface (drawn to a lightning rod
 /// within 128 blocks, or to a living entity under open sky near the column). With
-/// `spawn_mobs`, a chance of the effective difficulty in 100 makes it a skeleton trap's
-/// harmless bolt (Kiln does not spawn the trap's skeleton horse).
+/// `spawn_mobs`, a chance of the effective difficulty in 100 makes it a skeleton trap: a trap
+/// horse at the block (its goal springs the trap when a player comes near) and a harmless bolt.
 fn tick_thunder(level: &mut RegionLevel, c: ChunkPos) {
     let w = level.env.weather.weather;
     if !(w.raining && w.thundering) || level.blocks.random.next_int_bounded(100000) != 0 {
@@ -715,8 +715,26 @@ fn tick_thunder(level: &mut RegionLevel, c: ChunkPos) {
     let trap = env.mobs.spawn_mobs
         && level.blocks.random.next_double() < ctx.effective_difficulty as f64 * 0.01
         && !kiln_blocks::tags::is(level.block(target.below()), "minecraft:lightning_rods");
+    if trap {
+        // The horse's own random is not the chunk's.
+        let horse = trap_horse(target, effect_hash(level.env, target, 0x7472) as i64);
+        let corner = [target.x as f64, target.y as f64, target.z as f64];
+        level.out.spawns.push(Spawn { kind: &kiln_data::entities::types::SKELETON_HORSE, pos: corner, vel: [0.0; 3], body: entities::Body::Ready(Box::new(horse)) });
+    }
     let at = [target.x as f64 + 0.5, target.y as f64, target.z as f64 + 0.5];
     level.out.spawns.push(Spawn { kind: &kiln_data::entities::types::LIGHTNING_BOLT, pos: at, vel: [0.0; 3], body: entities::Body::Lightning { visual_only: trap } });
+}
+
+/// The trap horse of `ServerLevel.tickThunder`: `SKELETON_HORSE.create(level, EVENT)`,
+/// `setTrap(true)`, `setAge(0)`, `setPos` at the corner of block `target`, no `finalizeSpawn`;
+/// `seed` seeds its own random.
+pub(crate) fn trap_horse(target: BlockPos, seed: i64) -> kiln_entity::Entity {
+    let mut horse = kiln_entity::mob::new(kiln_entity::mob::MobKind::SkeletonHorse, 0, 0, seed);
+    if let Some(m) = kiln_entity::mob::data_mut(&mut horse) {
+        kiln_entity::mob::kinds::skeleton_horse::set_trap(m, true);
+    }
+    horse.set_pos(kiln_entity::math::Vec3::new(target.x as f64, target.y as f64, target.z as f64));
+    horse
 }
 
 /// `ServerLevel.findLightningTargetAround`.
@@ -1229,6 +1247,25 @@ mod tests {
             assert!(b.block_ticks.schedule(tick));
         }
         b
+    }
+
+    /// What a thunderstorm's trap spawns: an adult, wild skeleton horse at the block's corner
+    /// with the trap goal, not yet sprung.
+    #[test]
+    fn thunder_trap_horse_is_a_wild_trap() {
+        let e = trap_horse(BlockPos::new(-3, 70, 5), 99);
+        assert_eq!(e.position(), kiln_entity::math::Vec3::new(-3.0, 70.0, 5.0));
+        let m = kiln_entity::mob::data(&e).expect("a mob");
+        assert_eq!(m.kind, kiln_entity::mob::MobKind::SkeletonHorse);
+        assert!(kiln_entity::mob::kinds::skeleton_horse::is_trap(m));
+        assert!(!kiln_entity::mob::kinds::horse::is_tamed(m));
+        assert!(!m.baby());
+        assert!(m.goals.goals.iter().any(|g| g.priority == 1 && g.goal.name() == "SkeletonTrapGoal"));
+        // Saved as a trap (`SkeletonTrap`), and it comes back as one.
+        let tag = kiln_entity::persist::save(&e, &|_| None);
+        assert_eq!(tag.get("SkeletonTrap").and_then(|t| t.as_i64()), Some(1));
+        let back = kiln_entity::persist::load(&tag, 5, 1).expect("loads");
+        assert!(kiln_entity::mob::kinds::skeleton_horse::is_trap(kiln_entity::mob::data(&back).unwrap()));
     }
 
     #[test]

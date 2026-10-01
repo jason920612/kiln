@@ -41,6 +41,29 @@ fn container_json(sim: &Sim, pos: BlockPos) -> Value {
     Value::Object(m)
 }
 
+/// The slots of the container minecart standing in the block at `pos` (`{}` when none does),
+/// as `ContainerVectors.cartState` records them.
+fn cart_json(sim: &Sim, pos: BlockPos) -> Value {
+    let lo = [pos.x as f64 + 0.01, pos.y as f64 + 0.01, pos.z as f64 + 0.01];
+    let hi = [pos.x as f64 + 0.99, pos.y as f64 + 0.99, pos.z as f64 + 0.99];
+    for region in sim.dims[OVERWORLD_ID].regions.iter() {
+        for e in region.part().0.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_ref() else { continue };
+            let bb = phys.bounding_box();
+            if !(bb.min_x < hi[0] && bb.max_x > lo[0] && bb.min_y < hi[1] && bb.max_y > lo[1] && bb.min_z < hi[2] && bb.max_z > lo[2]) {
+                continue;
+            }
+            let Some(c) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(phys).and_then(|m| m.contents.as_ref()) else {
+                continue;
+            };
+            let items: Vec<Value> =
+                c.items.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| json!([i, s.item_name(), s.count()])).collect();
+            return json!({ "items": items });
+        }
+    }
+    json!({})
+}
+
 /// A comparator block entity's `OutputSignal` (-1 without one).
 fn comparator_output(sim: &Sim, pos: BlockPos) -> i64 {
     let Some(chunk) = sim.dims[OVERWORLD_ID].regions.chunk(ChunkPos::of_block(pos.x, pos.z)) else { return -1 };
@@ -79,14 +102,27 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
     }
-    let actions = |t: usize| -> Vec<ToSim> {
+    // Vanilla's `/summon` adds the entity at once; here entities summoned by a command join the
+    // level in the next tick, so the summons of tick `t` are sent with tick `t - 1` (tick 1's in
+    // a step of their own before it).
+    let actions = |t: usize, summons: bool| -> Vec<ToSim> {
         line["actions"].get(t.to_string()).and_then(Value::as_array).map_or(Vec::new(), |a| {
-            a.iter().map(|c| ToSim::Console(absolute(c.as_str().unwrap()))).collect()
+            a.iter()
+                .filter(|c| c.as_str().unwrap().starts_with("summon ") == summons)
+                .map(|c| ToSim::Console(absolute(c.as_str().unwrap())))
+                .collect()
         })
     };
+    let first_summons = actions(1, true);
+    if !first_summons.is_empty() {
+        let mut inbox = first_summons;
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+    }
     let containers: Vec<BlockPos> = line["containers"].as_array().unwrap().iter().map(pos_of).collect();
     let states: Vec<BlockPos> = line["states"].as_array().unwrap().iter().map(pos_of).collect();
     let comparators: Vec<BlockPos> = line["comparators"].as_array().unwrap().iter().map(pos_of).collect();
+    let carts: Vec<BlockPos> = line["carts"].as_array().map_or(Vec::new(), |a| a.iter().map(pos_of).collect());
     let (mut compared, mut errors) = (0, Vec::new());
     for (t, want) in line["result"].as_array().unwrap().iter().enumerate() {
         let tick = t + 1;
@@ -97,7 +133,8 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
                 inbox.push(ToSim::Console(format!("setblock {} {} {} {}", p.x, p.y, p.z, b[3].as_str().unwrap())));
             }
         }
-        inbox.extend(actions(tick));
+        inbox.extend(actions(tick, false));
+        inbox.extend(actions(tick + 1, true));
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
         for (i, &p) in containers.iter().enumerate() {
@@ -114,6 +151,13 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             if got != want_state {
                 let name = |s: Option<u16>| s.map_or("?".to_owned(), kiln_blocks::state::state_string);
                 errors.push(format!("tick {tick} state {p:?}: kiln {}, vanilla {}", name(got), want["states"][i]));
+            }
+        }
+        for (i, &p) in carts.iter().enumerate() {
+            let got = cart_json(&sim, p);
+            compared += 1;
+            if got != want["carts"][i] {
+                errors.push(format!("tick {tick} cart {i} {p:?}: kiln {got}, vanilla {}", want["carts"][i]));
             }
         }
         for (i, &p) in comparators.iter().enumerate() {

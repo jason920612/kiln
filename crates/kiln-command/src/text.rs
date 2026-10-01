@@ -22,6 +22,9 @@ pub enum Content {
     /// A component already in network NBT form (e.g. from `/tellraw`); style and siblings
     /// of the surrounding [`Text`] are ignored.
     Raw(Tag),
+    /// An object component (`Component.object`): its NBT fields and the text plain renderings
+    /// show (`ObjectInfo.defaultFallback`).
+    Object { fields: Vec<(String, Tag)>, fallback: String },
 }
 
 impl Default for Content {
@@ -118,15 +121,21 @@ impl Text {
     pub fn key(&self) -> Option<&str> {
         match &self.content {
             Content::Translate { key, .. } => Some(key),
-            Content::Literal(_) | Content::Raw(_) => None,
+            Content::Literal(_) | Content::Raw(_) | Content::Object { .. } => None,
         }
     }
 
     pub fn args(&self) -> &[Arg] {
         match &self.content {
             Content::Translate { args, .. } => args,
-            Content::Literal(_) | Content::Raw(_) => &[],
+            Content::Literal(_) | Content::Raw(_) | Content::Object { .. } => &[],
         }
+    }
+
+    /// An object component (a player head sprite): `fields` are its NBT fields (`object`, ...);
+    /// consoles and clients without the sprite show `fallback`.
+    pub fn object(fields: Vec<(String, Tag)>, fallback: impl Into<String>) -> Self {
+        Text { content: Content::Object { fields, fallback: fallback.into() }, ..Default::default() }
     }
 
     /// `[text]` as `ComponentUtils.wrapInSquareBrackets` builds it.
@@ -158,6 +167,7 @@ impl Text {
         let mut fields: Vec<(String, Tag)> = Vec::new();
         match &self.content {
             Content::Raw(tag) => return tag.clone(),
+            Content::Object { fields: object, .. } => fields.extend(object.iter().cloned()),
             Content::Literal(s) => fields.push(("text".into(), Tag::String(s.clone()))),
             Content::Translate { key, args } => {
                 fields.push(("translate".into(), Tag::String(key.clone())));
@@ -226,6 +236,7 @@ impl Text {
         match &self.content {
             Content::Literal(s) => out.push_str(s),
             Content::Raw(tag) => write_nbt_in(tag, lang, out),
+            Content::Object { fallback, .. } => out.push_str(fallback),
             Content::Translate { key, args } => {
                 let args: Vec<String> = args
                     .iter()
@@ -250,6 +261,7 @@ impl Text {
         match &self.content {
             Content::Literal(s) => out.push_str(s),
             Content::Raw(tag) => write_plain_nbt(tag, out),
+            Content::Object { fallback, .. } => out.push_str(fallback),
             Content::Translate { key, args } if key == "chat.square_brackets" && args.len() == 1 => {
                 out.push('[');
                 args[0].write_plain(out);

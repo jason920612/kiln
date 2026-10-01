@@ -142,9 +142,9 @@ fn throw_item(e: &Entity, level: &mut dyn EntityLevel, stack: ItemStack, target:
 /// `AllayAi.getLikedPlayer`: the liked player while it plays (not a spectator) within 64 blocks.
 fn liked_player(cx: &Cx) -> Option<PlayerView> {
     let u = cx.b.mem.uuid(Mem::LikedPlayer)?;
-    let p = cx.level.players().iter().find(|p| p.uuid == u)?;
+    let p = cx.level.player_by_uuid(u)?;
     let d = p.pos.distance_to_sqr(cx.e.position());
-    (!p.spectator && d < 64.0 * 64.0).then_some(*p)
+    (!p.spectator && d < 64.0 * 64.0).then_some(p)
 }
 
 /// `AllayAi.shouldDepositItemsAtLikedNoteblock`.

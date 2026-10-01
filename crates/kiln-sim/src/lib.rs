@@ -38,6 +38,7 @@ mod glide;
 mod slide;
 mod firework;
 mod boats;
+mod carts;
 mod xp;
 mod container;
 mod datapacks;
@@ -49,6 +50,8 @@ mod dragon_fight;
 mod effects;
 mod entities;
 mod fishing;
+mod gametest;
+mod profiles;
 mod generation;
 mod golem;
 mod independent;
@@ -152,6 +155,11 @@ pub struct SimConfig {
     pub keep_alive: bool,
     /// Where the data packs publish the feature flags and tags that logins send.
     pub data_sync: std::sync::Arc<kiln_link::DataSync>,
+    /// Looks game profiles up for `fetchprofile` (the session service); without one only
+    /// online players and offline names resolve.
+    pub profile_lookup: Option<std::sync::Arc<dyn kiln_link::ProfileLookup>>,
+    /// The simulation's own inbox, for answers that arrive from other threads.
+    pub replies: Option<crossbeam_channel::Sender<ToSim>>,
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -184,6 +192,8 @@ impl SimConfig {
             access: kiln_link::access::AccessLists::new(None).shared(),
             keep_alive: true,
             data_sync: Default::default(),
+            profile_lookup: None,
+            replies: None,
         }
     }
 }
@@ -295,6 +305,13 @@ struct Player {
     fall_fly_ticks: i32,
     /// `autoSpinAttackTicks` (a riptide throw): the spin attack lasts this many more ticks.
     spin_ticks: i32,
+    /// `autoSpinAttackDmg` and `autoSpinAttackItemStack`: what the spin hits with (the trident
+    /// as thrown, from the hand `spin_off_hand` names).
+    spin_damage: f32,
+    spin_item: kiln_item::ItemStack,
+    spin_off_hand: bool,
+    /// The tick counted down this tick, so the region checks what the spin touched.
+    spin_check: bool,
     /// Shared flags or pose changed since the last broadcast.
     meta_dirty: bool,
     /// Arm swung this tick.
@@ -1117,6 +1134,7 @@ impl Sim {
         self.world.tick_rate.tick();
         // B0: connection events, chunks, topology, joins, membership.
         let (mut packets, mut joins, mut console, mut leaves) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let mut profile_results = Vec::new();
         for msg in inbox {
             match msg {
                 ToSim::Join(j) => joins.push(j),
@@ -1132,6 +1150,7 @@ impl Sim {
                     let _ = done.send(());
                     return false;
                 }
+                ToSim::ProfileLookup { request, result } => profile_results.push((request, result)),
             }
         }
         // `/kiln use` clicks, as if their players had sent them.
@@ -1179,8 +1198,12 @@ impl Sim {
         lap(&mut self.stats, "px");
 
         // G: console, time, autosave.
+        self.deliver_profile_answers();
         for command in console {
             self.run_console_command(command.trim_start_matches('/'));
+        }
+        for (request, result) in profile_results {
+            self.profile_lookup_finished(request, result);
         }
         self.tick_global();
         self.flush_stat_scores();
@@ -1411,6 +1434,38 @@ impl Sim {
         out
     }
 
+    /// Every simulated entity's vehicle and passengers: (network id, vehicle, passengers), in id
+    /// order (for tests and tools).
+    pub fn riding(&self) -> Vec<(i32, Option<i32>, Vec<i32>)> {
+        let mut out: Vec<_> = self
+            .dims
+            .iter()
+            .flat_map(|d| d.regions.iter())
+            .flat_map(|r| r.part().0.list.iter())
+            .filter(|e| !e.removed)
+            .filter_map(|e| e.phys.as_ref().map(|p| (e.id, p.vehicle, p.passengers.clone())))
+            .collect();
+        out.sort_by_key(|r| r.0);
+        out
+    }
+
+    /// A chest or hopper minecart's slots as (slot, item name, count), and the loot table it
+    /// still holds unrolled (for tests and tools).
+    pub fn cart_items(&self, id: i32) -> Option<(Vec<(usize, &'static str, i32)>, Option<String>)> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
+        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_ref()?)?;
+        let c = cart.contents.as_ref()?;
+        Some((c.items.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i, s.item_name(), s.count())).collect(), c.loot_table.clone()))
+    }
+
+    /// A minecart's own numbers: the furnace's fuel, the TNT's fuse (-1: not primed) and
+    /// the hopper's `enabled` (for tests and tools).
+    pub fn cart_state(&self, id: i32) -> Option<(i32, i32, bool)> {
+        let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
+        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_ref()?)?;
+        Some((cart.fuel, cart.fuse, cart.enabled))
+    }
+
     /// The entity a player rides (for tests and tools).
     pub fn vehicle_of(&self, conn: ConnId) -> Option<i32> {
         self.players.get(&conn)?.vehicle
@@ -1448,6 +1503,11 @@ impl Sim {
             .collect();
         out.sort_by_key(|m| m.0);
         out
+    }
+
+    /// The ticks a player's riptide spin has left (for tests and tools).
+    pub fn spin_ticks(&self, conn: ConnId) -> Option<i32> {
+        Some(self.players.get(&conn)?.spin_ticks)
     }
 
     /// A player's health, and whether it is dead (for tests and tools).
@@ -1585,6 +1645,7 @@ impl Sim {
                 kiln_inventory::Source::Player => p.inv.items.get(s.index).cloned(),
                 kiln_inventory::Source::Block => match &p.containers.open {
                     Some(container::open::OpenBlock::EnderChest { .. }) => p.containers.ender.items.get(s.index).cloned(),
+                    Some(container::open::OpenBlock::Cart { .. }) => p.containers.cart.items.get(s.index).cloned(),
                     Some(container::open::OpenBlock::Containers { first, second }) => {
                         let region = self.dims[p.dim].regions.at(ChunkPos::of_block(first.0.x, first.0.z).cell());
                         region.and_then(|r| {
@@ -1661,6 +1722,7 @@ impl Sim {
                 creaking_active: dim == OVERWORLD_ID && mobs::creaking_active(self.day_time),
                 griefing: self.rule_bool("minecraft:mob_griefing"),
                 drops: self.rule_bool("minecraft:mob_drops"),
+                entity_drops: self.rule_bool("minecraft:entity_drops"),
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
                 spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
@@ -1901,6 +1963,9 @@ impl Sim {
         let world_seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
         for d in &mut self.dims {
             let mut later = Vec::new();
+            // Entities built during a tick carry placeholder (negative) ids that other new
+            // entities refer to as their vehicle or passengers: (placeholder, id, chunk).
+            let mut placeholders: Vec<(i32, i32, ChunkPos)> = Vec::new();
             for spawn in entities::canonical(std::mem::take(&mut d.spawns)) {
                 let chunk = entities::chunk_of(spawn.pos);
                 // Into a region ticking away: once it is back.
@@ -1923,9 +1988,46 @@ impl Sim {
                     self.next_entity_id += 8;
                 }
                 let uuid = entities::fresh_uuid(world_seed, self.game_time, id);
+                if let entities::Body::Ready(e) = &spawn.body
+                    && e.id < 0
+                {
+                    placeholders.push((e.id, id, chunk));
+                }
                 region.part_mut().0.list.push(entities::Entity::new(id, uuid, spawn));
             }
             d.spawns = later;
+            if !placeholders.is_empty() {
+                Self::resolve_placeholders(d, &placeholders);
+            }
+        }
+    }
+
+    /// Replaces the placeholder ids of `placeholders` in the vehicles and passengers of the
+    /// entities just added (and of the vehicles they ride, which may be older entities of the
+    /// same region: a skeleton trap's rider sits on the trap horse).
+    fn resolve_placeholders(d: &mut Dim, placeholders: &[(i32, i32, ChunkPos)]) {
+        let real = |id: i32| placeholders.iter().find(|p| p.0 == id).map_or(id, |p| p.1);
+        for &(placeholder, id, chunk) in placeholders {
+            let Some(region) = d.regions.at_mut(chunk.cell()) else { continue };
+            let list = &mut region.part_mut().0.list;
+            let Ok(i) = list.binary_search_by_key(&id, |e| e.id) else { continue };
+            let vehicle = list[i].phys.as_mut().and_then(|p| {
+                p.vehicle = p.vehicle.map(real);
+                for x in p.passengers.iter_mut() {
+                    *x = real(*x);
+                }
+                p.vehicle
+            });
+            if let Some(v) = vehicle
+                && let Ok(j) = list.binary_search_by_key(&v, |e| e.id)
+                && let Some(vp) = list[j].phys.as_mut()
+            {
+                for x in vp.passengers.iter_mut() {
+                    if *x == placeholder {
+                        *x = id;
+                    }
+                }
+            }
         }
     }
 
@@ -2140,7 +2242,9 @@ impl Sim {
                 }
                 let mut world = region::World { cells: &mut *cells, blocks: &mut part.1 };
                 let mut fx = region::Fx { blocks: &mut out, bodies: &bodies, spawns: &mut d.spawns, deaths: &mut deaths };
+                let cart = carts::pull(&part.0, p);
                 region::local_packet(p, &mut world, &env, pkt, &mut fx);
+                carts::push(&mut part.0, p, cart);
                 if let Some(h) = hook.as_mut() {
                     plugins::after_packets(h, cells, &env);
                 }
@@ -2299,6 +2403,10 @@ impl Sim {
             fall_flying: false,
             fall_fly_ticks: 0,
             spin_ticks: 0,
+            spin_damage: 0.0,
+            spin_item: kiln_item::ItemStack::empty(),
+            spin_off_hand: false,
+            spin_check: false,
             meta_dirty: false,
             swung: false,
             pending_suggestion: None,
@@ -2491,6 +2599,7 @@ impl Sim {
             }
         }
         self.tick_functions();
+        self.tick_gametests();
         if normal {
             self.tick_clocks();
         }

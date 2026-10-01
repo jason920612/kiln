@@ -10,7 +10,8 @@ two idle kiln-bots ("Diff0", then "Other0") for selectors. Kiln prints English o
 console through KILN_LANG (en_us.json extracted from the vanilla jar into the scratch dir).
 
 Case syntax (CASES below): one command per line; "# ..." starts a section; "! cmd" runs on
-both servers without comparing; "!v cmd" runs on vanilla only (setup Kiln lacks).
+both servers without comparing; "!v cmd" runs on vanilla only (setup Kiln lacks), "~ N" waits N seconds and then compares the
+console lines that arrived meanwhile (results that come over ticks or from other threads).
 """
 
 import argparse
@@ -1907,6 +1908,225 @@ compute default integer
 compute bogus
 ! clear @a
 ! kill @e[type=!minecraft:player]
+# test: arguments and errors
+! setworldspawn 0 -60 0
+test
+test bogus
+test clearall
+test clearall 5
+test clearall 100000
+test clearall -3
+test clearthese
+test clearthat
+test create
+test create kilndiff:box 49
+test create kilndiff:box 5 5 49
+test create kilndiff:box 3 4 5
+test locate kilndiff:*
+test locate kilndiff:nope
+test locate *
+test locate
+test pos
+test pos x
+test resetclosest
+test resetthese
+test resetthat
+test run
+test run kilndiff:nope
+test run kilndiff:pass_fn -1
+test runfailed
+test runfailed true
+test runmultiple kilndiff:nope
+test runthat
+test runthese
+test runclosest
+test stop
+test verify kilndiff:nope
+test verify
+test run kilndiff:pass_fn abc
+test run kilndiff:pass_fn 1 maybe
+test run kilndiff:pass_fn 1 true -1
+test run kilndiff:pass_fn 1 true 4
+test run kilndiff:pass_fn 1 true 99
+test run kilndiff:pass_fn 1 true 1 -1
+~ 4
+test run kilndiff:pass_fn 1 true 1 1 extra
+test run *
+~ 4
+test runmultiple
+test runmultiple kilndiff:pass_fn x
+test runmultiple kilndiff:pass_fn 1 x
+test runfailed maybe
+test runfailed true x
+test runfailed true 2 maybe
+test locate kilndiff:pass_fn extra
+test create kilndiff:box 0
+test create kilndiff:box 1 1
+test create kilndiff:box 1 1 0
+test create kilndiff:box 1 1 1 1
+test pos extra
+test pos kilnx
+test run kilndiff:pass_fn 1 true 3
+~ 3
+test run kilndiff:pass_fn 2 false 1 1
+~ 4
+test clearall
+test run kilndiff:missing_structure
+test clearall
+
+# test: create, locate, reset and clear
+test create kilndiff:pass_fn 4
+test locate kilndiff:pass_fn
+test locate kilndiff:*
+test runclosest
+~ 3
+test resetclosest
+test resetthese
+test clearthese
+test clearall
+test create kilndiff:pass_fn 4 3 2
+test runthese 2
+~ 4
+test clearall 10
+test clearall
+
+# test: runs
+test run minecraft:always_pass
+~ 3
+test run kilndiff:pass_fn
+~ 3
+test run kilndiff:optional_fn
+~ 3
+test run kilndiff:accept
+~ 3
+test run kilndiff:fail
+~ 3
+test run kilndiff:timeout
+~ 4
+test run kilndiff:timeout_optional
+~ 4
+test run kilndiff:nostart
+~ 3
+test run kilndiff:rotated
+~ 3
+test run kilndiff:padded
+~ 3
+test run kilndiff:with_rules
+~ 3
+test run kilndiff:with_inline_env
+~ 3
+test run kilndiff:flaky
+~ 3
+test run kilndiff:slow/one
+~ 3
+test run kilndiff:slow/two
+~ 3
+test runfailed
+~ 3
+test run kilndiff:fail
+~ 3
+test runfailed
+~ 3
+test runfailed true
+~ 3
+test run kilndiff:pass_fn 3
+~ 4
+test run kilndiff:pass_fn 2 true
+~ 4
+test run kilndiff:fail 3 true
+~ 4
+test run kilndiff:pass_fn 1 false 1
+~ 3
+test run kilndiff:accept 1 false 0 1
+~ 3
+test runmultiple kilndiff:pass_fn 3
+~ 4
+test runmultiple kilndiff:pass_fn 0
+test runmultiple kilndiff:fail
+~ 3
+test run kilndiff:optional_fn 2
+~ 4
+test verify kilndiff:pass_fn
+~ 10
+test clearall
+
+# test: as a player
+execute as Diff0 run test run kilndiff:pass_fn
+~ 3
+execute as Diff0 run test run kilndiff:fail
+~ 3
+execute as Diff0 run test runthese
+~ 3
+execute as Diff0 run test locate kilndiff:*
+execute as Diff0 run test pos
+execute as Diff0 run test runthat
+execute as Diff0 run test clearthat
+execute as Diff0 run test resetthat
+execute as Diff0 run test create kilndiff:pass_fn
+execute as Diff0 run test locate kilndiff:pass_fn
+execute as Diff0 run test clearall 50
+test clearall
+
+# publish and unpublish are not in a dedicated server's tree
+publish
+publish true
+publish true 25565
+publish false 25599
+publish survival
+publish survival true 25565
+unpublish
+unpublish now
+execute run publish
+execute as Diff0 run publish true
+execute run unpublish
+help publish
+help unpublish
+
+# fetchprofile
+fetchprofile
+fetchprofile name
+fetchprofile id
+fetchprofile id abc
+fetchprofile entity
+fetchprofile entity @e
+fetchprofile entity Nobody
+fetchprofile entity @e[type=minecraft:pig,limit=1]
+fetchprofile entity Diff0
+fetchprofile entity @a[name=Other0]
+fetchprofile entity @a
+fetchprofile entity @s
+fetchprofile bogus Diff0
+fetchprofile name Notch
+~ 5
+fetchprofile name Diff0
+~ 5
+fetchprofile name diff0
+~ 5
+fetchprofile name OTHER0
+~ 5
+fetchprofile name "Diff 0"
+~ 5
+fetchprofile name ""
+~ 5
+fetchprofile name Diff0 extra
+~ 5
+fetchprofile id 00000000-0000-0000-0000-000000000000
+~ 5
+fetchprofile id 00000000-0000-0000-0000-000000000001
+~ 5
+fetchprofile id 1-1-1-1-1
+~ 5
+fetchprofile id 00000000000000000000000000000001
+fetchprofile id @a
+execute as Diff0 run fetchprofile entity @s
+execute as Diff0 run fetchprofile name Other0
+~ 5
+execute as Other0 run fetchprofile entity Diff0
+execute at Diff0 run fetchprofile entity @p
+! scoreboard objectives add fp dummy
+execute store success score fp fp run fetchprofile entity @a[limit=1]
+execute store result score fp fp run fetchprofile name Diff0
+~ 5
 """
 
 
@@ -1998,6 +2218,15 @@ class Server:
                 return out
             out.append(line)
 
+    def drain(self):
+        """The command feedback that arrived since the last command."""
+        out = []
+        while True:
+            try:
+                out.append(self.queue.get_nowait())
+            except queue.Empty:
+                return [l for l in out if not l.endswith("<--[HERE]") and l != UNKNOWN]
+
     def stop(self):
         if self.p.poll() is None:
             try:
@@ -2070,6 +2299,9 @@ def start_kiln(port: int, exe: Path, lang: Path) -> Server:
     # The vanilla pack (recipes, loot, advancements, the feature packs).
     env.setdefault("KILN_DATAPACK", str(WORK / "generated"))
     env.pop("KILN_OPS", None)
+    # Vanilla's offline server asks the session service about every name and id; so does Kiln
+    # when told to (its default is to answer offline servers without the network).
+    env["KILN_PROFILE_LOOKUP"] = "true"
     return Server("kiln", [str(copy)], base, env, KILN_LINE, SCRATCH / "kiln.log")
 
 
@@ -2087,6 +2319,8 @@ def parse_cases(text):
             continue
         if line.startswith("# "):
             section = line[2:]
+        elif line.startswith("~ "):
+            cases.append(("wait", section, line[2:]))
         elif line.startswith("!v "):
             cases.append(("vanilla", section, line[3:]))
         elif line.startswith("! "):
@@ -2102,6 +2336,7 @@ def main():
     ap.add_argument("--vanilla-port", type=int, default=25591)
     ap.add_argument("--kiln-exe", default=str(ROOT / "target" / "debug" / "kiln.exe"))
     ap.add_argument("--bot-exe", default=str(ROOT / "target" / "debug" / "kiln-bot.exe"))
+    ap.add_argument("-s", dest="sections", action="append", help="only run the sections starting with this text (and the setup lines before the first section)")
     ap.add_argument("-k", dest="filter", help="only compare cases containing this text")
     ap.add_argument("-v", "--verbose", action="store_true", help="print every case")
     a = ap.parse_args()
@@ -2141,6 +2376,8 @@ def main():
 
         passed, failed = 0, []
         for kind, section, command in parse_cases(CASES):
+            if a.sections and section and not any(section.startswith(p) for p in a.sections):
+                continue
             if kind == "vanilla":
                 run(vanilla, command)
                 time.sleep(2)  # let forced chunks load and generate
@@ -2148,6 +2385,22 @@ def main():
             if kind == "setup":
                 for server in servers:
                     run(server, command)
+                continue
+            if kind == "wait":
+                time.sleep(float(command))
+                want, got = vanilla.drain(), kiln.drain()
+                label = f"(console lines after {command} s)"
+                ok = want == got
+                if ok:
+                    passed += 1
+                else:
+                    failed.append((section, label, want, got))
+                if a.verbose or not ok:
+                    print(f"{'PASS' if ok else 'FAIL'} [{section}] {label}")
+                    for line in want:
+                        print(f"    vanilla: {line}")
+                    for line in got:
+                        print(f"    kiln:    {line}")
                 continue
             if a.filter and a.filter not in command:
                 # Still run it so later cases see the same world.

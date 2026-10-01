@@ -295,7 +295,7 @@ fn conversion_progress(e: &mut Entity, level: &dyn EntityLevel) -> i32 {
 /// `finishConversion`: a villager with the zombie villager's data takes its place.
 fn finish_conversion(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     let zombie = crate::level::Seen::of_mob(e, m);
-    let starter = st(m).conversion_player.and_then(|u| level.players().iter().find(|p| p.uuid == u).map(|p| p.id));
+    let starter = st(m).conversion_player.and_then(|u| level.player_by_uuid(u).map(|p| p.id));
     let (vtype, profession, vlevel, finalized, xp) = {
         let s = st(m);
         (s.villager_type.clone(), s.profession.clone(), s.level, s.finalized, s.xp)

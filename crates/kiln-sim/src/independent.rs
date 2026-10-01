@@ -157,6 +157,8 @@ impl Sim {
             Some("plugins are loaded")
         } else if self.has_tick_functions() {
             Some("#minecraft:tick functions run every tick")
+        } else if self.commands.gametests.active() {
+            Some("a game test run ticks with the whole server")
         } else {
             None
         };

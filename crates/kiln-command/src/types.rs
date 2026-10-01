@@ -103,6 +103,11 @@ impl Difficulty {
         ["peaceful", "easy", "normal", "hard"][self as usize]
     }
 
+    /// `Difficulty.byName`.
+    pub fn by_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.name() == name)
+    }
+
     pub fn id(self) -> i32 {
         self as i32
     }
@@ -214,6 +219,30 @@ pub(crate) fn entity_type_tags() -> impl Iterator<Item = &'static str> {
         .flat_map(|(_, tags)| tags.iter().map(|(t, _)| *t))
 }
 
+/// `FilenameUtils.wildcardMatch(name, pattern)` (case sensitive): `*` is any run of characters,
+/// `?` exactly one.
+pub fn wildcard_match(name: &str, pattern: &str) -> bool {
+    let (n, p): (Vec<char>, Vec<char>) = (name.chars().collect(), pattern.chars().collect());
+    let (mut i, mut j) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while i < n.len() {
+        if j < p.len() && (p[j] == '?' || p[j] == n[i]) {
+            i += 1;
+            j += 1;
+        } else if j < p.len() && p[j] == '*' {
+            star = Some((j, i));
+            j += 1;
+        } else if let Some((sj, si)) = star {
+            j = sj + 1;
+            i = si + 1;
+            star = Some((sj, si + 1));
+        } else {
+            return false;
+        }
+    }
+    p[j..].iter().all(|&c| c == '*')
+}
+
 /// Entries of a synchronized or built-in registry, if kiln-data knows it.
 pub(crate) fn registry_entries(registry: &str) -> Option<&'static [&'static str]> {
     kiln_data::registries::SYNCHRONIZED
@@ -239,6 +268,20 @@ mod tests {
         let mut r = StringReader::new("a:b:c");
         let e = Identifier::read(&mut r).unwrap_err();
         assert_eq!((e.key(), e.cursor()), (Some("argument.id.invalid"), Some(0)));
+    }
+
+    #[test]
+    fn wildcards() {
+        assert!(wildcard_match("minecraft:always_pass", "minecraft:*"));
+        assert!(wildcard_match("minecraft:always_pass", "*:always_pass"));
+        assert!(wildcard_match("minecraft:always_pass", "minecraft:always_p?ss"));
+        assert!(wildcard_match("a:b", "*"));
+        assert!(wildcard_match("a:b", "a:b*"));
+        assert!(wildcard_match("aXbXc", "a*b*c"));
+        assert!(!wildcard_match("minecraft:always_pass", "minecraft:always_pas"));
+        assert!(!wildcard_match("minecraft:always_pass", "kiln:*"));
+        assert!(!wildcard_match("ab", "a?b"));
+        assert!(!wildcard_match("Minecraft:x", "minecraft:x"));
     }
 
     #[test]

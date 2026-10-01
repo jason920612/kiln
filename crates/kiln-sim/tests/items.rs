@@ -652,3 +652,43 @@ fn riptide_tridents_launch_instead_of_flying() {
     assert_eq!(w.count("minecraft:trident"), 0, "riptide keeps the trident");
     assert_eq!(w.sim.item_damage(1, 36), Some(1), "one durability for the throw");
 }
+
+#[test]
+fn the_riptide_spin_hits_what_it_touches_and_stops_there() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    let feet = [w.client.pos[0].floor() as i32, w.client.pos[1].floor() as i32, w.client.pos[2].floor() as i32];
+    w.set(feet, "minecraft:water");
+    // The player is in the water with a riptide trident, charged until the attack cooldown is
+    // over; a cow stands where the spinning player is when the trident is let go.
+    let at = w.client.pos;
+    let cow_health = |w: &World| w.sim.mobs().into_iter().find(|m| m.1 == "minecraft:cow").map(|m| m.3);
+    w.run("give User minecraft:trident[enchantments={\"minecraft:riptide\":1}]");
+    w.ticks(2);
+    w.use_item(30.0);
+    w.ticks(30);
+    w.run(&format!("summon minecraft:cow {} {} {}", at[0], at[1], at[2]));
+    w.ticks(1);
+    assert_eq!(cow_health(&w), Some(10.0));
+    w.release();
+    // The spin runs into the cow at once: 8 damage (a fist's cooldown does not shrink it), the
+    // spin over, the trident worn by the throw and by the hit.
+    w.ticks(2);
+    let health = cow_health(&w).expect("the cow is still there");
+    assert_eq!(health, 2.0, "8 damage from the spin");
+    assert_eq!(w.sim.spin_ticks(1), Some(0), "the spin stops on the hit");
+    assert_eq!(w.sim.item_damage(1, 36), Some(2), "one durability for the throw, one for the hit");
+    // Nothing in the way: the spin runs its 20 ticks.
+    w.run("kill @e[type=minecraft:cow]");
+    w.ticks(2);
+    w.use_item(30.0);
+    w.ticks(12);
+    w.release();
+    w.ticks(2);
+    assert!(w.sim.spin_ticks(1).is_some_and(|t| t > 10), "still spinning: {:?}", w.sim.spin_ticks(1));
+    w.ticks(25);
+    assert_eq!(w.sim.spin_ticks(1), Some(0));
+    assert_eq!(w.sim.item_damage(1, 36), Some(3));
+}

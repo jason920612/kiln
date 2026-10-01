@@ -54,6 +54,8 @@ public class ContainerVectors {
         List<int[]> containers = new ArrayList<>();
         List<int[]> states = new ArrayList<>();
         List<int[]> comparators = new ArrayList<>();
+        /** Container minecarts watched by the block they stand in. */
+        List<int[]> carts = new ArrayList<>();
 
         Scenario(String name, int ticks) {
             this.name = name;
@@ -74,6 +76,19 @@ public class ContainerVectors {
         Scenario state(int x, int y, int z) {
             states.add(new int[] {x, y, z});
             return this;
+        }
+
+        /**
+         * A chest or hopper minecart standing in that block, watched. It is summoned at the first
+         * tick without gravity, at the middle of the block (`bottom` above the block's floor),
+         * with the saved data `nbt`.
+         */
+        Scenario cart(int x, int y, int z, String type, double bottom, String nbt) {
+            carts.add(new int[] {x, y, z});
+            // `nbt` is a compound ("{Items:[...]}") or empty.
+            String body = nbt.startsWith("{") ? nbt.substring(1, nbt.length() - 1) : nbt;
+            return at(1, String.format(Locale.ROOT, "summon minecraft:%s %s %s %s {NoGravity:1b%s}", type, BASE[0] + x + 0.5,
+                    BASE[1] + y + bottom, BASE[2] + z + 0.5, body.isEmpty() ? "" : "," + body));
         }
 
         /** A comparator reading toward `facing` from the block behind it, on a stone block. */
@@ -101,6 +116,7 @@ public class ContainerVectors {
             m.put("containers", positions(containers));
             m.put("states", positions(states));
             m.put("comparators", positions(comparators));
+            m.put("carts", positions(carts));
             return m;
         }
 
@@ -230,7 +246,45 @@ public class ContainerVectors {
                 .container(0, 0, 0, "minecraft:hopper[facing=down]")
                 .container(0, -1, 0, "minecraft:chest")
                 .comparator(0, -1, 1, "north"));
+        cartScenarios(out);
         return out;
+    }
+
+    /** Hoppers and container minecarts exchanging items (the minecarts hang in the air, at rest). */
+    static void cartScenarios(List<Scenario> out) {
+        // A hopper block pulls from a chest minecart in the block above and feeds a chest.
+        out.add(new Scenario("cart_hopper_block_pulls_from_chest_minecart", 60)
+                .container(0, 0, 0, "minecraft:hopper[facing=east]")
+                .container(1, 0, 0, "minecraft:chest")
+                .cart(0, 1, 0, "chest_minecart", 0.0, items(slot(0, "apple", 3), slot(9, "coal", 40), slot(26, "stick", 5))));
+        // A hopper block pushes into a hopper minecart in the block it faces.
+        out.add(new Scenario("cart_hopper_block_fills_hopper_minecart", 60)
+                .container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "stone", 30), slot(2, "sand", 3)))
+                .cart(0, 0, 0, "hopper_minecart", 0.0, items(slot(0, "stone", 40))));
+        // A hopper minecart pulls from a chest above it (one item per tick at most).
+        out.add(new Scenario("cart_hopper_minecart_pulls_from_chest", 60)
+                .container(0, 1, 0, "minecraft:chest" + items(slot(0, "apple", 7), slot(1, "coal", 3), slot(20, "apple", 60)))
+                .cart(0, 0, 0, "hopper_minecart", 0.0, items(slot(0, "apple", 60))));
+        // ... and from a hopper block above it, which also pushes into it.
+        out.add(new Scenario("cart_hopper_minecart_and_hopper_block", 60)
+                .container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "coal", 20)))
+                .cart(0, 0, 0, "hopper_minecart", 0.0, ""));
+        // A hopper minecart pulls from a chest minecart above it.
+        out.add(new Scenario("cart_hopper_minecart_pulls_from_chest_minecart", 40)
+                .cart(0, 1, 0, "chest_minecart", 0.0, items(slot(0, "apple", 4), slot(5, "stick", 2)))
+                .cart(0, 0, 0, "hopper_minecart", 0.0, ""));
+        // A full chest minecart takes nothing; a nearly full one takes what fits.
+        out.add(new Scenario("cart_chest_minecart_full", 40)
+                .container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "stone", 64), slot(1, "stone", 10)))
+                .cart(0, 0, 0, "chest_minecart", 0.0, items(fullChest("stone", 64, 26, 0))));
+        out.add(new Scenario("cart_chest_minecart_nearly_full", 40)
+                .container(0, 1, 0, "minecraft:hopper[facing=down]" + items(slot(0, "stone", 64), slot(1, "stone", 10)))
+                .cart(0, 0, 0, "chest_minecart", 0.0, items(fullChest("stone", 64, 26, 62))));
+        // A hopper block beside nothing: a switched-off hopper minecart still gives up items.
+        out.add(new Scenario("cart_hopper_block_pulls_from_hopper_minecart_disabled", 40)
+                .container(0, 0, 0, "minecraft:hopper[facing=east]")
+                .container(1, 0, 0, "minecraft:chest")
+                .cart(0, 1, 0, "hopper_minecart", 0.0, "{Enabled:0b,Items:[" + slot(0, "apple", 2) + "," + slot(3, "coal", 2) + "]}"));
     }
 
     static void comparator(List<Scenario> out, String name, String block) {
@@ -306,7 +360,7 @@ public class ContainerVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=25597",
+                "server-port=" + System.getenv().getOrDefault("KILN_HARNESS_PORT", "25597"),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
@@ -427,6 +481,23 @@ public class ContainerVectors {
         return m;
     }
 
+    /** The slots of the container minecart standing in the block (empty when there is none). */
+    static Map<String, Object> cartState(ServerLevel level, int[] p) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        BlockPos b = pos(p);
+        var carts = level.getEntitiesOfClass(net.minecraft.world.entity.vehicle.minecart.AbstractMinecartContainer.class,
+                new net.minecraft.world.phys.AABB(b.getX() + 0.01, b.getY() + 0.01, b.getZ() + 0.01, b.getX() + 0.99, b.getY() + 0.99, b.getZ() + 0.99));
+        if (carts.isEmpty()) return m;
+        List<Object> items = new ArrayList<>();
+        var c = carts.get(0);
+        for (int i = 0; i < c.getContainerSize(); i++) {
+            ItemStack st = c.getItemStacks().get(i);
+            if (!st.isEmpty()) items.add(List.of(i, BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount()));
+        }
+        m.put("items", items);
+        return m;
+    }
+
     static String run(MinecraftServer server, Scenario s) throws Exception {
         ServerLevel level = server.overworld();
         for (Object[] b : s.sortedBlocks()) {
@@ -448,6 +519,9 @@ public class ContainerVectors {
                 List<Object> st = new ArrayList<>();
                 for (int[] p : s.states) st.add(stateString(level.getBlockState(pos(p))));
                 tick.put("states", st);
+                List<Object> carts = new ArrayList<>();
+                for (int[] p : s.carts) carts.add(cartState(level, p));
+                tick.put("carts", carts);
                 List<Object> cmp = new ArrayList<>();
                 for (int[] p : s.comparators) {
                     cmp.add(level.getBlockEntity(pos(p)) instanceof ComparatorBlockEntity c ? c.getOutputSignal() : -1);
@@ -461,6 +535,9 @@ public class ContainerVectors {
         // Clear the area (without drops) for the next scenario.
         command(server, String.format(Locale.ROOT, "fill %d %d %d %d %d %d air strict", BASE[0] - 3, BASE[1] - 3, BASE[2] - 3,
                 BASE[0] + 6, BASE[1] + 6, BASE[2] + 6));
+        // Killed container minecarts drop what they hold: the carts first, then the items.
+        command(server, "kill @e[type=chest_minecart]");
+        command(server, "kill @e[type=hopper_minecart]");
         command(server, "kill @e[type=item]");
         Map<String, Object> line = s.json();
         line.put("result", ticks);

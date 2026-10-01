@@ -60,9 +60,17 @@ SUMMONS = [
     ("zombie", f'zombie 140.5 {Y} -46.5 {{NoAI:1b,PersistenceRequired:1b,Health:15f,IsBaby:1b,'
                f'equipment:{{head:{{id:"minecraft:iron_helmet",count:1}}}},Tags:["kiln"]}}'),
     ("armor stand", f'armor_stand 139.5 {Y} -46.5 {{CustomName:"Stand",ShowArms:1b}}'),
+    # The cargo minecarts (Kiln simulates them; the loot table one stays unrolled).
+    ("chest minecart", f'chest_minecart 129.5 {Y} -44.5 {{Items:[{{Slot:0b,id:"minecraft:diamond",count:5}},'
+                       f'{{Slot:26b,id:"minecraft:apple",count:3}}],Tags:["kiln"]}}'),
+    ("hopper minecart", f'hopper_minecart 130.5 {Y} -44.5 {{Items:[{{Slot:1b,id:"minecraft:coal",count:9}}],Enabled:0b}}'),
+    ("furnace minecart", f'furnace_minecart 131.5 {Y} -44.5 {{Fuel:1234s,PushX:0.5d,PushZ:0.25d}}'),
+    ("tnt minecart", f'tnt_minecart 132.5 {Y} -44.5 {{fuse:30000,explosion_power:6.0f}}'),
+    ("loot minecart", f'chest_minecart 133.5 {Y} -44.5 {{LootTable:"minecraft:chests/simple_dungeon",LootTableSeed:99L}}'),
 ]
 SIMULATED = {"minecraft:item", "minecraft:experience_orb", "minecraft:arrow", "minecraft:falling_block",
-             "minecraft:tnt", "minecraft:snowball", "minecraft:pig", "minecraft:zombie"}
+             "minecraft:tnt", "minecraft:snowball", "minecraft:pig", "minecraft:zombie", "minecraft:chest_minecart",
+             "minecraft:hopper_minecart", "minecraft:furnace_minecart", "minecraft:tnt_minecart"}
 
 
 def entity_types():
@@ -278,6 +286,26 @@ def main():
           zombie is not None and val(get(zombie, "Health")) == 15.0 and val(get(zombie, "IsBaby")) == 1
           and val(get(zombie, "PersistenceRequired")) == 1
           and val(get(zombie, "equipment", "head", "id")) == "minecraft:iron_helmet", f"{zombie}")
+    def slots(e):
+        return {val(get(i, "Slot")): (val(get(i, "id")), val(get(i, "count"))) for i in val(get(e, "Items")) or ()}
+
+    chest = one("minecraft:chest_minecart", lambda e: get(e, "Items") is not None)
+    check("chest minecart keeps its slots and tags",
+          chest is not None and slots(chest) == {0: ("minecraft:diamond", 5), 26: ("minecraft:apple", 3)}
+          and get(chest, "Tags") is not None, f"{chest}")
+    hopper = one("minecraft:hopper_minecart")
+    check("hopper minecart keeps its slots and stays switched off",
+          hopper is not None and slots(hopper) == {1: ("minecraft:coal", 9)} and val(get(hopper, "Enabled")) == 0, f"{hopper}")
+    furnace = one("minecraft:furnace_minecart")
+    check("furnace minecart burns its fuel and keeps its push",
+          furnace is not None and 900 < val(get(furnace, "Fuel")) <= 1234 and get(furnace, "PushX") is not None
+          and get(furnace, "PushZ") is not None, f"{furnace}")
+    tnt_cart = one("minecraft:tnt_minecart")
+    check("TNT minecart burns its fuse and keeps its power",
+          tnt_cart is not None and 20000 < val(get(tnt_cart, "fuse")) < 30000 and val(get(tnt_cart, "explosion_power")) == 6.0, f"{tnt_cart}")
+    loot = one("minecraft:chest_minecart", lambda e: get(e, "LootTable") is not None)
+    check("loot table minecart keeps its unrolled table and seed",
+          loot is not None and val(get(loot, "LootTable")) == "minecraft:chests/simple_dungeon" and val(get(loot, "LootTableSeed")) == 99, f"{loot}")
     snow = one("minecraft:snowball")
     check("snowball kept", snow is not None and val(get(snow, "NoGravity")) == 1, f"{snow}")
     emerald = one("minecraft:item", lambda e: val(get(e, "Item", "id")) == "minecraft:emerald")

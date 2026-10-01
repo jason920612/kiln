@@ -552,6 +552,12 @@ impl<S: Source> Dispatcher<S> {
             }
             NodeKind::Argument { name, ty } => {
                 let value = ty.parse(reader, source.permission() >= SELECTOR_PERMISSION)?;
+                // `ResourceSelectorArgument.parse`: a pattern must select something.
+                if let (ArgumentType::ResourceSelector { registry }, ArgumentValue::String(pattern)) = (ty, &value)
+                    && !source.registry_ids(registry).iter().any(|id| crate::types::wildcard_match(id, pattern))
+                {
+                    return Err(CommandError::new(crate::tr!("argument.resource_selector.not_found", pattern.as_str(), *registry)).at(reader));
+                }
                 // Inline definitions are decoded while parsing, as `ResourceOrIdArgument` does.
                 let inline_registry = match ty {
                     ArgumentType::LootResource { registry } => Some(*registry),

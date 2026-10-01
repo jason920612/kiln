@@ -140,6 +140,32 @@ impl GoalSelector {
         self.goals.push(Wrapped { priority, goal, running: false });
     }
 
+    /// `GoalSelector.removeGoal`: the matching goals stop being available (a running one is
+    /// simply gone: its `stop` is not called; the goals it removed here have none of note).
+    pub fn remove_where(&mut self, f: impl Fn(&Goal) -> bool) {
+        let mut shift = vec![0usize; self.goals.len()];
+        let mut gone = vec![false; self.goals.len()];
+        let mut removed = 0;
+        for (i, w) in self.goals.iter().enumerate() {
+            gone[i] = f(&w.goal);
+            shift[i] = removed;
+            if gone[i] {
+                removed += 1;
+            }
+        }
+        if removed == 0 {
+            return;
+        }
+        for slot in self.locked.iter_mut() {
+            *slot = slot.and_then(|j| if gone[j] { None } else { Some(j - shift[j]) });
+        }
+        let mut i = 0;
+        self.goals.retain(|_| {
+            i += 1;
+            !gone[i - 1]
+        });
+    }
+
     pub fn set_control_flag(&mut self, flag: u8, on: bool) {
         if on {
             self.disabled &= !flag;
@@ -523,6 +549,10 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
             player.is_some()
         }
         Goal::RandomStroll { interval, check_no_action, water_avoiding, wanted, force, .. } => {
+            // (`RandomStrollGoal.canUse`: a mount with a steering rider does not wander.)
+            if super::has_controlling_passenger(e, m, level) {
+                return false;
+            }
             if !*force {
                 if *check_no_action && m.no_action_time >= 100 {
                     return false;
