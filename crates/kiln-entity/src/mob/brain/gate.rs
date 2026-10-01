@@ -115,8 +115,12 @@ impl Control for Gate {
         }
         match self.running_policy {
             RunningPolicy::RunOne => {
-                for (b, _, _) in self.list.entries.iter_mut() {
+                let debug = super::debug_on();
+                for (b, w, _) in self.list.entries.iter_mut() {
                     if !b.running() && b.try_start(cx) {
+                        if debug {
+                            eprintln!("gate t={} {} picked {}/{}", cx.time, self.name, b.name(), w);
+                        }
                         break;
                     }
                 }

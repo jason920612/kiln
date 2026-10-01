@@ -620,8 +620,7 @@ public class MobVectors {
                 dbg.append(" ").append(en.getKey()).append(":");
                 for (Object a : ((Map<?, ?>) en.getValue()).keySet()) dbg.append(a).append(",");
             }
-            Files.writeString(Path.of("dbg.txt"), dbg + "
-", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         }
         for (Object acts : byPriority.values())
             for (Object set : ((Map<?, ?>) acts).values())
@@ -3183,6 +3182,50 @@ public class MobVectors {
             }
             s.dayTime = 1000;
             s.ticks = 800;
+            out.add(s);
+        }
+        // More idle wandering: survival players near or none, different level seeds.
+        for (int seed = 7; seed <= 12; seed++) {
+            Scenario s = new Scenario("villager_wander_" + seed);
+            floor(s, 24, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:villager", 0.5 + (seed % 3), BY, 0.5, 47f * seed, 9300L + seed);
+            s.mobs.add(m);
+            if (seed % 2 == 0) s.player = new double[] {4.5, BY, 3.5};
+            s.playerCreative = false;
+            s.levelSeed = 10 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A farmer at its composter: seeds are planted on the empty farmland, young crops are left to grow.
+        {
+            Scenario s = new Scenario("villager_farmer");
+            floor(s, 20, "minecraft:grass_block");
+            block(s, 4, BY, 1, "minecraft:composter[level=0]");
+            for (int x = 5; x <= 9; x++) {
+                block(s, x, BY - 1, 3, "minecraft:farmland[moisture=7]");
+                if (x % 2 == 1) block(s, x, BY, 3, "minecraft:wheat[age=3]"); // (ripe crops drop loot from the level's random; the harness does not replay that)
+            }
+            MobSpec m = new MobSpec("minecraft:villager", 0.5, BY, 0.5, 30f, 9700);
+            m.nbt = "{VillagerData:{type:\"minecraft:plains\",profession:\"minecraft:farmer\",level:1},Xp:0,Inventory:[{id:\"minecraft:wheat_seeds\",count:8}],Brain:{memories:{\"minecraft:job_site\":{value:{dimension:\"minecraft:overworld\",pos:[I;4,100,1]}}}}}";
+            s.mobs.add(m);
+            s.dayTime = 3000;
+            s.ticks = 900;
+            out.add(s);
+        }
+        // Three villagers and one bell at the afternoon meeting, a player watching.
+        {
+            Scenario s = new Scenario("villager_meet_crowd");
+            floor(s, 24, "minecraft:grass_block");
+            block(s, 8, BY, 8, "minecraft:bell[attachment=floor,facing=north,powered=false]");
+            for (int i = 0; i < 3; i++) {
+                MobSpec m = new MobSpec("minecraft:villager", 0.5 + 2 * i, BY, 0.5 + i, 30f + i * 60, 9720L + i);
+                m.nbt = "{" + plains + "}";
+                s.mobs.add(m);
+            }
+            s.player = new double[] {12.5, BY, 8.5};
+            s.playerCreative = false;
+            s.dayTime = 9500;
+            s.ticks = 600;
             out.add(s);
         }
     }

@@ -519,7 +519,9 @@ fn every_mob_type_summons_ticks_and_saves() {
     let kinds: Vec<_> = kiln_entity::mob::ALL_KINDS.iter().copied().filter(|k| *k != kiln_entity::mob::MobKind::EnderDragon).collect();
     for (i, kind) in kinds.iter().enumerate() {
         let a = i as f64 * 0.7;
-        w.summon(kind.type_name(), [6.0 * a.cos(), 0.0, 6.0 * a.sin()], "{PersistenceRequired:1b}");
+        // (Invulnerable: they go on to hunt one another while the rest are being summoned, and which
+        // ones live depends on how they walk; the test is that every type exists and ticks.)
+        w.summon(kind.type_name(), [6.0 * a.cos(), 0.0, 6.0 * a.sin()], "{PersistenceRequired:1b,Invulnerable:1b}");
     }
     w.ticks(1);
     for &kind in &kinds {

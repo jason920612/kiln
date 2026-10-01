@@ -667,7 +667,9 @@ impl Brain {
         }
         brain.groups.sort_by_key(|g| g.priority);
         for g in brain.groups.iter_mut() {
-            // Stable: same bucket keeps registration order (`HashMap` chains append).
+            // `computeIfAbsent` puts a new node at the head of its bucket's chain: activities that
+            // share a bucket iterate latest-registered first (reverse, then a stable sort).
+            g.activities.reverse();
             g.activities.sort_by_key(|(a, _)| a.bucket());
         }
         st.set_core_activities(&[Activity::Core]);
@@ -722,7 +724,14 @@ impl Brain {
                 for bi in 0..self.groups[gi].activities[ai].1.len() {
                     let b = &mut self.groups[gi].activities[ai].1[bi];
                     if b.running() {
+                        let l0 = cx.rng().state();
                         b.tick_or_stop(&mut cx);
+                        if debug_on() {
+                            let l1 = cx.rng().state();
+                            if l0 != l1 {
+                                eprintln!("brain t={} tick {} lr {l0}->{l1}", cx.time, b.name());
+                            }
+                        }
                         if cx.b.refresh_requested {
                             Self::refresh_now(&mut self.groups, &mut self.refreshed, &mut cx);
                         }
@@ -864,7 +873,7 @@ pub fn pin(e: &mut Entity) {
     e.random = random;
 }
 
-fn debug_on() -> bool {
+pub(super) fn debug_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var_os("KILN_BRAIN_DEBUG").is_some())
 }
