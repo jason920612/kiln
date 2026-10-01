@@ -668,6 +668,31 @@ pub trait Kind: Sync + Send {
     fn age_boundary_reached(&self, e: &mut Entity, m: &mut MobData) {
         let _ = (e, m);
     }
+    /// `shouldDiscardFriction`: in the air the motion is kept, without drag (a long-jumping goat).
+    fn discard_friction(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
+    /// `getHurtSound` / `getDeathSound` that depend on the mob's state (screaming goats): `None`
+    /// for the type's own `hurt` / `death` sound.
+    fn hurt_sound_for(&self, m: &MobData) -> Option<&'static str> {
+        let _ = m;
+        None
+    }
+    fn death_sound_for(&self, m: &MobData) -> Option<&'static str> {
+        let _ = m;
+        None
+    }
+    /// `setYHeadRot` overrides: the head rotation `head` asked for while the body is at `body`
+    /// (goats keep their head within 15 degrees of the body).
+    fn set_head_rot(&self, body: f32, head: f32) -> f32 {
+        let _ = body;
+        head
+    }
+    /// `calculateFallDamage` less this many points (goats: 10).
+    fn fall_damage_reduction(&self) -> i32 {
+        0
+    }
 }
 
 /// `WaterAnimal.handleAirSupply` / `AgeableWaterCreature.handleAirSupply`: out of the water the

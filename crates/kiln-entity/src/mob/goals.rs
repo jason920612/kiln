@@ -336,6 +336,10 @@ pub fn can_attack(m: &MobData, level: &dyn EntityLevel, t: &Living) -> bool {
     {
         return false;
     }
+    // `Axolotl.canBeSeenAsEnemy`: not while playing dead.
+    if t.type_name == "minecraft:axolotl" && level.entity(t.id).and_then(super::data).is_some_and(super::kinds::axolotl::is_playing_dead) {
+        return false;
+    }
     t.seen_as_enemy()
 }
 

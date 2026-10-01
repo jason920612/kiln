@@ -140,6 +140,19 @@ pub(crate) fn bucket_release(bucket: &kiln_item::ItemStack, pos: [i32; 3], diffi
     Some(Spawn { kind: t, pos: [at.x, at.y, at.z], vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
 }
 
+/// `MobBucketItem.checkExtraContent` for an axolotl bucket emptied at `pos`: the axolotl comes out
+/// as the bucket kept it (`EntitySpawnReason.BUCKET`: no `finalizeSpawn`; the variant, health, age
+/// and hunting cooldown from the bucket, `FromBucket` set).
+pub(crate) fn bucket_axolotl(bucket: &kiln_item::ItemStack, pos: [f64; 3]) -> Option<Spawn> {
+    let seed = (pos[0].to_bits() ^ pos[2].to_bits().rotate_left(21) ^ pos[1].to_bits().rotate_left(42)) as i64;
+    let mut e = kiln_entity::mob::new(MobKind::Axolotl, 0, 0, seed);
+    e.set_pos(kiln_entity::math::Vec3::new(pos[0], pos[1], pos[2]));
+    e.set_old_pos_and_rot();
+    kiln_entity::mob::kinds::axolotl::apply_bucket(&mut e, bucket);
+    let t = kiln_data::entities::by_name(MobKind::Axolotl.type_name())?;
+    Some(Spawn { kind: t, pos, vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
+}
+
 /// A new mob of `kind` at `pos`, facing `yaw` (the entity's own random decides nothing
 /// here; `finalize` runs `finalizeSpawn` with the given context when set).
 pub(crate) fn spawn(kind: MobKind, pos: [f64; 3], yaw: Option<f32>, finalize: Option<Finalize>) -> Spawn {

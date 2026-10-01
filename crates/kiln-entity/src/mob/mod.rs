@@ -845,6 +845,7 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
             vec![C::ChickenVariant(v::ChickenVariant(m.variant)), C::ChickenSoundVariant(v::ChickenSoundVariant(m.sound_variant))]
         }
         MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
+        MobKind::Axolotl => kinds::axolotl::variant_components(m).unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -999,6 +1000,8 @@ pub fn reassess_weapon_goal(m: &mut MobData, hard: bool) {
 pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     let mut e = Entity::new(kind.type_name(), id, uuid, EntityKind::MobTicking { gravity: 0.08 }, seed);
     let mut m = MobData::new(kind, &mut e.random);
+    // `Entity`'s constructor: `airSupply = getMaxAirSupply()` (axolotls: 6000).
+    e.air_supply = m.air_supply_max;
     // `LivingEntity`'s constructor: a random yaw (in radians-sized degrees, as vanilla).
     e.y_rot = e.random.next_float() * 6.2831855;
     m.y_head_rot = e.y_rot;
@@ -1388,6 +1391,10 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if m.death_time >= 20 && !e.is_removed() {
             level.emit(Event::EntityEvent { entity: e.id, event: 60 });
             e.removed = Some(crate::entity::RemovalReason::Killed);
+            // `LivingEntity.remove`: the brain forgets everything.
+            if let Some(b) = m.brain.as_mut() {
+                b.st.mem.clear_all();
+            }
             effects::on_killed_removal(e, m, level);
             if let Some(k) = m.kind.ext() {
                 k.on_killed_removal(e, m, level);
@@ -1666,7 +1673,7 @@ fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         return;
     }
     let power = distance + 1.0e-6 - m.attrs.value(Attr::SafeFallDistance);
-    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier));
+    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier)) - m.kind.ext().map_or(0, |k| k.fall_damage_reduction());
     if dmg <= 0 {
         return;
     }
@@ -1730,6 +1737,11 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         y = -0.1;
     } else {
         y = 0.0;
+    }
+    // `shouldDiscardFriction`: no drag.
+    if m.kind.ext().is_some_and(|k| k.discard_friction(m)) {
+        e.delta = Vec3::new(v.x, y, v.z);
+        return;
     }
     let drag = m.attrs.value(Attr::AirDragModifier) as f32;
     let h = friction * modified_friction(0.91, drag);
@@ -2137,12 +2149,14 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     if m.is_dead_or_dying() {
         if full {
-            make_sound(e, m, level, m.kind.death_sound());
+            let sound = m.kind.ext().and_then(|k| k.death_sound_for(m)).unwrap_or_else(|| m.kind.death_sound());
+            make_sound(e, m, level, sound);
         }
         die(e, m, level, source);
     } else if full {
         m.ambient_sound_time = -m.kind.ambient_sound_interval();
-        make_sound(e, m, level, m.kind.hurt_sound());
+        let sound = m.kind.ext().and_then(|k| k.hurt_sound_for(m)).unwrap_or_else(|| m.kind.hurt_sound());
+        make_sound(e, m, level, sound);
     }
     m.last_damage_source = Some(source);
     m.last_damage_stamp = level.game_time();
@@ -2675,6 +2689,10 @@ impl DamageKind {
 
             // -- slice 3: common mobs B
             DamageKind::WindCharge => "minecraft:wind_charge",
+
+            // -- wp28: axolotl and goat
+            DamageKind::DryOut => "minecraft:dry_out",
+            DamageKind::NoAggroMobAttack => "minecraft:mob_attack_no_aggro",
 
         }
     }

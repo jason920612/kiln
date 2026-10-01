@@ -83,7 +83,8 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         m.effects = crate::effect::load(t);
     }
     let health = r.num("Health");
-    m.health = health.map_or(m.max_health(), |h| h as f32);
+    // `setHealth`: at most the maximum.
+    m.health = health.map_or(m.max_health(), |h| super::mth::clamp(h as f32, 0.0, m.max_health()));
     m.hurt_time = r.short_or("HurtTime", 0);
     m.death_time = r.short_or("DeathTime", 0);
     m.last_hurt_by_mob_timestamp = r.int_or("HurtByTimestamp", 0);

@@ -251,7 +251,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         e.random = kiln_javamath::random::LegacyRandom::new(spec["seed"].as_i64().unwrap());
         {
             let m = mob::data_mut(&mut e).unwrap();
-            m.y_head_rot = yaw;
+            // The harness calls `setYHeadRot` (types like goats clamp it to their body, which is at 0
+            // then) before it sets the body.
+            m.y_head_rot = m.kind.ext().map_or(yaw, |k| k.set_head_rot(0.0, yaw));
             m.y_body_rot = yaw;
             m.y_head_rot_o = yaw;
             m.y_body_rot_o = yaw;

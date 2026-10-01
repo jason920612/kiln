@@ -552,8 +552,10 @@ impl WalkTarget {
         WalkTarget { target: Tracker::block(pos), speed, close_enough }
     }
 
+    /// `new WalkTarget(Vec3, speed, closeEnough)`: the tracker is the block containing `v`
+    /// (`new BlockPosTracker(BlockPos.containing(v))`, its position the block's center).
     pub fn vec(v: Vec3, speed: f32, close_enough: i32) -> WalkTarget {
-        WalkTarget { target: Tracker::vec(v), speed, close_enough }
+        WalkTarget { target: Tracker::block(BlockPos::containing(v.x, v.y, v.z)), speed, close_enough }
     }
 
     pub fn entity(id: i32, speed: f32, close_enough: i32) -> WalkTarget {

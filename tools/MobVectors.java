@@ -630,6 +630,14 @@ public class MobVectors {
             }
             Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
         }
+        // Goats' LongJumpToRandomPos shuffles its angles with `Collections.shuffle`, whose random is
+        // unseedable: pinned through the JDK's static (needs --add-opens java.base/java.util). Kiln seeds
+        // the goat's own shuffle stream with the same value (`goat::SHUFFLE_SEED_XOR`).
+        if (m instanceof net.minecraft.world.entity.animal.goat.Goat) {
+            java.lang.reflect.Field r = java.util.Collections.class.getDeclaredField("r");
+            r.setAccessible(true);
+            r.set(null, new java.util.Random(base ^ 0x5DEECE66DL));
+        }
         for (Object acts : byPriority.values())
             for (Object set : ((Map<?, ?>) acts).values())
                 for (Object b : (Iterable<?>) set) seedGate(b, base, k);
@@ -735,6 +743,16 @@ public class MobVectors {
                 dbg.append(" noAction=").append(get(m, "noActionTime")).append(" persistent=").append(m.isPersistenceRequired());
                 dbg.append(" running=");
                 for (var b : brain.getRunningBehaviors()) dbg.append(b.debugString()).append(' ');
+                // The path being followed and where the move control wants to go (wp28).
+                var path = m.getNavigation().getPath();
+                dbg.append(" path=");
+                if (path == null) dbg.append("none");
+                else {
+                    dbg.append('@').append(path.getNextNodeIndex()).append('[');
+                    for (int pi = 0; pi < path.getNodeCount(); pi++) dbg.append(path.getNode(pi).x).append(',').append(path.getNode(pi).y).append(',').append(path.getNode(pi).z).append(' ');
+                    dbg.append(']');
+                }
+                dbg.append(" want=").append(get(m.getMoveControl(), "wantedX")).append(',').append(get(m.getMoveControl(), "wantedY")).append(',').append(get(m.getMoveControl(), "wantedZ"));
                 Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
             }
             // The level's random state too: brain draws from it (`Kiln`: the mob's own stream).
@@ -3587,9 +3605,383 @@ public class MobVectors {
 
     /// Axolotls, goats, frogs, tadpoles.
     static void scenariosBrainNew(List<Scenario> out) {
+        scenariosAxolotlGoat(out);
     }
 
     /// Wardens, breezes, creakings.
     static void scenariosBrainSpecial(List<Scenario> out) {
+    }
+
+    // ---------------------------------------------------------------------- wp28: axolotls and goats
+
+    /// A stone slab (`depth + 1` layers) with a water pool in it: the pool spans x0..x1, z0..z1 and is
+    /// `depth` deep (its surface is level with the land at BY - 1).
+    static void poolWorld(Scenario s, int r, int x0, int z0, int x1, int z1, int depth) {
+        BlockState stone = parse("minecraft:stone");
+        BlockState water = parse("minecraft:water");
+        for (int x = -r; x <= r; x++)
+            for (int z = -r; z <= r; z++) {
+                boolean pool = x >= x0 && x <= x1 && z >= z0 && z <= z1;
+                for (int y = BY - 1 - depth; y <= BY - 1; y++)
+                    s.blocks.put(new BlockPos(BX + x, y, BZ + z), pool && y > BY - 1 - depth ? water : stone);
+            }
+    }
+
+    static void scenariosAxolotlGoat(List<Scenario> out) {
+        double W = BY - 2; // y of a mob in the pool
+        // Axolotls idling in a pool (swimming about, looking at the player).
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("axolotl_idle_water_" + seed);
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 40f * seed, 21000L + seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 60 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Idle on land (walking slowly, no water in reach).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("axolotl_idle_land_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, BY, 0.5, 70f * seed, 21100L + seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 70 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // On land with a pool nearby: TryFindLiquid takes it there.
+        {
+            Scenario s = new Scenario("axolotl_find_water");
+            poolWorld(s, 14, 4, -3, 9, 3, 3);
+            s.mobs.add(new MobSpec("minecraft:axolotl", -2.5, BY, 0.5, 90f, 21200));
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 80;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Hunting: a cod (and a tropical fish) in the pool.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("axolotl_hunt_fish_" + seed);
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 20f, 21300L + seed));
+            s.mobs.add(new MobSpec("minecraft:cod", 3.5, W, 1.5, 0f, 21310L + seed));
+            s.mobs.add(new MobSpec("minecraft:tropical_fish", -2.5, W, -1.5, 90f, 21320L + seed));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 90 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Playing dead: hurt in the water (it takes a 1 in 3 chance per hit).
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("axolotl_play_dead_" + seed);
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 30f * seed, 21400L + seed));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.hurts.put(10, new double[] {0, 2.0});
+            s.hurts.put(40, new double[] {0, 2.0});
+            s.hurts.put(70, new double[] {0, 2.0});
+            s.levelSeed = 100 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // The same at low health (a hard-hit chance of 1 in 3 per hit, whatever the damage).
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("axolotl_play_dead_low_" + seed);
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            MobSpec m = new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 30f * seed, 21450L + seed);
+            m.nbt = "{Health:8.0f}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            for (int t = 10; t < 200; t += 22) s.hurts.put(t, new double[] {0, 0.5});
+            s.levelSeed = 105 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        // Breeding in the pool.
+        {
+            Scenario s = new Scenario("axolotl_breed");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            MobSpec m1 = new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 20f, 21500);
+            MobSpec m2 = new MobSpec("minecraft:axolotl", 3.5, W, 1.5, 200f, 21501);
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 110;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A baby follows an adult.
+        {
+            Scenario s = new Scenario("axolotl_baby_follow");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            MobSpec baby = new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 0f, 21600);
+            baby.age = -24000;
+            s.mobs.add(baby);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 4.5, W, 2.5, 90f, 21601));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 120;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Tempted by a tropical fish bucket, in the water and on land.
+        {
+            Scenario s = new Scenario("axolotl_tempt_water");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", -3.5, W, 0.5, 0f, 21700));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:tropical_fish_bucket";
+            s.levelSeed = 130;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("axolotl_tempt_land");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, BY, 0.5, 0f, 21710));
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:tropical_fish_bucket";
+            s.levelSeed = 131;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Feeding a tropical fish bucket: love mode.
+        {
+            Scenario s = new Scenario("axolotl_feed");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 0f, 21720));
+            s.player = new double[] {3.5, BY, 0.5};
+            Action a = new Action(5, "interact");
+            a.mob = 0; a.what = "minecraft:tropical_fish_bucket";
+            s.actions.add(a);
+            s.levelSeed = 132;
+            s.ticks = 120;
+            out.add(s);
+        }
+        // A water bucket takes the axolotl.
+        {
+            Scenario s = new Scenario("axolotl_bucket");
+            poolWorld(s, 14, -5, -5, 5, 5, 4);
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, W, 0.5, 0f, 21730));
+            s.player = new double[] {3.5, BY, 0.5};
+            Action a = new Action(5, "interact");
+            a.mob = 0; a.what = "minecraft:water_bucket";
+            s.actions.add(a);
+            s.levelSeed = 133;
+            s.ticks = 40;
+            out.add(s);
+        }
+        // Out of the water for good: 6000 ticks of air, then it dries out.
+        {
+            Scenario s = new Scenario("axolotl_dry_out");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:axolotl", 0.5, BY, 0.5, 0f, 21740));
+            s.player = new double[] {5.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 134;
+            s.ticks = 6200;
+            out.add(s);
+        }
+        scenariosGoat(out);
+    }
+
+    /// The memories of a goat that idles: both cooldowns running (else it rams or long jumps).
+    static final String GOAT_IDLE = "{Brain:{memories:{\"minecraft:ram_cooldown_ticks\":{value:3000},\"minecraft:long_jump_cooling_down\":{value:3000}}}}";
+
+    static String goatNbt(boolean ramReady, boolean jumpReady, String extra) {
+        StringBuilder sb = new StringBuilder("{");
+        if (extra != null) sb.append(extra).append(',');
+        sb.append("Brain:{memories:{");
+        boolean first = true;
+        if (!ramReady) { sb.append("\"minecraft:ram_cooldown_ticks\":{value:3000}"); first = false; }
+        if (!jumpReady) { if (!first) sb.append(','); sb.append("\"minecraft:long_jump_cooling_down\":{value:3000}"); }
+        return sb.append("}}}").toString();
+    }
+
+    static void scenariosGoat(List<Scenario> out) {
+        // Idle goats on grass: strolling, looking at the player.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("goat_idle_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 50f * seed, 22000L + seed);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 140 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A goat with no memories at all: it is ready to ram (and to jump), with nothing to ram.
+        {
+            Scenario s = new Scenario("goat_fresh");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:goat", 0.5, BY, 0.5, 20f, 22010));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 150;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Ramming a cow that stands still (NoAI), then again after the cooldown.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("goat_ram_cow_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec g = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 30f * seed, 22100L + seed);
+            g.nbt = goatNbt(true, false, null);
+            s.mobs.add(g);
+            MobSpec c = new MobSpec("minecraft:cow", 7.5, BY, 1.5, 90f, 22110L + seed);
+            c.nbt = "{NoAI:1b}";
+            s.mobs.add(c);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 160 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A screaming goat rams again and again.
+        {
+            Scenario s = new Scenario("goat_ram_screaming");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec g = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 30f, 22150);
+            g.nbt = goatNbt(true, false, "IsScreamingGoat:1b");
+            s.mobs.add(g);
+            MobSpec c = new MobSpec("minecraft:cow", 7.5, BY, 1.5, 90f, 22151);
+            c.nbt = "{NoAI:1b,attributes:[{id:\"minecraft:max_health\",base:100.0d}],Health:100.0f}";
+            s.mobs.add(c);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 165;
+            s.ticks = 700;
+            out.add(s);
+        }
+        // Ramming a player.
+        {
+            Scenario s = new Scenario("goat_ram_player");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec g = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 30f, 22200);
+            g.nbt = goatNbt(true, false, null);
+            s.mobs.add(g);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.levelSeed = 170;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Tempted by wheat, and fed it.
+        {
+            Scenario s = new Scenario("goat_tempt");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 0f, 22300);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:wheat";
+            s.levelSeed = 180;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("goat_feed");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 0f, 22310);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {2.5, BY, 0.5};
+            Action a = new Action(5, "interact");
+            a.mob = 0; a.what = "minecraft:wheat";
+            s.actions.add(a);
+            s.levelSeed = 181;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Milked with a bucket.
+        {
+            Scenario s = new Scenario("goat_milk");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 0f, 22320);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {2.5, BY, 0.5};
+            Action a = new Action(5, "interact");
+            a.mob = 0; a.what = "minecraft:bucket";
+            s.actions.add(a);
+            s.levelSeed = 182;
+            s.ticks = 60;
+            out.add(s);
+        }
+        // Breeding.
+        {
+            Scenario s = new Scenario("goat_breed");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 20f, 22400);
+            MobSpec m2 = new MobSpec("minecraft:goat", 3.5, BY, 1.5, 200f, 22401);
+            m1.nbt = GOAT_IDLE;
+            m2.nbt = GOAT_IDLE;
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 190;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A baby follows an adult, and grows up (its attack damage changes).
+        {
+            Scenario s = new Scenario("goat_baby_follow");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec baby = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 0f, 22500);
+            baby.age = -24000;
+            baby.nbt = GOAT_IDLE;
+            s.mobs.add(baby);
+            MobSpec adult = new MobSpec("minecraft:goat", 7.5, BY, 2.5, 90f, 22501);
+            adult.nbt = GOAT_IDLE;
+            s.mobs.add(adult);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 200;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Hurt: it panics (fast), the fall does not hurt.
+        {
+            Scenario s = new Scenario("goat_hurt");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:goat", 0.5, BY, 0.5, 30f, 22600);
+            m.nbt = GOAT_IDLE;
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.levelSeed = 210;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Long jumping over a trench (the goat is ready to jump, not to ram).
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario("goat_long_jump_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            for (int x = 4; x <= 5; x++)
+                for (int z = -20; z <= 20; z++) s.blocks.put(new BlockPos(x, BY - 1, z), parse("minecraft:air"));
+            MobSpec m = new MobSpec("minecraft:goat", 2.5, BY, 0.5, 90f, 22700L + seed);
+            // (the jump cooldown runs out after 10 ticks: on its first tick a mob is not on the ground yet)
+            m.nbt = "{Brain:{memories:{\"minecraft:ram_cooldown_ticks\":{value:3000},\"minecraft:long_jump_cooling_down\":{value:10}}}}";
+            s.mobs.add(m);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 220 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
     }
 }
