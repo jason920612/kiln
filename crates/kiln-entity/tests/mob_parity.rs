@@ -178,8 +178,19 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             }
             let e = level.entity_mut(id).unwrap();
             let mut e2 = std::mem::replace(e, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
-            mob::interact::interact(&mut e2, level, &who, &stack);
+            let out = mob::interact::interact(&mut e2, level, &who, &stack);
             *level.entity_mut(id).unwrap() = e2;
+            // What the interaction did to the held item (a stack of one eaten or filled up).
+            let held = match out.held {
+                mob::interact::HeldChange::Consume(_) if !who.creative => Some(0),
+                mob::interact::HeldChange::Fill(ref f) => Some(f.item()),
+                _ => None,
+            };
+            if let Some(held) = held {
+                for p in level.players.iter_mut() {
+                    p.main_hand = held;
+                }
+            }
         }
         // wp28: `time set` in the middle of a scenario.
         "daytime" => level.day_time = pos.x as i64,

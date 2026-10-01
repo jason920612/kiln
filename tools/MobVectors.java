@@ -684,6 +684,7 @@ public class MobVectors {
         var brain = m.getBrain();
         Map<?, ?> byPriority = (Map<?, ?>) get(brain, "availableBehaviorsByPriority");
         if (byPriority.isEmpty()) return;
+        long base = ((java.util.concurrent.atomic.AtomicLong) get(m.getRandom(), "seed")).get();
         pinGates(m);
         for (Object sensor : ((Map<?, ?>) get(brain, "sensors")).values())
             ((net.minecraft.world.entity.ai.sensing.Sensor<?>) sensor).randomlyDelayStart(m.getRandom());
