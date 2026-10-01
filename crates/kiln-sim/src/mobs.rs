@@ -16,6 +16,8 @@ pub(crate) struct MobRules {
     pub sky_darken: i32,
     /// The `minecraft:monsters_burn` timeline value.
     pub monsters_burn: bool,
+    /// The `minecraft:gameplay/creaking_active` value (the overworld's night).
+    pub creaking_active: bool,
     pub griefing: bool,
     pub drops: bool,
     pub spawn_mobs: bool,
@@ -34,6 +36,7 @@ impl Default for MobRules {
             day_time: 1000,
             sky_darken: 0,
             monsters_burn: true,
+            creaking_active: false,
             griefing: true,
             drops: true,
             spawn_mobs: true,
@@ -50,6 +53,11 @@ impl Default for MobRules {
 pub(crate) fn monsters_burn(day_time: i64) -> bool {
     let t = day_time.rem_euclid(24000);
     !(12542..23460).contains(&t)
+}
+
+/// The `minecraft:gameplay/creaking_active` timeline: on from 12600 to 23401.
+pub(crate) fn creaking_active(day_time: i64) -> bool {
+    (12600..23401).contains(&day_time.rem_euclid(24000))
 }
 
 /// Entity data of a mob for its viewers.

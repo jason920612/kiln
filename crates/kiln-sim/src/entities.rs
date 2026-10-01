@@ -394,8 +394,8 @@ fn kb(p: BlockPos) -> kiln_blocks::BlockPos {
 /// The region as kiln-entity's world: blocks through kiln-blocks (so landing falling blocks
 /// and explosions update their neighbours), the region's entities by id, and its players as
 /// stand-ins that explosions can hurt and push.
-struct SimLevel<'a, 'l, 'p> {
-    level: &'a mut RegionLevel<'l>,
+pub(crate) struct SimLevel<'a, 'l, 'p> {
+    pub(crate) level: &'a mut RegionLevel<'l>,
     list: &'a mut Vec<Entity>,
     /// The region's players, which mobs hurt directly.
     players: &'a mut [&'p mut Player],
@@ -408,8 +408,8 @@ struct SimLevel<'a, 'l, 'p> {
     /// Ids for entities spawned during the tick until they get their real one.
     next_placeholder: i32,
     /// The entity being ticked and how many seeds it drew, for partition-independent seeds.
-    current: i32,
-    seeds: u64,
+    pub(crate) current: i32,
+    pub(crate) seeds: u64,
     /// The ticking entity as the source of its game events (its state is out for its tick).
     current_source: Option<kiln_entity::vibration::EventSource>,
     /// The level random as the ticking entity sees it: seeded per entity and tick, so what
@@ -821,6 +821,37 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
     }
 
+    fn trail_particle(&mut self, pos: Vec3, target: Vec3, color: i32, duration: i32) {
+        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:trail") else { return };
+        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Trail { target: [target.x, target.y, target.z], color, duration } },
+            override_limiter: true,
+            always_show: true,
+            pos: [pos.x, pos.y, pos.z],
+            offset: [0.0; 3],
+            max_speed: [0.0; 3],
+            count: 1,
+            randomization: world_fx::ParticleRandomization::Default,
+        });
+        // `overrideLimiter`: players within 512 blocks.
+        self.level.out.packets.push(([pos.x, pos.y, pos.z], 512.0, pkt));
+    }
+
+    fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
+        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:block_crumble") else { return };
+        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Block(state as i32) },
+            override_limiter: false,
+            always_show: false,
+            pos: [pos.x, pos.y, pos.z],
+            offset: [spread.x as f32, spread.y as f32, spread.z as f32],
+            max_speed: [0.0; 3],
+            count,
+            randomization: world_fx::ParticleRandomization::Default,
+        });
+        self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
+    }
+
     fn mob_griefing(&self) -> bool {
         self.level.env.mobs.griefing
     }
@@ -835,6 +866,45 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn difficulty(&self) -> u8 {
         self.level.env.mobs.difficulty
+    }
+
+    fn creaking_active(&self, _pos: BlockPos) -> bool {
+        self.level.env.mobs.creaking_active
+    }
+
+    fn spawning_monsters(&self) -> bool {
+        self.level.env.mobs.spawn_mobs && self.level.env.mobs.spawn_monsters
+    }
+
+    /// A creaking whose heart is in a chunk that is not loaded stays as it is (vanilla loads
+    /// the chunk to look).
+    fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
+        let h = kb(home);
+        !self.level.is_loaded(h) || crate::heart::protects(self.level, h, id, uuid)
+    }
+
+    fn heart_creaking_hurt(&mut self, home: BlockPos, id: i32, uuid: u128, at: Vec3) {
+        crate::heart::with_heart(self, kb(home), |sim, be| kiln_entity::mob::kinds::creaking_heart::creaking_hurt(sim, home, be, id, uuid, at));
+    }
+
+    fn entity_by_uuid(&self, uuid: u128) -> Option<&kiln_entity::Entity> {
+        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_ref())
+    }
+
+    fn pos_random(&mut self, pos: BlockPos, salt: i64) -> LegacyRandom {
+        crate::container::pos_random(self.level, kb(pos), salt as u64)
+    }
+
+    fn update_neighbours_for_output_signal(&mut self, pos: BlockPos) {
+        let p = kb(pos);
+        let s = self.level.block(p);
+        kiln_blocks::update::update_neighbour_for_output_signal(self.level, p, kiln_blocks::BlockId::of(s));
+    }
+
+    /// The entity keeps the UUID it was made with (a heart holds its creaking by it).
+    fn add_entity_with_uuid(&mut self, entity: kiln_entity::Entity) {
+        let Some(kind) = kiln_data::entities::by_name(entity.type_name) else { return };
+        self.spawns.push(Spawn { kind, pos: arr(entity.position()), vel: arr(entity.delta), body: Body::Loaded(Box::new(entity)) });
     }
 
     fn sky_darken(&self) -> i32 {
@@ -1027,10 +1097,10 @@ pub(crate) fn tick(
     deaths: &mut Vec<health::Death>,
     any_player: bool,
 ) {
-    if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) {
+    if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() {
         return;
     }
-    let live = |p: &Player| !p.disconnected && !p.dead;
+    let live =|p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let mut sim = SimLevel {
@@ -1055,6 +1125,8 @@ pub(crate) fn tick(
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
+    // Creakings that lost their heart in the block phase go before the entities tick.
+    crate::heart::process_released(&mut sim);
     for i in 0..sim.list.len() {
         // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
         let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
@@ -1077,6 +1149,8 @@ pub(crate) fn tick(
             }
         }
     }
+    // `Level.tickBlockEntities`: the creaking hearts, after the entities.
+    crate::heart::tick_all(&mut sim, ticking);
     // `Player.aiStep` → `touch`: mobs in the player's box inflated by (1, 0.5, 1) (slimes and
     // magma cubes hurt the player). Vanilla runs it in the player's tick; here after the
     // entities'.

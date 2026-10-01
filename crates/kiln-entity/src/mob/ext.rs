@@ -316,6 +316,23 @@ pub trait Kind: Sync + Send {
         let _ = (e, m);
         false
     }
+    /// `Creaking.HomeNodeEvaluator`: the point beyond 32 blocks of which the navigation finds no
+    /// way (unless it leads back toward it).
+    fn path_home(&self, m: &MobData) -> Option<BlockPos> {
+        let _ = m;
+        None
+    }
+    /// `PathNavigation.tick` (creakings that cannot move skip it); false skips the tick.
+    fn ticks_navigation(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
+    /// `isPushable` where it depends on the mob's state (a frozen creaking): false, and
+    /// `Entity.push` moves nothing.
+    fn can_be_pushed(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
     /// `hurtServer` overrides that decide before the shared code: `Some(result)` ends it.
     fn hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> Option<bool> {
         let _ = (e, m, level, source, amount);

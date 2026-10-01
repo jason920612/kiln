@@ -73,6 +73,7 @@ pub mod camel;
 pub mod allay;
 pub mod breeze;
 pub mod creaking;
+pub mod creaking_heart;
 pub mod sniffer;
 
 // -- wp28: brain mobs

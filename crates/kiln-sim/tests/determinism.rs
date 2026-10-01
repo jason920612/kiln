@@ -70,6 +70,7 @@ fn run_phased(
     let mut hoppers_moved = false;
     let (mut effects, mut burning) = (0, 0);
     let mut mob_ticks = 0;
+    let mut hoppers_moved = false;
     // Players in odd rows of the groups can be hurt; the ones in even rows hit them.
     let victim = |i: usize| (i / GROUPS) % 2 == 1;
     for tick in 0..ticks {
@@ -145,6 +146,13 @@ fn run_phased(
                     inbox.push(ToSim::Console(format!("setblock {x} {SURFACE_Y} {z} minecraft:fire")));
                 }
             }
+        }
+        // Before the mobs come (they may knock the rig down): the hoppers have moved items into
+        // the chest below them.
+        if tick == 99 {
+            let [ox, oz] = group_offset(0, GROUPS, GROUP_SPACING);
+            let chest = [(2.0 + ox) as i32, SURFACE_Y as i32, (14.0 + oz) as i32];
+            hoppers_moved = sim.container_at(chest).is_some_and(|(items, _)| !items.is_empty());
         }
         // The mobs of each group, at night so the undead do not burn.
         if tick == 100 {

@@ -231,6 +231,12 @@ pub trait Level {
         false
     }
 
+    /// The `minecraft:gameplay/creaking_active` environment attribute at `pos` (the
+    /// overworld's night): what wakes a creaking heart.
+    fn creaking_active(&self, _pos: BlockPos) -> bool {
+        false
+    }
+
     /// Makes the level random's next draws for work at `pos` independent of what else the
     /// level did (a simulation split into regions reseeds it from the position and time;
     /// the vanilla level keeps its one random, so the default does nothing).

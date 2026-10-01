@@ -429,7 +429,13 @@ impl Sim {
             d.portal_cooldowns.retain(|_, until| *until > now);
             for r in d.regions.iter() {
                 // `EnderDragon.canUsePortal`: never.
-                for e in r.part().0.list.iter().filter(|e| !e.removed && e.kind.name != "minecraft:ender_dragon" && !d.portal_cooldowns.contains_key(&e.uuid.as_u128())) {
+                // `Creaking.canUsePortal`: not while bound to a heart.
+                for e in r.part().0.list.iter().filter(|e| {
+                    !e.removed
+                        && e.kind.name != "minecraft:ender_dragon"
+                        && !d.portal_cooldowns.contains_key(&e.uuid.as_u128())
+                        && !e.phys.as_ref().is_some_and(kiln_entity::mob::kinds::creaking::is_heart_bound)
+                }) {
                     let Some(phys) = e.phys.as_ref() else { continue };
                     let half = phys.width as f64 / 2.0 - 1.0e-5;
                     let (min, max) = ([e.pos[0] - half, e.pos[1] + 1.0e-5, e.pos[2] - half], [e.pos[0] + half, e.pos[1] + phys.height as f64 - 1.0e-5, e.pos[2] + half]);

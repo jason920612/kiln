@@ -167,6 +167,48 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
                 mob::kinds::witch::linger(&mut p, level, hit, &stack, None);
             }
         }
+        // wp28 creaking: the block at pos goes away (`what` = "player": a player breaks it).
+        "break_block" => {
+            let p = BlockPos::new(pos.x as i32, pos.y as i32, pos.z as i32);
+            let source = (what == "player").then(|| {
+                let pl = player.expect("a breaking player");
+                DamageSource { kind: DamageKind::PlayerAttack, attacker: Some(pl.id), direct: Some(pl.id), pos: None, attacker_is_player: true }
+            });
+            level.destroy_heart(p, source);
+        }
+        // wp28 creaking: the player's game mode changes (`what`), or it moves to pos.
+        "gamemode" => {
+            let mut who = Vec::new();
+            for p in level.players.iter_mut() {
+                p.creative = what == "creative";
+                p.spectator = what == "spectator";
+                who.push((p.id, p.creative));
+            }
+            for (id, creative) in who {
+                if let Some(e) = level.entity_mut(id) {
+                    e.invulnerable = creative;
+                }
+            }
+        }
+        "move" => {
+            let mut who = Vec::new();
+            for p in level.players.iter_mut() {
+                p.pos = pos;
+                who.push(p.id);
+            }
+            for id in who {
+                if let Some(e) = level.entity_mut(id) {
+                    e.set_pos(pos);
+                }
+            }
+        }
+        // wp28 creaking: the player turns (yaw = pos.x, pitch = pos.y).
+        "look" => {
+            for p in level.players.iter_mut() {
+                p.yaw = pos.x as f32;
+                p.pitch = pos.y as f32;
+            }
+        }
         "interact" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];
             let p = player.expect("an interacting player");
@@ -256,7 +298,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
         level.blocks.insert(p, b[3].as_u64().unwrap() as u16);
     }
-    let player = s.get("player").filter(|p| !p.is_null()).map(|p| {
+    let mut player = s.get("player").filter(|p| !p.is_null()).map(|p| {
         let mut v = PlayerView::new(p["id"].as_i64().unwrap() as i32, vec3(&p["pos"]));
         v.sneaking = p["sneaking"].as_bool().unwrap_or(false);
         if v.sneaking {
@@ -352,10 +394,24 @@ fn replay(s: &Value) -> Result<usize, String> {
         kiln_entity::mob::brain::pin(&mut e);
         ids.push(id);
         level.insert(e);
+        // wp28 creaking: the heart holding this creaking (`setCreakingInfo(creaking)`).
+        if let Some(h) = spec.get("heart").filter(|v| !v.is_null()) {
+            let p = BlockPos::new(h[0].as_i64().unwrap() as i32, h[1].as_i64().unwrap() as i32, h[2].as_i64().unwrap() as i32);
+            let mut be = kiln_entity::mob::kinds::creaking_heart::HeartBe::default();
+            be.set_creaking(id, 0);
+            level.hearts.insert(p, be);
+        }
         for fx in spec.get("effects").and_then(Value::as_array).into_iter().flatten() {
             let fx = kiln_entity::effect::Effect::named(fx[0].as_str().unwrap(), fx[1].as_i64().unwrap() as i32, fx[2].as_i64().unwrap() as i32).unwrap();
             level.add_effect_instance(id, fx, None);
         }
+    }
+    // wp28 creaking: hearts without a creaking yet (the ones with one were made above), and the
+    // night attribute.
+    level.creaking_active = s.get("creaking_active").and_then(Value::as_bool).unwrap_or(false);
+    for h in s.get("hearts").and_then(Value::as_array).into_iter().flatten() {
+        let p = BlockPos::new(h[0].as_i64().unwrap() as i32, h[1].as_i64().unwrap() as i32, h[2].as_i64().unwrap() as i32);
+        level.hearts.entry(p).or_default();
     }
     // Other entities (end crystals), after the mobs: ticked, not traced.
     let mut other_ids = Vec::new();
@@ -389,7 +445,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     let trace = s["trace"].as_array().unwrap();
     let initial = ids.len();
     // Vanilla numbers new entities on from the scenario's mobs (id parity paces the AI).
-    level.set_next_entity_id(ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1);
+    level.set_next_entity_id(s.get("next_id").and_then(Value::as_i64).map_or_else(|| ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1, |v| v as i32));
     level.immediate_adds = true;
     let mut known = level.len();
     let mut compared = 0;
@@ -419,6 +475,12 @@ fn replay(s: &Value) -> Result<usize, String> {
         for a in s.get("actions").and_then(Value::as_array).into_iter().flatten() {
             if a["tick"].as_i64() == Some(tick) {
                 act(&mut level, &ids, player, a);
+                // The player may have moved or changed game mode.
+                if player.is_some()
+                    && let Some(p) = level.players.first()
+                {
+                    player = Some(*p);
+                }
             }
         }
         let before = level.player_hits.len();
@@ -439,6 +501,8 @@ fn replay(s: &Value) -> Result<usize, String> {
                 e.tick(level);
             });
         }
+        // `Level.tickBlockEntities`: the creaking hearts, after the entities.
+        level.tick_hearts();
         let before_flush = known;
         level.flush_spawned();
         known = level.len();
@@ -549,6 +613,14 @@ fn replay(s: &Value) -> Result<usize, String> {
                 return Err(format!("tick {tick} mob {k}: goals [{goals}] (kiln) vs [{want_goals}] (vanilla)"));
             }
             compared += 1;
+        }
+    }
+    // wp28 creaking: the blocks around the hearts (resin) are the same.
+    for b in s.get("end_blocks").and_then(Value::as_array).into_iter().flatten() {
+        let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
+        let (got, want) = (level.block(p), b[3].as_u64().unwrap() as u16);
+        if got != want {
+            return Err(format!("end block {p:?}: {} (kiln) vs {} (vanilla)", kiln_data::blocks_types::block_of(got).name, kiln_data::blocks_types::block_of(want).name));
         }
     }
     // Vanilla arrows draw their damage and spread from their own random, which is seeded from

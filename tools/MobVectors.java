@@ -62,6 +62,9 @@ public class MobVectors {
         String nbt;
         /// Effects added (`addEffect`) once the mob is in the level: {effect, duration, amplifier}.
         final List<Object[]> effects = new ArrayList<>();
+        /// wp28 creaking: the creaking heart (a block of the scenario) that holds this creaking
+        /// (`CreakingHeartBlockEntity.setCreakingInfo`), or null.
+        BlockPos heart;
         MobSpec(String type, double x, double y, double z, float yaw, long seed) {
             this.type = type; this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.seed = seed;
         }
@@ -111,6 +114,28 @@ public class MobVectors {
                 potion.onHitAsPotion(level, stack, new net.minecraft.world.phys.BlockHitResult(at, net.minecraft.core.Direction.UP, BlockPos.containing(at), false));
             }
             case "daytime" -> level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + (long) a.x);
+            // wp28 creaking: the block at pos goes away: broken by the player (`what` = "player":
+            // `playerWillDestroy`, then the block is removed), or replaced by air.
+            case "break_block" -> {
+                BlockPos bp = BlockPos.containing(a.x, a.y, a.z);
+                BlockState state = level.getBlockState(bp);
+                if ("player".equals(a.what)) state.getBlock().playerWillDestroy(level, bp, state, player);
+                level.setBlock(bp, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
+            }
+            // wp28 creaking: the player's game mode changes (`what`), or it moves to pos.
+            case "gamemode" -> player.setGameMode(switch (a.what) {
+                case "creative" -> net.minecraft.world.level.GameType.CREATIVE;
+                case "spectator" -> net.minecraft.world.level.GameType.SPECTATOR;
+                default -> net.minecraft.world.level.GameType.SURVIVAL;
+            });
+            case "move" -> player.snapTo(a.x, a.y, a.z, player.getYRot(), player.getXRot());
+            // wp28 creaking: the player turns (yaw = pos.x, pitch = pos.y): where it looks decides
+            // whether creakings freeze.
+            case "look" -> {
+                player.setYRot((float) a.x);
+                player.setYHeadRot((float) a.x);
+                player.setXRot((float) a.y);
+            }
             case "interact" -> {
                 player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what))));
                 player.interactOn(tracked.get(a.mob), net.minecraft.world.InteractionHand.MAIN_HAND, tracked.get(a.mob).position());
@@ -167,6 +192,11 @@ public class MobVectors {
         final List<Action> actions = new ArrayList<>();
         /// Entities that are not mobs (end crystals): ticked after the mobs, not traced.
         final List<MobSpec> others = new ArrayList<>();
+        /// wp28 creaking: the creaking hearts whose block entities tick every tick (after the
+        /// entities), and whether the level spawns monsters (a heart spawns its creaking only
+        /// then).
+        final List<BlockPos> hearts = new ArrayList<>();
+        boolean spawnMonsters;
         Scenario(String name) { this.name = name; }
     }
 
@@ -385,6 +415,12 @@ public class MobVectors {
             var poi = net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(b.getValue());
             if (poi.isPresent()) level.getPoiManager().add(b.getKey(), poi.get());
         }
+        if (s.spawnMonsters) {
+            level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_monsters true");
+        }
+        // The attributes are cached per tick; the harness never ticks the level.
+        level.environmentAttributes().invalidateTickCache();
+        boolean creakingActive = level.environmentAttributes().getValue(net.minecraft.world.attribute.EnvironmentAttributes.CREAKING_ACTIVE, new BlockPos(0, BY, 0));
         int tickStamp = player.getLastHurtByMobTimestamp();
         List<Entity> tracked = new ArrayList<>();
         StringBuilder specs = new StringBuilder();
@@ -430,18 +466,24 @@ public class MobVectors {
             pinCubeMoveYaw(m);
             int eggTime = m instanceof net.minecraft.world.entity.animal.chicken.Chicken c ? (Integer) get(c, "eggTime") : 0;
             if (!level.addFreshEntity(m)) throw new IllegalStateException("could not add " + spec.type);
+            if (spec.heart != null) {
+                ((net.minecraft.world.level.block.entity.CreakingHeartBlockEntity) level.getBlockEntity(spec.heart))
+                        .setCreakingInfo((net.minecraft.world.entity.monster.creaking.Creaking) m);
+            }
             for (Object[] fx : spec.effects) {
                 m.addEffect(new net.minecraft.world.effect.MobEffectInstance(effect((String) fx[0]), (Integer) fx[1], (Integer) fx[2]));
             }
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
                     spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
-                    spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson, effectsJson(spec.effects)));
+                    spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson, effectsJson(spec.effects),
+                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]"));
         }
         StringBuilder trace = new StringBuilder();
+        StringBuilder heartTrace = new StringBuilder();
         StringBuilder hits = new StringBuilder();
         StringBuilder spawned = new StringBuilder();
         // Mobs that appear during the scenario (babies, split slimes, converted zombies) get a
@@ -471,6 +513,7 @@ public class MobVectors {
             counter.setAccessible(true);
             ((java.util.concurrent.atomic.AtomicInteger) counter.get(null)).set(pinId - 1);
         }
+        int nextId = pinId;
         // The world age is pinned too: some of the mobs' math depends on it.
         levelData.setGameTime(1000L);
         long startTime = level.getGameTime();
@@ -499,6 +542,20 @@ public class MobVectors {
                 // `ServerLevel.tick`: the despawn check, then the tick.
                 e.checkDespawn();
                 if (!e.isRemoved()) level.tickNonPassenger(e);
+            }
+            // wp28 creaking: `Level.tickBlockEntities` for the scenario's creaking hearts (their
+            // ticker skips uprooted ones).
+            for (BlockPos hp : s.hearts) {
+                BlockState hs = level.getBlockState(hp);
+                if (level.getBlockEntity(hp) instanceof net.minecraft.world.level.block.entity.CreakingHeartBlockEntity be
+                        && hs.getValue(net.minecraft.world.level.block.CreakingHeartBlock.STATE) != net.minecraft.world.level.block.state.properties.CreakingHeartState.UPROOTED) {
+                    net.minecraft.world.level.block.entity.CreakingHeartBlockEntity.serverTick(level, hp, hs, be);
+                }
+                if (level.getBlockEntity(hp) instanceof net.minecraft.world.level.block.entity.CreakingHeartBlockEntity be) {
+                    if (heartTrace.length() > 0) heartTrace.append(',');
+                    heartTrace.append(String.format(Locale.ROOT, "\"%d:%s:%s:%s:%s:%s\"", tick,
+                            level.getBlockState(hp).getValue(net.minecraft.world.level.block.CreakingHeartBlock.STATE), get(be, "ticker"), get(be, "emitter"), get(be, "ticksExisted"), get(be, "creakingInfo") == null ? 0 : 1));
+                }
             }
             if (s.player != null && player.getHealth() < healthBefore) {
                 if (hits.length() > 0) hits.append(',');
@@ -531,10 +588,28 @@ public class MobVectors {
                 trace.append(state((Mob) tracked.get(i)));
             }
             for (Mob nm : pinned) {
-                trace.append(',');
+                if (trace.charAt(trace.length() - 1) != '[') trace.append(',');
                 trace.append(state(nm));
             }
             trace.append(']');
+        }
+        // wp28 creaking: the blocks around the hearts as the scenario left them (resin), and
+        // the hearts' positions.
+        StringBuilder endBlocks = new StringBuilder();
+        StringBuilder heartsJson = new StringBuilder();
+        for (BlockPos hp : s.hearts) {
+            if (heartsJson.length() > 0) heartsJson.append(',');
+            heartsJson.append("[").append(hp.getX()).append(",").append(hp.getY()).append(",").append(hp.getZ()).append("]");
+            for (int dx = -3; dx <= 3; dx++)
+                for (int dy = -3; dy <= 3; dy++)
+                    for (int dz = -3; dz <= 3; dz++) {
+                        BlockPos p = hp.offset(dx, dy, dz);
+                        if (endBlocks.length() > 0) endBlocks.append(',');
+                        endBlocks.append(String.format(Locale.ROOT, "[%d,%d,%d,%d]", p.getX(), p.getY(), p.getZ(), Block.getId(level.getBlockState(p))));
+                    }
+        }
+        if (s.spawnMonsters) {
+            level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_monsters false");
         }
         // Flyers may end outside the cleanup box.
         for (Entity e : tracked) e.discard();
@@ -556,8 +631,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"trace\":[%s]}",
-                s.name, s.diverges, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"trace\":[%s]}",
+                s.name, s.diverges, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, heartsJson, creakingActive, endBlocks, heartTrace, nextId, trace);
     }
 
     /// `MOB_TRACE_RANDOM=<scenario>`: a mob's random that logs the callers of every draw.
@@ -862,6 +937,282 @@ public class MobVectors {
     static void block(Scenario s, int x, int y, int z, String block) {
         BlockState state = parse(block);
         s.blocks.put(new BlockPos(x, y, z), state);
+    }
+
+    // ------------------------------------------------------------------ wp28: creakings
+
+    static Action look(int tick, double yaw, double pitch) {
+        Action a = new Action(tick, "look");
+        a.x = yaw;
+        a.y = pitch;
+        return a;
+    }
+
+    /// A pale oak trunk (along y) around a creaking heart at (x, BY, z), with a log above the
+    /// trunk's top and the floor under it replaced by logs.
+    static void heartTree(Scenario s, int x, int z, String state, String natural) {
+        block(s, x, BY, z, "minecraft:creaking_heart[axis=y,creaking_heart_state=" + state + ",natural=" + natural + "]");
+        block(s, x, BY - 1, z, "minecraft:pale_oak_log[axis=y]");
+        block(s, x, BY + 1, z, "minecraft:pale_oak_log[axis=y]");
+        block(s, x, BY + 2, z, "minecraft:pale_oak_log[axis=y]");
+    }
+
+    /// Creakings (`CreakingAi`): unwatched, stared at, chasing a survival player that looks
+    /// away and freezing when it looks back, a disguised player, hurt while frozen.
+    static void scenariosCreaking(List<Scenario> out) {
+        // Alone, and with a player that never looks at them.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("idle_creaking_" + seed);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 90f * seed, 14700L + seed));
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("away_creaking_" + seed);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14710L + seed));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 270f;
+            s.playerPitch = -6.6f;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Stared at from beyond 12 blocks: nothing happens.
+        {
+            Scenario s = new Scenario("far_stare_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14720L));
+            s.player = new double[] {16.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Stared at within 12 blocks: it activates, freezes, and hunts once the player looks
+        // away; stares again (freezing mid-chase) and away again.
+        for (int seed = 1; seed <= 3; seed++) {
+            Scenario s = new Scenario(seed == 1 ? "stare_creaking" : "stare_creaking_" + seed);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14730L + seed));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.actions.add(look(60, 270f, 0f));
+            s.actions.add(look(125 + seed * 3, 90f, -6.6f));
+            s.actions.add(look(160 + seed * 3, 270f, 0f));
+            s.ticks = 320;
+            out.add(s);
+        }
+        // Chasing around stone pillars.
+        {
+            Scenario s = new Scenario("chase_creaking_pillars");
+            floor(s, 24, "minecraft:stone");
+            for (int y = 0; y < 3; y++) {
+                block(s, 3, BY + y, 0, "minecraft:stone");
+                block(s, 3, BY + y, 1, "minecraft:stone");
+                block(s, 5, BY + y, -1, "minecraft:stone");
+                block(s, 5, BY + y, 0, "minecraft:stone");
+            }
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14740L));
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.actions.add(look(40, 270f, 0f));
+            s.ticks = 320;
+            out.add(s);
+        }
+        // A pumpkin on the head does not stop an active creaking.
+        {
+            Scenario s = new Scenario("pumpkin_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14750L));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.playerHead = "minecraft:carved_pumpkin";
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A creative player cannot be attacked: it never activates.
+        {
+            Scenario s = new Scenario("creative_stare_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14760L));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Hurt while frozen (no knockback, dies at 1 health) and while it chases.
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario(i == 0 ? "hurt_frozen_creaking" : "hurt_chasing_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14770L + i));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            if (i == 1) s.actions.add(look(50, 270f, 0f));
+            s.hurts.put(i == 0 ? 60 : 90, new double[] {0, 0.5});
+            s.hurts.put(i == 0 ? 90 : 120, new double[] {0, 3.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Creaking hearts: a heart in a pale oak trunk holds its creaking (`home_pos`).
+        // Hurt by a player: it sways (no damage) and the heart hurts (particles, resin), with
+        // the hurt cooldowns of the creaking (8 ticks) and the heart (100 ticks).
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario(i == 0 ? "heart_hurt_creaking" : "heart_chase_creaking");
+            floor(s, 24, "minecraft:stone");
+            heartTree(s, 4, 4, "awake", i == 0 ? "false" : "true");
+            MobSpec c = new MobSpec("minecraft:creaking", 3.5, BY, 3.5, 270f, 14800L + i);
+            c.nbt = "{home_pos:[I;4," + BY + ",4]}";
+            c.heart = new BlockPos(4, BY, 4);
+            s.mobs.add(c);
+            s.hearts.add(c.heart);
+            s.player = new double[] {10.5, BY, 3.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.levelSeed = 5 + i;
+            s.hurts.put(40, new double[] {0, 1.0});
+            s.hurts.put(43, new double[] {0, 1.0});
+            s.hurts.put(70, new double[] {0, 1.0});
+            s.hurts.put(150, new double[] {0, 1.0});
+            s.hurts.put(200, new double[] {0, 1.0});
+            if (i == 1) {
+                s.actions.add(look(90, 270f, 0f));
+                s.actions.add(look(180, 90f, -6.6f));
+            }
+            s.ticks = 260;
+            out.add(s);
+        }
+        // By day the heart lets its creaking go (it crumbles); at night a creaking that strayed
+        // beyond 34 blocks is let go too.
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario(i == 0 ? "heart_day_creaking" : "heart_far_creaking");
+            floor(s, i == 0 ? 24 : 48, "minecraft:stone");
+            heartTree(s, 0, 0, "awake", "false");
+            MobSpec c = new MobSpec("minecraft:creaking", i == 0 ? 3.5 : 40.5, BY, 0.5, 270f, 14810L + i);
+            c.nbt = "{home_pos:[I;0," + BY + ",0]}";
+            c.heart = new BlockPos(0, BY, 0);
+            s.mobs.add(c);
+            s.hearts.add(c.heart);
+            s.dayTime = i == 0 ? 6000 : 18000;
+            s.ticks = 120;
+            out.add(s);
+        }
+        // The heart breaks: by anything (the creaking crumbles at once) or by a player (it twitches
+        // for 45 ticks first).
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario(i == 0 ? "heart_break_creaking" : "heart_player_break_creaking");
+            floor(s, 24, "minecraft:stone");
+            heartTree(s, 4, 4, "awake", "false");
+            MobSpec c = new MobSpec("minecraft:creaking", 3.5, BY, 3.5, 270f, 14820L + i);
+            c.nbt = "{home_pos:[I;4," + BY + ",4]}";
+            c.heart = new BlockPos(4, BY, 4);
+            s.mobs.add(c);
+            s.hearts.add(c.heart);
+            s.player = new double[] {10.5, BY, 3.5};
+            s.playerYaw = 270f;
+            s.dayTime = 18000;
+            Action a = new Action(50, "break_block");
+            a.what = i == 0 ? "" : "player";
+            a.x = 4;
+            a.y = BY;
+            a.z = 4;
+            s.actions.add(a);
+            s.ticks = 140;
+            out.add(s);
+        }
+        // A heart with a player near at night spawns its creaking (`SpawnUtil.trySpawnMob`).
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("heart_spawn_creaking_" + (i + 1));
+            floor(s, 24, "minecraft:stone");
+            heartTree(s, 4 + 3 * i, 4, "awake", "false");
+            s.hearts.add(new BlockPos(4 + 3 * i, BY, 4));
+            s.player = new double[] {10.5, BY, 3.5};
+            s.playerYaw = 270f;
+            s.dayTime = 18000;
+            s.spawnMonsters = true;
+            s.levelSeed = 11 + i;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // The game mode of the watched player changes: a creative player cannot be attacked (the
+        // creaking stays quiet), a survival one can; spectators do not count.
+        {
+            Scenario s = new Scenario("gamemode_creaking");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14790L));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerYaw = 270f;
+            s.playerPitch = 0f;
+            s.dayTime = 18000;
+            Action g1 = new Action(60, "gamemode");
+            g1.what = "survival";
+            s.actions.add(g1);
+            Action g2 = new Action(140, "gamemode");
+            g2.what = "spectator";
+            s.actions.add(g2);
+            Action g3 = new Action(200, "gamemode");
+            g3.what = "survival";
+            s.actions.add(g3);
+            s.ticks = 280;
+            out.add(s);
+        }
+        // A creaking bound to a heart never walks beyond 32 blocks of it (`HomeNodeEvaluator`),
+        // however far its player goes.
+        {
+            Scenario s = new Scenario("heart_home_creaking");
+            floor(s, 48, "minecraft:stone");
+            heartTree(s, 0, 0, "awake", "false");
+            MobSpec c = new MobSpec("minecraft:creaking", 3.5, BY, 0.5, 270f, 14830L);
+            c.nbt = "{home_pos:[I;0," + BY + ",0]}";
+            c.heart = new BlockPos(0, BY, 0);
+            s.mobs.add(c);
+            s.hearts.add(c.heart);
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = 0f;
+            s.dayTime = 18000;
+            s.actions.add(look(20, 270f, 0f));
+            Action m = new Action(30, "move");
+            m.x = 40.5;
+            m.y = BY;
+            m.z = 0.5;
+            s.actions.add(m);
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Two creakings watched by one player (they share the level random).
+        {
+            Scenario s = new Scenario("two_creakings");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14780L));
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 5.5, 200f, 14781L));
+            s.player = new double[] {8.5, BY, 2.5};
+            s.playerYaw = 90f;
+            s.playerPitch = 0f;
+            s.dayTime = 18000;
+            s.actions.add(look(70, 270f, 0f));
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 
     static List<Scenario> scenarios() {
@@ -2977,19 +3328,6 @@ public class MobVectors {
             s.ticks = 200;
             out.add(s);
         }
-        // Creakings (brain in vanilla): stared at by a survival player, and unwatched.
-        for (boolean stare : new boolean[] {true, false}) {
-            Scenario s = new Scenario(stare ? "stare_creaking" : "idle_creaking");
-            floor(s, 20, "minecraft:stone");
-            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14700));
-            s.player = new double[] {8.5, BY, 0.5};
-            s.playerYaw = stare ? 90f : 270f;
-            s.playerPitch = -6.6f;
-            s.dayTime = 18000;
-            s.ticks = 200;
-            s.diverges = true;
-            out.add(s);
-        }
         // Sniffers (brain in vanilla): wandering and sniffing on grass.
         {
             Scenario s = new Scenario("idle_sniffer");
@@ -4413,6 +4751,7 @@ public class MobVectors {
     /// Wardens, breezes, creakings.
     static void scenariosBrainSpecial(List<Scenario> out) {
         scenariosWardenBreeze(out);
+        scenariosCreaking(out);
     }
 
     // ---------------------------------------------------------------------- wp28: warden and breeze

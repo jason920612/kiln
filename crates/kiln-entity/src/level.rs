@@ -572,6 +572,17 @@ pub trait EntityLevel {
         let _ = (particle, pos);
     }
 
+    /// `sendParticles(TrailParticleOption(target, color, duration), overrideLimiter, alwaysShow,
+    /// pos, 1, 0, 0, 0, 0)` (the creaking heart's trails).
+    fn trail_particle(&mut self, pos: Vec3, target: Vec3, color: i32, duration: i32) {
+        let _ = (pos, target, color, duration);
+    }
+
+    /// `sendParticles(BlockParticleOption(block_crumble, state), pos, count, dx, dy, dz, 0)`.
+    fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
+        let _ = (pos, state, count, spread);
+    }
+
     /// `getRawBrightness(pos, skyDarken)`: the larger of the sky light less `sky_darken` and
     /// the block light.
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
@@ -785,6 +796,74 @@ pub trait EntityLevel {
     /// schedule timeline (`minecraft:villager_schedule`) reads in every dimension.
     fn day_time(&self) -> i64 {
         1000
+    }
+
+    // -- wp28 creaking: the creaking heart block entity (`crate::mob::kinds::creaking_heart`) as creakings see it.
+
+    /// `CreakingHeartBlockEntity.isProtector`: whether the heart at `home` holds creaking `id`
+    /// (`uuid`). Levels without heart block entities approximate it with a `creaking_heart`
+    /// block standing there.
+    fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
+        let _ = (id, uuid);
+        crate::blocks::block_name(self.block(home)) == "minecraft:creaking_heart"
+    }
+
+    /// `CreakingHeartBlockEntity.creakingHurt` (the protector `id` (`uuid`, its box centred on
+    /// `at`) was hurt by a player: the heart hurts, spreading resin).
+    fn heart_creaking_hurt(&mut self, home: BlockPos, id: i32, uuid: u128, at: Vec3) {
+        let _ = (home, id, uuid, at);
+    }
+
+    /// The entity with this UUID (`ServerLevel.getEntity(UUID)`), among the entities and the
+    /// ticking entity's neighbours.
+    fn entity_by_uuid(&self, uuid: u128) -> Option<&Entity> {
+        let _ = uuid;
+        None
+    }
+
+    /// A random for the block entity at `pos` this tick, standing in for the level random
+    /// (`salt` tells the users apart): seeded by the position and the game time, so what
+    /// block entities draw does not depend on how the world is split into regions.
+    fn pos_random(&mut self, pos: BlockPos, salt: i64) -> LegacyRandom {
+        let mut h = (self.game_time() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (salt as u64);
+        for v in [pos.x as u32 as u64, pos.y as u32 as u64, pos.z as u32 as u64] {
+            h = (h ^ v).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            h ^= h >> 31;
+        }
+        LegacyRandom::new(h as i64)
+    }
+
+    /// `Level.updateNeighbourForOutputSignal(pos, block)`: comparators next to a block entity
+    /// whose analog output changed re-read it.
+    fn update_neighbours_for_output_signal(&mut self, pos: BlockPos) {
+        let _ = pos;
+    }
+
+    /// A fresh UUID for a block entity's new entity at `pos`.
+    fn fresh_uuid_at(&mut self, pos: BlockPos) -> u128 {
+        use kiln_javamath::random::RandomSource;
+        let mut r = self.pos_random(pos, 0x5555);
+        let hi = (r.next_long() as u64 & !0xF000) | 0x4000;
+        let lo = (r.next_long() as u64 & !(0xC000u64 << 48)) | (0x8000u64 << 48);
+        ((hi as u128) << 64) | lo as u128
+    }
+
+    /// `addFreshEntity` of an entity that keeps the UUID it was made with (a block entity
+    /// holds on to what it spawned by UUID).
+    fn add_entity_with_uuid(&mut self, entity: Entity) {
+        self.add_entity(entity);
+    }
+
+    /// `ServerLevel.isSpawningMonsters` (`spawn_monsters` game rule).
+    fn spawning_monsters(&self) -> bool {
+        true
+    }
+
+    /// The `minecraft:gameplay/creaking_active` environment attribute at `pos` (the overworld's
+    /// night).
+    fn creaking_active(&self, pos: BlockPos) -> bool {
+        let _ = pos;
+        false
     }
 }
 

@@ -401,7 +401,7 @@ impl RegionWork<'_> {
             let list = &self.entities.list;
             self.blocks.sculk.retain_allays(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
         }
-        if self.entities.list.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
+        if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
             self.tick_block_entities(env);
             return;
         }

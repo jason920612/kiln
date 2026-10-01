@@ -1404,6 +1404,10 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             if let Some(k) = m.kind.ext() {
                 k.on_killed_removal(e, m, level);
             }
+            // `LivingEntity.remove`: `brain.clearMemories()`.
+            if let Some(b) = m.brain.as_mut() {
+                b.st.mem.clear_all();
+            }
         }
     }
     if m.last_hurt_by_player_memory > 0 {
@@ -1652,7 +1656,9 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
         goals::tick_running(&mut sel, e, m, level, false);
     }
     m.goals = sel;
-    path::tick(e, m, level);
+    if m.kind.ext().is_none_or(|k| k.ticks_navigation(m)) {
+        path::tick(e, m, level);
+    }
     breed::custom_server_ai_step(m);
     let k = m.kind.ext();
     if let Some(k) = k {
@@ -1955,7 +1961,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         dx *= 0.05000000074505806;
         dz *= 0.05000000074505806;
         // `Entity.push`: vehicles and dead (not `isPushable`) mobs are not pushed.
-        if e.passengers.is_empty() && m.health > 0.0 {
+        if e.passengers.is_empty() && m.health > 0.0 && m.kind.ext().is_none_or(|k| k.can_be_pushed(m)) {
             e.delta = e.delta.add(-dx, 0.0, -dz);
             e.needs_sync = true;
         }
