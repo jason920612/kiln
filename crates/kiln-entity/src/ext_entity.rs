@@ -47,8 +47,8 @@ pub trait EntityExt: Any + Debug + Send + Sync {
         0
     }
     /// `Entity.interact` (a right click): `Some` when the entity reacts (a boat takes the rider).
-    fn interact(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, who: &crate::mob::interact::Interactor) -> Option<crate::mob::interact::Outcome> {
-        let _ = (e, level, who);
+    fn interact(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, who: &crate::mob::interact::Interactor, stack: &kiln_item::ItemStack) -> Option<crate::mob::interact::Outcome> {
+        let _ = (e, level, who, stack);
         None
     }
     /// Whether a player's melee hit reaches `hurt` (`isAttackable`: boats yes, fireballs no).

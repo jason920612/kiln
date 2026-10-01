@@ -130,6 +130,7 @@ public class EntityVectors {
         Scenarios.throwables(out);
         Scenarios.arrows(out);
         Scenarios.vehicles(out);
+        Scenarios.cargo(out);
         return out;
     }
 
@@ -289,12 +290,22 @@ public class EntityVectors {
             Entity e = spawn(level, spec);
             if (e instanceof net.minecraft.server.level.ServerPlayer player) PLAYER_MOVES.put(player, (double[][]) spec.extra.get("moves"));
             tracked.add(e);
+            if (spec.extra.get("hits") instanceof String h) HITS.put(e, h);
             if (spawnJson.length() > 0) spawnJson.append(',');
             spawnJson.append(specJson(spec, e));
         }
         StringBuilder trace = new StringBuilder();
         StringBuilder spawned = new StringBuilder();
         for (int tick = 0; tick < s.ticks; tick++) {
+            // Scripted hits ("tick:kind:amount;...") land before the entities tick.
+            for (Entity e : new ArrayList<>(tracked)) {
+                String h = HITS.get(e);
+                if (h == null || e.isRemoved()) continue;
+                for (String part : h.split(";")) {
+                    String[] p = part.split(":");
+                    if (Integer.parseInt(p[0]) == tick) e.hurtServer(level, damageSource(level, p[1]), Float.parseFloat(p[2]));
+                }
+            }
             for (Entity e : new ArrayList<>(tracked)) {
                 if (e instanceof net.minecraft.server.level.ServerPlayer player) {
                     double[] m = PLAYER_MOVES.get(player)[tick];
@@ -394,6 +405,28 @@ public class EntityVectors {
                 e = rocket;
             }
             case "minecart" -> e = new net.minecraft.world.entity.vehicle.minecart.Minecart(EntityTypes.MINECART, level);
+            case "furnace_minecart" -> {
+                var c = new net.minecraft.world.entity.vehicle.minecart.MinecartFurnace(EntityTypes.FURNACE_MINECART, level);
+                setInt(net.minecraft.world.entity.vehicle.minecart.MinecartFurnace.class, c, "fuel", (Integer) spec.extra.getOrDefault("fuel", 0));
+                c.push = new Vec3(((Number) spec.extra.getOrDefault("push_x", 0.0)).doubleValue(), 0.0, ((Number) spec.extra.getOrDefault("push_z", 0.0)).doubleValue());
+                e = c;
+            }
+            case "tnt_minecart" -> {
+                var c = new net.minecraft.world.entity.vehicle.minecart.MinecartTNT(EntityTypes.TNT_MINECART, level);
+                setInt(net.minecraft.world.entity.vehicle.minecart.MinecartTNT.class, c, "fuse", (Integer) spec.extra.getOrDefault("fuse", -1));
+                e = c;
+            }
+            case "hopper_minecart" -> {
+                var c = new net.minecraft.world.entity.vehicle.minecart.MinecartHopper(EntityTypes.HOPPER_MINECART, level);
+                if (spec.extra.containsKey("disabled")) c.setEnabled(false);
+                fillCart(c, (String) spec.extra.get("items"));
+                e = c;
+            }
+            case "chest_minecart" -> {
+                var c = new net.minecraft.world.entity.vehicle.minecart.MinecartChest(EntityTypes.CHEST_MINECART, level);
+                fillCart(c, (String) spec.extra.get("items"));
+                e = c;
+            }
             case "oak_boat" -> e = new net.minecraft.world.entity.vehicle.boat.Boat(EntityTypes.OAK_BOAT, level, () -> net.minecraft.world.item.Items.OAK_BOAT);
             case "player" -> {
                 var profile = new com.mojang.authlib.GameProfile(java.util.UUID.nameUUIDFromBytes(new byte[] {1}), "Kiln");
@@ -430,6 +463,30 @@ public class EntityVectors {
         e.getRandom().setSeed(spec.seed);
         if (!level.addFreshEntity(e)) throw new IllegalStateException("could not add " + spec.kind);
         return e;
+    }
+
+    /** Puts "slot:item:count,slot:item:count" into a container minecart. */
+    static void fillCart(net.minecraft.world.Container c, String items) {
+        if (items == null) return;
+        for (String part : items.split(",")) {
+            String[] p = part.split(":");
+            var item = BuiltInRegistries.ITEM.getValue(Identifier.parse(p[1] + ":" + p[2]));
+            c.setItem(Integer.parseInt(p[0]), new ItemStack(item, Integer.parseInt(p[3])));
+        }
+    }
+
+    static final Map<Entity, String> HITS = new HashMap<>();
+
+    static net.minecraft.world.damagesource.DamageSource damageSource(ServerLevel level, String kind) {
+        var sources = level.damageSources();
+        return switch (kind) {
+            case "generic" -> sources.generic();
+            case "explosion" -> sources.explosion(null, null);
+            case "in_fire" -> sources.inFire();
+            case "on_fire" -> sources.onFire();
+            case "lava" -> sources.lava();
+            default -> throw new IllegalArgumentException(kind);
+        };
     }
 
     static void setInt(Class<?> c, Object o, String field, int v) throws Exception {
@@ -511,6 +568,20 @@ public class EntityVectors {
                     .append(',').append(getInt(net.minecraft.world.entity.projectile.FireworkRocketEntity.class, rocket, "lifetime"));
         } else if (e instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecart cart) {
             sb.append(',').append(d(cart.getYRot())).append(',').append(cart.isFlipped() ? 1 : 0);
+            // The cargo carts: [fuel, push.x, push.z], [fuse], [enabled, items...] (slot contents
+            // as item id and count).
+            if (cart instanceof net.minecraft.world.entity.vehicle.minecart.MinecartFurnace f) {
+                sb.append(',').append(getInt(net.minecraft.world.entity.vehicle.minecart.MinecartFurnace.class, f, "fuel"))
+                        .append(',').append(d(f.push.x)).append(',').append(d(f.push.z));
+            } else if (cart instanceof net.minecraft.world.entity.vehicle.minecart.MinecartTNT t) {
+                sb.append(',').append(t.getFuse());
+            } else if (cart instanceof net.minecraft.world.entity.vehicle.minecart.AbstractMinecartContainer c) {
+                sb.append(',').append(cart instanceof net.minecraft.world.entity.vehicle.minecart.MinecartHopper h && !h.isEnabled() ? 0 : 1);
+                for (int i = 0; i < c.getContainerSize(); i++) {
+                    var stack = c.getItemStacks().get(i);
+                    sb.append(',').append(stack.isEmpty() ? 0 : net.minecraft.world.item.Item.getId(stack.getItem()) + 1).append(',').append(stack.getCount());
+                }
+            }
         } else if (e instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat) {
             sb.append(',').append(d(boat.getYRot()));
         } else if (e instanceof ExperienceOrb orb) {
@@ -1065,6 +1136,134 @@ class Scenarios {
             s.entity("oak_boat", rnd(r, -3, 3), rnd(r, 0.4, 4.0), rnd(r, -3, 3), rnd(r, -0.3, 0.3), rnd(r, -0.2, 0.1), rnd(r, -0.3, 0.3), r.nextLong())
                     .with("yaw", rnd(r, -180, 180));
             s.ticks(100);
+            out.add(s);
+        }
+    }
+
+    /**
+     * The cargo minecarts: furnace carts driving themselves (fuel, push, the half speed limit),
+     * TNT carts set off by an activator rail, a crash, a fall, fire or an explosion, hopper carts
+     * pulling item entities (and switched off by a powered activator rail), chest carts dragging
+     * with their load and dropping it when broken.
+     */
+    static void cargo(List<EntityVectors.Scenario> out) {
+        Random r = new Random(26);
+        for (int k = 0; k < 16; k++) {
+            var s = new EntityVectors.Scenario("cart_furnace/straight/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            boolean powered = k % 4 == 3;
+            String rail = powered ? "minecraft:powered_rail" : "minecraft:rail";
+            String props = "[shape=east_west" + (powered ? ",powered=" + (k % 8 == 3) : "") + (k % 5 == 2 ? ",waterlogged=true" : "") + "]";
+            for (int x = -12; x <= 12; x++) s.block(x, 1, 0, rail + props);
+            double dir = k % 2 == 0 ? 1 : -1;
+            s.entity("furnace_minecart", rnd(r, -6, 6), 1.0625, 0.5, k % 3 == 0 ? dir * rnd(r, 0.05, 0.3) : 0, 0, 0, r.nextLong())
+                    .with("fuel", 20 + r.nextInt(k % 2 == 0 ? 150 : 3600)).with("push_x", dir * rnd(r, 0.3, 1.0)).with("push_z", rnd(r, -0.1, 0.1));
+            s.ticks(100);
+            out.add(s);
+        }
+        for (int k = 0; k < 8; k++) {
+            var s = new EntityVectors.Scenario("cart_furnace/offrail/" + k, r.nextLong());
+            s.fill(-14, 0, -8, 14, 0, 8, k % 3 == 1 ? "minecraft:ice" : "minecraft:stone");
+            if (k % 3 == 2) s.fill(-14, 1, -8, 14, 2, 8, "minecraft:water");
+            s.entity("furnace_minecart", rnd(r, -3, 3), rnd(r, 1.0, 3.0), rnd(r, -3, 3), rnd(r, -0.5, 0.5), rnd(r, -0.2, 0.3), rnd(r, -0.5, 0.5), r.nextLong())
+                    .with("fuel", 60 + r.nextInt(400)).with("push_x", rnd(r, -1, 1)).with("push_z", rnd(r, -1, 1));
+            s.ticks(80);
+            out.add(s);
+        }
+        // A furnace cart driving into a plain cart (and the other way round).
+        for (int k = 0; k < 8; k++) {
+            var s = new EntityVectors.Scenario("cart_furnace/push/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            for (int x = -12; x <= 12; x++) s.block(x, 1, 0, "minecraft:rail[shape=east_west]");
+            boolean furnaceFirst = k % 2 == 0;
+            s.entity(furnaceFirst ? "furnace_minecart" : "minecart", -4.5 + rnd(r, 0, 1), 1.0625, 0.5, 0, 0, 0, r.nextLong())
+                    .with("fuel", furnaceFirst ? 3000 : 0).with("push_x", furnaceFirst ? 0.8 : 0.0);
+            s.entity(furnaceFirst ? "minecart" : "furnace_minecart", -1.5 + rnd(r, 0, 1), 1.0625, 0.5, furnaceFirst ? 0 : -0.1, 0, 0, r.nextLong())
+                    .with("fuel", furnaceFirst ? 0 : 3000).with("push_x", furnaceFirst ? 0.0 : -0.8);
+            s.ticks(100);
+            out.add(s);
+        }
+        // TNT carts: a powered activator rail (the cart runs in at speed), a crash into a wall, a
+        // hard landing, fire and an explosion nearby.
+        for (int k = 0; k < 8; k++) {
+            var s = new EntityVectors.Scenario("cart_tnt/activator/" + k, r.nextLong());
+            s.fill(-14, 0, -8, 14, 0, 8, "minecraft:stone");
+            for (int x = -12; x <= 12; x++) s.block(x, 1, 0, x == 0 ? "minecraft:activator_rail[shape=east_west,powered=true]" : "minecraft:rail[shape=east_west]");
+            s.entity("tnt_minecart", -4.5 + rnd(r, 0, 1), 1.0625, 0.5, rnd(r, 0.1, 0.45), 0, 0, r.nextLong());
+            s.entity("item", 4 + rnd(r, 0, 3), 1.1, rnd(r, -2, 2), 0, 0, 0, r.nextLong()).with("item", "minecraft:stick").with("count", 5).with("pickup_delay", 100);
+            s.entity("minecart", 6.5, 1.0625, 0.5, 0, 0, 0, r.nextLong());
+            s.region = new int[] {-14, 0, -8, 14, 4, 8};
+            s.ticks(140);
+            out.add(s);
+        }
+        for (int k = 0; k < 6; k++) {
+            var s = new EntityVectors.Scenario("cart_tnt/crash/" + k, r.nextLong());
+            s.fill(-14, 0, -8, 14, 0, 8, "minecraft:stone");
+            for (int x = -12; x <= 5; x++) s.block(x, 1, 0, "minecraft:rail[shape=east_west]");
+            s.fill(6, 1, -1, 6, 3, 1, "minecraft:stone");
+            s.entity("tnt_minecart", -6.5 + rnd(r, 0, 1), 1.0625, 0.5, rnd(r, 0.15, 0.6), 0, 0, r.nextLong());
+            s.region = new int[] {-14, 0, -8, 14, 4, 8};
+            s.ticks(60);
+            out.add(s);
+        }
+        for (int k = 0; k < 6; k++) {
+            var s = new EntityVectors.Scenario("cart_tnt/fall/" + k, r.nextLong());
+            s.fill(-14, 0, -8, 14, 0, 8, "minecraft:stone");
+            s.entity("tnt_minecart", rnd(r, -3, 3), 3.0 + k * 1.5, rnd(r, -3, 3), rnd(r, -0.1, 0.1), 0, rnd(r, -0.1, 0.1), r.nextLong());
+            s.region = new int[] {-14, 0, -8, 14, 4, 8};
+            s.ticks(60);
+            out.add(s);
+        }
+        String[] kinds = {"in_fire", "explosion", "lava", "generic", "on_fire", "explosion"};
+        for (int k = 0; k < 6; k++) {
+            var s = new EntityVectors.Scenario("cart_tnt/hit/" + k, r.nextLong());
+            s.fill(-14, 0, -8, 14, 0, 8, "minecraft:stone");
+            for (int x = -12; x <= 12; x++) s.block(x, 1, 0, "minecraft:rail[shape=east_west]");
+            s.entity("tnt_minecart", rnd(r, -2, 2), 1.0625, 0.5, k % 2 == 0 ? rnd(r, 0.05, 0.3) : 0, 0, 0, r.nextLong())
+                    .with("hits", "3:" + kinds[k] + ":" + (k == 3 ? "5.0" : "1.0") + (k == 3 ? ";6:generic:5.0" : ""));
+            s.region = new int[] {-14, 0, -8, 14, 4, 8};
+            s.ticks(120);
+            out.add(s);
+        }
+        // Chest carts: dragging with their load, and breaking.
+        String[] loads = {"", "0:minecraft:stone:64", "0:minecraft:stone:64,1:minecraft:stone:64,2:minecraft:stone:64,3:minecraft:stone:64,4:minecraft:stone:64,5:minecraft:stone:64,6:minecraft:stone:64,7:minecraft:stone:64,8:minecraft:stone:64,9:minecraft:stone:64,10:minecraft:stone:64,11:minecraft:stone:64,12:minecraft:stone:64,13:minecraft:stone:64,14:minecraft:stone:64,15:minecraft:stone:64,16:minecraft:stone:64,17:minecraft:stone:64,18:minecraft:stone:64,19:minecraft:stone:64,20:minecraft:stone:64,21:minecraft:stone:64,22:minecraft:stone:64,23:minecraft:stone:64,24:minecraft:stone:64,25:minecraft:stone:64,26:minecraft:stone:64", "3:minecraft:ender_pearl:16,9:minecraft:diamond:7,26:minecraft:apple:33"};
+        for (int k = 0; k < 8; k++) {
+            var s = new EntityVectors.Scenario("cart_chest/drag/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            for (int x = -12; x <= 12; x++) s.block(x, 1, 0, "minecraft:rail[shape=east_west" + (k % 4 == 3 ? ",waterlogged=true" : "") + "]");
+            var e = s.entity(k % 2 == 0 ? "chest_minecart" : "hopper_minecart", rnd(r, -6, 0), 1.0625, 0.5, rnd(r, 0.1, 0.45), 0, 0, r.nextLong());
+            String load = loads[k % loads.length];
+            if (k % 2 == 1) load = load.isEmpty() ? "" : "0:minecraft:stone:64,2:minecraft:apple:5";
+            if (!load.isEmpty()) e.with("items", load);
+            s.ticks(80);
+            out.add(s);
+        }
+        for (int k = 0; k < 8; k++) {
+            var s = new EntityVectors.Scenario("cart_chest/break/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            for (int x = -12; x <= 12; x++) s.block(x, 1, 0, "minecraft:rail[shape=east_west]");
+            var e = s.entity(k % 2 == 0 ? "chest_minecart" : "hopper_minecart", rnd(r, -2, 2), 1.0625, 0.5, k % 4 < 2 ? 0 : rnd(r, 0.05, 0.3), 0, 0, r.nextLong());
+            e.with("items", k % 2 == 0 ? "0:minecraft:stone:64,4:minecraft:diamond:23,11:minecraft:apple:2,20:minecraft:coal:60" : "0:minecraft:stone:64,1:minecraft:stick:33,3:minecraft:coal:9");
+            e.with("hits", "2:generic:2.0;3:generic:3.0");
+            s.ticks(40);
+            out.add(s);
+        }
+        // Hopper carts pulling item entities, and stopped by a powered activator rail.
+        for (int k = 0; k < 10; k++) {
+            var s = new EntityVectors.Scenario("cart_hopper/items/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            boolean activator = k % 5 == 4;
+            for (int x = -12; x <= 12; x++) s.block(x, 1, 0, activator ? "minecraft:activator_rail[shape=east_west,powered=" + (k == 4) + "]" : "minecraft:rail[shape=east_west]");
+            var e = s.entity("hopper_minecart", rnd(r, -3, 0), 1.0625, 0.5, k % 2 == 0 ? rnd(r, 0.05, 0.3) : 0, 0, 0, r.nextLong());
+            if (k % 3 == 1) e.with("items", "0:minecraft:stone:60,1:minecraft:stick:64,2:minecraft:coal:3");
+            int n = 3 + r.nextInt(4);
+            String[] names = {"minecraft:stone", "minecraft:coal", "minecraft:stick", "minecraft:apple"};
+            for (int i = 0; i < n; i++) {
+                double y = r.nextBoolean() ? 1.3 : 2.4;
+                s.entity("item", rnd(r, -3, 3), y, 0.5 + rnd(r, -0.4, 0.4), 0, 0, 0, r.nextLong())
+                        .with("item", names[r.nextInt(names.length)]).with("count", 1 + r.nextInt(40)).with("pickup_delay", 100).with("no_gravity", 1);
+            }
+            s.ticks(60);
             out.add(s);
         }
     }

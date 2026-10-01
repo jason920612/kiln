@@ -210,8 +210,9 @@ impl Kind for GuardianKind {
         if (e.tick_count + e.id) % 1200 == 0 {
             // `MobEffectUtil.addEffectToPlayersAround(.., 50, mining fatigue 6000 III, 1200)`.
             let pos = e.position();
+            let area = crate::math::Aabb::new(pos.x - 51.0, pos.y - 51.0, pos.z - 51.0, pos.x + 51.0, pos.y + 51.0, pos.z + 51.0);
             let players: Vec<i32> = level
-                .players()
+                .players_in(&area)
                 .iter()
                 .filter(|p| !p.creative && !p.spectator && p.alive && p.pos.distance_to_sqr(pos) < 50.0 * 50.0)
                 .map(|p| p.id)

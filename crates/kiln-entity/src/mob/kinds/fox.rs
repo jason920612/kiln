@@ -1224,7 +1224,7 @@ impl CustomGoal for DefendTrustedTargetGoal {
             return false;
         }
         for uuid in st(m).trusted.into_iter().flatten() {
-            let Some(p) = level.players().iter().find(|p| p.uuid == uuid).copied() else { continue };
+            let Some(p) = level.player_by_uuid(uuid) else { continue };
             self.target = p.last_hurt_by_mob;
             if p.last_hurt_by_mob_time == self.timestamp {
                 return false;

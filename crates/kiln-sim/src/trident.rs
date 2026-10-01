@@ -102,8 +102,8 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
         return;
     }
     // Riptide: `Player.push` along the view (the strength spread over its three components),
-    // sent to the player's client, which launches itself; the spin lasts 20 ticks. (The
-    // spin's damage to what it touches is not simulated.)
+    // sent to the player's client, which launches itself; the spin lasts 20 ticks and hits
+    // what it touches for 8 (see [`crate::combat::spin_attack`]).
     use kiln_entity::mob::mth::{cos, sin};
     const RAD: f32 = 0.017453292;
     let (yaw, pitch) = (p.rot[0], p.rot[1]);
@@ -116,7 +116,7 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
     z = z * (spin / len);
     p.vel = [p.vel[0] + x as f64, p.vel[1] + y as f64, p.vel[2] + z as f64];
     p.sync_velocity = true;
-    p.start_spin_attack(20);
+    p.start_spin_attack(20, 8.0, stack.clone(), off_hand);
     p.sound_for_all(sound, SoundSource::Players, 1.0, 1.0);
 }
 

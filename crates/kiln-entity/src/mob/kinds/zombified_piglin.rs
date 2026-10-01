@@ -181,7 +181,7 @@ impl Kind for ZombifiedPiglin {
     fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         // A loaded anger target: find it among the players.
         if let Some((-1, uuid)) = st(m).anger_target
-            && let Some(p) = level.players().into_iter().find(|p| p.uuid == uuid)
+            && let Some(p) = level.player_by_uuid(uuid)
         {
             st_mut(m).anger_target = Some((p.id, uuid));
             mob::set_target(e, m, Some(p.id));

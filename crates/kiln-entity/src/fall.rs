@@ -47,6 +47,15 @@ pub fn cause_fall_damage(e: &mut Entity, level: &mut dyn EntityLevel, distance: 
             e.pending_fall = Some((distance, multiplier));
             false
         }
+        // `MinecartTNT.causeFallDamage`: a hard landing sets it off, which removes the cart at
+        // once (its move ends there); the cart works out the blast right after its move.
+        EntityKind::Other { type_name: "minecraft:tnt_minecart" } => {
+            e.pending_fall = Some((distance, multiplier));
+            if distance >= 3.0 && level.tnt_explodes() {
+                e.discard();
+            }
+            false
+        }
         _ => false,
     }
 }

@@ -63,6 +63,16 @@ pub(crate) fn is_minecart_item(name: &str) -> bool {
     kiln_entity::ext_entity::minecart::is_minecart(name)
 }
 
+/// `AbstractMinecart.createMinecart`: a new minecart of `type_name` at `at`, named as the item
+/// it came from was.
+pub(crate) fn new_cart(type_name: &'static str, at: Vec3, seed: i64, stack: &kiln_item::ItemStack) -> kiln_entity::Entity {
+    let mut cart = kiln_entity::ext_entity::minecart::new(type_name, at, seed);
+    if let Some(name) = stack.get(kiln_item::keys::CUSTOM_NAME) {
+        cart.extra.push(("CustomName".into(), name.nbt().clone()));
+    }
+    cart
+}
+
 /// `MinecartItem.useOn`: a minecart on the clicked rail (raised half a block on a slope).
 pub(crate) fn use_minecart_on(p: &mut Player, level: &mut RegionLevel, pos: kiln_blocks::BlockPos, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
     let stack = p.in_hand(off_hand).clone();
@@ -72,7 +82,7 @@ pub(crate) fn use_minecart_on(p: &mut Player, level: &mut RegionLevel, pos: kiln
     let lift = if shape.is_slope() { 0.5 } else { 0.0 };
     let at = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.0625 + lift, pos.z as f64 + 0.5);
     let seed = crate::ranged::projectile_seed(level, p, spawns.len() as u64);
-    let cart = kiln_entity::ext_entity::minecart::new(kind.name, at, seed);
+    let cart = new_cart(kind.name, at, seed, &stack);
     crate::ranged::push_spawn(spawns, cart);
     if !p.infinite_materials() {
         let i = p.hand_index(off_hand);

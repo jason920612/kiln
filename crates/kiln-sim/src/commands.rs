@@ -1062,6 +1062,28 @@ impl Host for Sim {
         true
     }
 
+    fn kiln_interact(&mut self, player: &PlayerRef, pos: [i32; 3]) -> bool {
+        let Some(p) = self.players.get(&player.conn) else { return false };
+        let at = [pos[0] as f64 + 0.5, pos[1] as f64 + 0.5, pos[2] as f64 + 0.5];
+        let nearest = self.dims[p.dim]
+            .regions
+            .iter()
+            .flat_map(|r| r.part().0.list.iter())
+            .filter(|e| !e.removed)
+            .map(|e| (e.id, (0..3).map(|i| (e.pos[i] - at[i]).powi(2)).sum::<f64>()))
+            .filter(|&(_, d)| d < 1.5 * 1.5)
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((entity_id, _)) = nearest else { return false };
+        let pkt = kiln_link::PlayIn::Interact {
+            entity_id,
+            hand: kiln_proto::packets::serverbound::Hand::Main,
+            location: [0.0, 0.5, 0.0],
+            sneaking: p.sneaking,
+        };
+        self.commands.injected.push((player.conn, pkt));
+        true
+    }
+
     fn kiln_break(&mut self, player: &PlayerRef, pos: [i32; 3]) -> bool {
         let Some(p) = self.players.get(&player.conn) else { return false };
         let pkt = kiln_link::PlayIn::PlayerAction { action: crate::digging::START_DESTROY_BLOCK, pos, face: 1, sequence: p.ack_block_changes.max(0) };

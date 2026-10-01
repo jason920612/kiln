@@ -123,8 +123,7 @@ fn scan_for_merges(e: &mut Entity, level: &mut dyn EntityLevel) {
 
 /// `followNearbyPlayer`.
 fn follow_nearby_player(e: &mut Entity, level: &mut dyn EntityLevel) {
-    let players = level.players();
-    let current = data(e).following.and_then(|id| players.iter().find(|p| p.id == id).copied());
+    let current = data(e).following.and_then(|id| level.player(id));
     let keep = current.is_some_and(|p| !p.spectator && distance_sqr(p.pos, e.position()) <= 64.0);
     let target = if keep {
         current
@@ -132,7 +131,10 @@ fn follow_nearby_player(e: &mut Entity, level: &mut dyn EntityLevel) {
         // Level.getNearestPlayer(entity, 8): nearest non-spectator within 8 blocks.
         let mut best = None;
         let mut best_d = -1.0;
-        for p in players.iter().filter(|p| !p.spectator) {
+        let at = e.position();
+        // (the players around, from the level's grid: every orb asks every tick)
+        let area = crate::math::Aabb::new(at.x - 9.0, at.y - 9.0, at.z - 9.0, at.x + 9.0, at.y + 9.0, at.z + 9.0);
+        for p in level.players_in(&area).iter().filter(|p| !p.spectator) {
             let d = distance_sqr(p.pos, e.position());
             if d < 64.0 && (best_d == -1.0 || d < best_d) {
                 best_d = d;

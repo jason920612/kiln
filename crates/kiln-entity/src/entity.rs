@@ -69,6 +69,9 @@ pub struct Entity {
     /// A mob's landing (`causeFallDamage(distance, multiplier)`) during its move, applied by
     /// the mob once its travel is done (its data is out of the entity meanwhile).
     pub pending_fall: Option<(f64, f32)>,
+    /// Damage a minecart took from what it stood in (lava, fire) while its own tick held its
+    /// state: (kind, amount, attacker), taken by the cart right after.
+    pub pending_hurts: Vec<(DamageKind, f32, Option<i32>)>,
     pub id: i32,
     pub uuid: u128,
     pub kind: EntityKind,
@@ -142,6 +145,7 @@ impl Entity {
         let t = kiln_data::entities::by_name(type_name).unwrap_or_else(|| panic!("unknown entity type {type_name}"));
         let mut e = Entity {
             pending_fall: None,
+            pending_hurts: Vec::new(),
             id,
             uuid,
             kind,
@@ -498,6 +502,11 @@ impl Entity {
                     self.kind = EntityKind::Ext(x);
                 }
                 r
+            }
+            // A minecart mid-tick: it takes the damage itself right after.
+            EntityKind::Other { .. } if crate::ext_entity::minecart::is_minecart(self.type_name) => {
+                self.pending_hurts.push((kind, amount, attacker));
+                true
             }
             EntityKind::Player(_) | EntityKind::Other { .. } => {
                 level.emit(Event::Hurt { target: self.id, amount, kind, attacker });

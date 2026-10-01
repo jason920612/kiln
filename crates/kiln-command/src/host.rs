@@ -715,6 +715,12 @@ pub trait Host: SelectorWorld {
     fn kiln_use(&mut self, _player: &Self::Entity, _pos: [i32; 3]) -> bool {
         false
     }
+    /// `/kiln interact <player> <pos>`: the player right-clicks the entity nearest the middle of
+    /// the block at `pos` (within a block and a half) with its main hand, as its client would
+    /// (for tools and tests). Whether it was queued.
+    fn kiln_interact(&mut self, _player: &Self::Entity, _pos: [i32; 3]) -> bool {
+        false
+    }
     /// `/kiln recipebook <player>`: the player's crafting recipe book is open, as if its
     /// client had toggled it (Recipe Book Settings; for tools and tests).
     fn kiln_open_recipe_book(&mut self, _player: &Self::Entity) -> bool {

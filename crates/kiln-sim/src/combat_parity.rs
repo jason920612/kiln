@@ -264,6 +264,12 @@ fn run_scenario(line: &Value) -> Vec<String> {
     for s in &stats {
         *s.log.lock().unwrap() = Some(Vec::new());
     }
+    // `startAutoSpinAttack(20, 8.0F, main hand)`.
+    if line["spin"].as_bool() == Some(true) {
+        let p = sim.players.get_mut(&1).unwrap();
+        let held = p.inv.selected_item().clone();
+        p.start_spin_attack(20, 8.0, held, false);
+    }
     let target_id = sim.players[&2].entity_id;
     assert!(sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: target_id })]), "{n}");
     let result = &line["result"];

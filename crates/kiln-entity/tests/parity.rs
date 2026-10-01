@@ -82,6 +82,27 @@ fn spawn(spec: &Value) -> Entity {
             e.id = id;
             e
         }
+        "furnace_minecart" | "tnt_minecart" | "hopper_minecart" | "chest_minecart" => {
+            use kiln_entity::ext_entity::minecart::Minecart;
+            let name: &'static str = kiln_data::entities::by_name(&format!("minecraft:{kind}")).unwrap().name;
+            let mut e = kiln_entity::ext_entity::minecart::new(name, vec3(&spec["pos"]), seed);
+            e.id = id;
+            let cart = kiln_entity::ext_entity::get_mut::<Minecart>(&mut e).unwrap();
+            cart.fuel = int("fuel", 0);
+            cart.push = kiln_entity::math::Vec3::new(spec.get("push_x").map_or(0.0, f), 0.0, spec.get("push_z").map_or(0.0, f));
+            cart.fuse = int("fuse", -1);
+            if spec.get("disabled").is_some() {
+                cart.enabled = false;
+            }
+            if let (Some(items), Some(c)) = (spec.get("items").and_then(Value::as_str), cart.contents.as_mut()) {
+                for part in items.split(',') {
+                    let p: Vec<&str> = part.split(':').collect();
+                    let name = format!("{}:{}", p[1], p[2]);
+                    c.items[p[0].parse::<usize>().unwrap()] = ItemStack::of(&name, p[3].parse().unwrap()).unwrap_or_else(|| panic!("unknown item {name}"));
+                }
+            }
+            e
+        }
         "firework" => {
             let mut e = kiln_entity::ext_entity::firework::new(vec3(&spec["pos"]), ItemStack::of("minecraft:firework_rocket", 1).unwrap(), None, None, false, seed);
             e.id = id;
@@ -158,6 +179,16 @@ fn state(e: &Entity) -> Vec<f64> {
         EntityKind::Ext(_) if kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e).is_some() => {
             let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e).unwrap();
             out.extend([e.y_rot as f64, b(cart.flipped)]);
+            if cart.furnace {
+                out.extend([cart.fuel as f64, cart.push.x, cart.push.z]);
+            } else if cart.tnt {
+                out.push(cart.fuse as f64);
+            } else if let Some(c) = &cart.contents {
+                out.push(b(cart.enabled || e.type_name != "minecraft:hopper_minecart"));
+                for s in &c.items {
+                    out.extend([if s.is_empty() { 0.0 } else { s.item() as f64 + 1.0 }, s.count() as f64]);
+                }
+            }
         }
         EntityKind::Ext(_) if kiln_entity::ext_entity::get::<kiln_entity::ext_entity::boat::Boat>(e).is_some() => out.push(e.y_rot as f64),
         EntityKind::Player(_) | EntityKind::Throwable(_) | EntityKind::Other { .. } | EntityKind::Mob(_) | EntityKind::MobTicking { .. } | EntityKind::Ext(_) => {}
@@ -169,6 +200,30 @@ const FIELDS: &[&str] = &[
     "id", "x", "y", "z", "dx", "dy", "dz", "on_ground", "h_coll", "v_coll", "fall", "removed", "fire", "air", "k0", "k1", "k2", "k3",
 ];
 
+fn field_name(i: usize) -> String {
+    FIELDS.get(i).map_or_else(|| format!("k{}", i - 14), |s| (*s).to_string())
+}
+
+/// The scripted hits of an entity ("tick:kind:amount;...").
+fn hits_of(spec: &Value) -> Vec<(usize, kiln_entity::level::DamageKind, f32)> {
+    use kiln_entity::level::DamageKind;
+    let Some(text) = spec.get("hits").and_then(Value::as_str) else { return Vec::new() };
+    text.split(';')
+        .map(|part| {
+            let p: Vec<&str> = part.split(':').collect();
+            let kind = match p[1] {
+                "generic" => DamageKind::Generic,
+                "explosion" => DamageKind::Explosion,
+                "in_fire" => DamageKind::InFire,
+                "on_fire" => DamageKind::OnFire,
+                "lava" => DamageKind::Lava,
+                other => panic!("unknown damage {other}"),
+            };
+            (p[0].parse().unwrap(), kind, p[2].parse().unwrap())
+        })
+        .collect()
+}
+
 /// Replays one scenario; `Err` describes the first mismatch.
 fn replay(s: &Value) -> Result<(), String> {
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
@@ -179,8 +234,13 @@ fn replay(s: &Value) -> Result<(), String> {
         level.blocks.insert(p, b[3].as_u64().unwrap() as u16);
     }
     let mut moves: HashMap<i32, Vec<kiln_entity::math::Vec3>> = HashMap::new();
+    let mut hits: HashMap<i32, Vec<(usize, kiln_entity::level::DamageKind, f32)>> = HashMap::new();
     for spec in s["entities"].as_array().unwrap() {
         let mut e = spawn(spec);
+        let h = hits_of(spec);
+        if !h.is_empty() {
+            hits.insert(e.id, h);
+        }
         if let Some(m) = spec.get("moves").and_then(Value::as_array) {
             moves.insert(e.id, m.iter().map(vec3).collect());
             if spec.get("on_ground").and_then(Value::as_bool).unwrap_or(false) {
@@ -193,6 +253,16 @@ fn replay(s: &Value) -> Result<(), String> {
     let initial = level.len();
     let mut seen_spawned: Vec<usize> = Vec::new();
     for (tick, expected) in trace.iter().enumerate() {
+        // Scripted hits land before the entities tick.
+        for i in 0..level.len() {
+            level.tick_one(i, |e, level| {
+                for &(at, kind, amount) in hits.get(&e.id).into_iter().flatten() {
+                    if at == tick {
+                        e.hurt(level, kind, amount, None);
+                    }
+                }
+            });
+        }
         for i in 0..level.len() {
             level.tick_one(i, |e, level| {
                 if let Some(m) = moves.get(&e.id) {
@@ -229,9 +299,20 @@ fn replay(s: &Value) -> Result<(), String> {
                     continue;
                 }
                 if g.to_bits() != w.to_bits() {
+                    if std::env::var_os("KILN_PARITY_DUMP").is_some() {
+                        for (n, ex) in trace.iter().enumerate().take(tick + 1).skip(tick.saturating_sub(2)) {
+                            for (k2, want2) in ex.as_array().unwrap().iter().enumerate() {
+                                eprintln!("  tick {n} entity {k2} vanilla {want2}");
+                            }
+                        }
+                        for (k2, e2) in level.entities().enumerate() {
+                            eprintln!("  now entity {k2} kiln {:?}", state(e2));
+                        }
+                    }
                     return Err(format!(
                         "tick {tick} entity {} field {}: kiln {g:?} vanilla {w:?}\n  kiln    {got:?}\n  vanilla {want:?}",
-                        want[0], FIELDS[i]
+                        want[0],
+                        field_name(i)
                     ));
                 }
             }

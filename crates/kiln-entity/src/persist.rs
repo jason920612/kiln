@@ -301,7 +301,12 @@ fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadE
             })
         }
         name if crate::mob::MobKind::by_name(name).is_some() => EntityKind::MobTicking { gravity: 0.08 },
-        name if crate::ext_entity::TYPES.contains(&name) => EntityKind::Ext(crate::ext_entity::load(name, r).ok_or(LoadError::NotSimulated)?),
+        name if crate::ext_entity::TYPES.contains(&name)
+            || crate::ext_entity::boat::is_boat(name)
+            || crate::ext_entity::minecart::is_minecart(name) =>
+        {
+            EntityKind::Ext(crate::ext_entity::load(name, r).ok_or(LoadError::NotSimulated)?)
+        }
         name => {
             let kind = THROWABLES.into_iter().find(|t| t.type_name() == name).ok_or(LoadError::NotSimulated)?;
             let (left_owner, has_been_shot) = read_projectile(r);

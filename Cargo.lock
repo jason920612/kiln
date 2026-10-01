@@ -1113,6 +1113,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "kiln-data",
+ "kiln-inventory",
  "kiln-item",
  "kiln-javamath",
  "kiln-proto",

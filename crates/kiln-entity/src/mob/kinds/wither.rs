@@ -309,15 +309,7 @@ impl Kind for Wither {
         if std::mem::take(&mut st_mut(m).summoned) {
             let area = e.bounding_box().inflate_all(50.0);
             let seen = crate::level::Seen::of_mob(e, m);
-            let near: Vec<i32> = level
-                .players()
-                .iter()
-                .filter(|p| {
-                    let h = if p.sneaking { 1.5 } else { 1.8 };
-                    area.intersects_raw(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3)
-                })
-                .map(|p| p.id)
-                .collect();
+            let near: Vec<i32> = level.players_in(&area).iter().map(|p| p.id).collect();
             for player in near {
                 level.emit(Event::Criterion { player, criterion: crate::level::Criterion::SummonedEntity { entity: seen.clone() } });
             }
