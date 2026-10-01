@@ -71,6 +71,10 @@ pub struct MemoryLevel {
     pub day_time: i64,
     /// Tickets taken at points of interest (`memory_poi`).
     pub(crate) poi_taken: FastMap<BlockPos, i32>,
+    /// wp28: the wardens' listeners (`set_listener`) and the vibrations they heard since their
+    /// last tick (`game_event` posts to them like `GameEventDispatcher`).
+    pub ears: Vec<(i32, crate::vibration::Ear)>,
+    pub heard: Vec<(i32, crate::vibration::Heard)>,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -109,7 +113,33 @@ impl MemoryLevel {
             share_ai_random: false,
             day_time: 1000,
             poi_taken: FastMap::default(),
+            ears: Vec::new(),
+            heard: Vec::new(),
         }
+    }
+
+    /// `Level.gameEvent(event, pos, ctx)` for the wardens' listeners (`Listener.handleGameEvent`
+    /// of `VibrationSystem`: within 16 blocks, `#warden_can_listen`, not occluded by wool).
+    pub fn game_event(&mut self, event: &'static str, from: crate::math::Vec3, ctx: crate::vibration::Context) {
+        use crate::vibration::{self, Validity};
+        let block = |p: BlockPos| self.block(p);
+        let mut got = Vec::new();
+        for &(id, ear) in &self.ears {
+            let (c, e) = (BlockPos::containing(from.x, from.y, from.z), BlockPos::containing(ear.pos.x, ear.pos.y, ear.pos.z));
+            let d = [(c.x - e.x) as i64, (c.y - e.y) as i64, (c.z - e.z) as i64];
+            if ear.busy || d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 16 * 16 {
+                continue;
+            }
+            if vibration::is_valid_vibration(event, &ctx, "minecraft:warden_can_listen", true) != Validity::Valid {
+                continue;
+            }
+            let untargetable = ctx.source.is_some_and(|s| s.living && (s.untargetable || matches!(s.type_name, "minecraft:warden" | "minecraft:armor_stand")));
+            if !ear.can_hear || untargetable || vibration::is_occluded(&block, from, ear.pos) {
+                continue;
+            }
+            got.push((id, vibration::Heard { event, from, to: ear.pos, source: ctx.source, tick: self.game_time }));
+        }
+        self.heard.extend(got);
     }
 
     /// Adds an entity now (it is ticked from the next `tick` on).
@@ -301,6 +331,13 @@ impl EntityLevel for MemoryLevel {
             amount
         };
         self.player_hits.push((id, dealt));
+        // `LivingEntity.actuallyHurt`: the player's `ENTITY_DAMAGE` game event (a warden hears it).
+        if !self.ears.is_empty()
+            && let Some(p) = self.players.iter().find(|p| p.id == id).copied()
+        {
+            let ctx = crate::vibration::Context { source: Some(crate::vibration::EventSource::player(p.id, p.uuid, p.pos, p.sneaking, p.spectator, p.creative)), affected_state: None };
+            self.game_event("minecraft:entity_damage", p.pos, ctx);
+        }
         // `setLastHurtByMob`: stamped with the player's own clock.
         if by_mob.is_some()
             && let Some(p) = self.players.iter_mut().find(|p| p.id == id)
@@ -386,5 +423,18 @@ impl EntityLevel for MemoryLevel {
 
     fn emit(&mut self, event: Event) {
         self.events.push(event);
+    }
+
+    fn take_vibrations(&mut self, id: i32) -> Vec<crate::vibration::Heard> {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.heard).into_iter().partition(|h| h.0 == id);
+        self.heard = rest;
+        mine.into_iter().map(|h| h.1).collect()
+    }
+
+    fn set_listener(&mut self, id: i32, ear: Option<crate::vibration::Ear>) {
+        self.ears.retain(|e| e.0 != id);
+        if let Some(ear) = ear {
+            self.ears.push((id, ear));
+        }
     }
 }

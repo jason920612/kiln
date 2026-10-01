@@ -1524,7 +1524,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if m.jumping {
         let h = if e.is_in_lava() { e.fluid_height_lava() } else { e.fluid_height_water() };
         let in_water = e.is_in_water() && h > 0.0;
-        let threshold = if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 };
+        let threshold = m.kind.ext().and_then(|k| k.fluid_jump_threshold(e)).unwrap_or(if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 });
         // `Mob.jumpInLiquid`: a mob whose navigation cannot float gets a strong push instead.
         let lift = if m.nav.can_float { 0.03999999910593033 } else { 0.3 };
         if in_water && (!e.on_ground || h > threshold) {
@@ -1936,6 +1936,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     for (id, ox, oz, player) in others {
         if let Some(k) = m.kind.ext() {
             k.do_push(e, m, &*level, id);
+            k.do_push_mut(e, m, level, id);
         }
         // `Entity.push(Entity)`: nothing moves when either side has no physics (a vex).
         if e.no_physics || (!player && level.entity(id).is_some_and(|o| o.no_physics)) {
