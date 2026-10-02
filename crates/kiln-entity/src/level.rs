@@ -126,6 +126,12 @@ pub struct PlayerView {
     pub vehicle: Option<i32>,
     /// The amplifier of the player's Hero of the Village effect.
     pub hero_of_the_village: Option<i32>,
+    /// wp32 parrots: `LandOnOwnersShoulderGoal.canUse`'s view of the player (not a spectator,
+    /// not flying, not in water or powder snow).
+    pub parrot_may_land: bool,
+    /// wp32 parrots: `ServerPlayer.setEntityOnShoulder` would take a parrot (a shoulder is free
+    /// and the player stands on the ground, not riding, in water or in powder snow).
+    pub parrot_can_sit: bool,
 }
 
 impl PlayerView {
@@ -160,6 +166,8 @@ impl PlayerView {
             hurt_recently: false,
             vehicle: None,
             hero_of_the_village: None,
+            parrot_may_land: false,
+            parrot_can_sit: false,
         }
     }
 
@@ -312,6 +320,9 @@ pub enum Event {
     GlobalLevelEvent { event: i32, pos: BlockPos, data: i32 },
     /// A `ClientboundGameEventPacket` for player `player` (10: the elder guardian's curse).
     PlayerGameEvent { player: i32, event: u8, param: f32 },
+    /// wp32 parrots: parrot `entity` (already discarded) flew onto the shoulder of `player`;
+    /// `tag` is its saved compound (`ShoulderRidingEntity.setEntityOnShoulder`).
+    MountShoulder { player: i32, entity: i32, tag: kiln_proto::nbt::Tag },
 }
 
 /// The level's `EnderDragonFight` as its dragon and crystals see it

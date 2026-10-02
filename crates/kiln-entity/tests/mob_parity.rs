@@ -247,6 +247,19 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
                 }
             }
         }
+        // wp32 parrots: the player stands on the ground (a parrot may land on its shoulder).
+        "ground" => {
+            for p in level.players.iter_mut() {
+                p.parrot_can_sit = true;
+            }
+        }
+        // wp32 parrots: a record plays near (or stops near) parrot `mob`.
+        "record" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let at = BlockPos::containing(pos.x, pos.y, pos.z);
+            let m = mob::data_mut(level.entity_mut(id).unwrap()).unwrap();
+            mob::kinds::parrot::set_record_playing_nearby(m, at, what == "play");
+        }
         // wp28: `time set` in the middle of a scenario.
         "daytime" => level.day_time = pos.x as i64,
         // wp28 animals: an item entity (`duration` items, default 1) at rest at the position.
@@ -353,6 +366,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         v.creative = p.get("creative").and_then(Value::as_bool).unwrap_or(false);
         // The recording's player is never ticked: it never finds itself in water.
         v.in_water = Some(false);
+        // (wp32: a parrot's owner is no spectator, flying or in powder snow; it does not stand on
+        // the ground (with a free shoulder) until the scenario says so.)
+        v.parrot_may_land = true;
         if let Some(item) = p.get("main_hand").and_then(Value::as_str) {
             v.main_hand = kiln_data::builtin_id("minecraft:item", item).unwrap();
         }
@@ -721,6 +737,12 @@ fn replay(s: &Value) -> Result<usize, String> {
             }
             compared += 1;
         }
+    }
+    // wp32 parrots: what the scenario drew from the level's random.
+    if let Some(want) = s.get("level_random").and_then(Value::as_i64)
+        && level.random_state() != want
+    {
+        return Err(format!("level random {} (kiln) vs {want} (vanilla)", level.random_state()));
     }
     // wp28 creaking: the blocks around the hearts (resin) are the same.
     for b in s.get("end_blocks").and_then(Value::as_array).into_iter().flatten() {
