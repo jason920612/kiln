@@ -240,6 +240,9 @@ pub enum DamageKind {
     /// `mob_attack_no_aggro` (a ramming goat: the victim does not turn on it).
     NoAggroMobAttack,
 
+    // -- wp30: llamas
+    /// `minecraft:spit` (llama spit).
+    Spit,
 }
 
 /// Side effects the simulation carries out or broadcasts.

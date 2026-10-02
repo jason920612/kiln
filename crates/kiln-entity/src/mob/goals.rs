@@ -1158,7 +1158,9 @@ pub fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<
         let Some(o) = level.entity(id) else { continue };
         let crate::entity::EntityKind::Mob(om) = &o.kind else { continue };
         // `PARTNER_TARGETING`: non-combat, 8 blocks, no line of sight needed.
-        if om.kind != m.kind || !o.is_alive() || om.health <= 0.0 || e.position().distance_to_sqr(o.position()) > 64.0 {
+        // (`getEntitiesOfClass(animal.getClass())`: a llama also finds trader llamas.)
+        let class = om.kind == m.kind || (m.kind == MobKind::Llama && om.kind == MobKind::TraderLlama);
+        if !class || !o.is_alive() || om.health <= 0.0 || e.position().distance_to_sqr(o.position()) > 64.0 {
             continue;
         }
         if !(m.in_love > 0 && om.in_love > 0) || om.goals.is_running(|g| matches!(g, Goal::Panic { .. })) {

@@ -215,8 +215,7 @@ impl Kind for Wolf {
         g.add(1, Goal::Float);
         g.add(1, Goal::Custom(Box::new(TamableAnimalPanicGoal::new(1.5, "minecraft:panic_environmental_causes"))));
         g.add(2, Goal::Custom(Box::new(SitWhenOrderedToGoal)));
-        // `WolfAvoidEntityGoal` runs from llamas, which Kiln does not simulate.
-        g.add(3, Goal::AvoidEntity);
+        g.add(3, Goal::Custom(Box::new(super::llama::WolfAvoidEntityGoal::new())));
         g.add(4, Goal::LeapAtTarget { yd: 0.4, target: None });
         g.add(
             5,

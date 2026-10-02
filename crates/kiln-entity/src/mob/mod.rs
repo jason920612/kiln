@@ -139,6 +139,10 @@ pub enum MobKind {
 
     // -- wp25: the skeleton trap
     SkeletonHorse,
+
+    // -- wp30: llamas
+    Llama,
+    TraderLlama,
 }
 
 /// `MobCategory`.
@@ -297,6 +301,10 @@ pub const ALL_KINDS: &[MobKind] = &[
 
     // -- wp25: the skeleton trap
     MobKind::SkeletonHorse,
+
+    // -- wp30: llamas
+    MobKind::Llama,
+    MobKind::TraderLlama,
 ];
 
 impl MobKind {
@@ -2748,6 +2756,7 @@ impl DamageKind {
             // -- wp28: axolotl and goat
             DamageKind::DryOut => "minecraft:dry_out",
             DamageKind::NoAggroMobAttack => "minecraft:mob_attack_no_aggro",
+            DamageKind::Spit => "minecraft:spit",
 
         }
     }

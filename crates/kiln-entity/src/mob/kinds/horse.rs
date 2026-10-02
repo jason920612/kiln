@@ -30,6 +30,9 @@ pub enum Which {
     Mule,
     /// `SkeletonHorse` (the trap horse of thunderstorms, see [`super::skeleton_horse`]).
     Skeleton,
+    /// `Llama` and `TraderLlama` (see [`super::llama`]): a chested equine with a strength, spit.
+    Llama,
+    TraderLlama,
 }
 
 pub struct Equine(pub Which);
@@ -38,6 +41,8 @@ pub static KIND: Equine = Equine(Which::Horse);
 pub static DONKEY: Equine = Equine(Which::Donkey);
 pub static MULE: Equine = Equine(Which::Mule);
 pub static SKELETON: Equine = Equine(Which::Skeleton);
+pub static LLAMA: Equine = Equine(Which::Llama);
+pub static TRADER_LLAMA: Equine = Equine(Which::TraderLlama);
 
 static HORSE_INFO: Info = Info {
     ambient_interval: 400,
@@ -50,6 +55,17 @@ static DONKEY_INFO: Info = Info {
 static MULE_INFO: Info = Info {
     ambient_interval: 400,
     ..Info::animal("minecraft:mule", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
+};
+
+static LLAMA_INFO: Info = Info {
+    ambient_interval: 400,
+    ..Info::animal("minecraft:llama", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
+};
+/// (`TraderLlama` has no sounds of its own: it makes the llama's.)
+static TRADER_LLAMA_INFO: Info = Info {
+    ambient_interval: 400,
+    sounds: Some("llama"),
+    ..Info::animal("minecraft:trader_llama", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
 };
 
 static SKELETON_INFO: Info = Info {
@@ -102,6 +118,22 @@ pub struct State {
     /// `SkeletonHorse.isTrap` and `trapTime`.
     pub trap: bool,
     pub trap_time: i32,
+    /// `Llama.DATA_STRENGTH_ID` (1 to 5; 0 until set).
+    pub strength: i32,
+    /// `Llama.DATA_VARIANT_ID` (`Llama.Variant` id).
+    pub llama_variant: i32,
+    /// `Llama.didSpit`.
+    pub did_spit: bool,
+    /// `Llama.caravanHead` and `caravanTail` (entity ids).
+    pub caravan_head: Option<i32>,
+    pub caravan_tail: Option<i32>,
+    /// `TraderLlama.despawnDelay`.
+    pub despawn_delay: i32,
+}
+
+/// The horse state of `m`, if it is one of the family.
+pub(super) fn state(m: &MobData) -> Option<&State> {
+    ext::state::<State>(m)
 }
 
 pub(super) fn st(m: &MobData) -> &State {
@@ -122,7 +154,14 @@ fn is(stack: &ItemStack, name: &str) -> bool {
 }
 
 fn sound(m: &MobData, what: &str) -> &'static str {
-    crate::mob::sound_event(&format!("minecraft:entity.{}.{what}", m.kind.short_name()))
+    // (A trader llama has the llama's sounds.)
+    let name = if m.kind == MobKind::TraderLlama { "llama" } else { m.kind.short_name() };
+    crate::mob::sound_event(&format!("minecraft:entity.{name}.{what}"))
+}
+
+/// `getMaxTemper`: 100, a llama's 30.
+fn max_temper(m: &MobData) -> i32 {
+    if super::llama::is_llama(m.kind) { 30 } else { 100 }
 }
 
 /// `LivingEntity.getVoicePitch` (two draws).
@@ -137,8 +176,11 @@ fn play(e: &Entity, level: &mut dyn EntityLevel, sound: &'static str, volume: f3
     }
 }
 
-/// `setStanding(20)` through `standIfPossible`.
+/// `setStanding(20)` through `standIfPossible` (`canPerformRearing`: llamas never rear).
 fn stand(m: &mut MobData) {
+    if super::llama::is_llama(m.kind) {
+        return;
+    }
     let s = st_mut(m);
     s.eating = false;
     s.standing = true;
@@ -185,8 +227,48 @@ fn eating(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     level.emit(Event::GameEvent { event: "minecraft:eat", pos: e.position(), entity: Some(e.id) });
 }
 
+/// `Llama.handleEating`: wheat and hay bales heal, make a baby grow and raise the temper (a hay
+/// bale also puts a tame, grown llama in love); the eating sound, no open mouth.
+fn handle_eating_llama(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> bool {
+    let mut ate = false;
+    let (age_up, temper_up, heal_by): (i32, i32, f32) = match item_name(stack) {
+        "minecraft:wheat" => (10, 3, 2.0),
+        "minecraft:hay_block" => {
+            if st(m).tamed && m.age == 0 && m.in_love <= 0 {
+                ate = true;
+                crate::mob::breed::set_in_love(e, m, level, Some(who.id));
+            }
+            (90, 6, 10.0)
+        }
+        _ => (0, 0, 0.0),
+    };
+    if m.health < m.max_health() && heal_by > 0.0 {
+        heal(m, heal_by);
+        ate = true;
+    }
+    if m.baby() && age_up > 0 && !m.age_locked {
+        crate::mob::random_point(e, 1.0);
+        crate::mob::age_up(e, m, age_up, false);
+        ate = true;
+    }
+    if temper_up > 0 && (ate || !st(m).tamed) && st(m).temper < max_temper(m) {
+        let max = max_temper(m);
+        let s = st_mut(m);
+        s.temper = (s.temper + temper_up).clamp(0, max);
+        ate = true;
+    }
+    if ate && !e.silent {
+        let pitch = 1.0 + (e.random.next_float() - e.random.next_float()) * 0.2;
+        level.emit(Event::Sound { pos: e.position(), sound: sound(m, "eat"), source: "neutral", volume: 1.0, pitch });
+    }
+    ate
+}
+
 /// `handleEating`: whether the horse ate `stack`.
 fn handle_eating(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> bool {
+    if super::llama::is_llama(m.kind) {
+        return handle_eating_llama(e, m, level, who, stack);
+    }
     let mut ate = false;
     let (heal_by, age_up, temper_up): (f32, i32, i32) = match item_name(stack) {
         "minecraft:wheat" => (2.0, 20, 3),
@@ -268,12 +350,22 @@ fn offspring_attribute(a: f64, b: f64, min: f64, max: f64, r: &mut dyn RandomSou
 
 impl Equine {
     fn chested(&self) -> bool {
-        matches!(self.0, Which::Donkey | Which::Mule)
+        matches!(self.0, Which::Donkey | Which::Mule | Which::Llama | Which::TraderLlama)
+    }
+
+    fn llama(&self) -> bool {
+        matches!(self.0, Which::Llama | Which::TraderLlama)
     }
 
     /// `getInventoryColumns`: five with a chest (a llama: its strength).
     fn columns(&self, m: &MobData) -> usize {
-        if self.chested() && st(m).chest { 5 } else { 0 }
+        if !(self.chested() && st(m).chest) {
+            0
+        } else if self.llama() {
+            st(m).strength.clamp(0, 5) as usize
+        } else {
+            5
+        }
     }
 
     /// `createInventory`: a new container of `getInventorySize()` slots that takes over what fits
@@ -298,6 +390,8 @@ impl Equine {
             (Which::Mule, false) => (1.2125, 0.0),
             (Which::Skeleton, false) => (1.31875f32 as f64, 0.0),
             (Which::Skeleton, true) => (((1.6f32 - 0.25) * 0.7) as f64, 0.0),
+            (Which::Llama | Which::TraderLlama, false) => (1.37, -0.3f32 as f64),
+            (Which::Llama | Which::TraderLlama, true) => (((1.87f32 - 0.25) * 0.5) as f64, (-0.3f32 * 0.5) as f64),
             (_, true) => (((1.5f32 + 0.03125) * 0.5) as f64, (-0.3125f32 * 0.5) as f64),
         }
     }
@@ -310,6 +404,8 @@ impl Kind for Equine {
             Which::Donkey => &DONKEY_INFO,
             Which::Mule => &MULE_INFO,
             Which::Skeleton => &SKELETON_INFO,
+            Which::Llama => &LLAMA_INFO,
+            Which::TraderLlama => &TRADER_LLAMA_INFO,
         }
     }
 
@@ -346,10 +442,22 @@ impl Kind for Equine {
             type_variant: 0,
             trap: false,
             trap_time: 0,
+            strength: 0,
+            llama_variant: 0,
+            did_spit: false,
+            caravan_head: None,
+            caravan_tail: None,
+            despawn_delay: 47999,
         }))
     }
 
     fn register_goals(&self, m: &mut MobData) {
+        if self.llama() {
+            // (`Llama` replaces `AbstractHorse.registerGoals`; its constructor sets the path length.)
+            m.nav.required_path_length = 40.0;
+            super::llama::register_goals(m, self.0 == Which::TraderLlama);
+            return;
+        }
         let g = &mut m.goals;
         g.add(1, Goal::Custom(Box::new(RunAroundLikeCrazyGoal { speed: 1.2, pos: Vec3::ZERO })));
         g.add(2, Goal::Breed { speed: 1.0, partner: None, love_time: 0 });
@@ -368,7 +476,7 @@ impl Kind for Equine {
     }
 
     fn tempted_by(&self, item: i32) -> bool {
-        item_tag(item, "minecraft:horse_tempt_items")
+        item_tag(item, if self.llama() { "minecraft:llama_tempt_items" } else { "minecraft:horse_tempt_items" })
     }
 
     fn water_slow_down(&self, _m: &MobData) -> f32 {
@@ -376,7 +484,7 @@ impl Kind for Equine {
     }
 
     fn is_food(&self, item: i32) -> bool {
-        item_tag(item, "minecraft:horse_food")
+        item_tag(item, if self.llama() { "minecraft:llama_food" } else { "minecraft:horse_food" })
     }
 
     fn is_immobile(&self, m: &MobData) -> bool {
@@ -396,32 +504,13 @@ impl Kind for Equine {
     }
 
     fn ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        if !crate::mob::is_alive(e, m) {
+        if self.0 == Which::TraderLlama {
+            // `TraderLlama.aiStep` after the horse's.
+            self.ai_step_horse(e, m, level);
+            self.maybe_despawn(e, m, level);
             return;
         }
-        if e.random.next_int_bounded(900) == 0 && m.death_time == 0 {
-            heal(m, 1.0);
-        }
-        // `canEatGrass`.
-        if !st(m).eating
-            && e.passengers.is_empty()
-            && e.random.next_int_bounded(300) == 0
-            && crate::blocks::block_name(level.block(e.block_position().below())) == "minecraft:grass_block"
-        {
-            st_mut(m).eating = true;
-        }
-        let s = st_mut(m);
-        if s.eating {
-            s.eating_counter += 1;
-            if s.eating_counter > 50 {
-                s.eating_counter = 0;
-                s.eating = false;
-            }
-        }
-        // `followMommy` only creates a path it does not follow (not modelled).
-        if self.0 == Which::Skeleton {
-            super::skeleton_horse::ai_step(e, m);
-        }
+        self.ai_step_horse(e, m, level);
     }
 
     fn custom_server_ai_step(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
@@ -432,72 +521,7 @@ impl Kind for Equine {
     }
 
     fn post_tick(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
-        let s = st_mut(m);
-        if s.mouth_counter > 0 {
-            s.mouth_counter += 1;
-            if s.mouth_counter > 30 {
-                s.mouth_counter = 0;
-                s.open_mouth = false;
-            }
-        }
-        if s.stand_counter > 0 {
-            s.stand_counter -= 1;
-            if s.stand_counter <= 0 {
-                s.standing = false;
-                s.stand_counter = 0;
-            }
-        }
-        if s.tail_counter > 0 {
-            s.tail_counter += 1;
-            if s.tail_counter > 8 {
-                s.tail_counter = 0;
-            }
-        }
-        if s.sprint_counter > 0 {
-            s.sprint_counter += 1;
-            if s.sprint_counter > 300 {
-                s.sprint_counter = 0;
-            }
-        }
-        s.eat_anim_o = s.eat_anim;
-        if s.eating {
-            s.eat_anim += (1.0 - s.eat_anim) * 0.4 + 0.05;
-            if s.eat_anim > 1.0 {
-                s.eat_anim = 1.0;
-            }
-        } else {
-            s.eat_anim += (0.0 - s.eat_anim) * 0.4 - 0.05;
-            if s.eat_anim < 0.0 {
-                s.eat_anim = 0.0;
-            }
-        }
-        s.stand_anim_o = s.stand_anim;
-        if s.standing {
-            s.eat_anim = 0.0;
-            s.eat_anim_o = s.eat_anim;
-            s.stand_anim += (1.0 - s.stand_anim) * 0.4 + 0.05;
-            if s.stand_anim > 1.0 {
-                s.stand_anim = 1.0;
-            }
-        } else {
-            s.allow_stand_sliding = false;
-            s.stand_anim += (0.8 * s.stand_anim * s.stand_anim * s.stand_anim - s.stand_anim) * 0.6 - 0.05;
-            if s.stand_anim < 0.0 {
-                s.stand_anim = 0.0;
-            }
-        }
-        s.mouth_anim_o = s.mouth_anim;
-        if s.open_mouth {
-            s.mouth_anim += (1.0 - s.mouth_anim) * 0.7 + 0.05;
-            if s.mouth_anim > 1.0 {
-                s.mouth_anim = 1.0;
-            }
-        } else {
-            s.mouth_anim += (0.0 - s.mouth_anim) * 0.7 - 0.05;
-            if s.mouth_anim < 0.0 {
-                s.mouth_anim = 0.0;
-            }
-        }
+        self.post_tick_horse(m);
     }
 
     fn after_hurt(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, _source: &DamageSource, _amount: f32, hurt: bool) {
@@ -544,6 +568,29 @@ impl Kind for Equine {
             ext::mob_finalize(m, r);
             return;
         }
+        if self.llama() {
+            // `Llama.finalizeSpawn`: strength, then the coat (the group's, or a random one
+            // that the group takes on), then `AbstractHorse.finalizeSpawn`.
+            super::llama::set_random_strength(m, r);
+            let variant = match group.variant {
+                Some(v) => v,
+                None => {
+                    let v = r.next_int_bounded(4);
+                    group.variant = Some(v);
+                    v
+                }
+            };
+            st_mut(m).llama_variant = variant;
+            // (`TraderLlama.finalizeSpawn`: one that came with an event is an adult.)
+            if self.0 == Which::TraderLlama && group.event {
+                crate::mob::set_age(e, m, 0);
+            }
+            let health = random_health(r);
+            set_base(m, MaxHealth, health as f64);
+            ext::ageable_finalize(e, m, r, group, 0.05);
+            ext::mob_finalize(m, r);
+            return;
+        }
         let chance = if self.0 == Which::Horse {
             // `HorseGroupData`: one coat for the group, markings each.
             let variant = match group.variant {
@@ -576,12 +623,35 @@ impl Kind for Equine {
     fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
         // `canParent` on both (vehicles are not checked here); mules never breed.
         let parent = |x: &MobData| is_tamed(x) && !x.baby() && x.health >= x.max_health() && x.in_love > 0;
+        if self.llama() {
+            // `Llama.canMate`: another llama of either kind.
+            return super::llama::is_llama(partner.kind) && parent(m) && parent(partner);
+        }
         // (`AbstractHorse.canMate` is false: skeleton horses never mate.)
         !matches!(self.0, Which::Mule | Which::Skeleton) && parent(m) && parent(partner)
     }
 
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, _level: &mut dyn EntityLevel) {
         if matches!(self.0, Which::Mule | Which::Skeleton) {
+            return;
+        }
+        if self.llama() {
+            // `Llama.getBreedOffspring`: the attributes, then the strength (the larger parent's
+            // as a bound, a rare extra point) and the coat of either parent.
+            self.offspring_attributes(e, m, partner, child);
+            let (mine, theirs) = (st(m).strength, ext::state::<State>(partner).map_or(0, |s| s.strength));
+            let mut strength = e.random.next_int_bounded(mine.max(theirs)) + 1;
+            if e.random.next_float() < 0.03 {
+                strength += 1;
+            }
+            super::llama::set_strength(child, strength);
+            let variant = if e.random.next_bool() { st(m).llama_variant } else { ext::state::<State>(partner).map_or(0, |s| s.llama_variant) };
+            st_mut(child).llama_variant = variant;
+            if self.0 == Which::TraderLlama {
+                // `TraderLlama.makeNewLlama`: the baby stays.
+                child.persistence_required = true;
+            }
+            child.health = child.max_health();
             return;
         }
         if self.0 == Which::Horse {
@@ -604,15 +674,7 @@ impl Kind for Equine {
             };
             st_mut(child).type_variant = (variant & 255) | ((markings << 8) & 65280);
         }
-        // `setOffspringAttributes`: health, jump strength, speed.
-        let min_speed = (0.44999998807907104f64 * 0.25) as f32 as f64;
-        let max_speed = ((0.44999998807907104f64 + 0.9) * 0.25) as f32 as f64;
-        let min_jump = 0.4000000059604645f32 as f64;
-        let max_jump = (0.4000000059604645f64 + 0.6) as f32 as f64;
-        for (a, min, max) in [(MaxHealth, 15.0, 30.0), (JumpStrength, min_jump, max_jump), (MovementSpeed, min_speed, max_speed)] {
-            let v = offspring_attribute(m.attrs.base(a), partner.attrs.base(a), min, max, &mut e.random);
-            set_base(child, a, v);
-        }
+        self.offspring_attributes(e, m, partner, child);
         child.health = child.max_health();
     }
 
@@ -656,7 +718,8 @@ impl Kind for Equine {
             out.open_container = e.passengers.is_empty() || e.passengers.contains(&who.id);
             return Some(out);
         }
-        if is(stack, "minecraft:saddle") && st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m) {
+        // (A llama is not in `#can_equip_saddle`: the saddle does not go on.)
+        if !self.llama() && is(stack, "minecraft:saddle") && st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m) {
             let mut one = stack.clone();
             one.set_count(1);
             st_mut(m).saddle = one;
@@ -738,7 +801,18 @@ impl Kind for Equine {
         let variant = r.int_or("Variant", 0);
         let chest = r.bool_or("ChestedHorse", false);
         let (trap, trap_time) = if self.0 == Which::Skeleton { (r.bool_or("SkeletonTrap", false), r.int_or("SkeletonTrapTime", 0)) } else { (false, 0) };
+        let strength = r.int_or("Strength", 0);
+        let despawn_delay = r.int_or("DespawnDelay", 47999);
         let s = st_mut(m);
+        if self.llama() {
+            // `Llama.readAdditionalSaveData`: the strength first (the inventory depends on it),
+            // then the coat.
+            s.strength = strength.clamp(1, 5);
+            s.llama_variant = super::llama::variant_by_id(variant);
+            if self.0 == Which::TraderLlama {
+                s.despawn_delay = despawn_delay;
+            }
+        }
         s.eating = eating;
         s.bred = bred;
         s.temper = temper;
@@ -807,6 +881,13 @@ impl Kind for Equine {
         if let Some(u) = s.owner {
             o.put("Owner", uuid_to_tag(u));
         }
+        if self.llama() {
+            o.put("Variant", Tag::Int(s.llama_variant));
+            o.put("Strength", Tag::Int(s.strength));
+            if self.0 == Which::TraderLlama {
+                o.put("DespawnDelay", Tag::Int(s.despawn_delay));
+            }
+        }
         if self.0 == Which::Horse {
             o.put("Variant", Tag::Int(s.type_variant));
         } else if self.chested() {
@@ -830,15 +911,153 @@ impl Kind for Equine {
         } else if self.chested() {
             d.set(data::abstract_chested_horse::ID_CHEST, &DataValue::Boolean(s.chest));
         }
+        if self.llama() {
+            d.set(data::llama::STRENGTH, &DataValue::Int(s.strength));
+            d.set(data::llama::VARIANT, &DataValue::Int(s.llama_variant));
+        }
+    }
+}
+
+impl Equine {
+    /// `setOffspringAttributes`: health, jump strength, speed.
+    fn offspring_attributes(&self, e: &mut Entity, m: &MobData, partner: &MobData, child: &mut MobData) {
+        let min_speed = (0.44999998807907104f64 * 0.25) as f32 as f64;
+        let max_speed = ((0.44999998807907104f64 + 0.9) * 0.25) as f32 as f64;
+        let min_jump = 0.4000000059604645f32 as f64;
+        let max_jump = (0.4000000059604645f64 + 0.6) as f32 as f64;
+        for (a, min, max) in [(MaxHealth, 15.0, 30.0), (JumpStrength, min_jump, max_jump), (MovementSpeed, min_speed, max_speed)] {
+            let v = offspring_attribute(m.attrs.base(a), partner.attrs.base(a), min, max, &mut e.random);
+            set_base(child, a, v);
+        }
+    }
+
+    /// `TraderLlama.maybeDespawn`: a wild trader llama goes after its despawn delay.
+    fn maybe_despawn(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        // `canDespawn`: not tame, not led (by anyone but a wandering trader), not carrying
+        // exactly one player, not kept young, not persistent.
+        let one_player = e.passengers.len() == 1 && level.player(e.passengers[0]).is_some();
+        let leashed_elsewhere = super::llama::is_leashed(m);
+        if st(m).tamed || leashed_elsewhere || one_player || m.age_locked || m.persistence_required {
+            return;
+        }
+        let s = st_mut(m);
+        s.despawn_delay -= 1;
+        if s.despawn_delay <= 0 {
+            e.discard();
+        }
+    }
+
+    fn ai_step_horse(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if !crate::mob::is_alive(e, m) {
+            return;
+        }
+        if e.random.next_int_bounded(900) == 0 && m.death_time == 0 {
+            heal(m, 1.0);
+        }
+        // `canEatGrass` (llamas do not graze).
+        if !self.llama()
+            && !st(m).eating
+            && e.passengers.is_empty()
+            && e.random.next_int_bounded(300) == 0
+            && crate::blocks::block_name(level.block(e.block_position().below())) == "minecraft:grass_block"
+        {
+            st_mut(m).eating = true;
+        }
+        let s = st_mut(m);
+        if s.eating {
+            s.eating_counter += 1;
+            if s.eating_counter > 50 {
+                s.eating_counter = 0;
+                s.eating = false;
+            }
+        }
+        // `followMommy` only creates a path it does not follow (not modelled).
+        if self.0 == Which::Skeleton {
+            super::skeleton_horse::ai_step(e, m);
+        }
+    }
+
+    fn post_tick_horse(&self, m: &mut MobData) {
+        let s = st_mut(m);
+        if s.mouth_counter > 0 {
+            s.mouth_counter += 1;
+            if s.mouth_counter > 30 {
+                s.mouth_counter = 0;
+                s.open_mouth = false;
+            }
+        }
+        if s.stand_counter > 0 {
+            s.stand_counter -= 1;
+            if s.stand_counter <= 0 {
+                s.standing = false;
+                s.stand_counter = 0;
+            }
+        }
+        if s.tail_counter > 0 {
+            s.tail_counter += 1;
+            if s.tail_counter > 8 {
+                s.tail_counter = 0;
+            }
+        }
+        if s.sprint_counter > 0 {
+            s.sprint_counter += 1;
+            if s.sprint_counter > 300 {
+                s.sprint_counter = 0;
+            }
+        }
+        s.eat_anim_o = s.eat_anim;
+        if s.eating {
+            s.eat_anim += (1.0 - s.eat_anim) * 0.4 + 0.05;
+            if s.eat_anim > 1.0 {
+                s.eat_anim = 1.0;
+            }
+        } else {
+            s.eat_anim += (0.0 - s.eat_anim) * 0.4 - 0.05;
+            if s.eat_anim < 0.0 {
+                s.eat_anim = 0.0;
+            }
+        }
+        s.stand_anim_o = s.stand_anim;
+        if s.standing {
+            s.eat_anim = 0.0;
+            s.eat_anim_o = s.eat_anim;
+            s.stand_anim += (1.0 - s.stand_anim) * 0.4 + 0.05;
+            if s.stand_anim > 1.0 {
+                s.stand_anim = 1.0;
+            }
+        } else {
+            s.allow_stand_sliding = false;
+            s.stand_anim += (0.8 * s.stand_anim * s.stand_anim * s.stand_anim - s.stand_anim) * 0.6 - 0.05;
+            if s.stand_anim < 0.0 {
+                s.stand_anim = 0.0;
+            }
+        }
+        s.mouth_anim_o = s.mouth_anim;
+        if s.open_mouth {
+            s.mouth_anim += (1.0 - s.mouth_anim) * 0.7 + 0.05;
+            if s.mouth_anim > 1.0 {
+                s.mouth_anim = 1.0;
+            }
+        } else {
+            s.mouth_anim += (0.0 - s.mouth_anim) * 0.7 - 0.05;
+            if s.mouth_anim < 0.0 {
+                s.mouth_anim = 0.0;
+            }
+        }
     }
 }
 
 /// `RunAroundLikeCrazyGoal`: an untamed horse with a rider runs about and, now and then, either
 /// accepts a player rider (its temper against a roll) or throws the rider off.
 #[derive(Clone, Debug)]
-struct RunAroundLikeCrazyGoal {
+pub(super) struct RunAroundLikeCrazyGoal {
     speed: f64,
     pos: Vec3,
+}
+
+/// `new RunAroundLikeCrazyGoal(horse, speed)`.
+pub(super) fn run_around_like_crazy(speed: f64) -> RunAroundLikeCrazyGoal {
+    RunAroundLikeCrazyGoal { speed, pos: Vec3::ZERO }
 }
 
 impl CustomGoal for RunAroundLikeCrazyGoal {
@@ -874,7 +1093,8 @@ impl CustomGoal for RunAroundLikeCrazyGoal {
         let Some(&first) = e.passengers.first() else { return };
         if let Some(p) = level.player(first) {
             let temper = st(m).temper;
-            if e.random.next_int_bounded(100) < temper {
+            let max = max_temper(m);
+            if e.random.next_int_bounded(max) < temper {
                 // `tameWithName`.
                 let s = st_mut(m);
                 s.owner = Some(p.uuid);
@@ -885,7 +1105,7 @@ impl CustomGoal for RunAroundLikeCrazyGoal {
                 return;
             }
             let s = st_mut(m);
-            s.temper = (s.temper + 5).clamp(0, 100);
+            s.temper = (s.temper + 5).clamp(0, max);
         }
         // `ejectPassengers` (players find out in the level's passenger pass).
         for id in std::mem::take(&mut e.passengers).into_iter().rev() {
@@ -1006,7 +1226,9 @@ fn same_stack(a: &ItemStack, b: &ItemStack) -> bool {
 pub fn mount_info(e: &Entity, m: &MobData) -> Option<(usize, bool, u32)> {
     let s = ext::state::<State>(m)?;
     let columns = s.inventory.len() / 3;
-    Some((columns, crate::mob::is_alive(e, m) && !m.baby() && s.tamed, s.inv_serial))
+    // (`Llama.canUseSlot`: every slot, always.)
+    let saddle_usable = super::llama::is_llama(m.kind) || (crate::mob::is_alive(e, m) && !m.baby() && s.tamed);
+    Some((columns, saddle_usable, s.inv_serial))
 }
 
 /// `handleStartJump` (a rider's jump key on a saddled mount): the horse rears; its jump sound.
@@ -1025,5 +1247,5 @@ pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
 
 /// Whether `kind` is one of the horse family.
 pub fn is_equine(kind: MobKind) -> bool {
-    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule | MobKind::SkeletonHorse)
+    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule | MobKind::SkeletonHorse | MobKind::Llama | MobKind::TraderLlama)
 }

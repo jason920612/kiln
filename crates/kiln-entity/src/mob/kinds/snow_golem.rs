@@ -146,6 +146,10 @@ fn snow_survives(level: &dyn EntityLevel, p: BlockPos) -> bool {
 }
 
 /// `SnowGolem.performRangedAttack`: a snowball from the eyes toward the target's eyes.
+fn snow_attack(e: &mut Entity, _m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) {
+    perform_ranged_attack(e, level, t);
+}
+
 fn perform_ranged_attack(e: &mut Entity, level: &mut dyn EntityLevel, t: &Living) {
     let dx = t.pos.x - e.x();
     let dy = t.eye_y - 1.100000023841858;
@@ -172,6 +176,9 @@ fn perform_ranged_attack(e: &mut Entity, level: &mut dyn EntityLevel, t: &Living
 /// `interval_min` to `interval_max` ticks (by the distance).
 #[derive(Clone, Debug)]
 pub struct RangedAttackGoal {
+    name: &'static str,
+    /// `RangedAttackMob.performRangedAttack`.
+    attack: fn(&mut Entity, &mut MobData, &mut dyn EntityLevel, &Living),
     speed: f64,
     interval_min: i32,
     interval_max: i32,
@@ -183,14 +190,19 @@ pub struct RangedAttackGoal {
 
 impl RangedAttackGoal {
     pub fn new(speed: f64, interval_min: i32, interval_max: i32, radius: f32) -> RangedAttackGoal {
-        RangedAttackGoal { speed, interval_min, interval_max, radius, target: None, attack_time: -1, see_time: 0 }
+        RangedAttackGoal { name: "RangedAttackGoal", attack: snow_attack, speed, interval_min, interval_max, radius, target: None, attack_time: -1, see_time: 0 }
+    }
+
+    /// A `RangedAttackGoal` of another mob: `attack` is its `performRangedAttack`.
+    pub fn with_attack(name: &'static str, speed: f64, interval_min: i32, interval_max: i32, radius: f32, attack: fn(&mut Entity, &mut MobData, &mut dyn EntityLevel, &Living)) -> RangedAttackGoal {
+        RangedAttackGoal { name, attack, speed, interval_min, interval_max, radius, target: None, attack_time: -1, see_time: 0 }
     }
 }
 
 impl CustomGoal for RangedAttackGoal {
     custom_goal_boilerplate!();
     fn name(&self) -> &'static str {
-        "RangedAttackGoal"
+        self.name
     }
     fn flags(&self) -> u8 {
         MOVE | LOOK
@@ -237,7 +249,7 @@ impl CustomGoal for RangedAttackGoal {
                 return;
             }
             let dist = d.sqrt() as f32 / self.radius;
-            perform_ranged_attack(e, level, &t);
+            (self.attack)(e, m, level, &t);
             self.attack_time = floor_f(dist * (hi - lo) + lo);
         } else if self.attack_time < 0 {
             let f = d.sqrt() / self.radius as f64;

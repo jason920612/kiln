@@ -2431,6 +2431,7 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         // -- wp28: axolotl and goat
         DamageKind::DryOut => ("minecraft:dry_out", "death.attack.dryout"),
         DamageKind::NoAggroMobAttack => ("minecraft:mob_attack_no_aggro", "death.attack.mob"),
+        DamageKind::Spit => ("minecraft:spit", "death.attack.mob"),
 
     }
 }
