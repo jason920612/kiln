@@ -703,6 +703,10 @@ pub trait Kind: Sync + Send {
     fn swim_sound(&self) -> Option<&'static str> {
         Some("minecraft:entity.generic.swim")
     }
+    /// A swim sound that depends on the mob's state (a calf's), when it has one.
+    fn swim_sound_for(&self, _m: &MobData) -> Option<&'static str> {
+        None
+    }
     /// After `Mob.baseTick` (the ambient sound roll): `WaterAnimal.handleAirSupply` with the air
     /// supply from before the base tick.
     fn after_base_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, air_before: i32) {

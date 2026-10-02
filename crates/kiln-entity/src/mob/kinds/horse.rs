@@ -1336,6 +1336,9 @@ pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
     if matches!(m.kind, MobKind::Camel | MobKind::CamelHusk) {
         return super::camel::start_jump(m);
     }
+    if matches!(m.kind, MobKind::Nautilus | MobKind::ZombieNautilus) {
+        return super::nautilus::start_jump(m);
+    }
     let saddled = !ext::state::<State>(m)?.saddle.is_empty();
     if !saddled {
         return None;

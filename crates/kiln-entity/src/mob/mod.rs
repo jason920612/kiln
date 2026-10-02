@@ -148,6 +148,8 @@ pub enum MobKind {
     ZombieHorse,
     CamelHusk,
     Parched,
+    Nautilus,
+    ZombieNautilus,
 }
 
 /// `MobCategory`.
@@ -315,6 +317,8 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::ZombieHorse,
     MobKind::CamelHusk,
     MobKind::Parched,
+    MobKind::Nautilus,
+    MobKind::ZombieNautilus,
 ];
 
 impl MobKind {
@@ -2095,7 +2099,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             && om.health > 0.0
             && om.kind.ext().is_none_or(|k| k.pushable())
             // `AbstractHorse.isPushable` (horses, donkeys, camels...): `!isVehicle()`.
-            && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || matches!(om.kind, MobKind::Camel | MobKind::CamelHusk)))
+            && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || matches!(om.kind, MobKind::Camel | MobKind::CamelHusk | MobKind::Nautilus | MobKind::ZombieNautilus)))
             && !riding(id, o.vehicle)
         {
             others.push((id, o.x(), o.z(), false));
@@ -2228,6 +2232,17 @@ pub fn swim_sound(type_name: &str) -> Option<&'static str> {
         Some(k) => k.swim_sound(),
         None => Some("minecraft:entity.generic.swim"),
     }
+}
+
+/// The swim sound of mob `e` (a calf's differs for the nautilus).
+pub fn swim_sound_of(e: &Entity) -> Option<&'static str> {
+    if let Some(m) = data(e)
+        && let Some(k) = m.kind.ext()
+        && let Some(s) = k.swim_sound_for(m)
+    {
+        return Some(s);
+    }
+    swim_sound(e.type_name)
 }
 
 /// Whether mob type `type_name` runs `checkFallDamage` (flying types override it with nothing).

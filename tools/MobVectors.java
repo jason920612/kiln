@@ -6078,5 +6078,251 @@ public class MobVectors {
             s.ticks = 300;
             out.add(s);
         }
+        scenariosMounts(out);
+        scenariosNautilus(out);
+    }
+
+    /// The undead mounts: zombie horses (steered by a zombie rider), camel husks (a husk and a
+    /// parched on top) and the parched itself.
+    static void scenariosMounts(List<Scenario> out) {
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("zombie_horse_idle_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:zombie_horse", 0.5, BY, 0.5, 40f * seed, 33100L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 340 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A zombie rider steers its zombie horse after a survival player (at night).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("zombie_horse_zombie_rider_" + seed);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec h = new MobSpec("minecraft:zombie_horse", 0.5, BY, 0.5, 30f * seed, 33200L + seed);
+            h.nbt = "{PersistenceRequired:1b}";
+            MobSpec r = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 30f * seed, 33210L + seed);
+            r.vehicle = 0;
+            s.mobs.add(h);
+            s.mobs.add(r);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.levelSeed = 345 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Rotten flesh tempts it; a hit makes it rear (no panic goal).
+        {
+            Scenario s = new Scenario("zombie_horse_tempt");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:zombie_horse", 0.5, BY, 0.5, 60f, 33300L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = "minecraft:rotten_flesh";
+            s.dayTime = 18000;
+            s.levelSeed = 350;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("zombie_horse_hurt");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:zombie_horse", 0.5, BY, 0.5, 60f, 33310L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.hurts.put(20, new double[] {0, 1.0});
+            s.dayTime = 18000;
+            s.levelSeed = 351;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // In the sun it burns.
+        {
+            Scenario s = new Scenario("zombie_horse_sun");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:zombie_horse", 0.5, BY, 0.5, 60f, 33320L);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 1000;
+            s.levelSeed = 352;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Camel husks: idling, and carrying a husk (the driver) and a parched behind it.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("camel_husk_idle_" + seed);
+            floor(s, 24, "minecraft:sand");
+            MobSpec m = new MobSpec("minecraft:camel_husk", 0.5, BY, 0.5, 50f * seed, 33400L + seed);
+            m.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 355 + seed;
+            s.ticks = 500;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("camel_husk_jockey_" + seed);
+            floor(s, 24, "minecraft:sand");
+            MobSpec c = new MobSpec("minecraft:camel_husk", 0.5, BY, 0.5, 30f * seed, 33500L + seed);
+            c.nbt = "{PersistenceRequired:1b}";
+            MobSpec h = new MobSpec("minecraft:husk", 0.5, BY, 0.5, 30f * seed, 33510L + seed);
+            h.vehicle = 0;
+            MobSpec p = new MobSpec("minecraft:parched", 0.5, BY, 0.5, 30f * seed, 33520L + seed);
+            p.mainHand = "minecraft:bow";
+            p.vehicle = 0;
+            s.mobs.add(c);
+            s.mobs.add(h);
+            s.mobs.add(p);
+            s.player = new double[] {seed == 1 ? 14.5 : 9.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.levelSeed = 360 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // The parched shoots weakness arrows (and is hurt like a skeleton).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("parched_shoots_" + seed);
+            floor(s, 24, "minecraft:sand");
+            MobSpec p = new MobSpec("minecraft:parched", 0.5, BY, 0.5, 90f * seed, 33600L + seed);
+            p.mainHand = "minecraft:bow";
+            s.mobs.add(p);
+            s.player = new double[] {13.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.levelSeed = 365 + seed;
+            s.ticks = 300;
+            out.add(s);
+        }
+    }
+
+    /// Nautilus and zombie nautilus swimming in a pool.
+    static void scenariosNautilus(List<Scenario> out) {
+        double W = BY - 3; // y of a mob in the pool
+        for (String kind : new String[] {"nautilus", "zombie_nautilus"}) {
+            for (int seed = 1; seed <= 3; seed++) {
+                Scenario s = new Scenario(kind + "_idle_" + seed);
+                poolWorld(s, 14, -6, -6, 6, 6, 5);
+                MobSpec m = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 40f * seed, 33700L + seed + kind.length() * 10);
+                m.nbt = "{PersistenceRequired:1b}";
+                s.mobs.add(m);
+                s.player = new double[] {10.5, BY, 0.5};
+                s.playerCreative = true;
+                s.dayTime = 18000;
+                s.levelSeed = 370 + seed;
+                s.ticks = 400;
+                out.add(s);
+            }
+            // Fish tempt it.
+            Scenario t = new Scenario(kind + "_tempt");
+            poolWorld(t, 14, -6, -6, 6, 6, 5);
+            MobSpec tm = new MobSpec("minecraft:" + kind, -3.5, W, 0.5, 100f, 33750L + kind.length());
+            tm.nbt = "{PersistenceRequired:1b}";
+            t.mobs.add(tm);
+            t.player = new double[] {5.5, BY, 0.5};
+            t.playerCreative = true;
+            t.playerMainHand = "minecraft:cod";
+            t.dayTime = 18000;
+            t.levelSeed = 380;
+            t.ticks = 300;
+            out.add(t);
+            // Hurt: it panics (a zombie nautilus does not).
+            Scenario h = new Scenario(kind + "_hurt");
+            poolWorld(h, 14, -6, -6, 6, 6, 5);
+            MobSpec hm = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 60f, 33760L + kind.length());
+            hm.nbt = "{PersistenceRequired:1b}";
+            h.mobs.add(hm);
+            h.player = new double[] {7.5, BY, 0.5};
+            h.hurts.put(20, new double[] {0, 1.0});
+            h.dayTime = 18000;
+            h.levelSeed = 381;
+            h.ticks = 300;
+            out.add(h);
+            // It hunts the pufferfish of its pool (half the time, once, when its cooldown starts).
+            for (int seed = 1; seed <= 6; seed++) {
+                Scenario p = new Scenario(kind + "_hunt_pufferfish_" + seed);
+                poolWorld(p, 14, -6, -6, 6, 6, 5);
+                MobSpec pm = new MobSpec("minecraft:" + kind, 0.5, W, 0.5, 20f * seed, 33800L + seed + kind.length() * 10);
+                pm.nbt = "{PersistenceRequired:1b}";
+                p.mobs.add(pm);
+                p.mobs.add(new MobSpec("minecraft:pufferfish", 3.5, W, 1.5, 0f, 33810L + seed));
+                p.player = new double[] {10.5, BY, 0.5};
+                p.playerCreative = true;
+                p.dayTime = 18000;
+                p.levelSeed = 390 + seed;
+                p.ticks = 300;
+                out.add(p);
+            }
+            // On land it dries out (hurt for 2 every 20 ticks after 300).
+            Scenario d = new Scenario(kind + "_dry_land");
+            floor(d, 20, "minecraft:grass_block");
+            MobSpec dm = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 60f, 33900L + kind.length());
+            dm.nbt = "{PersistenceRequired:1b}";
+            d.mobs.add(dm);
+            d.player = new double[] {9.5, BY, 0.5};
+            d.playerCreative = true;
+            d.dayTime = 18000;
+            d.levelSeed = 400;
+            d.ticks = 500;
+            out.add(d);
+        }
+        // Breeding.
+        {
+            Scenario s = new Scenario("nautilus_breed");
+            poolWorld(s, 14, -6, -6, 6, 6, 5);
+            MobSpec m1 = new MobSpec("minecraft:nautilus", 0.5, W, 0.5, 20f, 34000L);
+            MobSpec m2 = new MobSpec("minecraft:nautilus", 3.5, W, 1.5, 200f, 34001L);
+            m1.nbt = "{PersistenceRequired:1b}";
+            m2.nbt = "{PersistenceRequired:1b}";
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 410;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A calf follows an adult.
+        {
+            Scenario s = new Scenario("nautilus_calf_follow");
+            poolWorld(s, 14, -6, -6, 6, 6, 5);
+            MobSpec baby = new MobSpec("minecraft:nautilus", 0.5, W, 0.5, 0f, 34100L);
+            baby.age = -24000;
+            baby.nbt = "{PersistenceRequired:1b}";
+            MobSpec adult = new MobSpec("minecraft:nautilus", 5.5, W, 2.5, 90f, 34101L);
+            adult.nbt = "{PersistenceRequired:1b}";
+            s.mobs.add(baby);
+            s.mobs.add(adult);
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 411;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Tame: it keeps near its home and leaves pufferfish alone.
+        {
+            Scenario s = new Scenario("nautilus_tame_idle");
+            poolWorld(s, 14, -6, -6, 6, 6, 5);
+            MobSpec m = new MobSpec("minecraft:nautilus", 0.5, W, 0.5, 20f, 34200L);
+            m.nbt = "{PersistenceRequired:1b," + owner() + "}";
+            s.mobs.add(m);
+            s.mobs.add(new MobSpec("minecraft:pufferfish", 3.5, W, 1.5, 0f, 34210L));
+            s.player = new double[] {10.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 412;
+            s.ticks = 300;
+            out.add(s);
+        }
     }
 }
