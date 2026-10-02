@@ -186,6 +186,12 @@ fn the_rider_of_the_trap_horse_ticks_in_the_tick_the_trap_springs() {
 /// even the trap horse itself (which wanders nowhere on its own once it has a rider) walks.
 #[test]
 fn the_horsemen_steer_their_horses_toward_a_survival_player() {
+    // The horsemen's gear comes from the datapack (other tests in this process may set it up
+    // first, so set it up here too: the outcome must not depend on test order).
+    if !datapack() {
+        eprintln!("no datapack: skipped");
+        return;
+    }
     let mut w = World::new("survival");
     w.summon_at("minecraft:skeleton_horse", 8.0, "{SkeletonTrap:1b}");
     let trap_horse = w.sim.mobs().iter().find(|m| m.1 == "minecraft:skeleton_horse").map(|m| m.0).expect("the trap horse");
