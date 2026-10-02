@@ -178,8 +178,11 @@ fn stable_lava(level: &dyn EntityLevel, state: u16, pos: BlockPos, ctx: &Collisi
         && !physics::fluid_state(level.block(pos.above())).kind.is_lava()
 }
 
+/// The colliders around an entity: a handful, so they live on the stack.
+pub type Colliders = smallvec::SmallVec<[Collider; 8]>;
+
 /// `getBlockCollisions` as placed colliders.
-pub fn block_colliders(level: &dyn EntityLevel, ctx: &CollisionContext, area: &Aabb, out: &mut Vec<Collider>) {
+pub fn block_colliders(level: &dyn EntityLevel, ctx: &CollisionContext, area: &Aabb, out: &mut Colliders) {
     for_each_block_collision(level, ctx, area, |pos, shape, _| {
         out.push(Collider { shape, offset: [pos.x as f64, pos.y as f64, pos.z as f64] });
         true
@@ -200,8 +203,8 @@ pub fn collect_colliders(
     ctx: &CollisionContext,
     entity_shapes: &[Collider],
     area: &Aabb,
-) -> Vec<Collider> {
-    let mut out = entity_shapes.to_vec();
+) -> Colliders {
+    let mut out: Colliders = entity_shapes.iter().cloned().collect();
     block_colliders(level, ctx, area, &mut out);
     out
 }

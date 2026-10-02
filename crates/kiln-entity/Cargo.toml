@@ -16,6 +16,7 @@ kiln-inventory.workspace = true
 kiln-item.workspace = true
 kiln-javamath.workspace = true
 kiln-proto.workspace = true
+smallvec.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

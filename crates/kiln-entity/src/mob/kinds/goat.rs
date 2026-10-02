@@ -448,10 +448,9 @@ fn jump_vector_for_angle(cx: &Cx, target: Vec3, max_speed: f32, angle: i32) -> O
     let steps = mob::mth::ceil(horizontal / vh) * 2;
     let mut travelled = 0.0;
     let mut previous: Option<Vec3> = None;
-    let dims = goat_dimensions(cx.m.baby(), true, {
-        let t = kiln_data::entities::by_name("minecraft:goat")?;
-        (t.width, t.height, t.eye_height)
-    });
+    static BASE: std::sync::OnceLock<Option<(f32, f32, f32)>> = std::sync::OnceLock::new();
+    let base = (*BASE.get_or_init(|| kiln_data::entities::by_name("minecraft:goat").map(|t| (t.width, t.height, t.eye_height))))?;
+    let dims = goat_dimensions(cx.m.baby(), true, base);
     for _ in 0..(steps - 1).max(0) {
         travelled += horizontal / steps as f64;
         let y = ((sin_a / cos_a) * travelled) - (((travelled * travelled) * gravity) / ((2.0 * v_sqr) * (cos_a * cos_a)));

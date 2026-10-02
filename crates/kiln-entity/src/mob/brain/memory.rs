@@ -647,16 +647,15 @@ fn is_empty_collection(v: &Val) -> bool {
 pub struct Memories {
     slots: Vec<Slot>,
     registered: [bool; Mem::COUNT],
-    /// One bit per memory (`1 << Mem as u8`): registered, holding a value, and holding a value
-    /// that expires (the only ones [`Memories::tick`] has to visit).
-    registered_bits: u128,
+    /// One bit per memory (`1 << Mem as u8`): holding a value, and holding a value that expires
+    /// (the only ones [`Memories::tick`] has to visit).
     present_bits: u128,
     expiring_bits: u128,
 }
 
 impl Default for Memories {
     fn default() -> Self {
-        Memories { slots: vec![Slot::EMPTY; Mem::COUNT], registered: [false; Mem::COUNT], registered_bits: 0, present_bits: 0, expiring_bits: 0 }
+        Memories { slots: vec![Slot::EMPTY; Mem::COUNT], registered: [false; Mem::COUNT], present_bits: 0, expiring_bits: 0 }
     }
 }
 
@@ -665,12 +664,11 @@ const fn bit(m: Mem) -> u128 {
     1u128 << (m as u8)
 }
 
-/// What a behaviour's entry conditions ask of the memories as bit masks: every memory named is
-/// registered, the `present` ones hold a value, the `absent` ones do not
-/// (`Behavior.hasRequiredMemories` in three mask tests).
+/// What a behaviour's entry conditions ask of the memories as bit masks: the `present` ones hold a
+/// value, the `absent` ones do not. That is necessary for `Behavior.hasRequiredMemories` (which
+/// also wants them registered), so a behaviour that fails it cannot start and is not asked.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Entry {
-    all: u128,
     present: u128,
     absent: u128,
 }
@@ -679,7 +677,6 @@ impl Entry {
     pub fn of(entry: &[(Mem, Status)]) -> Entry {
         let mut e = Entry::default();
         for &(m, s) in entry {
-            e.all |= bit(m);
             match s {
                 Status::ValuePresent => e.present |= bit(m),
                 Status::ValueAbsent => e.absent |= bit(m),
@@ -689,17 +686,16 @@ impl Entry {
         e
     }
 
-    /// `entry.iter().all(|(m, s)| mem.check(m, s))`.
+    /// Whether the memories have what the entry conditions need of their values.
     #[inline]
     pub fn holds(&self, mem: &Memories) -> bool {
-        self.all & !mem.registered_bits == 0 && self.present & !mem.present_bits == 0 && self.absent & mem.present_bits == 0
+        self.present & !mem.present_bits == 0 && self.absent & mem.present_bits == 0
     }
 }
 
 impl Memories {
     pub fn register(&mut self, m: Mem) {
         self.registered[m as usize] = true;
-        self.registered_bits |= bit(m);
     }
 
     pub fn is_registered(&self, m: Mem) -> bool {

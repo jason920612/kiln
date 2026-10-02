@@ -778,7 +778,6 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn player(&self, id: i32) -> Option<PlayerView> {
-        kiln_entity::prof!("lvl", "player");
         self.view_index.by_id(&self.views, id)
     }
 

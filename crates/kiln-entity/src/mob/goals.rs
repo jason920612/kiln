@@ -291,7 +291,6 @@ impl Living {
 }
 
 pub fn living(level: &dyn EntityLevel, id: i32) -> Option<Living> {
-    crate::prof!("util", "living");
     if let Some(p) = level.player(id) {
         return Some(living_player(&p));
     }

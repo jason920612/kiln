@@ -832,11 +832,31 @@ pub fn item_tag(item: i32, tag: &str) -> bool {
 /// `minecraft:undead`, `minecraft:raiders`).
 pub fn entity_type_tag(type_name: &str, tag: &str) -> bool {
     let Some(id) = kiln_data::builtin_id("minecraft:entity_type", type_name) else { return false };
-    kiln_data::registries::TAGS
-        .iter()
-        .find(|(r, _)| *r == "minecraft:entity_type")
-        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
-        .is_some_and(|(_, ids)| ids.contains(&id))
+    // Each tag as a flag per entity type, made on first use.
+    thread_local! {
+        static TAGS: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<Vec<bool>>>> = Default::default();
+    }
+    let flags = TAGS.with(|t| {
+        if let Some(f) = t.borrow().get(tag) {
+            return f.clone();
+        }
+        let count = kiln_data::builtin_entries("minecraft:entity_type").map_or(0, |e| e.len());
+        let mut flags = vec![false; count];
+        let ids = kiln_data::registries::TAGS
+            .iter()
+            .find(|(r, _)| *r == "minecraft:entity_type")
+            .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+            .map(|(_, ids)| *ids);
+        for &i in ids.unwrap_or(&[]) {
+            if let Some(f) = usize::try_from(i).ok().and_then(|i| flags.get_mut(i)) {
+                *f = true;
+            }
+        }
+        let flags = std::rc::Rc::new(flags);
+        t.borrow_mut().insert(tag.to_owned(), flags.clone());
+        flags
+    });
+    flags.get(id as usize).copied().unwrap_or(false)
 }
 
 /// The variant components of a mob (`Entity.get(DataComponents.*_VARIANT)`) that entity

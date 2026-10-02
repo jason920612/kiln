@@ -600,64 +600,89 @@ impl BrainState {
     }
 }
 
-/// A behaviour with its entry conditions as masks and its status as of the last call that can
-/// change it (only the brain starts, ticks and stops a top-level behaviour), so the loops over
-/// every behaviour read a flag and not a virtual call.
-#[derive(Clone, Debug)]
-struct Beh {
-    c: Box<dyn Control>,
-    entry: Entry,
-    run: bool,
-}
-
-impl Beh {
-    fn new(c: Box<dyn Control>) -> Beh {
-        let entry = c.entry_masks();
-        let run = c.running();
-        Beh { c, entry, run }
-    }
-
-    #[inline]
-    fn running(&self) -> bool {
-        self.run
-    }
-
-    fn name(&self) -> &'static str {
-        self.c.name()
-    }
-
-    fn try_start(&mut self, cx: &mut Cx) -> bool {
-        let started = self.c.try_start(cx);
-        self.run = self.c.running();
-        started
-    }
-
-    fn tick_or_stop(&mut self, cx: &mut Cx) {
-        self.c.tick_or_stop(cx);
-        self.run = self.c.running();
-    }
-
-    fn do_stop(&mut self, cx: &mut Cx) {
-        self.c.do_stop(cx);
-        self.run = self.c.running();
-    }
-
-    fn running_names(&self, out: &mut Vec<String>) {
-        self.c.running_names(out);
-    }
-
-    fn seed_gates(&mut self, base: i64, k: &mut i64) {
-        self.c.seed_gates(base, k);
-    }
-}
-
-/// The behaviours of one activity at one priority.
+/// The behaviours of one activity at one priority (while the brain is built).
 #[derive(Clone, Debug)]
 struct Group {
     priority: i32,
     /// Activities in the iteration order of vanilla's `HashMap`, each with its behaviours in
     /// registration order.
-    activities: Vec<(Activity, Vec<Beh>)>,
+    activities: Vec<(Activity, Vec<Box<dyn Control>>)>,
+}
+
+/// The behaviours of a brain in the order its loops visit them (priority, then the activities in
+/// vanilla's `HashMap` order, then registration order), with what the loops read of each in
+/// arrays of their own: a mob's loops touch a few bytes of masks and flags and only the
+/// behaviours that can start or run, not every behaviour's object.
+#[derive(Clone, Debug, Default)]
+struct Behaviors {
+    list: Vec<Box<dyn Control>>,
+    /// What each behaviour's entry conditions ask of the memories.
+    entries: Vec<Entry>,
+    /// One bit per behaviour: running as of the last call that can change it (only the brain
+    /// starts, ticks and stops a top-level behaviour).
+    run: Vec<u64>,
+    /// (activity, first, end): the behaviours of each activity, consecutive in `list`.
+    spans: Vec<(Activity, u32, u32)>,
+}
+
+impl Behaviors {
+    fn flatten(groups: Vec<Group>) -> Behaviors {
+        let mut b = Behaviors::default();
+        for g in groups {
+            for (activity, bs) in g.activities {
+                let first = b.list.len() as u32;
+                for c in bs {
+                    b.entries.push(c.entry_masks());
+                    b.list.push(c);
+                }
+                b.spans.push((activity, first, b.list.len() as u32));
+            }
+        }
+        b.run = vec![0; b.list.len().div_ceil(64)];
+        for i in 0..b.list.len() {
+            b.sync(i);
+        }
+        b
+    }
+
+    #[inline]
+    fn running(&self, i: usize) -> bool {
+        self.run[i >> 6] >> (i & 63) & 1 != 0
+    }
+
+    fn sync(&mut self, i: usize) {
+        let bit = 1u64 << (i & 63);
+        if self.list[i].running() {
+            self.run[i >> 6] |= bit;
+        } else {
+            self.run[i >> 6] &= !bit;
+        }
+    }
+
+    fn try_start(&mut self, i: usize, cx: &mut Cx) -> bool {
+        let started = self.list[i].try_start(cx);
+        self.sync(i);
+        started
+    }
+
+    fn tick_or_stop(&mut self, i: usize, cx: &mut Cx) {
+        self.list[i].tick_or_stop(cx);
+        self.sync(i);
+    }
+
+    fn do_stop(&mut self, i: usize, cx: &mut Cx) {
+        self.list[i].do_stop(cx);
+        self.sync(i);
+    }
+
+    /// Stops everything that runs, in order.
+    fn stop_running(&mut self, cx: &mut Cx) {
+        for i in 0..self.list.len() {
+            if self.running(i) {
+                self.do_stop(i, cx);
+            }
+        }
+    }
 }
 
 /// `Brain`.
@@ -665,7 +690,7 @@ struct Group {
 pub struct Brain {
     pub st: BrainState,
     sensors: Vec<SensorSlot>,
-    groups: Vec<Group>,
+    beh: Behaviors,
     /// The brain a `refreshBrain` made during this tick: the rest of the tick still runs on this one
     /// (vanilla's loops hold the old `Brain`), the next one on the new.
     refreshed: Option<Box<Brain>>,
@@ -703,7 +728,8 @@ impl Brain {
             erase_when_stopped: vec![Vec::new(); Activity::COUNT],
             refresh_requested: false,
         };
-        let mut brain = Brain { st: st.clone(), sensors: slots, groups: Vec::new(), refreshed: None, needs_pin: false };
+        let mut brain = Brain { st: st.clone(), sensors: slots, beh: Behaviors::default(), refreshed: None, needs_pin: false };
+        let mut groups: Vec<Group> = Vec::new();
         // Registration order of (priority, activity): the first sighting of an activity in a
         // priority decides where it goes among those sharing a hash bucket.
         let mut firsts: Vec<(i32, Activity)> = Vec::new();
@@ -724,27 +750,28 @@ impl Brain {
                 if !firsts.contains(&(prio, a.activity)) {
                     firsts.push((prio, a.activity));
                 }
-                let gi = match brain.groups.iter().position(|g| g.priority == prio) {
+                let gi = match groups.iter().position(|g| g.priority == prio) {
                     Some(i) => i,
                     None => {
-                        brain.groups.push(Group { priority: prio, activities: Vec::new() });
-                        brain.groups.len() - 1
+                        groups.push(Group { priority: prio, activities: Vec::new() });
+                        groups.len() - 1
                     }
                 };
-                let g = &mut brain.groups[gi];
+                let g = &mut groups[gi];
                 match g.activities.iter_mut().find(|(x, _)| *x == a.activity) {
-                    Some((_, v)) => v.push(Beh::new(b)),
-                    None => g.activities.push((a.activity, vec![Beh::new(b)])),
+                    Some((_, v)) => v.push(b),
+                    None => g.activities.push((a.activity, vec![b])),
                 }
             }
         }
-        brain.groups.sort_by_key(|g| g.priority);
-        for g in brain.groups.iter_mut() {
+        groups.sort_by_key(|g| g.priority);
+        for g in groups.iter_mut() {
             // `computeIfAbsent` puts a new node at the head of its bucket's chain: activities that
             // share a bucket iterate latest-registered first (reverse, then a stable sort).
             g.activities.reverse();
             g.activities.sort_by_key(|(a, _)| a.bucket());
         }
+        brain.beh = Behaviors::flatten(groups);
         st.set_core_activities(&[Activity::Core]);
         st.use_default_activity();
         brain.st = st;
@@ -777,52 +804,51 @@ impl Brain {
         }
         // startEachNonRunningBehavior
         crate::prof!("brain", "start loop");
-        for gi in 0..self.groups.len() {
-            for ai in 0..self.groups[gi].activities.len() {
-                let act = self.groups[gi].activities[ai].0;
-                if !cx.b.is_active(act) {
-                    continue;
-                }
-                for bi in 0..self.groups[gi].activities[ai].1.len() {
-                    let b = &mut self.groups[gi].activities[ai].1[bi];
-                    if !b.running() && b.entry.holds(&cx.b.mem) {
-                        crate::prof!("start", b.name());
-                        if debug_on() {
-                            let (r0, l0) = (cx.e.random.state(), cx.rng().state());
-                            if b.try_start(&mut cx) {
-                                let (r1, l1, t) = (cx.e.random.state(), cx.rng().state(), cx.time);
-                                eprintln!("brain t={t} start {} rnd {r0}->{r1} lr {l0}->{l1}", b.name());
-                            }
-                        } else {
-                            b.try_start(&mut cx);
+        for si in 0..self.beh.spans.len() {
+            let (act, first, end) = self.beh.spans[si];
+            if !cx.b.is_active(act) {
+                continue;
+            }
+            for i in first as usize..end as usize {
+                if !self.beh.running(i) && self.beh.entries[i].holds(&cx.b.mem) {
+                    crate::prof!("start", self.beh.list[i].name());
+                    if debug_on() {
+                        let (r0, l0) = (cx.e.random.state(), cx.rng().state());
+                        if self.beh.try_start(i, &mut cx) {
+                            let (r1, l1, t) = (cx.e.random.state(), cx.rng().state(), cx.time);
+                            eprintln!("brain t={t} start {} rnd {r0}->{r1} lr {l0}->{l1}", self.beh.list[i].name());
                         }
-                        if cx.b.refresh_requested {
-                            Self::refresh_now(&mut self.groups, &mut self.refreshed, &mut cx);
-                        }
+                    } else {
+                        self.beh.try_start(i, &mut cx);
+                    }
+                    if cx.b.refresh_requested {
+                        Self::refresh_now(&mut self.beh, &mut self.refreshed, &mut cx);
                     }
                 }
             }
         }
         // tickEachRunningBehavior: the running ones as of now (behaviours started above included).
         crate::prof!("brain", "tick loop");
-        for gi in 0..self.groups.len() {
-            for ai in 0..self.groups[gi].activities.len() {
-                for bi in 0..self.groups[gi].activities[ai].1.len() {
-                    let b = &mut self.groups[gi].activities[ai].1[bi];
-                    if b.running() {
-                        crate::prof!("tick", b.name());
-                        let l0 = cx.rng().state();
-                        b.tick_or_stop(&mut cx);
-                        if debug_on() {
-                            let l1 = cx.rng().state();
-                            if l0 != l1 {
-                                eprintln!("brain t={} tick {} lr {l0}->{l1}", cx.time, b.name());
-                            }
-                        }
-                        if cx.b.refresh_requested {
-                            Self::refresh_now(&mut self.groups, &mut self.refreshed, &mut cx);
-                        }
+        for w in 0..self.beh.run.len() {
+            let mut bits = self.beh.run[w];
+            while bits != 0 {
+                let i = (w << 6) + bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                // (A behaviour a refresh stopped meanwhile is not ticked.)
+                if !self.beh.running(i) {
+                    continue;
+                }
+                crate::prof!("tick", self.beh.list[i].name());
+                let l0 = cx.rng().state();
+                self.beh.tick_or_stop(i, &mut cx);
+                if debug_on() {
+                    let l1 = cx.rng().state();
+                    if l0 != l1 {
+                        eprintln!("brain t={} tick {} lr {l0}->{l1}", cx.time, self.beh.list[i].name());
                     }
+                }
+                if cx.b.refresh_requested {
+                    Self::refresh_now(&mut self.beh, &mut self.refreshed, &mut cx);
                 }
             }
         }
@@ -839,17 +865,9 @@ impl Brain {
     /// made with the memories that have a codec carried over and its schedule read; the rest of
     /// the tick goes on with the old behaviours on the new memories (vanilla's behaviours reach
     /// them through `entity.getBrain()`).
-    fn refresh_now(groups: &mut [Group], refreshed: &mut Option<Box<Brain>>, cx: &mut Cx) {
+    fn refresh_now(beh: &mut Behaviors, refreshed: &mut Option<Box<Brain>>, cx: &mut Cx) {
         cx.b.refresh_requested = false;
-        for g in groups.iter_mut() {
-            for (_, bs) in g.activities.iter_mut() {
-                for b in bs.iter_mut() {
-                    if b.running() {
-                        b.do_stop(cx);
-                    }
-                }
-            }
-        }
+        beh.stop_running(cx);
         let Some(kind) = cx.m.kind.ext() else { return };
         let Some(mut new) = kind.make_brain(&*cx.m, &mut PeekLong(&mut cx.e.random)) else { return };
         persist::load_state(&mut new.st, &persist::save_state(cx.b));
@@ -863,26 +881,14 @@ impl Brain {
     pub fn stop_all(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let time = level.game_time();
         let mut cx = Cx { e, m, level, b: &mut self.st, time };
-        for g in self.groups.iter_mut() {
-            for (_, bs) in g.activities.iter_mut() {
-                for b in bs.iter_mut() {
-                    if b.running() {
-                        b.do_stop(&mut cx);
-                    }
-                }
-            }
-        }
+        self.beh.stop_running(&mut cx);
     }
 
     /// The names of the behaviours running now, in `getRunningBehaviors` order.
     pub fn running_names(&self) -> Vec<String> {
         let mut out = Vec::new();
-        for g in &self.groups {
-            for (_, bs) in &g.activities {
-                for b in bs {
-                    b.running_names(&mut out);
-                }
-            }
+        for b in &self.beh.list {
+            b.running_names(&mut out);
         }
         out
     }
@@ -899,12 +905,8 @@ impl Brain {
     /// random): gate `k` (depth first in registration order) gets `LegacyRandom(base + k)`.
     pub fn seed_gates(&mut self, base: i64) {
         let mut k = 0;
-        for g in self.groups.iter_mut() {
-            for (_, bs) in g.activities.iter_mut() {
-                for b in bs.iter_mut() {
-                    b.seed_gates(base, &mut k);
-                }
-            }
+        for b in self.beh.list.iter_mut() {
+            b.seed_gates(base, &mut k);
         }
     }
 }

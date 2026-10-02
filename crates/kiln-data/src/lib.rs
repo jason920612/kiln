@@ -40,8 +40,23 @@ pub fn synced_id(registry: &str, entry: &str) -> Option<i32> {
 
 /// Protocol id of `entry` in a built-in registry such as `minecraft:entity_type`.
 pub fn builtin_id(registry: &str, entry: &str) -> Option<i32> {
-    let (_, entries) = registries::BUILTIN.iter().find(|(r, _)| *r == registry)?;
-    entries.iter().position(|e| *e == entry).map(|i| i as i32)
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    // An index per registry (the first entry of a name wins, as the scan it replaces).
+    static INDEX: OnceLock<HashMap<&'static str, HashMap<&'static str, i32>>> = OnceLock::new();
+    let index = INDEX.get_or_init(|| {
+        registries::BUILTIN
+            .iter()
+            .map(|(r, entries)| {
+                let mut ids = HashMap::with_capacity(entries.len());
+                for (i, e) in entries.iter().enumerate() {
+                    ids.entry(*e).or_insert(i as i32);
+                }
+                (*r, ids)
+            })
+            .collect()
+    });
+    index.get(registry)?.get(entry).copied()
 }
 
 /// Entries of a built-in registry, indexed by protocol id.
