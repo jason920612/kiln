@@ -257,6 +257,7 @@ fn apply_entity_effect(
                 attacker: Some(owner),
                 direct: None,
                 weapon: None,
+                position: None,
             };
             players[affected].hurt(amount, &source, ctx);
         }

@@ -305,6 +305,7 @@ impl Player {
                     attacker: Some(self.as_attacker()),
                     direct: None,
                     weapon: None,
+                    position: None,
                 };
                 self.hurt(amount as f32, &source, ctx);
             }

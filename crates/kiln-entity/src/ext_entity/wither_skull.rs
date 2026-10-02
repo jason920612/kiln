@@ -67,6 +67,16 @@ pub fn block_tag(state: u16, tag: &str) -> bool {
 
 impl WitherSkull {
     fn on_hit(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
+        // `hitTargetOrDeflectSelf`: a breeze turns it back (`onDeflection(false)`: half the
+        // acceleration) and nothing is hit.
+        if let Hit::Entity { id, .. } = hit
+            && let Some(turned) = crate::projectile::try_deflect(e, level, id)
+        {
+            if turned {
+                self.acceleration_power *= 0.5;
+            }
+            return;
+        }
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: "minecraft:wither_skull", owner: self.owner, hit });
         if let Hit::Entity { id, .. } = hit {
             // `onHitEntity`: the owner's skull hits for 8, an ownerless one for 5 (magic).

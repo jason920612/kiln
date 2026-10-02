@@ -49,11 +49,13 @@ impl Player {
         if ba.bypassed_by.as_ref().is_some_and(|set| in_set(source, set)) {
             return 0.0;
         }
-        // `getSourcePosition`: where the attacker is (Kiln keeps no projectile position).
-        let angle = match &source.attacker {
-            Some(a) => {
+        // `getSourcePosition`: a projectile's own position (a point behind it along its flight),
+        // else where the attacker is.
+        let at = source.position.or(source.attacker.as_ref().map(|a| a.pos));
+        let angle = match at {
+            Some(at) => {
                 let view = crate::use_item::view_vector([self.rot[0], 0.0]);
-                let (dx, dz) = (a.pos[0] - self.pos[0], a.pos[2] - self.pos[2]);
+                let (dx, dz) = (at[0] - self.pos[0], at[2] - self.pos[2]);
                 let len = (dx * dx + dz * dz).sqrt();
                 let (nx, nz) = if len < 1.0e-4 { (0.0, 0.0) } else { (dx / len, dz / len) };
                 (nx * view.x + nz * view.z).acos()

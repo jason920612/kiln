@@ -139,11 +139,14 @@ pub(crate) struct Source {
     pub direct: Option<i32>,
     /// `getWeaponItem`: the attacker's main hand item for melee hits.
     pub weapon: Option<kiln_item::ItemStack>,
+    /// `DamageSource.getSourcePosition` when it is not the attacker's: a projectile's (the
+    /// position its hit direction points back to). Blocking judges the angle from it.
+    pub position: Option<[f64; 3]>,
 }
 
 impl From<Cause> for Source {
     fn from(cause: Cause) -> Self {
-        Source { cause, attacker: None, direct: None, weapon: None }
+        Source { cause, attacker: None, direct: None, weapon: None, position: None }
     }
 }
 
@@ -163,7 +166,7 @@ impl Cause {
 
 impl Source {
     pub(crate) fn melee(attacker: Attacker, weapon: kiln_item::ItemStack) -> Source {
-        Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: Some(weapon) }
+        Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: Some(weapon), position: None }
     }
 
     fn type_name(&self) -> &'static str {
@@ -609,7 +612,8 @@ impl Player {
                 self.killed("minecraft:entity_killed_player", k, source.cause.damage_type(), source.direct.is_none());
             }
         }
-        true
+        // A hit the shield blocked entirely does not count as one (an arrow bounces off).
+        !(blocked && amount <= 0.0)
     }
 
     /// Whether the damage's attacker is a player.

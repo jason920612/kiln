@@ -261,6 +261,12 @@ impl EntityExt for Firework {
         if let Some(hit) = hit
             && e.is_alive()
         {
+            // `hitTargetOrDeflectSelf`: a breeze turns the rocket back.
+            if let Hit::Entity { id, .. } = hit
+                && crate::projectile::deflected_by_target(e, level, id)
+            {
+                e.needs_sync = true;
+            } else {
             level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: "minecraft:firework_rocket", owner: self.owner, hit });
             match hit {
                 Hit::Entity { .. } => self.explode(e, level),
@@ -268,6 +274,7 @@ impl EntityExt for Firework {
                 Hit::Block { .. } => {}
             }
             e.needs_sync = true;
+            }
         }
         if !e.is_alive() {
             return;

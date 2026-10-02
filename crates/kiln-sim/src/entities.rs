@@ -1073,7 +1073,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         // `Entity.thunderHit`: one more tick of fire, 8 seconds if that made it 0.
         let ticks = p.fire_ticks + 1;
         p.set_fire_ticks(if ticks == 0 { 160 } else { ticks });
-        let source = health::Source { cause: health::Cause::Entity(DamageKind::LightningBolt), attacker: None, direct: None, weapon: None };
+        let source = health::Source { cause: health::Cause::Entity(DamageKind::LightningBolt), attacker: None, direct: None, weapon: None, position: None };
         let env = self.level.env;
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         p.hurt(5.0, &source, &mut ctx);
@@ -1105,7 +1105,9 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
             Some(health::Attacker::mob(a, e.type_name, arr(e.position())))
         });
-        let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None };
+        // A projectile's hit judges blocking from where it comes (`getSourcePosition`).
+        let position = source.direct.filter(|_| source.kind.is_tag("minecraft:is_projectile")).and(source.pos).map(arr);
+        let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None, position };
         let env = self.level.env;
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         let hurt = p.hurt(amount, &source, &mut ctx);
@@ -1169,8 +1171,8 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             kiln_entity::effect::Kind::HealOrHarm { harm: true } => {
                 let amount = (scale * 6i32.wrapping_shl(effect.amplifier as u32) as f64 + 0.5) as i32 as f32;
                 let source = match source {
-                    None => health::Source { cause: health::Cause::Entity(DamageKind::Magic), attacker: None, direct: None, weapon: None },
-                    Some((direct, _)) => health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker, direct: Some(direct), weapon: None },
+                    None => health::Source { cause: health::Cause::Entity(DamageKind::Magic), attacker: None, direct: None, weapon: None, position: None },
+                    Some((direct, _)) => health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker, direct: Some(direct), weapon: None, position: None },
                 };
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
@@ -1977,7 +1979,7 @@ fn carry_out(
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == target) {
                 // kiln-entity's attacker is the entity that dealt the damage (TNT, a falling
                 // block); none of them is a player.
-                let source = health::Source { cause: health::Cause::Entity(kind), attacker: None, direct: attacker, weapon: None };
+                let source = health::Source { cause: health::Cause::Entity(kind), attacker: None, direct: attacker, weapon: None, position: None };
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
             }
@@ -2070,7 +2072,7 @@ fn carry_out(
                     crate::effects::Kind::HealOrHarm { harm: false } => p.heal((scale * (4i32.wrapping_shl(e.amplifier as u32)) as f64 + 0.5) as i32 as f32),
                     crate::effects::Kind::HealOrHarm { harm: true } => {
                         let amount = (scale * (6i32.wrapping_shl(e.amplifier as u32)) as f64 + 0.5) as i32 as f32;
-                        let source = health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker: None, direct: None, weapon: None };
+                        let source = health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker: None, direct: None, weapon: None, position: None };
                         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
                         p.hurt(amount, &source, &mut ctx);
                     }
@@ -2109,7 +2111,7 @@ fn carry_out(
             let rot = p.rot;
             p.teleport(to, rot, now);
             p.fall_distance = 0.0;
-            let source = health::Source { cause: health::Cause::Other("minecraft:ender_pearl"), attacker: None, direct: None, weapon: None };
+            let source = health::Source { cause: health::Cause::Other("minecraft:ender_pearl"), attacker: None, direct: None, weapon: None, position: None };
             let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
             p.hurt(5.0, &source, &mut ctx);
             p.sound_for_all("minecraft:entity.player.teleport", world_fx::SoundSource::Players, 1.0, 1.0);

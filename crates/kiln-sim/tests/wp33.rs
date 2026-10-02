@@ -207,3 +207,65 @@ fn some_striders_spawn_with_a_piglin_or_a_baby_rider() {
         assert_eq!(hand, Some("minecraft:warped_fungus_on_a_stick"));
     }
 }
+
+/// An arrow summoned at `dx` (east of the player) flying east at `speed`.
+fn shoot_arrow_east(w: &mut World, dx: f64, y_offset: f64, speed: f64) {
+    let p = w.client.pos;
+    w.console(&format!("summon minecraft:arrow {} {} {} {{Motion:[{speed}d,0.0d,0.0d]}}", p[0] + dx, p[1] + y_offset, p[2]));
+}
+
+#[test]
+fn a_breeze_turns_arrows_back_and_takes_no_damage() {
+    let mut w = World::new("creative");
+    w.summon_at("minecraft:breeze", 6.0, "{NoAI:1b,PersistenceRequired:1b}");
+    w.ticks(2);
+    shoot_arrow_east(&mut w, 2.0, 0.8, 1.5);
+    w.ticks(6);
+    let arrows = w.nbt_of("minecraft:arrow");
+    assert_eq!(arrows.len(), 1, "the arrow is still flying: {arrows:?}");
+    let motion: Vec<f64> = match arrows[0].get("Motion") {
+        Some(Tag::List(v)) => v.iter().filter_map(|t| t.as_f64()).collect(),
+        other => panic!("{other:?}"),
+    };
+    assert!(motion[0] < 0.0, "the arrow was thrown back: {motion:?}");
+    let breeze = w.nbt_of("minecraft:breeze");
+    assert_eq!(breeze[0].get("Health").and_then(|h| h.as_f64()), Some(30.0), "the breeze was not hurt");
+}
+
+#[test]
+fn a_raised_shield_turns_arrows_back() {
+    use kiln_link::PlayIn;
+    use kiln_proto::packets::serverbound::Hand;
+    let mut w = World::new("survival");
+    w.console("give Bait minecraft:shield");
+    w.ticks(2);
+    // Facing north, shield up (blocking starts a quarter second into the use).
+    let turn = PlayIn::Move { pos: None, rot: Some([180.0, 0.0]), on_ground: true, horizontal_collision: false };
+    let raise = PlayIn::UseItem { hand: Hand::Main, sequence: 1, yaw: 180.0, pitch: 0.0 };
+    assert!(w.sim.step([ToSim::Packet(1, turn), ToSim::Packet(1, raise)]));
+    w.ticks(20);
+    // An arrow from the north, at the player's chest, flying south.
+    let p = w.client.pos;
+    w.console(&format!("summon minecraft:arrow {} {} {} {{Motion:[0.0d,0.0d,1.5d]}}", p[0], p[1] + 1.0, p[2] - 3.0));
+    w.ticks(4);
+    assert_eq!(w.sim.health(1).unwrap().0, 20.0, "the shield took the arrow");
+    let arrows = w.nbt_of("minecraft:arrow");
+    assert_eq!(arrows.len(), 1, "the arrow bounced off: {arrows:?}");
+    let motion: Vec<f64> = match arrows[0].get("Motion") {
+        Some(Tag::List(v)) => v.iter().filter_map(|t| t.as_f64()).collect(),
+        other => panic!("{other:?}"),
+    };
+    assert!(motion[2] < 0.0, "the arrow flies back north: {motion:?}");
+}
+
+#[test]
+fn a_zombie_is_hurt_by_the_same_arrow() {
+    let mut w = World::new("creative");
+    w.summon_at("minecraft:zombie", 6.0, "{NoAI:1b,PersistenceRequired:1b}");
+    w.ticks(2);
+    shoot_arrow_east(&mut w, 2.0, 0.8, 1.5);
+    w.ticks(6);
+    assert!(w.nbt_of("minecraft:arrow").is_empty(), "the arrow hit and is gone");
+    let health = w.nbt_of("minecraft:zombie")[0].get("Health").and_then(|h| h.as_f64()).unwrap();
+    assert!(health < 20.0, "{health}");
+}

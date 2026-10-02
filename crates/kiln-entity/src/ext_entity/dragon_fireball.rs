@@ -98,6 +98,16 @@ impl DragonFireball {
     /// `DragonFireball.onHit`: the breath cloud, on the first living entity within 4 blocks
     /// when there is one.
     fn on_hit(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
+        // `hitTargetOrDeflectSelf`: a breeze turns it back (`onDeflection(false)`: half the
+        // acceleration) and nothing is hit.
+        if let Hit::Entity { id, .. } = hit
+            && let Some(turned) = crate::projectile::try_deflect(e, level, id)
+        {
+            if turned {
+                self.acceleration_power *= 0.5;
+            }
+            return;
+        }
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: "minecraft:dragon_fireball", owner: self.owner, hit });
         // `ownedBy`: the owner itself (a hit on a dragon is on one of its parts, never owned).
         if let Hit::Entity { id, .. } = hit
