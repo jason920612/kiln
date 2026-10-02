@@ -500,6 +500,8 @@ impl Player {
         if self.dead {
             return false;
         }
+        // `Player.hurtServer`: what sits on the shoulders flies off first.
+        self.remove_entities_on_shoulder(ctx.game_time);
         if source.is("minecraft:is_fire") && self.has_effect("minecraft:fire_resistance") {
             return false;
         }

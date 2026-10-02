@@ -52,6 +52,8 @@ pub enum MenuKind {
     BrewingStand,
     /// `BeaconMenu`.
     Beacon,
+    /// `HorseInventoryMenu`: saddle, body armor, then the chest's `3 * columns` slots.
+    Mount { columns: u8 },
 }
 
 impl MenuKind {
@@ -81,6 +83,8 @@ impl MenuKind {
             MenuKind::Enchantment => "minecraft:enchantment",
             MenuKind::BrewingStand => "minecraft:brewing_stand",
             MenuKind::Beacon => "minecraft:beacon",
+            // Opened with its own packet (`ClientboundMountScreenOpenPacket`), not a menu type.
+            MenuKind::Mount { .. } => return None,
         })
     }
 
@@ -106,6 +110,7 @@ impl MenuKind {
             MenuKind::Generic { rows } => rows as usize * 9,
             MenuKind::Generic3x3 => 9,
             MenuKind::Hopper => 5,
+            MenuKind::Mount { columns } => 2 + columns as usize * 3,
             MenuKind::ShulkerBox => 27,
             MenuKind::Furnace(_) => 3,
             MenuKind::BrewingStand => 5,
@@ -168,6 +173,19 @@ impl Menu {
     /// `HopperMenu`.
     pub fn hopper(container_id: i32) -> Menu {
         Self::over_block(MenuKind::Hopper, container_id, SlotKind::Normal, 0)
+    }
+
+    /// `HorseInventoryMenu` over the screen's copy of the animal's slots (saddle 0, body 1, then
+    /// the chest's): `saddle_usable` is `canUseSlot(SADDLE)`, `body_usable` that of `BODY`, and
+    /// `entity` the animal's `minecraft:entity_type` id.
+    pub fn mount(container_id: i32, columns: u8, entity: i32, saddle_usable: bool, body_usable: bool) -> Menu {
+        let mut slots = vec![
+            Slot::new(Source::Block, 0, SlotKind::Mount { slot: EquipmentSlot::Saddle, entity, usable: saddle_usable }),
+            Slot::new(Source::Block, 1, SlotKind::Mount { slot: EquipmentSlot::Body, entity, usable: body_usable }),
+        ];
+        slots.extend((0..columns as usize * 3).map(|i| Slot::new(Source::Block, 2 + i, SlotKind::Normal)));
+        player_slots(&mut slots);
+        Menu::with_slots(MenuKind::Mount { columns }, container_id, slots, 0, CraftGrid::default())
     }
 
     /// `ShulkerBoxMenu`: its slots refuse shulker boxes.
@@ -711,6 +729,40 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
                 return ItemStack::empty();
             }
             menu.finish_quick_move(env, i, stack, copy, false).0
+        }
+        MenuKind::Mount { columns } => {
+            // `AbstractMountInventoryMenu.quickMoveStack`.
+            let size = columns as usize * 3;
+            let inv = 2 + size;
+            let ok = if i < inv {
+                menu.move_item_stack_to(env, &mut stack, inv, len, true)
+            } else if menu.slots[1].may_place(&stack, env.rules) && menu.item(env, 1).is_empty() {
+                menu.move_item_stack_to(env, &mut stack, 1, 2, false)
+            } else if menu.slots[0].may_place(&stack, env.rules) && menu.item(env, 0).is_empty() {
+                menu.move_item_stack_to(env, &mut stack, 0, 1, false)
+            } else if size != 0 && menu.move_item_stack_to(env, &mut stack, 2, inv, false) {
+                true
+            } else {
+                // Between the player's rows (`moveItemStackTo` on the stack itself: what moved
+                // stays moved), and nothing is returned.
+                let (main_end, hotbar_end) = (inv + 27, inv + 36);
+                let moved = if (main_end..hotbar_end).contains(&i) {
+                    menu.move_item_stack_to(env, &mut stack, inv, main_end, false)
+                } else if (inv..main_end).contains(&i) {
+                    menu.move_item_stack_to(env, &mut stack, main_end, hotbar_end, false)
+                } else {
+                    menu.move_item_stack_to(env, &mut stack, main_end, main_end, false)
+                };
+                if moved {
+                    *menu.item_mut(env, i) = stack;
+                }
+                return ItemStack::empty();
+            };
+            if !ok {
+                return ItemStack::empty();
+            }
+            menu.finish_move_simple(env, i, stack);
+            copy
         }
         MenuKind::Generic { .. } | MenuKind::Hopper | MenuKind::ShulkerBox => {
             let n = menu.kind.block_size();

@@ -157,16 +157,22 @@ pub fn drop_item_stack(level: &mut dyn EntityLevel, at: Vec3, mut stack: ItemSta
     }
 }
 
+/// `Containers.dropContents(level, entity, entity)`: the loot table rolls (no player), then
+/// every slot drops; the slots are empty afterwards.
+pub fn drop_entity_contents(c: &mut Contents, e: &Entity, level: &mut dyn EntityLevel) {
+    let at = e.position();
+    c.unpack(level, at, None);
+    for i in 0..c.items.len() {
+        let stack = std::mem::take(&mut c.items[i]);
+        drop_item_stack(level, at, stack);
+    }
+}
+
 impl Minecart {
-    /// `Containers.dropContents(level, this, this)`: the loot table rolls (no player), then
-    /// every slot drops; the slots are empty afterwards.
+    /// `Containers.dropContents(level, this, this)`.
     pub fn drop_contents(&mut self, e: &Entity, level: &mut dyn EntityLevel) {
-        let at = e.position();
-        let Some(c) = &mut self.contents else { return };
-        c.unpack(level, at, None);
-        for i in 0..c.items.len() {
-            let stack = std::mem::take(&mut c.items[i]);
-            drop_item_stack(level, at, stack);
+        if let Some(c) = &mut self.contents {
+            drop_entity_contents(c, e, level);
         }
     }
 
@@ -203,14 +209,13 @@ fn suck_in(c: &mut Contents, e: &Entity, level: &mut dyn EntityLevel) -> bool {
         .entities_in(&area, EntityFilter::Any, i32::MIN)
         .into_iter()
         .filter(|&id| id != e.id)
-        .filter(|&id| level.entity(id).is_some_and(|o| !o.is_removed() && crate::ext_entity::get::<Minecart>(o).is_some_and(|m| m.contents.is_some())))
+        .filter(|&id| level.entity(id).is_some_and(|o| !o.is_removed() && crate::ext_entity::container(o).is_some()))
         .collect();
     if !sources.is_empty() {
         let pick = level.random().next_int_bounded(sources.len() as i32) as usize;
         unpack_other(level, sources[pick]);
         let Some(other) = level.entity_mut(sources[pick]) else { return false };
-        let Some(m) = crate::ext_entity::get_mut::<Minecart>(other) else { return false };
-        let Some(src) = &mut m.contents else { return false };
+        let Some(src) = crate::ext_entity::container_mut(other) else { return false };
         for slot in 0..src.items.len() {
             if c.take_one_from(&mut src.items, slot) {
                 return true;
@@ -239,11 +244,11 @@ fn suck_in(c: &mut Contents, e: &Entity, level: &mut dyn EntityLevel) -> bool {
 fn unpack_other(level: &mut dyn EntityLevel, id: i32) {
     let Some(other) = level.entity_mut(id) else { return };
     let at = other.position();
-    let Some(c) = crate::ext_entity::get_mut::<Minecart>(other).and_then(|m| m.contents.as_mut()) else { return };
+    let Some(c) = crate::ext_entity::container_mut(other) else { return };
     let Some(table) = c.loot_table.take() else { return };
     let (seed, mut items) = (c.loot_seed, std::mem::take(&mut c.items));
     level.fill_container_loot(&mut items, &table, seed, at, None);
-    if let Some(c) = level.entity_mut(id).and_then(|o| crate::ext_entity::get_mut::<Minecart>(o)).and_then(|m| m.contents.as_mut()) {
+    if let Some(c) = level.entity_mut(id).and_then(crate::ext_entity::container_mut) {
         c.items = items;
     }
 }

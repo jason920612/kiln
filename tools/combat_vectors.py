@@ -8,7 +8,9 @@
 2. Runs `cargo test -p kiln-sim _parity` with KILN_COMBAT_VECTORS and KILN_ENCHANT_VECTORS set:
    combat_parity replays each scenario through the simulation (an Attack packet) and compares
    health, absorption, exhaustion, fire ticks, item and armor durability, the knockback motion
-   packet and death messages; enchant_parity checks the helper vectors.
+   packet and death messages; enchant_parity checks the helper vectors; riptide_parity replays
+   riptide.jsonl (the 1.2 lift on release, the spin's touch check) and mount_parity mount.jsonl
+   (the screens of horses, donkeys and mules).
 
 usage: python tools/combat_vectors.py [--filter NAME] [--skip-java] [--out FILE]
 """
@@ -45,7 +47,9 @@ def main():
         if p.returncode != 0:
             sys.exit(f"CombatVectors failed ({p.returncode})")
     env = dict(os.environ, KILN_COMBAT_VECTORS=str(out),
-               KILN_ENCHANT_VECTORS=str(out.with_name("enchant_helpers.jsonl")))
+               KILN_ENCHANT_VECTORS=str(out.with_name("enchant_helpers.jsonl")),
+               KILN_RIPTIDE_VECTORS=str(out.with_name("riptide.jsonl")),
+               KILN_MOUNT_VECTORS=str(out.with_name("mount.jsonl")))
     if args.filter:
         env["KILN_PARITY_FILTER"] = args.filter
     sys.exit(subprocess.call(["cargo", "test", "-p", "kiln-sim", "--lib", "_parity", "--", "--nocapture",

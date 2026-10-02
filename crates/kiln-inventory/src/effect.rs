@@ -109,6 +109,16 @@ pub fn container_close(container_id: i32) -> Bytes {
     b.freeze()
 }
 
+/// `ClientboundMountScreenOpenPacket`: container id, the chest's columns and the animal's entity id.
+pub fn mount_screen_open(container_id: i32, columns: i32, entity_id: i32) -> Bytes {
+    let mut b = BytesMut::with_capacity(16);
+    b.put_varint(cb::MOUNT_SCREEN_OPEN);
+    b.put_varint(container_id);
+    b.put_varint(columns);
+    bytes::BufMut::put_i32(&mut b, entity_id);
+    b.freeze()
+}
+
 /// `ClientboundOpenScreenPacket`: container id, `minecraft:menu` id and the title (NBT text).
 pub fn open_screen(container_id: i32, menu_type: i32, title: &kiln_proto::nbt::Tag) -> Bytes {
     let mut b = BytesMut::with_capacity(32);

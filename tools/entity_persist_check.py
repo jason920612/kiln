@@ -67,10 +67,25 @@ SUMMONS = [
     ("furnace minecart", f'furnace_minecart 131.5 {Y} -44.5 {{Fuel:1234s,PushX:0.5d,PushZ:0.25d}}'),
     ("tnt minecart", f'tnt_minecart 132.5 {Y} -44.5 {{fuse:30000,explosion_power:6.0f}}'),
     ("loot minecart", f'chest_minecart 133.5 {Y} -44.5 {{LootTable:"minecraft:chests/simple_dungeon",LootTableSeed:99L}}'),
+    # Chest boats and rafts, and a donkey with a chest and a saddle.
+    ("chest boat", f'oak_chest_boat 134.5 {Y} -44.5 {{Items:[{{Slot:2b,id:"minecraft:diamond",count:6}},'
+                   f'{{Slot:20b,id:"minecraft:apple",count:3}}],Tags:["kiln"]}}'),
+    ("loot chest raft", f'bamboo_chest_raft 135.5 {Y} -44.5 {{LootTable:"minecraft:chests/simple_dungeon",LootTableSeed:7L}}'),
+    ("donkey", f'donkey 136.5 {Y} -44.5 {{NoAI:1b,Tame:1b,PersistenceRequired:1b,ChestedHorse:1b,'
+               f'Items:[{{Slot:0b,id:"minecraft:emerald",count:5}},{{Slot:14b,id:"minecraft:stick",count:9}}],'
+               f'equipment:{{saddle:{{id:"minecraft:saddle",count:1}}}},Tags:["kiln"]}}'),
+    # wp30: a llama (strength 4: 12 slots) and a trader llama, with chest, items, coat and carpet.
+    ("llama", f'llama 137.5 {Y} -44.5 {{NoAI:1b,Tame:1b,PersistenceRequired:1b,Strength:4,Variant:2,ChestedHorse:1b,'
+              f'Items:[{{Slot:0b,id:"minecraft:emerald",count:5}},{{Slot:11b,id:"minecraft:stick",count:9}}],'
+              f'equipment:{{body:{{id:"minecraft:red_carpet",count:1}}}},Tags:["kiln"]}}'),
+    ("trader llama", f'trader_llama 138.5 {Y} -44.5 {{NoAI:1b,Tame:1b,PersistenceRequired:1b,Strength:2,Variant:3,DespawnDelay:30000,'
+                     f'ChestedHorse:1b,Items:[{{Slot:3b,id:"minecraft:gold_ingot",count:7}}],'
+                     f'equipment:{{body:{{id:"minecraft:blue_carpet",count:1}}}},Tags:["kiln"]}}'),
 ]
 SIMULATED = {"minecraft:item", "minecraft:experience_orb", "minecraft:arrow", "minecraft:falling_block",
              "minecraft:tnt", "minecraft:snowball", "minecraft:pig", "minecraft:zombie", "minecraft:chest_minecart",
-             "minecraft:hopper_minecart", "minecraft:furnace_minecart", "minecraft:tnt_minecart"}
+             "minecraft:hopper_minecart", "minecraft:furnace_minecart", "minecraft:tnt_minecart", "minecraft:oak_chest_boat",
+             "minecraft:bamboo_chest_raft", "minecraft:donkey", "minecraft:llama", "minecraft:trader_llama"}
 
 
 def entity_types():
@@ -306,6 +321,26 @@ def main():
     loot = one("minecraft:chest_minecart", lambda e: get(e, "LootTable") is not None)
     check("loot table minecart keeps its unrolled table and seed",
           loot is not None and val(get(loot, "LootTable")) == "minecraft:chests/simple_dungeon" and val(get(loot, "LootTableSeed")) == 99, f"{loot}")
+    boat = one("minecraft:oak_chest_boat")
+    check("chest boat keeps its slots and tags",
+          boat is not None and slots(boat) == {2: ("minecraft:diamond", 6), 20: ("minecraft:apple", 3)} and get(boat, "Tags") is not None, f"{boat}")
+    raft = one("minecraft:bamboo_chest_raft")
+    check("chest raft keeps its unrolled loot table and seed",
+          raft is not None and val(get(raft, "LootTable")) == "minecraft:chests/simple_dungeon" and val(get(raft, "LootTableSeed")) == 7, f"{raft}")
+    donkey = one("minecraft:donkey")
+    check("donkey keeps its chest, slots, saddle and tags",
+          donkey is not None and val(get(donkey, "ChestedHorse")) == 1 and slots(donkey) == {0: ("minecraft:emerald", 5), 14: ("minecraft:stick", 9)}
+          and val(get(donkey, "equipment", "saddle", "id")) == "minecraft:saddle" and get(donkey, "Tags") is not None, f"{donkey}")
+    llama = one("minecraft:llama")
+    check("llama keeps its strength, coat, chest, slots, carpet and tags",
+          llama is not None and val(get(llama, "Strength")) == 4 and val(get(llama, "Variant")) == 2 and val(get(llama, "ChestedHorse")) == 1
+          and slots(llama) == {0: ("minecraft:emerald", 5), 11: ("minecraft:stick", 9)}
+          and val(get(llama, "equipment", "body", "id")) == "minecraft:red_carpet" and get(llama, "Tags") is not None, f"{llama}")
+    trader = one("minecraft:trader_llama")
+    check("trader llama keeps its strength, coat, chest, slots, carpet and despawn delay",
+          trader is not None and val(get(trader, "Strength")) == 2 and val(get(trader, "Variant")) == 3 and val(get(trader, "ChestedHorse")) == 1
+          and slots(trader) == {3: ("minecraft:gold_ingot", 7)} and val(get(trader, "equipment", "body", "id")) == "minecraft:blue_carpet"
+          and val(get(trader, "DespawnDelay")) == 30000, f"{trader}")
     snow = one("minecraft:snowball")
     check("snowball kept", snow is not None and val(get(snow, "NoGravity")) == 1, f"{snow}")
     emerald = one("minecraft:item", lambda e: val(get(e, "Item", "id")) == "minecraft:emerald")
@@ -342,6 +377,10 @@ def main():
         check("vanilla's zombie came back as a hurt baby", line and "Test passed" in line, line or "")
         line = s.query('execute if entity @e[type=item,tag=kiln,nbt={Age:-32768s}]', r"Test passed|Test failed")
         check("vanilla reads the item's age and tag", line and "Test passed" in line, line or "")
+        line = s.query('execute if entity @e[type=llama,tag=kiln,nbt={Strength:4,Variant:2,ChestedHorse:1b,equipment:{body:{id:"minecraft:red_carpet"}}}]', r"Test passed|Test failed")
+        check("vanilla's llama came back with its strength, coat, chest and carpet", line and "Test passed" in line, line or "")
+        line = s.query('execute if entity @e[type=trader_llama,tag=kiln,nbt={Strength:2,Variant:3,DespawnDelay:30000}]', r"Test passed|Test failed")
+        check("vanilla's trader llama came back with its strength, coat and despawn delay", line and "Test passed" in line, line or "")
     finally:
         s.stop()
 

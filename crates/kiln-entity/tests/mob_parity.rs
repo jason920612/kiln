@@ -209,6 +209,16 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
                 p.pitch = pos.y as f32;
             }
         }
+        // wp30 llamas: mob `mob` is led by `amp` (an index into the mobs, -2 the player).
+        "leash" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let holder = match a["amp"].as_i64().unwrap() {
+                -2 => player.expect("a leading player").id,
+                i => ids[i as usize],
+            };
+            let m = mob::data_mut(level.entity_mut(id).unwrap()).unwrap();
+            mob::kinds::llama::set_leash_holder(m, Some(holder));
+        }
         "interact" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];
             let p = player.expect("an interacting player");
@@ -590,8 +600,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         // wp28: what a breeze shot flies as the recording's did (vanilla draws the shot's spread
         // from the projectile's own random, seeded from the clock, which cannot be pinned).
         {
-            // (wp29: skeletons' arrows likewise.)
-            for shot in ["minecraft:breeze_wind_charge", "minecraft:arrow"] {
+            // (wp29: skeletons' arrows likewise; wp30: llama spit, and where it starts must be
+            // where vanilla's did.)
+            for shot in ["minecraft:breeze_wind_charge", "minecraft:arrow", "minecraft:llama_spit"] {
                 let recorded: Vec<&Value> = s["spawned"]
                     .as_array()
                     .into_iter()
@@ -599,15 +610,27 @@ fn replay(s: &Value) -> Result<usize, String> {
                     .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some(shot))
                     .collect();
                 let mut charges: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == shot).map(|e| e.id).collect();
+                if shot == "minecraft:llama_spit" && charges.len() != recorded.len() {
+                    return Err(format!("tick {tick}: {} {shot} (kiln) vs {} (vanilla)", charges.len(), recorded.len()));
+                }
                 // (Shots of one tick are matched by where they started: the harness finds them in
                 // the order of its entity sections.)
                 let at = |id: i32| level.entity(id).unwrap().position();
-                charges.sort_by(|&a, &b| {
-                    let key = |id: i32| recorded.iter().position(|r| vec3(&r["pos"]).distance_to_sqr(at(id)) < 1.0e-12).unwrap_or(usize::MAX);
-                    key(a).cmp(&key(b))
-                });
+                if shot != "minecraft:llama_spit" {
+                    charges.sort_by(|&a, &b| {
+                        let key = |id: i32| recorded.iter().position(|r| vec3(&r["pos"]).distance_to_sqr(at(id)) < 1.0e-12).unwrap_or(usize::MAX);
+                        key(a).cmp(&key(b))
+                    });
+                }
                 for (k, (id, rec)) in charges.iter().zip(recorded).enumerate() {
                     let e = level.entity_mut(*id).unwrap();
+                    if shot == "minecraft:llama_spit" {
+                        let want = vec3(&rec["pos"]);
+                        let got = e.position();
+                        if [got.x, got.y, got.z].map(f64::to_bits) != [want.x, want.y, want.z].map(f64::to_bits) {
+                            return Err(format!("tick {tick}: {shot} starts at {got:?} (kiln) vs {want:?} (vanilla)"));
+                        }
+                    }
                     e.delta = vec3(&rec["motion"]);
                     // An arrow's damage and crit were drawn from its random at the shot, which is
                     // the clock's; its random is pinned for the hit (`MobVectors.Adopt`).

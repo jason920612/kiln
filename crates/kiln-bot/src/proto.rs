@@ -261,7 +261,7 @@ mod tests {
 
         let b = built(|b| move_player(b, Move::PosRot([1.5, -60.0, 2.5], 45.0, 0.0), true));
         match server_decode(&b) {
-            PlayIn::Move { pos, rot, on_ground } => {
+            PlayIn::Move { pos, rot, on_ground, horizontal_collision: false } => {
                 assert_eq!(pos, Some([1.5, -60.0, 2.5]));
                 assert_eq!(rot, Some([45.0, 0.0]));
                 assert!(on_ground);
@@ -269,11 +269,11 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let b = built(|b| move_player(b, Move::Pos([1.0, 2.0, 3.0]), false));
-        assert!(matches!(server_decode(&b), PlayIn::Move { pos: Some(_), rot: None, on_ground: false }));
+        assert!(matches!(server_decode(&b), PlayIn::Move { pos: Some(_), rot: None, on_ground: false, horizontal_collision: false }));
         let b = built(|b| move_player(b, Move::Rot(1.0, 2.0), true));
-        assert!(matches!(server_decode(&b), PlayIn::Move { pos: None, rot: Some(_), on_ground: true }));
+        assert!(matches!(server_decode(&b), PlayIn::Move { pos: None, rot: Some(_), on_ground: true, horizontal_collision: false }));
         let b = built(|b| move_player(b, Move::StatusOnly, true));
-        assert!(matches!(server_decode(&b), PlayIn::Move { pos: None, rot: None, on_ground: true }));
+        assert!(matches!(server_decode(&b), PlayIn::Move { pos: None, rot: None, on_ground: true, horizontal_collision: false }));
 
         let b = built(|b| keep_alive(b, ids::play::serverbound::KEEP_ALIVE, -5));
         assert!(matches!(server_decode(&b), PlayIn::KeepAlive { id: -5 }));

@@ -139,6 +139,10 @@ pub enum MobKind {
 
     // -- wp25: the skeleton trap
     SkeletonHorse,
+
+    // -- wp30: llamas
+    Llama,
+    TraderLlama,
 }
 
 /// `MobCategory`.
@@ -297,6 +301,10 @@ pub const ALL_KINDS: &[MobKind] = &[
 
     // -- wp25: the skeleton trap
     MobKind::SkeletonHorse,
+
+    // -- wp30: llamas
+    MobKind::Llama,
+    MobKind::TraderLlama,
 ];
 
 impl MobKind {
@@ -1381,8 +1389,9 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 pub fn sync_equipment_modifiers(m: &mut MobData) {
     use kiln_item::component::{AttributeOperation, EquipmentSlotGroup as G};
     let mut want: Vec<(Attr, String, f64, Op)> = Vec::new();
-    for slot in 0..6 {
-        let stack = &m.equipment[slot];
+    // The six slots, then the body (6) and saddle (7) of the mounts that have them.
+    let extras = m.kind.ext().map(|k| k.extra_equipment(m)).unwrap_or_default();
+    for (slot, stack) in m.equipment.iter().enumerate().chain(extras.iter().map(|(i, s)| (*i as usize, s))) {
         if stack.is_empty() || (stack.is_damageable_item() && stack.damage() >= stack.max_damage()) {
             continue;
         }
@@ -1397,8 +1406,9 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
                 G::Legs => slot == LEGS,
                 G::Chest => slot == CHEST,
                 G::Head => slot == HEAD,
-                G::Armor => slot >= FEET,
-                G::Body | G::Saddle => false,
+                G::Armor => (FEET..=HEAD).contains(&slot) || slot == 6,
+                G::Body => slot == 6,
+                G::Saddle => slot == 7,
             };
             let name = kiln_data::builtin_entries("minecraft:attribute").and_then(|e| e.get(md.attribute as usize).copied());
             let Some(attr) = name.and_then(Attr::by_name) else { continue };
@@ -2223,9 +2233,11 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         m.hurt_time = 10;
         true
     };
+    // (`instanceof LivingEntity`: the mob being ticked, which is out of the level just now,
+    // is the attacker of its own blows.)
     if let Some(a) = source.attacker
         && !kind.is_tag("minecraft:no_anger")
-        && goals::living(level, a).is_some()
+        && (goals::living(level, a).is_some() || level.entity(a).is_none())
     {
         m.last_hurt_by_mob = Some(a);
         m.last_hurt_by_mob_timestamp = e.tick_count;
@@ -2392,6 +2404,26 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
             }
             spawn_at_location(e, level, stack);
         }
+    }
+    // The same for the slots past the six (a horse's body armor and saddle).
+    if let Some(k) = m.kind.ext() {
+        for (mut stack, chance) in k.take_extra_equipment_for_drop(m) {
+            if chance == 0.0 || stack.is_empty() {
+                continue;
+            }
+            let preserved = chance > 1.0;
+            if (killed_by_player || preserved) && e.random.next_float() < chance {
+                if !preserved && stack.is_damageable_item() {
+                    let max = stack.max_damage();
+                    let inner = e.random.next_int_bounded((max - 3).max(1));
+                    let d = max - e.random.next_int_bounded(1 + inner);
+                    stack.insert(kiln_item::keys::DAMAGE, d);
+                }
+                spawn_at_location(e, level, stack);
+            }
+        }
+        // `dropEquipment`.
+        k.drop_equipment(e, m, level);
     }
     // `dropExperience`.
     if killed_by_player && level.mob_drops() && !consumed {
@@ -2809,6 +2841,7 @@ impl DamageKind {
             // -- wp28: axolotl and goat
             DamageKind::DryOut => "minecraft:dry_out",
             DamageKind::NoAggroMobAttack => "minecraft:mob_attack_no_aggro",
+            DamageKind::Spit => "minecraft:spit",
 
         }
     }

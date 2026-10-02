@@ -84,6 +84,9 @@ impl Player {
         if self.client.main_hand == 0 {
             d.set(data::avatar::PLAYER_MAIN_HAND, &DataValue::HumanoidArm(HumanoidArm::Left));
         }
+        if self.shoulders.iter().any(Option::is_some) {
+            self.shoulder_data(&mut d);
+        }
         if self.shared_flags() != 0 || self.sleep.pos.is_some() {
             d.set(data::entity::SHARED_FLAGS, &DataValue::Byte(self.shared_flags()));
             d.set(data::entity::POSE, &DataValue::Pose(self.pose()));
@@ -402,6 +405,9 @@ fn encode_movement(target: &mut Player) -> Encoded {
         if effects_dirty {
             target.effect_data(&mut d);
         }
+        if std::mem::take(&mut target.shoulder_dirty) {
+            target.shoulder_data(&mut d);
+        }
         packets.push(entity::set_entity_data(target.entity_id, &d));
     }
     // What the player's own client needs of its entity data: burning, invisibility and
@@ -434,6 +440,10 @@ fn encode_movement(target: &mut Player) -> Encoded {
     }
     // `ServerEntity.sendChanges` for a hit that was not answered by the attack itself
     // (swept players): the velocity goes to viewers and the player.
+    // A `push` (riptide): only the players that see it get the motion.
+    if std::mem::take(&mut target.push_sync) {
+        packets.push(entity::set_entity_motion(target.entity_id, target.vel));
+    }
     if std::mem::take(&mut target.sync_velocity) {
         let motion = entity::set_entity_motion(target.entity_id, target.vel);
         to_self.push(motion.clone());

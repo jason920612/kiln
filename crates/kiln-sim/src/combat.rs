@@ -456,14 +456,16 @@ impl Player {
 
     /// The player's bounding box (standing or crouching).
     pub(crate) fn bounding_box(&self) -> kiln_entity::math::Aabb {
-        let h = if self.fall_flying {
+        // `EntityDimensions` are floats: the box is made of their float arithmetic.
+        let h: f32 = if self.fall_flying || self.spin_pose {
             0.6
         } else if self.sneaking {
             1.5
         } else {
             1.8
         };
-        kiln_entity::math::Aabb::new(self.pos[0] - 0.3, self.pos[1], self.pos[2] - 0.3, self.pos[0] + 0.3, self.pos[1] + h, self.pos[2] + 0.3)
+        let half = (0.6f32 / 2.0f32) as f64;
+        kiln_entity::math::Aabb::new(self.pos[0] - half, self.pos[1], self.pos[2] - half, self.pos[0] + half, self.pos[1] + h as f64, self.pos[2] + half)
     }
 
     /// `isWithinAttackRange` with the server's buffer: the weapon's `attack_range`, or the
@@ -726,25 +728,37 @@ struct Spin {
     off_hand: bool,
 }
 
-/// The entity player `a`'s riptide spin runs into first (`checkAutoSpinAttack`: the first
-/// living entity among those whose box meets the player's own, spectators left out, in the
-/// order of their ids), if any.
-pub(crate) fn spin_touch(players: &[&mut Player], a: usize, entities: &entities::Entities) -> Option<i32> {
+/// What a riptide spin meets (`checkAutoSpinAttack`).
+pub(crate) struct SpinTouch {
+    /// The first living entity among those whose box meets the player's own, spectators left out
+    /// (the one with the lowest id here).
+    pub living: Option<i32>,
+    /// Whether any entity at all does (an item or a minecart is looked at and passed over, but
+    /// then the spin does not end against a wall either).
+    pub any: bool,
+}
+
+pub(crate) fn spin_touch(players: &[&mut Player], a: usize, entities: &entities::Entities) -> SpinTouch {
     let bb = players[a].bounding_box();
     let mut found: Vec<i32> = Vec::new();
+    let mut any = false;
     for (i, p) in players.iter().enumerate() {
         if i != a && !p.dead && !p.disconnected && p.game_mode != 3 && p.bounding_box().intersects(&bb) {
             found.push(p.entity_id);
+            any = true;
         }
     }
     for e in entities.list.iter().filter(|e| !e.removed) {
         let Some(phys) = e.phys.as_ref() else { continue };
-        // Living entities only (mobs); the others are looked at and passed over.
-        if matches!(phys.kind, EntityKind::Mob(_)) && phys.bounding_box().intersects(&bb) {
+        if !phys.bounding_box().intersects(&bb) {
+            continue;
+        }
+        any = true;
+        if matches!(phys.kind, EntityKind::Mob(_)) {
             found.push(e.id);
         }
     }
-    found.into_iter().min()
+    SpinTouch { living: found.into_iter().min(), any }
 }
 
 /// `LivingEntity.doAutoAttackOnTouch` for player `a` on entity `target_id`: `Player.attack`

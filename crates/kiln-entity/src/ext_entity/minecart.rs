@@ -23,7 +23,7 @@ use kiln_proto::nbt::Tag;
 use kiln_proto::packets::entity::{DataValue, EntityData};
 
 pub mod cargo;
-pub use cargo::Contents;
+pub use cargo::{Contents, drop_entity_contents};
 
 #[cfg(test)]
 mod tests;
@@ -677,6 +677,15 @@ impl EntityExt for Minecart {
         true
     }
 
+    /// `MinecartTNT.hurtServer`: a burning arrow sets the cart off with the arrow's speed, in the
+    /// name of whoever shot it; then the hit is the vehicle's.
+    fn hurt_by_projectile(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>, on_fire: bool, speed_sqr: f64) -> bool {
+        if self.tnt && on_fire && !e.is_removed() {
+            self.explode_caused(e, level, speed_sqr, attacker);
+        }
+        self.hurt(e, level, kind, amount, attacker)
+    }
+
     /// `Minecart.interact`: a click gets the player aboard unless sneaking or taken. The
     /// container minecarts open their menu, the furnace minecart takes fuel.
     fn interact(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &kiln_item::ItemStack) -> Option<Outcome> {
@@ -689,7 +698,9 @@ impl EntityExt for Minecart {
             let mut out = Outcome::success(HeldChange::None);
             out.open_container = true;
             if e.type_name == "minecraft:chest_minecart" {
+                // `MinecartChest.interact`: the game event and angry piglins.
                 level.emit(Event::GameEvent { event: "minecraft:container_open", pos: e.position(), entity: Some(who.id) });
+                crate::mob::kinds::piglin::anger_nearby_piglins(level, who.id, true);
             }
             return Some(out);
         }
@@ -706,6 +717,14 @@ impl EntityExt for Minecart {
 
     fn attackable(&self) -> bool {
         true
+    }
+
+    fn container(&self) -> Option<&Contents> {
+        self.contents.as_ref()
+    }
+
+    fn container_mut(&mut self) -> Option<&mut Contents> {
+        self.contents.as_mut()
     }
 
     fn passenger_offset(&self, _e: &Entity, _index: usize, _animal: bool) -> Option<Vec3> {
@@ -921,8 +940,12 @@ impl Minecart {
         }
         self.destroy_item(e, level);
         if self.contents.is_some() && level.entity_drops() {
-            // `chestVehicleDestroyed`: the contents drop again (they already have).
+            // `chestVehicleDestroyed`: the contents drop again (they already have), and a
+            // player's melee hit (`getDirectEntity() instanceof Player`) angers piglins.
             self.drop_contents(e, level);
+            if let Some(a) = attacker.filter(|&a| kind == DamageKind::PlayerAttack && level.player(a).is_some()) {
+                crate::mob::kinds::piglin::anger_nearby_piglins(level, a, true);
+            }
         }
     }
 
@@ -944,8 +967,16 @@ impl Minecart {
         }
     }
 
-    /// `MinecartTNT.explode`: the blast grows with the speed, up to 5 blocks per tick's worth.
+    /// `MinecartTNT.explode(ignitionSource, speed)`: the blast is in the name of whoever lit the
+    /// cart.
     fn explode(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, speed_sqr: f64) {
+        let causing = self.ignition.flatten();
+        self.explode_caused(e, level, speed_sqr, causing);
+    }
+
+    /// `MinecartTNT.explode(source, speed)`: the blast grows with the speed, up to 5 blocks per
+    /// tick's worth; `causing` is the damage source's entity.
+    fn explode_caused(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, speed_sqr: f64, causing: Option<i32>) {
         if !level.tnt_explodes() {
             if self.is_primed() {
                 e.discard();
@@ -961,7 +992,7 @@ impl Minecart {
         let is_rail_state = |s: u16| crate::ext_entity::minecart::rail_shape(s).is_some();
         let resistance = |state: u16, above: u16, res: f32| if primed && (is_rail_state(state) || is_rail_state(above)) { 0.0 } else { res };
         let should = |state: u16, above: u16| !(primed && (is_rail_state(state) || is_rail_state(above)));
-        let rules = crate::explosion::BlockRules { resistance: Some(&resistance), should_explode: Some(&should) };
+        let rules = crate::explosion::BlockRules { resistance: Some(&resistance), should_explode: Some(&should), causing };
         crate::explosion::explode_ruled(level, Some(e.id), centre, radius, false, crate::explosion::Interaction::Tnt, rules, true);
         e.discard();
     }

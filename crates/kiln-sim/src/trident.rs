@@ -115,9 +115,42 @@ pub(crate) fn release(p: &mut Player, level: &mut RegionLevel, off_hand: bool, s
     y = y * (spin / len);
     z = z * (spin / len);
     p.vel = [p.vel[0] + x as f64, p.vel[1] + y as f64, p.vel[2] + z as f64];
-    p.sync_velocity = true;
+    p.push_sync = true;
     p.start_spin_attack(20, 8.0, stack.clone(), off_hand);
+    // `startAutoSpinAttack` sets down what sits on the shoulders.
+    p.remove_entities_on_shoulder(level.env.game_time);
+    // On the ground the spin starts with a hop: `move(SELF, (0, 1.2, 0))`, held back by a
+    // ceiling (which also takes the lift out of the push just given).
+    if p.on_ground {
+        lift(p, level);
+    }
     p.sound_for_all(sound, SoundSource::Players, 1.0, 1.0);
+}
+
+/// `player.move(MoverType.SELF, new Vec3(0.0, 1.1999999284744263, 0.0))`.
+fn lift(p: &mut Player, level: &RegionLevel) {
+    use kiln_entity::collision::{CollisionContext, collide_blocks};
+    const LIFT: f64 = 1.1999999284744263;
+    let ctx = CollisionContext {
+        descending: p.sneaking,
+        entity_bottom: p.pos[1],
+        placement: false,
+        always_collide_with_fluid: false,
+        has_entity: true,
+        fall_distance: p.fall_distance,
+        falling_block: false,
+        walks_on_powder_snow: kiln_item::registry::ITEM.id("minecraft:leather_boots").is_some_and(|id| p.worn(EquipmentSlot::Feet).item() == id),
+        stands_on_lava: false,
+    };
+    use kiln_world::Blocks;
+    let blocks = |pos: kiln_entity::math::BlockPos| level.cells.get_block(pos.x, pos.y, pos.z);
+    let moved = collide_blocks(&blocks, &ctx, Vec3::new(0.0, LIFT, 0.0), &p.bounding_box());
+    p.pos[1] += moved.y;
+    p.on_ground = false;
+    if moved.y != LIFT {
+        // `Block.updateEntityMovementAfterFallOn`: a vertical collision stops the vertical motion.
+        p.vel[1] *= 0.0;
+    }
 }
 
 fn has_enchantment(s: &ItemStack, name: &str) -> bool {

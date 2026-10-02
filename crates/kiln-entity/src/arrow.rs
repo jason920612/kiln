@@ -178,7 +178,7 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
     let mut targets: Vec<(f64, i32, Vec3)> = Vec::new();
     for id in level.entities_in(&area, EntityFilter::Any, e.id) {
         let Some(t) = level.entity(id) else { continue };
-        if !can_be_hit_by_projectile(t) || pierced.contains(&id) {
+        if !(can_be_hit_by_projectile(t) || is_vehicle(t)) || pierced.contains(&id) {
             continue;
         }
         // (`canHitEntity`: until it has left its owner, an arrow passes what rides or is ridden
@@ -258,6 +258,11 @@ fn entity_hit_point(e: &Entity, level: &dyn EntityLevel, t: &Entity, margin: f64
     bb.clip(entry, target).map(|_| entry)
 }
 
+/// Boats and minecarts: pickable, so arrows hit them (`isPickable` is `!isRemoved()`).
+fn is_vehicle(t: &Entity) -> bool {
+    t.is_alive() && matches!(&t.kind, EntityKind::Ext(x) if x.attackable())
+}
+
 /// `AbstractArrow.onHitEntity` for a mob or a player: damage from the speed and base damage
 /// (a critical arrow adds a random bonus), then the arrow breaks, or bounces back when the hit
 /// did not land. Returns false for other entities (the simulation handles them).
@@ -268,8 +273,9 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
         e.discard();
         return true;
     }
+    let vehicle = level.entity(id).is_some_and(is_vehicle);
     let target = match level.entity(id) {
-        Some(t) if matches!(t.kind, EntityKind::Mob(_)) || is_player => t.position(),
+        Some(t) if matches!(t.kind, EntityKind::Mob(_)) || is_player || vehicle => t.position(),
         _ => return false,
     };
     let v = e.delta;
@@ -303,6 +309,16 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
     }
     let hurt = if is_player {
         level.hurt_player(id, source, damage as f32)
+    } else if vehicle {
+        // A boat or minecart: `VehicleEntity.hurtServer` (a TNT minecart reads the arrow).
+        let (on_fire, speed_sqr) = (e.is_on_fire(), e.delta.length_sqr());
+        let Some(slot) = level.entity_mut(id) else { return false };
+        let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+        let r = t.hurt_by_projectile(level, crate::level::DamageKind::Arrow, damage as f32, owner.or(Some(e.id)), on_fire, speed_sqr);
+        if let Some(slot) = level.entity_mut(id) {
+            *slot = t;
+        }
+        r
     } else {
         let Some(slot) = level.entity_mut(id) else { return false };
         let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
@@ -320,7 +336,13 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
         }
         r
     };
-    if hurt {
+    if hurt && vehicle {
+        let pitch = 1.2 / (e.random.next_float() * 0.2 + 0.9);
+        e.play_sound(level, "minecraft:entity.arrow.hit", 1.0, pitch);
+        if pierce == 0 {
+            e.discard();
+        }
+    } else if hurt {
         // `doKnockback`: the weapon's knockback along the arrow's horizontal motion.
         let knockback = data(e).knockback;
         if knockback > 0.0 {

@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -609,6 +610,34 @@ public class CombatVectors {
             for (String l : helperLines) w.println(l);
         }
         System.out.println("CombatVectors: wrote " + helperLines.size() + " EnchantmentHelper vectors to " + helperPath);
+        List<String> riptideLines = new ArrayList<>();
+        server.submit(() -> {
+            try {
+                RiptideVectors.run(server, riptideLines);
+            } catch (Throwable t) {
+                t.printStackTrace();
+                riptideLines.add("{\"kind\":\"error\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");
+            }
+        }).get();
+        Path riptidePath = outPath.resolveSibling("riptide.jsonl");
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(riptidePath))) {
+            for (String l : riptideLines) w.println(l);
+        }
+        System.out.println("CombatVectors: wrote " + riptideLines.size() + " riptide vectors to " + riptidePath);
+        List<String> mountLines = new ArrayList<>();
+        server.submit(() -> {
+            try {
+                MountVectors.run(server, mountLines, 240, 11L);
+            } catch (Throwable t) {
+                t.printStackTrace();
+                mountLines.add("{\"kind\":\"error\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");
+            }
+        }).get();
+        Path mountPath = outPath.resolveSibling("mount.jsonl");
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(mountPath))) {
+            for (String l : mountLines) w.println(l);
+        }
+        System.out.println("CombatVectors: wrote " + mountLines.size() + " mount vectors to " + mountPath);
         server.halt(false);
         System.exit(0);
     }
@@ -1139,5 +1168,369 @@ class EnchantHelperVectors {
         for (int dy = 0; dy < 3; dy++) level.setBlock(base.above(dy), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 2);
         server.getPlayerList().remove(attacker);
         server.getPlayerList().remove(wearer);
+    }
+}
+
+// Riptide vectors: TridentItem.releaseUsing from the ground under ceilings of every height (the
+// 1.2 lift and what stops it), in the air, crouching and at an angle; and the spin's check
+// (LivingEntity.checkAutoSpinAttack) against walls and the entities around: a horizontal
+// collision ends the spin only when no entity at all is touched.
+class RiptideVectors {
+    static Map<String, Object> line(String kind) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", kind);
+        return m;
+    }
+
+    static void clear(ServerLevel level) {
+        var air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        for (int x = -4; x <= 4; x++)
+            for (int y = -2; y <= 8; y++)
+                for (int z = -4; z <= 4; z++)
+                    level.setBlock(new net.minecraft.core.BlockPos((int) Math.floor(CombatVectors.BX) + x, (int) CombatVectors.BY + y, (int) Math.floor(CombatVectors.BZ) + z), air, 2);
+        for (var e : new ArrayList<>(level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-8, 90, -8, 8, 120, 8), e -> !(e instanceof ServerPlayer)))) e.discard();
+    }
+
+    static void block(ServerLevel level, int x, int y, int z, String state) throws Exception {
+        var st = net.minecraft.commands.arguments.blocks.BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK, state, false).blockState();
+        level.setBlock(new net.minecraft.core.BlockPos((int) Math.floor(CombatVectors.BX) + x, (int) CombatVectors.BY + y, (int) Math.floor(CombatVectors.BZ) + z), st, 2);
+    }
+
+    static void run(MinecraftServer server, List<String> out) throws Exception {
+        ServerLevel level = server.overworld();
+        // ---- the lift
+        String[][] ceilings = {
+            {"open", ""}, {"c2", "2:minecraft:stone"}, {"c3", "3:minecraft:stone"}, {"c4", "4:minecraft:stone"},
+            {"slab_top_2", "2:minecraft:stone_slab[type=top]"}, {"slab_bottom_2", "2:minecraft:stone_slab[type=bottom]"},
+            {"slab_top_3", "3:minecraft:stone_slab[type=top]"}, {"trapdoor_2", "2:minecraft:oak_trapdoor[half=bottom,open=false]"},
+            {"c3_edge", "3:minecraft:stone:edge"}, {"c2_edge", "2:minecraft:stone:edge"}};
+        int n = 0;
+        for (String[] ceil : ceilings) {
+            for (int lvl : new int[] {1, 3}) {
+                for (int variant = 0; variant < 4; variant++) {
+                    boolean onGround = variant != 3;
+                    boolean sneak = variant == 2;
+                    float pitch = new float[] {0f, -40f, 25f, 10f}[variant];
+                    float yaw = new float[] {0f, 90f, -135f, 30f}[variant];
+                    double dx = variant == 1 ? 0.3 : 0.0;
+                    Map<String, Object> m = line("lift");
+                    m.put("name", "riptide_lift/" + ceil[0] + "/" + lvl + "/" + variant);
+                    m.put("ceiling", ceil[1]);
+                    m.put("level", lvl);
+                    m.put("on_ground", onGround);
+                    m.put("sneak", sneak);
+                    m.put("pitch", pitch);
+                    m.put("yaw", yaw);
+                    m.put("dx", dx);
+                    clear(level);
+                    ServerPlayer p = CombatVectors.mockPlayer(server, "Rip" + (n++));
+                    for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) block(level, x, -1, z, "minecraft:stone");
+                    block(level, 0, 0, 0, "minecraft:water");
+                    block(level, 1, 0, 0, "minecraft:water");
+                    block(level, 0, 0, 1, "minecraft:water");
+                    block(level, 1, 0, 1, "minecraft:water");
+                    if (!ceil[1].isEmpty()) {
+                        String[] c = ceil[1].split(":", 2);
+                        int y = Integer.parseInt(c[0]);
+                        String rest = c[1];
+                        boolean edge = rest.endsWith(":edge");
+                        if (edge) rest = rest.substring(0, rest.length() - 5);
+                        // The ceiling covers the box fully, or only the half of the box east of x = 0.5.
+                        for (int x = edge ? 1 : -1; x <= 1; x++) for (int z = -1; z <= 1; z++) block(level, x, y, z, rest);
+                    }
+                    p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+                    CombatVectors.call(p.connection, "markClientLoaded");
+                    p.setPos(CombatVectors.BX + dx, CombatVectors.BY, CombatVectors.BZ);
+                    p.setYRot(yaw);
+                    p.setXRot(pitch);
+                    p.setDeltaMovement(Vec3.ZERO);
+                    p.setOnGround(onGround);
+                    p.setShiftKeyDown(sneak);
+                    if (sneak) p.setPose(net.minecraft.world.entity.Pose.CROUCHING);
+                    p.fallDistance = 0.0;
+                    ItemStack trident = EnchantHelperVectors.stack(server, "minecraft:trident", EnchantHelperVectors.ench("minecraft:riptide", lvl));
+                    p.getInventory().clearContent();
+                    p.setItemSlot(EquipmentSlot.MAINHAND, trident);
+                    CombatVectors.call(p, "detectEquipmentUpdates");
+                    CombatVectors.call(p, "updateFluidInteraction");
+                    p.verticalCollision = false;
+                    boolean wet = p.isInWaterOrRain();
+                    CombatVectors.drain(p);
+                    boolean released = trident.getItem().releaseUsing(trident, level, p, 72000 - 20);
+                    m.put("wet", wet);
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("released", released);
+                    r.put("pos", new double[] {p.getX() - CombatVectors.BX, p.getY() - CombatVectors.BY, p.getZ() - CombatVectors.BZ});
+                    r.put("delta", CombatVectors.vec(p.getDeltaMovement()));
+                    r.put("on_ground", p.onGround());
+                    r.put("spin", p.isAutoSpinAttack());
+                    r.put("needs_sync", p.needsSync);
+                    r.put("trident_damage", p.getMainHandItem().getDamageValue());
+                    m.put("result", r);
+                    out.add(CombatVectors.toJson(m));
+                    server.getPlayerList().remove(p);
+                }
+            }
+        }
+        // ---- the spin's touch check
+        String[] around = {"nothing", "item", "pig", "minecart", "pig_and_item"};
+        for (String what : around) {
+            for (boolean collision : new boolean[] {false, true}) {
+                for (int ticks : new int[] {20, 5, 1}) {
+                    Map<String, Object> m = line("touch");
+                    m.put("name", "riptide_touch/" + what + "/" + (collision ? "wall" : "free") + "/" + ticks);
+                    m.put("around", what);
+                    m.put("collision", collision);
+                    m.put("ticks", ticks);
+                    clear(level);
+                    ServerPlayer p = CombatVectors.mockPlayer(server, "Touch" + (n++));
+                    for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) block(level, x, -1, z, "minecraft:stone");
+                    p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+                    CombatVectors.call(p.connection, "markClientLoaded");
+                    p.setPos(CombatVectors.BX, CombatVectors.BY, CombatVectors.BZ);
+                    p.setYRot(0f);
+                    p.setXRot(0f);
+                    p.setOnGround(true);
+                    p.setDeltaMovement(new Vec3(0.4, 0.1, -0.3));
+                    p.getInventory().clearContent();
+                    ItemStack trident = new ItemStack(net.minecraft.world.item.Items.TRIDENT);
+                    p.setItemSlot(EquipmentSlot.MAINHAND, trident);
+                    CombatVectors.call(p, "detectEquipmentUpdates");
+                    CombatVectors.set(p, "attackStrengthTicker", 100);
+                    p.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_ABSORPTION).setBaseValue(20.0);
+                    List<net.minecraft.world.entity.Entity> made = new ArrayList<>();
+                    if (what.equals("item") || what.equals("pig_and_item")) {
+                        var item = new net.minecraft.world.entity.item.ItemEntity(level, CombatVectors.BX + 0.2, CombatVectors.BY, CombatVectors.BZ, new ItemStack(net.minecraft.world.item.Items.STONE));
+                        item.setDeltaMovement(Vec3.ZERO);
+                        item.setNoGravity(true);
+                        item.setPickUpDelay(1000);
+                        level.addFreshEntity(item);
+                        made.add(item);
+                    }
+                    if (what.equals("pig") || what.equals("pig_and_item")) {
+                        var pig = net.minecraft.world.entity.EntityTypes.PIG.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                        pig.setPos(CombatVectors.BX - 0.3, CombatVectors.BY, CombatVectors.BZ + 0.2);
+                        pig.setNoAi(true);
+                        pig.setYRot(0f);
+                        level.addFreshEntity(pig);
+                        made.add(pig);
+                    }
+                    if (what.equals("minecart")) {
+                        var cart = net.minecraft.world.entity.EntityTypes.MINECART.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                        cart.setPos(CombatVectors.BX + 0.1, CombatVectors.BY, CombatVectors.BZ);
+                        cart.setNoGravity(true);
+                        level.addFreshEntity(cart);
+                        made.add(cart);
+                    }
+                    level.getRandom().setSeed(77);
+                    p.getRandom().setSeed(78);
+                    p.horizontalCollision = collision;
+                    p.startAutoSpinAttack(ticks, 8.0f, trident);
+                    CombatVectors.drain(p);
+                    // `aiStep`: the count goes down, then the check.
+                    int now = (Integer) CombatVectors.get(p, "autoSpinAttackTicks") - 1;
+                    CombatVectors.set(p, "autoSpinAttackTicks", now);
+                    var box = p.getBoundingBox();
+                    for (Class<?> k = p.getClass(); k != null; k = k.getSuperclass()) {
+                        try {
+                            var meth = k.getDeclaredMethod("checkAutoSpinAttack", net.minecraft.world.phys.AABB.class, net.minecraft.world.phys.AABB.class);
+                            meth.setAccessible(true);
+                            meth.invoke(p, box, box);
+                            break;
+                        } catch (NoSuchMethodException e) {
+                            // up
+                        }
+                    }
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("spin_ticks", (Integer) CombatVectors.get(p, "autoSpinAttackTicks"));
+                    r.put("spin", p.isAutoSpinAttack());
+                    r.put("delta", CombatVectors.vec(p.getDeltaMovement()));
+                    List<Object> hp = new ArrayList<>();
+                    for (var e : made) {
+                        if (e instanceof net.minecraft.world.entity.LivingEntity le && !(e instanceof net.minecraft.world.entity.decoration.ArmorStand)) hp.add(le.getHealth());
+                    }
+                    r.put("health", hp);
+                    m.put("result", r);
+                    out.add(CombatVectors.toJson(m));
+                    for (var e : made) e.discard();
+                    server.getPlayerList().remove(p);
+                }
+            }
+        }
+        clear(level);
+    }
+}
+
+// Mount vectors: HorseInventoryMenu over horses, donkeys, mules (and llamas): saddle and armor
+// slots that take only what the animal can wear when it is tame and grown, a chest's slots,
+// random click sequences through AbstractContainerMenu.clicked, and what each leaves in the
+// menu's slots, the carried stack and on the ground.
+class MountVectors {
+    static final String[] POOL = {"minecraft:saddle", "minecraft:iron_horse_armor", "minecraft:diamond_horse_armor", "minecraft:leather_horse_armor",
+        "minecraft:golden_horse_armor", "minecraft:copperhorse_armor", "minecraft:netherite_horse_armor", "minecraft:white_carpet", "minecraft:red_carpet", "minecraft:wolf_armor",
+        "minecraft:stone", "minecraft:apple", "minecraft:golden_apple", "minecraft:hay_block", "minecraft:chest", "minecraft:diamond_chestplate",
+        "minecraft:elytra", "minecraft:carrot_on_a_stick", "minecraft:oak_boat"};
+
+    static String pick(Random r) {
+        String s = POOL[r.nextInt(POOL.length)];
+        return s.equals("minecraft:copperhorse_armor") ? "minecraft:copper_horse_armor" : s;
+    }
+
+    static ItemStack stack(String item, int count) {
+        var it = BuiltInRegistries.ITEM.getValue(Identifier.parse(item));
+        return new ItemStack(it, count);
+    }
+
+    static Object[] snapshot(net.minecraft.world.inventory.AbstractContainerMenu menu) {
+        List<Object> slots = new ArrayList<>();
+        for (var slot : menu.slots) {
+            ItemStack st = slot.getItem();
+            slots.add(st.isEmpty() ? null : List.of(BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount(), st.getDamageValue()));
+        }
+        ItemStack c = menu.getCarried();
+        return new Object[] {slots, c.isEmpty() ? null : List.of(BuiltInRegistries.ITEM.getKey(c.getItem()).toString(), c.getCount(), c.getDamageValue())};
+    }
+
+    static void run(MinecraftServer server, List<String> out, int sequences, long seed) throws Exception {
+        ServerLevel level = server.overworld();
+        String[] kinds = {"horse", "donkey", "mule", "skeleton_horse", "donkey", "mule", "horse"};
+        Random rng = new Random(seed);
+        int n = 0;
+        for (int seq = 0; seq < sequences; seq++) {
+            String kind = kinds[rng.nextInt(kinds.length)];
+            boolean tamed = true; // (the screen only opens for a tame animal)
+            boolean baby = false; // (nor for a foal)
+            boolean chest = rng.nextBoolean();
+            boolean creative = rng.nextInt(6) == 0;
+            RiptideVectors.clear(level);
+            ServerPlayer p = CombatVectors.mockPlayer(server, "Mount" + (n++));
+            p.setGameMode(creative ? net.minecraft.world.level.GameType.CREATIVE : net.minecraft.world.level.GameType.SURVIVAL);
+            CombatVectors.call(p.connection, "markClientLoaded");
+            p.setPos(CombatVectors.BX, CombatVectors.BY, CombatVectors.BZ);
+            p.getInventory().clearContent();
+            var type = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse("minecraft:" + kind));
+            var horse = (net.minecraft.world.entity.animal.equine.AbstractHorse) type.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+            horse.setPos(CombatVectors.BX + 1.5, CombatVectors.BY, CombatVectors.BZ);
+            horse.setTamed(tamed);
+            if (baby) horse.setBaby(true);
+            if (horse instanceof net.minecraft.world.entity.animal.equine.AbstractChestedHorse ch) {
+                ch.setChest(chest);
+                CombatVectors.call(ch, "createInventory");
+            }
+            var inv = (net.minecraft.world.SimpleContainer) CombatVectors.get(horse, "inventory");
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("kind", "mount");
+            m.put("name", "mount/" + seq);
+            m.put("horse", kind);
+            m.put("tamed", tamed);
+            m.put("baby", baby);
+            m.put("chest", chest);
+            m.put("creative", creative);
+            List<Object> invList = new ArrayList<>();
+            double fill = rng.nextDouble();
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                if (rng.nextDouble() < fill * 0.6) {
+                    String it = pick(rng);
+                    int count = Math.min(1 + rng.nextInt(20), stack(it, 1).getMaxStackSize());
+                    inv.setItem(i, stack(it, count));
+                    invList.add(List.of(i, it, count));
+                }
+            }
+            m.put("inventory", invList);
+            if (rng.nextInt(3) == 0) {
+                String it = rng.nextBoolean() ? "minecraft:saddle" : pick(rng);
+                if (horse.isEquippableInSlot(stack(it, 1), EquipmentSlot.SADDLE)) {
+                    horse.setItemSlot(EquipmentSlot.SADDLE, stack(it, 1));
+                    m.put("saddle", it);
+                }
+            }
+            if (rng.nextInt(3) == 0) {
+                String it = pick(rng);
+                if (horse.isEquippableInSlot(stack(it, 1), EquipmentSlot.BODY)) {
+                    horse.setItemSlot(EquipmentSlot.BODY, stack(it, 1));
+                    m.put("body", it);
+                }
+            }
+            level.addFreshEntity(horse);
+            List<Object> player = new ArrayList<>();
+            for (int i = 0; i < 36; i++) {
+                if (rng.nextDouble() < fill * 0.7) {
+                    String it = pick(rng);
+                    int count = Math.min(1 + rng.nextInt(30), stack(it, 1).getMaxStackSize());
+                    p.getInventory().setItem(i, stack(it, count));
+                    player.add(List.of(i, it, count));
+                }
+            }
+            m.put("player_inventory", player);
+            m.put("columns", horse.getInventoryColumns());
+            p.openHorseInventory(horse, inv);
+            var menu = p.containerMenu;
+            CombatVectors.drain(p);
+            m.put("open", snapshot(menu));
+            CombatVectors.field(net.minecraft.world.inventory.AbstractContainerMenu.class, "quickcraftSlots").set(menu, new java.util.LinkedHashSet<>());
+            List<Object> steps = new ArrayList<>();
+            int count = 5 + rng.nextInt(30);
+            int drag = -1;
+            for (int k = 0; k < count; k++) {
+                int size = menu.slots.size();
+                int slot, button, input;
+                if (drag >= 0) {
+                    if (rng.nextInt(4) == 0) { slot = -999; button = net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(2, drag); input = 5; drag = -1; }
+                    else { slot = rng.nextInt(size); button = net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(1, drag); input = 5; }
+                } else {
+                    slot = rng.nextInt(25) == 0 ? -999 : rng.nextInt(size);
+                    if (rng.nextInt(3) == 0) slot = rng.nextInt(Math.min(size, 2 + 3 * horse.getInventoryColumns()));
+                    int r = rng.nextInt(100);
+                    if (r < 45) { button = rng.nextInt(2); input = 0; }
+                    else if (r < 65) { button = rng.nextInt(2); input = 1; }
+                    else if (r < 75) { button = rng.nextInt(12) == 0 ? 40 : rng.nextInt(9); input = 2; }
+                    else if (r < 80) { button = rng.nextInt(2); input = 4; }
+                    else if (r < 90) { drag = rng.nextInt(2); slot = -999; button = net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(0, drag); input = 5; }
+                    else if (r < 96) { button = rng.nextInt(2); input = 6; }
+                    else { button = 2; input = creative ? 3 : 0; }
+                }
+                var ci = net.minecraft.world.inventory.ContainerInput.values()[input];
+                boolean crash = false;
+                try {
+                    menu.clicked(slot, button, ci, p);
+                    menu.broadcastChanges();
+                } catch (RuntimeException e) {
+                    crash = true;
+                }
+                Map<String, Object> step = new LinkedHashMap<>();
+                step.put("slot", slot);
+                step.put("button", button);
+                step.put("input", input);
+                if (crash) {
+                    step.put("crash", true);
+                    steps.add(step);
+                    break;
+                }
+                Object[] snap = snapshot(menu);
+                step.put("slots", snap[0]);
+                step.put("carried", snap[1]);
+                steps.add(step);
+                if (!horse.isAlive() || p.containerMenu != menu) break;
+            }
+            m.put("steps", steps);
+            // What lay on the ground afterwards (items by name and count).
+            Map<String, Integer> dropped = new java.util.TreeMap<>();
+            for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-6, 90, -6, 6, 120, 6), e -> e instanceof net.minecraft.world.entity.item.ItemEntity)) {
+                var st = ((net.minecraft.world.entity.item.ItemEntity) e).getItem();
+                dropped.merge(BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount(), Integer::sum);
+            }
+            m.put("dropped", dropped);
+            // The horse's own state afterwards.
+            Map<String, Object> state = new LinkedHashMap<>();
+            for (var slot : new EquipmentSlot[] {EquipmentSlot.SADDLE, EquipmentSlot.BODY}) {
+                ItemStack st = horse.getItemBySlot(slot);
+                state.put(slot.getName(), st.isEmpty() ? null : BuiltInRegistries.ITEM.getKey(st.getItem()).toString());
+            }
+            m.put("horse_state", state);
+            out.add(CombatVectors.toJson(m));
+            horse.discard();
+            for (var e : new ArrayList<>(level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-6, 90, -6, 6, 120, 6), e -> e instanceof net.minecraft.world.entity.item.ItemEntity))) e.discard();
+            server.getPlayerList().remove(p);
+        }
     }
 }

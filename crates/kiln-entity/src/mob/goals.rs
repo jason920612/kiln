@@ -1009,8 +1009,9 @@ pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &m
                 } else if d > 256.0 {
                     *recalc += 5;
                 }
+                // `moveTo(target, 0, speed)`: no path (an airborne mob makes none) leaves the one it has.
                 let p = path::create_path_to_entity(e, m, level, t.block_pos(), 0);
-                if !path::move_to_path(e, m, level, p, *speed) {
+                if !(p.is_some() && path::move_to_path(e, m, level, p, *speed)) {
                     *recalc += 15;
                 }
                 *recalc = adj(*recalc);
@@ -1162,7 +1163,9 @@ pub fn free_partner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> Option<
         let Some(o) = level.entity(id) else { continue };
         let crate::entity::EntityKind::Mob(om) = &o.kind else { continue };
         // `PARTNER_TARGETING`: non-combat, 8 blocks, no line of sight needed.
-        if om.kind != m.kind || !o.is_alive() || om.health <= 0.0 || e.position().distance_to_sqr(o.position()) > 64.0 {
+        // (`getEntitiesOfClass(animal.getClass())`: a llama also finds trader llamas.)
+        let class = om.kind == m.kind || (m.kind == MobKind::Llama && om.kind == MobKind::TraderLlama);
+        if !class || !o.is_alive() || om.health <= 0.0 || e.position().distance_to_sqr(o.position()) > 64.0 {
             continue;
         }
         if !(m.in_love > 0 && om.in_love > 0) || om.goals.is_running(|g| matches!(g, Goal::Panic { .. })) {

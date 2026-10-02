@@ -131,6 +131,7 @@ public class EntityVectors {
         Scenarios.arrows(out);
         Scenarios.vehicles(out);
         Scenarios.cargo(out);
+        Scenarios.vehicleCargo(out);
         return out;
     }
 
@@ -428,6 +429,11 @@ public class EntityVectors {
                 e = c;
             }
             case "oak_boat" -> e = new net.minecraft.world.entity.vehicle.boat.Boat(EntityTypes.OAK_BOAT, level, () -> net.minecraft.world.item.Items.OAK_BOAT);
+            case "oak_chest_boat", "bamboo_chest_raft", "cherry_chest_boat", "mangrove_chest_boat", "pale_oak_chest_boat" -> {
+                var type = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse("minecraft:" + spec.kind));
+                e = type.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                fillCart((net.minecraft.world.Container) e, (String) spec.extra.get("items"));
+            }
             case "player" -> {
                 var profile = new com.mojang.authlib.GameProfile(java.util.UUID.nameUUIDFromBytes(new byte[] {1}), "Kiln");
                 var player = new net.minecraft.server.level.ServerPlayer(level.getServer(), level, profile,
@@ -584,6 +590,12 @@ public class EntityVectors {
             }
         } else if (e instanceof net.minecraft.world.entity.vehicle.boat.AbstractBoat boat) {
             sb.append(',').append(d(boat.getYRot()));
+            if (boat instanceof net.minecraft.world.entity.vehicle.boat.AbstractChestBoat c) {
+                for (int i = 0; i < c.getContainerSize(); i++) {
+                    var stack = c.getItemStacks().get(i);
+                    sb.append(',').append(stack.isEmpty() ? 0 : net.minecraft.world.item.Item.getId(stack.getItem()) + 1).append(',').append(stack.getCount());
+                }
+            }
         } else if (e instanceof ExperienceOrb orb) {
             sb.append(',').append(orb.getValue()).append(',').append(getInt(ExperienceOrb.class, orb, "count"))
                     .append(',').append(getInt(ExperienceOrb.class, orb, "age"));
@@ -1264,6 +1276,57 @@ class Scenarios {
                         .with("item", names[r.nextInt(names.length)]).with("count", 1 + r.nextInt(40)).with("pickup_delay", 100).with("no_gravity", 1);
             }
             s.ticks(60);
+            out.add(s);
+        }
+    }
+
+    /**
+     * Chest boats and rafts (afloat with a load, aground, broken by hits and by fire) and arrows
+     * hitting minecarts and boats (a flaming arrow sets a TNT minecart off).
+     */
+    static void vehicleCargo(List<EntityVectors.Scenario> out) {
+        Random r = new Random(29);
+        String[] types = {"oak_chest_boat", "bamboo_chest_raft", "cherry_chest_boat", "mangrove_chest_boat", "pale_oak_chest_boat"};
+        String[] loads = {"", "0:minecraft:stone:64", "3:minecraft:ender_pearl:16,9:minecraft:diamond:7,26:minecraft:apple:33",
+            "0:minecraft:stone:64,4:minecraft:diamond:23,11:minecraft:apple:2,20:minecraft:coal:60"};
+        for (int k = 0; k < 10; k++) {
+            var s = new EntityVectors.Scenario("boat_chest/float/" + k, r.nextLong());
+            s.fill(-10, 0, -10, 10, 0, 10, "minecraft:stone");
+            if (k % 3 != 2) s.fill(-6, 0, -6, 6, 2, 6, "minecraft:water");
+            var e = s.entity(types[k % types.length], rnd(r, -3, 3), rnd(r, 0.4, 3.0), rnd(r, -3, 3), rnd(r, -0.2, 0.2), rnd(r, -0.2, 0.1), rnd(r, -0.2, 0.2), r.nextLong());
+            e.with("yaw", rnd(r, -180, 180));
+            if (!loads[k % loads.length].isEmpty()) e.with("items", loads[k % loads.length]);
+            s.ticks(80);
+            out.add(s);
+        }
+        // Breaking: two hits over forty damage, an explosion, or burning.
+        String[] hits = {"2:generic:2.0;3:generic:3.0", "2:generic:5.0", "2:explosion:6.0", "1:generic:1.0;5:generic:1.5;9:generic:1.0;12:generic:2.0"};
+        for (int k = 0; k < 12; k++) {
+            var s = new EntityVectors.Scenario("boat_chest/break/" + k, r.nextLong());
+            s.fill(-10, 0, -10, 10, 0, 10, "minecraft:stone");
+            if (k % 3 == 1) s.fill(-6, 0, -6, 6, 2, 6, "minecraft:water");
+            var e = s.entity(types[k % types.length], rnd(r, -2, 2), 1.0, rnd(r, -2, 2), 0, 0, 0, r.nextLong());
+            e.with("items", loads[1 + k % (loads.length - 1)]);
+            if (k % 4 == 3) e.with("fire", 90);
+            else e.with("hits", hits[k % hits.length]);
+            s.ticks(60);
+            out.add(s);
+        }
+        // Arrows flying into carts and boats.
+        String[] targets = {"minecart", "chest_minecart", "hopper_minecart", "tnt_minecart", "furnace_minecart", "oak_boat", "oak_chest_boat", "tnt_minecart"};
+        for (int k = 0; k < 32; k++) {
+            var s = new EntityVectors.Scenario("arrow_vehicle/" + k, r.nextLong());
+            s.fill(-14, 0, -6, 14, 0, 6, "minecraft:stone");
+            String target = targets[k % targets.length];
+            boolean cart = target.endsWith("minecart");
+            if (cart) for (int x = -12; x <= 12; x++) s.block(x, 1, 0, "minecraft:rail[shape=east_west]");
+            var t = s.entity(target, cart ? rnd(r, -0.5, 0.5) : rnd(r, -0.5, 0.5), cart ? 1.0625 : 1.0, 0.5, 0, 0, 0, r.nextLong());
+            if (target.equals("chest_minecart") || target.equals("oak_chest_boat")) t.with("items", loads[1 + k % 3]);
+            if (target.equals("hopper_minecart")) t.with("items", "0:minecraft:stone:64,2:minecraft:apple:5");
+            double speed = rnd(r, 0.4, 3.2);
+            var a = s.entity("arrow", -4 + rnd(r, -1, 0), (cart ? 1.4 : 1.3) + rnd(r, -0.1, 0.1), 0.5 + rnd(r, -0.15, 0.15), speed, 0, 0, r.nextLong());
+            if (k % 3 == 1 || k % 8 == 7) a.with("fire", 200);
+            s.ticks(40);
             out.add(s);
         }
     }

@@ -465,7 +465,7 @@ fn elytra_glide_wears_the_wings() {
     pos[1] += 5.0;
     let air = |w: &mut World, on_ground: bool, n: usize| {
         for _ in 0..n {
-            let pkt = PlayIn::Move { pos: Some(pos), rot: None, on_ground };
+            let pkt = PlayIn::Move { pos: Some(pos), rot: None, on_ground, horizontal_collision: false };
             assert!(w.sim.step([ToSim::Packet(1, pkt), ToSim::Packet(1, PlayIn::ClientTickEnd)]));
         }
     };
@@ -541,7 +541,7 @@ fn sliding_down_honey_earns_the_advancement() {
     w.ticks(3);
     for i in 0..70 {
         let pos = [x, top - 0.1 * i as f64, z];
-        let pkt = PlayIn::Move { pos: Some(pos), rot: None, on_ground: false };
+        let pkt = PlayIn::Move { pos: Some(pos), rot: None, on_ground: false, horizontal_collision: false };
         assert!(w.sim.step([ToSim::Packet(1, pkt), ToSim::Packet(1, PlayIn::ClientTickEnd)]));
     }
     if let Some(done) = w.sim.criterion_done(1, "minecraft:adventure/honey_block_slide", "honey_block_slide") {
@@ -680,8 +680,10 @@ fn the_riptide_spin_hits_what_it_touches_and_stops_there() {
     assert_eq!(health, 2.0, "8 damage from the spin");
     assert_eq!(w.sim.spin_ticks(1), Some(0), "the spin stops on the hit");
     assert_eq!(w.sim.item_damage(1, 36), Some(2), "one durability for the throw, one for the hit");
-    // Nothing in the way: the spin runs its 20 ticks.
+    // Nothing in the way: the spin runs its 20 ticks (back in the water first: the hop out of it
+    // that starts a spin from the ground has to be undone).
     w.run("kill @e[type=minecraft:cow]");
+    w.run(&format!("tp User {} {} {}", at[0], at[1], at[2]));
     w.ticks(2);
     w.use_item(30.0);
     w.ticks(12);
@@ -691,4 +693,41 @@ fn the_riptide_spin_hits_what_it_touches_and_stops_there() {
     w.ticks(25);
     assert_eq!(w.sim.spin_ticks(1), Some(0));
     assert_eq!(w.sim.item_damage(1, 36), Some(3));
+}
+
+#[test]
+fn the_riptide_spin_ends_against_a_wall_unless_something_else_is_touched() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("survival");
+    let feet = [w.client.pos[0].floor() as i32, w.client.pos[1].floor() as i32, w.client.pos[2].floor() as i32];
+    w.set(feet, "minecraft:water");
+    w.run("give User minecraft:trident[enchantments={\"minecraft:riptide\":1}]");
+    w.ticks(2);
+    let spin = |w: &mut World| {
+        w.use_item(30.0);
+        w.ticks(12);
+        w.release();
+    };
+    let wall = |w: &mut World| {
+        let pkt = PlayIn::Move { pos: None, rot: None, on_ground: true, horizontal_collision: true };
+        assert!(w.sim.step([ToSim::Packet(1, pkt)]));
+    };
+    // Into a wall with nothing else in reach: over at once.
+    spin(&mut w);
+    assert!(w.sim.spin_ticks(1).is_some_and(|t| t > 15));
+    wall(&mut w);
+    w.ticks(1);
+    assert_eq!(w.sim.spin_ticks(1), Some(0), "the wall ended the spin");
+    // The same with an item where the hop takes the player: looked at and passed over, and the wall
+    // is not looked at then.
+    w.run(&format!("summon minecraft:item {} {} {} {{Item:{{id:\"minecraft:stone\",count:1}},PickupDelay:1000s,NoGravity:1b,Motion:[0.0d,0.0d,0.0d]}}", w.client.pos[0], w.client.pos[1] + 1.4, w.client.pos[2]));
+    w.run(&format!("tp User {} {} {}", w.client.pos[0], w.client.pos[1], w.client.pos[2]));
+    w.ticks(30);
+    spin(&mut w);
+    w.ticks(1);
+    wall(&mut w);
+    w.ticks(1);
+    assert!(w.sim.spin_ticks(1).is_some_and(|t| t > 10), "an item in the way keeps the spin going: {:?}", w.sim.spin_ticks(1));
 }

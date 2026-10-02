@@ -126,7 +126,7 @@ impl Client {
             out.push(ToSim::Packet(self.conn, PlayIn::PlayerLoaded));
         } else if let Some(to) = to {
             self.pos = to;
-            out.push(ToSim::Packet(self.conn, PlayIn::Move { pos: Some(to), rot: None, on_ground: true }));
+            out.push(ToSim::Packet(self.conn, PlayIn::Move { pos: Some(to), rot: None, on_ground: true, horizontal_collision: false }));
         }
         out.push(ToSim::Packet(self.conn, PlayIn::ClientTickEnd));
     }

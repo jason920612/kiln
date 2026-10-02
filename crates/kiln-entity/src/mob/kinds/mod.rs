@@ -85,6 +85,9 @@ pub mod goat;
 pub mod frog;
 pub mod tadpole;
 
+// -- wp30: llamas
+pub mod llama;
+
 
 /// The behaviour of an extension type; `None` for the shared-code types.
 pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
@@ -168,6 +171,10 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Goat => &goat::KIND,
         MobKind::Frog => &frog::KIND,
         MobKind::Tadpole => &tadpole::KIND,
+
+        // -- wp30: llamas
+        MobKind::Llama => &llama::LLAMA,
+        MobKind::TraderLlama => &llama::TRADER_LLAMA,
 
         _ => return None,
     })

@@ -1,7 +1,11 @@
-//! Horses, donkeys and mules (`AbstractHorse`, `AbstractChestedHorse`): random stats at spawn,
-//! grazing and rearing, tamed by riding (temper, `RunAroundLikeCrazyGoal` bucks the rider),
-//! fed, saddled and then steered by their rider, chests on donkeys and mules, breeding.
-//! Not modelled: horse armor, the inventory screen, horse-donkey cross breeding (mules).
+//! Horses, donkeys, mules and llamas (`AbstractHorse`, `AbstractChestedHorse`, `Llama`,
+//! `TraderLlama`): random stats at spawn, grazing and rearing, tamed by riding (temper,
+//! `RunAroundLikeCrazyGoal` bucks the rider), fed, saddled and then steered by their rider, chests
+//! on donkeys, mules and llamas (15 slots; a llama's three per strength), body armor (a llama's
+//! carpet), the inventory the screen shows (saddle, armor and the chest's slots, kept in
+//! [`State`], dropped when the animal dies), breeding. The llamas' own goals and spit are in
+//! [`super::llama`].
+//! Not modelled: horse-donkey cross breeding (mules).
 
 use super::tame::TamableAnimalPanicGoal;
 use crate::custom_goal_boilerplate;
@@ -28,6 +32,9 @@ pub enum Which {
     Mule,
     /// `SkeletonHorse` (the trap horse of thunderstorms, see [`super::skeleton_horse`]).
     Skeleton,
+    /// `Llama` and `TraderLlama` (see [`super::llama`]): a chested equine with a strength, spit.
+    Llama,
+    TraderLlama,
 }
 
 pub struct Equine(pub Which);
@@ -36,6 +43,8 @@ pub static KIND: Equine = Equine(Which::Horse);
 pub static DONKEY: Equine = Equine(Which::Donkey);
 pub static MULE: Equine = Equine(Which::Mule);
 pub static SKELETON: Equine = Equine(Which::Skeleton);
+pub static LLAMA: Equine = Equine(Which::Llama);
+pub static TRADER_LLAMA: Equine = Equine(Which::TraderLlama);
 
 static HORSE_INFO: Info = Info {
     ambient_interval: 400,
@@ -48,6 +57,17 @@ static DONKEY_INFO: Info = Info {
 static MULE_INFO: Info = Info {
     ambient_interval: 400,
     ..Info::animal("minecraft:mule", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
+};
+
+static LLAMA_INFO: Info = Info {
+    ambient_interval: 400,
+    ..Info::animal("minecraft:llama", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
+};
+/// (`TraderLlama` has no sounds of its own: it makes the llama's.)
+static TRADER_LLAMA_INFO: Info = Info {
+    ambient_interval: 400,
+    sounds: Some("llama"),
+    ..Info::animal("minecraft:trader_llama", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
 };
 
 static SKELETON_INFO: Info = Info {
@@ -80,11 +100,44 @@ pub struct State {
     pub saddle: ItemStack,
     /// `AbstractChestedHorse.hasChest`.
     pub chest: bool,
+    /// `AbstractHorse.inventory`: the chest's slots (`3 * columns`, none without a chest).
+    pub inventory: Vec<ItemStack>,
+    /// Saved `Items` entries that did not decode, written back unchanged.
+    inv_undecoded: Vec<(i32, Tag)>,
+    /// `EquipmentSlot.BODY`: horse armor (a llama's carpet).
+    pub body: ItemStack,
+    /// What `dropChances` says about the saddle and the body slot (a slot filled by a player
+    /// is guaranteed to drop: 2).
+    pub saddle_drop: f32,
+    pub body_drop: f32,
+    /// Counts the times the inventory was made anew (the screen on the old one closes).
+    pub inv_serial: u32,
+    /// Equipment changes made through the screen whose `onEquipItem` is still to come: (slot
+    /// ordinal, old, new).
+    pending_equip: Vec<(u8, ItemStack, ItemStack)>,
     /// `Horse.DATA_ID_TYPE_VARIANT`: variant | markings << 8.
     pub type_variant: i32,
     /// `SkeletonHorse.isTrap` and `trapTime`.
     pub trap: bool,
     pub trap_time: i32,
+    /// `Llama.DATA_STRENGTH_ID` (1 to 5; 0 until set).
+    pub strength: i32,
+    /// `Llama.DATA_VARIANT_ID` (`Llama.Variant` id).
+    pub llama_variant: i32,
+    /// `Llama.didSpit`.
+    pub did_spit: bool,
+    /// `Llama.caravanHead` and `caravanTail` (entity ids).
+    pub caravan_head: Option<i32>,
+    pub caravan_tail: Option<i32>,
+    /// `TraderLlama.despawnDelay`.
+    pub despawn_delay: i32,
+    /// `Leashable.getLeashHolder` (entity id): leads are not simulated, only set by hand.
+    pub leash_holder: Option<i32>,
+}
+
+/// The horse state of `m`, if it is one of the family.
+pub(super) fn state(m: &MobData) -> Option<&State> {
+    ext::state::<State>(m)
 }
 
 pub(super) fn st(m: &MobData) -> &State {
@@ -105,7 +158,14 @@ fn is(stack: &ItemStack, name: &str) -> bool {
 }
 
 fn sound(m: &MobData, what: &str) -> &'static str {
-    crate::mob::sound_event(&format!("minecraft:entity.{}.{what}", m.kind.short_name()))
+    // (A trader llama has the llama's sounds.)
+    let name = if m.kind == MobKind::TraderLlama { "llama" } else { m.kind.short_name() };
+    crate::mob::sound_event(&format!("minecraft:entity.{name}.{what}"))
+}
+
+/// `getMaxTemper`: 100, a llama's 30.
+fn max_temper(m: &MobData) -> i32 {
+    if super::llama::is_llama(m.kind) { 30 } else { 100 }
 }
 
 /// `LivingEntity.getVoicePitch` (two draws).
@@ -120,8 +180,11 @@ fn play(e: &Entity, level: &mut dyn EntityLevel, sound: &'static str, volume: f3
     }
 }
 
-/// `setStanding(20)` through `standIfPossible`.
+/// `setStanding(20)` through `standIfPossible` (`canPerformRearing`: llamas never rear).
 fn stand(m: &mut MobData) {
+    if super::llama::is_llama(m.kind) {
+        return;
+    }
     let s = st_mut(m);
     s.eating = false;
     s.standing = true;
@@ -168,8 +231,48 @@ fn eating(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     level.emit(Event::GameEvent { event: "minecraft:eat", pos: e.position(), entity: Some(e.id) });
 }
 
+/// `Llama.handleEating`: wheat and hay bales heal, make a baby grow and raise the temper (a hay
+/// bale also puts a tame, grown llama in love); the eating sound, no open mouth.
+fn handle_eating_llama(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> bool {
+    let mut ate = false;
+    let (age_up, temper_up, heal_by): (i32, i32, f32) = match item_name(stack) {
+        "minecraft:wheat" => (10, 3, 2.0),
+        "minecraft:hay_block" => {
+            if st(m).tamed && m.age == 0 && m.in_love <= 0 {
+                ate = true;
+                crate::mob::breed::set_in_love(e, m, level, Some(who.id));
+            }
+            (90, 6, 10.0)
+        }
+        _ => (0, 0, 0.0),
+    };
+    if m.health < m.max_health() && heal_by > 0.0 {
+        heal(m, heal_by);
+        ate = true;
+    }
+    if m.baby() && age_up > 0 && !m.age_locked {
+        crate::mob::random_point(e, 1.0);
+        crate::mob::age_up(e, m, age_up, false);
+        ate = true;
+    }
+    if temper_up > 0 && (ate || !st(m).tamed) && st(m).temper < max_temper(m) {
+        let max = max_temper(m);
+        let s = st_mut(m);
+        s.temper = (s.temper + temper_up).clamp(0, max);
+        ate = true;
+    }
+    if ate && !e.silent {
+        let pitch = 1.0 + (e.random.next_float() - e.random.next_float()) * 0.2;
+        level.emit(Event::Sound { pos: e.position(), sound: sound(m, "eat"), source: "neutral", volume: 1.0, pitch });
+    }
+    ate
+}
+
 /// `handleEating`: whether the horse ate `stack`.
 fn handle_eating(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> bool {
+    if super::llama::is_llama(m.kind) {
+        return handle_eating_llama(e, m, level, who, stack);
+    }
     let mut ate = false;
     let (heal_by, age_up, temper_up): (f32, i32, i32) = match item_name(stack) {
         "minecraft:wheat" => (2.0, 20, 3),
@@ -223,11 +326,10 @@ fn random_speed(r: &mut dyn RandomSource) -> f64 {
 }
 
 fn set_base(m: &mut MobData, a: Attr, v: f64) {
+    // (`setBaseValue` leaves the health alone: `LivingEntity.tick` brings it down to the new
+    // maximum at its end, `refreshDirtyAttributes`, see `post_tick`.)
     if let Some(i) = m.attrs.get_mut(a) {
         i.base = v;
-    }
-    if a == MaxHealth && m.health > m.max_health() {
-        m.health = m.max_health();
     }
 }
 
@@ -251,7 +353,35 @@ fn offspring_attribute(a: f64, b: f64, min: f64, max: f64, r: &mut dyn RandomSou
 
 impl Equine {
     fn chested(&self) -> bool {
-        matches!(self.0, Which::Donkey | Which::Mule)
+        matches!(self.0, Which::Donkey | Which::Mule | Which::Llama | Which::TraderLlama)
+    }
+
+    fn llama(&self) -> bool {
+        matches!(self.0, Which::Llama | Which::TraderLlama)
+    }
+
+    /// `getInventoryColumns`: five with a chest (a llama: its strength).
+    fn columns(&self, m: &MobData) -> usize {
+        if !(self.chested() && st(m).chest) {
+            0
+        } else if self.llama() {
+            st(m).strength.clamp(0, 5) as usize
+        } else {
+            5
+        }
+    }
+
+    /// `createInventory`: a new container of `getInventorySize()` slots that takes over what fits
+    /// of the old one.
+    fn create_inventory(&self, m: &mut MobData) {
+        let n = self.columns(m) * 3;
+        let s = st_mut(m);
+        let mut inv = vec![ItemStack::empty(); n];
+        for (i, slot) in s.inventory.iter().enumerate().take(n) {
+            inv[i] = slot.clone();
+        }
+        s.inventory = inv;
+        s.inv_serial += 1;
     }
 
     /// The type's passenger attachment height (`passengerAttachments`).
@@ -263,6 +393,8 @@ impl Equine {
             (Which::Mule, false) => (1.2125, 0.0),
             (Which::Skeleton, false) => (1.31875f32 as f64, 0.0),
             (Which::Skeleton, true) => (((1.6f32 - 0.25) * 0.7) as f64, 0.0),
+            (Which::Llama | Which::TraderLlama, false) => (1.37, -0.3f32 as f64),
+            (Which::Llama | Which::TraderLlama, true) => (((1.87f32 - 0.25) * 0.5) as f64, (-0.3f32 * 0.5) as f64),
             (_, true) => (((1.5f32 + 0.03125) * 0.5) as f64, (-0.3125f32 * 0.5) as f64),
         }
     }
@@ -275,6 +407,8 @@ impl Kind for Equine {
             Which::Donkey => &DONKEY_INFO,
             Which::Mule => &MULE_INFO,
             Which::Skeleton => &SKELETON_INFO,
+            Which::Llama => &LLAMA_INFO,
+            Which::TraderLlama => &TRADER_LLAMA_INFO,
         }
     }
 
@@ -301,13 +435,33 @@ impl Kind for Equine {
             allow_stand_sliding: false,
             saddle: ItemStack::empty(),
             chest: false,
+            inventory: Vec::new(),
+            inv_undecoded: Vec::new(),
+            body: ItemStack::empty(),
+            saddle_drop: 0.085,
+            body_drop: 0.085,
+            inv_serial: 0,
+            pending_equip: Vec::new(),
             type_variant: 0,
             trap: false,
             trap_time: 0,
+            strength: 0,
+            llama_variant: 0,
+            did_spit: false,
+            caravan_head: None,
+            caravan_tail: None,
+            despawn_delay: 47999,
+            leash_holder: None,
         }))
     }
 
     fn register_goals(&self, m: &mut MobData) {
+        if self.llama() {
+            // (`Llama` replaces `AbstractHorse.registerGoals`; its constructor sets the path length.)
+            m.nav.required_path_length = 40.0;
+            super::llama::register_goals(m, self.0 == Which::TraderLlama);
+            return;
+        }
         let g = &mut m.goals;
         g.add(1, Goal::Custom(Box::new(RunAroundLikeCrazyGoal { speed: 1.2, pos: Vec3::ZERO })));
         g.add(2, Goal::Breed { speed: 1.0, partner: None, love_time: 0 });
@@ -325,8 +479,18 @@ impl Kind for Equine {
         g.add(3, Goal::Tempt { speed: 1.25, calm_down: 0, player: None });
     }
 
+    /// `AbstractHorse.getMaxSpawnClusterSize`.
+    fn max_spawn_cluster(&self) -> i32 {
+        6
+    }
+
+    /// `AbstractHorse.getSoundVolume`.
+    fn sound_volume(&self, _m: &MobData) -> f32 {
+        0.8
+    }
+
     fn tempted_by(&self, item: i32) -> bool {
-        item_tag(item, "minecraft:horse_tempt_items")
+        item_tag(item, if self.llama() { "minecraft:llama_tempt_items" } else { "minecraft:horse_tempt_items" })
     }
 
     fn water_slow_down(&self, _m: &MobData) -> f32 {
@@ -334,7 +498,7 @@ impl Kind for Equine {
     }
 
     fn is_food(&self, item: i32) -> bool {
-        item_tag(item, "minecraft:horse_food")
+        item_tag(item, if self.llama() { "minecraft:llama_food" } else { "minecraft:horse_food" })
     }
 
     fn is_immobile(&self, m: &MobData) -> bool {
@@ -342,21 +506,475 @@ impl Kind for Equine {
         s.eating || s.standing
     }
 
-    fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+    fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        // What was put on or taken off through the screen since the last tick (`onEquipItem`).
+        for (slot, old, new) in std::mem::take(&mut st_mut(m).pending_equip) {
+            let slot = if slot == 7 { kiln_item::component::EquipmentSlot::Saddle } else { kiln_item::component::EquipmentSlot::Body };
+            equip_sound(e, level, slot, &old, &new);
+        }
         if e.random.next_int_bounded(200) == 0 {
             st_mut(m).tail_counter = 1;
         }
     }
 
     fn ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        if self.0 == Which::TraderLlama {
+            // `TraderLlama.aiStep` after the horse's.
+            self.ai_step_horse(e, m, level);
+            self.maybe_despawn(e, m, level);
+            return;
+        }
+        self.ai_step_horse(e, m, level);
+    }
+
+    fn custom_server_ai_step(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        if self.0 == Which::Skeleton {
+            // The trap goal that fired took itself off the selector (`setTrap(false)`).
+            super::skeleton_horse::drop_spent_goal(m);
+        }
+    }
+
+    fn post_tick(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        // `LivingEntity.refreshDirtyAttributes` at the end of its tick: health above a lowered
+        // maximum comes down to it.
+        let max = m.max_health();
+        if m.health > max {
+            m.set_health(max);
+        }
+        self.post_tick_horse(m);
+    }
+
+    fn after_hurt(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, _source: &DamageSource, _amount: f32, hurt: bool) {
+        if hurt && e.random.next_int_bounded(3) == 0 {
+            stand(m);
+        }
+    }
+
+    fn steerable_by(&self, m: &MobData, _rider: &PlayerView) -> bool {
+        !st(m).saddle.is_empty()
+    }
+
+    fn tick_ridden(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, rider: &PlayerView) {
+        // `getRiddenRotation`: the rider's yaw, half its pitch.
+        e.y_rot = rider.yaw % 360.0;
+        e.x_rot = (rider.pitch * 0.5) % 360.0;
+        e.y_rot_o = e.y_rot;
+        m.y_body_rot = e.y_rot;
+        m.y_head_rot = e.y_rot;
+    }
+
+    fn passenger_offset(&self, e: &Entity, m: &MobData) -> Option<Vec3> {
+        let (h, z) = self.attach_height(m);
+        let base = crate::ride::y_rot(Vec3::new(0.0, h, z), -e.y_rot * 0.017453292);
+        let a = st(m).stand_anim_o as f64;
+        let stand = crate::ride::y_rot(Vec3::new(0.0, 0.15 * a, -0.7 * a), -e.y_rot * 0.017453292);
+        Some(base + stand)
+    }
+
+    fn dimensions(&self, m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {
+        if !m.baby() {
+            return base;
+        }
+        let s = if self.chested() { 0.5 } else { 0.7 };
+        (base.0 * s, base.1 * s, base.2 * s)
+    }
+
+    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &SpawnContext, group: &mut GroupData) {
+        if self.0 == Which::Skeleton {
+            // `SkeletonHorse.randomizeAttributes`: only the jump strength.
+            let jump = random_jump(r);
+            set_base(m, JumpStrength, jump);
+            ext::ageable_finalize(e, m, r, group, 0.2);
+            ext::mob_finalize(m, r);
+            return;
+        }
+        if self.llama() {
+            // `Llama.finalizeSpawn`: strength, then the coat (the group's, or a random one
+            // that the group takes on), then `AbstractHorse.finalizeSpawn`.
+            super::llama::set_random_strength(m, r);
+            let variant = match group.variant {
+                Some(v) => v,
+                None => {
+                    let v = r.next_int_bounded(4);
+                    group.variant = Some(v);
+                    v
+                }
+            };
+            st_mut(m).llama_variant = variant;
+            // (`TraderLlama.finalizeSpawn`: one that came with an event is an adult.)
+            if self.0 == Which::TraderLlama && group.event {
+                crate::mob::set_age(e, m, 0);
+            }
+            let health = random_health(r);
+            set_base(m, MaxHealth, health as f64);
+            ext::ageable_finalize(e, m, r, group, 0.05);
+            ext::mob_finalize(m, r);
+            return;
+        }
+        let chance = if self.0 == Which::Horse {
+            // `HorseGroupData`: one coat for the group, markings each.
+            let variant = match group.variant {
+                Some(v) => v,
+                None => {
+                    let v = r.next_int_bounded(7);
+                    group.variant = Some(v);
+                    v
+                }
+            };
+            let markings = r.next_int_bounded(5);
+            st_mut(m).type_variant = (variant & 255) | ((markings << 8) & 65280);
+            0.05
+        } else {
+            0.2
+        };
+        // `randomizeAttributes`.
+        let health = random_health(r);
+        set_base(m, MaxHealth, health as f64);
+        if self.0 == Which::Horse {
+            let speed = random_speed(r);
+            set_base(m, MovementSpeed, speed);
+            let jump = random_jump(r);
+            set_base(m, JumpStrength, jump);
+        }
+        ext::ageable_finalize(e, m, r, group, chance);
+        ext::mob_finalize(m, r);
+    }
+
+    fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
+        // `canParent` on both (vehicles are not checked here); mules never breed.
+        let parent = |x: &MobData| is_tamed(x) && !x.baby() && x.health >= x.max_health() && x.in_love > 0;
+        if self.llama() {
+            // `Llama.canMate`: another llama of either kind.
+            return super::llama::is_llama(partner.kind) && parent(m) && parent(partner);
+        }
+        // (`AbstractHorse.canMate` is false: skeleton horses never mate.)
+        !matches!(self.0, Which::Mule | Which::Skeleton) && parent(m) && parent(partner)
+    }
+
+    fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, _level: &mut dyn EntityLevel) {
+        if matches!(self.0, Which::Mule | Which::Skeleton) {
+            return;
+        }
+        if self.llama() {
+            // `Llama.getBreedOffspring`: the attributes, then the strength (the larger parent's
+            // as a bound, a rare extra point) and the coat of either parent.
+            self.offspring_attributes(e, m, partner, child);
+            let (mine, theirs) = (st(m).strength, ext::state::<State>(partner).map_or(0, |s| s.strength));
+            let mut strength = e.random.next_int_bounded(mine.max(theirs).max(1)) + 1;
+            if e.random.next_float() < 0.03 {
+                strength += 1;
+            }
+            super::llama::set_strength(child, strength);
+            let variant = if e.random.next_bool() { st(m).llama_variant } else { ext::state::<State>(partner).map_or(0, |s| s.llama_variant) };
+            st_mut(child).llama_variant = variant;
+            if self.0 == Which::TraderLlama {
+                // `TraderLlama.makeNewLlama`: the baby stays.
+                child.persistence_required = true;
+            }
+            return;
+        }
+        if self.0 == Which::Horse {
+            let (mine, theirs) = (st(m).type_variant, ext::state::<State>(partner).map_or(0, |s| s.type_variant));
+            let r = e.random.next_int_bounded(9);
+            let variant = if r < 4 {
+                mine & 255
+            } else if r < 8 {
+                theirs & 255
+            } else {
+                e.random.next_int_bounded(7)
+            };
+            let k = e.random.next_int_bounded(5);
+            let markings = if k < 2 {
+                (mine & 65280) >> 8
+            } else if k < 4 {
+                (theirs & 65280) >> 8
+            } else {
+                e.random.next_int_bounded(5)
+            };
+            st_mut(child).type_variant = (variant & 255) | ((markings << 8) & 65280);
+        }
+        self.offspring_attributes(e, m, partner, child);
+    }
+
+    fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+        // `SkeletonHorse.mobInteract`: a wild one ignores everybody.
+        if self.0 == Which::Skeleton && !st(m).tamed {
+            return Some(Outcome::PASS);
+        }
+        let vehicle = !e.passengers.is_empty();
+        let open_inventory = !m.baby() && st(m).tamed && who.sneaking;
+        let dandelion = m.baby() && is(stack, "minecraft:golden_dandelion");
+        if !(vehicle || open_inventory || dandelion) && !stack.is_empty() {
+            if self.is_food(stack.item()) {
+                // `fedFood`.
+                if handle_eating(e, m, level, who, stack) {
+                    return Some(Outcome::success(HeldChange::Consume(1)));
+                }
+                return Some(Outcome::PASS);
+            }
+            if !st(m).tamed {
+                make_mad(e, m, level);
+                return Some(Outcome::success(HeldChange::None));
+            }
+            if self.chested() && !st(m).chest && is(stack, "minecraft:chest") {
+                // `equipChest`.
+                st_mut(m).chest = true;
+                let pitch = (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0;
+                play(e, level, sound(m, "chest"), 1.0, pitch);
+                self.create_inventory(m);
+                return Some(Outcome::success(HeldChange::Consume(1)));
+            }
+        }
+        // `AbstractHorse.mobInteract`.
+        if vehicle || m.baby() {
+            return Some(crate::mob::interact::animal_interact(e, m, level, who, stack));
+        }
+        if st(m).tamed && who.sneaking {
+            // `openCustomInventoryScreen`: the screen of the tame animal, for whoever rides it
+            // or when nobody does.
+            let mut out = Outcome::success(HeldChange::None);
+            out.open_container = e.passengers.is_empty() || e.passengers.contains(&who.id);
+            return Some(out);
+        }
+        // (A llama is not in `#can_equip_saddle`: the saddle does not go on.)
+        if !self.llama() && is(stack, "minecraft:saddle") && st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m) {
+            let mut one = stack.clone();
+            one.set_count(1);
+            st_mut(m).saddle = one;
+            play(e, level, "minecraft:entity.horse.saddle", 0.5, 1.0);
+            return Some(Outcome::success(HeldChange::Consume(1)));
+        }
+        // `equipBodyArmor`: armor from the hand goes on a bare body.
+        if !stack.is_empty() && st(m).body.is_empty() && equippable_in_slot(stack, kiln_item::component::EquipmentSlot::Body, e.type_name) {
+            let mut one = stack.clone();
+            one.set_count(1);
+            let s = st_mut(m);
+            s.body = one.clone();
+            s.body_drop = 2.0;
+            equip_sound(e, level, kiln_item::component::EquipmentSlot::Body, &ItemStack::empty(), &one);
+            return Some(Outcome::success(HeldChange::Consume(1)));
+        }
+        // `doPlayerRide`.
+        st_mut(m).eating = false;
+        clear_standing(m);
+        let mut out = Outcome::success(HeldChange::None);
+        out.ride = true;
+        Some(out)
+    }
+
+    fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
+        let s = st(m);
+        let mut out = Vec::new();
+        if !s.body.is_empty() {
+            out.push((6, s.body.clone()));
+        }
+        if !s.saddle.is_empty() {
+            out.push((7, s.saddle.clone()));
+        }
+        out
+    }
+
+    fn take_extra_equipment_for_drop(&self, m: &mut MobData) -> Vec<(ItemStack, f32)> {
+        let s = st_mut(m);
+        vec![(std::mem::take(&mut s.body), s.body_drop), (std::mem::take(&mut s.saddle), s.saddle_drop)]
+    }
+
+    /// `AbstractHorse.dropEquipment` (the inventory) and `AbstractChestedHorse.dropEquipment` (the
+    /// chest).
+    fn drop_equipment(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let items = std::mem::take(&mut st_mut(m).inventory);
+        for stack in items {
+            if !stack.is_empty() {
+                crate::mob::spawn_at_location(e, level, stack);
+            }
+        }
+        if self.chested() && st(m).chest {
+            if let Some(chest) = ItemStack::of("minecraft:chest", 1) {
+                crate::mob::spawn_at_location(e, level, chest);
+            }
+            st_mut(m).chest = false;
+        }
+    }
+
+    fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
+        let saddle = match r.get("equipment") {
+            Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
+            _ => None,
+        };
+        let body = match r.get("equipment") {
+            Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "body").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
+            _ => None,
+        };
+        let drop_chance = |r: &mut Input, key: &str| match r.get("drop_chances") {
+            Some(Tag::Compound(dc)) => dc.iter().find(|(k, _)| k == key).and_then(|(_, v)| v.as_f64()).map(|f| f as f32),
+            _ => None,
+        };
+        let (saddle_drop, body_drop) = (drop_chance(r, "saddle"), drop_chance(r, "body"));
+        let items = r.get("Items").cloned();
+        let eating = r.bool_or("EatingHaystack", false);
+        let bred = r.bool_or("Bred", false);
+        let temper = r.int_or("Temper", 0);
+        let tamed = r.bool_or("Tame", false);
+        let owner = r.uuid("Owner");
+        let variant = r.int_or("Variant", 0);
+        let chest = r.bool_or("ChestedHorse", false);
+        let (trap, trap_time) = if self.0 == Which::Skeleton { (r.bool_or("SkeletonTrap", false), r.int_or("SkeletonTrapTime", 0)) } else { (false, 0) };
+        let strength = r.int_or("Strength", 0);
+        let despawn_delay = r.int_or("DespawnDelay", 47999);
+        let s = st_mut(m);
+        if self.llama() {
+            // `Llama.readAdditionalSaveData`: the strength first (the inventory depends on it),
+            // then the coat.
+            s.strength = strength.clamp(1, 5);
+            s.llama_variant = super::llama::variant_by_id(variant);
+            if self.0 == Which::TraderLlama {
+                s.despawn_delay = despawn_delay;
+            }
+        }
+        s.eating = eating;
+        s.bred = bred;
+        s.temper = temper;
+        s.tamed = tamed;
+        s.owner = owner;
+        if let Some(sd) = saddle {
+            s.saddle = sd;
+        }
+        if let Some(b) = body {
+            s.body = b;
+        }
+        if let Some(d) = saddle_drop {
+            s.saddle_drop = d;
+        }
+        if let Some(d) = body_drop {
+            s.body_drop = d;
+        }
+        if self.0 == Which::Horse {
+            s.type_variant = variant;
+        } else if self.chested() {
+            s.chest = chest;
+        }
+        if self.chested() {
+            // `AbstractChestedHorse.readAdditionalSaveData`: `createInventory`, then the `Items`.
+            self.create_inventory(m);
+            let n = st(m).inventory.len();
+            if st(m).chest {
+                let list = kiln_inventory::persist::ItemList::load(items.as_ref(), n);
+                let s = st_mut(m);
+                s.inventory = list.stacks;
+                s.inv_undecoded = list.undecoded;
+            }
+        }
+        if self.0 == Which::Skeleton {
+            let s = st_mut(m);
+            s.trap_time = trap_time;
+            super::skeleton_horse::set_trap(m, trap);
+        }
+    }
+
+    fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
+        let s = st(m);
+        for (key, stack) in [("body", &s.body), ("saddle", &s.saddle)] {
+            if stack.is_empty() {
+                continue;
+            }
+            let entry = (key.to_owned(), stack.to_nbt());
+            match o.0.iter_mut().find(|(k, _)| k == "equipment") {
+                Some((_, Tag::Compound(eq))) => eq.push(entry),
+                _ => o.put("equipment", Tag::Compound(vec![entry])),
+            }
+        }
+        for (key, chance) in [("saddle", s.saddle_drop), ("body", s.body_drop)] {
+            if chance != 0.085 {
+                let entry = (key.to_owned(), Tag::Float(chance));
+                match o.0.iter_mut().find(|(k, _)| k == "drop_chances") {
+                    Some((_, Tag::Compound(dc))) => dc.push(entry),
+                    _ => o.put("drop_chances", Tag::Compound(vec![entry])),
+                }
+            }
+        }
+        o.put("EatingHaystack", Tag::Byte(s.eating as i8));
+        o.put("Bred", Tag::Byte(s.bred as i8));
+        o.put("Temper", Tag::Int(s.temper));
+        o.put("Tame", Tag::Byte(s.tamed as i8));
+        if let Some(u) = s.owner {
+            o.put("Owner", uuid_to_tag(u));
+        }
+        if self.llama() {
+            o.put("Variant", Tag::Int(s.llama_variant));
+            o.put("Strength", Tag::Int(s.strength));
+            if self.0 == Which::TraderLlama {
+                o.put("DespawnDelay", Tag::Int(s.despawn_delay));
+            }
+        }
+        if self.0 == Which::Horse {
+            o.put("Variant", Tag::Int(s.type_variant));
+        } else if self.chested() {
+            o.put("ChestedHorse", Tag::Byte(s.chest as i8));
+            if s.chest {
+                o.put("Items", kiln_inventory::persist::ItemList { stacks: s.inventory.clone(), undecoded: s.inv_undecoded.clone() }.save());
+            }
+        }
+        if self.0 == Which::Skeleton {
+            o.put("SkeletonTrap", Tag::Byte(s.trap as i8));
+            o.put("SkeletonTrapTime", Tag::Int(s.trap_time));
+        }
+    }
+
+    fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {
+        let s = st(m);
+        let flags = (if s.tamed { 2 } else { 0 }) | (if s.bred { 8 } else { 0 }) | (if s.eating { 16 } else { 0 }) | (if s.standing { 32 } else { 0 }) | (if s.open_mouth { 64 } else { 0 });
+        d.set(data::abstract_horse::ID_FLAGS, &DataValue::Byte(flags as i8));
+        if self.0 == Which::Horse {
+            d.set(data::horse::ID_TYPE_VARIANT, &DataValue::Int(s.type_variant));
+        } else if self.chested() {
+            d.set(data::abstract_chested_horse::ID_CHEST, &DataValue::Boolean(s.chest));
+        }
+        if self.llama() {
+            d.set(data::llama::STRENGTH, &DataValue::Int(s.strength));
+            d.set(data::llama::VARIANT, &DataValue::Int(s.llama_variant));
+        }
+    }
+}
+
+impl Equine {
+    /// `setOffspringAttributes`: health, jump strength, speed.
+    fn offspring_attributes(&self, e: &mut Entity, m: &MobData, partner: &MobData, child: &mut MobData) {
+        let min_speed = (0.44999998807907104f64 * 0.25) as f32 as f64;
+        let max_speed = ((0.44999998807907104f64 + 0.9) * 0.25) as f32 as f64;
+        let min_jump = 0.4000000059604645f32 as f64;
+        let max_jump = (0.4000000059604645f64 + 0.6) as f32 as f64;
+        for (a, min, max) in [(MaxHealth, 15.0, 30.0), (JumpStrength, min_jump, max_jump), (MovementSpeed, min_speed, max_speed)] {
+            let v = offspring_attribute(m.attrs.base(a), partner.attrs.base(a), min, max, &mut e.random);
+            set_base(child, a, v);
+        }
+    }
+
+    /// `TraderLlama.maybeDespawn`: a wild trader llama goes after its despawn delay.
+    fn maybe_despawn(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        // `canDespawn`: not tame, not led (by anyone but a wandering trader), not carrying
+        // exactly one player, not kept young, not persistent.
+        let one_player = e.passengers.len() == 1 && level.player(e.passengers[0]).is_some();
+        let leashed_elsewhere = super::llama::is_leashed(m);
+        if st(m).tamed || leashed_elsewhere || one_player || m.age_locked || m.persistence_required {
+            return;
+        }
+        let s = st_mut(m);
+        s.despawn_delay -= 1;
+        if s.despawn_delay <= 0 {
+            e.discard();
+        }
+    }
+
+    fn ai_step_horse(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if !crate::mob::is_alive(e, m) {
             return;
         }
         if e.random.next_int_bounded(900) == 0 && m.death_time == 0 {
             heal(m, 1.0);
         }
-        // `canEatGrass`.
-        if !st(m).eating
+        // `canEatGrass` (llamas do not graze).
+        if !self.llama()
+            && !st(m).eating
             && e.passengers.is_empty()
             && e.random.next_int_bounded(300) == 0
             && crate::blocks::block_name(level.block(e.block_position().below())) == "minecraft:grass_block"
@@ -377,14 +995,7 @@ impl Kind for Equine {
         }
     }
 
-    fn custom_server_ai_step(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
-        if self.0 == Which::Skeleton {
-            // The trap goal that fired took itself off the selector (`setTrap(false)`).
-            super::skeleton_horse::drop_spent_goal(m);
-        }
-    }
-
-    fn post_tick(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+    fn post_tick_horse(&self, m: &mut MobData) {
         let s = st_mut(m);
         if s.mouth_counter > 0 {
             s.mouth_counter += 1;
@@ -452,256 +1063,19 @@ impl Kind for Equine {
             }
         }
     }
-
-    fn after_hurt(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, _source: &DamageSource, _amount: f32, hurt: bool) {
-        if hurt && e.random.next_int_bounded(3) == 0 {
-            stand(m);
-        }
-    }
-
-    fn steerable_by(&self, m: &MobData, _rider: &PlayerView) -> bool {
-        !st(m).saddle.is_empty()
-    }
-
-    fn tick_ridden(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, rider: &PlayerView) {
-        // `getRiddenRotation`: the rider's yaw, half its pitch.
-        e.y_rot = rider.yaw % 360.0;
-        e.x_rot = (rider.pitch * 0.5) % 360.0;
-        e.y_rot_o = e.y_rot;
-        m.y_body_rot = e.y_rot;
-        m.y_head_rot = e.y_rot;
-    }
-
-    fn passenger_offset(&self, e: &Entity, m: &MobData) -> Option<Vec3> {
-        let (h, z) = self.attach_height(m);
-        let base = crate::ride::y_rot(Vec3::new(0.0, h, z), -e.y_rot * 0.017453292);
-        let a = st(m).stand_anim_o as f64;
-        let stand = crate::ride::y_rot(Vec3::new(0.0, 0.15 * a, -0.7 * a), -e.y_rot * 0.017453292);
-        Some(base + stand)
-    }
-
-    fn dimensions(&self, m: &MobData, base: (f32, f32, f32)) -> (f32, f32, f32) {
-        if !m.baby() {
-            return base;
-        }
-        let s = if self.chested() { 0.5 } else { 0.7 };
-        (base.0 * s, base.1 * s, base.2 * s)
-    }
-
-    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &SpawnContext, group: &mut GroupData) {
-        if self.0 == Which::Skeleton {
-            // `SkeletonHorse.randomizeAttributes`: only the jump strength.
-            let jump = random_jump(r);
-            set_base(m, JumpStrength, jump);
-            ext::ageable_finalize(e, m, r, group, 0.2);
-            ext::mob_finalize(m, r);
-            return;
-        }
-        let chance = if self.0 == Which::Horse {
-            // `HorseGroupData`: one coat for the group, markings each.
-            let variant = match group.variant {
-                Some(v) => v,
-                None => {
-                    let v = r.next_int_bounded(7);
-                    group.variant = Some(v);
-                    v
-                }
-            };
-            let markings = r.next_int_bounded(5);
-            st_mut(m).type_variant = (variant & 255) | ((markings << 8) & 65280);
-            0.05
-        } else {
-            0.2
-        };
-        // `randomizeAttributes`.
-        let health = random_health(r);
-        set_base(m, MaxHealth, health as f64);
-        if self.0 == Which::Horse {
-            let speed = random_speed(r);
-            set_base(m, MovementSpeed, speed);
-            let jump = random_jump(r);
-            set_base(m, JumpStrength, jump);
-        }
-        ext::ageable_finalize(e, m, r, group, chance);
-        ext::mob_finalize(m, r);
-    }
-
-    fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
-        // `canParent` on both (vehicles are not checked here); mules never breed.
-        let parent = |x: &MobData| is_tamed(x) && !x.baby() && x.health >= x.max_health() && x.in_love > 0;
-        // (`AbstractHorse.canMate` is false: skeleton horses never mate.)
-        !matches!(self.0, Which::Mule | Which::Skeleton) && parent(m) && parent(partner)
-    }
-
-    fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, _level: &mut dyn EntityLevel) {
-        if matches!(self.0, Which::Mule | Which::Skeleton) {
-            return;
-        }
-        if self.0 == Which::Horse {
-            let (mine, theirs) = (st(m).type_variant, ext::state::<State>(partner).map_or(0, |s| s.type_variant));
-            let r = e.random.next_int_bounded(9);
-            let variant = if r < 4 {
-                mine & 255
-            } else if r < 8 {
-                theirs & 255
-            } else {
-                e.random.next_int_bounded(7)
-            };
-            let k = e.random.next_int_bounded(5);
-            let markings = if k < 2 {
-                (mine & 65280) >> 8
-            } else if k < 4 {
-                (theirs & 65280) >> 8
-            } else {
-                e.random.next_int_bounded(5)
-            };
-            st_mut(child).type_variant = (variant & 255) | ((markings << 8) & 65280);
-        }
-        // `setOffspringAttributes`: health, jump strength, speed.
-        let min_speed = (0.44999998807907104f64 * 0.25) as f32 as f64;
-        let max_speed = ((0.44999998807907104f64 + 0.9) * 0.25) as f32 as f64;
-        let min_jump = 0.4000000059604645f32 as f64;
-        let max_jump = (0.4000000059604645f64 + 0.6) as f32 as f64;
-        for (a, min, max) in [(MaxHealth, 15.0, 30.0), (JumpStrength, min_jump, max_jump), (MovementSpeed, min_speed, max_speed)] {
-            let v = offspring_attribute(m.attrs.base(a), partner.attrs.base(a), min, max, &mut e.random);
-            set_base(child, a, v);
-        }
-        child.health = child.max_health();
-    }
-
-    fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
-        // `SkeletonHorse.mobInteract`: a wild one ignores everybody.
-        if self.0 == Which::Skeleton && !st(m).tamed {
-            return Some(Outcome::PASS);
-        }
-        let vehicle = !e.passengers.is_empty();
-        let open_inventory = !m.baby() && st(m).tamed && who.sneaking;
-        let dandelion = m.baby() && is(stack, "minecraft:golden_dandelion");
-        if !(vehicle || open_inventory || dandelion) && !stack.is_empty() {
-            if self.is_food(stack.item()) {
-                // `fedFood`.
-                if handle_eating(e, m, level, who, stack) {
-                    return Some(Outcome::success(HeldChange::Consume(1)));
-                }
-                return Some(Outcome::PASS);
-            }
-            if !st(m).tamed {
-                make_mad(e, m, level);
-                return Some(Outcome::success(HeldChange::None));
-            }
-            if self.chested() && !st(m).chest && is(stack, "minecraft:chest") {
-                st_mut(m).chest = true;
-                let pitch = (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0;
-                play(e, level, sound(m, "chest"), 1.0, pitch);
-                return Some(Outcome::success(HeldChange::Consume(1)));
-            }
-        }
-        // `AbstractHorse.mobInteract`.
-        if vehicle || m.baby() {
-            return Some(crate::mob::interact::animal_interact(e, m, level, who, stack));
-        }
-        if st(m).tamed && who.sneaking {
-            // The inventory screen is not modelled.
-            return Some(Outcome::success(HeldChange::None));
-        }
-        if is(stack, "minecraft:saddle") && st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m) {
-            let mut one = stack.clone();
-            one.set_count(1);
-            st_mut(m).saddle = one;
-            play(e, level, "minecraft:entity.horse.saddle", 0.5, 1.0);
-            return Some(Outcome::success(HeldChange::Consume(1)));
-        }
-        // `doPlayerRide`.
-        st_mut(m).eating = false;
-        clear_standing(m);
-        let mut out = Outcome::success(HeldChange::None);
-        out.ride = true;
-        Some(out)
-    }
-
-    fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
-        let s = st(m);
-        if s.saddle.is_empty() { Vec::new() } else { vec![(7, s.saddle.clone())] }
-    }
-
-    fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
-        let saddle = match r.get("equipment") {
-            Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
-            _ => None,
-        };
-        let eating = r.bool_or("EatingHaystack", false);
-        let bred = r.bool_or("Bred", false);
-        let temper = r.int_or("Temper", 0);
-        let tamed = r.bool_or("Tame", false);
-        let owner = r.uuid("Owner");
-        let variant = r.int_or("Variant", 0);
-        let chest = r.bool_or("ChestedHorse", false);
-        let (trap, trap_time) = if self.0 == Which::Skeleton { (r.bool_or("SkeletonTrap", false), r.int_or("SkeletonTrapTime", 0)) } else { (false, 0) };
-        let s = st_mut(m);
-        s.eating = eating;
-        s.bred = bred;
-        s.temper = temper;
-        s.tamed = tamed;
-        s.owner = owner;
-        if let Some(sd) = saddle {
-            s.saddle = sd;
-        }
-        if self.0 == Which::Horse {
-            s.type_variant = variant;
-        } else if self.chested() {
-            s.chest = chest;
-        }
-        if self.0 == Which::Skeleton {
-            s.trap_time = trap_time;
-            super::skeleton_horse::set_trap(m, trap);
-        }
-    }
-
-    fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
-        let s = st(m);
-        if !s.saddle.is_empty() {
-            let entry = ("saddle".to_owned(), s.saddle.to_nbt());
-            match o.0.iter_mut().find(|(k, _)| k == "equipment") {
-                Some((_, Tag::Compound(eq))) => eq.push(entry),
-                _ => o.put("equipment", Tag::Compound(vec![entry])),
-            }
-        }
-        o.put("EatingHaystack", Tag::Byte(s.eating as i8));
-        o.put("Bred", Tag::Byte(s.bred as i8));
-        o.put("Temper", Tag::Int(s.temper));
-        o.put("Tame", Tag::Byte(s.tamed as i8));
-        if let Some(u) = s.owner {
-            o.put("Owner", uuid_to_tag(u));
-        }
-        if self.0 == Which::Horse {
-            o.put("Variant", Tag::Int(s.type_variant));
-        } else if self.chested() {
-            o.put("ChestedHorse", Tag::Byte(s.chest as i8));
-        }
-        if self.0 == Which::Skeleton {
-            o.put("SkeletonTrap", Tag::Byte(s.trap as i8));
-            o.put("SkeletonTrapTime", Tag::Int(s.trap_time));
-        }
-    }
-
-    fn entity_data(&self, _e: &Entity, m: &MobData, d: &mut EntityData) {
-        let s = st(m);
-        let flags = (if s.tamed { 2 } else { 0 }) | (if s.bred { 8 } else { 0 }) | (if s.eating { 16 } else { 0 }) | (if s.standing { 32 } else { 0 }) | (if s.open_mouth { 64 } else { 0 });
-        d.set(data::abstract_horse::ID_FLAGS, &DataValue::Byte(flags as i8));
-        if self.0 == Which::Horse {
-            d.set(data::horse::ID_TYPE_VARIANT, &DataValue::Int(s.type_variant));
-        } else if self.chested() {
-            d.set(data::abstract_chested_horse::ID_CHEST, &DataValue::Boolean(s.chest));
-        }
-    }
 }
 
 /// `RunAroundLikeCrazyGoal`: an untamed horse with a rider runs about and, now and then, either
 /// accepts a player rider (its temper against a roll) or throws the rider off.
 #[derive(Clone, Debug)]
-struct RunAroundLikeCrazyGoal {
+pub(super) struct RunAroundLikeCrazyGoal {
     speed: f64,
     pos: Vec3,
+}
+
+/// `new RunAroundLikeCrazyGoal(horse, speed)`.
+pub(super) fn run_around_like_crazy(speed: f64) -> RunAroundLikeCrazyGoal {
+    RunAroundLikeCrazyGoal { speed, pos: Vec3::ZERO }
 }
 
 impl CustomGoal for RunAroundLikeCrazyGoal {
@@ -737,7 +1111,8 @@ impl CustomGoal for RunAroundLikeCrazyGoal {
         let Some(&first) = e.passengers.first() else { return };
         if let Some(p) = level.player(first) {
             let temper = st(m).temper;
-            if e.random.next_int_bounded(100) < temper {
+            let max = max_temper(m);
+            if e.random.next_int_bounded(max) < temper {
                 // `tameWithName`.
                 let s = st_mut(m);
                 s.owner = Some(p.uuid);
@@ -748,7 +1123,7 @@ impl CustomGoal for RunAroundLikeCrazyGoal {
                 return;
             }
             let s = st_mut(m);
-            s.temper = (s.temper + 5).clamp(0, 100);
+            s.temper = (s.temper + 5).clamp(0, max);
         }
         // `ejectPassengers` (players find out in the level's passenger pass).
         for id in std::mem::take(&mut e.passengers).into_iter().rev() {
@@ -796,6 +1171,84 @@ impl CustomGoal for RandomStandGoal {
     }
 }
 
+/// `Equippable.canBeEquippedBy` and the slot: whether `stack` goes in `slot` of a `entity_type`.
+pub fn equippable_in_slot(stack: &ItemStack, slot: kiln_item::component::EquipmentSlot, entity_type: &str) -> bool {
+    use kiln_item::HolderSet;
+    let Some(e) = stack.get(kiln_item::keys::EQUIPPABLE) else { return false };
+    if e.slot != slot {
+        return false;
+    }
+    let Some(allowed) = &e.allowed_entities else { return true };
+    let Some(id) = kiln_item::registry::ENTITY_TYPE.id(entity_type) else { return false };
+    match allowed {
+        HolderSet::Direct(ids) => ids.contains(&id),
+        HolderSet::Tag(tag) => kiln_inventory::tags::contains("minecraft:entity_type", tag.as_str(), id),
+    }
+}
+
+/// `onEquipItem` for a mount: the equip sound (the saddle's own for a saddle), with the seed
+/// drawn from the animal's random, unless the same item was swapped for itself.
+fn equip_sound(e: &mut Entity, level: &mut dyn EntityLevel, slot: kiln_item::component::EquipmentSlot, old: &ItemStack, new: &ItemStack) {
+    use kiln_inventory::stack::same_item_same_components as same;
+    if (new.is_empty() && old.is_empty()) || same(old, new) || e.first_tick {
+        return;
+    }
+    let Some(equippable) = new.get(kiln_item::keys::EQUIPPABLE) else { return };
+    if e.silent || equippable.slot != slot {
+        return;
+    }
+    let sound = if slot == kiln_item::component::EquipmentSlot::Saddle {
+        "minecraft:entity.horse.saddle"
+    } else {
+        match &equippable.equip_sound {
+            kiln_item::Holder::Reference(id) => kiln_data::builtin_entries("minecraft:sound_event").and_then(|n| n.get(*id as usize).copied()).unwrap_or("minecraft:item.armor.equip_generic"),
+            kiln_item::Holder::Direct(_) => "minecraft:item.armor.equip_generic",
+        }
+    };
+    e.random.next_long();
+    level.emit(Event::Sound { pos: e.position(), sound, source: "neutral", volume: 1.0, pitch: 1.0 });
+}
+
+/// The slots a mount's screen shows: saddle, body armor, then the chest's.
+pub fn mount_slots(m: &MobData) -> Option<Vec<ItemStack>> {
+    let s = ext::state::<State>(m)?;
+    let mut v = vec![s.saddle.clone(), s.body.clone()];
+    v.extend(s.inventory.iter().cloned());
+    Some(v)
+}
+
+/// What the screen's slots now say, taken into the animal (the changes of the saddle and the
+/// armor sound at the animal's next tick).
+pub fn set_mount_slots(m: &mut MobData, items: &[ItemStack]) {
+    let Some(s) = ext::state_mut::<State>(m) else { return };
+    if items.len() != 2 + s.inventory.len() {
+        return;
+    }
+    if !same_stack(&s.saddle, &items[0]) {
+        s.pending_equip.push((7, s.saddle.clone(), items[0].clone()));
+    }
+    if !same_stack(&s.body, &items[1]) {
+        s.pending_equip.push((6, s.body.clone(), items[1].clone()));
+    }
+    s.saddle = items[0].clone();
+    s.body = items[1].clone();
+    s.inventory.clone_from_slice(&items[2..]);
+}
+
+fn same_stack(a: &ItemStack, b: &ItemStack) -> bool {
+    kiln_inventory::stack::same_item_same_components(a, b) && a.count() == b.count()
+}
+
+/// `getInventoryColumns`, whether the saddle slot can be used (`canUseSlot(SADDLE)`: grown, tame
+/// and alive) and how often the inventory was made anew, of the mount `e`.
+pub fn mount_info(e: &Entity, m: &MobData) -> Option<(usize, bool, u32)> {
+    let s = ext::state::<State>(m)?;
+    let columns = s.inventory.len() / 3;
+    // (`Llama.canUseSlot`: every slot, always.)
+    let saddle_usable = super::llama::is_llama(m.kind) || (crate::mob::is_alive(e, m) && !m.baby() && s.tamed);
+    Some((columns, saddle_usable, s.inv_serial))
+}
+
 /// `handleStartJump` (a rider's jump key on a saddled mount): the horse rears; its jump sound.
 pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
     if m.kind == MobKind::Camel {
@@ -812,5 +1265,5 @@ pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
 
 /// Whether `kind` is one of the horse family.
 pub fn is_equine(kind: MobKind) -> bool {
-    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule | MobKind::SkeletonHorse)
+    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule | MobKind::SkeletonHorse | MobKind::Llama | MobKind::TraderLlama)
 }

@@ -1560,8 +1560,7 @@ pub(crate) fn interact_mob(
         // `Player.interactOn` for a spectator: a `MenuProvider` opens its menu (a minecart whose
         // loot table is unrolled has none for them), nothing else reacts.
         if p.game_mode == 3 {
-            let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(phys);
-            return cart.and_then(|m| m.contents.as_ref()).is_some_and(|c| c.loot_table.is_none());
+            return kiln_entity::ext_entity::container(phys).is_some_and(|c| c.loot_table.is_none());
         }
     }
     let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
@@ -2477,6 +2476,7 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         // -- wp28: axolotl and goat
         DamageKind::DryOut => ("minecraft:dry_out", "death.attack.dryout"),
         DamageKind::NoAggroMobAttack => ("minecraft:mob_attack_no_aggro", "death.attack.mob"),
+        DamageKind::Spit => ("minecraft:spit", "death.attack.mob"),
 
     }
 }

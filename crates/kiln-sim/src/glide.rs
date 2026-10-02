@@ -21,7 +21,7 @@ pub(crate) fn can_glide_using(stack: &ItemStack, slot: EquipmentSlot) -> bool {
 }
 
 impl Player {
-    fn worn(&self, slot: EquipmentSlot) -> &ItemStack {
+    pub(crate) fn worn(&self, slot: EquipmentSlot) -> &ItemStack {
         kiln_inventory::Container::item(&self.inv, kiln_inventory::inventory::equipment_index(slot, self.inv.selected))
     }
 
@@ -75,6 +75,16 @@ impl Player {
             self.spin_damage = 0.0;
             self.spin_item = ItemStack::empty();
         }
+        // `updatePlayerPose` afterwards.
+        self.spin_pose = self.spin_ticks > 0;
+    }
+
+    /// A spin that runs into a wall (the client reports a horizontal collision) and nothing else
+    /// ends there, without a bounce (`autoSpinAttackTicks = 0`).
+    pub(crate) fn end_spin_on_collision(&mut self) {
+        self.spin_ticks = 0;
+        self.meta_dirty = true;
+        self.self_meta_dirty = true;
     }
 
     /// The spin hit something (`autoSpinAttackTicks = 0`, `setDeltaMovement(delta * -0.2)`): the

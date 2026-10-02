@@ -599,6 +599,17 @@ pub trait Kind: Sync + Send {
         let _ = m;
         Vec::new()
     }
+    /// The equipment beyond the six slots that `dropCustomDeathLoot` looks at (`BODY`, then `SADDLE`),
+    /// taken off the mob as (stack, drop chance).
+    fn take_extra_equipment_for_drop(&self, m: &mut MobData) -> Vec<(ItemStack, f32)> {
+        let _ = m;
+        Vec::new()
+    }
+    /// `dropEquipment`: what the type drops besides equipment and loot (a horse's inventory and
+    /// chest).
+    fn drop_equipment(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let _ = (e, m, level);
+    }
     /// `doPush(other)` before the push itself (iron golems pick fights with monsters they bump).
     fn do_push(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, other: i32) {
         let _ = (e, m, level, other);

@@ -139,6 +139,8 @@ public class MobVectors {
                 player.setYHeadRot((float) a.x);
                 player.setXRot((float) a.y);
             }
+            // wp30 llamas: mob `mob` is led by entity `amp` (an index into the scenario's mobs, -2 the player).
+            case "leash" -> ((net.minecraft.world.entity.Leashable) tracked.get(a.mob)).setLeashedTo(a.amp == -2 ? player : tracked.get(a.amp), true);
             case "interact" -> {
                 player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what))));
                 player.interactOn(tracked.get(a.mob), net.minecraft.world.InteractionHand.MAIN_HAND, tracked.get(a.mob).position());
@@ -1571,8 +1573,217 @@ public class MobVectors {
 
         // -- wp29: mob riders steer their mounts
         scenariosRiders(out);
+        // -- wp30: llamas
+        scenariosLlama(out);
 
         return out;
+    }
+
+    // ---------------------------------------------------------- wp30: llamas and trader llamas
+    static void scenariosLlama(List<Scenario> out) {
+        // Idling: coats, strengths, a baby, a trader llama (which despawns only after 48000 ticks).
+        String[] idleKinds = {"llama", "llama", "trader_llama", "llama", "trader_llama"};
+        String[] idleNbt = {"{Strength:3,Variant:1}", "{Strength:5,Variant:3}", "{Strength:2,Variant:2}", "{Strength:1}", "{Strength:4,Variant:0,DespawnDelay:30}"};
+        for (int i = 0; i < idleKinds.length; i++) {
+            Scenario s = new Scenario("idle_" + idleKinds[i] + "_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:" + idleKinds[i], 0.5, BY, 0.5, 35f * i, 31000L + 13 * i);
+            m.nbt = idleNbt[i];
+            if (i == 3) m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = i + 1;
+            s.ticks = i == 4 ? 400 : 600;
+            out.add(s);
+        }
+        // Tempted by hay bales, not by wheat.
+        for (String[] t : new String[][] {{"llama", "minecraft:hay_block"}, {"llama", "minecraft:wheat"}, {"trader_llama", "minecraft:hay_block"}}) {
+            Scenario s = new Scenario("tempt_" + t[0] + "_" + t[1].substring(10));
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:" + t[0], 0.5, BY, 0.5, 0f, 31100);
+            m.nbt = "{Strength:2}";
+            s.mobs.add(m);
+            s.player = new double[] {7.5, BY, 0.5};
+            s.playerCreative = true;
+            s.playerMainHand = t[1];
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Fed: the temper rises with wheat and hay bales (and health, growth); a tame llama fed a
+        // hay bale falls in love.
+        {
+            Scenario s = new Scenario("feed_llama_wild");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:llama", 0.5, BY, 0.5, 0f, 31200);
+            m.nbt = "{Strength:3,Health:30f}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            interact(s, 5, 0, "minecraft:wheat");
+            interact(s, 15, 0, "minecraft:hay_block");
+            interact(s, 25, 0, "minecraft:wheat");
+            interact(s, 35, 0, "minecraft:sugar");
+            interact(s, 45, 0, "minecraft:stick");
+            interact(s, 55, 0, "minecraft:hay_block");
+            s.ticks = 120;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("feed_llama_tame");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:llama", 0.5, BY, 0.5, 0f, 31210);
+            m.nbt = "{Strength:3,Health:30f,Tame:1b,Temper:20}";
+            s.mobs.add(m);
+            MobSpec t = new MobSpec("minecraft:trader_llama", 4.5, BY, 0.5, 90f, 31211);
+            t.nbt = "{Strength:2,Health:40f,Tame:1b}";
+            s.mobs.add(t);
+            s.player = new double[] {2.5, BY, 3.5};
+            s.playerCreative = true;
+            interact(s, 5, 0, "minecraft:wheat");
+            interact(s, 15, 0, "minecraft:hay_block");
+            interact(s, 25, 1, "minecraft:hay_block");
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("feed_llama_baby");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:llama", 0.5, BY, 0.5, 0f, 31220);
+            m.nbt = "{Strength:2}";
+            m.age = -24000;
+            s.mobs.add(m);
+            s.player = new double[] {2.5, BY, 0.5};
+            s.playerCreative = true;
+            interact(s, 5, 0, "minecraft:wheat");
+            interact(s, 15, 0, "minecraft:hay_block");
+            s.ticks = 100;
+            out.add(s);
+        }
+        // Bred: two tame llamas in love (a trader llama's baby stays).
+        String[][] pairs = {{"llama", "llama"}, {"trader_llama", "trader_llama"}, {"llama", "trader_llama"}};
+        for (int i = 0; i < pairs.length; i++) {
+            Scenario s = new Scenario("breed_llama_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:" + pairs[i][0], 0.5, BY, 0.5, 20f, 31300L + i);
+            MobSpec m2 = new MobSpec("minecraft:" + pairs[i][1], 3.5, BY, 1.5, 200f, 31310L + i);
+            m1.nbt = "{Strength:4,Variant:1,Tame:1b,Health:53f}";
+            m2.nbt = "{Strength:2,Variant:3,Tame:1b,Health:53f}";
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 70 + i;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A baby follows an adult and grows up.
+        {
+            Scenario s = new Scenario("follow_parent_llama");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec baby = new MobSpec("minecraft:llama", 0.5, BY, 0.5, 0f, 31250);
+            baby.nbt = "{Strength:1}";
+            baby.age = -600;
+            MobSpec adult = new MobSpec("minecraft:llama", 6.5, BY, 2.5, 90f, 31251);
+            adult.nbt = "{Strength:3}";
+            s.mobs.add(baby);
+            s.mobs.add(adult);
+            s.player = new double[] {12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 75;
+            s.ticks = 800;
+            out.add(s);
+        }
+        // Hurt by the player: the llama spits at it (one spit per grievance) or runs.
+        String[] spitKinds = {"llama", "trader_llama", "llama"};
+        for (int i = 0; i < spitKinds.length; i++) {
+            Scenario s = new Scenario("spit_" + spitKinds[i] + "_" + i);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:" + spitKinds[i], 0.5, BY, 0.5, 70f * i, 31400L + 7 * i);
+            m.nbt = "{Strength:" + (i + 2) + ",Variant:" + i + "}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5 + i, BY, 0.5 + i};
+            s.hurts.put(5, new double[] {0, 1.0});
+            if (i == 2) s.hurts.put(120, new double[] {0, 1.0});
+            s.levelSeed = 80 + i;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Wolves and llamas: a wild wolf keeps away (by the llama's strength), a llama fights wolves
+        // that come near.
+        for (int i = 0; i < 4; i++) {
+            Scenario s = new Scenario("wolf_llama_" + i);
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec llama = new MobSpec("minecraft:" + (i == 3 ? "trader_llama" : "llama"), 0.5, BY, 0.5, 0f, 31500L + i);
+            llama.nbt = "{Strength:" + (i == 0 ? 5 : i == 1 ? 3 : i == 2 ? 1 : 2) + "}";
+            s.mobs.add(llama);
+            s.mobs.add(new MobSpec("minecraft:wolf", 4.5 - i, BY, 2.5, 120f, 31510L + i));
+            s.player = new double[] {14.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 90 + i;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A trader llama picks fights with zombies.
+        {
+            Scenario s = new Scenario("trader_llama_zombie");
+            floor(s, 20, "minecraft:grass_block");
+            MobSpec llama = new MobSpec("minecraft:trader_llama", 0.5, BY, 0.5, 0f, 31600);
+            llama.nbt = "{Strength:3}";
+            s.mobs.add(llama);
+            s.mobs.add(new MobSpec("minecraft:zombie", 7.5, BY, 0.5, 90f, 31601));
+            s.player = new double[] {18.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 99;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A caravan: the head is led by the player (it stays put), the others join the tail of the
+        // chain and follow it.
+        String[][] caravans = {{"llama", "llama", "llama"}, {"trader_llama", "llama", "trader_llama"}};
+        for (int i = 0; i < caravans.length; i++) {
+            Scenario s = new Scenario("caravan_llama_" + i);
+            floor(s, 24, "minecraft:grass_block");
+            double[][] at = {{0.5, 0.5}, {7.5, 0.5}, {10.5, 5.5}};
+            for (int k = 0; k < 3; k++) {
+                MobSpec m = new MobSpec("minecraft:" + caravans[i][k], at[k][0], BY, at[k][1], 90f * k, 31650L + 10 * i + k);
+                m.nbt = k == 0 ? "{Strength:3,NoAI:1b}" : "{Strength:2}";
+                s.mobs.add(m);
+            }
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            Action lead = new Action(0, "leash");
+            lead.mob = 0;
+            lead.amp = -2;
+            lead.what = "";
+            s.actions.add(lead);
+            s.levelSeed = 120 + i;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Death: the chest, its items and the carpet drop (guaranteed or by their chances).
+        String[] gearKinds = {"llama", "llama", "trader_llama", "llama"};
+        String[] gear = {
+            "{Strength:3,Tame:1b,NoAI:1b,ChestedHorse:1b,Items:[{Slot:0b,id:\"minecraft:diamond\",count:3},{Slot:4b,id:\"minecraft:stick\",count:60},{Slot:8b,id:\"minecraft:apple\",count:2}],equipment:{body:{id:\"minecraft:red_carpet\",count:1}},drop_chances:{body:2.0f}}",
+            "{Strength:5,Tame:1b,NoAI:1b,ChestedHorse:1b,Items:[{Slot:2b,id:\"minecraft:iron_ingot\",count:64},{Slot:3b,id:\"minecraft:iron_ingot\",count:64},{Slot:14b,id:\"minecraft:iron_ingot\",count:12}],equipment:{body:{id:\"minecraft:white_carpet\",count:1}}}",
+            "{Strength:2,NoAI:1b,ChestedHorse:1b,Items:[{Slot:0b,id:\"minecraft:emerald\",count:7},{Slot:5b,id:\"minecraft:gold_ingot\",count:9}],equipment:{body:{id:\"minecraft:blue_carpet\",count:1}},drop_chances:{body:2.0f}}",
+            "{Strength:4,NoAI:1b}",
+        };
+        for (int i = 0; i < gear.length; i++) {
+            Scenario s = new Scenario("die_" + gearKinds[i] + "_gear_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:" + gearKinds[i], 0.5, BY, 0.5, 20f * i, 31700L + i);
+            m.nbt = gear[i];
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 100.0});
+            s.levelSeed = 140 + i;
+            s.ticks = 60;
+            out.add(s);
+        }
     }
 
     // ---------------------------------------------------------- wp25: skeleton horses and the trap
@@ -1915,6 +2126,27 @@ public class MobVectors {
             s.playerCreative = true;
             s.playerMainHand = "minecraft:golden_carrot";
             s.ticks = 300;
+            out.add(s);
+        }
+        // wp30: chested equines and their gear when they die (a player kills them): the chest, the
+        // slots, the saddle and the body armor, with guaranteed and default drop chances.
+        String[] gear = {
+            "{Tame:1b,NoAI:1b,ChestedHorse:1b,Items:[{Slot:0b,id:\"minecraft:diamond\",count:3},{Slot:7b,id:\"minecraft:stick\",count:60},{Slot:14b,id:\"minecraft:apple\",count:2}],equipment:{saddle:{id:\"minecraft:saddle\",count:1}},drop_chances:{saddle:2.0f}}",
+            "{Tame:1b,NoAI:1b,ChestedHorse:1b,Items:[{Slot:2b,id:\"minecraft:iron_ingot\",count:64},{Slot:3b,id:\"minecraft:iron_ingot\",count:64},{Slot:4b,id:\"minecraft:iron_ingot\",count:12}],equipment:{saddle:{id:\"minecraft:saddle\",count:1}}}",
+            "{Tame:1b,NoAI:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1},body:{id:\"minecraft:iron_horse_armor\",count:1}},drop_chances:{body:2.0f}}",
+            "{Tame:1b,NoAI:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1},body:{id:\"minecraft:diamond_horse_armor\",count:1,components:{\"minecraft:damage\":40}}}}",
+        };
+        String[] gearKinds = {"donkey", "mule", "horse", "horse"};
+        for (int i = 0; i < gear.length; i++) {
+            Scenario s = new Scenario("die_" + gearKinds[i] + "_gear_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:" + gearKinds[i], 0.5, BY, 0.5, 20f * i, 9870L + i);
+            m.nbt = gear[i];
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 100.0});
+            s.levelSeed = 40 + i;
+            s.ticks = 60;
             out.add(s);
         }
         for (int i = 0; i < 2; i++) {
