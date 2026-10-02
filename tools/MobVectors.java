@@ -68,6 +68,8 @@ public class MobVectors {
         /// wp29: the index (in the scenario's mobs, before this one) of the mob this one rides
         /// (`startRiding`), or -1.
         int vehicle = -1;
+        /// wp33: a projectile among `others` flies with this motion.
+        double[] motion;
         MobSpec(String type, double x, double y, double z, float yaw, long seed) {
             this.type = type; this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.seed = seed;
         }
@@ -636,12 +638,18 @@ public class MobVectors {
             // wp28: an item entity's stack is `mainHand` (an item id, count 1).
             if (o instanceof net.minecraft.world.entity.item.ItemEntity ie && spec.mainHand != null)
                 ie.setItem(new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(spec.mainHand))));
+            // wp33: a projectile flies with `motion`, its random pinned to `seed`.
+            if (spec.motion != null) {
+                o.setDeltaMovement(spec.motion[0], spec.motion[1], spec.motion[2]);
+                o.getRandom().setSeed(spec.seed);
+            }
             if (!level.addFreshEntity(o)) throw new IllegalStateException("could not add " + spec.type);
             tracked.add(o);
             if (others.length() > 0) others.append(',');
-            others.append(String.format(Locale.ROOT, "{\"type\":\"%s\",\"id\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"item\":%s}",
+            others.append(String.format(Locale.ROOT, "{\"type\":\"%s\",\"id\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"item\":%s,\"motion\":%s,\"seed\":%d}",
                     spec.type, o.getId(), d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
-                    spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\""));
+                    spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"",
+                    spec.motion == null ? "null" : "[" + d(spec.motion[0]) + "," + d(spec.motion[1]) + "," + d(spec.motion[2]) + "]", spec.seed));
         }
         // What appears during the scenario takes the ids after the pinned ones (Kiln continues after
         // the highest id it has been given).
@@ -6153,6 +6161,28 @@ public class MobVectors {
         }
         scenariosMounts(out);
         scenariosNautilus(out);
+        scenariosDeflect(out);
+    }
+
+    /// Arrows flying into a breeze (reversed without a scratch, whatever their speed) and, as the
+    /// control, into a zombie (hurt, knocked back).
+    static void scenariosDeflect(List<Scenario> out) {
+        double[][] shots = {{1.5, 0.0, 0.0}, {3.0, 0.05, 0.1}, {0.8, 0.0, -0.05}, {2.2, -0.02, 0.0}};
+        for (String kind : new String[] {"breeze", "zombie"}) {
+            for (int i = 0; i < shots.length; i++) {
+                Scenario s = new Scenario(kind + "_arrow_" + i);
+                floor(s, 20, "minecraft:stone");
+                MobSpec m = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 40f * i, 34500L + i);
+                m.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+                s.mobs.add(m);
+                MobSpec arrow = new MobSpec("minecraft:arrow", -5.5, BY + 1.0, 0.5, -90f, 34600L + i);
+                arrow.motion = shots[i];
+                s.others.add(arrow);
+                s.levelSeed = 420 + i;
+                s.ticks = 60;
+                out.add(s);
+            }
+        }
     }
 
     /// The undead mounts: zombie horses (steered by a zombie rider), camel husks (a husk and a

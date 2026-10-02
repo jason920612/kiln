@@ -480,8 +480,16 @@ fn replay(s: &Value) -> Result<usize, String> {
                 kiln_proto::nbt::Tag::Compound(vec![("id".into(), kiln_proto::nbt::Tag::String(item.to_owned())), ("count".into(), kiln_proto::nbt::Tag::Int(1))]),
             ));
         }
+        // (wp33: a projectile's motion and the seed of its random.)
+        let motion = o.get("motion").and_then(Value::as_array);
+        if let Some(m) = motion {
+            fields.push(("Motion".into(), kiln_proto::nbt::Tag::List(m.iter().map(|v| kiln_proto::nbt::Tag::Double(f(v))).collect())));
+        }
         let tag = kiln_proto::nbt::Tag::Compound(fields);
-        let e = kiln_entity::persist::load(&tag, id, 0).expect("other entity");
+        let mut e = kiln_entity::persist::load(&tag, id, 0).expect("other entity");
+        if motion.is_some() {
+            e.random = kiln_javamath::random::LegacyRandom::new(o["seed"].as_i64().unwrap());
+        }
         other_ids.push(id);
         level.insert(e);
     }
