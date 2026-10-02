@@ -74,7 +74,14 @@ pub fn set_look_and_interact(type_name: &'static str, max_dist: i32) -> Box<dyn 
         &[(Mem::LookTarget, Registered), (Mem::InteractionTarget, ValueAbsent), (Mem::NearestVisibleLivingEntities, ValuePresent)],
         move |cx| {
             let me = cx.e.position();
-            let found = util::find_closest_visible(cx, |cx, id| util::living(cx, id).is_some_and(|l| l.pos.distance_to_sqr(me) <= max_sqr && l.type_name == type_name));
+            let found = util::find_closest_visible(cx, |cx, id| {
+                // Most of what is around is not of the type: its entity says so before a
+                // `Living` is built (a player's view always reads as a player).
+                if type_name != "minecraft:player" && cx.level.entity(id).is_none_or(|o| o.type_name != type_name) {
+                    return false;
+                }
+                util::living(cx, id).is_some_and(|l| l.pos.distance_to_sqr(me) <= max_sqr && l.type_name == type_name)
+            });
             let Some(id) = found else { return false };
             cx.b.mem.set(Mem::InteractionTarget, Val::Entity(id));
             cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::entity(id, true)));

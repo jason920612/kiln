@@ -9,7 +9,7 @@ use crate::collision::{self, CollisionContext};
 use crate::entity::Entity;
 use crate::level::EntityLevel;
 use crate::math::{Aabb, Axis, BlockPos, Vec3, floor};
-use std::collections::HashMap;
+use crate::memory::FastMap;
 
 // ---------------------------------------------------------------------- block facts
 
@@ -343,9 +343,9 @@ struct Search<'a> {
     e: &'a Entity,
     m: &'a MobData,
     nodes: Vec<Node>,
-    by_hash: HashMap<i32, u32>,
-    types: HashMap<i64, PathType>,
-    collisions: HashMap<[u64; 6], bool>,
+    by_hash: FastMap<i32, u32>,
+    types: FastMap<i64, PathType>,
+    collisions: FastMap<[u64; 6], bool>,
     width: i32,
     height: i32,
     depth: i32,
@@ -1504,9 +1504,9 @@ fn create_path_raw_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, tar
         e,
         m,
         nodes: Vec::with_capacity(256),
-        by_hash: HashMap::with_capacity(256),
-        types: HashMap::with_capacity(256),
-        collisions: HashMap::new(),
+        by_hash: FastMap::with_capacity_and_hasher(256, Default::default()),
+        types: FastMap::with_capacity_and_hasher(256, Default::default()),
+        collisions: FastMap::default(),
         width: floor((e.width + 1.0) as f64),
         height: floor((e.height + 1.0) as f64),
         depth: floor((e.width + 1.0) as f64),
@@ -1554,9 +1554,9 @@ pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t
         e,
         m,
         nodes: Vec::with_capacity(256),
-        by_hash: HashMap::with_capacity(256),
-        types: HashMap::with_capacity(256),
-        collisions: HashMap::new(),
+        by_hash: FastMap::with_capacity_and_hasher(256, Default::default()),
+        types: FastMap::with_capacity_and_hasher(256, Default::default()),
+        collisions: FastMap::default(),
         width: floor((e.width + 1.0) as f64),
         height: floor((e.height + 1.0) as f64),
         depth: floor((e.width + 1.0) as f64),

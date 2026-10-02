@@ -319,12 +319,21 @@ impl Entity {
             blocks.push((pos, step));
             true
         });
+        // The states of the blocks' bounding box at once when it is loaded and small.
+        let mut buf = [0u16; 64];
+        let (mut lo, mut hi) = (BlockPos::new(i32::MAX, i32::MAX, i32::MAX), BlockPos::new(i32::MIN, i32::MIN, i32::MIN));
+        for (p, _) in &blocks {
+            lo = BlockPos::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+            hi = BlockPos::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+        let (dx, dy, dz) = (hi.x as i64 - lo.x as i64 + 1, hi.y as i64 - lo.y as i64 + 1, hi.z as i64 - lo.z as i64 + 1);
+        let bulk = !blocks.is_empty() && dx * dy * dz <= buf.len() as i64 && level.read_blocks(lo, hi, &mut buf[..(dx * dy * dz) as usize]);
         for (pos, step) in blocks {
             if !self.is_alive() {
                 break;
             }
             counter = step;
-            let state = level.block(pos);
+            let state = if bulk { buf[(((pos.y - lo.y) as i64 * dz + (pos.z - lo.z) as i64) * dx + (pos.x - lo.x) as i64) as usize] } else { level.block(pos) };
             if physics::is_air(state) {
                 continue;
             }

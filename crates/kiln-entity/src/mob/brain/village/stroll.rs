@@ -218,12 +218,19 @@ pub fn go_to_closest_village(speed: f32, close_enough: i32) -> Box<dyn Control> 
 /// `BehaviorUtils.findSectionClosestToVillage(level, section, 2)`: the section within 2 (a cube,
 /// x fastest) nearest to a village, the section itself when none is nearer.
 fn find_section_closest_to_village(cx: &Cx, section: (i32, i32, i32), radius: i32) -> (i32, i32, i32) {
-    let here = cx.level.sections_to_village(BlockPos::new(section.0 << 4, section.1 << 4, section.2 << 4));
+    // One scan for the village sections around, when the level lists them: the distance of a
+    // section is then the nearest of them by cube distance, 7 when none is within 6.
+    let centers = cx.level.village_centers_near(section, radius + 6);
+    let distance = |x: i32, y: i32, z: i32| match &centers {
+        Some(c) => c.iter().map(|&(cx, cy, cz)| (cx - x).abs().max((cy - y).abs()).max((cz - z).abs())).min().map_or(7, |d| d.min(7)),
+        None => cx.level.sections_to_village(BlockPos::new(x << 4, y << 4, z << 4)),
+    };
+    let here = distance(section.0, section.1, section.2);
     let mut best: Option<((i32, i32, i32), i32)> = None;
     for z in section.2 - radius..=section.2 + radius {
         for y in section.1 - radius..=section.1 + radius {
             for x in section.0 - radius..=section.0 + radius {
-                let d = cx.level.sections_to_village(BlockPos::new(x << 4, y << 4, z << 4));
+                let d = distance(x, y, z);
                 if d < here && best.is_none_or(|(_, bd)| d < bd) {
                     best = Some(((x, y, z), d));
                 }

@@ -599,30 +599,54 @@ impl BrainState {
     }
 }
 
-/// A behaviour with its entry conditions as masks.
+/// A behaviour with its entry conditions as masks and its status as of the last call that can
+/// change it (only the brain starts, ticks and stops a top-level behaviour), so the loops over
+/// every behaviour read a flag and not a virtual call.
 #[derive(Clone, Debug)]
 struct Beh {
     c: Box<dyn Control>,
     entry: Entry,
+    run: bool,
 }
 
 impl Beh {
     fn new(c: Box<dyn Control>) -> Beh {
         let entry = c.entry_masks();
-        Beh { c, entry }
+        let run = c.running();
+        Beh { c, entry, run }
     }
-}
 
-impl std::ops::Deref for Beh {
-    type Target = Box<dyn Control>;
-    fn deref(&self) -> &Self::Target {
-        &self.c
+    #[inline]
+    fn running(&self) -> bool {
+        self.run
     }
-}
 
-impl std::ops::DerefMut for Beh {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.c
+    fn name(&self) -> &'static str {
+        self.c.name()
+    }
+
+    fn try_start(&mut self, cx: &mut Cx) -> bool {
+        let started = self.c.try_start(cx);
+        self.run = self.c.running();
+        started
+    }
+
+    fn tick_or_stop(&mut self, cx: &mut Cx) {
+        self.c.tick_or_stop(cx);
+        self.run = self.c.running();
+    }
+
+    fn do_stop(&mut self, cx: &mut Cx) {
+        self.c.do_stop(cx);
+        self.run = self.c.running();
+    }
+
+    fn running_names(&self, out: &mut Vec<String>) {
+        self.c.running_names(out);
+    }
+
+    fn seed_gates(&mut self, base: i64, k: &mut i64) {
+        self.c.seed_gates(base, k);
     }
 }
 

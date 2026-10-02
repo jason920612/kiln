@@ -279,7 +279,9 @@ pub fn poi_competitor_scan() -> Box<dyn Control> {
         let my_id = cx.e.id;
         let mut winner_id = my_id;
         let mut winner_xp = villager::state(cx.m).map_or(0, |s| s.xp);
-        for id in cx.b.mem.entities(Mem::NearestLivingEntities).to_vec() {
+        // (Nothing in the loop changes the list: it is read by index, not copied.)
+        for i in 0..cx.b.mem.entities(Mem::NearestLivingEntities).len() {
+            let id = cx.b.mem.entities(Mem::NearestLivingEntities)[i];
             if id == my_id {
                 continue;
             }

@@ -27,9 +27,16 @@ impl Hasher for FastHasher {
     fn write_u64(&mut self, v: u64) {
         self.0 = (self.0.rotate_left(5) ^ v).wrapping_mul(0x517c_c1b7_2722_0a95);
     }
+    fn write_usize(&mut self, v: usize) {
+        self.write_u64(v as u64);
+    }
+    fn write_u128(&mut self, v: u128) {
+        self.write_u64(v as u64);
+        self.write_u64((v >> 64) as u64);
+    }
 }
 
-type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHasher>>;
+pub(crate) type FastMap<K, V> = HashMap<K, V, BuildHasherDefault<FastHasher>>;
 
 struct Slot {
     entity: Option<Entity>,

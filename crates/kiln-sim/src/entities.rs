@@ -553,6 +553,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         crate::raid::raid_at_view(&self.level.env.raids, pos)
     }
 
+    fn village_centers_near(&self, section: (i32, i32, i32), radius: i32) -> Option<Vec<(i32, i32, i32)>> {
+        Some(crate::poi::village_centers(&*self.level.cells, [section.0, section.1, section.2], radius))
+    }
+
     fn sections_to_village(&self, pos: BlockPos) -> i32 {
         kiln_entity::prof!("lvl", "sections_to_village");
         crate::poi::sections_to_village(&*self.level.cells, [pos.x, pos.y, pos.z])
@@ -686,7 +690,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         // sections within 2 blocks of the area hold every entity whose box can touch it.
         let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
         let hi = section_of([area.max_x + 2.0, area.max_y + 2.0, area.max_z + 2.0]);
-        let mut found: Vec<((i32, i64), i32)> = Vec::new();
+        let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
         let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
         if span > self.grid.cells.len() as i64 * 4 {
             found.extend(self.list.iter().filter_map(|e| e.phys.as_ref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
