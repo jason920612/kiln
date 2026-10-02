@@ -221,6 +221,23 @@ impl RegionWork<'_> {
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
     }
 
+    /// `stopOpen` of the chest minecarts and chest boats whose menus `check_menus` closed: the
+    /// `container_close` game events.
+    fn post_cart_closes(&mut self, env: &Env) {
+        if self.players.iter().all(|p| p.containers.cart_closed.is_none()) {
+            return;
+        }
+        let bodies = Vec::new();
+        let mut out = BlockOut::default();
+        let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+        for p in self.players.iter_mut() {
+            if let Some(at) = p.containers.cart_closed.take() {
+                p.post_container_close(&mut level, at);
+            }
+        }
+        blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+    }
+
     /// `LivingEntity.checkAutoSpinAttack` for the players whose riptide spin counted down this
     /// tick: the first living entity their box meets is hit (`Player.attack` with the spin's
     /// damage and its trident) and the spin ends there; a finished spin forgets its damage.
@@ -374,6 +391,7 @@ impl RegionWork<'_> {
         self.tick_entities(env);
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
+        self.post_cart_closes(env);
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
         mark(&mut self.out.times, 4);

@@ -515,6 +515,23 @@ impl Entity {
         }
     }
 
+    /// `hurtServer` for a hit by a projectile (`on_fire`, `speed_sqr`: the projectile's state at
+    /// the hit) on an extension entity that cares about it; the others take it as [`Entity::hurt`].
+    pub fn hurt_by_projectile(&mut self, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>, on_fire: bool, speed_sqr: f64) -> bool {
+        match self.kind {
+            EntityKind::Ext(_) => {
+                let placeholder = EntityKind::Other { type_name: self.type_name };
+                let EntityKind::Ext(mut x) = std::mem::replace(&mut self.kind, placeholder) else { unreachable!() };
+                let r = x.hurt_by_projectile(self, level, kind, amount, attacker, on_fire, speed_sqr);
+                if matches!(self.kind, EntityKind::Other { .. }) {
+                    self.kind = EntityKind::Ext(x);
+                }
+                r
+            }
+            _ => self.hurt(level, kind, amount, attacker),
+        }
+    }
+
     /// `isInvulnerableToBase` for fire and explosion sources.
     pub fn is_invulnerable_to_base(&self, kind: DamageKind) -> bool {
         self.is_removed()

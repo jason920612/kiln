@@ -60,10 +60,24 @@ pub trait EntityExt: Any + Debug + Send + Sync {
         let _ = (e, index, animal);
         None
     }
+    /// The slots of a container entity (`ContainerEntity`: chest and hopper minecarts, chest boats).
+    fn container(&self) -> Option<&minecart::Contents> {
+        None
+    }
+    fn container_mut(&mut self) -> Option<&mut minecart::Contents> {
+        None
+    }
     /// `hurtServer`: whether the hit did something (a deflected fireball).
     fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>) -> bool {
         let _ = (e, level, kind, amount, attacker);
         false
+    }
+    /// `hurtServer` of a hit by a projectile whose state the entity may care about (a TNT
+    /// minecart goes off when a burning arrow hits it); `on_fire` and `speed_sqr` are the
+    /// projectile's `isOnFire` and `getDeltaMovement().lengthSqr()`.
+    fn hurt_by_projectile(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>, on_fire: bool, speed_sqr: f64) -> bool {
+        let _ = (on_fire, speed_sqr);
+        self.hurt(e, level, kind, amount, attacker)
     }
 }
 
@@ -135,6 +149,21 @@ pub fn get<T: 'static>(e: &Entity) -> Option<&T> {
 pub fn get_mut<T: 'static>(e: &mut Entity) -> Option<&mut T> {
     match &mut e.kind {
         EntityKind::Ext(x) => x.as_any_mut().downcast_mut::<T>(),
+        _ => None,
+    }
+}
+
+/// The slots of `e` when it is a container entity (chest or hopper minecart, chest boat).
+pub fn container(e: &Entity) -> Option<&minecart::Contents> {
+    match &e.kind {
+        EntityKind::Ext(x) => x.container(),
+        _ => None,
+    }
+}
+
+pub fn container_mut(e: &mut Entity) -> Option<&mut minecart::Contents> {
+    match &mut e.kind {
+        EntityKind::Ext(x) => x.container_mut(),
         _ => None,
     }
 }

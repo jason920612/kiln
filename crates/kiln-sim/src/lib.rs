@@ -1453,8 +1453,7 @@ impl Sim {
     /// still holds unrolled (for tests and tools).
     pub fn cart_items(&self, id: i32) -> Option<(Vec<(usize, &'static str, i32)>, Option<String>)> {
         let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
-        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_ref()?)?;
-        let c = cart.contents.as_ref()?;
+        let c = kiln_entity::ext_entity::container(e.phys.as_ref()?)?;
         Some((c.items.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i, s.item_name(), s.count())).collect(), c.loot_table.clone()))
     }
 

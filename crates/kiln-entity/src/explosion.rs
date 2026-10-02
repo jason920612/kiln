@@ -55,6 +55,9 @@ pub type Resistance<'a> = &'a dyn Fn(u16, f32) -> f32;
 pub struct BlockRules<'a> {
     pub resistance: Option<&'a dyn Fn(u16, u16, f32) -> f32>,
     pub should_explode: Option<&'a dyn Fn(u16, u16) -> bool>,
+    /// `Explosion.getIndirectSourceEntity`: who the blast is credited to when the source entity
+    /// is not enough to tell (a primed TNT's owner, the entity that lit a TNT minecart).
+    pub causing: Option<i32>,
 }
 
 /// [`explode`] with the source entity's block resistance override.
@@ -70,7 +73,7 @@ pub fn explode_with(
     damage: bool,
 ) -> Vec<BlockPos> {
     let wrapped = resistance.map(|f| move |state: u16, _above: u16, res: f32| f(state, res));
-    let rules = BlockRules { resistance: wrapped.as_ref().map(|f| f as &dyn Fn(u16, u16, f32) -> f32), should_explode: None };
+    let rules = BlockRules { resistance: wrapped.as_ref().map(|f| f as &dyn Fn(u16, u16, f32) -> f32), should_explode: None, causing: None };
     explode_ruled(level, source, center, radius, fire, interaction, rules, damage)
 }
 
@@ -87,13 +90,20 @@ pub fn explode_ruled(
 ) -> Vec<BlockPos> {
     let interaction = interaction.resolved();
     level.emit(Event::GameEvent { event: "minecraft:explode", pos: center, entity: source });
+    // `getIndirectSourceEntity` of a primed TNT is its owner.
+    let causing = rules.causing.or_else(|| {
+        source.and_then(|s| match level.entity(s).map(|e| &e.kind) {
+            Some(EntityKind::Tnt(d)) => d.owner,
+            _ => None,
+        })
+    });
     let mut positions = exploded_positions(level, center, radius, rules);
-    hurt_entities(level, source, center, radius, interaction, damage);
+    hurt_entities(level, source, causing, center, radius, interaction, damage);
     if interaction != Interaction::Keep {
         shuffle(&mut positions, level);
         for &pos in &positions {
             let state = level.block(pos);
-            on_explosion_hit(level, source, pos, state, interaction);
+            on_explosion_hit(level, source, causing, pos, state, interaction);
         }
     }
     if fire {
@@ -192,7 +202,7 @@ fn shuffle(list: &mut [BlockPos], level: &mut dyn EntityLevel) {
 }
 
 /// `BlockBehaviour.onExplosionHit` (+ `TntBlock.wasExploded`).
-fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, pos: BlockPos, state: u16, interaction: Interaction) {
+fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, pos: BlockPos, state: u16, interaction: Interaction) {
     if physics::is_air(state) || interaction == Interaction::TriggerBlock {
         return;
     }
@@ -203,10 +213,8 @@ fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, pos: Block
     if kind(state) == Kind::Tnt {
         let id = level.next_entity_id();
         let seed = level.fresh_seed();
-        let owner = source.and_then(|s| match level.entity(s).map(|e| &e.kind) {
-            Some(EntityKind::Tnt(d)) => d.owner,
-            _ => None,
-        });
+        // `TntBlock.wasExploded`: the new TNT's owner is the explosion's indirect source.
+        let owner = causing;
         let mut tnt = crate::tnt::ignite(id, 0, Vec3::new(pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5), owner, seed);
         let fuse = crate::tnt::DEFAULT_FUSE;
         let short = level.random().next_int_bounded((fuse / 4).max(1)) + fuse / 8;
@@ -218,7 +226,7 @@ fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, pos: Block
 }
 
 /// `hurtEntities`: damage by exposure and distance, and knockback.
-fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3, radius: f32, interaction: Interaction, damage_entities: bool) {
+fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, center: Vec3, radius: f32, interaction: Interaction, damage_entities: bool) {
     if radius < 1.0e-5 {
         return;
     }
@@ -253,7 +261,12 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3,
         let push = dir.scale(knockback);
         let Some(mut e) = level.entity_mut(id).map(|e| std::mem::replace(e, placeholder())) else { continue };
         if damage_entities {
-            e.hurt(level, DamageKind::Explosion, damage, source);
+            match causing {
+                Some(c) => hurt_credited(level, &mut e, id, damage, source, c),
+                None => {
+                    e.hurt(level, DamageKind::Explosion, damage, source);
+                }
+            }
         }
         if push.x.is_finite() && push.y.is_finite() && push.z.is_finite() {
             e.delta = e.delta.add(push.x, push.y, push.z);
@@ -291,6 +304,26 @@ fn hurt_entities(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3,
             if let Some(slot) = level.entity_mut(id) {
                 *slot = e;
             }
+        }
+    }
+}
+
+/// The blast's damage to `e` (entity `id`) when somebody caused it (`DamageSources.explosion(direct,
+/// causing)` is `player_explosion` then): the causing entity is the attacker, and a player
+/// gets the kill credit.
+fn hurt_credited(level: &mut dyn EntityLevel, e: &mut Entity, id: i32, damage: f32, direct: Option<i32>, causing: i32) {
+    let causing_is_player = level.player(causing).is_some();
+    let pos = direct.and_then(|d| level.entity(d)).map(|d| d.position()).or(Some(e.position()));
+    let source = crate::mob::DamageSource { kind: DamageKind::PlayerExplosion, attacker: Some(causing), direct, pos, attacker_is_player: causing_is_player };
+    match e.kind {
+        EntityKind::Mob(_) => {
+            crate::mob::hurt_entity(e, level, source, damage);
+        }
+        EntityKind::Player(_) => {
+            level.hurt_player(id, source, damage);
+        }
+        _ => {
+            e.hurt(level, DamageKind::PlayerExplosion, damage, Some(causing));
         }
     }
 }

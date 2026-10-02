@@ -72,7 +72,8 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
 
 fn explode(e: &mut Entity, level: &mut dyn EntityLevel) {
     let EntityKind::Tnt(d) = &e.kind else { unreachable!() };
-    let power = d.explosion_power;
+    let (power, owner) = (d.explosion_power, d.owner);
     let center = Vec3::new(e.x(), e.y() + e.height as f64 * 0.0625, e.z());
-    crate::explosion::explode(level, Some(e.id), center, power, false, crate::explosion::Interaction::Tnt);
+    let rules = crate::explosion::BlockRules { causing: owner, ..Default::default() };
+    crate::explosion::explode_ruled(level, Some(e.id), center, power, false, crate::explosion::Interaction::Tnt, rules, true);
 }

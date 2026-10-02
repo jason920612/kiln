@@ -3,7 +3,9 @@
 //! creative players break them at once, over 40 they drop their item), carry one or two
 //! riders and push or take in what bumps into them. A boat a player steers is moved by the
 //! player's client (`ServerboundMoveVehiclePacket`); the server only floats it while nobody
-//! steers. Chest storage and bubble columns are not simulated.
+//! steers. Chest boats and chest rafts hold 27 slots like a chest minecart (loot table, saved
+//! like a chest, dropped when the boat breaks, opened by a click while sneaking or when no
+//! rider fits). Bubble columns are not simulated.
 
 use crate::collision;
 use crate::entity::{Entity, EntityKind, MoverType};
@@ -12,7 +14,8 @@ use crate::fluid;
 use crate::level::{DamageKind, EntityFilter, EntityLevel, Event};
 use crate::math::{Aabb, BlockPos, Vec3, ceil, floor};
 use crate::mob::interact::{Interactor, Outcome};
-use crate::persist::Input;
+use crate::ext_entity::minecart::{Contents, drop_entity_contents};
+use crate::persist::{Input, Output};
 use kiln_data::entities::data;
 use kiln_javamath::random::RandomSource;
 use kiln_proto::packets::entity::{DataValue, EntityData};
@@ -46,6 +49,8 @@ pub struct Boat {
     pub damage: f32,
     pub paddles: [bool; 2],
     paddle_positions: [f32; 2],
+    /// A chest boat's 27 slots (`AbstractChestBoat`).
+    pub contents: Option<Contents>,
 }
 
 /// Whether `name` is a boat or raft type.
@@ -71,6 +76,7 @@ impl Boat {
             damage: 0.0,
             paddles: [false; 2],
             paddle_positions: [0.0; 2],
+            contents: name.contains("_chest_").then(|| Contents::new(27)),
         }
     }
 
@@ -99,8 +105,13 @@ pub fn new(type_name: &'static str, pos: Vec3, y_rot: f32, seed: i64) -> Entity 
 }
 
 /// Reads a saved one.
-pub fn load(type_name: &'static str, _r: &mut Input) -> Option<Box<dyn EntityExt>> {
-    Some(Box::new(Boat::of(type_name)))
+pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>> {
+    let mut b = Boat::of(type_name);
+    // `readChestVehicleSaveData`.
+    if let Some(c) = &b.contents {
+        b.contents = Some(Contents::load(r, c.items.len()));
+    }
+    Some(Box::new(b))
 }
 
 /// The item a boat of `type_name` drops (the entity and item names agree).
@@ -318,6 +329,10 @@ impl EntityExt for Boat {
         } else {
             self.out_of_control = 0.0;
         }
+        // Under water for three seconds: everybody aboard is thrown off.
+        if self.out_of_control >= 60.0 {
+            crate::ride::eject(e, level);
+        }
         if self.hurt_time > 0 {
             self.hurt_time -= 1;
         }
@@ -338,6 +353,7 @@ impl EntityExt for Boat {
             e.delta = Vec3::ZERO;
             self.delta_rotation = 0.0;
         }
+        e.apply_effects_from_blocks(level);
         // The paddles: the blades turn and splash.
         for i in 0..2 {
             if self.paddles[i] {
@@ -400,32 +416,49 @@ impl EntityExt for Boat {
         level.emit(Event::GameEvent { event: "minecraft:entity_damage", pos: e.position(), entity: attacker });
         let creative = attacker.and_then(|a| level.player(a)).is_some_and(|p| p.creative);
         if !creative && self.damage > 40.0 {
-            // `destroy`: the boat as an item.
-            if let Some(stack) = kiln_item::ItemStack::of(drop_item(e.type_name), 1) {
-                let (id, seed) = (level.next_entity_id(), level.fresh_seed());
-                let mut item = crate::item::new_at(id, 0, stack, e.position(), seed);
-                // `setDefaultPickUpDelay`.
-                if let EntityKind::Item(d) = &mut item.kind {
-                    d.pickup_delay = 10;
-                }
-                level.add_entity(item);
-            }
-            e.discard();
+            self.destroy(e, level, kind, attacker);
         } else if creative {
-            e.discard();
+            // `discard`: a chest boat drops what it holds (`shouldDestroy`).
+            self.remove(e, level, true);
         }
         true
     }
 
     /// `AbstractBoat.interact`: a click gets the player aboard unless sneaking, under water
-    /// too long, or the boat is full.
-    fn interact(&mut self, e: &mut Entity, _level: &mut dyn EntityLevel, who: &Interactor, _stack: &kiln_item::ItemStack) -> Option<Outcome> {
-        if who.sneaking || self.out_of_control >= 60.0 || e.passengers.len() >= self.max_passengers() {
-            return Some(Outcome::PASS);
+    /// too long, or the boat is full. A chest boat then opens its menu for a player who
+    /// sneaks or cannot board (`AbstractChestBoat.interact`).
+    fn interact(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, _stack: &kiln_item::ItemStack) -> Option<Outcome> {
+        let full = e.passengers.len() >= self.max_passengers();
+        if !who.sneaking && self.out_of_control < 60.0 && !full {
+            let mut out = Outcome::success(crate::mob::interact::HeldChange::None);
+            out.ride = true;
+            return Some(out);
         }
-        let mut out = Outcome::success(crate::mob::interact::HeldChange::None);
-        out.ride = true;
-        Some(out)
+        if let Some(c) = &mut self.contents {
+            // `interactWithContainerVehicle` (the loot table rolls with the player's luck),
+            // then `container_open` and angry piglins.
+            c.unpack(level, e.position(), Some(who.id));
+            let mut out = Outcome::success(crate::mob::interact::HeldChange::None);
+            out.open_container = true;
+            level.emit(Event::GameEvent { event: "minecraft:container_open", pos: e.position(), entity: Some(who.id) });
+            crate::mob::kinds::piglin::anger_nearby_piglins(level, who.id, true);
+            return Some(out);
+        }
+        Some(Outcome::PASS)
+    }
+
+    fn container(&self) -> Option<&Contents> {
+        self.contents.as_ref()
+    }
+
+    fn container_mut(&mut self) -> Option<&mut Contents> {
+        self.contents.as_mut()
+    }
+
+    fn save(&self, _e: &Entity, o: &mut Output) {
+        if let Some(c) = &self.contents {
+            c.save(o);
+        }
     }
 
     fn attackable(&self) -> bool {
@@ -475,6 +508,50 @@ fn cannot_board(type_name: &str) -> bool {
             | "minecraft:zombie_nautilus"
             | "minecraft:sulfur_cube"
     )
+}
+
+impl Boat {
+    /// `remove`: a chest boat drops what it holds first (`shouldDestroy`: killed or discarded).
+    fn remove(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, discarded: bool) {
+        crate::ride::eject(e, level);
+        if let Some(c) = &mut self.contents {
+            drop_entity_contents(c, e, level);
+        }
+        if discarded {
+            e.discard();
+        } else {
+            e.removed.get_or_insert(crate::entity::RemovalReason::Killed);
+        }
+    }
+
+    /// `VehicleEntity.destroy(level, source)`: the boat is killed and, with entity drops on,
+    /// leaves its item named as it was; a chest boat drops its contents (`chestVehicleDestroyed`,
+    /// which also angers piglins when a player hit it).
+    fn destroy(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, attacker: Option<i32>) {
+        self.remove(e, level, false);
+        if !level.entity_drops() {
+            return;
+        }
+        if let Some(mut stack) = kiln_item::ItemStack::of(drop_item(e.type_name), 1) {
+            if let Some(name) = e.extra.iter().find(|(k, _)| k == "CustomName").and_then(|(_, t)| kiln_item::Text::from_nbt(t.clone())) {
+                stack.set(kiln_item::component::Component::CustomName(name));
+            }
+            let (id, seed) = (level.next_entity_id(), level.fresh_seed());
+            let mut item = crate::item::new_at(id, 0, stack, e.position(), seed);
+            // `setDefaultPickUpDelay`.
+            if let EntityKind::Item(d) = &mut item.kind {
+                d.pickup_delay = 10;
+            }
+            level.add_entity(item);
+        }
+        if let Some(c) = &mut self.contents {
+            drop_entity_contents(c, e, level);
+            // `getDirectEntity() instanceof Player`: a melee hit.
+            if let Some(a) = attacker.filter(|&a| kind == DamageKind::PlayerAttack && level.player(a).is_some()) {
+                crate::mob::kinds::piglin::anger_nearby_piglins(level, a, true);
+            }
+        }
+    }
 }
 
 /// `Entity.push(entity)`: the two are pushed apart a little.

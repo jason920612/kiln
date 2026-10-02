@@ -75,6 +75,7 @@ fn can_be_hurt_by(stack: &ItemStack, kind: DamageKind) -> bool {
         DamageKind::Lava => ("minecraft:is_fire", "minecraft:lava"),
         DamageKind::HotFloor => ("minecraft:is_fire", "minecraft:hot_floor"),
         DamageKind::Explosion => ("minecraft:is_explosion", "minecraft:explosion"),
+        DamageKind::PlayerExplosion => ("minecraft:is_explosion", "minecraft:player_explosion"),
         DamageKind::Cactus => ("", "minecraft:cactus"),
         _ => ("", ""),
     };

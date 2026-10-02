@@ -53,7 +53,7 @@ fn cart_json(sim: &Sim, pos: BlockPos) -> Value {
             if !(bb.min_x < hi[0] && bb.max_x > lo[0] && bb.min_y < hi[1] && bb.max_y > lo[1] && bb.min_z < hi[2] && bb.max_z > lo[2]) {
                 continue;
             }
-            let Some(c) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(phys).and_then(|m| m.contents.as_ref()) else {
+            let Some(c) = kiln_entity::ext_entity::container(phys) else {
                 continue;
             };
             let items: Vec<Value> =

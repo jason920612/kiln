@@ -48,6 +48,11 @@ pub(crate) struct PlayerContainers {
     pub ender: SimpleContainer,
     /// The open minecart menu's slots ([`OpenBlock::Cart`]).
     pub cart: SimpleContainer,
+    /// Where the open entity menu's chest minecart or chest boat is (`stopOpen` posts
+    /// `container_close` there when the menu closes); `None` for the others.
+    pub cart_event_pos: Option<[f64; 3]>,
+    /// A menu closed while the entity was ticking: its `container_close` still to post.
+    pub cart_closed: Option<[f64; 3]>,
     ender_undecoded: Vec<(i32, Tag)>,
     /// Workstation effects of the last menu operation (grindstone and anvil use), for the
     /// region to carry out at the workstation.
@@ -69,6 +74,8 @@ impl PlayerContainers {
             open: None,
             ender: SimpleContainer::from_items(list.stacks),
             cart: SimpleContainer::default(),
+            cart_event_pos: None,
+            cart_closed: None,
             ender_undecoded: list.undecoded,
             pending: Vec::new(),
             enchantment_seed: player.get("XpSeed").and_then(Tag::as_i64).unwrap_or(0) as i32,
@@ -265,6 +272,18 @@ impl Player {
         self.open_menu = None;
         if let Some(block) = self.containers.open.take() {
             stop_open(level, &block, self.game_mode == 3);
+        }
+        // `ChestMenu.removed` → `MinecartChest.stopOpen` / `AbstractChestBoat.stopOpen`.
+        if let Some(at) = self.containers.cart_event_pos.take() {
+            self.post_container_close(level, at);
+        }
+    }
+
+    /// `level.gameEvent(CONTAINER_CLOSE, position, Context.of(player))`.
+    pub(crate) fn post_container_close(&self, level: &mut RegionLevel, at: [f64; 3]) {
+        if crate::sculk::listening(level) {
+            let ctx = kiln_entity::vibration::Context { source: Some(crate::blocks::player_source(self)), affected_state: None };
+            crate::sculk::post(level, "minecraft:container_close", kiln_entity::math::Vec3::new(at[0], at[1], at[2]), ctx);
         }
     }
 

@@ -655,9 +655,9 @@ impl ItemEntities for EntityItems<'_> {
     }
 }
 
-/// A chest or hopper minecart.
+/// A chest or hopper minecart or a chest boat (`EntitySelector.CONTAINER_ENTITY_SELECTOR`).
 fn is_container_cart(e: &kiln_entity::Entity) -> bool {
-    kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e).is_some_and(|m| m.contents.is_some())
+    kiln_entity::ext_entity::container(e).is_some()
 }
 
 /// Viewers of item entities a hopper took from see the remaining count (removed ones leave
@@ -715,7 +715,7 @@ impl ItemEntities for crate::entities::Entities {
     fn cart(&mut self, i: usize) -> Option<(&mut kiln_entity::ext_entity::minecart::Contents, [f64; 3])> {
         let phys = self.list.get_mut(i)?.phys.as_mut()?;
         let p = phys.position();
-        let contents = kiln_entity::ext_entity::get_mut::<kiln_entity::ext_entity::minecart::Minecart>(phys)?.contents.as_mut()?;
+        let contents = kiln_entity::ext_entity::container_mut(phys)?;
         Some((contents, [p.x, p.y, p.z]))
     }
 

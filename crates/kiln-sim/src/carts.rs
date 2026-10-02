@@ -1,7 +1,8 @@
-//! The menus of chest and hopper minecarts (`ContainerEntity` as a `MenuProvider`): opening
-//! one from a click on the minecart, and keeping the menu's slots and the minecart's in step.
+//! The menus of container entities (`ContainerEntity` as a `MenuProvider`: chest and hopper
+//! minecarts, chest boats): opening one from a click on the entity, and keeping the menu's
+//! slots and the entity's in step.
 //!
-//! A minecart's slots live in the entity, so its menu works on a copy the player carries
+//! The slots live in the entity, so the menu works on a copy the player carries
 //! ([`PlayerContainers::cart`](crate::container::open::PlayerContainers)): the region copies
 //! the minecart's slots into it before a menu operation ([`pull`]) and back afterwards
 //! ([`push`]), so what hoppers and other viewers did shows and what the player did sticks.
@@ -10,8 +11,7 @@ use crate::Player;
 use crate::blocks::RegionLevel;
 use crate::container::open::OpenBlock;
 use crate::entities::{Entities, Spawn};
-use kiln_entity::EntityKind;
-use kiln_entity::ext_entity::minecart::{Contents, Minecart};
+use kiln_entity::ext_entity::minecart::Contents;
 use kiln_inventory::{Menu, SimpleContainer};
 use kiln_proto::nbt::Tag;
 
@@ -22,10 +22,7 @@ fn contents(entities: &Entities, id: i32) -> Option<&Contents> {
     if e.removed {
         return None;
     }
-    match &e.phys.as_ref()?.kind {
-        EntityKind::Ext(x) => x.as_any().downcast_ref::<Minecart>()?.contents.as_ref(),
-        _ => None,
-    }
+    kiln_entity::ext_entity::container(e.phys.as_ref()?)
 }
 
 fn contents_mut(entities: &mut Entities, id: i32) -> Option<&mut Contents> {
@@ -34,16 +31,18 @@ fn contents_mut(entities: &mut Entities, id: i32) -> Option<&mut Contents> {
     if e.removed {
         return None;
     }
-    match &mut e.phys.as_mut()?.kind {
-        EntityKind::Ext(x) => x.as_any_mut().downcast_mut::<Minecart>()?.contents.as_mut(),
-        _ => None,
-    }
+    kiln_entity::ext_entity::container_mut(e.phys.as_mut()?)
 }
 
 /// Before a menu operation of `p`: its open minecart's slots into the player's copy. Returns
 /// the minecart's id for [`push`].
 pub(crate) fn pull(entities: &Entities, p: &mut Player) -> Option<i32> {
     let Some(OpenBlock::Cart { entity }) = p.containers.open else { return None };
+    if p.containers.cart_event_pos.is_some()
+        && let Some(at) = position_of(entities, entity)
+    {
+        p.containers.cart_event_pos = Some(at);
+    }
     if let Some(c) = contents(entities, entity)
         && c.items.len() == p.containers.cart.items.len()
     {
@@ -60,6 +59,18 @@ pub(crate) fn push(entities: &mut Entities, p: &Player, cart: Option<i32>) {
     {
         c.items.clone_from(&p.containers.cart.items);
     }
+}
+
+/// Whether closing the menu of this entity type posts `container_close` (`MinecartChest` and
+/// the chest boats override `stopOpen`; the hopper minecart keeps the default).
+fn posts_close(type_name: &str) -> bool {
+    type_name == "minecraft:chest_minecart" || type_name.ends_with("_chest_boat") || type_name.ends_with("_chest_raft")
+}
+
+fn position_of(entities: &Entities, id: i32) -> Option<[f64; 3]> {
+    let idx = entities.list.binary_search_by_key(&id, |e| e.id).ok()?;
+    let p = entities.list[idx].phys.as_ref()?.position();
+    Some([p.x, p.y, p.z])
 }
 
 /// `Entity.getDisplayName`: the custom name, or the type's.
@@ -87,6 +98,7 @@ pub(crate) fn open(entities: &Entities, level: &mut RegionLevel, p: &mut Player,
     let Some(ty) = menu.kind.menu_type_id() else { return };
     p.send(kiln_inventory::effect::open_screen(id, ty, &title));
     p.containers.cart = SimpleContainer::from_items(items);
+    p.containers.cart_event_pos = posts_close(phys.type_name).then(|| [phys.x(), phys.y(), phys.z()]);
     p.containers.open = Some(OpenBlock::Cart { entity: target });
     p.open_menu = Some(menu);
     p.with_menu_at(&rules, spawns, None, |menu, _, env| menu.open(env));
@@ -106,7 +118,11 @@ pub(crate) fn check_menus(entities: &Entities, players: &mut [&mut Player], rule
                 let range = p.attribute(crate::combat::ENTITY_INTERACTION_RANGE) + 4.0;
                 dx * dx + dy * dy + dz * dz < range * range
             });
+        if valid && p.containers.cart_event_pos.is_some() {
+            p.containers.cart_event_pos = position_of(entities, entity);
+        }
         if !valid && !p.dead {
+            p.containers.cart_closed = p.containers.cart_event_pos.take();
             // `ServerPlayer.closeContainer`.
             if let Some(id) = p.open_menu.as_ref().map(|m| m.container_id) {
                 p.send(kiln_inventory::effect::container_close(id));
