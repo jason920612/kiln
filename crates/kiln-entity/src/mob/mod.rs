@@ -601,6 +601,10 @@ pub struct MobData {
     /// `getFirstPassenger() instanceof Mob`, read for this tick's body turn (a mount carrying a
     /// mob keeps its body as it is).
     pub carries_mob: bool,
+    /// Where a hit by a projectile throws the mob back, set around that one hurt
+    /// (`Projectile.calculateHorizontalHurtKnockbackDirection`: the projectile's own horizontal
+    /// motion, negated), instead of the direction from the damage source's position.
+    pub knock_override: Option<(f64, f64)>,
 }
 
 /// The vehicle of a mob rider while the rider ticks. `Mob.getNavigation()` and
@@ -707,6 +711,7 @@ impl MobData {
             discard_friction: false,
             mount: None,
             carries_mob: false,
+            knock_override: None,
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -2178,7 +2183,9 @@ pub fn hurt(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source
 /// The shared `LivingEntity.hurtServer`.
 pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: DamageSource, amount: f32) -> bool {
     let kind = source.kind;
-    if e.is_removed() || (e.invulnerable && !kind.is_tag("minecraft:bypasses_invulnerability")) || m.is_dead_or_dying() {
+    // (`isInvulnerableToBase`: `isInvulnerable()` is the permanent flag or ticks of `invulnerableTime`,
+    // which a trap's horsemen start with.)
+    if e.is_removed() || ((e.invulnerable || e.invulnerable_time > 0) && !kind.is_tag("minecraft:bypasses_invulnerability")) || m.is_dead_or_dying() {
         return false;
     }
     if kind.is_tag("minecraft:is_fire") && effects::has(m, crate::effect::ids::fire_resistance()) {
@@ -2233,7 +2240,10 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         }
         if !kind.is_tag("minecraft:no_knockback") {
             let (mut dx, mut dz) = (0.0, 0.0);
-            if let Some(p) = source.pos {
+            if let Some((x, z)) = m.knock_override {
+                dx = x;
+                dz = z;
+            } else if let Some(p) = source.pos {
                 dx = p.x - e.x();
                 dz = p.z - e.z();
             }

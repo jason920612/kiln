@@ -1181,6 +1181,11 @@ pub(crate) fn tick(
         for id in passengers {
             if let Some(j) = sim.index(id) {
                 tick_entity(&mut sim, j, ticking, any_player, Some(i));
+            } else if id < 0 {
+                // A rider the vehicle's own tick just made (the skeleton of a trap horse, still
+                // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
+                // joined the level meanwhile.
+                tick_new_passenger(&mut sim, id, i);
             }
         }
     }
@@ -1220,6 +1225,39 @@ pub(crate) fn tick(
     }
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
+/// `ServerLevel.tickPassenger` for a rider spawned during its vehicle's tick (`vehicle` is the
+/// index of the vehicle, which has just ticked): it is still among the spawns of this tick, under
+/// the placeholder id its vehicle lists it by.
+fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
+    let Some(k) = sim.spawns.iter().position(|s| matches!(&s.body, Body::Ready(e) if e.id == id)) else { return };
+    let Body::Ready(boxed) = &mut sim.spawns[k].body else { return };
+    let marker = kiln_entity::Entity::new("minecraft:marker", 0, 0, kiln_entity::EntityKind::Other { type_name: "minecraft:marker" }, 0);
+    let mut phys = std::mem::replace(&mut **boxed, marker);
+    if phys.is_removed() || phys.vehicle != sim.list[vehicle].phys.as_ref().map(|p| p.id) {
+        if let Body::Ready(b) = &mut sim.spawns[k].body {
+            **b = phys;
+        }
+        return;
+    }
+    (sim.current, sim.seeds) = (phys.id, 0);
+    sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+    sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
+    phys.common_tick();
+    if let Some(mut v) = sim.list[vehicle].phys.clone() {
+        if kiln_entity::ride::ride_tick(&mut phys, sim, &mut v)
+            && let Some(real) = sim.list[vehicle].phys.as_mut()
+        {
+            kiln_entity::ride::copy_steering_back(&v, real);
+        }
+    }
+    // (Spawns only get appended meanwhile: `k` still holds the rider's place.)
+    sim.spawns[k].pos = arr(phys.position());
+    sim.spawns[k].vel = arr(phys.delta);
+    if let Body::Ready(b) = &mut sim.spawns[k].body {
+        **b = phys;
     }
 }
 

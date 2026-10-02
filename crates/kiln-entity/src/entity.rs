@@ -519,6 +519,7 @@ impl Entity {
     pub fn is_invulnerable_to_base(&self, kind: DamageKind) -> bool {
         self.is_removed()
             || self.invulnerable
+            || self.invulnerable_time > 0
             || (matches!(kind, DamageKind::OnFire | DamageKind::InFire | DamageKind::Lava) && self.fire_immune())
     }
 

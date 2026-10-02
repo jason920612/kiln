@@ -282,10 +282,42 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
     }
 }
 
+/// What the harness does to a mob that appeared (`MobVectors.Adopt.adopt`): its random is seeded from
+/// the tick and its number, its head and body turn to its yaw (the pinned one in a `pin_yaw`
+/// scenario: the constructor's is `Math.random()`'s, where both sides drew one Kiln takes the
+/// recording's).
+fn pin_fresh(level: &mut MemoryLevel, id: i32, n: i64, tick: i64, pin_yaw: bool, recorded: Option<f32>) {
+    let e = level.entity_mut(id).unwrap();
+    if let Some(y) = recorded
+        && (0.0..6.2832).contains(&y)
+        && (0.0..6.2832).contains(&e.y_rot)
+    {
+        e.y_rot = y;
+        e.y_rot_o = y;
+    }
+    e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
+    kiln_entity::mob::brain::pin(e);
+    if pin_yaw {
+        e.y_rot = 10.0 * (n + 1) as f32;
+        e.y_rot_o = e.y_rot;
+    }
+    let yaw = e.y_rot;
+    let m = mob::data_mut(e).unwrap();
+    m.y_head_rot = yaw;
+    m.y_head_rot_o = yaw;
+    m.y_body_rot = yaw;
+    m.y_body_rot_o = yaw;
+    if let mob::Species::Chicken { egg_time } = &mut m.species {
+        *egg_time = 6000 + n as i32;
+    }
+}
+
 fn replay(s: &Value) -> Result<usize, String> {
     // Diverging (brain-driven) scenarios compare the body only: not the random or the goals.
     let loose = s.get("diverges").and_then(Value::as_bool) == Some(true);
     let pin_yaw = s.get("pin_yaw").and_then(Value::as_bool) == Some(true);
+    // Recordings since wp29 pin a rider that appears during its vehicle's tick before it ticks.
+    let early_pin = s.get("pin_passengers").and_then(Value::as_bool) == Some(true);
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
     level.share_ai_random = true;
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
@@ -495,6 +527,15 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         let before = level.player_hits.len();
         let nearest = player.filter(|p| !p.spectator);
+        // The yaw a mob gets from its constructor is `Math.random() * 2 pi` (unseeded): where both
+        // sides drew one, Kiln takes the recording's.
+        let mut recorded_yaws = s
+            .get("spawned")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|sp| sp["tick"].as_i64() == Some(tick) && sp["mob"].as_bool() == Some(true))
+            .map(|sp| f(&sp["yaw"]) as f32);
         for i in 0..ticked {
             level.tick_one(i, |e, level| {
                 if let (Some(p), EntityKind::Mob(_)) = (nearest, &e.kind) {
@@ -520,6 +561,13 @@ fn replay(s: &Value) -> Result<usize, String> {
             let Some(v) = level.entity_at(i).filter(|e| !e.is_removed() && e.vehicle.is_none()) else { continue };
             let (vid, riders) = (v.id, v.passengers.clone());
             for pid in riders {
+                // (`ServerLevel.tickPassenger` ticks a rider that appeared meanwhile, the skeleton
+                // of a trap horse, in this very tick: the harness pins it first.)
+                if early_pin && !ids.contains(&pid) {
+                    let n = (ids.len() - initial) as i64;
+                    pin_fresh(&mut level, pid, n, tick, pin_yaw, recorded_yaws.next());
+                    ids.push(pid);
+                }
                 let Some(mut vehicle) = level.entity(vid).cloned() else { break };
                 let Some(slot) = level.entity_mut(pid) else { continue };
                 let mut p = std::mem::replace(slot, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
@@ -542,60 +590,48 @@ fn replay(s: &Value) -> Result<usize, String> {
         // wp28: what a breeze shot flies as the recording's did (vanilla draws the shot's spread
         // from the projectile's own random, seeded from the clock, which cannot be pinned).
         {
-            let recorded: Vec<&Value> = s["spawned"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:breeze_wind_charge"))
-                .collect();
-            let charges: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:breeze_wind_charge").map(|e| e.id).collect();
-            for (id, rec) in charges.iter().zip(recorded) {
-                level.entity_mut(*id).unwrap().delta = vec3(&rec["motion"]);
+            // (wp29: skeletons' arrows likewise.)
+            for shot in ["minecraft:breeze_wind_charge", "minecraft:arrow"] {
+                let recorded: Vec<&Value> = s["spawned"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some(shot))
+                    .collect();
+                let mut charges: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == shot).map(|e| e.id).collect();
+                // (Shots of one tick are matched by where they started: the harness finds them in
+                // the order of its entity sections.)
+                let at = |id: i32| level.entity(id).unwrap().position();
+                charges.sort_by(|&a, &b| {
+                    let key = |id: i32| recorded.iter().position(|r| vec3(&r["pos"]).distance_to_sqr(at(id)) < 1.0e-12).unwrap_or(usize::MAX);
+                    key(a).cmp(&key(b))
+                });
+                for (k, (id, rec)) in charges.iter().zip(recorded).enumerate() {
+                    let e = level.entity_mut(*id).unwrap();
+                    e.delta = vec3(&rec["motion"]);
+                    // An arrow's damage and crit were drawn from its random at the shot, which is
+                    // the clock's; its random is pinned for the hit (`MobVectors.Adopt`).
+                    // (Vectors recorded before wp29 do not carry them.)
+                    if let EntityKind::Arrow(a) = &mut e.kind
+                        && rec.get("base_damage").is_some_and(|v| !v.is_null())
+                    {
+                        a.base_damage = f(&rec["base_damage"]);
+                        a.crit = rec["crit"].as_bool().unwrap_or(false);
+                        e.random = kiln_javamath::random::LegacyRandom::new(5555 * (tick + 1) + k as i64);
+                    }
+                }
             }
         }
         // Mobs that appeared get the harness's pinned random and head/body yaw, in the order the
         // harness finds them (`getEntities` over its box: entity sections, then insertion).
-        let fresh: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| mob::data(e).is_some()).map(|e| e.id).collect();
+        let fresh: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| mob::data(e).is_some()).map(|e| e.id).filter(|id| !ids.contains(id)).collect();
         let harness_box = kiln_entity::math::Aabb::new(-60.0, 60.0, -60.0, 60.0, 140.0, 60.0);
         let order = level.entities_in(&harness_box, kiln_entity::EntityFilter::Any, i32::MIN);
         let mut fresh = fresh;
         fresh.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
-        // The yaw a mob gets from its constructor is `Math.random() * 2 pi` (unseeded): where both
-        // sides drew one, Kiln takes the recording's.
-        let mut recorded_yaws = s
-            .get("spawned")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter(|sp| sp["tick"].as_i64() == Some(tick) && sp["mob"].as_bool() == Some(true))
-            .map(|sp| f(&sp["yaw"]) as f32);
         for id in fresh {
             let n = (ids.len() - initial) as i64;
-            let recorded = recorded_yaws.next();
-            let e = level.entity_mut(id).unwrap();
-            if let Some(y) = recorded
-                && (0.0..6.2832).contains(&y)
-                && (0.0..6.2832).contains(&e.y_rot)
-            {
-                e.y_rot = y;
-                e.y_rot_o = y;
-            }
-            e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
-            kiln_entity::mob::brain::pin(e);
-            if pin_yaw {
-                // (`Scenario.pinYaw`)
-                e.y_rot = 10.0 * (n + 1) as f32;
-                e.y_rot_o = e.y_rot;
-            }
-            let yaw = e.y_rot;
-            let m = mob::data_mut(e).unwrap();
-            m.y_head_rot = yaw;
-            m.y_head_rot_o = yaw;
-            m.y_body_rot = yaw;
-            m.y_body_rot_o = yaw;
-            if let mob::Species::Chicken { egg_time } = &mut m.species {
-                *egg_time = 6000 + n as i32;
-            }
+            pin_fresh(&mut level, id, n, tick, pin_yaw, recorded_yaws.next());
             ids.push(id);
         }
         // Explosions hurt the player through events (it is not an entity of the harness).
@@ -621,6 +657,13 @@ fn replay(s: &Value) -> Result<usize, String> {
         {
             let m = mob::data(e).unwrap();
             eprintln!("dbg tick {tick} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
+        }
+        if std::env::var_os("KILN_MOB_DEBUG_ENTS").is_some() {
+            for i in 0..level.len() {
+                if let Some(e) = level.entity_at(i).filter(|e| matches!(e.kind, EntityKind::Arrow(_))) {
+                    eprintln!("ENT tick={tick} {} id={} removed={} pos={:?} delta={:?}", e.type_name, e.id, e.is_removed(), e.position(), e.delta);
+                }
+            }
         }
         for (k, want) in expected.as_array().unwrap().iter().enumerate() {
             let want = want.as_array().unwrap();

@@ -156,3 +156,28 @@ fn spectators_and_the_far_do_not_spring_it() {
     w.ticks(5);
     assert_eq!(w.sim.mobs().iter().filter(|m| m.1 == "minecraft:skeleton_horse").count(), 4, "a survival player does");
 }
+
+/// The skeleton on the trap horse ticks in the very tick the trap springs (`tickPassenger` ticks
+/// what joined its vehicle meanwhile): it already sits on the horse when that tick is over, not
+/// where it was made.
+#[test]
+fn the_rider_of_the_trap_horse_ticks_in_the_tick_the_trap_springs() {
+    let mut w = World::new("creative");
+    w.summon_at("minecraft:skeleton_horse", 12.0, "{SkeletonTrap:1b}");
+    w.ticks(10);
+    // Steps into reach, then one tick at a time: the first tick with a skeleton is the spring's.
+    w.console("tp Bait ~7 ~ ~");
+    for _ in 0..5 {
+        w.ticks(1);
+        let mobs = w.sim.mobs();
+        let Some(rider) = mobs.iter().find(|m| m.1 == "minecraft:skeleton") else { continue };
+        let riding = w.sim.riding();
+        let (_, vehicle, _) = riding.iter().find(|r| r.0 == rider.0).expect("simulated");
+        let horse = mobs.iter().find(|m| Some(m.0) == *vehicle).expect("its horse");
+        // A skeleton sits 0.7 below the horse's seat (a skeleton horse's is 1.31875 up).
+        let dy = rider.2[1] - horse.2[1];
+        assert!((dy - (1.318_750_023_841_858 - 0.699_999_988_079_071)).abs() < 1e-9, "the rider sits on its horse in the spring's own tick: {dy}");
+        return;
+    }
+    panic!("the trap did not spring");
+}
