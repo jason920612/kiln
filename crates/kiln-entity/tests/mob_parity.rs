@@ -141,7 +141,7 @@ fn effects_sig(m: &mob::MobData) -> i64 {
 }
 
 /// A scenario action (`MobVectors.Action`), run before the entity ticks of its tick.
-fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Value) {
+fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, player: Option<PlayerView>, a: &Value) {
     let kind = a["kind"].as_str().unwrap();
     let what = a["what"].as_str().unwrap_or("");
     let pos = vec3(&a["pos"]);
@@ -212,12 +212,13 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
         // wp30 llamas: mob `mob` is led by `amp` (an index into the mobs, -2 the player).
         "leash" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];
+            // (An index past the mobs is one of the scenario's other entities: a leash knot.)
             let holder = match a["amp"].as_i64().unwrap() {
                 -2 => player.expect("a leading player").id,
-                i => ids[i as usize],
+                i if (i as usize) < initial => ids[i as usize],
+                i => other_ids[i as usize - initial],
             };
-            let m = mob::data_mut(level.entity_mut(id).unwrap()).unwrap();
-            mob::kinds::llama::set_leash_holder(m, Some(holder));
+            kiln_entity::leash::set_leashed_to_in_level(level, id, holder);
         }
         "interact" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];
@@ -236,6 +237,8 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             let held = match out.held {
                 mob::interact::HeldChange::Consume(_) if !who.creative => Some(0),
                 mob::interact::HeldChange::Fill(ref f) => Some(f.item()),
+                // `ItemStack.shrink(1)` of a stack of one, whatever the game mode.
+                mob::interact::HeldChange::Shrink(_) => Some(0),
                 _ => None,
             };
             if let Some(held) = held {
@@ -243,6 +246,19 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
                     p.main_hand = held;
                 }
             }
+        }
+        // wp32 parrots: the player stands on the ground (a parrot may land on its shoulder).
+        "ground" => {
+            for p in level.players.iter_mut() {
+                p.parrot_can_sit = true;
+            }
+        }
+        // wp32 parrots: a record plays near (or stops near) parrot `mob`.
+        "record" => {
+            let id = ids[a["mob"].as_u64().unwrap() as usize];
+            let at = BlockPos::containing(pos.x, pos.y, pos.z);
+            let m = mob::data_mut(level.entity_mut(id).unwrap()).unwrap();
+            mob::kinds::parrot::set_record_playing_nearby(m, at, what == "play");
         }
         // wp28: `time set` in the middle of a scenario.
         "daytime" => level.day_time = pos.x as i64,
@@ -350,6 +366,9 @@ fn replay(s: &Value) -> Result<usize, String> {
         v.creative = p.get("creative").and_then(Value::as_bool).unwrap_or(false);
         // The recording's player is never ticked: it never finds itself in water.
         v.in_water = Some(false);
+        // (wp32: a parrot's owner is no spectator, flying or in powder snow; it does not stand on
+        // the ground (with a free shoulder) until the scenario says so.)
+        v.parrot_may_land = true;
         if let Some(item) = p.get("main_hand").and_then(Value::as_str) {
             v.main_hand = kiln_data::builtin_id("minecraft:item", item).unwrap();
         }
@@ -526,7 +545,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         for a in s.get("actions").and_then(Value::as_array).into_iter().flatten() {
             if a["tick"].as_i64() == Some(tick) {
-                act(&mut level, &ids, player, a);
+                act(&mut level, &ids, &other_ids, initial, player, a);
                 // The player may have moved or changed game mode.
                 if player.is_some()
                     && let Some(p) = level.players.first()
@@ -679,7 +698,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             && let Some(e) = ids.get(k).and_then(|&id| level.entity(id))
         {
             let m = mob::data(e).unwrap();
-            eprintln!("dbg tick {tick} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
+            eprintln!("dbg tick {tick} op {:?} wanted {:?} yaw {} head {} body {} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", m.mov.operation, m.mov.wanted, e.y_rot, m.y_head_rot, m.y_body_rot, e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
         }
         if std::env::var_os("KILN_MOB_DEBUG_ENTS").is_some() {
             for i in 0..level.len() {
@@ -718,6 +737,12 @@ fn replay(s: &Value) -> Result<usize, String> {
             }
             compared += 1;
         }
+    }
+    // wp32 parrots: what the scenario drew from the level's random.
+    if let Some(want) = s.get("level_random").and_then(Value::as_i64)
+        && level.random_state() != want
+    {
+        return Err(format!("level random {} (kiln) vs {want} (vanilla)", level.random_state()));
     }
     // wp28 creaking: the blocks around the hearts (resin) are the same.
     for b in s.get("end_blocks").and_then(Value::as_array).into_iter().flatten() {

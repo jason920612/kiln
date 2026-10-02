@@ -28,6 +28,8 @@ pub enum HeldChange {
     Fill(ItemStack),
     /// `hurtAndBreak(n)`: durability lost (none in creative).
     Damage(i32),
+    /// `ItemStack.shrink(n)`: taken in every game mode (a lead put on a mob).
+    Shrink(i32),
 }
 
 /// `InteractionResult`, as far as the caller cares.
@@ -60,6 +62,14 @@ fn is(stack: &ItemStack, name: &str) -> bool {
 
 /// `Player.interactOn` for a mob: the mob's own handler first, then the held item's.
 pub fn interact(e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Outcome {
+    // `Entity.interact`'s share (leads and shears) comes before the type's own handler, for
+    // living mobs and for boats.
+    if crate::leash::is_leashable(e) && super::data(e).is_none_or(|m| super::is_alive(e, m)) && let Some(out) = crate::leash::interact(e, level, who, stack) {
+        if out.success {
+            level.emit(Event::GameEvent { event: "minecraft:entity_interact", pos: e.position(), entity: Some(who.id) });
+        }
+        return out;
+    }
     if super::data(e).is_none() {
         // Extension entities with a click of their own (boats).
         let placeholder = crate::entity::EntityKind::Other { type_name: e.type_name };

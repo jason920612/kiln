@@ -88,6 +88,11 @@ pub mod tadpole;
 // -- wp30: llamas
 pub mod llama;
 
+// -- wp32: wandering traders
+pub mod wandering_trader;
+// -- wp32: parrots
+pub mod parrot;
+
 
 /// The behaviour of an extension type; `None` for the shared-code types.
 pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
@@ -175,6 +180,11 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         // -- wp30: llamas
         MobKind::Llama => &llama::LLAMA,
         MobKind::TraderLlama => &llama::TRADER_LLAMA,
+
+        // -- wp32: wandering traders
+        MobKind::WanderingTrader => &wandering_trader::KIND,
+        // -- wp32: parrots
+        MobKind::Parrot => &parrot::KIND,
 
         _ => return None,
     })

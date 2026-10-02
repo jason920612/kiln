@@ -17,6 +17,7 @@ pub mod fireball;
 pub mod minecart;
 pub mod firework;
 pub mod fishing_hook;
+pub mod leash_knot;
 pub mod lightning;
 pub mod llama_spit;
 pub mod shulker_bullet;
@@ -120,6 +121,8 @@ pub const TYPES: &[&str] = &[
     "minecraft:firework_rocket",
     // -- wp30: llamas
     "minecraft:llama_spit",
+    // -- wp32: leads
+    "minecraft:leash_knot",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -138,6 +141,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:dragon_fireball" => dragon_fireball::load(r),
         "minecraft:wither_skull" => wither_skull::load(r),
         "minecraft:llama_spit" => llama_spit::load(r),
+        "minecraft:leash_knot" => leash_knot::load(r),
         _ => None,
     }
 }

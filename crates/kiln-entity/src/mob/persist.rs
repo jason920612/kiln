@@ -110,6 +110,12 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
             }
         }
     }
+    // `home_radius` (below 0: no home) and `home_pos`.
+    let home_radius = r.int_or("home_radius", -1);
+    m.home = (home_radius >= 0).then(|| match r.get("home_pos") {
+        Some(Tag::IntArray(v)) if v.len() == 3 => (crate::math::BlockPos::new(v[0], v[1], v[2]), home_radius),
+        _ => (crate::math::BlockPos::new(0, 0, 0), home_radius),
+    });
     m.left_handed = r.bool_or("LeftHanded", false);
     m.no_ai = r.bool_or("NoAI", false);
     // `AgeableMob` and `Animal`.
@@ -260,6 +266,13 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     }
     if let Some(k) = m.kind.ext() {
         k.save(e, m, o);
+    }
+    // `Mob.addAdditionalSaveData`: the home (types with a home of their own wrote it).
+    if let Some((p, radius)) = m.home
+        && !o.has("home_radius")
+    {
+        o.put("home_radius", Tag::Int(radius));
+        o.put("home_pos", Tag::IntArray(vec![p.x, p.y, p.z]));
     }
     if let Some(b) = &m.brain
         && !o.has("Brain")

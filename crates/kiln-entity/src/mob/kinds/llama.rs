@@ -2,10 +2,9 @@
 //! holds their state: strength, coat, caravan links, the trader's despawn delay) that spit at what
 //! hurts them, fight wolves, and follow each other in caravans when led.
 //!
-//! Leads do not exist yet: a llama is leashed only when [`set_leash_holder`] says so (the tests
-//! and the parity harness do), with none of a lead's physics, so [`LlamaFollowCaravanGoal`] only
-//! has a head to follow then, and a trader llama is never led by a wandering trader
-//! (`TraderLlamaDefendWanderingTraderGoal` never starts: there are none).
+//! A led llama is the head of a caravan ([`LlamaFollowCaravanGoal`]); a trader llama led by a
+//! wandering trader defends it (`TraderLlamaDefendWanderingTraderGoal`) and lives as long as the
+//! trader does.
 
 use super::common_a::{Avoid, NearestTargetGoal};
 use super::horse::{self, st, st_mut};
@@ -48,23 +47,9 @@ pub fn variant_by_id(id: i32) -> i32 {
     id.clamp(0, 3)
 }
 
-/// The leash holder of `m` (`Leashable.getLeashHolder`): nobody unless [`set_leash_holder`] said
-/// so (leads, their physics and knots are not simulated).
-pub fn leash_holder(m: &MobData) -> Option<i32> {
-    horse::state(m).and_then(|s| s.leash_holder)
-}
-
-/// Leashes `m` to entity `holder` (or frees it): the holder pulls nothing, and stays within
-/// range of the llama (a lead's elastic range is 4.5 blocks around it).
-pub fn set_leash_holder(m: &mut MobData, holder: Option<i32>) {
-    if let Some(s) = ext_state_mut(m) {
-        s.leash_holder = holder;
-    }
-}
-
-/// `isLeashed`.
-pub fn is_leashed(m: &MobData) -> bool {
-    leash_holder(m).is_some()
+/// `isLeashed` (the lead is data of the entity: see [`crate::leash`]).
+pub fn is_leashed(e: &Entity) -> bool {
+    crate::leash::is_leashed(e)
 }
 
 /// `Llama.inCaravan`.
@@ -211,8 +196,9 @@ fn first_is_leashed(level: &dyn EntityLevel, m: &MobData, depth: i32) -> bool {
         return false;
     }
     let Some(head) = st(m).caravan_head else { return false };
-    let Some(hm) = level.entity(head).and_then(crate::mob::data) else { return false };
-    is_leashed(hm) || first_is_leashed(level, hm, depth + 1)
+    let Some(ho) = level.entity(head) else { return false };
+    let Some(hm) = crate::mob::data(ho) else { return false };
+    is_leashed(ho) || first_is_leashed(level, hm, depth + 1)
 }
 
 impl CustomGoal for LlamaFollowCaravanGoal {
@@ -224,7 +210,7 @@ impl CustomGoal for LlamaFollowCaravanGoal {
         MOVE
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if is_leashed(m) || in_caravan(m) {
+        if is_leashed(e) || in_caravan(m) {
             return false;
         }
         let area = e.bounding_box().inflate(9.0, 4.0, 9.0);
@@ -252,7 +238,7 @@ impl CustomGoal for LlamaFollowCaravanGoal {
             for &id in &llamas {
                 let Some(o) = level.entity(id) else { continue };
                 let Some(om) = crate::mob::data(o) else { continue };
-                if !is_leashed(om) || has_caravan_tail(om) {
+                if !is_leashed(o) || has_caravan_tail(om) {
                     continue;
                 }
                 let d = e.position().distance_to_sqr(o.position());
@@ -267,8 +253,9 @@ impl CustomGoal for LlamaFollowCaravanGoal {
         if best < 4.0 {
             return false;
         }
-        let Some(head_m) = level.entity(head).and_then(crate::mob::data) else { return false };
-        if !is_leashed(head_m) && !first_is_leashed(level, head_m, 1) {
+        let Some(head_e) = level.entity(head) else { return false };
+        let Some(head_m) = crate::mob::data(head_e) else { return false };
+        if !is_leashed(head_e) && !first_is_leashed(level, head_m, 1) {
             return false;
         }
         join_caravan(e.id, m, head, level);
@@ -315,7 +302,7 @@ impl CustomGoal for LlamaFollowCaravanGoal {
 }
 
 /// `TraderLlama.TraderLlamaDefendWanderingTraderGoal`: fights whoever hurt the wandering trader
-/// that leads the llama (which never happens: leads and wandering traders are not simulated).
+/// that leads the llama.
 #[derive(Clone, Debug)]
 struct TraderLlamaDefendWanderingTraderGoal {
     timestamp: i32,
@@ -329,16 +316,17 @@ impl CustomGoal for TraderLlamaDefendWanderingTraderGoal {
     fn flags(&self) -> u8 {
         TARGET
     }
-    fn can_use(&mut self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        let Some(holder) = leash_holder(m) else { return false };
+    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        let Some(holder) = crate::leash::holder_of(e) else { return false };
         let Some(h) = level.entity(holder).filter(|h| h.type_name == "minecraft:wandering_trader") else { return false };
         let Some(hm) = crate::mob::data(h) else { return false };
         let (by, stamp) = (hm.last_hurt_by_mob, hm.last_hurt_by_mob_timestamp);
         let Some(by) = by.and_then(|id| goals::living(level, id)) else { return false };
-        stamp != self.timestamp && goals::can_attack(m, level, &by)
+        // `TargetGoal.canAttack(by, TargetingConditions.DEFAULT)`: combat conditions, and within home.
+        stamp != self.timestamp && goals::targeting_ok(e, m, level, &by, true, -1.0, true) && crate::mob::random_pos::within_home(m.home, by.block_pos())
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        let Some(holder) = leash_holder(m) else { return };
+        let Some(holder) = crate::leash::holder_of(e) else { return };
         let Some(hm) = level.entity(holder).and_then(crate::mob::data) else { return };
         let (by, stamp) = (hm.last_hurt_by_mob, hm.last_hurt_by_mob_timestamp);
         crate::mob::set_target(e, m, by);

@@ -195,6 +195,21 @@ impl RegionWork<'_> {
                 crate::trading::open_if_requested(self.entities, self.players[i], entity_id, &env.rules, &mut self.out.spawns);
                 continue;
             }
+            // A fence with leads tied to the player: they move to its knot.
+            if let PlayIn::UseItemOn { hand, pos, face, cursor, sequence, .. } = pkt
+                && crate::leash::intercepts(self.players[i], &*self.cells, &env.blocks, hand, pos, face, cursor)
+            {
+                let mut level =
+                    RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: Some(conn) };
+                if crate::leash::bind(self.entities, &mut level, &mut self.players, i, pos, &mut self.out.spawns, &mut self.out.deaths) {
+                    let p = &mut *self.players[i];
+                    let step = crate::blocks::direction(face).map_or([0; 3], |d| d.step());
+                    p.resend_block(&mut level, pos);
+                    p.resend_block(&mut level, [pos[0] + step[0], pos[1] + step[1], pos[2] + step[2]]);
+                    p.ack_block_changes = p.ack_block_changes.max(sequence);
+                    continue;
+                }
+            }
             // Beds and respawn anchors need the region's entities (monsters nearby, explosions).
             if let PlayIn::UseItemOn { hand: 0, pos, face, cursor, sequence, .. } = pkt
                 && crate::sleep::intercepts(self.players[i], &*self.cells, &env.blocks, pos, face, cursor)

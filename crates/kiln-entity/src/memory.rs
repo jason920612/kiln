@@ -264,6 +264,16 @@ impl MemoryLevel {
 }
 
 impl EntityLevel for MemoryLevel {
+    /// A wandering trader sells one thing (emeralds for a stick): the tests have no trade data.
+    fn trade_offers(&mut self, set: &str, _merchant: &crate::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
+        use kiln_item::trading::{ItemCost, MerchantOffer};
+        if !set.starts_with("minecraft:wandering_trader/") {
+            return Vec::new();
+        }
+        let (Some(emerald), Some(stick)) = (kiln_data::builtin_id("minecraft:item", "minecraft:emerald"), kiln_item::ItemStack::of("minecraft:stick", 1)) else { return Vec::new() };
+        vec![MerchantOffer::new(ItemCost::new(emerald, 1), None, stick, 12, 1, 0.05)]
+    }
+
     fn block(&self, pos: BlockPos) -> u16 {
         let floor = match self.bottom_layer {
             Some(b) if pos.y == self.min_y => b,

@@ -136,6 +136,8 @@ pub struct Entity {
     /// Saved fields Kiln does not model (custom name, tags, passengers, ...), written back
     /// unchanged by [`crate::persist::save`].
     pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
+    /// `Leashable.getLeashData` (mobs and boats; see [`crate::leash`]).
+    pub leash: Option<Box<crate::leash::LeashData>>,
 }
 
 impl Entity {
@@ -203,6 +205,7 @@ impl Entity {
             passengers: Vec::new(),
             stands_on_lava: false,
             extra: Vec::new(),
+            leash: None,
         };
         e.set_pos(Vec3::ZERO);
         e.bb = e.make_bounding_box(e.position);
@@ -436,6 +439,10 @@ impl Entity {
             self.discard();
         }
         self.first_tick = false;
+        // `Leashable.tickLeash` (boats; mobs do it in their own base tick).
+        if self.leash.is_some() {
+            crate::leash::tick_leash(self, None, level);
+        }
     }
 
     pub(crate) fn compute_speed(&mut self) {

@@ -143,6 +143,11 @@ pub enum MobKind {
     // -- wp30: llamas
     Llama,
     TraderLlama,
+
+    // -- wp32: wandering traders
+    WanderingTrader,
+    // -- wp32: parrots
+    Parrot,
 }
 
 /// `MobCategory`.
@@ -305,6 +310,11 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- wp30: llamas
     MobKind::Llama,
     MobKind::TraderLlama,
+
+    // -- wp32: wandering traders
+    MobKind::WanderingTrader,
+    // -- wp32: parrots
+    MobKind::Parrot,
 ];
 
 impl MobKind {
@@ -613,6 +623,11 @@ pub struct MobData {
     /// (`Projectile.calculateHorizontalHurtKnockbackDirection`: the projectile's own horizontal
     /// motion, negated), instead of the direction from the damage source's position.
     pub knock_override: Option<(f64, f64)>,
+    /// `Mob.homePosition` and `homeRadius` (`None`: no home, radius -1): where a leashed mob
+    /// or a wandering trader keeps to.
+    pub home: Option<(BlockPos, i32)>,
+    /// `Entity.isInvisible` (shared flag 5), set from the effects when the data is synchronised.
+    pub invisible_flag: bool,
 }
 
 /// The vehicle of a mob rider while the rider ticks. `Mob.getNavigation()` and
@@ -720,6 +735,8 @@ impl MobData {
             mount: None,
             carries_mob: false,
             knock_override: None,
+            home: None,
+            invisible_flag: false,
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -840,6 +857,17 @@ impl MobData {
     }
 }
 
+/// `LivingEntity.updateDataBeforeSync` (`updateDirtyEffects`): the tracker's call at the end of
+/// the tick, which sets the invisible flag from the effects.
+pub fn update_data_before_sync(e: &mut Entity) {
+    if let Some(m) = data_mut(e) {
+        let now = effects::invisibility_effect(m);
+        if m.invisible_flag != now {
+            m.invisible_flag = now;
+        }
+    }
+}
+
 /// `getArmorCoverPercentage`: the share of the four armor slots that hold something.
 pub fn armor_cover(m: &MobData) -> f32 {
     let worn = [FEET, LEGS, CHEST, HEAD].iter().filter(|&&i| !m.equipment[i].is_empty()).count();
@@ -908,6 +936,8 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
         MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
         MobKind::Axolotl => kinds::axolotl::variant_components(m).unwrap_or_default(),
         MobKind::Frog => vec![C::FrogVariant(v::FrogVariant(m.variant))],
+        // -- wp32: parrots
+        MobKind::Parrot => vec![C::ParrotVariant(v::ParrotVariant::ALL[kinds::parrot::variant(m) as usize])],
         _ => Vec::new(),
     }
 }
@@ -1494,6 +1524,10 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         hurt(e, m, level, DamageSource::of(DamageKind::OutOfWorld), 4.0);
     }
     e.first_tick = false;
+    // `Leashable.tickLeash` (the end of `Entity.baseTick`).
+    if e.leash.is_some() {
+        crate::leash::tick_leash(e, Some(&mut *m), level);
+    }
     // `LivingEntity.baseTick`.
     if is_alive(e, m) {
         if in_wall(e, level) {
@@ -1568,7 +1602,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.ambient_sound_time += 1;
         if e.random.next_int_bounded(1000) < t {
             m.ambient_sound_time = -m.kind.ambient_sound_interval();
-            let sound = match m.kind.ext().and_then(|k| k.ambient_sound(e, m, &*level)) {
+            let sound = match m.kind.ext().and_then(|k| k.ambient_sound_mut(e, m, level)) {
                 Some(s) => s,
                 None => m.kind.ambient_sound(),
             };
@@ -1898,7 +1932,8 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
     }
     let drag = m.attrs.value(Attr::AirDragModifier) as f32;
     let h = friction * modified_friction(0.91, drag);
-    let vy = modified_friction(0.98, drag);
+    // `omnidirectionalAirMover` (wp32: parrots): the vertical drag is the horizontal one.
+    let vy = if m.kind.ext().is_some_and(|k| k.omnidirectional_air_mover()) { modified_friction(0.91, drag) } else { modified_friction(0.98, drag) };
     e.delta = Vec3::new(v.x * h as f64, y * vy as f64, v.z * h as f64);
 }
 
@@ -2081,6 +2116,10 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         }
     }
     for (id, ox, oz, player) in others {
+        // `doPush` of a parrot ignores players (wp32).
+        if player && m.kind.ext().is_some_and(|k| k.do_push_skips_players()) {
+            continue;
+        }
         if let Some(k) = m.kind.ext() {
             k.do_push(e, m, &*level, id);
             k.do_push_mut(e, m, level, id);
@@ -2541,12 +2580,17 @@ pub fn spawn_at_location(e: &Entity, level: &mut dyn EntityLevel, stack: ItemSta
 }
 
 pub fn spawn_at_location_offset(e: &Entity, level: &mut dyn EntityLevel, stack: ItemStack, y_off: f32) {
+    spawn_at(e.position(), level, stack, y_off);
+}
+
+/// `Entity.spawnAtLocation(stack, y_off)` for an entity standing at `at`.
+pub fn spawn_at(at: Vec3, level: &mut dyn EntityLevel, stack: ItemStack, y_off: f32) {
     if stack.is_empty() {
         return;
     }
     let id = level.next_entity_id();
     let seed = level.fresh_seed();
-    let pos = Vec3::new(e.x(), e.y() + y_off as f64, e.z());
+    let pos = Vec3::new(at.x, at.y + y_off as f64, at.z);
     let mut item = crate::item::new(id, 0, stack, seed);
     item.set_pos(pos);
     // `new ItemEntity(level, x, y, z, stack)`: a random throw from the item's own random.
@@ -2809,7 +2853,8 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
         return;
     }
     // (`isPersistenceRequired() || requiresCustomPersistence()`: a passenger is never removed.)
-    let persistent = m.persistence_required || e.vehicle.is_some();
+    // (`requiresCustomPersistence`: a passenger or a led mob.)
+    let persistent = m.persistence_required || e.vehicle.is_some() || crate::leash::is_leashed(e);
     let category = m.kind.category();
     let Some(d) = nearest else { return };
     let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(!category.persistent());
