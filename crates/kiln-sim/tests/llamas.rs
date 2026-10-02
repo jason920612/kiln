@@ -265,7 +265,7 @@ fn a_summoned_llama_comes_with_a_strength_a_coat_and_a_health_of_its_own() {
     let mut seen = std::collections::BTreeSet::new();
     let mut coats = std::collections::BTreeSet::new();
     for _ in 0..12 {
-        w.run("summon minecraft:llama ~ ~ ~ {NoAI:1b}");
+        w.run("summon minecraft:llama ~ ~ ~");
         w.ticks(1);
     }
     for t in w.sim.entity_nbt().iter().filter(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:llama")) {
