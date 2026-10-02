@@ -4865,10 +4865,76 @@ public class MobVectors {
         }
     }
 
+    /// Blocks between a player and a creaking (`Entity.hasLineOfSight(VISUAL)` from the player's
+    /// eyes to three points of the creaking). The player stands at x 8.5 looking at the creaking
+    /// at x 0.5 (eye 1.62 and 2.3 high). Controls: a wall that blocks (stone, leaves, ice) or does
+    /// not (glass, tinted glass, pane, bars, powder snow). Then the blocks whose visual shape is
+    /// not their collision shape, with stone at x 2 hiding the creaking's eyes and middle, so only
+    /// its feet (y + 0.5) are seen and that ray runs through the block under test:
+    /// a fence's arm (a control: inside its own block its outline is as high as its collision,
+    /// the 1.5 high collision never gets a ray that passes over the block),
+    /// mud and soul sand are whole blocks to the eye (the ray passes over their 14 pixels of
+    /// collision at 0.99), 7 snow layers show 14 pixels while colliding with 12, and scaffolding
+    /// does not collide with a player standing at its feet but does for no entity at all. The
+    /// creaking stands in a pen of glass (glass has no visual shape) so that it stays where the
+    /// rays were worked out for.
+    static void scenariosCreakingSight(List<Scenario> out) {
+        String[][] walls = {
+            {"glass", "minecraft:glass"}, {"tinted_glass", "minecraft:tinted_glass"}, {"pane", "minecraft:glass_pane"},
+            {"bars", "minecraft:iron_bars"}, {"powder_snow", "minecraft:powder_snow"}, {"stone", "minecraft:stone"},
+            {"leaves", "minecraft:oak_leaves[persistent=true]"}, {"ice", "minecraft:ice"}, {"stained_glass", "minecraft:red_stained_glass"},
+        };
+        int seed = 0;
+        for (String[] w : walls) {
+            Scenario s = new Scenario("sight_wall_" + w[0]);
+            floor(s, 24, "minecraft:stone");
+            for (int y = 0; y < 4; y++) block(s, 4, BY + y, 0, w[1]);
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14900L + seed++));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // x, y offset from BY of the block under test, and its state.
+        Object[][] tests = {
+            {"fence", 4, 0, "minecraft:oak_fence[west=true]"},
+            {"mud", 4, 0, "minecraft:mud"},
+            {"soul_sand", 4, 0, "minecraft:soul_sand"},
+            {"snow7", 3, 0, "minecraft:snow[layers=7]"},
+            {"snow8", 4, 0, "minecraft:snow[layers=8]"},
+            {"scaffold", 3, 0, "minecraft:scaffolding[bottom=false,distance=0,waterlogged=false]"},
+        };
+        for (Object[] t : tests) {
+            Scenario s = new Scenario("sight_" + t[0]);
+            floor(s, 24, "minecraft:stone");
+            block(s, 2, BY + 1, 0, "minecraft:stone");
+            block(s, 2, BY + 2, 0, "minecraft:stone");
+            block(s, (Integer) t[1], BY + (Integer) t[2], 0, (String) t[3]);
+            for (int y = 0; y < 3; y++) {
+                for (int d = -1; d <= 1; d++) {
+                    block(s, 1, BY + y, d, "minecraft:glass");
+                    block(s, -1, BY + y, d, "minecraft:glass");
+                }
+                block(s, 0, BY + y, -1, "minecraft:glass");
+                block(s, 0, BY + y, 1, "minecraft:glass");
+            }
+            s.mobs.add(new MobSpec("minecraft:creaking", 0.5, BY, 0.5, 270f, 14900L + seed++));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerYaw = 90f;
+            s.playerPitch = -6.6f;
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+    }
+
     /// Wardens, breezes, creakings.
     static void scenariosBrainSpecial(List<Scenario> out) {
         scenariosWardenBreeze(out);
         scenariosCreaking(out);
+        scenariosCreakingSight(out);
     }
 
     // ---------------------------------------------------------------------- wp28: warden and breeze
