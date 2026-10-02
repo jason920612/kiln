@@ -216,8 +216,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
                 -2 => player.expect("a leading player").id,
                 i => ids[i as usize],
             };
-            let m = mob::data_mut(level.entity_mut(id).unwrap()).unwrap();
-            mob::kinds::llama::set_leash_holder(m, Some(holder));
+            kiln_entity::leash::set_leashed_to_in_level(level, id, holder);
         }
         "interact" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];

@@ -105,6 +105,13 @@ fn stand_up(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     mob::refresh_dimensions_in(e, m, level);
 }
 
+/// `Camel.onElasticLeashPull`: a pulled camel that sits and can change pose stands up.
+pub fn elastic_pull(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    if sitting(m) && !in_pose_transition(m) && can_change_pose(e, m, &*level) {
+        stand_up(e, m, level);
+    }
+}
+
 /// `standUpInstantly`.
 fn stand_up_instantly(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });

@@ -45,7 +45,7 @@ fn generate(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, mut next: impl
 
 /// `DefaultRandomPos.getPos(mob, h, v)`.
 pub fn default_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32) -> Option<Vec3> {
-    default_pos_home(e, m, level, h, v, None)
+    default_pos_home(e, m, level, h, v, m.home)
 }
 
 /// A mob's home (`Mob.homePosition`, `homeRadius`): a block and a radius (-1: anywhere).
@@ -197,24 +197,18 @@ fn move_up_to_above_solid(level: &dyn EntityLevel, p: BlockPos, above: i32) -> B
 /// `DefaultRandomPos.getPosTowards(mob, h, v, target, angle)`.
 pub fn default_pos_towards(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, target: Vec3, angle: f64) -> Option<Vec3> {
     crate::prof!("path", "default_pos_towards");
-    let d = target - e.position();
-    generate(e, m, level, |e| {
-        let dir = direction_within_radians(e, 0.0, h as f64, v, 0, d.x, d.z, angle)?;
-        let p = toward(e, dir);
-        if outside_limits(level, p) || !path::stable_destination(m, level, p) || has_malus(m, level, p) {
-            return None;
-        }
-        Some(p)
-    })
+    default_pos_towards_home(e, m, level, h, v, target, angle, m.home)
 }
 
 /// `LandRandomPos.getPos(mob, h, v)`.
 pub fn land_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32) -> Option<Vec3> {
     crate::prof!("path", "land_pos");
+    let home = m.home;
+    let restrict = mob_restricted(e, home, h as f64);
     generate(e, m, level, |e| {
         let dir = random_direction(e, h, v);
-        let p = toward(e, dir);
-        if outside_limits(level, p) || !path::stable_destination(m, level, p) {
+        let p = toward_home(e, h as f64, dir, home);
+        if outside_limits(level, p) || (restrict && !within_home(home, p)) || !path::stable_destination(m, level, p) {
             return None;
         }
         move_up_out_of_solid(m, level, p)

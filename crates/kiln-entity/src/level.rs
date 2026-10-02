@@ -608,6 +608,15 @@ pub trait EntityLevel {
         self.players().iter().filter(|p| player_box(p).intersects(area)).copied().collect()
     }
 
+    /// `Entity.getKnownMovement` of entity or player `id`: a mob's or boat's own motion, a
+    /// player's last movement as its client reported it (none when not known).
+    fn known_movement(&self, id: i32) -> Vec3 {
+        if self.player(id).is_some() {
+            return Vec3::ZERO;
+        }
+        self.entity(id).map_or(Vec3::ZERO, |e| e.delta)
+    }
+
     /// Player `id`, if it is one.
     fn player(&self, id: i32) -> Option<PlayerView> {
         self.players().iter().find(|p| p.id == id).copied()

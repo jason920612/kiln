@@ -613,6 +613,9 @@ pub struct MobData {
     /// (`Projectile.calculateHorizontalHurtKnockbackDirection`: the projectile's own horizontal
     /// motion, negated), instead of the direction from the damage source's position.
     pub knock_override: Option<(f64, f64)>,
+    /// `Mob.homePosition` and `homeRadius` (`None`: no home, radius -1): where a leashed mob
+    /// or a wandering trader keeps to.
+    pub home: Option<(BlockPos, i32)>,
 }
 
 /// The vehicle of a mob rider while the rider ticks. `Mob.getNavigation()` and
@@ -720,6 +723,7 @@ impl MobData {
             mount: None,
             carries_mob: false,
             knock_override: None,
+            home: None,
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -1494,6 +1498,10 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         hurt(e, m, level, DamageSource::of(DamageKind::OutOfWorld), 4.0);
     }
     e.first_tick = false;
+    // `Leashable.tickLeash` (the end of `Entity.baseTick`).
+    if e.leash.is_some() {
+        crate::leash::tick_leash(e, Some(&mut *m), level);
+    }
     // `LivingEntity.baseTick`.
     if is_alive(e, m) {
         if in_wall(e, level) {
@@ -2541,12 +2549,17 @@ pub fn spawn_at_location(e: &Entity, level: &mut dyn EntityLevel, stack: ItemSta
 }
 
 pub fn spawn_at_location_offset(e: &Entity, level: &mut dyn EntityLevel, stack: ItemStack, y_off: f32) {
+    spawn_at(e.position(), level, stack, y_off);
+}
+
+/// `Entity.spawnAtLocation(stack, y_off)` for an entity standing at `at`.
+pub fn spawn_at(at: Vec3, level: &mut dyn EntityLevel, stack: ItemStack, y_off: f32) {
     if stack.is_empty() {
         return;
     }
     let id = level.next_entity_id();
     let seed = level.fresh_seed();
-    let pos = Vec3::new(e.x(), e.y() + y_off as f64, e.z());
+    let pos = Vec3::new(at.x, at.y + y_off as f64, at.z);
     let mut item = crate::item::new(id, 0, stack, seed);
     item.set_pos(pos);
     // `new ItemEntity(level, x, y, z, stack)`: a random throw from the item's own random.
@@ -2809,7 +2822,8 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
         return;
     }
     // (`isPersistenceRequired() || requiresCustomPersistence()`: a passenger is never removed.)
-    let persistent = m.persistence_required || e.vehicle.is_some();
+    // (`requiresCustomPersistence`: a passenger or a led mob.)
+    let persistent = m.persistence_required || e.vehicle.is_some() || crate::leash::is_leashed(e);
     let category = m.kind.category();
     let Some(d) = nearest else { return };
     let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(!category.persistent());

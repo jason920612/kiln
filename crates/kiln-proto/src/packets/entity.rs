@@ -167,6 +167,14 @@ pub fn remove_entities(entity_ids: &[i32]) -> Bytes {
     b.freeze()
 }
 
+/// `set_entity_link`: entity `source` is led by `dest` (0: its lead is gone).
+pub fn set_entity_link(source: i32, dest: i32) -> Bytes {
+    let mut b = packet(ids::SET_ENTITY_LINK);
+    b.put_i32(source);
+    b.put_i32(dest);
+    b.freeze()
+}
+
 /// `set_passengers`: who rides `vehicle`, the controlling passenger first.
 pub fn set_passengers(vehicle: i32, passengers: &[i32]) -> Bytes {
     let mut b = packet(ids::SET_PASSENGERS);

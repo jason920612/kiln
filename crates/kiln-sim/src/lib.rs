@@ -78,6 +78,7 @@ mod heart;
 mod sleep;
 mod stats;
 mod trading;
+mod leash;
 mod waypoints;
 mod weather;
 mod world_state;
@@ -2053,6 +2054,25 @@ impl Sim {
                     if *x == placeholder {
                         *x = id;
                     }
+                }
+            }
+        }
+        // Leads tied to entities that were not in the level yet (a new knot, a trader): the
+        // region's led entities find their holder by its real id.
+        let mut cells = Vec::new();
+        for &(_, _, chunk) in placeholders {
+            let cell = chunk.cell();
+            if cells.contains(&cell) {
+                continue;
+            }
+            cells.push(cell);
+            let Some(region) = d.regions.at_mut(cell) else { continue };
+            for e in region.part_mut().0.list.iter_mut() {
+                if let Some(l) = e.phys.as_mut().and_then(|p| p.leash.as_mut())
+                    && let Some(h) = l.holder
+                    && h < 0
+                {
+                    l.holder = Some(real(h));
                 }
             }
         }
