@@ -190,15 +190,6 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
             targets.push((from.distance_to_sqr(t.position()), id, p));
         }
     }
-    if std::env::var_os("KILN_ARROW_DEBUG").is_some() {
-        let ids: Vec<i32> = level.entities_in(&area, EntityFilter::Any, e.id);
-        eprintln!("DBGARROW id={} tick_count={} from={:?} end={:?} margin={} area_ids={:?} targets={:?}", e.id, e.tick_count, from, end, margin, ids, targets.iter().map(|t| t.1).collect::<Vec<_>>());
-        for id in ids {
-            if let Some(t) = level.entity(id) {
-                eprintln!("   cand {} {} pos={:?} bb={:?} pickable={} owner={:?}", id, t.type_name, t.position(), t.bounding_box(), can_be_hit_by_projectile(t), owner);
-            }
-        }
-    }
     // (`ArrayList.sort`: stable.)
     targets.sort_by(|a, b| a.0.total_cmp(&b.0));
     let dest = targets.first().map_or(end, |&(_, _, p)| p);
@@ -285,9 +276,6 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
     let speed = v.length() as f32;
     let (base, crit) = { let d = data(e); (d.base_damage, d.crit) };
     let mut damage = crate::mob::mth::ceil((speed as f64 * base).clamp(0.0, 2.147483647e9));
-    if std::env::var_os("KILN_ARROW_DEBUG").is_some() {
-        eprintln!("DBGHIT arrow {} -> {} speed {} base {} crit {} damage {}", e.id, id, speed, base, crit, damage);
-    }
     // Piercing: the arrow goes on through up to `pierce_level` entities.
     let pierce = data(e).pierce_level;
     if pierce > 0 {

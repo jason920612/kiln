@@ -11,6 +11,8 @@ use kiln_javamath::random::LegacyRandom;
 struct GridLevel {
     inner: MemoryLevel,
     grid: PlayerGrid,
+    /// Answer the player queries by scanning every player instead (the reference).
+    scan: bool,
 }
 
 impl GridLevel {
@@ -18,7 +20,11 @@ impl GridLevel {
         let grid = PlayerGrid::build(&views);
         let mut inner = MemoryLevel::new(-64, 1);
         inner.players = views;
-        GridLevel { inner, grid }
+        GridLevel { inner, grid, scan: false }
+    }
+
+    fn scanning(views: Vec<PlayerView>) -> GridLevel {
+        GridLevel { scan: true, ..GridLevel::new(views) }
     }
 }
 
@@ -63,12 +69,21 @@ impl EntityLevel for GridLevel {
         &self.inner.players
     }
     fn players_in(&self, area: &Aabb) -> Vec<PlayerView> {
+        if self.scan {
+            return self.inner.players.iter().filter(|p| player_box(p).intersects(area)).copied().collect();
+        }
         self.grid.in_area(&self.inner.players, area)
     }
     fn player(&self, id: i32) -> Option<PlayerView> {
+        if self.scan {
+            return self.inner.players.iter().find(|p| p.id == id).copied();
+        }
         self.grid.by_id(&self.inner.players, id)
     }
     fn player_by_uuid(&self, uuid: u128) -> Option<PlayerView> {
+        if self.scan {
+            return self.inner.players.iter().find(|p| p.uuid == uuid).copied();
+        }
         self.grid.by_uuid(&self.inner.players, uuid)
     }
 }
@@ -206,4 +221,59 @@ fn nearest_player_matches_a_scan() {
             assert!(calls <= n.max(1) * 2, "{calls} accept calls for {n} players");
         }
     }
+}
+
+#[test]
+fn lightning_and_fireworks_see_the_players_a_scan_sees() {
+    use kiln_item::component::{FireworkExplosion, FireworkShape, Fireworks};
+    let mut rng = Rng(21);
+    let (mut criteria, mut hurts) = (0, 0);
+    for (n, spread) in [(0, 10.0), (3, 20.0), (40, 150.0), (300, 400.0), (600, 3000.0)] {
+        for round in 0..6 {
+            let views = crowd(&mut rng, n, spread);
+            let at = Vec3::new(rng.f(-spread / 4.0, spread / 4.0), rng.f(0.0, 150.0), rng.f(-spread / 4.0, spread / 4.0));
+            let mut grid = GridLevel::new(views.clone());
+            let mut scan = GridLevel::scanning(views.clone());
+            // A bolt reaches every player within 256 blocks when it ends.
+            let seed = 5 + round;
+            let bolt = kiln_entity::ext_entity::lightning::new(1, 0, at, true, seed);
+            let (mut a, mut b) = (bolt.clone(), bolt);
+            let (mut ea, mut eb) = (Vec::new(), Vec::new());
+            for _ in 0..60 {
+                a.common_tick();
+                a.tick(&mut grid);
+                ea.append(&mut grid.inner.events);
+                b.common_tick();
+                b.tick(&mut scan);
+                eb.append(&mut scan.inner.events);
+            }
+            assert_eq!(ea, eb, "lightning over {n} players");
+            criteria += ea.iter().filter(|e| matches!(e, Event::Criterion { .. })).count();
+            // A rocket with a burst, shot at a player (or at nothing): the same hits and the same
+            // damage to the same players.
+            let mut stack = kiln_item::ItemStack::of("minecraft:firework_rocket", 1).expect("a rocket");
+            stack.insert(
+                kiln_item::keys::FIREWORKS,
+                Fireworks { flight_duration: 1, explosions: vec![FireworkExplosion { shape: FireworkShape::SmallBall, colors: vec![0xff0000], fade_colors: vec![], has_trail: false, has_twinkle: false }] },
+            );
+            let target = views.iter().find(|v| v.alive && !v.spectator).map_or(at, |v| Vec3::new(v.pos.x, v.pos.y + 1.0, v.pos.z));
+            let mut rocket = kiln_entity::ext_entity::firework::new(target + Vec3::new(-3.0, -2.0, 0.0), stack, None, None, false, seed);
+            rocket.delta = Vec3::new(0.7, 0.3, 0.0);
+            let (mut a, mut b) = (rocket.clone(), rocket);
+            let (mut ea, mut eb) = (Vec::new(), Vec::new());
+            for _ in 0..40 {
+                a.common_tick();
+                a.tick(&mut grid);
+                ea.append(&mut grid.inner.events);
+                b.common_tick();
+                b.tick(&mut scan);
+                eb.append(&mut scan.inner.events);
+            }
+            assert_eq!(ea, eb, "firework over {n} players");
+            hurts += ea.iter().filter(|e| matches!(e, Event::Hurt { .. })).count();
+            assert_eq!(a.position(), b.position());
+        }
+    }
+    // (The comparison is not of two empty answers.)
+    assert!(criteria > 0 && hurts > 0, "{criteria} criteria, {hurts} hurts");
 }
