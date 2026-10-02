@@ -383,7 +383,7 @@ impl CustomGoal for LongDistancePatrolGoal {
     }
     fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let Some(r) = raider(m).cloned() else { return };
-        if !m.nav.is_done() {
+        if !m.nav_ref().is_done() {
             return;
         }
         let companions = Self::companions(e, level);
@@ -492,7 +492,7 @@ impl CustomGoal for ObtainRaidLeaderBannerGoal {
         if level.entity(b).is_none_or(|i| i.is_removed()) {
             return false;
         }
-        !m.nav.is_done() && !Self::cannot_pick_up(m, level)
+        !m.nav_ref().is_done() && !Self::cannot_pick_up(m, level)
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let p = self.path.clone();
@@ -568,7 +568,7 @@ impl CustomGoal for PathfindToRaidGoal {
             self.recruitment_tick = e.tick_count + 20;
             recruit_nearby(e, level, &raid);
         }
-        if m.nav.is_done() {
+        if m.nav_ref().is_done() {
             let c = raid.center;
             let to = Vec3::new(c.x as f64 + 0.5, c.y as f64, c.z as f64 + 0.5);
             if let Some(p) = random_pos::default_pos_towards(e, m, level, 15, 4, to, std::f32::consts::FRAC_PI_2 as f64) {
@@ -648,7 +648,7 @@ impl CustomGoal for RaiderMoveThroughVillageGoal {
         goals::target(m, level).is_none()
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if m.nav.is_done() {
+        if m.nav_ref().is_done() {
             return false;
         }
         goals::target(m, level).is_none() && !closer_to_center(self.poi, e.position(), e.width as f64 + self.distance as f64) && !self.stuck
@@ -665,7 +665,7 @@ impl CustomGoal for RaiderMoveThroughVillageGoal {
         self.stuck = false;
     }
     fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        if !m.nav.is_done() {
+        if !m.nav_ref().is_done() {
             return;
         }
         let p = self.poi;
@@ -754,7 +754,7 @@ impl CustomGoal for HoldGroundAttackGoal {
         r.raid.is_none() && r.patrolling && goals::target(m, level).is_some() && !m.aggressive && !by_player
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        m.nav.stop();
+        m.nav_mut().stop();
         let t = goals::target(m, level).map(|t| t.id);
         for id in shout_targets(e, level) {
             mob::set_target_of(level, id, t);

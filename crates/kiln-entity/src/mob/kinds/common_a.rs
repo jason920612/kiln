@@ -137,7 +137,9 @@ impl CustomGoal for AvoidEntityGoal {
         if t.pos.distance_to_sqr(away) < t.pos.distance_to_sqr(e.position()) {
             return false;
         }
-        self.path = path::create_path(e, m, level, BlockPos::containing(away.x, away.y, away.z), 0);
+        // (`pathNav` is the mob's own navigation, taken when the goal was made: a rider plans
+        // with its own, whose steps then move its mount.)
+        self.path = path::own_nav(m, |m| path::create_path(e, m, level, BlockPos::containing(away.x, away.y, away.z), 0));
         self.path.is_some()
     }
     fn can_continue(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
@@ -145,14 +147,14 @@ impl CustomGoal for AvoidEntityGoal {
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let p = self.path.take();
-        path::move_to_path(e, m, level, p, self.walk);
+        path::own_nav(m, |m| path::move_to_path(e, m, level, p, self.walk));
     }
     fn stop(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) {
         self.to_avoid = None;
     }
     fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let Some(t) = self.to_avoid.and_then(|id| goals::living(level, id)) else { return };
-        m.nav.speed_modifier = if e.position().distance_to_sqr(t.pos) < 49.0 { self.sprint } else { self.walk };
+        m.nav_mut().speed_modifier = if e.position().distance_to_sqr(t.pos) < 49.0 { self.sprint } else { self.walk };
     }
 }
 
@@ -438,7 +440,7 @@ impl CustomGoal for PanicGoal {
         }
     }
     fn can_continue(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
-        !m.nav.is_done()
+        !m.nav_ref().is_done()
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         path::move_to(e, m, level, self.pos.x, self.pos.y, self.pos.z, self.speed);
@@ -652,7 +654,7 @@ impl MeleeGoal {
 /// The shared `checkAndPerformAttack`: swing and hit once the cooldown ran out, in reach and in
 /// sight.
 pub fn plain_attack(next: &mut i32, reset: i32, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) {
-    if *next <= 0 && crate::mob::within_melee_range(e, t) && crate::mob::has_line_of_sight_cached(e, m, level, t) {
+    if *next <= 0 && crate::mob::within_melee_range(e, m, t) && crate::mob::has_line_of_sight_cached(e, m, level, t) {
         *next = reset;
         m.swing = true;
         crate::mob::do_hurt_target(e, m, level, t);

@@ -174,45 +174,88 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
         EntityKind::Arrow(d) => (if d.left_owner { None } else { d.owner }, d.pierced.clone()),
         _ => (None, Vec::new()),
     };
-    // Approximation: only the nearest entity on the segment (vanilla collects all for piercing;
-    // a piercing arrow finds the next one on its next tick).
-    let mut target: Option<(i32, Vec3)> = None;
-    let mut best = f64::MAX;
+    // Every entity on the segment (`findHitEntities`), the nearest (by position) first.
+    let mut targets: Vec<(f64, i32, Vec3)> = Vec::new();
     for id in level.entities_in(&area, EntityFilter::Any, e.id) {
         let Some(t) = level.entity(id) else { continue };
-        if !can_be_hit_by_projectile(t) || Some(id) == owner || pierced.contains(&id) {
+        if !can_be_hit_by_projectile(t) || pierced.contains(&id) {
             continue;
         }
-        if let Some(p) = crate::projectile::clip_entity(t, margin as f64, from, end) {
-            let d = from.distance_to_sqr(t.position());
-            if d < best {
-                best = d;
-                target = Some((id, p));
-            }
+        // (`canHitEntity`: until it has left its owner, an arrow passes what rides or is ridden
+        // with the owner: `isPassengerOfSameVehicle`.)
+        if owner.is_some_and(|o| root_vehicle(level, o) == root_vehicle(level, id)) {
+            continue;
+        }
+        if let Some(p) = entity_hit_point(e, level, t, margin as f64, from, end) {
+            targets.push((from.distance_to_sqr(t.position()), id, p));
         }
     }
-    let dest = target.map_or(end, |(_, p)| p);
+    // (`ArrayList.sort`: stable.)
+    targets.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let dest = targets.first().map_or(end, |&(_, _, p)| p);
     e.set_pos(dest);
     e.apply_effects_between(level, from, dest);
-    match target {
-        None => {
-            if let (true, Some((pos, face, location))) = (e.is_alive(), block) {
-                hit_block(e, level, pos, face, location);
-                e.needs_sync = true;
-            }
+    if targets.is_empty() {
+        if let (true, Some((pos, face, location))) = (e.is_alive(), block) {
+            hit_block(e, level, pos, face, location);
+            e.needs_sync = true;
         }
-        Some((id, location)) => {
-            if e.is_alive() && !e.no_physics {
-                let owner = data(e).owner;
-                if hit_living(e, level, id, owner) {
-                    return;
-                }
+        return;
+    }
+    if e.is_alive() && !e.no_physics {
+        // `hitTargetsOrDeflectSelf`: each target in turn until the arrow is gone (a hit that did
+        // not land bounces it back and it goes on to the next one).
+        for (_, id, location) in targets {
+            let owner = data(e).owner;
+            if !hit_living(e, level, id, owner) {
                 level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner, hit: Hit::Entity { id, location } });
-                e.needs_sync = true;
                 e.discard();
             }
+            if !e.is_alive() {
+                break;
+            }
         }
+        e.needs_sync = true;
     }
+}
+
+/// `Entity.getRootVehicle`: the entity at the bottom of the stack `id` rides.
+fn root_vehicle(level: &dyn EntityLevel, id: i32) -> i32 {
+    let mut at = id;
+    while let Some(v) = level.entity(at).and_then(|e| e.vehicle).or_else(|| level.player(at).and_then(|p| p.vehicle)) {
+        if v == at {
+            break;
+        }
+        at = v;
+    }
+    at
+}
+
+/// Where the segment `from..to` meets `t` (`ProjectileUtil.getManyEntityHitResult` as the arrow
+/// calls it): its own box first; failing that, a box inflated by `margin` the segment enters,
+/// when a clear line from there to the box's centre (blocks stop it) reaches the box itself:
+/// the entry point of the inflated box.
+fn entity_hit_point(e: &Entity, level: &dyn EntityLevel, t: &Entity, margin: f64, from: Vec3, to: Vec3) -> Option<Vec3> {
+    if t.type_name == "minecraft:ender_dragon" {
+        return crate::projectile::clip_entity(t, margin, from, to);
+    }
+    let bb = t.bounding_box();
+    if let Some(p) = bb.clip(from, to) {
+        return Some(p);
+    }
+    if margin <= 0.0 {
+        return None;
+    }
+    let entry = bb.inflate_all(margin).clip(from, to)?;
+    let mut target = bb.center();
+    let ctx = e.collision_context();
+    if let Some((_, _, location)) = clip::traverse_blocks(entry, target, |pos| {
+        let (shape, _) = collision::collision_shape(level.block(pos), pos, &ctx);
+        clip::shape_clip(&shape, entry, target, pos).map(|(location, face)| (pos, face, location))
+    }) {
+        target = location;
+    }
+    bb.clip(entry, target).map(|_| entry)
 }
 
 /// `AbstractArrow.onHitEntity` for a mob or a player: damage from the speed and base damage
@@ -264,7 +307,14 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
         let Some(slot) = level.entity_mut(id) else { return false };
         let mut t = std::mem::replace(slot, Entity::new("minecraft:marker", i32::MIN, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
         crate::mob::kinds::ender_dragon::aim_at(&mut t, e.position());
+        // (The knockback goes opposite the arrow's own horizontal motion.)
+        if let Some(m) = crate::mob::data_mut(&mut t) {
+            m.knock_override = Some((-v.x, -v.z));
+        }
         let r = crate::mob::hurt_entity(&mut t, level, source, damage as f32);
+        if let Some(m) = crate::mob::data_mut(&mut t) {
+            m.knock_override = None;
+        }
         if let Some(slot) = level.entity_mut(id) {
             *slot = t;
         }
@@ -314,9 +364,12 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
             e.discard();
         }
     } else {
+        // `deflect(REVERSE, ..., 0.2)`: a fifth of the motion, backwards, and the turn of `170 +
+        // nextFloat() * 20` degrees.
+        let turn = 170.0f32 + e.random.next_float() * 20.0f32;
         e.delta = e.delta.scale(-0.1);
-        e.y_rot += 180.0;
-        e.y_rot_o += 180.0;
+        e.y_rot += turn;
+        e.y_rot_o += turn;
         e.needs_sync = true;
     }
     true

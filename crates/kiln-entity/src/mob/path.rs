@@ -162,8 +162,33 @@ impl PathType {
     }
 }
 
-/// `Mob.getPathfindingMalus`.
+/// Runs `f` on the vehicle a rider steers (`Mob.getNavigation()` and `getMoveControl()` of such
+/// a rider are the vehicle's): its entity and mob data, lent for the rider's tick. `None` for
+/// a mob that steers nothing.
+fn on_mount<R>(m: &mut MobData, f: impl FnOnce(&Entity, &mut MobData) -> R) -> Option<R> {
+    let mut c = m.mount.take()?;
+    let r = f(&c.e, &mut c.m);
+    m.mount = Some(c);
+    Some(r)
+}
+
+/// Runs `f` on the mob's own navigation even while it steers a vehicle's (a goal that took
+/// `getNavigation()` when it was made, `AvoidEntityGoal.pathNav`).
+pub fn own_nav<R>(m: &mut MobData, f: impl FnOnce(&mut MobData) -> R) -> R {
+    let lent = m.mount.take();
+    let r = f(m);
+    m.mount = lent;
+    r
+}
+
+/// `Mob.getPathfindingMalus`: a rider takes the maluses of a vehicle that says so
+/// (`shouldPassengersInheritMalus`: striders).
 pub fn malus(m: &MobData, t: PathType) -> f32 {
+    if let Some(c) = &m.mount
+        && c.m.kind.ext().is_some_and(|k| k.passengers_inherit_malus())
+    {
+        return malus(&c.m, t);
+    }
     m.maluses.iter().find(|(k, _)| *k == t).map_or(t.malus(), |&(_, v)| v)
 }
 
@@ -1350,7 +1375,7 @@ fn can_update_path(e: &Entity, m: &MobData) -> bool {
     if m.nav.fly {
         return (m.nav.can_float && (e.is_in_water() || e.is_in_lava())) || e.vehicle.is_none();
     }
-    m.nav.amphibious || e.on_ground || e.is_in_water() || e.is_in_lava()
+    m.nav.amphibious || e.on_ground || e.is_in_water() || e.is_in_lava() || e.vehicle.is_some()
 }
 
 /// Water-bound, flying and amphibious navigation go to the block itself, ground navigation to
@@ -1458,8 +1483,11 @@ pub fn random_swimmable_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel
     p
 }
 
-/// `isStableDestination` of the mob's navigation.
+/// `isStableDestination` of the mob's navigation (a steering rider's is its vehicle's).
 pub fn stable_destination(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -> bool {
+    if let Some(c) = &m.mount {
+        return stable_destination(&c.m, level, pos);
+    }
     if let Some(stable) = m.kind.ext().and_then(|k| k.stable_destination_for(m, level, pos)) {
         return stable;
     }
@@ -1534,6 +1562,9 @@ fn create_path_raw_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, tar
 /// `PathNavigation.createPath(Set<BlockPos>, reach)` (region 8, no upward offset): a path to the
 /// best of several blocks; `None` without targets.
 pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, targets: &[BlockPos], reach: i32) -> Option<Path> {
+    if let Some(r) = on_mount(m, |e, m| create_path_multi(e, m, level, targets, reach)) {
+        return r;
+    }
     if targets.is_empty() {
         return None;
     }
@@ -1582,6 +1613,9 @@ pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t
 
 /// `createPath(BlockPos, reach)`: ground navigation first finds the surface.
 pub fn create_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: BlockPos, reach: i32) -> Option<Path> {
+    if let Some(r) = on_mount(m, |e, m| create_path(e, m, level, pos, reach)) {
+        return r;
+    }
     if m.nav.climber {
         m.nav.path_to_position = Some(pos);
     }
@@ -1594,6 +1628,9 @@ pub fn create_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: Bl
 
 /// `createPath(BlockPos, reach, maxPathLength)`.
 pub fn create_path_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: BlockPos, reach: i32, length: f32) -> Option<Path> {
+    if let Some(r) = on_mount(m, |e, m| create_path_len(e, m, level, pos, reach, length)) {
+        return r;
+    }
     if m.nav.climber {
         m.nav.path_to_position = Some(pos);
     }
@@ -1606,6 +1643,9 @@ pub fn create_path_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos
 
 /// `createPath(Entity, reach)`.
 pub fn create_path_to_entity(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, reach: i32) -> Option<Path> {
+    if let Some(r) = on_mount(m, |e, m| create_path_to_entity(e, m, level, target, reach)) {
+        return r;
+    }
     if m.nav.climber {
         m.nav.path_to_position = Some(target);
     }
@@ -1646,6 +1686,9 @@ fn find_surface(level: &dyn EntityLevel, mut pos: BlockPos) -> BlockPos {
 
 /// `moveTo(Path, speed)`.
 pub fn move_to_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, path: Option<Path>, speed: f64) -> bool {
+    if m.mount.is_some() {
+        return on_mount(m, |e, m| move_to_path(e, m, level, path, speed)).unwrap_or(false);
+    }
     let Some(path) = path else {
         m.nav.path = None;
         return false;
@@ -1669,12 +1712,18 @@ pub fn move_to_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, path: 
 
 /// `moveTo(x, y, z, speed)`.
 pub fn move_to(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, x: f64, y: f64, z: f64, speed: f64) -> bool {
+    if m.mount.is_some() {
+        return on_mount(m, |e, m| move_to(e, m, level, x, y, z, speed)).unwrap_or(false);
+    }
     let p = create_path(e, m, level, BlockPos::containing(x, y, z), 1);
     move_to_path(e, m, level, p, speed)
 }
 
 /// `moveTo(Entity, speed)`.
 pub fn move_to_entity(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, speed: f64) -> bool {
+    if m.mount.is_some() {
+        return on_mount(m, |e, m| move_to_entity(e, m, level, target, speed)).unwrap_or(false);
+    }
     let p = create_path_to_entity(e, m, level, target, 1);
     if m.nav.climber && p.is_none() {
         m.nav.path_to_position = Some(target);
@@ -1762,7 +1811,7 @@ pub fn tick(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
                 m.nav.path_to_position = None;
             } else {
                 let s = m.nav.speed_modifier;
-                m.mov.set_wanted_position(p.x as f64, p.y as f64, p.z as f64, s);
+                m.mov_mut().set_wanted_position(p.x as f64, p.y as f64, p.z as f64, s);
             }
         }
         return;
@@ -1800,7 +1849,7 @@ pub fn tick(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
     // `getGroundY`: the node's own height for water-bound and flying navigation.
     let y = if keeps_target_block(m) || kiln_data::blocks_types::is_air(level.block(bp.below())) { next.y } else { floor_level(level, bp) };
     let s = m.nav.speed_modifier;
-    m.mov.set_wanted_position(next.x, y, next.z, s);
+    m.mov_mut().set_wanted_position(next.x, y, next.z, s);
 }
 
 fn recompute_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {

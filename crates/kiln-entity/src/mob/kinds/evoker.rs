@@ -176,6 +176,7 @@ impl CustomGoal for CastingSpellGoal {
         st(m).spell_ticks > 0
     }
     fn start(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        // (`SpellcasterIllager.navigation`, the field: the caster's own navigation, not its mount's.)
         m.nav.stop();
     }
     fn stop(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {

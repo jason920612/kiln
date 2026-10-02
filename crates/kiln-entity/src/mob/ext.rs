@@ -630,6 +630,16 @@ pub trait Kind: Sync + Send {
         let _ = m;
         self.stable_destination(level, p)
     }
+    /// `shouldPassengersInheritMalus`: a mob rider takes the mount's path maluses (a zombified
+    /// piglin on a strider walks on lava).
+    fn passengers_inherit_malus(&self) -> bool {
+        false
+    }
+    /// `updateControlFlags` of the type when it is not `Mob`'s: a ravager keeps its goals'
+    /// flags for riders that are raiders.
+    fn keeps_flags_for_raiders(&self) -> bool {
+        false
+    }
     /// The items a `TemptGoal` of the type follows.
     fn tempted_by(&self, item: i32) -> bool {
         let _ = item;

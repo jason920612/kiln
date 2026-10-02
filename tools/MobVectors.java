@@ -65,6 +65,9 @@ public class MobVectors {
         /// wp28 creaking: the creaking heart (a block of the scenario) that holds this creaking
         /// (`CreakingHeartBlockEntity.setCreakingInfo`), or null.
         BlockPos heart;
+        /// wp29: the index (in the scenario's mobs, before this one) of the mob this one rides
+        /// (`startRiding`), or -1.
+        int vehicle = -1;
         MobSpec(String type, double x, double y, double z, float yaw, long seed) {
             this.type = type; this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.seed = seed;
         }
@@ -189,6 +192,9 @@ public class MobVectors {
         /// constructor's random yaw stands (a trap's new horses, which their riders copy) the
         /// vanilla one cannot be reproduced.
         boolean pinYaw;
+        /// The enchantments the datapack's provider put on new mobs' gear are taken off (the replay
+        /// loads no datapack): a trap's horsemen.
+        boolean stripEnchants;
         /// The replay compares only this many ticks (0: all): mob riders steer their mounts in
         /// vanilla (the mount's goals go off at its next fifth tick, the rider's navigation and
         /// move control are the mount's), which Kiln does not do yet.
@@ -353,10 +359,30 @@ public class MobVectors {
         BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
         for (int x = -40; x <= 40; x++)
             for (int z = -40; z <= 40; z++)
-                for (int y = BY - 8; y <= BY + 8; y++) {
+                // (wp29: up to BY + 24: the stairs of `warden_stairs` stood 14 high, and what was left above
+                // the old limit shaded and blocked the scenarios that came after.)
+                for (int y = BY - 8; y <= BY + 24; y++) {
                     BlockPos p = new BlockPos(x, y, z);
-                    if (!level.getBlockState(p).isAir()) level.setBlock(p, air, FLAGS);
+                    BlockState was = level.getBlockState(p);
+                    if (was.isAir()) continue;
+                    // (wp29: points of interest of blocks the scenario's own mobs or actions placed (a villager
+                    // breeding's beds) outlived it, and made a village of the next scenario's place.)
+                    if (net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(was).isPresent()) level.getPoiManager().remove(p);
+                    level.setBlock(p, air, FLAGS);
                 }
+        // (wp29: the villages' distance tracker keeps the levels of the points of interest that were taken
+        // away (after `villager_breed` the origin's section was still 6 sections from a village, and a
+        // zombie's `MoveThroughVillageGoal` went looking): a fresh one, nothing in the world being a village.)
+        try {
+            var poi = level.getPoiManager();
+            Field f = poi.getClass().getDeclaredField("distanceTracker");
+            f.setAccessible(true);
+            var c = Class.forName("net.minecraft.world.entity.ai.village.poi.PoiManager$DistanceTracker").getDeclaredConstructor(poi.getClass());
+            c.setAccessible(true);
+            f.set(poi, c.newInstance(poi));
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
         awaitLight(level);
     }
 
@@ -447,6 +473,11 @@ public class MobVectors {
         // The attributes are cached per tick; the harness never ticks the level.
         level.environmentAttributes().invalidateTickCache();
         boolean creakingActive = level.environmentAttributes().getValue(net.minecraft.world.attribute.EnvironmentAttributes.CREAKING_ACTIVE, new BlockPos(0, BY, 0));
+        if (System.getenv("MOB_DEBUG_POI") != null) {
+            var center = BlockPos.containing(0.5, BY, 0.5);
+            var pois = level.getPoiManager().getInRange(t -> true, center, 64, net.minecraft.world.entity.ai.village.poi.PoiManager.Occupancy.ANY).toList();
+            Files.writeString(Path.of("dbg.txt"), "POI scenario=" + s.name + " village=" + level.isVillage(center) + " sections=" + level.getPoiManager().sectionsToVillage(net.minecraft.core.SectionPos.of(center)) + " pois=" + pois.stream().map(r -> r.getPos().toString() + ":" + r.getPoiType().getRegisteredName()).toList() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        }
         int tickStamp = player.getLastHurtByMobTimestamp();
         List<Entity> tracked = new ArrayList<>();
         StringBuilder specs = new StringBuilder();
@@ -484,8 +515,8 @@ public class MobVectors {
             }
             if (spec.age != null) ((net.minecraft.world.entity.AgeableMob) m).setAge(spec.age);
             if (spec.inLove != null) ((net.minecraft.world.entity.animal.Animal) m).setInLoveTime(spec.inLove);
-            if (spec == s.mobs.get(0) && s.name.equals(System.getenv("MOB_TRACE_RANDOM"))) {
-                // Debugging aid: the first mob's random logs who draws from it (to <cwd>/dbg.txt).
+            if (spec == s.mobs.get(Integer.parseInt(System.getenv().getOrDefault("MOB_TRACE_INDEX", "0"))) && s.name.equals(System.getenv("MOB_TRACE_RANDOM"))) {
+                // Debugging aid: the mob's (`MOB_TRACE_INDEX`, the first by default) random logs who draws from it (to <cwd>/dbg.txt).
                 set(m, "random", new TracingRandom(spec.seed));
             }
             m.getRandom().setSeed(spec.seed);
@@ -502,11 +533,16 @@ public class MobVectors {
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s,\"vehicle\":%d}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
                     spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
                     spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson, effectsJson(spec.effects),
-                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]"));
+                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]", spec.vehicle));
+        }
+        // wp29: riders sit on their mounts before the first tick.
+        for (int i = 0; i < s.mobs.size(); i++) {
+            int v = s.mobs.get(i).vehicle;
+            if (v >= 0 && !tracked.get(i).startRiding(tracked.get(v), true, false)) throw new IllegalStateException("could not ride: " + s.mobs.get(i).type);
         }
         StringBuilder trace = new StringBuilder();
         StringBuilder heartTrace = new StringBuilder();
@@ -543,7 +579,9 @@ public class MobVectors {
         // The world age is pinned too: some of the mobs' math depends on it.
         levelData.setGameTime(1000L);
         long startTime = level.getGameTime();
+        Adopt ad = new Adopt(tracked, pinned, spawned, s);
         for (int tick = 0; tick < s.ticks; tick++) {
+            ad.tick = tick;
             // `ServerLevel.tickTime`: the world age advances before entities tick.
             levelData.setGameTime(startTime + 1 + tick);
             traceTick = tick;
@@ -568,7 +606,7 @@ public class MobVectors {
                 // `ServerLevel.tick`: the despawn check, then the tick.
                 e.checkDespawn();
                 // Riders are ticked with their vehicle (`tickPassenger`).
-                if (!e.isRemoved() && !e.isPassenger()) level.tickNonPassenger(e);
+                if (!e.isRemoved() && !e.isPassenger()) tickNonPassenger(ad, e);
             }
             // wp28 creaking: `Level.tickBlockEntities` for the scenario's creaking hearts (their
             // ticker skips uprooted ones).
@@ -590,27 +628,35 @@ public class MobVectors {
                 player.setHealth(s.playerHealth);
             }
             for (Entity e : level.getEntities((Entity) null, box(), e -> !(e instanceof ServerPlayer))) {
-                if (!tracked.contains(e)) {
-                    tracked.add(e);
-                    if (spawned.length() > 0) spawned.append(',');
-                    spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"%s\",\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s],\"mob\":%b,\"yaw\":%s}", tick,
-                            BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()), d(e.getX()), d(e.getY()), d(e.getZ()),
-                            d(e.getDeltaMovement().x), d(e.getDeltaMovement().y), d(e.getDeltaMovement().z), e instanceof Mob, Float.toString(e.getYRot())));
-                    if (e instanceof Mob nm) {
-                        nm.getRandom().setSeed(7777L * (tick + 1) + pinned.size());
-                        if (s.pinYaw) {
-                            float y = 10f * (pinned.size() + 1);
-                            nm.setYRot(y);
-                            nm.yRotO = y;
-                        }
-                        nm.setYHeadRot(nm.getYRot());
-                        nm.yHeadRotO = nm.getYRot();
-                        nm.setYBodyRot(nm.getYRot());
-                        nm.yBodyRotO = nm.getYRot();
-                        if (nm instanceof net.minecraft.world.entity.animal.chicken.Chicken) set(nm, "eggTime", 6000 + pinned.size());
-                        pinCubeMoveYaw(nm);
-                        pinned.add(nm);
+                if (!tracked.contains(e)) ad.adopt(e);
+            }
+            // `MOB_DEBUG_NAV=<scenario>`: every mob's own navigation and the move control it steers
+            // (to <cwd>/dbg.txt), for finding where a rider's steering parts from Kiln's.
+            if (s.name.equals(System.getenv("MOB_DEBUG_NAV"))) {
+                for (int i = 0; i < initial; i++) {
+                    Mob dm = (Mob) tracked.get(i);
+                    var nav = (net.minecraft.world.entity.ai.navigation.PathNavigation) get(dm, "navigation");
+                    var np = nav.getPath();
+                    StringBuilder dbg = new StringBuilder("NAV tick=" + tick + " mob=" + i + " pos=" + dm.position() + " path=");
+                    if (np == null) dbg.append("none");
+                    else {
+                        dbg.append('@').append(np.getNextNodeIndex()).append('[');
+                        for (int pi = 0; pi < np.getNodeCount(); pi++) dbg.append(np.getNode(pi).x).append(',').append(np.getNode(pi).y).append(',').append(np.getNode(pi).z).append(' ');
+                        dbg.append("] target=").append(np.getTarget()).append(" reach=").append(np.canReach());
                     }
+                    var mc = dm.getMoveControl();
+                    dbg.append(" op=").append(get(mc, "operation")).append(" want=").append(get(mc, "wantedX")).append(',').append(get(mc, "wantedY")).append(',').append(get(mc, "wantedZ")).append(" speedMod=").append(get(mc, "speedModifier"));
+                    Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                }
+            }
+            // `MOB_DEBUG_ENTS=<scenario>`: the other entities (arrows) after every tick (to <cwd>/dbg.txt).
+            if (s.name.equals(System.getenv("MOB_DEBUG_ENTS"))) {
+                for (Entity oe : tracked) {
+                    if (oe instanceof Mob om) {
+                        Files.writeString(Path.of("dbg.txt"), "MOB tick=" + tick + " id=" + om.getId() + " health=" + om.getHealth() + " hurtTime=" + om.hurtTime + " cooldown=" + get(om, "damageCooldownTime") + " lastHurt=" + get(om, "lastHurt") + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+                        continue;
+                    }
+                    Files.writeString(Path.of("dbg.txt"), "ENT tick=" + tick + " " + BuiltInRegistries.ENTITY_TYPE.getKey(oe.getType()) + " id=" + oe.getId() + " removed=" + oe.isRemoved() + " pos=" + oe.position() + " delta=" + oe.getDeltaMovement() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                 }
             }
             if (tick > 0) trace.append(',');
@@ -662,9 +708,84 @@ public class MobVectors {
                         s.playerMainHand == null ? "null" : "\"" + s.playerMainHand + "\"", Float.toString(s.playerYaw), Float.toString(s.playerPitch),
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
-                "{\"name\":\"%s\",\"diverges\":%b,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
+                "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
                         + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"trace\":[%s]}",
                 s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, heartsJson, creakingActive, endBlocks, heartTrace, nextId, trace);
+    }
+
+    /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
+    /// head and body turned to its yaw, and joins the trace.
+    static final class Adopt {
+        final List<Entity> tracked;
+        final List<Mob> pinned;
+        final StringBuilder spawned;
+        final Scenario s;
+        int tick;
+        int arrowTick = -1, arrows;
+        Adopt(List<Entity> tracked, List<Mob> pinned, StringBuilder spawned, Scenario s) {
+            this.tracked = tracked; this.pinned = pinned; this.spawned = spawned; this.s = s;
+        }
+
+        void adopt(Entity e) throws Exception {
+            tracked.add(e);
+            if (spawned.length() > 0) spawned.append(',');
+            // An arrow's damage and crit come from its own random at the shot (the clock's): recorded
+            // for the replay, and its random pinned for what it draws when it hits.
+            String arrow = "";
+            if (e instanceof net.minecraft.world.entity.projectile.arrow.AbstractArrow aa) {
+                if (arrowTick != tick) { arrowTick = tick; arrows = 0; }
+                arrow = String.format(Locale.ROOT, ",\"base_damage\":%s,\"crit\":%b", d((Double) get(aa, "baseDamage")), aa.isCritArrow());
+                aa.getRandom().setSeed(5555L * (tick + 1) + arrows++);
+            }
+            spawned.append(String.format(Locale.ROOT, "{\"tick\":%d,\"type\":\"%s\",\"pos\":[%s,%s,%s],\"motion\":[%s,%s,%s],\"mob\":%b,\"yaw\":%s%s}", tick,
+                    BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()), d(e.getX()), d(e.getY()), d(e.getZ()),
+                    d(e.getDeltaMovement().x), d(e.getDeltaMovement().y), d(e.getDeltaMovement().z), e instanceof Mob, Float.toString(e.getYRot()), arrow));
+            if (e instanceof Mob nm) {
+                nm.getRandom().setSeed(7777L * (tick + 1) + pinned.size());
+                // A trap's horsemen have gear enchanted by the datapack's provider (power, protection...):
+                // the replay has no datapack, so what the provider added is taken off.
+                if (s.stripEnchants) {
+                    for (EquipmentSlot slot : EquipmentSlot.values()) {
+                        ItemStack st = nm.getItemBySlot(slot);
+                        if (!st.isEmpty() && st.has(net.minecraft.core.component.DataComponents.ENCHANTMENTS))
+                            st.set(net.minecraft.core.component.DataComponents.ENCHANTMENTS, net.minecraft.world.item.enchantment.ItemEnchantments.EMPTY);
+                    }
+                }
+                if (s.pinYaw) {
+                    float y = 10f * (pinned.size() + 1);
+                    nm.setYRot(y);
+                    nm.yRotO = y;
+                }
+                nm.setYHeadRot(nm.getYRot());
+                nm.yHeadRotO = nm.getYRot();
+                nm.setYBodyRot(nm.getYRot());
+                nm.yBodyRotO = nm.getYRot();
+                if (nm instanceof net.minecraft.world.entity.animal.chicken.Chicken) set(nm, "eggTime", 6000 + pinned.size());
+                pinCubeMoveYaw(nm);
+                pinned.add(nm);
+            }
+        }
+    }
+
+    /// `ServerLevel.tickNonPassenger`, with a rider that appeared during its vehicle's tick (the
+    /// skeleton on a trap horse: `tickPassenger` ticks it in that very tick) pinned first: its random
+    /// is the clock's otherwise, which no replay can follow.
+    static void tickNonPassenger(Adopt ad, Entity e) throws Exception {
+        e.commonTick();
+        e.tick();
+        for (Entity p : new ArrayList<>(e.getPassengers())) tickPassenger(ad, e, p);
+    }
+
+    /// `ServerLevel.tickPassenger` (the entity tick list holds everything of the harness).
+    static void tickPassenger(Adopt ad, Entity vehicle, Entity passenger) throws Exception {
+        if (passenger.isRemoved() || passenger.getVehicle() != vehicle) {
+            passenger.stopRiding();
+            return;
+        }
+        if (!ad.tracked.contains(passenger) && !(passenger instanceof ServerPlayer)) ad.adopt(passenger);
+        passenger.commonTick();
+        passenger.rideTick();
+        for (Entity p : new ArrayList<>(passenger.getPassengers())) tickPassenger(ad, passenger, p);
     }
 
     /// `MOB_TRACE_RANDOM=<scenario>`: a mob's random that logs the callers of every draw.
@@ -1448,6 +1569,9 @@ public class MobVectors {
         // -- wp25: the skeleton trap
         scenariosTrap(out);
 
+        // -- wp29: mob riders steer their mounts
+        scenariosRiders(out);
+
         return out;
     }
 
@@ -1488,28 +1612,31 @@ public class MobVectors {
             out.add(s);
         }
         // Sprung by a player within 10 blocks: a bolt, a skeleton on the horse and three more
-        // horsemen. The player is in creative mode: the skeleton that rides the trap horse ticks
-        // in the tick the trap springs, on a random the harness cannot pin yet, and would
-        // pick a survival player as its target by chance. (Its arrows' spread comes from the
-        // clock too.)
-        {
-            Scenario s = new Scenario("skeleton_trap_creative");
+        // horsemen. The skeleton that rides the trap horse ticks in the tick the trap springs
+        // (`tickPassenger`): the harness pins its random before that tick (`tickNonPassenger`).
+        // Creative players are not shot at; survival ones are charged and shot at (the arrows'
+        // spread comes from the clock: the replay flies them as recorded).
+        for (int k = 0; k < 4; k++) {
+            boolean survival = k % 2 == 1;
+            Scenario s = new Scenario("skeleton_trap_" + (survival ? "survival" : "creative") + "_" + (k / 2 + 1));
             s.pinYaw = true;
-            s.compareTicks = 5;
+            s.stripEnchants = true;
             solidGround(s);
-            MobSpec m = new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 20f, 21300L);
+            MobSpec m = new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 20f + 100f * (k / 2), 21300L + k);
             m.nbt = "{SkeletonTrap:1b}";
             s.mobs.add(m);
-            s.player = new double[] {14.5, BY, 8.5};
-            s.playerCreative = true;
-            s.ticks = 160;
+            s.player = new double[] {k / 2 == 0 ? 14.5 : 8.5, BY, k / 2 == 0 ? 8.5 : 16.5};
+            s.playerCreative = !survival;
+            s.dayTime = 18000;
+            s.levelSeed = k + 1;
+            s.ticks = k < 2 ? 160 : 220;
             out.add(s);
         }
         // The edge of the trap's reach: a player 9.9 blocks away springs it, one 10.1 away does not.
         for (double dx : new double[] {9.9, 10.1}) {
             Scenario s = new Scenario("skeleton_trap_edge_" + (dx < 10 ? "in" : "out"));
             s.pinYaw = true;
-            s.compareTicks = dx < 10 ? 5 : 0;
+            s.stripEnchants = true;
             solidGround(s);
             MobSpec m = new MobSpec("minecraft:skeleton_horse", 8.5, BY, 8.5, 200f, 21400L + (dx < 10 ? 0 : 1));
             m.nbt = "{SkeletonTrap:1b}";
@@ -1529,6 +1656,103 @@ public class MobVectors {
             s.player = new double[] {22.5, BY, 8.5};
             s.playerCreative = true;
             s.ticks = 200;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp29: mob riders
+    /// A mob that rides a mob steers it: the rider's goals use the mount's navigation and move
+    /// control (`Mob.getNavigation`/`getMoveControl` of a rider are the vehicle's), the mount's
+    /// own goals lose their MOVE, JUMP and LOOK flags (`updateControlFlags`: a ravager keeps
+    /// them for raider riders).
+    static void scenariosRiders(List<Scenario> out) {
+        // Spider jockeys: a skeleton with a bow on a spider, at night. A survival player is
+        // shot at and charged; a creative one is not noticed (the skeleton strolls the spider).
+        for (int k = 0; k < 4; k++) {
+            boolean survival = k % 2 == 0;
+            Scenario s = new Scenario("spider_jockey_" + (survival ? "survival" : "creative") + "_" + (k / 2 + 1));
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:spider", 0.5, BY, 0.5, 30f * (k + 1), 31000L + k * 10));
+            MobSpec r = new MobSpec("minecraft:skeleton", 0.5, BY, 0.5, 30f * (k + 1), 31001L + k * 10);
+            r.mainHand = "minecraft:bow";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {survival ? 14.5 : 18.5, BY, 0.5};
+            s.playerCreative = !survival;
+            s.dayTime = 18000;
+            s.levelSeed = k + 1;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Chicken jockeys: a baby zombie on a chicken.
+        for (int k = 0; k < 4; k++) {
+            boolean survival = k % 2 == 0;
+            Scenario s = new Scenario("chicken_jockey_" + (survival ? "survival" : "creative") + "_" + (k / 2 + 1));
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:chicken", 0.5, BY, 0.5, 40f * (k + 1), 31100L + k * 10));
+            MobSpec r = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 40f * (k + 1), 31101L + k * 10);
+            r.nbt = "{IsBaby:1b,IsChickenJockey:1b}";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {survival ? 12.5 : 20.5, BY, 0.5};
+            s.playerCreative = !survival;
+            s.dayTime = 18000;
+            s.levelSeed = k + 1;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A zombified piglin on a strider: on land (the strider shivers, slowed) and over lava
+        // (the strider's path maluses are the rider's; lava is walked on). The replay does not
+        // model block light, which moves where a monster likes to walk near lava: the lava one is
+        // recorded with a far player.
+        for (int k = 0; k < 3; k++) {
+            boolean lava = k == 1;
+            Scenario s = new Scenario("strider_jockey_" + (lava ? "lava" : "land") + "_" + (k + 1));
+            solidGround(s);
+            if (lava) {
+                for (int x = -12; x <= 12; x++)
+                    for (int z = -12; z <= 12; z++) block(s, x, BY - 1, z, "minecraft:lava");
+            }
+            s.mobs.add(new MobSpec("minecraft:strider", 0.5, BY, 0.5, 50f * (k + 1), 31300L + k * 10));
+            MobSpec r = new MobSpec("minecraft:zombified_piglin", 0.5, BY, 0.5, 50f * (k + 1), 31301L + k * 10);
+            r.mainHand = "minecraft:golden_sword";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {k == 1 ? 30.5 : 12.5, BY, 0.5};
+            s.playerCreative = k != 0;
+            s.dayTime = 18000;
+            s.levelSeed = k + 1;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Raiders on ravagers: the ravager keeps its own goals for raider riders.
+        for (String rider : new String[] {"pillager", "vindicator", "evoker"}) {
+            Scenario s = new Scenario("ravager_" + rider);
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:ravager", 0.5, BY, 0.5, 20f, 31400L + rider.length()));
+            MobSpec r = new MobSpec("minecraft:" + rider, 0.5, BY, 0.5, 20f, 31401L + rider.length());
+            if (rider.equals("pillager")) r.mainHand = "minecraft:crossbow";
+            if (rider.equals("vindicator")) r.mainHand = "minecraft:iron_axe";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // The same without a player in sight: the raider and the ravager wander.
+        {
+            Scenario s = new Scenario("ravager_pillager_alone");
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:ravager", 0.5, BY, 0.5, 70f, 31500L));
+            MobSpec r = new MobSpec("minecraft:pillager", 0.5, BY, 0.5, 70f, 31501L);
+            r.mainHand = "minecraft:crossbow";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {40.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 400;
             out.add(s);
         }
     }

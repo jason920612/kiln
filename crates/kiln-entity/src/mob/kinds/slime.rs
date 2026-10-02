@@ -230,7 +230,7 @@ fn can_deal_damage(m: &MobData) -> bool {
 
 /// `dealDamage`: a hit on a touching target in reach and sight.
 fn deal_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) {
-    if !mob::is_alive(e, m) || !mob::within_melee_range(e, t) || !mob::has_line_of_sight_cached(e, m, level, t) {
+    if !mob::is_alive(e, m) || !mob::within_melee_range(e, m, t) || !mob::has_line_of_sight_cached(e, m, level, t) {
         return;
     }
     let mut damage = m.attrs.value(Attr::AttackDamage) as f32;

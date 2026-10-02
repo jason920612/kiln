@@ -86,8 +86,11 @@ impl LightningBolt {
             .filter_map(|id| level.entity(id).filter(|o| o.is_alive()).map(crate::level::Seen::of))
             .collect();
         let bolt = crate::level::Seen { lightning_fires: Some(self.blocks_set_on_fire), ..crate::level::Seen::of(e) };
+        // (The players whose box touches the cube of 257 blocks around the bolt: the ones
+        // within 256 blocks in `f32` stand in it.)
+        let reach = Aabb::new(p.x - 257.0, p.y - 257.0, p.z - 257.0, p.x + 257.0, p.y + 257.0, p.z + 257.0);
         let players: Vec<i32> = level
-            .players()
+            .players_in(&reach)
             .iter()
             .filter(|v| {
                 let (dx, dy, dz) = ((v.pos.x - p.x) as f32, (v.pos.y - p.y) as f32, (v.pos.z - p.z) as f32);
