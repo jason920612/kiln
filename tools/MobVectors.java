@@ -247,6 +247,13 @@ public class MobVectors {
         server.submit(() -> {
             ServerLevel level = server.overworld();
             ServerPlayer player = mockPlayer(server, "KilnMob");
+            if ("finalize".equals(filter)) {
+                try {
+                    lines.addAll(finalizeVectors(level, player));
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                }
+            }
             for (Scenario s : selected) {
                 try {
                     lines.add(run(level, player, s));
@@ -270,6 +277,72 @@ public class MobVectors {
         System.out.println("MobVectors: wrote " + lines.size() + " scenarios to " + outPath);
         server.halt(false);
         System.exit(0);
+    }
+
+    /// wp33: `finalizeSpawn` of natural spawns with the level random set to each seed: the random
+    /// state after, and every entity of the mob's riding stack (the jockeys it makes) with its
+    /// equipment and who it rides. Written with the argument `finalize` (to the output file).
+    static List<String> finalizeVectors(ServerLevel level, ServerPlayer player) throws Exception {
+        List<String> lines = new ArrayList<>();
+        var src = level.getServer().createCommandSourceStack();
+        level.getServer().getCommands().performPrefixedCommand(src, "gamerule minecraft:spawn_monsters true");
+        level.getServer().getCommands().performPrefixedCommand(src, "time set 18000");
+        player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
+        player.snapTo(0, 300, 0, 0f, 0f);
+        var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
+        levelData.setGameTime(1000L);
+        level.updateSkyBrightness();
+        Object[][] kinds = {
+            {"minecraft:spider", 6000},{"minecraft:zombie", 6000}, {"minecraft:husk", 4000},
+            {"minecraft:drowned", 4000}, {"minecraft:zombified_piglin", 1500}, {"minecraft:strider", 4000},
+            {"minecraft:zombie_horse", 600}, {"minecraft:parched", 300}, {"minecraft:nautilus", 300},
+            {"minecraft:zombie_nautilus", 300}, {"minecraft:camel_husk", 200}, {"minecraft:skeleton", 300}, {"minecraft:stray", 300},
+        };
+        EquipmentSlot[] slots = {EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND, EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET, EquipmentSlot.BODY, EquipmentSlot.SADDLE};
+        for (Object[] k : kinds) {
+            EntityType<?> type = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse((String) k[0]));
+            int n = (Integer) k[1];
+            for (int seed = 0; seed < n; seed++) {
+                level.getRandom().setSeed(seed);
+                Mob mob = (Mob) type.create(level, EntitySpawnReason.NATURAL);
+                mob.snapTo(0.5, BY, 0.5, 0f, 0f);
+                var difficulty = level.getCurrentDifficultyAt(mob.blockPosition());
+                mob.finalizeSpawn(level, difficulty, EntitySpawnReason.NATURAL, null);
+                long lr = ((java.util.concurrent.atomic.AtomicLong) get(level.getRandom(), "seed")).get();
+                List<Entity> stack = new ArrayList<>();
+                collectStack(mob.getRootVehicle(), stack);
+                stack.sort(java.util.Comparator.comparingInt(Entity::getId));
+                StringBuilder sb = new StringBuilder();
+                sb.append(String.format(Locale.ROOT, "{\"type\":\"%s\",\"seed\":%d,\"eff\":%s,\"special\":%s,\"lr\":%d,\"entities\":[", k[0], seed,
+                        Float.toString(difficulty.getEffectiveDifficulty()), Float.toString(difficulty.getSpecialMultiplier()), lr));
+                for (int i = 0; i < stack.size(); i++) {
+                    Entity en = stack.get(i);
+                    if (i > 0) sb.append(',');
+                    sb.append(String.format(Locale.ROOT, "{\"type\":\"%s\",\"baby\":%b,\"vehicle\":%d,\"items\":{",
+                            BuiltInRegistries.ENTITY_TYPE.getKey(en.getType()), en instanceof LivingEntity le && le.isBaby(), stack.indexOf(en.getVehicle())));
+                    if (en instanceof Mob m) {
+                        for (int j = 0; j < slots.length; j++) {
+                            ItemStack st = m.getItemBySlot(slots[j]);
+                            if (j > 0) sb.append(',');
+                            sb.append(String.format(Locale.ROOT, "\"%s\":\"%s\"", slots[j].getName(), st.isEmpty() ? "" : BuiltInRegistries.ITEM.getKey(st.getItem()).toString()));
+                        }
+                    }
+                    sb.append("}}");
+                }
+                sb.append("]}");
+                lines.add(sb.toString());
+                for (Entity en : stack) en.discard();
+                mob.discard();
+                // (what a mob left behind, a chicken a baby husk gave up, would be a "nearby chicken" of the next one)
+                for (Entity en : level.getEntities((Entity) null, box(), x -> !(x instanceof ServerPlayer))) en.discard();
+            }
+        }
+        return lines;
+    }
+
+    static void collectStack(Entity e, List<Entity> out) {
+        out.add(e);
+        for (Entity p : e.getPassengers()) collectStack(p, out);
     }
 
     static void writeServerFiles() throws Exception {

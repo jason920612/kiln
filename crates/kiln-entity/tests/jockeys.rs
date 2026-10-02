@@ -1,6 +1,6 @@
 //! Natural jockeys made by `finalizeSpawn`: spider jockeys, chicken jockeys and the strider's
 //! riders (the draws and the riders are compared with vanilla by `finalize_parity`, from
-//! tools/finalize_vectors.py).
+//! `tools/mob_vectors.py --filter finalize`).
 
 use kiln_entity::mob::{self, GroupData, MobKind, Seat, SpawnContext};
 use kiln_javamath::random::LegacyRandom;
@@ -146,4 +146,33 @@ fn natural_zombie_horses_carry_a_zombie_with_an_iron_spear() {
         mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(), &mut group, false);
         assert!(group.companions.is_empty());
     }
+}
+
+#[test]
+fn natural_drowned_with_a_trident_ride_zombie_nautilus_half_the_time() {
+    let (mut tridents, mut riders) = (0, 0);
+    for seed in 0..40000 {
+        let mut e = mob::new(MobKind::Drowned, 1, 0, seed);
+        let mut group = GroupData::default();
+        mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(), &mut group, true);
+        let m = mob::data(&e).unwrap();
+        let trident = kiln_entity::mob::item_name(&m.equipment[mob::MAINHAND]) == "minecraft:trident";
+        if trident && !m.baby() {
+            tridents += 1;
+        }
+        let nautilus = group.companions.iter().find(|c| c.entity.type_name == "minecraft:zombie_nautilus");
+        if let Some(c) = nautilus {
+            assert!(trident && !m.baby());
+            assert_eq!(c.seat, Seat::UnderMob);
+            riders += 1;
+        }
+        // Spawn eggs bring none.
+        let mut e = mob::new(MobKind::Drowned, 1, 0, seed);
+        let mut group = GroupData::default();
+        mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(), &mut group, false);
+        assert!(group.companions.iter().all(|c| c.entity.type_name != "minecraft:zombie_nautilus"));
+    }
+    assert!(tridents > 500, "{tridents}");
+    let ratio = riders as f64 / tridents as f64;
+    assert!((0.4..0.6).contains(&ratio), "{riders} of {tridents}");
 }
