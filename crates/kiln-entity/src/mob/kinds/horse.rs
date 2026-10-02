@@ -129,6 +129,8 @@ pub struct State {
     pub caravan_tail: Option<i32>,
     /// `TraderLlama.despawnDelay`.
     pub despawn_delay: i32,
+    /// `Leashable.getLeashHolder` (entity id): leads are not simulated, only set by hand.
+    pub leash_holder: Option<i32>,
 }
 
 /// The horse state of `m`, if it is one of the family.
@@ -322,11 +324,10 @@ fn random_speed(r: &mut dyn RandomSource) -> f64 {
 }
 
 fn set_base(m: &mut MobData, a: Attr, v: f64) {
+    // (`setBaseValue` leaves the health alone: `LivingEntity.tick` brings it down to the new
+    // maximum at its end, `refreshDirtyAttributes`, see `post_tick`.)
     if let Some(i) = m.attrs.get_mut(a) {
         i.base = v;
-    }
-    if a == MaxHealth && m.health > m.max_health() {
-        m.health = m.max_health();
     }
 }
 
@@ -448,6 +449,7 @@ impl Kind for Equine {
             caravan_head: None,
             caravan_tail: None,
             despawn_delay: 47999,
+            leash_holder: None,
         }))
     }
 
@@ -521,6 +523,12 @@ impl Kind for Equine {
     }
 
     fn post_tick(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+        // `LivingEntity.refreshDirtyAttributes` at the end of its tick: health above a lowered
+        // maximum comes down to it.
+        let max = m.max_health();
+        if m.health > max {
+            m.set_health(max);
+        }
         self.post_tick_horse(m);
     }
 
@@ -651,7 +659,6 @@ impl Kind for Equine {
                 // `TraderLlama.makeNewLlama`: the baby stays.
                 child.persistence_required = true;
             }
-            child.health = child.max_health();
             return;
         }
         if self.0 == Which::Horse {
@@ -675,7 +682,6 @@ impl Kind for Equine {
             st_mut(child).type_variant = (variant & 255) | ((markings << 8) & 65280);
         }
         self.offspring_attributes(e, m, partner, child);
-        child.health = child.max_health();
     }
 
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {

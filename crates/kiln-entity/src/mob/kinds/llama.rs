@@ -2,9 +2,10 @@
 //! holds their state: strength, coat, caravan links, the trader's despawn delay) that spit at what
 //! hurts them, fight wolves, and follow each other in caravans when led.
 //!
-//! Leads do not exist yet: no llama is ever leashed, so [`LlamaFollowCaravanGoal`] only runs for
-//! llamas that were joined to a caravan by hand ([`join_caravan`]) and a trader llama is never led
-//! by a wandering trader (`TraderLlamaDefendWanderingTraderGoal` never starts).
+//! Leads do not exist yet: a llama is leashed only when [`set_leash_holder`] says so (the tests
+//! and the parity harness do), with none of a lead's physics, so [`LlamaFollowCaravanGoal`] only
+//! has a head to follow then, and a trader llama is never led by a wandering trader
+//! (`TraderLlamaDefendWanderingTraderGoal` never starts: there are none).
 
 use super::common_a::{Avoid, NearestTargetGoal};
 use super::horse::{self, st, st_mut};
@@ -47,9 +48,18 @@ pub fn variant_by_id(id: i32) -> i32 {
     id.clamp(0, 3)
 }
 
-/// The leash holder of `m` (`Leashable.getLeashHolder`): nobody, leads are not simulated.
-pub fn leash_holder(_m: &MobData) -> Option<i32> {
-    None
+/// The leash holder of `m` (`Leashable.getLeashHolder`): nobody unless [`set_leash_holder`] said
+/// so (leads, their physics and knots are not simulated).
+pub fn leash_holder(m: &MobData) -> Option<i32> {
+    horse::state(m).and_then(|s| s.leash_holder)
+}
+
+/// Leashes `m` to entity `holder` (or frees it): the holder pulls nothing, and stays within
+/// range of the llama (a lead's elastic range is 4.5 blocks around it).
+pub fn set_leash_holder(m: &mut MobData, holder: Option<i32>) {
+    if let Some(s) = ext_state_mut(m) {
+        s.leash_holder = holder;
+    }
 }
 
 /// `isLeashed`.
@@ -194,21 +204,15 @@ struct LlamaFollowCaravanGoal {
     dist_check_counter: i32,
 }
 
-/// `firstIsLeashed`: the head of the caravan, at most eight links up, is led.
-fn first_is_leashed(level: &dyn EntityLevel, llama: i32, depth: i32) -> bool {
-    if depth > 8 {
+/// `firstIsLeashed`: the head of the caravan `m` is in, at most eight links up, is led (`m` is
+/// the llama itself: the one being ticked is not in the level to be looked up).
+fn first_is_leashed(level: &dyn EntityLevel, m: &MobData, depth: i32) -> bool {
+    if depth > 8 || !in_caravan(m) {
         return false;
     }
-    let Some(m) = level.entity(llama).and_then(crate::mob::data) else { return false };
-    if !in_caravan(m) {
-        return false;
-    }
-    let head = st(m).caravan_head.unwrap();
+    let Some(head) = st(m).caravan_head else { return false };
     let Some(hm) = level.entity(head).and_then(crate::mob::data) else { return false };
-    if is_leashed(hm) {
-        return true;
-    }
-    first_is_leashed(level, head, depth + 1)
+    is_leashed(hm) || first_is_leashed(level, hm, depth + 1)
 }
 
 impl CustomGoal for LlamaFollowCaravanGoal {
@@ -263,8 +267,8 @@ impl CustomGoal for LlamaFollowCaravanGoal {
         if best < 4.0 {
             return false;
         }
-        let head_leashed = level.entity(head).and_then(crate::mob::data).is_some_and(is_leashed);
-        if !head_leashed && !first_is_leashed(level, head, 1) {
+        let Some(head_m) = level.entity(head).and_then(crate::mob::data) else { return false };
+        if !is_leashed(head_m) && !first_is_leashed(level, head_m, 1) {
             return false;
         }
         join_caravan(e.id, m, head, level);
@@ -273,7 +277,7 @@ impl CustomGoal for LlamaFollowCaravanGoal {
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         let Some(head) = st(m).caravan_head else { return false };
         let Some(ho) = level.entity(head) else { return false };
-        if !in_caravan(m) || !ho.is_alive() || !first_is_leashed(level, e.id, 0) {
+        if !in_caravan(m) || !ho.is_alive() || !first_is_leashed(level, m, 0) {
             return false;
         }
         let d = e.position().distance_to_sqr(ho.position());

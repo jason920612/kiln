@@ -2164,9 +2164,11 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         m.hurt_time = 10;
         true
     };
+    // (`instanceof LivingEntity`: the mob being ticked, which is out of the level just now,
+    // is the attacker of its own blows.)
     if let Some(a) = source.attacker
         && !kind.is_tag("minecraft:no_anger")
-        && goals::living(level, a).is_some()
+        && (goals::living(level, a).is_some() || level.entity(a).is_none())
     {
         m.last_hurt_by_mob = Some(a);
         m.last_hurt_by_mob_timestamp = e.tick_count;
