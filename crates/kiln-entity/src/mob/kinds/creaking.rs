@@ -93,14 +93,16 @@ fn can_move(m: &MobData) -> bool {
 fn looked_at_by(e: &Entity, level: &dyn EntityLevel, p: &crate::level::PlayerView) -> bool {
     let look = crate::ext_entity::fireball::view_vector(p.pitch, p.yaw).normalize();
     let eye = p.pos.y + p.eye_height as f64;
+    // `getY() + 0.5 * getScale()`: the scale attribute is 1 for a creaking.
     for h in [e.eye_y(), e.y() + 0.5, (e.eye_y() + e.y()) / 2.0] {
         let dir = Vec3::new(e.x() - p.pos.x, h - eye, e.z() - p.pos.z).normalize();
         let dot = look.x * dir.x + look.y * dir.y + look.z * dir.z;
         if dot > 1.0 - 0.5 {
-            // `hasLineOfSight(entity, VISUAL, NONE, y)` from the player's eyes.
+            // `player.hasLineOfSight(creaking, VISUAL, NONE, y)`: a clip from the player's eyes
+            // with the player's collision context.
             let from = Vec3::new(p.pos.x, eye, p.pos.z);
             let to = Vec3::new(e.x(), h, e.z());
-            if to.distance_to_sqr(from).sqrt() <= 128.0 && !clip_visual(level, from, to) {
+            if to.distance_to_sqr(from).sqrt() <= 128.0 && !clip_visual(level, from, to, &player_context(p)) {
                 return true;
             }
         }
@@ -108,16 +110,40 @@ fn looked_at_by(e: &Entity, level: &dyn EntityLevel, p: &crate::level::PlayerVie
     false
 }
 
-/// `Level.clip(ClipContext(from, to, VISUAL, NONE))`: whether a block's visual shape is in the way.
-/// Glass, bars and powder snow have none; everything else is as its collision shape.
-fn clip_visual(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
+/// `CollisionContext.of(player)` as `ClipContext` builds it: the context-dependent shapes
+/// (scaffolding) read whether the player is above them and sneaking.
+fn player_context(p: &crate::level::PlayerView) -> crate::collision::CollisionContext {
+    crate::collision::CollisionContext {
+        descending: p.sneaking,
+        entity_bottom: p.pos.y,
+        has_entity: true,
+        ..crate::collision::CollisionContext::EMPTY
+    }
+}
+
+/// `BlockState.getVisualShape(level, pos, context)`: the collision shape, except for the blocks
+/// that override it: glass, panes, iron bars and powder snow have none; mud and soul sand are
+/// whole blocks to the eye; fences and snow layers show their outline shape (a fence is lower
+/// than it collides, a layer one step higher).
+fn visual_shape(s: u16, p: BlockPos, ctx: &crate::collision::CollisionContext) -> std::borrow::Cow<'static, crate::shape::Shape> {
     use kiln_data::block_logic::{BlockClass as C, is_instance};
+    use std::borrow::Cow;
+    if is_instance(s, C::TransparentBlock) || is_instance(s, C::IronBarsBlock) || is_instance(s, C::PowderSnowBlock) {
+        Cow::Borrowed(crate::physics::empty_shape())
+    } else if is_instance(s, C::MudBlock) || is_instance(s, C::SoulSandBlock) {
+        Cow::Borrowed(crate::physics::block_shape())
+    } else if is_instance(s, C::FenceBlock) || is_instance(s, C::SnowLayerBlock) {
+        Cow::Borrowed(crate::physics::outline_shape(s))
+    } else {
+        crate::collision::collision_shape(s, p, ctx).0
+    }
+}
+
+/// `Level.clip(ClipContext(from, to, VISUAL, NONE, player))`: whether a block's visual shape is in
+/// the way.
+fn clip_visual(level: &dyn EntityLevel, from: Vec3, to: Vec3, ctx: &crate::collision::CollisionContext) -> bool {
     crate::clip::traverse_blocks(from, to, |p| {
-        let s = level.block(p);
-        if is_instance(s, C::TransparentBlock) || is_instance(s, C::IronBarsBlock) || is_instance(s, C::PowderSnowBlock) {
-            return None;
-        }
-        let (shape, _) = crate::collision::collision_shape(s, p, &crate::collision::CollisionContext::EMPTY);
+        let shape = visual_shape(level.block(p), p, ctx);
         crate::clip::shape_clips(&shape, from, to, p).then_some(())
     })
     .is_some()

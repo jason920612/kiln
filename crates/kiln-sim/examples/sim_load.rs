@@ -84,6 +84,11 @@ struct Args {
     mobs: usize,
     /// The kinds the mobs cycle through (`--kinds fox,piglin`; default: eight common ones).
     kinds: Vec<String>,
+    /// Beds, workstations and a bell around each group's centre, so villagers have points of
+    /// interest to claim and walk to.
+    village: bool,
+    /// `time set` this many ticks when the mobs come (villager schedules: 2000 work, 9000 meet, 13000 rest).
+    day_time: Option<i64>,
 }
 
 fn args() -> Args {
@@ -107,6 +112,8 @@ fn args() -> Args {
         helper_share_us: None,
         mobs: 0,
         kinds: Vec::new(),
+        village: false,
+        day_time: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -128,6 +135,8 @@ fn args() -> Args {
             "--inline-below-us" => a.inline_below_us = Some(value().parse().unwrap()),
             "--chunk-us" => a.chunk_us = Some(value().parse().unwrap()),
             "--mobs" => a.mobs = value().parse().unwrap(),
+            "--village" => a.village = true,
+            "--day-time" => a.day_time = Some(value().parse().unwrap()),
             "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
             other => panic!("unknown argument {other}"),
@@ -211,6 +220,30 @@ fn main() {
                 measuring_since = Some(tick);
                 const DEFAULT_KINDS: [&str; 8] = ["rabbit", "fox", "cat", "ocelot", "zombie", "piglin", "hoglin", "wolf"];
                 let kinds: Vec<String> = if a.kinds.is_empty() { DEFAULT_KINDS.iter().map(|k| k.to_string()).collect() } else { a.kinds.clone() };
+                if let Some(t) = a.day_time {
+                    inbox.push(kiln_link::ToSim::Console(format!("time set {t}")));
+                }
+                if a.village {
+                    for g in 0..a.groups {
+                        let [ox, oz] = group_offset(g, a.groups, a.spacing);
+                        let (cx, cz) = ((8.5 + ox) as i32, (8.5 + oz) as i32);
+                        let y = SURFACE_Y as i32;
+                        let mut set = |dx: i32, dz: i32, block: &str| {
+                            inbox.push(kiln_link::ToSim::Console(format!("setblock {} {y} {} {block}", cx + dx, cz + dz)));
+                        };
+                        // Eight beds (head to the north of the foot) in a row, job sites in another.
+                        for b in 0..8 {
+                            set(-8 + 2 * b, 5, "minecraft:red_bed[facing=north,part=foot]");
+                            set(-8 + 2 * b, 4, "minecraft:red_bed[facing=north,part=head]");
+                        }
+                        const JOBS: [&str; 10] =
+                            ["composter", "lectern", "barrel", "blast_furnace", "smoker", "cartography_table", "brewing_stand", "grindstone", "loom", "fletching_table"];
+                        for (j, job) in JOBS.iter().enumerate() {
+                            set(-9 + 2 * j as i32, -6, &format!("minecraft:{job}"));
+                        }
+                        set(0, 0, "minecraft:bell[facing=north,attachment=floor]");
+                    }
+                }
                 for i in 0..a.mobs {
                     let [ox, oz] = group_offset(i % a.groups, a.groups, a.spacing);
                     let ang = i as f64 * 2.399;
@@ -224,12 +257,16 @@ fn main() {
                 }
                 cpu0 = cpu::now();
                 sim.reset_pool_stats();
+                kiln_entity::prof::start();
                 wall0 = Instant::now();
                 packets0 = walkers.iter().map(|w| w.client.stats.packets.load(Relaxed)).sum();
                 bytes0 = walkers.iter().map(|w| w.client.stats.bytes.load(Relaxed)).sum();
             }
             Some(since) => {
                 times.push(elapsed);
+                if std::env::var_os("KILN_SLOW_PRINT").is_some_and(|v| v.to_str().and_then(|v| v.parse::<f64>().ok()).is_some_and(|ms| elapsed > ms)) {
+                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms", tick, tick - since);
+                }
                 if tick - since >= a.ticks {
                     break;
                 }
@@ -313,6 +350,7 @@ fn main() {
         sum(|w| w.parked).as_secs_f64() * 1e3 / t,
         helpers.iter().map(|w| w.chunks).sum::<u64>() as f64 / t,
     );
+    kiln_entity::prof::report(times.len() as u64);
     if let Some(r) = sim.last_report() {
         println!("last window: {r}");
     }

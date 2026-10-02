@@ -97,7 +97,7 @@ impl Behavior for LongJumpMidJump {
 pub struct LongJumpToRandomPos {
     cfg: LongJumpCfg,
     /// `jumpCandidates`: (position, weight).
-    candidates: Vec<(BlockPos, i32)>,
+    candidates: super::pool::WeightedPool,
     initial_position: Option<Vec3>,
     chosen_jump: Option<Vec3>,
     find_jump_tries: i32,
@@ -110,7 +110,7 @@ impl LongJumpToRandomPos {
     pub fn new(cfg: LongJumpCfg) -> Box<dyn Control> {
         Timed::new(LongJumpToRandomPos {
             cfg,
-            candidates: Vec::new(),
+            candidates: Default::default(),
             initial_position: None,
             chosen_jump: None,
             find_jump_tries: 0,
@@ -122,22 +122,17 @@ impl LongJumpToRandomPos {
 
     /// `WeightedRandom.getRandomItem(level.getRandom(), jumpCandidates, weight)`, removing the pick.
     fn base_candidate(&mut self, cx: &mut Cx) -> Option<(BlockPos, i32)> {
-        let total: i64 = self.candidates.iter().map(|c| c.1 as i64).sum();
+        let total = self.candidates.total();
         if total == 0 {
             return None;
         }
-        let mut r = cx.rng().next_int_bounded(total as i32);
-        for i in 0..self.candidates.len() {
-            r -= self.candidates[i].1;
-            if r < 0 {
-                return Some(self.candidates.remove(i));
-            }
-        }
-        None
+        let r = cx.rng().next_int_bounded(total as i32);
+        self.candidates.take(r)
     }
 
     /// `getJumpCandidate` (`LongJumpToPreferredBlock`'s takes preferred landing blocks first).
     fn jump_candidate(&mut self, cx: &mut Cx) -> Option<(BlockPos, i32)> {
+        crate::prof!("jump", "candidate");
         let Some((is_preferred, _)) = self.cfg.preferred else { return self.base_candidate(cx) };
         if !self.currently_wanting_preferred {
             return self.base_candidate(cx);
@@ -164,6 +159,7 @@ impl LongJumpToRandomPos {
 
     /// `calculateOptimalJumpVector`: the four launch angles in a shuffled order, the first that works.
     fn optimal_jump_vector(&self, cx: &mut Cx, target: Vec3) -> Option<Vec3> {
+        crate::prof!("jump", "optimal vector");
         let mut angles = [65, 70, 75, 80];
         {
             let rnd = (self.cfg.shuffle)(cx.m);
@@ -248,10 +244,11 @@ impl Behavior for LongJumpToRandomPos {
                         continue;
                     }
                     let d = (dx * dx + dy * dy + dz * dz) as f64;
-                    self.candidates.push((BlockPos::new(p.x + dx, p.y + dy, p.z + dz), mth::ceil(d)));
+                    self.candidates.push(BlockPos::new(p.x + dx, p.y + dy, p.z + dz), mth::ceil(d));
                 }
             }
         }
+        self.candidates.build();
         if let Some((_, chance)) = self.cfg.preferred {
             self.not_preferred.clear();
             self.currently_wanting_preferred = cx.e.random.next_float() < chance;
@@ -328,6 +325,7 @@ pub fn jump_vector_for_angle(cx: &mut Cx, target: Vec3, max_velocity: f32, angle
 
 /// `LongJumpUtil.isClearTransition`: the mob's box, stepped from one point to the next, touches nothing.
 fn is_clear_transition(cx: &mut Cx, from: Vec3, to: Vec3) -> bool {
+    crate::prof!("jump", "clear transition");
     let diff = to - from;
     let size = cx.e.width.min(cx.e.height) as f64;
     let n = mth::ceil(diff.length() / size);
@@ -347,6 +345,7 @@ fn is_clear_transition(cx: &mut Cx, from: Vec3, to: Vec3) -> bool {
 /// `LongJumpToRandomPos.defaultAcceptableLandingSpot`: a solid block below and a free (no malus)
 /// path type at the spot.
 pub fn default_acceptable_landing_spot(cx: &mut Cx, pos: BlockPos) -> bool {
+    crate::prof!("jump", "acceptable");
     let below = pos.below();
     kiln_data::block_props::solid_render(cx.level.block(below))
         && mob::path::malus(cx.m, mob::path::path_type_static(&*cx.level, pos.x, pos.y, pos.z)) == 0.0

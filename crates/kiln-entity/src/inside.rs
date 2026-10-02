@@ -311,7 +311,7 @@ impl Entity {
         let bb = self.make_bounding_box(to).deflate_all(9.999999747378752e-6);
         let too_far = from.distance_to_sqr(to) > 0.9999900000002526 * 0.9999900000002526;
         let mut counter = 0;
-        let mut blocks = Vec::new();
+        let mut blocks: smallvec::SmallVec<[(BlockPos, i32); 32]> = smallvec::SmallVec::new();
         for_each_block_intersected_between(from, to, &bb, |pos, step| {
             if step >= max_steps {
                 return false;
@@ -319,12 +319,21 @@ impl Entity {
             blocks.push((pos, step));
             true
         });
+        // The states of the blocks' bounding box at once when it is loaded and small.
+        let mut buf = [0u16; 64];
+        let (mut lo, mut hi) = (BlockPos::new(i32::MAX, i32::MAX, i32::MAX), BlockPos::new(i32::MIN, i32::MIN, i32::MIN));
+        for (p, _) in &blocks {
+            lo = BlockPos::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z));
+            hi = BlockPos::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z));
+        }
+        let (dx, dy, dz) = (hi.x as i64 - lo.x as i64 + 1, hi.y as i64 - lo.y as i64 + 1, hi.z as i64 - lo.z as i64 + 1);
+        let bulk = !blocks.is_empty() && dx * dy * dz <= buf.len() as i64 && level.read_blocks(lo, hi, &mut buf[..(dx * dy * dz) as usize]);
         for (pos, step) in blocks {
             if !self.is_alive() {
                 break;
             }
             counter = step;
-            let state = level.block(pos);
+            let state = if bulk { buf[(((pos.y - lo.y) as i64 * dz + (pos.z - lo.z) as i64) * dx + (pos.x - lo.x) as i64) as usize] } else { level.block(pos) };
             if physics::is_air(state) {
                 continue;
             }
@@ -499,7 +508,7 @@ impl Entity {
 
 /// A set of packed block positions; entity paths touch few blocks, so a vector is fastest.
 #[derive(Default)]
-pub(crate) struct SmallSet(Vec<i64>);
+pub(crate) struct SmallSet(smallvec::SmallVec<[i64; 32]>);
 
 impl SmallSet {
     /// `LongSet.add`: true if newly added.
@@ -550,8 +559,11 @@ pub fn for_each_block_intersected_between(from: Vec3, to: Vec3, bb: &Aabb, mut v
     true
 }
 
+/// The blocks of a box (an entity's box is a handful).
+type Corners = smallvec::SmallVec<[BlockPos; 32]>;
+
 /// `BlockPos.betweenCornersInDirection(AABB, Vec3)`.
-fn corners_in_direction(bb: &Aabb, d: Vec3) -> Vec<BlockPos> {
+fn corners_in_direction(bb: &Aabb, d: Vec3) -> Corners {
     corners_between(
         floor(bb.min_x),
         floor(bb.min_y),
@@ -565,7 +577,7 @@ fn corners_in_direction(bb: &Aabb, d: Vec3) -> Vec<BlockPos> {
 
 /// `BlockPos.betweenCornersInDirection(ints, Vec3)`: the box's blocks starting from the corner
 /// facing away from `d`, the first step-order axis outermost.
-fn corners_between(x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32, d: Vec3) -> Vec<BlockPos> {
+fn corners_between(x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32, d: Vec3) -> Corners {
     let (min_x, min_y, min_z) = (x0.min(x1), y0.min(y1), z0.min(z1));
     let (max_x, max_y, max_z) = (x0.max(x1), y0.max(y1), z0.max(z1));
     let sizes = [max_x - min_x, max_y - min_y, max_z - min_z];
@@ -583,7 +595,7 @@ fn corners_between(x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32, d: Vec3
     };
     let (d1, d2, d3) = (dir(order[0]), dir(order[1]), dir(order[2]));
     let (m1, m2, m3) = (sizes[order[0] as usize], sizes[order[1] as usize], sizes[order[2] as usize]);
-    let mut out = Vec::with_capacity(((m1 + 1) * (m2 + 1) * (m3 + 1)).max(0) as usize);
+    let mut out = Corners::with_capacity(((m1 + 1) * (m2 + 1) * (m3 + 1)).max(0) as usize);
     for i in 0..=m1 {
         for j in 0..=m2 {
             for k in 0..=m3 {

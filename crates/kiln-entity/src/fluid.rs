@@ -154,11 +154,16 @@ impl FluidInteraction {
         let mut last: Option<FluidKind> = None;
         let mut tracker = 0usize;
         let mut acc: Option<bool> = None;
+        // The box's blocks at once when it is loaded (an entity's box is a handful of blocks).
+        let (dx, dy, dz) = (x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
+        let mut buf = [0u16; 64];
+        let n = (dx.max(0) * dy.max(0) * dz.max(0)) as usize;
+        let bulk = n > 0 && n <= buf.len() && level.read_blocks(BlockPos::new(x0, y0, z0), BlockPos::new(x1, y1, z1), &mut buf[..n]);
         for x in x0..=x1 {
             for y in y0..=y1 {
                 for z in z0..=z1 {
                     let pos = BlockPos::new(x, y, z);
-                    let f = fluid_at(level, pos);
+                    let f = if bulk { physics::fluid_state(buf[(((y - y0) * dz + (z - z0)) * dx + (x - x0)) as usize]) } else { fluid_at(level, pos) };
                     if f.is_empty() {
                         continue;
                     }

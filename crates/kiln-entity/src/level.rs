@@ -353,9 +353,9 @@ pub fn player_box(p: &PlayerView) -> Aabb {
 /// scan of the views would give (same players, same order).
 #[derive(Default)]
 pub struct PlayerGrid {
-    by_id: std::collections::HashMap<i32, usize>,
-    by_uuid: std::collections::HashMap<u128, usize>,
-    cells: std::collections::HashMap<(i32, i32, i32), Vec<usize>>,
+    by_id: crate::memory::FastMap<i32, usize>,
+    by_uuid: crate::memory::FastMap<u128, usize>,
+    cells: crate::memory::FastMap<(i32, i32, i32), Vec<usize>>,
 }
 
 fn section_of(x: f64, y: f64, z: f64) -> (i32, i32, i32) {
@@ -455,6 +455,14 @@ pub trait EntityLevel {
     fn is_loaded(&self, pos: BlockPos) -> bool {
         let _ = pos;
         true
+    }
+
+    /// Writes the states of the box `min..=max` into `out` (x fastest, then z, then y) when every
+    /// chunk it touches is loaded, and says so; `false` leaves `out` unspecified and the caller
+    /// reads block by block. One lookup per chunk instead of two per block.
+    fn read_blocks(&self, min: BlockPos, max: BlockPos, out: &mut [u16]) -> bool {
+        let _ = (min, max, out);
+        false
     }
 
     /// Whether `pred` holds for any block state in the box `min..=max` (unloaded chunks read as
@@ -903,6 +911,15 @@ pub trait EntityLevel {
     fn sections_to_village(&self, pos: BlockPos) -> i32 {
         let _ = pos;
         7
+    }
+
+    /// The sections within `radius` (a cube) of `section` that hold an occupied village point of
+    /// interest, when the level can list them: `sections_to_village` of a section within
+    /// `radius - 6` of `section` is then 7 or the nearest of these (a cube distance) below 7, which
+    /// answers a crowd of such queries from one scan. `None`: ask `sections_to_village` itself.
+    fn village_centers_near(&self, section: (i32, i32, i32), radius: i32) -> Option<Vec<(i32, i32, i32)>> {
+        let _ = (section, radius);
+        None
     }
 
     /// `ServerLevel.isVillage`.

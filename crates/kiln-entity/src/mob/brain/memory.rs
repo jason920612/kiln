@@ -568,13 +568,17 @@ impl WalkTarget {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NearestVisible {
     pub nearby: Vec<i32>,
+    /// The entity type of each of `nearby` (a type does not change), so a search for one type
+    /// looks at those and leaves the other entities alone.
+    pub kinds: Vec<&'static str>,
     /// (id, visible), filled on demand.
     pub seen: Vec<(i32, bool)>,
 }
 
 impl NearestVisible {
-    pub fn new(nearby: Vec<i32>) -> NearestVisible {
-        NearestVisible { nearby, seen: Vec::new() }
+    pub fn new(nearby: Vec<i32>, kinds: Vec<&'static str>) -> NearestVisible {
+        debug_assert_eq!(nearby.len(), kinds.len());
+        NearestVisible { nearby, kinds, seen: Vec::new() }
     }
 }
 
@@ -647,11 +651,49 @@ fn is_empty_collection(v: &Val) -> bool {
 pub struct Memories {
     slots: Vec<Slot>,
     registered: [bool; Mem::COUNT],
+    /// One bit per memory (`1 << Mem as u8`): holding a value, and holding a value that expires
+    /// (the only ones [`Memories::tick`] has to visit).
+    present_bits: u128,
+    expiring_bits: u128,
 }
 
 impl Default for Memories {
     fn default() -> Self {
-        Memories { slots: vec![Slot::EMPTY; Mem::COUNT], registered: [false; Mem::COUNT] }
+        Memories { slots: vec![Slot::EMPTY; Mem::COUNT], registered: [false; Mem::COUNT], present_bits: 0, expiring_bits: 0 }
+    }
+}
+
+/// The bit of a memory in the masks of [`Memories`] and [`Entry`].
+const fn bit(m: Mem) -> u128 {
+    1u128 << (m as u8)
+}
+
+/// What a behaviour's entry conditions ask of the memories as bit masks: the `present` ones hold a
+/// value, the `absent` ones do not. That is necessary for `Behavior.hasRequiredMemories` (which
+/// also wants them registered), so a behaviour that fails it cannot start and is not asked.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Entry {
+    present: u128,
+    absent: u128,
+}
+
+impl Entry {
+    pub fn of(entry: &[(Mem, Status)]) -> Entry {
+        let mut e = Entry::default();
+        for &(m, s) in entry {
+            match s {
+                Status::ValuePresent => e.present |= bit(m),
+                Status::ValueAbsent => e.absent |= bit(m),
+                Status::Registered => {}
+            }
+        }
+        e
+    }
+
+    /// Whether the memories have what the entry conditions need of their values.
+    #[inline]
+    pub fn holds(&self, mem: &Memories) -> bool {
+        self.present & !mem.present_bits == 0 && self.absent & mem.present_bits == 0
     }
 }
 
@@ -666,9 +708,15 @@ impl Memories {
 
     /// `Brain.forgetOutdatedMemories`.
     pub fn tick(&mut self) {
-        for (i, s) in self.slots.iter_mut().enumerate() {
-            if self.registered[i] {
-                s.tick();
+        let mut bits = self.expiring_bits;
+        while bits != 0 {
+            let i = bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let s = &mut self.slots[i];
+            s.tick();
+            if s.value.is_none() {
+                self.present_bits &= !(1u128 << i);
+                self.expiring_bits &= !(1u128 << i);
             }
         }
     }
@@ -681,8 +729,8 @@ impl Memories {
         }
         match status {
             Status::Registered => true,
-            Status::ValuePresent => self.slots[i].value.is_some(),
-            Status::ValueAbsent => self.slots[i].value.is_none(),
+            Status::ValuePresent => self.present_bits & bit(m) != 0,
+            Status::ValueAbsent => self.present_bits & bit(m) == 0,
         }
     }
 
@@ -692,11 +740,12 @@ impl Memories {
 
     /// `Brain.getMemory` (a memory that was never registered has no value).
     pub fn get(&self, m: Mem) -> Option<&Val> {
-        if !self.registered[m as usize] { None } else { self.slots[m as usize].value.as_ref() }
+        // (The mask says without touching the slot: most memories most of the time hold nothing.)
+        if self.present_bits & bit(m) == 0 { None } else { self.slots[m as usize].value.as_ref() }
     }
 
     pub fn get_mut(&mut self, m: Mem) -> Option<&mut Val> {
-        if !self.registered[m as usize] { None } else { self.slots[m as usize].value.as_mut() }
+        if self.present_bits & bit(m) == 0 { None } else { self.slots[m as usize].value.as_mut() }
     }
 
     /// `Brain.getTimeUntilExpiry`.
@@ -719,10 +768,19 @@ impl Memories {
         if !self.registered[i] {
             return;
         }
+        let b = 1u128 << i;
         if is_empty_collection(&v) {
             self.slots[i].clear();
+            self.present_bits &= !b;
+            self.expiring_bits &= !b;
         } else {
             self.slots[i] = Slot { value: Some(v), ttl };
+            self.present_bits |= b;
+            if ttl == NEVER_EXPIRE {
+                self.expiring_bits &= !b;
+            } else {
+                self.expiring_bits |= b;
+            }
         }
     }
 
@@ -738,6 +796,8 @@ impl Memories {
     pub fn erase(&mut self, m: Mem) {
         if self.registered[m as usize] {
             self.slots[m as usize].clear();
+            self.present_bits &= !bit(m);
+            self.expiring_bits &= !bit(m);
         }
     }
 
@@ -746,6 +806,8 @@ impl Memories {
         for s in self.slots.iter_mut() {
             s.clear();
         }
+        self.present_bits = 0;
+        self.expiring_bits = 0;
     }
 
     pub fn slot(&self, m: Mem) -> &Slot {

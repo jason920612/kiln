@@ -420,18 +420,21 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     grid: Grid,
     /// Player entity id → index in `proxies` ([`SimLevel::index_players`]; mobs look players up
     /// several times a tick, and a crowd has a thousand).
-    proxy_at: HashMap<i32, usize>,
+    proxy_at: FastMap<i32, usize>,
     /// Player stand-ins by entity section (like `grid`), so area queries skip far players.
-    proxy_grid: HashMap<(i32, i32, i32), Vec<usize>>,
+    proxy_grid: FastMap<(i32, i32, i32), Vec<usize>>,
     /// Player views (spectators too) by id, UUID and section, for [`EntityLevel::player`],
     /// [`EntityLevel::player_by_uuid`] and [`EntityLevel::players_in`].
     view_index: kiln_entity::level::PlayerGrid,
 }
 
+/// Maps of small integer keys (entity ids, sections): looked up several times per entity and tick.
+type FastMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<kiln_entity::memory::FastHasher>>;
+
 /// Entities by section, like vanilla's `EntitySectionStorage`.
 #[derive(Default)]
 struct Grid {
-    cells: std::collections::HashMap<(i32, i32, i32), Vec<usize>>,
+    cells: FastMap<(i32, i32, i32), Vec<usize>>,
     at: Vec<(i32, i32, i32)>,
 }
 
@@ -550,11 +553,17 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         crate::raid::raid_at_view(&self.level.env.raids, pos)
     }
 
+    fn village_centers_near(&self, section: (i32, i32, i32), radius: i32) -> Option<Vec<(i32, i32, i32)>> {
+        Some(crate::poi::village_centers(&*self.level.cells, [section.0, section.1, section.2], radius))
+    }
+
     fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        kiln_entity::prof!("lvl", "sections_to_village");
         crate::poi::sections_to_village(&*self.level.cells, [pos.x, pos.y, pos.z])
     }
 
     fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: kiln_entity::level::PoiOccupancy) -> Vec<BlockPos> {
+        kiln_entity::prof!("lvl", "poi_in_range");
         let kinds = crate::poi::kinds_of(types);
         crate::poi::in_range(&*self.level.cells, &kinds, [center.x, center.y, center.z], radius, occupancy_of(occupancy))
             .into_iter()
@@ -590,6 +599,27 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn is_loaded(&self, pos: BlockPos) -> bool {
         self.level.is_loaded(kb(pos))
+    }
+
+    fn read_blocks(&self, min: BlockPos, max: BlockPos, out: &mut [u16]) -> bool {
+        use kiln_world::Blocks;
+        let (dx, dz) = ((max.x - min.x + 1) as usize, (max.z - min.z + 1) as usize);
+        for cz in (min.z >> 4)..=(max.z >> 4) {
+            for cx in (min.x >> 4)..=(max.x >> 4) {
+                let Some(chunk) = self.level.cells.chunk(ChunkPos::new(cx, cz)) else { return false };
+                let (x0, x1) = (min.x.max(cx * 16), max.x.min(cx * 16 + 15));
+                let (z0, z1) = (min.z.max(cz * 16), max.z.min(cz * 16 + 15));
+                for y in min.y..=max.y {
+                    for z in z0..=z1 {
+                        let row = ((y - min.y) as usize * dz + (z - min.z) as usize) * dx;
+                        for x in x0..=x1 {
+                            out[row + (x - min.x) as usize] = chunk.get((x & 15) as usize, y, (z & 15) as usize);
+                        }
+                    }
+                }
+            }
+        }
+        true
     }
 
     fn any_block_in(&self, min: BlockPos, max: BlockPos, pred: &dyn Fn(u16) -> bool) -> bool {
@@ -646,6 +676,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
+        kiln_entity::prof!("lvl", "entities_in");
         let wanted = |e: &kiln_entity::Entity| {
             let kind = match filter {
                 EntityFilter::Any => true,
@@ -659,7 +690,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         // sections within 2 blocks of the area hold every entity whose box can touch it.
         let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
         let hi = section_of([area.max_x + 2.0, area.max_y + 2.0, area.max_z + 2.0]);
-        let mut found: Vec<((i32, i64), i32)> = Vec::new();
+        let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
         let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
         if span > self.grid.cells.len() as i64 * 4 {
             found.extend(self.list.iter().filter_map(|e| e.phys.as_ref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
@@ -736,6 +767,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn players_in(&self, area: &Aabb) -> Vec<PlayerView> {
+        kiln_entity::prof!("lvl", "players_in");
         self.view_index.in_area(&self.views, area)
     }
 
@@ -1154,8 +1186,8 @@ pub(crate) fn tick(
         current_source: None,
         rng: LegacyRandom::new(0),
         grid: Grid::default(),
-        proxy_at: HashMap::new(),
-        proxy_grid: HashMap::new(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
         view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
@@ -1467,8 +1499,8 @@ pub(crate) fn hit_mob(
         current_source: None,
         rng,
         grid: Grid::default(),
-        proxy_at: HashMap::new(),
-        proxy_grid: HashMap::new(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
         view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
@@ -1585,8 +1617,8 @@ pub(crate) fn interact_mob(
         current_source: None,
         rng,
         grid: Grid::default(),
-        proxy_at: HashMap::new(),
-        proxy_grid: HashMap::new(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
         view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
@@ -1737,8 +1769,8 @@ pub(crate) fn with_entity<R>(
         current_source: None,
         rng,
         grid: Grid::default(),
-        proxy_at: HashMap::new(),
-        proxy_grid: HashMap::new(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
         view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);
@@ -1786,8 +1818,8 @@ pub(crate) fn with_level<R>(
         current_source: None,
         rng,
         grid: Grid::default(),
-        proxy_at: HashMap::new(),
-        proxy_grid: HashMap::new(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
         view_index: Default::default(),
     };
     sim.grid = Grid::build(sim.list);

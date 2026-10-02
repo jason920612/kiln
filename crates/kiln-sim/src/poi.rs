@@ -62,22 +62,46 @@ pub(crate) fn type_at<C: CellStore + ?Sized>(cells: &C, pos: [i32; 3]) -> Option
 pub(crate) fn sections_to_village<C: CellStore + ?Sized>(cells: &C, pos: [i32; 3]) -> i32 {
     let (sx, sy, sz) = (pos[0] >> 4, pos[1] >> 4, pos[2] >> 4);
     let mut best = 7;
-    for cz in sz - 6..=sz + 6 {
-        for cx in sx - 6..=sx + 6 {
-            let d_h = (cx - sx).abs().max((cz - sz).abs());
-            if d_h >= best {
-                continue;
-            }
-            let Some(p) = pois(cells, ChunkPos::new(cx, cz)) else { continue };
-            for (&y, s) in p.sections.range(sy - 6..=sy + 6) {
-                let d = d_h.max((y - sy).abs());
-                if d < best && s.is_village_center() {
-                    best = d;
+    // Chunks in rings around the section's own, nearest first: a section in ring `r` is at least
+    // `r` away, so once `best` has been reached the farther rings cannot improve on it.
+    for r in 0i32..=6 {
+        if r >= best {
+            break;
+        }
+        for dz in -r..=r {
+            let step = if dz.abs() == r { 1 } else { (2 * r).max(1) };
+            let mut dx = -r;
+            while dx <= r {
+                if let Some(p) = pois(cells, ChunkPos::new(sx + dx, sz + dz)) {
+                    for (&y, s) in p.sections.range(sy - 6..=sy + 6) {
+                        let d = r.max((y - sy).abs());
+                        if d < best && s.is_village_center() {
+                            best = d;
+                        }
+                    }
                 }
+                dx += step;
             }
         }
     }
     best
+}
+
+/// The sections within `radius` (a cube) of section `at` that hold an occupied village point of
+/// interest: what [`sections_to_village`] looks for.
+pub(crate) fn village_centers<C: CellStore + ?Sized>(cells: &C, at: [i32; 3], radius: i32) -> Vec<(i32, i32, i32)> {
+    let mut out = Vec::new();
+    for cz in at[2] - radius..=at[2] + radius {
+        for cx in at[0] - radius..=at[0] + radius {
+            let Some(p) = pois(cells, ChunkPos::new(cx, cz)) else { continue };
+            for (&y, s) in p.sections.range(at[1] - radius..=at[1] + radius) {
+                if s.is_village_center() {
+                    out.push((cx, y, cz));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A `minecraft:point_of_interest_type` entry or `#tag` as a predicate on type indices.

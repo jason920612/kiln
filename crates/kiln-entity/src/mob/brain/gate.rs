@@ -105,6 +105,9 @@ impl Control for Gate {
             b.required(out);
         }
     }
+    fn entry_masks(&self) -> super::Entry {
+        super::Entry::of(&self.entry)
+    }
     fn try_start(&mut self, cx: &mut Cx) -> bool {
         if !self.entry.iter().all(|&(m, s)| cx.b.mem.check(m, s)) {
             return false;
@@ -117,6 +120,7 @@ impl Control for Gate {
             RunningPolicy::RunOne => {
                 let debug = super::debug_on();
                 for (b, w, _) in self.list.entries.iter_mut() {
+                    crate::prof!("gate child", b.name());
                     if !b.running() && b.try_start(cx) {
                         if debug {
                             eprintln!("gate t={} {} picked {}/{}", cx.time, self.name, b.name(), w);

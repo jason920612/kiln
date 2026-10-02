@@ -95,6 +95,12 @@ python tools/e2e.py [--client]       # tests, release build, server, smoke clien
 python tools/load_test.py --count 1000 --groups 20    # server + kiln-bot, tick statistics
 cargo run --release -p kiln-sim --example sim_load -- --players 1000 --groups 20
                                      # the simulation alone with scripted in-process players
+cargo run --release -p kiln-sim --features prof --example sim_load -- --players 40 --groups 20 \
+    --mobs 400 --kinds villager --village --day-time 3000
+                                     # brain mobs (--kinds a,b,c; --village adds beds, workstations and
+                                     # a bell per group); with the prof feature the time spent in
+                                     # named scopes (kiln_entity::prof!) is sampled and printed per
+                                     # tick; KILN_SLOW_PRINT=<ms> lists the ticks over that cost
 python tools/vanilla_baseline.py     # the same bot workload against the vanilla server
 KILN_PARITY=1 cargo test -p kiln-worldgen --release --test parity
                                      # worldgen bit parity (vectors from tools/worldgen_vectors.py)

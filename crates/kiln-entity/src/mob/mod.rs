@@ -865,11 +865,31 @@ pub fn item_tag(item: i32, tag: &str) -> bool {
 /// `minecraft:undead`, `minecraft:raiders`).
 pub fn entity_type_tag(type_name: &str, tag: &str) -> bool {
     let Some(id) = kiln_data::builtin_id("minecraft:entity_type", type_name) else { return false };
-    kiln_data::registries::TAGS
-        .iter()
-        .find(|(r, _)| *r == "minecraft:entity_type")
-        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
-        .is_some_and(|(_, ids)| ids.contains(&id))
+    // Each tag as a flag per entity type, made on first use.
+    thread_local! {
+        static TAGS: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<Vec<bool>>>> = Default::default();
+    }
+    let flags = TAGS.with(|t| {
+        if let Some(f) = t.borrow().get(tag) {
+            return f.clone();
+        }
+        let count = kiln_data::builtin_entries("minecraft:entity_type").map_or(0, |e| e.len());
+        let mut flags = vec![false; count];
+        let ids = kiln_data::registries::TAGS
+            .iter()
+            .find(|(r, _)| *r == "minecraft:entity_type")
+            .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+            .map(|(_, ids)| *ids);
+        for &i in ids.unwrap_or(&[]) {
+            if let Some(f) = usize::try_from(i).ok().and_then(|i| flags.get_mut(i)) {
+                *f = true;
+            }
+        }
+        let flags = std::rc::Rc::new(flags);
+        t.borrow_mut().insert(tag.to_owned(), flags.clone());
+        flags
+    });
+    flags.get(id as usize).copied().unwrap_or(false)
 }
 
 /// The variant components of a mob (`Entity.get(DataComponents.*_VARIANT)`) that entity
@@ -1317,16 +1337,23 @@ impl MobData {
 /// `Mob.tick` (the level ran `commonTick`): the type's pre-tick, `LivingEntity.tick`, then
 /// `Mob.tick`'s control flags.
 pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
+    crate::prof!("mob", e.type_name);
     let mut m = take(e);
     m.swing = false;
     // `Entity.isVehicle()` as the goals of this tick see it (a spider with a rider does not attack).
     m.is_vehicle = !e.passengers.is_empty();
-    species::pre_tick(e, &mut m, level);
+    {
+        crate::prof!("mob", "pre_tick");
+        species::pre_tick(e, &mut m, level);
+    }
     living_tick(e, &mut m, level);
     if e.tick_count % 5 == 0 {
         update_control_flags(e, &mut m, &*level);
     }
-    species::post_tick(e, &mut m, level);
+    {
+        crate::prof!("mob", "post_tick");
+        species::post_tick(e, &mut m, level);
+    }
     // `LivingEntity.remove`: a mob that was removed (killed, converted, discarded) forgets what
     // its brain remembered.
     if e.is_removed()
@@ -1339,7 +1366,10 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
 }
 
 fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-    base_tick(e, m, level);
+    {
+        crate::prof!("mob", "base_tick");
+        base_tick(e, m, level);
+    }
     if m.using_item.is_some()
         && let Some(k) = m.kind.ext()
     {
@@ -1350,6 +1380,7 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
     sync_equipment_modifiers(m);
     if !e.is_removed() {
+        crate::prof!("mob", "ai_step");
         ai_step(e, m, level);
     }
     // Body and head rotation (`Mob.tickHeadTurn`), then angle unwinding of the old values.
@@ -1623,6 +1654,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.xxa = 0.0;
         m.zza = 0.0;
     } else if !m.no_ai && rider.is_none() {
+        crate::prof!("mob", "server_ai_step");
         server_ai_step(e, m, level);
     }
     if m.jumping {
@@ -1659,17 +1691,24 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         }
         e.delta = Vec3::ZERO;
     } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
+        crate::prof!("mob", "travel");
         travel(e, m, level, input);
     }
     if let Some((distance, multiplier)) = e.pending_fall.take() {
         cause_fall_damage(e, m, level, distance, multiplier);
     }
-    e.apply_effects_from_blocks(level);
+    {
+        crate::prof!("mob", "apply_effects_from_blocks");
+        e.apply_effects_from_blocks(level);
+    }
     // Freezing.
     if !e.is_in_powder_snow {
         e.ticks_frozen = (e.ticks_frozen - 2).max(0);
     }
-    push_entities(e, m, level);
+    {
+        crate::prof!("mob", "push_entities");
+        push_entities(e, m, level);
+    }
     if m.kind.ext().is_some_and(|k| k.sensitive_to_water()) && (e.is_in_water() || level.is_raining_at(e.block_position())) {
         hurt(e, m, level, DamageSource::of(DamageKind::Drown), 1.0);
     }
@@ -1692,6 +1731,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             }
         }
     }
+    crate::prof!("mob", "species::ai_step");
     species::ai_step(e, m, level);
 }
 
@@ -1757,11 +1797,13 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     }
     m.goals = sel;
     if m.kind.ext().is_none_or(|k| k.ticks_navigation(m)) {
+        crate::prof!("mob", "navigation");
         path::tick(e, m, level);
     }
     breed::custom_server_ai_step(m);
     let k = m.kind.ext();
     if let Some(k) = k {
+        crate::prof!("mob", "custom_server_ai_step");
         k.custom_server_ai_step(e, m, level);
     }
     if !k.is_some_and(|k| k.tick_move(e, m, level)) {
@@ -1867,8 +1909,11 @@ fn relative_friction_movement(e: &mut Entity, m: &mut MobData, level: &mut dyn E
     } else {
         0.02
     };
-    move_relative(e, speed, input);
-    e.delta = handle_on_climbable(e, m, level, e.delta);
+    {
+        crate::prof!("mv", "relative");
+        move_relative(e, speed, input);
+        e.delta = handle_on_climbable(e, m, level, e.delta);
+    }
     let d = e.delta;
     e.do_move(level, MoverType::SelfMove, d);
     let mut v = e.delta;

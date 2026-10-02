@@ -62,7 +62,8 @@ fn is_baby(cx: &mut Cx) -> bool {
 
 /// `Zoglin.findNearestValidAttackTarget`: not a zoglin or a creeper, and attackable.
 fn find_nearest_valid_attack_target(cx: &mut Cx) -> Option<i32> {
-    util::find_closest_visible(cx, |cx, id| {
+    // (Zoglins and creepers fail the predicate: they are not asked.)
+    util::find_closest_visible_kind(cx, |k| k != "minecraft:zoglin" && k != "minecraft:creeper", |cx, id| {
         let Some(l) = living_now(cx, id) else { return false };
         l.type_name != "minecraft:zoglin" && l.type_name != "minecraft:creeper" && util::is_entity_attackable(cx, &l)
     })

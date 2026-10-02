@@ -116,6 +116,10 @@ pub fn for_each_block_collision(
     let z1 = floor(area.max_z + 1.0e-7) + 1;
     let entity_shape = BoxShape::new(area);
     let (w, h, d) = (x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
+    // The whole box read at once when it is loaded and small enough for the stack.
+    let mut buf = [0u16; 384];
+    let n = (w * h * d) as usize;
+    let bulk = n <= buf.len() && level.read_blocks(BlockPos::new(x0, y0, z0), BlockPos::new(x1, y1, z1), &mut buf[..n]);
     for z in 0..d {
         for y in 0..h {
             for x in 0..w {
@@ -124,10 +128,14 @@ pub fn for_each_block_collision(
                     continue;
                 }
                 let pos = BlockPos::new(x0 + x, y0 + y, z0 + z);
-                if !level.is_loaded(pos) {
-                    continue;
-                }
-                let state = level.block(pos);
+                let state = if bulk {
+                    buf[((y * d + z) * w + x) as usize]
+                } else {
+                    if !level.is_loaded(pos) {
+                        continue;
+                    }
+                    level.block(pos)
+                };
                 if edges == 1 && !physics::has_large_collision_shape(state) {
                     continue;
                 }
@@ -215,8 +223,11 @@ fn stable_lava(level: &dyn EntityLevel, state: u16, pos: BlockPos, ctx: &Collisi
         && !physics::fluid_state(level.block(pos.above())).kind.is_lava()
 }
 
+/// The colliders around an entity: a handful, so they live on the stack.
+pub type Colliders = smallvec::SmallVec<[Collider; 8]>;
+
 /// `getBlockCollisions` as placed colliders.
-pub fn block_colliders(level: &dyn EntityLevel, ctx: &CollisionContext, area: &Aabb, out: &mut Vec<Collider>) {
+pub fn block_colliders(level: &dyn EntityLevel, ctx: &CollisionContext, area: &Aabb, out: &mut Colliders) {
     for_each_block_collision(level, ctx, area, |pos, shape, _| {
         out.push(Collider { shape, offset: [pos.x as f64, pos.y as f64, pos.z as f64] });
         true
@@ -237,8 +248,8 @@ pub fn collect_colliders(
     ctx: &CollisionContext,
     entity_shapes: &[Collider],
     area: &Aabb,
-) -> Vec<Collider> {
-    let mut out = entity_shapes.to_vec();
+) -> Colliders {
+    let mut out: Colliders = entity_shapes.iter().cloned().collect();
     block_colliders(level, ctx, area, &mut out);
     out
 }

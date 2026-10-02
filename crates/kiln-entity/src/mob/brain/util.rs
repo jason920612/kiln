@@ -178,6 +178,42 @@ pub fn find_closest_visible(cx: &mut Cx, mut pred: impl FnMut(&mut Cx, i32) -> b
     .flatten()
 }
 
+/// [`find_closest_visible`] over the entities whose type `kind_ok` accepts: the same answer when
+/// `pred` rejects the others, without asking it about them.
+pub fn find_closest_visible_kind(cx: &mut Cx, kind_ok: impl Fn(&str) -> bool, mut pred: impl FnMut(&mut Cx, i32) -> bool) -> Option<i32> {
+    with_visible(cx, |cx, nv| {
+        for i in 0..nv.nearby.len() {
+            if !kind_ok(nv.kinds[i]) {
+                continue;
+            }
+            let id = nv.nearby[i];
+            if pred(cx, id) && visible_test(cx, nv, id) {
+                return Some(id);
+            }
+        }
+        None
+    })
+    .flatten()
+}
+
+/// [`find_all_visible`] over the entities whose type `kind_ok` accepts.
+pub fn find_all_visible_kind(cx: &mut Cx, kind_ok: impl Fn(&str) -> bool, mut pred: impl FnMut(&mut Cx, i32) -> bool) -> Vec<i32> {
+    with_visible(cx, |cx, nv| {
+        let mut out = Vec::new();
+        for i in 0..nv.nearby.len() {
+            if !kind_ok(nv.kinds[i]) {
+                continue;
+            }
+            let id = nv.nearby[i];
+            if pred(cx, id) && visible_test(cx, nv, id) {
+                out.push(id);
+            }
+        }
+        out
+    })
+    .unwrap_or_default()
+}
+
 /// `NearestVisibleLivingEntities.find(predicate)`: all that pass, nearest first.
 pub fn find_all_visible(cx: &mut Cx, mut pred: impl FnMut(&mut Cx, i32) -> bool) -> Vec<i32> {
     with_visible(cx, |cx, nv| {
@@ -297,20 +333,25 @@ pub fn uniform(r: &mut dyn RandomSource, min: i32, max: i32) -> i32 {
 /// The living entities and players around, nearest to `from` first (ties in listing order), as
 /// `getEntitiesOfClass(LivingEntity.class, box, filter)` then a stable sort by distance.
 pub fn living_in_box(cx: &Cx, area: &Aabb) -> Vec<i32> {
-    let mut v: Vec<(f64, i32)> = Vec::new();
+    living_in_box_typed(cx, area).into_iter().map(|(id, _)| id).collect()
+}
+
+/// [`living_in_box`] with each entity's type.
+pub fn living_in_box_typed(cx: &Cx, area: &Aabb) -> Vec<(i32, &'static str)> {
+    let mut v: Vec<(f64, i32, &'static str)> = Vec::new();
     let me = cx.e.id;
     for id in cx.level.entities_in(area, EntityFilter::Living, me) {
         if let Some(l) = living(cx, id)
             && l.alive
         {
-            v.push((cx.e.position().distance_to_sqr(l.pos), id));
+            v.push((cx.e.position().distance_to_sqr(l.pos), id, l.type_name));
         }
     }
     for p in cx.level.players_in(area) {
         if p.id != me && p.alive {
-            v.push((cx.e.position().distance_to_sqr(p.pos), p.id));
+            v.push((cx.e.position().distance_to_sqr(p.pos), p.id, "minecraft:player"));
         }
     }
     v.sort_by(|a, b| a.0.total_cmp(&b.0));
-    v.into_iter().map(|(_, id)| id).collect()
+    v.into_iter().map(|(_, id, t)| (id, t)).collect()
 }

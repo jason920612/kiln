@@ -9,7 +9,7 @@ use crate::collision::{self, CollisionContext};
 use crate::entity::Entity;
 use crate::level::EntityLevel;
 use crate::math::{Aabb, Axis, BlockPos, Vec3, floor};
-use std::collections::HashMap;
+use crate::memory::FastMap;
 
 // ---------------------------------------------------------------------- block facts
 
@@ -217,13 +217,17 @@ pub fn path_type_static(level: &dyn EntityLevel, x: i32, y: i32, z: i32) -> Path
 
 /// `WalkNodeEvaluator.checkNeighbourBlocks`.
 fn check_neighbour_blocks(level: &dyn EntityLevel, x: i32, y: i32, z: i32, default: PathType) -> PathType {
+    // The 27 blocks at once when they are loaded (x fastest, then z, then y).
+    let mut buf = [0u16; 27];
+    let bulk = level.read_blocks(BlockPos::new(x - 1, y - 1, z - 1), BlockPos::new(x + 1, y + 1, z + 1), &mut buf);
     for dx in -1..=1 {
         for dy in -1..=1 {
             for dz in -1..=1 {
                 if dx == 0 && dz == 0 {
                     continue;
                 }
-                match type_at(level, x + dx, y + dy, z + dz) {
+                let t = if bulk { path_type_from_state(buf[(((dy + 1) * 3 + (dz + 1)) * 3 + (dx + 1)) as usize]) } else { type_at(level, x + dx, y + dy, z + dz) };
+                match t {
                     PathType::Damaging => return PathType::DamagingInNeighbor,
                     PathType::Fire | PathType::Lava => return PathType::FireInNeighbor,
                     PathType::Water => return PathType::WaterBorder,
@@ -368,9 +372,13 @@ struct Search<'a> {
     e: &'a Entity,
     m: &'a MobData,
     nodes: Vec<Node>,
-    by_hash: HashMap<i32, u32>,
-    types: HashMap<i64, PathType>,
-    collisions: HashMap<[u64; 6], bool>,
+    by_hash: FastMap<i32, u32>,
+    types: FastMap<i64, PathType>,
+    collisions: FastMap<[u64; 6], bool>,
+    /// `getFloorLevel` by block (the level does not change during a search).
+    floors: FastMap<i64, f64>,
+    /// `Creaking.HomeNodeEvaluator`'s home (`path_home`), read once.
+    home: Option<BlockPos>,
     width: i32,
     height: i32,
     depth: i32,
@@ -393,7 +401,80 @@ struct Search<'a> {
     heap: Vec<u32>,
 }
 
+/// The tables of a finished search, kept for the next one on the thread (a mob that long-jumps or
+/// gathers points of interest starts hundreds of searches a tick; allocating and filling the
+/// tables for each cost more than the searching).
+struct Spare {
+    nodes: Vec<Node>,
+    by_hash: FastMap<i32, u32>,
+    types: FastMap<i64, PathType>,
+    collisions: FastMap<[u64; 6], bool>,
+    floors: FastMap<i64, f64>,
+    heap: Vec<u32>,
+}
+
+thread_local! {
+    static SPARE: std::cell::RefCell<Vec<Spare>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl<'a> Search<'a> {
+    fn new(level: &'a dyn EntityLevel, e: &'a Entity, m: &'a MobData) -> Search<'a> {
+        let sp = SPARE.with(|s| s.borrow_mut().pop()).unwrap_or_else(|| Spare {
+            nodes: Vec::with_capacity(256),
+            by_hash: FastMap::with_capacity_and_hasher(256, Default::default()),
+            types: FastMap::with_capacity_and_hasher(256, Default::default()),
+            collisions: FastMap::default(),
+            floors: FastMap::with_capacity_and_hasher(256, Default::default()),
+            heap: Vec::with_capacity(64),
+        });
+        Search {
+            level,
+            e,
+            m,
+            nodes: sp.nodes,
+            by_hash: sp.by_hash,
+            types: sp.types,
+            collisions: sp.collisions,
+            floors: sp.floors,
+            home: if m.nav.amphibious { None } else { m.kind.ext().and_then(|k| k.path_home(m)) },
+            width: floor((e.width + 1.0) as f64),
+            height: floor((e.height + 1.0) as f64),
+            depth: floor((e.width + 1.0) as f64),
+            can_float: m.nav.can_float,
+            can_open_doors: m.nav.can_open_doors,
+            can_pass_doors: m.nav.can_pass_doors,
+            can_walk_over_fences: m.nav.can_walk_over_fences,
+            amphibious: m.nav.amphibious,
+            swim: m.nav.water_bound,
+            breaching: m.nav.allow_breaching,
+            fly: m.nav.fly,
+            frog: m.nav.frog,
+            mob_pos: e.block_position(),
+            heap: sp.heap,
+        }
+    }
+
+    /// Hands the tables back for the next search (emptied; a search that grew them very large
+    /// lets them go).
+    fn recycle(mut self) {
+        if self.nodes.capacity() > 16384 {
+            return;
+        }
+        self.nodes.clear();
+        self.by_hash.clear();
+        self.types.clear();
+        self.collisions.clear();
+        self.floors.clear();
+        self.heap.clear();
+        let sp = Spare { nodes: self.nodes, by_hash: self.by_hash, types: self.types, collisions: self.collisions, floors: self.floors, heap: self.heap };
+        SPARE.with(|s| {
+            let mut s = s.borrow_mut();
+            if s.len() < 4 {
+                s.push(sp);
+            }
+        });
+    }
+
     fn node(&mut self, x: i32, y: i32, z: i32) -> u32 {
         let h = node_hash(x, y, z);
         if let Some(&i) = self.by_hash.get(&h) {
@@ -434,7 +515,7 @@ impl<'a> Search<'a> {
         if !self.amphibious {
             // `Creaking.HomeNodeEvaluator.getPathType`: nothing beyond 32 blocks of the home
             // unless closer to it than the creaking is.
-            if let Some(home) = self.m.kind.ext().and_then(|k| k.path_home(self.m)) {
+            if let Some(home) = self.home {
                 let sqr = |a: BlockPos, b: BlockPos| {
                     let (dx, dy, dz) = ((a.x - b.x) as f64, (a.y - b.y) as f64, (a.z - b.z) as f64);
                     dx * dx + dy * dy + dz * dz
@@ -469,19 +550,23 @@ impl<'a> Search<'a> {
 
     /// `getPathTypeOfMob`.
     fn type_of_mob(&mut self, x: i32, y: i32, z: i32) -> PathType {
+        crate::prof!("path", "type_of_mob");
         let set = self.types_within_bb(x, y, z);
-        if set.len() == 1 {
-            return set[0];
+        if set.count_ones() == 1 {
+            return PathType::ALL[set.trailing_zeros() as usize];
         }
-        if set.contains(&PathType::Fence) {
+        if set & (1 << PathType::Fence as u32) != 0 {
             return PathType::Fence;
         }
-        if set.contains(&PathType::UnpassableRail) {
+        if set & (1 << PathType::UnpassableRail as u32) != 0 {
             return PathType::UnpassableRail;
         }
         let mut best = PathType::Blocked;
         let mut best_malus = self.malus(best);
-        for &t in &set {
+        let mut bits = set;
+        while bits != 0 {
+            let t = PathType::ALL[bits.trailing_zeros() as usize];
+            bits &= bits - 1;
             let v = self.malus(t);
             if v < 0.0 {
                 return t;
@@ -504,9 +589,9 @@ impl<'a> Search<'a> {
         best
     }
 
-    /// `getPathTypeWithinMobBB`: an `EnumSet` (ordinal order).
-    fn types_within_bb(&mut self, x: i32, y: i32, z: i32) -> Vec<PathType> {
-        let mut set: Vec<PathType> = Vec::with_capacity(2);
+    /// `getPathTypeWithinMobBB`: an `EnumSet` (a bit per ordinal, so ordinal order).
+    fn types_within_bb(&mut self, x: i32, y: i32, z: i32) -> u32 {
+        let mut set = 0u32;
         let mob = self.mob_pos;
         for i in 0..self.width {
             for j in 0..self.height {
@@ -525,23 +610,30 @@ impl<'a> Search<'a> {
                     {
                         t = PathType::UnpassableRail;
                     }
-                    if let Err(pos) = set.binary_search(&t) {
-                        set.insert(pos, t);
-                    }
+                    set |= 1 << t as u32;
                 }
             }
         }
         set
     }
 
-    fn floor_level(&self, pos: BlockPos) -> f64 {
-        if (self.can_float || self.amphibious) && crate::fluid::fluid_at(self.level, pos).kind.is_water() {
-            return pos.y as f64 + 0.5;
+    fn floor_level(&mut self, pos: BlockPos) -> f64 {
+        crate::prof!("path", "floor_level");
+        let key = pos.as_long();
+        if let Some(&f) = self.floors.get(&key) {
+            return f;
         }
-        floor_level(self.level, pos)
+        let f = if (self.can_float || self.amphibious) && crate::fluid::fluid_at(self.level, pos).kind.is_water() {
+            pos.y as f64 + 0.5
+        } else {
+            floor_level(self.level, pos)
+        };
+        self.floors.insert(key, f);
+        f
     }
 
     fn has_collisions(&mut self, b: &Aabb) -> bool {
+        crate::prof!("path", "has_collisions");
         let key = [b.min_x, b.min_y, b.min_z, b.max_x, b.max_y, b.max_z].map(f64::to_bits);
         if let Some(&v) = self.collisions.get(&key) {
             return v;
@@ -633,6 +725,7 @@ impl<'a> Search<'a> {
 
     /// `getNeighbors`.
     fn neighbors(&mut self, out: &mut Vec<u32>, cur: u32) {
+        crate::prof!("path", "neighbors");
         out.clear();
         if self.swim {
             return self.swim_neighbors(out, cur);
@@ -1512,6 +1605,7 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
 /// (the search still visits at most as many nodes as the follow range allows).
 #[allow(clippy::too_many_arguments)]
 fn create_path_raw_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, region: i32, up: bool, reach: i32, length: Option<f32>) -> Option<Path> {
+    crate::prof!("path", "raw");
     let max_len = max_path_length(m);
     if e.y() < level.min_y() as f64 || !can_update_path(e, m) {
         return None;
@@ -1527,30 +1621,12 @@ fn create_path_raw_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, tar
     // the constructor's value agrees).
     // (the pathfinder's own limit: `createPath` with a length of its own leaves it alone)
     let max_visited = (floor((max_path_length(m) * 16.0) as f64) as f32 * m.nav.max_visited_nodes_multiplier) as i32;
-    let mut s = Search {
-        level,
-        e,
-        m,
-        nodes: Vec::with_capacity(256),
-        by_hash: HashMap::with_capacity(256),
-        types: HashMap::with_capacity(256),
-        collisions: HashMap::new(),
-        width: floor((e.width + 1.0) as f64),
-        height: floor((e.height + 1.0) as f64),
-        depth: floor((e.width + 1.0) as f64),
-        can_float: m.nav.can_float,
-        can_open_doors: m.nav.can_open_doors,
-        can_pass_doors: m.nav.can_pass_doors,
-        can_walk_over_fences: m.nav.can_walk_over_fences,
-        amphibious: m.nav.amphibious,
-        swim: m.nav.water_bound,
-        breaching: m.nav.allow_breaching,
-        fly: m.nav.fly,
-        frog: m.nav.frog,
-        mob_pos: e.block_position(),
-        heap: Vec::with_capacity(64),
+    let mut s = Search::new(level, e, m);
+    let path = {
+        crate::prof!("path", "find");
+        s.find(target, length.unwrap_or(max_len), reach, max_visited)
     };
-    let path = s.find(target, length.unwrap_or(max_len), reach, max_visited);
+    s.recycle();
     if let Some(p) = &path {
         m.nav.target_pos = Some(p.target);
         m.nav.reach_range = reach;
@@ -1565,6 +1641,7 @@ pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t
     if let Some(r) = on_mount(m, |e, m| create_path_multi(e, m, level, targets, reach)) {
         return r;
     }
+    crate::prof!("path", "create_path_multi");
     if targets.is_empty() {
         return None;
     }
@@ -1579,30 +1656,9 @@ pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t
         return Some(p.clone());
     }
     let max_visited = (floor((max_len * 16.0) as f64) as f32 * m.nav.max_visited_nodes_multiplier) as i32;
-    let mut s = Search {
-        level,
-        e,
-        m,
-        nodes: Vec::with_capacity(256),
-        by_hash: HashMap::with_capacity(256),
-        types: HashMap::with_capacity(256),
-        collisions: HashMap::new(),
-        width: floor((e.width + 1.0) as f64),
-        height: floor((e.height + 1.0) as f64),
-        depth: floor((e.width + 1.0) as f64),
-        can_float: m.nav.can_float,
-        can_open_doors: m.nav.can_open_doors,
-        can_pass_doors: m.nav.can_pass_doors,
-        can_walk_over_fences: m.nav.can_walk_over_fences,
-        amphibious: m.nav.amphibious,
-        swim: m.nav.water_bound,
-        breaching: m.nav.allow_breaching,
-        fly: m.nav.fly,
-        frog: m.nav.frog,
-        mob_pos: e.block_position(),
-        heap: Vec::with_capacity(64),
-    };
+    let mut s = Search::new(level, e, m);
     let path = s.find_multi(targets, max_len, reach, max_visited);
+    s.recycle();
     if let Some(p) = &path {
         m.nav.target_pos = Some(p.target);
         m.nav.reach_range = reach;
@@ -1616,6 +1672,7 @@ pub fn create_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: Bl
     if let Some(r) = on_mount(m, |e, m| create_path(e, m, level, pos, reach)) {
         return r;
     }
+    crate::prof!("path", "create_path");
     if m.nav.climber {
         m.nav.path_to_position = Some(pos);
     }

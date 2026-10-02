@@ -5,6 +5,10 @@ edition.workspace = true
 version.workspace = true
 publish.workspace = true
 
+[features]
+# Cost counters per named scope (`prof!`), printed by sim_load.
+prof = []
+
 [dependencies]
 bytes.workspace = true
 kiln-data.workspace = true
@@ -12,6 +16,7 @@ kiln-inventory.workspace = true
 kiln-item.workspace = true
 kiln-javamath.workspace = true
 kiln-proto.workspace = true
+smallvec.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
