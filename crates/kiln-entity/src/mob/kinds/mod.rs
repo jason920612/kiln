@@ -88,6 +88,9 @@ pub mod tadpole;
 // -- wp30: llamas
 pub mod llama;
 
+// -- wp33: the undead mounts and the nautiluses
+pub mod parched;
+
 
 /// The behaviour of an extension type; `None` for the shared-code types.
 pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
@@ -175,6 +178,11 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         // -- wp30: llamas
         MobKind::Llama => &llama::LLAMA,
         MobKind::TraderLlama => &llama::TRADER_LLAMA,
+
+        // -- wp33: the undead mounts and the nautiluses
+        MobKind::ZombieHorse => &horse::ZOMBIE,
+        MobKind::CamelHusk => &camel::HUSK,
+        MobKind::Parched => &parched::KIND,
 
         _ => return None,
     })

@@ -94,3 +94,56 @@ fn striders_carry_zombified_piglins_and_baby_striders() {
     }
     assert!(g.companions.iter().all(|c| c.entity.type_name == "minecraft:strider"));
 }
+
+#[test]
+fn natural_husks_carry_a_camel_husk_and_a_parched() {
+    let mut camels = 0;
+    for seed in 0..20000 {
+        let mut e = mob::new(MobKind::Husk, 1, 0, seed);
+        let mut group = GroupData { camel_space: true, ..Default::default() };
+        mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(), &mut group, true);
+        // (A baby husk may bring a chicken as well.)
+        let Some(at) = group.companions.iter().position(|c| c.entity.type_name == "minecraft:camel_husk") else { continue };
+        camels += 1;
+        assert_eq!(group.companions[at].seat, Seat::UnderMob);
+        assert_eq!(group.companions[at + 1].entity.type_name, "minecraft:parched");
+        assert_eq!(group.companions[at + 1].seat, Seat::OnCompanion(at));
+        assert_eq!(kiln_entity::mob::item_name(&mob::data(&e).unwrap().equipment[mob::MAINHAND]), "minecraft:iron_spear");
+    }
+    // One in ten.
+    assert!((1700..2300).contains(&camels), "{camels}");
+    // Spawn egg husks and husks without room for the camel never bring one.
+    for seed in 0..2000 {
+        let mut e = mob::new(MobKind::Husk, 1, 0, seed);
+        let mut group = GroupData { camel_space: true, ..Default::default() };
+        mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(), &mut group, false);
+        assert!(group.companions.iter().all(|c| c.entity.type_name != "minecraft:camel_husk"));
+        let mut e = mob::new(MobKind::Husk, 1, 0, seed);
+        let mut group = GroupData::default();
+        mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(), &mut group, true);
+        assert!(group.companions.iter().all(|c| c.entity.type_name != "minecraft:camel_husk"));
+    }
+}
+
+#[test]
+fn natural_zombie_horses_carry_a_zombie_with_an_iron_spear() {
+    for seed in 0..200 {
+        let mut e = mob::new(MobKind::ZombieHorse, 1, 0, seed);
+        let mut group = GroupData::default();
+        mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(), &mut group, true);
+        let zombie = &group.companions[0];
+        assert_eq!(zombie.entity.type_name, "minecraft:zombie");
+        assert_eq!(zombie.seat, Seat::OnMob);
+        assert_eq!(kiln_entity::mob::item_name(&mob::data(&zombie.entity).unwrap().equipment[mob::MAINHAND]), "minecraft:iron_spear");
+        // Its jump strength is drawn (never a baby: no Age saved).
+        let m = mob::data(&e).unwrap();
+        let jump = m.attrs.base(kiln_entity::mob::attributes::Attr::JumpStrength);
+        assert!((0.5..=0.7).contains(&jump), "{jump}");
+        assert!(!m.baby());
+        // Eggs and /summon bring no zombie.
+        let mut e = mob::new(MobKind::ZombieHorse, 1, 0, seed);
+        let mut group = GroupData::default();
+        mob::finalize_spawn(&mut e, &mut LegacyRandom::new(seed), &ctx(), &mut group, false);
+        assert!(group.companions.is_empty());
+    }
+}

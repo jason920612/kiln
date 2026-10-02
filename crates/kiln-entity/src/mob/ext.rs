@@ -473,6 +473,26 @@ pub trait Kind: Sync + Send {
         let _ = item;
         false
     }
+    /// `sunProtectionSlot` is `BODY` (zombie horses and zombie nautiluses: their armor keeps the
+    /// sun off, not a helmet).
+    fn sun_protection_on_body(&self) -> bool {
+        false
+    }
+    /// The body slot's stack, for [`Kind::sun_protection_on_body`] types.
+    fn body_slot_mut<'a>(&self, m: &'a mut MobData) -> Option<&'a mut ItemStack> {
+        let _ = m;
+        None
+    }
+    /// `AgeableMob.canBeABaby`: false for the types that are never babies (zombie horses, camel
+    /// husks, zombie nautiluses): no baby size or sounds, no `Age` in their saved form.
+    fn can_be_baby(&self) -> bool {
+        true
+    }
+    /// `EntityType.isAllowedInPeaceful` of a type the category would send away in peaceful: the
+    /// monsters that are not `notInPeaceful` (zombie horses, camel husks) stay.
+    fn allowed_in_peaceful(&self) -> Option<bool> {
+        None
+    }
     /// The type `getBreedOffspring` makes a baby of with `partner` (a horse and a donkey have a
     /// mule).
     fn offspring_kind(&self, m: &MobData, partner: &MobData) -> MobKind {

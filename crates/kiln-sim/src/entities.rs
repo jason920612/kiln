@@ -126,10 +126,11 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
     // `startRiding`: (rider, vehicle) in the order the companions were made.
     let mut links: Vec<(i32, i32)> = seated
         .iter()
-        .map(|&(id, seat)| match seat {
-            Seat::OnMob => (id, mount),
-            Seat::UnderMob => (mount, id),
-            Seat::OnCompanion(i) => (id, seated[i].0),
+        .filter_map(|&(id, seat)| match seat {
+            Seat::OnMob => Some((id, mount)),
+            Seat::UnderMob => Some((mount, id)),
+            Seat::OnCompanion(i) => Some((id, seated[i].0)),
+            Seat::Loose => None,
         })
         .collect();
     if jockeys.nearby_chicken

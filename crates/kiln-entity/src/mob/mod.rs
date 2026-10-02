@@ -143,6 +143,11 @@ pub enum MobKind {
     // -- wp30: llamas
     Llama,
     TraderLlama,
+
+    // -- wp33: the undead mounts and the nautiluses
+    ZombieHorse,
+    CamelHusk,
+    Parched,
 }
 
 /// `MobCategory`.
@@ -305,6 +310,11 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- wp30: llamas
     MobKind::Llama,
     MobKind::TraderLlama,
+
+    // -- wp33: the undead mounts and the nautiluses
+    MobKind::ZombieHorse,
+    MobKind::CamelHusk,
+    MobKind::Parched,
 ];
 
 impl MobKind {
@@ -440,7 +450,7 @@ impl MobKind {
 
     /// `instanceof AbstractSkeleton`.
     pub fn is_skeleton(self) -> bool {
-        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton | MobKind::Bogged)
+        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton | MobKind::Bogged | MobKind::Parched)
     }
 
     pub fn loot_table(self) -> String {
@@ -748,7 +758,7 @@ impl MobData {
 
     pub fn baby(&self) -> bool {
         // (`canBeABaby`: frogs never are.)
-        self.zombie_baby || (breed::is_ageable(self.kind) && self.age < 0 && self.kind != MobKind::Frog)
+        self.zombie_baby || (breed::is_ageable(self.kind) && self.age < 0 && self.kind != MobKind::Frog && self.kind.ext().is_none_or(|k| k.can_be_baby()))
     }
 
     pub fn holding_bow(&self) -> bool {
@@ -1288,6 +1298,11 @@ pub fn controlling_mob_passenger(e: &Entity, m: &MobData, level: &dyn EntityLeve
     (matches!(rider.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) && !entity_type_tag(rider.type_name, "minecraft:non_controlling_rider")).then_some(first)
 }
 
+/// `getFirstPassenger() instanceof Mob` (`isMobControlled` of the horses, camels and nautiluses).
+pub fn first_passenger_is_mob(e: &Entity, level: &dyn EntityLevel) -> bool {
+    e.passengers.first().and_then(|&p| level.entity(p)).is_some_and(|r| matches!(r.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }))
+}
+
 /// `Mob.hasControllingPassenger`: a saddled mount's player rider, or a mob rider that steers.
 pub fn has_controlling_passenger(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool {
     !e.passengers.is_empty() && (m.kind.ext().and_then(|k| k.controlling_player(e, m, level)).is_some() || controlling_mob_passenger(e, m, level).is_some())
@@ -1717,17 +1732,20 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
     // `Mob.aiStep`: burning in daylight.
     if m.kind.burns_in_daylight() && is_alive(e, m) && is_sun_burn_tick(e, level) {
-        if m.equipment[HEAD].is_empty() {
+        // (`sunProtectionSlot`: the head, a zombie horse's or zombie nautilus's body.)
+        let on_body = m.kind.ext().is_some_and(|k| k.sun_protection_on_body());
+        let protector = if on_body { m.kind.ext().and_then(|k| k.body_slot_mut(m)).map(|s| s.is_empty()) } else { Some(m.equipment[HEAD].is_empty()) };
+        if protector.unwrap_or(true) {
             e.ignite_for_seconds(8.0);
         } else {
-            // `hurtAndBreak(random.nextInt(2))` on the helmet that keeps the sun off.
+            // `hurtAndBreak(random.nextInt(2))` on the item that keeps the sun off.
             let n = e.random.next_int_bounded(2);
-            let helmet = &mut m.equipment[HEAD];
+            let helmet = if on_body { m.kind.ext().and_then(|k| k.body_slot_mut(m)).expect("a body slot") } else { &mut m.equipment[HEAD] };
             if n > 0 && helmet.is_damageable_item() {
                 let d = helmet.damage() + n;
                 if d >= helmet.max_damage() {
                     *helmet = ItemStack::empty();
-                    level.emit(Event::EntityEvent { entity: e.id, event: 49 });
+                    level.emit(Event::EntityEvent { entity: e.id, event: if on_body { 65 } else { 49 } });
                 } else {
                     helmet.insert(kiln_item::keys::DAMAGE, d);
                 }
@@ -2077,7 +2095,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             && om.health > 0.0
             && om.kind.ext().is_none_or(|k| k.pushable())
             // `AbstractHorse.isPushable` (horses, donkeys, camels...): `!isVehicle()`.
-            && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || om.kind == MobKind::Camel))
+            && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || matches!(om.kind, MobKind::Camel | MobKind::CamelHusk)))
             && !riding(id, o.vehicle)
         {
             others.push((id, o.x(), o.z(), false));
@@ -2751,20 +2769,30 @@ pub enum Seat {
     UnderMob,
     /// It rides another companion (index in the list: a parched on a camel husk).
     OnCompanion(usize),
+    /// It only joins the level (a chicken the zombie left for a horse).
+    Loose,
 }
 
 /// A new mob of `kind` for `parent` to carry or ride: `EntityType.create`, then
 /// `snapTo(parent x, y, z, parent yaw, 0)`. Its own random is seeded from the parent's (without
 /// using it up); the caller finalizes it and assigns its id.
 pub fn new_jockey(parent: &Entity, kind: MobKind) -> Entity {
+    new_jockey_at(parent, kind, true)
+}
+
+/// [`new_jockey`] with the choice of turning it like the parent (`snapTo`) or only placing it
+/// (`setPos`: a camel husk keeps the yaw its constructor drew).
+pub fn new_jockey_at(parent: &Entity, kind: MobKind, rotate: bool) -> Entity {
     let mut seed_from = parent.random.clone();
     let seed = seed_from.next_long() ^ ((kind as i64) << 40);
     let mut e = new(kind, 0, 0, seed);
     e.set_pos(parent.position());
-    e.y_rot = parent.y_rot;
-    e.x_rot = 0.0;
+    if rotate {
+        e.y_rot = parent.y_rot;
+        e.x_rot = 0.0;
+    }
     e.set_old_pos_and_rot();
-    let yaw = parent.y_rot;
+    let yaw = e.y_rot;
     if let Some(m) = data_mut(&mut e) {
         m.y_head_rot = yaw;
         m.y_body_rot = yaw;
@@ -2872,7 +2900,7 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
         return;
     }
     let Some(m) = data(e) else { return };
-    if level.difficulty() == 0 && !m.kind.is_animal() {
+    if level.difficulty() == 0 && !m.kind.ext().and_then(|k| k.allowed_in_peaceful()).unwrap_or(m.kind.is_animal()) {
         e.discard();
         return;
     }

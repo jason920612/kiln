@@ -113,7 +113,7 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
     m.left_handed = r.bool_or("LeftHanded", false);
     m.no_ai = r.bool_or("NoAI", false);
     // `AgeableMob` and `Animal`.
-    if super::breed::is_ageable(kind) {
+    if super::breed::is_ageable(kind) && kind.ext().is_none_or(|k| k.can_be_baby()) {
         m.age = r.int_or("Age", 0);
         m.forced_age = r.int_or("ForcedAge", 0);
         m.age_locked = r.bool_or("AgeLocked", false);
@@ -228,7 +228,7 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     if m.no_ai {
         o.put("NoAI", Tag::Byte(1));
     }
-    if super::breed::is_ageable(m.kind) {
+    if super::breed::is_ageable(m.kind) && m.kind.ext().is_none_or(|k| k.can_be_baby()) {
         o.put("Age", Tag::Int(m.age));
         o.put("ForcedAge", Tag::Int(m.forced_age));
         o.put("AgeLocked", Tag::Byte(m.age_locked as i8));
