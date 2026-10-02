@@ -1009,8 +1009,9 @@ pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &m
                 } else if d > 256.0 {
                     *recalc += 5;
                 }
+                // `moveTo(target, 0, speed)`: no path (an airborne mob makes none) leaves the one it has.
                 let p = path::create_path_to_entity(e, m, level, t.block_pos(), 0);
-                if !path::move_to_path(e, m, level, p, *speed) {
+                if !(p.is_some() && path::move_to_path(e, m, level, p, *speed)) {
                     *recalc += 15;
                 }
                 *recalc = adj(*recalc);

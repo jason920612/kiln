@@ -593,6 +593,9 @@ pub struct MobData {
     pub air_supply_max: i32,
     /// `ServerEntity` needs the last hurt direction for the damage event.
     pub hurt_by: Option<(DamageKind, Option<i32>, Option<i32>)>,
+    /// `Projectile.calculateHorizontalHurtKnockbackDirection` for the blow being dealt: the
+    /// projectile's motion, negated (set by the projectile around the hurt, taken by it).
+    pub projectile_knockback: Option<(f64, f64)>,
     /// The attribute modifiers the equipment added (`collectEquipmentChanges`).
     pub equip_mods: Vec<(Attr, String)>,
     /// `activeEffects` (see [`effects`]).
@@ -690,6 +693,7 @@ impl MobData {
             swing: false,
             air_supply_max: 300,
             hurt_by: None,
+            projectile_knockback: None,
             equip_mods: Vec::new(),
             effects: crate::effect::Effects::new(),
             brain: None,
@@ -2185,7 +2189,10 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         }
         if !kind.is_tag("minecraft:no_knockback") {
             let (mut dx, mut dz) = (0.0, 0.0);
-            if let Some(p) = source.pos {
+            if let Some((px, pz)) = m.projectile_knockback {
+                dx = px;
+                dz = pz;
+            } else if let Some(p) = source.pos {
                 dx = p.x - e.x();
                 dz = p.z - e.z();
             }

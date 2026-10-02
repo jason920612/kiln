@@ -1,8 +1,10 @@
-//! Horses, donkeys and mules (`AbstractHorse`, `AbstractChestedHorse`): random stats at spawn,
-//! grazing and rearing, tamed by riding (temper, `RunAroundLikeCrazyGoal` bucks the rider),
-//! fed, saddled and then steered by their rider, chests on donkeys and mules (15 slots), body
-//! armor, the inventory the screen shows (saddle, armor and the chest's slots, kept in
-//! [`State`], dropped when the animal dies), breeding.
+//! Horses, donkeys, mules and llamas (`AbstractHorse`, `AbstractChestedHorse`, `Llama`,
+//! `TraderLlama`): random stats at spawn, grazing and rearing, tamed by riding (temper,
+//! `RunAroundLikeCrazyGoal` bucks the rider), fed, saddled and then steered by their rider, chests
+//! on donkeys, mules and llamas (15 slots; a llama's three per strength), body armor (a llama's
+//! carpet), the inventory the screen shows (saddle, armor and the chest's slots, kept in
+//! [`State`], dropped when the animal dies), breeding. The llamas' own goals and spit are in
+//! [`super::llama`].
 //! Not modelled: horse-donkey cross breeding (mules).
 
 use super::tame::TamableAnimalPanicGoal;

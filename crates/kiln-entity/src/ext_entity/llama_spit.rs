@@ -117,11 +117,17 @@ impl LlamaSpit {
                 if let Some(owner) = self.owner
                     && let Some(t) = mob::goals::living(level, id)
                 {
-                    // (`Projectile.calculateHorizontalHurtKnockbackDirection`: along the spit's flight.)
                     let v = e.delta;
-                    let from = Vec3::new(t.pos.x - v.x, t.pos.y, t.pos.z - v.z);
-                    let source = DamageSource { kind: DamageKind::Spit, attacker: Some(owner), direct: Some(e.id), pos: Some(from), attacker_is_player: false };
+                    let source = DamageSource { kind: DamageKind::Spit, attacker: Some(owner), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+                    // (`Projectile.calculateHorizontalHurtKnockbackDirection`: along the spit's flight.)
+                    let mob_target = !t.player;
+                    if mob_target && let Some(m) = level.entity_mut(id).and_then(mob::data_mut) {
+                        m.projectile_knockback = Some((-v.x, -v.z));
+                    }
                     mob::hurt_living(level, &t, source, 1.0);
+                    if mob_target && let Some(m) = level.entity_mut(id).and_then(mob::data_mut) {
+                        m.projectile_knockback = None;
+                    }
                 }
                 level.emit(Event::GameEvent { event: "minecraft:projectile_land", pos: location, entity: Some(e.id) });
             }
@@ -185,7 +191,10 @@ impl EntityExt for LlamaSpit {
             return;
         }
         e.delta = movement.scale(0.99f32 as f64);
-        e.apply_gravity();
+        // `applyGravity` (the entity's kind is a stand-in during its own tick: no gravity from it).
+        if !e.no_gravity {
+            e.delta = e.delta.add(0.0, -self.gravity(), 0.0);
+        }
         e.set_pos(to);
     }
 
