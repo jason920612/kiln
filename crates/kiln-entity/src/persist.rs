@@ -178,6 +178,12 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
         // `ItemEntity` constructor: the bob offset (the yaw is overwritten by `Rotation`).
         d.bob_offset = e.random.next_float() * std::f32::consts::PI * 2.0;
     }
+    // `Leashable.readLeashData`: the lead looks for its holder on the first tick.
+    if crate::leash::is_leashable(&e)
+        && let Some(t) = r.get("leash")
+    {
+        e.leash = crate::leash::load(t).map(Box::new);
+    }
 
     let pos = r.vec3("Pos").unwrap_or([0.0; 3]);
     let motion = r.vec3("Motion").unwrap_or([0.0; 3]).map(|v| if v.abs() > 10.0 { 0.0 } else { v });
@@ -198,6 +204,11 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
         pos[1].clamp(-2.0E7, 2.0E7),
         pos[2].clamp(-3.0000512E7, 3.0000512E7),
     ));
+    // `BlockAttachedEntity.setPos`: a leash knot sits on the middle of its block.
+    if e.type_name == crate::leash::KNOT {
+        let p = e.position();
+        e.set_pos(Vec3::new(p.x.floor() + 0.5, p.y.floor() + 0.375, p.z.floor() + 0.5));
+    }
     // `setRot` through `setYRot`/`setXRot`: both taken mod 360, the pitch clamped to 90.
     e.y_rot = rot[0] % 360.0;
     e.x_rot = (rot[1] % 360.0).clamp(-90.0, 90.0);
@@ -443,6 +454,9 @@ pub fn save(e: &Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>) -> Tag {
         EntityKind::Mob(m) => crate::mob::persist::save(e, m, &mut o),
         EntityKind::Ext(x) => x.save(e, &mut o),
         EntityKind::Player(_) | EntityKind::MobTicking { .. } | EntityKind::Other { .. } => {}
+    }
+    if let Some(t) = crate::leash::save(e) {
+        o.put("leash", t);
     }
     // Everything else as it was loaded (custom name, tags, passengers, an unresolved owner).
     for (k, v) in &e.extra {

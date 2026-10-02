@@ -143,8 +143,6 @@ pub struct State {
     pub caravan_tail: Option<i32>,
     /// `TraderLlama.despawnDelay`.
     pub despawn_delay: i32,
-    /// `Leashable.getLeashHolder` (entity id): leads are not simulated, only set by hand.
-    pub leash_holder: Option<i32>,
 }
 
 /// The horse state of `m`, if it is one of the family.
@@ -201,6 +199,13 @@ fn stand(m: &mut MobData) {
     s.eating = false;
     s.standing = true;
     s.stand_counter = 20;
+}
+
+/// `AbstractHorse.onElasticLeashPull`: a pulled horse stops eating.
+pub fn stop_eating(m: &mut MobData) {
+    if let Some(s) = ext::state_mut::<State>(m) {
+        s.eating = false;
+    }
 }
 
 fn clear_standing(m: &mut MobData) {
@@ -484,7 +489,6 @@ impl Kind for Equine {
             caravan_head: None,
             caravan_tail: None,
             despawn_delay: 47999,
-            leash_holder: None,
         }))
     }
 
@@ -835,6 +839,12 @@ impl Kind for Equine {
             equip_sound(e, level, kiln_item::component::EquipmentSlot::Body, &ItemStack::empty(), &one);
             return Some(Outcome::success(HeldChange::Consume(1)));
         }
+        // `TraderLlama.doPlayerRide`: nobody rides a llama a wandering trader leads.
+        if m.kind == MobKind::TraderLlama
+            && crate::leash::holder_of(e).and_then(|h| level.entity(h)).is_some_and(|h| h.type_name == "minecraft:wandering_trader")
+        {
+            return Some(Outcome::success(HeldChange::None));
+        }
         // `doPlayerRide`.
         st_mut(m).eating = false;
         clear_standing(m);
@@ -1035,13 +1045,21 @@ impl Equine {
         // `canDespawn`: not tame, not led (by anyone but a wandering trader), not carrying
         // exactly one player, not kept young, not persistent.
         let one_player = e.passengers.len() == 1 && level.player(e.passengers[0]).is_some();
-        let leashed_elsewhere = super::llama::is_leashed(m);
+        // `isLeashedToWanderingTrader` / `isLeashedToSomethingOtherThanTheWanderingTrader`.
+        let holder = crate::leash::holder_of(e);
+        let trader = holder.and_then(|h| level.entity(h)).filter(|h| h.type_name == "minecraft:wandering_trader");
+        let leashed_elsewhere = holder.is_some() && trader.is_none();
         if st(m).tamed || leashed_elsewhere || one_player || m.age_locked || m.persistence_required {
             return;
         }
-        let s = st_mut(m);
-        s.despawn_delay -= 1;
-        if s.despawn_delay <= 0 {
+        // A llama led by a wandering trader lives as long as the trader's delay.
+        let delay = match trader.and_then(crate::mob::data) {
+            Some(tm) => super::wandering_trader::despawn_delay(tm) - 1,
+            None => st(m).despawn_delay - 1,
+        };
+        st_mut(m).despawn_delay = delay;
+        if delay <= 0 {
+            crate::leash::remove_leash(e, Some(m), level);
             e.discard();
         }
     }

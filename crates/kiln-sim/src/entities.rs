@@ -69,6 +69,8 @@ pub(crate) struct Entity {
     /// Passengers as viewers last got them (Set Passengers).
     passengers_sent: Vec<i32>,
     equipment_sent: Vec<(u8, kiln_item::ItemStack)>,
+    /// The entity its lead is tied to, as viewers last got it (Set Entity Link).
+    leash_sent: Option<i32>,
     /// A boss's bar fill as its viewers last got it (`ServerBossEvent`, the wither).
     boss_sent: Option<f32>,
     /// What `finalizeSpawn` made along with it, until the level adds and seats it.
@@ -288,6 +290,7 @@ impl Entity {
             meta_sent: Vec::new(),
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
+            leash_sent: None,
             boss_sent: None,
             jockeys,
         }
@@ -377,11 +380,25 @@ impl Entity {
             EntityKind::Throwable(t) => t.owner.unwrap_or(0),
             _ => 0,
         };
-        let mut out = vec![
-            entity::bundle_delimiter(),
-            self.tracker.spawn(self.uuid, self.kind.id, self.vel, spawn_data),
-            entity::set_entity_data(self.id, &self.metadata()),
-        ];
+        // `LeashFenceKnotEntity.getAddEntityPacket`: the spawn position is the block's own.
+        let spawn = if self.phys().type_name == kiln_entity::leash::KNOT {
+            let p = self.phys().position();
+            let at = [p.x.floor(), p.y.floor(), p.z.floor()];
+            entity::add_entity(&entity::AddEntity {
+                entity_id: self.id,
+                uuid: self.uuid,
+                kind: self.kind.id,
+                pos: at,
+                velocity: [0.0; 3],
+                pitch: kiln_proto::packets::entity::Angle::from_degrees(0.0),
+                yaw: kiln_proto::packets::entity::Angle::from_degrees(0.0),
+                head_yaw: kiln_proto::packets::entity::Angle::from_degrees(0.0),
+                data: 0,
+            })
+        } else {
+            self.tracker.spawn(self.uuid, self.kind.id, self.vel, spawn_data)
+        };
+        let mut out = vec![entity::bundle_delimiter(), spawn, entity::set_entity_data(self.id, &self.metadata())];
         // `ServerEntity.sendPairingData`: a mob's equipment.
         if let EntityKind::Mob(m) = &self.phys().kind {
             let worn = crate::mobs::shown_equipment(m);
@@ -392,6 +409,10 @@ impl Entity {
         }
         if !self.phys().passengers.is_empty() {
             out.push(entity::set_passengers(self.id, &self.phys().passengers));
+        }
+        // `ServerEntity.sendPairingData`: a led entity's lead.
+        if let Some(h) = kiln_entity::leash::holder_of(self.phys()) {
+            out.push(entity::set_entity_link(self.id, h));
         }
         out.push(entity::bundle_delimiter());
         out
@@ -1030,7 +1051,16 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn entity_by_uuid(&self, uuid: u128) -> Option<&kiln_entity::Entity> {
-        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_ref())
+        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_ref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid))
+    }
+
+    fn known_movement(&self, id: i32) -> Vec3 {
+        if let Some(i) = self.proxy_index(id)
+            && let Some(p) = self.players.iter().find(|p| p.entity_id == self.proxies[i].id)
+        {
+            return vec3(p.known_movement);
+        }
+        self.entity(id).map_or(Vec3::ZERO, |e| e.delta)
     }
 
     fn pos_random(&mut self, pos: BlockPos, salt: i64) -> LegacyRandom {
@@ -1246,7 +1276,12 @@ pub(crate) fn tick(
     }
     let live =|p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
-    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let mut views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    // wp32 parrots: what parrots need to know of their owners' footing.
+    if entities.list.iter().any(|e| e.kind.name == "minecraft:parrot") {
+        let block = |pos: BlockPos| level.block(kb(pos));
+        crate::shoulder::mark_views(players, &block, &mut views);
+    }
     let mut sim = SimLevel {
         level,
         list: &mut entities.list,
@@ -1296,6 +1331,13 @@ pub(crate) fn tick(
                 // joined the level meanwhile.
                 tick_new_passenger(&mut sim, id, i);
             }
+        }
+    }
+    // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
+    // effects once all the entities have ticked.
+    for e in sim.list.iter_mut() {
+        if let Some(p) = e.phys.as_mut() {
+            kiln_entity::mob::update_data_before_sync(p);
         }
     }
     // `Level.tickBlockEntities`: the creaking hearts, after the entities.
@@ -1799,6 +1841,9 @@ pub(crate) fn interact_mob(
                 kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
             }
         }
+        HeldChange::Shrink(n) => {
+            kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
+        }
         HeldChange::Damage(n) => p.hurt_and_break(slot, *n, None),
         HeldChange::Fill(filled) => {
             // `ItemUtils.createFilledResult`: creative players keep the empty item and get the
@@ -2144,6 +2189,20 @@ fn carry_out(
                 f.send(crate::dragon_fight::FightMsg::Entity(ev));
             }
         }
+        // wp32 parrots: a parrot flew onto its owner's shoulder (or, when the shoulder turns out
+        // taken after all, stays where it is).
+        Event::MountShoulder { player, tag, .. } => {
+            let block = |pos: BlockPos| level.block(kb(pos));
+            let Some(p) = players.iter_mut().find(|p| p.entity_id == player) else { return };
+            if let Some(back) = crate::shoulder::mount(p, tag, env.game_time, &block) {
+                let uuid = back.get("UUID").and_then(kiln_entity::persist::uuid_from_tag).unwrap_or(0);
+                if let Ok(e) = kiln_entity::persist::load(&back, 0, seed_for_uuid(uuid))
+                    && let Some(spawn) = Spawn::loaded(e)
+                {
+                    spawns.push(spawn);
+                }
+            }
+        }
     }
 }
 
@@ -2203,6 +2262,9 @@ fn view(p: &Player, now: i64) -> PlayerView {
         hurt_recently: p.last_hurt_by_mob.is_some_and(|(_, t)| now - t <= 100),
         hero_of_the_village: p.effect_amplifier("minecraft:hero_of_the_village"),
         vehicle: p.vehicle,
+        // (filled in by `shoulder::mark_views` where parrots are about)
+        parrot_may_land: false,
+        parrot_can_sit: false,
     }
 }
 
@@ -2532,6 +2594,17 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
         {
             e.passengers_sent = phys.passengers.clone();
             packets.push(entity::set_passengers(e.id, &e.passengers_sent));
+        }
+        // `Leashable.setLeashedTo` / `dropLeash`: Set Entity Link when the holder changes.
+        if let Some(phys) = e.phys.as_ref() {
+            let holder = kiln_entity::leash::holder_of(phys);
+            if holder != e.leash_sent {
+                // (A knot made this tick is still under a stand-in id: the link waits.)
+                if !holder.is_some_and(|h| h < 0) {
+                    e.leash_sent = holder;
+                    packets.push(entity::set_entity_link(e.id, holder.unwrap_or(0)));
+                }
+            }
         }
         // `ServerEntity.sendChanges`: velocity on update ticks when it changed, or at once
         // after an impulse (explosion knockback).

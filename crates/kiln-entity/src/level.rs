@@ -126,6 +126,12 @@ pub struct PlayerView {
     pub vehicle: Option<i32>,
     /// The amplifier of the player's Hero of the Village effect.
     pub hero_of_the_village: Option<i32>,
+    /// wp32 parrots: `LandOnOwnersShoulderGoal.canUse`'s view of the player (not a spectator,
+    /// not flying, not in water or powder snow).
+    pub parrot_may_land: bool,
+    /// wp32 parrots: `ServerPlayer.setEntityOnShoulder` would take a parrot (a shoulder is free
+    /// and the player stands on the ground, not riding, in water or in powder snow).
+    pub parrot_can_sit: bool,
 }
 
 impl PlayerView {
@@ -160,6 +166,8 @@ impl PlayerView {
             hurt_recently: false,
             vehicle: None,
             hero_of_the_village: None,
+            parrot_may_land: false,
+            parrot_can_sit: false,
         }
     }
 
@@ -312,6 +320,9 @@ pub enum Event {
     GlobalLevelEvent { event: i32, pos: BlockPos, data: i32 },
     /// A `ClientboundGameEventPacket` for player `player` (10: the elder guardian's curse).
     PlayerGameEvent { player: i32, event: u8, param: f32 },
+    /// wp32 parrots: parrot `entity` (already discarded) flew onto the shoulder of `player`;
+    /// `tag` is its saved compound (`ShoulderRidingEntity.setEntityOnShoulder`).
+    MountShoulder { player: i32, entity: i32, tag: kiln_proto::nbt::Tag },
 }
 
 /// The level's `EnderDragonFight` as its dragon and crystals see it
@@ -606,6 +617,15 @@ pub trait EntityLevel {
     /// players around them, not for all of them.
     fn players_in(&self, area: &Aabb) -> Vec<PlayerView> {
         self.players().iter().filter(|p| player_box(p).intersects(area)).copied().collect()
+    }
+
+    /// `Entity.getKnownMovement` of entity or player `id`: a mob's or boat's own motion, a
+    /// player's last movement as its client reported it (none when not known).
+    fn known_movement(&self, id: i32) -> Vec3 {
+        if self.player(id).is_some() {
+            return Vec3::ZERO;
+        }
+        self.entity(id).map_or(Vec3::ZERO, |e| e.delta)
     }
 
     /// Player `id`, if it is one.
@@ -1081,4 +1101,6 @@ pub struct TradeMerchant {
     pub pos: Vec3,
     /// The villager's `minecraft:villager_type` (for type-restricted trades).
     pub villager_type: &'static str,
+    /// The merchant's entity type (`minecraft:villager`, `minecraft:wandering_trader`).
+    pub entity_type: &'static str,
 }

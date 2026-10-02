@@ -18,6 +18,7 @@ pub mod falling_block;
 pub mod fluid;
 pub mod inside;
 pub mod item;
+pub mod leash;
 pub mod level;
 pub mod math;
 pub mod memory;

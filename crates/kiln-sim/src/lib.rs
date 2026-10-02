@@ -78,6 +78,8 @@ mod heart;
 mod sleep;
 mod stats;
 mod trading;
+mod leash;
+mod trader;
 mod waypoints;
 mod weather;
 mod world_state;
@@ -928,6 +930,8 @@ pub struct Sim {
     plugins: Option<plugins::SimPlugins>,
     /// Independent scheduling state: regions ticking away, their clocks.
     independent: independent::Independent,
+    /// `WanderingTraderSpawner` (the overworld's).
+    trader: trader::TraderSpawner,
     /// Borders, tick rate, forced chunks and random sequences (the world commands).
     world: world_state::WorldState,
 }
@@ -1119,6 +1123,7 @@ impl Sim {
             advancements: Default::default(),
             plugins: None,
             independent: Default::default(),
+            trader: Default::default(),
             world: world_state::WorldState { pipelines, ..Default::default() },
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
@@ -1129,6 +1134,7 @@ impl Sim {
         sim.load_weather();
         sim.load_world_state();
         sim.load_raids();
+        sim.load_trader();
         sim.load_dragon_fight();
         sim.init_packs(vanilla_pack);
         sim.load_plugins();
@@ -1626,6 +1632,19 @@ impl Sim {
         Some((items, [c.lit_remaining, c.lit_total, c.cook_timer, c.cook_total]))
     }
 
+    /// Makes the wandering trader spawner try at the next tick with the highest chance (for tests
+    /// and tools: vanilla waits a day).
+    pub fn force_trader_attempt(&mut self) {
+        self.trader.tick_delay = 1;
+        self.trader.spawn_delay = 1200;
+        self.trader.spawn_chance = 99;
+    }
+
+    /// The wandering trader spawner's (`tickDelay`, `spawnDelay`, `spawnChance`) (for tests and tools).
+    pub fn trader_spawner(&self) -> (i32, i32, i32) {
+        (self.trader.tick_delay, self.trader.spawn_delay, self.trader.spawn_chance)
+    }
+
     /// The stacks of the overworld's item entities (for tests and tools).
     pub fn item_stacks(&self) -> Vec<kiln_item::ItemStack> {
         self.dims[OVERWORLD_ID]
@@ -2063,6 +2082,25 @@ impl Sim {
                 }
             }
         }
+        // Leads tied to entities that were not in the level yet (a new knot, a trader): the
+        // region's led entities find their holder by its real id.
+        let mut cells = Vec::new();
+        for &(_, _, chunk) in placeholders {
+            let cell = chunk.cell();
+            if cells.contains(&cell) {
+                continue;
+            }
+            cells.push(cell);
+            let Some(region) = d.regions.at_mut(cell) else { continue };
+            for e in region.part_mut().0.list.iter_mut() {
+                if let Some(l) = e.phys.as_mut().and_then(|p| p.leash.as_mut())
+                    && let Some(h) = l.holder
+                    && h < 0
+                {
+                    l.holder = Some(real(h));
+                }
+            }
+        }
     }
 
     /// Death messages to everyone (`show_death_messages`), in the order the deaths happened.
@@ -2370,6 +2408,7 @@ impl Sim {
         self.save_weather();
         self.save_world_state();
         self.save_raids();
+        self.save_trader();
         self.save_scoreboard();
         self.save_stopwatches();
         self.save_timers();

@@ -712,6 +712,19 @@ pub trait Kind: Sync + Send {
     fn after_base_tick(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, air_before: i32) {
         let _ = (e, m, level, air_before);
     }
+    /// `getAmbientSound` for types that draw from the level's random (parrots): [`Kind::ambient_sound`]
+    /// unless the type says otherwise.
+    fn ambient_sound_mut(&self, e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) -> Option<Option<&'static str>> {
+        self.ambient_sound(e, m, &*level)
+    }
+    /// `omnidirectionalAirMover` (parrots, bees): the vertical air drag is the horizontal one.
+    fn omnidirectional_air_mover(&self) -> bool {
+        false
+    }
+    /// `doPush(player)` overridden to nothing (parrots): neither side moves.
+    fn do_push_skips_players(&self) -> bool {
+        false
+    }
     /// `getSoundVolume` (squids 0.4, bats 0.1).
     fn sound_volume(&self, m: &MobData) -> f32 {
         let _ = m;

@@ -270,7 +270,7 @@ pub struct Living {
 }
 
 impl Living {
-    fn block_pos(&self) -> BlockPos {
+    pub(crate) fn block_pos(&self) -> BlockPos {
         BlockPos::containing(self.pos.x, self.pos.y, self.pos.z)
     }
 
@@ -686,8 +686,9 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
             }
             let Some(by) = by else { return false };
             let Some(t) = living(level, by) else { return false };
-            // `HURT_BY_TARGETING`: combat, ignoring line of sight and invisibility.
-            targeting_ok(e, m, level, &t, true, -1.0, false)
+            // `HURT_BY_TARGETING`: combat, ignoring line of sight and invisibility; and
+            // `TargetGoal.canAttack`: within the mob's home (a led mob keeps near its holder).
+            targeting_ok(e, m, level, &t, true, -1.0, false) && super::random_pos::within_home(m.home, t.block_pos())
         }
         Goal::NearestAttackable { wanted, interval, target: tg, spider, .. } => {
             if *spider && super::light_magic_value(e, level) >= 0.5 {

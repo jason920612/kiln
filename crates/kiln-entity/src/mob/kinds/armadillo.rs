@@ -65,9 +65,9 @@ fn switch_to(m: &mut MobData, state: u8) {
     s.state = state;
 }
 
-/// `canStayRolledUp`: not panicking, in a liquid or riding.
+/// `canStayRolledUp`: not panicking, in a liquid, led or riding.
 fn can_stay_rolled_up(e: &Entity, panicking: bool) -> bool {
-    !panicking && !e.is_in_water() && !e.is_in_lava() && e.vehicle.is_none() && e.passengers.is_empty()
+    !panicking && !e.is_in_water() && !e.is_in_lava() && !crate::leash::is_leashed(e) && e.vehicle.is_none() && e.passengers.is_empty()
 }
 
 /// `rollUp`.

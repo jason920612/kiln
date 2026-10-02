@@ -200,7 +200,7 @@ pub fn max_xp_per_level(level: i32) -> i32 {
 /// `Villager.updateTrades`: appends the current level's trade set.
 fn update_trades(e: &Entity, st: &mut VillagerState, level: &mut dyn EntityLevel) {
     let Some(set) = st.trade_set() else { return };
-    let merchant = TradeMerchant { entity: e.id, pos: e.position(), villager_type: st.villager_type };
+    let merchant = TradeMerchant { entity: e.id, pos: e.position(), villager_type: st.villager_type, entity_type: "minecraft:villager" };
     let new = level.trade_offers(&set, &merchant);
     st.offers.get_or_insert_with(Vec::new).extend(new);
 }
