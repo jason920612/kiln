@@ -227,9 +227,10 @@ fn a_llama_drops_its_chest_items_and_carpet() {
     assert_eq!(w.stacks_total("minecraft:red_carpet"), 1, "the carpet, guaranteed by its drop chance");
     // The loot table: leather (a trader llama's too).
     let trader = w.summon("minecraft:trader_llama", ",Health:2f,Tame:1b,Strength:2", true);
+    w.ticks(25);
     assert!(w.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: trader })]));
-    w.ticks(3);
-    assert!(w.sim.entity_ids_of("minecraft:trader_llama").is_empty(), "dead");
+    w.ticks(30);
+    assert!(w.sim.entity_ids_of("minecraft:trader_llama").is_empty(), "dead, and gone after its death animation");
 }
 
 #[test]
@@ -237,12 +238,9 @@ fn a_llama_spits_at_the_player_who_hurt_it() {
     let mut w = World::new();
     let p = w.client.pos;
     let before = w.sim.entity_ids_of("minecraft:llama");
-    w.run(&format!("summon minecraft:llama {} {} {} {{Strength:3,Health:50f,PersistenceRequired:1b}}", p[0] + 5.5, p[1], p[2]));
+    w.run(&format!("summon minecraft:llama {} {} {} {{Strength:3,Health:50f,PersistenceRequired:1b}}", p[0] + 2.0, p[1], p[2]));
     w.ticks(2);
     let llama = *w.sim.entity_ids_of("minecraft:llama").iter().find(|id| !before.contains(id)).expect("summoned");
-    // Hit it from a distance: a stick's reach is the player's, so close in first.
-    w.run(&format!("tp User {} {} {}", p[0] + 3.0, p[1], p[2]));
-    w.ticks(2);
     let mut min_health = 20.0f32;
     let mut spit_seen = false;
     for round in 0..4 {
@@ -259,4 +257,26 @@ fn a_llama_spits_at_the_player_who_hurt_it() {
     }
     assert!(min_health < 20.0, "a spit hit the player (health went down to {min_health})");
     assert!(min_health >= 16.0, "each spit does 1 damage (health went down to {min_health})");
+}
+
+#[test]
+fn a_summoned_llama_comes_with_a_strength_a_coat_and_a_health_of_its_own() {
+    let mut w = World::new();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut coats = std::collections::BTreeSet::new();
+    for _ in 0..12 {
+        w.run("summon minecraft:llama ~ ~ ~ {NoAI:1b}");
+        w.ticks(1);
+    }
+    for t in w.sim.entity_nbt().iter().filter(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:llama")) {
+        let strength = t.get("Strength").and_then(Tag::as_i64).unwrap();
+        let coat = t.get("Variant").and_then(Tag::as_i64).unwrap();
+        assert!((1..=5).contains(&strength), "strength {strength}");
+        assert!((0..=3).contains(&coat), "coat {coat}");
+        let health = t.get("Health").and_then(Tag::as_f64).unwrap();
+        assert!((15.0..=30.0).contains(&health), "health {health}");
+        seen.insert(strength);
+        coats.insert(coat);
+    }
+    assert!(seen.len() >= 2 && coats.len() >= 2, "strengths {seen:?} and coats {coats:?} vary");
 }

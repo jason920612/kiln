@@ -479,6 +479,16 @@ impl Kind for Equine {
         g.add(3, Goal::Tempt { speed: 1.25, calm_down: 0, player: None });
     }
 
+    /// `AbstractHorse.getMaxSpawnClusterSize`.
+    fn max_spawn_cluster(&self) -> i32 {
+        6
+    }
+
+    /// `AbstractHorse.getSoundVolume`.
+    fn sound_volume(&self, _m: &MobData) -> f32 {
+        0.8
+    }
+
     fn tempted_by(&self, item: i32) -> bool {
         item_tag(item, if self.llama() { "minecraft:llama_tempt_items" } else { "minecraft:horse_tempt_items" })
     }
@@ -650,7 +660,7 @@ impl Kind for Equine {
             // as a bound, a rare extra point) and the coat of either parent.
             self.offspring_attributes(e, m, partner, child);
             let (mine, theirs) = (st(m).strength, ext::state::<State>(partner).map_or(0, |s| s.strength));
-            let mut strength = e.random.next_int_bounded(mine.max(theirs)) + 1;
+            let mut strength = e.random.next_int_bounded(mine.max(theirs).max(1)) + 1;
             if e.random.next_float() < 0.03 {
                 strength += 1;
             }
