@@ -244,6 +244,13 @@ impl Sim {
             }
             fields.retain(|(k, _)| k != "fall_distance");
             fields.push(("fall_distance".to_owned(), Tag::Double(p.fall_distance)));
+            // `Player.addAdditionalSaveData`: the shoulders' entities, when there are any.
+            fields.retain(|(k, _)| k != "ShoulderEntityLeft" && k != "ShoulderEntityRight");
+            for (key, tag) in [("ShoulderEntityLeft", &p.shoulders[0]), ("ShoulderEntityRight", &p.shoulders[1])] {
+                if let Some(tag) = tag {
+                    fields.push((key.to_owned(), tag.clone()));
+                }
+            }
             // `Abilities.addSaveData`, from the game mode (`GameType.updatePlayerAbilities`).
             let (creative, spectator) = (p.game_mode == 1, p.game_mode == 3);
             let abilities = Tag::Compound(vec![

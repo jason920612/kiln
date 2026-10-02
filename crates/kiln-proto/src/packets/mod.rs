@@ -435,7 +435,8 @@ pub fn play_disconnect(reason: &str) -> Bytes {
 pub enum PlayIn {
     AcceptTeleport { id: i32 },
     KeepAlive { id: i64 },
-    Move { pos: Option<[f64; 3]>, rot: Option<[f32; 2]>, on_ground: bool },
+    /// `horizontal_collision`: the client says it ran into something sideways (flag bit 2).
+    Move { pos: Option<[f64; 3]>, rot: Option<[f32; 2]>, on_ground: bool, horizontal_collision: bool },
     ChunkBatchReceived { chunks_per_tick: f32 },
     ClientInformation(ClientInfo),
     /// Movement keys; bit 0x20 is sneak (shift), 0x40 sprint.
@@ -609,18 +610,24 @@ pub fn decode_play(id: i32, r: &mut Reader) -> Result<Option<PlayIn>, DecodeErro
         sb::KEEP_ALIVE => PlayIn::KeepAlive { id: r.i64()? },
         sb::MOVE_PLAYER_POS => {
             let pos = [r.f64()?, r.f64()?, r.f64()?];
-            PlayIn::Move { pos: Some(pos), rot: None, on_ground: r.u8()? & 1 != 0 }
+            let flags = r.u8()?;
+            PlayIn::Move { pos: Some(pos), rot: None, on_ground: flags & 1 != 0, horizontal_collision: flags & 2 != 0 }
         }
         sb::MOVE_PLAYER_POS_ROT => {
             let pos = [r.f64()?, r.f64()?, r.f64()?];
             let rot = [r.f32()?, r.f32()?];
-            PlayIn::Move { pos: Some(pos), rot: Some(rot), on_ground: r.u8()? & 1 != 0 }
+            let flags = r.u8()?;
+            PlayIn::Move { pos: Some(pos), rot: Some(rot), on_ground: flags & 1 != 0, horizontal_collision: flags & 2 != 0 }
         }
         sb::MOVE_PLAYER_ROT => {
             let rot = [r.f32()?, r.f32()?];
-            PlayIn::Move { pos: None, rot: Some(rot), on_ground: r.u8()? & 1 != 0 }
+            let flags = r.u8()?;
+            PlayIn::Move { pos: None, rot: Some(rot), on_ground: flags & 1 != 0, horizontal_collision: flags & 2 != 0 }
         }
-        sb::MOVE_PLAYER_STATUS_ONLY => PlayIn::Move { pos: None, rot: None, on_ground: r.u8()? & 1 != 0 },
+        sb::MOVE_PLAYER_STATUS_ONLY => {
+            let flags = r.u8()?;
+            PlayIn::Move { pos: None, rot: None, on_ground: flags & 1 != 0, horizontal_collision: flags & 2 != 0 }
+        }
         sb::CHUNK_BATCH_RECEIVED => PlayIn::ChunkBatchReceived { chunks_per_tick: r.f32()? },
         sb::CLIENT_INFORMATION => PlayIn::ClientInformation(read_client_information(r)?),
         sb::PLAYER_INPUT => PlayIn::PlayerInput { flags: r.u8()? },

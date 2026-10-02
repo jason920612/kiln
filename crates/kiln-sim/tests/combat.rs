@@ -283,7 +283,7 @@ fn raised_shields_block_until_an_axe_disables_them() {
     w.console("gamemode survival Target");
     w.place("Target", [0.0, 0.0, 2.0]);
     // The target faces the attacker (north) and raises the shield.
-    let turn = PlayIn::Move { pos: None, rot: Some([180.0, 0.0]), on_ground: true };
+    let turn = PlayIn::Move { pos: None, rot: Some([180.0, 0.0]), on_ground: true, horizontal_collision: false };
     let raise = PlayIn::UseItem { hand: Hand::Main, sequence: 1, yaw: 180.0, pitch: 0.0 };
     w.step(vec![ToSim::Packet(2, turn), ToSim::Packet(2, raise)]);
     // Blocking starts a quarter second into the use.

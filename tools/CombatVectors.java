@@ -609,6 +609,20 @@ public class CombatVectors {
             for (String l : helperLines) w.println(l);
         }
         System.out.println("CombatVectors: wrote " + helperLines.size() + " EnchantmentHelper vectors to " + helperPath);
+        List<String> riptideLines = new ArrayList<>();
+        server.submit(() -> {
+            try {
+                RiptideVectors.run(server, riptideLines);
+            } catch (Throwable t) {
+                t.printStackTrace();
+                riptideLines.add("{\"kind\":\"error\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");
+            }
+        }).get();
+        Path riptidePath = outPath.resolveSibling("riptide.jsonl");
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(riptidePath))) {
+            for (String l : riptideLines) w.println(l);
+        }
+        System.out.println("CombatVectors: wrote " + riptideLines.size() + " riptide vectors to " + riptidePath);
         server.halt(false);
         System.exit(0);
     }
@@ -1139,5 +1153,195 @@ class EnchantHelperVectors {
         for (int dy = 0; dy < 3; dy++) level.setBlock(base.above(dy), net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), 2);
         server.getPlayerList().remove(attacker);
         server.getPlayerList().remove(wearer);
+    }
+}
+
+// Riptide vectors: TridentItem.releaseUsing from the ground under ceilings of every height (the
+// 1.2 lift and what stops it), in the air, crouching and at an angle; and the spin's check
+// (LivingEntity.checkAutoSpinAttack) against walls and the entities around: a horizontal
+// collision ends the spin only when no entity at all is touched.
+class RiptideVectors {
+    static Map<String, Object> line(String kind) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", kind);
+        return m;
+    }
+
+    static void clear(ServerLevel level) {
+        var air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        for (int x = -4; x <= 4; x++)
+            for (int y = -2; y <= 8; y++)
+                for (int z = -4; z <= 4; z++)
+                    level.setBlock(new net.minecraft.core.BlockPos((int) Math.floor(CombatVectors.BX) + x, (int) CombatVectors.BY + y, (int) Math.floor(CombatVectors.BZ) + z), air, 2);
+        for (var e : new ArrayList<>(level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-8, 90, -8, 8, 120, 8), e -> !(e instanceof ServerPlayer)))) e.discard();
+    }
+
+    static void block(ServerLevel level, int x, int y, int z, String state) throws Exception {
+        var st = net.minecraft.commands.arguments.blocks.BlockStateParser.parseForBlock(BuiltInRegistries.BLOCK, state, false).blockState();
+        level.setBlock(new net.minecraft.core.BlockPos((int) Math.floor(CombatVectors.BX) + x, (int) CombatVectors.BY + y, (int) Math.floor(CombatVectors.BZ) + z), st, 2);
+    }
+
+    static void run(MinecraftServer server, List<String> out) throws Exception {
+        ServerLevel level = server.overworld();
+        // ---- the lift
+        String[][] ceilings = {
+            {"open", ""}, {"c2", "2:minecraft:stone"}, {"c3", "3:minecraft:stone"}, {"c4", "4:minecraft:stone"},
+            {"slab_top_2", "2:minecraft:stone_slab[type=top]"}, {"slab_bottom_2", "2:minecraft:stone_slab[type=bottom]"},
+            {"slab_top_3", "3:minecraft:stone_slab[type=top]"}, {"trapdoor_2", "2:minecraft:oak_trapdoor[half=bottom,open=false]"},
+            {"c3_edge", "3:minecraft:stone:edge"}, {"c2_edge", "2:minecraft:stone:edge"}};
+        int n = 0;
+        for (String[] ceil : ceilings) {
+            for (int lvl : new int[] {1, 3}) {
+                for (int variant = 0; variant < 4; variant++) {
+                    boolean onGround = variant != 3;
+                    boolean sneak = variant == 2;
+                    float pitch = new float[] {0f, -40f, 25f, 10f}[variant];
+                    float yaw = new float[] {0f, 90f, -135f, 30f}[variant];
+                    double dx = variant == 1 ? 0.3 : 0.0;
+                    Map<String, Object> m = line("lift");
+                    m.put("name", "riptide_lift/" + ceil[0] + "/" + lvl + "/" + variant);
+                    m.put("ceiling", ceil[1]);
+                    m.put("level", lvl);
+                    m.put("on_ground", onGround);
+                    m.put("sneak", sneak);
+                    m.put("pitch", pitch);
+                    m.put("yaw", yaw);
+                    m.put("dx", dx);
+                    clear(level);
+                    ServerPlayer p = CombatVectors.mockPlayer(server, "Rip" + (n++));
+                    for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) block(level, x, -1, z, "minecraft:stone");
+                    block(level, 0, 0, 0, "minecraft:water");
+                    block(level, 1, 0, 0, "minecraft:water");
+                    block(level, 0, 0, 1, "minecraft:water");
+                    block(level, 1, 0, 1, "minecraft:water");
+                    if (!ceil[1].isEmpty()) {
+                        String[] c = ceil[1].split(":", 2);
+                        int y = Integer.parseInt(c[0]);
+                        String rest = c[1];
+                        boolean edge = rest.endsWith(":edge");
+                        if (edge) rest = rest.substring(0, rest.length() - 5);
+                        // The ceiling covers the box fully, or only the half of the box east of x = 0.5.
+                        for (int x = edge ? 1 : -1; x <= 1; x++) for (int z = -1; z <= 1; z++) block(level, x, y, z, rest);
+                    }
+                    p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+                    CombatVectors.call(p.connection, "markClientLoaded");
+                    p.setPos(CombatVectors.BX + dx, CombatVectors.BY, CombatVectors.BZ);
+                    p.setYRot(yaw);
+                    p.setXRot(pitch);
+                    p.setDeltaMovement(Vec3.ZERO);
+                    p.setOnGround(onGround);
+                    p.setShiftKeyDown(sneak);
+                    if (sneak) p.setPose(net.minecraft.world.entity.Pose.CROUCHING);
+                    p.fallDistance = 0.0;
+                    ItemStack trident = EnchantHelperVectors.stack(server, "minecraft:trident", EnchantHelperVectors.ench("minecraft:riptide", lvl));
+                    p.getInventory().clearContent();
+                    p.setItemSlot(EquipmentSlot.MAINHAND, trident);
+                    CombatVectors.call(p, "detectEquipmentUpdates");
+                    CombatVectors.call(p, "updateFluidInteraction");
+                    p.verticalCollision = false;
+                    boolean wet = p.isInWaterOrRain();
+                    CombatVectors.drain(p);
+                    boolean released = trident.getItem().releaseUsing(trident, level, p, 72000 - 20);
+                    m.put("wet", wet);
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("released", released);
+                    r.put("pos", new double[] {p.getX() - CombatVectors.BX, p.getY() - CombatVectors.BY, p.getZ() - CombatVectors.BZ});
+                    r.put("delta", CombatVectors.vec(p.getDeltaMovement()));
+                    r.put("on_ground", p.onGround());
+                    r.put("spin", p.isAutoSpinAttack());
+                    r.put("needs_sync", p.needsSync);
+                    r.put("trident_damage", p.getMainHandItem().getDamageValue());
+                    m.put("result", r);
+                    out.add(CombatVectors.toJson(m));
+                    server.getPlayerList().remove(p);
+                }
+            }
+        }
+        // ---- the spin's touch check
+        String[] around = {"nothing", "item", "pig", "minecart", "pig_and_item"};
+        for (String what : around) {
+            for (boolean collision : new boolean[] {false, true}) {
+                for (int ticks : new int[] {20, 5, 1}) {
+                    Map<String, Object> m = line("touch");
+                    m.put("name", "riptide_touch/" + what + "/" + (collision ? "wall" : "free") + "/" + ticks);
+                    m.put("around", what);
+                    m.put("collision", collision);
+                    m.put("ticks", ticks);
+                    clear(level);
+                    ServerPlayer p = CombatVectors.mockPlayer(server, "Touch" + (n++));
+                    for (int x = -2; x <= 2; x++) for (int z = -2; z <= 2; z++) block(level, x, -1, z, "minecraft:stone");
+                    p.setGameMode(net.minecraft.world.level.GameType.SURVIVAL);
+                    CombatVectors.call(p.connection, "markClientLoaded");
+                    p.setPos(CombatVectors.BX, CombatVectors.BY, CombatVectors.BZ);
+                    p.setYRot(0f);
+                    p.setXRot(0f);
+                    p.setOnGround(true);
+                    p.setDeltaMovement(new Vec3(0.4, 0.1, -0.3));
+                    p.getInventory().clearContent();
+                    ItemStack trident = new ItemStack(net.minecraft.world.item.Items.TRIDENT);
+                    p.setItemSlot(EquipmentSlot.MAINHAND, trident);
+                    CombatVectors.call(p, "detectEquipmentUpdates");
+                    CombatVectors.set(p, "attackStrengthTicker", 100);
+                    p.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_ABSORPTION).setBaseValue(20.0);
+                    List<net.minecraft.world.entity.Entity> made = new ArrayList<>();
+                    if (what.equals("item") || what.equals("pig_and_item")) {
+                        var item = new net.minecraft.world.entity.item.ItemEntity(level, CombatVectors.BX + 0.2, CombatVectors.BY, CombatVectors.BZ, new ItemStack(net.minecraft.world.item.Items.STONE));
+                        item.setDeltaMovement(Vec3.ZERO);
+                        item.setNoGravity(true);
+                        item.setPickUpDelay(1000);
+                        level.addFreshEntity(item);
+                        made.add(item);
+                    }
+                    if (what.equals("pig") || what.equals("pig_and_item")) {
+                        var pig = net.minecraft.world.entity.EntityTypes.PIG.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                        pig.setPos(CombatVectors.BX - 0.3, CombatVectors.BY, CombatVectors.BZ + 0.2);
+                        pig.setNoAi(true);
+                        pig.setYRot(0f);
+                        level.addFreshEntity(pig);
+                        made.add(pig);
+                    }
+                    if (what.equals("minecart")) {
+                        var cart = net.minecraft.world.entity.EntityTypes.MINECART.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+                        cart.setPos(CombatVectors.BX + 0.1, CombatVectors.BY, CombatVectors.BZ);
+                        cart.setNoGravity(true);
+                        level.addFreshEntity(cart);
+                        made.add(cart);
+                    }
+                    level.getRandom().setSeed(77);
+                    p.getRandom().setSeed(78);
+                    p.horizontalCollision = collision;
+                    p.startAutoSpinAttack(ticks, 8.0f, trident);
+                    CombatVectors.drain(p);
+                    // `aiStep`: the count goes down, then the check.
+                    int now = (Integer) CombatVectors.get(p, "autoSpinAttackTicks") - 1;
+                    CombatVectors.set(p, "autoSpinAttackTicks", now);
+                    var box = p.getBoundingBox();
+                    for (Class<?> k = p.getClass(); k != null; k = k.getSuperclass()) {
+                        try {
+                            var meth = k.getDeclaredMethod("checkAutoSpinAttack", net.minecraft.world.phys.AABB.class, net.minecraft.world.phys.AABB.class);
+                            meth.setAccessible(true);
+                            meth.invoke(p, box, box);
+                            break;
+                        } catch (NoSuchMethodException e) {
+                            // up
+                        }
+                    }
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("spin_ticks", (Integer) CombatVectors.get(p, "autoSpinAttackTicks"));
+                    r.put("spin", p.isAutoSpinAttack());
+                    r.put("delta", CombatVectors.vec(p.getDeltaMovement()));
+                    List<Object> hp = new ArrayList<>();
+                    for (var e : made) {
+                        if (e instanceof net.minecraft.world.entity.LivingEntity le && !(e instanceof net.minecraft.world.entity.decoration.ArmorStand)) hp.add(le.getHealth());
+                    }
+                    r.put("health", hp);
+                    m.put("result", r);
+                    out.add(CombatVectors.toJson(m));
+                    for (var e : made) e.discard();
+                    server.getPlayerList().remove(p);
+                }
+            }
+        }
+        clear(level);
     }
 }

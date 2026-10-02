@@ -85,6 +85,7 @@ mod wither;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
+mod shoulder;
 #[cfg(test)]
 mod container_parity;
 #[cfg(test)]
@@ -270,6 +271,8 @@ struct Player {
     pos: [f64; 3],
     rot: [f32; 2],
     on_ground: bool,
+    /// `horizontalCollision` as the client last reported it (`ServerboundMovePlayerPacket`).
+    horizontal_collision: bool,
     view_distance: i32,
     center: ChunkPos,
     sent_chunks: HashSet<ChunkPos>,
@@ -312,6 +315,9 @@ struct Player {
     spin_off_hand: bool,
     /// The tick counted down this tick, so the region checks what the spin touched.
     spin_check: bool,
+    /// The spin attack pose (a box 0.6 high) the player's last tick settled into
+    /// (`updatePlayerPose` runs after `aiStep` counts the spin down).
+    spin_pose: bool,
     /// Shared flags or pose changed since the last broadcast.
     meta_dirty: bool,
     /// Arm swung this tick.
@@ -414,6 +420,16 @@ struct Player {
     vel: [f64; 3],
     /// `syncVelocity`: a hit this tick; the velocity goes to the client and its viewers.
     sync_velocity: bool,
+    /// `Entity.needsSync` after a `push` (a riptide): the tracking players, not the pushed
+    /// player's own client, get the motion.
+    push_sync: bool,
+    /// What sits on the shoulders (`ShoulderEntityLeft`, `ShoulderEntityRight`), when they sat
+    /// down (`timeEntitySatOnShoulder`), whether the entity data still has to say so, and the
+    /// compounds let go this tick (they become entities in the region's chunk).
+    shoulders: [Option<kiln_proto::nbt::Tag>; 2],
+    shoulder_time: i64,
+    shoulder_dirty: bool,
+    released_shoulders: Vec<kiln_proto::nbt::Tag>,
     /// `lastKnownClientMovement`: the last accepted move, zero after a tick without one.
     known_movement: [f64; 3],
     moved_this_tick: bool,
@@ -1225,6 +1241,12 @@ impl Sim {
             d.requests.extend(out.wanted);
             d.unloads.extend(out.unload);
             d.spawns.extend(out.spawns);
+            for tag in out.saved_entities {
+                let at = tag.get("Pos").and_then(Tag::as_list).map(|l| [0, 1, 2].map(|i| l.get(i).and_then(Tag::as_f64).unwrap_or(0.0)));
+                if let Some(at) = at {
+                    d.add_saved_entities(entities::chunk_of(at), vec![tag]);
+                }
+            }
             travels.extend(out.portals);
             self.announce_deaths(out.deaths);
             for (t, d) in times.iter_mut().zip(out.times) {
@@ -2349,6 +2371,7 @@ impl Sim {
         let dimension_type = kiln_data::synced_id("minecraft:dimension_type", DIMENSIONS[dim].0).expect("dimension type");
         let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).expect("spawn chunk loaded");
         let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
+        let shoulders = [shoulder::load(joining.saved.raw(), "ShoulderEntityLeft"), shoulder::load(joining.saved.raw(), "ShoulderEntityRight")];
         recipe_book.retain_existing(&self.rules);
         let warden_tracker = sculk::shrieker::WardenSpawnTracker::load(joining.saved.raw().get("warden_spawn_tracker"));
         let mut player = Player {
@@ -2375,6 +2398,7 @@ impl Sim {
             pos: spawn,
             rot: joining.rot,
             on_ground: true,
+            horizontal_collision: false,
             view_distance,
             center: player_chunk(spawn),
             sent_chunks: HashSet::new(),
@@ -2406,6 +2430,7 @@ impl Sim {
             spin_item: kiln_item::ItemStack::empty(),
             spin_off_hand: false,
             spin_check: false,
+            spin_pose: false,
             meta_dirty: false,
             swung: false,
             pending_suggestion: None,
@@ -2455,6 +2480,11 @@ impl Sim {
             equipment_sent: vec![kiln_item::ItemStack::empty(); combat::SLOTS.len()],
             vel: [0.0; 3],
             sync_velocity: false,
+            push_sync: false,
+            shoulders,
+            shoulder_time: 0,
+            shoulder_dirty: false,
+            released_shoulders: Vec::new(),
             known_movement: [0.0; 3],
             moved_this_tick: false,
             death_location: None,

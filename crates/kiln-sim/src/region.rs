@@ -66,6 +66,9 @@ pub(crate) struct RegionOut {
     pub deaths: Vec<crate::health::Death>,
     /// Players whose portal took them (they change level in a serial phase).
     pub portals: Vec<crate::portal::Travel>,
+    /// Entities that came out of saved compounds this phase (what sat on a player's shoulder),
+    /// to be loaded like the ones a chunk brings.
+    pub saved_entities: Vec<kiln_proto::nbt::Tag>,
     /// CPU time per sub-phase, for the statistics.
     pub times: [Duration; SUB_PHASES.len()],
 }
@@ -246,7 +249,11 @@ impl RegionWork<'_> {
             if !std::mem::take(&mut self.players[i].spin_check) {
                 continue;
             }
-            if !self.players[i].dead && let Some(target) = crate::combat::spin_touch(&self.players, i, self.entities) {
+            let touch = crate::combat::spin_touch(&self.players, i, self.entities);
+            if !self.players[i].dead && touch.living.is_none() && !touch.any && self.players[i].horizontal_collision {
+                self.players[i].end_spin_on_collision();
+            }
+            if !self.players[i].dead && let Some(target) = touch.living {
                 let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
                 let mut hits = Vec::new();
                 {
@@ -405,6 +412,9 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 6);
         self.send_light_updates();
         mark(&mut self.out.times, 7);
+        for p in self.players.iter_mut() {
+            self.out.saved_entities.append(&mut p.released_shoulders);
+        }
         ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| p.flush());
         mark(&mut self.out.times, 8);
     }
@@ -590,6 +600,13 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
     p.tick_glide();
     p.tick_spin();
+    {
+        // `handleShoulderEntities`, at the end of `Player.aiStep`.
+        let in_water = p.fluids(&|pos: kiln_entity::math::BlockPos| block(pos)).in_water;
+        let feet = kiln_entity::math::BlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
+        let in_powder_snow = block(feet) == kiln_data::blocks::default_state::POWDER_SNOW;
+        p.handle_shoulder_entities(env.game_time, in_water, in_powder_snow);
+    }
     // `Entity.handlePortal` (in `baseTick`).
     if let Some(travel) = p.handle_portal(env) {
         t.portals.push(travel);
@@ -732,10 +749,12 @@ pub(crate) fn player_packet(
                 p.rot = crate::movement::normalize_rotation(r);
             }
         }
-        PlayIn::Move { pos, rot, on_ground } => {
+        PlayIn::Move { pos, rot, on_ground, horizontal_collision } => {
             let (from, was_on_ground) = (p.pos, p.on_ground);
             let y0 = p.pos[1];
             if handle_move(p, cells, env, pos, rot, on_ground) {
+                // `setOnGroundWithMovement`: the client's own report of running into a wall.
+                p.horizontal_collision = horizontal_collision;
                 let feet = p.pos.map(|c| c.floor() as i32);
                 let in_fluid = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
                 let d = [p.pos[0] - from[0], p.pos[1] - from[1], p.pos[2] - from[2]];

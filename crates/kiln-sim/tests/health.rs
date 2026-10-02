@@ -35,7 +35,7 @@ fn landing_after_a_long_fall_hurts() {
         let y = ground[1] + 10.0 - i as f64;
         let on_ground = i == 10;
         assert!(sim.step([
-            ToSim::Packet(1, PlayIn::Move { pos: Some([ground[0], y, ground[2]]), rot: None, on_ground }),
+            ToSim::Packet(1, PlayIn::Move { pos: Some([ground[0], y, ground[2]]), rot: None, on_ground, horizontal_collision: false }),
             ToSim::Packet(1, PlayIn::ClientTickEnd),
         ]));
     }
@@ -59,7 +59,7 @@ fn totems_save_players_from_death() {
     for i in 1..=30 {
         let y = ground[1] + 30.0 - i as f64;
         assert!(sim.step([
-            ToSim::Packet(1, PlayIn::Move { pos: Some([ground[0], y, ground[2]]), rot: None, on_ground: i == 30 }),
+            ToSim::Packet(1, PlayIn::Move { pos: Some([ground[0], y, ground[2]]), rot: None, on_ground: i == 30, horizontal_collision: false }),
             ToSim::Packet(1, PlayIn::ClientTickEnd),
         ]));
     }
@@ -110,7 +110,7 @@ fn well_fed_players_heal() {
     for i in 1..=10 {
         let y = ground[1] + 10.0 - i as f64;
         assert!(sim.step([
-            ToSim::Packet(1, PlayIn::Move { pos: Some([ground[0], y, ground[2]]), rot: None, on_ground: i == 10 }),
+            ToSim::Packet(1, PlayIn::Move { pos: Some([ground[0], y, ground[2]]), rot: None, on_ground: i == 10, horizontal_collision: false }),
             ToSim::Packet(1, PlayIn::ClientTickEnd),
         ]));
     }
@@ -137,7 +137,7 @@ fn sprinting_uses_saturation() {
     for _ in 0..200 {
         x += 0.28;
         assert!(sim.step([
-            ToSim::Packet(1, PlayIn::Move { pos: Some([x, ground[1], ground[2]]), rot: None, on_ground: true }),
+            ToSim::Packet(1, PlayIn::Move { pos: Some([x, ground[1], ground[2]]), rot: None, on_ground: true, horizontal_collision: false }),
             ToSim::Packet(1, PlayIn::ClientTickEnd),
         ]));
     }
@@ -187,7 +187,7 @@ fn stew_is_eaten_only_when_hungry_and_leaves_a_bowl() {
     while sim.food(1).unwrap().0 == 20 {
         x += 0.28;
         assert!(sim.step([
-            ToSim::Packet(1, PlayIn::Move { pos: Some([x, ground[1], ground[2]]), rot: None, on_ground: true }),
+            ToSim::Packet(1, PlayIn::Move { pos: Some([x, ground[1], ground[2]]), rot: None, on_ground: true, horizontal_collision: false }),
             ToSim::Packet(1, PlayIn::ClientTickEnd),
         ]));
     }

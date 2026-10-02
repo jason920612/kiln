@@ -450,11 +450,11 @@ fn staring_at_an_enderman_angers_it() {
     // Looking straight ahead does not meet its eyes; looking up at them does.
     w.ticks(60);
     assert_eq!(w.health(), 20.0, "not stared at");
-    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: None, rot: Some([0.0, -10.5]), on_ground: true })]));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: None, rot: Some([0.0, -10.5]), on_ground: true, horizontal_collision: false })]));
     // It freezes while looked at; looking away lets it come.
     w.ticks(30);
     assert_eq!(w.health(), 20.0, "frozen while stared at");
-    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: None, rot: Some([180.0, 0.0]), on_ground: true })]));
+    assert!(w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: None, rot: Some([180.0, 0.0]), on_ground: true, horizontal_collision: false })]));
     w.ticks(200);
     assert!(w.health() < 20.0, "the enderman attacked (health {})", w.health());
 }
@@ -689,7 +689,7 @@ fn wild_horses_throw_riders_until_tamed() {
             // On the ground: walk up to the horse and get on.
             w.clients[0].pos = [hp[0] - 1.0, hp[1], hp[2]];
             let pos = w.clients[0].pos;
-            w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: Some(pos), rot: None, on_ground: true })]);
+            w.sim.step([ToSim::Packet(1, PlayIn::Move { pos: Some(pos), rot: None, on_ground: true, horizontal_collision: false })]);
             w.interact(horse);
             throws += 1;
         }

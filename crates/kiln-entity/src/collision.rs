@@ -154,6 +154,51 @@ pub fn for_each_block_collision(
     }
 }
 
+/// `Entity.collide` over blocks alone, for a mover the level's entities do not know (a player the
+/// region moves by hand): how far `bx` gets with `movement` through the block shapes `blocks`
+/// gives (`None`: not loaded).
+pub fn collide_blocks(blocks: &dyn Fn(BlockPos) -> Option<u16>, ctx: &CollisionContext, movement: Vec3, bx: &Aabb) -> Vec3 {
+    let area = bx.expand_towards_vec(movement);
+    let x0 = floor(area.min_x - 1.0e-7) - 1;
+    let x1 = floor(area.max_x + 1.0e-7) + 1;
+    let y0 = floor(area.min_y - 1.0e-7) - 1;
+    let y1 = floor(area.max_y + 1.0e-7) + 1;
+    let z0 = floor(area.min_z - 1.0e-7) - 1;
+    let z1 = floor(area.max_z + 1.0e-7) + 1;
+    let entity_shape = BoxShape::new(&area);
+    let (w, h, d) = (x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
+    let mut shapes: Vec<Collider> = Vec::new();
+    for z in 0..d {
+        for y in 0..h {
+            for x in 0..w {
+                let edges = (x == 0 || x == w - 1) as u8 + (y == 0 || y == h - 1) as u8 + (z == 0 || z == d - 1) as u8;
+                if edges == 3 {
+                    continue;
+                }
+                let pos = BlockPos::new(x0 + x, y0 + y, z0 + z);
+                let Some(state) = blocks(pos) else { continue };
+                if edges == 1 && !physics::has_large_collision_shape(state) {
+                    continue;
+                }
+                if edges == 2 && kind(state) != Kind::MovingPiston {
+                    continue;
+                }
+                let (shape, cube) = collision_shape(state, pos, ctx);
+                let (px, py, pz) = (pos.x as f64, pos.y as f64, pos.z as f64);
+                let hit = if cube {
+                    area.intersects_raw(px, py, pz, px + 1.0, py + 1.0, pz + 1.0)
+                } else {
+                    !shape.is_empty() && entity_shape.as_ref().is_some_and(|e| intersects_box(&shape, [px, py, pz], e))
+                };
+                if hit {
+                    shapes.push(Collider { shape, offset: [px, py, pz] });
+                }
+            }
+        }
+    }
+    collide_with_shapes(movement, bx, &shapes)
+}
+
 /// `LiquidBlock.STABLE_SHAPE`: the lower half of the block.
 fn lava_stable_shape() -> &'static Shape {
     static SHAPE: std::sync::OnceLock<Shape> = std::sync::OnceLock::new();
