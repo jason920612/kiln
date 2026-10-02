@@ -136,7 +136,11 @@ pub fn spawn_child(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     // `getBreedOffspring`.
     let id = level.next_entity_id();
     let seed = level.fresh_seed();
-    let mut child = super::new(m.kind, id, 0, seed);
+    let child_kind = match (m.kind.ext(), level.entity(partner).and_then(super::data)) {
+        (Some(k), Some(p)) => k.offspring_kind(m, p),
+        _ => m.kind,
+    };
+    let mut child = super::new(child_kind, id, 0, seed);
     {
         let cm = super::data_mut(&mut child).expect("a mob");
         match m.kind {

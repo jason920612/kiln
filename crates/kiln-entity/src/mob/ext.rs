@@ -6,7 +6,7 @@
 use super::attributes::Attr;
 use super::goals::{Goal, Living};
 use super::interact::{Interactor, Outcome};
-use super::{Category, DamageSource, GroupData, MobData, SpawnContext};
+use super::{Category, DamageSource, GroupData, MobData, MobKind, SpawnContext};
 use crate::entity::Entity;
 use crate::level::{DamageKind, EntityLevel};
 use crate::math::{BlockPos, Vec3};
@@ -472,6 +472,12 @@ pub trait Kind: Sync + Send {
     fn is_food(&self, item: i32) -> bool {
         let _ = item;
         false
+    }
+    /// The type `getBreedOffspring` makes a baby of with `partner` (a horse and a donkey have a
+    /// mule).
+    fn offspring_kind(&self, m: &MobData, partner: &MobData) -> MobKind {
+        let _ = partner;
+        m.kind
     }
     /// `getBreedOffspring` extras: set up `child` from the parents (variants, colors).
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {

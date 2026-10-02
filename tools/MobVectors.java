@@ -1575,6 +1575,8 @@ public class MobVectors {
         scenariosRiders(out);
         // -- wp30: llamas
         scenariosLlama(out);
+        // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
+        scenariosWp33(out);
 
         return out;
     }
@@ -6052,6 +6054,28 @@ public class MobVectors {
             s.playerCreative = true;
             s.levelSeed = 220 + seed;
             s.ticks = 400;
+            out.add(s);
+        }
+    }
+    // ---------------------------------------------------------- wp33: mounts and miscellany
+    static void scenariosWp33(List<Scenario> out) {
+        // A horse and a donkey have a mule (either way round), two donkeys a donkey.
+        String[][] pairs = {{"horse", "donkey"}, {"donkey", "horse"}, {"donkey", "donkey"}, {"horse", "horse"}};
+        for (int i = 0; i < pairs.length; i++) {
+            Scenario s = new Scenario("breed_equine_" + pairs[i][0] + "_" + pairs[i][1]);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m1 = new MobSpec("minecraft:" + pairs[i][0], 0.5, BY, 0.5, 20f, 33000L + i);
+            MobSpec m2 = new MobSpec("minecraft:" + pairs[i][1], 3.5, BY, 1.5, 200f, 33010L + i);
+            m1.nbt = "{Tame:1b,Variant:" + (258 + i) + "}";
+            m2.nbt = "{Tame:1b,Variant:" + (513 + i) + "}";
+            m1.inLove = 600;
+            m2.inLove = 590;
+            s.mobs.add(m1);
+            s.mobs.add(m2);
+            s.player = new double[] {9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 330 + i;
+            s.ticks = 300;
             out.add(s);
         }
     }

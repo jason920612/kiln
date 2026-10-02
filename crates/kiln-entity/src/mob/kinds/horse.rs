@@ -647,8 +647,17 @@ impl Kind for Equine {
             // `Llama.canMate`: another llama of either kind.
             return super::llama::is_llama(partner.kind) && parent(m) && parent(partner);
         }
-        // (`AbstractHorse.canMate` is false: skeleton horses never mate.)
-        !matches!(self.0, Which::Mule | Which::Skeleton) && parent(m) && parent(partner)
+        // `Horse.canMate` and `Donkey.canMate`: the partner is a horse or a donkey (mules, skeleton
+        // horses and the rest never mate: `AbstractHorse.canMate` is false).
+        matches!(self.0, Which::Horse | Which::Donkey) && matches!(partner.kind, MobKind::Horse | MobKind::Donkey) && parent(m) && parent(partner)
+    }
+
+    /// `Horse.getBreedOffspring` / `Donkey.getBreedOffspring`: a horse and a donkey have a mule.
+    fn offspring_kind(&self, m: &MobData, partner: &MobData) -> MobKind {
+        match (self.0, partner.kind) {
+            (Which::Horse, MobKind::Donkey) | (Which::Donkey, MobKind::Horse) => MobKind::Mule,
+            _ => m.kind,
+        }
     }
 
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, _level: &mut dyn EntityLevel) {
@@ -673,7 +682,8 @@ impl Kind for Equine {
             }
             return;
         }
-        if self.0 == Which::Horse {
+        // A mule gets only the attributes of its parents (a horse and a donkey).
+        if self.0 == Which::Horse && partner.kind == MobKind::Horse {
             let (mine, theirs) = (st(m).type_variant, ext::state::<State>(partner).map_or(0, |s| s.type_variant));
             let r = e.random.next_int_bounded(9);
             let variant = if r < 4 {

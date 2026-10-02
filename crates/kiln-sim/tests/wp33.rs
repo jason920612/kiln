@@ -137,3 +137,22 @@ fn keep_inventory_keeps_everything_cursed_or_not() {
     let held: i32 = inv.iter().flatten().map(|(_, n)| *n).sum();
     assert!(held >= 1 + 5 + 3, "the inventory is intact ({held} items)");
 }
+
+#[test]
+fn a_horse_and_a_donkey_have_a_mule() {
+    let mut w = World::new("creative");
+    w.summon_at("minecraft:horse", 3.0, "{Tame:1b,InLove:600,PersistenceRequired:1b}");
+    w.summon_at("minecraft:donkey", 4.0, "{Tame:1b,InLove:600,PersistenceRequired:1b}");
+    w.ticks(400);
+    let mules = w.nbt_of("minecraft:mule");
+    assert_eq!(mules.len(), 1, "a mule foal: {:?}", w.sim.mobs());
+    assert!(mules[0].get("Age").and_then(|a| a.as_i64()).is_some_and(|a| a < 0), "a baby");
+    assert_eq!(w.nbt_of("minecraft:horse").len(), 1);
+    assert_eq!(w.nbt_of("minecraft:donkey").len(), 1);
+    // Two donkeys have a donkey.
+    w.summon_at("minecraft:donkey", -3.0, "{Tame:1b,InLove:600,PersistenceRequired:1b}");
+    w.summon_at("minecraft:donkey", -4.0, "{Tame:1b,InLove:600,PersistenceRequired:1b}");
+    w.ticks(400);
+    assert_eq!(w.nbt_of("minecraft:donkey").len(), 4, "two donkeys, a donkey foal and the first one");
+    assert_eq!(w.nbt_of("minecraft:mule").len(), 1, "no more mules");
+}
