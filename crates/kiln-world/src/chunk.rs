@@ -275,6 +275,37 @@ impl Chunk {
         }
     }
 
+    /// Whether `pred` holds for any block of the box `x0..=x1` by `z0..=z1` (within the chunk,
+    /// 0..16) and `y0..=y1` (absolute); outside the world blocks read as void air. Sections whose
+    /// palette has nothing `pred` accepts are skipped (`PalettedContainer.maybeHas`).
+    pub fn any_block_in(&self, (x0, x1): (usize, usize), (y0, y1): (i32, i32), (z0, z1): (usize, usize), pred: &dyn Fn(u16) -> bool) -> bool {
+        if (y0 < self.min_y || y1 >= self.min_y + self.height()) && pred(kiln_data::blocks::default_state::VOID_AIR) {
+            return true;
+        }
+        let (lo, hi) = (y0.max(self.min_y), y1.min(self.min_y + self.height() - 1));
+        if lo > hi {
+            return false;
+        }
+        for s in ((lo - self.min_y) >> 4)..=((hi - self.min_y) >> 4) {
+            let section = &self.sections[s as usize];
+            if !section.blocks.maybe_has(pred) {
+                continue;
+            }
+            let base = self.min_y + s * 16;
+            for y in lo.max(base)..=hi.min(base + 15) {
+                let ly = (y - base) as usize;
+                for z in z0..=z1 {
+                    for x in x0..=x1 {
+                        if pred(section.get(x, ly, z)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Returns the previous state, or `None` if `y` is outside the world.
     /// Light is not updated here; the world's light engine does that.
     ///
@@ -571,5 +602,36 @@ fn put_light_data(b: &mut BytesMut, sky: &[Light], sky_sel: u64, block: &[Light]
                 Light::Zero => unreachable!("zero sections go in the empty mask"),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod any_block_tests {
+    use super::*;
+
+    fn chunk() -> Chunk {
+        Chunk::new((0..3).map(|_| Section::filled(0, 0)).collect(), -64)
+    }
+
+    #[test]
+    fn any_block_in_finds_blocks_by_box_and_skips_empty_sections() {
+        let mut c = chunk();
+        let fire = kiln_data::blocks::default_state::SOUL_FIRE;
+        let is_fire = |s: u16| s == fire;
+        assert!(!c.any_block_in((0, 15), (-64, -17), (0, 15), &is_fire));
+        c.set(3, -50, 5, fire);
+        assert!(c.any_block_in((0, 15), (-64, -17), (0, 15), &is_fire));
+        assert!(c.any_block_in((3, 3), (-50, -50), (5, 5), &is_fire));
+        for (x, y, z) in [(2, -50, 5), (3, -51, 5), (3, -50, 6), (4, -50, 5), (3, -49, 5)] {
+            assert!(!c.any_block_in((x, x), (y, y), (z, z), &is_fire), "{x} {y} {z}");
+        }
+        // Another section, a box across two: found in either part.
+        assert!(c.any_block_in((0, 15), (-70, -40), (0, 15), &is_fire));
+        assert!(!c.any_block_in((0, 15), (-40, -17), (0, 15), &is_fire));
+        // Outside the world blocks are void air.
+        let void = kiln_data::blocks::default_state::VOID_AIR;
+        assert!(c.any_block_in((0, 0), (-80, -80), (0, 0), &|s| s == void));
+        assert!(!c.any_block_in((0, 0), (-80, -80), (0, 0), &is_fire));
+        assert!(c.any_block_in((0, 15), (-100, 100), (0, 15), &is_fire));
     }
 }

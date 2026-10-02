@@ -100,14 +100,41 @@ pub fn biome_is(id: i32, spec: &str) -> bool {
 }
 
 /// Whether block state `state` is in the block tag `tag`.
+///
+/// Sensors ask this for every block of a box (piglins look for repellents in 2601 blocks every
+/// 20 ticks), so each thread keeps a bit per block state for the tags it has been asked about.
 pub fn block_in_tag(state: u16, tag: &str) -> bool {
-    let name = crate::blocks::block_name(state);
-    let Some(id) = kiln_data::builtin_id("minecraft:block", name) else { return false };
-    kiln_data::registries::TAGS
-        .iter()
-        .find(|(r, _)| *r == "minecraft:block")
-        .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
-        .is_some_and(|(_, ids)| ids.contains(&id))
+    use std::cell::RefCell;
+    thread_local! {
+        static CACHE: RefCell<Vec<(String, Box<[u64]>)>> = const { RefCell::new(Vec::new()) };
+    }
+    CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        let i = match cache.iter().position(|(t, _)| t == tag) {
+            Some(i) => i,
+            None => {
+                let ids = kiln_data::registries::TAGS
+                    .iter()
+                    .find(|(r, _)| *r == "minecraft:block")
+                    .and_then(|(_, tags)| tags.iter().find(|(t, _)| *t == tag))
+                    .map(|(_, ids)| *ids);
+                let count = kiln_data::blocks::STATE_COUNT as usize;
+                let mut bits = vec![0u64; count.div_ceil(64)].into_boxed_slice();
+                if let Some(ids) = ids {
+                    for s in 0..count {
+                        let name = crate::blocks::block_name(s as u16);
+                        if kiln_data::builtin_id("minecraft:block", name).is_some_and(|id| ids.contains(&id)) {
+                            bits[s >> 6] |= 1 << (s & 63);
+                        }
+                    }
+                }
+                cache.push((tag.to_owned(), bits));
+                cache.len() - 1
+            }
+        };
+        let s = state as usize;
+        cache[i].1.get(s >> 6).is_some_and(|w| w >> (s & 63) & 1 == 1)
+    })
 }
 
 /// `WolfVariants` spawn conditions (priority 1 by biome, else pale).
@@ -494,5 +521,22 @@ impl CustomGoal for BegGoal {
         let max_x = m.max_head_x_rot() as f32;
         m.look.set_look_at(p.pos.x, p.pos.y + p.eye_height as f64, p.pos.z, 10.0, max_x);
         self.look_time -= 1;
+    }
+}
+
+#[cfg(test)]
+mod tag_tests {
+    use super::block_in_tag;
+    use kiln_data::blocks::default_state as d;
+
+    #[test]
+    fn block_tags_answer_for_states_through_the_cache() {
+        // (twice: the second answer comes from the cached bits)
+        for _ in 0..2 {
+            assert!(block_in_tag(d::SOUL_FIRE, "minecraft:piglin_repellents"));
+            assert!(!block_in_tag(d::STONE, "minecraft:piglin_repellents"));
+            assert!(!block_in_tag(d::SOUL_FIRE, "minecraft:no_such_tag"));
+            assert!(!block_in_tag(u16::MAX, "minecraft:piglin_repellents"));
+        }
     }
 }

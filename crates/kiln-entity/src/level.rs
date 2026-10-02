@@ -454,6 +454,12 @@ pub trait EntityLevel {
         true
     }
 
+    /// Whether `pred` holds for any block state in the box `min..=max` (unloaded chunks read as
+    /// void air). Levels that can tell from their storage that a region has none skip it.
+    fn any_block_in(&self, min: BlockPos, max: BlockPos, pred: &dyn Fn(u16) -> bool) -> bool {
+        (min.y..=max.y).any(|y| (min.x..=max.x).any(|x| (min.z..=max.z).any(|z| pred(self.block(BlockPos::new(x, y, z))))))
+    }
+
     /// Sets a block with vanilla update `flags` (`Block.UPDATE_*`); false if nothing changed.
     fn set_block(&mut self, pos: BlockPos, state: u16, flags: u32) -> bool;
 

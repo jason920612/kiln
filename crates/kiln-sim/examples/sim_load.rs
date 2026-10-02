@@ -82,6 +82,8 @@ struct Args {
     /// Mobs summoned around the groups' centres once everyone is in (rabbits, foxes, cats, ocelots,
     /// zombies, piglins, hoglins, wolves: the ones that look for players).
     mobs: usize,
+    /// The kinds the mobs cycle through (`--kinds fox,piglin`; default: eight common ones).
+    kinds: Vec<String>,
 }
 
 fn args() -> Args {
@@ -104,6 +106,7 @@ fn args() -> Args {
         chunk_us: None,
         helper_share_us: None,
         mobs: 0,
+        kinds: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -125,6 +128,7 @@ fn args() -> Args {
             "--inline-below-us" => a.inline_below_us = Some(value().parse().unwrap()),
             "--chunk-us" => a.chunk_us = Some(value().parse().unwrap()),
             "--mobs" => a.mobs = value().parse().unwrap(),
+            "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
             other => panic!("unknown argument {other}"),
         }
@@ -205,14 +209,15 @@ fn main() {
         match measuring_since {
             None if warmup_done(&walkers) => {
                 measuring_since = Some(tick);
-                const KINDS: [&str; 8] = ["rabbit", "fox", "cat", "ocelot", "zombie", "piglin", "hoglin", "wolf"];
+                const DEFAULT_KINDS: [&str; 8] = ["rabbit", "fox", "cat", "ocelot", "zombie", "piglin", "hoglin", "wolf"];
+                let kinds: Vec<String> = if a.kinds.is_empty() { DEFAULT_KINDS.iter().map(|k| k.to_string()).collect() } else { a.kinds.clone() };
                 for i in 0..a.mobs {
                     let [ox, oz] = group_offset(i % a.groups, a.groups, a.spacing);
                     let ang = i as f64 * 2.399;
                     let r = 3.0 + (i % 9) as f64;
                     inbox.push(kiln_link::ToSim::Console(format!(
                         "summon minecraft:{} {} {SURFACE_Y} {} {{PersistenceRequired:1b}}",
-                        KINDS[i % KINDS.len()],
+                        kinds[i % kinds.len()],
                         8.5 + ox + r * ang.cos(),
                         8.5 + oz + r * ang.sin()
                     )));

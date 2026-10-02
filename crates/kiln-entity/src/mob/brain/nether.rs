@@ -268,6 +268,10 @@ impl Sensor for NearestItems {
 /// filterState(pred).findFirst()`).
 pub fn find_nearest_repellent(cx: &Cx, pred: fn(u16) -> bool) -> Option<BlockPos> {
     let c = cx.e.block_position();
+    // Nearly always there is none: the levels' storage can say so without a walk of 2601 blocks.
+    if !cx.level.any_block_in(c.offset(-8, -4, -8), c.offset(8, 4, 8), &pred) {
+        return None;
+    }
     crate::mob::kinds::turtle::within_manhattan(c, 8, 4, 8).find(|&p| pred(cx.level.block(p)))
 }
 

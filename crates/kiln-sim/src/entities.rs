@@ -592,6 +592,31 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.is_loaded(kb(pos))
     }
 
+    fn any_block_in(&self, min: BlockPos, max: BlockPos, pred: &dyn Fn(u16) -> bool) -> bool {
+        use kiln_world::Blocks;
+        let void = kiln_data::blocks::default_state::VOID_AIR;
+        for cx in (min.x >> 4)..=(max.x >> 4) {
+            for cz in (min.z >> 4)..=(max.z >> 4) {
+                let (x0, x1) = (min.x.max(cx * 16), max.x.min(cx * 16 + 15));
+                let (z0, z1) = (min.z.max(cz * 16), max.z.min(cz * 16 + 15));
+                match self.level.cells.chunk(ChunkPos::new(cx, cz)) {
+                    Some(chunk) => {
+                        let local = |a: i32, b: i32, o: i32| ((a - o) as usize, (b - o) as usize);
+                        if chunk.any_block_in(local(x0, x1, cx * 16), (min.y, max.y), local(z0, z1, cz * 16), pred) {
+                            return true;
+                        }
+                    }
+                    None => {
+                        if pred(void) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
     fn set_block(&mut self, pos: BlockPos, state: u16, flags: u32) -> bool {
         kiln_blocks::set_block(self.level, kb(pos), state, flags)
     }
