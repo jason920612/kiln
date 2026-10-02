@@ -1788,6 +1788,8 @@ impl Sim {
             freeze: self.rule_bool("minecraft:freeze_damage"),
             drowning: self.rule_bool("minecraft:drowning_damage"),
             difficulty: self.commands.difficulty as u8,
+            keep_inventory: self.rule_bool("minecraft:keep_inventory"),
+            vanishing: self.rules.equipment_drop_lock(),
         }
     }
 
@@ -2128,6 +2130,7 @@ impl Sim {
         let time = self.time_packet();
         let weather = self.level_info_packets(dim);
         let rules = self.rules.clone();
+        let keep_inventory = self.rule_bool("minecraft:keep_inventory");
         // Viewers in the old level saw the death (or the player walk into the portal): they
         // forget it and get the entity again once tracking re-evaluates it.
         self.untrack_everywhere(conn);
@@ -2150,9 +2153,12 @@ impl Sim {
             p.saturation = 5.0;
             p.exhaustion = 0.0;
             p.food_timer = 0;
-            p.xp_level = 0;
-            p.xp_progress = 0.0;
-            p.xp_total = 0;
+            // (`restoreFrom` keeps the experience of a player that keeps its inventory.)
+            if !keep_inventory {
+                p.xp_level = 0;
+                p.xp_progress = 0.0;
+                p.xp_total = 0;
+            }
             // A fresh `ServerPlayer`: no cooldowns, credit or tracked hits carry over.
             p.hurt_cooldown = 0;
             p.last_hurt = 0.0;

@@ -1194,6 +1194,7 @@ pub(crate) fn tick(
     sim.index_players();
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
+    process_pending_kills(&mut sim);
     for i in 0..sim.list.len() {
         // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
         let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
@@ -1257,6 +1258,30 @@ pub(crate) fn tick(
     }
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
+/// `/kill` of mobs (`LivingEntity.kill`: `hurtServer(genericKill, Float.MAX_VALUE)`): whatever
+/// the command queued runs through the mob's own damage code (death sound, loot, experience,
+/// equipment drops, death events), in loaded chunks that do not tick too.
+fn process_pending_kills(sim: &mut SimLevel) {
+    for i in 0..sim.list.len() {
+        let queued = sim.list[i].phys.as_ref().is_some_and(|p| !p.pending_hurts.is_empty() && matches!(p.kind, EntityKind::Mob(_)));
+        if !queued {
+            continue;
+        }
+        let Some(mut phys) = sim.list[i].phys.take() else { continue };
+        (sim.current, sim.seeds) = (phys.id, 0x6b69_6c6c);
+        sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+        sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time ^ 0x6b69_6c6c, phys.id);
+        for (kind, amount, attacker) in std::mem::take(&mut phys.pending_hurts) {
+            let mut source = kiln_entity::mob::DamageSource::of(kind);
+            source.attacker = attacker;
+            kiln_entity::mob::hurt_entity(&mut phys, sim, source, amount);
+        }
+        let e = &mut sim.list[i];
+        e.phys = Some(phys);
+        e.sync();
     }
 }
 
