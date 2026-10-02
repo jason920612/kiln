@@ -693,16 +693,21 @@ impl Brain {
 
     /// `Brain.tick`.
     pub fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        crate::prof!("brain", "tick");
         let time = level.game_time();
         let mut cx = Cx { e, m, level, b: &mut self.st, time };
         if debug_on() {
             eprintln!("brain t={time} tick begins rnd {}", cx.e.random.state());
         }
-        cx.b.mem.tick();
+        {
+            crate::prof!("brain", "memories");
+            cx.b.mem.tick();
+        }
         for s in self.sensors.iter_mut() {
             s.time_to_tick -= 1;
             if s.time_to_tick <= 0 {
                 s.time_to_tick = s.s.scan_rate() as i64;
+                crate::prof!("sensor", s.s.name());
                 s.s.do_tick(&mut cx);
             }
         }
@@ -716,6 +721,7 @@ impl Brain {
                 for bi in 0..self.groups[gi].activities[ai].1.len() {
                     let b = &mut self.groups[gi].activities[ai].1[bi];
                     if !b.running() {
+                        crate::prof!("start", b.name());
                         let (r0, l0) = (cx.e.random.state(), cx.rng().state());
                         if b.try_start(&mut cx) && debug_on() {
                             let (r1, l1, t) = (cx.e.random.state(), cx.rng().state(), cx.time);
@@ -734,6 +740,7 @@ impl Brain {
                 for bi in 0..self.groups[gi].activities[ai].1.len() {
                     let b = &mut self.groups[gi].activities[ai].1[bi];
                     if b.running() {
+                        crate::prof!("tick", b.name());
                         let l0 = cx.rng().state();
                         b.tick_or_stop(&mut cx);
                         if debug_on() {

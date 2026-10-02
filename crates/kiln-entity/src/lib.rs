@@ -26,6 +26,7 @@ pub mod mob;
 pub mod persist;
 pub mod physics;
 pub mod player;
+pub mod prof;
 pub mod projectile;
 pub mod ride;
 pub mod shape;

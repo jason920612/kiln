@@ -5,6 +5,10 @@ edition.workspace = true
 version.workspace = true
 publish.workspace = true
 
+[features]
+# Cost counters per named scope (`prof!`), printed by sim_load.
+prof = []
+
 [dependencies]
 bytes.workspace = true
 kiln-data.workspace = true

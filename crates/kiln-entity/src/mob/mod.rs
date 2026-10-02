@@ -1242,9 +1242,13 @@ pub fn has_controlling_passenger(e: &Entity, m: &MobData, level: &dyn EntityLeve
 /// `Mob.tick` (the level ran `commonTick`): the type's pre-tick, `LivingEntity.tick`, then
 /// `Mob.tick`'s control flags.
 pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
+    crate::prof!("mob", e.type_name);
     let mut m = take(e);
     m.swing = false;
-    species::pre_tick(e, &mut m, level);
+    {
+        crate::prof!("mob", "pre_tick");
+        species::pre_tick(e, &mut m, level);
+    }
     living_tick(e, &mut m, level);
     if e.tick_count % 5 == 0 {
         // `updateControlFlags`: no mob passengers, no boats.
@@ -1252,7 +1256,10 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
         m.goals.set_control_flag(goals::JUMP, true);
         m.goals.set_control_flag(goals::LOOK, true);
     }
-    species::post_tick(e, &mut m, level);
+    {
+        crate::prof!("mob", "post_tick");
+        species::post_tick(e, &mut m, level);
+    }
     // `LivingEntity.remove`: a mob that was removed (killed, converted, discarded) forgets what
     // its brain remembered.
     if e.is_removed()
@@ -1265,7 +1272,10 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
 }
 
 fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-    base_tick(e, m, level);
+    {
+        crate::prof!("mob", "base_tick");
+        base_tick(e, m, level);
+    }
     if m.using_item.is_some()
         && let Some(k) = m.kind.ext()
     {
@@ -1276,6 +1286,7 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
     sync_equipment_modifiers(m);
     if !e.is_removed() {
+        crate::prof!("mob", "ai_step");
         ai_step(e, m, level);
     }
     // Body and head rotation (`Mob.tickHeadTurn`), then angle unwinding of the old values.
@@ -1546,6 +1557,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.xxa = 0.0;
         m.zza = 0.0;
     } else if !m.no_ai && rider.is_none() {
+        crate::prof!("mob", "server_ai_step");
         server_ai_step(e, m, level);
     }
     if m.jumping {
@@ -1582,17 +1594,24 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         }
         e.delta = Vec3::ZERO;
     } else if !m.no_ai && !m.kind.ext().is_some_and(|k| k.travel(e, m, level, input)) {
+        crate::prof!("mob", "travel");
         travel(e, m, level, input);
     }
     if let Some((distance, multiplier)) = e.pending_fall.take() {
         cause_fall_damage(e, m, level, distance, multiplier);
     }
-    e.apply_effects_from_blocks(level);
+    {
+        crate::prof!("mob", "apply_effects_from_blocks");
+        e.apply_effects_from_blocks(level);
+    }
     // Freezing.
     if !e.is_in_powder_snow {
         e.ticks_frozen = (e.ticks_frozen - 2).max(0);
     }
-    push_entities(e, m, level);
+    {
+        crate::prof!("mob", "push_entities");
+        push_entities(e, m, level);
+    }
     if m.kind.ext().is_some_and(|k| k.sensitive_to_water()) && (e.is_in_water() || level.is_raining_at(e.block_position())) {
         hurt(e, m, level, DamageSource::of(DamageKind::Drown), 1.0);
     }
@@ -1615,6 +1634,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             }
         }
     }
+    crate::prof!("mob", "species::ai_step");
     species::ai_step(e, m, level);
 }
 
@@ -1680,11 +1700,13 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
     }
     m.goals = sel;
     if m.kind.ext().is_none_or(|k| k.ticks_navigation(m)) {
+        crate::prof!("mob", "navigation");
         path::tick(e, m, level);
     }
     breed::custom_server_ai_step(m);
     let k = m.kind.ext();
     if let Some(k) = k {
+        crate::prof!("mob", "custom_server_ai_step");
         k.custom_server_ai_step(e, m, level);
     }
     if !k.is_some_and(|k| k.tick_move(e, m, level)) {
