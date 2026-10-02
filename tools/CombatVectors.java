@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -623,6 +624,20 @@ public class CombatVectors {
             for (String l : riptideLines) w.println(l);
         }
         System.out.println("CombatVectors: wrote " + riptideLines.size() + " riptide vectors to " + riptidePath);
+        List<String> mountLines = new ArrayList<>();
+        server.submit(() -> {
+            try {
+                MountVectors.run(server, mountLines, 240, 11L);
+            } catch (Throwable t) {
+                t.printStackTrace();
+                mountLines.add("{\"kind\":\"error\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");
+            }
+        }).get();
+        Path mountPath = outPath.resolveSibling("mount.jsonl");
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(mountPath))) {
+            for (String l : mountLines) w.println(l);
+        }
+        System.out.println("CombatVectors: wrote " + mountLines.size() + " mount vectors to " + mountPath);
         server.halt(false);
         System.exit(0);
     }
@@ -1343,5 +1358,179 @@ class RiptideVectors {
             }
         }
         clear(level);
+    }
+}
+
+// Mount vectors: HorseInventoryMenu over horses, donkeys, mules (and llamas): saddle and armor
+// slots that take only what the animal can wear when it is tame and grown, a chest's slots,
+// random click sequences through AbstractContainerMenu.clicked, and what each leaves in the
+// menu's slots, the carried stack and on the ground.
+class MountVectors {
+    static final String[] POOL = {"minecraft:saddle", "minecraft:iron_horse_armor", "minecraft:diamond_horse_armor", "minecraft:leather_horse_armor",
+        "minecraft:golden_horse_armor", "minecraft:copperhorse_armor", "minecraft:netherite_horse_armor", "minecraft:white_carpet", "minecraft:red_carpet", "minecraft:wolf_armor",
+        "minecraft:stone", "minecraft:apple", "minecraft:golden_apple", "minecraft:hay_block", "minecraft:chest", "minecraft:diamond_chestplate",
+        "minecraft:elytra", "minecraft:carrot_on_a_stick", "minecraft:oak_boat"};
+
+    static String pick(Random r) {
+        String s = POOL[r.nextInt(POOL.length)];
+        return s.equals("minecraft:copperhorse_armor") ? "minecraft:copper_horse_armor" : s;
+    }
+
+    static ItemStack stack(String item, int count) {
+        var it = BuiltInRegistries.ITEM.getValue(Identifier.parse(item));
+        return new ItemStack(it, count);
+    }
+
+    static Object[] snapshot(net.minecraft.world.inventory.AbstractContainerMenu menu) {
+        List<Object> slots = new ArrayList<>();
+        for (var slot : menu.slots) {
+            ItemStack st = slot.getItem();
+            slots.add(st.isEmpty() ? null : List.of(BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount(), st.getDamageValue()));
+        }
+        ItemStack c = menu.getCarried();
+        return new Object[] {slots, c.isEmpty() ? null : List.of(BuiltInRegistries.ITEM.getKey(c.getItem()).toString(), c.getCount(), c.getDamageValue())};
+    }
+
+    static void run(MinecraftServer server, List<String> out, int sequences, long seed) throws Exception {
+        ServerLevel level = server.overworld();
+        String[] kinds = {"horse", "donkey", "mule", "skeleton_horse", "donkey", "mule", "horse"};
+        Random rng = new Random(seed);
+        int n = 0;
+        for (int seq = 0; seq < sequences; seq++) {
+            String kind = kinds[rng.nextInt(kinds.length)];
+            boolean tamed = true; // (the screen only opens for a tame animal)
+            boolean baby = false; // (nor for a foal)
+            boolean chest = rng.nextBoolean();
+            boolean creative = rng.nextInt(6) == 0;
+            RiptideVectors.clear(level);
+            ServerPlayer p = CombatVectors.mockPlayer(server, "Mount" + (n++));
+            p.setGameMode(creative ? net.minecraft.world.level.GameType.CREATIVE : net.minecraft.world.level.GameType.SURVIVAL);
+            CombatVectors.call(p.connection, "markClientLoaded");
+            p.setPos(CombatVectors.BX, CombatVectors.BY, CombatVectors.BZ);
+            p.getInventory().clearContent();
+            var type = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse("minecraft:" + kind));
+            var horse = (net.minecraft.world.entity.animal.equine.AbstractHorse) type.create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+            horse.setPos(CombatVectors.BX + 1.5, CombatVectors.BY, CombatVectors.BZ);
+            horse.setTamed(tamed);
+            if (baby) horse.setBaby(true);
+            if (horse instanceof net.minecraft.world.entity.animal.equine.AbstractChestedHorse ch) {
+                ch.setChest(chest);
+                CombatVectors.call(ch, "createInventory");
+            }
+            var inv = (net.minecraft.world.SimpleContainer) CombatVectors.get(horse, "inventory");
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("kind", "mount");
+            m.put("name", "mount/" + seq);
+            m.put("horse", kind);
+            m.put("tamed", tamed);
+            m.put("baby", baby);
+            m.put("chest", chest);
+            m.put("creative", creative);
+            List<Object> invList = new ArrayList<>();
+            double fill = rng.nextDouble();
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                if (rng.nextDouble() < fill * 0.6) {
+                    String it = pick(rng);
+                    int count = Math.min(1 + rng.nextInt(20), stack(it, 1).getMaxStackSize());
+                    inv.setItem(i, stack(it, count));
+                    invList.add(List.of(i, it, count));
+                }
+            }
+            m.put("inventory", invList);
+            if (rng.nextInt(3) == 0) {
+                String it = rng.nextBoolean() ? "minecraft:saddle" : pick(rng);
+                if (horse.isEquippableInSlot(stack(it, 1), EquipmentSlot.SADDLE)) {
+                    horse.setItemSlot(EquipmentSlot.SADDLE, stack(it, 1));
+                    m.put("saddle", it);
+                }
+            }
+            if (rng.nextInt(3) == 0) {
+                String it = pick(rng);
+                if (horse.isEquippableInSlot(stack(it, 1), EquipmentSlot.BODY)) {
+                    horse.setItemSlot(EquipmentSlot.BODY, stack(it, 1));
+                    m.put("body", it);
+                }
+            }
+            level.addFreshEntity(horse);
+            List<Object> player = new ArrayList<>();
+            for (int i = 0; i < 36; i++) {
+                if (rng.nextDouble() < fill * 0.7) {
+                    String it = pick(rng);
+                    int count = Math.min(1 + rng.nextInt(30), stack(it, 1).getMaxStackSize());
+                    p.getInventory().setItem(i, stack(it, count));
+                    player.add(List.of(i, it, count));
+                }
+            }
+            m.put("player_inventory", player);
+            m.put("columns", horse.getInventoryColumns());
+            p.openHorseInventory(horse, inv);
+            var menu = p.containerMenu;
+            CombatVectors.drain(p);
+            m.put("open", snapshot(menu));
+            CombatVectors.field(net.minecraft.world.inventory.AbstractContainerMenu.class, "quickcraftSlots").set(menu, new java.util.LinkedHashSet<>());
+            List<Object> steps = new ArrayList<>();
+            int count = 5 + rng.nextInt(30);
+            int drag = -1;
+            for (int k = 0; k < count; k++) {
+                int size = menu.slots.size();
+                int slot, button, input;
+                if (drag >= 0) {
+                    if (rng.nextInt(4) == 0) { slot = -999; button = net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(2, drag); input = 5; drag = -1; }
+                    else { slot = rng.nextInt(size); button = net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(1, drag); input = 5; }
+                } else {
+                    slot = rng.nextInt(25) == 0 ? -999 : rng.nextInt(size);
+                    if (rng.nextInt(3) == 0) slot = rng.nextInt(Math.min(size, 2 + 3 * horse.getInventoryColumns()));
+                    int r = rng.nextInt(100);
+                    if (r < 45) { button = rng.nextInt(2); input = 0; }
+                    else if (r < 65) { button = rng.nextInt(2); input = 1; }
+                    else if (r < 75) { button = rng.nextInt(12) == 0 ? 40 : rng.nextInt(9); input = 2; }
+                    else if (r < 80) { button = rng.nextInt(2); input = 4; }
+                    else if (r < 90) { drag = rng.nextInt(2); slot = -999; button = net.minecraft.world.inventory.AbstractContainerMenu.getQuickcraftMask(0, drag); input = 5; }
+                    else if (r < 96) { button = rng.nextInt(2); input = 6; }
+                    else { button = 2; input = creative ? 3 : 0; }
+                }
+                var ci = net.minecraft.world.inventory.ContainerInput.values()[input];
+                boolean crash = false;
+                try {
+                    menu.clicked(slot, button, ci, p);
+                    menu.broadcastChanges();
+                } catch (RuntimeException e) {
+                    crash = true;
+                }
+                Map<String, Object> step = new LinkedHashMap<>();
+                step.put("slot", slot);
+                step.put("button", button);
+                step.put("input", input);
+                if (crash) {
+                    step.put("crash", true);
+                    steps.add(step);
+                    break;
+                }
+                Object[] snap = snapshot(menu);
+                step.put("slots", snap[0]);
+                step.put("carried", snap[1]);
+                steps.add(step);
+                if (!horse.isAlive() || p.containerMenu != menu) break;
+            }
+            m.put("steps", steps);
+            // What lay on the ground afterwards (items by name and count).
+            Map<String, Integer> dropped = new java.util.TreeMap<>();
+            for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-6, 90, -6, 6, 120, 6), e -> e instanceof net.minecraft.world.entity.item.ItemEntity)) {
+                var st = ((net.minecraft.world.entity.item.ItemEntity) e).getItem();
+                dropped.merge(BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount(), Integer::sum);
+            }
+            m.put("dropped", dropped);
+            // The horse's own state afterwards.
+            Map<String, Object> state = new LinkedHashMap<>();
+            for (var slot : new EquipmentSlot[] {EquipmentSlot.SADDLE, EquipmentSlot.BODY}) {
+                ItemStack st = horse.getItemBySlot(slot);
+                state.put(slot.getName(), st.isEmpty() ? null : BuiltInRegistries.ITEM.getKey(st.getItem()).toString());
+            }
+            m.put("horse_state", state);
+            out.add(CombatVectors.toJson(m));
+            horse.discard();
+            for (var e : new ArrayList<>(level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-6, 90, -6, 6, 120, 6), e -> e instanceof net.minecraft.world.entity.item.ItemEntity))) e.discard();
+            server.getPlayerList().remove(p);
+        }
     }
 }

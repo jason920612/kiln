@@ -1314,8 +1314,9 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 pub fn sync_equipment_modifiers(m: &mut MobData) {
     use kiln_item::component::{AttributeOperation, EquipmentSlotGroup as G};
     let mut want: Vec<(Attr, String, f64, Op)> = Vec::new();
-    for slot in 0..6 {
-        let stack = &m.equipment[slot];
+    // The six slots, then the body (6) and saddle (7) of the mounts that have them.
+    let extras = m.kind.ext().map(|k| k.extra_equipment(m)).unwrap_or_default();
+    for (slot, stack) in m.equipment.iter().enumerate().chain(extras.iter().map(|(i, s)| (*i as usize, s))) {
         if stack.is_empty() || (stack.is_damageable_item() && stack.damage() >= stack.max_damage()) {
             continue;
         }
@@ -1330,8 +1331,9 @@ pub fn sync_equipment_modifiers(m: &mut MobData) {
                 G::Legs => slot == LEGS,
                 G::Chest => slot == CHEST,
                 G::Head => slot == HEAD,
-                G::Armor => slot >= FEET,
-                G::Body | G::Saddle => false,
+                G::Armor => (FEET..=HEAD).contains(&slot) || slot == 6,
+                G::Body => slot == 6,
+                G::Saddle => slot == 7,
             };
             let name = kiln_data::builtin_entries("minecraft:attribute").and_then(|e| e.get(md.attribute as usize).copied());
             let Some(attr) = name.and_then(Attr::by_name) else { continue };
@@ -2320,6 +2322,26 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
             }
             spawn_at_location(e, level, stack);
         }
+    }
+    // The same for the slots past the six (a horse's body armor and saddle).
+    if let Some(k) = m.kind.ext() {
+        for (mut stack, chance) in k.take_extra_equipment_for_drop(m) {
+            if chance == 0.0 || stack.is_empty() {
+                continue;
+            }
+            let preserved = chance > 1.0;
+            if (killed_by_player || preserved) && e.random.next_float() < chance {
+                if !preserved && stack.is_damageable_item() {
+                    let max = stack.max_damage();
+                    let inner = e.random.next_int_bounded((max - 3).max(1));
+                    let d = max - e.random.next_int_bounded(1 + inner);
+                    stack.insert(kiln_item::keys::DAMAGE, d);
+                }
+                spawn_at_location(e, level, stack);
+            }
+        }
+        // `dropEquipment`.
+        k.drop_equipment(e, m, level);
     }
     // `dropExperience`.
     if killed_by_player && level.mob_drops() && !consumed {

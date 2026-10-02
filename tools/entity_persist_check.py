@@ -67,10 +67,18 @@ SUMMONS = [
     ("furnace minecart", f'furnace_minecart 131.5 {Y} -44.5 {{Fuel:1234s,PushX:0.5d,PushZ:0.25d}}'),
     ("tnt minecart", f'tnt_minecart 132.5 {Y} -44.5 {{fuse:30000,explosion_power:6.0f}}'),
     ("loot minecart", f'chest_minecart 133.5 {Y} -44.5 {{LootTable:"minecraft:chests/simple_dungeon",LootTableSeed:99L}}'),
+    # Chest boats and rafts, and a donkey with a chest and a saddle.
+    ("chest boat", f'oak_chest_boat 134.5 {Y} -44.5 {{Items:[{{Slot:2b,id:"minecraft:diamond",count:6}},'
+                   f'{{Slot:20b,id:"minecraft:apple",count:3}}],Tags:["kiln"]}}'),
+    ("loot chest raft", f'bamboo_chest_raft 135.5 {Y} -44.5 {{LootTable:"minecraft:chests/simple_dungeon",LootTableSeed:7L}}'),
+    ("donkey", f'donkey 136.5 {Y} -44.5 {{NoAI:1b,Tame:1b,PersistenceRequired:1b,ChestedHorse:1b,'
+               f'Items:[{{Slot:0b,id:"minecraft:emerald",count:5}},{{Slot:14b,id:"minecraft:stick",count:9}}],'
+               f'equipment:{{saddle:{{id:"minecraft:saddle",count:1}}}},Tags:["kiln"]}}'),
 ]
 SIMULATED = {"minecraft:item", "minecraft:experience_orb", "minecraft:arrow", "minecraft:falling_block",
              "minecraft:tnt", "minecraft:snowball", "minecraft:pig", "minecraft:zombie", "minecraft:chest_minecart",
-             "minecraft:hopper_minecart", "minecraft:furnace_minecart", "minecraft:tnt_minecart"}
+             "minecraft:hopper_minecart", "minecraft:furnace_minecart", "minecraft:tnt_minecart", "minecraft:oak_chest_boat",
+             "minecraft:bamboo_chest_raft", "minecraft:donkey"}
 
 
 def entity_types():
@@ -306,6 +314,16 @@ def main():
     loot = one("minecraft:chest_minecart", lambda e: get(e, "LootTable") is not None)
     check("loot table minecart keeps its unrolled table and seed",
           loot is not None and val(get(loot, "LootTable")) == "minecraft:chests/simple_dungeon" and val(get(loot, "LootTableSeed")) == 99, f"{loot}")
+    boat = one("minecraft:oak_chest_boat")
+    check("chest boat keeps its slots and tags",
+          boat is not None and slots(boat) == {2: ("minecraft:diamond", 6), 20: ("minecraft:apple", 3)} and get(boat, "Tags") is not None, f"{boat}")
+    raft = one("minecraft:bamboo_chest_raft")
+    check("chest raft keeps its unrolled loot table and seed",
+          raft is not None and val(get(raft, "LootTable")) == "minecraft:chests/simple_dungeon" and val(get(raft, "LootTableSeed")) == 7, f"{raft}")
+    donkey = one("minecraft:donkey")
+    check("donkey keeps its chest, slots, saddle and tags",
+          donkey is not None and val(get(donkey, "ChestedHorse")) == 1 and slots(donkey) == {0: ("minecraft:emerald", 5), 14: ("minecraft:stick", 9)}
+          and val(get(donkey, "equipment", "saddle", "id")) == "minecraft:saddle" and get(donkey, "Tags") is not None, f"{donkey}")
     snow = one("minecraft:snowball")
     check("snowball kept", snow is not None and val(get(snow, "NoGravity")) == 1, f"{snow}")
     emerald = one("minecraft:item", lambda e: val(get(e, "Item", "id")) == "minecraft:emerald")

@@ -51,6 +51,9 @@ pub(crate) struct PlayerContainers {
     /// Where the open entity menu's chest minecart or chest boat is (`stopOpen` posts
     /// `container_close` there when the menu closes); `None` for the others.
     pub cart_event_pos: Option<[f64; 3]>,
+    /// For the screen of a mount: how often its inventory had been made anew when the screen
+    /// opened (a new inventory closes the screen).
+    pub cart_serial: Option<u32>,
     /// A menu closed while the entity was ticking: its `container_close` still to post.
     pub cart_closed: Option<[f64; 3]>,
     ender_undecoded: Vec<(i32, Tag)>,
@@ -75,6 +78,7 @@ impl PlayerContainers {
             ender: SimpleContainer::from_items(list.stacks),
             cart: SimpleContainer::default(),
             cart_event_pos: None,
+            cart_serial: None,
             cart_closed: None,
             ender_undecoded: list.undecoded,
             pending: Vec::new(),

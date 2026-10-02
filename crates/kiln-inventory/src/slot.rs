@@ -29,6 +29,10 @@ pub enum SlotKind {
     Normal,
     /// `ArmorSlot`: one item that is equippable in this slot; a curse of binding keeps it on.
     Armor(EquipmentSlot),
+    /// `ArmorSlot` of a mount's screen (`HorseInventoryMenu`): the saddle or body slot of an
+    /// animal of entity type `entity` (a `minecraft:entity_type` id); it takes only what that
+    /// type may wear, and nothing when the animal cannot use the slot (`usable`).
+    Mount { slot: EquipmentSlot, entity: i32, usable: bool },
     /// The inventory menu's off hand slot (`InventoryMenu$1`).
     Offhand,
     /// `ResultSlot` of a crafting grid.
@@ -102,6 +106,7 @@ impl Slot {
         match self.kind {
             SlotKind::Normal | SlotKind::Offhand => true,
             SlotKind::Armor(slot) => rules.is_equippable_in_slot(stack, slot),
+            SlotKind::Mount { slot, entity, usable } => usable && mount_may_wear(stack, slot, entity),
             SlotKind::CraftResult
             | SlotKind::FurnaceResult
             | SlotKind::StonecutterResult
@@ -135,7 +140,7 @@ impl Slot {
     /// `mayPickup`.
     pub fn may_pickup(&self, item: &ItemStack, creative: bool, rules: &Rules) -> bool {
         match self.kind {
-            SlotKind::Armor(_) => item.is_empty() || creative || !rules.prevents_armor_change(item),
+            SlotKind::Armor(_) | SlotKind::Mount { .. } => item.is_empty() || creative || !rules.prevents_armor_change(item),
             _ => true,
         }
     }
@@ -143,7 +148,7 @@ impl Slot {
     /// `getMaxStackSize()`, given the container's.
     pub fn max_stack_size(&self, container_max: i32) -> i32 {
         match self.kind {
-            SlotKind::Armor(_) | SlotKind::EnchantItem | SlotKind::BrewingPotion | SlotKind::BeaconPayment => 1,
+            SlotKind::Armor(_) | SlotKind::Mount { .. } | SlotKind::EnchantItem | SlotKind::BrewingPotion | SlotKind::BeaconPayment => 1,
             _ => container_max,
         }
     }
@@ -163,6 +168,21 @@ impl Slot {
             SlotKind::Offhand => Some(EquipmentSlot::OffHand),
             _ => None,
         }
+    }
+}
+
+/// `LivingEntity.isEquippableInSlot` less `canUseSlot`: `stack`'s `equippable` names `slot` and
+/// lets entity type `entity` wear it.
+pub fn mount_may_wear(stack: &ItemStack, slot: EquipmentSlot, entity: i32) -> bool {
+    use kiln_item::HolderSet;
+    let Some(e) = stack.get(keys::EQUIPPABLE) else { return false };
+    if e.slot != slot {
+        return false;
+    }
+    match &e.allowed_entities {
+        None => true,
+        Some(HolderSet::Direct(ids)) => ids.contains(&entity),
+        Some(HolderSet::Tag(tag)) => crate::tags::contains("minecraft:entity_type", tag.as_str(), entity),
     }
 }
 

@@ -1,7 +1,9 @@
 //! Horses, donkeys and mules (`AbstractHorse`, `AbstractChestedHorse`): random stats at spawn,
 //! grazing and rearing, tamed by riding (temper, `RunAroundLikeCrazyGoal` bucks the rider),
-//! fed, saddled and then steered by their rider, chests on donkeys and mules, breeding.
-//! Not modelled: horse armor, the inventory screen, horse-donkey cross breeding (mules).
+//! fed, saddled and then steered by their rider, chests on donkeys and mules (15 slots), body
+//! armor, the inventory the screen shows (saddle, armor and the chest's slots, kept in
+//! [`State`], dropped when the animal dies), breeding.
+//! Not modelled: horse-donkey cross breeding (mules).
 
 use super::tame::TamableAnimalPanicGoal;
 use crate::custom_goal_boilerplate;
@@ -80,6 +82,21 @@ pub struct State {
     pub saddle: ItemStack,
     /// `AbstractChestedHorse.hasChest`.
     pub chest: bool,
+    /// `AbstractHorse.inventory`: the chest's slots (`3 * columns`, none without a chest).
+    pub inventory: Vec<ItemStack>,
+    /// Saved `Items` entries that did not decode, written back unchanged.
+    inv_undecoded: Vec<(i32, Tag)>,
+    /// `EquipmentSlot.BODY`: horse armor (a llama's carpet).
+    pub body: ItemStack,
+    /// What `dropChances` says about the saddle and the body slot (a slot filled by a player
+    /// is guaranteed to drop: 2).
+    pub saddle_drop: f32,
+    pub body_drop: f32,
+    /// Counts the times the inventory was made anew (the screen on the old one closes).
+    pub inv_serial: u32,
+    /// Equipment changes made through the screen whose `onEquipItem` is still to come: (slot
+    /// ordinal, old, new).
+    pending_equip: Vec<(u8, ItemStack, ItemStack)>,
     /// `Horse.DATA_ID_TYPE_VARIANT`: variant | markings << 8.
     pub type_variant: i32,
     /// `SkeletonHorse.isTrap` and `trapTime`.
@@ -254,6 +271,24 @@ impl Equine {
         matches!(self.0, Which::Donkey | Which::Mule)
     }
 
+    /// `getInventoryColumns`: five with a chest (a llama: its strength).
+    fn columns(&self, m: &MobData) -> usize {
+        if self.chested() && st(m).chest { 5 } else { 0 }
+    }
+
+    /// `createInventory`: a new container of `getInventorySize()` slots that takes over what fits
+    /// of the old one.
+    fn create_inventory(&self, m: &mut MobData) {
+        let n = self.columns(m) * 3;
+        let s = st_mut(m);
+        let mut inv = vec![ItemStack::empty(); n];
+        for (i, slot) in s.inventory.iter().enumerate().take(n) {
+            inv[i] = slot.clone();
+        }
+        s.inventory = inv;
+        s.inv_serial += 1;
+    }
+
     /// The type's passenger attachment height (`passengerAttachments`).
     fn attach_height(&self, m: &MobData) -> (f64, f64) {
         match (self.0, m.baby()) {
@@ -301,6 +336,13 @@ impl Kind for Equine {
             allow_stand_sliding: false,
             saddle: ItemStack::empty(),
             chest: false,
+            inventory: Vec::new(),
+            inv_undecoded: Vec::new(),
+            body: ItemStack::empty(),
+            saddle_drop: 0.085,
+            body_drop: 0.085,
+            inv_serial: 0,
+            pending_equip: Vec::new(),
             type_variant: 0,
             trap: false,
             trap_time: 0,
@@ -342,7 +384,12 @@ impl Kind for Equine {
         s.eating || s.standing
     }
 
-    fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
+    fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        // What was put on or taken off through the screen since the last tick (`onEquipItem`).
+        for (slot, old, new) in std::mem::take(&mut st_mut(m).pending_equip) {
+            let slot = if slot == 7 { kiln_item::component::EquipmentSlot::Saddle } else { kiln_item::component::EquipmentSlot::Body };
+            equip_sound(e, level, slot, &old, &new);
+        }
         if e.random.next_int_bounded(200) == 0 {
             st_mut(m).tail_counter = 1;
         }
@@ -590,9 +637,11 @@ impl Kind for Equine {
                 return Some(Outcome::success(HeldChange::None));
             }
             if self.chested() && !st(m).chest && is(stack, "minecraft:chest") {
+                // `equipChest`.
                 st_mut(m).chest = true;
                 let pitch = (e.random.next_float() - e.random.next_float()) * 0.2 + 1.0;
                 play(e, level, sound(m, "chest"), 1.0, pitch);
+                self.create_inventory(m);
                 return Some(Outcome::success(HeldChange::Consume(1)));
             }
         }
@@ -601,14 +650,27 @@ impl Kind for Equine {
             return Some(crate::mob::interact::animal_interact(e, m, level, who, stack));
         }
         if st(m).tamed && who.sneaking {
-            // The inventory screen is not modelled.
-            return Some(Outcome::success(HeldChange::None));
+            // `openCustomInventoryScreen`: the screen of the tame animal, for whoever rides it
+            // or when nobody does.
+            let mut out = Outcome::success(HeldChange::None);
+            out.open_container = e.passengers.is_empty() || e.passengers.contains(&who.id);
+            return Some(out);
         }
         if is(stack, "minecraft:saddle") && st(m).tamed && st(m).saddle.is_empty() && crate::mob::is_alive(e, m) {
             let mut one = stack.clone();
             one.set_count(1);
             st_mut(m).saddle = one;
             play(e, level, "minecraft:entity.horse.saddle", 0.5, 1.0);
+            return Some(Outcome::success(HeldChange::Consume(1)));
+        }
+        // `equipBodyArmor`: armor from the hand goes on a bare body.
+        if !stack.is_empty() && st(m).body.is_empty() && equippable_in_slot(stack, kiln_item::component::EquipmentSlot::Body, e.type_name) {
+            let mut one = stack.clone();
+            one.set_count(1);
+            let s = st_mut(m);
+            s.body = one.clone();
+            s.body_drop = 2.0;
+            equip_sound(e, level, kiln_item::component::EquipmentSlot::Body, &ItemStack::empty(), &one);
             return Some(Outcome::success(HeldChange::Consume(1)));
         }
         // `doPlayerRide`.
@@ -621,7 +683,36 @@ impl Kind for Equine {
 
     fn extra_equipment(&self, m: &MobData) -> Vec<(u8, ItemStack)> {
         let s = st(m);
-        if s.saddle.is_empty() { Vec::new() } else { vec![(7, s.saddle.clone())] }
+        let mut out = Vec::new();
+        if !s.body.is_empty() {
+            out.push((6, s.body.clone()));
+        }
+        if !s.saddle.is_empty() {
+            out.push((7, s.saddle.clone()));
+        }
+        out
+    }
+
+    fn take_extra_equipment_for_drop(&self, m: &mut MobData) -> Vec<(ItemStack, f32)> {
+        let s = st_mut(m);
+        vec![(std::mem::take(&mut s.body), s.body_drop), (std::mem::take(&mut s.saddle), s.saddle_drop)]
+    }
+
+    /// `AbstractHorse.dropEquipment` (the inventory) and `AbstractChestedHorse.dropEquipment` (the
+    /// chest).
+    fn drop_equipment(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+        let items = std::mem::take(&mut st_mut(m).inventory);
+        for stack in items {
+            if !stack.is_empty() {
+                crate::mob::spawn_at_location(e, level, stack);
+            }
+        }
+        if self.chested() && st(m).chest {
+            if let Some(chest) = ItemStack::of("minecraft:chest", 1) {
+                crate::mob::spawn_at_location(e, level, chest);
+            }
+            st_mut(m).chest = false;
+        }
     }
 
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
@@ -629,6 +720,16 @@ impl Kind for Equine {
             Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
             _ => None,
         };
+        let body = match r.get("equipment") {
+            Some(Tag::Compound(eq)) => eq.iter().find(|(k, _)| k == "body").and_then(|(_, v)| ItemStack::from_nbt(v).ok()),
+            _ => None,
+        };
+        let drop_chance = |r: &mut Input, key: &str| match r.get("drop_chances") {
+            Some(Tag::Compound(dc)) => dc.iter().find(|(k, _)| k == key).and_then(|(_, v)| v.as_f64()).map(|f| f as f32),
+            _ => None,
+        };
+        let (saddle_drop, body_drop) = (drop_chance(r, "saddle"), drop_chance(r, "body"));
+        let items = r.get("Items").cloned();
         let eating = r.bool_or("EatingHaystack", false);
         let bred = r.bool_or("Bred", false);
         let temper = r.int_or("Temper", 0);
@@ -646,12 +747,33 @@ impl Kind for Equine {
         if let Some(sd) = saddle {
             s.saddle = sd;
         }
+        if let Some(b) = body {
+            s.body = b;
+        }
+        if let Some(d) = saddle_drop {
+            s.saddle_drop = d;
+        }
+        if let Some(d) = body_drop {
+            s.body_drop = d;
+        }
         if self.0 == Which::Horse {
             s.type_variant = variant;
         } else if self.chested() {
             s.chest = chest;
         }
+        if self.chested() {
+            // `AbstractChestedHorse.readAdditionalSaveData`: `createInventory`, then the `Items`.
+            self.create_inventory(m);
+            let n = st(m).inventory.len();
+            if st(m).chest {
+                let list = kiln_inventory::persist::ItemList::load(items.as_ref(), n);
+                let s = st_mut(m);
+                s.inventory = list.stacks;
+                s.inv_undecoded = list.undecoded;
+            }
+        }
         if self.0 == Which::Skeleton {
+            let s = st_mut(m);
             s.trap_time = trap_time;
             super::skeleton_horse::set_trap(m, trap);
         }
@@ -659,11 +781,23 @@ impl Kind for Equine {
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
         let s = st(m);
-        if !s.saddle.is_empty() {
-            let entry = ("saddle".to_owned(), s.saddle.to_nbt());
+        for (key, stack) in [("body", &s.body), ("saddle", &s.saddle)] {
+            if stack.is_empty() {
+                continue;
+            }
+            let entry = (key.to_owned(), stack.to_nbt());
             match o.0.iter_mut().find(|(k, _)| k == "equipment") {
                 Some((_, Tag::Compound(eq))) => eq.push(entry),
                 _ => o.put("equipment", Tag::Compound(vec![entry])),
+            }
+        }
+        for (key, chance) in [("saddle", s.saddle_drop), ("body", s.body_drop)] {
+            if chance != 0.085 {
+                let entry = (key.to_owned(), Tag::Float(chance));
+                match o.0.iter_mut().find(|(k, _)| k == "drop_chances") {
+                    Some((_, Tag::Compound(dc))) => dc.push(entry),
+                    _ => o.put("drop_chances", Tag::Compound(vec![entry])),
+                }
             }
         }
         o.put("EatingHaystack", Tag::Byte(s.eating as i8));
@@ -677,6 +811,9 @@ impl Kind for Equine {
             o.put("Variant", Tag::Int(s.type_variant));
         } else if self.chested() {
             o.put("ChestedHorse", Tag::Byte(s.chest as i8));
+            if s.chest {
+                o.put("Items", kiln_inventory::persist::ItemList { stacks: s.inventory.clone(), undecoded: s.inv_undecoded.clone() }.save());
+            }
         }
         if self.0 == Which::Skeleton {
             o.put("SkeletonTrap", Tag::Byte(s.trap as i8));
@@ -794,6 +931,82 @@ impl CustomGoal for RandomStandGoal {
         stand(m);
         play(e, level, sound(m, "ambient"), 0.8, 1.0);
     }
+}
+
+/// `Equippable.canBeEquippedBy` and the slot: whether `stack` goes in `slot` of a `entity_type`.
+pub fn equippable_in_slot(stack: &ItemStack, slot: kiln_item::component::EquipmentSlot, entity_type: &str) -> bool {
+    use kiln_item::HolderSet;
+    let Some(e) = stack.get(kiln_item::keys::EQUIPPABLE) else { return false };
+    if e.slot != slot {
+        return false;
+    }
+    let Some(allowed) = &e.allowed_entities else { return true };
+    let Some(id) = kiln_item::registry::ENTITY_TYPE.id(entity_type) else { return false };
+    match allowed {
+        HolderSet::Direct(ids) => ids.contains(&id),
+        HolderSet::Tag(tag) => kiln_inventory::tags::contains("minecraft:entity_type", tag.as_str(), id),
+    }
+}
+
+/// `onEquipItem` for a mount: the equip sound (the saddle's own for a saddle), with the seed
+/// drawn from the animal's random, unless the same item was swapped for itself.
+fn equip_sound(e: &mut Entity, level: &mut dyn EntityLevel, slot: kiln_item::component::EquipmentSlot, old: &ItemStack, new: &ItemStack) {
+    use kiln_inventory::stack::same_item_same_components as same;
+    if (new.is_empty() && old.is_empty()) || same(old, new) || e.first_tick {
+        return;
+    }
+    let Some(equippable) = new.get(kiln_item::keys::EQUIPPABLE) else { return };
+    if e.silent || equippable.slot != slot {
+        return;
+    }
+    let sound = if slot == kiln_item::component::EquipmentSlot::Saddle {
+        "minecraft:entity.horse.saddle"
+    } else {
+        match &equippable.equip_sound {
+            kiln_item::Holder::Reference(id) => kiln_data::builtin_entries("minecraft:sound_event").and_then(|n| n.get(*id as usize).copied()).unwrap_or("minecraft:item.armor.equip_generic"),
+            kiln_item::Holder::Direct(_) => "minecraft:item.armor.equip_generic",
+        }
+    };
+    e.random.next_long();
+    level.emit(Event::Sound { pos: e.position(), sound, source: "neutral", volume: 1.0, pitch: 1.0 });
+}
+
+/// The slots a mount's screen shows: saddle, body armor, then the chest's.
+pub fn mount_slots(m: &MobData) -> Option<Vec<ItemStack>> {
+    let s = ext::state::<State>(m)?;
+    let mut v = vec![s.saddle.clone(), s.body.clone()];
+    v.extend(s.inventory.iter().cloned());
+    Some(v)
+}
+
+/// What the screen's slots now say, taken into the animal (the changes of the saddle and the
+/// armor sound at the animal's next tick).
+pub fn set_mount_slots(m: &mut MobData, items: &[ItemStack]) {
+    let Some(s) = ext::state_mut::<State>(m) else { return };
+    if items.len() != 2 + s.inventory.len() {
+        return;
+    }
+    if !same_stack(&s.saddle, &items[0]) {
+        s.pending_equip.push((7, s.saddle.clone(), items[0].clone()));
+    }
+    if !same_stack(&s.body, &items[1]) {
+        s.pending_equip.push((6, s.body.clone(), items[1].clone()));
+    }
+    s.saddle = items[0].clone();
+    s.body = items[1].clone();
+    s.inventory.clone_from_slice(&items[2..]);
+}
+
+fn same_stack(a: &ItemStack, b: &ItemStack) -> bool {
+    kiln_inventory::stack::same_item_same_components(a, b) && a.count() == b.count()
+}
+
+/// `getInventoryColumns`, whether the saddle slot can be used (`canUseSlot(SADDLE)`: grown, tame
+/// and alive) and how often the inventory was made anew, of the mount `e`.
+pub fn mount_info(e: &Entity, m: &MobData) -> Option<(usize, bool, u32)> {
+    let s = ext::state::<State>(m)?;
+    let columns = s.inventory.len() / 3;
+    Some((columns, crate::mob::is_alive(e, m) && !m.baby() && s.tamed, s.inv_serial))
 }
 
 /// `handleStartJump` (a rider's jump key on a saddled mount): the horse rears; its jump sound.

@@ -1645,7 +1645,7 @@ impl Sim {
     pub fn open_menu(&self, conn: ConnId) -> Option<MenuView> {
         let p = self.players.get(&conn)?;
         let menu = p.open_menu.as_ref()?;
-        let ty = menu.kind.menu_type()?;
+        let ty = menu.kind.menu_type().or(matches!(menu.kind, kiln_inventory::MenuKind::Mount { .. }).then_some("minecraft:mount"))?;
         // The menu's own containers (crafting grid, inputs, result), read through a scratch
         // environment when the menu has no block container.
         let own: Option<Vec<kiln_item::ItemStack>> = menu.slots().iter().all(|s| s.source != kiln_inventory::Source::Block).then(|| {
@@ -1686,6 +1686,12 @@ impl Sim {
             stack.filter(|s| !s.is_empty()).map(|s| (s.item_name(), s.count()))
         });
         Some((ty, items.collect()))
+    }
+
+    /// The stack the cursor carries in a player's open menu (for tests and tools).
+    pub fn menu_carried(&self, conn: ConnId) -> Option<(&'static str, i32)> {
+        let c = self.players.get(&conn)?.open_menu.as_ref()?.carried();
+        (!c.is_empty()).then(|| (c.item_name(), c.count()))
     }
 
     /// Timing of the last completed statistics window.

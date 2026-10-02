@@ -511,3 +511,150 @@ fn riptide_parity() {
     println!("riptide parity: {passed} passed, {} failed", failed.len());
     assert!(failed.is_empty(), "failed: {failed:?}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Mounts: the screens of horses, donkeys and mules (`mount.jsonl`; `KILN_MOUNT_VECTORS`).
+
+fn nbt_item(slot: Option<i64>, name: &str, count: i64) -> String {
+    match slot {
+        Some(s) => format!("{{Slot:{s}b,id:\"{name}\",count:{count}}}"),
+        None => format!("{{id:\"{name}\",count:{count}}}"),
+    }
+}
+
+fn menu_slots(sim: &Sim) -> Vec<Option<(String, i64)>> {
+    sim.open_menu(1).map(|(_, v)| v).unwrap_or_default().into_iter().map(|s| s.map(|(n, c)| (n.to_owned(), c as i64))).collect()
+}
+
+fn want_slots(v: &Value) -> Vec<Option<(String, i64)>> {
+    v.as_array().unwrap().iter().map(|s| s.as_array().map(|a| (a[0].as_str().unwrap().to_owned(), a[1].as_i64().unwrap()))).collect()
+}
+
+fn run_mount(v: &Value) -> Vec<String> {
+    let (mut sim, _clients, _stats, base) = riptide_sim();
+    let creative = v["creative"].as_bool().unwrap();
+    console(&mut sim, format!("gamemode {} Rip", if creative { "creative" } else { "survival" }));
+    let kind = v["horse"].as_str().unwrap();
+    let mut nbt = vec!["NoAI:1b".to_owned(), "Tame:1b".to_owned(), "PersistenceRequired:1b".to_owned()];
+    if v["chest"].as_bool().unwrap() && matches!(kind, "donkey" | "mule") {
+        nbt.push("ChestedHorse:1b".into());
+        let items: Vec<String> = v["inventory"].as_array().unwrap().iter().map(|i| nbt_item(i[0].as_i64(), i[1].as_str().unwrap(), i[2].as_i64().unwrap())).collect();
+        nbt.push(format!("Items:[{}]", items.join(",")));
+    }
+    let mut equipment = Vec::new();
+    for key in ["saddle", "body"] {
+        if let Some(name) = v[key].as_str() {
+            equipment.push(format!("{key}:{}", nbt_item(None, name, 1)));
+        }
+    }
+    if !equipment.is_empty() {
+        nbt.push(format!("equipment:{{{}}}", equipment.join(",")));
+    }
+    console(&mut sim, format!("summon minecraft:{kind} {} {} {} {{{}}}", base[0] + 1.5, base[1], base[2], nbt.join(",")));
+    assert!(sim.step([]));
+    {
+        let p = sim.players.get_mut(&1).unwrap();
+        p.inv = kiln_inventory::PlayerInventory::new();
+        for i in v["player_inventory"].as_array().unwrap() {
+            let (slot, name, count) = (i[0].as_u64().unwrap() as usize, i[1].as_str().unwrap(), i[2].as_i64().unwrap() as i32);
+            p.inv.items[slot] = kiln_item::ItemStack::of(name, count).unwrap_or_else(|| panic!("unknown item {name}"));
+        }
+        p.loot = vanilla_loot();
+        see_equipment(p);
+    }
+    let horse = sim.mobs().into_iter().find(|m| m.1 == format!("minecraft:{kind}")).map(|m| m.0).expect("the animal");
+    assert!(sim.step([ToSim::Packet(1, PlayIn::Interact { entity_id: horse, hand: kiln_proto::packets::serverbound::Hand::Main, location: [0.0, 0.5, 0.0], sneaking: true })]));
+    let mut errors = Vec::new();
+    let open = want_slots(&v["open"][0]);
+    let got = menu_slots(&sim);
+    if got != open {
+        errors.push(format!("open: kiln {got:?}\n  vanilla {open:?}"));
+        return errors;
+    }
+    let container = sim.players[&1].open_menu.as_ref().map(|m| m.container_id).unwrap_or(0);
+    for (n, step) in v["steps"].as_array().unwrap().iter().enumerate() {
+        if step["crash"].as_bool() == Some(true) {
+            break;
+        }
+        let input = [
+            kiln_inventory::ContainerInput::Pickup,
+            kiln_inventory::ContainerInput::QuickMove,
+            kiln_inventory::ContainerInput::Swap,
+            kiln_inventory::ContainerInput::Clone,
+            kiln_inventory::ContainerInput::Throw,
+            kiln_inventory::ContainerInput::QuickCraft,
+            kiln_inventory::ContainerInput::PickupAll,
+        ][step["input"].as_i64().unwrap() as usize];
+        let click = kiln_inventory::ContainerClick {
+            container_id: container,
+            state_id: 0,
+            slot: step["slot"].as_i64().unwrap() as i16,
+            button: step["button"].as_i64().unwrap() as i8,
+            input,
+            changed: Vec::new(),
+            carried: kiln_item::HashedStack::Empty,
+        };
+        let mut body = bytes::BytesMut::new();
+        click.write(&mut body);
+        assert!(sim.step([ToSim::Packet(1, PlayIn::ContainerClick { body: body.freeze() })]));
+        let (got, want) = (menu_slots(&sim), want_slots(&step["slots"]));
+        let carried = sim.menu_carried(1).map(|(n, c)| (n.to_owned(), c as i64));
+        let want_carried = step["carried"].as_array().map(|a| (a[0].as_str().unwrap().to_owned(), a[1].as_i64().unwrap()));
+        if got != want || carried != want_carried {
+            let diff: Vec<String> = got.iter().zip(&want).enumerate().filter(|(_, (g, w))| g != w).map(|(i, (g, w))| format!("slot {i}: kiln {g:?} vanilla {w:?}")).collect();
+            errors.push(format!(
+                "step {n} (slot {} button {} input {}): {} carried kiln {carried:?} vanilla {want_carried:?}",
+                step["slot"], step["button"], step["input"], diff.join("; ")
+            ));
+            return errors;
+        }
+        if sim.open_menu(1).is_none() {
+            break;
+        }
+    }
+    // What lay on the ground, and what the animal wears.
+    let mut dropped = std::collections::BTreeMap::new();
+    for s in sim.item_stacks() {
+        *dropped.entry(s.item_name().to_owned()).or_insert(0i64) += s.count() as i64;
+    }
+    let want_dropped: std::collections::BTreeMap<String, i64> = v["dropped"].as_object().unwrap().iter().map(|(k, c)| (k.clone(), c.as_i64().unwrap())).collect();
+    if dropped != want_dropped {
+        errors.push(format!("dropped: kiln {dropped:?}, vanilla {want_dropped:?}"));
+    }
+    let saved = sim.entity_nbt().into_iter().find(|t| t.get("id").and_then(Tag::as_str) == Some(&format!("minecraft:{kind}")));
+    let worn = |key: &str| saved.as_ref().and_then(|t| t.get("equipment")).and_then(|e| e.get(key)).and_then(|i| i.get("id")).and_then(Tag::as_str).map(str::to_owned);
+    for (key, want) in [("saddle", v["horse_state"]["saddle"].as_str()), ("body", v["horse_state"]["body"].as_str())] {
+        if worn(key).as_deref() != want {
+            errors.push(format!("{key}: kiln {:?}, vanilla {want:?}", worn(key)));
+        }
+    }
+    errors
+}
+
+#[test]
+fn mount_parity() {
+    let Some(path) = std::env::var_os("KILN_MOUNT_VECTORS") else {
+        eprintln!("skipped: set KILN_MOUNT_VECTORS (tools/combat_vectors.py)");
+        return;
+    };
+    let filter = std::env::var("KILN_PARITY_FILTER").ok();
+    let text = std::fs::read_to_string(path).unwrap();
+    let (mut passed, mut failed) = (0, Vec::new());
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let v: Value = serde_json::from_str(line).unwrap();
+        assert!(v["kind"].as_str() != Some("error"), "vanilla failed: {}", v["error"]);
+        let name = v["name"].as_str().unwrap().to_owned();
+        if filter.as_ref().is_some_and(|f| !name.contains(f.as_str())) {
+            continue;
+        }
+        let errors = run_mount(&v);
+        if errors.is_empty() {
+            passed += 1;
+        } else {
+            println!("FAIL {name} ({} {})\n  {}", v["horse"], if v["chest"].as_bool().unwrap() { "with a chest" } else { "" }, errors.join("\n  "));
+            failed.push(name);
+        }
+    }
+    println!("mount parity: {passed} passed, {} failed", failed.len());
+    assert!(failed.is_empty(), "failed: {failed:?}");
+}

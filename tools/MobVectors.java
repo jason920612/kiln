@@ -1693,6 +1693,27 @@ public class MobVectors {
             s.ticks = 300;
             out.add(s);
         }
+        // wp30: chested equines and their gear when they die (a player kills them): the chest, the
+        // slots, the saddle and the body armor, with guaranteed and default drop chances.
+        String[] gear = {
+            "{Tame:1b,NoAI:1b,ChestedHorse:1b,Items:[{Slot:0b,id:\"minecraft:diamond\",count:3},{Slot:7b,id:\"minecraft:stick\",count:60},{Slot:14b,id:\"minecraft:apple\",count:2}],equipment:{saddle:{id:\"minecraft:saddle\",count:1}},drop_chances:{saddle:2.0f}}",
+            "{Tame:1b,NoAI:1b,ChestedHorse:1b,Items:[{Slot:2b,id:\"minecraft:iron_ingot\",count:64},{Slot:3b,id:\"minecraft:iron_ingot\",count:64},{Slot:4b,id:\"minecraft:iron_ingot\",count:12}],equipment:{saddle:{id:\"minecraft:saddle\",count:1}}}",
+            "{Tame:1b,NoAI:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1},body:{id:\"minecraft:iron_horse_armor\",count:1}},drop_chances:{body:2.0f}}",
+            "{Tame:1b,NoAI:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1},body:{id:\"minecraft:diamond_horse_armor\",count:1,components:{\"minecraft:damage\":40}}}}",
+        };
+        String[] gearKinds = {"donkey", "mule", "horse", "horse"};
+        for (int i = 0; i < gear.length; i++) {
+            Scenario s = new Scenario("die_" + gearKinds[i] + "_gear_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:" + gearKinds[i], 0.5, BY, 0.5, 20f * i, 9870L + i);
+            m.nbt = gear[i];
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.hurts.put(5, new double[] {0, 100.0});
+            s.levelSeed = 40 + i;
+            s.ticks = 60;
+            out.add(s);
+        }
         for (int i = 0; i < 2; i++) {
             Scenario s = new Scenario("idle_iron_golem_" + i);
             floor(s, 20, "minecraft:grass_block");
