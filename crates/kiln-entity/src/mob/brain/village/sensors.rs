@@ -79,7 +79,7 @@ impl Sensor for VillagerHostiles {
             cx.b.mem.erase(Mem::NearestHostile);
             return;
         }
-        let found = util::find_closest_visible(cx, |cx, id| {
+        let found = util::find_closest_visible_kind(cx, |k| hostile_distance(k).is_some(), |cx, id| {
             let Some(l) = util::living(cx, id) else { return false };
             hostile_distance(l.type_name).is_some_and(|r| cx.e.position().distance_to_sqr(l.pos) <= (r * r) as f64)
         });
@@ -111,7 +111,7 @@ impl Sensor for VillagerBabies {
         &[Mem::VisibleVillagerBabies]
     }
     fn do_tick(&mut self, cx: &mut Cx) {
-        let babies = util::find_all_visible(cx, |cx, id| {
+        let babies = util::find_all_visible_kind(cx, |k| k == "minecraft:villager", |cx, id| {
             cx.level.entity(id).is_some_and(|o| o.type_name == "minecraft:villager" && crate::mob::data(o).is_some_and(|d| d.baby()))
         });
         cx.b.mem.set(Mem::VisibleVillagerBabies, Val::Entities(babies));

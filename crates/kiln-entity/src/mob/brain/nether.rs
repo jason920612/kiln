@@ -420,7 +420,9 @@ impl Sensor for PiglinBruteSpecific {
         &[Mem::NearestVisibleLivingEntities, Mem::NearestVisibleNemesis, Mem::NearbyAdultPiglins]
     }
     fn do_tick(&mut self, cx: &mut Cx) {
-        let nemesis = util::find_closest_visible(cx, |cx, id| util::living(cx, id).is_some_and(|l| l.type_name == "minecraft:wither_skeleton" || l.type_name == "minecraft:wither"));
+        let nemesis = util::find_closest_visible_kind(cx, |k| k == "minecraft:wither_skeleton" || k == "minecraft:wither", |cx, id| {
+            util::living(cx, id).is_some_and(|l| l.type_name == "minecraft:wither_skeleton" || l.type_name == "minecraft:wither")
+        });
         let nearby = nearby_adult_piglins(cx);
         cx.b.mem.set_opt(Mem::NearestVisibleNemesis, nemesis.map(Val::Entity));
         cx.b.mem.set(Mem::NearbyAdultPiglins, Val::Entities(nearby));
@@ -453,7 +455,7 @@ impl Sensor for HoglinSpecific {
         let mut piglin: Option<i32> = None;
         let mut piglins = 0;
         let mut hoglins: Vec<i32> = Vec::new();
-        let visible = util::find_all_visible(cx, |cx, id| !is_baby(cx, id) && cx.level.entity(id).is_some_and(|o| o.type_name == PIGLIN || o.type_name == HOGLIN));
+        let visible = util::find_all_visible_kind(cx, |k| k == PIGLIN || k == HOGLIN, |cx, id| !is_baby(cx, id) && cx.level.entity(id).is_some_and(|o| o.type_name == PIGLIN || o.type_name == HOGLIN));
         for id in visible {
             let Some(o) = cx.level.entity(id) else { continue };
             if o.type_name == PIGLIN {
@@ -700,10 +702,10 @@ pub fn interact_with(entity_type: &'static str, range: i32, speed: f32, close_en
         "InteractWith",
         &[(Mem::InteractionTarget, Registered), (Mem::LookTarget, Registered), (Mem::WalkTarget, ValueAbsent), (Mem::NearestVisibleLivingEntities, ValuePresent)],
         move |cx| {
-            if util::find_closest_visible(cx, |cx, id| util::living(cx, id).is_some_and(|l| l.type_name == entity_type)).is_none() {
+            if util::find_closest_visible_kind(cx, |k| k == entity_type, |cx, id| util::living(cx, id).is_some_and(|l| l.type_name == entity_type)).is_none() {
                 return false;
             }
-            let found = util::find_closest_visible(cx, |cx, id| {
+            let found = util::find_closest_visible_kind(cx, |k| k == entity_type, |cx, id| {
                 util::living(cx, id).is_some_and(|l| cx.e.position().distance_to_sqr(l.pos) <= r2 && l.type_name == entity_type)
             });
             if let Some(id) = found {
@@ -720,7 +722,7 @@ pub fn interact_with(entity_type: &'static str, range: i32, speed: f32, close_en
 pub fn set_look_and_interact(entity_type: &'static str, distance: i32) -> Box<dyn Control> {
     let r2 = (distance * distance) as f64;
     shot("SetLookAndInteract", &[(Mem::LookTarget, Registered), (Mem::InteractionTarget, ValueAbsent), (Mem::NearestVisibleLivingEntities, ValuePresent)], move |cx| {
-        let found = util::find_closest_visible(cx, |cx, id| util::living(cx, id).is_some_and(|l| cx.e.position().distance_to_sqr(l.pos) <= r2 && l.type_name == entity_type));
+        let found = util::find_closest_visible_kind(cx, |k| k == entity_type, |cx, id| util::living(cx, id).is_some_and(|l| cx.e.position().distance_to_sqr(l.pos) <= r2 && l.type_name == entity_type));
         let Some(id) = found else { return false };
         cx.b.mem.set(Mem::InteractionTarget, Val::Entity(id));
         cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::entity(id, true)));

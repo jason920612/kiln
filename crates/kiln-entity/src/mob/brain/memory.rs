@@ -568,13 +568,17 @@ impl WalkTarget {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct NearestVisible {
     pub nearby: Vec<i32>,
+    /// The entity type of each of `nearby` (a type does not change), so a search for one type
+    /// looks at those and leaves the other entities alone.
+    pub kinds: Vec<&'static str>,
     /// (id, visible), filled on demand.
     pub seen: Vec<(i32, bool)>,
 }
 
 impl NearestVisible {
-    pub fn new(nearby: Vec<i32>) -> NearestVisible {
-        NearestVisible { nearby, seen: Vec::new() }
+    pub fn new(nearby: Vec<i32>, kinds: Vec<&'static str>) -> NearestVisible {
+        debug_assert_eq!(nearby.len(), kinds.len());
+        NearestVisible { nearby, kinds, seen: Vec::new() }
     }
 }
 
@@ -725,8 +729,8 @@ impl Memories {
         }
         match status {
             Status::Registered => true,
-            Status::ValuePresent => self.slots[i].value.is_some(),
-            Status::ValueAbsent => self.slots[i].value.is_none(),
+            Status::ValuePresent => self.present_bits & bit(m) != 0,
+            Status::ValueAbsent => self.present_bits & bit(m) == 0,
         }
     }
 
@@ -736,11 +740,12 @@ impl Memories {
 
     /// `Brain.getMemory` (a memory that was never registered has no value).
     pub fn get(&self, m: Mem) -> Option<&Val> {
-        if !self.registered[m as usize] { None } else { self.slots[m as usize].value.as_ref() }
+        // (The mask says without touching the slot: most memories most of the time hold nothing.)
+        if self.present_bits & bit(m) == 0 { None } else { self.slots[m as usize].value.as_ref() }
     }
 
     pub fn get_mut(&mut self, m: Mem) -> Option<&mut Val> {
-        if !self.registered[m as usize] { None } else { self.slots[m as usize].value.as_mut() }
+        if self.present_bits & bit(m) == 0 { None } else { self.slots[m as usize].value.as_mut() }
     }
 
     /// `Brain.getTimeUntilExpiry`.

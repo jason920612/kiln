@@ -23,9 +23,11 @@ impl Sensor for NearestLivingEntities {
     fn do_tick(&mut self, cx: &mut Cx) {
         let r = util::follow_range(cx);
         let area = cx.e.bounding_box().inflate(r, r, r);
-        let list = util::living_in_box(cx, &area);
+        let typed = util::living_in_box_typed(cx, &area);
+        let list: Vec<i32> = typed.iter().map(|&(id, _)| id).collect();
+        let kinds: Vec<&'static str> = typed.iter().map(|&(_, t)| t).collect();
         cx.b.mem.set(Mem::NearestLivingEntities, Val::Entities(list.clone()));
-        cx.b.mem.set(Mem::NearestVisibleLivingEntities, Val::Visible(NearestVisible::new(list)));
+        cx.b.mem.set(Mem::NearestVisibleLivingEntities, Val::Visible(NearestVisible::new(list, kinds)));
     }
     sensor_boilerplate!();
 }

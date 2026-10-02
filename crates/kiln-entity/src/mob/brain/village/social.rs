@@ -51,11 +51,11 @@ pub fn interact_with(
         }
         let of_type = |cx: &mut Cx, id: i32| cx.level.entity(id).is_some_and(|o| o.type_name == type_name) && target_pred(cx, id);
         // `contains(type && target predicate)`, then `findClosest(distance && predicate)`.
-        if util::find_closest_visible(cx, |cx, id| of_type(cx, id)).is_none() {
+        if util::find_closest_visible_kind(cx, |k| k == type_name, |cx, id| of_type(cx, id)).is_none() {
             return false;
         }
         let me = cx.e.position();
-        let found = util::find_closest_visible(cx, |cx, id| util::living(cx, id).is_some_and(|l| l.pos.distance_to_sqr(me) <= max_sqr) && of_type(cx, id));
+        let found = util::find_closest_visible_kind(cx, |k| k == type_name, |cx, id| util::living(cx, id).is_some_and(|l| l.pos.distance_to_sqr(me) <= max_sqr) && of_type(cx, id));
         if let Some(id) = found {
             cx.b.mem.set(mem, Val::Entity(id));
             cx.b.mem.set(Mem::LookTarget, Val::Look(Tracker::entity(id, true)));
@@ -74,12 +74,8 @@ pub fn set_look_and_interact(type_name: &'static str, max_dist: i32) -> Box<dyn 
         &[(Mem::LookTarget, Registered), (Mem::InteractionTarget, ValueAbsent), (Mem::NearestVisibleLivingEntities, ValuePresent)],
         move |cx| {
             let me = cx.e.position();
-            let found = util::find_closest_visible(cx, |cx, id| {
-                // Most of what is around is not of the type: its entity says so before a
-                // `Living` is built (a player's view always reads as a player).
-                if type_name != "minecraft:player" && cx.level.entity(id).is_none_or(|o| o.type_name != type_name) {
-                    return false;
-                }
+            // (Only what is of the type is asked: the others fail the predicate anyway.)
+            let found = util::find_closest_visible_kind(cx, |k| k == type_name, |cx, id| {
                 util::living(cx, id).is_some_and(|l| l.pos.distance_to_sqr(me) <= max_sqr && l.type_name == type_name)
             });
             let Some(id) = found else { return false };
