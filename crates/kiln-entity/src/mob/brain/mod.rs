@@ -24,6 +24,7 @@ pub mod gate;
 pub mod memory;
 pub mod nether;
 pub mod persist;
+pub mod pool;
 pub mod sensors;
 pub mod util;
 pub mod village;

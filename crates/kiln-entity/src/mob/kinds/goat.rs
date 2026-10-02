@@ -491,7 +491,7 @@ struct LongJumpToRandomPos {
     running: bool,
     end: i64,
     /// `jumpCandidates`: (position, weight).
-    candidates: Vec<(BlockPos, i32)>,
+    candidates: brain::pool::WeightedPool,
     initial_position: Option<Vec3>,
     chosen: Option<Vec3>,
     tries: i32,
@@ -505,7 +505,7 @@ impl LongJumpToRandomPos {
         Box::new(LongJumpToRandomPos {
             running: false,
             end: 0,
-            candidates: Vec::new(),
+            candidates: Default::default(),
             initial_position: None,
             chosen: None,
             tries: 0,
@@ -549,11 +549,12 @@ impl LongJumpToRandomPos {
                 for x in c.x - MAX_LONG_JUMP..=c.x + MAX_LONG_JUMP {
                     let p = BlockPos::new(x, y, z);
                     if p != c {
-                        self.candidates.push((p, mob::mth::ceil(util::dist_sqr_pos(c, p))));
+                        self.candidates.push(p, mob::mth::ceil(util::dist_sqr_pos(c, p)));
                     }
                 }
             }
         }
+        self.candidates.build();
     }
 
     fn tick(&mut self, cx: &mut Cx) {
@@ -579,21 +580,16 @@ impl LongJumpToRandomPos {
 
     /// `getJumpCandidate`: `WeightedRandom.getRandomItem` from the level's random, removing it.
     fn candidate(&mut self, cx: &mut Cx) -> Option<BlockPos> {
-        let total: i64 = self.candidates.iter().map(|c| c.1 as i64).sum();
+        let total = self.candidates.total();
         if total == 0 {
             return None;
         }
-        let mut n = cx.rng().next_int_bounded(total as i32);
-        for i in 0..self.candidates.len() {
-            n -= self.candidates[i].1;
-            if n < 0 {
-                return Some(self.candidates.remove(i).0);
-            }
-        }
-        None
+        let n = cx.rng().next_int_bounded(total as i32);
+        self.candidates.take(n).map(|c| c.0)
     }
 
     fn pick_candidate(&mut self, cx: &mut Cx) {
+        crate::prof!("jump", "goat pick");
         while !self.candidates.is_empty() {
             let Some(target) = self.candidate(cx) else { continue };
             // `isAcceptableLandingPosition`.
@@ -621,6 +617,7 @@ impl LongJumpToRandomPos {
     /// `calculateOptimalJumpVector`: the angles 65, 70, 75, 80 in a shuffled order, the first that
     /// works.
     fn optimal_vector(&mut self, cx: &mut Cx, target: Vec3) -> Option<Vec3> {
+        crate::prof!("jump", "goat vector");
         let mut angles = [65, 70, 75, 80];
         // `Collections.shuffle`.
         for i in (2..=angles.len()).rev() {

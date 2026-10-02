@@ -42,7 +42,7 @@ mod imp {
         static CELL: Cell<Option<&'static AtomicU64>> = const { Cell::new(None) };
     }
 
-    const TAGS: [&str; 11] = ["", "mob", "brain", "start", "tick", "sensor", "gate child", "mv", "path", "util", "lvl"];
+    const TAGS: [&str; 12] = ["", "mob", "brain", "start", "tick", "sensor", "gate child", "mv", "path", "util", "lvl", "jump"];
 
     /// The index in `TAGS`: a match on the first byte and length, so a literal tag costs nothing.
     #[inline(always)]
@@ -58,6 +58,7 @@ mod imp {
             (Some(b'p'), _) => 8,
             (Some(b'u'), _) => 9,
             (Some(b'l'), _) => 10,
+            (Some(b'j'), _) => 11,
             _ => 0,
         }
     }

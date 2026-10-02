@@ -115,6 +115,7 @@ fn water_source(state: u16) -> bool {
 
 /// `FrogAi.isAcceptableLandingSpot`: dry ground, lily pads and trapdoors; else the default.
 fn acceptable_landing_spot(cx: &mut Cx, pos: BlockPos) -> bool {
+    crate::prof!("jump", "frog acceptable");
     let below = pos.below();
     let level = &*cx.level;
     if !crate::physics::fluid_state(level.block(pos)).is_empty()
