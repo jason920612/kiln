@@ -359,10 +359,30 @@ public class MobVectors {
         BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
         for (int x = -40; x <= 40; x++)
             for (int z = -40; z <= 40; z++)
-                for (int y = BY - 8; y <= BY + 8; y++) {
+                // (wp29: up to BY + 24: the stairs of `warden_stairs` stood 14 high, and what was left above
+                // the old limit shaded and blocked the scenarios that came after.)
+                for (int y = BY - 8; y <= BY + 24; y++) {
                     BlockPos p = new BlockPos(x, y, z);
-                    if (!level.getBlockState(p).isAir()) level.setBlock(p, air, FLAGS);
+                    BlockState was = level.getBlockState(p);
+                    if (was.isAir()) continue;
+                    // (wp29: points of interest of blocks the scenario's own mobs or actions placed (a villager
+                    // breeding's beds) outlived it, and made a village of the next scenario's place.)
+                    if (net.minecraft.world.entity.ai.village.poi.PoiTypes.forState(was).isPresent()) level.getPoiManager().remove(p);
+                    level.setBlock(p, air, FLAGS);
                 }
+        // (wp29: the villages' distance tracker keeps the levels of the points of interest that were taken
+        // away (after `villager_breed` the origin's section was still 6 sections from a village, and a
+        // zombie's `MoveThroughVillageGoal` went looking): a fresh one, nothing in the world being a village.)
+        try {
+            var poi = level.getPoiManager();
+            Field f = poi.getClass().getDeclaredField("distanceTracker");
+            f.setAccessible(true);
+            var c = Class.forName("net.minecraft.world.entity.ai.village.poi.PoiManager$DistanceTracker").getDeclaredConstructor(poi.getClass());
+            c.setAccessible(true);
+            f.set(poi, c.newInstance(poi));
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
         awaitLight(level);
     }
 
@@ -453,6 +473,11 @@ public class MobVectors {
         // The attributes are cached per tick; the harness never ticks the level.
         level.environmentAttributes().invalidateTickCache();
         boolean creakingActive = level.environmentAttributes().getValue(net.minecraft.world.attribute.EnvironmentAttributes.CREAKING_ACTIVE, new BlockPos(0, BY, 0));
+        if (System.getenv("MOB_DEBUG_POI") != null) {
+            var center = BlockPos.containing(0.5, BY, 0.5);
+            var pois = level.getPoiManager().getInRange(t -> true, center, 64, net.minecraft.world.entity.ai.village.poi.PoiManager.Occupancy.ANY).toList();
+            Files.writeString(Path.of("dbg.txt"), "POI scenario=" + s.name + " village=" + level.isVillage(center) + " sections=" + level.getPoiManager().sectionsToVillage(net.minecraft.core.SectionPos.of(center)) + " pois=" + pois.stream().map(r -> r.getPos().toString() + ":" + r.getPoiType().getRegisteredName()).toList() + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        }
         int tickStamp = player.getLastHurtByMobTimestamp();
         List<Entity> tracked = new ArrayList<>();
         StringBuilder specs = new StringBuilder();

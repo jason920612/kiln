@@ -181,3 +181,30 @@ fn the_rider_of_the_trap_horse_ticks_in_the_tick_the_trap_springs() {
     }
     panic!("the trap did not spring");
 }
+
+/// The horsemen of a sprung trap charge a survival player: the rider's goals steer the horse, so
+/// even the trap horse itself (which wanders nowhere on its own once it has a rider) walks.
+#[test]
+fn the_horsemen_steer_their_horses_toward_a_survival_player() {
+    let mut w = World::new("survival");
+    w.summon_at("minecraft:skeleton_horse", 8.0, "{SkeletonTrap:1b}");
+    let trap_horse = w.sim.mobs().iter().find(|m| m.1 == "minecraft:skeleton_horse").map(|m| m.0).expect("the trap horse");
+    // (The spring's tick, then a few more for the riders to settle.)
+    let mut sprung = false;
+    for _ in 0..10 {
+        w.ticks(1);
+        if w.sim.mobs().iter().any(|m| m.1 == "minecraft:skeleton") {
+            sprung = true;
+            break;
+        }
+    }
+    assert!(sprung, "the trap sprang");
+    w.ticks(5);
+    let start = w.sim.mobs().iter().find(|m| m.0 == trap_horse).map(|m| m.2).expect("still there");
+    let player = w.client.pos;
+    w.ticks(40);
+    let mobs = w.sim.mobs();
+    let now = mobs.iter().find(|m| m.0 == trap_horse).map(|m| m.2).expect("still there");
+    let moved = ((now[0] - start[0]).powi(2) + (now[2] - start[2]).powi(2)).sqrt();
+    assert!(moved > 1.0, "the trap horse was carried {moved} blocks by its rider (player at {player:?}, horse {start:?} -> {now:?})");
+}

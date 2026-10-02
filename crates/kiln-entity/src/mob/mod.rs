@@ -1311,6 +1311,8 @@ impl MobData {
 pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
     let mut m = take(e);
     m.swing = false;
+    // `Entity.isVehicle()` as the goals of this tick see it (a spider with a rider does not attack).
+    m.is_vehicle = !e.passengers.is_empty();
     species::pre_tick(e, &mut m, level);
     living_tick(e, &mut m, level);
     if e.tick_count % 5 == 0 {
