@@ -10,11 +10,10 @@
 //! The block itself (`CreakingHeartBlock`: state updates from its logs, placement, experience)
 //! is the block layer's; here `state` is read from the level.
 //!
-//! Gaps: `isUnobstructed` for entities that block building is not checked for the spawn.
 
 use super::creaking;
 use crate::entity::{Entity, EntityKind};
-use crate::level::{EntityLevel, Event};
+use crate::level::{EntityFilter, EntityLevel, Event};
 use crate::math::{Aabb, BlockPos, Direction, Vec3};
 use crate::mob::{self, DamageSource, MobData, MobKind};
 use kiln_data::blocks_types::block_of;
@@ -361,7 +360,7 @@ fn spawn_protector(level: &mut dyn EntityLevel, r: &mut LegacyRandom, pos: Block
         let (y0, y1) = (crate::math::floor(bb.min_y), crate::math::ceil(bb.max_y));
         let (z0, z1) = (crate::math::floor(bb.min_z), crate::math::ceil(bb.max_z));
         let liquid = (x0..x1).any(|x| (y0..y1).any(|y| (z0..z1).any(|z| kiln_data::blocks_types::has_fluid(level.block(BlockPos::new(x, y, z))))));
-        if liquid {
+        if liquid || !is_unobstructed(level, &bb) {
             continue;
         }
         // `playAmbientSound` of the new creaking.
@@ -383,6 +382,37 @@ fn spawn_protector(level: &mut dyn EntityLevel, r: &mut LegacyRandom, pos: Block
         return Some((id, uuid));
     }
     None
+}
+
+/// `Entity.blocksBuilding`: living entities (the `LivingEntity` constructor sets it), end crystals,
+/// armor stands, falling blocks, primed TNT, boats and minecarts.
+fn blocks_building(e: &Entity) -> bool {
+    matches!(e.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. } | EntityKind::Player(_) | EntityKind::FallingBlock(_) | EntityKind::Tnt(_))
+        || matches!(e.type_name, "minecraft:end_crystal" | "minecraft:armor_stand" | "minecraft:falling_block" | "minecraft:tnt")
+        || e.type_name.ends_with("minecart")
+        || e.type_name.ends_with("boat")
+        || e.type_name.ends_with("raft")
+}
+
+/// `LevelReader.isUnobstructed(entity)` for an entity not yet in the level whose box is `bb`: no
+/// entity that blocks building (but spectators, which `getEntities` leaves out) overlaps it.
+pub(crate) fn is_unobstructed(level: &dyn EntityLevel, bb: &Aabb) -> bool {
+    for id in level.entities_in(bb, EntityFilter::Any, i32::MIN) {
+        let Some(o) = level.entity(id) else { continue };
+        if o.is_removed() || !blocks_building(o) || level.player(id).is_some_and(|p| p.spectator) {
+            continue;
+        }
+        if o.bounding_box().intersects(bb) {
+            return false;
+        }
+    }
+    // Players that have no entity of their own in the level.
+    for p in level.players_in(bb) {
+        if !p.spectator && level.entity(p.id).is_none() && mob::goals::living_player(&p).bb.intersects(bb) {
+            return false;
+        }
+    }
+    true
 }
 
 /// `SpawnUtil.moveToPossibleSpawnPosition` with `ON_TOP_OF_COLLIDER_NO_LEAVES`.
@@ -547,4 +577,26 @@ pub fn remove_protector(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut Hea
         }
     });
     be.link = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::MemoryLevel;
+
+    /// `LevelReader.isUnobstructed`: a mob in the box blocks the spawn; one beside it, or none, does not.
+    #[test]
+    fn mobs_obstruct_a_spawn_box() {
+        let mut level = MemoryLevel::new(0, 1);
+        let mut pig = mob::new(MobKind::Pig, 1, 1, 1);
+        pig.set_pos(Vec3::new(10.5, 5.0, 10.5));
+        level.insert(pig);
+        let around = |x: f64, z: f64| Aabb::new(x - 0.33, 5.0, z - 0.33, x + 0.33, 7.7, z + 0.33);
+        assert!(!is_unobstructed(&level, &around(10.5, 10.5)));
+        assert!(!is_unobstructed(&level, &around(10.8, 10.5)));
+        assert!(is_unobstructed(&level, &around(12.5, 10.5)));
+        // A box that only touches the pig's does not overlap it.
+        let edge = level.entity(1).unwrap().bounding_box().max_x;
+        assert!(is_unobstructed(&level, &Aabb::new(edge, 5.0, 10.5, edge + 0.66, 7.7, 11.0)));
+    }
 }
