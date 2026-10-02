@@ -33,6 +33,7 @@ pub struct Tame {
 /// The tame state of a tamable mob.
 pub fn get(m: &MobData) -> Option<&Tame> {
     match m.kind {
+        MobKind::Nautilus | MobKind::ZombieNautilus => super::nautilus::tame_of(m),
         MobKind::Wolf => ext::state::<super::wolf::State>(m).map(|s| &s.tame),
         MobKind::Cat => ext::state::<super::cat::State>(m).map(|s| &s.tame),
         MobKind::Parrot => ext::state::<super::parrot::State>(m).map(|s| &s.tame),
@@ -42,6 +43,7 @@ pub fn get(m: &MobData) -> Option<&Tame> {
 
 pub fn get_mut(m: &mut MobData) -> Option<&mut Tame> {
     match m.kind {
+        MobKind::Nautilus | MobKind::ZombieNautilus => super::nautilus::tame_of_mut(m),
         MobKind::Wolf => ext::state_mut::<super::wolf::State>(m).map(|s| &mut s.tame),
         MobKind::Cat => ext::state_mut::<super::cat::State>(m).map(|s| &mut s.tame),
         MobKind::Parrot => ext::state_mut::<super::parrot::State>(m).map(|s| &mut s.tame),

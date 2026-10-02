@@ -679,13 +679,19 @@ impl Host for Sim {
 
     fn kill(&mut self, entity: &PlayerRef) {
         if let Some(id) = entity.entity {
-            // Mobs die (`hurt(genericKill)`); other entities are discarded.
+            // Mobs die (`LivingEntity.kill`: `hurtServer(genericKill, MAX_VALUE)`, carried out at
+            // the start of the region's next entity phase); other entities are discarded.
             let Some(dim) = crate::dim_id(entity.dim) else { return };
             for r in self.dims[dim].regions.iter_mut() {
                 if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == id) {
                     if let Some(p) = e.phys.as_mut() {
                         if kiln_entity::mob::data(p).is_some() {
-                            kiln_entity::mob::kill(p);
+                            if p.type_name == "minecraft:ender_dragon" {
+                                // `EnderDragon.kill`: it goes at once (the fight is told), without a death.
+                                kiln_entity::mob::kill(p);
+                            } else {
+                                p.pending_hurts.push((kiln_entity::level::DamageKind::Kill, f32::MAX, None));
+                            }
                         } else {
                             p.removed = Some(kiln_entity::entity::RemovalReason::Killed);
                             // `EndCrystal.kill`: the fight hears of it.

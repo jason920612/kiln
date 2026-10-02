@@ -144,6 +144,12 @@ pub enum MobKind {
     Llama,
     TraderLlama,
 
+    // -- wp33: the undead mounts and the nautiluses
+    ZombieHorse,
+    CamelHusk,
+    Parched,
+    Nautilus,
+    ZombieNautilus,
     // -- wp32: wandering traders
     WanderingTrader,
     // -- wp32: parrots
@@ -311,6 +317,12 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Llama,
     MobKind::TraderLlama,
 
+    // -- wp33: the undead mounts and the nautiluses
+    MobKind::ZombieHorse,
+    MobKind::CamelHusk,
+    MobKind::Parched,
+    MobKind::Nautilus,
+    MobKind::ZombieNautilus,
     // -- wp32: wandering traders
     MobKind::WanderingTrader,
     // -- wp32: parrots
@@ -450,7 +462,7 @@ impl MobKind {
 
     /// `instanceof AbstractSkeleton`.
     pub fn is_skeleton(self) -> bool {
-        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton | MobKind::Bogged)
+        matches!(self, MobKind::Skeleton | MobKind::Stray | MobKind::WitherSkeleton | MobKind::Bogged | MobKind::Parched)
     }
 
     pub fn loot_table(self) -> String {
@@ -567,6 +579,8 @@ pub struct MobData {
     /// `AgeableMob.age` (negative for babies); zombies keep a baby flag instead.
     pub age: i32,
     pub zombie_baby: bool,
+    /// `Chicken.isChickenJockey` (carries a baby zombie: lays no eggs, can despawn, 10 experience).
+    pub chicken_jockey: bool,
     /// `AgeableMob.forcedAge`, `forcedAgeTimer`, the age lock (golden dandelion) and its
     /// particle timer.
     pub forced_age: i32,
@@ -700,6 +714,7 @@ impl MobData {
             can_pick_up_loot: false,
             age: 0,
             zombie_baby: false,
+            chicken_jockey: false,
             forced_age: 0,
             forced_age_timer: 0,
             age_locked: false,
@@ -762,7 +777,7 @@ impl MobData {
 
     pub fn baby(&self) -> bool {
         // (`canBeABaby`: frogs never are.)
-        self.zombie_baby || (breed::is_ageable(self.kind) && self.age < 0 && self.kind != MobKind::Frog)
+        self.zombie_baby || (breed::is_ageable(self.kind) && self.age < 0 && self.kind != MobKind::Frog && self.kind.ext().is_none_or(|k| k.can_be_baby()))
     }
 
     pub fn holding_bow(&self) -> bool {
@@ -1315,6 +1330,11 @@ pub fn controlling_mob_passenger(e: &Entity, m: &MobData, level: &dyn EntityLeve
     (matches!(rider.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) && !entity_type_tag(rider.type_name, "minecraft:non_controlling_rider")).then_some(first)
 }
 
+/// `getFirstPassenger() instanceof Mob` (`isMobControlled` of the horses, camels and nautiluses).
+pub fn first_passenger_is_mob(e: &Entity, level: &dyn EntityLevel) -> bool {
+    e.passengers.first().and_then(|&p| level.entity(p)).is_some_and(|r| matches!(r.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }))
+}
+
 /// `Mob.hasControllingPassenger`: a saddled mount's player rider, or a mob rider that steers.
 pub fn has_controlling_passenger(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool {
     !e.passengers.is_empty() && (m.kind.ext().and_then(|k| k.controlling_player(e, m, level)).is_some() || controlling_mob_passenger(e, m, level).is_some())
@@ -1748,17 +1768,20 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
     // `Mob.aiStep`: burning in daylight.
     if m.kind.burns_in_daylight() && is_alive(e, m) && is_sun_burn_tick(e, level) {
-        if m.equipment[HEAD].is_empty() {
+        // (`sunProtectionSlot`: the head, a zombie horse's or zombie nautilus's body.)
+        let on_body = m.kind.ext().is_some_and(|k| k.sun_protection_on_body());
+        let protector = if on_body { m.kind.ext().and_then(|k| k.body_slot_mut(m)).map(|s| s.is_empty()) } else { Some(m.equipment[HEAD].is_empty()) };
+        if protector.unwrap_or(true) {
             e.ignite_for_seconds(8.0);
         } else {
-            // `hurtAndBreak(random.nextInt(2))` on the helmet that keeps the sun off.
+            // `hurtAndBreak(random.nextInt(2))` on the item that keeps the sun off.
             let n = e.random.next_int_bounded(2);
-            let helmet = &mut m.equipment[HEAD];
+            let helmet = if on_body { m.kind.ext().and_then(|k| k.body_slot_mut(m)).expect("a body slot") } else { &mut m.equipment[HEAD] };
             if n > 0 && helmet.is_damageable_item() {
                 let d = helmet.damage() + n;
                 if d >= helmet.max_damage() {
                     *helmet = ItemStack::empty();
-                    level.emit(Event::EntityEvent { entity: e.id, event: 49 });
+                    level.emit(Event::EntityEvent { entity: e.id, event: if on_body { 65 } else { 49 } });
                 } else {
                     helmet.insert(kiln_item::keys::DAMAGE, d);
                 }
@@ -2109,7 +2132,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             && om.health > 0.0
             && om.kind.ext().is_none_or(|k| k.pushable())
             // `AbstractHorse.isPushable` (horses, donkeys, camels...): `!isVehicle()`.
-            && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || om.kind == MobKind::Camel))
+            && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || matches!(om.kind, MobKind::Camel | MobKind::CamelHusk | MobKind::Nautilus | MobKind::ZombieNautilus)))
             && !riding(id, o.vehicle)
         {
             others.push((id, o.x(), o.z(), false));
@@ -2246,6 +2269,17 @@ pub fn swim_sound(type_name: &str) -> Option<&'static str> {
         Some(k) => k.swim_sound(),
         None => Some("minecraft:entity.generic.swim"),
     }
+}
+
+/// The swim sound of mob `e` (a calf's differs for the nautilus).
+pub fn swim_sound_of(e: &Entity) -> Option<&'static str> {
+    if let Some(m) = data(e)
+        && let Some(k) = m.kind.ext()
+        && let Some(s) = k.swim_sound_for(m)
+    {
+        return Some(s);
+    }
+    swim_sound(e.type_name)
 }
 
 /// Whether mob type `type_name` runs `checkFallDamage` (flying types override it with nothing).
@@ -2525,6 +2559,10 @@ fn experience_reward(e: &mut Entity, m: &MobData) -> i32 {
     if let Some(xp) = m.kind.ext().and_then(|k| k.experience(e, m)) {
         return xp;
     }
+    // `Chicken.getBaseExperienceReward`: a jockey's chicken is worth 10.
+    if m.chicken_jockey {
+        return 10;
+    }
     if m.kind.is_animal() {
         return 1 + e.random.next_int_bounded(3);
     }
@@ -2753,6 +2791,72 @@ pub struct GroupData {
     pub patrol: bool,
     pub event: bool,
     pub structure: bool,
+    /// `ZombieGroupData.canSpawnJockey` of the group the first zombie made (its baby chance is
+    /// `zombie_baby`): a baby of such a group may ride a chicken.
+    pub zombie_can_jockey: bool,
+    /// `ServerLevel.isSpawningMonsters` is false (the `spawn_monsters` rule is off, or peaceful):
+    /// striders get no zombified piglin rider.
+    pub monsters_disabled: bool,
+    /// The box a camel husk would stand in is free (`Husk.finalizeSpawn`'s `noCollision`: the
+    /// caller has the level and looked).
+    pub camel_space: bool,
+    /// What `finalizeSpawn` made along with the mob (its jockeys); the caller adds them to the
+    /// level and seats them.
+    pub companions: Vec<Companion>,
+    /// A baby zombie of a jockey group (`canSpawnJockey`) asked for an unridden chicken within
+    /// 5x3x5 blocks of its box to ride (`getEntitiesOfClass(Chicken, ..., ENTITY_NOT_BEING_RIDDEN)`):
+    /// the caller finds it (the level is not at hand here).
+    pub nearby_chicken: bool,
+}
+
+/// An entity `finalizeSpawn` makes along with the mob: a jockey. It stands where the mob does,
+/// finalized; the caller gives it an id, adds it to the level and seats it (`startRiding`).
+#[derive(Clone, Debug)]
+pub struct Companion {
+    pub entity: Entity,
+    pub seat: Seat,
+}
+
+/// Where a [`Companion`] sits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seat {
+    /// It rides the mob (a skeleton on its spider).
+    OnMob,
+    /// The mob rides it (a baby zombie on its chicken).
+    UnderMob,
+    /// It rides another companion (index in the list: a parched on a camel husk).
+    OnCompanion(usize),
+    /// It only joins the level (a chicken the zombie left for a horse).
+    Loose,
+}
+
+/// A new mob of `kind` for `parent` to carry or ride: `EntityType.create`, then
+/// `snapTo(parent x, y, z, parent yaw, 0)`. Its own random is seeded from the parent's (without
+/// using it up); the caller finalizes it and assigns its id.
+pub fn new_jockey(parent: &Entity, kind: MobKind) -> Entity {
+    new_jockey_at(parent, kind, true)
+}
+
+/// [`new_jockey`] with the choice of turning it like the parent (`snapTo`) or only placing it
+/// (`setPos`: a camel husk keeps the yaw its constructor drew).
+pub fn new_jockey_at(parent: &Entity, kind: MobKind, rotate: bool) -> Entity {
+    let mut seed_from = parent.random.clone();
+    let seed = seed_from.next_long() ^ ((kind as i64) << 40);
+    let mut e = new(kind, 0, 0, seed);
+    e.set_pos(parent.position());
+    if rotate {
+        e.y_rot = parent.y_rot;
+        e.x_rot = 0.0;
+    }
+    e.set_old_pos_and_rot();
+    let yaw = e.y_rot;
+    if let Some(m) = data_mut(&mut e) {
+        m.y_head_rot = yaw;
+        m.y_body_rot = yaw;
+        m.y_head_rot_o = yaw;
+        m.y_body_rot_o = yaw;
+    }
+    e
 }
 
 /// `Mob.finalizeSpawn` and the types' overrides; random draws from `r` (the level's).
@@ -2811,8 +2915,13 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     m.left_handed = r.next_float() < 0.05;
     match kind {
         MobKind::Spider => {
-            // Spider jockeys (1 in 100) are not simulated; the draw still happens.
-            let _ = r.next_int_bounded(100);
+            // Spider jockeys (1 in 100): a skeleton, finalized for the same reason as the spider,
+            // rides it.
+            if r.next_int_bounded(100) == 0 {
+                let mut skeleton = new_jockey(e, MobKind::Skeleton);
+                finalize_spawn(&mut skeleton, r, ctx, &mut GroupData::default(), natural);
+                group.companions.push(Companion { entity: skeleton, seat: Seat::OnMob });
+            }
             if group.spider_effect.is_none() {
                 let mut effect = None;
                 if ctx.hard && r.next_float() < 0.1 * ctx.special_multiplier {
@@ -2848,7 +2957,7 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
         return;
     }
     let Some(m) = data(e) else { return };
-    if level.difficulty() == 0 && !m.kind.is_animal() {
+    if level.difficulty() == 0 && !m.kind.ext().and_then(|k| k.allowed_in_peaceful()).unwrap_or(m.kind.is_animal()) {
         e.discard();
         return;
     }
@@ -2857,7 +2966,8 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
     let persistent = m.persistence_required || e.vehicle.is_some() || crate::leash::is_leashed(e);
     let category = m.kind.category();
     let Some(d) = nearest else { return };
-    let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(!category.persistent());
+    // (`Chicken.removeWhenFarAway`: only a chicken jockey.)
+    let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(if m.kind == MobKind::Chicken { m.chicken_jockey } else { !category.persistent() });
     let far = category.despawn_distance() as f64;
     if !persistent && removable && d > far * far {
         e.discard();

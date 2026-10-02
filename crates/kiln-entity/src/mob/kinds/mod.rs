@@ -88,6 +88,9 @@ pub mod tadpole;
 // -- wp30: llamas
 pub mod llama;
 
+// -- wp33: the undead mounts and the nautiluses
+pub mod parched;
+pub mod nautilus;
 // -- wp32: wandering traders
 pub mod wandering_trader;
 // -- wp32: parrots
@@ -181,6 +184,12 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Llama => &llama::LLAMA,
         MobKind::TraderLlama => &llama::TRADER_LLAMA,
 
+        // -- wp33: the undead mounts and the nautiluses
+        MobKind::ZombieHorse => &horse::ZOMBIE,
+        MobKind::CamelHusk => &camel::HUSK,
+        MobKind::Parched => &parched::KIND,
+        MobKind::Nautilus => &nautilus::KIND,
+        MobKind::ZombieNautilus => &nautilus::ZOMBIE,
         // -- wp32: wandering traders
         MobKind::WanderingTrader => &wandering_trader::KIND,
         // -- wp32: parrots

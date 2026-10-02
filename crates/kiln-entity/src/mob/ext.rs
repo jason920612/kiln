@@ -6,7 +6,7 @@
 use super::attributes::Attr;
 use super::goals::{Goal, Living};
 use super::interact::{Interactor, Outcome};
-use super::{Category, DamageSource, GroupData, MobData, SpawnContext};
+use super::{Category, DamageSource, GroupData, MobData, MobKind, SpawnContext};
 use crate::entity::Entity;
 use crate::level::{DamageKind, EntityLevel};
 use crate::math::{BlockPos, Vec3};
@@ -473,6 +473,32 @@ pub trait Kind: Sync + Send {
         let _ = item;
         false
     }
+    /// `sunProtectionSlot` is `BODY` (zombie horses and zombie nautiluses: their armor keeps the
+    /// sun off, not a helmet).
+    fn sun_protection_on_body(&self) -> bool {
+        false
+    }
+    /// The body slot's stack, for [`Kind::sun_protection_on_body`] types.
+    fn body_slot_mut<'a>(&self, m: &'a mut MobData) -> Option<&'a mut ItemStack> {
+        let _ = m;
+        None
+    }
+    /// `AgeableMob.canBeABaby`: false for the types that are never babies (zombie horses, camel
+    /// husks, zombie nautiluses): no baby size or sounds, no `Age` in their saved form.
+    fn can_be_baby(&self) -> bool {
+        true
+    }
+    /// `EntityType.isAllowedInPeaceful` of a type the category would send away in peaceful: the
+    /// monsters that are not `notInPeaceful` (zombie horses, camel husks) stay.
+    fn allowed_in_peaceful(&self) -> Option<bool> {
+        None
+    }
+    /// The type `getBreedOffspring` makes a baby of with `partner` (a horse and a donkey have a
+    /// mule).
+    fn offspring_kind(&self, m: &MobData, partner: &MobData) -> MobKind {
+        let _ = partner;
+        m.kind
+    }
     /// `getBreedOffspring` extras: set up `child` from the parents (variants, colors).
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, level: &mut dyn EntityLevel) {
         let _ = (e, m, partner, child, level);
@@ -676,6 +702,10 @@ pub trait Kind: Sync + Send {
     /// (no step or swim sounds, no pitch draws).
     fn swim_sound(&self) -> Option<&'static str> {
         Some("minecraft:entity.generic.swim")
+    }
+    /// A swim sound that depends on the mob's state (a calf's), when it has one.
+    fn swim_sound_for(&self, _m: &MobData) -> Option<&'static str> {
+        None
     }
     /// After `Mob.baseTick` (the ambient sound roll): `WaterAnimal.handleAirSupply` with the air
     /// supply from before the base tick.

@@ -207,6 +207,11 @@ fn step_move_and_hit(e: &mut Entity, level: &mut dyn EntityLevel, from: Vec3, to
         // not land bounces it back and it goes on to the next one).
         for (_, id, location) in targets {
             let owner = data(e).owner;
+            // `hitTargetOrDeflectSelf`: a breeze turns the arrow back; the rest of the targets
+            // are left alone.
+            if crate::projectile::deflected_by_target(e, level, id) {
+                break;
+            }
             if !hit_living(e, level, id, owner) {
                 level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: e.type_name, owner, hit: Hit::Entity { id, location } });
                 e.discard();
@@ -304,6 +309,8 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
         pos: Some(Vec3::new(target.x - v.x, target.y, target.z - v.z)),
         attacker_is_player: owner_is_player,
     };
+    // (`getRemainingFireTicks` before the arrow's fire: given back when the hit does not land.)
+    let fire_before = level.entity(id).map(|t| t.remaining_fire_ticks);
     if e.is_on_fire() {
         level.ignite(id, 5.0);
     }
@@ -385,14 +392,15 @@ fn hit_living(e: &mut Entity, level: &mut dyn EntityLevel, id: i32, owner: Optio
         if pierce == 0 {
             e.discard();
         }
+    } else if !crate::projectile::receives_side_effects_on_hit(level, id, false) {
+        // An enderman that teleported away: the arrow flies on through where it stood.
     } else {
+        if let (Some(before), Some(t)) = (fire_before, level.entity_mut(id)) {
+            t.remaining_fire_ticks = before;
+        }
         // `deflect(REVERSE, ..., 0.2)`: a fifth of the motion, backwards, and the turn of `170 +
         // nextFloat() * 20` degrees.
-        let turn = 170.0f32 + e.random.next_float() * 20.0f32;
-        e.delta = e.delta.scale(-0.1);
-        e.y_rot += turn;
-        e.y_rot_o += turn;
-        e.needs_sync = true;
+        crate::projectile::deflect_reverse(e, Vec3::new(0.2, 0.2, 0.2));
     }
     true
 }

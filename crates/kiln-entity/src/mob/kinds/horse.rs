@@ -35,6 +35,9 @@ pub enum Which {
     /// `Llama` and `TraderLlama` (see [`super::llama`]): a chested equine with a strength, spit.
     Llama,
     TraderLlama,
+    /// `ZombieHorse`: a monster that burns in daylight (its body armor keeps the sun off), is
+    /// never a baby, cannot breed and is steered by a mob rider (the zombie of a natural spawn).
+    Zombie,
 }
 
 pub struct Equine(pub Which);
@@ -45,6 +48,7 @@ pub static MULE: Equine = Equine(Which::Mule);
 pub static SKELETON: Equine = Equine(Which::Skeleton);
 pub static LLAMA: Equine = Equine(Which::Llama);
 pub static TRADER_LLAMA: Equine = Equine(Which::TraderLlama);
+pub static ZOMBIE: Equine = Equine(Which::Zombie);
 
 static HORSE_INFO: Info = Info {
     ambient_interval: 400,
@@ -68,6 +72,14 @@ static TRADER_LLAMA_INFO: Info = Info {
     ambient_interval: 400,
     sounds: Some("llama"),
     ..Info::animal("minecraft:trader_llama", &[(MaxHealth, 53.0), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5), (MovementSpeed, 0.17499999701976776), (JumpStrength, 0.5)])
+};
+
+static ZOMBIE_INFO: Info = Info {
+    category: crate::mob::Category::Monster,
+    burns_in_daylight: true,
+    breathes_under_water: true,
+    ambient_interval: 400,
+    ..Info::animal("minecraft:zombie_horse", &[(JumpStrength, 0.7), (MaxHealth, 25.0), (MovementSpeed, 0.22499999403953552), (StepHeight, 1.0), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5)])
 };
 
 static SKELETON_INFO: Info = Info {
@@ -396,7 +408,7 @@ impl Equine {
             (Which::Horse, true) => (((1.6f32 - 0.125) * 0.7) as f64, 0.0),
             (Which::Donkey, false) => (1.1125, 0.0),
             (Which::Mule, false) => (1.2125, 0.0),
-            (Which::Skeleton, false) => (1.31875f32 as f64, 0.0),
+            (Which::Skeleton | Which::Zombie, false) => (1.31875f32 as f64, 0.0),
             (Which::Skeleton, true) => (((1.6f32 - 0.25) * 0.7) as f64, 0.0),
             (Which::Llama | Which::TraderLlama, false) => (1.37, -0.3f32 as f64),
             (Which::Llama | Which::TraderLlama, true) => (((1.87f32 - 0.25) * 0.5) as f64, (-0.3f32 * 0.5) as f64),
@@ -414,7 +426,28 @@ impl Kind for Equine {
             Which::Skeleton => &SKELETON_INFO,
             Which::Llama => &LLAMA_INFO,
             Which::TraderLlama => &TRADER_LLAMA_INFO,
+            Which::Zombie => &ZOMBIE_INFO,
         }
+    }
+
+    fn can_be_baby(&self) -> bool {
+        self.0 != Which::Zombie
+    }
+
+    fn allowed_in_peaceful(&self) -> Option<bool> {
+        (self.0 == Which::Zombie).then_some(true)
+    }
+
+    fn remove_when_far_away(&self, _m: &MobData) -> Option<bool> {
+        (self.0 == Which::Zombie).then_some(true)
+    }
+
+    fn sun_protection_on_body(&self) -> bool {
+        self.0 == Which::Zombie
+    }
+
+    fn body_slot_mut<'a>(&self, m: &'a mut MobData) -> Option<&'a mut ItemStack> {
+        ext::state_mut::<State>(m).map(|s| &mut s.body)
     }
 
     fn new_state(&self, _m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
@@ -479,7 +512,10 @@ impl Kind for Equine {
             return;
         }
         g.add(0, Goal::Float);
-        g.add(1, Goal::Custom(Box::new(TamableAnimalPanicGoal::named("MountPanicGoal", 1.2, "minecraft:panic_causes"))));
+        // (`ZombieHorse.addBehaviourGoals`: no panic goal.)
+        if self.0 != Which::Zombie {
+            g.add(1, Goal::Custom(Box::new(TamableAnimalPanicGoal::named("MountPanicGoal", 1.2, "minecraft:panic_causes"))));
+        }
         g.add(3, Goal::Tempt { speed: 1.25, calm_down: 0, player: None });
     }
 
@@ -494,6 +530,9 @@ impl Kind for Equine {
     }
 
     fn tempted_by(&self, item: i32) -> bool {
+        if self.0 == Which::Zombie {
+            return item_tag(item, "minecraft:zombie_horse_food");
+        }
         item_tag(item, if self.llama() { "minecraft:llama_tempt_items" } else { "minecraft:horse_tempt_items" })
     }
 
@@ -502,6 +541,9 @@ impl Kind for Equine {
     }
 
     fn is_food(&self, item: i32) -> bool {
+        if self.0 == Which::Zombie {
+            return item_tag(item, "minecraft:zombie_horse_food");
+        }
         item_tag(item, if self.llama() { "minecraft:llama_food" } else { "minecraft:horse_food" })
     }
 
@@ -583,7 +625,32 @@ impl Kind for Equine {
         (base.0 * s, base.1 * s, base.2 * s)
     }
 
-    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &SpawnContext, group: &mut GroupData) {
+    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
+        if self.0 == Which::Zombie {
+            // `ZombieHorse.finalizeSpawn`: a natural one carries a zombie with an iron spear
+            // (finalized for the same reason, no group data).
+            if group.natural {
+                let mut zombie = crate::mob::new_jockey(e, MobKind::Zombie);
+                let mut zombie_group = GroupData::default();
+                crate::mob::finalize_spawn(&mut zombie, r, ctx, &mut zombie_group, true);
+                if let (Some(zm), Some(spear)) = (crate::mob::data_mut(&mut zombie), ItemStack::of("minecraft:iron_spear", 1)) {
+                    zm.equipment[crate::mob::MAINHAND] = spear;
+                }
+                group.companions.push(crate::mob::Companion { entity: zombie, seat: crate::mob::Seat::OnMob });
+                // (A chicken the zombie rode is left behind when it mounts the horse.)
+                for c in zombie_group.companions {
+                    group.companions.push(crate::mob::Companion { entity: c.entity, seat: crate::mob::Seat::Loose });
+                }
+            }
+            // `randomizeAttributes`: the jump strength, then the speed (three draws each).
+            let jump = ((0.5 + r.next_double() * 0.06666666666666667) + r.next_double() * 0.06666666666666667) + r.next_double() * 0.06666666666666667;
+            set_base(m, JumpStrength, jump);
+            let speed = (((9.0 + r.next_double() * 1.0) + r.next_double() * 1.0) + r.next_double() * 1.0) / 42.15999984741211;
+            set_base(m, MovementSpeed, speed);
+            ext::ageable_finalize(e, m, r, group, 0.2);
+            ext::mob_finalize(m, r);
+            return;
+        }
         if self.0 == Which::Skeleton {
             // `SkeletonHorse.randomizeAttributes`: only the jump strength.
             let jump = random_jump(r);
@@ -651,8 +718,17 @@ impl Kind for Equine {
             // `Llama.canMate`: another llama of either kind.
             return super::llama::is_llama(partner.kind) && parent(m) && parent(partner);
         }
-        // (`AbstractHorse.canMate` is false: skeleton horses never mate.)
-        !matches!(self.0, Which::Mule | Which::Skeleton) && parent(m) && parent(partner)
+        // `Horse.canMate` and `Donkey.canMate`: the partner is a horse or a donkey (mules, skeleton
+        // horses and the rest never mate: `AbstractHorse.canMate` is false).
+        matches!(self.0, Which::Horse | Which::Donkey) && matches!(partner.kind, MobKind::Horse | MobKind::Donkey) && parent(m) && parent(partner)
+    }
+
+    /// `Horse.getBreedOffspring` / `Donkey.getBreedOffspring`: a horse and a donkey have a mule.
+    fn offspring_kind(&self, m: &MobData, partner: &MobData) -> MobKind {
+        match (self.0, partner.kind) {
+            (Which::Horse, MobKind::Donkey) | (Which::Donkey, MobKind::Horse) => MobKind::Mule,
+            _ => m.kind,
+        }
     }
 
     fn breed_offspring(&self, e: &mut Entity, m: &mut MobData, partner: &MobData, child: &mut MobData, _level: &mut dyn EntityLevel) {
@@ -677,7 +753,8 @@ impl Kind for Equine {
             }
             return;
         }
-        if self.0 == Which::Horse {
+        // A mule gets only the attributes of its parents (a horse and a donkey).
+        if self.0 == Which::Horse && partner.kind == MobKind::Horse {
             let (mine, theirs) = (st(m).type_variant, ext::state::<State>(partner).map_or(0, |s| s.type_variant));
             let r = e.random.next_int_bounded(9);
             let variant = if r < 4 {
@@ -701,6 +778,10 @@ impl Kind for Equine {
     }
 
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+        if self.0 == Which::Zombie {
+            // `ZombieHorse.interact`: whoever touches it makes it stay.
+            m.persistence_required = true;
+        }
         // `SkeletonHorse.mobInteract`: a wild one ignores everybody.
         if self.0 == Which::Skeleton && !st(m).tamed {
             return Some(Outcome::PASS);
@@ -1105,7 +1186,8 @@ impl CustomGoal for RunAroundLikeCrazyGoal {
         MOVE
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if st(m).tamed || e.passengers.is_empty() {
+        // (`!isMobControlled() && !isTamed() && isVehicle()`: a zombie horse's zombie steers it.)
+        if st(m).tamed || e.passengers.is_empty() || crate::mob::first_passenger_is_mob(e, &*level) && m.kind == MobKind::ZombieHorse {
             return false;
         }
         match random_pos::default_pos(e, m, level, 5, 4) {
@@ -1263,14 +1345,17 @@ pub fn mount_info(e: &Entity, m: &MobData) -> Option<(usize, bool, u32)> {
     let s = ext::state::<State>(m)?;
     let columns = s.inventory.len() / 3;
     // (`Llama.canUseSlot`: every slot, always.)
-    let saddle_usable = super::llama::is_llama(m.kind) || (crate::mob::is_alive(e, m) && !m.baby() && s.tamed);
+    let saddle_usable = super::llama::is_llama(m.kind) || m.kind == MobKind::ZombieHorse || (crate::mob::is_alive(e, m) && !m.baby() && s.tamed);
     Some((columns, saddle_usable, s.inv_serial))
 }
 
 /// `handleStartJump` (a rider's jump key on a saddled mount): the horse rears; its jump sound.
 pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
-    if m.kind == MobKind::Camel {
+    if matches!(m.kind, MobKind::Camel | MobKind::CamelHusk) {
         return super::camel::start_jump(m);
+    }
+    if matches!(m.kind, MobKind::Nautilus | MobKind::ZombieNautilus) {
+        return super::nautilus::start_jump(m);
     }
     let saddled = !ext::state::<State>(m)?.saddle.is_empty();
     if !saddled {
@@ -1283,5 +1368,5 @@ pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
 
 /// Whether `kind` is one of the horse family.
 pub fn is_equine(kind: MobKind) -> bool {
-    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule | MobKind::SkeletonHorse | MobKind::Llama | MobKind::TraderLlama)
+    matches!(kind, MobKind::Horse | MobKind::Donkey | MobKind::Mule | MobKind::SkeletonHorse | MobKind::ZombieHorse | MobKind::Llama | MobKind::TraderLlama)
 }

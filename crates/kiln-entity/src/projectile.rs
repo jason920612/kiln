@@ -179,6 +179,73 @@ pub(crate) fn clip_entity(t: &Entity, margin: f64, from: Vec3, to: Vec3) -> Opti
     t.bounding_box().inflate_all(margin).clip(from, to)
 }
 
+/// `ProjectileDeflection` as `Entity.deflection(projectile)` returns it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Deflection {
+    None,
+    /// `ProjectileDeflection.REVERSE`.
+    Reverse,
+    /// A breeze's: its deflect sound, then `REVERSE`.
+    BreezeReverse,
+}
+
+/// `Entity.deflection(projectile)` of `target` for a projectile of type `projectile_type`: an
+/// entity of `#minecraft:deflects_projectiles` turns it back; a breeze lets wind charges through
+/// and plays its sound.
+pub fn deflection_of(target: &Entity, projectile_type: &str) -> Deflection {
+    if !crate::mob::entity_type_tag(target.type_name, "minecraft:deflects_projectiles") {
+        return Deflection::None;
+    }
+    if target.type_name == "minecraft:breeze" {
+        return if matches!(projectile_type, "minecraft:wind_charge" | "minecraft:breeze_wind_charge") { Deflection::None } else { Deflection::BreezeReverse };
+    }
+    Deflection::Reverse
+}
+
+/// `ProjectileDeflection.REVERSE.deflect(projectile, ..., random, scale)`: the motion goes back
+/// at half of `scale` (per axis), the projectile turns about (170 to 190 degrees, from its own
+/// random).
+pub fn deflect_reverse(e: &mut Entity, scale: Vec3) {
+    let turn = 170.0f32 + e.random.next_float() * 20.0f32;
+    e.delta = e.delta.multiply(-scale.x * 0.5, -scale.y * 0.5, -scale.z * 0.5);
+    e.y_rot += turn;
+    e.y_rot_o += turn;
+    e.needs_sync = true;
+}
+
+/// `Projectile.hitTargetOrDeflectSelf` for an entity hit on `target`: when the target deflects
+/// projectiles (a breeze) the projectile is turned back (once per deflecting entity: it flies
+/// through the same one afterwards) and the hit does not happen. True when the hit is off.
+pub(crate) fn deflected_by_target(e: &mut Entity, level: &mut dyn EntityLevel, target: i32) -> bool {
+    try_deflect(e, level, target).is_some()
+}
+
+/// [`deflected_by_target`] telling whether the projectile was turned now (`Some(true)`) or went
+/// through the entity that turned it before (`Some(false)`); `None` when the target does not
+/// deflect it.
+pub(crate) fn try_deflect(e: &mut Entity, level: &mut dyn EntityLevel, target: i32) -> Option<bool> {
+    let t = level.entity(target)?;
+    let d = deflection_of(t, e.type_name);
+    if d == Deflection::None {
+        return None;
+    }
+    if e.last_deflected_by == Some(target) {
+        return Some(false);
+    }
+    if d == Deflection::BreezeReverse && !e.silent {
+        level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.breeze.deflect", source: "neutral", volume: 1.0, pitch: 1.0 });
+    }
+    deflect_reverse(e, Vec3::new(1.0, 1.0, 1.0));
+    e.last_deflected_by = Some(target);
+    Some(true)
+}
+
+/// `Entity.projectileReceivesSideEffectsOnHit(hurt)`: an enderman that teleported away from the
+/// hit (it was not hurt) is not touched by the arrow or the trident, which fly on.
+pub(crate) fn receives_side_effects_on_hit(level: &dyn EntityLevel, target: i32, hurt: bool) -> bool {
+    hurt || !level.entity(target).is_some_and(|t| t.type_name == "minecraft:enderman")
+}
+
 /// `hurtServer` on an end crystal struck by a projectile (it explodes); false for other
 /// entities.
 pub(crate) fn hurt_crystal(level: &mut dyn EntityLevel, id: i32, kind: crate::level::DamageKind, amount: f32, attacker: Option<i32>) -> bool {
@@ -295,6 +362,11 @@ pub fn mth_atan2(mut y: f64, mut x: f64) -> f64 {
 
 /// `onHit`: every throwable breaks on impact; the effect is the simulation's.
 fn on_hit(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
+    if let Hit::Entity { id, .. } = hit
+        && deflected_by_target(e, level, id)
+    {
+        return;
+    }
     let (kind_, owner) = { let d = data(e); (d.kind, d.owner) };
     if kind_ == Throwable::SplashPotion
         && let Some(item) = data(e).item.clone()

@@ -273,6 +273,8 @@ impl EntityExt for ShulkerBullet {
         e.apply_effects_from_blocks(level);
         if let Some(h) = hit
             && e.is_alive()
+            // `hitTargetOrDeflectSelf`: a breeze turns the bullet back; it is not destroyed.
+            && !matches!(h, Hit::Entity(id) if crate::projectile::deflected_by_target(e, level, id))
         {
             match h {
                 Hit::Entity(id) => self.on_hit_entity(e, level, id),

@@ -73,6 +73,15 @@ pub(crate) struct Entity {
     leash_sent: Option<i32>,
     /// A boss's bar fill as its viewers last got it (`ServerBossEvent`, the wither).
     boss_sent: Option<f32>,
+    /// What `finalizeSpawn` made along with it, until the level adds and seats it.
+    pub(crate) jockeys: Option<Box<Jockeys>>,
+}
+
+/// The jockeys a mob's `finalizeSpawn` made (see `kiln_entity::mob::Companion`).
+pub(crate) struct Jockeys {
+    pub companions: Vec<kiln_entity::mob::Companion>,
+    /// A baby zombie looks for an unridden chicken near it.
+    pub nearby_chicken: bool,
 }
 
 /// A spawn requested during a phase; ids are handed out afterwards in canonical order.
@@ -99,6 +108,65 @@ impl Spawn {
         let kind = kiln_data::entities::by_name(e.type_name)?;
         Some(Spawn { kind, pos: arr(e.position()), vel: arr(e.delta), body: Body::Loaded(Box::new(e)) })
     }
+}
+
+/// Adds the jockeys of the mob `mount` (just pushed, the last of `list`) after it, with the next
+/// ids, and seats them (`startRiding`). A baby zombie that asked for a chicken takes the lowest
+/// numbered unridden one within 5x3x5 blocks of its box (`ENTITY_NOT_BEING_RIDDEN`).
+pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, next_id: &mut i32, world_seed: i64, game_time: i64) {
+    use kiln_entity::mob::Seat;
+    let mut seated: Vec<(i32, Seat)> = Vec::new();
+    for c in jockeys.companions {
+        let Some(kind) = kiln_data::entities::by_name(c.entity.type_name) else { continue };
+        let id = *next_id;
+        *next_id += 1;
+        let pos = arr(c.entity.position());
+        let uuid = fresh_uuid(world_seed, game_time, id);
+        list.push(Entity::new(id, uuid, Spawn { kind, pos, vel: [0.0; 3], body: Body::Ready(Box::new(c.entity)) }));
+        seated.push((id, c.seat));
+    }
+    // `startRiding`: (rider, vehicle) in the order the companions were made.
+    let mut links: Vec<(i32, i32)> = seated
+        .iter()
+        .filter_map(|&(id, seat)| match seat {
+            Seat::OnMob => Some((id, mount)),
+            Seat::UnderMob => Some((mount, id)),
+            Seat::OnCompanion(i) => Some((id, seated[i].0)),
+            Seat::Loose => None,
+        })
+        .collect();
+    if jockeys.nearby_chicken
+        && let Some(chicken) = nearby_unridden_chicken(list, mount)
+    {
+        if let Some(c) = list.iter_mut().find(|e| e.id == chicken).and_then(|e| e.phys.as_mut()).and_then(kiln_entity::mob::data_mut) {
+            c.chicken_jockey = true;
+        }
+        links.push((mount, chicken));
+    }
+    for (rider, vehicle) in links {
+        let (Ok(ri), Ok(vi)) = (list.binary_search_by_key(&rider, |e| e.id), list.binary_search_by_key(&vehicle, |e| e.id)) else { continue };
+        if ri == vi {
+            continue;
+        }
+        let Some(mut rp) = list[ri].phys.take() else { continue };
+        if let Some(vp) = list[vi].phys.as_mut()
+            && kiln_entity::ride::start_riding(&mut rp, vp, false)
+        {
+            kiln_entity::ride::position_rider(&mut rp, vp);
+        }
+        list[ri].phys = Some(rp);
+        list[ri].sync();
+    }
+}
+
+fn nearby_unridden_chicken(list: &[Entity], mount: i32) -> Option<i32> {
+    let me = list.iter().find(|e| e.id == mount)?.phys.as_ref()?;
+    let area = me.bounding_box().inflate(5.0, 3.0, 5.0);
+    list.iter()
+        .filter(|e| e.id != mount && !e.removed)
+        .filter(|e| e.phys.as_ref().is_some_and(|p| p.is_alive() && p.type_name == "minecraft:chicken" && p.passengers.is_empty() && p.vehicle.is_none() && p.bounding_box().intersects(&area)))
+        .map(|e| e.id)
+        .min()
 }
 
 /// A fresh entity UUID (version 4 layout), from the world seed, the world age and the network
@@ -149,6 +217,7 @@ impl Entity {
             _ => uuid,
         };
         let (u, seed, pos) = (uuid.as_u128(), seed_for(id), vec3(spawn.pos));
+        let mut jockeys = None;
         let phys = match spawn.body {
             Body::Item { stack, pickup_delay, thrower } => {
                 let mut e = kiln_entity::item::new(id, u, stack, seed);
@@ -180,7 +249,11 @@ impl Entity {
                 }
                 if let Some(f) = finalize {
                     let mut r = LegacyRandom::new(f.seed);
-                    kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, &mut kiln_entity::mob::GroupData::default(), true);
+                    let mut group = kiln_entity::mob::GroupData { monsters_disabled: f.monsters_disabled, camel_space: f.camel_space, ..Default::default() };
+                    kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, &mut group, f.natural);
+                    if !group.companions.is_empty() || group.nearby_chicken {
+                        jockeys = Some(Box::new(Jockeys { companions: std::mem::take(&mut group.companions), nearby_chicken: group.nearby_chicken }));
+                    }
                     if f.persistent
                         && let Some(m) = kiln_entity::mob::data_mut(&mut e)
                     {
@@ -219,6 +292,7 @@ impl Entity {
             equipment_sent: Vec::new(),
             leash_sent: None,
             boss_sent: None,
+            jockeys,
         }
     }
 
@@ -1030,7 +1104,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         // `Entity.thunderHit`: one more tick of fire, 8 seconds if that made it 0.
         let ticks = p.fire_ticks + 1;
         p.set_fire_ticks(if ticks == 0 { 160 } else { ticks });
-        let source = health::Source { cause: health::Cause::Entity(DamageKind::LightningBolt), attacker: None, direct: None, weapon: None };
+        let source = health::Source { cause: health::Cause::Entity(DamageKind::LightningBolt), attacker: None, direct: None, weapon: None, position: None };
         let env = self.level.env;
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         p.hurt(5.0, &source, &mut ctx);
@@ -1062,7 +1136,9 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
             Some(health::Attacker::mob(a, e.type_name, arr(e.position())))
         });
-        let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None };
+        // A projectile's hit judges blocking from where it comes (`getSourcePosition`).
+        let position = source.direct.filter(|_| source.kind.is_tag("minecraft:is_projectile")).and(source.pos).map(arr);
+        let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None, position };
         let env = self.level.env;
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         let hurt = p.hurt(amount, &source, &mut ctx);
@@ -1126,8 +1202,8 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             kiln_entity::effect::Kind::HealOrHarm { harm: true } => {
                 let amount = (scale * 6i32.wrapping_shl(effect.amplifier as u32) as f64 + 0.5) as i32 as f32;
                 let source = match source {
-                    None => health::Source { cause: health::Cause::Entity(DamageKind::Magic), attacker: None, direct: None, weapon: None },
-                    Some((direct, _)) => health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker, direct: Some(direct), weapon: None },
+                    None => health::Source { cause: health::Cause::Entity(DamageKind::Magic), attacker: None, direct: None, weapon: None, position: None },
+                    Some((direct, _)) => health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker, direct: Some(direct), weapon: None, position: None },
                 };
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
@@ -1229,6 +1305,7 @@ pub(crate) fn tick(
     sim.index_players();
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
+    process_pending_kills(&mut sim);
     for i in 0..sim.list.len() {
         // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
         let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
@@ -1299,6 +1376,30 @@ pub(crate) fn tick(
     }
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
+/// `/kill` of mobs (`LivingEntity.kill`: `hurtServer(genericKill, Float.MAX_VALUE)`): whatever
+/// the command queued runs through the mob's own damage code (death sound, loot, experience,
+/// equipment drops, death events), in loaded chunks that do not tick too.
+fn process_pending_kills(sim: &mut SimLevel) {
+    for i in 0..sim.list.len() {
+        let queued = sim.list[i].phys.as_ref().is_some_and(|p| !p.pending_hurts.is_empty() && matches!(p.kind, EntityKind::Mob(_)));
+        if !queued {
+            continue;
+        }
+        let Some(mut phys) = sim.list[i].phys.take() else { continue };
+        (sim.current, sim.seeds) = (phys.id, 0x6b69_6c6c);
+        sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+        sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time ^ 0x6b69_6c6c, phys.id);
+        for (kind, amount, attacker) in std::mem::take(&mut phys.pending_hurts) {
+            let mut source = kiln_entity::mob::DamageSource::of(kind);
+            source.attacker = attacker;
+            kiln_entity::mob::hurt_entity(&mut phys, sim, source, amount);
+        }
+        let e = &mut sim.list[i];
+        e.phys = Some(phys);
+        e.sync();
     }
 }
 
@@ -1924,7 +2025,7 @@ fn carry_out(
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == target) {
                 // kiln-entity's attacker is the entity that dealt the damage (TNT, a falling
                 // block); none of them is a player.
-                let source = health::Source { cause: health::Cause::Entity(kind), attacker: None, direct: attacker, weapon: None };
+                let source = health::Source { cause: health::Cause::Entity(kind), attacker: None, direct: attacker, weapon: None, position: None };
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
             }
@@ -2017,7 +2118,7 @@ fn carry_out(
                     crate::effects::Kind::HealOrHarm { harm: false } => p.heal((scale * (4i32.wrapping_shl(e.amplifier as u32)) as f64 + 0.5) as i32 as f32),
                     crate::effects::Kind::HealOrHarm { harm: true } => {
                         let amount = (scale * (6i32.wrapping_shl(e.amplifier as u32)) as f64 + 0.5) as i32 as f32;
-                        let source = health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker: None, direct: None, weapon: None };
+                        let source = health::Source { cause: health::Cause::Entity(DamageKind::IndirectMagic), attacker: None, direct: None, weapon: None, position: None };
                         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
                         p.hurt(amount, &source, &mut ctx);
                     }
@@ -2056,7 +2157,7 @@ fn carry_out(
             let rot = p.rot;
             p.teleport(to, rot, now);
             p.fall_distance = 0.0;
-            let source = health::Source { cause: health::Cause::Other("minecraft:ender_pearl"), attacker: None, direct: None, weapon: None };
+            let source = health::Source { cause: health::Cause::Other("minecraft:ender_pearl"), attacker: None, direct: None, weapon: None, position: None };
             let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
             p.hurt(5.0, &source, &mut ctx);
             p.sound_for_all("minecraft:entity.player.teleport", world_fx::SoundSource::Players, 1.0, 1.0);

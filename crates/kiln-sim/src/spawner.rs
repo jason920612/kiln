@@ -345,7 +345,7 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
         let count = 1 + r.next_int_bounded(env.mobs.difficulty as i32 + 1);
         for _ in 0..count {
             let seed = r.next_long();
-            let fin = crate::mobs::Finalize { ctx, seed, persistent: false };
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: false, monsters_disabled: false, camel_space: false };
             spawns.push(crate::mobs::spawn(MobKind::Phantom, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(0.0), Some(fin)));
         }
     }
@@ -449,7 +449,12 @@ fn spawn_category_for_chunk(
             ctx.biome = Some(biome as i32);
             let seed = r.next_long();
             let _ = &mut group;
-            spawns.push(crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(crate::mobs::Finalize { ctx, seed, persistent: false })));
+            let monsters_disabled = env.mobs.difficulty == 0 || !env.mobs.spawn_monsters;
+            // `Husk.finalizeSpawn`: a camel husk jockey needs the room for the camel.
+            let camel_space = kind == MobKind::Husk
+                && kiln_data::entities::by_name("minecraft:camel_husk").is_some_and(|c| no_collision(level, [fx.floor() + 0.5, y as f64, fz.floor() + 0.5], c.width, c.height));
+            let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space };
+            spawns.push(crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)));
             s.add(pc, cat);
             spawned += 1;
             in_group += 1;

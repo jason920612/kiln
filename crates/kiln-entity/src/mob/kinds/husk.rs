@@ -7,7 +7,7 @@ use crate::level::EntityLevel;
 use crate::mob::attributes::Attr::*;
 use crate::mob::ext::{Info, Kind, MobExt, Placement, SpawnView};
 use crate::mob::goals::Living;
-use crate::mob::{self, DamageSource, GroupData, MobData, SpawnContext};
+use crate::mob::{self, DamageSource, GroupData, MobData, MobKind, SpawnContext};
 use crate::math::BlockPos;
 use crate::persist::{Input, Output};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
@@ -54,16 +54,25 @@ impl Kind for Husk {
         }
     }
 
-    /// `Husk.finalizeSpawn`: the zombie's, a second loot pickup roll, and for natural spawns the
-    /// camel husk roll. Approximation: camel husks and parched are not simulated, so the rider
-    /// only gets its iron spear, and the free space for the camel is assumed.
+    /// `Husk.finalizeSpawn`: the zombie's, a second loot pickup roll, and for natural spawns,
+    /// where the camel's box is free (`group.camel_space`, looked at by the caller), one husk in
+    /// ten rides a camel husk with an iron spear, a parched sitting behind it.
     fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
         zombie::finalize(e, m, r, ctx, group, false);
         m.can_pick_up_loot = r.next_float() < 0.55 * ctx.special_multiplier;
-        if group.natural && r.next_float() < 0.1 {
+        if group.natural && group.camel_space && r.next_float() < 0.1 {
             if let Some(s) = kiln_item::ItemStack::of("minecraft:iron_spear", 1) {
                 m.equipment[mob::MAINHAND] = s;
             }
+            // `camelHusk.setPos(x, y, z)`, finalized with no group data, ridden by this husk.
+            let mut camel = mob::new_jockey_at(e, MobKind::CamelHusk, false);
+            mob::finalize_spawn(&mut camel, r, ctx, &mut GroupData::default(), true);
+            group.companions.push(mob::Companion { entity: camel, seat: mob::Seat::UnderMob });
+            // The parched: `snapTo` the husk's place and yaw, finalized, riding the camel husk.
+            let mut parched = mob::new_jockey(e, MobKind::Parched);
+            mob::finalize_spawn(&mut parched, r, ctx, &mut GroupData::default(), true);
+            let camel_index = group.companions.len() - 1;
+            group.companions.push(mob::Companion { entity: parched, seat: mob::Seat::OnCompanion(camel_index) });
         }
     }
 

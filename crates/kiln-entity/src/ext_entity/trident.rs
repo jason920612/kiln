@@ -346,7 +346,10 @@ impl Trident {
             }
             Some((id, location)) => {
                 if e.is_alive() && !e.no_physics {
-                    self.hit_entity(e, level, id, location);
+                    // `hitTargetOrDeflectSelf`: a breeze turns the trident back.
+                    if !crate::projectile::deflected_by_target(e, level, id) {
+                        self.hit_entity(e, level, id, location);
+                    }
                     e.needs_sync = true;
                 }
             }
@@ -388,12 +391,12 @@ impl Trident {
         if hurt {
             self.call_lightning(level, target.0);
         }
-        // `projectileReceivesSideEffectsOnHit`, then `deflect(REVERSE)` from the trident's random.
-        e.play_sound(level, "minecraft:item.trident.hit", 1.0, 1.0);
-        let yaw = 170.0 + e.random.next_float() * 20.0;
-        e.delta = e.delta.multiply(-0.01, -0.1, -0.01);
-        e.y_rot += yaw;
-        e.y_rot_o += yaw;
+        // `projectileReceivesSideEffectsOnHit`, then `deflect(REVERSE)` from the trident's random
+        // (an enderman that teleported away is not touched: the trident flies on).
+        if crate::projectile::receives_side_effects_on_hit(level, id, hurt) {
+            e.play_sound(level, "minecraft:item.trident.hit", 1.0, 1.0);
+            crate::projectile::deflect_reverse(e, Vec3::new(0.02, 0.2, 0.02));
+        }
     }
 
     /// `AbstractArrow.onHitBlock`: sticks in the block, backed off 0.05 against the motion.

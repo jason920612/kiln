@@ -110,6 +110,12 @@ impl LlamaSpit {
     /// `hitTargetOrDeflectSelf` (nothing here deflects a spit) and `LlamaSpit.onHitEntity` /
     /// `onHitBlock`.
     fn on_hit(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
+        // `hitTargetOrDeflectSelf`: a breeze turns the spit back.
+        if let Hit::Entity { id, .. } = hit
+            && crate::projectile::deflected_by_target(e, level, id)
+        {
+            return;
+        }
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: TYPE, owner: self.owner, hit });
         match hit {
             Hit::Entity { id, location } => {

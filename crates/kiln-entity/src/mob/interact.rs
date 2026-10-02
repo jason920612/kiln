@@ -158,6 +158,10 @@ fn play_eating_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel) {
         let sound = super::sound_event(if m.baby() { "minecraft:entity.baby_pig.eat" } else { "minecraft:entity.pig.eat" });
         super::make_sound(e, m, level, sound);
     }
+    // `Nautilus.playEatingSound`.
+    if matches!(m.kind, MobKind::Nautilus | MobKind::ZombieNautilus) {
+        super::kinds::nautilus::play_eating_sound(e, m, level);
+    }
     // `Frog.playEatingSound`: a loud gulp, by the level.
     if m.kind == MobKind::Frog {
         level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.frog.eat", source: "neutral", volume: 2.0, pitch: 1.0 });

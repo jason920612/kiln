@@ -1,7 +1,8 @@
 //! Strider: walks on lava sources, heads for lava when out of it and shivers (slower, the
 //! suffocating flag) away from warm blocks, is hurt by water; saddled and ridden, steered with
-//! a warped fungus on a stick. Not modelled: the boost from using the fungus on a stick, the
-//! zombified piglin and baby jockeys at spawn (their rolls are kept, the riders are not made).
+//! a warped fungus on a stick; at spawn one in thirty carries a saddled-in zombified piglin
+//! jockey holding one, one in ten a baby strider rides it. Not modelled: the boost from using the
+//! fungus on a stick.
 
 use crate::custom_goal_boilerplate;
 use crate::entity::Entity;
@@ -12,7 +13,7 @@ use crate::mob::ext::{self, CustomGoal, Info, Kind, MobExt};
 use crate::mob::goals::{self, Goal, JUMP, LOOK, MOVE};
 use crate::mob::interact::{HeldChange, Interactor, Outcome};
 use crate::mob::mth::reduced_tick_delay;
-use crate::mob::{DamageSource, GroupData, MobData, SpawnContext, item_name, item_tag, path, random_pos};
+use crate::mob::{self, DamageSource, GroupData, MobData, MobKind, SpawnContext, item_name, item_tag, path, random_pos};
 use crate::persist::{Input, Output};
 use kiln_data::entities::data;
 use kiln_item::ItemStack;
@@ -29,14 +30,22 @@ static INFO: Info = Info {
     ..Info::animal("minecraft:strider", &[(MovementSpeed, 0.17499999701976776)])
 };
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct State {
     pub suffocating: bool,
     pub saddle: ItemStack,
+    /// `Mob.dropChances` of the saddle slot (0.085, 2.0 for a jockey's: `setGuaranteedDrop`).
+    pub saddle_drop: f32,
     /// `DATA_BOOST_TIME`.
     pub boost_time: i32,
     /// `isInLava` as of this tick's base tick (for the walk target values).
     in_lava: bool,
+}
+
+impl Default for State {
+    fn default() -> State {
+        State { suffocating: false, saddle: ItemStack::default(), saddle_drop: 0.085, boost_time: 0, in_lava: false }
+    }
 }
 
 fn st(m: &MobData) -> &State {
@@ -203,18 +212,43 @@ impl Kind for Strider {
         if m.baby() { (0.45, 0.85, 0.4375) } else { base }
     }
 
-    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &SpawnContext, group: &mut GroupData) {
+    /// `Strider.finalizeSpawn`: a grown strider gets group data of its own (so it is never a
+    /// baby of a group) and, one time in thirty (with monsters spawning), a zombified piglin
+    /// jockey with a warped fungus on a stick and its own saddle; else one time in ten a baby
+    /// strider rides it (`spawnJockey`: finalized for the jockey reason, `startRiding(force)`).
+    fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
         if !m.baby() {
-            // Jockeys: the rolls happen, the riders are not simulated. Every strider gets group
-            // data of its own, so none turns into a baby.
-            if r.next_int_bounded(30) == 0 {
-                let _ = r.next_float();
-            } else {
-                let _ = r.next_int_bounded(10);
+            if r.next_int_bounded(30) == 0 && !group.monsters_disabled {
+                let mut piglin = mob::new_jockey(e, MobKind::ZombifiedPiglin);
+                // `new ZombieGroupData(getSpawnAsBabyOdds(random), false)`.
+                let mut jockey_group = GroupData { zombie_baby: Some(r.next_float() < 0.05), zombie_can_jockey: false, ..GroupData::default() };
+                mob::finalize_spawn(&mut piglin, r, ctx, &mut jockey_group, false);
+                if let Some(pm) = mob::data_mut(&mut piglin)
+                    && let Some(fungus) = ItemStack::of("minecraft:warped_fungus_on_a_stick", 1)
+                {
+                    pm.equipment[mob::MAINHAND] = fungus;
+                }
+                if let Some(saddle) = ItemStack::of("minecraft:saddle", 1) {
+                    let s = st_mut(m);
+                    s.saddle = saddle;
+                    s.saddle_drop = 2.0;
+                }
+                group.companions.push(mob::Companion { entity: piglin, seat: mob::Seat::OnMob });
+            } else if r.next_int_bounded(10) == 0 {
+                let mut baby = mob::new_jockey(e, MobKind::Strider);
+                let mut bm = mob::take(&mut baby);
+                mob::set_age(&mut baby, &mut bm, -24000);
+                mob::put(&mut baby, bm);
+                mob::finalize_spawn(&mut baby, r, ctx, &mut GroupData::default(), false);
+                group.companions.push(mob::Companion { entity: baby, seat: mob::Seat::OnMob });
             }
         }
-        let _ = (e, group);
         ext::mob_finalize(m, r);
+    }
+
+    fn take_extra_equipment_for_drop(&self, m: &mut MobData) -> Vec<(ItemStack, f32)> {
+        let s = st_mut(m);
+        vec![(std::mem::take(&mut s.saddle), s.saddle_drop)]
     }
 
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
@@ -255,6 +289,11 @@ impl Kind for Strider {
         {
             st_mut(m).saddle = sd;
         }
+        if let Some(Tag::Compound(dc)) = r.get("drop_chances")
+            && let Some(f) = dc.iter().find(|(k, _)| k == "saddle").and_then(|(_, v)| v.as_f64())
+        {
+            st_mut(m).saddle_drop = f as f32;
+        }
     }
 
     fn save(&self, _e: &Entity, m: &MobData, o: &mut Output) {
@@ -264,6 +303,13 @@ impl Kind for Strider {
             match o.0.iter_mut().find(|(k, _)| k == "equipment") {
                 Some((_, Tag::Compound(eq))) => eq.push(entry),
                 _ => o.put("equipment", Tag::Compound(vec![entry])),
+            }
+        }
+        if s.saddle_drop != 0.085 {
+            let entry = ("saddle".to_owned(), Tag::Float(s.saddle_drop));
+            match o.0.iter_mut().find(|(k, _)| k == "drop_chances") {
+                Some((_, Tag::Compound(dc))) => dc.push(entry),
+                _ => o.put("drop_chances", Tag::Compound(vec![entry])),
             }
         }
     }

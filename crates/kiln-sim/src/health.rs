@@ -48,11 +48,15 @@ pub(crate) struct DamageRules {
     pub drowning: bool,
     /// 0 (peaceful) to 3 (hard).
     pub difficulty: u8,
+    /// `minecraft:keep_inventory`.
+    pub keep_inventory: bool,
+    /// The enchantments with `prevent_equipment_drop` (see `kiln_inventory::Rules`).
+    pub vanishing: Option<&'static [i32]>,
 }
 
 impl Default for DamageRules {
     fn default() -> Self {
-        DamageRules { pvp: true, fall: true, fire: true, freeze: true, drowning: true, difficulty: 2 }
+        DamageRules { pvp: true, fall: true, fire: true, freeze: true, drowning: true, difficulty: 2, keep_inventory: false, vanishing: None }
     }
 }
 
@@ -135,11 +139,14 @@ pub(crate) struct Source {
     pub direct: Option<i32>,
     /// `getWeaponItem`: the attacker's main hand item for melee hits.
     pub weapon: Option<kiln_item::ItemStack>,
+    /// `DamageSource.getSourcePosition` when it is not the attacker's: a projectile's (the
+    /// position its hit direction points back to). Blocking judges the angle from it.
+    pub position: Option<[f64; 3]>,
 }
 
 impl From<Cause> for Source {
     fn from(cause: Cause) -> Self {
-        Source { cause, attacker: None, direct: None, weapon: None }
+        Source { cause, attacker: None, direct: None, weapon: None, position: None }
     }
 }
 
@@ -159,7 +166,7 @@ impl Cause {
 
 impl Source {
     pub(crate) fn melee(attacker: Attacker, weapon: kiln_item::ItemStack) -> Source {
-        Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: Some(weapon) }
+        Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: Some(weapon), position: None }
     }
 
     fn type_name(&self) -> &'static str {
@@ -605,7 +612,8 @@ impl Player {
                 self.killed("minecraft:entity_killed_player", k, source.cause.damage_type(), source.direct.is_none());
             }
         }
-        true
+        // A hit the shield blocked entirely does not count as one (an arrow bounces off).
+        !(blocked && amount <= 0.0)
     }
 
     /// Whether the damage's attacker is a player.
@@ -743,21 +751,37 @@ impl Player {
         self.sync_on_fire_flag();
         self.death_location = Some(self.pos.map(|c| c.floor() as i32));
         self.death_dim = self.dim;
-        for i in 0..self.inv.items.len() {
-            let stack = std::mem::replace(&mut self.inv.items[i], kiln_item::ItemStack::empty());
-            if !stack.is_empty() {
-                ctx.spawns.push(self.throw_randomly(stack));
+        // `ServerPlayer.die`: unless `keepInventory` (or a spectator), the items with the curse of
+        // vanishing are destroyed (`destroyVanishingCursedItems`, over the whole container:
+        // items, armor, off hand), then `Inventory.dropAll` scatters the rest.
+        let keep = ctx.rules.keep_inventory;
+        if !keep && self.game_mode != 3 {
+            for i in 0..self.inv.items.len() {
+                if kiln_inventory::rules::prevents_equipment_drop(ctx.rules.vanishing, &self.inv.items[i]) {
+                    self.inv.items[i] = kiln_item::ItemStack::empty();
+                }
             }
-        }
-        for i in 0..self.inv.equipment.len() {
-            let stack = std::mem::replace(&mut self.inv.equipment[i], kiln_item::ItemStack::empty());
-            if !stack.is_empty() {
-                ctx.spawns.push(self.throw_randomly(stack));
+            for i in 0..self.inv.equipment.len() {
+                if kiln_inventory::rules::prevents_equipment_drop(ctx.rules.vanishing, &self.inv.equipment[i]) {
+                    self.inv.equipment[i] = kiln_item::ItemStack::empty();
+                }
             }
+            for i in 0..self.inv.items.len() {
+                let stack = std::mem::replace(&mut self.inv.items[i], kiln_item::ItemStack::empty());
+                if !stack.is_empty() {
+                    ctx.spawns.push(self.throw_randomly(stack));
+                }
+            }
+            for i in 0..self.inv.equipment.len() {
+                let stack = std::mem::replace(&mut self.inv.equipment[i], kiln_item::ItemStack::empty());
+                if !stack.is_empty() {
+                    ctx.spawns.push(self.throw_randomly(stack));
+                }
+            }
+            self.inv.times_changed += 1;
         }
-        self.inv.times_changed += 1;
-        // `LivingEntity.dropExperience` (players always drop it).
-        let xp = self.death_experience(false);
+        // `LivingEntity.dropExperience` (players always drop it, but not with `keepInventory`).
+        let xp = self.death_experience(keep);
         if xp > 0 {
             let at = self.pos;
             crate::container::furnace::award_experience(at, xp, &mut self.entity_rng, ctx.spawns);

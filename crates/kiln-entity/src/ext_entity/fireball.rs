@@ -113,6 +113,16 @@ impl Fireball {
     }
 
     fn on_hit(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {
+        // `hitTargetOrDeflectSelf`: a breeze turns it back (`onDeflection(false)`: half the
+        // acceleration) and nothing is hit.
+        if let Hit::Entity { id, .. } = hit
+            && let Some(turned) = crate::projectile::try_deflect(e, level, id)
+        {
+            if turned {
+                self.acceleration_power *= 0.5;
+            }
+            return;
+        }
         let name = if self.small { "minecraft:small_fireball" } else { "minecraft:fireball" };
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: name, owner: self.owner, hit });
         let source = DamageSource { kind: DamageKind::Fireball, attacker: self.owner, direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };

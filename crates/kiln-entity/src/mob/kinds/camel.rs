@@ -2,6 +2,11 @@
 //! steering once it wears a saddle; sits down and stands up now and then (refusing to move
 //! meanwhile), dashes forward on the rider's jump with a 55-tick cooldown, eats cactus.
 //!
+//! The camel husk (`CamelHusk`) is the same on its own sounds: a monster of the desert's husks
+//! that is never a baby and cannot breed, despawns, lives on in peaceful, is fed husk food and
+//! is steered by the husk that rides it (a mob rider: it neither sits, looks about nor panics
+//! meanwhile).
+//!
 //! Driven by the brain of `CamelAi` (core: swim, panic, look sink, move sink, cooldowns; idle:
 //! look at players, love, temptation or following an adult, looking about, then one of strolling,
 //! walking to the look target, sitting down or standing up, or nothing), on [`crate::mob::brain`].
@@ -25,9 +30,11 @@ use kiln_javamath::random::{LegacyRandom, RandomSource};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets::entity::{DataValue, EntityData};
 
-pub struct Camel;
+/// `Camel` (false) and `CamelHusk` (true).
+pub struct Camel(pub bool);
 
-pub static KIND: Camel = Camel;
+pub static KIND: Camel = Camel(false);
+pub static HUSK: Camel = Camel(true);
 
 /// `createBaseHorseAttributes` with the camel's own.
 static INFO: Info = Info {
@@ -39,6 +46,24 @@ static INFO: Info = Info {
         &[(MaxHealth, 32.0), (MovementSpeed, 0.09000000357627869), (JumpStrength, 0.41999998688697815), (StepHeight, 1.5), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5)],
     )
 };
+
+/// `CamelHusk`: a monster (not a baby, no breeding); the rest as the camel.
+static HUSK_INFO: Info = Info {
+    category: crate::mob::Category::Monster,
+    breathes_under_water: true,
+    head: (30, 40, 10),
+    ambient_interval: 400,
+    ..Info::animal(
+        "minecraft:camel_husk",
+        &[(MaxHealth, 32.0), (MovementSpeed, 0.09000000357627869), (JumpStrength, 0.41999998688697815), (StepHeight, 1.5), (SafeFallDistance, 6.0), (FallDamageMultiplier, 0.5)],
+    )
+};
+
+/// The type's `entity.<camel or camel_husk>.<what>` sound.
+fn snd(m: &MobData, what: &str) -> &'static str {
+    let name = if m.kind == mob::MobKind::CamelHusk { "camel_husk" } else { "camel" };
+    mob::sound_event(&format!("minecraft:entity.{name}.{what}"))
+}
 
 const SITDOWN_TICKS: i64 = 40;
 const STANDUP_TICKS: i64 = 52;
@@ -89,7 +114,7 @@ fn sit_down(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if sitting(m) {
         return;
     }
-    mob::make_sound(e, m, level, "minecraft:entity.camel.sit");
+    mob::make_sound(e, m, level, snd(m, "sit"));
     level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
     st_mut(m).last_pose_change = -level.game_time();
     mob::refresh_dimensions(e, m);
@@ -99,7 +124,7 @@ fn stand_up(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if !sitting(m) {
         return;
     }
-    mob::make_sound(e, m, level, "minecraft:entity.camel.stand");
+    mob::make_sound(e, m, level, snd(m, "stand"));
     level.emit(Event::GameEvent { event: "minecraft:entity_action", pos: e.position(), entity: Some(e.id) });
     st_mut(m).last_pose_change = level.game_time();
     mob::refresh_dimensions_in(e, m, level);
@@ -126,7 +151,19 @@ fn stand_up_instantly(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
 
 impl Kind for Camel {
     fn info(&self) -> &'static Info {
-        &INFO
+        if self.0 { &HUSK_INFO } else { &INFO }
+    }
+
+    fn can_be_baby(&self) -> bool {
+        !self.0
+    }
+
+    fn allowed_in_peaceful(&self) -> Option<bool> {
+        self.0.then_some(true)
+    }
+
+    fn remove_when_far_away(&self, _m: &MobData) -> Option<bool> {
+        self.0.then_some(true)
     }
 
     fn new_state(&self, m: &mut MobData, _random: &mut dyn RandomSource) -> Option<Box<dyn MobExt>> {
@@ -143,11 +180,11 @@ impl Kind for Camel {
     }
 
     fn is_food(&self, item: i32) -> bool {
-        mob::item_tag(item, "minecraft:camel_food")
+        mob::item_tag(item, if self.0 { "minecraft:camel_husk_food" } else { "minecraft:camel_food" })
     }
 
     fn tempted_by(&self, item: i32) -> bool {
-        mob::item_tag(item, "minecraft:camel_food")
+        self.is_food(item)
     }
 
     fn pre_tick(&self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
@@ -246,7 +283,7 @@ impl Kind for Camel {
         if st(m).dash_cooldown > 0 {
             st_mut(m).dash_cooldown -= 1;
             if st(m).dash_cooldown == 0 {
-                level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.camel.dash_ready", source: "neutral", volume: 1.0, pitch: 1.0 });
+                level.emit(Event::Sound { pos: e.position(), sound: snd(m, "dash_ready"), source: "neutral", volume: 1.0, pitch: 1.0 });
             }
         }
         if refuse_to_move(m) {
@@ -306,6 +343,10 @@ impl Kind for Camel {
     }
 
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
+        if self.0 {
+            // `CamelHusk.interact`: whoever touches it makes it stay.
+            m.persistence_required = true;
+        }
         if who.sneaking && !m.baby() {
             // The inventory screen is not modelled.
             return Some(Outcome::success(HeldChange::None));
@@ -315,7 +356,7 @@ impl Kind for Camel {
             let mut one = stack.clone();
             one.set_count(1);
             st_mut(m).saddle = one;
-            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.camel.saddle", source: "neutral", volume: 0.5, pitch: 1.0 });
+            level.emit(Event::Sound { pos: e.position(), sound: snd(m, "saddle"), source: "neutral", volume: 0.5, pitch: 1.0 });
             return Some(Outcome::success(HeldChange::Consume(1)));
         }
         if !stack.is_empty() && self.is_food(stack.item()) {
@@ -340,7 +381,7 @@ impl Kind for Camel {
             }
             if !e.silent {
                 let pitch = 1.0 + (e.random.next_float() - e.random.next_float()) * 0.2;
-                level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.camel.eat", source: "neutral", volume: 1.0, pitch });
+                level.emit(Event::Sound { pos: e.position(), sound: snd(m, "eat"), source: "neutral", volume: 1.0, pitch });
             }
             level.emit(Event::GameEvent { event: "minecraft:eat", pos: e.position(), entity: Some(e.id) });
             return Some(Outcome::success(HeldChange::Consume(1)));
@@ -361,6 +402,10 @@ impl Kind for Camel {
 
     /// `canMate`: both grown, fed and healthy (`canParent`).
     fn can_mate(&self, m: &MobData, partner: &MobData) -> bool {
+        // (`CamelHusk.canMate` and `canFallInLove`: never.)
+        if self.0 {
+            return false;
+        }
         let parent = |x: &MobData| !x.baby() && x.health >= x.max_health() && x.in_love > 0 && !x.is_vehicle;
         parent(m) && parent(partner)
     }
@@ -373,7 +418,11 @@ impl Kind for Camel {
     }
 
     /// `checkCamelSpawnRules`.
-    fn check_spawn_rules(&self, view: &dyn SpawnView, pos: BlockPos, _r: &mut LegacyRandom) -> Option<bool> {
+    fn check_spawn_rules(&self, view: &dyn SpawnView, pos: BlockPos, r: &mut LegacyRandom) -> Option<bool> {
+        if self.0 {
+            // `Monster.checkSurfaceMonstersSpawnRules`: dark enough, and under the open sky.
+            return Some(super::zombie::monster_rules(view, pos, r) && view.sky_light(pos) >= 15);
+        }
         Some(super::wolf::block_in_tag(view.block(pos.below()), "minecraft:camels_spawnable_on") && view.raw_brightness(pos, 0) > 8)
     }
 
@@ -442,12 +491,12 @@ pub fn start_jump(m: &mut MobData) -> Option<&'static str> {
     let s = st_mut(m);
     s.dashing = true;
     s.dash_cooldown = 55;
-    Some("minecraft:entity.camel.dash")
+    Some(snd(m, "dash"))
 }
 
 /// `Entity.hasControllingPassenger` of a camel: saddled, a player in front.
 fn has_controlling_passenger(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool {
-    !st(m).saddle.is_empty() && e.passengers.first().is_some_and(|&p| level.player(p).is_some())
+    mob::has_controlling_passenger(e, m, level)
 }
 
 /// `wouldNotSuffocateAtTargetPose` for the pose the camel would change to.
@@ -485,7 +534,8 @@ fn make_brain(random: &mut dyn RandomSource) -> Brain {
         vec![
             Swim::new(0.8),
             // `CamelPanic`: stands up at once when it panics.
-            Anon::named("CamelPanic", AnimalPanic::new(4.0), None, Some(|cx| stand_up_instantly(cx.e, cx.m, cx.level))),
+            // (`CamelPanic.checkExtraStartConditions`: not while a mob rides it.)
+            Anon::named("CamelPanic", AnimalPanic::new(4.0), Some(|cx| !mob::first_passenger_is_mob(cx.e, &*cx.level)), Some(|cx| stand_up_instantly(cx.e, cx.m, cx.level))),
             LookAtTargetSink::new(45, 90),
             MoveToTargetSink::new(),
             CountDownCooldownTicks::new(Mem::TemptationCooldownTicks),

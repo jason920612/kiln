@@ -197,6 +197,11 @@ pub fn copy_steering_back(steered: &Entity, vehicle: &mut Entity) {
     }
 }
 
+/// The `AbstractHorse` subclasses: horses and their kin, llamas and camels.
+fn is_abstract_horse(kind: crate::mob::MobKind) -> bool {
+    crate::mob::kinds::horse::is_equine(kind) || matches!(kind, crate::mob::MobKind::Camel | crate::mob::MobKind::CamelHusk)
+}
+
 /// `positionRider(passenger)` for an entity passenger.
 pub fn position_rider(e: &mut Entity, vehicle: &Entity) {
     let Some(index) = vehicle.passengers.iter().position(|&p| p == e.id) else { return };
@@ -206,7 +211,7 @@ pub fn position_rider(e: &mut Entity, vehicle: &Entity) {
     // `AbstractHorse.positionRider`, `Chicken.positionRider`: the rider's body faces the
     // mount's way.
     if let (EntityKind::Mob(vm), EntityKind::Mob(rm)) = (&vehicle.kind, &mut e.kind)
-        && (crate::mob::kinds::horse::is_equine(vm.kind) || vm.kind == crate::mob::MobKind::Chicken)
+        && (is_abstract_horse(vm.kind) || vm.kind == crate::mob::MobKind::Chicken)
     {
         rm.y_body_rot = vm.y_body_rot;
     }
@@ -220,7 +225,7 @@ pub fn start_riding(rider: &mut Entity, vehicle: &mut Entity, rider_is_player: b
     }
     rider.vehicle = Some(vehicle.id);
     add_passenger(vehicle, rider.id, rider_is_player, false);
-    if matches!(&vehicle.kind, EntityKind::Mob(vm) if crate::mob::kinds::horse::is_equine(vm.kind)) {
+    if matches!(&vehicle.kind, EntityKind::Mob(vm) if is_abstract_horse(vm.kind)) {
         snap_rotation_to_mount(rider, vehicle);
     }
     true
