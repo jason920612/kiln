@@ -55,7 +55,7 @@ fn play_warning_sound(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
 /// `PolarBearMeleeAttackGoal.checkAndPerformAttack`: no swing; within reach plus three blocks the
 /// bear stands up and roars as the swipe comes due.
 fn bear_attack(next: &mut i32, reset: i32, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) {
-    if *next <= 0 && crate::mob::within_melee_range(e, t) && crate::mob::has_line_of_sight_cached(e, m, level, t) {
+    if *next <= 0 && crate::mob::within_melee_range(e, m, t) && crate::mob::has_line_of_sight_cached(e, m, level, t) {
         *next = reset;
         crate::mob::do_hurt_target(e, m, level, t);
         set_standing(m, false);

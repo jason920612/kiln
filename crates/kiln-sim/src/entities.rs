@@ -1244,8 +1244,15 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     }
     if !phys.is_removed() {
         phys.common_tick();
-        match vehicle.and_then(|v| sim.list[v].phys.clone()) {
-            Some(v) => kiln_entity::ride::ride_tick(&mut phys, sim, &v),
+        match vehicle.and_then(|v| sim.list[v].phys.clone().map(|p| (v, p))) {
+            Some((vi, mut v)) => {
+                // (The vehicle is ticked as a copy: what its rider steered it by comes back.)
+                if kiln_entity::ride::ride_tick(&mut phys, sim, &mut v)
+                    && let Some(real) = sim.list[vi].phys.as_mut()
+                {
+                    kiln_entity::ride::copy_steering_back(&v, real);
+                }
+            }
             None => phys.tick(sim),
         }
     }

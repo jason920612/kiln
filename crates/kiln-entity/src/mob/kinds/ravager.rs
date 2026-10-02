@@ -55,6 +55,11 @@ impl Kind for Ravager {
         Some(Box::new(IllagerState::default()))
     }
 
+    /// `Ravager.updateControlFlags`: raiders on its back leave its goals their flags.
+    fn keeps_flags_for_raiders(&self) -> bool {
+        true
+    }
+
     fn register_goals(&self, m: &mut MobData) {
         raider::register_raider_goals(m);
         let g = &mut m.goals;

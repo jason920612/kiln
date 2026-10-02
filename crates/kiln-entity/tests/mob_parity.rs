@@ -407,6 +407,14 @@ fn replay(s: &Value) -> Result<usize, String> {
             level.add_effect_instance(id, fx, None);
         }
     }
+    // wp29: riders sit on their mounts (`startRiding`) before the first tick.
+    for (i, spec) in s["mobs"].as_array().unwrap().iter().enumerate() {
+        let Some(v) = spec.get("vehicle").and_then(Value::as_i64).filter(|&v| v >= 0) else { continue };
+        let marker = kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0);
+        let mut vehicle = std::mem::replace(level.entity_mut(ids[v as usize]).unwrap(), marker);
+        assert!(kiln_entity::ride::start_riding(level.entity_mut(ids[i]).unwrap(), &mut vehicle, false), "could not ride");
+        *level.entity_mut(ids[v as usize]).unwrap() = vehicle;
+    }
     // wp28 creaking: hearts without a creaking yet (the ones with one were made above), and the
     // night attribute.
     level.creaking_active = s.get("creaking_active").and_then(Value::as_bool).unwrap_or(false);
@@ -505,16 +513,26 @@ fn replay(s: &Value) -> Result<usize, String> {
                 }
                 e.common_tick();
                 e.tick(level);
-                for pid in e.passengers.clone() {
-                    let Some(slot) = level.entity_mut(pid) else { continue };
-                    let mut p = std::mem::replace(slot, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
-                    if p.vehicle == Some(e.id) && !p.is_removed() {
-                        p.common_tick();
-                        kiln_entity::ride::ride_tick(&mut p, level, e);
-                    }
-                    *level.entity_mut(pid).unwrap() = p;
-                }
             });
+            // The riders tick right after their vehicle (`ServerLevel.tickPassenger`), with the
+            // vehicle in the level as the simulation has it: a copy of it goes to the rider,
+            // and what the rider steered it by goes back.
+            let Some(v) = level.entity_at(i).filter(|e| !e.is_removed() && e.vehicle.is_none()) else { continue };
+            let (vid, riders) = (v.id, v.passengers.clone());
+            for pid in riders {
+                let Some(mut vehicle) = level.entity(vid).cloned() else { break };
+                let Some(slot) = level.entity_mut(pid) else { continue };
+                let mut p = std::mem::replace(slot, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
+                if p.vehicle == Some(vid) && !p.is_removed() {
+                    p.common_tick();
+                    if kiln_entity::ride::ride_tick(&mut p, &mut level, &mut vehicle)
+                        && let Some(real) = level.entity_mut(vid)
+                    {
+                        kiln_entity::ride::copy_steering_back(&vehicle, real);
+                    }
+                }
+                *level.entity_mut(pid).unwrap() = p;
+            }
         }
         // `Level.tickBlockEntities`: the creaking hearts, after the entities.
         level.tick_hearts();

@@ -303,7 +303,7 @@ impl Kind for Fox {
         g.add(6, Goal::Custom(Box::new(FoxPounceGoal)));
         g.add(6, Goal::Custom(Box::new(SeekShelterGoal { speed: 1.25, interval: mth::reduced_tick_delay(100), wanted: Vec3::ZERO })));
         let mut melee = common_a::MeleeGoal::new("FoxMeleeAttackGoal", 1.2, true, |next, reset, e, m, level, t| {
-            if *next <= 0 && crate::mob::within_melee_range(e, t) && crate::mob::has_line_of_sight_cached(e, m, level, t) {
+            if *next <= 0 && crate::mob::within_melee_range(e, m, t) && crate::mob::has_line_of_sight_cached(e, m, level, t) {
                 *next = reset;
                 crate::mob::do_hurt_target(e, m, level, t);
                 common_a::play(e, m, level, crate::mob::sound_event("minecraft:entity.fox.bite"), 1.0, 1.0);

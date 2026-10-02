@@ -385,7 +385,7 @@ impl CustomGoal for RangedAttack {
         }
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        self.can_use(e, m, level) || (self.target.and_then(|id| goals::living(level, id)).is_some_and(|t| t.alive) && !m.nav.is_done())
+        self.can_use(e, m, level) || (self.target.and_then(|id| goals::living(level, id)).is_some_and(|t| t.alive) && !m.nav_ref().is_done())
     }
     fn stop(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) {
         self.target = None;
@@ -402,7 +402,7 @@ impl CustomGoal for RangedAttack {
             self.see_time = 0;
         }
         if !(d > (RADIUS * RADIUS) as f64) && self.see_time >= 5 {
-            m.nav.stop();
+            m.nav_mut().stop();
         } else {
             path::move_to_entity(e, m, level, BlockPos::containing(t.pos.x, t.pos.y, t.pos.z), 1.0);
         }

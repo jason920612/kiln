@@ -299,7 +299,7 @@ impl CustomGoal for RangedCrossbowAttackGoal {
         valid_target(m, level).is_some() && holding_crossbow(m)
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        valid_target(m, level).is_some() && (self.can_use(e, m, level) || !m.nav.is_done()) && holding_crossbow(m)
+        valid_target(m, level).is_some() && (self.can_use(e, m, level) || !m.nav_ref().is_done()) && holding_crossbow(m)
     }
     fn stop(&mut self, e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
         m.set_aggressive(false);
@@ -335,7 +335,7 @@ impl CustomGoal for RangedCrossbowAttackGoal {
             }
         } else {
             self.update_path_delay = 0;
-            m.nav.stop();
+            m.nav_mut().stop();
         }
         m.look.set_look_at(t.pos.x, t.eye_y, t.pos.z, 30.0, 30.0);
         match self.state {

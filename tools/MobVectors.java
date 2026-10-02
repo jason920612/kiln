@@ -65,6 +65,9 @@ public class MobVectors {
         /// wp28 creaking: the creaking heart (a block of the scenario) that holds this creaking
         /// (`CreakingHeartBlockEntity.setCreakingInfo`), or null.
         BlockPos heart;
+        /// wp29: the index (in the scenario's mobs, before this one) of the mob this one rides
+        /// (`startRiding`), or -1.
+        int vehicle = -1;
         MobSpec(String type, double x, double y, double z, float yaw, long seed) {
             this.type = type; this.x = x; this.y = y; this.z = z; this.yaw = yaw; this.seed = seed;
         }
@@ -484,8 +487,8 @@ public class MobVectors {
             }
             if (spec.age != null) ((net.minecraft.world.entity.AgeableMob) m).setAge(spec.age);
             if (spec.inLove != null) ((net.minecraft.world.entity.animal.Animal) m).setInLoveTime(spec.inLove);
-            if (spec == s.mobs.get(0) && s.name.equals(System.getenv("MOB_TRACE_RANDOM"))) {
-                // Debugging aid: the first mob's random logs who draws from it (to <cwd>/dbg.txt).
+            if (spec == s.mobs.get(Integer.parseInt(System.getenv().getOrDefault("MOB_TRACE_INDEX", "0"))) && s.name.equals(System.getenv("MOB_TRACE_RANDOM"))) {
+                // Debugging aid: the mob's (`MOB_TRACE_INDEX`, the first by default) random logs who draws from it (to <cwd>/dbg.txt).
                 set(m, "random", new TracingRandom(spec.seed));
             }
             m.getRandom().setSeed(spec.seed);
@@ -502,11 +505,16 @@ public class MobVectors {
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s,\"vehicle\":%d}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
                     spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
                     spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson, effectsJson(spec.effects),
-                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]"));
+                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]", spec.vehicle));
+        }
+        // wp29: riders sit on their mounts before the first tick.
+        for (int i = 0; i < s.mobs.size(); i++) {
+            int v = s.mobs.get(i).vehicle;
+            if (v >= 0 && !tracked.get(i).startRiding(tracked.get(v), true, false)) throw new IllegalStateException("could not ride: " + s.mobs.get(i).type);
         }
         StringBuilder trace = new StringBuilder();
         StringBuilder heartTrace = new StringBuilder();
@@ -611,6 +619,25 @@ public class MobVectors {
                         pinCubeMoveYaw(nm);
                         pinned.add(nm);
                     }
+                }
+            }
+            // `MOB_DEBUG_NAV=<scenario>`: every mob's own navigation and the move control it steers
+            // (to <cwd>/dbg.txt), for finding where a rider's steering parts from Kiln's.
+            if (s.name.equals(System.getenv("MOB_DEBUG_NAV"))) {
+                for (int i = 0; i < initial; i++) {
+                    Mob dm = (Mob) tracked.get(i);
+                    var nav = (net.minecraft.world.entity.ai.navigation.PathNavigation) get(dm, "navigation");
+                    var np = nav.getPath();
+                    StringBuilder dbg = new StringBuilder("NAV tick=" + tick + " mob=" + i + " pos=" + dm.position() + " path=");
+                    if (np == null) dbg.append("none");
+                    else {
+                        dbg.append('@').append(np.getNextNodeIndex()).append('[');
+                        for (int pi = 0; pi < np.getNodeCount(); pi++) dbg.append(np.getNode(pi).x).append(',').append(np.getNode(pi).y).append(',').append(np.getNode(pi).z).append(' ');
+                        dbg.append("] target=").append(np.getTarget()).append(" reach=").append(np.canReach());
+                    }
+                    var mc = dm.getMoveControl();
+                    dbg.append(" op=").append(get(mc, "operation")).append(" want=").append(get(mc, "wantedX")).append(',').append(get(mc, "wantedY")).append(',').append(get(mc, "wantedZ")).append(" speedMod=").append(get(mc, "speedModifier"));
+                    Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                 }
             }
             if (tick > 0) trace.append(',');
@@ -1448,6 +1475,9 @@ public class MobVectors {
         // -- wp25: the skeleton trap
         scenariosTrap(out);
 
+        // -- wp29: mob riders steer their mounts
+        scenariosRiders(out);
+
         return out;
     }
 
@@ -1529,6 +1559,103 @@ public class MobVectors {
             s.player = new double[] {22.5, BY, 8.5};
             s.playerCreative = true;
             s.ticks = 200;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp29: mob riders
+    /// A mob that rides a mob steers it: the rider's goals use the mount's navigation and move
+    /// control (`Mob.getNavigation`/`getMoveControl` of a rider are the vehicle's), the mount's
+    /// own goals lose their MOVE, JUMP and LOOK flags (`updateControlFlags`: a ravager keeps
+    /// them for raider riders).
+    static void scenariosRiders(List<Scenario> out) {
+        // Spider jockeys: a skeleton with a bow on a spider, at night. A survival player is
+        // shot at and charged; a creative one is not noticed (the skeleton strolls the spider).
+        for (int k = 0; k < 4; k++) {
+            boolean survival = k % 2 == 0;
+            Scenario s = new Scenario("spider_jockey_" + (survival ? "survival" : "creative") + "_" + (k / 2 + 1));
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:spider", 0.5, BY, 0.5, 30f * (k + 1), 31000L + k * 10));
+            MobSpec r = new MobSpec("minecraft:skeleton", 0.5, BY, 0.5, 30f * (k + 1), 31001L + k * 10);
+            r.mainHand = "minecraft:bow";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {survival ? 14.5 : 18.5, BY, 0.5};
+            s.playerCreative = !survival;
+            s.dayTime = 18000;
+            s.levelSeed = k + 1;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Chicken jockeys: a baby zombie on a chicken.
+        for (int k = 0; k < 4; k++) {
+            boolean survival = k % 2 == 0;
+            Scenario s = new Scenario("chicken_jockey_" + (survival ? "survival" : "creative") + "_" + (k / 2 + 1));
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:chicken", 0.5, BY, 0.5, 40f * (k + 1), 31100L + k * 10));
+            MobSpec r = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 40f * (k + 1), 31101L + k * 10);
+            r.nbt = "{IsBaby:1b,IsChickenJockey:1b}";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {survival ? 12.5 : 20.5, BY, 0.5};
+            s.playerCreative = !survival;
+            s.dayTime = 18000;
+            s.levelSeed = k + 1;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // A zombified piglin on a strider: on land (the strider shivers, slowed) and over lava
+        // (the strider's path maluses are the rider's; lava is walked on). The replay does not
+        // model block light, which moves where a monster likes to walk near lava: the lava one is
+        // recorded with a far player.
+        for (int k = 0; k < 3; k++) {
+            boolean lava = k == 1;
+            Scenario s = new Scenario("strider_jockey_" + (lava ? "lava" : "land") + "_" + (k + 1));
+            solidGround(s);
+            if (lava) {
+                for (int x = -12; x <= 12; x++)
+                    for (int z = -12; z <= 12; z++) block(s, x, BY - 1, z, "minecraft:lava");
+            }
+            s.mobs.add(new MobSpec("minecraft:strider", 0.5, BY, 0.5, 50f * (k + 1), 31300L + k * 10));
+            MobSpec r = new MobSpec("minecraft:zombified_piglin", 0.5, BY, 0.5, 50f * (k + 1), 31301L + k * 10);
+            r.mainHand = "minecraft:golden_sword";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {k == 1 ? 30.5 : 12.5, BY, 0.5};
+            s.playerCreative = k != 0;
+            s.dayTime = 18000;
+            s.levelSeed = k + 1;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Raiders on ravagers: the ravager keeps its own goals for raider riders.
+        for (String rider : new String[] {"pillager", "vindicator", "evoker"}) {
+            Scenario s = new Scenario("ravager_" + rider);
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:ravager", 0.5, BY, 0.5, 20f, 31400L + rider.length()));
+            MobSpec r = new MobSpec("minecraft:" + rider, 0.5, BY, 0.5, 20f, 31401L + rider.length());
+            if (rider.equals("pillager")) r.mainHand = "minecraft:crossbow";
+            if (rider.equals("vindicator")) r.mainHand = "minecraft:iron_axe";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {14.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // The same without a player in sight: the raider and the ravager wander.
+        {
+            Scenario s = new Scenario("ravager_pillager_alone");
+            solidGround(s);
+            s.mobs.add(new MobSpec("minecraft:ravager", 0.5, BY, 0.5, 70f, 31500L));
+            MobSpec r = new MobSpec("minecraft:pillager", 0.5, BY, 0.5, 70f, 31501L);
+            r.mainHand = "minecraft:crossbow";
+            r.vehicle = 0;
+            s.mobs.add(r);
+            s.player = new double[] {40.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.ticks = 400;
             out.add(s);
         }
     }

@@ -480,7 +480,7 @@ pub fn nearest_mob_where(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, r
 // ---------------------------------------------------------------------- goal logic
 
 fn nav_done(m: &MobData) -> bool {
-    m.nav.is_done()
+    m.nav_ref().is_done()
 }
 
 pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
@@ -616,7 +616,7 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                 return false;
             }
             *path = path::create_path_to_entity(e, m, level, t.block_pos(), 0);
-            path.is_some() || super::within_melee_range(e, &t)
+            path.is_some() || super::within_melee_range(e, m, &t)
         }
         Goal::RangedBow { .. } => target(m, level).is_some() && m.holding_bow(),
         Goal::Swell { .. } => {
@@ -825,7 +825,7 @@ pub(crate) fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut d
         Goal::EatBlock { tick } => {
             *tick = adj(40);
             level.emit(Event::EntityEvent { entity: e.id, event: 10 });
-            m.nav.stop();
+            m.nav_mut().stop();
         }
         Goal::Melee { speed, path, recalc, next_attack, raise_arm, .. } => {
             let p = path.take();
@@ -837,7 +837,7 @@ pub(crate) fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut d
         }
         Goal::RangedBow { .. } => m.set_aggressive(true),
         Goal::Swell { target: t } => {
-            m.nav.stop();
+            m.nav_mut().stop();
             *t = m.target;
         }
         Goal::LeapAtTarget { yd, target: tg } => {
@@ -849,7 +849,7 @@ pub(crate) fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut d
             }
             e.delta = Vec3::new(d.x, *yd as f64, d.z);
         }
-        Goal::RestrictSun => m.nav.avoid_sun = true,
+        Goal::RestrictSun => m.nav_mut().avoid_sun = true,
         Goal::RemoveTurtleEgg { block, try_ticks, max_stay, .. } => {
             let b = *block;
             path::move_to(e, m, level, b.x as f64 + 0.5, (b.y + 1) as f64, b.z as f64 + 0.5, 1.0);
@@ -881,10 +881,10 @@ pub(crate) fn start(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut d
 pub(crate) fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     match g {
         Goal::Custom(c) => c.stop(_e, m, level),
-        Goal::RandomStroll { .. } => m.nav.stop(),
+        Goal::RandomStroll { .. } => m.nav_mut().stop(),
         Goal::Tempt { calm_down, player, .. } => {
             *player = None;
-            m.nav.stop();
+            m.nav_mut().stop();
             *calm_down = reduced_tick_delay(100);
         }
         Goal::LookAtPlayer { look_at, .. } => *look_at = None,
@@ -901,7 +901,7 @@ pub(crate) fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut d
                 super::set_target(_e, m, None);
             }
             m.set_aggressive(false);
-            m.nav.stop();
+            m.nav_mut().stop();
         }
         Goal::RangedBow { see_time, attack_time, .. } => {
             m.set_aggressive(false);
@@ -910,7 +910,7 @@ pub(crate) fn stop(g: &mut Goal, _e: &mut Entity, m: &mut MobData, level: &mut d
             m.stop_using_item();
         }
         Goal::Swell { target } => *target = None,
-        Goal::RestrictSun => m.nav.avoid_sun = false,
+        Goal::RestrictSun => m.nav_mut().avoid_sun = false,
         Goal::RemoveTurtleEgg { .. } => _e.fall_distance = 1.0,
         Goal::HurtByTarget { target_mob, .. } | Goal::NearestAttackable { target: target_mob, .. } => {
             super::set_target(_e, m, None);
@@ -935,7 +935,7 @@ pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &m
             let (hs, hx) = ((m.kind.max_head_y_rot() + 20) as f32, m.max_head_x_rot() as f32);
             m.look.set_look_at(p.pos.x, p.eye_y, p.pos.z, hs, hx);
             if e.position().distance_to_sqr(p.pos) < 2.5 * 2.5 {
-                m.nav.stop();
+                m.nav_mut().stop();
             } else {
                 path::move_to_entity(e, m, level, p.block_pos(), *speed);
             }
@@ -1016,7 +1016,7 @@ pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &m
                 *recalc = adj(*recalc);
             }
             *next_attack = (*next_attack - 1).max(0);
-            if *next_attack <= 0 && super::within_melee_range(e, &t) && super::has_line_of_sight_cached(e, m, level, &t) {
+            if *next_attack <= 0 && super::within_melee_range(e, m, &t) && super::has_line_of_sight_cached(e, m, level, &t) {
                 *next_attack = adj(20);
                 m.swing = true;
                 super::do_hurt_target(e, m, level, &t);
@@ -1040,7 +1040,7 @@ pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &m
                 *see_time -= 1;
             }
             if d <= *radius_sqr as f64 && *see_time >= 20 {
-                m.nav.stop();
+                m.nav_mut().stop();
                 *strafing_time += 1;
             } else {
                 path::move_to_entity(e, m, level, t.block_pos(), *speed);
@@ -1061,7 +1061,11 @@ pub(crate) fn tick_goal(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &m
                 } else if d < (*radius_sqr * 0.25) as f64 {
                     *strafing_backwards = true;
                 }
-                m.mov.strafe(if *strafing_backwards { -0.5 } else { 0.5 }, if *strafing_clockwise { 0.5 } else { -0.5 });
+                m.mov_mut().strafe(if *strafing_backwards { -0.5 } else { 0.5 }, if *strafing_clockwise { 0.5 } else { -0.5 });
+                // (`getControlledVehicle() instanceof Mob`: the mount turns to the target too.)
+                if let Some(c) = m.mount.as_mut() {
+                    super::mob_look_at(&mut c.e, &t, 30.0, 30.0);
+                }
                 super::mob_look_at(e, &t, 30.0, 30.0);
             } else {
                 m.look.set_look_at(t.pos.x, t.eye_y, t.pos.z, 30.0, 30.0);

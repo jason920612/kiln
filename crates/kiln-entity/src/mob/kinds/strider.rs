@@ -189,6 +189,11 @@ impl Kind for Strider {
         m.y_head_rot = e.y_rot;
     }
 
+    /// `Strider.shouldPassengersInheritMalus`.
+    fn passengers_inherit_malus(&self) -> bool {
+        true
+    }
+
     fn passenger_offset(&self, e: &Entity, m: &MobData) -> Option<Vec3> {
         let h = if m.baby() { 0.65625 } else { e.height as f64 };
         Some(Vec3::new(0.0, h, 0.0))
@@ -373,6 +378,10 @@ impl CustomGoal for RandomStrollGoal {
         MOVE
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        // (`hasControllingPassenger`: a mount with a rider that steers does not wander.)
+        if crate::mob::has_controlling_passenger(e, m, level) {
+            return false;
+        }
         if m.no_action_time >= 100 {
             return false;
         }
@@ -387,14 +396,14 @@ impl CustomGoal for RandomStrollGoal {
             None => false,
         }
     }
-    fn can_continue(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
-        !m.nav.is_done()
+    fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
+        !m.nav_ref().is_done() && !crate::mob::has_controlling_passenger(e, m, level)
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         path::move_to(e, m, level, self.wanted.x, self.wanted.y, self.wanted.z, self.speed);
     }
     fn stop(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
-        m.nav.stop();
+        m.nav_mut().stop();
     }
 }
 

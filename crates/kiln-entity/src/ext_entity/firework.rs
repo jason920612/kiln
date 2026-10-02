@@ -121,7 +121,9 @@ impl Firework {
                 }
             }
         }
-        for v in level.players() {
+        // (The players whose box touches the swept area, which holds the whole segment with a
+        // block to spare: a player the margin would let the segment touch is among them.)
+        for v in &level.players_in(&area) {
             if !v.alive || v.spectator || !self.can_hit(v.id) {
                 continue;
             }
@@ -181,7 +183,9 @@ impl Firework {
                 targets.push((id, t.position(), t.height as f64));
             }
         }
-        for v in level.players() {
+        // (Players within 5 blocks of the burst stand in the box: `area` holds every point
+        // within 5 blocks of it.)
+        for v in &level.players_in(&area) {
             if v.alive && !v.spectator {
                 targets.push((v.id, v.pos, if v.sneaking { 1.5 } else { 1.8 }));
             }

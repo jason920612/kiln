@@ -321,7 +321,7 @@ impl CustomGoal for GoToWater {
         false
     }
     fn can_continue(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
-        !m.nav.is_done()
+        !m.nav_ref().is_done()
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let w = self.wanted;
@@ -361,7 +361,7 @@ impl CustomGoal for TridentAttack {
         holds_trident(m)
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        self.can_use(e, m, level) || (self.target.and_then(|id| goals::living(level, id)).is_some_and(|t| t.alive) && !m.nav.is_done())
+        self.can_use(e, m, level) || (self.target.and_then(|id| goals::living(level, id)).is_some_and(|t| t.alive) && !m.nav_ref().is_done())
     }
     fn start(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
         m.set_aggressive(true);
@@ -386,7 +386,7 @@ impl CustomGoal for TridentAttack {
             self.see_time = 0;
         }
         if !(d > (RADIUS * RADIUS) as f64) && self.see_time >= 5 {
-            m.nav.stop();
+            m.nav_mut().stop();
         } else {
             path::move_to_entity(e, m, level, BlockPos::containing(t.pos.x, t.pos.y, t.pos.z), 1.0);
         }
@@ -573,11 +573,11 @@ impl CustomGoal for SwimUp {
     fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let sea = level.sea_level();
         // `closeToNextPos`: within 2 blocks of the path's target.
-        let close = m.nav.path.as_ref().is_some_and(|p| {
+        let close = m.nav_ref().path.as_ref().is_some_and(|p| {
             let t = p.target;
             e.position().distance_to_sqr(Vec3::new(t.x as f64, t.y as f64, t.z as f64)) < 4.0
         });
-        if e.y() < (sea - 1) as f64 && (m.nav.is_done() || close) {
+        if e.y() < (sea - 1) as f64 && (m.nav_ref().is_done() || close) {
             let towards = Vec3::new(e.x(), (sea - 1) as f64, e.z());
             match random_pos::default_pos_towards(e, m, level, 4, 8, towards, 1.5707963705062866) {
                 None => self.stuck = true,

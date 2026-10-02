@@ -491,7 +491,8 @@ impl CustomGoal for AvoidPlayerGoal {
         if p.pos.distance_to_sqr(away) < p.pos.distance_to_sqr(e.position()) {
             return false;
         }
-        self.path = path::create_path(e, m, level, BlockPos::containing(away.x, away.y, away.z), 0);
+        // (`AvoidEntityGoal.pathNav` is the mob's own navigation: a rider plans with its own.)
+        self.path = path::own_nav(m, |m| path::create_path(e, m, level, BlockPos::containing(away.x, away.y, away.z), 0));
         self.path.is_some()
     }
     fn can_continue(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
@@ -499,14 +500,14 @@ impl CustomGoal for AvoidPlayerGoal {
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let p = self.path.take();
-        path::move_to_path(e, m, level, p, self.walk);
+        path::own_nav(m, |m| path::move_to_path(e, m, level, p, self.walk));
     }
     fn stop(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) {
         self.to_avoid = None;
     }
     fn tick(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let Some(p) = self.to_avoid.and_then(|id| level.player(id)) else { return };
-        m.nav.speed_modifier = if e.position().distance_to_sqr(p.pos) < 49.0 { self.sprint } else { self.walk };
+        m.nav_mut().speed_modifier = if e.position().distance_to_sqr(p.pos) < 49.0 { self.sprint } else { self.walk };
     }
 }
 

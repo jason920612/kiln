@@ -272,7 +272,7 @@ pub fn is_breeding(cx: &Cx) -> bool {
 /// `BehaviorUtils.isWithinAttackRange(mob, target, extra)` for a mob that is not holding a
 /// projectile weapon (melee reach).
 pub fn within_melee(cx: &Cx, t: &Living) -> bool {
-    crate::mob::within_melee_range(cx.e, t)
+    crate::mob::within_melee_range(cx.e, cx.m, t)
 }
 
 /// `BehaviorUtils.isOtherTargetMuchFurtherAwayThanCurrentAttackTarget`.

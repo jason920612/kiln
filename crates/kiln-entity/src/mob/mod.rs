@@ -596,6 +596,24 @@ pub struct MobData {
     pub brain_random: kiln_javamath::random::LegacyRandom,
     /// `LivingEntity.discardFriction` (long-jumping frogs and goats keep their momentum).
     pub discard_friction: bool,
+    /// The mob this one steers, lent to it for the length of its tick (see [`Mount`]).
+    pub mount: Option<Box<Mount>>,
+    /// `getFirstPassenger() instanceof Mob`, read for this tick's body turn (a mount carrying a
+    /// mob keeps its body as it is).
+    pub carries_mob: bool,
+}
+
+/// The vehicle of a mob rider while the rider ticks. `Mob.getNavigation()` and
+/// `Mob.getMoveControl()` of a rider that controls its vehicle are the vehicle's (and its path
+/// maluses too when the vehicle says so): the rider's goals plan and steer with the vehicle's
+/// navigation and move control, the vehicle follows them on its next tick. The level lends the
+/// vehicle's data and a copy of its entity around the rider's tick ([`crate::ride::ride_tick`]).
+#[derive(Clone, Debug)]
+pub struct Mount {
+    /// The vehicle's entity (a copy without its mob data): where the vehicle is, for its
+    /// navigation. What `Mob.lookAt` turned of it goes back to the vehicle.
+    pub e: Entity,
+    pub m: Box<MobData>,
 }
 
 impl MobData {
@@ -687,6 +705,8 @@ impl MobData {
             brain: None,
             brain_random: kiln_javamath::random::LegacyRandom::new(0),
             discard_friction: false,
+            mount: None,
+            carries_mob: false,
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -1203,7 +1223,7 @@ pub fn data_mut(e: &mut Entity) -> Option<&mut MobData> {
     }
 }
 
-fn take(e: &mut Entity) -> Box<MobData> {
+pub(crate) fn take(e: &mut Entity) -> Box<MobData> {
     let gravity = match &e.kind {
         EntityKind::Mob(m) => m.attrs.value(Attr::Gravity),
         _ => 0.08,
@@ -1214,7 +1234,7 @@ fn take(e: &mut Entity) -> Box<MobData> {
     }
 }
 
-fn put(e: &mut Entity, m: Box<MobData>) {
+pub(crate) fn put(e: &mut Entity, m: Box<MobData>) {
     e.kind = EntityKind::Mob(m);
 }
 
@@ -1233,10 +1253,52 @@ pub fn controlling_mob_passenger(e: &Entity, m: &MobData, level: &dyn EntityLeve
 }
 
 /// `Mob.hasControllingPassenger`: a saddled mount's player rider, or a mob rider that steers.
-/// (Kiln's mob riders do not steer their mounts yet: what the check switches off, such as a
-/// mount's own strolls, is switched off all the same.)
 pub fn has_controlling_passenger(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool {
     !e.passengers.is_empty() && (m.kind.ext().and_then(|k| k.controlling_player(e, m, level)).is_some() || controlling_mob_passenger(e, m, level).is_some())
+}
+
+/// `Mob.updateControlFlags`: a mob that a mob rider steers gives up its goals' MOVE, JUMP and
+/// LOOK flags (the rider's goals do the walking: a ravager keeps them for raiders), and no goal
+/// of a mob in a boat jumps.
+fn update_control_flags(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
+    let controlling = controlling_mob_passenger(e, m, level);
+    let mut flag = controlling.is_none();
+    if !flag && m.kind.ext().is_some_and(|k| k.keeps_flags_for_raiders()) {
+        flag = controlling.and_then(|id| level.entity(id)).is_some_and(|r| entity_type_tag(r.type_name, "minecraft:raiders"));
+    }
+    let boat = e.vehicle.and_then(|v| level.entity(v)).is_some_and(|v| crate::ext_entity::boat::is_boat(v.type_name));
+    m.goals.set_control_flag(goals::MOVE, flag);
+    m.goals.set_control_flag(goals::JUMP, flag && !boat);
+    m.goals.set_control_flag(goals::LOOK, flag);
+    if m.kind.ext().is_some_and(|k| k.keeps_flags_for_raiders()) {
+        m.goals.set_control_flag(goals::TARGET, flag);
+    }
+}
+
+impl MobData {
+    /// `Mob.getNavigation()` for reading: the vehicle's while this mob steers one.
+    pub fn nav_ref(&self) -> &path::Navigation {
+        match &self.mount {
+            Some(c) => &c.m.nav,
+            None => &self.nav,
+        }
+    }
+
+    /// `Mob.getNavigation()`: the vehicle's while this mob steers one.
+    pub fn nav_mut(&mut self) -> &mut path::Navigation {
+        match &mut self.mount {
+            Some(c) => &mut c.m.nav,
+            None => &mut self.nav,
+        }
+    }
+
+    /// `Mob.getMoveControl()`: the vehicle's while this mob steers one.
+    pub fn mov_mut(&mut self) -> &mut control::MoveControl {
+        match &mut self.mount {
+            Some(c) => &mut c.m.mov,
+            None => &mut self.mov,
+        }
+    }
 }
 
 /// `Mob.tick` (the level ran `commonTick`): the type's pre-tick, `LivingEntity.tick`, then
@@ -1247,10 +1309,7 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
     species::pre_tick(e, &mut m, level);
     living_tick(e, &mut m, level);
     if e.tick_count % 5 == 0 {
-        // `updateControlFlags`: no mob passengers, no boats.
-        m.goals.set_control_flag(goals::MOVE, true);
-        m.goals.set_control_flag(goals::JUMP, true);
-        m.goals.set_control_flag(goals::LOOK, true);
+        update_control_flags(e, &mut m, &*level);
     }
     species::post_tick(e, &mut m, level);
     // `LivingEntity.remove`: a mob that was removed (killed, converted, discarded) forgets what
@@ -1279,6 +1338,7 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         ai_step(e, m, level);
     }
     // Body and head rotation (`Mob.tickHeadTurn`), then angle unwinding of the old values.
+    m.carries_mob = e.passengers.first().and_then(|&id| level.entity(id)).is_some_and(|p| matches!(p.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }));
     if !m.kind.ext().is_some_and(|k| k.tick_body(e, m)) {
         control::tick_body(e, m);
     }
@@ -2442,10 +2502,20 @@ pub fn clip_blocks(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
     .is_some()
 }
 
-/// `Mob.isWithinMeleeAttackRange` (`DEFAULT_ATTACK_REACH`: sqrt(2.04) - 0.6).
-pub fn within_melee_range(e: &Entity, t: &Living) -> bool {
+/// `Mob.isWithinMeleeAttackRange` (`DEFAULT_ATTACK_REACH`: sqrt(2.04) - 0.6). A rider's attack
+/// box takes in the mount's footprint (`getAttackBoundingBox`; known for a mount the rider
+/// steers).
+pub fn within_melee_range(e: &Entity, m: &MobData, t: &Living) -> bool {
     let reach = 2.04f64.sqrt() - 0.6000000238418579;
-    let mut b = e.bounding_box().inflate(reach, 0.0, reach);
+    let own = e.bounding_box();
+    let mut b = match &m.mount {
+        Some(c) => {
+            let v = c.e.bounding_box();
+            Aabb::new(own.min_x.min(v.min_x), own.min_y, own.min_z.min(v.min_z), own.max_x.max(v.max_x), own.max_y, own.max_z.max(v.max_z))
+        }
+        None => own,
+    }
+    .inflate(reach, 0.0, reach);
     // `Ravager.getAttackBoundingBox`: a little narrower.
     if e.type_name == "minecraft:ravager" {
         b = b.deflate(0.05, 0.0, 0.05);
@@ -2649,7 +2719,8 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
         e.discard();
         return;
     }
-    let persistent = m.persistence_required;
+    // (`isPersistenceRequired() || requiresCustomPersistence()`: a passenger is never removed.)
+    let persistent = m.persistence_required || e.vehicle.is_some();
     let category = m.kind.category();
     let Some(d) = nearest else { return };
     let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(!category.persistent());

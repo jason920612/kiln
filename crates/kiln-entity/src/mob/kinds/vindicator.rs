@@ -79,7 +79,7 @@ impl Kind for Vindicator {
     /// `customServerAiStep`: doors open for it where a raid is on.
     fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if !m.no_ai {
-            m.nav.can_open_doors = level.raid_at(e.block_position()).is_some();
+            m.nav_mut().can_open_doors = level.raid_at(e.block_position()).is_some();
         }
     }
 

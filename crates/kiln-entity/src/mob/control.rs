@@ -61,7 +61,7 @@ pub fn tick_look_with(e: &mut Entity, m: &mut MobData, reset_x_rot: bool) {
     } else {
         m.y_head_rot = mth::rotate_towards(m.y_head_rot, m.y_body_rot, 10.0);
     }
-    if !m.nav.is_done() {
+    if !m.nav_ref().is_done() {
         m.y_head_rot = mth::rotate_if_necessary(m.y_head_rot, m.y_body_rot, m.kind.max_head_y_rot() as f32);
     }
 }
@@ -236,6 +236,10 @@ pub fn tick_body(e: &Entity, m: &mut MobData) {
         m.y_head_rot = mth::rotate_if_necessary(m.y_head_rot, m.y_body_rot, max);
         m.body.last_stable_y_head_rot = m.y_head_rot;
         m.body.head_stable_time = 0;
+        return;
+    }
+    // (`notCarryingMobPassengers`: a mount with a mob on it holds its body.)
+    if m.carries_mob {
         return;
     }
     if (m.y_head_rot - m.body.last_stable_y_head_rot).abs() > 15.0 {
