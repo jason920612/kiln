@@ -259,6 +259,49 @@ fn a_raised_shield_turns_arrows_back() {
 }
 
 #[test]
+fn the_undead_mounts_settle_down_and_keep_their_state() {
+    let mut w = World::new("creative");
+    w.console("time set 18000");
+    w.summon_at("minecraft:zombie_horse", 5.0, "{PersistenceRequired:1b}");
+    w.summon_at("minecraft:camel_husk", 9.0, "{PersistenceRequired:1b}");
+    w.summon_at("minecraft:parched", -5.0, "{PersistenceRequired:1b}");
+    w.ticks(200);
+    for (id, health) in [("minecraft:zombie_horse", 25.0), ("minecraft:camel_husk", 32.0), ("minecraft:parched", 16.0)] {
+        let found = w.nbt_of(id);
+        assert_eq!(found.len(), 1, "{id}");
+        assert_eq!(found[0].get("Health").and_then(|h| h.as_f64()), Some(health), "{id}");
+    }
+}
+
+#[test]
+fn nautilus_swim_in_their_pool_and_are_never_dried_out_in_it() {
+    let mut w = World::new("creative");
+    w.console("time set 18000");
+    let p = w.client.pos;
+    let (x, y, z) = (p[0].floor() as i32, p[1].floor() as i32, p[2].floor() as i32);
+    // A stone tank on the flat ground, full of water.
+    w.console(&format!("fill {} {} {} {} {} {} minecraft:stone", x - 5, y - 1, z + 3, x + 5, y + 7, z + 13));
+    w.console(&format!("fill {} {} {} {} {} {} minecraft:water", x - 4, y, z + 4, x + 4, y + 5, z + 12));
+    w.ticks(10);
+    for kind in ["minecraft:nautilus", "minecraft:zombie_nautilus"] {
+        w.console(&format!("summon {kind} {} {} {} {{PersistenceRequired:1b}}", x as f64 + 0.5, y as f64 + 2.0, z as f64 + 8.5));
+        w.ticks(1);
+    }
+    w.ticks(300);
+    for kind in ["minecraft:nautilus", "minecraft:zombie_nautilus"] {
+        let found = w.nbt_of(kind);
+        assert_eq!(found.len(), 1, "{kind}");
+        assert_eq!(found[0].get("Health").and_then(|h| h.as_f64()), Some(15.0), "{kind}");
+        let pos: Vec<f64> = match found[0].get("Pos") {
+            Some(Tag::List(v)) => v.iter().filter_map(|t| t.as_f64()).collect(),
+            other => panic!("{other:?}"),
+        };
+        assert!(pos[1] > y as f64 && pos[1] < (y + 6) as f64, "{kind} swims in the tank: {pos:?}");
+        assert!(pos[0] > (x - 4) as f64 && pos[0] < (x + 5) as f64 && pos[2] > (z + 4) as f64 && pos[2] < (z + 13) as f64, "{kind} stays in the tank: {pos:?}");
+    }
+}
+
+#[test]
 fn a_zombie_is_hurt_by_the_same_arrow() {
     let mut w = World::new("creative");
     w.summon_at("minecraft:zombie", 6.0, "{NoAI:1b,PersistenceRequired:1b}");
