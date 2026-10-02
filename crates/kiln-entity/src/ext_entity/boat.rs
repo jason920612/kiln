@@ -513,6 +513,8 @@ fn cannot_board(type_name: &str) -> bool {
 impl Boat {
     /// `remove`: a chest boat drops what it holds first (`shouldDestroy`: killed or discarded).
     fn remove(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, discarded: bool) {
+        // `AbstractBoat.remove`: a destroyed boat drops its lead.
+        crate::leash::drop_leash(e, None, level);
         crate::ride::eject(e, level);
         if let Some(c) = &mut self.contents {
             drop_entity_contents(c, e, level);

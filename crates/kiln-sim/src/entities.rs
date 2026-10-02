@@ -1251,6 +1251,13 @@ pub(crate) fn tick(
             }
         }
     }
+    // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
+    // effects once all the entities have ticked.
+    for e in sim.list.iter_mut() {
+        if let Some(p) = e.phys.as_mut() {
+            kiln_entity::mob::update_data_before_sync(p);
+        }
+    }
     // `Level.tickBlockEntities`: the creaking hearts, after the entities.
     crate::heart::tick_all(&mut sim, ticking);
     // `Player.aiStep` → `touch`: mobs in the player's box inflated by (1, 0.5, 1) (slimes and

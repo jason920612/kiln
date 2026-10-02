@@ -337,6 +337,9 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
     if let Some(d) = e.leash.as_mut() {
         d.holder_key = Some(h_key);
     }
+    // `data` is the lead's data as it was when this tick began: its angular momentum still
+    // turns the entity on the tick the lead snaps.
+    let mut angular = e.leash.as_ref().map_or(0.0, |d| d.angular_momentum);
     let dist = h_bb_center.distance_to_sqr(e.bounding_box().center()).sqrt();
     // `PathfinderMob.whenLeashedTo`: the home follows the holder.
     let leasher_block = BlockPos::containing(hp.x, hp.y, hp.z);
@@ -358,7 +361,9 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
         close_range_leash_behaviour(e, &mut m, hp, level);
     }
     // The lead turns the entity, and the turn dies down with the ground it is on.
-    let angular = e.leash.as_ref().map_or(0.0, |d| d.angular_momentum);
+    if let Some(d) = e.leash.as_ref() {
+        angular = d.angular_momentum;
+    }
     e.y_rot = (e.y_rot as f64 - angular) as f32;
     let friction = angular_friction(e, level);
     if let Some(d) = e.leash.as_mut() {
@@ -591,36 +596,23 @@ pub fn bind_player_mobs(level: &mut dyn EntityLevel, who: i32, pos: BlockPos) ->
         return false;
     }
     let existing = find_knot(level, pos);
+    // The knot's box for the reach test (a new one is not in the level yet).
+    let template = existing.and_then(|k| level.entity(k).cloned()).unwrap_or_else(|| crate::ext_entity::leash_knot::new(0, pos, 0));
+    let eligible: Vec<i32> = list.into_iter().filter(|&id| level.entity(id).is_some_and(|l| can_have_leash_attached_to(l, None, &template, &*level))).collect();
+    if eligible.is_empty() {
+        // (A knot made for nothing is not made.)
+        return false;
+    }
     let knot = match existing {
         Some(k) => k,
         None => create_knot(level, pos),
     };
-    // The knot's box for the reach test (a new one is not in the level yet).
-    let knot_entity = level.entity(knot).cloned().unwrap_or_else(|| crate::ext_entity::leash_knot::new(knot, pos, 0));
-    let mut any = false;
-    for id in list {
-        if level.entity(id).is_some_and(|l| can_have_leash_attached_to(l, None, &knot_entity, &*level)) {
-            set_leashed_to_in_level(level, id, knot);
-            any = true;
-        }
+    for id in eligible {
+        set_leashed_to_in_level(level, id, knot);
     }
-    if any {
-        level.emit(Event::Sound { pos: knot_entity.position(), sound: "minecraft:item.lead.tied", source: "neutral", volume: 1.0, pitch: 1.0 });
-        level.emit(Event::GameEvent { event: "minecraft:block_attach", pos: centre, entity: Some(who) });
-        true
-    } else {
-        if existing.is_none() {
-            discard_pending(level, knot);
-        }
-        false
-    }
-}
-
-/// Takes back the knot made a moment ago (it is still waiting to be added to the level).
-fn discard_pending(level: &mut dyn EntityLevel, id: i32) {
-    if let Some(k) = level.entity_mut(id) {
-        k.discard();
-    }
+    level.emit(Event::Sound { pos: template.position(), sound: "minecraft:item.lead.tied", source: "neutral", volume: 1.0, pitch: 1.0 });
+    level.emit(Event::GameEvent { event: "minecraft:block_attach", pos: centre, entity: Some(who) });
+    true
 }
 
 // ---------------------------------------------------------------------------- saving
@@ -644,4 +636,106 @@ pub fn load(tag: &Tag) -> Option<LeashData> {
         _ => return None,
     };
     Some(LeashData { holder: None, holder_key: None, delayed: Some(delayed), angular_momentum: 0.0 })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::MemoryLevel;
+
+    fn cow(id: i32, uuid: u128, at: Vec3) -> Entity {
+        let mut e = mob::new(MobKind::Cow, id, uuid, 7);
+        e.set_pos(at);
+        e.set_old_pos_and_rot();
+        e
+    }
+
+    fn lead_items(level: &MemoryLevel) -> usize {
+        level.entities().filter(|e| matches!(&e.kind, EntityKind::Item(d) if d.stack.item_name() == "minecraft:lead")).count()
+    }
+
+    /// Takes entity `id` out of the level, as the entity being ticked is.
+    fn take(level: &mut MemoryLevel, id: i32) -> Entity {
+        std::mem::replace(level.entity_mut(id).unwrap(), cow(-1, 0, Vec3::ZERO))
+    }
+
+    #[test]
+    fn a_lead_is_saved_by_holder_uuid_and_a_loaded_one_finds_its_holder() {
+        let mut level = MemoryLevel::new(-64, 1);
+        level.insert(cow(1, 0xA, Vec3::new(0.5, 0.0, 0.5)));
+        level.insert(cow(2, 0xB, Vec3::new(2.5, 0.0, 0.5)));
+        set_leashed_to_in_level(&mut level, 1, 2);
+        let saved = crate::persist::save(level.entity(1).unwrap(), &|_| None);
+        let leash = saved.get("leash").expect("the lead is saved").clone();
+        assert_eq!(leash.get("UUID"), Some(&crate::persist::uuid_to_tag(0xB)));
+        // A fresh level: the cow loads with the lead waiting for its holder, which finds it.
+        let mut again = MemoryLevel::new(-64, 1);
+        again.insert(cow(2, 0xB, Vec3::new(2.5, 0.0, 0.5)));
+        let mut loaded = crate::persist::load(&saved, 9, 3).expect("loads");
+        assert_eq!(holder_of(&loaded), None);
+        assert!(loaded.leash.as_ref().is_some_and(|d| d.delayed == Some(Delayed::Holder(0xB))));
+        tick_leash(&mut loaded, None, &mut again);
+        assert_eq!(holder_of(&loaded), Some(2), "led by the holder it was saved with");
+        assert_eq!(crate::persist::save(&loaded, &|_| None).get("leash"), Some(&leash));
+    }
+
+    #[test]
+    fn a_saved_lead_without_its_holder_falls_off_after_a_hundred_ticks() {
+        let mut level = MemoryLevel::new(-64, 1);
+        let mut e = cow(1, 0xA, Vec3::new(0.5, 0.0, 0.5));
+        e.leash = Some(Box::new(LeashData { delayed: Some(Delayed::Holder(0xDEAD)), ..Default::default() }));
+        for t in 0..=101 {
+            e.tick_count = t;
+            tick_leash(&mut e, None, &mut level);
+        }
+        level.flush_spawned();
+        assert!(e.leash.is_none(), "given up");
+        assert_eq!(lead_items(&level), 1, "the lead dropped");
+    }
+
+    #[test]
+    fn a_lead_stretched_past_twelve_blocks_snaps_and_drops() {
+        let mut level = MemoryLevel::new(-64, 1);
+        level.insert(cow(1, 0xA, Vec3::new(0.5, 0.0, 0.5)));
+        level.insert(cow(2, 0xB, Vec3::new(5.5, 0.0, 0.5)));
+        set_leashed_to_in_level(&mut level, 1, 2);
+        let mut a = take(&mut level, 1);
+        // Close: it holds.
+        tick_leash(&mut a, None, &mut level);
+        assert_eq!(holder_of(&a), Some(2));
+        // Far: it snaps, with the sound.
+        level.entity_mut(2).unwrap().set_pos(Vec3::new(30.5, 0.0, 0.5));
+        tick_leash(&mut a, None, &mut level);
+        level.flush_spawned();
+        assert!(!is_leashed(&a));
+        assert_eq!(lead_items(&level), 1);
+        assert!(level.events.iter().any(|ev| matches!(ev, Event::Sound { sound: "minecraft:item.lead.break", .. })));
+    }
+
+    #[test]
+    fn a_lead_that_is_stretched_a_little_pulls_the_led_entity_toward_its_holder() {
+        let mut level = MemoryLevel::new(-64, 1);
+        level.insert(cow(1, 0xA, Vec3::new(0.5, 0.0, 0.5)));
+        level.insert(cow(2, 0xB, Vec3::new(9.5, 0.0, 0.5)));
+        set_leashed_to_in_level(&mut level, 1, 2);
+        let mut a = take(&mut level, 1);
+        tick_leash(&mut a, None, &mut level);
+        assert!(a.delta.x > 0.0, "pulled toward +x: {:?}", a.delta);
+        assert_eq!(holder_of(&a), Some(2));
+    }
+
+    #[test]
+    fn a_knot_is_saved_as_its_block_and_goes_when_its_last_lead_does() {
+        let mut level = MemoryLevel::new(-64, 1);
+        level.insert(cow(1, 0xA, Vec3::new(0.5, 0.0, 0.5)));
+        let knot = get_or_create_knot(&mut level, BlockPos::new(3, 0, 1));
+        level.flush_spawned();
+        set_leashed_to_in_level(&mut level, 1, knot);
+        let saved = crate::persist::save(level.entity(1).unwrap(), &|_| None);
+        assert_eq!(saved.get("leash"), Some(&Tag::IntArray(vec![3, 0, 1])));
+        assert_eq!(find_knot(&level, BlockPos::new(3, 0, 1)), Some(knot));
+        // Taking the lead off: the knot is discarded.
+        release_in_level(&mut level, 1, false);
+        assert!(level.entity(knot).unwrap().is_removed());
+    }
 }

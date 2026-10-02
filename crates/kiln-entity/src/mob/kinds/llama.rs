@@ -322,7 +322,8 @@ impl CustomGoal for TraderLlamaDefendWanderingTraderGoal {
         let Some(hm) = crate::mob::data(h) else { return false };
         let (by, stamp) = (hm.last_hurt_by_mob, hm.last_hurt_by_mob_timestamp);
         let Some(by) = by.and_then(|id| goals::living(level, id)) else { return false };
-        stamp != self.timestamp && goals::can_attack(m, level, &by)
+        // `TargetGoal.canAttack(by, TargetingConditions.DEFAULT)`: combat conditions, and within home.
+        stamp != self.timestamp && goals::targeting_ok(e, m, level, &by, true, -1.0, true) && crate::mob::random_pos::within_home(m.home, by.block_pos())
     }
     fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let Some(holder) = crate::leash::holder_of(e) else { return };

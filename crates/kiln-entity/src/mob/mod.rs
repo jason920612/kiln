@@ -143,6 +143,9 @@ pub enum MobKind {
     // -- wp30: llamas
     Llama,
     TraderLlama,
+
+    // -- wp32: wandering traders
+    WanderingTrader,
 }
 
 /// `MobCategory`.
@@ -305,6 +308,9 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- wp30: llamas
     MobKind::Llama,
     MobKind::TraderLlama,
+
+    // -- wp32: wandering traders
+    MobKind::WanderingTrader,
 ];
 
 impl MobKind {
@@ -616,6 +622,8 @@ pub struct MobData {
     /// `Mob.homePosition` and `homeRadius` (`None`: no home, radius -1): where a leashed mob
     /// or a wandering trader keeps to.
     pub home: Option<(BlockPos, i32)>,
+    /// `Entity.isInvisible` (shared flag 5), set from the effects when the data is synchronised.
+    pub invisible_flag: bool,
 }
 
 /// The vehicle of a mob rider while the rider ticks. `Mob.getNavigation()` and
@@ -724,6 +732,7 @@ impl MobData {
             carries_mob: false,
             knock_override: None,
             home: None,
+            invisible_flag: false,
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -841,6 +850,17 @@ impl MobData {
         let mut v = self.goals.running_names();
         v.extend(self.targets.running_names());
         v
+    }
+}
+
+/// `LivingEntity.updateDataBeforeSync` (`updateDirtyEffects`): the tracker's call at the end of
+/// the tick, which sets the invisible flag from the effects.
+pub fn update_data_before_sync(e: &mut Entity) {
+    if let Some(m) = data_mut(e) {
+        let now = effects::invisibility_effect(m);
+        if m.invisible_flag != now {
+            m.invisible_flag = now;
+        }
     }
 }
 

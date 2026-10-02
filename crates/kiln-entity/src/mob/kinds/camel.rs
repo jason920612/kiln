@@ -107,6 +107,8 @@ fn stand_up(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 
 /// `Camel.onElasticLeashPull`: a pulled camel that sits and can change pose stands up.
 pub fn elastic_pull(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    // `AbstractHorse.onElasticLeashPull`: a pulled camel stops grazing.
+    st_mut(m).eating = false;
     if sitting(m) && !in_pose_transition(m) && can_change_pose(e, m, &*level) {
         stand_up(e, m, level);
     }
@@ -209,7 +211,7 @@ impl Kind for Camel {
 
     /// `CamelMoveControl.tick`: a move order stands a sitting camel up, then the usual control.
     fn tick_move(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if m.mov.operation == Operation::MoveTo && sitting(m) && !in_pose_transition(m) && can_change_pose(e, m, &*level) {
+        if m.mov.operation == Operation::MoveTo && !crate::leash::is_leashed(e) && sitting(m) && !in_pose_transition(m) && can_change_pose(e, m, &*level) {
             stand_up(e, m, level);
         }
         mob::control::tick_move(e, m, &*level);
@@ -537,6 +539,7 @@ impl Behavior for RandomSitting {
         let pose_time = cx.time - s.last_pose_change.abs();
         !cx.e.is_in_water()
             && pose_time >= self.minimal_pose_ticks
+            && !crate::leash::is_leashed(cx.e)
             && cx.e.on_ground
             && !has_controlling_passenger(cx.e, cx.m, &*cx.level)
             && can_change_pose(cx.e, cx.m, &*cx.level)

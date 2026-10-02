@@ -1090,4 +1090,6 @@ pub struct TradeMerchant {
     pub pos: Vec3,
     /// The villager's `minecraft:villager_type` (for type-restricted trades).
     pub villager_type: &'static str,
+    /// The merchant's entity type (`minecraft:villager`, `minecraft:wandering_trader`).
+    pub entity_type: &'static str,
 }

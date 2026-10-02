@@ -179,6 +179,9 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Llama => &llama::LLAMA,
         MobKind::TraderLlama => &llama::TRADER_LLAMA,
 
+        // -- wp32: wandering traders
+        MobKind::WanderingTrader => &wandering_trader::KIND,
+
         _ => return None,
     })
 }

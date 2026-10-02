@@ -464,8 +464,15 @@ pub fn particles(m: &MobData) -> (Vec<kiln_proto::packets::entity::metadata::Par
     (effect::particles(&m.effects), !m.effects.is_empty() && effect::all_ambient(&m.effects))
 }
 
-/// Whether the effects make the mob invisible (`updateInvisibilityStatus`).
+/// `Entity.isInvisible`: the shared invisible flag, which the effects set when the entity's data
+/// is synchronised (`updateDataBeforeSync`, at the end of the tick: see
+/// [`crate::mob::update_data_before_sync`]), not when the effect is added.
 pub fn invisible(m: &MobData) -> bool {
+    m.invisible_flag
+}
+
+/// Whether the effects make the mob invisible (`updateInvisibilityStatus`).
+pub fn invisibility_effect(m: &MobData) -> bool {
     has(m, ids::invisibility())
 }
 

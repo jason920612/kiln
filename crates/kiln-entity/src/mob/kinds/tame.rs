@@ -93,7 +93,8 @@ fn dist_sqr(e: &Entity, p: Vec3) -> f64 {
 
 /// `unableToMoveToOwner`.
 pub fn unable_to_move_to_owner(e: &Entity, m: &MobData, level: &dyn EntityLevel) -> bool {
-    ordered_to_sit(m) || e.vehicle.is_some() || owner(m, level).is_some_and(|o| o.spectator)
+    // (`mayBeLeashed`: a lead on it, or a lead data waiting for its holder.)
+    ordered_to_sit(m) || e.vehicle.is_some() || e.leash.is_some() || owner(m, level).is_some_and(|o| o.spectator)
 }
 
 /// `shouldTryTeleportToOwner`: 12 blocks or more away.

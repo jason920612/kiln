@@ -124,11 +124,12 @@ pub fn default_pos_towards_home(e: &mut Entity, m: &MobData, level: &dyn EntityL
 /// direction, raised a few blocks over the solid ground.
 #[allow(clippy::too_many_arguments)]
 pub fn hover_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, dx: f64, dz: f64, angle: f32, max_hover: i32, min_hover: i32) -> Option<Vec3> {
+    let restrict = mob_restricted(e, m.home, h as f64);
     generate(e, m, level, |e| {
         let dir = direction_within_radians(e, 0.0, h as f64, v, 0, dx, dz, angle as f64)?;
-        // `LandRandomPos.generateRandomPosTowardDirection` (no home).
-        let p = toward_home(e, h as f64, dir, None);
-        if outside_limits(level, p) || !path::stable_destination(m, level, p) {
+        // `LandRandomPos.generateRandomPosTowardDirection`.
+        let p = toward_home(e, h as f64, dir, m.home);
+        if outside_limits(level, p) || (restrict && !within_home(m.home, p)) || !path::stable_destination(m, level, p) {
             return None;
         }
         let above = e.random.next_int_bounded(max_hover - min_hover + 1) + min_hover;
@@ -143,10 +144,11 @@ pub fn hover_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v
 /// `AirAndWaterRandomPos.getPos(mob, h, v, flyingHeight, x, z, angle)`.
 #[allow(clippy::too_many_arguments)]
 pub fn air_and_water_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, flying_height: i32, dx: f64, dz: f64, angle: f64) -> Option<Vec3> {
+    let restrict = mob_restricted(e, m.home, h as f64);
     generate(e, m, level, |e| {
         let dir = direction_within_radians(e, 0.0, h as f64, v, flying_height, dx, dz, angle)?;
-        let p = toward_home(e, h as f64, dir, None);
-        if outside_limits(level, p) {
+        let p = toward_home(e, h as f64, dir, m.home);
+        if outside_limits(level, p) || (restrict && !within_home(m.home, p)) {
             return None;
         }
         let p = move_up_out_of_solid_raw(level, p);

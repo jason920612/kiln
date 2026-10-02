@@ -758,6 +758,12 @@ impl Kind for Equine {
             equip_sound(e, level, kiln_item::component::EquipmentSlot::Body, &ItemStack::empty(), &one);
             return Some(Outcome::success(HeldChange::Consume(1)));
         }
+        // `TraderLlama.doPlayerRide`: nobody rides a llama a wandering trader leads.
+        if m.kind == MobKind::TraderLlama
+            && crate::leash::holder_of(e).and_then(|h| level.entity(h)).is_some_and(|h| h.type_name == "minecraft:wandering_trader")
+        {
+            return Some(Outcome::success(HeldChange::None));
+        }
         // `doPlayerRide`.
         st_mut(m).eating = false;
         clear_standing(m);

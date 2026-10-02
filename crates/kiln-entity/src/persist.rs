@@ -204,6 +204,11 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
         pos[1].clamp(-2.0E7, 2.0E7),
         pos[2].clamp(-3.0000512E7, 3.0000512E7),
     ));
+    // `BlockAttachedEntity.setPos`: a leash knot sits on the middle of its block.
+    if e.type_name == crate::leash::KNOT {
+        let p = e.position();
+        e.set_pos(Vec3::new(p.x.floor() + 0.5, p.y.floor() + 0.375, p.z.floor() + 0.5));
+    }
     // `setRot` through `setYRot`/`setXRot`: both taken mod 360, the pitch clamped to 90.
     e.y_rot = rot[0] % 360.0;
     e.x_rot = (rot[1] % 360.0).clamp(-90.0, 90.0);

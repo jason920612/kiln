@@ -462,6 +462,7 @@ impl Sim {
             self.dims[dim].raids.refresh_views();
         }
         self.tick_patrols();
+        self.tick_wandering_trader();
     }
 
     fn raid_event(&mut self, dim: DimId, ev: RaidEvent) {
@@ -1221,7 +1222,7 @@ impl Sim {
     }
 
     /// The biome's name at `pos` of level `dim`, if its chunk is loaded.
-    fn biome_name(&self, dim: DimId, pos: [i32; 3]) -> Option<&'static str> {
+    pub(crate) fn biome_name(&self, dim: DimId, pos: [i32; 3]) -> Option<&'static str> {
         // The stored (quart) biome, without the voronoi zoom.
         let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(pos[0], pos[2]))?;
         let min_y = self.dims[dim].provider.dimension.min_y;

@@ -141,7 +141,7 @@ fn effects_sig(m: &mob::MobData) -> i64 {
 }
 
 /// A scenario action (`MobVectors.Action`), run before the entity ticks of its tick.
-fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Value) {
+fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, player: Option<PlayerView>, a: &Value) {
     let kind = a["kind"].as_str().unwrap();
     let what = a["what"].as_str().unwrap_or("");
     let pos = vec3(&a["pos"]);
@@ -212,9 +212,11 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
         // wp30 llamas: mob `mob` is led by `amp` (an index into the mobs, -2 the player).
         "leash" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];
+            // (An index past the mobs is one of the scenario's other entities: a leash knot.)
             let holder = match a["amp"].as_i64().unwrap() {
                 -2 => player.expect("a leading player").id,
-                i => ids[i as usize],
+                i if (i as usize) < initial => ids[i as usize],
+                i => other_ids[i as usize - initial],
             };
             kiln_entity::leash::set_leashed_to_in_level(level, id, holder);
         }
@@ -235,6 +237,8 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
             let held = match out.held {
                 mob::interact::HeldChange::Consume(_) if !who.creative => Some(0),
                 mob::interact::HeldChange::Fill(ref f) => Some(f.item()),
+                // `ItemStack.shrink(1)` of a stack of one, whatever the game mode.
+                mob::interact::HeldChange::Shrink(_) => Some(0),
                 _ => None,
             };
             if let Some(held) = held {
@@ -525,7 +529,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         for a in s.get("actions").and_then(Value::as_array).into_iter().flatten() {
             if a["tick"].as_i64() == Some(tick) {
-                act(&mut level, &ids, player, a);
+                act(&mut level, &ids, &other_ids, initial, player, a);
                 // The player may have moved or changed game mode.
                 if player.is_some()
                     && let Some(p) = level.players.first()
@@ -678,7 +682,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             && let Some(e) = ids.get(k).and_then(|&id| level.entity(id))
         {
             let m = mob::data(e).unwrap();
-            eprintln!("dbg tick {tick} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
+            eprintln!("dbg tick {tick} op {:?} wanted {:?} yaw {} head {} body {} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", m.mov.operation, m.mov.wanted, e.y_rot, m.y_head_rot, m.y_body_rot, e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
         }
         if std::env::var_os("KILN_MOB_DEBUG_ENTS").is_some() {
             for i in 0..level.len() {
