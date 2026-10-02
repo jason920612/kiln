@@ -71,6 +71,15 @@ pub(crate) struct Entity {
     equipment_sent: Vec<(u8, kiln_item::ItemStack)>,
     /// A boss's bar fill as its viewers last got it (`ServerBossEvent`, the wither).
     boss_sent: Option<f32>,
+    /// What `finalizeSpawn` made along with it, until the level adds and seats it.
+    pub(crate) jockeys: Option<Box<Jockeys>>,
+}
+
+/// The jockeys a mob's `finalizeSpawn` made (see `kiln_entity::mob::Companion`).
+pub(crate) struct Jockeys {
+    pub companions: Vec<kiln_entity::mob::Companion>,
+    /// A baby zombie looks for an unridden chicken near it.
+    pub nearby_chicken: bool,
 }
 
 /// A spawn requested during a phase; ids are handed out afterwards in canonical order.
@@ -97,6 +106,64 @@ impl Spawn {
         let kind = kiln_data::entities::by_name(e.type_name)?;
         Some(Spawn { kind, pos: arr(e.position()), vel: arr(e.delta), body: Body::Loaded(Box::new(e)) })
     }
+}
+
+/// Adds the jockeys of the mob `mount` (just pushed, the last of `list`) after it, with the next
+/// ids, and seats them (`startRiding`). A baby zombie that asked for a chicken takes the lowest
+/// numbered unridden one within 5x3x5 blocks of its box (`ENTITY_NOT_BEING_RIDDEN`).
+pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, next_id: &mut i32, world_seed: i64, game_time: i64) {
+    use kiln_entity::mob::Seat;
+    let mut seated: Vec<(i32, Seat)> = Vec::new();
+    for c in jockeys.companions {
+        let Some(kind) = kiln_data::entities::by_name(c.entity.type_name) else { continue };
+        let id = *next_id;
+        *next_id += 1;
+        let pos = arr(c.entity.position());
+        let uuid = fresh_uuid(world_seed, game_time, id);
+        list.push(Entity::new(id, uuid, Spawn { kind, pos, vel: [0.0; 3], body: Body::Ready(Box::new(c.entity)) }));
+        seated.push((id, c.seat));
+    }
+    // `startRiding`: (rider, vehicle) in the order the companions were made.
+    let mut links: Vec<(i32, i32)> = seated
+        .iter()
+        .map(|&(id, seat)| match seat {
+            Seat::OnMob => (id, mount),
+            Seat::UnderMob => (mount, id),
+            Seat::OnCompanion(i) => (id, seated[i].0),
+        })
+        .collect();
+    if jockeys.nearby_chicken
+        && let Some(chicken) = nearby_unridden_chicken(list, mount)
+    {
+        if let Some(c) = list.iter_mut().find(|e| e.id == chicken).and_then(|e| e.phys.as_mut()).and_then(kiln_entity::mob::data_mut) {
+            c.chicken_jockey = true;
+        }
+        links.push((mount, chicken));
+    }
+    for (rider, vehicle) in links {
+        let (Ok(ri), Ok(vi)) = (list.binary_search_by_key(&rider, |e| e.id), list.binary_search_by_key(&vehicle, |e| e.id)) else { continue };
+        if ri == vi {
+            continue;
+        }
+        let Some(mut rp) = list[ri].phys.take() else { continue };
+        if let Some(vp) = list[vi].phys.as_mut()
+            && kiln_entity::ride::start_riding(&mut rp, vp, false)
+        {
+            kiln_entity::ride::position_rider(&mut rp, vp);
+        }
+        list[ri].phys = Some(rp);
+        list[ri].sync();
+    }
+}
+
+fn nearby_unridden_chicken(list: &[Entity], mount: i32) -> Option<i32> {
+    let me = list.iter().find(|e| e.id == mount)?.phys.as_ref()?;
+    let area = me.bounding_box().inflate(5.0, 3.0, 5.0);
+    list.iter()
+        .filter(|e| e.id != mount && !e.removed)
+        .filter(|e| e.phys.as_ref().is_some_and(|p| p.is_alive() && p.type_name == "minecraft:chicken" && p.passengers.is_empty() && p.vehicle.is_none() && p.bounding_box().intersects(&area)))
+        .map(|e| e.id)
+        .min()
 }
 
 /// A fresh entity UUID (version 4 layout), from the world seed, the world age and the network
@@ -147,6 +214,7 @@ impl Entity {
             _ => uuid,
         };
         let (u, seed, pos) = (uuid.as_u128(), seed_for(id), vec3(spawn.pos));
+        let mut jockeys = None;
         let phys = match spawn.body {
             Body::Item { stack, pickup_delay, thrower } => {
                 let mut e = kiln_entity::item::new(id, u, stack, seed);
@@ -178,7 +246,11 @@ impl Entity {
                 }
                 if let Some(f) = finalize {
                     let mut r = LegacyRandom::new(f.seed);
-                    kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, &mut kiln_entity::mob::GroupData::default(), true);
+                    let mut group = kiln_entity::mob::GroupData { monsters_disabled: f.monsters_disabled, camel_space: f.camel_space, ..Default::default() };
+                    kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, &mut group, f.natural);
+                    if !group.companions.is_empty() || group.nearby_chicken {
+                        jockeys = Some(Box::new(Jockeys { companions: std::mem::take(&mut group.companions), nearby_chicken: group.nearby_chicken }));
+                    }
                     if f.persistent
                         && let Some(m) = kiln_entity::mob::data_mut(&mut e)
                     {
@@ -216,6 +288,7 @@ impl Entity {
             passengers_sent: Vec::new(),
             equipment_sent: Vec::new(),
             boss_sent: None,
+            jockeys,
         }
     }
 

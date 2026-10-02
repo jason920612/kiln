@@ -2022,7 +2022,12 @@ impl Sim {
                 {
                     placeholders.push((e.id, id, chunk));
                 }
-                region.part_mut().0.list.push(entities::Entity::new(id, uuid, spawn));
+                let list = &mut region.part_mut().0.list;
+                list.push(entities::Entity::new(id, uuid, spawn));
+                // What `finalizeSpawn` made along with the mob (its jockeys) joins right after it.
+                if let Some(j) = list.last_mut().and_then(|e| e.jockeys.take()) {
+                    entities::add_jockeys(list, id, *j, &mut self.next_entity_id, world_seed, self.game_time);
+                }
             }
             d.spawns = later;
             if !placeholders.is_empty() {

@@ -1097,11 +1097,12 @@ fn use_on_block(
         let at = if clicked_empty { bp } else { bp.relative(dir) };
         let yaw = kiln_entity::mob::mth::wrap_degrees(kiln_javamath::random::RandomSource::next_float(level.random()) * 360.0);
         let env = level.env;
-        let finalize = crate::mobs::Finalize {
-            ctx: crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, 1.0),
-            seed: crate::mobs::loot_seed(env.seed, env.game_time, p.entity_id, (at.x as u64) << 32 ^ at.z as u64 ^ (at.y as u64) << 16),
-            persistent: false,
-        };
+        let finalize = crate::mobs::Finalize::command(
+            crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, 1.0),
+            crate::mobs::loot_seed(env.seed, env.game_time, p.entity_id, (at.x as u64) << 32 ^ at.z as u64 ^ (at.y as u64) << 16),
+            false,
+            env.mobs.difficulty == 0 || !env.mobs.spawn_monsters,
+        );
         spawns.push(crate::mobs::spawn(kind, [at.x as f64 + 0.5, at.y as f64, at.z as f64 + 0.5], Some(yaw), Some(finalize)));
         let egg = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
         p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, egg), 1);

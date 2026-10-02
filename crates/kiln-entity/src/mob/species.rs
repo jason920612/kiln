@@ -76,11 +76,12 @@ pub fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
     let alive = super::is_alive(e, m);
     let baby = m.baby();
+    let jockey = m.chicken_jockey;
     if let Species::Chicken { egg_time } = &mut m.species {
         if !e.on_ground && e.delta.y < 0.0 {
             e.delta = e.delta.multiply(1.0, 0.6, 1.0);
         }
-        if alive && !baby {
+        if alive && !baby && !jockey {
             *egg_time -= 1;
             if *egg_time <= 0 {
                 level.emit(Event::GiftLoot { entity: e.id, table: "minecraft:gameplay/chicken_lay", pos: e.position() });

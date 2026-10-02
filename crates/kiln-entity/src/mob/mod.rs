@@ -557,6 +557,8 @@ pub struct MobData {
     /// `AgeableMob.age` (negative for babies); zombies keep a baby flag instead.
     pub age: i32,
     pub zombie_baby: bool,
+    /// `Chicken.isChickenJockey` (carries a baby zombie: lays no eggs, can despawn, 10 experience).
+    pub chicken_jockey: bool,
     /// `AgeableMob.forcedAge`, `forcedAgeTimer`, the age lock (golden dandelion) and its
     /// particle timer.
     pub forced_age: i32,
@@ -685,6 +687,7 @@ impl MobData {
             can_pick_up_loot: false,
             age: 0,
             zombie_baby: false,
+            chicken_jockey: false,
             forced_age: 0,
             forced_age_timer: 0,
             age_locked: false,
@@ -2486,6 +2489,10 @@ fn experience_reward(e: &mut Entity, m: &MobData) -> i32 {
     if let Some(xp) = m.kind.ext().and_then(|k| k.experience(e, m)) {
         return xp;
     }
+    // `Chicken.getBaseExperienceReward`: a jockey's chicken is worth 10.
+    if m.chicken_jockey {
+        return 10;
+    }
     if m.kind.is_animal() {
         return 1 + e.random.next_int_bounded(3);
     }
@@ -2709,6 +2716,62 @@ pub struct GroupData {
     pub patrol: bool,
     pub event: bool,
     pub structure: bool,
+    /// `ZombieGroupData.canSpawnJockey` of the group the first zombie made (its baby chance is
+    /// `zombie_baby`): a baby of such a group may ride a chicken.
+    pub zombie_can_jockey: bool,
+    /// `ServerLevel.isSpawningMonsters` is false (the `spawn_monsters` rule is off, or peaceful):
+    /// striders get no zombified piglin rider.
+    pub monsters_disabled: bool,
+    /// The box a camel husk would stand in is free (`Husk.finalizeSpawn`'s `noCollision`: the
+    /// caller has the level and looked).
+    pub camel_space: bool,
+    /// What `finalizeSpawn` made along with the mob (its jockeys); the caller adds them to the
+    /// level and seats them.
+    pub companions: Vec<Companion>,
+    /// A baby zombie of a jockey group (`canSpawnJockey`) asked for an unridden chicken within
+    /// 5x3x5 blocks of its box to ride (`getEntitiesOfClass(Chicken, ..., ENTITY_NOT_BEING_RIDDEN)`):
+    /// the caller finds it (the level is not at hand here).
+    pub nearby_chicken: bool,
+}
+
+/// An entity `finalizeSpawn` makes along with the mob: a jockey. It stands where the mob does,
+/// finalized; the caller gives it an id, adds it to the level and seats it (`startRiding`).
+#[derive(Clone, Debug)]
+pub struct Companion {
+    pub entity: Entity,
+    pub seat: Seat,
+}
+
+/// Where a [`Companion`] sits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Seat {
+    /// It rides the mob (a skeleton on its spider).
+    OnMob,
+    /// The mob rides it (a baby zombie on its chicken).
+    UnderMob,
+    /// It rides another companion (index in the list: a parched on a camel husk).
+    OnCompanion(usize),
+}
+
+/// A new mob of `kind` for `parent` to carry or ride: `EntityType.create`, then
+/// `snapTo(parent x, y, z, parent yaw, 0)`. Its own random is seeded from the parent's (without
+/// using it up); the caller finalizes it and assigns its id.
+pub fn new_jockey(parent: &Entity, kind: MobKind) -> Entity {
+    let mut seed_from = parent.random.clone();
+    let seed = seed_from.next_long() ^ ((kind as i64) << 40);
+    let mut e = new(kind, 0, 0, seed);
+    e.set_pos(parent.position());
+    e.y_rot = parent.y_rot;
+    e.x_rot = 0.0;
+    e.set_old_pos_and_rot();
+    let yaw = parent.y_rot;
+    if let Some(m) = data_mut(&mut e) {
+        m.y_head_rot = yaw;
+        m.y_body_rot = yaw;
+        m.y_head_rot_o = yaw;
+        m.y_body_rot_o = yaw;
+    }
+    e
 }
 
 /// `Mob.finalizeSpawn` and the types' overrides; random draws from `r` (the level's).
@@ -2767,8 +2830,13 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     m.left_handed = r.next_float() < 0.05;
     match kind {
         MobKind::Spider => {
-            // Spider jockeys (1 in 100) are not simulated; the draw still happens.
-            let _ = r.next_int_bounded(100);
+            // Spider jockeys (1 in 100): a skeleton, finalized for the same reason as the spider,
+            // rides it.
+            if r.next_int_bounded(100) == 0 {
+                let mut skeleton = new_jockey(e, MobKind::Skeleton);
+                finalize_spawn(&mut skeleton, r, ctx, &mut GroupData::default(), natural);
+                group.companions.push(Companion { entity: skeleton, seat: Seat::OnMob });
+            }
             if group.spider_effect.is_none() {
                 let mut effect = None;
                 if ctx.hard && r.next_float() < 0.1 * ctx.special_multiplier {
@@ -2812,7 +2880,8 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
     let persistent = m.persistence_required || e.vehicle.is_some();
     let category = m.kind.category();
     let Some(d) = nearest else { return };
-    let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(!category.persistent());
+    // (`Chicken.removeWhenFarAway`: only a chicken jockey.)
+    let removable = m.kind.ext().and_then(|k| k.remove_when_far_away_at(m, d)).unwrap_or(if m.kind == MobKind::Chicken { m.chicken_jockey } else { !category.persistent() });
     let far = category.despawn_distance() as f64;
     if !persistent && removable && d > far * far {
         e.discard();

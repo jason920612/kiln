@@ -270,13 +270,27 @@ pub fn finalize(e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: 
     if !conversion {
         m.can_pick_up_loot = r.next_float() < 0.55 * special;
     }
-    let baby = *group.zombie_baby.get_or_insert_with(|| r.next_float() < 0.05);
+    // (`new ZombieGroupData(getSpawnAsBabyOdds(random), true)` for the first of a group.)
+    if group.zombie_baby.is_none() {
+        group.zombie_baby = Some(r.next_float() < 0.05);
+        group.zombie_can_jockey = true;
+    }
+    let baby = group.zombie_baby.unwrap_or(false);
     if baby {
         set_baby(e, m, true);
-        // Chicken jockeys (riding is not simulated): the draws.
-        if r.next_float() < 0.05 {
-        } else {
-            let _ = r.next_float();
+        if group.zombie_can_jockey {
+            // Chicken jockeys: with 5% an unridden chicken nearby is ridden (the caller looks
+            // for it), else with 5% a new chicken carries it.
+            if (r.next_float() as f64) < 0.05 {
+                group.nearby_chicken = true;
+            } else if (r.next_float() as f64) < 0.05 {
+                let mut chicken = mob::new_jockey(e, MobKind::Chicken);
+                mob::finalize_spawn(&mut chicken, r, ctx, &mut GroupData::default(), false);
+                if let Some(cm) = mob::data_mut(&mut chicken) {
+                    cm.chicken_jockey = true;
+                }
+                group.companions.push(mob::Companion { entity: chicken, seat: mob::Seat::UnderMob });
+            }
         }
     }
     let doors = r.next_float() < special * 0.1;

@@ -219,11 +219,7 @@ pub(crate) fn summon(
             spawns.push(Spawn::loaded(e)?);
         }
         _ => {
-            let finalize = initialize.then(|| Finalize {
-                ctx: difficulty_instance(difficulty, game_time, 0, 1.0),
-                seed,
-                persistent: false,
-            });
+            let finalize = initialize.then(|| Finalize::command(difficulty_instance(difficulty, game_time, 0, 1.0), seed, false, difficulty == 0));
             spawns.push(spawn(kind, pos, None, finalize));
         }
     }
@@ -239,6 +235,20 @@ pub(crate) struct Finalize {
     /// Natural spawns may despawn; summoned and egg-spawned ones are persistent only when
     /// asked (vanilla: `/summon` mobs despawn too).
     pub persistent: bool,
+    /// `EntitySpawnReason.NATURAL`: the natural spawner's mobs (not eggs or `/summon`).
+    pub natural: bool,
+    /// `ServerLevel.isSpawningMonsters` is false (a peaceful world or `spawn_monsters` off).
+    pub monsters_disabled: bool,
+    /// The box a camel husk jockey would stand in is free (`Husk.finalizeSpawn`'s `noCollision`;
+    /// only the natural spawner looks).
+    pub camel_space: bool,
+}
+
+impl Finalize {
+    /// A summoned or egg-spawned mob (not `NATURAL`).
+    pub(crate) fn command(ctx: mob::SpawnContext, seed: i64, persistent: bool, monsters_disabled: bool) -> Finalize {
+        Finalize { ctx, seed, persistent, natural: false, monsters_disabled, camel_space: false }
+    }
 }
 
 /// `DifficultyInstance` for a position: the effective difficulty and its special multiplier.

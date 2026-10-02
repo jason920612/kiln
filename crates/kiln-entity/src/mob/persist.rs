@@ -121,6 +121,9 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
     if super::breed::is_animal(kind) {
         m.in_love = r.int_or("InLove", 0);
     }
+    if kind == MobKind::Chicken {
+        m.chicken_jockey = r.bool_or("IsChickenJockey", false);
+    }
     match &mut m.species {
         Species::Sheep { color, sheared } => {
             *sheared = r.bool_or("Sheared", false);
@@ -239,7 +242,7 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
             o.put("Color", Tag::Byte(*color as i8));
         }
         Species::Chicken { egg_time } => {
-            o.put("IsChickenJockey", Tag::Byte(0));
+            o.put("IsChickenJockey", Tag::Byte(m.chicken_jockey as i8));
             o.put("EggLayTime", Tag::Int(*egg_time));
         }
         Species::Zombie { can_break_doors, drowning } => {

@@ -54,7 +54,7 @@ impl World {
 
     fn summon_at(&mut self, entity: &str, dx: f64, nbt: &str) {
         let p = self.client.pos;
-        self.console(&format!("summon {entity} {} {} {} {nbt}", p[0] + dx, p[1], p[2]));
+        self.console(format!("summon {entity} {} {} {} {nbt}", p[0] + dx, p[1], p[2]).trim());
     }
 
     fn nbt_of(&self, id: &str) -> Vec<Tag> {
@@ -155,4 +155,55 @@ fn a_horse_and_a_donkey_have_a_mule() {
     w.ticks(400);
     assert_eq!(w.nbt_of("minecraft:donkey").len(), 4, "two donkeys, a donkey foal and the first one");
     assert_eq!(w.nbt_of("minecraft:mule").len(), 1, "no more mules");
+}
+
+/// Summons `count` of `entity` along a line (each gets its own `finalizeSpawn` seed), then lets
+/// them settle.
+fn summon_many(w: &mut World, entity: &str, count: usize) {
+    for i in 0..count {
+        w.summon_at(entity, 4.0 + i as f64 * 0.05, "");
+        w.ticks(1);
+    }
+    w.ticks(3);
+}
+
+/// Every rider of `riders_type` sits on a vehicle of `vehicle_type` that lists it; returns how
+/// many there are.
+fn seated_riders(w: &World, riders_type: &str, vehicle_type: &str) -> usize {
+    let mobs = w.sim.mobs();
+    let riding = w.sim.riding();
+    let mut n = 0;
+    for r in mobs.iter().filter(|m| m.1 == riders_type) {
+        let Some((_, Some(v), _)) = riding.iter().find(|x| x.0 == r.0) else { continue };
+        let vt = mobs.iter().find(|m| m.0 == *v).map(|m| m.1);
+        assert_eq!(vt, Some(vehicle_type), "the vehicle of {riders_type} {}", r.0);
+        let (_, _, passengers) = riding.iter().find(|x| x.0 == *v).expect("the vehicle is simulated");
+        assert!(passengers.contains(&r.0), "{vehicle_type} {v} lists {:?}", passengers);
+        n += 1;
+    }
+    n
+}
+
+#[test]
+fn some_spiders_spawn_with_a_skeleton_rider() {
+    let mut w = World::new("creative");
+    summon_many(&mut w, "minecraft:spider", 500);
+    let riders = seated_riders(&w, "minecraft:skeleton", "minecraft:spider");
+    assert!((1..=20).contains(&riders), "{riders} spider jockeys among 500 spiders");
+    assert_eq!(w.sim.mobs().iter().filter(|m| m.1 == "minecraft:skeleton").count(), riders, "every skeleton is a rider");
+}
+
+#[test]
+fn some_striders_spawn_with_a_piglin_or_a_baby_rider() {
+    let mut w = World::new("creative");
+    summon_many(&mut w, "minecraft:strider", 400);
+    let piglins = seated_riders(&w, "minecraft:zombified_piglin", "minecraft:strider");
+    assert!(piglins >= 1, "{piglins} zombified piglin jockeys among 400 striders");
+    // The jockey's strider is saddled, and the rider holds a warped fungus on a stick.
+    let striders = w.nbt_of("minecraft:strider");
+    assert!(striders.iter().filter(|s| s.get("equipment").and_then(|e| e.get("saddle")).is_some()).count() >= piglins);
+    for p in w.nbt_of("minecraft:zombified_piglin") {
+        let hand = p.get("equipment").and_then(|e| e.get("mainhand")).and_then(|h| h.get("id")).and_then(|i| i.as_str());
+        assert_eq!(hand, Some("minecraft:warped_fungus_on_a_stick"));
+    }
 }
