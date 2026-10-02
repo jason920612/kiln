@@ -166,6 +166,11 @@ public class MobVectors {
                 var holder = BuiltInRegistries.GAME_EVENT.get(Identifier.parse(a.what)).orElseThrow();
                 level.gameEvent(src, holder, new Vec3(a.x, a.y, a.z));
             }
+            // wp32 parrots: the player stands on the ground (a parrot lands on a shoulder only then).
+            case "ground" -> player.setOnGround(true);
+            // wp32 parrots: a record starts ("play") or stops ("stop") nearby: `setRecordPlayingNearby` of the parrot `mob`
+            // (the client calls it; nothing on the server does).
+            case "record" -> ((net.minecraft.world.entity.animal.parrot.Parrot) tracked.get(a.mob)).setRecordPlayingNearby(BlockPos.containing(a.x, a.y, a.z), a.what.equals("play"));
             default -> throw new IllegalArgumentException(a.kind);
         }
     }
@@ -213,6 +218,8 @@ public class MobVectors {
         /// then).
         final List<BlockPos> hearts = new ArrayList<>();
         boolean spawnMonsters;
+        /// wp32 parrots: the level's random is compared at the end (what a scenario draws from it, imitations).
+        boolean checkLevelRandom;
         Scenario(String name) { this.name = name; }
     }
 
@@ -446,6 +453,8 @@ public class MobVectors {
             player.setYHeadRot(s.playerYaw);
             player.setItemSlot(EquipmentSlot.HEAD, s.playerHead == null ? ItemStack.EMPTY
                     : new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(s.playerHead))));
+            // (wp32: the player left standing on the ground by a scenario is in the air again.)
+            player.setOnGround(false);
             player.setShiftKeyDown(s.playerSneaking);
             player.setPose(s.playerSneaking ? net.minecraft.world.entity.Pose.CROUCHING : net.minecraft.world.entity.Pose.STANDING);
             // wp28: a player who survives what a warden does to him (`playerHealth`, 20 by default).
@@ -711,8 +720,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, heartsJson, creakingActive, endBlocks, heartTrace, nextId, trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, heartsJson, creakingActive, endBlocks, heartTrace, nextId, s.checkLevelRandom ? Long.toString(((java.util.concurrent.atomic.AtomicLong) get(level.getRandom(), "seed")).get()) : "null", trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1575,6 +1584,8 @@ public class MobVectors {
         scenariosRiders(out);
         // -- wp30: llamas
         scenariosLlama(out);
+        // -- wp32: parrots
+        scenariosParrot(out);
 
         return out;
     }
@@ -1972,6 +1983,167 @@ public class MobVectors {
     static String owner() {
         int[] u = net.minecraft.core.UUIDUtil.uuidToIntArray(UUID.nameUUIDFromBytes("KilnMob".getBytes()));
         return String.format(Locale.ROOT, "Owner:[I;%d,%d,%d,%d]", u[0], u[1], u[2], u[3]);
+    }
+
+    // ---------------------------------------------------------- wp32: parrots
+    static void scenariosParrot(List<Scenario> out) {
+        // Idling: flying about, perching on the tree's top, landing; three seeds and variants.
+        for (int i = 0; i < 3; i++) {
+            Scenario s = new Scenario("idle_parrot_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            if (i == 2) {
+                for (int y = 0; y < 4; y++) block(s, 4, BY + y, 3, "minecraft:jungle_log");
+                for (int dx = -2; dx <= 2; dx++)
+                    for (int dz = -2; dz <= 2; dz++)
+                        for (int dy = 4; dy <= 5; dy++) block(s, 4 + dx, BY + dy, 3 + dz, "minecraft:jungle_leaves[persistent=true]");
+            }
+            MobSpec m = new MobSpec("minecraft:parrot", 0.5, BY + (i == 1 ? 4 : 0), 0.5, 40f * i, 33000L + 11 * i);
+            m.nbt = "{Variant:" + (i + 1) + "}";
+            s.mobs.add(m);
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 70 + i;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Tamed with seeds (one in ten): the player tries every few ticks; once tame the parrot
+        // follows its owner.
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("tame_parrot_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 0f, 33100L + 17 * i));
+            s.player = new double[] {2.5, BY, 0.5};
+            s.playerCreative = true;
+            for (int t = 5; t < 400; t += 6) interact(s, t, 0, i == 0 ? "minecraft:wheat_seeds" : "minecraft:pumpkin_seeds");
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Sitting: sitting from the save, and told to sit (and stand up again) by its owner.
+        {
+            Scenario s = new Scenario("sit_parrot");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 45f, 33200);
+            m.nbt = "{" + owner() + ",Sitting:1b,Variant:2}";
+            s.mobs.add(m);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("toggle_sit_parrot");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 45f, 33210);
+            m.nbt = "{" + owner() + ",Variant:4}";
+            s.mobs.add(m);
+            s.player = new double[] {3.5, BY, 0.5};
+            s.playerCreative = true;
+            for (int t : new int[] {2, 30, 31, 32, 60, 90, 120, 150, 180}) interact(s, t, 0, "minecraft:air");
+            s.ticks = 260;
+            out.add(s);
+        }
+        // Hurt: a wild parrot panics; a sitting tamed one stands up.
+        {
+            Scenario s = new Scenario("hurt_parrot");
+            floor(s, 16, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 0f, 33300));
+            MobSpec m = new MobSpec("minecraft:parrot", 3.5, BY, 0.5, 90f, 33301);
+            m.nbt = "{" + owner() + ",Sitting:1b}";
+            s.mobs.add(m);
+            s.player = new double[] {6.5, BY, 0.5};
+            s.playerCreative = true;
+            s.hurts.put(10, new double[] {0, 1.0});
+            s.hurts.put(40, new double[] {1, 1.0});
+            s.ticks = 200;
+            out.add(s);
+        }
+        // A cookie poisons (and kills) a parrot, tame or not.
+        for (int i = 0; i < 2; i++) {
+            Scenario s = new Scenario("poison_parrot_" + i);
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 0f, 33400L + i);
+            if (i == 1) m.nbt = "{" + owner() + "}";
+            s.mobs.add(m);
+            s.player = new double[] {2.5, BY, 0.5};
+            s.playerCreative = true;
+            interact(s, 5, 0, "minecraft:cookie");
+            s.ticks = 60;
+            out.add(s);
+        }
+        // Following the owner (and teleporting to it from 12 blocks).
+        for (double dist : new double[] {8, 14, 20}) {
+            Scenario s = new Scenario("follow_owner_parrot_" + (int) dist);
+            floor(s, 30, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 0f, 33500 + (long) dist);
+            m.nbt = "{" + owner() + "}";
+            s.mobs.add(m);
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Following another kind of mob.
+        {
+            Scenario s = new Scenario("follow_mob_parrot");
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 0f, 33600));
+            s.mobs.add(new MobSpec("minecraft:cow", 5.5, BY, 2.5, 90f, 33601));
+            s.mobs.add(new MobSpec("minecraft:sheep", -4.5, BY, 3.5, 90f, 33602));
+            s.player = new double[] {15.5, BY, 0.5};
+            s.playerCreative = true;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // Landing on the owner's shoulder (over 100 ticks old, touching the owner, the owner on the ground), and not
+        // landing on a player in the air.
+        for (int i = 0; i < 5; i++) {
+            Scenario s = new Scenario(i < 4 ? "shoulder_parrot_" + i : "shoulder_parrot_air");
+            floor(s, 16, "minecraft:grass_block");
+            MobSpec m = new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 0f, 33700L + i);
+            m.nbt = "{" + owner() + ",Variant:3}";
+            s.mobs.add(m);
+            s.player = new double[] {i == 2 ? 3.0 : 1.0, BY, 0.5};
+            s.playerCreative = true;
+            if (i < 4) s.actions.add(new Action(0, "ground"));
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A jukebox plays near a parrot (the client's dance: nothing happens on the server).
+        {
+            Scenario s = new Scenario("jukebox_parrot");
+            floor(s, 16, "minecraft:grass_block");
+            block(s, 2, BY, 2, "minecraft:jukebox");
+            s.mobs.add(new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 0f, 33800));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            for (int[] t : new int[][] {{5, 1}, {100, 0}, {150, 1}}) {
+                Action a = new Action(t[0], "record");
+                a.mob = 0;
+                a.what = t[1] == 1 ? "play" : "stop";
+                a.x = 2.5;
+                a.y = BY + 0.5;
+                a.z = 2.5;
+                s.actions.add(a);
+            }
+            s.ticks = 300;
+            out.add(s);
+        }
+        // Imitating the mobs around it (the level's random is compared at the end).
+        String[] imitated = {"minecraft:zombie", "minecraft:creeper", "minecraft:skeleton"};
+        for (int i = 0; i < imitated.length; i++) {
+            Scenario s = new Scenario("imitate_parrot_" + imitated[i].substring(10));
+            floor(s, 20, "minecraft:grass_block");
+            s.mobs.add(new MobSpec("minecraft:parrot", 0.5, BY, 0.5, 0f, 33900L + i));
+            s.mobs.add(new MobSpec(imitated[i], 9.5, BY, 3.5, 90f, 33910L + i));
+            s.player = new double[] {-12.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = 90 + i;
+            // (at night: skeletons and zombies do not burn or flee the sun)
+            s.dayTime = 18000;
+            s.checkLevelRandom = true;
+            s.ticks = 1500;
+            out.add(s);
+        }
     }
 
     // ---------------------------------------------------------- slice 2: tameables, riding, golems

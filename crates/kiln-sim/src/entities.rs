@@ -1170,7 +1170,12 @@ pub(crate) fn tick(
     }
     let live =|p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
-    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let mut views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    // wp32 parrots: what parrots need to know of their owners' footing.
+    if entities.list.iter().any(|e| e.kind.name == "minecraft:parrot") {
+        let block = |pos: BlockPos| level.block(kb(pos));
+        crate::shoulder::mark_views(players, &block, &mut views);
+    }
     let mut sim = SimLevel {
         level,
         list: &mut entities.list,
@@ -2043,6 +2048,20 @@ fn carry_out(
                 f.send(crate::dragon_fight::FightMsg::Entity(ev));
             }
         }
+        // wp32 parrots: a parrot flew onto its owner's shoulder (or, when the shoulder turns out
+        // taken after all, stays where it is).
+        Event::MountShoulder { player, tag, .. } => {
+            let block = |pos: BlockPos| level.block(kb(pos));
+            let Some(p) = players.iter_mut().find(|p| p.entity_id == player) else { return };
+            if let Some(back) = crate::shoulder::mount(p, tag, env.game_time, &block) {
+                let uuid = back.get("UUID").and_then(kiln_entity::persist::uuid_from_tag).unwrap_or(0);
+                if let Ok(e) = kiln_entity::persist::load(&back, 0, seed_for_uuid(uuid))
+                    && let Some(spawn) = Spawn::loaded(e)
+                {
+                    spawns.push(spawn);
+                }
+            }
+        }
     }
 }
 
@@ -2102,6 +2121,9 @@ fn view(p: &Player, now: i64) -> PlayerView {
         hurt_recently: p.last_hurt_by_mob.is_some_and(|(_, t)| now - t <= 100),
         hero_of_the_village: p.effect_amplifier("minecraft:hero_of_the_village"),
         vehicle: p.vehicle,
+        // (filled in by `shoulder::mark_views` where parrots are about)
+        parrot_may_land: false,
+        parrot_can_sit: false,
     }
 }
 

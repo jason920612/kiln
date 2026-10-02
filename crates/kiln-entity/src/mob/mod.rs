@@ -143,6 +143,9 @@ pub enum MobKind {
     // -- wp30: llamas
     Llama,
     TraderLlama,
+
+    // -- wp32: parrots
+    Parrot,
 }
 
 /// `MobCategory`.
@@ -305,6 +308,9 @@ pub const ALL_KINDS: &[MobKind] = &[
     // -- wp30: llamas
     MobKind::Llama,
     MobKind::TraderLlama,
+
+    // -- wp32: parrots
+    MobKind::Parrot,
 ];
 
 impl MobKind {
@@ -908,6 +914,8 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
         MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
         MobKind::Axolotl => kinds::axolotl::variant_components(m).unwrap_or_default(),
         MobKind::Frog => vec![C::FrogVariant(v::FrogVariant(m.variant))],
+        // -- wp32: parrots
+        MobKind::Parrot => vec![C::ParrotVariant(v::ParrotVariant::ALL[kinds::parrot::variant(m) as usize])],
         _ => Vec::new(),
     }
 }
@@ -1568,7 +1576,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         m.ambient_sound_time += 1;
         if e.random.next_int_bounded(1000) < t {
             m.ambient_sound_time = -m.kind.ambient_sound_interval();
-            let sound = match m.kind.ext().and_then(|k| k.ambient_sound(e, m, &*level)) {
+            let sound = match m.kind.ext().and_then(|k| k.ambient_sound_mut(e, m, level)) {
                 Some(s) => s,
                 None => m.kind.ambient_sound(),
             };
@@ -1898,7 +1906,8 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
     }
     let drag = m.attrs.value(Attr::AirDragModifier) as f32;
     let h = friction * modified_friction(0.91, drag);
-    let vy = modified_friction(0.98, drag);
+    // `omnidirectionalAirMover` (wp32: parrots): the vertical drag is the horizontal one.
+    let vy = if m.kind.ext().is_some_and(|k| k.omnidirectional_air_mover()) { modified_friction(0.91, drag) } else { modified_friction(0.98, drag) };
     e.delta = Vec3::new(v.x * h as f64, y * vy as f64, v.z * h as f64);
 }
 
@@ -2081,6 +2090,10 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         }
     }
     for (id, ox, oz, player) in others {
+        // `doPush` of a parrot ignores players (wp32).
+        if player && m.kind.ext().is_some_and(|k| k.do_push_skips_players()) {
+            continue;
+        }
         if let Some(k) = m.kind.ext() {
             k.do_push(e, m, &*level, id);
             k.do_push_mut(e, m, level, id);

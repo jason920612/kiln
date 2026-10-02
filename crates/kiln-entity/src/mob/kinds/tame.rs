@@ -35,6 +35,7 @@ pub fn get(m: &MobData) -> Option<&Tame> {
     match m.kind {
         MobKind::Wolf => ext::state::<super::wolf::State>(m).map(|s| &s.tame),
         MobKind::Cat => ext::state::<super::cat::State>(m).map(|s| &s.tame),
+        MobKind::Parrot => ext::state::<super::parrot::State>(m).map(|s| &s.tame),
         _ => None,
     }
 }
@@ -43,6 +44,7 @@ pub fn get_mut(m: &mut MobData) -> Option<&mut Tame> {
     match m.kind {
         MobKind::Wolf => ext::state_mut::<super::wolf::State>(m).map(|s| &mut s.tame),
         MobKind::Cat => ext::state_mut::<super::cat::State>(m).map(|s| &mut s.tame),
+        MobKind::Parrot => ext::state_mut::<super::parrot::State>(m).map(|s| &mut s.tame),
         _ => None,
     }
 }
@@ -113,7 +115,7 @@ pub fn try_to_teleport_to_owner(e: &mut Entity, m: &mut MobData, level: &dyn Ent
         }
         let dy = next_int_between(&mut e.random, -1, 1);
         let p = BlockPos::new(pos.x + dx, pos.y + dy, pos.z + dz);
-        if can_teleport_to(e, level, p) {
+        if can_teleport_to(e, level, p, m.kind == MobKind::Parrot) {
             e.set_pos(Vec3::new(p.x as f64 + 0.5, p.y as f64, p.z as f64 + 0.5));
             e.set_old_pos_and_rot();
             m.nav.stop();
@@ -123,12 +125,12 @@ pub fn try_to_teleport_to_owner(e: &mut Entity, m: &mut MobData, level: &dyn Ent
 }
 
 /// `canTeleportTo`: a walkable spot, not on leaves, where the mob fits.
-fn can_teleport_to(e: &Entity, level: &dyn EntityLevel, p: BlockPos) -> bool {
+fn can_teleport_to(e: &Entity, level: &dyn EntityLevel, p: BlockPos, can_fly_to_owner: bool) -> bool {
     if path::path_type_static(level, p.x, p.y, p.z) != PathType::Walkable {
         return false;
     }
-    // `instanceof LeavesBlock`.
-    if crate::blocks::block_name(level.block(p.below())).ends_with("_leaves") {
+    // `instanceof LeavesBlock` (unless the animal `canFlyToOwner`: parrots).
+    if !can_fly_to_owner && crate::blocks::block_name(level.block(p.below())).ends_with("_leaves") {
         return false;
     }
     let b = e.block_position();
