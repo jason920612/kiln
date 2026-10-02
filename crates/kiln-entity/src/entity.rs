@@ -636,7 +636,10 @@ impl Entity {
             self.delta = Vec3::ZERO;
         }
         movement = self.maybe_back_off_from_edge(level, movement, mover);
-        let collided = self.collide(level, movement);
+        let collided = {
+            crate::prof!("mv", "collide");
+            self.collide(level, movement)
+        };
         let d = collided.length_sqr();
         if d > 1.0e-7 || movement.length_sqr() - d < 1.0e-7 {
             if self.fall_distance != 0.0 && d >= 1.0 {
@@ -651,6 +654,7 @@ impl Entity {
             self.add_movement_this_tick(Movement { from, to, axis_dependent_original: Some(movement) });
             self.set_pos(to);
         }
+        crate::prof!("mv", "after collide");
         let x_collision = !mth_equal(movement.x, collided.x);
         let z_collision = !mth_equal(movement.z, collided.z);
         self.horizontal_collision = x_collision || z_collision;
@@ -674,8 +678,10 @@ impl Entity {
             self.restitute_movement_after_collisions(level, on_state, x_collision, z_collision, collided);
         }
         if matches!(self.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. }) {
+            crate::prof!("mv", "emission");
             self.apply_movement_emission(level, collided, on_pos, on_state);
         }
+        crate::prof!("mv", "speed factor");
         let f = self.block_speed_factor(level) as f64;
         self.delta = self.delta.multiply(f, 1.0, f);
     }
@@ -751,11 +757,14 @@ impl Entity {
     pub fn collide(&self, level: &dyn EntityLevel, movement: Vec3) -> Vec3 {
         let bb = self.bb;
         let ctx = self.collision_context();
-        let entity_shapes =
-            collision::entity_colliders(level, self.id, &bb.expand_towards_vec(movement).expand_towards(0.0, self.max_up_step as f64, 0.0));
+        let entity_shapes = {
+            crate::prof!("mv", "entity_colliders");
+            collision::entity_colliders(level, self.id, &bb.expand_towards_vec(movement).expand_towards(0.0, self.max_up_step as f64, 0.0))
+        };
         let collided = if movement.length_sqr() == 0.0 {
             movement
         } else {
+            crate::prof!("mv", "collide_bounding_box");
             collision::collide_bounding_box(level, &ctx, movement, &bb, &entity_shapes)
         };
         let x_changed = movement.x != collided.x;

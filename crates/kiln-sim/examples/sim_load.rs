@@ -257,7 +257,7 @@ fn main() {
                 }
                 cpu0 = cpu::now();
                 sim.reset_pool_stats();
-                kiln_entity::prof::reset();
+                kiln_entity::prof::start();
                 wall0 = Instant::now();
                 packets0 = walkers.iter().map(|w| w.client.stats.packets.load(Relaxed)).sum();
                 bytes0 = walkers.iter().map(|w| w.client.stats.bytes.load(Relaxed)).sum();

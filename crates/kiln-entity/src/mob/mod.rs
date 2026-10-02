@@ -1812,8 +1812,11 @@ fn relative_friction_movement(e: &mut Entity, m: &mut MobData, level: &mut dyn E
     } else {
         0.02
     };
-    move_relative(e, speed, input);
-    e.delta = handle_on_climbable(e, m, level, e.delta);
+    {
+        crate::prof!("mv", "relative");
+        move_relative(e, speed, input);
+        e.delta = handle_on_climbable(e, m, level, e.delta);
+    }
     let d = e.delta;
     e.do_move(level, MoverType::SelfMove, d);
     let mut v = e.delta;

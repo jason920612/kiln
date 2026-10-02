@@ -196,6 +196,7 @@ fn move_up_to_above_solid(level: &dyn EntityLevel, p: BlockPos, above: i32) -> B
 
 /// `DefaultRandomPos.getPosTowards(mob, h, v, target, angle)`.
 pub fn default_pos_towards(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, target: Vec3, angle: f64) -> Option<Vec3> {
+    crate::prof!("path", "default_pos_towards");
     let d = target - e.position();
     generate(e, m, level, |e| {
         let dir = direction_within_radians(e, 0.0, h as f64, v, 0, d.x, d.z, angle)?;
@@ -209,6 +210,7 @@ pub fn default_pos_towards(e: &mut Entity, m: &MobData, level: &dyn EntityLevel,
 
 /// `LandRandomPos.getPos(mob, h, v)`.
 pub fn land_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32) -> Option<Vec3> {
+    crate::prof!("path", "land_pos");
     generate(e, m, level, |e| {
         let dir = random_direction(e, h, v);
         let p = toward(e, dir);

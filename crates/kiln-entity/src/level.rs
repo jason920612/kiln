@@ -454,6 +454,14 @@ pub trait EntityLevel {
         true
     }
 
+    /// Writes the states of the box `min..=max` into `out` (x fastest, then z, then y) when every
+    /// chunk it touches is loaded, and says so; `false` leaves `out` unspecified and the caller
+    /// reads block by block. One lookup per chunk instead of two per block.
+    fn read_blocks(&self, min: BlockPos, max: BlockPos, out: &mut [u16]) -> bool {
+        let _ = (min, max, out);
+        false
+    }
+
     /// Whether `pred` holds for any block state in the box `min..=max` (unloaded chunks read as
     /// void air). Levels that can tell from their storage that a region has none skip it.
     fn any_block_in(&self, min: BlockPos, max: BlockPos, pred: &dyn Fn(u16) -> bool) -> bool {

@@ -29,7 +29,7 @@ pub mod util;
 pub mod village;
 
 pub use gate::{Gate, OrderPolicy, RunningPolicy, TriggerGate};
-pub use memory::{GlobalPos, Mem, Memories, NearestVisible, Slot, Status, Tracker, Val, WalkTarget};
+pub use memory::{Entry, GlobalPos, Mem, Memories, NearestVisible, Slot, Status, Tracker, Val, WalkTarget};
 
 use super::MobData;
 use crate::entity::Entity;
@@ -186,6 +186,11 @@ pub trait Control: Debug + Send + Sync {
     fn running(&self) -> bool;
     /// `getRequiredMemories` (registered with the brain).
     fn required(&self, out: &mut Vec<Mem>);
+    /// The entry conditions as masks, when `try_start` starts with them and does nothing when
+    /// they fail: the brain skips the call then.
+    fn entry_masks(&self) -> Entry {
+        Entry::default()
+    }
     fn try_start(&mut self, cx: &mut Cx) -> bool;
     fn tick_or_stop(&mut self, cx: &mut Cx);
     fn do_stop(&mut self, cx: &mut Cx);
@@ -296,6 +301,9 @@ impl Control for Timed {
     fn required(&self, out: &mut Vec<Mem>) {
         out.extend(self.b.entry().iter().map(|&(m, _)| m));
     }
+    fn entry_masks(&self) -> Entry {
+        Entry::of(self.b.entry())
+    }
     /// `Behavior.tryStart`.
     fn try_start(&mut self, cx: &mut Cx) -> bool {
         if has_required(self.b.entry(), &cx.b.mem) && self.b.check_extra_start(cx) {
@@ -364,6 +372,9 @@ impl Control for Shot {
     }
     fn required(&self, out: &mut Vec<Mem>) {
         out.extend(self.0.entry().iter().map(|&(m, _)| m));
+    }
+    fn entry_masks(&self) -> Entry {
+        Entry::of(self.0.entry())
     }
     fn try_start(&mut self, cx: &mut Cx) -> bool {
         has_required(self.0.entry(), &cx.b.mem) && self.0.trigger(cx)
@@ -588,13 +599,40 @@ impl BrainState {
     }
 }
 
+/// A behaviour with its entry conditions as masks.
+#[derive(Clone, Debug)]
+struct Beh {
+    c: Box<dyn Control>,
+    entry: Entry,
+}
+
+impl Beh {
+    fn new(c: Box<dyn Control>) -> Beh {
+        let entry = c.entry_masks();
+        Beh { c, entry }
+    }
+}
+
+impl std::ops::Deref for Beh {
+    type Target = Box<dyn Control>;
+    fn deref(&self) -> &Self::Target {
+        &self.c
+    }
+}
+
+impl std::ops::DerefMut for Beh {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.c
+    }
+}
+
 /// The behaviours of one activity at one priority.
 #[derive(Clone, Debug)]
 struct Group {
     priority: i32,
     /// Activities in the iteration order of vanilla's `HashMap`, each with its behaviours in
     /// registration order.
-    activities: Vec<(Activity, Vec<Box<dyn Control>>)>,
+    activities: Vec<(Activity, Vec<Beh>)>,
 }
 
 /// `Brain`.
@@ -670,8 +708,8 @@ impl Brain {
                 };
                 let g = &mut brain.groups[gi];
                 match g.activities.iter_mut().find(|(x, _)| *x == a.activity) {
-                    Some((_, v)) => v.push(b),
-                    None => g.activities.push((a.activity, vec![b])),
+                    Some((_, v)) => v.push(Beh::new(b)),
+                    None => g.activities.push((a.activity, vec![Beh::new(b)])),
                 }
             }
         }
@@ -703,6 +741,7 @@ impl Brain {
             crate::prof!("brain", "memories");
             cx.b.mem.tick();
         }
+        crate::prof!("brain", "sensors loop");
         for s in self.sensors.iter_mut() {
             s.time_to_tick -= 1;
             if s.time_to_tick <= 0 {
@@ -712,6 +751,7 @@ impl Brain {
             }
         }
         // startEachNonRunningBehavior
+        crate::prof!("brain", "start loop");
         for gi in 0..self.groups.len() {
             for ai in 0..self.groups[gi].activities.len() {
                 let act = self.groups[gi].activities[ai].0;
@@ -720,12 +760,16 @@ impl Brain {
                 }
                 for bi in 0..self.groups[gi].activities[ai].1.len() {
                     let b = &mut self.groups[gi].activities[ai].1[bi];
-                    if !b.running() {
+                    if !b.running() && b.entry.holds(&cx.b.mem) {
                         crate::prof!("start", b.name());
-                        let (r0, l0) = (cx.e.random.state(), cx.rng().state());
-                        if b.try_start(&mut cx) && debug_on() {
-                            let (r1, l1, t) = (cx.e.random.state(), cx.rng().state(), cx.time);
-                            eprintln!("brain t={t} start {} rnd {r0}->{r1} lr {l0}->{l1}", b.name());
+                        if debug_on() {
+                            let (r0, l0) = (cx.e.random.state(), cx.rng().state());
+                            if b.try_start(&mut cx) {
+                                let (r1, l1, t) = (cx.e.random.state(), cx.rng().state(), cx.time);
+                                eprintln!("brain t={t} start {} rnd {r0}->{r1} lr {l0}->{l1}", b.name());
+                            }
+                        } else {
+                            b.try_start(&mut cx);
                         }
                         if cx.b.refresh_requested {
                             Self::refresh_now(&mut self.groups, &mut self.refreshed, &mut cx);
@@ -735,6 +779,7 @@ impl Brain {
             }
         }
         // tickEachRunningBehavior: the running ones as of now (behaviours started above included).
+        crate::prof!("brain", "tick loop");
         for gi in 0..self.groups.len() {
             for ai in 0..self.groups[gi].activities.len() {
                 for bi in 0..self.groups[gi].activities[ai].1.len() {

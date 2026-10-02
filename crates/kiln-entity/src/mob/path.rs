@@ -1534,6 +1534,7 @@ fn create_path_raw_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, tar
 /// `PathNavigation.createPath(Set<BlockPos>, reach)` (region 8, no upward offset): a path to the
 /// best of several blocks; `None` without targets.
 pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, targets: &[BlockPos], reach: i32) -> Option<Path> {
+    crate::prof!("path", "create_path_multi");
     if targets.is_empty() {
         return None;
     }
@@ -1582,6 +1583,7 @@ pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, t
 
 /// `createPath(BlockPos, reach)`: ground navigation first finds the surface.
 pub fn create_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: BlockPos, reach: i32) -> Option<Path> {
+    crate::prof!("path", "create_path");
     if m.nav.climber {
         m.nav.path_to_position = Some(pos);
     }
