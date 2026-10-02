@@ -106,6 +106,10 @@ KILN_PARITY=1 cargo test -p kiln-worldgen --release --test parity
                                      # worldgen bit parity (vectors from tools/worldgen_vectors.py)
 KILN_PARITY=1 cargo test -p kiln-loot --test vanilla_parity
                                      # loot parity (vectors from tools/loot_vectors.py)
+python tools/mob_vectors.py --filter finalize --out work/wp33/finalize.jsonl
+KILN_FINALIZE_VECTORS=work/wp33/finalize.jsonl cargo test -p kiln-entity --test finalize_parity
+                                     # finalizeSpawn of natural spawns (jockeys and their riders, the
+                                     # level random after) against vanilla, seed by seed
 ```
 
 Packets Kiln encodes are checked by decoding them with vanilla's own codecs
