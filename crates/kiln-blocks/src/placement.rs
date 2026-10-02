@@ -263,6 +263,8 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
         _ if logic::is_instance(d, C::SnowyBlock) => state::set_bool(d, "snowy", connect::snowy_setting(level.block(pos.above()))),
         _ if logic::is_instance(d, C::LeavesBlock) => misc::leaves_distance(level, c.waterlogged(state::set_bool(d, "persistent", true)), pos),
         _ if logic::is_instance(d, C::RotatedPillarBlock) => state::set(d, "axis", axis_name(c.face.axis())),
+        // `CreakingHeartBlock.getStateForPlacement`: along the clicked face, awake if it has its logs.
+        C::CreakingHeartBlock => misc::creaking_heart_update_state(level, state::set(d, "axis", axis_name(c.face.axis())), pos),
         _ => generic(c, d),
     };
     Some(s)

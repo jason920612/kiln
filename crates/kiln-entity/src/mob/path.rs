@@ -271,6 +271,12 @@ impl Node {
         mth::sqrt_f(a * a + b * b + c * c)
     }
 
+    /// `Node.distanceToXZ` (the warden's path finder measures steps horizontally).
+    fn distance_to_xz(&self, o: &Node) -> f32 {
+        let (a, c) = ((o.x - self.x) as f32, (o.z - self.z) as f32);
+        mth::sqrt_f(a * a + c * c)
+    }
+
     fn distance_manhattan(&self, x: i32, y: i32, z: i32) -> f32 {
         (x - self.x).abs() as f32 + (y - self.y).abs() as f32 + (z - self.z).abs() as f32
     }
@@ -355,6 +361,8 @@ struct Search<'a> {
     breaching: bool,
     /// `FlyNodeEvaluator`: open air in 26 directions.
     fly: bool,
+    /// `Frog.FrogNodeEvaluator` (an amphibious evaluator that sees lily pads as open ground).
+    frog: bool,
     /// `PathfindingContext.mobPosition`.
     mob_pos: BlockPos,
     heap: Vec<u32>,
@@ -399,7 +407,23 @@ impl<'a> Search<'a> {
             return fly_type(self.level, x, y, z, self.mob_pos);
         }
         if !self.amphibious {
+            // `Creaking.HomeNodeEvaluator.getPathType`: nothing beyond 32 blocks of the home
+            // unless closer to it than the creaking is.
+            if let Some(home) = self.m.kind.ext().and_then(|k| k.path_home(self.m)) {
+                let sqr = |a: BlockPos, b: BlockPos| {
+                    let (dx, dy, dz) = ((a.x - b.x) as f64, (a.y - b.y) as f64, (a.z - b.z) as f64);
+                    dx * dx + dy * dy + dz * dz
+                };
+                let d = sqr(home, BlockPos::new(x, y, z));
+                if d > 1024.0 && d >= sqr(home, self.mob_pos) {
+                    return PathType::Blocked;
+                }
+            }
             return path_type_static(self.level, x, y, z);
+        }
+        // `FrogNodeEvaluator.getPathType`: a `#frog_prefer_jump_to` block below is open ground.
+        if self.frog && super::kinds::frog::prefers_jump_to(self.level.block(BlockPos::new(x, y - 1, z))) {
+            return PathType::Open;
         }
         amphibious_type(self.level, x, y, z)
     }
@@ -519,7 +543,9 @@ impl<'a> Search<'a> {
         if self.amphibious && e.is_in_water() {
             // `AmphibiousNodeEvaluator.getStart`: the block at the box's low corner, half up.
             let bb = e.bounding_box();
-            let (x, y, z) = (floor(bb.min_x), floor(bb.min_y + 0.5), floor(bb.min_z));
+            // (`FrogNodeEvaluator.getStart`: at the box's low corner itself.)
+            let up = if self.frog { 0.0 } else { 0.5 };
+            let (x, y, z) = (floor(bb.min_x), floor(bb.min_y + up), floor(bb.min_z));
             return Some(self.start_node(x, y, z));
         }
         let state = self.level.block(at(e.x(), y, e.z()));
@@ -608,7 +634,7 @@ impl<'a> Search<'a> {
             }
         }
         // `getClockWise`: north->east, east->south, south->west, west->north.
-        const CW: [usize; 4] = [3, 0, 1, 2]; // indexed by the 2D value of the direction
+        const CW: [usize; 4] = [1, 2, 3, 0]; // indexed by the 2D value of the direction
         for &(dx, dz, d2) in &HORIZ {
             let cw = CW[d2];
             let (cx, cz) = match cw {
@@ -1083,6 +1109,8 @@ impl<'a> Search<'a> {
         let mut reached = false;
         let mut visited = 0;
         let mut neigh = Vec::with_capacity(8);
+        // `PathFinder.distance(a, b)`: the warden's overrides it with `distanceToXZ`.
+        let xz = self.m.kind.ext().is_some_and(|k| k.path_distance_xz());
         while !self.heap.is_empty() {
             visited += 1;
             if visited >= max_visited {
@@ -1101,7 +1129,7 @@ impl<'a> Search<'a> {
             }
             self.neighbors(&mut neigh, cur);
             for &nb in &neigh {
-                let d = self.n(cur).distance_to(self.n(nb));
+                let d = if xz { self.n(cur).distance_to_xz(self.n(nb)) } else { self.n(cur).distance_to(self.n(nb)) };
                 let walked = self.n(cur).walked_distance + d;
                 self.nm(nb).walked_distance = walked;
                 let g = self.n(cur).g + d + self.n(nb).cost_malus;
@@ -1129,6 +1157,113 @@ impl<'a> Search<'a> {
         chain.reverse();
         let nodes = chain.iter().map(|&i| self.n(i).clone()).collect();
         Some(Path::new(nodes, target, reached))
+    }
+
+    /// `PathFinder.findPath` for several target blocks (the villagers' points of interest): every
+    /// target keeps its own best node; the path goes to the reached target with the fewest nodes,
+    /// else to the one that came closest (ties: first in the given order).
+    fn find_multi(&mut self, targets: &[BlockPos], max_dist: f32, reach: i32, max_visited: i32) -> Option<Path> {
+        let start = self.start()?;
+        let tnodes: Vec<u32> = targets.iter().map(|t| self.node(floor(t.x as f64), floor(t.y as f64), floor(t.z as f64))).collect();
+        let coords: Vec<(i32, i32, i32)> = tnodes.iter().map(|&t| (self.n(t).x, self.n(t).y, self.n(t).z)).collect();
+        let mut best_h = vec![f32::MAX; targets.len()];
+        let mut best_node: Vec<Option<u32>> = vec![None; targets.len()];
+        let mut reached_t = vec![false; targets.len()];
+        // `getBestH(node, targets)`: updates each target's best, answers the smallest distance.
+        fn best_of(s: &Search, n: u32, tnodes: &[u32], best_h: &mut [f32], best_node: &mut [Option<u32>]) -> f32 {
+            let mut m = f32::MAX;
+            for (i, &t) in tnodes.iter().enumerate() {
+                let d = s.n(n).distance_to(s.n(t));
+                if d < best_h[i] {
+                    best_h[i] = d;
+                    best_node[i] = Some(n);
+                }
+                m = m.min(d);
+            }
+            m
+        }
+        {
+            let h = best_of(self, start, &tnodes, &mut best_h, &mut best_node);
+            let n = self.nm(start);
+            n.g = 0.0;
+            n.h = h;
+            n.f = h;
+        }
+        self.heap.clear();
+        self.heap_insert(start);
+        let mut any_reached = false;
+        let mut visited = 0;
+        let mut neigh = Vec::with_capacity(8);
+        while !self.heap.is_empty() {
+            visited += 1;
+            if visited >= max_visited {
+                break;
+            }
+            let cur = self.heap_pop();
+            self.nm(cur).closed = true;
+            for (i, &(tx, ty, tz)) in coords.iter().enumerate() {
+                if self.n(cur).distance_manhattan(tx, ty, tz) <= reach as f32 {
+                    reached_t[i] = true;
+                    any_reached = true;
+                }
+            }
+            if any_reached {
+                break;
+            }
+            if self.n(cur).distance_to(self.n(start)) >= max_dist {
+                continue;
+            }
+            self.neighbors(&mut neigh, cur);
+            for &nb in &neigh {
+                let d = self.n(cur).distance_to(self.n(nb));
+                let walked = self.n(cur).walked_distance + d;
+                self.nm(nb).walked_distance = walked;
+                let g = self.n(cur).g + d + self.n(nb).cost_malus;
+                if walked < max_dist && (self.n(nb).heap_idx < 0 || g < self.n(nb).g) {
+                    self.nm(nb).came_from = Some(cur);
+                    self.nm(nb).g = g;
+                    let h = best_of(self, nb, &tnodes, &mut best_h, &mut best_node) * 1.5;
+                    self.nm(nb).h = h;
+                    if self.n(nb).heap_idx >= 0 {
+                        self.change_cost(nb, g + h);
+                    } else {
+                        self.nm(nb).f = g + h;
+                        self.heap_insert(nb);
+                    }
+                }
+            }
+        }
+        let build = |s: &Search, i: usize, reached: bool| -> Option<Path> {
+            let mut chain = vec![best_node[i]?];
+            let mut c = chain[0];
+            while let Some(p) = s.n(c).came_from {
+                chain.push(p);
+                c = p;
+            }
+            chain.reverse();
+            Some(Path::new(chain.iter().map(|&k| s.n(k).clone()).collect(), targets[i], reached))
+        };
+        let mut best: Option<Path> = None;
+        if any_reached {
+            for i in (0..targets.len()).filter(|&i| reached_t[i]) {
+                let Some(p) = build(self, i, true) else { continue };
+                if best.as_ref().is_none_or(|b| p.nodes.len() < b.nodes.len()) {
+                    best = Some(p);
+                }
+            }
+        } else {
+            for i in 0..targets.len() {
+                let Some(p) = build(self, i, false) else { continue };
+                let better = match &best {
+                    None => true,
+                    Some(b) => p.dist_to_target < b.dist_to_target || (p.dist_to_target == b.dist_to_target && p.nodes.len() < b.nodes.len()),
+                };
+                if better {
+                    best = Some(p);
+                }
+            }
+        }
+        best
     }
 }
 
@@ -1169,6 +1304,8 @@ pub struct Navigation {
     pub allow_breaching: bool,
     /// `FlyingPathNavigation` (the wither).
     pub fly: bool,
+    /// `Frog.FrogPathNavigation` (amphibious; no corner cutting over a water border).
+    pub frog: bool,
 }
 
 impl Navigation {
@@ -1340,6 +1477,13 @@ pub fn stable_destination(m: &MobData, level: &dyn EntityLevel, pos: BlockPos) -
 
 /// `PathNavigation.createPath(Set<BlockPos>, regionOffset, offsetUpward, reach, maxPathLength)`.
 fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, region: i32, up: bool, reach: i32) -> Option<Path> {
+    create_path_raw_len(e, m, level, target, region, up, reach, None)
+}
+
+/// [`create_path_raw`] with `PathNavigation.createPath(pos, reach, maxPathLength)`'s own path length
+/// (the search still visits at most as many nodes as the follow range allows).
+#[allow(clippy::too_many_arguments)]
+fn create_path_raw_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target: BlockPos, region: i32, up: bool, reach: i32, length: Option<f32>) -> Option<Path> {
     let max_len = max_path_length(m);
     if e.y() < level.min_y() as f64 || !can_update_path(e, m) {
         return None;
@@ -1353,6 +1497,56 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
     let _ = (region, up);
     // `updatePathfinderMaxVisitedNodes` (the follow range is at least 16 for every mob here, so
     // the constructor's value agrees).
+    // (the pathfinder's own limit: `createPath` with a length of its own leaves it alone)
+    let max_visited = (floor((max_path_length(m) * 16.0) as f64) as f32 * m.nav.max_visited_nodes_multiplier) as i32;
+    let mut s = Search {
+        level,
+        e,
+        m,
+        nodes: Vec::with_capacity(256),
+        by_hash: HashMap::with_capacity(256),
+        types: HashMap::with_capacity(256),
+        collisions: HashMap::new(),
+        width: floor((e.width + 1.0) as f64),
+        height: floor((e.height + 1.0) as f64),
+        depth: floor((e.width + 1.0) as f64),
+        can_float: m.nav.can_float,
+        can_open_doors: m.nav.can_open_doors,
+        can_pass_doors: m.nav.can_pass_doors,
+        can_walk_over_fences: m.nav.can_walk_over_fences,
+        amphibious: m.nav.amphibious,
+        swim: m.nav.water_bound,
+        breaching: m.nav.allow_breaching,
+        fly: m.nav.fly,
+        frog: m.nav.frog,
+        mob_pos: e.block_position(),
+        heap: Vec::with_capacity(64),
+    };
+    let path = s.find(target, length.unwrap_or(max_len), reach, max_visited);
+    if let Some(p) = &path {
+        m.nav.target_pos = Some(p.target);
+        m.nav.reach_range = reach;
+        m.nav.reset_stuck_timeout();
+    }
+    path
+}
+
+/// `PathNavigation.createPath(Set<BlockPos>, reach)` (region 8, no upward offset): a path to the
+/// best of several blocks; `None` without targets.
+pub fn create_path_multi(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, targets: &[BlockPos], reach: i32) -> Option<Path> {
+    if targets.is_empty() {
+        return None;
+    }
+    let max_len = max_path_length(m);
+    if e.y() < level.min_y() as f64 || !can_update_path(e, m) {
+        return None;
+    }
+    if let Some(p) = &m.nav.path
+        && !p.is_done()
+        && m.nav.target_pos.is_some_and(|t| targets.contains(&t))
+    {
+        return Some(p.clone());
+    }
     let max_visited = (floor((max_len * 16.0) as f64) as f32 * m.nav.max_visited_nodes_multiplier) as i32;
     let mut s = Search {
         level,
@@ -1373,10 +1567,11 @@ fn create_path_raw(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, target:
         swim: m.nav.water_bound,
         breaching: m.nav.allow_breaching,
         fly: m.nav.fly,
+        frog: m.nav.frog,
         mob_pos: e.block_position(),
         heap: Vec::with_capacity(64),
     };
-    let path = s.find(target, max_len, reach, max_visited);
+    let path = s.find_multi(targets, max_len, reach, max_visited);
     if let Some(p) = &path {
         m.nav.target_pos = Some(p.target);
         m.nav.reach_range = reach;
@@ -1395,6 +1590,18 @@ pub fn create_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: Bl
     }
     let pos = if keeps_target_block(m) { pos } else { find_surface(level, pos) };
     create_path_raw(e, m, level, pos, 8, false, reach)
+}
+
+/// `createPath(BlockPos, reach, maxPathLength)`.
+pub fn create_path_len(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: BlockPos, reach: i32, length: f32) -> Option<Path> {
+    if m.nav.climber {
+        m.nav.path_to_position = Some(pos);
+    }
+    if !level.is_loaded(pos) {
+        return None;
+    }
+    let pos = if keeps_target_block(m) { pos } else { find_surface(level, pos) };
+    create_path_raw_len(e, m, level, pos, 8, false, reach, Some(length))
 }
 
 /// `createPath(Entity, reach)`.
@@ -1622,7 +1829,7 @@ fn follow_the_path(e: &Entity, m: &mut MobData, level: &dyn EntityLevel) {
     // `getMaxVerticalDistanceToWaypoint`: 0.5 for water-bound navigation.
     let close = dx < md && dz < md && dy < if m.nav.water_bound { 0.5 } else { 1.0 };
     let kind = path.nodes[path.next].kind;
-    let cut = !matches!(kind, PathType::FireInNeighbor | PathType::DamagingInNeighbor | PathType::WalkableDoor);
+    let cut = !matches!(kind, PathType::FireInNeighbor | PathType::DamagingInNeighbor | PathType::WalkableDoor) && !(m.nav.frog && kind == PathType::WaterBorder);
     if close || (cut && should_target_next_node_in_direction(e, m, level, path, cur)) {
         m.nav.path.as_mut().unwrap().next += 1;
     }

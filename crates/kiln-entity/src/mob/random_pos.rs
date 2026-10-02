@@ -219,6 +219,27 @@ pub fn land_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v:
     })
 }
 
+/// `LandRandomPos.getPos(mob, h, v, weight)`: the best of ten spots by `weight` (not the mob's
+/// own walk target value).
+pub fn land_pos_weighted(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, weight: &dyn Fn(BlockPos) -> f64) -> Option<Vec3> {
+    let mut best = f64::NEG_INFINITY;
+    let mut found = None;
+    for _ in 0..10 {
+        let dir = random_direction(e, h, v);
+        let p = toward(e, dir);
+        if outside_limits(level, p) || !path::stable_destination(m, level, p) {
+            continue;
+        }
+        let Some(p) = move_up_out_of_solid(m, level, p) else { continue };
+        let w = weight(p);
+        if w > best {
+            best = w;
+            found = Some(p);
+        }
+    }
+    found.map(|p| Vec3::new(p.x as f64 + 0.5, p.y as f64, p.z as f64 + 0.5))
+}
+
 /// `LandRandomPos.getPosAway(mob, h, v, from)` (`getPosInDirection` with half-pi spread).
 pub fn land_pos_away(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, from: Vec3) -> Option<Vec3> {
     let mut d = e.position() - from;

@@ -157,12 +157,17 @@ pub(crate) struct Sculk {
     /// selector before its next tick, as they would have when heard (the selector is only read
     /// in the warden's tick).
     pub heard: Vec<(i32, Heard)>,
+    /// Allay listeners (`Allay.dynamicVibrationListener`: note blocks) and what they heard,
+    /// like the wardens' (wp28 animals).
+    pub allays: BTreeMap<i32, Ear>,
+    allay_sections: HashMap<SectionKey, Vec<i32>>,
+    pub allay_heard: Vec<(i32, Heard)>,
 }
 
 impl Sculk {
     /// No listener at all: game events cost nothing.
     pub fn is_empty(&self) -> bool {
-        self.map.is_empty() && self.wardens.is_empty()
+        self.map.is_empty() && self.wardens.is_empty() && self.allays.is_empty()
     }
 
     pub fn len(&self) -> usize {
@@ -273,6 +278,45 @@ impl Sculk {
         }
     }
 
+    /// Allay `id` listens from `pos` (after its tick; `None`: it is gone).
+    pub fn set_allay(&mut self, id: i32, ear: Option<Ear>) {
+        if let Some(old) = self.allays.remove(&id) {
+            let key = section_of_vec(old.pos);
+            if let Some(v) = self.allay_sections.get_mut(&key) {
+                v.retain(|w| *w != id);
+                if v.is_empty() {
+                    self.allay_sections.remove(&key);
+                }
+            }
+        }
+        if let Some(ear) = ear {
+            let v = self.allay_sections.entry(section_of_vec(ear.pos)).or_default();
+            let i = v.binary_search(&id).unwrap_or_else(|i| i);
+            v.insert(i, id);
+            self.allays.insert(id, ear);
+        }
+    }
+
+    /// Drops the listeners of allays that are gone.
+    pub fn retain_allays(&mut self, keep: impl Fn(i32) -> bool) {
+        let gone: Vec<i32> = self.allays.keys().copied().filter(|&id| !keep(id)).collect();
+        for id in gone {
+            self.set_allay(id, None);
+        }
+        let allays = &self.allays;
+        self.allay_heard.retain(|h| allays.contains_key(&h.0));
+    }
+
+    /// The vibrations allay `id` heard since its last tick, in order.
+    pub fn take_heard_allay(&mut self, id: i32) -> Vec<Heard> {
+        if !self.allay_heard.iter().any(|h| h.0 == id) {
+            return Vec::new();
+        }
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.allay_heard).into_iter().partition(|h| h.0 == id);
+        self.allay_heard = rest;
+        mine.into_iter().map(|(_, h)| h).collect()
+    }
+
     /// Drops the listeners of wardens that are gone (`DynamicGameEventListener.remove`).
     pub fn retain_wardens(&mut self, keep: impl Fn(i32) -> bool) {
         let gone: Vec<i32> = self.wardens.keys().copied().filter(|&id| !keep(id)).collect();
@@ -311,6 +355,17 @@ impl Sculk {
                 parts[i].heard.push(h);
             }
         }
+        for (id, ear) in std::mem::take(&mut self.allays) {
+            let c = ChunkPos::of_block(kiln_entity::math::floor(ear.pos.x), kiln_entity::math::floor(ear.pos.z));
+            parts[owner(c)].set_allay(id, Some(ear));
+        }
+        self.allay_sections.clear();
+        let allays: Vec<BTreeMap<i32, ()>> = parts.iter().map(|p| p.allays.keys().map(|k| (*k, ())).collect()).collect();
+        for h in std::mem::take(&mut self.allay_heard) {
+            if let Some(i) = allays.iter().position(|w| w.contains_key(&h.0)) {
+                parts[i].allay_heard.push(h);
+            }
+        }
     }
 
     pub fn merge(&mut self, from: Sculk) {
@@ -322,6 +377,10 @@ impl Sculk {
         }
         // Heard vibrations keep their order per warden, which is all that matters.
         self.heard.extend(from.heard);
+        for (id, ear) in from.allays {
+            self.set_allay(id, Some(ear));
+        }
+        self.allay_heard.extend(from.allay_heard);
     }
 }
 
@@ -387,6 +446,10 @@ pub(crate) fn post(level: &mut RegionLevel, event: &'static str, pos: Vec3, ctx:
                 for id in wardens {
                     hear_warden(level, id, event, pos, &ctx);
                 }
+                let allays: smallvec::SmallVec<[i32; 4]> = level.blocks.sculk.allay_sections.get(&key).map(|v| v.iter().copied().collect()).unwrap_or_default();
+                for id in allays {
+                    hear_allay(level, id, event, pos, &ctx);
+                }
             }
         }
     }
@@ -446,6 +509,34 @@ fn hear_warden(level: &mut RegionLevel, id: i32, event: &'static str, from: Vec3
     }
     let now = level.env.game_time;
     level.blocks.sculk.heard.push((id, Heard { event, from, to: ear.pos, source: ctx.source, tick: now }));
+}
+
+/// `Allay.VibrationUser`'s side of `handleGameEvent` (`#allay_can_listen`: note blocks, 16
+/// blocks), noted for the allay's next tick.
+fn hear_allay(level: &mut RegionLevel, id: i32, event: &'static str, from: Vec3, ctx: &Context) {
+    let Some(ear) = level.blocks.sculk.allays.get(&id).copied() else { return };
+    let (c, e) = (containing(from), containing(ear.pos));
+    let d = [(c.x - e.x) as i64, (c.y - e.y) as i64, (c.z - e.z) as i64];
+    let dist = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+    // `Allay.JukeboxListener` (radius 10): a jukebox starting or stopping, heard at once.
+    if matches!(event, "minecraft:jukebox_play" | "minecraft:jukebox_stop_play") {
+        if dist <= 10 * 10 {
+            let now = level.env.game_time;
+            level.blocks.sculk.allay_heard.push((id, Heard { event, from, to: ear.pos, source: ctx.source, tick: now }));
+        }
+        return;
+    }
+    if ear.busy || dist > 16 * 16 {
+        return;
+    }
+    if vibration::is_valid_vibration(event, ctx, "minecraft:allay_can_listen", false) != Validity::Valid {
+        return;
+    }
+    if !ear.can_hear || occluded(level, from, ear.pos) {
+        return;
+    }
+    let now = level.env.game_time;
+    level.blocks.sculk.allay_heard.push((id, Heard { event, from, to: ear.pos, source: ctx.source, tick: now }));
 }
 
 /// `Listener.isOccluded` against the region's blocks.

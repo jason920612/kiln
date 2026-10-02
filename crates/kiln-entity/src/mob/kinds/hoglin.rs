@@ -1,27 +1,34 @@
 //! Hoglin: attacks players and throws them, breeds with crimson fungus, flees warped fungus.
 //!
-//! Vanilla drives hoglins with a `Brain` (`HoglinAi`: fight, avoid and idle activities). Kiln
-//! approximates it with goals: attacking the nearest visible player (the hit's random damage and
-//! the upward throw are vanilla's `HoglinBase`), anger at attackers shared with nearby hoglins,
-//! breeding and following parents, fleeing hoglin repellents (warped fungus, portals, respawn
-//! anchors) within 8 blocks and staying peaceful for 10 s after, strolling and looking around.
-//! Retreating from outnumbering piglins and babies avoiding piglins are not simulated. There is
-//! no zoglin type yet, so hoglins outside the nether count their time but do not convert.
+//! Driven by the brain of `HoglinAi` (core: looking and moving; idle: giving up near repellents,
+//! breeding, avoiding repellents and piglins, attacking the nearest visible player, following
+//! adults, looking and strolling; fight: melee every 40 ticks, 15 for babies; avoid: running
+//! from piglins that outnumber the hoglins), on [`crate::mob::brain`]. The hit's random damage
+//! and the upward throw are vanilla's `HoglinBase`. Outside the nether an adult that is not
+//! immune turns into a zoglin after 300 ticks.
 
-use crate::custom_goal_boilerplate;
 use crate::entity::Entity;
-use crate::level::{EntityLevel, Event};
+use crate::level::{DamageKind, EntityLevel, Event};
 use crate::math::{BlockPos, Vec3};
 use crate::mob::attributes::Attr::*;
-use crate::mob::ext::{self, CustomGoal, Info, Kind, MobExt, SpawnView};
-use crate::mob::goals::{self, Goal, Living, MOVE, MeleeKind, TARGET};
+use crate::mob::brain::behaviors::*;
+use crate::mob::brain::combat::{set_walk_target_from_attack_target_if_out_of_reach, start_attacking, stop_attacking_if_target_invalid_default};
+use crate::mob::brain::memory::Val;
+use crate::mob::brain::nether::*;
+use crate::mob::brain::sensors;
+use crate::mob::brain::util;
+use crate::mob::brain::{self, Activity, ActivityData, Brain, Control, Cx, Gate, Mem, Status, shot};
+use crate::mob::ext::{self, Info, Kind, MobExt, SpawnView};
+use crate::mob::goals::Living;
 use crate::mob::interact::{Interactor, Outcome};
-use crate::mob::{self, DamageSource, GroupData, MobData, SpawnContext, mth, random_pos};
+use crate::mob::{self, DamageSource, GroupData, MobData, MobKind, SpawnContext, mth};
 use crate::persist::{Input, Output};
 use kiln_item::ItemStack;
 use kiln_javamath::random::{LegacyRandom, RandomSource};
 use kiln_proto::nbt::Tag;
 use kiln_proto::packets::entity::{DataValue, EntityData};
+
+use Status::ValuePresent;
 
 pub struct Hoglin;
 
@@ -33,8 +40,16 @@ static INFO: Info = Info {
     sounds: Some("hoglin"),
     sound_source: "hostile",
     extends_monster: false,
+    // `Animal.getAmbientSoundInterval`.
+    ambient_interval: 120,
     ..Info::monster("minecraft:hoglin", &[(MaxHealth, 40.0), (MovementSpeed, 0.30000001192092896), (KnockbackResistance, 0.6000000238418579), (AttackKnockback, 1.0), (AttackDamage, 6.0)])
 };
+
+/// `Hoglin.CONVERSION_TIME`.
+pub const CONVERSION_TIME: i32 = 300;
+
+/// `HoglinAi.RETREAT_DURATION` (`TimeUtil.rangeOfSeconds(5, 20)`).
+const RETREAT_DURATION: (i32, i32) = seconds(5, 20);
 
 #[derive(Clone, Debug, Default)]
 pub struct HoglinState {
@@ -42,10 +57,11 @@ pub struct HoglinState {
     pub time_in_overworld: i32,
     pub cannot_be_hunted: bool,
     pub attack_animation: i32,
-    /// `PACIFIED` ticks left (a repellent was near).
-    pub pacified: i32,
-    /// The nearest repellent block (`NEAREST_REPELLENT`), refreshed every second.
+    /// The value of `NEAREST_REPELLENT` (the walk target value reads it while the brain is out of
+    /// the mob).
     pub repellent: Option<BlockPos>,
+    /// Attackers whose hits the hoglin reacts to at the start of its next brain tick.
+    pub pending_hurt: Vec<i32>,
 }
 
 pub fn state(m: &MobData) -> Option<&HoglinState> {
@@ -56,43 +72,31 @@ pub fn state_mut(m: &mut MobData) -> Option<&mut HoglinState> {
     ext::state_mut::<HoglinState>(m)
 }
 
-/// `HoglinSpecificSensor.findNearestRepellent`: a `#minecraft:hoglin_repellents` block within 8
-/// blocks horizontally and 4 vertically, nearest first.
-fn find_repellent(e: &Entity, level: &dyn EntityLevel) -> Option<BlockPos> {
-    let c = e.block_position();
-    let mut best: Option<(i32, BlockPos)> = None;
-    for dy in -4..=4 {
-        for dx in -8..=8 {
-            for dz in -8..=8 {
-                let p = BlockPos::new(c.x + dx, c.y + dy, c.z + dz);
-                if !is_repellent(level.block(p)) {
-                    continue;
-                }
-                let d = dx * dx + dy * dy + dz * dz;
-                if best.is_none_or(|b| d < b.0) {
-                    best = Some((d, p));
-                }
-            }
-        }
+/// The sensor's `NEAREST_REPELLENT` (for `getWalkTargetValue`).
+pub fn remember_repellent(m: &mut MobData, p: Option<BlockPos>) {
+    if let Some(s) = state_mut(m) {
+        s.repellent = p;
     }
-    best.map(|b| b.1)
 }
 
-fn is_repellent(state: u16) -> bool {
-    let name = crate::blocks::block_name(state);
-    matches!(name, "minecraft:warped_fungus" | "minecraft:potted_warped_fungus" | "minecraft:nether_portal" | "minecraft:respawn_anchor")
+/// The stream vanilla's `level.getRandom()` is for a mob (see [`Cx::rng`]).
+fn ai_rng<'a>(level: &'a mut dyn EntityLevel, m: &'a mut MobData) -> &'a mut LegacyRandom {
+    match level.shared_ai_random() {
+        Some(r) => r,
+        None => &mut m.brain_random,
+    }
 }
 
 /// `HoglinBase.throwTarget`: the target flies up and away, turned by a random angle (given to
 /// `Vec3.yRot` in degrees-sized radians, as vanilla does).
-pub fn throw_target(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, target: i32, resistance: f64) {
+pub fn throw_target(e: &Entity, m: &mut MobData, level: &mut dyn EntityLevel, target: i32, resistance: f64) {
     let strength = m.attrs.value(AttackKnockback) - resistance;
     if strength <= 0.0 {
         return;
     }
     let Some(t) = level.entity(target).map(|t| t.position()).or_else(|| level.player(target).map(|p| p.pos)) else { return };
     let (dx, dz) = (t.x - e.x(), t.z - e.z());
-    let r = level.random();
+    let r = ai_rng(level, m);
     let angle = (r.next_int_bounded(21) - 10) as f32;
     let horiz = strength * (r.next_float() * 0.5 + 0.2) as f64;
     let v = Vec3::new(dx, 0.0, dz).normalize().scale(horiz);
@@ -105,86 +109,20 @@ pub fn throw_target(e: &Entity, m: &MobData, level: &mut dyn EntityLevel, target
     }
 }
 
-/// Targets the nearest visible attackable player (the brain's `StartAttacking`), unless
-/// pacified or breeding.
-#[derive(Clone, Debug)]
-struct HoglinTargetGoal;
-
-fn attackable_player(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, id: i32) -> Option<f64> {
-    let p = level.player(id)?;
-    if !p.alive || p.spectator || p.creative {
-        return None;
-    }
-    let t = goals::living(level, id)?;
-    let d = e.position().distance_to_sqr(p.pos);
-    let range = m.attrs.value(FollowRange);
-    (d <= range * range && mob::has_line_of_sight_cached(e, m, level, &t)).then_some(d)
-}
-
-impl CustomGoal for HoglinTargetGoal {
-    custom_goal_boilerplate!();
-    fn name(&self) -> &'static str {
-        "HoglinTargetGoal"
-    }
-    fn flags(&self) -> u8 {
-        TARGET
-    }
-    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if m.in_love > 0 || state(m).is_none_or(|s| s.pacified > 0) {
-            return false;
+/// `HoglinBase.hurtAndThrowTarget`.
+pub fn hurt_and_throw_target(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> bool {
+    let base = m.attrs.value(AttackDamage) as f32;
+    let damage = if !m.baby() && base as i32 > 0 { base / 2.0 + ai_rng(level, m).next_int_bounded(base as i32) as f32 } else { base };
+    let source = DamageSource { kind: DamageKind::MobAttack, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+    let hurt = mob::hurt_living(level, t, source, damage);
+    if hurt {
+        m.last_hurt_mob = Some(t.id);
+        if !m.baby() {
+            let resistance = level.entity(t.id).and_then(mob::data).map_or(0.0, |o| o.attrs.value(KnockbackResistance));
+            throw_target(e, m, level, t.id, resistance);
         }
-        let mut best: Option<(f64, i32)> = None;
-        let range = m.attrs.value(FollowRange);
-        for p in goals::players_around(e, level, range).iter() {
-            if let Some(d) = attackable_player(e, m, level, p.id)
-                && best.is_none_or(|b| d < b.0)
-            {
-                best = Some((d, p.id));
-            }
-        }
-        let Some((_, id)) = best else { return false };
-        m.target = Some(id);
-        true
     }
-    fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        let Some(t) = m.target else { return false };
-        state(m).is_some_and(|s| s.pacified == 0) && attackable_player(e, m, level, t).is_some()
-    }
-    fn stop(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
-        m.target = None;
-    }
-}
-
-/// Runs from a repellent (`SetWalkTargetAwayFrom.pos(NEAREST_REPELLENT, 1.0, 8, true)`).
-#[derive(Clone, Debug)]
-struct HoglinAvoidRepellentGoal {
-    to: Vec3,
-}
-
-impl CustomGoal for HoglinAvoidRepellentGoal {
-    custom_goal_boilerplate!();
-    fn name(&self) -> &'static str {
-        "HoglinAvoidRepellentGoal"
-    }
-    fn flags(&self) -> u8 {
-        MOVE
-    }
-    fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        let Some(r) = state(m).and_then(|s| s.repellent) else { return false };
-        let from = Vec3::new(r.x as f64 + 0.5, r.y as f64, r.z as f64 + 0.5);
-        if e.position().distance_to_sqr(from) > 8.0 * 8.0 {
-            return false;
-        }
-        let Some(to) = random_pos::land_pos_away(e, m, level, 16, 7, from) else { return false };
-        self.to = to;
-        true
-    }
-    fn can_continue(&mut self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
-        !m.nav.is_done()
-    }
-    fn start(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        mob::path::move_to(e, m, level, self.to.x, self.to.y, self.to.z, 1.0);
-    }
+    hurt
 }
 
 /// `ageBoundaryReached`: babies hit for 0.5.
@@ -193,6 +131,303 @@ fn update_attack_damage(m: &mut MobData) {
     if let Some(a) = m.attrs.get_mut(AttackDamage) {
         a.base = base;
     }
+}
+
+// ---------------------------------------------------------------------------- HoglinAi
+
+fn is_pacified(cx: &Cx) -> bool {
+    cx.b.mem.has(Mem::Pacified)
+}
+
+/// `HoglinAi.findNearestValidAttackTarget`.
+fn find_nearest_valid_attack_target(cx: &mut Cx) -> Option<i32> {
+    if is_pacified(cx) || cx.b.mem.has(Mem::BreedTarget) {
+        return None;
+    }
+    cx.b.mem.entity(Mem::NearestVisibleAttackablePlayer)
+}
+
+/// `HoglinAi.piglinsOutnumberHoglins`.
+fn piglins_outnumber_hoglins(cx: &Cx) -> bool {
+    if cx.m.baby() {
+        return false;
+    }
+    let piglins = cx.b.mem.int(Mem::VisibleAdultPiglinCount).unwrap_or(0);
+    let hoglins = cx.b.mem.int(Mem::VisibleAdultHoglinCount).unwrap_or(0) + 1;
+    piglins > hoglins
+}
+
+fn wants_to_stop_fleeing(cx: &mut Cx) -> bool {
+    !cx.m.baby() && !piglins_outnumber_hoglins(cx)
+}
+
+fn is_adult(cx: &mut Cx) -> bool {
+    !cx.m.baby()
+}
+
+fn is_baby(cx: &mut Cx) -> bool {
+    cx.m.baby()
+}
+
+fn is_breeding(cx: &mut Cx) -> bool {
+    cx.b.mem.has(Mem::BreedTarget)
+}
+
+/// `HoglinAi.setAttackTarget`.
+fn set_attack_target(cx: &mut Cx, target: &Living) {
+    cx.b.mem.erase(Mem::CantReachWalkTargetSince);
+    cx.b.mem.erase(Mem::BreedTarget);
+    cx.b.mem.set_expiring(Mem::AttackTarget, Val::Entity(target.id), 200);
+}
+
+/// `HoglinAi.setAttackTargetIfCloserThanCurrent`.
+fn set_attack_target_if_closer_than_current(cx: &mut Cx, target: &Living) {
+    if is_pacified(cx) {
+        return;
+    }
+    let current = cx.b.mem.entity(Mem::AttackTarget).and_then(|id| living_now(cx, id));
+    let n = match &current {
+        None => target.id,
+        Some(c) => util::nearest_of(cx, c, target),
+    };
+    let t = if n == target.id { target.clone() } else { current.expect("current is the nearest") };
+    set_attack_target(cx, &t);
+}
+
+/// `HoglinAi.broadcastAttackTarget`.
+fn broadcast_attack_target(cx: &mut Cx, target: &Living) {
+    let others = cx.b.mem.entities(Mem::NearestVisibleAdultHoglins).to_vec();
+    for id in others {
+        let t = target.clone();
+        as_mob(cx, id, |c| set_attack_target_if_closer_than_current(c, &t));
+    }
+}
+
+/// `HoglinAi.setAvoidTarget`.
+fn set_avoid_target(cx: &mut Cx, target: &Living) {
+    cx.b.mem.erase(Mem::AttackTarget);
+    cx.b.mem.erase(Mem::WalkTarget);
+    let n = sample(cx.rng(), RETREAT_DURATION.0, RETREAT_DURATION.1) as i64;
+    cx.b.mem.set_expiring(Mem::AvoidTarget, Val::Entity(target.id), n);
+}
+
+/// `HoglinAi.retreatFromNearestTarget`.
+fn retreat_from_nearest_target(cx: &mut Cx, target: &Living) {
+    let mut t = target.clone();
+    let avoid = cx.b.mem.entity(Mem::AvoidTarget).and_then(|id| living_now(cx, id));
+    if let Some(a) = avoid
+        && util::nearest_of(cx, &a, &t) != t.id
+    {
+        t = a;
+    }
+    let attack = cx.b.mem.entity(Mem::AttackTarget).and_then(|id| living_now(cx, id));
+    if let Some(a) = attack
+        && util::nearest_of(cx, &a, &t) != t.id
+    {
+        t = a;
+    }
+    set_avoid_target(cx, &t);
+}
+
+/// `HoglinAi.broadcastRetreat`.
+fn broadcast_retreat(cx: &mut Cx, target: &Living) {
+    let others = cx.b.mem.entities(Mem::NearestVisibleAdultHoglins).to_vec();
+    for id in others {
+        let t = target.clone();
+        as_mob(cx, id, |c| retreat_from_nearest_target(c, &t));
+    }
+}
+
+/// `HoglinAi.onHitTarget`.
+pub fn on_hit_target(cx: &mut Cx, target: &Living) {
+    if cx.m.baby() {
+        return;
+    }
+    if target.type_name == PIGLIN && piglins_outnumber_hoglins(cx) {
+        set_avoid_target(cx, target);
+        broadcast_retreat(cx, target);
+        return;
+    }
+    broadcast_attack_target(cx, target);
+}
+
+/// `HoglinAi.maybeRetaliate`.
+fn maybe_retaliate(cx: &mut Cx, attacker: &Living) {
+    if cx.b.is_active(Activity::Avoid) && attacker.type_name == PIGLIN {
+        return;
+    }
+    if attacker.type_name == HOGLIN {
+        return;
+    }
+    if util::other_target_much_further(cx, attacker, 4.0) {
+        return;
+    }
+    if !util::is_entity_attackable(cx, attacker) {
+        return;
+    }
+    set_attack_target(cx, attacker);
+    broadcast_attack_target(cx, attacker);
+}
+
+/// `HoglinAi.wasHurtBy`.
+pub fn was_hurt_by(cx: &mut Cx, attacker: &Living) {
+    cx.b.mem.erase(Mem::Pacified);
+    cx.b.mem.erase(Mem::BreedTarget);
+    if cx.m.baby() {
+        retreat_from_nearest_target(cx, attacker);
+        return;
+    }
+    maybe_retaliate(cx, attacker);
+}
+
+/// The hoglin's melee (`MeleeAttack.create(cooldown)`), which tells the brain about the hit
+/// (`HoglinAi.onHitTarget`) between the attack sound and the damage.
+fn melee(cooldown: i32) -> Box<dyn Control> {
+    shot(
+        "MeleeAttack",
+        &[
+            (Mem::LookTarget, Status::Registered),
+            (Mem::AttackTarget, ValuePresent),
+            (Mem::AttackCoolingDown, Status::ValueAbsent),
+            (Mem::NearestVisibleLivingEntities, ValuePresent),
+        ],
+        move |cx| {
+            let Some(id) = cx.b.mem.entity(Mem::AttackTarget) else { return false };
+            let Some(t) = living_now(cx, id) else { return false };
+            if util::within_melee(cx, &t) && util::visible_contains(cx, id) {
+                cx.b.mem.set(Mem::LookTarget, Val::Look(brain::Tracker::entity(id, true)));
+                cx.m.swing = true;
+                // `Hoglin.doHurtTarget`.
+                if let Some(s) = state_mut(cx.m) {
+                    s.attack_animation = 10;
+                }
+                cx.level.emit(Event::EntityEvent { entity: cx.e.id, event: 4 });
+                mob::make_sound(cx.e, cx.m, cx.level, mob::sound_event("minecraft:entity.hoglin.attack"));
+                on_hit_target(cx, &t);
+                hurt_and_throw_target(cx.e, cx.m, cx.level, &t);
+                cx.b.mem.set_expiring(Mem::AttackCoolingDown, Val::Bool(true), cooldown as i64);
+                return true;
+            }
+            false
+        },
+    )
+}
+
+/// `HoglinAi.createIdleMovementBehaviors`.
+fn idle_movement_behaviors() -> Box<dyn Control> {
+    Gate::run_one(vec![
+        (stroll(0.4, StrollKind::Land { avoid_water: true }), 2),
+        (set_walk_target_from_look_target(0.4, 3), 2),
+        (DoNothing::new(30, 60), 1),
+    ])
+}
+
+fn make_brain(random: &mut dyn RandomSource) -> Brain {
+    let sensors: Vec<Box<dyn brain::Sensor>> = vec![
+        Box::new(sensors::NearestLivingEntities),
+        Box::new(sensors::Players),
+        Box::new(sensors::Adult { any_type: false }),
+        Box::new(HoglinSpecific),
+    ];
+    let core = ActivityData::create(Activity::Core, 0, vec![LookAtTargetSink::new(45, 90), MoveToTargetSink::new()]);
+    let idle = ActivityData::create(
+        Activity::Idle,
+        10,
+        vec![
+            become_passive_if_memory_present(Mem::NearestRepellent, 200),
+            AnimalMakeLove::new(HOGLIN, 0.6, 2),
+            SetWalkTargetAwayFrom::pos(Mem::NearestRepellent, 1.0, 8, true),
+            start_attacking(|_| true, find_nearest_valid_attack_target),
+            trigger_if(is_adult, SetWalkTargetAwayFrom::entity(Mem::NearestVisibleAdultPiglin, 0.4, 8, false)),
+            SetEntityLookTargetSometimes::new(None, 8.0, (30, 60)),
+            baby_follow_adult((5, 16), |_| 0.6, Mem::NearestVisibleAdult, false),
+            idle_movement_behaviors(),
+        ],
+    );
+    let fight = ActivityData::full(
+        Activity::Fight,
+        numbered(
+            10,
+            vec![
+                become_passive_if_memory_present(Mem::NearestRepellent, 200),
+                AnimalMakeLove::new(HOGLIN, 0.6, 2),
+                set_walk_target_from_attack_target_if_out_of_reach(|_| 1.0),
+                trigger_if(is_adult, melee(40)),
+                trigger_if(is_baby, melee(15)),
+                stop_attacking_if_target_invalid_default(),
+                erase_memory_if(is_breeding, Mem::AttackTarget),
+            ],
+        ),
+        &[(Mem::AttackTarget, ValuePresent)],
+        &[Mem::AttackTarget],
+    );
+    let avoid = ActivityData::full(
+        Activity::Avoid,
+        numbered(
+            10,
+            vec![
+                SetWalkTargetAwayFrom::entity(Mem::AvoidTarget, 1.3, 15, false),
+                idle_movement_behaviors(),
+                SetEntityLookTargetSometimes::new(None, 8.0, (30, 60)),
+                erase_memory_if(wants_to_stop_fleeing, Mem::AvoidTarget),
+            ],
+        ),
+        &[(Mem::AvoidTarget, ValuePresent)],
+        &[Mem::AvoidTarget],
+    );
+    Brain::new(&[], sensors, vec![core, idle, fight, avoid], random)
+}
+
+pub(crate) fn numbered(start: i32, list: Vec<Box<dyn Control>>) -> Vec<(i32, Box<dyn Control>)> {
+    list.into_iter().enumerate().map(|(i, b)| (start + i as i32, b)).collect()
+}
+
+/// `Hoglin.isConverting`.
+fn is_converting(m: &MobData, level: &dyn EntityLevel) -> bool {
+    !state(m).is_some_and(|s| s.immune_to_zombification) && !m.no_ai && level.piglins_zombify()
+}
+
+/// `HoglinAi.getSoundForActivity`.
+fn sound_for_activity(m: &MobData, level: &dyn EntityLevel, mem: &brain::Memories, a: Activity) -> &'static str {
+    let s = |n: &str| mob::sound_event(n);
+    if a == Activity::Avoid || is_converting(m, level) {
+        return s("minecraft:entity.hoglin.retreat");
+    }
+    if a == Activity::Fight {
+        return s("minecraft:entity.hoglin.angry");
+    }
+    if mem.has(Mem::NearestRepellent) {
+        return s("minecraft:entity.hoglin.retreat");
+    }
+    s("minecraft:entity.hoglin.ambient")
+}
+
+/// `HoglinAi.updateActivity`.
+fn update_activity(cx: &mut Cx) {
+    let old = cx.b.active_non_core();
+    cx.b.set_active_activity_to_first_valid(&[Activity::Fight, Activity::Avoid, Activity::Idle]);
+    let new = cx.b.active_non_core();
+    if old != new
+        && let Some(a) = new
+    {
+        let sound = sound_for_activity(cx.m, &*cx.level, &cx.b.mem, a);
+        mob::make_sound(cx.e, cx.m, cx.level, sound);
+    }
+    let aggressive = cx.b.mem.has(Mem::AttackTarget);
+    cx.m.set_aggressive(aggressive);
+}
+
+fn process_pending_hurt(cx: &mut Cx) {
+    let pending = state_mut(cx.m).map(|s| std::mem::take(&mut s.pending_hurt)).unwrap_or_default();
+    for id in pending {
+        if let Some(a) = living_now(cx, id) {
+            was_hurt_by(cx, &a);
+        }
+    }
+}
+
+fn sync_target(m: &mut MobData) {
+    m.target = m.brain.as_ref().and_then(|b| b.st.mem.entity(Mem::AttackTarget));
 }
 
 impl Kind for Hoglin {
@@ -204,18 +439,11 @@ impl Kind for Hoglin {
         Some(Box::new(HoglinState::default()))
     }
 
-    fn register_goals(&self, m: &mut MobData) {
-        let g = &mut m.goals;
-        g.add(1, Goal::Custom(Box::new(HoglinAvoidRepellentGoal { to: Vec3::ZERO })));
-        g.add(2, Goal::Breed { speed: 0.6, partner: None, love_time: 0 });
-        g.add(3, Goal::Melee { kind: MeleeKind::Plain, speed: 1.0, follow_unseen: false, path: None, recalc: 0, next_attack: 0, last_can_use: 0, pathed: Vec3::ZERO, raise_arm: 0 });
-        g.add(5, Goal::FollowParent { speed: 0.6, parent: None, recalc: 0 });
-        g.add(6, Goal::RandomStroll { speed: 0.4, interval: 120, check_no_action: true, water_avoiding: Some(0.001), wanted: Vec3::ZERO, force: false });
-        g.add(7, Goal::LookAtPlayer { dist: 8.0, probability: 0.02, look_at: None, look_time: 0 });
-        g.add(8, Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 });
-        let t = &mut m.targets;
-        t.add(1, Goal::HurtByTarget { timestamp: 0, alert_others: true, target_mob: None, unseen: 0, unseen_memory: 60 });
-        t.add(2, Goal::Custom(Box::new(HoglinTargetGoal)));
+    /// No goals: the brain does it all.
+    fn register_goals(&self, _m: &mut MobData) {}
+
+    fn make_brain(&self, _m: &MobData, random: &mut dyn RandomSource) -> Option<Brain> {
+        Some(make_brain(random))
     }
 
     fn ai_step_before(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel) {
@@ -230,49 +458,65 @@ impl Kind for Hoglin {
         update_attack_damage(m);
     }
 
+    /// The brain, `HoglinAi.updateActivity`, then the zoglin conversion.
     fn custom_server_ai_step(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
-        // The sensor looks for repellents; one nearby pacifies for 200 ticks.
-        if e.tick_count % 20 == 0 {
-            let r = find_repellent(e, level);
-            if let Some(st) = state_mut(m) {
-                st.repellent = r;
+        if let Some(mut b) = m.brain.take() {
+            let time = level.game_time();
+            {
+                let mut cx = Cx { e, m, level, b: &mut b.st, time };
+                process_pending_hurt(&mut cx);
             }
+            m.brain = Some(b);
         }
-        let converting = level.piglins_zombify() && !m.no_ai;
-        if let Some(st) = state_mut(m) {
-            if st.repellent.is_some() {
-                st.pacified = 200;
-            } else if st.pacified > 0 {
-                st.pacified -= 1;
+        set_ticking(Some((&*e, &*m)));
+        brain::tick_brain(e, m, level);
+        set_ticking(None);
+        if let Some(mut b) = m.brain.take() {
+            let time = level.game_time();
+            {
+                let mut cx = Cx { e, m, level, b: &mut b.st, time };
+                update_activity(&mut cx);
             }
-            let converting = converting && !st.immune_to_zombification;
-            // Zoglins are not simulated: the time counts, the conversion never comes.
-            st.time_in_overworld = if converting { st.time_in_overworld + 1 } else { 0 };
+            m.brain = Some(b);
         }
-        m.set_aggressive(m.target.is_some());
+        sync_target(m);
+        let converting = is_converting(m, &*level);
+        let Some(st) = state_mut(m) else { return };
+        if converting {
+            st.time_in_overworld += 1;
+            if st.time_in_overworld > CONVERSION_TIME {
+                mob::make_sound(e, m, level, mob::sound_event("minecraft:entity.hoglin.converted_to_zombified"));
+                finish_conversion(e, m, level);
+            }
+        } else {
+            st.time_in_overworld = 0;
+        }
     }
 
+    /// `Hoglin.hurtServer`: a hit by a living entity is the brain's business.
     fn after_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, _amount: f32, hurt: bool) {
-        // `HoglinAi.wasHurtBy`: no longer pacified; an adult retaliates at once (the attack
-        // target is set even without AI) against an attackable attacker in follow range.
         if !hurt {
             return;
         }
-        if let Some(st) = state_mut(m) {
-            st.pacified = 0;
-        }
         let Some(a) = source.attacker else { return };
-        if m.baby() {
-            return;
+        match living_or_ticking(&*level, a) {
+            None => {
+                if let Some(s) = state_mut(m) {
+                    s.pending_hurt.push(a);
+                }
+            }
+            Some(attacker) => {
+                if let Some(mut brain) = m.brain.take() {
+                    let time = level.game_time();
+                    {
+                        let mut cx = Cx { e, m, level, b: &mut brain.st, time };
+                        was_hurt_by(&mut cx, &attacker);
+                    }
+                    m.brain = Some(brain);
+                }
+            }
         }
-        let range = m.attrs.value(FollowRange);
-        let ok = match level.player(a) {
-            Some(p) => p.alive && !p.creative && !p.spectator && e.position().distance_to_sqr(p.pos) <= range * range,
-            None => level.entity(a).is_some_and(|o| o.type_name != "minecraft:hoglin" && o.is_alive() && e.position().distance_to_sqr(o.position()) <= range * range),
-        };
-        if ok {
-            m.target = Some(a);
-        }
+        sync_target(m);
     }
 
     fn do_hurt_target(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> Option<bool> {
@@ -281,33 +525,7 @@ impl Kind for Hoglin {
         }
         level.emit(Event::EntityEvent { entity: e.id, event: 4 });
         mob::make_sound(e, m, level, mob::sound_event("minecraft:entity.hoglin.attack"));
-        // `HoglinBase.hurtAndThrowTarget`.
-        let base = m.attrs.value(AttackDamage) as f32;
-        let damage = if !m.baby() && base as i32 > 0 { base / 2.0 + level.random().next_int_bounded(base as i32) as f32 } else { base };
-        let source = DamageSource { kind: crate::level::DamageKind::MobAttack, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
-        let hurt = if t.player {
-            level.hurt_player(t.id, source, damage)
-        } else {
-            match level.entity_mut(t.id) {
-                Some(o) => {
-                    let mut o2 = std::mem::replace(o, Entity::new("minecraft:marker", 0, 0, crate::entity::EntityKind::Other { type_name: "minecraft:marker" }, 0));
-                    let r = mob::hurt_entity(&mut o2, level, source, damage);
-                    if let Some(slot) = level.entity_mut(t.id) {
-                        *slot = o2;
-                    }
-                    r
-                }
-                None => false,
-            }
-        };
-        if hurt {
-            m.last_hurt_mob = Some(t.id);
-            if !m.baby() {
-                let resistance = level.entity(t.id).and_then(mob::data).map_or(0.0, |o| o.attrs.value(KnockbackResistance));
-                throw_target(e, m, level, t.id, resistance);
-            }
-        }
-        Some(hurt)
+        Some(hurt_and_throw_target(e, m, level, t))
     }
 
     fn finalize_spawn(&self, e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, _ctx: &SpawnContext, group: &mut GroupData) {
@@ -317,6 +535,11 @@ impl Kind for Hoglin {
         ext::ageable_finalize(e, m, r, group, 0.05);
         update_attack_damage(m);
         ext::mob_finalize(m, r);
+    }
+
+    fn breed_offspring(&self, _e: &mut Entity, _m: &mut MobData, _partner: &MobData, child: &mut MobData, _level: &mut dyn EntityLevel) {
+        // `Hoglin.getBreedOffspring`: `setPersistenceRequired`.
+        child.persistence_required = true;
     }
 
     fn load(&self, _e: &mut Entity, m: &mut MobData, r: &mut Input) {
@@ -347,8 +570,16 @@ impl Kind for Hoglin {
     }
 
     fn interact(&self, _e: &mut Entity, m: &mut MobData, _level: &mut dyn EntityLevel, _who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
-        // `Hoglin.mobInteract`: feeding (the shared animal code) also makes it persistent.
-        if !stack.is_empty() && self.is_food(stack.item()) && ((m.age == 0 && m.in_love <= 0) || (m.age < 0 && !m.age_locked)) {
+        // `Hoglin.mobInteract`: feeding (the shared animal code) also makes it persistent; a
+        // pacified adult does not fall in love (`canFallInLove`).
+        if stack.is_empty() || !self.is_food(stack.item()) {
+            return None;
+        }
+        let pacified = m.brain.as_ref().is_some_and(|b| b.st.mem.has(Mem::Pacified));
+        if m.age >= 0 && pacified {
+            return Some(Outcome::PASS);
+        }
+        if (m.age == 0 && m.in_love <= 0) || (m.age < 0 && !m.age_locked) {
             m.persistence_required = true;
         }
         None
@@ -362,7 +593,11 @@ impl Kind for Hoglin {
         if m.baby() { (0.75, 0.85, 0.625) } else { base }
     }
 
-    fn walk_target_value(&self, _m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> Option<f32> {
+    /// `Hoglin.getWalkTargetValue`: near a repellent -1, crimson nylium 10.
+    fn walk_target_value(&self, m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> Option<f32> {
+        if state(m).and_then(|s| s.repellent).is_some_and(|r| util::dist_sqr_pos(r, p) < 64.0) {
+            return Some(-1.0);
+        }
         Some(if crate::blocks::block_name(level.block(p.below())) == "minecraft:crimson_nylium" { 10.0 } else { 0.0 })
     }
 
@@ -374,7 +609,27 @@ impl Kind for Hoglin {
         Some(true)
     }
 
+    fn ambient_sound(&self, _e: &mut Entity, m: &MobData, level: &dyn EntityLevel) -> Option<Option<&'static str>> {
+        let b = m.brain.as_ref()?;
+        let a = b.st.active_non_core()?;
+        Some(Some(sound_for_activity(m, level, &b.st.mem, a)))
+    }
+
     fn check_spawn_rules(&self, view: &dyn SpawnView, pos: BlockPos, _r: &mut LegacyRandom) -> Option<bool> {
         Some(crate::blocks::block_name(view.block(pos.below())) != "minecraft:nether_wart_block")
     }
+}
+
+/// `Hoglin.finishConversion`: a zoglin takes its place (equipment kept, the baby flag carried
+/// over), with nausea.
+fn finish_conversion(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
+    let baby = m.baby();
+    crate::mob::convert::convert_to(e, m, level, MobKind::Zoglin, true, false, move |ne, nm, level| {
+        if baby {
+            crate::mob::kinds::zoglin::set_baby(ne, nm, true);
+        }
+        if let Some(fx) = crate::effect::Effect::named("minecraft:nausea", 200, 0) {
+            crate::mob::effects::add(ne, nm, level, fx, None);
+        }
+    });
 }

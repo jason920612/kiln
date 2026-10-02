@@ -79,6 +79,11 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         C::ObserverBlock => return devices::observer_update_shape(level, s, pos, dir),
         C::NoteBlock => return devices::note_update_shape(level, s, pos, dir),
         C::PistonHeadBlock => return piston::head_update_shape(level, s, pos, dir),
+        // `CreakingHeartBlock.updateShape`: the state is re-checked next tick.
+        C::CreakingHeartBlock => {
+            crate::level::schedule_block_tick(level, pos, BlockId::of(s), 1, crate::ticks::TickPriority::Normal);
+            return s;
+        }
         C::NetherPortalBlock => return portal::portal_update_shape(level, s, pos, dir, neighbor_state),
         C::FireBlock | C::SoulFireBlock => return crate::fire::update_shape(level, s, pos),
         _ => {}
@@ -219,6 +224,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::HopperBlock => container::hopper_on_place(level, s, pos, old),
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_on_place(level, s, pos, old),
         C::SnifferEggBlock if !state::same_block(old, s) => misc::sniffer_egg_on_place(level, s, pos),
+        C::FrogspawnBlock => misc::frogspawn_on_place(level, s, pos),
         // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it; one that cannot
         // survive goes out.
         C::FireBlock | C::SoulFireBlock => {
@@ -274,6 +280,8 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::SculkShriekerBlock => sculk::shrieker_tick(level, s, pos),
         C::SculkCatalystBlock => sculk::catalyst_tick(level, s, pos),
         C::SnifferEggBlock => misc::sniffer_egg_tick(level, s, pos),
+        C::FrogspawnBlock => misc::frogspawn_tick(level, pos),
+        C::CreakingHeartBlock => misc::creaking_heart_tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.
         C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock => level.block_entity_tick(pos, s),

@@ -65,6 +65,20 @@ pub struct MemoryLevel {
     /// New entities join the level at once (vanilla's `addFreshEntity`: other entities see
     /// them the same tick; they tick from the next), instead of at [`MemoryLevel::flush_spawned`].
     pub immediate_adds: bool,
+    /// Mob AI draws from the level's random, as vanilla's (one stream for all mobs).
+    pub share_ai_random: bool,
+    /// The overworld clock (the villagers' schedule reads it).
+    pub day_time: i64,
+    /// Tickets taken at points of interest (`memory_poi`).
+    pub(crate) poi_taken: FastMap<BlockPos, i32>,
+    /// wp28: the wardens' listeners (`set_listener`) and the vibrations they heard since their
+    /// last tick (`game_event` posts to them like `GameEventDispatcher`).
+    pub ears: Vec<(i32, crate::vibration::Ear)>,
+    pub heard: Vec<(i32, crate::vibration::Heard)>,
+    /// The creaking hearts (their block entities) by position.
+    pub hearts: FastMap<BlockPos, crate::mob::kinds::creaking_heart::HeartBe>,
+    /// The `minecraft:gameplay/creaking_active` attribute.
+    pub creaking_active: bool,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -75,6 +89,11 @@ fn section_of(e: &Entity) -> (i32, i64) {
 }
 
 impl MemoryLevel {
+    /// The level random's state (`Random.seed` in Java terms), for traces.
+    pub fn random_state(&self) -> i64 {
+        self.random.state()
+    }
+
     pub fn new(min_y: i32, random_seed: i64) -> Self {
         MemoryLevel {
             blocks: FastMap::default(),
@@ -95,7 +114,67 @@ impl MemoryLevel {
             next_seq: 0,
             spawned: Vec::new(),
             immediate_adds: false,
+            share_ai_random: false,
+            day_time: 1000,
+            poi_taken: FastMap::default(),
+            ears: Vec::new(),
+            heard: Vec::new(),
+            hearts: FastMap::default(),
+            creaking_active: false,
         }
+    }
+
+    /// The creaking heart at `pos` goes away: a player breaking it (`source`: `playerWillDestroy`)
+    /// makes its creaking twitch and die; either way removing the block entity lets the creaking
+    /// go (`preRemoveSideEffects`).
+    pub fn destroy_heart(&mut self, pos: BlockPos, source: Option<crate::mob::DamageSource>) {
+        use crate::mob::kinds::creaking_heart::remove_protector;
+        if source.is_some()
+            && let Some(mut be) = self.hearts.remove(&pos)
+        {
+            remove_protector(self, pos, &mut be, source);
+            self.hearts.insert(pos, be);
+        }
+        self.blocks.insert(pos, 0);
+        if let Some(mut be) = self.hearts.remove(&pos) {
+            remove_protector(self, pos, &mut be, None);
+        }
+    }
+
+    /// Ticks the creaking hearts (`Level.tickBlockEntities`), in position order.
+    pub fn tick_hearts(&mut self) {
+        let mut at: Vec<BlockPos> = self.hearts.keys().copied().collect();
+        at.sort_by_key(|p| (p.x, p.y, p.z));
+        for p in at {
+            if let Some(mut be) = self.hearts.remove(&p) {
+                crate::mob::kinds::creaking_heart::tick(self, p, &mut be);
+                self.hearts.insert(p, be);
+            }
+        }
+    }
+
+    /// `Level.gameEvent(event, pos, ctx)` for the wardens' listeners (`Listener.handleGameEvent`
+    /// of `VibrationSystem`: within 16 blocks, `#warden_can_listen`, not occluded by wool).
+    pub fn game_event(&mut self, event: &'static str, from: crate::math::Vec3, ctx: crate::vibration::Context) {
+        use crate::vibration::{self, Validity};
+        let block = |p: BlockPos| self.block(p);
+        let mut got = Vec::new();
+        for &(id, ear) in &self.ears {
+            let (c, e) = (BlockPos::containing(from.x, from.y, from.z), BlockPos::containing(ear.pos.x, ear.pos.y, ear.pos.z));
+            let d = [(c.x - e.x) as i64, (c.y - e.y) as i64, (c.z - e.z) as i64];
+            if ear.busy || d[0] * d[0] + d[1] * d[1] + d[2] * d[2] > 16 * 16 {
+                continue;
+            }
+            if vibration::is_valid_vibration(event, &ctx, "minecraft:warden_can_listen", true) != Validity::Valid {
+                continue;
+            }
+            let untargetable = ctx.source.is_some_and(|s| s.living && (s.untargetable || matches!(s.type_name, "minecraft:warden" | "minecraft:armor_stand")));
+            if !ear.can_hear || untargetable || vibration::is_occluded(&block, from, ear.pos) {
+                continue;
+            }
+            got.push((id, vibration::Heard { event, from, to: ear.pos, source: ctx.source, tick: self.game_time }));
+        }
+        self.heard.extend(got);
     }
 
     /// Adds an entity now (it is ticked from the next `tick` on).
@@ -187,6 +266,11 @@ impl EntityLevel for MemoryLevel {
     }
 
     fn set_block(&mut self, pos: BlockPos, state: u16, _flags: u32) -> bool {
+        // `FrogspawnBlock.onPlace` schedules its hatching with a draw from the level's random
+        // (the real level runs the block's behaviour; this one only keeps the states).
+        if state == kiln_data::blocks::default_state::FROGSPAWN {
+            let _ = kiln_javamath::random::RandomSource::next_int_bounded(&mut self.random, 12000 - 3600);
+        }
         self.blocks.insert(pos, state).unwrap_or(0) != state
     }
 
@@ -194,8 +278,36 @@ impl EntityLevel for MemoryLevel {
         &mut self.random
     }
 
+    fn shared_ai_random(&mut self) -> Option<&mut LegacyRandom> {
+        if self.share_ai_random { Some(&mut self.random) } else { None }
+    }
+
     fn game_time(&self) -> i64 {
         self.game_time
+    }
+
+    fn day_time(&self) -> i64 {
+        self.day_time
+    }
+
+    fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: crate::level::PoiOccupancy) -> Vec<BlockPos> {
+        self.poi_in_range_impl(types, center, radius, occupancy)
+    }
+
+    fn poi_take(&mut self, types: &[&str], center: BlockPos, radius: i32, accept: &dyn Fn(&str, BlockPos) -> bool) -> Option<BlockPos> {
+        self.poi_take_impl(types, center, radius, accept)
+    }
+
+    fn poi_release(&mut self, pos: BlockPos) {
+        self.poi_release_impl(pos);
+    }
+
+    fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
+        self.poi_type_impl(pos)
+    }
+
+    fn sections_to_village(&self, pos: BlockPos) -> i32 {
+        self.sections_to_village_impl(pos)
     }
 
     fn sky_darken(&self) -> i32 {
@@ -254,6 +366,13 @@ impl EntityLevel for MemoryLevel {
             amount
         };
         self.player_hits.push((id, dealt));
+        // `LivingEntity.actuallyHurt`: the player's `ENTITY_DAMAGE` game event (a warden hears it).
+        if !self.ears.is_empty()
+            && let Some(p) = self.players.iter().find(|p| p.id == id).copied()
+        {
+            let ctx = crate::vibration::Context { source: Some(crate::vibration::EventSource::player(p.id, p.uuid, p.pos, p.sneaking, p.spectator, p.creative)), affected_state: None };
+            self.game_event("minecraft:entity_damage", p.pos, ctx);
+        }
         // `setLastHurtByMob`: stamped with the player's own clock.
         if by_mob.is_some()
             && let Some(p) = self.players.iter_mut().find(|p| p.id == id)
@@ -339,5 +458,36 @@ impl EntityLevel for MemoryLevel {
 
     fn emit(&mut self, event: Event) {
         self.events.push(event);
+    }
+
+    fn take_vibrations(&mut self, id: i32) -> Vec<crate::vibration::Heard> {
+        let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut self.heard).into_iter().partition(|h| h.0 == id);
+        self.heard = rest;
+        mine.into_iter().map(|h| h.1).collect()
+    }
+
+    fn set_listener(&mut self, id: i32, ear: Option<crate::vibration::Ear>) {
+        self.ears.retain(|e| e.0 != id);
+        if let Some(ear) = ear {
+            self.ears.push((id, ear));
+        }
+    }
+    fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
+        crate::mob::kinds::creaking_heart::is_heart(self.block(home)) && self.hearts.get(&home).is_some_and(|h| h.protects(id, uuid))
+    }
+
+    fn heart_creaking_hurt(&mut self, home: BlockPos, id: i32, uuid: u128, at: crate::math::Vec3) {
+        if let Some(mut be) = self.hearts.remove(&home) {
+            crate::mob::kinds::creaking_heart::creaking_hurt(self, home, &mut be, id, uuid, at);
+            self.hearts.insert(home, be);
+        }
+    }
+
+    fn entity_by_uuid(&self, uuid: u128) -> Option<&Entity> {
+        self.slots.iter().filter_map(|s| s.entity.as_ref()).find(|e| e.uuid == uuid && !e.is_removed())
+    }
+
+    fn creaking_active(&self, _pos: BlockPos) -> bool {
+        self.creaking_active
     }
 }

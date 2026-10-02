@@ -30,14 +30,14 @@ def main():
     if not args.skip_java:
         server_dir = out.parent / "server"
         server_dir.mkdir(parents=True, exist_ok=True)
-        cmd = ["java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-cp", classpath(),
+        cmd = ["java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "--add-opens", "java.base/java.util=ALL-UNNAMED", "-cp", classpath(),
                str(ROOT / "tools" / "MobVectors.java"), str(out)]
         if args.filter:
             cmd.append(args.filter)
         print("$ java ... MobVectors.java", out, flush=True)
         p = subprocess.run(cmd, cwd=server_dir, capture_output=True, text=True, encoding="utf-8", errors="replace")
         lines = [l for l in (p.stdout + p.stderr).splitlines()
-                 if "MobVectors" in l or "Exception" in l or "Error" in l or "\tat " in l or "error:" in l]
+                 if "MobVectors" in l or "DBG" in l or "Exception" in l or "Error" in l or "\tat " in l or "error:" in l]
         print("\n".join(lines[-60:]))
         if p.returncode != 0:
             sys.exit(f"MobVectors failed ({p.returncode})")

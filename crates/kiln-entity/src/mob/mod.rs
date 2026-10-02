@@ -11,6 +11,7 @@
 //! level's random for spawning decisions.
 
 pub mod attributes;
+pub mod brain;
 pub mod breed;
 pub mod ext;
 pub mod fly;
@@ -127,6 +128,14 @@ pub enum MobKind {
     Breeze,
     Creaking,
     Sniffer,
+
+    // -- wp28: brain mobs (new types; their modules are stubs until their owners fill them in)
+    PiglinBrute,
+    Zoglin,
+    Axolotl,
+    Goat,
+    Frog,
+    Tadpole,
 
     // -- wp25: the skeleton trap
     SkeletonHorse,
@@ -277,6 +286,14 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Breeze,
     MobKind::Creaking,
     MobKind::Sniffer,
+
+    // -- wp28: brain mobs
+    MobKind::PiglinBrute,
+    MobKind::Zoglin,
+    MobKind::Axolotl,
+    MobKind::Goat,
+    MobKind::Frog,
+    MobKind::Tadpole,
 
     // -- wp25: the skeleton trap
     MobKind::SkeletonHorse,
@@ -572,6 +589,13 @@ pub struct MobData {
     pub equip_mods: Vec<(Attr, String)>,
     /// `activeEffects` (see [`effects`]).
     pub effects: crate::effect::Effects,
+    /// The `Brain` of brain-driven types (taken out of the mob while it ticks).
+    pub brain: Option<Box<brain::Brain>>,
+    /// The mob's own stream for what vanilla draws from `level.getRandom()` in its AI (per entity,
+    /// so the outcome does not depend on which entities share a region).
+    pub brain_random: kiln_javamath::random::LegacyRandom,
+    /// `LivingEntity.discardFriction` (long-jumping frogs and goats keep their momentum).
+    pub discard_friction: bool,
 }
 
 impl MobData {
@@ -660,6 +684,9 @@ impl MobData {
             hurt_by: None,
             equip_mods: Vec::new(),
             effects: crate::effect::Effects::new(),
+            brain: None,
+            brain_random: kiln_javamath::random::LegacyRandom::new(0),
+            discard_friction: false,
         };
         if kind.is_animal() {
             m.maluses.push((path::PathType::FireInNeighbor, 16.0));
@@ -684,7 +711,8 @@ impl MobData {
     }
 
     pub fn baby(&self) -> bool {
-        self.zombie_baby || (breed::is_ageable(self.kind) && self.age < 0)
+        // (`canBeABaby`: frogs never are.)
+        self.zombie_baby || (breed::is_ageable(self.kind) && self.age < 0 && self.kind != MobKind::Frog)
     }
 
     pub fn holding_bow(&self) -> bool {
@@ -748,6 +776,29 @@ impl MobData {
         if now - self.last_damage_stamp > 40 { None } else { self.last_damage_source }
     }
 
+    /// A brain's active activities and running behaviours (`act:idle`, `run:MoveToTargetSink`),
+    /// for parity traces (anonymous behaviours have no name and are left out).
+    pub fn brain_trace(&self) -> Vec<String> {
+        let Some(b) = &self.brain else { return Vec::new() };
+        let mut acts: Vec<String> = b.st.active_activities().iter().map(|a| format!("act:{}", a.name())).collect();
+        acts.sort();
+        let mut run: Vec<String> = b.running_names().into_iter().filter(|n| !n.is_empty()).map(|n| format!("run:{n}")).collect();
+        run.sort();
+        acts.extend(run);
+        // The memories that hold a value, with the ticks left of expiring ones.
+        let mut mems: Vec<String> = b
+            .st
+            .mem
+            .iter()
+            .map(|(m, _, ttl)| if ttl == i64::MAX { format!("m:{}", m.name()) } else { format!("m:{}@{ttl}", m.name()) })
+            .collect();
+        mems.sort();
+        acts.extend(mems);
+        // The stream vanilla's level random plays (`MobVectors` prints it as `lr:`).
+        acts.push(format!("lr:{}", self.brain_random.state()));
+        acts
+    }
+
     /// Running goal names, for tests and parity traces.
     pub fn running_goals(&self) -> Vec<&'static str> {
         let mut v = self.goals.running_names();
@@ -802,6 +853,8 @@ pub fn variant_components(m: &MobData) -> Vec<kiln_item::Component> {
             vec![C::ChickenVariant(v::ChickenVariant(m.variant)), C::ChickenSoundVariant(v::ChickenSoundVariant(m.sound_variant))]
         }
         MobKind::Salmon | MobKind::TropicalFish | MobKind::Mooshroom => kinds::fish::variant_components(m).unwrap_or_default(),
+        MobKind::Axolotl => kinds::axolotl::variant_components(m).unwrap_or_default(),
+        MobKind::Frog => vec![C::FrogVariant(v::FrogVariant(m.variant))],
         _ => Vec::new(),
     }
 }
@@ -956,9 +1009,16 @@ pub fn reassess_weapon_goal(m: &mut MobData, hard: bool) {
 pub fn new(kind: MobKind, id: i32, uuid: u128, seed: i64) -> Entity {
     let mut e = Entity::new(kind.type_name(), id, uuid, EntityKind::MobTicking { gravity: 0.08 }, seed);
     let mut m = MobData::new(kind, &mut e.random);
+    // `Entity`'s constructor: `airSupply = getMaxAirSupply()` (axolotls: 6000).
+    e.air_supply = m.air_supply_max;
     // `LivingEntity`'s constructor: a random yaw (in radians-sized degrees, as vanilla).
     e.y_rot = e.random.next_float() * 6.2831855;
     m.y_head_rot = e.y_rot;
+    // ... then the brain (its sensors' first scans are delayed by draws from the mob's random).
+    m.brain_random = kiln_javamath::random::LegacyRandom::new(seed ^ 0x2545_F491_4F6C_DD1D);
+    if let Some(k) = kind.ext() {
+        m.brain = k.make_brain(&m, &mut e.random).map(Box::new);
+    }
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
     // `EnderDragon`'s constructor: `noPhysics`.
     e.no_physics = kind == MobKind::EnderDragon;
@@ -974,6 +1034,9 @@ pub fn set_age(e: &mut Entity, m: &mut MobData, age: i32) {
     m.age = age;
     if (old < 0) != (age < 0) {
         refresh_dimensions(e, m);
+        if let Some(k) = m.kind.ext() {
+            k.age_boundary_reached(e, m);
+        }
     }
 }
 
@@ -1190,6 +1253,14 @@ pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
         m.goals.set_control_flag(goals::LOOK, true);
     }
     species::post_tick(e, &mut m, level);
+    // `LivingEntity.remove`: a mob that was removed (killed, converted, discarded) forgets what
+    // its brain remembered.
+    if e.is_removed()
+        && let Some(b) = m.brain.as_mut()
+    {
+        b.st.mem.clear_all();
+        m.target = None;
+    }
     put(e, m);
 }
 
@@ -1348,9 +1419,17 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         if m.death_time >= 20 && !e.is_removed() {
             level.emit(Event::EntityEvent { entity: e.id, event: 60 });
             e.removed = Some(crate::entity::RemovalReason::Killed);
+            // `LivingEntity.remove`: the brain forgets everything.
+            if let Some(b) = m.brain.as_mut() {
+                b.st.mem.clear_all();
+            }
             effects::on_killed_removal(e, m, level);
             if let Some(k) = m.kind.ext() {
                 k.on_killed_removal(e, m, level);
+            }
+            // `LivingEntity.remove`: `brain.clearMemories()`.
+            if let Some(b) = m.brain.as_mut() {
+                b.st.mem.clear_all();
             }
         }
     }
@@ -1472,7 +1551,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     if m.jumping {
         let h = if e.is_in_lava() { e.fluid_height_lava() } else { e.fluid_height_water() };
         let in_water = e.is_in_water() && h > 0.0;
-        let threshold = if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 };
+        let threshold = m.kind.ext().and_then(|k| k.fluid_jump_threshold(e)).unwrap_or(if (e.eye_height as f64) < 0.4 { 0.0 } else { 0.4 });
         // `Mob.jumpInLiquid`: a mob whose navigation cannot float gets a strong push instead.
         let lift = if m.nav.can_float { 0.03999999910593033 } else { 0.3 };
         if in_water && (!e.on_ground || h > threshold) {
@@ -1600,7 +1679,9 @@ fn server_ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) 
         goals::tick_running(&mut sel, e, m, level, false);
     }
     m.goals = sel;
-    path::tick(e, m, level);
+    if m.kind.ext().is_none_or(|k| k.ticks_navigation(m)) {
+        path::tick(e, m, level);
+    }
     breed::custom_server_ai_step(m);
     let k = m.kind.ext();
     if let Some(k) = k {
@@ -1626,7 +1707,7 @@ fn cause_fall_damage(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
         return;
     }
     let power = distance + 1.0e-6 - m.attrs.value(Attr::SafeFallDistance);
-    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier));
+    let dmg = crate::math::floor(power * multiplier as f64 * m.attrs.value(Attr::FallDamageMultiplier)) - m.kind.ext().map_or(0, |k| k.fall_damage_reduction());
     if dmg <= 0 {
         return;
     }
@@ -1691,6 +1772,11 @@ pub fn travel_in_air(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLeve
     } else {
         y = 0.0;
     }
+    // `shouldDiscardFriction`: no drag.
+    if m.discard_friction || m.kind.ext().is_some_and(|k| k.discard_friction(m)) {
+        e.delta = Vec3::new(v.x, y, v.z);
+        return;
+    }
     let drag = m.attrs.value(Attr::AirDragModifier) as f32;
     let h = friction * modified_friction(0.91, drag);
     let vy = modified_friction(0.98, drag);
@@ -1719,6 +1805,8 @@ fn relative_friction_movement(e: &mut Entity, m: &mut MobData, level: &mut dyn E
 pub fn move_relative(e: &mut Entity, speed: f32, input: Vec3) {
     let l = input.length_sqr();
     if l < 1.0e-7 {
+        // `getInputVector` is `Vec3.ZERO`, and adding it still turns a -0.0 into +0.0.
+        e.delta = e.delta + Vec3::ZERO;
         return;
     }
     let v = if l > 1.0 { input.normalize() } else { input }.scale(speed as f64);
@@ -1873,6 +1961,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     for (id, ox, oz, player) in others {
         if let Some(k) = m.kind.ext() {
             k.do_push(e, m, &*level, id);
+            k.do_push_mut(e, m, level, id);
         }
         // `Entity.push(Entity)`: nothing moves when either side has no physics (a vex).
         if e.no_physics || (!player && level.entity(id).is_some_and(|o| o.no_physics)) {
@@ -1891,7 +1980,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         dx *= 0.05000000074505806;
         dz *= 0.05000000074505806;
         // `Entity.push`: vehicles and dead (not `isPushable`) mobs are not pushed.
-        if e.passengers.is_empty() && m.health > 0.0 {
+        if e.passengers.is_empty() && m.health > 0.0 && m.kind.ext().is_none_or(|k| k.can_be_pushed(m)) {
             e.delta = e.delta.add(-dx, 0.0, -dz);
             e.needs_sync = true;
         }
@@ -2047,13 +2136,20 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
         if amount <= m.last_hurt {
             return false;
         }
-        actually_hurt(e.id, m, source, amount - m.last_hurt);
+        let dealt = amount - m.last_hurt;
+        actually_hurt(e.id, m, source, dealt);
+        if let Some(k) = m.kind.ext() {
+            k.actually_hurt(e, m, level, &source, dealt);
+        }
         m.last_hurt = amount;
         false
     } else {
         m.last_hurt = amount;
         m.damage_cooldown = 20;
         actually_hurt(e.id, m, source, amount);
+        if let Some(k) = m.kind.ext() {
+            k.actually_hurt(e, m, level, &source, amount);
+        }
         m.hurt_duration = 10;
         m.hurt_time = 10;
         true
@@ -2086,12 +2182,14 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     if m.is_dead_or_dying() {
         if full {
-            make_sound(e, m, level, m.kind.death_sound());
+            let sound = m.kind.ext().and_then(|k| k.death_sound_for(m)).unwrap_or_else(|| m.kind.death_sound());
+            make_sound(e, m, level, sound);
         }
         die(e, m, level, source);
     } else if full {
         m.ambient_sound_time = -m.kind.ambient_sound_interval();
-        make_sound(e, m, level, m.kind.hurt_sound());
+        let sound = m.kind.ext().and_then(|k| k.hurt_sound_for(m)).unwrap_or_else(|| m.kind.hurt_sound());
+        make_sound(e, m, level, sound);
     }
     m.last_damage_source = Some(source);
     m.last_damage_stamp = level.game_time();
@@ -2624,6 +2722,10 @@ impl DamageKind {
 
             // -- slice 3: common mobs B
             DamageKind::WindCharge => "minecraft:wind_charge",
+
+            // -- wp28: axolotl and goat
+            DamageKind::DryOut => "minecraft:dry_out",
+            DamageKind::NoAggroMobAttack => "minecraft:mob_attack_no_aggro",
 
         }
     }

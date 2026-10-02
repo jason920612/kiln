@@ -16,6 +16,8 @@ pub(crate) struct MobRules {
     pub sky_darken: i32,
     /// The `minecraft:monsters_burn` timeline value.
     pub monsters_burn: bool,
+    /// The `minecraft:gameplay/creaking_active` value (the overworld's night).
+    pub creaking_active: bool,
     pub griefing: bool,
     pub drops: bool,
     /// `minecraft:entity_drops` (vehicles and other non-mob entities drop their items).
@@ -36,6 +38,7 @@ impl Default for MobRules {
             day_time: 1000,
             sky_darken: 0,
             monsters_burn: true,
+            creaking_active: false,
             griefing: true,
             drops: true,
             entity_drops: true,
@@ -53,6 +56,11 @@ impl Default for MobRules {
 pub(crate) fn monsters_burn(day_time: i64) -> bool {
     let t = day_time.rem_euclid(24000);
     !(12542..23460).contains(&t)
+}
+
+/// The `minecraft:gameplay/creaking_active` timeline: on from 12600 to 23401.
+pub(crate) fn creaking_active(day_time: i64) -> bool {
+    (12600..23401).contains(&day_time.rem_euclid(24000))
 }
 
 /// Entity data of a mob for its viewers.
@@ -138,9 +146,26 @@ pub(crate) fn bucket_release(bucket: &kiln_item::ItemStack, pos: [i32; 3], diffi
     let ctx = difficulty_instance(difficulty, game_time, 0, 1.0);
     let mut r = kiln_javamath::random::LegacyRandom::new(seed);
     mob::finalize_spawn(&mut e, &mut r, &ctx, &mut mob::GroupData::default(), false);
-    kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
+    if kind == MobKind::Tadpole {
+        kiln_entity::mob::kinds::tadpole::apply_bucket(&mut e, bucket);
+    } else {
+        kiln_entity::mob::kinds::fish::apply_bucket(&mut e, bucket);
+    }
     let t = kiln_data::entities::by_name(kind.type_name())?;
     Some(Spawn { kind: t, pos: [at.x, at.y, at.z], vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
+}
+
+/// `MobBucketItem.checkExtraContent` for an axolotl bucket emptied at `pos`: the axolotl comes out
+/// as the bucket kept it (`EntitySpawnReason.BUCKET`: no `finalizeSpawn`; the variant, health, age
+/// and hunting cooldown from the bucket, `FromBucket` set).
+pub(crate) fn bucket_axolotl(bucket: &kiln_item::ItemStack, pos: [f64; 3]) -> Option<Spawn> {
+    let seed = (pos[0].to_bits() ^ pos[2].to_bits().rotate_left(21) ^ pos[1].to_bits().rotate_left(42)) as i64;
+    let mut e = kiln_entity::mob::new(MobKind::Axolotl, 0, 0, seed);
+    e.set_pos(kiln_entity::math::Vec3::new(pos[0], pos[1], pos[2]));
+    e.set_old_pos_and_rot();
+    kiln_entity::mob::kinds::axolotl::apply_bucket(&mut e, bucket);
+    let t = kiln_data::entities::by_name(MobKind::Axolotl.type_name())?;
+    Some(Spawn { kind: t, pos, vel: [0.0; 3], body: Body::Ready(Box::new(e)) })
 }
 
 /// A new mob of `kind` at `pos`, facing `yaw` (the entity's own random decides nothing
@@ -264,6 +289,30 @@ pub(crate) struct DeathContext {
     pub weapon: Option<kiln_item::ItemStack>,
     /// A raider's `type_specific/raider` facts: (has a raid, is a captain).
     pub raider: Option<(bool, bool)>,
+    /// Whoever dealt the damage (`damage_source_properties`' `source_entity`): its type and the
+    /// components entity predicates match (a frog's variant).
+    pub attacker: Option<AttackerView>,
+}
+
+/// The killer as a `source_entity` predicate sees it.
+#[derive(Clone, Debug)]
+pub(crate) struct AttackerView {
+    pub type_name: &'static str,
+    pub components: Vec<kiln_item::Component>,
+}
+
+impl AttackerView {
+    /// `EntityPredicate.matches` for the parts Kiln can answer about a killer: its type and
+    /// components.
+    fn matches(&self, p: &kiln_loot::predicate::world::EntityPredicate) -> bool {
+        use kiln_loot::predicate::world::EntitySubPredicate as P;
+        let type_id = kiln_item::registry::ENTITY_TYPE.id(self.type_name).unwrap_or(-1);
+        p.parts.iter().all(|part| match part {
+            P::EntityType(set) => set.contains(type_id),
+            P::Components(cs) => cs.iter().all(|c| self.components.contains(c)),
+            _ => false,
+        })
+    }
 }
 
 impl kiln_loot::LootContext for DeathContext {
@@ -285,8 +334,12 @@ impl kiln_loot::LootContext for DeathContext {
     fn damage_source_matches(&self, p: &kiln_loot::predicate::world::DamageSourcePredicate) -> bool {
         // Only the damage type tags are known here; entity sub-predicates fail.
         let id = kiln_data::synced_id("minecraft:damage_type", self.damage_type).unwrap_or(0);
-        p.direct_entity.is_none()
-            && p.source_entity.is_none()
+        let entity_ok = |pred: &Option<kiln_loot::predicate::world::EntityPredicate>| match pred {
+            None => true,
+            Some(pr) => self.attacker.as_ref().is_some_and(|a| a.matches(pr)),
+        };
+        entity_ok(&p.direct_entity)
+            && entity_ok(&p.source_entity)
             && p.tags.iter().all(|t| crate::health::damage_type_tag(id, t.tag.as_str()) == t.expected)
     }
     fn entity_matches(&self, target: kiln_loot::EntityTarget, predicate: &kiln_loot::predicate::EntityPredicate) -> bool {

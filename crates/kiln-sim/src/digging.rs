@@ -257,6 +257,7 @@ pub(crate) fn destroy_block(p: &mut Player, level: &mut RegionLevel, pos: [i32; 
     }
     let previous = level.actor.replace(p.conn);
     crate::container::open::player_will_destroy(level, bp, state, actor.creative);
+    crate::heart::player_will_destroy(level, bp, state, p.entity_id, p.game_mode == 0 || p.game_mode == 2);
     let removed = interact::player_destroy(level, bp, &actor, drops);
     level.actor = previous;
     // `ItemStack.mineBlock` (survival only): a tool loses `damage_per_block` durability for

@@ -21,6 +21,7 @@ pub mod item;
 pub mod level;
 pub mod math;
 pub mod memory;
+mod memory_poi;
 pub mod mob;
 pub mod persist;
 pub mod physics;

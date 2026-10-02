@@ -47,7 +47,11 @@ pub fn load(r: &mut Input) -> Option<Box<dyn EntityExt>> {
 
 /// The wind burst at `center` from charge `source`.
 pub fn burst(level: &mut dyn EntityLevel, source: Option<i32>, center: Vec3) {
-    crate::explosion::explode_with(level, source, center, 3.0, false, crate::explosion::Interaction::TriggerBlock, None, false);
+    // The wind calculator (`SimpleExplosionDamageCalculator` with `#blocks_wind_charge_explosions`
+    // immune): blocks have no resistance at all (the rays go through them, so they draw the
+    // level random as long as vanilla's), except those of the tag (3600000).
+    let resist = |state: u16, _res: f32| if crate::mob::kinds::wolf::block_in_tag(state, "minecraft:blocks_wind_charge_explosions") { 3600000.0 } else { -0.3 };
+    crate::explosion::explode_with(level, source, center, 3.0, false, crate::explosion::Interaction::TriggerBlock, Some(&resist), false);
     level.emit(Event::Sound { pos: center, sound: "minecraft:entity.breeze.wind_burst", source: "hostile", volume: 1.0, pitch: 1.0 });
 }
 

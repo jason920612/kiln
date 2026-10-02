@@ -28,6 +28,10 @@ fn op_of(name: &str) -> Option<Op> {
 /// Builds the mob of a loaded compound (the kind was `MobTicking` until now).
 pub(crate) fn load(e: &mut Entity, kind: MobKind, r: &mut Input) {
     let mut m = MobData::new(kind, &mut e.random);
+    m.brain_random = kiln_javamath::random::LegacyRandom::new(e.random.state() ^ 0x2545_F491_4F6C_DD1D);
+    if let Some(k) = kind.ext() {
+        m.brain = k.make_brain(&m, &mut e.random).map(Box::new);
+    }
     e.max_up_step = m.attrs.value(Attr::StepHeight) as f32;
     e.no_physics = kind == MobKind::EnderDragon;
     read_fields(e, &mut m, r);
@@ -79,7 +83,8 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         m.effects = crate::effect::load(t);
     }
     let health = r.num("Health");
-    m.health = health.map_or(m.max_health(), |h| h as f32);
+    // `setHealth`: at most the maximum.
+    m.health = health.map_or(m.max_health(), |h| super::mth::clamp(h as f32, 0.0, m.max_health()));
     m.hurt_time = r.short_or("HurtTime", 0);
     m.death_time = r.short_or("DeathTime", 0);
     m.last_hurt_by_mob_timestamp = r.int_or("HurtByTimestamp", 0);
@@ -148,6 +153,12 @@ fn read_fields(e: &mut Entity, m: &mut MobData, r: &mut Input) {
         m.attrs.set_modifier(Attr::MovementSpeed, "minecraft:baby", 0.5, Op::AddMultipliedBase);
     }
     super::reassess_weapon_goal(m, false);
+    // The saved memories (`Brain` tag) of a brain-driven type.
+    if let Some(b) = m.brain.as_mut()
+        && let Some(t) = r.get("Brain")
+    {
+        super::brain::persist::load(b, t);
+    }
     if let Some(k) = kind.ext() {
         k.load(e, m, r);
     }
@@ -249,6 +260,11 @@ pub(crate) fn save(e: &Entity, m: &MobData, o: &mut Output) {
     }
     if let Some(k) = m.kind.ext() {
         k.save(e, m, o);
+    }
+    if let Some(b) = &m.brain
+        && !o.has("Brain")
+    {
+        o.put("Brain", super::brain::persist::save(b));
     }
     if !e.extra.iter().any(|(k, _)| k == "Brain") && !o.has("Brain") {
         o.put("Brain", Tag::Compound(vec![("memories".into(), Tag::Compound(vec![]))]));

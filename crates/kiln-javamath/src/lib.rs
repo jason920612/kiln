@@ -6,6 +6,7 @@
 //! Rust never contracts `a * b + c` into an FMA, so plain `f32` expressions written in Java's
 //! evaluation order give Java's results.
 
+pub mod atan;
 pub mod math;
 pub mod random;
 pub mod trig;

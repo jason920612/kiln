@@ -67,8 +67,10 @@ fn run_phased(
     let mut traffic = Vec::new();
     let mut max_regions = 0;
     let mut hits = 0;
+    let mut hoppers_moved = false;
     let (mut effects, mut burning) = (0, 0);
     let mut mob_ticks = 0;
+    let mut hoppers_moved = false;
     // Players in odd rows of the groups can be hurt; the ones in even rows hit them.
     let victim = |i: usize| (i / GROUPS) % 2 == 1;
     for tick in 0..ticks {
@@ -145,6 +147,13 @@ fn run_phased(
                 }
             }
         }
+        // Before the mobs come (they may knock the rig down): the hoppers have moved items into
+        // the chest below them.
+        if tick == 99 {
+            let [ox, oz] = group_offset(0, GROUPS, GROUP_SPACING);
+            let chest = [(2.0 + ox) as i32, SURFACE_Y as i32, (14.0 + oz) as i32];
+            hoppers_moved = sim.container_at(chest).is_some_and(|(items, _)| !items.is_empty());
+        }
         // The mobs of each group, at night so the undead do not burn.
         if tick == 100 {
             inbox.push(ToSim::Console("time set 14000".into()));
@@ -189,6 +198,12 @@ fn run_phased(
             }
         }
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
+        // (Seen as it happens: a creeper may blow the chests up later, depending on how it walks.)
+        if tick % 10 == 0 && !hoppers_moved {
+            let [ox, oz] = group_offset(0, GROUPS, GROUP_SPACING);
+            let chest = [(2.0 + ox) as i32, SURFACE_Y as i32, (14.0 + oz) as i32];
+            hoppers_moved = sim.container_at(chest).is_some_and(|(items, _)| !items.is_empty());
+        }
         hits += (0..PLAYERS).filter(|&i| victim(i) && sim.health(i as u64 + 1).is_some_and(|(h, _)| h < 20.0)).count();
         effects += (0..PLAYERS).filter(|&i| sim.effects(i as u64 + 1).is_some_and(|e| !e.is_empty())).count();
         burning += (0..PLAYERS).filter(|&i| sim.fire_and_air(i as u64 + 1).is_some_and(|(f, _)| f > -20)).count();
@@ -223,8 +238,7 @@ fn run_phased(
         sim.block_at(wx + dx, SURFACE_Y as i32, wz + dz).is_some_and(|s| kiln_data::blocks_types::has_fluid(s))
     });
     assert!(flowing.count() > 9, "the water spread");
-    let chest = [(2.0 + ox) as i32, SURFACE_Y as i32, (14.0 + oz) as i32];
-    assert!(sim.container_at(chest).is_some_and(|(items, _)| !items.is_empty()), "the hoppers moved items");
+    assert!(hoppers_moved, "the hoppers moved items");
     assert!(walkers.iter().all(|w| !w.client.stats.disconnected.load(std::sync::atomic::Ordering::Relaxed)));
     assert!(hits > 0, "some attacks landed");
     assert!(effects > 0, "players had effects");

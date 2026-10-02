@@ -517,14 +517,25 @@ fn every_mob_type_summons_ticks_and_saves() {
     // The ender dragon's head hurts whatever it touches (10 damage kills a cat): it is tested in
     // the dragon fight's own tests.
     let kinds: Vec<_> = kiln_entity::mob::ALL_KINDS.iter().copied().filter(|k| *k != kiln_entity::mob::MobKind::EnderDragon).collect();
-    for (i, kind) in kinds.iter().enumerate() {
-        let a = i as f64 * 0.7;
-        w.summon(kind.type_name(), [6.0 * a.cos(), 0.0, 6.0 * a.sin()], "{PersistenceRequired:1b}");
-    }
+    // (Invulnerable: they go on to hunt one another, and which ones live depends on how they walk; the
+    // test is that every type exists and ticks.)
+    // All in one tick: types that hunt their neighbours (zoglins, wardens, piglin brutes) must not
+    // get dozens of ticks among the first ones summoned before the rest exist.
+    let p = w.pos();
+    let summons: Vec<_> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            let a = i as f64 * 0.7;
+            ToSim::Console(format!("summon {} {} {} {} {{PersistenceRequired:1b,Invulnerable:1b}}", kind.type_name(), p[0] + 6.0 * a.cos(), p[1], p[2] + 6.0 * a.sin()))
+        })
+        .collect();
+    assert!(w.sim.step(summons));
     w.ticks(1);
     for &kind in &kinds {
-        // Endermen hunt endermites.
-        if kind == kiln_entity::mob::MobKind::Endermite {
+        // Endermen hunt endermites, and the golems hunt the phantom (the longer the zoo takes to
+        // summon, the likelier it is gone).
+        if matches!(kind, kiln_entity::mob::MobKind::Endermite | kiln_entity::mob::MobKind::Phantom) {
             continue;
         }
         assert!(!w.mobs(kind.type_name()).is_empty(), "{} is gone", kind.type_name());

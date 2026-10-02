@@ -36,7 +36,14 @@ pub fn look_at(m: &mut MobData, x: f64, y: f64, z: f64) {
 
 /// `LookControl.tick`.
 pub fn tick_look(e: &mut Entity, m: &mut MobData) {
-    e.x_rot = 0.0;
+    tick_look_with(e, m, true);
+}
+
+/// `LookControl.tick` with `resetXRotOnTick` given (a frog keeps its pitch while its tongue is out).
+pub fn tick_look_with(e: &mut Entity, m: &mut MobData, reset_x_rot: bool) {
+    if reset_x_rot {
+        e.x_rot = 0.0;
+    }
     if m.look.cooldown > 0 {
         m.look.cooldown -= 1;
         let [wx, wy, wz] = m.look.wanted;

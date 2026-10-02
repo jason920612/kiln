@@ -84,7 +84,12 @@ pub(crate) fn use_bucket(p: &mut Player, level: &mut RegionLevel, off_hand: bool
     if let Some((mob_type, _)) = mob
         && let Some(kind) = kiln_entity::mob::MobKind::by_name(mob_type)
     {
-        spawns.push(crate::mobs::spawn(kind, [target.x as f64 + 0.5, target.y as f64, target.z as f64 + 0.5], None, None));
+        let at = [target.x as f64 + 0.5, target.y as f64, target.z as f64 + 0.5];
+        match (kind, crate::mobs::bucket_axolotl(&held, at)) {
+            // An axolotl keeps its variant, health and age in the bucket.
+            (kiln_entity::mob::MobKind::Axolotl, Some(spawn)) => spawns.push(spawn),
+            _ => spawns.push(crate::mobs::spawn(kind, at, None, None)),
+        }
     }
     let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
     p.used_on_block("minecraft:placed_block", [target.x, target.y, target.z], level.block(target), &held, &probe);

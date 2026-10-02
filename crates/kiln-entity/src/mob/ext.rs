@@ -249,6 +249,13 @@ pub trait Kind: Sync + Send {
         None
     }
 
+    /// `makeBrain`: the brain of a brain-driven type (built after the constructor's yaw draw;
+    /// its sensors' first scans are delayed by draws from `random`). `None` for goal-driven types.
+    fn make_brain(&self, m: &MobData, random: &mut dyn RandomSource) -> Option<super::brain::Brain> {
+        let _ = (m, random);
+        None
+    }
+
     /// `registerGoals` (and goals the constructor adds).
     fn register_goals(&self, m: &mut MobData) {
         default_goals(m, self.info());
@@ -309,10 +316,32 @@ pub trait Kind: Sync + Send {
         let _ = (e, m);
         false
     }
+    /// `Creaking.HomeNodeEvaluator`: the point beyond 32 blocks of which the navigation finds no
+    /// way (unless it leads back toward it).
+    fn path_home(&self, m: &MobData) -> Option<BlockPos> {
+        let _ = m;
+        None
+    }
+    /// `PathNavigation.tick` (creakings that cannot move skip it); false skips the tick.
+    fn ticks_navigation(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
+    /// `isPushable` where it depends on the mob's state (a frozen creaking): false, and
+    /// `Entity.push` moves nothing.
+    fn can_be_pushed(&self, m: &MobData) -> bool {
+        let _ = m;
+        true
+    }
     /// `hurtServer` overrides that decide before the shared code: `Some(result)` ends it.
     fn hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> Option<bool> {
         let _ = (e, m, level, source, amount);
         None
+    }
+    /// The type's `actuallyHurt` additions, right after the shared health and absorption change
+    /// (and before the hurt time, the attacker bookkeeping and the knockback).
+    fn actually_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) {
+        let _ = (e, m, level, source, amount);
     }
     /// After the shared `hurtServer` (reinforcements, anger, ...), with its result.
     fn after_hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32, hurt: bool) {
@@ -574,6 +603,21 @@ pub trait Kind: Sync + Send {
     fn do_push(&self, e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, other: i32) {
         let _ = (e, m, level, other);
     }
+    /// The type's path finder measures the cost of a step horizontally (`Node.distanceToXZ`: the
+    /// warden's `Warden$1$1`).
+    fn path_distance_xz(&self) -> bool {
+        false
+    }
+    /// `getFluidJumpThreshold` when the type overrides it (the breeze: its eye height).
+    fn fluid_jump_threshold(&self, e: &Entity) -> Option<f64> {
+        let _ = e;
+        None
+    }
+    /// [`Kind::do_push`] with the level at hand for changes (wp28: the warden gets angry at what
+    /// bumps it, which plays a sound and changes its brain).
+    fn do_push_mut(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, other: i32) {
+        let _ = (e, m, level, other);
+    }
     /// `isStableDestination` of the type's navigation (striders stand on lava): `None` for
     /// the ground navigation's.
     fn stable_destination(&self, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
@@ -646,10 +690,49 @@ pub trait Kind: Sync + Send {
     fn breed_as_item(&self) -> Option<&'static str> {
         None
     }
+    /// `calculateFallDamage` overridden to take points off (frogs: 5, goats: 10).
+    fn fall_damage_reduction(&self) -> i32 {
+        0
+    }
+    /// `spawnChildFromBreeding` without a child: the mother is pregnant (frogs lay frogspawn).
+    fn breed_as_pregnancy(&self) -> bool {
+        false
+    }
+    /// The parity replay's pin (`brain::pin`): seeds the randoms vanilla cannot seed
+    /// (`Collections.shuffle`) from `base`, the mob's random state.
+    fn pin_replay(&self, m: &mut MobData, base: i64) {
+        let _ = (m, base);
+    }
     /// [`Kind::passenger_offset`] for the passenger at `index` (camels seat two).
     fn passenger_offset_at(&self, e: &Entity, m: &MobData, index: usize) -> Option<Vec3> {
         let _ = index;
         self.passenger_offset(e, m)
+    }
+    /// `AgeableMob.ageBoundaryReached` (a baby grows up, an adult is made a baby): villagers
+    /// rebuild their brain for the other age.
+    fn age_boundary_reached(&self, e: &mut Entity, m: &mut MobData) {
+        let _ = (e, m);
+    }
+    /// `shouldDiscardFriction`: in the air the motion is kept, without drag (a long-jumping goat).
+    fn discard_friction(&self, m: &MobData) -> bool {
+        let _ = m;
+        false
+    }
+    /// `getHurtSound` / `getDeathSound` that depend on the mob's state (screaming goats): `None`
+    /// for the type's own `hurt` / `death` sound.
+    fn hurt_sound_for(&self, m: &MobData) -> Option<&'static str> {
+        let _ = m;
+        None
+    }
+    fn death_sound_for(&self, m: &MobData) -> Option<&'static str> {
+        let _ = m;
+        None
+    }
+    /// `setYHeadRot` overrides: the head rotation `head` asked for while the body is at `body`
+    /// (goats keep their head within 15 degrees of the body).
+    fn set_head_rot(&self, body: f32, head: f32) -> f32 {
+        let _ = body;
+        head
     }
 }
 

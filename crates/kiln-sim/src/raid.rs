@@ -191,6 +191,7 @@ impl Raid {
             groups_spawned: self.groups_spawned,
             omen_level: self.omen_level,
             leaders: self.leaders.iter().map(|(w, id)| (*w, *id)).collect(),
+            between_waves: self.groups_spawned > 0 && self.cooldown_ticks > 0,
         }
     }
 

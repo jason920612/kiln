@@ -88,7 +88,7 @@ fn tag_of(v: &Value) -> kiln_proto::nbt::Tag {
     }
 }
 
-fn state(e: &kiln_entity::Entity, level: &dyn EntityLevel) -> (Vec<f64>, String) {
+fn state(e: &kiln_entity::Entity, level: &MemoryLevel) -> (Vec<f64>, String) {
     let m = mob::data(e).expect("a mob");
     let p = e.position();
     let v = e.delta;
@@ -118,6 +118,11 @@ fn state(e: &kiln_entity::Entity, level: &dyn EntityLevel) -> (Vec<f64>, String)
     ];
     let mut goals: Vec<String> = m.running_goals().into_iter().map(|g| goal_class(g, m.kind).to_owned()).collect();
     goals.retain(|g| !g.is_empty());
+    goals.extend(m.brain_trace().into_iter().filter(|t| !t.starts_with("lr:")));
+    if m.brain.is_some() {
+        let lr = level.random_state();
+        goals.push(format!("lr:{lr}"));
+    }
     // The dragon's phase (`EnderDragonPhase` id).
     if let Some(d) = mob::kinds::ender_dragon::state_of(e) {
         goals.push(format!("DragonPhase{}", d.phase.id()));
@@ -162,15 +167,116 @@ fn act(level: &mut MemoryLevel, ids: &[i32], player: Option<PlayerView>, a: &Val
                 mob::kinds::witch::linger(&mut p, level, hit, &stack, None);
             }
         }
+        // wp28 creaking: the block at pos goes away (`what` = "player": a player breaks it).
+        "break_block" => {
+            let p = BlockPos::new(pos.x as i32, pos.y as i32, pos.z as i32);
+            let source = (what == "player").then(|| {
+                let pl = player.expect("a breaking player");
+                DamageSource { kind: DamageKind::PlayerAttack, attacker: Some(pl.id), direct: Some(pl.id), pos: None, attacker_is_player: true }
+            });
+            level.destroy_heart(p, source);
+        }
+        // wp28 creaking: the player's game mode changes (`what`), or it moves to pos.
+        "gamemode" => {
+            let mut who = Vec::new();
+            for p in level.players.iter_mut() {
+                p.creative = what == "creative";
+                p.spectator = what == "spectator";
+                who.push((p.id, p.creative));
+            }
+            for (id, creative) in who {
+                if let Some(e) = level.entity_mut(id) {
+                    e.invulnerable = creative;
+                }
+            }
+        }
+        "move" => {
+            let mut who = Vec::new();
+            for p in level.players.iter_mut() {
+                p.pos = pos;
+                who.push(p.id);
+            }
+            for id in who {
+                if let Some(e) = level.entity_mut(id) {
+                    e.set_pos(pos);
+                }
+            }
+        }
+        // wp28 creaking: the player turns (yaw = pos.x, pitch = pos.y).
+        "look" => {
+            for p in level.players.iter_mut() {
+                p.yaw = pos.x as f32;
+                p.pitch = pos.y as f32;
+            }
+        }
         "interact" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];
             let p = player.expect("an interacting player");
             let who = mob::interact::Interactor { id: p.id, creative: p.creative, sneaking: p.sneaking };
             let stack = kiln_item::ItemStack::of(what, 1).unwrap();
+            // The harness puts the item in the player's hand, where it stays.
+            for p in level.players.iter_mut() {
+                p.main_hand = stack.item();
+            }
             let e = level.entity_mut(id).unwrap();
             let mut e2 = std::mem::replace(e, kiln_entity::Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0));
-            mob::interact::interact(&mut e2, level, &who, &stack);
+            let out = mob::interact::interact(&mut e2, level, &who, &stack);
             *level.entity_mut(id).unwrap() = e2;
+            // What the interaction did to the held item (a stack of one eaten or filled up).
+            let held = match out.held {
+                mob::interact::HeldChange::Consume(_) if !who.creative => Some(0),
+                mob::interact::HeldChange::Fill(ref f) => Some(f.item()),
+                _ => None,
+            };
+            if let Some(held) = held {
+                for p in level.players.iter_mut() {
+                    p.main_hand = held;
+                }
+            }
+        }
+        // wp28: `time set` in the middle of a scenario.
+        "daytime" => level.day_time = pos.x as i64,
+        // wp28 animals: an item entity (`duration` items, default 1) at rest at the position.
+        "drop" => {
+            let stack = kiln_item::ItemStack::of(what, a["duration"].as_i64().unwrap_or(0).max(1) as i32).unwrap();
+            let id = level.next_entity_id();
+            let seed = level.fresh_seed();
+            let mut item = kiln_entity::item::new(id, 0, stack, seed);
+            item.set_pos(pos);
+            item.delta = Vec3::ZERO;
+            item.set_old_pos_and_rot();
+            level.add_entity(item);
+        }
+        // wp28 animals: a jukebox starts or stops playing; every allay within 10 blocks hears it.
+        "jukebox" => {
+            let at = BlockPos::containing(pos.x, pos.y, pos.z);
+            let playing = what == "play";
+            let allays: Vec<i32> = level.entities().filter(|e| mob::data(e).is_some_and(|m| m.kind == MobKind::Allay)).map(|e| e.id).collect();
+            for id in allays {
+                let e = level.entity_mut(id).unwrap();
+                // The mob data out of the entity, as the mob tick has it.
+                let mut k = std::mem::replace(&mut e.kind, EntityKind::MobTicking { gravity: 0.08 });
+                if let EntityKind::Mob(m) = &mut k {
+                    mob::kinds::allay::hear_jukebox(e, m, playing, at);
+                }
+                e.kind = k;
+            }
+        }
+        // wp28: `Level.gameEvent(source, event, pos)`: `mob` is the source (an index into the
+        // scenario's mobs, -1 nobody, -2 the player); wardens hear it.
+        "gameevent" => {
+            let event = kiln_entity::vibration::intern(what).expect("game event");
+            let m = a["mob"].as_i64().unwrap();
+            let source = if m == -2 {
+                let p = player.expect("a player source");
+                Some(kiln_entity::vibration::EventSource::player(p.id, p.uuid, p.pos, p.sneaking, p.spectator, p.creative))
+            } else if m >= 0 {
+                let e = level.entity(ids[m as usize]).unwrap();
+                Some(kiln_entity::vibration::source_of(e, level))
+            } else {
+                None
+            };
+            level.game_event(event, pos, kiln_entity::vibration::Context { source, affected_state: None });
         }
         k => panic!("action {k}"),
     }
@@ -181,8 +287,11 @@ fn replay(s: &Value) -> Result<usize, String> {
     let loose = s.get("diverges").and_then(Value::as_bool) == Some(true);
     let pin_yaw = s.get("pin_yaw").and_then(Value::as_bool) == Some(true);
     let mut level = MemoryLevel::new(-64, s["level_seed"].as_i64().unwrap());
+    level.share_ai_random = true;
     level.bottom_layer = Some(kiln_data::blocks::default_state::BEDROCK);
     level.sky_darken = s["sky_darken"].as_i64().unwrap() as i32;
+    // wp28: the overworld clock (villagers' schedule).
+    level.day_time = s.get("day_time").and_then(Value::as_i64).unwrap_or(1000);
     // The recording world is superflat.
     level.sea_level = -63;
     let start = s["game_time"].as_i64().unwrap();
@@ -190,7 +299,7 @@ fn replay(s: &Value) -> Result<usize, String> {
         let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
         level.blocks.insert(p, b[3].as_u64().unwrap() as u16);
     }
-    let player = s.get("player").filter(|p| !p.is_null()).map(|p| {
+    let mut player = s.get("player").filter(|p| !p.is_null()).map(|p| {
         let mut v = PlayerView::new(p["id"].as_i64().unwrap() as i32, vec3(&p["pos"]));
         v.sneaking = p["sneaking"].as_bool().unwrap_or(false);
         if v.sneaking {
@@ -204,6 +313,8 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         if let Some(item) = p.get("head").and_then(Value::as_str) {
             v.head = kiln_data::builtin_id("minecraft:item", item).unwrap();
+            // (wp28: `PiglinAi.isWearingSafeArmor` reads the armor tag.)
+            v.piglin_safe_armor = mob::item_tag(v.head, "minecraft:piglin_safe_armor");
         }
         v.yaw = p.get("yaw").and_then(Value::as_f64).unwrap_or(0.0) as f32;
         // The recording's player is never ticked: its clock and hurt stamp as they were.
@@ -231,7 +342,8 @@ fn replay(s: &Value) -> Result<usize, String> {
     for spec in s["mobs"].as_array().unwrap() {
         let kind = MobKind::by_name(spec["type"].as_str().unwrap()).expect("mob type");
         let id = spec["id"].as_i64().unwrap() as i32;
-        let mut e = mob::new(kind, id, 0, 0);
+        // (wp28: a uuid of its own, for the memories that hold entities by uuid: anger.)
+        let mut e = mob::new(kind, id, id as u128 + 0x5eed_0000, 0);
         let yaw = f(&spec["yaw"]) as f32;
         e.set_pos(vec3(&spec["pos"]));
         e.y_rot = yaw;
@@ -239,14 +351,15 @@ fn replay(s: &Value) -> Result<usize, String> {
         e.random = kiln_javamath::random::LegacyRandom::new(spec["seed"].as_i64().unwrap());
         {
             let m = mob::data_mut(&mut e).unwrap();
-            m.y_head_rot = yaw;
+            // The harness calls `setYHeadRot` (types like goats clamp it to their body, which is at 0
+            // then) before it sets the body.
+            m.y_head_rot = m.kind.ext().map_or(yaw, |k| k.set_head_rot(0.0, yaw));
             m.y_body_rot = yaw;
             m.y_head_rot_o = yaw;
             m.y_body_rot_o = yaw;
             if let mob::Species::Chicken { egg_time } = &mut m.species {
                 *egg_time = spec["egg_time"].as_i64().unwrap() as i32;
             }
-            m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
             // The harness equips the main hand before it reads the NBT (which replaces the
             // equipment).
             if let Some(item) = spec["main_hand"].as_str() {
@@ -256,6 +369,10 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
             mob::persist::apply_nbt(&mut e, &tag_of(nbt));
+        }
+        // (wp28: the harness sets the love time after it read the NBT.)
+        if let Some(m) = mob::data_mut(&mut e) {
+            m.in_love = spec.get("in_love").and_then(Value::as_i64).unwrap_or(0) as i32;
         }
         {
             let age = spec.get("age").and_then(Value::as_i64).unwrap_or(0) as i32;
@@ -267,22 +384,53 @@ fn replay(s: &Value) -> Result<usize, String> {
                 e.kind = m;
             }
         }
+        // The harness seeds the mob's random after the NBT and the age were read (the reads may draw
+        // from it, a villager's brain being rebuilt).
+        e.random = kiln_javamath::random::LegacyRandom::new(spec["seed"].as_i64().unwrap());
+        // A brain mob's random for what vanilla draws from the level's: the recording's level
+        // random, seeded per scenario; the sensors and gates pinned as `MobVectors.pinBrain` does.
+        if let Some(m) = mob::data_mut(&mut e) {
+            m.brain_random = kiln_javamath::random::LegacyRandom::new(s["level_seed"].as_i64().unwrap());
+        }
+        kiln_entity::mob::brain::pin(&mut e);
         ids.push(id);
         level.insert(e);
+        // wp28 creaking: the heart holding this creaking (`setCreakingInfo(creaking)`).
+        if let Some(h) = spec.get("heart").filter(|v| !v.is_null()) {
+            let p = BlockPos::new(h[0].as_i64().unwrap() as i32, h[1].as_i64().unwrap() as i32, h[2].as_i64().unwrap() as i32);
+            let mut be = kiln_entity::mob::kinds::creaking_heart::HeartBe::default();
+            be.set_creaking(id, 0);
+            level.hearts.insert(p, be);
+        }
         for fx in spec.get("effects").and_then(Value::as_array).into_iter().flatten() {
             let fx = kiln_entity::effect::Effect::named(fx[0].as_str().unwrap(), fx[1].as_i64().unwrap() as i32, fx[2].as_i64().unwrap() as i32).unwrap();
             level.add_effect_instance(id, fx, None);
         }
     }
+    // wp28 creaking: hearts without a creaking yet (the ones with one were made above), and the
+    // night attribute.
+    level.creaking_active = s.get("creaking_active").and_then(Value::as_bool).unwrap_or(false);
+    for h in s.get("hearts").and_then(Value::as_array).into_iter().flatten() {
+        let p = BlockPos::new(h[0].as_i64().unwrap() as i32, h[1].as_i64().unwrap() as i32, h[2].as_i64().unwrap() as i32);
+        level.hearts.entry(p).or_default();
+    }
     // Other entities (end crystals), after the mobs: ticked, not traced.
     let mut other_ids = Vec::new();
     for o in s.get("others").and_then(Value::as_array).into_iter().flatten() {
         let id = o["id"].as_i64().unwrap() as i32;
-        let tag = kiln_proto::nbt::Tag::Compound(vec![
+        let mut fields = vec![
             ("id".into(), kiln_proto::nbt::Tag::String(o["type"].as_str().unwrap().to_owned())),
             ("Pos".into(), kiln_proto::nbt::Tag::List((0..3).map(|i| kiln_proto::nbt::Tag::Double(f(&o["pos"][i]))).collect())),
             ("Rotation".into(), kiln_proto::nbt::Tag::List(vec![kiln_proto::nbt::Tag::Float(f(&o["yaw"]) as f32), kiln_proto::nbt::Tag::Float(0.0)])),
-        ]);
+        ];
+        // (wp28: an item entity's stack.)
+        if let Some(item) = o.get("item").and_then(Value::as_str) {
+            fields.push((
+                "Item".into(),
+                kiln_proto::nbt::Tag::Compound(vec![("id".into(), kiln_proto::nbt::Tag::String(item.to_owned())), ("count".into(), kiln_proto::nbt::Tag::Int(1))]),
+            ));
+        }
+        let tag = kiln_proto::nbt::Tag::Compound(fields);
         let e = kiln_entity::persist::load(&tag, id, 0).expect("other entity");
         other_ids.push(id);
         level.insert(e);
@@ -298,7 +446,7 @@ fn replay(s: &Value) -> Result<usize, String> {
     let trace = s["trace"].as_array().unwrap();
     let initial = ids.len();
     // Vanilla numbers new entities on from the scenario's mobs (id parity paces the AI).
-    level.set_next_entity_id(ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1);
+    level.set_next_entity_id(s.get("next_id").and_then(Value::as_i64).map_or_else(|| ids.iter().chain(&other_ids).copied().max().unwrap_or(0) + 1, |v| v as i32));
     level.immediate_adds = true;
     let mut known = level.len();
     let mut compared = 0;
@@ -329,6 +477,12 @@ fn replay(s: &Value) -> Result<usize, String> {
         for a in s.get("actions").and_then(Value::as_array).into_iter().flatten() {
             if a["tick"].as_i64() == Some(tick) {
                 act(&mut level, &ids, player, a);
+                // The player may have moved or changed game mode.
+                if player.is_some()
+                    && let Some(p) = level.players.first()
+                {
+                    player = Some(*p);
+                }
             }
         }
         let before = level.player_hits.len();
@@ -362,9 +516,25 @@ fn replay(s: &Value) -> Result<usize, String> {
                 }
             });
         }
+        // `Level.tickBlockEntities`: the creaking hearts, after the entities.
+        level.tick_hearts();
         let before_flush = known;
         level.flush_spawned();
         known = level.len();
+        // wp28: what a breeze shot flies as the recording's did (vanilla draws the shot's spread
+        // from the projectile's own random, seeded from the clock, which cannot be pinned).
+        {
+            let recorded: Vec<&Value> = s["spawned"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|x| x["tick"].as_i64() == Some(tick) && x["type"].as_str() == Some("minecraft:breeze_wind_charge"))
+                .collect();
+            let charges: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| e.type_name == "minecraft:breeze_wind_charge").map(|e| e.id).collect();
+            for (id, rec) in charges.iter().zip(recorded) {
+                level.entity_mut(*id).unwrap().delta = vec3(&rec["motion"]);
+            }
+        }
         // Mobs that appeared get the harness's pinned random and head/body yaw, in the order the
         // harness finds them (`getEntities` over its box: entity sections, then insertion).
         let fresh: Vec<i32> = (before_flush..level.len()).filter_map(|i| level.entity_at(i)).filter(|e| mob::data(e).is_some()).map(|e| e.id).collect();
@@ -372,10 +542,28 @@ fn replay(s: &Value) -> Result<usize, String> {
         let order = level.entities_in(&harness_box, kiln_entity::EntityFilter::Any, i32::MIN);
         let mut fresh = fresh;
         fresh.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
+        // The yaw a mob gets from its constructor is `Math.random() * 2 pi` (unseeded): where both
+        // sides drew one, Kiln takes the recording's.
+        let mut recorded_yaws = s
+            .get("spawned")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter(|sp| sp["tick"].as_i64() == Some(tick) && sp["mob"].as_bool() == Some(true))
+            .map(|sp| f(&sp["yaw"]) as f32);
         for id in fresh {
             let n = (ids.len() - initial) as i64;
+            let recorded = recorded_yaws.next();
             let e = level.entity_mut(id).unwrap();
+            if let Some(y) = recorded
+                && (0.0..6.2832).contains(&y)
+                && (0.0..6.2832).contains(&e.y_rot)
+            {
+                e.y_rot = y;
+                e.y_rot_o = y;
+            }
             e.random = kiln_javamath::random::LegacyRandom::new(7777 * (tick + 1) + n);
+            kiln_entity::mob::brain::pin(e);
             if pin_yaw {
                 // (`Scenario.pinYaw`)
                 e.y_rot = 10.0 * (n + 1) as f32;
@@ -394,6 +582,11 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         // Explosions hurt the player through events (it is not an entity of the harness).
         for ev in std::mem::take(&mut level.events) {
+            if std::env::var_os("KILN_MOB_DEBUG").is_some()
+                && let kiln_entity::level::Event::Explosion { pos, power, blocks, .. } = &ev
+            {
+                eprintln!("dbg tick {tick} explosion at {pos:?} power {power} ({} positions)", blocks.len());
+            }
             if let kiln_entity::level::Event::Hurt { target, amount, kind, attacker } = ev
                 && Some(target) == player.map(|p| p.id)
             {
@@ -409,7 +602,7 @@ fn replay(s: &Value) -> Result<usize, String> {
             && let Some(e) = ids.get(k).and_then(|&id| level.entity(id))
         {
             let m = mob::data(e).unwrap();
-            eprintln!("dbg tick {tick} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
+            eprintln!("dbg tick {tick} pos {:?} delta {:?} ground {} brain {:?} rnd {} ambient {} noaction {} goals {:?} path {:?}", e.position(), e.delta, e.on_ground, m.brain_trace(), e.random.state(), m.ambient_sound_time, m.no_action_time, m.running_goals(), m.nav.path.as_ref().map(|p| (p.next, p.target, p.nodes.iter().map(|n| (n.x, n.y, n.z)).collect::<Vec<_>>())));
         }
         for (k, want) in expected.as_array().unwrap().iter().enumerate() {
             let want = want.as_array().unwrap();
@@ -440,6 +633,14 @@ fn replay(s: &Value) -> Result<usize, String> {
                 return Err(format!("tick {tick} mob {k}: goals [{goals}] (kiln) vs [{want_goals}] (vanilla)"));
             }
             compared += 1;
+        }
+    }
+    // wp28 creaking: the blocks around the hearts (resin) are the same.
+    for b in s.get("end_blocks").and_then(Value::as_array).into_iter().flatten() {
+        let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
+        let (got, want) = (level.block(p), b[3].as_u64().unwrap() as u16);
+        if got != want {
+            return Err(format!("end block {p:?}: {} (kiln) vs {} (vanilla)", kiln_data::blocks_types::block_of(got).name, kiln_data::blocks_types::block_of(want).name));
         }
     }
     // Vanilla arrows draw their damage and spread from their own random, which is seeded from
