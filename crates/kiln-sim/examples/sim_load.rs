@@ -9,6 +9,11 @@
 //!
 //! Prints the process CPU time per measured tick next to the wall time: idle workers spinning
 //! cost CPU without showing in mspt.
+//!
+//! `KILN_SLOW_PRINT=<ms>` prints the measured ticks slower than that with their phases;
+//! `KILN_SAMPLE=1` (Windows) samples every thread's stack while measuring and prints the
+//! functions by self and total time (`KILN_SAMPLE_US` interval, `KILN_SAMPLE_TOP` rows,
+//! `KILN_SAMPLE_FILTER` keeps the stacks through a function whose name contains it).
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
