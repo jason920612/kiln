@@ -349,7 +349,6 @@ pub(crate) fn tick(
     if spawn_enemies {
         phantoms(level, players, spawns);
     }
-    let mut tq = std::time::Instant::now();
     let players: Vec<[f64; 3]> =
         players.iter().filter(|p| !p.disconnected && !p.dead && p.game_mode != 3).map(|p| p.pos).collect();
     if players.is_empty() {
@@ -444,7 +443,6 @@ pub(crate) fn tick(
         order,
         starts,
     };
-    crate::pt(11, &mut tq);
     // `createState`: mobs per category, persistent ones excluded.
     for e in &entities.list {
         let Some(m) = e.phys.as_deref().and_then(mob::data) else { continue };
@@ -461,7 +459,6 @@ pub(crate) fn tick(
     if categories.is_empty() {
         return;
     }
-    crate::pt(12, &mut tq);
     // `collectSpawningChunks`: loaded, ticking chunks with a player within 128 blocks.
     let mut chunks: Vec<(u64, ChunkPos)> = Vec::new();
     level.cells.for_each_cell(&mut |pos, cell| {
@@ -475,7 +472,6 @@ pub(crate) fn tick(
         }
     });
     chunks.sort_unstable();
-    crate::pt(13, &mut tq);
     // The categories whose local caps may bind are counted now, so the chunks below can be
     // looked at side by side.
     for &cat in &categories {
@@ -489,12 +485,10 @@ pub(crate) fn tick(
     // chunk sees (its caps), and spawns are rare: in turn, a chunk that spawned nothing and
     // whose caps still say the same is done; the others run again, so the outcome is the
     // serial one whatever the workers.
-    crate::pt(14, &mut tq);
     let speculated: Vec<Option<smallvec::SmallVec<[bool; N]>>> = {
         let (lvl, sp, cats, counts) = (&*level, &s, &categories, &start_counts);
         ctx.map_indexed_with(SPAWN_WINDOW, &chunks, |_, &(_, c)| speculate(lvl, sp, c, cats, counts, ticking))
     };
-    crate::pt(15, &mut tq);
     let mut spawned_any = false;
     for (&(_, c), guess) in chunks.iter().zip(speculated) {
         let global = |s: &Spawner, cat: Category| s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);

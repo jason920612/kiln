@@ -1666,7 +1666,6 @@ pub(crate) fn tick(
     }
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
-    let mut tq = std::time::Instant::now();
     // The players' stand-ins and views, made side by side (a crowd has a thousand).
     let now = level.env.game_time;
     let made: Vec<(Option<Proxy>, Option<PlayerView>)> = ctx.map_mut_with(PLAYER_VIEWS, players, |_, p| {
@@ -1684,9 +1683,7 @@ pub(crate) fn tick(
         let block = |pos: BlockPos| level.block(kb(pos));
         crate::shoulder::mark_views(players, &block, &mut views);
     }
-    crate::pt(0, &mut tq);
     let nearest = Nearest::build(&views);
-    crate::pt(1, &mut tq);
     let mut sim = SimLevel {
         level: World::Region(level),
         list: &mut entities.list,
@@ -1709,14 +1706,12 @@ pub(crate) fn tick(
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
-    crate::pt(2, &mut tq);
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
     process_pending_kills(&mut sim);
     if !islands::tick_islands(&mut sim, ticking, any_player, ctx) {
         tick_list(&mut sim, ticking, any_player, &mut |_, _| true);
     }
-    crate::pt(3, &mut tq);
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
     for e in sim.list.iter_mut() {
@@ -1726,7 +1721,6 @@ pub(crate) fn tick(
     }
     // `Level.tickBlockEntities`: the creaking hearts, after the entities.
     crate::heart::tick_all(&mut sim, ticking);
-    crate::pt(4, &mut tq);
     // `Player.aiStep` → `touch`: mobs in the player's box inflated by (1, 0.5, 1) (slimes and
     // magma cubes hurt the player). Vanilla runs it in the player's tick; here after the
     // entities'.
@@ -1775,9 +1769,7 @@ pub(crate) fn tick(
             sim.list[i].phys = Some(phys);
         }
     }
-    crate::pt(5, &mut tq);
     ride_players(&mut sim);
-    crate::pt(6, &mut tq);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     let level = level.into_region();
     // Explosion knockback reaches the pushed player's client (it owns its movement).
@@ -1791,7 +1783,6 @@ pub(crate) fn tick(
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
-    crate::pt(7, &mut tq);
 }
 
 /// The entities' turns in list order (`tick` for a region, an island or a tile): passengers

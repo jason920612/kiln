@@ -295,7 +295,6 @@ fn main() {
                 cpu0 = cpu::now();
                 sim.reset_pool_stats();
                 sim.reset_phase_totals();
-                for a in &kiln_sim::PT { a.store(0, Relaxed); }
                 kiln_entity::prof::start();
                 #[cfg(windows)]
                 {
@@ -420,7 +419,6 @@ fn main() {
     let phases: Vec<String> = sim.phase_totals().iter().map(|(n, d)| format!("{n} {:.3}", d.as_secs_f64() * 1e3 / t)).collect();
     println!("phases ms/tick: {}", phases.join(" | "));
     kiln_entity::prof::report(times.len() as u64);
-    println!("PT: {}", kiln_sim::PT.iter().map(|a| format!("{:.3}", a.load(Relaxed) as f64 / 1e6 / times.len() as f64)).collect::<Vec<_>>().join(" "));
     #[cfg(windows)]
     if let Some(s) = sampling {
         s.report();
