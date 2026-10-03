@@ -24,7 +24,10 @@
 //! entities in list order against the entities and players of its tile and the eight around
 //! it, which no other tile of the pass reaches, so the pass's tiles run in parallel. The
 //! entities tick in the order of the passes rather than the list, and see no further than the
-//! neighbouring tiles; what they leave behind is merged per pass in list order.
+//! neighbouring tiles; what they leave behind is merged per pass in list order. There is no
+//! barrier between the passes: a tile's group runs once the groups of earlier passes it shares
+//! an entity or a player with are done ([`run_tiles`]), and the blocks the groups change reach
+//! the region after all the passes.
 
 use super::*;
 use crate::entity_world::{Deferred, IslandWorld, World};
