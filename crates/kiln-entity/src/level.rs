@@ -387,7 +387,12 @@ fn section_of(x: f64, y: f64, z: f64) -> (i32, i32, i32) {
 
 impl PlayerGrid {
     pub fn build(views: &[PlayerView]) -> PlayerGrid {
-        let mut g = PlayerGrid::default();
+        // Sized up front: a crowd rebuilds this every tick.
+        let mut g = PlayerGrid {
+            by_id: crate::memory::FastMap::with_capacity_and_hasher(views.len(), Default::default()),
+            by_uuid: crate::memory::FastMap::with_capacity_and_hasher(views.len(), Default::default()),
+            cells: Default::default(),
+        };
         for (i, v) in views.iter().enumerate() {
             g.by_id.insert(v.id, i);
             g.by_uuid.entry(v.uuid).or_insert(i);
