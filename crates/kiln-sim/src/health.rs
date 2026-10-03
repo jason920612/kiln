@@ -124,7 +124,7 @@ impl Attacker {
             pos,
             creative: false,
             weapon: None,
-            view: crate::enchant::EntityView { type_id, pos, on_ground: true, on_fire: false, sneaking: false, sprinting: false, flying: false },
+            view: crate::enchant::EntityView { type_id, pos, on_ground: true, ..Default::default() },
             mob: Some(type_name),
         }
     }

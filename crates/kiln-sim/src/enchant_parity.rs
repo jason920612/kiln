@@ -21,11 +21,7 @@ fn view(type_name: &str, pos: [f64; 3]) -> EntityView {
     EntityView {
         type_id: kiln_item::registry::ENTITY_TYPE.id(type_name).unwrap_or_else(|| panic!("entity type {type_name}")),
         pos,
-        on_ground: false,
-        on_fire: false,
-        sneaking: false,
-        sprinting: false,
-        flying: false,
+        ..Default::default()
     }
 }
 

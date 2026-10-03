@@ -357,9 +357,7 @@ impl kiln_loot::LootContext for DeathContext {
             pos: self.origin,
             on_ground: true,
             on_fire: self.on_fire,
-            sneaking: false,
-            sprinting: false,
-            flying: false,
+            ..Default::default()
         };
         use kiln_loot::predicate::world::EntitySubPredicate as P;
         predicate.parts.iter().all(|part| match part {

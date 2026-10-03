@@ -93,6 +93,12 @@ pub(crate) fn use_held(p: &mut Player, off_hand: bool, stack: &ItemStack) -> boo
         p.start_using(off_hand, stack, 72000);
         return true;
     }
+    // `Item.use` of a kinetic weapon (a spear): charging begins, with its sound for the others.
+    if let Some(kinetic) = stack.get(kiln_item::keys::KINETIC_WEAPON) {
+        p.start_using(off_hand, stack, 72000);
+        p.make_kinetic_sound(&kinetic.sound);
+        return true;
+    }
     false
 }
 
@@ -385,6 +391,7 @@ pub(crate) fn release_using(p: &mut Player, level: &mut RegionLevel, spawns: &mu
 impl Player {
     /// `LivingEntity.startUsingItem` for an item used over `duration` ticks.
     pub(crate) fn start_using(&mut self, off_hand: bool, stack: &ItemStack, duration: i32) {
+        self.recent_stabs.clear();
         self.using = Some(crate::consume::Using { off_hand, item: stack.item(), remaining: duration, duration, sounds: 0 });
         self.meta_dirty = true;
     }

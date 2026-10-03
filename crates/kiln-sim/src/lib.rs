@@ -29,6 +29,7 @@ mod consume;
 mod buckets;
 mod use_item;
 mod ranged;
+mod spear;
 mod crossbow;
 mod trident;
 mod shield;
@@ -87,6 +88,8 @@ mod wither;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
+#[cfg(test)]
+mod spear_parity;
 mod shoulder;
 #[cfg(test)]
 mod container_parity;
@@ -324,6 +327,16 @@ struct Player {
     meta_dirty: bool,
     /// Arm swung this tick.
     swung: bool,
+    /// `LivingEntity.swingState`: ticks into the current swing (-1 when it has just begun) and
+    /// its length (0: not swinging), and what viewers are told when a swing begins.
+    swing_ticks: i32,
+    swing_duration: i32,
+    swing_kind: i32,
+    swing_wire_duration: i32,
+    /// Ticks of use of a `kinetic_weapon` this tick (for [`spear::kinetic_attack`]).
+    kinetic_ticks: Option<i32>,
+    /// `LivingEntity.recentKineticEnemies`: the entities a charging weapon touched and when.
+    recent_stabs: Vec<(i32, i64)>,
     /// Latest tab-completion request, answered once per tick.
     pending_suggestion: Option<(i32, String)>,
     teleport_id: i32,
@@ -2506,6 +2519,12 @@ impl Sim {
             spin_pose: false,
             meta_dirty: false,
             swung: false,
+            swing_ticks: 0,
+            swing_duration: 0,
+            swing_kind: kiln_proto::packets::entity::swing::WHACK,
+            swing_wire_duration: kiln_proto::packets::entity::swing::DEFAULT_DURATION,
+            kinetic_ticks: None,
+            recent_stabs: Vec::new(),
             pending_suggestion: None,
             teleport_id: 1,
             respawn: joining.respawn,

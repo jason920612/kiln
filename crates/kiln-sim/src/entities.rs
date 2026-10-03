@@ -1780,6 +1780,136 @@ pub(crate) fn hit_mob(
     }
 }
 
+/// A player's stab on an entity (`Player.stabAttack` with a spear), carried out against the
+/// region's entities.
+#[derive(Debug, Clone)]
+pub(crate) struct MobStab {
+    pub target: i32,
+    pub attacker: i32,
+    pub attacker_pos: [f64; 3],
+    pub yaw: f32,
+    /// The weapon's damage type (`minecraft:spear`).
+    pub kind: DamageKind,
+    pub amount: f32,
+    /// Whether the stab hurts at all (a charge may only push or dismount).
+    pub damage: bool,
+    /// The `causeExtraKnockback` strengths in order (0 skips one).
+    pub knockbacks: [f32; 2],
+    pub dismount: bool,
+    /// Fire aspect: seconds the entity burns when hurt.
+    pub fire_seconds: f32,
+}
+
+/// What a stab did to the entity.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MobStabOutcome {
+    pub hurt: bool,
+    pub dismounted: bool,
+    pub health_before: Option<f32>,
+}
+
+/// `Player.stabAttack` on entity `stab.target`: hurt (if it hurts), pushed once or twice, taken
+/// off what it rides, set on fire; `None` when the entity is gone.
+pub(crate) fn stab_mob(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    stab: &MobStab,
+) -> Option<MobStabOutcome> {
+    let i = entities.list.binary_search_by_key(&stab.target, |e| e.id).ok()?;
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x7374_6162, stab.target);
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: stab.target,
+        seeds: 0x7374_6162_00,
+        current_source: None,
+        rng,
+        grid: Grid::default(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
+        view_index: Default::default(),
+    };
+    sim.grid = Grid::build(sim.list);
+    sim.index_players();
+    let mut phys = sim.list[i].phys.take()?;
+    let source = kiln_entity::mob::DamageSource {
+        kind: stab.kind,
+        attacker: Some(stab.attacker),
+        direct: Some(stab.attacker),
+        pos: Some(vec3(stab.attacker_pos)),
+        attacker_is_player: true,
+    };
+    let is_mob = kiln_entity::mob::data(&phys).is_some();
+    let health_before = kiln_entity::mob::data(&phys).map(|m| m.health);
+    let hurt = stab.damage
+        && if is_mob {
+            kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, stab.amount)
+        } else {
+            phys.hurt(&mut sim, stab.kind, stab.amount, Some(stab.attacker))
+        };
+    // `Player.causeExtraKnockback`: a living entity is knocked back, the others pushed.
+    let rad = (stab.yaw * 0.017453292) as f64;
+    let (s, c) = (kiln_entity::mob::mth::sin(rad) as f64, kiln_entity::mob::mth::cos(rad) as f64);
+    for strength in stab.knockbacks {
+        if strength <= 0.0 {
+            continue;
+        }
+        if is_mob {
+            kiln_entity::mob::knockback_entity(&mut phys, strength as f64, s, -c);
+        } else {
+            let k = strength as f64;
+            phys.delta = phys.delta + Vec3::new(-s * k, 0.1, c * k);
+            phys.needs_sync = true;
+        }
+    }
+    let mut dismounted = false;
+    if stab.dismount
+        && let Some(v) = phys.vehicle
+        && !kiln_entity::mob::entity_type_tag(phys.type_name, "minecraft:cannot_be_dismounted_by_item_usage")
+    {
+        dismounted = true;
+        phys.vehicle = None;
+        if let Ok(j) = sim.list.binary_search_by_key(&v, |e| e.id)
+            && let Some(vp) = sim.list[j].phys.as_mut()
+        {
+            kiln_entity::ride::remove_passenger(vp, stab.target);
+        }
+    }
+    if hurt && stab.fire_seconds > 0.0 && is_mob {
+        phys.ignite_for_seconds(stab.fire_seconds);
+    }
+    let victim = kiln_entity::level::Seen::of(&phys);
+    let health_after = kiln_entity::mob::data(&phys).map(|m| m.health);
+    let e = &mut sim.list[i];
+    e.phys = Some(phys);
+    e.sync();
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == stab.attacker) {
+        p.last_hurt_mob = Some((stab.target, level.env.game_time));
+        // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
+        let taken = health_before.zip(health_after).map_or(stab.amount, |(b, a)| b - a);
+        let subject = crate::advancements::triggers::seen_subject(&victim, crate::DIMENSIONS[level.env.dim].0);
+        p.player_hurt_entity(&subject, stab.amount, taken, stab.kind.type_name(), true);
+    }
+    for (n, event) in keyed(events) {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+    Some(MobStabOutcome { hurt, dismounted, health_before })
+}
+
 /// `ServerGamePacketListenerImpl.handleInteract` on a mob, then `Player.interactOn`: player
 /// `i` of the region's players right-clicks entity `target` with the item in `hand` (0 main,
 /// 1 off). The held item changes as the mob says; sheared wool drops.

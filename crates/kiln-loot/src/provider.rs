@@ -53,6 +53,37 @@ impl Ints {
     }
 }
 
+/// A vanilla `FloatProvider` of the kinds enchantment effects use.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Floats {
+    Constant(f32),
+    /// `uniform`: from `min` (inclusive) up to `max` (exclusive).
+    Uniform { min: f32, max: f32 },
+}
+
+impl Floats {
+    pub fn parse(j: &Json) -> PResult<Floats> {
+        if matches!(j, Json::Num(_)) {
+            return Ok(Floats::Constant(crate::parse::float(j)?));
+        }
+        obj(j)?;
+        let kind = req(j, "type", crate::parse::string)?;
+        match kind.strip_prefix("minecraft:").unwrap_or(&kind) {
+            "constant" => Ok(Floats::Constant(req(j, "value", crate::parse::float)?)),
+            "uniform" => Ok(Floats::Uniform { min: req(j, "min_inclusive", crate::parse::float)?, max: req(j, "max_exclusive", crate::parse::float)? }),
+            other => fail(format!("unsupported float provider type {other}")),
+        }
+    }
+
+    /// `FloatProvider.sample`.
+    pub fn sample(self, random: &mut dyn RandomSource) -> f32 {
+        match self {
+            Floats::Constant(v) => v,
+            Floats::Uniform { min, max } => random.next_float() * (max - min) + min,
+        }
+    }
+}
+
 /// An `EnchantmentProvider`.
 #[derive(Debug, Clone)]
 pub enum Provider {

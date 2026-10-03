@@ -143,6 +143,13 @@ pub enum EntityEffect {
     DamageEntity { damage_type: Identifier, min_damage: LevelBasedValue, max_damage: LevelBasedValue },
     /// `ignite`: seconds of fire.
     Ignite(LevelBasedValue),
+    /// `apply_exhaustion`: a player's food exhaustion.
+    ApplyExhaustion(LevelBasedValue),
+    /// `apply_impulse`: the entity's motion changes by `direction` turned along its look, scaled
+    /// by `coordinate_scale` and `magnitude` (the lunge enchantment).
+    ApplyImpulse { direction: [f64; 3], coordinate_scale: [f64; 3], magnitude: LevelBasedValue },
+    /// `play_sound`: one of `sounds` (by the enchantment's level), heard by everyone.
+    PlaySound { sounds: Vec<Identifier>, volume: crate::provider::Floats, pitch: crate::provider::Floats },
     Other(Identifier),
 }
 
@@ -169,6 +176,25 @@ impl EntityEffect {
                 max_damage: lbv("max_damage")?,
             },
             "minecraft:ignite" => EntityEffect::Ignite(lbv("duration")?),
+            "minecraft:apply_exhaustion" => EntityEffect::ApplyExhaustion(lbv("amount")?),
+            "minecraft:apply_impulse" => {
+                let vec3 = |key: &str| -> PResult<[f64; 3]> {
+                    let v = req(j, key, |v| list(v, crate::parse::float))?;
+                    match v[..] {
+                        [x, y, z] => Ok([x as f64, y as f64, z as f64]),
+                        _ => fail(format!("{key} needs three numbers")),
+                    }
+                };
+                EntityEffect::ApplyImpulse { direction: vec3("direction")?, coordinate_scale: vec3("coordinate_scale")?, magnitude: lbv("magnitude")? }
+            }
+            "minecraft:play_sound" => EntityEffect::PlaySound {
+                sounds: req(j, "sound", |v| match v {
+                    Json::Arr(_) => list(v, ident),
+                    _ => Ok(vec![ident(v)?]),
+                })?,
+                volume: opt(j, "volume", crate::provider::Floats::parse)?.unwrap_or(crate::provider::Floats::Constant(1.0)),
+                pitch: opt(j, "pitch", crate::provider::Floats::parse)?.unwrap_or(crate::provider::Floats::Constant(1.0)),
+            },
             _ => EntityEffect::Other(ty),
         })
     }
@@ -324,6 +350,8 @@ pub struct Effects {
     pub damage_immunity: Vec<Conditional<()>>,
     pub attributes: Vec<AttributeEffect>,
     pub post_attack: Vec<Targeted<EntityEffect>>,
+    /// `post_piercing_attack`: what a spear's stab does to its wielder (lunge).
+    pub post_piercing_attack: Vec<Conditional<EntityEffect>>,
     /// `equipment_drops`: targeted value effects (`enchanted` only).
     pub equipment_drops: Vec<Targeted<ValueEffect>>,
     pub crossbow_charge_time: Option<ValueEffect>,
@@ -351,6 +379,9 @@ impl Effects {
                 "minecraft:attributes" => out.attributes = list(v, |e| AttributeEffect::parse(p, e)).map_err(at)?,
                 "minecraft:post_attack" => {
                     out.post_attack = list(v, |e| Targeted::parse(p, e, EntityEffect::parse)).map_err(at)?;
+                }
+                "minecraft:post_piercing_attack" => {
+                    out.post_piercing_attack = list(v, |e| Conditional::parse(p, e, EntityEffect::parse)).map_err(at)?;
                 }
                 "minecraft:equipment_drops" => {
                     out.equipment_drops = list(v, |e| Targeted::parse(p, e, ValueEffect::parse)).map_err(at)?;
@@ -628,6 +659,28 @@ impl LootData {
             for t in e.effects.post_attack.iter().filter(|t| t.enchanted == target) {
                 if t.matches(self, &ctx(level), rng) {
                     f(t, level);
+                }
+            }
+        });
+    }
+}
+
+impl LootData {
+    /// `EnchantmentHelper.doPostPiercingAttackEffects` over the weapon in `slot`: each enchantment's
+    /// `post_piercing_attack` effects whose requirements hold in `entityContext(level, wielder)`,
+    /// with the enchantment's level, in the stored enchantment order.
+    pub fn post_piercing_effects<'a, C: LootContext>(
+        &'a self,
+        stack: &ItemStack,
+        slot: EquipmentSlot,
+        rng: &mut dyn RandomSource,
+        ctx: impl Fn(i32) -> C,
+        mut f: impl FnMut(&'a EntityEffect, i32),
+    ) {
+        self.for_each_enchantment_in_slot(stack, slot, |e, level| {
+            for c in &e.effects.post_piercing_attack {
+                if c.matches(self, &ctx(level), rng) {
+                    f(&c.effect, level);
                 }
             }
         });
