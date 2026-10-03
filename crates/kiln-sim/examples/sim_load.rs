@@ -6,6 +6,7 @@
 //!        [--spacing 48] [--radius 6] [--ticks 1200] [--view-distance 2] [--behavior crowd|walk]
 //!        [--threads n] [--unified] [--inline] [--independent] [--slow-ms n]
 //!        [--spin-us n] [--inline-below-us n] [--chunk-us n] [--helper-share-us n]
+//!        [--priority n] [--tick-ms n]
 //!
 //! Prints the process CPU time per measured tick next to the wall time: idle workers spinning
 //! cost CPU without showing in mspt.
@@ -108,6 +109,8 @@ struct Args {
     prewake_us: u64,
     /// `--priority n`: the tick threads' priority (`PoolConfig::priority`).
     priority: Option<i32>,
+    /// `--tick-ms n`: ticks start n ms apart, as a server paces them (0: back to back).
+    tick_ms: u64,
 }
 
 fn args() -> Args {
@@ -138,6 +141,7 @@ fn args() -> Args {
         locator_interval: 1,
         prewake_us: 0,
         priority: None,
+        tick_ms: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -165,6 +169,7 @@ fn args() -> Args {
             "--locator-interval" => a.locator_interval = value().parse().unwrap(),
             "--prewake-us" => a.prewake_us = value().parse().unwrap(),
             "--priority" => a.priority = Some(value().parse().unwrap()),
+            "--tick-ms" => a.tick_ms = value().parse().unwrap(),
             "--day-time" => a.day_time = Some(value().parse().unwrap()),
             "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
@@ -234,6 +239,7 @@ fn main() {
     #[cfg(windows)]
     let mut sampling: Option<sampler::Sampler> = None;
     let mut wall0 = Instant::now();
+    let pace_start = Instant::now();
     let mut last_totals: Vec<(&str, std::time::Duration)> = Vec::new();
     loop {
         for _ in 0..joins_per_tick {
@@ -254,6 +260,17 @@ fn main() {
         }
         if a.churn && let Some(since) = measuring_since {
             churn.tick(tick - since, &mut walkers, &mut inbox, a.groups, a.spacing, a.view_distance, SURFACE_Y);
+        }
+        if a.tick_ms > 0 {
+            // A server sleeps out the rest of the tick (spinning for the last stretch, as a
+            // sleep overshoots on Windows).
+            let due = pace_start + std::time::Duration::from_millis(a.tick_ms * tick as u64);
+            while Instant::now() + std::time::Duration::from_millis(2) < due {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            while Instant::now() < due {
+                std::hint::spin_loop();
+            }
         }
         let start = Instant::now();
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
