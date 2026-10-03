@@ -10,6 +10,8 @@ pub struct TickStats {
     micros: Vec<u32>,
     /// Accumulated time per named tick phase over the window.
     phases: Vec<(&'static str, Duration)>,
+    /// The same, since the last `reset_totals` (not cleared by a completed window).
+    totals: Vec<(&'static str, Duration)>,
 }
 
 pub struct Report {
@@ -38,10 +40,23 @@ impl fmt::Display for Report {
 impl TickStats {
     /// Adds time spent in a phase this tick.
     pub fn phase(&mut self, name: &'static str, d: Duration) {
+        match self.totals.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, t)) => *t += d,
+            None => self.totals.push((name, d)),
+        }
         match self.phases.iter_mut().find(|(n, _)| *n == name) {
             Some((_, t)) => *t += d,
             None => self.phases.push((name, d)),
         }
+    }
+
+    /// Time per phase since the last reset, in the order the phases first appeared.
+    pub fn totals(&self) -> &[(&'static str, Duration)] {
+        &self.totals
+    }
+
+    pub fn reset_totals(&mut self) {
+        self.totals.clear();
     }
 
     /// Records one tick; returns a report when a window completes.

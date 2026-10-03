@@ -1248,11 +1248,16 @@ impl Sim {
         for (request, result) in profile_results {
             self.profile_lookup_finished(request, result);
         }
+        lap(&mut self.stats, "g.console");
         self.tick_global();
+        lap(&mut self.stats, "g.tick_global");
         self.flush_stat_scores();
+        lap(&mut self.stats, "g.stat_scores");
         self.advancement_upkeep();
+        lap(&mut self.stats, "g.advancements");
         // Players teleported in PX or G tick in their destination's region from now on.
         self.settle_teleported();
+        lap(&mut self.stats, "g.settle");
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
 
@@ -1448,6 +1453,16 @@ impl Sim {
     /// The tick pool's per-worker counters (for load tools).
     pub fn pool_stats(&self) -> Vec<kiln_sched::WorkerStats> {
         self.pool.stats()
+    }
+
+    /// Time per tick phase (b0, packets, px, global, regions, then the regions' sub-phases as
+    /// summed CPU time) since `reset_phase_totals`.
+    pub fn phase_totals(&self) -> Vec<(&'static str, Duration)> {
+        self.stats.totals().to_vec()
+    }
+
+    pub fn reset_phase_totals(&mut self) {
+        self.stats.reset_totals();
     }
 
     pub fn reset_pool_stats(&self) {
@@ -2722,6 +2737,12 @@ impl Sim {
 
     /// G: world age and time, autosave.
     fn tick_global(&mut self) {
+        let mut mark = Instant::now();
+        let mut lap = |stats: &mut stats::TickStats, name| {
+            let now = Instant::now();
+            stats.phase(name, now - mark);
+            mark = now;
+        };
         // A frozen game (`/tick freeze`) keeps its time, weather and border; functions run.
         let normal = self.world.tick_rate.runs_normally();
         if normal {
@@ -2741,16 +2762,22 @@ impl Sim {
         }
         // The levels' `tick`: the border, the weather, sleeping, then (in the regions) the
         // blocks.
+        lap(&mut self.stats, "g.time");
         self.update_sleeping();
         if normal {
             self.tick_borders();
             self.tick_weather();
         }
+        lap(&mut self.stats, "g.border_weather");
         self.tick_sleep();
+        lap(&mut self.stats, "g.sleep");
         self.send_post_effects();
+        lap(&mut self.stats, "g.effects");
         self.tick_waypoints();
+        lap(&mut self.stats, "g.waypoints");
         self.tick_raids();
         self.tick_dragon_fight();
+        lap(&mut self.stats, "g.raids_dragon");
         // `save-all` asks for a save; `save-off` stops the autosave.
         let autosave = normal && self.commands.auto_save && self.game_time % AUTOSAVE_TICKS == 0;
         if std::mem::take(&mut self.commands.save_requested) || autosave {

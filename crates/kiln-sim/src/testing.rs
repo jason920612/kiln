@@ -27,6 +27,14 @@ pub struct SinkStats {
     pub count_ids: AtomicBool,
     /// Every packet sent, once set to `Some` (tests that inspect packets).
     pub log: Mutex<Option<Vec<Bytes>>>,
+    /// Order-dependent hash of every packet received (keep-alives left out), when
+    /// `KILN_SINK_DIGEST` is set: two runs sent a player the same stream iff the digests agree.
+    pub digest: Mutex<u64>,
+}
+
+fn track_digest() -> bool {
+    static TRACK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACK.get_or_init(|| std::env::var_os("KILN_SINK_DIGEST").is_some())
 }
 
 fn track_ids() -> bool {
@@ -41,6 +49,15 @@ impl SinkStats {
         }
         let mut r = Reader::new(p);
         let id = r.varint().ok();
+        if track_digest() && id != Some(kiln_data::packets::play::clientbound::KEEP_ALIVE) {
+            // FNV-1a over the length and the bytes.
+            let mut d = self.digest.lock().unwrap();
+            let mut h = *d ^ 0xcbf2_9ce4_8422_2325;
+            for b in (p.len() as u32).to_le_bytes().iter().chain(p.iter()) {
+                h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            *d = h;
+        }
         if id != Some(kiln_data::packets::play::clientbound::KEEP_ALIVE) {
             self.packets.fetch_add(1, Relaxed);
             self.bytes.fetch_add(p.len() as u64, Relaxed);

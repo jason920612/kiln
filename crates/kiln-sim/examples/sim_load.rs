@@ -89,6 +89,9 @@ struct Args {
     village: bool,
     /// `time set` this many ticks when the mobs come (villager schedules: 2000 work, 9000 meet, 13000 rest).
     day_time: Option<i64>,
+    /// Players that crouch, go spectator and leave and rejoin while measuring (waypoint and
+    /// tracking churn); for comparing packet streams between builds.
+    churn: bool,
 }
 
 fn args() -> Args {
@@ -114,6 +117,7 @@ fn args() -> Args {
         kinds: Vec::new(),
         village: false,
         day_time: None,
+        churn: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -136,6 +140,7 @@ fn args() -> Args {
             "--chunk-us" => a.chunk_us = Some(value().parse().unwrap()),
             "--mobs" => a.mobs = value().parse().unwrap(),
             "--village" => a.village = true,
+            "--churn" => a.churn = true,
             "--day-time" => a.day_time = Some(value().parse().unwrap()),
             "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
@@ -192,6 +197,10 @@ fn main() {
     let (mut packets0, mut bytes0) = (0, 0);
     let warmup_done = |w: &[Walker]| w.len() == a.players && w.iter().all(|w| w.client.settled());
     let mut measuring_since: Option<usize> = None;
+    let mut crouching = vec![false; a.players];
+    let mut spectators: Vec<(usize, usize)> = Vec::new();
+    let mut retired = Vec::new();
+    let mut next_conn = a.players as u64;
     let mut cpu0 = None;
     let mut wall0 = Instant::now();
     loop {
@@ -210,6 +219,47 @@ fn main() {
         }
         for w in &mut walkers {
             w.tick(a.radius, a.walk, &mut inbox);
+        }
+        if a.churn && let Some(since) = measuring_since {
+            let k = tick - since;
+            let n = walkers.len();
+            for i in 0..n {
+                // About 2.5% of the players flip their crouch each tick.
+                if (i * 7 + k) % 40 == 0 {
+                    crouching[i] = !crouching[i];
+                    let flags = if crouching[i] { 0x20 } else { 0 };
+                    inbox.push(kiln_link::ToSim::Packet(walkers[i].client.conn, kiln_link::PlayIn::PlayerInput { flags }));
+                }
+            }
+            if k % 50 == 0 {
+                let i = (k / 50 * 13) % n;
+                inbox.push(kiln_link::ToSim::Console(format!("gamemode spectator W{}", walkers[i].client.conn - 1)));
+                spectators.push((k + 25, i));
+            }
+            while let Some(&(when, i)) = spectators.first() {
+                if when > k {
+                    break;
+                }
+                spectators.remove(0);
+                inbox.push(kiln_link::ToSim::Console(format!("gamemode survival W{}", walkers[i].client.conn - 1)));
+            }
+            if k % 97 == 96 {
+                // One player leaves; a new one takes its place in the group.
+                let i = (k / 97 * 31) % n;
+                let old = walkers.remove(i);
+                crouching.remove(i);
+                retired.push(old.client.stats.clone());
+                inbox.push(kiln_link::ToSim::Leave(old.client.conn));
+                next_conn += 1;
+                let name = format!("W{}", next_conn - 1);
+                let (msg, stats) = join(next_conn, &name, a.view_distance);
+                inbox.push(msg);
+                let [ox, oz] = group_offset(i % a.groups, a.groups, a.spacing);
+                let center = [8.5 + ox, 8.5 + oz];
+                inbox.push(kiln_link::ToSim::Console(format!("tp {name} {} {SURFACE_Y} {}", center[0], center[1])));
+                walkers.insert(i, Walker::new(Client::new(next_conn, stats), center, next_conn));
+                crouching.insert(i, false);
+            }
         }
         let start = Instant::now();
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
@@ -257,6 +307,7 @@ fn main() {
                 }
                 cpu0 = cpu::now();
                 sim.reset_pool_stats();
+                sim.reset_phase_totals();
                 kiln_entity::prof::start();
                 wall0 = Instant::now();
                 packets0 = walkers.iter().map(|w| w.client.stats.packets.load(Relaxed)).sum();
@@ -314,6 +365,19 @@ fn main() {
         (bytes - bytes0) as f64 / n / 1e3,
         sim.state_hash()
     );
+    if std::env::var_os("KILN_SINK_DIGEST").is_some() {
+        // Per player (by connection) streams, combined in connection order.
+        let mut all: Vec<(u64, u64)> =
+            walkers.iter().map(|w| (w.client.conn, *w.client.stats.digest.lock().unwrap())).chain(retired.iter().map(|r| (0, *r.digest.lock().unwrap()))).collect();
+        all.sort_unstable();
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for (c, d) in &all {
+            for b in c.to_le_bytes().iter().chain(d.to_le_bytes().iter()) {
+                h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        println!("packet stream digest {h:016x} ({} players)", all.len());
+    }
     if std::env::var_os("KILN_SINK_IDS").is_some() {
         let mut total: std::collections::BTreeMap<i32, (u64, u64)> = Default::default();
         for w in &walkers {
@@ -350,6 +414,8 @@ fn main() {
         sum(|w| w.parked).as_secs_f64() * 1e3 / t,
         helpers.iter().map(|w| w.chunks).sum::<u64>() as f64 / t,
     );
+    let phases: Vec<String> = sim.phase_totals().iter().map(|(n, d)| format!("{n} {:.3}", d.as_secs_f64() * 1e3 / t)).collect();
+    println!("phases ms/tick: {}", phases.join(" | "));
     kiln_entity::prof::report(times.len() as u64);
     if let Some(r) = sim.last_report() {
         println!("last window: {r}");
