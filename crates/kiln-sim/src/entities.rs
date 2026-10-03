@@ -651,7 +651,8 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
 /// there is one only those are compared.
 pub(crate) struct Nearest {
     cubes: FastMap<(i32, i32, i32), Vec<Vec3>>,
-    all: Vec<Vec3>,
+    /// Each cube's players' bounds (min, max corners) and its key, for the far search.
+    bounds: Vec<(Vec3, Vec3, (i32, i32, i32))>,
 }
 
 impl Nearest {
@@ -660,12 +661,20 @@ impl Nearest {
     }
 
     pub(crate) fn build(views: &[PlayerView]) -> Nearest {
-        let all: Vec<Vec3> = views.iter().filter(|v| !v.spectator).map(|v| v.pos).collect();
         let mut cubes: FastMap<(i32, i32, i32), Vec<Vec3>> = Default::default();
-        for &p in &all {
+        for p in views.iter().filter(|v| !v.spectator).map(|v| v.pos) {
             cubes.entry(Self::cube(p)).or_default().push(p);
         }
-        Nearest { cubes, all }
+        let mut bounds: Vec<(Vec3, Vec3, (i32, i32, i32))> = cubes
+            .iter()
+            .map(|(&k, ps)| {
+                let lo = ps.iter().fold(ps[0], |a, b| Vec3::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z)));
+                let hi = ps.iter().fold(ps[0], |a, b| Vec3::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z)));
+                (lo, hi, k)
+            })
+            .collect();
+        bounds.sort_unstable_by_key(|b| b.2);
+        Nearest { cubes, bounds }
     }
 
     /// The squared distance from `p` to the nearest player, as a scan of every player gives it.
@@ -684,10 +693,31 @@ impl Nearest {
                 }
             }
         }
-        match best {
-            Some(d) if d <= 32.0 * 32.0 => Some(d),
-            _ => self.all.iter().map(|q| q.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b)),
+        if let Some(d) = best
+            && d <= 32.0 * 32.0
+        {
+            return Some(d);
         }
+        // Farther: the other cubes whose players' bounds could hold someone nearer. Each
+        // axis's gap to the bounds is at most that axis's difference for any player inside,
+        // and the squares add up in the same order, so the bound never exceeds a distance.
+        for (lo, hi, k) in &self.bounds {
+            if (k.0 - c.0).abs() <= 1 && (k.1 - c.1).abs() <= 1 && (k.2 - c.2).abs() <= 1 {
+                continue;
+            }
+            let gap = |v: f64, lo: f64, hi: f64| if v < lo { lo - v } else if v > hi { v - hi } else { 0.0 };
+            let (gx, gy, gz) = (gap(p.x, lo.x, hi.x), gap(p.y, lo.y, hi.y), gap(p.z, lo.z, hi.z));
+            if best.is_some_and(|b| gx * gx + gy * gy + gz * gz >= b) {
+                continue;
+            }
+            for q in &self.cubes[k] {
+                let d = q.distance_to_sqr(p);
+                if best.is_none_or(|b| d < b) {
+                    best = Some(d);
+                }
+            }
+        }
+        best
     }
 }
 
