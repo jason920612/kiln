@@ -646,6 +646,13 @@ impl Ticking {
         }
     }
 
+    /// These chunks and those within `r` of `center` (the dragon fight's arena).
+    pub fn with_arena(&self, center: ChunkPos, r: i32) -> Ticking {
+        let mut t = Ticking(self.0.clone());
+        t.add(center, r);
+        t
+    }
+
     pub fn contains(&self, c: ChunkPos) -> bool {
         let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
         self.0.get(&c.cell()).is_some_and(|m| m & (1 << bit) != 0)
