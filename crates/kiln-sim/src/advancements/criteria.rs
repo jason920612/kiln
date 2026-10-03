@@ -454,14 +454,13 @@ pub(crate) fn location_matches(l: &LocationPredicate, pos: [f64; 3], dim: &str, 
     let block_pos = pos.map(|c| c.floor() as i32);
     if let Some(biomes) = &l.biomes {
         let Some(b) = world.and_then(|w| w.biome(block_pos)) else { return false };
-        let Some(id) = kiln_item::Identifier::parse(b) else { return false };
-        if !biomes.contains(&id) {
+        if !biomes.contains_str(b) {
             return false;
         }
     }
     if let Some(structures) = &l.structures {
         let Some(found) = world.and_then(|w| w.structures_at(block_pos)) else { return false };
-        if !found.iter().filter_map(|s| kiln_item::Identifier::parse(s)).any(|id| structures.contains(&id)) {
+        if !found.iter().any(|s| structures.contains_str(s)) {
             return false;
         }
     }

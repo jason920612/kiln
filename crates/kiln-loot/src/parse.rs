@@ -184,6 +184,11 @@ impl NameSet {
     pub fn contains(&self, name: &Identifier) -> bool {
         self.names.contains(name)
     }
+
+    /// [`NameSet::contains`] of `Identifier::parse(name)` (false if it does not parse).
+    pub fn contains_str(&self, name: &str) -> bool {
+        self.names.iter().any(|n| n.is(name))
+    }
 }
 
 /// State shared while decoding one datapack: the loot registries' names and the tags.
