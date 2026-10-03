@@ -269,7 +269,9 @@ impl Player {
             let z = self.pos[2] + (self.entity_rng.next_double() - 0.5) * diameter as f64;
             if let Some(to) = self.random_teleport_target(x, y, z, block) {
                 self.stop_using();
+                self.dismount_on_teleport |= self.vehicle.is_some();
                 self.teleport(to, self.rot, now);
+
                 self.block_effects_from = to;
                 self.entity_events.push(TELEPORT);
                 self.send(entity::entity_event(self.entity_id, TELEPORT));

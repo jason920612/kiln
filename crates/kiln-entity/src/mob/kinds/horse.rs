@@ -124,9 +124,9 @@ pub struct State {
     pub body_drop: f32,
     /// Counts the times the inventory was made anew (the screen on the old one closes).
     pub inv_serial: u32,
-    /// Equipment changes made through the screen whose `onEquipItem` is still to come: (slot
-    /// ordinal, old, new).
-    pending_equip: Vec<(u8, ItemStack, ItemStack)>,
+    /// Equip sounds of changes made through the screen: `onEquipItem` drew its seed when the
+    /// change was made, the sound itself goes out at the animal's next tick.
+    pending_equip: Vec<&'static str>,
     /// `Horse.DATA_ID_TYPE_VARIANT`: variant | markings << 8.
     pub type_variant: i32,
     /// `SkeletonHorse.isTrap` and `trapTime`.
@@ -563,9 +563,8 @@ impl Kind for Equine {
 
     fn ai_step_before(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         // What was put on or taken off through the screen since the last tick (`onEquipItem`).
-        for (slot, old, new) in std::mem::take(&mut st_mut(m).pending_equip) {
-            let slot = if slot == 7 { kiln_item::component::EquipmentSlot::Saddle } else { kiln_item::component::EquipmentSlot::Body };
-            equip_sound(e, level, slot, &old, &new);
+        for sound in std::mem::take(&mut st_mut(m).pending_equip) {
+            level.emit(Event::Sound { pos: e.position(), sound, source: "neutral", volume: 1.0, pitch: 1.0 });
         }
         if e.random.next_int_bounded(200) == 0 {
             st_mut(m).tail_counter = 1;
@@ -1298,13 +1297,20 @@ pub fn equippable_in_slot(stack: &ItemStack, slot: kiln_item::component::Equipme
 /// `onEquipItem` for a mount: the equip sound (the saddle's own for a saddle), with the seed
 /// drawn from the animal's random, unless the same item was swapped for itself.
 fn equip_sound(e: &mut Entity, level: &mut dyn EntityLevel, slot: kiln_item::component::EquipmentSlot, old: &ItemStack, new: &ItemStack) {
+    if let Some(sound) = equip_sound_drawn(e, slot, old, new) {
+        level.emit(Event::Sound { pos: e.position(), sound, source: "neutral", volume: 1.0, pitch: 1.0 });
+    }
+}
+
+/// The checks of `onEquipItem` and the draw of the sound's seed; the sound to play, if any.
+fn equip_sound_drawn(e: &mut Entity, slot: kiln_item::component::EquipmentSlot, old: &ItemStack, new: &ItemStack) -> Option<&'static str> {
     use kiln_inventory::stack::same_item_same_components as same;
     if (new.is_empty() && old.is_empty()) || same(old, new) || e.first_tick {
-        return;
+        return None;
     }
-    let Some(equippable) = new.get(kiln_item::keys::EQUIPPABLE) else { return };
+    let equippable = new.get(kiln_item::keys::EQUIPPABLE)?;
     if e.silent || equippable.slot != slot {
-        return;
+        return None;
     }
     let sound = if slot == kiln_item::component::EquipmentSlot::Saddle {
         "minecraft:entity.horse.saddle"
@@ -1315,7 +1321,7 @@ fn equip_sound(e: &mut Entity, level: &mut dyn EntityLevel, slot: kiln_item::com
         }
     };
     e.random.next_long();
-    level.emit(Event::Sound { pos: e.position(), sound, source: "neutral", volume: 1.0, pitch: 1.0 });
+    Some(sound)
 }
 
 /// The slots a mount's screen shows: saddle, body armor, then the chest's.
@@ -1326,22 +1332,34 @@ pub fn mount_slots(m: &MobData) -> Option<Vec<ItemStack>> {
     Some(v)
 }
 
-/// What the screen's slots now say, taken into the animal (the changes of the saddle and the
-/// armor sound at the animal's next tick).
-pub fn set_mount_slots(m: &mut MobData, items: &[ItemStack]) {
-    let Some(s) = ext::state_mut::<State>(m) else { return };
-    if items.len() != 2 + s.inventory.len() {
-        return;
+/// What the screen's slots now say, taken into the animal. A change of the saddle or the armor
+/// is an `onEquipItem` now (its sound's seed comes off the animal's random at once, like the
+/// packet that moved the item); the sound itself goes out at the animal's next tick.
+pub fn set_mount_slots(e: &mut Entity, items: &[ItemStack]) {
+    let mut changes = Vec::new();
+    {
+        let Some(m) = crate::mob::data_mut(e) else { return };
+        let Some(s) = ext::state_mut::<State>(m) else { return };
+        if items.len() != 2 + s.inventory.len() {
+            return;
+        }
+        if !same_stack(&s.saddle, &items[0]) {
+            changes.push((kiln_item::component::EquipmentSlot::Saddle, s.saddle.clone(), items[0].clone()));
+        }
+        if !same_stack(&s.body, &items[1]) {
+            changes.push((kiln_item::component::EquipmentSlot::Body, s.body.clone(), items[1].clone()));
+        }
+        s.saddle = items[0].clone();
+        s.body = items[1].clone();
+        s.inventory.clone_from_slice(&items[2..]);
     }
-    if !same_stack(&s.saddle, &items[0]) {
-        s.pending_equip.push((7, s.saddle.clone(), items[0].clone()));
+    for (slot, old, new) in changes {
+        if let Some(sound) = equip_sound_drawn(e, slot, &old, &new)
+            && let Some(s) = crate::mob::data_mut(e).and_then(ext::state_mut::<State>)
+        {
+            s.pending_equip.push(sound);
+        }
     }
-    if !same_stack(&s.body, &items[1]) {
-        s.pending_equip.push((6, s.body.clone(), items[1].clone()));
-    }
-    s.saddle = items[0].clone();
-    s.body = items[1].clone();
-    s.inventory.clone_from_slice(&items[2..]);
 }
 
 fn same_stack(a: &ItemStack, b: &ItemStack) -> bool {

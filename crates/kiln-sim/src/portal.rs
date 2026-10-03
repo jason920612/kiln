@@ -87,9 +87,9 @@ impl Sim {
 }
 
 impl Player {
-    /// `Entity.canUsePortal(false)`: alive (players ride nothing in Kiln).
+    /// `Entity.canUsePortal(false)`: alive, and not a passenger (what it rides goes, with it).
     fn can_use_portal(&self) -> bool {
-        !self.dead && self.health > 0.0 && !self.disconnected
+        !self.dead && self.health > 0.0 && !self.disconnected && self.vehicle.is_none()
     }
 
     /// `entityInside` of the portal blocks, for a block the player's box touches.
@@ -434,6 +434,8 @@ impl Sim {
                     !e.removed
                         && e.kind.name != "minecraft:ender_dragon"
                         && !d.portal_cooldowns.contains_key(&e.uuid.as_u128())
+                        // `canUsePortal(false)`: a passenger does not (its vehicle does, with it).
+                        && e.phys.as_ref().is_none_or(|p| p.vehicle.is_none())
                         && !e.phys.as_ref().is_some_and(kiln_entity::mob::kinds::creaking::is_heart_bound)
                 }) {
                     let Some(phys) = e.phys.as_ref() else { continue };
@@ -494,7 +496,14 @@ impl Sim {
                 PortalKind::Gateway => None,
             };
             let Some((to, pos, rot)) = dest else { continue };
+            // A vehicle takes its riders along (`Entity.teleport`: passengers are teleported
+            // first and sit down again on the new entity).
+            if self.entity_has_riders(from, id) {
+                self.stack_changes_level(from, id, to, pos, Some(rot), Some(now + ENTITY_PORTAL_COOLDOWN));
+                continue;
+            }
             let mut taken = None;
+
             for r in self.dims[from].regions.iter_mut() {
                 let list = &mut r.part_mut().0.list;
                 if let Some(i) = list.iter().position(|e| e.id == id) {

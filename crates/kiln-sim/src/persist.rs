@@ -82,6 +82,15 @@ pub(crate) struct ReturningVehicle {
 /// Ticks a returning vehicle is waited for before it is given up on.
 const RETURNING_TRIES: u32 = 100;
 
+impl ReturningVehicle {
+    /// A rider whose stack was spawned in its level just now: it sits on what has `attach` as its
+    /// UUID (the stack is only waiting for its ids).
+    pub(crate) fn spawned(attach: u128, root: Tag) -> Self {
+        Self { attach, root, spawned: true, tries: 0 }
+    }
+}
+
+
 pub(crate) fn returning_vehicle(saved: Option<&Tag>) -> Option<ReturningVehicle> {
     let saved = saved?;
     let attach = saved.get("Attach").and_then(persist::uuid_from_tag)?;

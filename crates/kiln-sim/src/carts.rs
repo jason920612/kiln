@@ -78,8 +78,8 @@ pub(crate) fn push(entities: &mut Entities, p: &Player, cart: Option<i32>) {
     if e.removed {
         return;
     }
-    if let Some(m) = e.phys.as_mut().and_then(kiln_entity::mob::data_mut) {
-        kiln_entity::mob::kinds::horse::set_mount_slots(m, &p.containers.cart.items);
+    if let Some(phys) = e.phys.as_mut() {
+        kiln_entity::mob::kinds::horse::set_mount_slots(phys, &p.containers.cart.items);
     }
 }
 

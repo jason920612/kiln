@@ -89,7 +89,10 @@ SUMMONS = [
 SIMULATED = {"minecraft:cow", "minecraft:chicken","minecraft:item", "minecraft:experience_orb", "minecraft:arrow", "minecraft:falling_block",
              "minecraft:tnt", "minecraft:snowball", "minecraft:pig", "minecraft:zombie", "minecraft:chest_minecart",
              "minecraft:hopper_minecart", "minecraft:furnace_minecart", "minecraft:tnt_minecart", "minecraft:oak_chest_boat",
-             "minecraft:bamboo_chest_raft", "minecraft:donkey", "minecraft:llama", "minecraft:trader_llama"}
+             "minecraft:bamboo_chest_raft", "minecraft:donkey", "minecraft:llama", "minecraft:trader_llama",
+             # Kiln simulates bats (kinds/bat.rs): the ones vanilla spawned in the caves below are spawned
+             # for the client and saved with their UUID and state like any other simulated mob.
+             "minecraft:bat"}
 
 
 def entity_types():
@@ -222,7 +225,7 @@ def main():
     fixture = build_fixture(out, a.vanilla_port)
     before = entities(fixture / "world")
     kinds = sorted(typ(e) for e in before.values())
-    # Mobs that spawned naturally (bats in the caves below) stay in: more unsimulated entities.
+    # Mobs that spawned naturally (bats in the caves below) stay in: more entities than the summons.
     if len(before) < len(SUMMONS):
         sys.exit(f"vanilla saved {len(before)} entities, expected at least {len(SUMMONS)}: {kinds}")
     print(f"   vanilla saved {kinds}", flush=True)

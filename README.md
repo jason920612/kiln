@@ -126,6 +126,13 @@ python tools/combat_vectors.py --filter spear --out work/wp34/combat/vectors.jso
                                      # players' spears (stabs and charges, lunge); drop --filter for all
                                      # combat, enchantment, riptide, mount and spear parity
 python tools/entity_persist_check.py   # entity chunks and riding stacks load in vanilla and back
+cargo test -p kiln-sim --test region_stacks
+                                     # riding stacks, leads and open cart menus through region merges and
+                                     # splits, `/tp` of entities (ids, riders and menus kept across regions),
+                                     # a rider that teleports, boats through portals: every tick's digest
+                                     # (entities as saved, riding, menus, packets) equal on one region, one
+                                     # per group and parallel workers; invariants under independent scheduling
+
 ```
 
 Packets Kiln encodes are checked by decoding them with vanilla's own codecs
