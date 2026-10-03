@@ -65,61 +65,60 @@ impl SinkStats {
         if let Some(log) = self.log.lock().unwrap().as_mut() {
             log.extend(batch.iter().cloned());
         }
-        let ids: Vec<Option<i32>> = batch.iter().map(|p| Reader::new(p).varint().ok()).collect();
-        if track_digest() {
-            // FNV-1a over the length and the bytes.
-            let mut d = self.digest.lock().unwrap();
-            for (p, id) in batch.iter().zip(&ids) {
-                if *id == Some(KEEP_ALIVE) {
-                    continue;
-                }
-                let mut h = *d ^ 0xcbf2_9ce4_8422_2325;
-                for b in (p.len() as u32).to_le_bytes().iter().chain(p.iter()) {
-                    h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
-                }
-                *d = h;
-            }
-        }
-        let (mut packets, mut bytes) = (0, 0);
-        for (p, id) in batch.iter().zip(&ids) {
-            if *id != Some(KEEP_ALIVE) {
-                packets += 1;
-                bytes += p.len() as u64;
-            }
-        }
-        self.packets.fetch_add(packets, Relaxed);
-        self.bytes.fetch_add(bytes, Relaxed);
-        if track_ids() || self.count_ids.load(Relaxed) {
-            let mut m = self.by_id.lock().unwrap();
-            for (p, id) in batch.iter().zip(&ids) {
-                if let Some(id) = id {
-                    let e = m.entry(*id).or_default();
-                    e.0 += 1;
-                    e.1 += p.len() as u64;
+        let id_of = |p: &Bytes| Reader::new(p).varint().ok();
+        let digest = track_digest();
+        let by_id = track_ids() || self.count_ids.load(Relaxed);
+        if digest || by_id {
+            let ids: Vec<Option<i32>> = batch.iter().map(id_of).collect();
+            if digest {
+                // FNV-1a over the length and the bytes.
+                let mut d = self.digest.lock().unwrap();
+                for (p, id) in batch.iter().zip(&ids) {
+                    if *id == Some(KEEP_ALIVE) {
+                        continue;
+                    }
+                    let mut h = *d ^ 0xcbf2_9ce4_8422_2325;
+                    for b in (p.len() as u32).to_le_bytes().iter().chain(p.iter()) {
+                        h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+                    }
+                    *d = h;
                 }
             }
-        }
-        for (p, id) in batch.iter().zip(&ids) {
-            match *id {
-                Some(KEEP_ALIVE) => {
-                    let mut r = Reader::new(p);
-                    if r.varint().is_ok()
-                        && let Ok(k) = r.i64()
-                    {
-                        *self.keep_alive.lock().unwrap() = Some(k);
+            if by_id {
+                let mut m = self.by_id.lock().unwrap();
+                for (p, id) in batch.iter().zip(&ids) {
+                    if let Some(id) = id {
+                        let e = m.entry(*id).or_default();
+                        e.0 += 1;
+                        e.1 += p.len() as u64;
                     }
                 }
+            }
+        }
+        // One pass for the counts and the packets a scripted client answers (this runs inside
+        // the measured tick: a crowd's sinks see tens of thousands of packets a tick).
+        let (mut packets, mut bytes) = (0, 0);
+        for p in batch {
+            let mut r = Reader::new(p);
+            match r.varint().ok() {
+                Some(KEEP_ALIVE) => {
+                    if let Ok(k) = r.i64() {
+                        *self.keep_alive.lock().unwrap() = Some(k);
+                    }
+                    continue;
+                }
                 Some(PLAYER_POSITION) => {
-                    let mut r = Reader::new(p);
-                    if r.varint().is_ok()
-                        && let (Ok(id), Ok(x), Ok(y), Ok(z)) = (r.varint(), r.f64(), r.f64(), r.f64())
-                    {
+                    if let (Ok(id), Ok(x), Ok(y), Ok(z)) = (r.varint(), r.f64(), r.f64(), r.f64()) {
                         *self.teleport.lock().unwrap() = Some((id, [x, y, z]));
                     }
                 }
                 _ => {}
             }
+            packets += 1;
+            bytes += p.len() as u64;
         }
+        self.packets.fetch_add(packets, Relaxed);
+        self.bytes.fetch_add(bytes, Relaxed);
     }
 }
 
