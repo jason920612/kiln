@@ -579,7 +579,9 @@ impl Player {
     }
     fn flush(&mut self) {
         if !self.outbox.is_empty() {
-            self.sink.send_batch(std::mem::take(&mut self.outbox));
+            // (The next tick's outbox starts with room for as many packets.)
+            let n = self.outbox.len();
+            self.sink.send_batch(std::mem::replace(&mut self.outbox, Vec::with_capacity(n)));
         }
     }
     fn disconnect(&mut self, reason: &str) {

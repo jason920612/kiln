@@ -2889,7 +2889,8 @@ fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
 pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers: &[ConnId], ctx: &kiln_sched::Ctx<'_>) {
     let viewers: Vec<Viewer> = players.iter().map(|p| Viewer { conn: p.conn, pos: p.pos, view: p.view_distance }).collect();
     let movers: Vec<usize> = movers.iter().filter_map(|m| viewers.binary_search_by_key(m, |v| v.conn).ok()).collect();
-    let encoded = ctx.map_mut_with(TRACK_WINDOW, &mut entities.list, |_, e| track_entity(e, &viewers, &movers));
+    let present = Present::of(&viewers);
+    let encoded = ctx.map_mut_with(TRACK_WINDOW, &mut entities.list, |_, e| track_entity(e, &viewers, &movers, &present));
     let mut runs: Vec<(usize, &mut [&mut Player])> = Vec::new();
     let mut start = 0;
     for run in players.chunks_mut(TRACK_RUN) {
@@ -2905,6 +2906,35 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
 /// Entities per chunk of the encoding window, and players per delivery run.
 const TRACK_WINDOW: kiln_sched::Window = kiln_sched::Window::new();
 const TRACK_RUN: usize = 32;
+
+/// The region's players by connection, for dropping viewers that left: a bit per connection
+/// id when the ids are small (they are handed out in order), else the sorted list.
+enum Present {
+    Bits(Vec<u64>),
+    Sorted(Vec<ConnId>),
+}
+
+impl Present {
+    fn of(viewers: &[Viewer]) -> Present {
+        match viewers.last() {
+            Some(v) if v.conn < 1 << 20 => {
+                let mut bits = vec![0u64; v.conn as usize / 64 + 1];
+                for v in viewers {
+                    bits[v.conn as usize / 64] |= 1 << (v.conn % 64);
+                }
+                Present::Bits(bits)
+            }
+            _ => Present::Sorted(viewers.iter().map(|v| v.conn).collect()),
+        }
+    }
+
+    fn contains(&self, conn: ConnId) -> bool {
+        match self {
+            Present::Bits(b) => b.get(conn as usize / 64).is_some_and(|w| w >> (conn % 64) & 1 != 0),
+            Present::Sorted(v) => v.binary_search(&conn).is_ok(),
+        }
+    }
+}
 
 /// What tracking reads of a player.
 struct Viewer {
@@ -2932,14 +2962,13 @@ struct Tracked {
     packets: Vec<Bytes>,
 }
 
-fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked {
+fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &Present) -> Tracked {
     let sees = |p: &Viewer, e: &Entity| {
         let range = (e.kind.tracking_range as f64 * 16.0).min(p.view as f64 * 16.0);
         let (dx, dz) = (p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]);
         let (pc, ec) = (chunk_of(p.pos), chunk_of(e.pos));
         !e.removed && dx * dx + dz * dz <= range * range && (pc.x - ec.x).abs() <= p.view && (pc.z - ec.z).abs() <= p.view
     };
-    let index = |conn: ConnId| viewers.binary_search_by_key(&conn, |v| v.conn).ok();
     let mut t = Tracked::default();
     let section = e.pos.map(|c| c.floor() as i32 >> 4);
     let moved = e.section != Some(section);
@@ -2998,7 +3027,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked
     seen_by.extend(t.added.iter().copied());
     seen_by.sort_unstable();
     // Players that left the region or the game are no longer viewers.
-    seen_by.retain(|&v| index(v).is_some());
+    seen_by.retain(|&v| present.contains(v));
     e.seen_by = seen_by;
     if e.removed {
         return t;
