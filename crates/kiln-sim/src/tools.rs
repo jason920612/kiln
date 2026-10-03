@@ -409,6 +409,7 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
     let stack = p.in_hand(off_hand).clone();
     match logic::block_class(s) {
         C::ComposterBlock => compost(p, level, pos, s, off_hand, &stack),
+        C::JukeboxBlock => crate::jukebox::use_item_on(p, level, pos, s, off_hand),
         C::PumpkinBlock if !stack.is_empty() && stack.item_name() == "minecraft:shears" => {
             carve(p, level, pos, face, off_hand, spawns);
             Some(true)
@@ -419,6 +420,9 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
 
 /// `ComposterBlock.useWithoutItem`: a full composter gives its bone meal.
 pub(crate) fn block_use_without_item(level: &mut RegionLevel, pos: BlockPos, spawns: &mut Vec<Spawn>) -> bool {
+    if crate::jukebox::use_without_item(level, pos, spawns) {
+        return true;
+    }
     let s = level.block(pos);
     if logic::block_class(s) != C::ComposterBlock || state::get_int(s, "level") != 8 {
         return false;

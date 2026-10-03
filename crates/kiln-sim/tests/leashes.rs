@@ -240,3 +240,30 @@ fn a_boat_can_be_led_and_a_saved_lead_finds_its_holder_again() {
     let end = (pos_of(&w.nbt("minecraft:oak_boat"))[0] - player[0]).abs();
     assert!(end < start, "the lead pulled the boat in ({start} -> {end})");
 }
+
+/// The client is told, for every mob led by a knot, the knot's real id (the last Set Entity Link
+/// each mob got), however many mobs share it and whatever order they and the knot appear in.
+#[test]
+fn every_mob_on_a_knot_is_sent_the_knots_id() {
+    let mut w = World::new();
+    *w.client.stats.log.lock().unwrap() = Some(Vec::new());
+    let p = w.client.pos;
+    let (fx, fy, fz) = (p[0].floor() as i32 + 4, p[1].floor() as i32, p[2].floor() as i32 + 4);
+    w.run(&format!("setblock {fx} {fy} {fz} minecraft:oak_fence"));
+    let sheep: Vec<i32> = (0..3).map(|i| w.summon("minecraft:sheep", &format!(",leash:[I;{fx},{fy},{fz}],Tags:[\"s{i}\"]"))).collect();
+    w.ticks(10);
+    let knots = w.sim.entity_ids_of("minecraft:leash_knot");
+    assert_eq!(knots.len(), 1, "one knot for all three: {knots:?}");
+    let mut last = std::collections::BTreeMap::new();
+    let log: Vec<bytes::Bytes> = w.client.stats.log.lock().unwrap().clone().unwrap();
+    for pkt in &log {
+        let mut r = kiln_proto::Reader::new(pkt);
+        if r.varint().ok() == Some(kiln_data::packets::play::clientbound::SET_ENTITY_LINK) {
+            let (source, dest) = (r.i32().unwrap(), r.i32().unwrap());
+            last.insert(source, dest);
+        }
+    }
+    for id in sheep {
+        assert_eq!(last.get(&id), Some(&knots[0]), "sheep {id} is shown on the knot {} ({last:?})", knots[0]);
+    }
+}

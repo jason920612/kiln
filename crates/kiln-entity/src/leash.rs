@@ -315,7 +315,9 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
         Some(m) => !e.is_removed() && m.health > 0.0,
         None => alive(e),
     };
-    let holder_alive = level.entity(holder_id).is_some_and(alive_holder);
+    // (A knot made this tick, by a lead restored from a save, is still under its stand-in id:
+    // the simulation adds it right after the tick, and the lead is already tied to it.)
+    let holder_alive = holder_id < 0 || level.entity(holder_id).is_some_and(alive_holder);
     if !is_alive || !holder_alive || e.vehicle.is_some() {
         if e.vehicle.is_some() || level.entity_drops() {
             drop_leash(e, m.as_deref_mut(), level);

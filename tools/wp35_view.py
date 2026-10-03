@@ -56,6 +56,13 @@ def main():
 
     name = "KilnView"
     pid = None
+    # No chat overlay over the scenes (the server's replies still reach the client's log).
+    options = e2e.WORK / "client" / "options.txt"
+    if options.exists():
+        text = options.read_text(encoding="utf-8")
+        text = re.sub(r"^chatVisibility:.*$", "chatVisibility:2", text, flags=re.M)
+        text = re.sub(r"^gamma:.*$", "gamma:1.0", text, flags=re.M)
+        options.write_text(text, encoding="utf-8")
     for attempt in range(3):
         try:
             pid = e2e.launch(a.port, name)
@@ -76,11 +83,17 @@ def main():
 
     def shot(tag):
         out = e2e.WORK / f"wp35-view-{tag}.png"
-        e2e.screenshot(pid, out)
+        # A window caught between frames comes out black (a few hundred bytes of PNG): again.
+        for _ in range(4):
+            e2e.screenshot(pid, out)
+            if out.stat().st_size > 20000:
+                break
+            time.sleep(1.5)
         print("screenshot:", out, flush=True)
 
     def clear():
         console("kill @e[type=!minecraft:player]", 0.8)
+        console("kill @e[type=minecraft:item]", 0.5)
         console("fill -4 -60 4 24 -40 30 air", 0.3)
 
     me = uuid_nbt(name)
@@ -142,49 +155,50 @@ def main():
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         deadline = time.time() + 30
-        while time.time() < deadline and "Bob0 joined" not in e2e.server_log():
+        while time.time() < deadline and "Bob0 (" not in e2e.server_log():
             time.sleep(0.5)
+        time.sleep(2)
         bob = uuid_nbt("Bob0")
         console("gamemode survival Bob0")
-        console("tp Bob0 8.5 -60 12.5 0 0")
-        # Bob's own tamed parrots: one he picks up on his shoulder, two dancing next to a jukebox.
-        console(f"summon minecraft:parrot 9.5 -60 11.5 {{Tame:1b,Owner:{bob},Variant:1,PersistenceRequired:1b}}")
-        time.sleep(1.5)
-        console("kiln interact Bob0 9 -60 11 sneak")
-        time.sleep(2)
-        console("tp Bob0 8.5 -60 10.5 0 0")
-        console(f"tp {name} 8.5 -60 15.5 0 5")
-        time.sleep(2)
+        console("tp Bob0 8.5 -60 13.5 0 0")
+        # Bob's own tamed parrots (one of each side): they hop on his shoulders once he stands still.
+        console(f"summon minecraft:parrot 9.5 -60 13.5 {{Tame:1b,Owner:{bob},Variant:1,PersistenceRequired:1b}}")
+        console(f"summon minecraft:parrot 7.5 -60 13.5 {{Tame:1b,Owner:{bob},Variant:3,PersistenceRequired:1b}}")
+        console(f"tp {name} 8.5 -60 17.5 180 10")
+        time.sleep(6)
         shot("parrot-shoulder")
-        console(f"tp {name} 8.5 -60 20.5 180 12")
+        time.sleep(2)
+        shot("parrot-shoulder-2")
         console("tp Bob0 30.5 -60 30.5")
-        console("setblock 8 -60 12 minecraft:jukebox")
+        console("kill @e[type=minecraft:parrot]", 0.5)
+        console(f"tp {name} 8.5 -60 17.5 180 10")
+        console("setblock 8 -60 13 minecraft:jukebox")
         console(f"summon minecraft:parrot 7.5 -60 13.5 {{Tame:1b,Owner:{me},Variant:0,PersistenceRequired:1b,NoAI:1b}}")
-        console(f"summon minecraft:parrot 9.5 -60 13.5 {{Tame:1b,Owner:{me},Variant:3,PersistenceRequired:1b,NoAI:1b}}")
+        console(f"summon minecraft:parrot 9.5 -60 13.5 {{Tame:1b,Owner:{me},Variant:2,PersistenceRequired:1b,NoAI:1b}}")
         console(f"item replace entity {name} hotbar.0 with minecraft:music_disc_13")
         time.sleep(1)
-        console(f"kiln use {name} 8 -60 12")
-        time.sleep(2.5)
+        shot("parrot-before-disc")
+        console(f"kiln use {name} 8 -60 13")
+        time.sleep(1.5)
         shot("parrot-dance")
-        time.sleep(1.2)
+        time.sleep(0.6)
         shot("parrot-dance-2")
         bot.terminate()
 
     if "knots" in scenes:
         clear()
-        console(face)
-        console("setblock 14 -61 14 minecraft:stone", 0.1)
-        console("setblock 14 -60 14 minecraft:oak_fence", 0.1)
-        console("setblock 2 -61 14 minecraft:stone", 0.1)
-        console("setblock 2 -60 14 minecraft:oak_fence", 0.1)
-        console("summon minecraft:sheep 12.5 -60 12.5 {PersistenceRequired:1b,leash:[I;14,-60,14]}", 0.1)
-        console("summon minecraft:sheep 16.5 -60 12.5 {PersistenceRequired:1b,leash:[I;14,-60,14]}", 0.1)
-        console("summon minecraft:cow 4.5 -60 12.5 {PersistenceRequired:1b,leash:[I;2,-60,14]}", 0.1)
-        console(f"summon minecraft:cow 8.5 -60 12.5 {{PersistenceRequired:1b,leash:{{UUID:{me}}}}}", 0.1)
+        console(f"tp {name} 9.5 -60 19.5 180 8")
+        console("setblock 9 -61 14 minecraft:stone", 0.1)
+        console("setblock 9 -60 14 minecraft:oak_fence", 0.1)
+        console("setblock 4 -61 14 minecraft:stone", 0.1)
+        console("setblock 4 -60 14 minecraft:oak_fence", 0.1)
+        console("summon minecraft:sheep 7.5 -60 13.5 {PersistenceRequired:1b,leash:[I;9,-60,14]}", 0.1)
+        console("summon minecraft:sheep 11.5 -60 13.5 {PersistenceRequired:1b,leash:[I;9,-60,14]}", 0.1)
+        console("summon minecraft:cow 2.5 -60 13.5 {PersistenceRequired:1b,leash:[I;4,-60,14]}", 0.1)
         time.sleep(3)
         shot("knots")
-        # Remove one fence: its knot goes and the leads drop.
-        console("setblock 2 -60 14 minecraft:air", 0.5)
+        # Remove one fence: its knot goes and the lead drops.
+        console("setblock 4 -60 14 minecraft:air", 0.5)
         time.sleep(1.5)
         shot("knots-broken")
 
@@ -200,37 +214,64 @@ def main():
 
     if "riders" in scenes:
         clear()
-        console(face)
-        console("summon minecraft:zombie_horse 4.5 -60 13.5 {PersistenceRequired:1b,Passengers:[{id:\"minecraft:zombie\",PersistenceRequired:1b}]}")
-        console("summon minecraft:camel_husk 9.5 -60 13.5 {PersistenceRequired:1b,Passengers:[{id:\"minecraft:parched\",PersistenceRequired:1b}]}")
-        console("summon minecraft:spider 14.5 -60 13.5 {PersistenceRequired:1b,Passengers:[{id:\"minecraft:skeleton\",PersistenceRequired:1b}]}")
-        console("summon minecraft:skeleton_horse 19.5 -60 13.5 {PersistenceRequired:1b,Tame:1b,Passengers:[{id:\"minecraft:skeleton\",PersistenceRequired:1b}]}")
+        # Dusk: the undead do not burn.
+        console("time set 13200")
+        console(f"tp {name} 8.5 -60 25.5 180 8")
+
+        def mounted(rider, vehicle, x, extra=""):
+            """A vehicle at x with a rider on it (`ride`, as Passengers of a summon are not read)."""
+            console(f"summon minecraft:{vehicle} {x} -60 17.5 {{PersistenceRequired:1b{extra}}}", 0.3)
+            console(f"summon minecraft:{rider} {x} -60 20.5 {{PersistenceRequired:1b}}", 0.3)
+            console(f"ride @e[type=minecraft:{rider},limit=1,sort=nearest] mount @e[type=minecraft:{vehicle},limit=1,sort=nearest]", 0.3)
+
+        mounted("zombie", "zombie_horse", 2.5)
+        mounted("parched", "camel_husk", 6.5)
+        console("summon minecraft:camel 10.5 -60 17.5 {PersistenceRequired:1b}")
+        mounted("skeleton", "spider", 14.5)
         time.sleep(4)
         shot("riders")
         console("kill @e[type=!minecraft:player]", 0.5)
-        # A tank: nautili and zombie nautili, one with a drowned on its back.
-        console("fill -2 -61 4 16 -61 18 minecraft:stone")
-        console("fill -2 -60 4 16 -54 18 minecraft:water")
-        console("tp KilnView 8.5 -60 3.5 180 5")
-        console("summon minecraft:nautilus 4.5 -57 10.5 {PersistenceRequired:1b}")
-        console("summon minecraft:zombie_nautilus 9.5 -57 10.5 {PersistenceRequired:1b,Passengers:[{id:\"minecraft:drowned\",PersistenceRequired:1b}]}")
-        console("summon minecraft:nautilus 13.5 -58 12.5 {PersistenceRequired:1b,Baby:1b}")
+        mounted("skeleton", "skeleton_horse", 2.5, ",Tame:1b")
+        console("summon minecraft:zombie_horse 6.5 -60 17.5 {PersistenceRequired:1b,Tame:1b}")
+        mounted("husk", "camel_husk", 10.5)
+        mounted("zombie", "zombie_horse", 14.5, ",Tame:1b")
+        time.sleep(3)
+        shot("riders-2")
+        console("kill @e[type=!minecraft:player]", 0.5)
+        console("time set 6000")
+        # A glass tank: nautili and zombie nautili, one with a drowned on its back.
+        console("fill 0 -61 8 16 -61 16 minecraft:stone")
+        console("fill 0 -60 8 16 -55 16 minecraft:glass hollow")
+        console("fill 1 -60 9 15 -56 15 minecraft:water")
+        console(f"tp {name} 8.5 -60 0.5 0 12")
+        console("summon minecraft:nautilus 4.5 -58 11.5 {PersistenceRequired:1b}")
+        console("summon minecraft:nautilus 12.5 -58 12.5 {PersistenceRequired:1b,Baby:1b}")
+        mounted_tank = "summon minecraft:zombie_nautilus 8.5 -58 11.5 {PersistenceRequired:1b}"
+        console(mounted_tank)
+        console("summon minecraft:drowned 8.5 -58 12.5 {PersistenceRequired:1b}")
+        console("ride @e[type=minecraft:drowned,limit=1] mount @e[type=minecraft:zombie_nautilus,limit=1]")
         time.sleep(4)
         shot("nautili")
-        console("fill -2 -60 4 16 -54 18 minecraft:air", 0.5)
+        console("kill @e[type=!minecraft:player]", 0.5)
+        console("fill 0 -61 8 16 -55 16 minecraft:air", 0.5)
+        console("fill 0 -61 8 16 -61 16 minecraft:grass_block", 0.5)
 
     if "breeze" in scenes:
         clear()
-        console(face)
+        console(f"tp {name} 8.5 -60 18.5 180 6")
         console("summon minecraft:breeze 8.5 -60 12.5 {PersistenceRequired:1b,NoAI:1b}")
-        console(f"summon minecraft:skeleton 8.5 -60 4.5 {{PersistenceRequired:1b,NoAI:1b,Rotation:[0f,0f],equipment:{{mainhand:{{id:\"minecraft:bow\",count:1}}}}}}")
-        for i in range(6):
-            # Arrows flying at the breeze from the south (the player's side).
-            console("summon minecraft:arrow 8.5 -59 17.5 {Motion:[0.0d,0.0d,-1.5d],PersistenceRequired:1b}", 0.15)
-        time.sleep(0.5)
-        shot("breeze-arrows")
         time.sleep(1.5)
-        shot("breeze-after")
+        shot("breeze")
+        # Frozen ticks stepped by hand: an arrow flies at the breeze, which turns it back.
+        console("tick freeze")
+        console("summon minecraft:arrow 8.5 -59.2 16.5 {Motion:[0.0d,0.0d,-0.7d]}")
+        console("summon minecraft:arrow 7.9 -59.0 16.5 {Motion:[0.0d,0.0d,-0.7d]}")
+        console("summon minecraft:arrow 9.1 -59.4 16.5 {Motion:[0.0d,0.0d,-0.7d]}")
+        for n, tag in ((2, "breeze-arrows-1"), (3, "breeze-arrows-2"), (3, "breeze-arrows-3"), (4, "breeze-arrows-4")):
+            console(f"tick step {n}", 1.2)
+            shot(tag)
+        console("tick unfreeze")
+
 
     time.sleep(1)
     client_log = (e2e.WORK / "client" / "logs" / "latest.log").read_text(encoding="utf-8", errors="replace")
