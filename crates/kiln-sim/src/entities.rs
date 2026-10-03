@@ -4,6 +4,7 @@
 
 use crate::Player;
 use crate::blocks::{self, RegionLevel};
+use crate::entity_world::World;
 use crate::health;
 use bytes::Bytes;
 use kiln_blocks::{Effect, Level};
@@ -608,7 +609,7 @@ fn kb(p: BlockPos) -> kiln_blocks::BlockPos {
 /// and explosions update their neighbours), the region's entities by id, and its players as
 /// stand-ins that explosions can hurt and push.
 pub(crate) struct SimLevel<'a, 'l, 'p> {
-    pub(crate) level: &'a mut RegionLevel<'l>,
+    pub(crate) level: World<'a, 'l>,
     list: &'a mut Vec<Entity>,
     /// The region's players, which mobs hurt directly.
     players: &'a mut [&'p mut Player],
@@ -732,15 +733,15 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
     fn biome(&self, pos: BlockPos) -> Option<i32> {
-        Some(crate::spawner::biome_at(self.level, kb(pos)) as i32)
+        Some(crate::spawner::biome_at_in(self.level.cells(), self.level.env(), kb(pos)) as i32)
     }
 
     fn piglins_zombify(&self) -> bool {
-        !self.level.env.rules.fast_lava
+        !self.level.env().rules.fast_lava
     }
 
     fn snow_golem_melts(&self, pos: Vec3) -> bool {
-        if self.level.env.rules.fast_lava {
+        if self.level.env().rules.fast_lava {
             return true;
         }
         // The biomes whose `minecraft:gameplay/snow_golem_melts` is on.
@@ -753,36 +754,36 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             "minecraft:windswept_savanna",
             "minecraft:wooded_badlands",
         ];
-        let b = crate::spawner::biome_at(self.level, kb(BlockPos::containing(pos.x, pos.y, pos.z))) as i32;
+        let b = crate::spawner::biome_at_in(self.level.cells(), self.level.env(), kb(BlockPos::containing(pos.x, pos.y, pos.z))) as i32;
         HOT.iter().any(|n| kiln_data::synced_id("minecraft:worldgen/biome", n) == Some(b))
     }
 
     fn trade_offers(&mut self, set: &str, merchant: &kiln_entity::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
-        let env = self.level.env;
+        let env = self.level.env();
         crate::trading::roll_offers(env.loot.as_deref(), env.seed, env.game_time, set, merchant)
     }
 
     fn raid(&self, id: i32) -> Option<&kiln_entity::level::RaidView> {
-        self.level.env.raids.iter().find(|r| r.id == id)
+        self.level.env().raids.iter().find(|r| r.id == id)
     }
 
     fn raid_at(&self, pos: BlockPos) -> Option<&kiln_entity::level::RaidView> {
-        crate::raid::raid_at_view(&self.level.env.raids, pos)
+        crate::raid::raid_at_view(&self.level.env().raids, pos)
     }
 
     fn village_centers_near(&self, section: (i32, i32, i32), radius: i32) -> Option<Vec<(i32, i32, i32)>> {
-        Some(crate::poi::village_centers(&*self.level.cells, [section.0, section.1, section.2], radius))
+        Some(crate::poi::village_centers(self.level.cells(), [section.0, section.1, section.2], radius))
     }
 
     fn sections_to_village(&self, pos: BlockPos) -> i32 {
         kiln_entity::prof!("lvl", "sections_to_village");
-        crate::poi::sections_to_village(&*self.level.cells, [pos.x, pos.y, pos.z])
+        crate::poi::sections_to_village(self.level.cells(), [pos.x, pos.y, pos.z])
     }
 
     fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: kiln_entity::level::PoiOccupancy) -> Vec<BlockPos> {
         kiln_entity::prof!("lvl", "poi_in_range");
         let kinds = crate::poi::kinds_of(types);
-        crate::poi::in_range(&*self.level.cells, &kinds, [center.x, center.y, center.z], radius, occupancy_of(occupancy))
+        crate::poi::in_range(self.level.cells(), &kinds, [center.x, center.y, center.z], radius, occupancy_of(occupancy))
             .into_iter()
             .map(|r| BlockPos::new(r.pos[0], r.pos[1], r.pos[2]))
             .collect()
@@ -791,20 +792,23 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     fn poi_take(&mut self, types: &[&str], center: BlockPos, radius: i32, accept: &dyn Fn(&str, BlockPos) -> bool) -> Option<BlockPos> {
         let kinds = crate::poi::kinds_of(types);
         let accept = |k: u8, p: [i32; 3]| accept(kiln_world::poi::TYPES[k as usize].name, BlockPos::new(p[0], p[1], p[2]));
-        crate::poi::take(&mut *self.level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]))
+        let level = self.level.region()?;
+        crate::poi::take(&mut *level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]))
     }
 
     fn poi_release(&mut self, pos: BlockPos) {
-        crate::poi::release(&mut *self.level.cells, [pos.x, pos.y, pos.z]);
+        if let Some(level) = self.level.region() {
+            crate::poi::release(&mut *level.cells, [pos.x, pos.y, pos.z]);
+        }
     }
 
     fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
-        crate::poi::type_at(&*self.level.cells, [pos.x, pos.y, pos.z]).map(|k| kiln_world::poi::TYPES[k as usize].name)
+        crate::poi::type_at(self.level.cells(), [pos.x, pos.y, pos.z]).map(|k| kiln_world::poi::TYPES[k as usize].name)
     }
 
     fn motion_blocking_no_leaves_height(&self, x: i32, z: i32) -> i32 {
         use kiln_world::Blocks;
-        let Some(chunk) = self.level.cells.chunk(ChunkPos::of_block(x, z)) else { return self.level.env.min_y };
+        let Some(chunk) = self.level.cells().chunk(ChunkPos::of_block(x, z)) else { return self.level.env().min_y };
         chunk.column_height((x & 15) as usize, (z & 15) as usize, |s| {
             kiln_data::block_props::motion_blocking(s) && !kiln_data::blocks_types::block_of(s).name.ends_with("_leaves")
         })
@@ -823,7 +827,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let (dx, dz) = ((max.x - min.x + 1) as usize, (max.z - min.z + 1) as usize);
         for cz in (min.z >> 4)..=(max.z >> 4) {
             for cx in (min.x >> 4)..=(max.x >> 4) {
-                let Some(chunk) = self.level.cells.chunk(ChunkPos::new(cx, cz)) else { return false };
+                let Some(chunk) = self.level.cells().chunk(ChunkPos::new(cx, cz)) else { return false };
                 let (x0, x1) = (min.x.max(cx * 16), max.x.min(cx * 16 + 15));
                 let (z0, z1) = (min.z.max(cz * 16), max.z.min(cz * 16 + 15));
                 let origin = (z0 - min.z) as usize * dx + (x0 - min.x) as usize;
@@ -845,7 +849,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         use kiln_world::Blocks;
         for cz in (min.z >> 4)..=(max.z >> 4) {
             for cx in (min.x >> 4)..=(max.x >> 4) {
-                match self.level.cells.chunk(ChunkPos::new(cx, cz)) {
+                match self.level.cells().chunk(ChunkPos::new(cx, cz)) {
                     Some(chunk) if !chunk.may_have_fluid(min.y, max.y) => {}
                     _ => return false,
                 }
@@ -862,7 +866,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
         let mut key = [0u64; 4];
         for (i, (cz, cx)) in (z0..=z1).flat_map(|cz| (x0..=x1).map(move |cx| (cz, cx))).enumerate() {
-            key[i] = self.level.cells.chunk(ChunkPos::new(cx, cz))?.block_epoch();
+            key[i] = self.level.cells().chunk(ChunkPos::new(cx, cz))?.block_epoch();
         }
         Some(kiln_entity::level::BlocksEpoch(key))
     }
@@ -874,7 +878,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             for cz in (min.z >> 4)..=(max.z >> 4) {
                 let (x0, x1) = (min.x.max(cx * 16), max.x.min(cx * 16 + 15));
                 let (z0, z1) = (min.z.max(cz * 16), max.z.min(cz * 16 + 15));
-                match self.level.cells.chunk(ChunkPos::new(cx, cz)) {
+                match self.level.cells().chunk(ChunkPos::new(cx, cz)) {
                     Some(chunk) => {
                         let local = |a: i32, b: i32, o: i32| ((a - o) as usize, (b - o) as usize);
                         if chunk.any_block_in(local(x0, x1, cx * 16), (min.y, max.y), local(z0, z1, cz * 16), pred) {
@@ -893,11 +897,11 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn set_block(&mut self, pos: BlockPos, state: u16, flags: u32) -> bool {
-        kiln_blocks::set_block(self.level, kb(pos), state, flags)
+        self.level.set_block(kb(pos), state, flags)
     }
 
     fn destroy_block(&mut self, pos: BlockPos, drop: bool) -> bool {
-        kiln_blocks::destroy_block(self.level, kb(pos), drop, 512)
+        self.level.destroy_block(kb(pos), drop)
     }
 
     fn random(&mut self) -> &mut LegacyRandom {
@@ -905,19 +909,19 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn game_time(&self) -> i64 {
-        self.level.env.game_time
+        self.level.env().game_time
     }
 
     fn day_time(&self) -> i64 {
-        self.level.env.mobs.day_time
+        self.level.env().mobs.day_time
     }
 
     fn min_y(&self) -> i32 {
-        self.level.env.min_y
+        self.level.env().min_y
     }
 
     fn max_y(&self) -> i32 {
-        self.level.env.min_y + self.level.env.height - 1
+        self.level.env().min_y + self.level.env().height - 1
     }
 
     fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
@@ -999,7 +1003,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn fresh_seed(&mut self) -> i64 {
         self.seeds += 1;
-        let mut h = (self.level.env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.level.env.seed as u64;
+        let mut h = (self.level.env().game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.level.env().seed as u64;
         for v in [self.current as u64, self.seeds] {
             h = (h ^ v).wrapping_mul(0xBF58_476D_1CE4_E5B9);
             h ^= h >> 31;
@@ -1017,7 +1021,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn enchant_from_provider(&self, stack: &mut kiln_item::ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
-        if let Some(loot) = self.level.env.loot.as_deref() {
+        if let Some(loot) = self.level.env().loot.as_deref() {
             crate::enchant::enchant_from_provider(loot, stack, provider, special_multiplier, random);
         }
     }
@@ -1033,9 +1037,11 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     fn emit(&mut self, event: Event) {
         if let Event::GameEvent { event, pos, entity } = event {
             // `ServerLevel.gameEvent`: listeners hear it now.
-            if crate::sculk::listening(self.level) {
+            if self.level.listening() {
                 let source = entity.and_then(|id| self.game_event_source(id));
-                crate::sculk::post(self.level, event, pos, kiln_entity::vibration::Context { source, affected_state: None });
+                if let Some(l) = self.level.region() {
+                    crate::sculk::post(l, event, pos, kiln_entity::vibration::Context { source, affected_state: None });
+                }
             }
             return;
         }
@@ -1043,48 +1049,60 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn block_game_event(&mut self, event: &'static str, pos: Vec3, entity: Option<i32>, state: u16) {
-        if crate::sculk::listening(self.level) {
+        if self.level.listening() {
             let source = entity.and_then(|id| self.game_event_source(id));
-            crate::sculk::post(self.level, event, pos, kiln_entity::vibration::Context { source, affected_state: Some(state) });
+            if let Some(l) = self.level.region() {
+                crate::sculk::post(l, event, pos, kiln_entity::vibration::Context { source, affected_state: Some(state) });
+            }
         }
     }
 
     fn sculk_step_on(&mut self, pos: BlockPos, entity: i32, at: Vec3) {
         if let Some(mut source) = self.game_event_source(entity) {
             source.pos = at;
-            crate::sculk::step_on(self.level, kb(pos), source);
+            if let Some(l) = self.level.region() {
+                crate::sculk::step_on(l, kb(pos), source);
+            }
         }
     }
 
     fn sculk_catalyst_near(&self, pos: Vec3) -> bool {
-        crate::sculk::catalyst::nearest(self.level, pos).is_some()
+        self.level.region_ref().is_some_and(|l| crate::sculk::catalyst::nearest(l, pos).is_some())
     }
 
     fn feed_sculk_catalyst(&mut self, pos: Vec3, charge: i32) {
-        if let Some(at) = crate::sculk::catalyst::nearest(self.level, pos) {
-            crate::sculk::catalyst::feed(self.level, at, pos, charge);
+        if let Some(l) = self.level.region()
+            && let Some(at) = crate::sculk::catalyst::nearest(l, pos)
+        {
+            crate::sculk::catalyst::feed(l, at, pos, charge);
         }
     }
 
     fn take_vibrations(&mut self, id: i32) -> Vec<kiln_entity::vibration::Heard> {
-        self.level.blocks.sculk.take_heard(id)
+        self.level.region().map(|l| l.blocks.sculk.take_heard(id)).unwrap_or_default()
     }
 
     fn set_listener(&mut self, id: i32, ear: Option<kiln_entity::vibration::Ear>) {
-        self.level.blocks.sculk.set_warden(id, ear);
+        if let Some(l) = self.level.region() {
+            l.blocks.sculk.set_warden(id, ear);
+        }
     }
 
     fn take_allay_vibrations(&mut self, id: i32) -> Vec<kiln_entity::vibration::Heard> {
-        self.level.blocks.sculk.take_heard_allay(id)
+        self.level.region().map(|l| l.blocks.sculk.take_heard_allay(id)).unwrap_or_default()
     }
 
     fn set_allay_listener(&mut self, id: i32, ear: Option<kiln_entity::vibration::Ear>) {
-        self.level.blocks.sculk.set_allay(id, ear);
+        if let Some(l) = self.level.region() {
+            l.blocks.sculk.set_allay(id, ear);
+        }
     }
 
     fn vibration_particle(&mut self, from: Vec3, entity: i32, y_offset: f32, ticks: i32) {
         let dest = kiln_proto::packets::world_fx::PositionSource::Entity { id: entity, y_offset };
-        crate::sculk::send_vibration_particle(self.level, from, dest, ticks);
+        if let Some(l) = self.level.region() {
+            crate::sculk::send_vibration_particle(l, from, dest, ticks);
+        }
     }
 
     fn darkness_around(&mut self, pos: Vec3, radius: f64) {
@@ -1103,7 +1121,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             count: 1,
             randomization: world_fx::ParticleRandomization::Default,
         });
-        self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
+        self.level.push_packet(([pos.x, pos.y, pos.z], 32.0, pkt));
     }
 
     fn trail_particle(&mut self, pos: Vec3, target: Vec3, color: i32, duration: i32) {
@@ -1119,7 +1137,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             randomization: world_fx::ParticleRandomization::Default,
         });
         // `overrideLimiter`: players within 512 blocks.
-        self.level.out.packets.push(([pos.x, pos.y, pos.z], 512.0, pkt));
+        self.level.push_packet(([pos.x, pos.y, pos.z], 512.0, pkt));
     }
 
     fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
@@ -1134,31 +1152,31 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             count,
             randomization: world_fx::ParticleRandomization::Default,
         });
-        self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
+        self.level.push_packet(([pos.x, pos.y, pos.z], 32.0, pkt));
     }
 
     fn mob_griefing(&self) -> bool {
-        self.level.env.mobs.griefing
+        self.level.env().mobs.griefing
     }
 
     fn dragon_fight(&self) -> Option<kiln_entity::level::DragonFightView> {
-        self.level.env.dragon_fight.as_ref().map(|f| f.view)
+        self.level.env().dragon_fight.as_ref().map(|f| f.view)
     }
 
     fn mob_drops(&self) -> bool {
-        self.level.env.mobs.drops
+        self.level.env().mobs.drops
     }
 
     fn entity_drops(&self) -> bool {
-        self.level.env.mobs.entity_drops
+        self.level.env().mobs.entity_drops
     }
 
     fn tnt_explodes(&self) -> bool {
-        self.level.env.rules.tnt_explodes
+        self.level.env().rules.tnt_explodes
     }
 
     fn fill_container_loot(&mut self, items: &mut [kiln_item::ItemStack], table: &str, seed: i64, origin: Vec3, player: Option<i32>) {
-        let env = self.level.env;
+        let env = self.level.env();
         let Some(loot) = env.loot.clone() else { return };
         let at = [origin.x.floor() as i32, origin.y.floor() as i32, origin.z.floor() as i32];
         crate::container::fill_from_table(items, &loot, table, seed, arr(origin), at, player.is_some(), env.game_time, env.seed);
@@ -1174,7 +1192,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn block_loot(&mut self, state: u16, origin: Vec3, tool: &kiln_item::ItemStack, entity: i32) -> Vec<kiln_item::ItemStack> {
-        let env = self.level.env;
+        let env = self.level.env();
         let Some(loot) = env.loot.clone() else {
             return kiln_item::ItemStack::of(kiln_entity::blocks::block_name(state), 1).into_iter().collect();
         };
@@ -1183,26 +1201,26 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn hopper_take_from_block(&mut self, pos: BlockPos, dest: &mut Vec<kiln_item::ItemStack>) -> Option<bool> {
-        crate::container::hopper::take_into_cart(self.level, kb(pos), dest)
+        crate::container::hopper::take_into_cart(self.level.region()?, kb(pos), dest)
     }
 
     fn difficulty(&self) -> u8 {
-        self.level.env.mobs.difficulty
+        self.level.env().mobs.difficulty
     }
 
     fn creaking_active(&self, _pos: BlockPos) -> bool {
-        self.level.env.mobs.creaking_active
+        self.level.env().mobs.creaking_active
     }
 
     fn spawning_monsters(&self) -> bool {
-        self.level.env.mobs.spawn_mobs && self.level.env.mobs.spawn_monsters
+        self.level.env().mobs.spawn_mobs && self.level.env().mobs.spawn_monsters
     }
 
     /// A creaking whose heart is in a chunk that is not loaded stays as it is (vanilla loads
     /// the chunk to look).
     fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
         let h = kb(home);
-        !self.level.is_loaded(h) || crate::heart::protects(self.level, h, id, uuid)
+        !self.level.is_loaded(h) || self.level.region_ref().is_none_or(|l| crate::heart::protects(l, h, id, uuid))
     }
 
     fn heart_creaking_hurt(&mut self, home: BlockPos, id: i32, uuid: u128, at: Vec3) {
@@ -1223,13 +1241,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn pos_random(&mut self, pos: BlockPos, salt: i64) -> LegacyRandom {
-        crate::container::pos_random(self.level, kb(pos), salt as u64)
+        crate::container::pos_random_in(self.level.env(), kb(pos), salt as u64)
     }
 
     fn update_neighbours_for_output_signal(&mut self, pos: BlockPos) {
         let p = kb(pos);
         let s = self.level.block(p);
-        kiln_blocks::update::update_neighbour_for_output_signal(self.level, p, kiln_blocks::BlockId::of(s));
+        self.level.change(move |l| kiln_blocks::update::update_neighbour_for_output_signal(l, p, kiln_blocks::BlockId::of(s)));
     }
 
     /// The entity keeps the UUID it was made with (a heart holds its creaking by it).
@@ -1239,23 +1257,24 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn sky_darken(&self) -> i32 {
-        self.level.env.mobs.sky_darken
+        self.level.env().mobs.sky_darken
     }
 
     fn is_raining_at(&self, pos: BlockPos) -> bool {
-        crate::weather::is_raining_at(self.level.cells, self.level.env, kb(pos))
+        crate::weather::is_raining_at(self.level.cells(), self.level.env(), kb(pos))
     }
 
     fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
-        kiln_blocks::Level::can_spread_fire_around(&*self.level, kb(pos))
+        self.level.region_ref().is_some_and(|l| kiln_blocks::Level::can_spread_fire_around(l, kb(pos)))
     }
 
     fn place_lightning_fire(&mut self, pos: BlockPos) -> bool {
-        crate::weather::place_lightning_fire(&mut *self.level, kb(pos))
+        self.level.region().is_some_and(|l| crate::weather::place_lightning_fire(l, kb(pos)))
     }
 
     fn lightning_strike_block(&mut self, pos: BlockPos) {
-        kiln_blocks::weather::lightning_strike(&mut *self.level, kb(pos));
+        let pos = kb(pos);
+        self.level.change(move |l| kiln_blocks::weather::lightning_strike(l, pos));
     }
 
     fn thunder_hit_player(&mut self, id: i32) {
@@ -1264,26 +1283,26 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let ticks = p.fire_ticks + 1;
         p.set_fire_ticks(if ticks == 0 { 160 } else { ticks });
         let source = health::Source { cause: health::Cause::Entity(DamageKind::LightningBolt), attacker: None, direct: None, weapon: None, position: None };
-        let env = self.level.env;
+        let env = self.level.env();
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         p.hurt(5.0, &source, &mut ctx);
     }
 
     fn monsters_burn(&self) -> bool {
-        self.level.env.mobs.monsters_burn
+        self.level.env().mobs.monsters_burn
     }
 
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
-        kiln_blocks::Level::raw_brightness(&*self.level, kb(pos), sky_darken)
+        self.level.raw_brightness(kb(pos), sky_darken)
     }
 
     fn sky_light(&self, pos: BlockPos) -> i32 {
-        kiln_world::light::light_at(&*self.level.cells, kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z)
-            .map_or(if pos.y >= self.level.env.min_y + self.level.env.height { 15 } else { 0 }, i32::from)
+        kiln_world::light::light_at(self.level.cells(), kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z)
+            .map_or(if pos.y >= self.level.env().min_y + self.level.env().height { 15 } else { 0 }, i32::from)
     }
 
     fn effective_difficulty(&self, _pos: BlockPos) -> f32 {
-        crate::mobs::difficulty_instance(self.level.env.mobs.difficulty, self.level.env.game_time, 0, 1.0).effective_difficulty
+        crate::mobs::difficulty_instance(self.level.env().mobs.difficulty, self.level.env().game_time, 0, 1.0).effective_difficulty
     }
 
     fn hurt_player(&mut self, id: i32, source: kiln_entity::mob::DamageSource, amount: f32) -> bool {
@@ -1298,7 +1317,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         // A projectile's hit judges blocking from where it comes (`getSourcePosition`).
         let position = source.direct.filter(|_| source.kind.is_tag("minecraft:is_projectile")).and(source.pos).map(arr);
         let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None, position };
-        let env = self.level.env;
+        let env = self.level.env();
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         let hurt = p.hurt(amount, &source, &mut ctx);
         if hurt && let Some(a) = source.attacker.as_ref().map(|a| a.id) {
@@ -1357,7 +1376,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn is_thundering(&self) -> bool {
-        self.level.env.weather.weather.thundering
+        self.level.env().weather.weather.thundering
     }
 
     fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, _source: Option<i32>) -> bool {
@@ -1388,7 +1407,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             let e = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
             Some(health::Attacker::mob(o, e.type_name, arr(e.position())))
         });
-        let env = self.level.env;
+        let env = self.level.env();
         let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return };
         match effect.kind() {
             kiln_entity::effect::Kind::HealOrHarm { harm: false } => {
@@ -1409,7 +1428,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn max_entity_cramming(&self) -> i32 {
-        self.level.env.mobs.cramming
+        self.level.env().mobs.cramming
     }
 
     fn player_effect(&self, id: i32, effect: &str) -> Option<(i32, i32)> {
@@ -1480,7 +1499,7 @@ pub(crate) fn tick(
         crate::shoulder::mark_views(players, &block, &mut views);
     }
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -1563,6 +1582,7 @@ pub(crate) fn tick(
     }
     ride_players(&mut sim);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     // Explosion knockback reaches the pushed player's client (it owns its movement).
     for pr in proxies.iter().filter(|e| e.delta != Vec3::ZERO) {
         if let Some(p) = players.iter_mut().find(|p| p.entity_id == pr.id)
@@ -1587,8 +1607,8 @@ fn process_pending_kills(sim: &mut SimLevel) {
         }
         let Some(mut phys) = sim.list[i].phys.take() else { continue };
         (sim.current, sim.seeds) = (phys.id, 0x6b69_6c6c);
-        sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
-        sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time ^ 0x6b69_6c6c, phys.id);
+        sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+        sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time ^ 0x6b69_6c6c, phys.id);
         for (kind, amount, attacker) in std::mem::take(&mut phys.pending_hurts) {
             let mut source = kiln_entity::mob::DamageSource::of(kind);
             source.attacker = attacker;
@@ -1615,8 +1635,8 @@ fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
         return;
     }
     (sim.current, sim.seeds) = (phys.id, 0);
-    sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
-    sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
+    sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+    sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
     phys.common_tick();
     if let Some(mut v) = sim.list[vehicle].phys.clone() {
         if kiln_entity::ride::ride_tick(&mut phys, sim, &mut v)
@@ -1643,8 +1663,8 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     e.age += 1;
     let Some(mut phys) = e.phys.take() else { return };
     (sim.current, sim.seeds) = (phys.id, 0);
-    sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
-    sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
+    sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+    sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
     // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
     // farther apart than the despawn distance, so the region's players decide).
     if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
@@ -1673,7 +1693,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     sim.grid.moved(i, pos);
     let e = &mut sim.list[i];
     let cell = chunk_of(e.pos).cell();
-    if sim.level.cells.cell(cell).is_some() {
+    if sim.level.cells().cell(cell).is_some() {
         e.cell = cell;
     }
 }
@@ -1682,7 +1702,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
 /// player (or one whose mount is gone or threw it off) gets off at the mount's dismount
 /// location; the others sit where the mount carries them.
 fn ride_players(sim: &mut SimLevel) {
-    let now = sim.level.env.game_time;
+    let now = sim.level.env().game_time;
     for k in 0..sim.players.len() {
         let Some(v) = sim.players[k].vehicle else { continue };
         let pid = sim.players[k].entity_id;
@@ -1837,7 +1857,7 @@ pub(crate) fn hit_mob(
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x6869_74, hit.target);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -1895,6 +1915,7 @@ pub(crate) fn hit_mob(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == hit.attacker) {
         p.last_hurt_mob = Some((hit.target, level.env.game_time));
         // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
@@ -1951,7 +1972,7 @@ pub(crate) fn stab_mob(
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x7374_6162, stab.target);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -2024,6 +2045,7 @@ pub(crate) fn stab_mob(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == stab.attacker) {
         p.last_hurt_mob = Some((stab.target, level.env.game_time));
         // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
@@ -2085,7 +2107,7 @@ pub(crate) fn interact_mob(
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x696e_74, target);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -2109,9 +2131,9 @@ pub(crate) fn interact_mob(
     let out = kiln_entity::mob::interact::interact(&mut phys, &mut sim, &who, &stack);
     // Sheared wool: each item on its own, thrown up from the sheep with a push from its random.
     if let Some(table) = &out.shear
-        && let Some(loot) = sim.level.env.loot.clone()
+        && let Some(loot) = sim.level.env().loot.clone()
     {
-        let env = sim.level.env;
+        let env = sim.level.env();
         let ctx = crate::mobs::DeathContext {
             type_name: phys.type_name,
             origin: arr(phys.position()),
@@ -2150,7 +2172,7 @@ pub(crate) fn interact_mob(
         kiln_entity::ride::add_passenger(&mut phys, pid, true, first_is_player);
         let at = phys.passengers.iter().position(|&x| x == pid).unwrap_or(0);
         let seat = kiln_entity::ride::rider_position(&phys, at, "minecraft:player", 1.0);
-        let now = sim.level.env.game_time;
+        let now = sim.level.env().game_time;
         let p = &mut *sim.players[i];
         p.vehicle = Some(target);
         p.vehicle_type = Some(phys.type_name);
@@ -2162,6 +2184,7 @@ pub(crate) fn interact_mob(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     let p = &mut *players[i];
     // `PlayerInteractTrigger`: the item as it was when the interaction used it.
     if let Some(seen) = seen {
@@ -2241,7 +2264,7 @@ pub(crate) fn with_entity<R>(
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, target);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -2267,6 +2290,7 @@ pub(crate) fn with_entity<R>(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
@@ -2290,7 +2314,7 @@ pub(crate) fn with_level<R>(
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, 0);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -2315,6 +2339,7 @@ pub(crate) fn with_level<R>(
         e.sync();
     }
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }

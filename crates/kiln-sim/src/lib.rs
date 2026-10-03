@@ -53,6 +53,7 @@ mod digging;
 mod dragon_fight;
 mod effects;
 mod entities;
+mod entity_world;
 mod fishing;
 mod gametest;
 mod profiles;

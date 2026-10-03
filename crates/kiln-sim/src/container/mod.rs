@@ -758,7 +758,12 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
 /// depend on how the world is split, so each gets its own seed from the world seed, the time,
 /// the position and `salt` (an approximation, I class).
 pub(crate) fn pos_random(level: &RegionLevel, pos: BlockPos, salt: u64) -> kiln_javamath::random::LegacyRandom {
-    let mut h = (level.env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ level.env.seed as u64 ^ salt.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    pos_random_in(level.env, pos, salt)
+}
+
+/// [`pos_random`] from the environment.
+pub(crate) fn pos_random_in(env: &crate::blocks::BlockEnv, pos: BlockPos, salt: u64) -> kiln_javamath::random::LegacyRandom {
+    let mut h = (env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.seed as u64 ^ salt.wrapping_mul(0xD6E8_FEB8_6659_FD93);
     for v in [pos.x as i64, pos.y as i64, pos.z as i64] {
         h = (h ^ v as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         h ^= h >> 31;

@@ -218,10 +218,11 @@ pub(crate) fn analog(level: &RegionLevel, pos: BlockPos, state: u16) -> Option<i
 
 /// The start of the entity phase: creakings that lost their heart are let go or killed.
 pub(crate) fn process_released(sim: &mut SimLevel) {
-    if sim.level.blocks.hearts.released.is_empty() {
+    let Some(level) = sim.level.region() else { return };
+    if level.blocks.hearts.released.is_empty() {
         return;
     }
-    for r in std::mem::take(&mut sim.level.blocks.hearts.released) {
+    for r in std::mem::take(&mut level.blocks.hearts.released) {
         let mut be = HeartBe::load(Some(r.uuid));
         // The creaking may still be spawning (a fresh spawn is not in the list yet): it stays,
         // and, having no heart, dies of it at its first tick.
@@ -239,9 +240,10 @@ pub(crate) fn process_released(sim: &mut SimLevel) {
 
 /// `Level.tickBlockEntities` for the hearts in ticking chunks, in position order.
 pub(crate) fn tick_all(sim: &mut SimLevel, ticking: &Ticking) {
-    let due: Vec<BlockPos> = sim.level.blocks.hearts.map.keys().filter(|p| ticking.contains(chunk_of(**p))).copied().collect();
+    let Some(level) = sim.level.region() else { return };
+    let due: Vec<BlockPos> = level.blocks.hearts.map.keys().filter(|p| ticking.contains(chunk_of(**p))).copied().collect();
     for p in due {
-        let Some(mut e) = sim.level.blocks.hearts.map.remove(&p) else { continue };
+        let Some(mut e) = sim.level.region().and_then(|l| l.blocks.hearts.map.remove(&p)) else { continue };
         let before = e.be.saved_uuid();
         // What the heart draws for its entities' seeds depends on the heart alone.
         (sim.current, sim.seeds) = (0, (p.x as u32 as u64) << 40 ^ (p.y as u32 as u64) << 20 ^ p.z as u32 as u64);
@@ -249,7 +251,9 @@ pub(crate) fn tick_all(sim: &mut SimLevel, ticking: &Ticking) {
         if e.be.saved_uuid() != before {
             e.dirty = true;
         }
-        sim.level.blocks.hearts.map.insert(p, e);
+        if let Some(l) = sim.level.region() {
+            l.blocks.hearts.map.insert(p, e);
+        }
     }
 }
 
@@ -260,13 +264,15 @@ pub(crate) fn protects(level: &RegionLevel, pos: BlockPos, id: i32, uuid: u128) 
 
 /// Runs the heart at `pos` (taken out of the map) on `f`.
 pub(crate) fn with_heart<R>(sim: &mut SimLevel, pos: BlockPos, f: impl FnOnce(&mut SimLevel, &mut HeartBe) -> R) -> Option<R> {
-    let mut e = sim.level.blocks.hearts.map.remove(&pos)?;
+    let mut e = sim.level.region()?.blocks.hearts.map.remove(&pos)?;
     let before = e.be.saved_uuid();
     let r = f(sim, &mut e.be);
     if e.be.saved_uuid() != before {
         e.dirty = true;
     }
-    sim.level.blocks.hearts.map.insert(pos, e);
+    if let Some(l) = sim.level.region() {
+        l.blocks.hearts.map.insert(pos, e);
+    }
     Some(r)
 }
 
