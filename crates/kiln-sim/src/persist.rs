@@ -295,10 +295,7 @@ impl Sim {
             }
             Some(id) => {
                 let dim = crate::dim_id(dim)?;
-                let owners = self.owner_uuids();
-                let owner = |id: i32| owners.get(&id).copied();
-                let e = self.dims[dim].regions.iter().flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
-                let mut nbt = e.save(&owner);
+                let mut nbt = self.entity_with_passengers(dim, id)?;
                 // `saveWithoutId`: no type id.
                 if let Tag::Compound(fields) = &mut nbt {
                     fields.retain(|(k, _)| k != "id");
@@ -377,6 +374,35 @@ impl Sim {
         all.into_iter().map(|e| e.save(&owner)).collect()
     }
 
+    /// What the entity chunks hold of the simulated entities: the roots of stacks, each with
+    /// its `Passengers`, in id order (for tests and tools).
+    pub fn entity_stacks_nbt(&self) -> Vec<Tag> {
+        let owners = self.owner_uuids();
+        let owner = |id: i32| owners.get(&id).copied();
+        let mut all: Vec<(i32, Tag)> = Vec::new();
+        for r in self.dims.iter().flat_map(|d| d.regions.iter()) {
+            let list = &r.part().0.list;
+            for (i, e) in list.iter().enumerate().filter(|(_, e)| !e.removed) {
+                if entities::root_in(list, i) == i {
+                    all.push((e.id, entities::save_in(list, i, &owner)));
+                }
+            }
+        }
+        all.sort_by_key(|(id, _)| *id);
+        all.into_iter().map(|(_, t)| t).collect()
+    }
+
+    /// The entity `id` of dimension `dim` saved with its passengers (`saveWithoutId`).
+    pub(crate) fn entity_with_passengers(&self, dim: usize, id: i32) -> Option<Tag> {
+        let owners = self.owner_uuids();
+        let owner = |id: i32| owners.get(&id).copied();
+        self.dims[dim].regions.iter().find_map(|r| {
+            let list = &r.part().0.list;
+            let i = list.iter().position(|e| e.id == id && !e.removed)?;
+            Some(entities::save_in(list, i, &owner))
+        })
+    }
+
     /// How many entities of loaded chunks are kept as saved without being simulated.
     pub fn kept_entity_count(&self) -> usize {
         self.dims.iter().flat_map(|d| d.raw_entities.values()).map(Vec::len).sum()
@@ -404,11 +430,9 @@ impl crate::Dim {
         let mut raw = Vec::new();
         for tag in tags {
             let uuid = tag.get("UUID").and_then(persist::uuid_from_tag).unwrap_or(0);
-            match persist::load(&tag, 0, entities::seed_for_uuid(uuid)) {
-                Ok(e) => match entities::Spawn::loaded(e) {
-                    Some(spawn) => self.spawns.push(spawn),
-                    None => raw.push(tag),
-                },
+            // (`EntityType.loadEntitiesRecursive`: the root and its `Passengers`.)
+            match entities::Spawn::from_saved(&tag, entities::seed_for_uuid(uuid), true) {
+                Ok(spawn) => self.spawns.push(spawn),
                 Err(LoadError::Discarded) => {}
                 Err(LoadError::NotSimulated) => raw.push(tag),
                 Err(LoadError::Invalid(why)) => {
@@ -445,11 +469,15 @@ impl crate::Dim {
         let mut leaving: HashSet<i32> = HashSet::new();
         for r in self.regions.iter() {
             // Lightning bolts and fishing bobbers are never saved (`EntityType.noSave`).
-            for e in r.part().0.list.iter().filter(|e| !e.removed && !matches!(e.kind.name, "minecraft:lightning_bolt" | "minecraft:fishing_bobber")) {
-                let c = entities::chunk_of(e.pos);
+            let list = &r.part().0.list;
+            for (i, e) in list.iter().enumerate().filter(|(_, e)| !e.removed && !matches!(e.kind.name, "minecraft:lightning_bolt" | "minecraft:fishing_bobber")) {
+                // A stack is saved, and unloaded, by its root (`Entity.save`: a passenger is
+                // saved inside its vehicle, in the chunk the root is in).
+                let root = entities::root_in(list, i);
+                let c = entities::chunk_of(list[root].pos);
                 let loaded = self.regions.chunk(c).is_some();
-                if storing && (all || !loaded) {
-                    groups.entry(c).or_default().push(e.save(&owner));
+                if root == i && storing && (all || !loaded) {
+                    groups.entry(c).or_default().push(entities::save_in(list, i, &owner));
                 }
                 if !loaded {
                     leaving.insert(e.id);

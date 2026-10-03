@@ -223,8 +223,65 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
     e.silent = r.bool_or("Silent", false);
     e.no_gravity = r.bool_or("NoGravity", false);
     e.ticks_frozen = r.int_or("TicksFrozen", 0);
+    // (`Passengers` is `EntityType.loadEntityRecursive`'s: see [`load_stack`].)
+    r.get("Passengers");
     e.extra = r.rest();
     Ok(e)
+}
+
+/// A rider of a loaded stack: the entity and what it rides.
+#[derive(Debug, Clone)]
+pub struct Rider {
+    pub entity: Entity,
+    /// 0: the root; n: the rider at index n - 1.
+    pub vehicle: usize,
+}
+
+/// `EntityType.loadEntityRecursive`: the root a compound describes and the riders of its
+/// `Passengers` (and theirs), depth first, each seated on its vehicle (`startRiding(vehicle,
+/// true)`: the caller links them by network ids). `seed` gives an entity's random seed from its
+/// UUID. A rider vanilla would discard is left out; a rider Kiln cannot simulate or read keeps
+/// the whole stack as saved (the error of the rider) when `strict`, else is left out too.
+pub fn load_stack(tag: &Tag, id: i32, seed: &dyn Fn(u128) -> i64, strict: bool) -> Result<(Entity, Vec<Rider>), LoadError> {
+    let uuid = tag.get("UUID").and_then(uuid_from_tag).unwrap_or(0);
+    let root = load(tag, id, seed(uuid))?;
+    let mut riders = Vec::new();
+    load_riders(tag, 0, seed, strict, &mut riders)?;
+    Ok((root, riders))
+}
+
+/// [`save_with`] of a stack as [`load_stack`] gave it.
+pub fn save_stack(root: &Entity, riders: &[Rider], owner_uuid: &dyn Fn(i32) -> Option<u128>) -> Tag {
+    let mut all: Vec<Entity> = std::iter::once(root.clone()).chain(riders.iter().map(|r| r.entity.clone())).collect();
+    for (i, e) in all.iter_mut().enumerate() {
+        e.id = i as i32 + 1;
+        e.vehicle = None;
+        e.passengers.clear();
+    }
+    for (i, r) in riders.iter().enumerate() {
+        all[i + 1].vehicle = Some(r.vehicle as i32 + 1);
+        all[r.vehicle].passengers.push(i as i32 + 2);
+    }
+    let lookup = |id: i32| usize::try_from(id - 1).ok().and_then(|i| all.get(i));
+    save_with(&all[0], owner_uuid, &lookup)
+}
+
+fn load_riders(tag: &Tag, vehicle: usize, seed: &dyn Fn(u128) -> i64, strict: bool, out: &mut Vec<Rider>) -> Result<(), LoadError> {
+    let Some(list) = tag.get("Passengers").and_then(Tag::as_list) else { return Ok(()) };
+    for p in list {
+        let uuid = p.get("UUID").and_then(uuid_from_tag).unwrap_or(0);
+        match load(p, 0, seed(uuid)) {
+            Ok(entity) => {
+                out.push(Rider { entity, vehicle });
+                let me = out.len();
+                load_riders(p, me, seed, strict, out)?;
+            }
+            Err(LoadError::Discarded) => {}
+            Err(e) if strict => return Err(e),
+            Err(_) => {}
+        }
+    }
+    Ok(())
 }
 
 fn read_kind(type_name: &'static str, r: &mut Input) -> Result<EntityKind, LoadError> {
@@ -355,10 +412,22 @@ fn item_tag(name: &str) -> Tag {
 /// `Entity.save`: the entity's compound with its `id`, as stored in an entity chunk.
 /// `owner_uuid` resolves the network id of a projectile's or TNT's owner.
 pub fn save(e: &Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>) -> Tag {
+    save_with(e, owner_uuid, &|_| None)
+}
+
+/// `Entity.saveAsPassenger`: [`save`] of an entity with the passengers it carries (`lookup`
+/// finds an entity by its network id: the level's) saved inside it as the `Passengers` list,
+/// each with its own. A rider's `Pos` is its vehicle's x and z with its own y
+/// (`saveWithoutId`). Passengers `lookup` does not find (players, entities gone) are left
+/// out; vanilla saves a stack by its root, whose chunk it is in.
+pub fn save_with<'a>(e: &'a Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>, lookup: &dyn Fn(i32) -> Option<&'a Entity>) -> Tag {
     let mut o = Output(Vec::new());
     let extra = |key: &str| e.extra.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone());
     o.put("id", Tag::String(e.type_name.to_owned()));
-    let p = e.position();
+    let p = match e.vehicle.and_then(lookup) {
+        Some(v) => Vec3::new(v.x(), e.y(), v.z()),
+        None => e.position(),
+    };
     o.put("Pos", doubles([p.x, p.y, p.z]));
     o.put("Motion", doubles([e.delta.x, e.delta.y, e.delta.z]));
     o.put("Rotation", Tag::List(vec![Tag::Float(e.y_rot), Tag::Float(e.x_rot)]));
@@ -458,7 +527,19 @@ pub fn save(e: &Entity, owner_uuid: &dyn Fn(i32) -> Option<u128>) -> Tag {
     if let Some(t) = crate::leash::save(e) {
         o.put("leash", t);
     }
-    // Everything else as it was loaded (custom name, tags, passengers, an unresolved owner).
+    // `Entity.saveWithoutId`: the passengers, each saved with its own (a rider that cannot be
+    // saved is left out, and the list with it when nothing is left).
+    let riders: Vec<Tag> = e
+        .passengers
+        .iter()
+        .filter_map(|&id| lookup(id))
+        .filter(|p| p.removed.is_none() && p.vehicle == Some(e.id) && !matches!(p.kind, EntityKind::Player(_)))
+        .map(|p| save_with(p, owner_uuid, lookup))
+        .collect();
+    if !riders.is_empty() {
+        o.put("Passengers", Tag::List(riders));
+    }
+    // Everything else as it was loaded (custom name, tags, an unresolved owner).
     for (k, v) in &e.extra {
         if !o.has(k) {
             o.put(k, v.clone());

@@ -2023,9 +2023,16 @@ impl Sim {
                 }
                 let Some(region) = d.regions.at_mut(chunk.cell()) else {
                     // A loaded entity outside its chunk's loaded area goes back to storage.
-                    if let entities::Body::Loaded(e) = spawn.body {
-                        let tag = kiln_entity::persist::save(&e, &|_| None);
-                        d.stash_entities(chunk, vec![tag]);
+                    match spawn.body {
+                        entities::Body::Loaded(e) => {
+                            let tag = kiln_entity::persist::save(&e, &|_| None);
+                            d.stash_entities(chunk, vec![tag]);
+                        }
+                        entities::Body::LoadedStack(e, riders) => {
+                            let tag = kiln_entity::persist::save_stack(&e, &riders, &|_| None);
+                            d.stash_entities(chunk, vec![tag]);
+                        }
+                        _ => {}
                     }
                     continue;
                 };

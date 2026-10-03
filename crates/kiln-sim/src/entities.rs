@@ -36,6 +36,9 @@ pub(crate) enum Body {
     Ready(Box<kiln_entity::Entity>),
     /// An entity loaded from its chunk's saved data; keeps its UUID (unless it had none).
     Loaded(Box<kiln_entity::Entity>),
+    /// A stack loaded from its root's saved data (`Passengers`): the root, and the riders
+    /// depth first, each with the index of what it rides (0 the root, n the rider n - 1).
+    LoadedStack(Box<kiln_entity::Entity>, Vec<kiln_entity::persist::Rider>),
     /// A new mob facing `yaw`; `finalize` runs its `finalizeSpawn`.
     /// `yaw`: `None` keeps the constructor's random yaw.
     Mob { kind: kiln_entity::mob::MobKind, yaw: Option<f32>, finalize: Option<crate::mobs::Finalize> },
@@ -80,6 +83,8 @@ pub(crate) struct Entity {
 /// The jockeys a mob's `finalizeSpawn` made (see `kiln_entity::mob::Companion`).
 pub(crate) struct Jockeys {
     pub companions: Vec<kiln_entity::mob::Companion>,
+    /// The companions are riders loaded from saved data: they keep their UUIDs and places.
+    pub loaded: bool,
     /// A baby zombie looks for an unridden chicken near it.
     pub nearby_chicken: bool,
 }
@@ -97,7 +102,7 @@ impl Spawn {
     /// loaded entity (never by region or load order).
     fn key(&self) -> ([u64; 3], i32, u128) {
         let uuid = match &self.body {
-            Body::Loaded(e) => e.uuid,
+            Body::Loaded(e) | Body::LoadedStack(e, _) => e.uuid,
             _ => 0,
         };
         (self.pos.map(f64::to_bits), self.kind.id, uuid)
@@ -107,6 +112,34 @@ impl Spawn {
     pub fn loaded(e: kiln_entity::Entity) -> Option<Spawn> {
         let kind = kiln_data::entities::by_name(e.type_name)?;
         Some(Spawn { kind, pos: arr(e.position()), vel: arr(e.delta), body: Body::Loaded(Box::new(e)) })
+    }
+
+    /// A spawn for a stack loaded from its root's chunk data (`EntityType.loadEntityRecursive`).
+    pub fn loaded_stack(root: kiln_entity::Entity, riders: Vec<kiln_entity::persist::Rider>) -> Option<Spawn> {
+        if riders.is_empty() {
+            return Self::loaded(root);
+        }
+        let kind = kiln_data::entities::by_name(root.type_name)?;
+        Some(Spawn { kind, pos: arr(root.position()), vel: arr(root.delta), body: Body::LoadedStack(Box::new(root), riders) })
+    }
+
+    /// The stack `tag` saves (root and `Passengers`) as a spawn; the error says why the
+    /// compound is to be kept as saved. Entities without a UUID get random seeds derived
+    /// from `seed`.
+    pub fn from_saved(tag: &kiln_proto::nbt::Tag, seed: i64, strict: bool) -> Result<Spawn, kiln_entity::persist::LoadError> {
+        let n = std::cell::Cell::new(0i64);
+        let seeds = |u: u128| {
+            n.set(n.get() + 1);
+            if u != 0 {
+                seed_for_uuid(u)
+            } else if n.get() == 1 {
+                seed
+            } else {
+                seed ^ n.get().wrapping_mul(0x9E37_79B9_7F4A_7C15u64 as i64)
+            }
+        };
+        let (root, riders) = kiln_entity::persist::load_stack(tag, 0, &seeds, strict)?;
+        Self::loaded_stack(root, riders).ok_or(kiln_entity::persist::LoadError::NotSimulated)
     }
 }
 
@@ -122,7 +155,12 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
         *next_id += 1;
         let pos = arr(c.entity.position());
         let uuid = fresh_uuid(world_seed, game_time, id);
-        list.push(Entity::new(id, uuid, Spawn { kind, pos, vel: [0.0; 3], body: Body::Ready(Box::new(c.entity)) }));
+        let (vel, body) = if jockeys.loaded {
+            (arr(c.entity.delta), Body::Loaded(Box::new(c.entity)))
+        } else {
+            ([0.0; 3], Body::Ready(Box::new(c.entity)))
+        };
+        list.push(Entity::new(id, uuid, Spawn { kind, pos, vel, body }));
         seated.push((id, c.seat));
     }
     // `startRiding`: (rider, vehicle) in the order the companions were made.
@@ -152,7 +190,12 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
         if let Some(vp) = list[vi].phys.as_mut()
             && kiln_entity::ride::start_riding(&mut rp, vp, false)
         {
-            kiln_entity::ride::position_rider(&mut rp, vp);
+            // (A rider loaded from saved data stays where it was saved unless that is far from
+            // its seat: the first tick seats it, and its cell must be its vehicle's.)
+            let seat = kiln_entity::ride::riding_position(vp, vp.passengers.len().saturating_sub(1));
+            if !jockeys.loaded || (rp.position() - seat).length_sqr() > 4.0 {
+                kiln_entity::ride::position_rider(&mut rp, vp);
+            }
         }
         list[ri].phys = Some(rp);
         list[ri].sync();
@@ -213,7 +256,7 @@ impl Entity {
     /// The entity of `spawn` with network id `id`; `uuid` unless it was loaded with one.
     pub fn new(id: i32, uuid: Uuid, spawn: Spawn) -> Self {
         let uuid = match &spawn.body {
-            Body::Loaded(e) if e.uuid != 0 => Uuid::from_u128(e.uuid),
+            Body::Loaded(e) | Body::LoadedStack(e, _) if e.uuid != 0 => Uuid::from_u128(e.uuid),
             _ => uuid,
         };
         let (u, seed, pos) = (uuid.as_u128(), seed_for(id), vec3(spawn.pos));
@@ -252,7 +295,7 @@ impl Entity {
                     let mut group = kiln_entity::mob::GroupData { monsters_disabled: f.monsters_disabled, camel_space: f.camel_space, ..Default::default() };
                     kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, &mut group, f.natural);
                     if !group.companions.is_empty() || group.nearby_chicken {
-                        jockeys = Some(Box::new(Jockeys { companions: std::mem::take(&mut group.companions), nearby_chicken: group.nearby_chicken }));
+                        jockeys = Some(Box::new(Jockeys { companions: std::mem::take(&mut group.companions), loaded: false, nearby_chicken: group.nearby_chicken }));
                     }
                     if f.persistent
                         && let Some(m) = kiln_entity::mob::data_mut(&mut e)
@@ -266,6 +309,20 @@ impl Entity {
                 let mut e = *e;
                 e.id = id;
                 e.uuid = u;
+                e
+            }
+            Body::LoadedStack(e, riders) => {
+                let mut e = *e;
+                e.id = id;
+                e.uuid = u;
+                let companions = riders
+                    .into_iter()
+                    .map(|r| kiln_entity::mob::Companion {
+                        entity: r.entity,
+                        seat: if r.vehicle == 0 { kiln_entity::mob::Seat::OnMob } else { kiln_entity::mob::Seat::OnCompanion(r.vehicle - 1) },
+                    })
+                    .collect();
+                jockeys = Some(Box::new(Jockeys { companions, loaded: true, nearby_chicken: false }));
                 e
             }
         };
@@ -480,6 +537,29 @@ impl RegionPart for Entities {
 
 pub(crate) fn chunk_of(pos: [f64; 3]) -> ChunkPos {
     ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)
+}
+
+/// The entity at `i` of a region's id-ordered `list`, saved with the passengers it carries
+/// (`Entity.saveWithoutId`, `Passengers` and all).
+pub(crate) fn save_in(list: &[Entity], i: usize, owners: &dyn Fn(i32) -> Option<u128>) -> kiln_proto::nbt::Tag {
+    let lookup = |id: i32| list.binary_search_by_key(&id, |e| e.id).ok().map(|j| &list[j]).filter(|e| !e.removed).and_then(|e| e.phys.as_ref());
+    kiln_entity::persist::save_with(list[i].phys(), owners, &lookup)
+}
+
+/// The index of the entity the stack of `list[i]` stands on: its vehicle's vehicle's... that
+/// is in `list` and carries it (a rider is saved and unloaded with its root).
+pub(crate) fn root_in(list: &[Entity], i: usize) -> usize {
+    let mut at = i;
+    for _ in 0..list.len().min(64) {
+        let Some(p) = list[at].phys.as_ref() else { break };
+        let Some(v) = p.vehicle else { break };
+        let Ok(j) = list.binary_search_by_key(&v, |e| e.id) else { break };
+        if list[j].removed || !list[j].phys.as_ref().is_some_and(|vp| vp.passengers.contains(&p.id)) {
+            break;
+        }
+        at = j;
+    }
+    at
 }
 
 fn kb(p: BlockPos) -> kiln_blocks::BlockPos {

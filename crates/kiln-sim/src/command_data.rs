@@ -91,8 +91,8 @@ impl Sim {
             }
             return Some(nbt);
         }
-        let e = self.entity_mut(target)?;
-        let mut nbt = e.save(&|_| None);
+        let dim = crate::dim_id(target.dim)?;
+        let mut nbt = self.entity_with_passengers(dim, target.entity?)?;
         if let Tag::Compound(fields) = &mut nbt {
             fields.retain(|(k, _)| k != "id");
         }
