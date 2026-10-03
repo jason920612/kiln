@@ -136,11 +136,16 @@ pub fn custom_name(e: &Entity) -> Option<&str> {
     }
 }
 
-/// `Vindicator.applyRaidBuffs`: a fresh iron axe (enchanted with the raid's odds by vanilla's
-/// providers; the enchanting is not applied, its roll is).
-pub fn apply_raid_buffs(e: &mut Entity, m: &mut MobData, enchant_odds: f32) {
-    let _ = e.random.next_float() <= enchant_odds;
-    m.equipment[MAINHAND] = ItemStack::of("minecraft:iron_axe", 1).unwrap_or_else(ItemStack::empty);
+/// `Vindicator.applyRaidBuffs`: a fresh iron axe, with the raid's odds enchanted by
+/// `raid/vindicator_post_wave_5` after the last wave of normal difficulty, else by
+/// `raid/vindicator`.
+pub fn apply_raid_buffs(e: &mut Entity, m: &mut MobData, wave: i32, normal_groups: i32, enchant_odds: f32) {
+    let mut axe = ItemStack::of("minecraft:iron_axe", 1).unwrap_or_else(ItemStack::empty);
+    if e.random.next_float() <= enchant_odds {
+        let provider = if wave > normal_groups { "minecraft:raid/vindicator_post_wave_5" } else { "minecraft:raid/vindicator" };
+        crate::enchanting::enchant_from_provider(&mut axe, provider, 0.0, &mut e.random);
+    }
+    m.equipment[MAINHAND] = axe;
 }
 
 /// `VindicatorBreakDoorGoal`: only in an active raid, one in ten tries. Kiln's doors cannot be

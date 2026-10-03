@@ -22,25 +22,25 @@ use kiln_loot::LootContext;
 use kiln_item::component::EquipmentSlot;
 use kiln_item::ItemStack;
 
-/// `EnchantmentHelper.enchantItemFromProvider` for the enchantment providers of the
-/// `by_cost_with_difficulty` type Kiln knows (vanilla's `minecraft:mob_spawn_equipment`: the
-/// non-treasure enchantments at a cost of 5 to 22, scaled by the difficulty's special
-/// multiplier): the cost is drawn between `min_cost` and `min_cost + (multiplier * span)`, the
-/// enchantments picked as for an enchanting table at that cost, and each upgraded into the
-/// item's list. The stack must carry its (empty) enchantment list already, as the trap sets it.
+/// `EnchantmentHelper.enchantItemFromProvider`: the datapack's provider `provider` (an
+/// `enchantment_provider` id such as `minecraft:mob_spawn_equipment`) applied to `stack`.
 pub(crate) fn enchant_from_provider(loot: &kiln_loot::LootData, stack: &mut ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
-    let (tag, min_cost, max_cost_span) = match provider {
-        "minecraft:mob_spawn_equipment" => ("minecraft:on_mob_spawn_equipment", 5, 17),
-        _ => return,
-    };
-    // `Mth.randomBetweenInclusive(random, minCost, minCost + (int)(multiplier * maxCostSpan))`.
-    let hi = min_cost + (special_multiplier * max_cost_span as f32) as i32;
-    let cost = random.next_int_bounded(hi - min_cost + 1) + min_cost;
-    let Some(ids) = kiln_inventory::tags::entries("minecraft:enchantment", tag) else { return };
-    let candidates: Vec<&kiln_loot::enchant::Enchantment> = ids.iter().filter_map(|&id| loot.enchantment(id)).collect();
-    for (enchantment, level) in kiln_loot::enchant::select(random, stack, cost, &candidates) {
-        kiln_loot::enchant::enchant(stack, enchantment, level);
+    loot.enchant_from_provider(provider, stack, special_multiplier, random);
+}
+
+/// The [`kiln_entity::enchanting::Enchanter`] of a datapack.
+struct LootEnchanter(std::sync::Arc<kiln_loot::LootData>);
+
+impl kiln_entity::enchanting::Enchanter for LootEnchanter {
+    fn enchant(&self, stack: &mut ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
+        self.0.enchant_from_provider(provider, stack, special_multiplier, random);
     }
+}
+
+/// Lets the mobs this thread runs enchant their spawn equipment from `loot`'s providers until
+/// the result is dropped.
+pub(crate) fn install_enchanter(loot: Option<&std::sync::Arc<kiln_loot::LootData>>) -> kiln_entity::enchanting::Installed {
+    kiln_entity::enchanting::install(loot.map(|l| std::rc::Rc::new(LootEnchanter(l.clone())) as std::rc::Rc<dyn kiln_entity::enchanting::Enchanter>))
 }
 
 /// What predicates can ask of an entity.

@@ -9,6 +9,7 @@ pub mod arrow;
 pub mod blocks;
 pub mod clip;
 pub mod effect;
+pub mod enchanting;
 pub mod collision;
 pub mod entity;
 pub mod explosion;

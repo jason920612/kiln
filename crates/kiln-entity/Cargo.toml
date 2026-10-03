@@ -21,3 +21,5 @@ uuid.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["float_roundtrip"] }
+# The datapack's enchantment providers, for the finalizeSpawn enchanting parity test.
+kiln-loot.workspace = true

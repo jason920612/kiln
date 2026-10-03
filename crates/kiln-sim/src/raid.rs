@@ -853,6 +853,7 @@ impl Sim {
     /// `applyRaidBuffs`, on the ground).
     #[allow(clippy::too_many_arguments)]
     fn build_raider(&mut self, kind: MobKind, at: kiln_entity::math::Vec3, seed: i64, ctx: &mob::SpawnContext, raid: i32, wave: i32, odds: f32, normal: i32) -> kiln_entity::Entity {
+        let _enchanting = crate::enchant::install_enchanter(self.loot.as_ref());
         let mut e = mob::new(kind, -1, 0, seed);
         e.set_pos(at);
         e.set_old_pos_and_rot();
@@ -870,7 +871,7 @@ impl Sim {
             }
             match kind {
                 MobKind::Pillager => mob::kinds::pillager::apply_raid_buffs(&mut e, m, wave, odds, normal, num_groups(1)),
-                MobKind::Vindicator => mob::kinds::vindicator::apply_raid_buffs(&mut e, m, odds),
+                MobKind::Vindicator => mob::kinds::vindicator::apply_raid_buffs(&mut e, m, wave, normal, odds),
                 _ => {}
             }
             m.y_head_rot = yaw;

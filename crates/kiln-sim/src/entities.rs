@@ -1354,6 +1354,8 @@ pub(crate) fn tick(
     if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() {
         return;
     }
+    // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
+    let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live =|p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
     let mut views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
@@ -1976,6 +1978,7 @@ pub(crate) fn with_entity<R>(
     if entities.list[idx].removed {
         return None;
     }
+    let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();

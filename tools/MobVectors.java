@@ -256,9 +256,9 @@ public class MobVectors {
         server.submit(() -> {
             ServerLevel level = server.overworld();
             ServerPlayer player = mockPlayer(server, "KilnMob");
-            if ("finalize".equals(filter)) {
+            if ("finalize".equals(filter) || "finalize_hard".equals(filter)) {
                 try {
-                    lines.addAll(finalizeVectors(level, player));
+                    lines.addAll(finalizeVectors(server, level, player, "finalize_hard".equals(filter)));
                 } catch (Throwable t) {
                     t.printStackTrace();
                 }
@@ -291,17 +291,28 @@ public class MobVectors {
     /// wp33: `finalizeSpawn` of natural spawns with the level random set to each seed: the random
     /// state after, and every entity of the mob's riding stack (the jockeys it makes) with its
     /// equipment and who it rides. Written with the argument `finalize` (to the output file).
-    static List<String> finalizeVectors(ServerLevel level, ServerPlayer player) throws Exception {
+    /// wp34 (`finalize_hard`): the same on hard difficulty, in a long-inhabited chunk at a late full
+    /// moon, where the special multiplier is high (mobs enchant their spawn equipment): every item
+    /// also with its enchantments (`ench`).
+    static List<String> finalizeVectors(MinecraftServer server, ServerLevel level, ServerPlayer player, boolean hard) throws Exception {
         List<String> lines = new ArrayList<>();
         var src = level.getServer().createCommandSourceStack();
         level.getServer().getCommands().performPrefixedCommand(src, "gamerule minecraft:spawn_monsters true");
-        level.getServer().getCommands().performPrefixedCommand(src, "time set 18000");
+        level.getServer().getCommands().performPrefixedCommand(src, hard ? "time set 1554000" : "time set 18000");
         player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
         player.snapTo(0, 300, 0, 0f, 0f);
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
         levelData.setGameTime(1000L);
+        if (hard) {
+            server.setDifficulty(net.minecraft.world.Difficulty.HARD, true);
+            level.getChunkAt(new net.minecraft.core.BlockPos(0, BY, 0)).setInhabitedTime(4_000_000L);
+        }
         level.updateSkyBrightness();
-        Object[][] kinds = {
+        Object[][] kinds = hard ? new Object[][] {
+            {"minecraft:zombie", 500}, {"minecraft:husk", 400}, {"minecraft:drowned", 400}, {"minecraft:zombified_piglin", 400},
+            {"minecraft:skeleton", 400}, {"minecraft:stray", 300}, {"minecraft:pillager", 800}, {"minecraft:vindicator", 400},
+            {"minecraft:wither_skeleton", 300}, {"minecraft:vex", 200},
+        } : new Object[][] {
             {"minecraft:spider", 6000},{"minecraft:zombie", 6000}, {"minecraft:husk", 4000},
             {"minecraft:drowned", 4000}, {"minecraft:zombified_piglin", 1500}, {"minecraft:strider", 4000},
             {"minecraft:zombie_horse", 600}, {"minecraft:parched", 300}, {"minecraft:nautilus", 300},
@@ -335,6 +346,18 @@ public class MobVectors {
                             if (j > 0) sb.append(',');
                             sb.append(String.format(Locale.ROOT, "\"%s\":\"%s\"", slots[j].getName(), st.isEmpty() ? "" : BuiltInRegistries.ITEM.getKey(st.getItem()).toString()));
                         }
+                        sb.append("},\"ench\":{");
+                        for (int j = 0; j < slots.length; j++) {
+                            ItemStack st = m.getItemBySlot(slots[j]);
+                            List<String> parts = new ArrayList<>();
+                            var ench = st.getOrDefault(net.minecraft.core.component.DataComponents.ENCHANTMENTS, net.minecraft.world.item.enchantment.ItemEnchantments.EMPTY);
+                            for (var ee : ench.entrySet()) parts.add(ee.getKey().unwrapKey().get().identifier() + ":" + ee.getIntValue());
+                            java.util.Collections.sort(parts);
+                            if (j > 0) sb.append(',');
+                            sb.append(String.format(Locale.ROOT, "\"%s\":\"%s\"", slots[j].getName(), String.join(",", parts)));
+                        }
+                        sb.append("}}");
+                        continue;
                     }
                     sb.append("}}");
                 }

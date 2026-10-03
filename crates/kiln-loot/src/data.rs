@@ -135,6 +135,8 @@ pub struct LootData {
     pub(crate) float_providers: Registry<FloatProvider>,
     /// By `minecraft:enchantment` network id.
     pub(crate) enchantments: Vec<Option<Enchantment>>,
+    /// `enchantment_provider/`.
+    pub(crate) providers: HashMap<Identifier, crate::provider::Provider>,
     pub tags: Tags,
     /// Files that failed to decode (see [`LootData::load_lenient`]).
     pub errors: Vec<FileError>,
@@ -253,6 +255,25 @@ impl LootData {
             }
         }
         data.enchantments = enchantments;
+
+        // Enchantment providers (`enchantment_provider/`, with subfolders).
+        {
+            let parser = Parser { names: &data.names, tags: &data.tags };
+            let mut providers = HashMap::new();
+            for (id, path) in list_pack_files(packs, "enchantment_provider")? {
+                let text = std::fs::read_to_string(&path).map_err(io(&path))?;
+                let result = Json::parse(&text)
+                    .map_err(|e| ParseError::new(e.to_string()))
+                    .and_then(|j| crate::provider::Provider::parse(&parser, &j));
+                match result {
+                    Ok(p) => {
+                        providers.insert(id, p);
+                    }
+                    Err(e) => errors.push(FileError { element: format!("enchantment_provider/{id}"), error: e.to_string() }),
+                }
+            }
+            data.providers = providers;
+        }
 
         // Loot registries.
         for (kind, id, path) in files {

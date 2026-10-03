@@ -1469,12 +1469,8 @@ impl Kind for Piglin {
                 }
             }
         }
-        // `populateDefaultEquipmentEnchantments`: one draw per worn item (weapon 25%, armor 50%
-        // of the special multiplier); the enchanting itself is not simulated.
-        let _ = !m.equipment[MAINHAND].is_empty() && r.next_float() < 0.25 * ctx.special_multiplier;
-        for slot in [mob::FEET, mob::LEGS, mob::CHEST, mob::HEAD] {
-            let _ = !m.equipment[slot].is_empty() && r.next_float() < 0.5 * ctx.special_multiplier;
-        }
+        // `populateDefaultEquipmentEnchantments`.
+        super::zombie::populate_enchantments(m, r, ctx);
         ext::mob_finalize(m, r);
     }
 

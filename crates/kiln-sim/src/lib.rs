@@ -2011,6 +2011,8 @@ impl Sim {
     /// (spawns in unloaded chunks are dropped, as vanilla would not add them).
     fn materialize_spawns(&mut self) {
         let world_seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
+        // What `finalizeSpawn` does to a new mob's equipment reads the datapack's providers.
+        let _enchanting = enchant::install_enchanter(self.loot.as_ref());
         for d in &mut self.dims {
             let mut later = Vec::new();
             // Entities built during a tick carry placeholder (negative) ids that other new
