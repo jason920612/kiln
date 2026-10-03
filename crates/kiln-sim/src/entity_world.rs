@@ -4,7 +4,7 @@
 //! (block changes, block packets) is applied after the islands, in the entities' order; until
 //! then the island reads its own block changes from an overlay.
 
-use crate::blocks::{BlockEnv, RegionBlocks, RegionLevel};
+use crate::blocks::{BlockEnv, RegionLevel};
 use bytes::Bytes;
 use kiln_blocks::{BlockPos, Level};
 use kiln_region::CellSet;
@@ -17,7 +17,6 @@ pub(crate) type Deferred = Box<dyn FnOnce(&mut RegionLevel) + Send>;
 /// One island's view of the blocks and its log.
 pub(crate) struct IslandWorld<'l> {
     pub cells: &'l CellSet<Cell>,
-    pub blocks: &'l RegionBlocks,
     pub env: &'l BlockEnv,
     /// Blocks this island set, as it reads them until the changes are applied.
     pub overlay: crate::FastMap<(i32, i32, i32), u16>,
@@ -27,8 +26,8 @@ pub(crate) struct IslandWorld<'l> {
 }
 
 impl<'l> IslandWorld<'l> {
-    pub fn new(cells: &'l CellSet<Cell>, blocks: &'l RegionBlocks, env: &'l BlockEnv) -> Self {
-        IslandWorld { cells, blocks, env, overlay: Default::default(), deferred: Vec::new(), packets: Vec::new() }
+    pub fn new(cells: &'l CellSet<Cell>, env: &'l BlockEnv) -> Self {
+        IslandWorld { cells, env, overlay: Default::default(), deferred: Vec::new(), packets: Vec::new() }
     }
 }
 
@@ -53,13 +52,6 @@ impl<'a, 'l> World<'a, 'l> {
         match self {
             World::Region(l) => l.cells,
             World::Island(i) => i.cells,
-        }
-    }
-
-    pub fn blocks(&self) -> &RegionBlocks {
-        match self {
-            World::Region(l) => l.blocks,
-            World::Island(i) => i.blocks,
         }
     }
 

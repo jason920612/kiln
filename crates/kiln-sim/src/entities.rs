@@ -5,6 +5,8 @@
 use crate::Player;
 use crate::blocks::{self, RegionLevel};
 use crate::entity_world::World;
+
+mod islands;
 use crate::health;
 use bytes::Bytes;
 use kiln_blocks::{Effect, Level};
@@ -640,6 +642,8 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     /// Player views (spectators too) by id, UUID and section, for [`EntityLevel::player`],
     /// [`EntityLevel::player_by_uuid`] and [`EntityLevel::players_in`].
     view_index: kiln_entity::level::PlayerGrid,
+    /// The region's players for `Mob.checkDespawn` when `views` holds only an island's.
+    despawn_views: Option<&'a [PlayerView]>,
 }
 
 /// Maps of small integer keys (entity ids, sections): looked up several times per entity and tick.
@@ -1484,6 +1488,7 @@ pub(crate) fn tick(
     spawns: &mut Vec<Spawn>,
     deaths: &mut Vec<health::Death>,
     any_player: bool,
+    ctx: &kiln_sched::Ctx<'_>,
 ) {
     if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() {
         return;
@@ -1516,38 +1521,15 @@ pub(crate) fn tick(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn_views: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
     process_pending_kills(&mut sim);
-    for i in 0..sim.list.len() {
-        // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
-        let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
-        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
-            continue;
-        }
-        let me = sim.list[i].id;
-        if let Some(phys) = sim.list[i].phys.as_mut()
-            && let Some(v) = phys.vehicle.take()
-            && let Some(j) = sim.index(v)
-            && let Some(vp) = sim.list[j].phys.as_mut()
-        {
-            kiln_entity::ride::remove_passenger(vp, me);
-        }
-        tick_entity(&mut sim, i, ticking, any_player, None);
-        let passengers = sim.list[i].phys.as_ref().map(|p| p.passengers.clone()).unwrap_or_default();
-        for id in passengers {
-            if let Some(j) = sim.index(id) {
-                tick_entity(&mut sim, j, ticking, any_player, Some(i));
-            } else if id < 0 {
-                // A rider the vehicle's own tick just made (the skeleton of a trap horse, still
-                // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
-                // joined the level meanwhile.
-                tick_new_passenger(&mut sim, id, i);
-            }
-        }
+    if !islands::tick_islands(&mut sim, ticking, any_player, ctx) {
+        tick_list(&mut sim, ticking, any_player, &mut |_, _| {});
     }
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
@@ -1593,6 +1575,39 @@ pub(crate) fn tick(
     }
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
+    }
+}
+
+/// The entities' turns in list order (`tick` for a region or an island): passengers right after
+/// their vehicle. `mark` sees each turn (by list index) before it runs.
+pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_player: bool, mark: &mut dyn FnMut(&SimLevel, usize)) {
+    for i in 0..sim.list.len() {
+        // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
+        let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
+        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
+            continue;
+        }
+        mark(sim, i);
+        let me = sim.list[i].id;
+        if let Some(phys) = sim.list[i].phys.as_mut()
+            && let Some(v) = phys.vehicle.take()
+            && let Some(j) = sim.index(v)
+            && let Some(vp) = sim.list[j].phys.as_mut()
+        {
+            kiln_entity::ride::remove_passenger(vp, me);
+        }
+        tick_entity(sim, i, ticking, any_player, None);
+        let passengers = sim.list[i].phys.as_ref().map(|p| p.passengers.clone()).unwrap_or_default();
+        for id in passengers {
+            if let Some(j) = sim.index(id) {
+                tick_entity(sim, j, ticking, any_player, Some(i));
+            } else if id < 0 {
+                // A rider the vehicle's own tick just made (the skeleton of a trap horse, still
+                // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
+                // joined the level meanwhile.
+                tick_new_passenger(sim, id, i);
+            }
+        }
     }
 }
 
@@ -1669,7 +1684,8 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     // farther apart than the despawn distance, so the region's players decide).
     if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
         let p = phys.position();
-        let nearest = sim.views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b));
+        let views = sim.despawn_views.unwrap_or(&sim.views);
+        let nearest = views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b));
         kiln_entity::mob::check_despawn(&mut phys, &*sim, nearest.or(any_player.then_some(f64::MAX)));
     }
     if !phys.is_removed() {
@@ -1874,6 +1890,7 @@ pub(crate) fn hit_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn_views: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -1989,6 +2006,7 @@ pub(crate) fn stab_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn_views: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2124,6 +2142,7 @@ pub(crate) fn interact_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn_views: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2281,6 +2300,7 @@ pub(crate) fn with_entity<R>(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn_views: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2331,6 +2351,7 @@ pub(crate) fn with_level<R>(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn_views: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();

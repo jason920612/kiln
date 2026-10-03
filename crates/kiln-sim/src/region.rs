@@ -436,7 +436,7 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 2);
         self.tick_blocks(env);
         mark(&mut self.out.times, 3);
-        self.tick_entities(env);
+        self.tick_entities(env, ctx);
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         self.post_cart_closes(env);
@@ -505,7 +505,7 @@ impl RegionWork<'_> {
 
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
-    fn tick_entities(&mut self, env: &Env) {
+    fn tick_entities(&mut self, env: &Env, ctx: &Ctx<'_>) {
         // `TickRateManager.isEntityFrozen`: nothing but players ticks while frozen.
         if env.frozen {
             return;
@@ -540,7 +540,7 @@ impl RegionWork<'_> {
             };
             let any_player = !self.players.is_empty();
             crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns);
-            entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player);
+            entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player, ctx);
             crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
