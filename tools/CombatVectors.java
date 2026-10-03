@@ -581,6 +581,25 @@ public class CombatVectors {
                 }
         }).get();
         Thread.sleep(2000);
+        if ("spear".equals(filter)) {
+            // wp34: only the spear vectors (spear.jsonl beside the output file).
+            List<String> spearLines = new ArrayList<>();
+            server.submit(() -> {
+                try {
+                    SpearVectors.run(server, spearLines);
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                    spearLines.add("{\"kind\":\"error\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");
+                }
+            }).get();
+            Path spearPath = outPath.resolveSibling("spear.jsonl");
+            try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(spearPath))) {
+                for (String l : spearLines) w.println(l);
+            }
+            System.out.println("CombatVectors: wrote " + spearLines.size() + " spear vectors to " + spearPath);
+            server.halt(false);
+            System.exit(0);
+        }
         List<String> lines = new ArrayList<>();
         server.submit(() -> {
             for (Scenario s : selected) {
@@ -1532,5 +1551,440 @@ class MountVectors {
             for (var e : new ArrayList<>(level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-6, 90, -6, 6, 120, 6), e -> e instanceof net.minecraft.world.entity.item.ItemEntity))) e.discard();
             server.getPlayerList().remove(p);
         }
+    }
+}
+
+// Spear vectors (wp34): the piercing attack (`PiercingWeapon.attack` through the STAB player
+// action) and charging with a kinetic weapon (`KineticWeapon.damageEntities` every tick of use),
+// by mock players against players and mobs: damage, knockback, dismounting, the lunge
+// enchantment, durability, exhaustion and the attack cooldown, and the sounds and swing the
+// target hears and sees.
+class SpearVectors {
+    static Map<String, Object> line(String kind) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", kind);
+        return m;
+    }
+
+    static net.minecraft.core.BlockPos at(int x, int y, int z) {
+        return new net.minecraft.core.BlockPos(x, (int) CombatVectors.BY + y, z);
+    }
+
+    static void clear(ServerLevel level) {
+        var air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        for (int x = -4; x <= 4; x++)
+            for (int y = -3; y <= 6; y++)
+                for (int z = -4; z <= 14; z++) level.setBlock(at(x, y, z), air, 2);
+        for (var e : new ArrayList<>(level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-10, 90, -10, 10, 120, 20), e -> !(e instanceof ServerPlayer)))) e.discard();
+    }
+
+    static void gameTime(ServerLevel level, long t) throws Exception {
+        var data = (net.minecraft.world.level.storage.ServerLevelData) CombatVectors.get(level, "serverLevelData");
+        data.setGameTime(t);
+    }
+
+    static CombatVectors.Side player(String spear, double dz, float yaw) {
+        CombatVectors.Side s = new CombatVectors.Side();
+        s.mainHand = spear;
+        s.dz = dz;
+        s.yaw = yaw;
+        return s;
+    }
+
+    static net.minecraft.world.entity.LivingEntity mob(ServerLevel level, String type, double dx, double dy, double dz, float yaw) {
+        var e = (net.minecraft.world.entity.LivingEntity) BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(type))
+                .create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+        e.setPos(CombatVectors.BX + dx, CombatVectors.BY + dy, CombatVectors.BZ + dz);
+        e.setYRot(yaw);
+        if (e instanceof net.minecraft.world.entity.Mob m) m.setNoAi(true);
+        if (e instanceof net.minecraft.world.entity.Mob m && m.getAttribute(Attributes.MAX_HEALTH) != null) m.setPersistenceRequired();
+        level.addFreshEntity(e);
+        return e;
+    }
+
+    static List<Object> sounds(List<Object> packets) {
+        List<Object> out = new ArrayList<>();
+        for (Object p : packets) {
+            if (p instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket s) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("sound", s.getSound().value().location().toString());
+                m.put("source", s.getSource().getName());
+                m.put("volume", s.getVolume());
+                m.put("pitch", s.getPitch());
+                out.add(m);
+            }
+        }
+        return out;
+    }
+
+    static Object swing(List<Object> packets, int entityId) {
+        for (Object p : packets) {
+            if (p instanceof net.minecraft.network.protocol.game.ClientboundSwingAnimationPacket s && s.entityId() == entityId) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("hand", s.hand().name());
+                m.put("type", s.animation().type().name());
+                m.put("duration", s.animation().duration());
+                return m;
+            }
+        }
+        return null;
+    }
+
+    static Map<String, Object> playerOutcome(ServerPlayer p, int attackerId) throws Exception {
+        List<Object> packets = CombatVectors.drain(p);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("health", p.getHealth());
+        m.put("absorption", p.getAbsorptionAmount());
+        m.put("exhaustion", (Float) CombatVectors.get(p.getFoodData(), "exhaustionLevel"));
+        m.put("ticker", (Integer) CombatVectors.get(p, "attackStrengthTicker"));
+        ItemStack main = p.getMainHandItem();
+        m.put("main_hand_damage", main.getDamageValue());
+        m.put("main_hand_count", main.getCount());
+        EquipmentSlot[] slots = {EquipmentSlot.FEET, EquipmentSlot.LEGS, EquipmentSlot.CHEST, EquipmentSlot.HEAD};
+        List<Object> armor = new ArrayList<>();
+        for (EquipmentSlot slot : slots) {
+            ItemStack a = p.getItemBySlot(slot);
+            armor.add(a.isEmpty() ? null : a.getDamageValue());
+        }
+        m.put("armor_damage", armor);
+        Object motion = null;
+        for (Object pkt : packets) {
+            if (pkt instanceof net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket mp && mp.id() == p.getId()) motion = CombatVectors.vec(mp.movement());
+        }
+        m.put("motion", motion);
+        m.put("velocity", CombatVectors.vec(p.getDeltaMovement()));
+        m.put("pending_motion", p.syncVelocity ? CombatVectors.vec(p.getDeltaMovement()) : null);
+        m.put("sounds", sounds(packets));
+        m.put("swing", swing(packets, attackerId));
+        m.put("fire_ticks", p.getRemainingFireTicks());
+        m.put("on_ground", p.onGround());
+        m.put("vehicle", p.getVehicle() == null ? null : BuiltInRegistries.ENTITY_TYPE.getKey(p.getVehicle().getType()).toString());
+        return m;
+    }
+
+    static Map<String, Object> mobOutcome(net.minecraft.world.entity.LivingEntity e) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("type", BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString());
+        m.put("health", e.getHealth());
+        m.put("alive", e.isAlive());
+        m.put("velocity", CombatVectors.vec(e.getDeltaMovement()));
+        m.put("vehicle", e.getVehicle() == null ? null : BuiltInRegistries.ENTITY_TYPE.getKey(e.getVehicle().getType()).toString());
+        m.put("fire_ticks", e.getRemainingFireTicks());
+        m.put("hurt_time", e.hurtTime);
+        return m;
+    }
+
+    static void stab(ServerPlayer a) {
+        a.connection.handlePlayerAction(new net.minecraft.network.protocol.game.ServerboundPlayerActionPacket(
+                net.minecraft.network.protocol.game.ServerboundPlayerActionPacket.Action.STAB, net.minecraft.core.BlockPos.ZERO, net.minecraft.core.Direction.DOWN, 0));
+    }
+
+    /** One stab by an attacker holding a spear at a target player (`tgt` null) or mobs. */
+    static void stabCase(MinecraftServer server, List<String> out, String name, CombatVectors.Side att, CombatVectors.Side tgt, String[][] mobs,
+                         float pitch, int food, String twist, int n) throws Exception {
+        ServerLevel level = server.overworld();
+        clear(level);
+        gameTime(level, 5000);
+        var cmd = server.createCommandSourceStack();
+        server.getCommands().performPrefixedCommand(cmd, "gamerule minecraft:pvp true");
+        server.getCommands().performPrefixedCommand(cmd, "difficulty normal");
+        ServerPlayer a = CombatVectors.mockPlayer(server, "Stab" + n);
+        ServerPlayer t = tgt != null ? CombatVectors.mockPlayer(server, "Mark" + n) : null;
+        CombatVectors.setup(server, a, att);
+        if (t != null) CombatVectors.setup(server, t, tgt);
+        a.setXRot(pitch);
+        a.getFoodData().setFoodLevel(food);
+        List<net.minecraft.world.entity.LivingEntity> made = new ArrayList<>();
+        if (mobs != null) {
+            for (String[] mb : mobs) {
+                var e = mob(level, mb[0], Double.parseDouble(mb[1]), Double.parseDouble(mb[2]), Double.parseDouble(mb[3]), 180f);
+                if (mb.length > 4 && !mb[4].isEmpty()) {
+                    for (String piece : mb[4].split(",")) {
+                        String[] kv = piece.split("=");
+                        e.setItemSlot(EquipmentSlot.valueOf(kv[0]), new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(kv[1]))));
+                    }
+                }
+                made.add(e);
+            }
+        }
+        // Twists: a wall between them, the attacker mounted, in water, gliding, a shield up.
+        switch (twist) {
+            case "wall" -> level.setBlock(at(0, 1, 1), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), 2);
+            case "wall_close" -> level.setBlock(at(0, 1, 1), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), 2);
+            case "mounted" -> {
+                var pig = mob(level, "minecraft:pig", 0.0, 0.0, 0.0, 0f);
+                a.setPos(CombatVectors.BX + att.dx, CombatVectors.BY + att.dy, CombatVectors.BZ + att.dz);
+                a.startRiding(pig, true, false);
+                made.add(pig);
+            }
+            case "water" -> {
+                level.setBlock(at(0, 0, 0), net.minecraft.world.level.block.Blocks.WATER.defaultBlockState(), 2);
+                level.setBlock(at(0, 1, 0), net.minecraft.world.level.block.Blocks.WATER.defaultBlockState(), 2);
+                CombatVectors.call(a, "updateFluidInteraction");
+            }
+            case "glide" -> a.startFallFlying();
+            case "shield" -> {
+                t.setItemSlot(EquipmentSlot.OFFHAND, new ItemStack(net.minecraft.world.item.Items.SHIELD));
+                t.startUsingItem(net.minecraft.world.InteractionHand.OFF_HAND);
+            }
+            default -> {}
+        }
+        CombatVectors.drain(a);
+        if (t != null) CombatVectors.drain(t);
+        long seed = name.hashCode();
+        level.getRandom().setSeed(seed);
+        a.getRandom().setSeed(seed + 1);
+        if (t != null) t.getRandom().setSeed(seed + 2);
+        stab(a);
+        Map<String, Object> m = line("stab");
+        m.put("name", name);
+        m.put("level_seed", seed);
+        m.put("attacker", att.json());
+        m.put("attacker_pitch", pitch);
+        m.put("food", food);
+        m.put("twist", twist);
+        m.put("target", tgt != null ? tgt.json() : null);
+        List<Object> ms = new ArrayList<>();
+        if (mobs != null) for (String[] mb : mobs) ms.add(mb);
+        m.put("mobs", ms);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("attacker", playerOutcome(a, a.getId()));
+        if (t != null) r.put("target", playerOutcome(t, a.getId()));
+        List<Object> mo = new ArrayList<>();
+        for (var e : made) mo.add(mobOutcome(e));
+        r.put("mobs", mo);
+        m.put("result", r);
+        out.add(CombatVectors.toJson(m));
+        for (var e : made) e.discard();
+        server.getPlayerList().remove(a);
+        if (t != null) server.getPlayerList().remove(t);
+        clear(level);
+    }
+
+    static void stabs(MinecraftServer server, List<String> out) throws Exception {
+        int n = 0;
+        String[] spears = {"minecraft:wooden_spear", "minecraft:iron_spear", "minecraft:netherite_spear", "minecraft:golden_spear", "minecraft:copper_spear"};
+        double[] dists = {1.0, 2.0, 2.5, 3.5, 4.0, 4.5, 5.0, 6.5};
+        for (String spear : spears) {
+            for (double d : dists) {
+                CombatVectors.Side a = player(spear, 0.0, 0f);
+                CombatVectors.Side t = player(null, d, 180f);
+                stabCase(server, out, "stab/" + spear + "/" + d, a, t, null, 0f, 17, "", n++);
+            }
+        }
+        // The attack cooldown: a spear wants its charge.
+        for (int ticker : new int[] {0, 5, 10, 13, 14, 15, 20, 100}) {
+            CombatVectors.Side a = player("minecraft:iron_spear", 0.0, 0f);
+            a.ticker = ticker;
+            stabCase(server, out, "stab_ticker/" + ticker, a, player(null, 3.0, 180f), null, 0f, 17, "", n++);
+        }
+        // Enchantments of the weapon.
+        Object[][] enchants = {
+            {"lunge1", "minecraft:lunge", 1}, {"lunge2", "minecraft:lunge", 2}, {"lunge3", "minecraft:lunge", 3},
+            {"sharpness3", "minecraft:sharpness", 3}, {"fire2", "minecraft:fire_aspect", 2}, {"knockback2", "minecraft:knockback", 2},
+            {"unbreaking3", "minecraft:unbreaking", 3}, {"looting3", "minecraft:looting", 3}};
+        for (Object[] e : enchants) {
+            CombatVectors.Side a = player("minecraft:iron_spear", 0.0, 0f);
+            a.ench((String) e[1], (Integer) e[2]);
+            a.mainHandDamage = 100;
+            stabCase(server, out, "stab_ench/" + e[0], a, player(null, 3.0, 180f), null, 0f, 17, "", n++);
+        }
+        // Lunge's conditions: hunger, creative, riding, water, gliding.
+        for (int food : new int[] {20, 7, 6, 0}) {
+            CombatVectors.Side a = player("minecraft:iron_spear", 0.0, 0f);
+            a.ench("minecraft:lunge", 2);
+            stabCase(server, out, "stab_lunge_food/" + food, a, player(null, 3.0, 180f), null, 0f, food, "", n++);
+        }
+        for (String twist : new String[] {"mounted", "water", "glide", "wall", "shield"}) {
+            CombatVectors.Side a = player("minecraft:iron_spear", 0.0, 0f);
+            a.ench("minecraft:lunge", 1);
+            CombatVectors.Side t = player(null, 3.0, 180f);
+            stabCase(server, out, "stab_twist/" + twist, a, t, null, 0f, 17, twist, n++);
+        }
+        {
+            CombatVectors.Side a = player("minecraft:iron_spear", 0.0, 0f);
+            a.ench("minecraft:lunge", 1);
+            a.gameMode = "creative";
+            stabCase(server, out, "stab_lunge_creative", a, player(null, 3.0, 180f), null, 0f, 3, "", n++);
+        }
+        // Looking up and down, with the target higher and lower.
+        for (float pitch : new float[] {-30f, -10f, 15f, 40f}) {
+            for (double dy : new double[] {0.0, 1.5, -1.0}) {
+                CombatVectors.Side t = player(null, 3.0, 180f);
+                t.dy = dy;
+                stabCase(server, out, "stab_pitch/" + pitch + "/" + dy, player("minecraft:iron_spear", 0.0, 0f), t, null, pitch, 17, "", n++);
+            }
+        }
+        // Targets with armor, absorption, an old hurt, sneaking away.
+        {
+            CombatVectors.Side t = player(null, 3.0, 180f);
+            t.armor = new String[] {"minecraft:iron_boots", "minecraft:iron_leggings", "minecraft:iron_chestplate", "minecraft:iron_helmet"};
+            stabCase(server, out, "stab_armor", player("minecraft:diamond_spear", 0.0, 0f), t, null, 0f, 17, "", n++);
+            CombatVectors.Side t2 = player(null, 3.0, 180f);
+            t2.absorption = 4.0f;
+            t2.health = 5.0f;
+            stabCase(server, out, "stab_absorption", player("minecraft:diamond_spear", 0.0, 0f), t2, null, 0f, 17, "", n++);
+            CombatVectors.Side t3 = player(null, 3.0, 180f);
+            t3.hurtCooldown = 15;
+            t3.lastHurt = 3.0f;
+            stabCase(server, out, "stab_cooldown", player("minecraft:diamond_spear", 0.0, 0f), t3, null, 0f, 17, "", n++);
+            CombatVectors.Side t4 = player(null, 3.0, 180f);
+            t4.gameMode = "creative";
+            stabCase(server, out, "stab_creative_target", player("minecraft:diamond_spear", 0.0, 0f), t4, null, 0f, 17, "", n++);
+            CombatVectors.Side t5 = player(null, 3.0, 180f);
+            t5.health = 0.5f;
+            stabCase(server, out, "stab_kill", player("minecraft:diamond_spear", 0.0, 0f), t5, null, 0f, 17, "", n++);
+        }
+        // Mobs: one, two in a line (both are pierced), behind a wall, riding.
+        stabCase(server, out, "stab_mob/pig", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {{"minecraft:pig", "0.0", "0.0", "3.0"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_mob/zombie_armor", player("minecraft:iron_spear", 0.0, 0f), null,
+                new String[][] {{"minecraft:zombie", "0.0", "0.0", "3.0", "HEAD=minecraft:iron_helmet,CHEST=minecraft:iron_chestplate"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_mob/two", player("minecraft:iron_spear", 0.0, 0f), null,
+                new String[][] {{"minecraft:pig", "0.0", "0.0", "3.0"}, {"minecraft:zombie", "0.0", "0.0", "4.0"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_mob/wall", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {{"minecraft:pig", "0.0", "0.0", "3.0"}}, 0f, 17, "wall", n++);
+        stabCase(server, out, "stab_mob/fire", ench(player("minecraft:iron_spear", 0.0, 0f), "minecraft:fire_aspect", 1), null,
+                new String[][] {{"minecraft:cow", "0.0", "0.0", "3.0"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_mob/smite", ench(player("minecraft:iron_spear", 0.0, 0f), "minecraft:smite", 4), null,
+                new String[][] {{"minecraft:zombie", "0.0", "0.0", "3.0"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_mob/baby_far", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {{"minecraft:chicken", "0.0", "0.0", "4.4"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_mob/player_and_mob", player("minecraft:iron_spear", 0.0, 0f), player(null, 3.0, 180f), new String[][] {{"minecraft:pig", "0.0", "0.0", "4.0"}}, 0f, 17, "", n++);
+    }
+
+    static CombatVectors.Side ench(CombatVectors.Side s, String id, int level) {
+        s.ench(id, level);
+        return s;
+    }
+
+    /**
+     * Charging: the attacker starts using the spear and walks (or rides) at `speed` blocks per tick
+     * along its look direction for `ticks` ticks, its position and known movement updated like a
+     * client's; every tick `ItemStack.onUseTick`. The target is a player or mobs that stand or walk.
+     */
+    static void charge(MinecraftServer server, List<String> out, String name, CombatVectors.Side att, double speed, double targetStep, String targetKind,
+                       int ticks, int n) throws Exception {
+        ServerLevel level = server.overworld();
+        clear(level);
+        long start = 7000;
+        gameTime(level, start);
+        var cmd = server.createCommandSourceStack();
+        server.getCommands().performPrefixedCommand(cmd, "gamerule minecraft:pvp true");
+        server.getCommands().performPrefixedCommand(cmd, "difficulty normal");
+        ServerPlayer a = CombatVectors.mockPlayer(server, "Charge" + n);
+        CombatVectors.setup(server, a, att);
+        ServerPlayer tp = null;
+        net.minecraft.world.entity.LivingEntity tm = null;
+        net.minecraft.world.entity.Entity mount = null;
+        double tz = 7.0;
+        if (targetKind.equals("player")) {
+            tp = CombatVectors.mockPlayer(server, "Mark" + n);
+            CombatVectors.setup(server, tp, player(null, tz, 180f));
+        } else if (targetKind.equals("pig")) {
+            tm = mob(level, "minecraft:pig", 0.0, 0.0, tz, 180f);
+        } else if (targetKind.equals("mounted_zombie")) {
+            mount = mob(level, "minecraft:pig", 0.0, 0.0, tz, 180f);
+            tm = mob(level, "minecraft:zombie", 0.0, 0.0, tz, 180f);
+            tm.startRiding(mount, true, false);
+        }
+        long seed = name.hashCode();
+        level.getRandom().setSeed(seed);
+        a.getRandom().setSeed(seed + 1);
+        CombatVectors.drain(a);
+        if (tp != null) CombatVectors.drain(tp);
+        // `Item.use`: the use begins and its sound goes to the others.
+        a.getMainHandItem().use(level, a, net.minecraft.world.InteractionHand.MAIN_HAND);
+        CombatVectors.drain(a);
+        Map<String, Object> m = line("charge");
+        m.put("name", name);
+        m.put("level_seed", seed);
+        m.put("attacker", att.json());
+        m.put("speed", speed);
+        m.put("target_step", targetStep);
+        m.put("target_kind", targetKind);
+        m.put("ticks", ticks);
+        m.put("start_time", start);
+        m.put("use_duration", a.getUseItem().getUseDuration(a));
+        List<Object> states = new ArrayList<>();
+        Vec3 step = new Vec3(0.0, 0.0, speed);
+        for (int t = 0; t < ticks; t++) {
+            gameTime(level, start + t);
+            a.setPos(a.getX(), a.getY(), a.getZ() + step.z);
+            a.setKnownMovement(step);
+            if (tp != null) {
+                tp.setPos(tp.getX(), tp.getY(), tp.getZ() + targetStep);
+                tp.setKnownMovement(new Vec3(0.0, 0.0, targetStep));
+            }
+            if (tm != null) {
+                var mover = mount != null ? mount : tm;
+                mover.setPos(mover.getX(), mover.getY(), mover.getZ() + targetStep);
+                if (mount != null) tm.setPos(mover.getX(), mover.getY() + 0.7, mover.getZ());
+                CombatVectors.set(mover, "lastKnownSpeed", new Vec3(0.0, 0.0, targetStep));
+                if (mount != null) CombatVectors.set(mount, "lastKnownSpeed", new Vec3(0.0, 0.0, targetStep));
+            }
+            ItemStack use = a.getUseItem();
+            use.onUseTick(level, a, a.getUseItemRemainingTicks());
+            CombatVectors.set(a, "useItemRemaining", a.getUseItemRemainingTicks() - 1);
+            Map<String, Object> s = new LinkedHashMap<>();
+            s.put("t", t);
+            s.put("a_delta", CombatVectors.vec(a.getDeltaMovement()));
+            s.put("a_damage", a.getMainHandItem().getDamageValue());
+            s.put("a_exhaustion", (Float) CombatVectors.get(a.getFoodData(), "exhaustionLevel"));
+            if (tp != null) {
+                s.put("t_health", tp.getHealth());
+                s.put("t_delta", CombatVectors.vec(tp.getDeltaMovement()));
+                s.put("t_pending", tp.syncVelocity ? CombatVectors.vec(tp.getDeltaMovement()) : null);
+            }
+            if (tm != null) {
+                s.put("m_health", tm.getHealth());
+                s.put("m_delta", CombatVectors.vec(tm.getDeltaMovement()));
+                s.put("m_vehicle", tm.getVehicle() != null);
+                s.put("m_z", tm.getZ() - CombatVectors.BZ);
+            }
+            if (tp != null) {
+                List<Object> pk = CombatVectors.drain(tp);
+                s.put("t_sounds", sounds(pk));
+                Object motion = null;
+                for (Object pkt : pk) if (pkt instanceof net.minecraft.network.protocol.game.ClientboundSetEntityMotionPacket mp && mp.id() == tp.getId()) motion = CombatVectors.vec(mp.movement());
+                s.put("t_motion", motion);
+                s.put("t_swing", swing(pk, a.getId()));
+            }
+            states.add(s);
+        }
+        m.put("states", states);
+        out.add(CombatVectors.toJson(m));
+        if (tm != null) tm.discard();
+        if (mount != null) mount.discard();
+        server.getPlayerList().remove(a);
+        if (tp != null) server.getPlayerList().remove(tp);
+        clear(level);
+    }
+
+    static void charges(MinecraftServer server, List<String> out) throws Exception {
+        int n = 0;
+        double[] speeds = {0.1, 0.2, 0.25, 0.3, 0.35, 0.45, 0.6, 0.8};
+        for (String spear : new String[] {"minecraft:wooden_spear", "minecraft:iron_spear", "minecraft:netherite_spear"}) {
+            for (double speed : speeds) {
+                charge(server, out, "charge/" + spear + "/" + speed, player(spear, 0.0, 0f), speed, 0.0, "player", 40, n++);
+            }
+        }
+        // The target walks toward the charger, and away from it.
+        for (double step : new double[] {-0.1, -0.25, 0.1, 0.2}) {
+            charge(server, out, "charge_walking/" + step, player("minecraft:iron_spear", 0.0, 0f), 0.3, step, "player", 40, n++);
+        }
+        for (double speed : new double[] {0.25, 0.4, 0.7}) {
+            charge(server, out, "charge_pig/" + speed, player("minecraft:iron_spear", 0.0, 0f), speed, 0.0, "pig", 40, n++);
+            charge(server, out, "charge_mounted/" + speed, player("minecraft:iron_spear", 0.0, 0f), speed, 0.0, "mounted_zombie", 40, n++);
+        }
+        CombatVectors.Side lunge = player("minecraft:iron_spear", 0.0, 0f);
+        lunge.ench("minecraft:sharpness", 3);
+        charge(server, out, "charge_sharpness", lunge, 0.4, 0.0, "player", 40, n++);
+        CombatVectors.Side worn = player("minecraft:iron_spear", 0.0, 0f);
+        worn.ench("minecraft:unbreaking", 2);
+        worn.mainHandDamage = 200;
+        charge(server, out, "charge_worn", worn, 0.45, 0.0, "pig", 40, n++);
+    }
+
+    static void run(MinecraftServer server, List<String> out) throws Exception {
+        stabs(server, out);
+        charges(server, out);
     }
 }

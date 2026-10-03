@@ -85,6 +85,9 @@ impl Player {
 
     /// `LivingEntity.releaseUsingItem` / `stopUsingItem`.
     pub(crate) fn stop_using(&mut self) {
+        // (`recentKineticEnemies` is dropped with the use.)
+        self.recent_stabs.clear();
+        self.kinetic_ticks = None;
         if self.using.take().is_some() {
             self.meta_dirty = true;
         }
@@ -114,6 +117,10 @@ impl Player {
         }
         if stack.item_name() == "minecraft:crossbow" {
             crate::crossbow::on_use_tick(self, &mut u);
+        }
+        // `ItemStack.onUseTick` of a kinetic weapon: the region's tick carries out the charge.
+        if stack.get(keys::KINETIC_WEAPON).is_some() {
+            self.kinetic_ticks = Some(u.duration - u.remaining);
         }
         u.remaining -= 1;
         self.using = Some(u);

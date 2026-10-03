@@ -10,7 +10,8 @@
    health, absorption, exhaustion, fire ticks, item and armor durability, the knockback motion
    packet and death messages; enchant_parity checks the helper vectors; riptide_parity replays
    riptide.jsonl (the 1.2 lift on release, the spin's touch check) and mount_parity mount.jsonl
-   (the screens of horses, donkeys and mules).
+   (the screens of horses, donkeys and mules); spear_parity replays spear.jsonl (stabs and
+   charges of spears, `--filter spear` writes only those).
 
 usage: python tools/combat_vectors.py [--filter NAME] [--skip-java] [--out FILE]
 """
@@ -49,7 +50,8 @@ def main():
     env = dict(os.environ, KILN_COMBAT_VECTORS=str(out),
                KILN_ENCHANT_VECTORS=str(out.with_name("enchant_helpers.jsonl")),
                KILN_RIPTIDE_VECTORS=str(out.with_name("riptide.jsonl")),
-               KILN_MOUNT_VECTORS=str(out.with_name("mount.jsonl")))
+               KILN_MOUNT_VECTORS=str(out.with_name("mount.jsonl")),
+               KILN_SPEAR_VECTORS=str(out.with_name("spear.jsonl")))
     if args.filter:
         env["KILN_PARITY_FILTER"] = args.filter
     sys.exit(subprocess.call(["cargo", "test", "-p", "kiln-sim", "--lib", "_parity", "--", "--nocapture",

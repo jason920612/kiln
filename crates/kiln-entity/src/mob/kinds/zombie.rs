@@ -208,8 +208,8 @@ pub fn register_base_goals(m: &mut MobData) {
 pub fn register_goals(m: &mut MobData) {
     register_base_goals(m);
     let g = &mut m.goals;
-    // `SpearUseGoal` (no spear) and `MoveThroughVillageGoal` (no villages) never start.
-    g.add(2, Goal::Never);
+    // `MoveThroughVillageGoal` (no villages) never starts.
+    g.add(2, Goal::Custom(Box::new(super::spear_use::SpearUseGoal::new(1.0, 1.0, 10.0, 2.0))));
     g.add(3, melee(1.0));
     g.add(6, Goal::Never);
     g.add(7, stroll(1.0, true));
@@ -370,18 +370,22 @@ pub fn populate_armor(m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnCont
     }
 }
 
-/// `Mob.populateDefaultEquipmentEnchantments`: the draws (main hand, then each armor slot in
-/// `EquipmentSlot` order, only for filled slots). Approximation: a successful roll does not
-/// enchant (`minecraft:mob_spawn_equipment` is not evaluated; it needs a special multiplier
-/// above zero, which takes a long-inhabited chunk).
+/// `Mob.populateDefaultEquipmentEnchantments`: `enchantSpawnedWeapon`, then each armor slot in
+/// `EquipmentSlot` order, each a roll (only for a filled slot) of 25% (weapon) or 50% (armor)
+/// of the special multiplier, a success enchanting the item from `minecraft:mob_spawn_equipment`
+/// ([`crate::enchanting`]).
 pub fn populate_enchantments(m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext) {
-    if !m.equipment[mob::MAINHAND].is_empty() {
-        let _ = r.next_float() < 0.25 * ctx.special_multiplier;
-    }
+    enchant_spawned_weapon(m, r, ctx);
     for slot in [mob::FEET, mob::LEGS, mob::CHEST, mob::HEAD] {
-        if !m.equipment[slot].is_empty() {
-            let _ = r.next_float() < 0.5 * ctx.special_multiplier;
-        }
+        crate::enchanting::enchant_spawned_equipment(&mut m.equipment[slot], 0.5, ctx.special_multiplier, r);
+    }
+}
+
+/// `Mob.enchantSpawnedWeapon` (a pillager's also gives a crossbow piercing in 1 of 300 cases).
+pub fn enchant_spawned_weapon(m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext) {
+    crate::enchanting::enchant_spawned_equipment(&mut m.equipment[mob::MAINHAND], 0.25, ctx.special_multiplier, r);
+    if m.kind == MobKind::Pillager && r.next_int_bounded(300) == 0 && m.equipment[mob::MAINHAND].item_name() == "minecraft:crossbow" {
+        crate::enchanting::enchant_from_provider(&mut m.equipment[mob::MAINHAND], "minecraft:pillager_spawn_crossbow", ctx.special_multiplier, r);
     }
 }
 

@@ -13,11 +13,11 @@ use kiln_proto::nbt::Tag;
 use serde_json::Value;
 use std::sync::Arc;
 
-fn f32_of(v: &Value) -> f32 {
+pub(crate) fn f32_of(v: &Value) -> f32 {
     v.as_f64().unwrap() as f32
 }
 
-fn vec_of(v: &Value) -> [f64; 3] {
+pub(crate) fn vec_of(v: &Value) -> [f64; 3] {
     let a = v.as_array().unwrap();
     [a[0].as_f64().unwrap(), a[1].as_f64().unwrap(), a[2].as_f64().unwrap()]
 }
@@ -64,7 +64,7 @@ pub(crate) fn vanilla_loot() -> Option<Arc<kiln_loot::LootData>> {
 
 /// Puts a player in the recorded state (`CombatVectors.setup`), `base` being the attacker's
 /// position.
-fn setup(sim: &mut Sim, conn: u64, side: &Value, base: [f64; 3]) {
+pub(crate) fn setup(sim: &mut Sim, conn: u64, side: &Value, base: [f64; 3]) {
     let p = sim.players.get_mut(&conn).unwrap();
     let rel = vec_of(&side["pos"]);
     p.pos = [base[0] + rel[0], base[1] + rel[1], base[2] + rel[2]];
@@ -112,7 +112,7 @@ fn setup(sim: &mut Sim, conn: u64, side: &Value, base: [f64; 3]) {
 }
 
 /// Packets `stats` received with this id.
-fn packets_with_id(stats: &SinkStats, id: i32) -> Vec<bytes::Bytes> {
+pub(crate) fn packets_with_id(stats: &SinkStats, id: i32) -> Vec<bytes::Bytes> {
     let log = stats.log.lock().unwrap();
     log.iter()
         .flatten()
@@ -170,7 +170,7 @@ fn death_message(stats: &SinkStats) -> Option<(String, Vec<String>)> {
 }
 
 /// The motion packet a player got for itself, if any.
-fn motion_packet(stats: &SinkStats, entity_id: i32) -> Option<bytes::Bytes> {
+pub(crate) fn motion_packet(stats: &SinkStats, entity_id: i32) -> Option<bytes::Bytes> {
     packets_with_id(stats, kiln_data::packets::play::clientbound::SET_ENTITY_MOTION).into_iter().find(|p| {
         let mut r = kiln_proto::codec::Reader::new(p);
         r.varint().unwrap();

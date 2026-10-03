@@ -122,6 +122,14 @@ impl RegionWork<'_> {
             {
                 continue;
             }
+            // `ServerboundPlayerActionPacket.Action.STAB`: a spear's piercing attack.
+            if let PlayIn::PlayerAction { action: STAB, .. } = pkt {
+                if !self.players[i].dead {
+                    let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+                    crate::spear::piercing_attack(self.entities, &mut level, &mut self.players, i, &mut self.out.spawns, &mut self.out.deaths);
+                }
+                continue;
+            }
             if let PlayIn::Attack { entity_id } = pkt {
                 if !self.players[i].dead {
                     let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
@@ -297,6 +305,23 @@ impl RegionWork<'_> {
         }
     }
 
+    /// `KineticWeapon.damageEntities` for the players using a charging weapon this tick (it is
+    /// part of the item's use tick): the entities in the way of the charge are hurt, pushed or
+    /// thrown off their mounts by how fast the player moves relative to them.
+    fn kinetic_attacks(&mut self, env: &Env) {
+        for i in 0..self.players.len() {
+            let Some(ticks) = self.players[i].kinetic_ticks.take() else { continue };
+            if self.players[i].dead {
+                continue;
+            }
+            let bodies = Vec::new();
+            let mut out = BlockOut::default();
+            let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
+            crate::spear::kinetic_attack(self.entities, &mut level, &mut self.players, i, ticks, &mut self.out.spawns, &mut self.out.deaths);
+            blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        }
+    }
+
     /// A Use Item with a fishing rod in that hand, from a living player.
     fn rod_use(&self, conn: ConnId, pkt: &PlayIn) -> bool {
         let PlayIn::UseItem { hand, .. } = pkt else { return false };
@@ -396,6 +421,7 @@ impl RegionWork<'_> {
             self.out.portals.extend(t.portals);
         }
         self.spin_attacks(env);
+        self.kinetic_attacks(env);
         mark(&mut self.out.times, 1);
         // Which chunks each player lacks is its own business (a window); sending them needs
         // the chunks' packet caches, so that part runs in connection order here.
@@ -734,6 +760,9 @@ pub(crate) fn is_player_packet(pkt: &PlayIn) -> bool {
 /// `PlayerCommand`'s "Leave Bed" action.
 const STOP_SLEEPING: i32 = 0;
 
+/// `ServerboundPlayerActionPacket.Action.STAB`.
+const STAB: i32 = 8;
+
 /// The packets of [`is_player_packet`]; any other packet comes back for [`local_packet`]
 /// (`None`: handled, or ignored because the player is dead).
 pub(crate) fn player_packet(
@@ -984,7 +1013,7 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
         }
         // `handlePunch`: the swing resets the attack strength.
         PlayIn::Punch => {
-            p.swung = true;
+            p.swing_main_hand();
             p.attack_ticker = 0;
         }
         // `handleInteract`: nothing Kiln simulates reacts to a right click on an entity yet

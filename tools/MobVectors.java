@@ -256,9 +256,9 @@ public class MobVectors {
         server.submit(() -> {
             ServerLevel level = server.overworld();
             ServerPlayer player = mockPlayer(server, "KilnMob");
-            if ("finalize".equals(filter)) {
+            if ("finalize".equals(filter) || "finalize_hard".equals(filter)) {
                 try {
-                    lines.addAll(finalizeVectors(level, player));
+                    lines.addAll(finalizeVectors(server, level, player, "finalize_hard".equals(filter)));
                 } catch (Throwable t) {
                     t.printStackTrace();
                 }
@@ -291,17 +291,28 @@ public class MobVectors {
     /// wp33: `finalizeSpawn` of natural spawns with the level random set to each seed: the random
     /// state after, and every entity of the mob's riding stack (the jockeys it makes) with its
     /// equipment and who it rides. Written with the argument `finalize` (to the output file).
-    static List<String> finalizeVectors(ServerLevel level, ServerPlayer player) throws Exception {
+    /// wp34 (`finalize_hard`): the same on hard difficulty, in a long-inhabited chunk at a late full
+    /// moon, where the special multiplier is high (mobs enchant their spawn equipment): every item
+    /// also with its enchantments (`ench`).
+    static List<String> finalizeVectors(MinecraftServer server, ServerLevel level, ServerPlayer player, boolean hard) throws Exception {
         List<String> lines = new ArrayList<>();
         var src = level.getServer().createCommandSourceStack();
         level.getServer().getCommands().performPrefixedCommand(src, "gamerule minecraft:spawn_monsters true");
-        level.getServer().getCommands().performPrefixedCommand(src, "time set 18000");
+        level.getServer().getCommands().performPrefixedCommand(src, hard ? "time set 1554000" : "time set 18000");
         player.setGameMode(net.minecraft.world.level.GameType.SPECTATOR);
         player.snapTo(0, 300, 0, 0f, 0f);
         var levelData = (net.minecraft.world.level.storage.ServerLevelData) get(level, "serverLevelData");
         levelData.setGameTime(1000L);
+        if (hard) {
+            server.setDifficulty(net.minecraft.world.Difficulty.HARD, true);
+            level.getChunkAt(new net.minecraft.core.BlockPos(0, BY, 0)).setInhabitedTime(4_000_000L);
+        }
         level.updateSkyBrightness();
-        Object[][] kinds = {
+        Object[][] kinds = hard ? new Object[][] {
+            {"minecraft:zombie", 500}, {"minecraft:husk", 400}, {"minecraft:drowned", 400}, {"minecraft:zombified_piglin", 400},
+            {"minecraft:skeleton", 400}, {"minecraft:stray", 300}, {"minecraft:pillager", 800}, {"minecraft:vindicator", 400},
+            {"minecraft:wither_skeleton", 300}, {"minecraft:vex", 200},
+        } : new Object[][] {
             {"minecraft:spider", 6000},{"minecraft:zombie", 6000}, {"minecraft:husk", 4000},
             {"minecraft:drowned", 4000}, {"minecraft:zombified_piglin", 1500}, {"minecraft:strider", 4000},
             {"minecraft:zombie_horse", 600}, {"minecraft:parched", 300}, {"minecraft:nautilus", 300},
@@ -335,6 +346,18 @@ public class MobVectors {
                             if (j > 0) sb.append(',');
                             sb.append(String.format(Locale.ROOT, "\"%s\":\"%s\"", slots[j].getName(), st.isEmpty() ? "" : BuiltInRegistries.ITEM.getKey(st.getItem()).toString()));
                         }
+                        sb.append("},\"ench\":{");
+                        for (int j = 0; j < slots.length; j++) {
+                            ItemStack st = m.getItemBySlot(slots[j]);
+                            List<String> parts = new ArrayList<>();
+                            var ench = st.getOrDefault(net.minecraft.core.component.DataComponents.ENCHANTMENTS, net.minecraft.world.item.enchantment.ItemEnchantments.EMPTY);
+                            for (var ee : ench.entrySet()) parts.add(ee.getKey().unwrapKey().get().identifier() + ":" + ee.getIntValue());
+                            java.util.Collections.sort(parts);
+                            if (j > 0) sb.append(',');
+                            sb.append(String.format(Locale.ROOT, "\"%s\":\"%s\"", slots[j].getName(), String.join(",", parts)));
+                        }
+                        sb.append("}}");
+                        continue;
                     }
                     sb.append("}}");
                 }
@@ -1676,6 +1699,7 @@ public class MobVectors {
         scenariosParrot(out);
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
+        scenariosSpears(out);
 
         return out;
     }
@@ -6765,6 +6789,112 @@ public class MobVectors {
             s.dayTime = 18000;
             s.levelSeed = 365 + seed;
             s.ticks = 300;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp34: mobs with spears
+    /// Zombies, husks and zombified piglins with a kinetic weapon charge their target (`SpearUseGoal`),
+    /// back off and charge again; a zombie horse's or camel husk's rider charges faster.
+    static void scenariosSpears(List<Scenario> out) {
+        String[] spears = {"minecraft:wooden_spear", "minecraft:iron_spear", "minecraft:netherite_spear"};
+        for (int i = 0; i < spears.length; i++) {
+            for (int seed = 1; seed <= 2; seed++) {
+                Scenario s = new Scenario("spear_zombie_player_" + i + "_" + seed);
+                floor(s, 30, "minecraft:stone");
+                MobSpec z = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 90f * seed, 34000L + 10 * i + seed);
+                z.mainHand = spears[i];
+                s.mobs.add(z);
+                s.player = new double[] {13.5 + seed, BY, 0.5};
+                s.dayTime = 18000;
+                s.levelSeed = 400 + 10 * i + seed;
+                s.ticks = 500;
+                out.add(s);
+            }
+        }
+        for (String kind : new String[] {"husk", "zombie_villager"}) {
+            Scenario s = new Scenario("spear_" + kind + "_player");
+            floor(s, 30, "minecraft:stone");
+            MobSpec z = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 40f, 34100L);
+            z.mainHand = "minecraft:iron_spear";
+            s.mobs.add(z);
+            s.player = new double[] {12.5, BY, 3.5};
+            s.dayTime = 18000;
+            s.levelSeed = 420;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A zombie with a spear charges villagers (no AI: they stand and are thrown back).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("spear_zombie_villager_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec z = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 60f, 34200L + seed);
+            z.mainHand = "minecraft:iron_spear";
+            MobSpec v = new MobSpec("minecraft:villager", 11.5, BY, 0.5 + seed, 90f, 34210L + seed);
+            v.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            s.mobs.add(z);
+            s.mobs.add(v);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 425 + seed;
+            // (A zombie that kills a villager converts it half the time: `Zombie.killedEntity`.)
+            s.ticks = 200;
+            out.add(s);
+        }
+        // An angry zombified piglin with a spear.
+        {
+            Scenario s = new Scenario("spear_zombified_piglin");
+            floor(s, 30, "minecraft:stone");
+            MobSpec z = new MobSpec("minecraft:zombified_piglin", 0.5, BY, 0.5, 60f, 34300L);
+            z.mainHand = "minecraft:iron_spear";
+            s.mobs.add(z);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.hurts.put(3, new double[] {0, 1.0});
+            s.dayTime = 18000;
+            s.levelSeed = 430;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A piglin with a spear: its brain's spear behaviours never start in vanilla (the piglin
+        // does not register `spear_status`), it fights with the spear as a plain melee weapon.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = nether("spear_piglin_attack_" + seed, 300);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 34600L + seed, "{IsImmuneToZombification:1b,equipment:{mainhand:{id:\"minecraft:golden_spear\",count:1}}}");
+            s.player = new double[] {9.5 + seed, BY, 0.5};
+            out.add(s);
+        }
+        // Zombies on zombie horses and camel husks.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("spear_zombie_horse_rider_" + seed);
+            floor(s, 40, "minecraft:stone");
+            MobSpec h = new MobSpec("minecraft:zombie_horse", 0.5, BY, 0.5, 30f * seed, 34400L + seed);
+            h.nbt = "{PersistenceRequired:1b}";
+            MobSpec r = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 30f * seed, 34410L + seed);
+            r.mainHand = "minecraft:iron_spear";
+            r.vehicle = 0;
+            s.mobs.add(h);
+            s.mobs.add(r);
+            s.player = new double[] {16.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.levelSeed = 435 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("spear_camel_husk_rider_" + seed);
+            floor(s, 40, "minecraft:sand");
+            MobSpec c = new MobSpec("minecraft:camel_husk", 0.5, BY, 0.5, 30f * seed, 34500L + seed);
+            c.nbt = "{PersistenceRequired:1b}";
+            MobSpec r = new MobSpec("minecraft:husk", 0.5, BY, 0.5, 30f * seed, 34510L + seed);
+            r.mainHand = "minecraft:iron_spear";
+            r.vehicle = 0;
+            s.mobs.add(c);
+            s.mobs.add(r);
+            s.player = new double[] {16.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.levelSeed = 440 + seed;
+            s.ticks = 400;
             out.add(s);
         }
     }

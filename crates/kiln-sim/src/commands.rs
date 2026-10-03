@@ -60,7 +60,7 @@ pub struct PlayerRef {
     pub(crate) conn: ConnId,
     uuid: Uuid,
     name: String,
-    pos: [f64; 3],
+    pub(crate) pos: [f64; 3],
     rot: [f32; 2],
     /// The player's level.
     pub(crate) dim: &'static str,
@@ -70,7 +70,7 @@ pub struct PlayerRef {
     display: Text,
     /// A non-player entity: its id, type and eye height (`conn` is then [`NO_CONN`]).
     pub(crate) entity: Option<i32>,
-    kind: &'static str,
+    pub(crate) kind: &'static str,
     size: [f64; 2],
     eye: f64,
     alive: bool,
@@ -1464,11 +1464,11 @@ impl Host for Sim {
         entity: &PlayerRef,
         amount: f32,
         damage_type: &str,
-        _at: Option<[f64; 3]>,
-        _by: Option<&PlayerRef>,
-        _from: Option<&PlayerRef>,
+        at: Option<[f64; 3]>,
+        by: Option<&PlayerRef>,
+        from: Option<&PlayerRef>,
     ) -> Result<bool, CommandError> {
-        self.damage_target(entity, amount, damage_type)
+        self.damage_target(entity, amount, damage_type, at, by, from)
     }
 
     fn can_spectate(&self, entity: &PlayerRef) -> bool {

@@ -22,29 +22,29 @@ use kiln_loot::LootContext;
 use kiln_item::component::EquipmentSlot;
 use kiln_item::ItemStack;
 
-/// `EnchantmentHelper.enchantItemFromProvider` for the enchantment providers of the
-/// `by_cost_with_difficulty` type Kiln knows (vanilla's `minecraft:mob_spawn_equipment`: the
-/// non-treasure enchantments at a cost of 5 to 22, scaled by the difficulty's special
-/// multiplier): the cost is drawn between `min_cost` and `min_cost + (multiplier * span)`, the
-/// enchantments picked as for an enchanting table at that cost, and each upgraded into the
-/// item's list. The stack must carry its (empty) enchantment list already, as the trap sets it.
+/// `EnchantmentHelper.enchantItemFromProvider`: the datapack's provider `provider` (an
+/// `enchantment_provider` id such as `minecraft:mob_spawn_equipment`) applied to `stack`.
 pub(crate) fn enchant_from_provider(loot: &kiln_loot::LootData, stack: &mut ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
-    let (tag, min_cost, max_cost_span) = match provider {
-        "minecraft:mob_spawn_equipment" => ("minecraft:on_mob_spawn_equipment", 5, 17),
-        _ => return,
-    };
-    // `Mth.randomBetweenInclusive(random, minCost, minCost + (int)(multiplier * maxCostSpan))`.
-    let hi = min_cost + (special_multiplier * max_cost_span as f32) as i32;
-    let cost = random.next_int_bounded(hi - min_cost + 1) + min_cost;
-    let Some(ids) = kiln_inventory::tags::entries("minecraft:enchantment", tag) else { return };
-    let candidates: Vec<&kiln_loot::enchant::Enchantment> = ids.iter().filter_map(|&id| loot.enchantment(id)).collect();
-    for (enchantment, level) in kiln_loot::enchant::select(random, stack, cost, &candidates) {
-        kiln_loot::enchant::enchant(stack, enchantment, level);
+    loot.enchant_from_provider(provider, stack, special_multiplier, random);
+}
+
+/// The [`kiln_entity::enchanting::Enchanter`] of a datapack.
+struct LootEnchanter(std::sync::Arc<kiln_loot::LootData>);
+
+impl kiln_entity::enchanting::Enchanter for LootEnchanter {
+    fn enchant(&self, stack: &mut ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
+        self.0.enchant_from_provider(provider, stack, special_multiplier, random);
     }
 }
 
+/// Lets the mobs this thread runs enchant their spawn equipment from `loot`'s providers until
+/// the result is dropped.
+pub(crate) fn install_enchanter(loot: Option<&std::sync::Arc<kiln_loot::LootData>>) -> kiln_entity::enchanting::Installed {
+    kiln_entity::enchanting::install(loot.map(|l| std::rc::Rc::new(LootEnchanter(l.clone())) as std::rc::Rc<dyn kiln_entity::enchanting::Enchanter>))
+}
+
 /// What predicates can ask of an entity.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct EntityView {
     /// `minecraft:entity_type` network id.
     pub type_id: i32,
@@ -54,6 +54,54 @@ pub(crate) struct EntityView {
     pub sneaking: bool,
     pub sprinting: bool,
     pub flying: bool,
+    /// The entity rides something (`vehicle` predicates with no conditions match).
+    pub has_vehicle: bool,
+    pub fall_flying: bool,
+    pub in_water: bool,
+    /// What `type_specific/player` asks of a player.
+    pub player: Option<PlayerFacts>,
+}
+
+/// A player's game mode and stats, for `type_specific/player` predicates.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct PlayerFacts {
+    /// 0 survival, 1 creative, 2 adventure, 3 spectator.
+    pub game_mode: u8,
+    pub food: i32,
+    pub saturation: f32,
+    pub level: i32,
+}
+
+impl PlayerFacts {
+    /// `PlayerPredicate.matches` for the parts Kiln can answer: `gamemode`, `food` and `level`;
+    /// anything else (advancements, recipes, stats, input, looking_at) does not match.
+    fn matches(&self, json: &kiln_loot::json::Json) -> bool {
+        use kiln_loot::json::Json;
+        let Json::Obj(entries) = json else { return false };
+        entries.iter().all(|(key, v)| match key.as_str() {
+            "gamemode" => {
+                let name = ["survival", "creative", "adventure", "spectator"][self.game_mode.min(3) as usize];
+                v.as_array().is_some_and(|l| l.iter().any(|m| m.as_str() == Some(name)))
+            }
+            "level" => bounds(v, self.level as f64),
+            "food" => entries_match(v, &[("level", self.food as f64), ("saturation", self.saturation as f64)]),
+            _ => false,
+        })
+    }
+}
+
+/// `MinMaxBounds.matches`: a plain number is exact, else the `min` and `max` given.
+fn bounds(v: &kiln_loot::json::Json, value: f64) -> bool {
+    use kiln_loot::json::Json;
+    match v {
+        Json::Obj(_) => v.get("min").and_then(|m| m.as_f64()).is_none_or(|m| value >= m) && v.get("max").and_then(|m| m.as_f64()).is_none_or(|m| value <= m),
+        other => other.as_f64().is_some_and(|x| x == value),
+    }
+}
+
+fn entries_match(v: &kiln_loot::json::Json, facts: &[(&str, f64)]) -> bool {
+    let kiln_loot::json::Json::Obj(entries) = v else { return false };
+    entries.iter().all(|(k, b)| facts.iter().find(|(name, _)| name == k).is_some_and(|(_, value)| bounds(b, *value)))
 }
 
 /// `minecraft:player`'s entity type id.
@@ -76,8 +124,13 @@ impl EntityView {
                     && ok(f.is_flying, self.flying)
                     && ok(f.is_baby, false)
                     && ok(f.is_swimming, false)
-                    && ok(f.is_fall_flying, false)
-                    && f.is_in_water.is_none()
+                    && ok(f.is_fall_flying, self.fall_flying)
+                    && ok(f.is_in_water, self.in_water)
+            }
+            // A vehicle with no conditions: whether there is one.
+            EntitySubPredicate::Vehicle(v) => v.parts.is_empty() && self.has_vehicle,
+            EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:type_specific/player" => {
+                self.player.as_ref().is_some_and(|p| p.matches(json))
             }
             _ => false,
         })
@@ -94,7 +147,17 @@ impl Player {
             sneaking: self.sneaking,
             sprinting: self.sprinting,
             flying: self.flying,
+            has_vehicle: self.vehicle.is_some(),
+            fall_flying: self.fall_flying,
+            // (Where the water is needs the blocks: [`Player::view_in`].)
+            in_water: false,
+            player: Some(PlayerFacts { game_mode: self.game_mode, food: self.food, saturation: self.saturation, level: self.xp_level }),
         }
+    }
+
+    /// [`Player::view`] with the fluids the player stands in.
+    pub(crate) fn view_in(&self, block: crate::hazards::BlockAt) -> EntityView {
+        EntityView { in_water: self.fluids(block).in_water, ..self.view() }
     }
 
     /// The player's equipment per slot, for `runIterationOnEquipment`.
@@ -287,7 +350,7 @@ fn apply_entity_effect(
                 p.add_effect(crate::effects::Effect::simple(id, duration, amplifier));
             }
         }
-        EntityEffect::Other(_) => {}
+        EntityEffect::Other(_) | EntityEffect::ApplyExhaustion(_) | EntityEffect::ApplyImpulse { .. } | EntityEffect::PlaySound { .. } => {}
     }
 }
 

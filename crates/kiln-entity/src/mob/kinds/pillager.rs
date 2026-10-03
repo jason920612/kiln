@@ -92,11 +92,10 @@ impl Kind for Pillager {
     }
 
     fn finalize_spawn(&self, _e: &mut Entity, m: &mut MobData, r: &mut dyn RandomSource, ctx: &SpawnContext, group: &mut GroupData) {
-        // `populateDefaultEquipmentSlots`, `populateDefaultEquipmentEnchantments` (the enchanting
-        // rolls; enchantment providers are not applied), `enchantSpawnedWeapon`'s 1 in 300.
+        // `populateDefaultEquipmentSlots`, `populateDefaultEquipmentEnchantments` (with the 1 in
+        // 300 of `enchantSpawnedWeapon`).
         m.equipment[MAINHAND] = ItemStack::of("minecraft:crossbow", 1).unwrap_or_else(ItemStack::empty);
         super::zombie::populate_enchantments(m, r, ctx);
-        let _ = r.next_int_bounded(300);
         raider::finalize_spawn(m, r, group);
         ext::mob_finalize(m, r);
     }
@@ -131,12 +130,21 @@ impl Kind for Pillager {
     }
 }
 
-/// `Raider.applyRaidBuffs` of a pillager: with the raid's enchant odds a fresh crossbow
-/// (enchanted after wave 3 and 5 by vanilla's providers; the enchanting is not applied).
+/// `Raider.applyRaidBuffs` of a pillager: with the raid's enchant odds a fresh crossbow,
+/// enchanted by `raid/pillager_post_wave_5` after the last wave of normal difficulty and by
+/// `raid/pillager_post_wave_3` after the last of easy; before that it stays as it was.
 pub fn apply_raid_buffs(e: &mut Entity, m: &mut MobData, wave: i32, enchant_odds: f32, normal_groups: i32, easy_groups: i32) {
-    if e.random.next_float() <= enchant_odds && wave > easy_groups {
-        let _ = normal_groups;
-        m.equipment[MAINHAND] = ItemStack::of("minecraft:crossbow", 1).unwrap_or_else(ItemStack::empty);
+    if e.random.next_float() <= enchant_odds {
+        let provider = if wave > normal_groups {
+            "minecraft:raid/pillager_post_wave_5"
+        } else if wave > easy_groups {
+            "minecraft:raid/pillager_post_wave_3"
+        } else {
+            return;
+        };
+        let mut crossbow = ItemStack::of("minecraft:crossbow", 1).unwrap_or_else(ItemStack::empty);
+        crate::enchanting::enchant_from_provider(&mut crossbow, provider, 0.0, &mut e.random);
+        m.equipment[MAINHAND] = crossbow;
     }
 }
 

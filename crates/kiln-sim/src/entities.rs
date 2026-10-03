@@ -36,6 +36,9 @@ pub(crate) enum Body {
     Ready(Box<kiln_entity::Entity>),
     /// An entity loaded from its chunk's saved data; keeps its UUID (unless it had none).
     Loaded(Box<kiln_entity::Entity>),
+    /// A stack loaded from its root's saved data (`Passengers`): the root, and the riders
+    /// depth first, each with the index of what it rides (0 the root, n the rider n - 1).
+    LoadedStack(Box<kiln_entity::Entity>, Vec<kiln_entity::persist::Rider>),
     /// A new mob facing `yaw`; `finalize` runs its `finalizeSpawn`.
     /// `yaw`: `None` keeps the constructor's random yaw.
     Mob { kind: kiln_entity::mob::MobKind, yaw: Option<f32>, finalize: Option<crate::mobs::Finalize> },
@@ -80,6 +83,8 @@ pub(crate) struct Entity {
 /// The jockeys a mob's `finalizeSpawn` made (see `kiln_entity::mob::Companion`).
 pub(crate) struct Jockeys {
     pub companions: Vec<kiln_entity::mob::Companion>,
+    /// The companions are riders loaded from saved data: they keep their UUIDs and places.
+    pub loaded: bool,
     /// A baby zombie looks for an unridden chicken near it.
     pub nearby_chicken: bool,
 }
@@ -97,7 +102,7 @@ impl Spawn {
     /// loaded entity (never by region or load order).
     fn key(&self) -> ([u64; 3], i32, u128) {
         let uuid = match &self.body {
-            Body::Loaded(e) => e.uuid,
+            Body::Loaded(e) | Body::LoadedStack(e, _) => e.uuid,
             _ => 0,
         };
         (self.pos.map(f64::to_bits), self.kind.id, uuid)
@@ -107,6 +112,34 @@ impl Spawn {
     pub fn loaded(e: kiln_entity::Entity) -> Option<Spawn> {
         let kind = kiln_data::entities::by_name(e.type_name)?;
         Some(Spawn { kind, pos: arr(e.position()), vel: arr(e.delta), body: Body::Loaded(Box::new(e)) })
+    }
+
+    /// A spawn for a stack loaded from its root's chunk data (`EntityType.loadEntityRecursive`).
+    pub fn loaded_stack(root: kiln_entity::Entity, riders: Vec<kiln_entity::persist::Rider>) -> Option<Spawn> {
+        if riders.is_empty() {
+            return Self::loaded(root);
+        }
+        let kind = kiln_data::entities::by_name(root.type_name)?;
+        Some(Spawn { kind, pos: arr(root.position()), vel: arr(root.delta), body: Body::LoadedStack(Box::new(root), riders) })
+    }
+
+    /// The stack `tag` saves (root and `Passengers`) as a spawn; the error says why the
+    /// compound is to be kept as saved. Entities without a UUID get random seeds derived
+    /// from `seed`.
+    pub fn from_saved(tag: &kiln_proto::nbt::Tag, seed: i64, strict: bool) -> Result<Spawn, kiln_entity::persist::LoadError> {
+        let n = std::cell::Cell::new(0i64);
+        let seeds = |u: u128| {
+            n.set(n.get() + 1);
+            if u != 0 {
+                seed_for_uuid(u)
+            } else if n.get() == 1 {
+                seed
+            } else {
+                seed ^ n.get().wrapping_mul(0x9E37_79B9_7F4A_7C15u64 as i64)
+            }
+        };
+        let (root, riders) = kiln_entity::persist::load_stack(tag, 0, &seeds, strict)?;
+        Self::loaded_stack(root, riders).ok_or(kiln_entity::persist::LoadError::NotSimulated)
     }
 }
 
@@ -122,7 +155,12 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
         *next_id += 1;
         let pos = arr(c.entity.position());
         let uuid = fresh_uuid(world_seed, game_time, id);
-        list.push(Entity::new(id, uuid, Spawn { kind, pos, vel: [0.0; 3], body: Body::Ready(Box::new(c.entity)) }));
+        let (vel, body) = if jockeys.loaded {
+            (arr(c.entity.delta), Body::Loaded(Box::new(c.entity)))
+        } else {
+            ([0.0; 3], Body::Ready(Box::new(c.entity)))
+        };
+        list.push(Entity::new(id, uuid, Spawn { kind, pos, vel, body }));
         seated.push((id, c.seat));
     }
     // `startRiding`: (rider, vehicle) in the order the companions were made.
@@ -152,7 +190,12 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
         if let Some(vp) = list[vi].phys.as_mut()
             && kiln_entity::ride::start_riding(&mut rp, vp, false)
         {
-            kiln_entity::ride::position_rider(&mut rp, vp);
+            // (A rider loaded from saved data stays where it was saved unless that is far from
+            // its seat: the first tick seats it, and its cell must be its vehicle's.)
+            let seat = kiln_entity::ride::riding_position(vp, vp.passengers.len().saturating_sub(1));
+            if !jockeys.loaded || (rp.position() - seat).length_sqr() > 4.0 {
+                kiln_entity::ride::position_rider(&mut rp, vp);
+            }
         }
         list[ri].phys = Some(rp);
         list[ri].sync();
@@ -213,7 +256,7 @@ impl Entity {
     /// The entity of `spawn` with network id `id`; `uuid` unless it was loaded with one.
     pub fn new(id: i32, uuid: Uuid, spawn: Spawn) -> Self {
         let uuid = match &spawn.body {
-            Body::Loaded(e) if e.uuid != 0 => Uuid::from_u128(e.uuid),
+            Body::Loaded(e) | Body::LoadedStack(e, _) if e.uuid != 0 => Uuid::from_u128(e.uuid),
             _ => uuid,
         };
         let (u, seed, pos) = (uuid.as_u128(), seed_for(id), vec3(spawn.pos));
@@ -252,7 +295,7 @@ impl Entity {
                     let mut group = kiln_entity::mob::GroupData { monsters_disabled: f.monsters_disabled, camel_space: f.camel_space, ..Default::default() };
                     kiln_entity::mob::finalize_spawn(&mut e, &mut r, &f.ctx, &mut group, f.natural);
                     if !group.companions.is_empty() || group.nearby_chicken {
-                        jockeys = Some(Box::new(Jockeys { companions: std::mem::take(&mut group.companions), nearby_chicken: group.nearby_chicken }));
+                        jockeys = Some(Box::new(Jockeys { companions: std::mem::take(&mut group.companions), loaded: false, nearby_chicken: group.nearby_chicken }));
                     }
                     if f.persistent
                         && let Some(m) = kiln_entity::mob::data_mut(&mut e)
@@ -266,6 +309,20 @@ impl Entity {
                 let mut e = *e;
                 e.id = id;
                 e.uuid = u;
+                e
+            }
+            Body::LoadedStack(e, riders) => {
+                let mut e = *e;
+                e.id = id;
+                e.uuid = u;
+                let companions = riders
+                    .into_iter()
+                    .map(|r| kiln_entity::mob::Companion {
+                        entity: r.entity,
+                        seat: if r.vehicle == 0 { kiln_entity::mob::Seat::OnMob } else { kiln_entity::mob::Seat::OnCompanion(r.vehicle - 1) },
+                    })
+                    .collect();
+                jockeys = Some(Box::new(Jockeys { companions, loaded: true, nearby_chicken: false }));
                 e
             }
         };
@@ -480,6 +537,29 @@ impl RegionPart for Entities {
 
 pub(crate) fn chunk_of(pos: [f64; 3]) -> ChunkPos {
     ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)
+}
+
+/// The entity at `i` of a region's id-ordered `list`, saved with the passengers it carries
+/// (`Entity.saveWithoutId`, `Passengers` and all).
+pub(crate) fn save_in(list: &[Entity], i: usize, owners: &dyn Fn(i32) -> Option<u128>) -> kiln_proto::nbt::Tag {
+    let lookup = |id: i32| list.binary_search_by_key(&id, |e| e.id).ok().map(|j| &list[j]).filter(|e| !e.removed).and_then(|e| e.phys.as_ref());
+    kiln_entity::persist::save_with(list[i].phys(), owners, &lookup)
+}
+
+/// The index of the entity the stack of `list[i]` stands on: its vehicle's vehicle's... that
+/// is in `list` and carries it (a rider is saved and unloaded with its root).
+pub(crate) fn root_in(list: &[Entity], i: usize) -> usize {
+    let mut at = i;
+    for _ in 0..list.len().min(64) {
+        let Some(p) = list[at].phys.as_ref() else { break };
+        let Some(v) = p.vehicle else { break };
+        let Ok(j) = list.binary_search_by_key(&v, |e| e.id) else { break };
+        if list[j].removed || !list[j].phys.as_ref().is_some_and(|vp| vp.passengers.contains(&p.id)) {
+            break;
+        }
+        at = j;
+    }
+    at
 }
 
 fn kb(p: BlockPos) -> kiln_blocks::BlockPos {
@@ -1161,6 +1241,42 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
     }
 
+    fn motion(&self, id: i32) -> Vec3 {
+        if let Some(p) = self.players.iter().find(|p| p.entity_id == id) {
+            return vec3(p.vel);
+        }
+        self.entity(id).map_or(Vec3::ZERO, |e| e.delta)
+    }
+
+    fn knockback_target(&mut self, id: i32, strength: f64, dx: f64, dz: f64, old_motion: Vec3) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+            p.knockback(strength, dx, dz);
+            // (A player is told at once; the server keeps the motion it had.)
+            if p.sync_velocity {
+                p.send(kiln_proto::packets::entity::set_entity_motion(p.entity_id, p.vel));
+                p.sync_velocity = false;
+                p.vel = arr(old_motion);
+            }
+            return;
+        }
+        if let Some(e) = self.entity_mut(id) {
+            kiln_entity::mob::knockback_entity(e, strength, dx, dz);
+        }
+    }
+
+    fn stop_riding(&mut self, id: i32) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+            if let Some(v) = p.vehicle.take() {
+                p.vehicle_type = None;
+                if let Some(ve) = self.entity_mut(v) {
+                    kiln_entity::ride::remove_passenger(ve, id);
+                }
+            }
+            return;
+        }
+        kiln_entity::level::stop_riding_entity(self, id);
+    }
+
     fn is_thundering(&self) -> bool {
         self.level.env.weather.weather.thundering
     }
@@ -1274,6 +1390,8 @@ pub(crate) fn tick(
     if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() {
         return;
     }
+    // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
+    let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live =|p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
     let mut views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
@@ -1698,6 +1816,136 @@ pub(crate) fn hit_mob(
     }
 }
 
+/// A player's stab on an entity (`Player.stabAttack` with a spear), carried out against the
+/// region's entities.
+#[derive(Debug, Clone)]
+pub(crate) struct MobStab {
+    pub target: i32,
+    pub attacker: i32,
+    pub attacker_pos: [f64; 3],
+    pub yaw: f32,
+    /// The weapon's damage type (`minecraft:spear`).
+    pub kind: DamageKind,
+    pub amount: f32,
+    /// Whether the stab hurts at all (a charge may only push or dismount).
+    pub damage: bool,
+    /// The `causeExtraKnockback` strengths in order (0 skips one).
+    pub knockbacks: [f32; 2],
+    pub dismount: bool,
+    /// Fire aspect: seconds the entity burns when hurt.
+    pub fire_seconds: f32,
+}
+
+/// What a stab did to the entity.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct MobStabOutcome {
+    pub hurt: bool,
+    pub dismounted: bool,
+    pub health_before: Option<f32>,
+}
+
+/// `Player.stabAttack` on entity `stab.target`: hurt (if it hurts), pushed once or twice, taken
+/// off what it rides, set on fire; `None` when the entity is gone.
+pub(crate) fn stab_mob(
+    entities: &mut Entities,
+    level: &mut RegionLevel,
+    players: &mut [&mut Player],
+    spawns: &mut Vec<Spawn>,
+    deaths: &mut Vec<health::Death>,
+    stab: &MobStab,
+) -> Option<MobStabOutcome> {
+    let i = entities.list.binary_search_by_key(&stab.target, |e| e.id).ok()?;
+    let live = |p: &Player| !p.disconnected && !p.dead;
+    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x7374_6162, stab.target);
+    let mut sim = SimLevel {
+        level,
+        list: &mut entities.list,
+        players,
+        deaths,
+        proxies,
+        views,
+        spawns,
+        events: Vec::new(),
+        next_placeholder: -1_000_000,
+        current: stab.target,
+        seeds: 0x7374_6162_00,
+        current_source: None,
+        rng,
+        grid: Grid::default(),
+        proxy_at: Default::default(),
+        proxy_grid: Default::default(),
+        view_index: Default::default(),
+    };
+    sim.grid = Grid::build(sim.list);
+    sim.index_players();
+    let mut phys = sim.list[i].phys.take()?;
+    let source = kiln_entity::mob::DamageSource {
+        kind: stab.kind,
+        attacker: Some(stab.attacker),
+        direct: Some(stab.attacker),
+        pos: Some(vec3(stab.attacker_pos)),
+        attacker_is_player: true,
+    };
+    let is_mob = kiln_entity::mob::data(&phys).is_some();
+    let health_before = kiln_entity::mob::data(&phys).map(|m| m.health);
+    let hurt = stab.damage
+        && if is_mob {
+            kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, stab.amount)
+        } else {
+            phys.hurt(&mut sim, stab.kind, stab.amount, Some(stab.attacker))
+        };
+    // `Player.causeExtraKnockback`: a living entity is knocked back, the others pushed.
+    let rad = (stab.yaw * 0.017453292) as f64;
+    let (s, c) = (kiln_entity::mob::mth::sin(rad) as f64, kiln_entity::mob::mth::cos(rad) as f64);
+    for strength in stab.knockbacks {
+        if strength <= 0.0 {
+            continue;
+        }
+        if is_mob {
+            kiln_entity::mob::knockback_entity(&mut phys, strength as f64, s, -c);
+        } else {
+            let k = strength as f64;
+            phys.delta = phys.delta + Vec3::new(-s * k, 0.1, c * k);
+            phys.needs_sync = true;
+        }
+    }
+    let mut dismounted = false;
+    if stab.dismount
+        && let Some(v) = phys.vehicle
+        && !kiln_entity::mob::entity_type_tag(phys.type_name, "minecraft:cannot_be_dismounted_by_item_usage")
+    {
+        dismounted = true;
+        phys.vehicle = None;
+        if let Ok(j) = sim.list.binary_search_by_key(&v, |e| e.id)
+            && let Some(vp) = sim.list[j].phys.as_mut()
+        {
+            kiln_entity::ride::remove_passenger(vp, stab.target);
+        }
+    }
+    if hurt && stab.fire_seconds > 0.0 && is_mob {
+        phys.ignite_for_seconds(stab.fire_seconds);
+    }
+    let victim = kiln_entity::level::Seen::of(&phys);
+    let health_after = kiln_entity::mob::data(&phys).map(|m| m.health);
+    let e = &mut sim.list[i];
+    e.phys = Some(phys);
+    e.sync();
+    let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == stab.attacker) {
+        p.last_hurt_mob = Some((stab.target, level.env.game_time));
+        // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
+        let taken = health_before.zip(health_after).map_or(stab.amount, |(b, a)| b - a);
+        let subject = crate::advancements::triggers::seen_subject(&victim, crate::DIMENSIONS[level.env.dim].0);
+        p.player_hurt_entity(&subject, stab.amount, taken, stab.kind.type_name(), true);
+    }
+    for (n, event) in keyed(events) {
+        carry_out(event, n, level, list, players, spawns, deaths);
+    }
+    Some(MobStabOutcome { hurt, dismounted, health_before })
+}
+
 /// `ServerGamePacketListenerImpl.handleInteract` on a mob, then `Player.interactOn`: player
 /// `i` of the region's players right-clicks entity `target` with the item in `hand` (0 main,
 /// 1 off). The held item changes as the mob says; sheared wool drops.
@@ -1896,6 +2144,7 @@ pub(crate) fn with_entity<R>(
     if entities.list[idx].removed {
         return None;
     }
+    let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
@@ -2683,6 +2932,6 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::DryOut => ("minecraft:dry_out", "death.attack.dryout"),
         DamageKind::NoAggroMobAttack => ("minecraft:mob_attack_no_aggro", "death.attack.mob"),
         DamageKind::Spit => ("minecraft:spit", "death.attack.mob"),
-
+        DamageKind::Named(name) => (name, health::death_message_key(name)),
     }
 }

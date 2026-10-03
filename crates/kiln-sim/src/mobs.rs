@@ -201,9 +201,7 @@ pub(crate) fn summon(
         };
         c.push(("id".into(), Tag::String(entity.into())));
         c.push(("Pos".into(), Tag::List(pos.iter().map(|&v| Tag::Double(v)).collect())));
-        let mut e = kiln_entity::persist::load(&Tag::Compound(c), 0, seed).ok()?;
-        e.set_pos(kiln_entity::math::Vec3::new(pos[0], pos[1], pos[2]));
-        spawns.push(Spawn::loaded(e)?);
+        spawns.push(Spawn::from_saved(&Tag::Compound(c), seed, false).ok()?);
         let path = entity.strip_prefix("minecraft:").unwrap_or(entity);
         return Some(Tag::Compound(vec![("translate".into(), Tag::String(format!("entity.minecraft.{path}")))]));
     };
@@ -213,10 +211,7 @@ pub(crate) fn summon(
             let mut c: Vec<(String, Tag)> = fields.iter().filter(|(k, _)| k != "id" && k != "Pos").cloned().collect();
             c.push(("id".into(), Tag::String(kind.type_name().into())));
             c.push(("Pos".into(), Tag::List(pos.iter().map(|&v| Tag::Double(v)).collect())));
-            let e = kiln_entity::persist::load(&Tag::Compound(c), 0, seed).ok()?;
-            let mut e = e;
-            e.set_pos(kiln_entity::math::Vec3::new(pos[0], pos[1], pos[2]));
-            spawns.push(Spawn::loaded(e)?);
+            spawns.push(Spawn::from_saved(&Tag::Compound(c), seed, false).ok()?);
         }
         _ => {
             let finalize = initialize.then(|| Finalize::command(difficulty_instance(difficulty, game_time, 0, 1.0), seed, false, difficulty == 0));
@@ -362,9 +357,7 @@ impl kiln_loot::LootContext for DeathContext {
             pos: self.origin,
             on_ground: true,
             on_fire: self.on_fire,
-            sneaking: false,
-            sprinting: false,
-            flying: false,
+            ..Default::default()
         };
         use kiln_loot::predicate::world::EntitySubPredicate as P;
         predicate.parts.iter().all(|part| match part {

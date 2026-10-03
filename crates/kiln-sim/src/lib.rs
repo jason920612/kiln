@@ -29,6 +29,7 @@ mod consume;
 mod buckets;
 mod use_item;
 mod ranged;
+mod spear;
 mod crossbow;
 mod trident;
 mod shield;
@@ -87,6 +88,8 @@ mod wither;
 pub mod testing;
 #[cfg(test)]
 mod combat_parity;
+#[cfg(test)]
+mod spear_parity;
 mod shoulder;
 #[cfg(test)]
 mod container_parity;
@@ -324,6 +327,16 @@ struct Player {
     meta_dirty: bool,
     /// Arm swung this tick.
     swung: bool,
+    /// `LivingEntity.swingState`: ticks into the current swing (-1 when it has just begun) and
+    /// its length (0: not swinging), and what viewers are told when a swing begins.
+    swing_ticks: i32,
+    swing_duration: i32,
+    swing_kind: i32,
+    swing_wire_duration: i32,
+    /// Ticks of use of a `kinetic_weapon` this tick (for [`spear::kinetic_attack`]).
+    kinetic_ticks: Option<i32>,
+    /// `LivingEntity.recentKineticEnemies`: the entities a charging weapon touched and when.
+    recent_stabs: Vec<(i32, i64)>,
     /// Latest tab-completion request, answered once per tick.
     pending_suggestion: Option<(i32, String)>,
     teleport_id: i32,
@@ -475,6 +488,8 @@ struct Player {
     vehicle: Option<i32>,
     /// The type of that entity (for the vehicle entity predicates of criteria).
     vehicle_type: Option<&'static str>,
+    /// A saved `RootVehicle` waiting to be put back under the player.
+    returning_vehicle: Option<persist::ReturningVehicle>,
     /// `ServerPlayer.levitationStartTime` and `levitationStartPos` (the `levitation` trigger).
     levitation_start: Option<(i32, [f64; 3])>,
     /// `startingToFallPosition` (`fall_from_height`), `enteredNetherPosition`
@@ -2009,6 +2024,8 @@ impl Sim {
     /// (spawns in unloaded chunks are dropped, as vanilla would not add them).
     fn materialize_spawns(&mut self) {
         let world_seed = self.config.noise.as_ref().map_or(0, |n| n.seed);
+        // What `finalizeSpawn` does to a new mob's equipment reads the datapack's providers.
+        let _enchanting = enchant::install_enchanter(self.loot.as_ref());
         for d in &mut self.dims {
             let mut later = Vec::new();
             // Entities built during a tick carry placeholder (negative) ids that other new
@@ -2023,9 +2040,16 @@ impl Sim {
                 }
                 let Some(region) = d.regions.at_mut(chunk.cell()) else {
                     // A loaded entity outside its chunk's loaded area goes back to storage.
-                    if let entities::Body::Loaded(e) = spawn.body {
-                        let tag = kiln_entity::persist::save(&e, &|_| None);
-                        d.stash_entities(chunk, vec![tag]);
+                    match spawn.body {
+                        entities::Body::Loaded(e) => {
+                            let tag = kiln_entity::persist::save(&e, &|_| None);
+                            d.stash_entities(chunk, vec![tag]);
+                        }
+                        entities::Body::LoadedStack(e, riders) => {
+                            let tag = kiln_entity::persist::save_stack(&e, &riders, &|_| None);
+                            d.stash_entities(chunk, vec![tag]);
+                        }
+                        _ => {}
                     }
                     continue;
                 };
@@ -2052,6 +2076,10 @@ impl Sim {
             if !placeholders.is_empty() {
                 Self::resolve_placeholders(d, &placeholders);
             }
+        }
+        // Riders that joined with a saved `RootVehicle`.
+        if self.players.values().any(|p| p.returning_vehicle.is_some()) {
+            self.seat_returning_players();
         }
     }
 
@@ -2347,6 +2375,7 @@ impl Sim {
                 self.waypoints_remove_player(dim, conn, p.uuid);
             }
             self.save_player(&p);
+            self.player_stops_riding(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
             self.broadcast_system(yellow(&format!("{} left the game", p.name)));
@@ -2428,6 +2457,7 @@ impl Sim {
         let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).expect("spawn chunk loaded");
         let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
         let shoulders = [shoulder::load(joining.saved.raw(), "ShoulderEntityLeft"), shoulder::load(joining.saved.raw(), "ShoulderEntityRight")];
+        let returning_vehicle = persist::returning_vehicle(joining.saved.raw().get("RootVehicle"));
         recipe_book.retain_existing(&self.rules);
         let warden_tracker = sculk::shrieker::WardenSpawnTracker::load(joining.saved.raw().get("warden_spawn_tracker"));
         let mut player = Player {
@@ -2489,6 +2519,12 @@ impl Sim {
             spin_pose: false,
             meta_dirty: false,
             swung: false,
+            swing_ticks: 0,
+            swing_duration: 0,
+            swing_kind: kiln_proto::packets::entity::swing::WHACK,
+            swing_wire_duration: kiln_proto::packets::entity::swing::DEFAULT_DURATION,
+            kinetic_ticks: None,
+            recent_stabs: Vec::new(),
             pending_suggestion: None,
             teleport_id: 1,
             respawn: joining.respawn,
@@ -2565,6 +2601,7 @@ impl Sim {
             pending_travel: None,
             vehicle: None,
             vehicle_type: None,
+            returning_vehicle,
             levitation_start: None,
             raid_omen_position: None,
             raid_omen_trigger: None,

@@ -286,7 +286,7 @@ fn dragon_part(entities: &entities::Entities, id: i32) -> Option<Target> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum EntityClass {
+pub(crate) enum EntityClass {
     /// Items and experience orbs: attacking them is a protocol violation.
     Invalid,
     /// `isAttackable` false: nothing happens (falling blocks).
@@ -314,7 +314,7 @@ pub(crate) struct MobHit {
     pub fire_seconds: f32,
 }
 
-fn classify(e: &kiln_entity::Entity) -> EntityClass {
+pub(crate) fn classify(e: &kiln_entity::Entity) -> EntityClass {
     match &e.kind {
         EntityKind::Item(_) | EntityKind::ExperienceOrb(_) => EntityClass::Invalid,
         // `AbstractArrow.isAttackable`: only redirectable projectiles (none of Kiln's arrows).
@@ -414,6 +414,7 @@ impl Player {
     /// hand holds a different item (`Player.tick`, `LivingEntity.detectEquipmentUpdates`).
     pub(crate) fn tick_combat(&mut self) {
         self.attack_ticker += 1;
+        self.tick_swing();
         let main = self.inv.selected_item().clone();
         if !main.is_same_item(&self.equipment_seen[0]) {
             self.attack_ticker = 0;
@@ -437,7 +438,7 @@ impl Player {
     }
 
     /// `cannotAttackWithItem`: items with a minimum charge need that much attack strength.
-    fn cannot_attack_with_item(&self, stack: &ItemStack, extra_ticks: i32) -> bool {
+    pub(crate) fn cannot_attack_with_item(&self, stack: &ItemStack, extra_ticks: i32) -> bool {
         let min = stack.get(keys::MINIMUM_ATTACK_CHARGE).copied().unwrap_or(0.0);
         let charge = (self.attack_ticker + extra_ticks) as f32 / self.attack_strength_delay();
         min > 0.0 && charge < min
@@ -789,14 +790,14 @@ pub(crate) fn spin_attack(
 impl Player {
     /// `ServerPlayer.getEnchantedDamage`: `EnchantmentHelper.modifyDamage` with the main hand
     /// item against `target`.
-    fn enchanted_damage(&self, target: &crate::enchant::EntityView, damage: f32, source: &Source, rng: &mut kiln_javamath::random::LegacyRandom) -> f32 {
+    pub(crate) fn enchanted_damage(&self, target: &crate::enchant::EntityView, damage: f32, source: &Source, rng: &mut kiln_javamath::random::LegacyRandom) -> f32 {
         let (Some(loot), Some(weapon)) = (&self.loot, &source.weapon) else { return damage };
         loot.modify_damage(weapon, rng, damage, |level| crate::enchant::DamageContext { level, this: target, source })
     }
 
     /// `LivingEntity.getKnockback`: the attack knockback attribute through the weapon's
     /// `knockback` enchantments, halved.
-    fn attack_knockback(&self, target: &crate::enchant::EntityView, source: &Source, rng: &mut kiln_javamath::random::LegacyRandom) -> f32 {
+    pub(crate) fn attack_knockback(&self, target: &crate::enchant::EntityView, source: &Source, rng: &mut kiln_javamath::random::LegacyRandom) -> f32 {
         let base = self.attribute(ATTACK_KNOCKBACK) as f32;
         let value = match (&self.loot, &source.weapon) {
             (Some(loot), Some(weapon)) => {
@@ -815,7 +816,7 @@ fn attack_rng<'c>(ctx: &'c mut DamageCtx) -> &'c mut kiln_javamath::random::Lega
 
 /// `EnchantmentHelper.doPostAttackEffectsWithItemSource` for player `victim` hit by player
 /// `a`, then the effects carried out.
-fn post_attack(players: &mut [&mut Player], a: usize, victim: usize, source: &Source, ctx: &mut DamageCtx) {
+pub(crate) fn post_attack(players: &mut [&mut Player], a: usize, victim: usize, source: &Source, ctx: &mut DamageCtx) {
     let Some(loot) = players[victim].loot.clone() else { return };
     let effects = crate::enchant::post_attack_effects(&loot, players, victim, Some(a), source, attack_rng(ctx));
     for e in &effects {
@@ -838,15 +839,7 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     };
     let target_view = match &target {
         Target::Player(t) => players[*t].view(),
-        Target::Entity { type_id, pos, .. } => crate::enchant::EntityView {
-            type_id: *type_id,
-            pos: *pos,
-            on_ground: false,
-            on_fire: false,
-            sneaking: false,
-            sprinting: false,
-            flying: false,
-        },
+        Target::Entity { type_id, pos, .. } => crate::enchant::EntityView { type_id: *type_id, pos: *pos, ..Default::default() },
     };
     let p = &mut *players[a];
     // `isAutoSpinAttack ? autoSpinAttackDmg : ATTACK_DAMAGE`, and `getWeaponItem` (the trident
@@ -1072,7 +1065,7 @@ fn play_sounds(players: &mut [&mut Player], a: usize, sounds: &[&str], env: &Att
 }
 
 /// `ServerLevel.sendParticles`: to players within 32 blocks.
-fn send_particles(players: &mut [&mut Player], particle: &str, at: [f64; 3], count: i32, offset: [f32; 3], speed: f32) {
+pub(crate) fn send_particles(players: &mut [&mut Player], particle: &str, at: [f64; 3], count: i32, offset: [f32; 3], speed: f32) {
     let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) else { return };
     let pkt = world_fx::level_particles(&world_fx::LevelParticles {
         particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
@@ -1090,7 +1083,7 @@ fn send_particles(players: &mut [&mut Player], particle: &str, at: [f64; 3], cou
 }
 
 /// `sendToTrackingPlayersAndSelf` for player `a`.
-fn send_to_trackers_and_self(players: &mut [&mut Player], a: usize, pkt: &bytes::Bytes) {
+pub(crate) fn send_to_trackers_and_self(players: &mut [&mut Player], a: usize, pkt: &bytes::Bytes) {
     let viewers = players[a].seen_by.clone();
     players[a].send(pkt.clone());
     for v in viewers {
@@ -1100,7 +1093,7 @@ fn send_to_trackers_and_self(players: &mut [&mut Player], a: usize, pkt: &bytes:
     }
 }
 
-fn dist2(a: [f64; 3], b: [f64; 3]) -> f64 {
+pub(crate) fn dist2(a: [f64; 3], b: [f64; 3]) -> f64 {
     (a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)
 }
 

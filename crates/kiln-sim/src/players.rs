@@ -454,12 +454,7 @@ fn encode_movement(target: &mut Player) -> Encoded {
         packets.push(entity::entity_event(target.entity_id, 3));
     }
     if std::mem::take(&mut target.swung) {
-        packets.push(entity::swing_animation(
-            target.entity_id,
-            false,
-            entity::swing::WHACK,
-            entity::swing::DEFAULT_DURATION,
-        ));
+        packets.push(entity::swing_animation(target.entity_id, false, target.swing_kind, target.swing_wire_duration));
     }
     let viewers = if packets.is_empty() { Vec::new() } else { target.seen_by.clone() };
     Encoded { to_viewers: packets, to_self, viewers }

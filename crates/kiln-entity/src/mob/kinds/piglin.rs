@@ -1153,6 +1153,9 @@ fn make_brain(random: &mut dyn RandomSource) -> Brain {
                 stop_attacking_if_target_invalid(|cx, t| find_nearest_valid_attack_target(cx) != Some(t.id), |_, _| {}, true),
                 trigger_if(has_crossbow, back_up_if_too_close(5, 0.75)),
                 set_walk_target_from_attack_target_if_out_of_reach(|_| 1.0),
+                super::spear_brain::SpearApproach::new(1.0, 10.0),
+                super::spear_brain::SpearAttack::new(1.0, 1.0, 2.0),
+                super::spear_brain::SpearRetreat::new(1.0),
                 melee_attack(20),
                 CrossbowAttack::new(),
                 remember_if_hoglin_was_killed(),
@@ -1469,12 +1472,8 @@ impl Kind for Piglin {
                 }
             }
         }
-        // `populateDefaultEquipmentEnchantments`: one draw per worn item (weapon 25%, armor 50%
-        // of the special multiplier); the enchanting itself is not simulated.
-        let _ = !m.equipment[MAINHAND].is_empty() && r.next_float() < 0.25 * ctx.special_multiplier;
-        for slot in [mob::FEET, mob::LEGS, mob::CHEST, mob::HEAD] {
-            let _ = !m.equipment[slot].is_empty() && r.next_float() < 0.5 * ctx.special_multiplier;
-        }
+        // `populateDefaultEquipmentEnchantments`.
+        super::zombie::populate_enchantments(m, r, ctx);
         ext::mob_finalize(m, r);
     }
 
