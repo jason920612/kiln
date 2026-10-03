@@ -1091,32 +1091,39 @@ fn block_drops(
     env: &BlockEnv,
     i: usize,
 ) -> Vec<Spawn> {
-    let Some(table_id) = loot.block_table(BlockId::of(state).name()) else { return Vec::new() };
-    let Some(table) = loot.table(&table_id) else { return Vec::new() };
-    // A player break also sets `this_entity` (the player).
-    let player = tool.is_some();
-    let ctx = BreakContext {
-        tool: tool.unwrap_or_else(kiln_item::ItemStack::empty),
-        player,
-        state,
-        origin: [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5],
-        block_entity,
-    };
     // Vanilla draws block drops from the server-wide random sequence of the table; parallel
     // regions cannot share one without the order depending on the partition, so each drop gets
     // its own seed from the position and tick (an approximation, I class).
-    let items = {
-        let seed = (effect_hash(env, pos, i) | 1) as i64;
-        let (mut sequences, mut level) = (kiln_loot::RandomSequences::new(0), kiln_javamath::random::LegacyRandom::new(seed));
-        let mut rng = table.random(seed, &mut sequences, &mut level);
-        loot.random_items(&table_id, &ctx, rng.source())
-    };
+    let origin = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+    let seed = (effect_hash(env, pos, i) | 1) as i64;
+    let items = block_items(loot, origin, state, tool, block_entity, seed);
     items
         .into_iter()
         .filter(|s| !s.is_empty())
         .enumerate()
         .map(|(k, stack)| pop_resource(pos, stack, effect_hash(env, pos, i.wrapping_mul(64).wrapping_add(k))))
         .collect()
+}
+
+/// The stacks the loot table of `state`'s block rolls for a context at `origin` with `tool`
+/// (`Block.getDrops`); a tool means an entity broke it (`this_entity` is set). `seed` stands in
+/// for the table's random sequence.
+pub(crate) fn block_items(
+    loot: &kiln_loot::LootData,
+    origin: [f64; 3],
+    state: u16,
+    tool: Option<kiln_item::ItemStack>,
+    block_entity: Option<Vec<kiln_item::component::Component>>,
+    seed: i64,
+) -> Vec<kiln_item::ItemStack> {
+    let Some(table_id) = loot.block_table(BlockId::of(state).name()) else { return Vec::new() };
+    let Some(table) = loot.table(&table_id) else { return Vec::new() };
+    // A player break also sets `this_entity` (the player).
+    let player = tool.is_some();
+    let ctx = BreakContext { tool: tool.unwrap_or_else(kiln_item::ItemStack::empty), player, state, origin, block_entity };
+    let (mut sequences, mut level) = (kiln_loot::RandomSequences::new(0), kiln_javamath::random::LegacyRandom::new(seed));
+    let mut rng = table.random(seed, &mut sequences, &mut level);
+    loot.random_items(&table_id, &ctx, rng.source())
 }
 
 /// The loot context of a block broken at `origin` (`LootContextParamSets.BLOCK`).

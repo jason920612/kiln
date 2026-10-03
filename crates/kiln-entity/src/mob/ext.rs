@@ -352,6 +352,11 @@ pub trait Kind: Sync + Send {
         let _ = m;
         self.info().fire_immune && kind.is_tag("minecraft:is_fire")
     }
+    /// `dropCustomDeathLoot` past the equipment (an enderman's carried block), when the mob drops
+    /// loot at all.
+    fn drop_custom_death_loot(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource) {
+        let _ = (e, m, level, source);
+    }
     /// Extra work in `die` (after loot and experience).
     fn die(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource) {
         let _ = (e, m, level, source);

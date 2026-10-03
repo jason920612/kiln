@@ -1135,6 +1135,15 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
     }
 
+    fn block_loot(&mut self, state: u16, origin: Vec3, tool: &kiln_item::ItemStack, entity: i32) -> Vec<kiln_item::ItemStack> {
+        let env = self.level.env;
+        let Some(loot) = env.loot.clone() else {
+            return kiln_item::ItemStack::of(kiln_entity::blocks::block_name(state), 1).into_iter().collect();
+        };
+        let seed = crate::mobs::loot_seed(env.seed, env.game_time, entity, 0x626c_6f63);
+        crate::blocks::block_items(&loot, arr(origin), state, Some(tool.clone()), None, seed)
+    }
+
     fn hopper_take_from_block(&mut self, pos: BlockPos, dest: &mut Vec<kiln_item::ItemStack>) -> Option<bool> {
         crate::container::hopper::take_into_cart(self.level, kb(pos), dest)
     }
