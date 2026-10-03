@@ -264,6 +264,16 @@ impl Spawner<'_> {
         false
     }
 
+    /// [`Spawner::local_ok`] without counting: `None` if it would need counts not made yet.
+    fn local_ok_now(&self, c: ChunkPos, cat: Category) -> Option<bool> {
+        let i = cat_index(cat);
+        let max = cat.max_instances();
+        if !self.known[i] {
+            return self.stands_near(c, 8).all(|k| self.upper[k][i] < max).then(|| self.any_close(c));
+        }
+        Some(self.stands_near(c, 8).any(|k| self.room[i][k].iter().any(|&p| self.local[p][i] < max && close_for_spawning(self.pos[p], c))))
+    }
+
     /// Every player's local count of category index `i`, and the players with room per stand.
     fn count_category(&mut self, i: usize, max: i32) {
         self.known[i] = true;
@@ -318,7 +328,14 @@ impl Spawner<'_> {
 
 /// One tick of natural spawning in a region (`ServerChunkCache.tickChunks`' spawning part).
 #[inline(never)]
-pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut Player], ticking: &Ticking, spawns: &mut Vec<Spawn>) {
+pub(crate) fn tick(
+    level: &mut RegionLevel,
+    entities: &Entities,
+    players: &[&mut Player],
+    ticking: &Ticking,
+    spawns: &mut Vec<Spawn>,
+    ctx: &kiln_sched::Ctx<'_>,
+) {
     let env = level.env;
     let rules = env.mobs;
     let Some(table) = env.spawn_table.clone() else { return };
@@ -456,15 +473,74 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
         }
     });
     chunks.sort_unstable();
-    for (_, c) in chunks {
+    // The categories whose local caps may bind are counted now, so the chunks below can be
+    // looked at side by side.
+    for &cat in &categories {
+        let (i, max) = (cat_index(cat), cat.max_instances());
+        if !s.known[i] && s.upper.iter().any(|u| u[i] >= max) {
+            s.count_category(i, max);
+        }
+    }
+    // Every chunk alone against the state before the first one, in parallel: what each
+    // category's caps said and whether anything spawned. Only a spawn changes what a later
+    // chunk sees (its caps), and spawns are rare: in turn, a chunk that spawned nothing and
+    // whose caps still say the same is done; the others run again, so the outcome is the
+    // serial one whatever the workers.
+    let speculated: Vec<Option<smallvec::SmallVec<[bool; N]>>> = {
+        let (lvl, sp, cats, counts) = (&*level, &s, &categories, &start_counts);
+        ctx.map_indexed_with(SPAWN_WINDOW, &chunks, |_, &(_, c)| speculate(lvl, sp, c, cats, counts, ticking))
+    };
+    let mut spawned_any = false;
+    for (&(_, c), guess) in chunks.iter().zip(speculated) {
+        let global = |s: &Spawner, cat: Category| s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
+        if let Some(said) = guess
+            && (!spawned_any || categories.iter().zip(&said).all(|(&cat, &ok)| (global(&s, cat) && s.local_ok(c, cat)) == ok))
+        {
+            continue;
+        }
         let mut r = chunk_random(env.seed, env.game_time, c);
         for &cat in &categories {
-            let global = s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
-            if global && s.local_ok(c, cat) {
-                spawn_category_for_chunk(level, &mut s, &mut r, cat, c, ticking, spawns);
+            if global(&s, cat) && s.local_ok(c, cat) {
+                let mut made = Vec::new();
+                spawn_category_for_chunk(level, &s, &mut r, cat, c, ticking, &mut made);
+                for (spawn, pc) in made {
+                    spawns.push(spawn);
+                    s.add(pc, cat);
+                    spawned_any = true;
+                }
             }
         }
     }
+}
+
+/// The spawning pass's chunks, a few microseconds each.
+const SPAWN_WINDOW: kiln_sched::Window = kiln_sched::Window::new();
+
+/// Chunk `c`'s turn against `s` as it stands: per category, whether its caps let it try; `None`
+/// if something spawned (or a cap needs counts not made yet).
+fn speculate(
+    level: &RegionLevel,
+    s: &Spawner,
+    c: ChunkPos,
+    categories: &[Category],
+    start_counts: &[[i32; N]],
+    ticking: &Ticking,
+) -> Option<smallvec::SmallVec<[bool; N]>> {
+    let mut r = chunk_random(level.env.seed, level.env.game_time, c);
+    let mut said = smallvec::SmallVec::new();
+    for &cat in categories {
+        let global = s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
+        let ok = global && s.local_ok_now(c, cat)?;
+        said.push(ok);
+        if ok {
+            let mut made = Vec::new();
+            spawn_category_for_chunk(level, s, &mut r, cat, c, ticking, &mut made);
+            if !made.is_empty() {
+                return None;
+            }
+        }
+    }
+    Some(said)
 }
 
 /// `PhantomSpawner.tick`, per region. Approximations: the pass comes every 1200 ticks with a
@@ -515,16 +591,17 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
     }
 }
 
-/// `spawnCategoryForChunk` + `spawnCategoryForPosition`.
+/// `spawnCategoryForChunk` + `spawnCategoryForPosition`: what spawns, with the chunk each
+/// counts in.
 #[inline(never)]
 fn spawn_category_for_chunk(
-    level: &mut RegionLevel,
-    s: &mut Spawner,
+    level: &RegionLevel,
+    s: &Spawner,
     r: &mut LegacyRandom,
     cat: Category,
     c: ChunkPos,
     ticking: &Ticking,
-    spawns: &mut Vec<Spawn>,
+    spawns: &mut Vec<(Spawn, ChunkPos)>,
 ) {
     let env = level.env;
     let min_y = env.min_y;
@@ -619,8 +696,8 @@ fn spawn_category_for_chunk(
             let camel_space = kind == MobKind::Husk
                 && kiln_data::entities::by_name("minecraft:camel_husk").is_some_and(|c| no_collision(level, [fx.floor() + 0.5, y as f64, fz.floor() + 0.5], c.width, c.height));
             let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space };
-            spawns.push(crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)));
-            s.add(pc, cat);
+            // The caller counts it (nothing below reads the counts).
+            spawns.push((crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)), pc));
             spawned += 1;
             in_group += 1;
             if spawned >= kind.ext().map_or(4, |k| k.max_spawn_cluster()) {

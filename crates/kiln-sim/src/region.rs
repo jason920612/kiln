@@ -543,7 +543,7 @@ impl RegionWork<'_> {
             };
             let any_player = !self.players.is_empty();
             let spawning = Instant::now();
-            crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns);
+            crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns, ctx);
             self.out.times[9] += spawning.elapsed();
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player, ctx);
             crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
