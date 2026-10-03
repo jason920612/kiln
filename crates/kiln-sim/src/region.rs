@@ -105,7 +105,10 @@ impl RegionWork<'_> {
     /// any packet) everything applies in order on this thread.
     pub fn apply_packets(&mut self, env: &Env, ctx: &Ctx<'_>) {
         let mut out = BlockOut::default();
-        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        // The boxes at the start of the phase, for the packets that place or use things (a
+        // crowd's ticks are mostly movement, which needs none).
+        let needs_bodies = self.plugins.is_some() || self.packets.iter().any(|(c, p)| !is_player_packet(p) || self.rod_use(*c, p));
+        let bodies = if needs_bodies { blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities) } else { Vec::new() };
         let mut packets = std::mem::take(&mut self.packets).into_iter().peekable();
         while let Some((conn, pkt)) = packets.next() {
             if self.plugins.is_none() && is_player_packet(&pkt) && !self.rod_use(conn, &pkt) {
