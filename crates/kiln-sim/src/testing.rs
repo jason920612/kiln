@@ -32,9 +32,17 @@ pub struct SinkStats {
     pub digest: Mutex<u64>,
 }
 
+static DIGESTS: AtomicBool = AtomicBool::new(false);
+
+/// Makes every sink hash its packets from now on (as `KILN_SINK_DIGEST` does); call before the
+/// first join.
+pub fn hash_packets() {
+    DIGESTS.store(true, Relaxed);
+}
+
 fn track_digest() -> bool {
     static TRACK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *TRACK.get_or_init(|| std::env::var_os("KILN_SINK_DIGEST").is_some())
+    DIGESTS.load(Relaxed) || *TRACK.get_or_init(|| std::env::var_os("KILN_SINK_DIGEST").is_some())
 }
 
 fn track_ids() -> bool {
@@ -218,4 +226,85 @@ pub fn group_offset(g: usize, groups: usize, spacing: f64) -> [f64; 2] {
     let rows = groups.div_ceil(cols);
     let at = |i: usize, n: usize| (i as f64 - (n - 1) as f64 / 2.0) * spacing;
     [at(g % cols, cols), at(g / cols, rows)]
+}
+
+/// Players that crouch, go spectator, and leave and rejoin while a crowd runs (locator bar and
+/// tracking churn), scripted from the tick number so two builds can be compared.
+pub struct Churn {
+    crouching: Vec<bool>,
+    spectators: Vec<(usize, usize)>,
+    retired: Vec<Arc<SinkStats>>,
+    next_conn: u64,
+}
+
+impl Churn {
+    pub fn new(players: usize) -> Self {
+        Self { crouching: vec![false; players], spectators: Vec::new(), retired: Vec::new(), next_conn: players as u64 }
+    }
+
+    /// Adds tick `k`'s events to `inbox`.
+    pub fn tick(&mut self, k: usize, walkers: &mut Vec<Walker>, inbox: &mut Vec<ToSim>, groups: usize, spacing: f64, view_distance: u8, y: f64) {
+        let n = walkers.len();
+        for i in 0..n {
+            // About 2.5% of the players flip their crouch each tick.
+            if (i * 7 + k) % 40 == 0 {
+                self.crouching[i] = !self.crouching[i];
+                let flags = if self.crouching[i] { 0x20 } else { 0 };
+                inbox.push(ToSim::Packet(walkers[i].client.conn, PlayIn::PlayerInput { flags }));
+            }
+        }
+        if k % 50 == 0 {
+            let i = (k / 50 * 13) % n;
+            inbox.push(ToSim::Console(format!("gamemode spectator W{}", walkers[i].client.conn - 1)));
+            self.spectators.push((k + 25, i));
+        }
+        while let Some(&(when, i)) = self.spectators.first() {
+            if when > k {
+                break;
+            }
+            self.spectators.remove(0);
+            inbox.push(ToSim::Console(format!("gamemode survival W{}", walkers[i].client.conn - 1)));
+        }
+        if k % 97 == 96 {
+            // One player leaves; a new one takes its place in the group.
+            let i = (k / 97 * 31) % n;
+            let old = walkers.remove(i);
+            self.crouching.remove(i);
+            self.retired.push(old.client.stats.clone());
+            inbox.push(ToSim::Leave(old.client.conn));
+            self.next_conn += 1;
+            let name = format!("W{}", self.next_conn - 1);
+            let (msg, stats) = join(self.next_conn, &name, view_distance);
+            inbox.push(msg);
+            let [ox, oz] = group_offset(i % groups, groups, spacing);
+            let center = [8.5 + ox, 8.5 + oz];
+            inbox.push(ToSim::Console(format!("tp {name} {} {y} {}", center[0], center[1])));
+            walkers.insert(i, Walker::new(Client::new(self.next_conn, stats), center, self.next_conn));
+            self.crouching.insert(i, false);
+        }
+    }
+
+    /// One hash of every player's packet stream (needs `KILN_SINK_DIGEST`), the players who
+    /// left included, combined in connection order.
+    pub fn stream_digest(&self, walkers: &[Walker]) -> u64 {
+        stream_digest(walkers, &self.retired)
+    }
+}
+
+/// One hash of the packet streams of `walkers` and of `retired` connections (needs
+/// `KILN_SINK_DIGEST`).
+pub fn stream_digest(walkers: &[Walker], retired: &[Arc<SinkStats>]) -> u64 {
+    let mut all: Vec<(u64, u64)> = walkers
+        .iter()
+        .map(|w| (w.client.conn, *w.client.stats.digest.lock().unwrap()))
+        .chain(retired.iter().map(|r| (0, *r.digest.lock().unwrap())))
+        .collect();
+    all.sort_unstable();
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for (c, d) in &all {
+        for b in c.to_le_bytes().iter().chain(d.to_le_bytes().iter()) {
+            h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
 }
