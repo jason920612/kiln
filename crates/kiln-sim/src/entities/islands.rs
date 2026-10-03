@@ -54,7 +54,7 @@ const SERIAL: [&str; 9] = [
 /// Placeholder ids each island or tile may hand out.
 const PLACEHOLDERS: i32 = 10_000;
 /// The tiles' side (blocks): an entity reaches at least this far into the tiles around its own.
-const TILE: f64 = 24.0;
+const TILE: f64 = 16.0;
 
 /// Where an island's outputs stood when one of its entities' turns began.
 #[derive(Clone, Copy)]
@@ -73,7 +73,7 @@ struct Job<'p> {
     global: Vec<usize>,
     list: Vec<Entity>,
     players: Vec<&'p mut Player>,
-    proxies: Vec<kiln_entity::Entity>,
+    proxies: Vec<Box<kiln_entity::Entity>>,
     views: Vec<PlayerView>,
     placeholder: i32,
     spawns: Vec<Spawn>,
@@ -291,7 +291,7 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
     let player_at: crate::FastMap<i32, usize> = sim.players.iter().enumerate().map(|(j, p)| (p.entity_id, j)).collect();
     let mut taken: Vec<Option<Entity>> = std::mem::take(sim.list).into_iter().map(Some).collect();
     // The players' stand-ins go to their groups and come back, like the entities.
-    let mut stand_ins: Vec<Option<kiln_entity::Entity>> = std::mem::take(&mut sim.proxies).into_iter().map(Some).collect();
+    let mut stand_ins: Vec<Option<Box<kiln_entity::Entity>>> = std::mem::take(&mut sim.proxies).into_iter().map(Some).collect();
     for batch in batches {
         run_batch(sim, &mut taken, &mut stand_ins, batch, &player_at, ticking, any_player, ctx, &mut next);
     }
@@ -308,7 +308,7 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
 fn run_batch(
     sim: &mut SimLevel,
     taken: &mut [Option<Entity>],
-    stand_ins: &mut [Option<kiln_entity::Entity>],
+    stand_ins: &mut [Option<Box<kiln_entity::Entity>>],
     groups: Vec<Group>,
     player_at: &crate::FastMap<i32, usize>,
     ticking: &blocks::Ticking,

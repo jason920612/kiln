@@ -617,7 +617,7 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     players: &'a mut [&'p mut Player],
     deaths: &'a mut Vec<health::Death>,
     /// Players as `Other` entities, in connection order.
-    proxies: Vec<kiln_entity::Entity>,
+    proxies: Vec<Box<kiln_entity::Entity>>,
     views: Vec<PlayerView>,
     spawns: &'a mut Vec<Spawn>,
     events: Vec<Event>,
@@ -1029,7 +1029,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             return self.list[i].phys.as_deref_mut();
         }
         let i = self.proxy_index(id)?;
-        self.proxies.get_mut(i)
+        self.proxies.get_mut(i).map(|b| &mut **b)
     }
 
     fn entity(&self, id: i32) -> Option<&kiln_entity::Entity> {
@@ -1037,7 +1037,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             return self.list[i].phys.as_deref();
         }
         let i = self.proxy_index(id)?;
-        self.proxies.get(i)
+        self.proxies.get(i).map(|b| &**b)
     }
 
     fn add_entity(&mut self, entity: kiln_entity::Entity) {
@@ -1277,7 +1277,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn entity_by_uuid(&self, uuid: u128) -> Option<&kiln_entity::Entity> {
-        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_deref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid))
+        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_deref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid).map(|b| &**b))
     }
 
     fn known_movement(&self, id: i32) -> Vec3 {
@@ -1541,7 +1541,7 @@ pub(crate) fn tick(
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live =|p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let mut views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     // wp32 parrots: what parrots need to know of their owners' footing.
     if entities.list.iter().any(|e| e.kind.name == "minecraft:parrot") {
@@ -1920,7 +1920,7 @@ pub(crate) fn hit_mob(
     let target = hit.target - hit.part.map_or(0, |p| p as i32 + 1);
     let Ok(i) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x6869_74, hit.target);
     let mut sim = SimLevel {
@@ -2036,7 +2036,7 @@ pub(crate) fn stab_mob(
 ) -> Option<MobStabOutcome> {
     let i = entities.list.binary_search_by_key(&stab.target, |e| e.id).ok()?;
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x7374_6162, stab.target);
     let mut sim = SimLevel {
@@ -2172,7 +2172,7 @@ pub(crate) fn interact_mob(
     let stack = players[i].inv.equipped(slot).clone();
     let who = kiln_entity::mob::interact::Interactor { id: players[i].entity_id, creative: players[i].game_mode == 1, sneaking: players[i].sneaking };
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x696e_74, target);
     let mut sim = SimLevel {
@@ -2330,7 +2330,7 @@ pub(crate) fn with_entity<R>(
     }
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, target);
     let mut sim = SimLevel {
@@ -2381,7 +2381,7 @@ pub(crate) fn with_level<R>(
     f: impl FnOnce(&mut dyn EntityLevel) -> R,
 ) -> R {
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, 0);
     let mut sim = SimLevel {
