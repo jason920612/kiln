@@ -71,8 +71,12 @@ pub(crate) struct RegionOut {
     pub saved_entities: Vec<kiln_proto::nbt::Tag>,
     /// CPU time per sub-phase, for the statistics.
     pub times: [Duration; SUB_PHASES.len()],
+    /// Of which in split windows (owner's wall time).
+    pub win: [Duration; SUB_PHASES.len()],
 }
 
+pub(crate) const SUB_WIN: [&str; 10] =
+    ["menus~", "connections~", "chunks~", "blocks~", "entities~", "visibility~", "movement~", "light~", "egress~", "spawning~"];
 pub(crate) const SUB_PHASES: [&str; 10] =
     ["menus", "connections", "chunks", "blocks", "entities", "visibility", "movement", "light", "egress", "spawning"];
 
@@ -85,6 +89,9 @@ pub(crate) struct RegionWork<'a> {
     pub blocks: &'a mut RegionBlocks,
     /// Sorted by connection id.
     pub players: Vec<&'a mut Player>,
+    /// The players' connection ids, side by side (a search through the players themselves
+    /// misses the cache at every step).
+    pub conns: Vec<ConnId>,
     /// This region's packets for the tick, in arrival order.
     pub packets: Vec<(ConnId, PlayIn)>,
     /// The region's plugin instances.
@@ -96,7 +103,7 @@ pub(crate) struct RegionWork<'a> {
 
 impl RegionWork<'_> {
     fn index_of(&self, conn: ConnId) -> Option<usize> {
-        self.players.binary_search_by_key(&conn, |p| p.conn).ok()
+        self.conns.binary_search(&conn).ok()
     }
 
     /// P1: applies the region's packets in arrival order. Runs of packets that each touch only
@@ -104,11 +111,13 @@ impl RegionWork<'_> {
     /// order; what they leave behind merges in arrival order. With plugins (which may deny
     /// any packet) everything applies in order on this thread.
     pub fn apply_packets(&mut self, env: &Env, ctx: &Ctx<'_>) {
+        let dt = Instant::now();
         let mut out = BlockOut::default();
         // The boxes at the start of the phase, for the packets that place or use things (a
         // crowd's ticks are mostly movement, which needs none).
         let needs_bodies = self.plugins.is_some() || self.packets.iter().any(|(c, p)| !is_player_packet(p) || self.rod_use(*c, p));
         let bodies = if needs_bodies { blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities) } else { Vec::new() };
+        crate::diag::lap("ap.bodies", dt);
         let mut packets = std::mem::take(&mut self.packets).into_iter().peekable();
         while let Some((conn, pkt)) = packets.next() {
             if self.plugins.is_none() && is_player_packet(&pkt) && !self.rod_use(conn, &pkt) {
@@ -247,7 +256,9 @@ impl RegionWork<'_> {
         if let Some(h) = self.plugins.as_mut() {
             crate::plugins::after_packets(h, self.cells, env);
         }
+        let dt = Instant::now();
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+        crate::diag::lap("ap.finish", dt);
     }
 
     /// `stopOpen` of the chest minecarts and chest boats whose menus `check_menus` closed: the
@@ -335,14 +346,22 @@ impl RegionWork<'_> {
     /// A run of [`is_player_packet`] packets: grouped by player (each keeps its order) and
     /// applied in a window; drops and deaths merge in arrival order.
     fn apply_player_packets(&mut self, run: Vec<(ConnId, PlayIn)>, env: &Env, ctx: &Ctx<'_>) {
+        let dt = Instant::now();
         let mut jobs: Vec<Vec<(usize, PlayIn)>> = (0..self.players.len()).map(|_| Vec::new()).collect();
+        let mut last: Option<(ConnId, Option<usize>)> = None;
         for (seq, (conn, pkt)) in run.into_iter().enumerate() {
-            if let Some(i) = self.index_of(conn) {
+            let at = match last {
+                Some((c, at)) if c == conn => at,
+                _ => self.index_of(conn),
+            };
+            last = Some((conn, at));
+            if let Some(i) = at {
                 jobs[i].push((seq, pkt));
             }
         }
         let mut items: Vec<(&mut &mut Player, Vec<(usize, PlayIn)>)> =
             self.players.iter_mut().zip(jobs).filter(|(_, j)| !j.is_empty()).collect();
+        let dt = crate::diag::lap("ap.jobs", dt);
         let cells = &*self.cells;
         let left = ctx.map_mut_with(PACKET_WINDOW, &mut items, |_, (p, pkts)| {
             let mut left = Vec::new();
@@ -356,7 +375,9 @@ impl RegionWork<'_> {
             }
             left
         });
+        let dt = crate::diag::lap("ap.window", dt);
         let mut left: Vec<_> = left.into_iter().flatten().collect();
+        crate::diag::lap("ap.left", dt);
         left.sort_unstable_by_key(|(seq, _, _)| *seq);
         for (_, spawns, deaths) in left {
             self.out.spawns.extend(spawns);
@@ -370,10 +391,15 @@ impl RegionWork<'_> {
             std::thread::sleep(self.delay);
         }
         let mut lap = Instant::now();
+        let mut wlap = kiln_sched::window_ns();
+        let mut win = [Duration::ZERO; SUB_PHASES.len()];
         let mut mark = |times: &mut [Duration; SUB_PHASES.len()], i: usize| {
             let now = Instant::now();
             times[i] += now - lap;
             lap = now;
+            let w = kiln_sched::window_ns();
+            win[i] += Duration::from_nanos(w - wlap);
+            wlap = w;
         };
         // Menu changes first, like vanilla's container broadcast at the start of a player tick,
         // then `stillValid`: a menu whose block went away or is out of reach closes.
@@ -382,7 +408,7 @@ impl RegionWork<'_> {
         // the drops land in that order either way.
         {
             let rules = &*env.blocks.menus;
-            let own = ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| {
+            let own = ctx.map_mut_with(MENU_WINDOW, &mut self.players, |_, p| {
                 p.containers.open.is_none().then(|| crate::container::open::own_menu_broadcast(p, rules))
             });
             let bodies = Vec::new();
@@ -417,7 +443,7 @@ impl RegionWork<'_> {
         // itself and reads the region's blocks, so the players split into windows; what they
         // leave behind is merged in connection order, as a serial loop would have left it.
         let cells = &*self.cells;
-        let ticked = ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| player_tick(p, cells, env));
+        let ticked = ctx.map_mut_with(PLAYER_TICK_WINDOW, &mut self.players, |_, p| player_tick(p, cells, env));
         for t in ticked {
             self.out.spawns.extend(t.spawns);
             self.out.deaths.extend(t.deaths);
@@ -428,7 +454,7 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 1);
         // Which chunks each player lacks is its own business (a window); sending them needs
         // the chunks' packet caches, so that part runs in connection order here.
-        let missing = ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| if p.disconnected { Vec::new() } else { chunk_view(p) });
+        let missing = ctx.map_mut_with(CHUNK_VIEW_WINDOW, &mut self.players, |_, p| if p.disconnected { Vec::new() } else { chunk_view(p) });
         for (p, missing) in self.players.iter_mut().zip(missing).filter(|(_, m)| !m.is_empty()) {
             send_chunks(p, missing, &mut *self.cells, env, &mut self.out.wanted);
         }
@@ -439,40 +465,51 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 2);
         // The chunks that tick, for the block and entity phases (no player changes chunk
         // between them).
+        let dt = std::time::Instant::now();
         let ticking = ticking_chunks(&self.players, env);
+        crate::diag::lap("b.ticking", dt);
         self.tick_blocks(env, &ticking);
         mark(&mut self.out.times, 3);
         let spawned_before = self.out.times[9];
         self.tick_entities(env, ctx, &ticking);
+        let dt = std::time::Instant::now();
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         self.post_cart_closes(env);
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
+        crate::diag::lap("ent.after", dt);
         mark(&mut self.out.times, 4);
         // The spawner's share of the entity phase is its own sub-phase.
         self.out.times[4] = self.out.times[4].saturating_sub(self.out.times[9] - spawned_before);
         let movers = crate::players::update_visibility(&mut self.players, ctx);
         mark(&mut self.out.times, 5);
+        let dt = std::time::Instant::now();
         crate::players::broadcast_movement(&mut self.players, ctx);
+        let dt = crate::diag::lap("mv.broadcast", dt);
         for p in self.players.iter_mut() {
             p.decay_velocity();
         }
+        let dt = crate::diag::lap("mv.decay", dt);
         entities::track(self.entities, &mut self.players, &movers, ctx);
+        crate::diag::lap("mv.track", dt);
         mark(&mut self.out.times, 6);
         self.send_light_updates();
         mark(&mut self.out.times, 7);
         for p in self.players.iter_mut() {
             self.out.saved_entities.append(&mut p.released_shoulders);
         }
-        ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| p.flush());
+        ctx.map_mut_with(FLUSH_WINDOW, &mut self.players, |_, p| p.flush());
         mark(&mut self.out.times, 8);
+        self.out.win = win;
     }
 
     /// The block phases: players' digging, pressure plates under bodies, then scheduled
     /// ticks, random ticks, block events and moving pistons in chunks near players.
     fn tick_blocks(&mut self, env: &Env, ticking: &Ticking) {
+        let dt = std::time::Instant::now();
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let dt = crate::diag::lap("b.bodies", dt);
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
             crate::plugins::watch_delayed_breaks(h, &self.players, self.cells);
@@ -493,11 +530,15 @@ impl RegionWork<'_> {
             for p in self.players.iter_mut().filter(|p| !p.disconnected) {
                 crate::sleep::tick_player(p, &mut level);
             }
+            let dt = crate::diag::lap("b.dig_sleep", dt);
             // A frozen game (`/tick freeze`) ticks no blocks.
             if !env.frozen {
                 blocks::press_plates(&mut level);
+                let dt = crate::diag::lap("b.plates", dt);
                 crate::sculk::players_step_on(&mut level, &self.players);
+                let dt = crate::diag::lap("b.sculk_step", dt);
                 blocks::tick_blocks(&mut level, &ticking);
+                crate::diag::lap("b.tick_blocks", dt);
                 for pos in std::mem::take(&mut level.out.rechecks) {
                     crate::container::open::recheck_openers(&mut level, &self.players, pos);
                 }
@@ -623,10 +664,15 @@ impl RegionWork<'_> {
     }
 }
 
-/// Players per window chunk in the per-player windows of a crowd (a few microseconds each).
-const PLAYER_WINDOW: Window = Window::new();
+/// The per-player windows of a crowd, with what one player costs (measured with the vanilla
+/// datapack; a hint saves the timed prefix, wp40): menu broadcast, player tick, chunk view,
+/// egress.
+const MENU_WINDOW: Window = Window::new().item_ns(700);
+const PLAYER_TICK_WINDOW: Window = Window::new().item_ns(2_000);
+const CHUNK_VIEW_WINDOW: Window = Window::new().item_ns(150);
+const FLUSH_WINDOW: Window = Window::new().item_ns(400);
 /// A player's packets of one run (mostly a move and a tick end).
-const PACKET_WINDOW: Window = Window::new();
+const PACKET_WINDOW: Window = Window::new().item_ns(600);
 
 /// What one player's tick leaves for its region, merged in connection order.
 #[derive(Default)]

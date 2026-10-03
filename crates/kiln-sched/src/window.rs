@@ -69,6 +69,15 @@ enum Plan {
     Probe(Option<usize>),
 }
 
+thread_local! {
+    static WINDOW_NS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Diagnostics: nanoseconds this thread spent owning split windows (wall time).
+pub fn window_ns() -> u64 {
+    WINDOW_NS.with(|c| c.get())
+}
+
 impl<'a> Ctx<'a> {
     pub(crate) fn new(local: &'a WorkerLocal, family: u64) -> Self {
         Ctx { local, family, _not_send: PhantomData }
@@ -113,7 +122,11 @@ impl<'a> Ctx<'a> {
             Plan::Probe(hint) => self.probe(items, &mut out, &run, hint),
         };
         match split {
-            Some((chunk, est)) => self.parallel(items, &mut out, chunk.max(1), est, &run),
+            Some((chunk, est)) => {
+                let t = std::time::Instant::now();
+                self.parallel(items, &mut out, chunk.max(1), est, &run);
+                WINDOW_NS.with(|c| c.set(c.get() + t.elapsed().as_nanos() as u64));
+            }
             None => out.extend(items[out.len()..].iter().map(|x| run(self, x))),
         }
         out

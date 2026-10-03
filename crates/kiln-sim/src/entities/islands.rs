@@ -43,7 +43,7 @@ const MIN_ENTITIES: usize = 32;
 /// tiles; never the workers, so the result does not depend on them.
 const ISLAND_SHARE: usize = 4;
 /// Entity types whose tick needs region state an island cannot change later.
-const SERIAL: [&str; 9] = [
+pub(super) const SERIAL: [&str; 9] = [
     "minecraft:villager",
     "minecraft:warden",
     "minecraft:allay",
@@ -692,6 +692,8 @@ fn run_island(job: &mut Job, sh: &Shared) {
         proxy_grid: Default::default(),
         view_index: Default::default(),
         despawn: Some(sh.nearest),
+        player_writes: 0,
+        touched: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();

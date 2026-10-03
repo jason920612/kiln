@@ -6,6 +6,7 @@
 //!        [--spacing 48] [--radius 6] [--ticks 1200] [--view-distance 2] [--behavior crowd|walk]
 //!        [--threads n] [--unified] [--inline] [--independent] [--slow-ms n]
 //!        [--spin-us n] [--inline-below-us n] [--chunk-us n] [--helper-share-us n]
+//!        [--priority n] [--tick-ms n]
 //!
 //! Prints the process CPU time per measured tick next to the wall time: idle workers spinning
 //! cost CPU without showing in mspt.
@@ -106,6 +107,10 @@ struct Args {
     locator_interval: u32,
     /// `--prewake-us n`: workers spin this long from each tick's start.
     prewake_us: u64,
+    /// `--priority n`: the tick threads' priority (`PoolConfig::priority`).
+    priority: Option<i32>,
+    /// `--tick-ms n`: ticks start n ms apart, as a server paces them (0: back to back).
+    tick_ms: u64,
 }
 
 fn args() -> Args {
@@ -118,7 +123,7 @@ fn args() -> Args {
         ticks: 1200,
         view_distance: 2,
         walk: false,
-        threads: cores.saturating_sub(1).clamp(1, 7),
+        threads: kiln_sim::default_workers(cores),
         unified: false,
         inline: false,
         independent: false,
@@ -135,6 +140,8 @@ fn args() -> Args {
         entity_ticking: None,
         locator_interval: 1,
         prewake_us: 0,
+        priority: None,
+        tick_ms: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -161,6 +168,8 @@ fn args() -> Args {
             "--entity-ticking" => a.entity_ticking = Some(kiln_sim::EntityTicking::parse(&value()).expect("serial, islands or tiles")),
             "--locator-interval" => a.locator_interval = value().parse().unwrap(),
             "--prewake-us" => a.prewake_us = value().parse().unwrap(),
+            "--priority" => a.priority = Some(value().parse().unwrap()),
+            "--tick-ms" => a.tick_ms = value().parse().unwrap(),
             "--day-time" => a.day_time = Some(value().parse().unwrap()),
             "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
@@ -184,6 +193,9 @@ fn main() {
     }
     config.locator_interval = a.locator_interval;
     config.prewake = std::time::Duration::from_micros(a.prewake_us);
+    if let Some(p) = a.priority {
+        config.pool.priority = p;
+    }
     let us = std::time::Duration::from_micros;
     if let Some(v) = a.spin_us {
         config.pool.spin = us(v);
@@ -227,6 +239,7 @@ fn main() {
     #[cfg(windows)]
     let mut sampling: Option<sampler::Sampler> = None;
     let mut wall0 = Instant::now();
+    let pace_start = Instant::now();
     let mut last_totals: Vec<(&str, std::time::Duration)> = Vec::new();
     loop {
         for _ in 0..joins_per_tick {
@@ -247,6 +260,17 @@ fn main() {
         }
         if a.churn && let Some(since) = measuring_since {
             churn.tick(tick - since, &mut walkers, &mut inbox, a.groups, a.spacing, a.view_distance, SURFACE_Y);
+        }
+        if a.tick_ms > 0 {
+            // A server sleeps out the rest of the tick (spinning for the last stretch, as a
+            // sleep overshoots on Windows).
+            let due = pace_start + std::time::Duration::from_millis(a.tick_ms * tick as u64);
+            while Instant::now() + std::time::Duration::from_millis(2) < due {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            while Instant::now() < due {
+                std::hint::spin_loop();
+            }
         }
         let start = Instant::now();
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
@@ -312,10 +336,11 @@ fn main() {
                     let phases: Vec<String> = totals
                         .iter()
                         .map(|(n, d)| (n, d.saturating_sub(last_totals.iter().find(|(m, _)| m == n).map_or(std::time::Duration::ZERO, |(_, d)| *d))))
-                        .filter(|(_, d)| d.as_secs_f64() >= 2e-4)
+                        .filter(|(_, d)| d.as_secs_f64() >= 1e-5)
                         .map(|(n, d)| format!("{n} {:.2}", d.as_secs_f64() * 1e3))
                         .collect();
-                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms: {}", tick, tick - since, phases.join(" | "));
+                    let at = (start - wall0).as_secs_f64() * 1e3;
+                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms: at {at:.2} ms: {}", tick, tick - since, phases.join(" | "));
                 }
                 last_totals = totals;
                 if tick - since >= a.ticks {

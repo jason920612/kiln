@@ -90,4 +90,4 @@ mod window;
 pub use config::{PhaseMode, PoolConfig, Strategy};
 pub use pool::{Housekeeper, MAX_WORKERS, TickPool};
 pub use stats::{ForkReport, WorkerStats};
-pub use window::{Ctx, Window};
+pub use window::{Ctx, Window, window_ns};

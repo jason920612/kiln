@@ -148,6 +148,9 @@ impl Sampler {
         let every = Duration::from_micros(std::env::var("KILN_SAMPLE_US").ok().and_then(|v| v.parse().ok()).unwrap_or(200));
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
+        // `KILN_SAMPLE_MAIN=1`: only the thread that started sampling (the tick's critical path),
+        // waits included.
+        let only = std::env::var_os("KILN_SAMPLE_MAIN").map(|_| unsafe { GetCurrentThreadId() });
         let thread = std::thread::spawn(move || {
             let me = unsafe { GetCurrentThreadId() };
             let pid = unsafe { GetCurrentProcessId() };
@@ -166,7 +169,7 @@ impl Sampler {
                         e.dwSize = std::mem::size_of::<ThreadEntry32>() as u32;
                         let mut ok = Thread32First(snap, &mut e);
                         while ok != 0 {
-                            if e.th32OwnerProcessID == pid && e.th32ThreadID != me {
+                            if e.th32OwnerProcessID == pid && e.th32ThreadID != me && only.is_none_or(|o| o == e.th32ThreadID) {
                                 tids.push(e.th32ThreadID);
                             }
                             ok = Thread32Next(snap, &mut e);
@@ -237,15 +240,23 @@ impl Sampler {
                 })
                 .clone()
         };
+        let main_only = std::env::var_os("KILN_SAMPLE_MAIN").is_some();
         let idle = |n: &str| {
-            n.starts_with("Nt") || n.starts_with("Zw") || n.contains("WaitFor") || n.contains("SleepEx") || n.contains("park") || n.contains("Sleep")
+            !main_only && (n.starts_with("Nt") || n.starts_with("Zw") || n.contains("WaitFor") || n.contains("SleepEx") || n.contains("park") || n.contains("Sleep"))
         };
         // `KILN_SAMPLE_FILTER`: only the stacks with a function whose name contains it.
+        // `KILN_SAMPLE_EXCLUDE`: leaves out the stacks with a function whose name contains it.
         let filter = std::env::var("KILN_SAMPLE_FILTER").ok();
+        let exclude = std::env::var("KILN_SAMPLE_EXCLUDE").ok();
+        let all: u64 = counts.values().map(|&n| n as u64).sum();
         let counts: Vec<(Vec<u64>, u32)> = counts
             .into_iter()
-            .filter(|(stack, _)| filter.as_ref().is_none_or(|f| stack.iter().any(|&a| name(a).contains(f.as_str()))))
+            .filter(|(stack, _)| {
+                filter.as_ref().is_none_or(|f| stack.iter().any(|&a| name(a).contains(f.as_str())))
+                    && exclude.as_ref().is_none_or(|f| !stack.iter().any(|&a| name(a).contains(f.as_str())))
+            })
             .collect();
+        println!("sampler: {} of {all} samples kept by the filters", counts.iter().map(|c| c.1 as u64).sum::<u64>());
         let (mut selfs, mut totals): (HashMap<String, u64>, HashMap<String, u64>) = Default::default();
         let mut busy = 0u64;
         for (stack, n) in &counts {

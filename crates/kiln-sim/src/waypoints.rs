@@ -74,15 +74,35 @@ struct Connection {
 }
 
 /// A connection as a row keeps it (16 bytes; a crowd's rows hold a million): the position,
-/// chunk or angle bits, and the kind (low two bits, 0: no connection) with the icon.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// chunk or angle bits, and the kind (low two bits, 0: no connection) with the icon. An
+/// azimuth connection keeps its quiet deadline ([`azimuth_deadline`]) in the other two words.
+#[derive(Debug, Clone, Copy)]
 struct Stored {
     at: [i32; 3],
     meta: u32,
 }
 
+/// Equal connections: the deadline is a cache, not part of what was sent.
+impl PartialEq for Stored {
+    fn eq(&self, other: &Stored) -> bool {
+        let n = if self.meta & 3 == 3 { 1 } else { 3 };
+        self.meta == other.meta && self.at[..n] == other.at[..n]
+    }
+}
+
 impl Stored {
     const NONE: Stored = Stored { at: [0; 3], meta: 0 };
+
+    /// An azimuth connection's quiet deadline (0: none, step in full).
+    fn deadline(self) -> f64 {
+        f64::from_bits(u64::from(self.at[1] as u32) | (u64::from(self.at[2] as u32) << 32))
+    }
+
+    fn set_deadline(&mut self, d: f64) {
+        let b = d.to_bits();
+        self.at[1] = b as u32 as i32;
+        self.at[2] = (b >> 32) as u32 as i32;
+    }
 
     fn of(c: Option<Connection>) -> Stored {
         let Some(c) = c else { return Stored::NONE };
@@ -214,6 +234,10 @@ pub(crate) struct WaypointManager {
     /// Buckets of vanilla's `HashSet` of transmitters (16, doubling past a load of 0.75,
     /// never shrinking), for its iteration order.
     capacity: usize,
+    /// By slot: how far the member has moved, summed over the positions the turns saw (blocks;
+    /// it only grows), and the position of the last turns.
+    odo: Vec<f64>,
+    odo_pos: Vec<Option<[f64; 3]>>,
 }
 
 impl WaypointManager {
@@ -247,6 +271,21 @@ impl WaypointManager {
         self.slots.insert(conn, s as u32);
         self.mark_dirty(s);
         s
+    }
+
+    /// Adds how far each member moved since the last turns to its odometer (at every turns,
+    /// before any step, so a deadline set at one turns holds at the next).
+    fn advance_odometers(&mut self, snaps: &[Option<Snap>]) {
+        self.odo.resize(snaps.len(), 0.0);
+        self.odo_pos.resize(snaps.len(), None);
+        for (s, snap) in snaps.iter().enumerate() {
+            let Some(snap) = snap else { continue };
+            if let Some(last) = self.odo_pos[s] {
+                let d2: f64 = (0..3).map(|i| (snap.pos[i] - last[i]).powi(2)).sum();
+                self.odo[s] += d2.sqrt();
+            }
+            self.odo_pos[s] = Some(snap.pos);
+        }
     }
 
     /// Frees the slot of a member that neither transmits nor receives any more.
@@ -372,6 +411,33 @@ fn is_broken(link: Link, source: &Snap, receiver: &Snap) -> bool {
     }
 }
 
+/// How far an azimuth must turn (radians) before an intact connection sends it.
+const AZIMUTH_STEP: f32 = 0.008_726_646;
+/// A bound on how far `Mth.atan2` strays from the true angle (radians; under 1e-5 measured,
+/// see the tests), with room to spare.
+const ATAN2_ERROR: f64 = 1e-4;
+
+/// The odometer sum (transmitter's plus receiver's, [`WaypointManager::advance_odometers`])
+/// below which the step of an intact azimuth connection is certainly quiet: `now` is the
+/// angle the step just computed and `told` the one the receiver has. Until the two have
+/// moved `budget` blocks between them, the offset from the transmitter to the receiver has
+/// moved at most that far, so the distance stays beyond `REALLY_FAR` and the true angle
+/// turns by at most `asin(budget / horizontal) <= pi/2 * budget / horizontal`; with the
+/// table's error on both computed angles (and the rounding to `f32`) that keeps the change
+/// within `AZIMUTH_STEP`, and away from the jump at +-pi, as the full step would find. 0:
+/// no deadline (the next step runs in full).
+fn azimuth_deadline(odo: f64, src: &Snap, me: &Snap, now: f32, told: f32) -> f64 {
+    let d: [f64; 3] = std::array::from_fn(|i| me.pos[i] - src.pos[i]);
+    let dist = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    let horizontal = (d[0] * d[0] + d[2] * d[2]).sqrt();
+    let far = dist - f64::from(REALLY_FAR) - 0.05;
+    let slack = f64::from(AZIMUTH_STEP) - f64::from((now - told).abs()) - 2.0 * ATAN2_ERROR - 1e-5;
+    let cut = std::f64::consts::PI - f64::from(now.abs()) - ATAN2_ERROR - 1e-5;
+    let turn = slack.min(cut) * horizontal / std::f64::consts::FRAC_PI_2;
+    let budget = far.min(turn) - 1e-6;
+    if budget <= 0.0 { 0.0 } else { odo + budget }
+}
+
 /// What an intact connection sends when its transmitter moved (`Connection.update`).
 fn next_link(link: Link, source: &Snap, receiver: &Snap) -> Option<Link> {
     match link {
@@ -379,7 +445,7 @@ fn next_link(link: Link, source: &Snap, receiver: &Snap) -> Option<Link> {
         Link::Chunk(last) => (source.chunk != last).then_some(Link::Chunk(source.chunk)),
         Link::Azimuth(last) => {
             let now = azimuth(source, receiver);
-            ((now - last).abs() > 0.008_726_646).then_some(Link::Azimuth(now))
+            ((now - last).abs() > AZIMUTH_STEP).then_some(Link::Azimuth(now))
         }
     }
 }
@@ -522,12 +588,17 @@ struct Turns<'a> {
     settled_chunk: Bits,
     /// Present transmitters by chunk, for the chunks a receiver sees.
     by_chunk: crate::FastMap<[i32; 2], Vec<u32>>,
+    /// [`visible_set`] of each view (centre chunk and distance) a receiver has: a crowd's
+    /// receivers share a few.
+    views: crate::FastMap<([i32; 2], i32), Bits>,
     words: usize,
+    /// The members' odometers, by slot.
+    odo: &'a [f64],
 }
 
 /// The transmitters in the chunks `me` sees (`ChunkTrackingView.isInViewDistance`).
-fn visible_set(t: &Turns, me: &Snap) -> Bits {
-    let mut vis = vec![0u64; t.words];
+fn visible_set(by_chunk: &crate::FastMap<[i32; 2], Vec<u32>>, words: usize, me: &Snap) -> Bits {
+    let mut vis = vec![0u64; words];
     let v = me.view.max(0);
     let mut add = |chunk: &[i32; 2], slots: &Vec<u32>| {
         if chunk_visible(*chunk, me) {
@@ -537,16 +608,16 @@ fn visible_set(t: &Turns, me: &Snap) -> Bits {
         }
     };
     let side = 2 * i64::from(v) + 1;
-    if (side * side) as usize <= t.by_chunk.len() {
+    if (side * side) as usize <= by_chunk.len() {
         for x in me.center[0] - v..=me.center[0] + v {
             for z in me.center[1] - v..=me.center[1] + v {
-                if let Some(slots) = t.by_chunk.get(&[x, z]) {
+                if let Some(slots) = by_chunk.get(&[x, z]) {
                     add(&[x, z], slots);
                 }
             }
         }
     } else {
-        for (chunk, slots) in &t.by_chunk {
+        for (chunk, slots) in by_chunk {
             add(chunk, slots);
         }
     }
@@ -598,21 +669,32 @@ fn every_step(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes
         if m == r {
             for &w in &t.transmitters {
                 if w as usize != r && t.snaps[w as usize].is_some() {
-                    full_step(row, w as usize, me, t, out);
+                    full_step(row, r, w as usize, me, t, out, false);
                 }
             }
         } else if transmitting {
-            full_step(row, m, me, t, out);
+            full_step(row, r, m, me, t, out, false);
         }
     }
 }
 
 fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
-    let vis = visible_set(t, me);
+    let own;
+    let vis: &Bits = match t.views.get(&(me.center, me.view)) {
+        Some(v) => v,
+        None => {
+            own = visible_set(&t.by_chunk, t.words, me);
+            &own
+        }
+    };
     let own = t.rank[r];
     let w = t.words;
     let earlier_than = |i: usize| &t.before[i * w..(i + 1) * w];
     let all_movers = earlier_than(t.before.len() / w.max(1) - 1);
+    // Azimuth connections that neither the spectator rule nor the view can break: their steps
+    // are quiet before their deadlines (`full_step`).
+    let unbreakable = |i: usize| !vis[i] & if me.mode == 3 { !0 } else { !t.spectators[i] };
+    let odo_r = t.odo[r];
     // The steps of `among` that may send anything; `stepped`: whose connection to this
     // receiver was stepped already this tick.
     let open = |row: &Row, among: &dyn Fn(usize) -> u64, stepped: &dyn Fn(usize) -> u64| -> Vec<usize> {
@@ -622,7 +704,17 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
             let quiet = t.present[i]
                 & !t.spectators[i]
                 & ((k1 & (t.settled_block[i] | st)) | (k2 & (t.settled_chunk[i] | st) & !vis[i]));
-            among(i) & t.present[i] & !quiet
+            let mut open = among(i) & t.present[i] & !quiet;
+            let mut azimuths = open & word(&row.kinds[2], i) & unbreakable(i);
+            while azimuths != 0 {
+                let b = azimuths.trailing_zeros() as usize;
+                azimuths &= azimuths - 1;
+                let s = i * 64 + b;
+                if t.odo[s] + odo_r < row.data[s].deadline() {
+                    open &= !(1 << b);
+                }
+            }
+            open
         });
         let open: Vec<usize> = each_bit(words).filter(|&s| s != r).collect();
         prefetch(row, &open);
@@ -635,25 +727,25 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
     if own == u32::MAX {
         // Not moving: the moving transmitters' turns.
         for s in by_rank(open(row, &|i| all_movers[i], &|_| 0)) {
-            full_step(row, s, me, t, out);
+            full_step(row, r, s, me, t, out, true);
         }
         return;
     }
     let earlier = earlier_than(own as usize);
     // `updateWaypoint` of the movers before this receiver: their connections to it.
     for s in by_rank(open(row, &|i| earlier[i], &|_| 0)) {
-        full_step(row, s, me, t, out);
+        full_step(row, r, s, me, t, out, true);
     }
     // `updatePlayer`: this receiver's connection to every transmitter, in their order.
     let mut mine = open(row, &|_| !0, &|i| earlier[i]);
     mine.retain(|&s| t.tpos[s] != u32::MAX);
     mine.sort_unstable_by_key(|&s| t.tpos[s]);
     for s in mine {
-        full_step(row, s, me, t, out);
+        full_step(row, r, s, me, t, out, true);
     }
     // `updateWaypoint` of the movers after it (all stepped at its turn).
     for s in by_rank(open(row, &|i| all_movers[i] & !earlier[i], &|_| !0)) {
-        full_step(row, s, me, t, out);
+        full_step(row, r, s, me, t, out, true);
     }
 }
 
@@ -670,9 +762,39 @@ fn prefetch(row: &Row, slots: &[usize]) {
     let _ = (row, slots);
 }
 
-/// One step of the connection from transmitter `s` to the receiver `me` in full.
-fn full_step(row: &mut Row, s: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+/// One step of the connection from transmitter `s` to the receiver `me` (slot `r`) in full.
+/// `quick`: an intact azimuth connection whose step is certainly quiet ([`azimuth_deadline`])
+/// is left alone (the straightforward path for [`verify`] steps it).
+fn full_step(row: &mut Row, r: usize, s: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>, quick: bool) {
     let (Some(src), Some(tx)) = (t.snaps[s].as_ref(), t.tx[s].as_ref()) else { return };
+    // An azimuth connection is intact while neither the spectator rule nor the receiver's view
+    // breaks it and the transmitter stays beyond `REALLY_FAR` (`is_broken`); then it sends the
+    // angle once it turned by more than `AZIMUTH_STEP` (`next_link`).
+    if quick
+        && let Some(stored) = row.data.get(s).copied()
+        && stored.meta & 3 == 3
+        && !ignores(src, me)
+        && !chunk_visible(src.chunk, me)
+    {
+        let odo = t.odo[s] + t.odo[r];
+        if odo < stored.deadline() {
+            return;
+        }
+        if distance(src, me) > REALLY_FAR {
+            let last = f32::from_bits(stored.at[0] as u32);
+            let now = azimuth(src, me);
+            let (mut new, told) = if (now - last).abs() > AZIMUTH_STEP {
+                let c = Connection { link: Link::Azimuth(now), icon: stored.meta >> 2 };
+                out.push(tx.bytes(WaypointOp::Update, &c, t.icons));
+                (Stored::of(Some(c)), now)
+            } else {
+                (stored, last)
+            };
+            new.set_deadline(azimuth_deadline(odo, src, me, now, told));
+            row.data[s] = new;
+            return;
+        }
+    }
     let mut c = row.get(s);
     match step_pair(&mut c, src, me, tx.fresh) {
         Step::Quiet => return,
@@ -681,6 +803,9 @@ fn full_step(row: &mut Row, s: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>
     }
     row.put(s, c);
 }
+
+/// Window hint: a member's snapshot, a few cache misses.
+const SNAP_WINDOW: Window = Window::new().item_ns(300);
 
 /// Window hint: a receiver's share is a few microseconds in a crowd.
 const SHARE_WINDOW: Window = Window::new().item_ns(5_000);
@@ -885,26 +1010,42 @@ impl Sim {
 
     /// The movers' turns in one level (`moved`: in connection order).
     fn waypoint_moves(&mut self, dim: DimId, moved: &[ConnId]) {
+        let t0 = std::time::Instant::now();
         let (players, scoreboard, pool) = (&self.players, &self.commands.scoreboard, &mut self.pool);
         let mgr = &mut self.waypoints[dim];
         // The icons new connections from each transmitter get, interned before the receivers
         // run, and the members' snapshots.
-        let mut tx: Vec<Option<Tx>> = Vec::with_capacity(mgr.members.len());
-        let mut snaps: Vec<Option<Snap>> = Vec::with_capacity(mgr.members.len());
-        for i in 0..mgr.members.len() {
-            let m = &mgr.members[i];
-            let p = m.conn.and_then(|c| players.get(&c));
-            snaps.push(p.map(Snap::of));
-            tx.push(match (m.transmitting, p) {
-                (true, Some(p)) => {
-                    let color = p.waypoint_icon.color.or_else(|| team_color(scoreboard, &p.name));
-                    let fresh = mgr.icon_id(&p.waypoint_icon.style, color);
-                    let snap = snaps[i].expect("snapshot");
-                    Some(Tx { uuid: p.uuid, block: snap.block, chunk: snap.chunk, fresh, shared: Default::default() })
-                }
-                _ => None,
-            });
+        // (Side by side: a crowd's players are a thousand scattered structures.)
+        let looked: Vec<(Option<Snap>, Option<(Uuid, &str, Option<i32>, Option<u32>)>)> = {
+            let icons = &mgr.icons;
+            pool.serial(|ctx| {
+                ctx.map_indexed_with(SNAP_WINDOW, &mgr.members, |_, m| {
+                    let p = m.conn.and_then(|c| players.get(&c));
+                    let tx = match (m.transmitting, p) {
+                        (true, Some(p)) => {
+                            let color = p.waypoint_icon.color.or_else(|| team_color(scoreboard, &p.name));
+                            let style = p.waypoint_icon.style.as_str();
+                            let known = icons.iter().position(|(s, c)| s == style && *c == color).map(|i| i as u32);
+                            Some((p.uuid, style, color, known))
+                        }
+                        _ => None,
+                    };
+                    (p.map(Snap::of), tx)
+                })
+            })
+        };
+        let mut tx: Vec<Option<Tx>> = Vec::with_capacity(looked.len());
+        let mut snaps: Vec<Option<Snap>> = Vec::with_capacity(looked.len());
+        for (snap, t) in looked {
+            tx.push(t.map(|(uuid, style, color, known)| {
+                let fresh = known.unwrap_or_else(|| mgr.icon_id(style, color));
+                let snap = snap.expect("snapshot");
+                Tx { uuid, block: snap.block, chunk: snap.chunk, fresh, shared: Default::default() }
+            }));
+            snaps.push(snap);
         }
+        let ta = std::time::Instant::now();
+        mgr.advance_odometers(&snaps);
         let n = mgr.members.len();
         let words = n.div_ceil(64);
         let mut rank = vec![u32::MAX; n];
@@ -954,6 +1095,7 @@ impl Sim {
             set_bit(&mut settled_chunk, s, !snap.chunk_moved && !dirty);
             by_chunk.entry(snap.chunk).or_default().push(s as u32);
         }
+        let td = std::time::Instant::now();
         let any_transmitting = !turns.is_empty();
         // Receivers that have turns to take: all of them when a transmitter moved, else the
         // moving receivers.
@@ -974,6 +1116,12 @@ impl Sim {
                 outbox: Mutex::new(outboxes[slot].take()),
             })
             .collect();
+        let mut views: crate::FastMap<([i32; 2], i32), Bits> = Default::default();
+        for share in &shares {
+            if let Some(me) = snaps[share.slot].as_ref() {
+                views.entry((me.center, me.view)).or_insert_with(|| visible_set(&by_chunk, words, me));
+            }
+        }
         let turns = Turns {
             rank,
             tpos,
@@ -988,13 +1136,22 @@ impl Sim {
             settled_block,
             settled_chunk,
             by_chunk,
+            views,
             words,
+            odo: &mgr.odo,
         };
+        let t1 = std::time::Instant::now();
         pool.serial(|ctx| ctx.map_indexed_with(SHARE_WINDOW, &shares, |_, share| run_share(share, &turns)));
+        let t2 = std::time::Instant::now();
         drop(turns);
         for share in shares {
             mgr.members[share.slot].row = share.row.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
         }
+        crate::diag::add("w.snaps", ta - t0);
+        crate::diag::add("w.sets", td - ta);
+        crate::diag::add("w.prepare", t1 - td);
+        crate::diag::add("w.shares", t2 - t1);
+        crate::diag::lap("w.after", t2);
     }
 
     /// `/waypoint modify`: `mutateIcon` (untrack, change, track again).
@@ -1049,5 +1206,98 @@ mod tests {
         let (dx, dz) = (0.0f64, 500.0f64);
         let a = kiln_command::coords::mth_atan2(dx, -dz) as f32;
         assert!((a.abs() - std::f32::consts::PI).abs() < 1e-3);
+    }
+
+    /// xorshift for the sweeps below.
+    fn rng(state: &mut u64) -> f64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        (*state >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// `ATAN2_ERROR` holds with room: the table arctangent against the true one, over every
+    /// direction and many lengths.
+    #[test]
+    fn table_atan2_stays_close_to_the_true_angle() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut worst = 0f64;
+        for i in 0..2_000_000 {
+            let a = (i as f64 / 2_000_000.0 - 0.5) * std::f64::consts::TAU + rng(&mut state) * 1e-6;
+            let len = 10f64.powf(rng(&mut state) * 9.0 - 3.0);
+            let (y, x) = (a.sin() * len, a.cos() * len);
+            let d = kiln_command::coords::mth_atan2(y, x) - y.atan2(x);
+            let d = [d, d - std::f64::consts::TAU, d + std::f64::consts::TAU].into_iter().map(f64::abs).fold(f64::MAX, f64::min);
+            worst = worst.max(d);
+        }
+        assert!(worst < ATAN2_ERROR / 10.0, "table atan2 off by {worst}");
+    }
+
+    fn snap_at(pos: [f64; 3], view: i32) -> Snap {
+        let block = pos.map(|c| c.floor() as i32);
+        Snap {
+            conn: 0,
+            pos,
+            block,
+            chunk: [block[0] >> 4, block[2] >> 4],
+            center: [block[0] >> 4, block[2] >> 4],
+            view,
+            mode: 0,
+            first_tick: false,
+            block_moved: true,
+            chunk_moved: true,
+        }
+    }
+
+    /// Whenever the deadline says an azimuth step is quiet, the full step finds it quiet:
+    /// two players far apart walk, run and jump about (now and then right through the
+    /// transmitter's far side, crossing the angle's jump at +-pi, and into `REALLY_FAR`).
+    #[test]
+    fn azimuth_deadline_only_skips_quiet_steps() {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let (mut skipped, mut quiet_run) = (0u64, 0u64);
+        for case in 0..400 {
+            let far = 340.0 + rng(&mut state) * 2000.0;
+            let a = rng(&mut state) * std::f64::consts::TAU;
+            let mut src = [0.0, 64.0, 0.0];
+            // Half the cases sit right on the jump at +-pi (the receiver due south).
+            let mut me = if case % 2 == 0 { [far * a.cos(), 64.0, far * a.sin()] } else { [0.0, 64.0, far] };
+            let (mut odo_s, mut odo_r) = (0f64, 0f64);
+            let mut c = Some(Connection { link: Link::Azimuth(azimuth(&snap_at(src, 2), &snap_at(me, 2))), icon: 0 });
+            let mut deadline = 0.0;
+            for step in 0..3000 {
+                let speed = if step % 97 == 0 { 8.0 } else if step % 7 == 0 { 0.0 } else { 0.3 };
+                for (p, odo) in [(&mut src, &mut odo_s), (&mut me, &mut odo_r)] {
+                    let d = [(rng(&mut state) - 0.5) * speed, (rng(&mut state) - 0.5) * speed * 0.2, (rng(&mut state) - 0.5) * speed];
+                    for i in 0..3 {
+                        p[i] += d[i];
+                    }
+                    *odo += (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+                }
+                let (s, r) = (snap_at(src, 2), snap_at(me, 2));
+                let odo = odo_s + odo_r;
+                let before = c;
+                let full = step_pair(&mut c, &s, &r, 0);
+                if odo < deadline {
+                    skipped += 1;
+                    assert!(matches!(full, Step::Quiet) && c == before, "case {case} step {step}: skipped a step that sends");
+                }
+                deadline = match (before, c) {
+                    (Some(Connection { link: Link::Azimuth(told0), .. }), Some(Connection { link: Link::Azimuth(told), .. }))
+                        if !is_broken(Link::Azimuth(told0), &s, &r) =>
+                    {
+                        quiet_run += u64::from(matches!(full, Step::Quiet));
+                        azimuth_deadline(odo, &s, &r, azimuth(&s, &r), told)
+                    }
+                    _ => 0.0,
+                };
+                if !matches!(c, Some(Connection { link: Link::Azimuth(_), .. })) {
+                    c = Some(Connection { link: Link::Azimuth(azimuth(&s, &r)), icon: 0 });
+                    deadline = 0.0;
+                }
+            }
+        }
+        // The deadline does skip most of the quiet steps.
+        assert!(skipped * 2 > quiet_run, "skipped {skipped} of {quiet_run} quiet steps");
     }
 }

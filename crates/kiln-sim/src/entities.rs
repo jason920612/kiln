@@ -7,6 +7,7 @@ use crate::blocks::{self, RegionLevel};
 use crate::entity_world::World;
 
 mod islands;
+mod spec;
 use crate::health;
 use bytes::Bytes;
 use kiln_blocks::{Effect, Level};
@@ -81,6 +82,8 @@ pub(crate) struct Entity {
     boss_sent: Option<f32>,
     /// What `finalizeSpawn` made along with it, until the level adds and seats it.
     pub(crate) jockeys: Option<Box<Jockeys>>,
+    /// How long its last speculative turn took (nanoseconds; the long ones start first).
+    pub(crate) spec_ns: u32,
 }
 
 /// The jockeys a mob's `finalizeSpawn` made (see `kiln_entity::mob::Companion`).
@@ -353,6 +356,7 @@ impl Entity {
             leash_sent: None,
             boss_sent: None,
             jockeys,
+            spec_ns: 0,
         }
     }
 
@@ -540,6 +544,8 @@ impl Entity {
 #[derive(Default)]
 pub(crate) struct Entities {
     pub list: Vec<Entity>,
+    /// How speculation fared in this region ([`spec`]).
+    pub(crate) spec: spec::Pace,
 }
 
 impl RegionPart for Entities {
@@ -644,6 +650,12 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     view_index: kiln_entity::level::PlayerGrid,
     /// The region's players for `Mob.checkDespawn` (`views` may hold only an island's).
     despawn: Option<&'a Nearest>,
+    /// How many times an entity changed a player (speculation: what read the players before
+    /// may be out of date).
+    player_writes: u32,
+    /// While an entity's turn runs in place of its speculation: the entities it reached with
+    /// `entity_mut`, with their box and whether they were alive before.
+    touched: Option<Vec<(i32, Aabb, bool)>>,
 }
 
 /// The non-spectator players' positions by 32-block cube, for `Mob.checkDespawn`'s nearest
@@ -791,10 +803,18 @@ impl SimLevel<'_, '_, '_> {
     fn index_players(&mut self) {
         self.proxy_at = self.proxies.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
         self.view_index = kiln_entity::level::PlayerGrid::build(&self.views);
-        self.proxy_grid.clear();
-        for (i, e) in self.proxies.iter().enumerate() {
-            let p = e.position();
-            self.proxy_grid.entry(section_of([p.x, p.y, p.z])).or_default().push(i);
+        self.proxy_grid = proxy_sections(&self.proxies);
+    }
+
+    /// Logs `id` for [`SimLevel::touched`] (once, with its box and liveness as they were).
+    fn note_touched(&mut self, id: i32) {
+        if self.touched.as_ref().is_some_and(|t| t.iter().any(|&(t, _, _)| t == id)) {
+            return;
+        }
+        let Some(e) = self.entity(id) else { return };
+        let (b, alive) = (e.bounding_box(), e.is_alive());
+        if let Some(t) = self.touched.as_mut() {
+            t.push((id, b, alive));
         }
     }
 
@@ -1063,6 +1083,9 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn entity_mut(&mut self, id: i32) -> Option<&mut kiln_entity::Entity> {
+        if self.touched.is_some() {
+            self.note_touched(id);
+        }
         if let Some(i) = self.index(id) {
             return self.list[i].phys.as_deref_mut();
         }
@@ -1193,53 +1216,26 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn darkness_around(&mut self, pos: Vec3, radius: f64) {
+        self.player_writes += 1;
         crate::sculk::shrieker::darkness_around(self.players, [pos.x, pos.y, pos.z], radius);
     }
 
     fn particle(&mut self, particle: &'static str, pos: Vec3) {
-        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", particle) else { return };
-        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
-            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
-            override_limiter: false,
-            always_show: false,
-            pos: [pos.x, pos.y, pos.z],
-            offset: [0.0; 3],
-            max_speed: [0.0; 3],
-            count: 1,
-            randomization: world_fx::ParticleRandomization::Default,
-        });
-        self.level.push_packet(([pos.x, pos.y, pos.z], 32.0, pkt));
+        if let Some(p) = particle_packet(particle, pos) {
+            self.level.push_packet(p);
+        }
     }
 
     fn trail_particle(&mut self, pos: Vec3, target: Vec3, color: i32, duration: i32) {
-        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:trail") else { return };
-        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
-            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Trail { target: [target.x, target.y, target.z], color, duration } },
-            override_limiter: true,
-            always_show: true,
-            pos: [pos.x, pos.y, pos.z],
-            offset: [0.0; 3],
-            max_speed: [0.0; 3],
-            count: 1,
-            randomization: world_fx::ParticleRandomization::Default,
-        });
-        // `overrideLimiter`: players within 512 blocks.
-        self.level.push_packet(([pos.x, pos.y, pos.z], 512.0, pkt));
+        if let Some(p) = trail_packet(pos, target, color, duration) {
+            self.level.push_packet(p);
+        }
     }
 
     fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
-        let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:block_crumble") else { return };
-        let pkt = world_fx::level_particles(&world_fx::LevelParticles {
-            particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Block(state as i32) },
-            override_limiter: false,
-            always_show: false,
-            pos: [pos.x, pos.y, pos.z],
-            offset: [spread.x as f32, spread.y as f32, spread.z as f32],
-            max_speed: [0.0; 3],
-            count,
-            randomization: world_fx::ParticleRandomization::Default,
-        });
-        self.level.push_packet(([pos.x, pos.y, pos.z], 32.0, pkt));
+        if let Some(p) = crumble_packet(pos, state, count, spread) {
+            self.level.push_packet(p);
+        }
     }
 
     fn mob_griefing(&self) -> bool {
@@ -1269,7 +1265,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         crate::container::fill_from_table(items, &loot, table, seed, arr(origin), at, player.is_some(), env.game_time, env.seed);
         // `unpackChestVehicleLootTable(player)`: `player_generates_container_loot`.
         if let Some(pid) = player
-            && let Some(p) = self.players.iter_mut().find(|p| p.entity_id == pid)
+            && let Some(p) = self.players.iter_mut().find(|p| p.entity_id == pid).inspect(|_| self.player_writes += 1)
         {
             let table = kiln_item::ident::Identifier::parse(table).map_or(table.to_owned(), |i| i.to_string());
             p.fire_conds("minecraft:player_generates_container_loot", None, |c, _, _| {
@@ -1279,12 +1275,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn block_loot(&mut self, state: u16, origin: Vec3, tool: &kiln_item::ItemStack, entity: i32) -> Vec<kiln_item::ItemStack> {
-        let env = self.level.env();
-        let Some(loot) = env.loot.clone() else {
-            return kiln_item::ItemStack::of(kiln_entity::blocks::block_name(state), 1).into_iter().collect();
-        };
-        let seed = crate::mobs::loot_seed(env.seed, env.game_time, entity, 0x626c_6f63);
-        crate::blocks::block_items(&loot, arr(origin), state, Some(tool.clone()), None, seed)
+        block_loot_in(self.level.env(), state, origin, tool, entity)
     }
 
     fn hopper_take_from_block(&mut self, pos: BlockPos, dest: &mut Vec<kiln_item::ItemStack>) -> Option<bool> {
@@ -1365,7 +1356,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn thunder_hit_player(&mut self, id: i32) {
-        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return };
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) else { return };
         // `Entity.thunderHit`: one more tick of fire, 8 seconds if that made it 0.
         let ticks = p.fire_ticks + 1;
         p.set_fire_ticks(if ticks == 0 { 160 } else { ticks });
@@ -1395,7 +1386,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     fn hurt_player(&mut self, id: i32, source: kiln_entity::mob::DamageSource, amount: f32) -> bool {
         // A player's projectile credits the player.
         let player_attacker = source.attacker.and_then(|a| self.players.iter().find(|p| p.entity_id == a).map(|p| p.as_attacker()));
-        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) else { return false };
         let attacker = player_attacker.or_else(|| {
             let a = source.attacker?;
             let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref())?;
@@ -1415,7 +1406,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn push(&mut self, id: i32, v: Vec3) {
         // A player's client owns its motion: it gets the push.
-        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) {
             p.vel = [p.vel[0] + v.x, p.vel[1] + v.y, p.vel[2] + v.z];
             p.sync_velocity = true;
             return;
@@ -1434,7 +1425,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn knockback_target(&mut self, id: i32, strength: f64, dx: f64, dz: f64, old_motion: Vec3) {
-        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) {
             p.knockback(strength, dx, dz);
             // (A player is told at once; the server keeps the motion it had.)
             if p.sync_velocity {
@@ -1450,7 +1441,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn stop_riding(&mut self, id: i32) {
-        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) {
             if let Some(v) = p.vehicle.take() {
                 p.vehicle_type = None;
                 if let Some(ve) = self.entity_mut(v) {
@@ -1467,13 +1458,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, _source: Option<i32>) -> bool {
-        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) else { return false };
         let Some(e) = crate::effects::effect_id(effect) else { return false };
         p.add_effect(crate::effects::Effect::simple(e, duration, amplifier))
     }
 
     fn add_effect_instance(&mut self, id: i32, effect: kiln_entity::effect::Effect, source: Option<i32>) -> bool {
-        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) {
             return p.add_effect(effect);
         }
         kiln_entity::mob::effects::add_to_entity(self, id, effect, source)
@@ -1495,7 +1486,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             Some(health::Attacker::mob(o, e.type_name, arr(e.position())))
         });
         let env = self.level.env();
-        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return };
+        let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) else { return };
         match effect.kind() {
             kiln_entity::effect::Kind::HealOrHarm { harm: false } => {
                 p.heal((scale * 4i32.wrapping_shl(effect.amplifier as u32) as f64 + 0.5) as i32 as f32);
@@ -1525,7 +1516,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn ignite(&mut self, id: i32, seconds: f32) {
-        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) {
             let ticks = kiln_javamath::math::floor_f32(seconds * 20.0);
             if p.fire_ticks < ticks {
                 p.set_fire_ticks(ticks);
@@ -1538,6 +1529,67 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 }
 
+/// [`EntityLevel::block_loot`].
+fn block_loot_in(env: &blocks::BlockEnv, state: u16, origin: Vec3, tool: &kiln_item::ItemStack, entity: i32) -> Vec<kiln_item::ItemStack> {
+    let Some(loot) = env.loot.clone() else {
+        return kiln_item::ItemStack::of(kiln_entity::blocks::block_name(state), 1).into_iter().collect();
+    };
+    let seed = crate::mobs::loot_seed(env.seed, env.game_time, entity, 0x626c_6f63);
+    crate::blocks::block_items(&loot, arr(origin), state, Some(tool.clone()), None, seed)
+}
+
+/// A block packet for the players near a point.
+type NearPacket = ([f64; 3], f64, Bytes);
+
+/// [`EntityLevel::particle`]'s packet.
+fn particle_packet(particle: &'static str, pos: Vec3) -> Option<NearPacket> {
+    let kind = kiln_data::builtin_id("minecraft:particle_type", particle)?;
+    let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+        particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
+        override_limiter: false,
+        always_show: false,
+        pos: [pos.x, pos.y, pos.z],
+        offset: [0.0; 3],
+        max_speed: [0.0; 3],
+        count: 1,
+        randomization: world_fx::ParticleRandomization::Default,
+    });
+    Some(([pos.x, pos.y, pos.z], 32.0, pkt))
+}
+
+/// [`EntityLevel::trail_particle`]'s packet.
+fn trail_packet(pos: Vec3, target: Vec3, color: i32, duration: i32) -> Option<NearPacket> {
+    let kind = kiln_data::builtin_id("minecraft:particle_type", "minecraft:trail")?;
+    let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+        particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Trail { target: [target.x, target.y, target.z], color, duration } },
+        override_limiter: true,
+        always_show: true,
+        pos: [pos.x, pos.y, pos.z],
+        offset: [0.0; 3],
+        max_speed: [0.0; 3],
+        count: 1,
+        randomization: world_fx::ParticleRandomization::Default,
+    });
+    // `overrideLimiter`: players within 512 blocks.
+    Some(([pos.x, pos.y, pos.z], 512.0, pkt))
+}
+
+/// [`EntityLevel::crumble_particles`]'s packet.
+fn crumble_packet(pos: Vec3, state: u16, count: i32, spread: Vec3) -> Option<NearPacket> {
+    let kind = kiln_data::builtin_id("minecraft:particle_type", "minecraft:block_crumble")?;
+    let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+        particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::Block(state as i32) },
+        override_limiter: false,
+        always_show: false,
+        pos: [pos.x, pos.y, pos.z],
+        offset: [spread.x as f32, spread.y as f32, spread.z as f32],
+        max_speed: [0.0; 3],
+        count,
+        randomization: world_fx::ParticleRandomization::Default,
+    });
+    Some(([pos.x, pos.y, pos.z], 32.0, pkt))
+}
+
 fn occupancy_of(o: kiln_entity::level::PoiOccupancy) -> kiln_world::poi::Occupancy {
     match o {
         kiln_entity::level::PoiOccupancy::HasSpace => kiln_world::poi::Occupancy::HasSpace,
@@ -1546,8 +1598,21 @@ fn occupancy_of(o: kiln_entity::level::PoiOccupancy) -> kiln_world::poi::Occupan
     }
 }
 
+/// The stand-ins by entity section.
+fn proxy_sections(proxies: &[Proxy]) -> FastMap<(i32, i32, i32), Vec<usize>> {
+    let mut m: FastMap<(i32, i32, i32), Vec<usize>> = FastMap::default();
+    for (i, e) in proxies.iter().enumerate() {
+        let p = e.position();
+        m.entry(section_of([p.x, p.y, p.z])).or_default().push(i);
+    }
+    m
+}
+
+/// The entity phase's indexes, built side by side (tens of microseconds each in a crowd).
+const INDEX_WINDOW: kiln_sched::Window = kiln_sched::Window::new().chunk(1).strategy(kiln_sched::Strategy::Parallel);
+
 /// The players' stand-ins and views, a microsecond or so each.
-const PLAYER_VIEWS: kiln_sched::Window = kiln_sched::Window::new();
+const PLAYER_VIEWS: kiln_sched::Window = kiln_sched::Window::new().item_ns(110);
 
 /// What a player's stand-in is made from: the player as the entities see it
 /// (`minecraft:player`, standing or sneaking).
@@ -1583,13 +1648,13 @@ pub(crate) struct Proxy {
     pub(crate) id: i32,
     pub(crate) uuid: u128,
     seed: ProxySeed,
-    made: std::cell::OnceCell<Box<kiln_entity::Entity>>,
+    made: std::sync::OnceLock<Box<kiln_entity::Entity>>,
 }
 
 impl Proxy {
     fn of(p: &Player) -> Proxy {
         let seed = ProxySeed::of(p);
-        Proxy { id: seed.id, uuid: seed.uuid, seed, made: std::cell::OnceCell::new() }
+        Proxy { id: seed.id, uuid: seed.uuid, seed, made: std::sync::OnceLock::new() }
     }
 
     fn get(&self) -> &kiln_entity::Entity {
@@ -1666,6 +1731,7 @@ pub(crate) fn tick(
     }
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
+    let dt = std::time::Instant::now();
     // The players' stand-ins and views, made side by side (a crowd has a thousand).
     let now = level.env.game_time;
     let made: Vec<(Option<Proxy>, Option<PlayerView>)> = ctx.map_mut_with(PLAYER_VIEWS, players, |_, p| {
@@ -1683,10 +1749,41 @@ pub(crate) fn tick(
         let block = |pos: BlockPos| level.block(kb(pos));
         crate::shoulder::mark_views(players, &block, &mut views);
     }
-    let nearest = Nearest::build(&views);
+    let dt = crate::diag::lap("e.views", dt);
+    // The indexes over the players and the entities, side by side.
+    enum Built {
+        Nearest(Nearest),
+        Grid(Grid),
+        ProxyAt(FastMap<i32, usize>),
+        Views(kiln_entity::level::PlayerGrid),
+        ProxyGrid(FastMap<(i32, i32, i32), Vec<usize>>),
+    }
+    let built = {
+        let (views, proxies, list) = (&views, &proxies, &entities.list);
+        let jobs: [u8; 5] = [0, 1, 2, 3, 4];
+        ctx.map_indexed_with(INDEX_WINDOW, &jobs, |_, &k| match k {
+            0 => Built::Nearest(Nearest::build(views)),
+            1 => Built::Grid(Grid::build(list)),
+            2 => Built::ProxyAt(proxies.iter().enumerate().map(|(i, e)| (e.id, i)).collect()),
+            3 => Built::Views(kiln_entity::level::PlayerGrid::build(views)),
+            _ => Built::ProxyGrid(proxy_sections(proxies)),
+        })
+    };
+    let (mut nearest, mut grid, mut proxy_at, mut view_index, mut proxy_grid) = (None, Grid::default(), FastMap::default(), Default::default(), FastMap::default());
+    for b in built {
+        match b {
+            Built::Nearest(n) => nearest = Some(n),
+            Built::Grid(g) => grid = g,
+            Built::ProxyAt(m) => proxy_at = m,
+            Built::Views(v) => view_index = v,
+            Built::ProxyGrid(m) => proxy_grid = m,
+        }
+    }
+    let nearest = nearest.expect("built");
+    let Entities { list, spec: pace } = entities;
     let mut sim = SimLevel {
         level: World::Region(level),
-        list: &mut entities.list,
+        list,
         players,
         deaths,
         proxies,
@@ -1698,20 +1795,22 @@ pub(crate) fn tick(
         seeds: 0,
         current_source: None,
         rng: LegacyRandom::new(0),
-        grid: Grid::default(),
-        proxy_at: Default::default(),
-        proxy_grid: Default::default(),
-        view_index: Default::default(),
+        grid,
+        proxy_at,
+        proxy_grid,
+        view_index,
         despawn: Some(&nearest),
+        player_writes: 0,
+        touched: None,
     };
-    sim.grid = Grid::build(sim.list);
-    sim.index_players();
+    let dt = crate::diag::lap("e.index", dt);
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
     process_pending_kills(&mut sim);
-    if !islands::tick_islands(&mut sim, ticking, any_player, ctx) {
+    if !islands::tick_islands(&mut sim, ticking, any_player, ctx) && !spec::tick_speculative(&mut sim, pace, ticking, any_player, ctx) {
         tick_list(&mut sim, ticking, any_player, &mut |_, _| true);
     }
+    let dt = crate::diag::lap("e.list", dt);
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
     for e in sim.list.iter_mut() {
@@ -1769,6 +1868,7 @@ pub(crate) fn tick(
             sim.list[i].phys = Some(phys);
         }
     }
+    let dt = crate::diag::lap("e.post_touch", dt);
     ride_players(&mut sim);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     let level = level.into_region();
@@ -1783,6 +1883,7 @@ pub(crate) fn tick(
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
+    crate::diag::lap("e.carry", dt);
 }
 
 /// The entities' turns in list order (`tick` for a region, an island or a tile): passengers
@@ -1790,33 +1891,40 @@ pub(crate) fn tick(
 /// whether it runs.
 pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_player: bool, turn: &mut dyn FnMut(&SimLevel, usize) -> bool) {
     for i in 0..sim.list.len() {
-        // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
-        let vehicle = sim.list[i].phys.as_deref().and_then(|p| p.vehicle);
-        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_deref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
+        if carried(sim, i) || !turn(sim, i) {
             continue;
         }
-        if !turn(sim, i) {
-            continue;
-        }
-        let me = sim.list[i].id;
-        if let Some(phys) = sim.list[i].phys.as_deref_mut()
-            && let Some(v) = phys.vehicle.take()
-            && let Some(j) = sim.index(v)
-            && let Some(vp) = sim.list[j].phys.as_deref_mut()
-        {
-            kiln_entity::ride::remove_passenger(vp, me);
-        }
-        tick_entity(sim, i, ticking, any_player, None);
-        let passengers = sim.list[i].phys.as_deref().map(|p| p.passengers.clone()).unwrap_or_default();
-        for id in passengers {
-            if let Some(j) = sim.index(id) {
-                tick_entity(sim, j, ticking, any_player, Some(i));
-            } else if id < 0 {
-                // A rider the vehicle's own tick just made (the skeleton of a trap horse, still
-                // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
-                // joined the level meanwhile.
-                tick_new_passenger(sim, id, i);
-            }
+        tick_turn(sim, i, ticking, any_player);
+    }
+}
+
+/// Passengers tick right after their vehicle (`ServerLevel.tickPassenger`), not in their own
+/// turn: whether entity `i` rides a vehicle that carries it.
+fn carried(sim: &SimLevel, i: usize) -> bool {
+    let vehicle = sim.list[i].phys.as_deref().and_then(|p| p.vehicle);
+    vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_deref().is_some_and(|p| p.passengers.contains(&sim.list[i].id))))
+}
+
+/// Entity `i`'s turn in the list (it is not [`carried`]): its tick, then its passengers'.
+fn tick_turn(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bool) {
+    let me = sim.list[i].id;
+    if let Some(phys) = sim.list[i].phys.as_deref_mut()
+        && let Some(v) = phys.vehicle.take()
+        && let Some(j) = sim.index(v)
+        && let Some(vp) = sim.list[j].phys.as_deref_mut()
+    {
+        kiln_entity::ride::remove_passenger(vp, me);
+    }
+    tick_entity(sim, i, ticking, any_player, None);
+    let passengers = sim.list[i].phys.as_deref().map(|p| p.passengers.clone()).unwrap_or_default();
+    for id in passengers {
+        if let Some(j) = sim.index(id) {
+            tick_entity(sim, j, ticking, any_player, Some(i));
+        } else if id < 0 {
+            // A rider the vehicle's own tick just made (the skeleton of a trap horse, still
+            // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
+            // joined the level meanwhile.
+            tick_new_passenger(sim, id, i);
         }
     }
 }
@@ -1914,8 +2022,14 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
             None => phys.tick(sim),
         }
     }
+    sim.list[i].phys = Some(phys);
+    settle(sim, i);
+}
+
+/// After entity `i`'s tick: its outer state follows the vanilla state, its section and cell
+/// follow its position.
+fn settle(sim: &mut SimLevel, i: usize) {
     let e = &mut sim.list[i];
-    e.phys = Some(phys);
     e.sync();
     let pos = e.pos;
     sim.grid.moved(i, pos);
@@ -2103,6 +2217,8 @@ pub(crate) fn hit_mob(
         proxy_grid: Default::default(),
         view_index: Default::default(),
         despawn: None,
+        player_writes: 0,
+        touched: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2219,6 +2335,8 @@ pub(crate) fn stab_mob(
         proxy_grid: Default::default(),
         view_index: Default::default(),
         despawn: None,
+        player_writes: 0,
+        touched: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2355,6 +2473,8 @@ pub(crate) fn interact_mob(
         proxy_grid: Default::default(),
         view_index: Default::default(),
         despawn: None,
+        player_writes: 0,
+        touched: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2513,6 +2633,8 @@ pub(crate) fn with_entity<R>(
         proxy_grid: Default::default(),
         view_index: Default::default(),
         despawn: None,
+        player_writes: 0,
+        touched: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2564,6 +2686,8 @@ pub(crate) fn with_level<R>(
         proxy_grid: Default::default(),
         view_index: Default::default(),
         despawn: None,
+        player_writes: 0,
+        touched: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -3060,12 +3184,12 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
         start += n;
     }
     let encoded = &encoded[..];
-    ctx.map_mut_with(kiln_sched::Window::new(), &mut runs, |_, (_, run)| deliver_tracking(run, encoded));
+    ctx.map_mut_with(kiln_sched::Window::new().item_ns(850), &mut runs, |_, (_, run)| deliver_tracking(run, encoded));
     entities.list.retain(|e| !e.removed);
 }
 
 /// Entities per chunk of the encoding window, and players per delivery run.
-const TRACK_WINDOW: kiln_sched::Window = kiln_sched::Window::new();
+const TRACK_WINDOW: kiln_sched::Window = kiln_sched::Window::new().item_ns(1_000);
 const TRACK_RUN: usize = 32;
 
 /// The region's players by connection, for dropping viewers that left: a bit per connection
@@ -3370,4 +3494,10 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::Spit => ("minecraft:spit", "death.attack.mob"),
         DamageKind::Named(name) => (name, health::death_message_key(name)),
     }
+}
+
+#[allow(dead_code)]
+fn _assert_sync() {
+    fn f<T: Sync>() {}
+    f::<SimLevel<'static, 'static, 'static>>();
 }

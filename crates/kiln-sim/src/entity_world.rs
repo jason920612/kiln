@@ -12,7 +12,7 @@ use kiln_world::chunk::LightLayer;
 use kiln_world::{Blocks, Cell, ChunkPos};
 
 /// A change to the region an island makes, applied after the islands ticked.
-pub(crate) type Deferred = Box<dyn FnOnce(&mut RegionLevel) + Send>;
+pub(crate) type Deferred = Box<dyn FnOnce(&mut RegionLevel) + Send + Sync>;
 
 /// One island's view of the blocks and its log.
 pub(crate) struct IslandWorld<'l> {
@@ -122,7 +122,7 @@ impl<'a, 'l> World<'a, 'l> {
     }
 
     /// Changes the region now, or (an island) once the islands have ticked.
-    pub fn change(&mut self, f: impl FnOnce(&mut RegionLevel) + Send + 'static) {
+    pub fn change(&mut self, f: impl FnOnce(&mut RegionLevel) + Send + Sync + 'static) {
         match self {
             World::Region(l) => f(l),
             World::Island(i) => i.deferred.push(Box::new(f)),

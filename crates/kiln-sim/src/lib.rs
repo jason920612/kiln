@@ -49,6 +49,7 @@ mod datapacks;
 mod tags;
 mod zip_pack;
 pub mod lobby;
+mod diag;
 mod digging;
 mod dragon_fight;
 mod effects;
@@ -173,6 +174,10 @@ pub struct SimConfig {
     /// How a crowded region's entities tick ([`EntityTicking`]). Serial (vanilla's order) by
     /// default; islands and tiles are faster approximations, opt-in until approved.
     pub entity_ticking: EntityTicking,
+    /// Serial entity turns are first tried side by side against the phase's start and kept when
+    /// nothing they read changed before their turn (`entities/spec.rs`; the same result as
+    /// running them in order). On by default; `KILN_SPECULATE=0` turns it off.
+    pub speculate: bool,
     /// The locator bar takes the movers' turns every this many ticks (1: every tick, as
     /// vanilla; more sends fewer, coarser waypoint updates).
     pub locator_interval: u32,
@@ -222,8 +227,16 @@ pub struct NoiseConfig {
     pub threads: usize,
 }
 
+/// The tick pool's size on a machine with `cores` logical cores: all but a fifth of them (at
+/// least one) for the network, generation and storage threads, at most 13. wp40: with the tick
+/// threads above normal priority, 13 of 16 beat 7 (1,000 players 4.28 -> 3.75 ms, p99 6.1 ->
+/// 4.8; spread over 20 regions 4.17 -> 3.39) for about half again the CPU per tick.
+pub fn default_workers(cores: usize) -> usize {
+    cores.saturating_sub((cores / 5).max(1)).clamp(1, 13)
+}
+
 impl SimConfig {
-    /// Defaults for a server on this machine: all cores but one tick (at most 7), regions on.
+    /// Defaults for a server on this machine: [`default_workers`] tick, regions on.
     pub fn new(max_players: usize, view_distance: u8, world: Option<std::path::PathBuf>) -> Self {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         Self {
@@ -232,7 +245,15 @@ impl SimConfig {
             simulation_distance: view_distance,
             world,
             online_mode: false,
-            pool: kiln_sched::PoolConfig::new(cores.saturating_sub(1).clamp(1, 7)),
+            pool: {
+                let mut pool = kiln_sched::PoolConfig::new(default_workers(cores));
+                // wp40: the tick threads above other programs' (on a busy machine a worker that
+                // loses its core mid-window holds up the tick: 1,000 players p99 9.6 -> 6.6 ms
+                // with 7 workers).
+                // `KILN_TICK_PRIORITY` overrides (0: normal).
+                pool.priority = std::env::var("KILN_TICK_PRIORITY").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+                pool
+            },
             unified_regions: false,
             noise: None,
             require_resource_pack: false,
@@ -243,6 +264,7 @@ impl SimConfig {
             access: kiln_link::access::AccessLists::new(None).shared(),
             keep_alive: true,
             entity_ticking: EntityTicking::Serial,
+            speculate: std::env::var("KILN_SPECULATE").map_or(true, |v| v != "0"),
             locator_interval: 1,
             prewake: Duration::ZERO,
             data_sync: Default::default(),
@@ -1206,6 +1228,9 @@ impl Sim {
         sim.load_dragon_fight();
         sim.init_packs(vanilla_pack);
         sim.load_plugins();
+        // Tables built on first use, built now rather than in the middle of a tick (the path
+        // types of every block state: 13 ms the first time a mob looks for a path).
+        kiln_entity::mob::path::path_type_from_state(0);
         sim
     }
 
@@ -1252,32 +1277,43 @@ impl Sim {
         packets.splice(0..0, std::mem::take(&mut self.commands.injected));
         // Independent mode: regions back from ticking away rejoin; anything that needs the
         // whole server waits for all of them.
+        let dt = Instant::now();
         let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
         self.track_idle(&packets);
+        let dt = diag::lap("b0.idle", dt);
         self.maintain_chunks();
+        let dt = diag::lap("b0.chunks", dt);
         self.rendezvous_for_topology();
         let joining: Vec<_> = joins.into_iter().map(|j| (self.joining(j.uuid), j)).collect();
         for (jn, _) in &joining {
             self.dims[jn.dim].load_chunk(player_chunk(jn.pos));
         }
         let changed = self.apply_topology();
+        let dt = diag::lap("b0.topology", dt);
         self.plugins_b0();
         for (jn, j) in joining {
             let conn = j.conn;
             self.join(j, jn);
             self.plugins_joined(conn);
         }
+        let dt = diag::lap("b0.joins", dt);
         self.update_membership(changed);
+        diag::lap("b0.membership", dt);
         lap(&mut self.stats, "b0");
 
         // P: region-local packets in parallel.
+        let w0 = kiln_sched::window_ns();
+        let dt = Instant::now();
         let (local, exclusive) = self.route(packets);
+        let dt = diag::lap("p.route", dt);
         let outs = self.run_regions(local, |w, env, ctx| w.apply_packets(env, ctx));
+        diag::lap("p.run", dt);
         for (dim, out) in outs {
             self.dims[dim].spawns.extend(out.spawns);
             self.announce_deaths(out.deaths);
         }
         self.deliver_plugin_messages();
+        diag::add("packets~", Duration::from_nanos(kiln_sched::window_ns() - w0));
         lap(&mut self.stats, "packets");
 
         // PX: chat, commands and what followed them, in arrival order.
@@ -1336,6 +1372,9 @@ impl Sim {
             for (t, d) in times.iter_mut().zip(out.times) {
                 *t += d;
             }
+            for (name, d) in region::SUB_WIN.iter().zip(out.win) {
+                diag::add(name, d);
+            }
         }
         self.materialize_spawns();
         // What the dragon and the crystals told the fight.
@@ -1356,6 +1395,9 @@ impl Sim {
             self.stats.phase(name, d);
         }
 
+        for (name, d) in diag::take() {
+            self.stats.phase(name, d);
+        }
         self.record_tick_time(start.elapsed().as_nanos() as i64);
         if let Some(report) = self.stats.record(start.elapsed()) {
             info!(
@@ -1882,6 +1924,7 @@ impl Sim {
             fire_watchers: std::sync::Arc::new(self.players.values().filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()),
             raids: self.dims[dim].raids.views.clone(),
             entity_ticking: self.config.entity_ticking,
+            speculate: self.config.speculate,
         }
     }
 
@@ -1928,10 +1971,13 @@ impl Sim {
         mut packets: BTreeMap<(DimId, RegionId), Vec<(ConnId, PlayIn)>>,
         f: impl Fn(&mut RegionWork, &Env, &kiln_sched::Ctx<'_>) + Sync,
     ) -> Vec<(DimId, RegionOut)> {
-        let envs: Vec<Env> = (0..self.dims.len()).map(|d| self.env(d)).collect();
-        let mut buckets: BTreeMap<(DimId, RegionId), Vec<&mut Player>> = BTreeMap::new();
-        for p in self.players.values_mut() {
-            buckets.entry((p.dim, p.region)).or_default().push(p);
+        let dt = Instant::now();
+        // The levels with regions to run.
+        let envs: Vec<Option<Env>> = (0..self.dims.len()).map(|d| self.dims[d].regions.iter().next().is_some().then(|| self.env(d))).collect();
+        let dt = diag::lap("rr.envs", dt);
+        let mut buckets: BTreeMap<(DimId, RegionId), Vec<(ConnId, &mut Player)>> = BTreeMap::new();
+        for (&conn, p) in self.players.iter_mut() {
+            buckets.entry((p.dim, p.region)).or_default().push((conn, p));
         }
         let mut hooks = self.plugins.as_mut().map(|pl| pl.hooks()).unwrap_or_default();
         let mut work: Vec<RegionWork> = Vec::new();
@@ -1941,13 +1987,15 @@ impl Sim {
             let lent = &d.lent;
             work.extend(regions.filter(|r| !lent.contains(&r.id())).map(|r| {
                 let key = (dim, r.id());
-                let mut players = buckets.remove(&key).unwrap_or_default();
-                players.sort_unstable_by_key(|p| p.conn);
+                let mut keyed = buckets.remove(&key).unwrap_or_default();
+                keyed.sort_unstable_by_key(|&(conn, _)| conn);
+                let conns: Vec<ConnId> = keyed.iter().map(|&(c, _)| c).collect();
+                let players: Vec<&mut Player> = keyed.into_iter().map(|(_, p)| p).collect();
                 let packets = packets.remove(&key).unwrap_or_default();
                 let (cells, (entities, blocks)) = r.cells_and_part_mut();
                 let plugins = hooks.remove(&key);
                 let delay = inject.map_or(Duration::ZERO, |i| i.delay_for(dim, cells));
-                RegionWork { dim, region: key.1, cells, entities, blocks, players, packets, plugins, delay, out: RegionOut::default() }
+                RegionWork { dim, region: key.1, cells, entities, blocks, players, conns, packets, plugins, delay, out: RegionOut::default() }
             }));
         }
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
@@ -1955,7 +2003,9 @@ impl Sim {
         let cost = |w: &RegionWork| {
             20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
         };
-        let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, &envs[w.dim], ctx));
+        let dt = diag::lap("rr.work", dt);
+        let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, envs[w.dim].as_ref().expect("the environment of a level with regions"), ctx));
+        diag::lap("rr.units", dt);
         self.independent.last_fork = work.iter().zip(&report.unit_ns).map(|(w, &ns)| (w.dim, w.region, ns)).collect();
         work.into_iter().map(|w| (w.dim, w.out)).collect()
     }
@@ -1969,16 +2019,42 @@ impl Sim {
     ) -> (BTreeMap<(DimId, RegionId), Vec<(ConnId, PlayIn)>>, Vec<(ConnId, PlayIn)>) {
         let (mut local, mut exclusive) = (BTreeMap::<(DimId, RegionId), Vec<_>>::new(), Vec::new());
         let mut stopped = HashSet::new();
+        // A connection's packets come in a row: its key is looked up once per row, and a row
+        // of one region's packets goes into its stream at once.
+        let mut last: Option<(ConnId, Option<(DimId, RegionId)>)> = None;
+        let mut run: Option<((DimId, RegionId), Vec<(ConnId, PlayIn)>)> = None;
+        let flush = |local: &mut BTreeMap<(DimId, RegionId), Vec<(ConnId, PlayIn)>>, run: &mut Option<((DimId, RegionId), Vec<(ConnId, PlayIn)>)>| {
+            if let Some((k, v)) = run.take() {
+                match local.entry(k) {
+                    std::collections::btree_map::Entry::Vacant(e) => {
+                        e.insert(v);
+                    }
+                    std::collections::btree_map::Entry::Occupied(e) => e.into_mut().extend(v),
+                }
+            }
+        };
         for (conn, pkt) in packets {
-            let Some(p) = self.players.get(&conn) else { continue };
-            let key = (p.dim, p.region);
-            if stopped.contains(&key) || region::is_exclusive(&pkt) {
+            let key = match last {
+                Some((c, key)) if c == conn => key,
+                _ => self.players.get(&conn).map(|p| (p.dim, p.region)),
+            };
+            last = Some((conn, key));
+            let Some(key) = key else { continue };
+            if (!stopped.is_empty() && stopped.contains(&key)) || region::is_exclusive(&pkt) {
+                flush(&mut local, &mut run);
                 stopped.insert(key);
                 exclusive.push((conn, pkt));
             } else {
-                local.entry(key).or_default().push((conn, pkt));
+                match &mut run {
+                    Some((k, v)) if *k == key => v.push((conn, pkt)),
+                    _ => {
+                        flush(&mut local, &mut run);
+                        run = Some((key, vec![(conn, pkt)]));
+                    }
+                }
             }
         }
+        flush(&mut local, &mut run);
         (local, exclusive)
     }
 
@@ -1988,8 +2064,15 @@ impl Sim {
     fn maintain_chunks(&mut self) {
         // Entities loaded with a chunk have their ids before the chunk can leave again.
         self.materialize_spawns();
+        // Every player's own chunk, by level (one pass over the players).
+        let mut own_chunks: Vec<HashSet<ChunkPos>> = (0..self.dims.len()).map(|_| HashSet::new()).collect();
+        for p in self.players.values() {
+            if let Some(set) = own_chunks.get_mut(p.dim) {
+                set.insert(player_chunk(p.pos));
+            }
+        }
         for dim in 0..self.dims.len() {
-            let mut keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            let mut keep: HashSet<ChunkPos> = std::mem::take(&mut own_chunks[dim]);
             // Force-loaded chunks (`/forceload`) stay, and load like a player's own chunk.
             keep.extend(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)));
             // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),

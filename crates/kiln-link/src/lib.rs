@@ -13,7 +13,7 @@ pub type ConnId = u64;
 
 /// Outbound side of a player connection. Packets are packet id + data; framing,
 /// compression and encryption happen on the network side.
-pub trait Sink: Send {
+pub trait Sink: Send + Sync {
     fn send(&self, packet: Bytes);
     /// Sends a tick's worth of packets in order; one wakeup for the writer.
     fn send_batch(&self, packets: Vec<Bytes>) {

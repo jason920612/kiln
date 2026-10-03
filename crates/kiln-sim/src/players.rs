@@ -12,8 +12,9 @@ use kiln_world::ChunkPos;
 use std::collections::HashMap;
 use kiln_sched::{Ctx, Window};
 
-/// Per-player windows of a crowd (a few microseconds per player).
-const PLAYER_WINDOW: Window = Window::new();
+/// Per-player windows of a crowd: encoding a player's movement (hints from measurements with
+/// the vanilla datapack save the timed prefix).
+const PLAYER_WINDOW: Window = Window::new().item_ns(170);
 /// Visibility: each player checks every mover (or everyone, when it moved).
 const VISIBILITY_WINDOW: Window = Window::new();
 
@@ -317,10 +318,10 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
     };
     // Each player's viewer changes depend only on the snapshots and its own viewer list, so
     // the players split into windows; the changes apply below in connection order.
-    let seen: Vec<&[ConnId]> = players.iter().map(|p| p.seen_by.as_slice()).collect();
+    let seen: &[&mut Player] = players;
     let targets: Vec<usize> = (0..snaps.len()).collect();
     let diffs = ctx.map_indexed_with(VISIBILITY_WINDOW, &targets, |_, &ti| {
-        let (t, seen) = (&snaps[ti], seen[ti]);
+        let (t, seen) = (&snaps[ti], seen[ti].seen_by.as_slice());
         let (added, removed) = if t.moved {
             let want: Vec<ConnId> = snaps.iter().filter(|v| sees(v, t)).map(|v| v.conn).collect();
             if seen[..] == want[..] {
@@ -343,7 +344,6 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
         };
         Some((ti, added, removed))
     });
-    drop(seen);
     let changes: Vec<(usize, Vec<ConnId>, Vec<ConnId>)> = diffs.into_iter().flatten().collect();
     let index = |conn: ConnId| snaps.binary_search_by_key(&conn, |s| s.conn).ok();
     for (ti, added, removed) in changes {
@@ -386,7 +386,7 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player], ctx: &Ctx<'_>) {
         start += n;
     }
     let encoded = &encoded[..];
-    ctx.map_mut_with(Window::new(), &mut runs, |_, (lo, run)| deliver_movement(*lo, run, encoded));
+    ctx.map_mut_with(Window::new().item_ns(19_000), &mut runs, |_, (lo, run)| deliver_movement(*lo, run, encoded));
 }
 
 /// Players per viewer run in [`broadcast_movement`]'s delivery window.
