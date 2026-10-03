@@ -531,6 +531,9 @@ type FastMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<kiln_entity::me
 struct Grid {
     cells: FastMap<(i32, i32, i32), Vec<usize>>,
     at: Vec<(i32, i32, i32)>,
+    /// The ids of the list in its order (ascending): looked up by binary search, which over the
+    /// entities themselves (hundreds of bytes each) misses the cache at every step.
+    ids: Vec<i32>,
 }
 
 fn section_of(p: [f64; 3]) -> (i32, i32, i32) {
@@ -539,11 +542,12 @@ fn section_of(p: [f64; 3]) -> (i32, i32, i32) {
 
 impl Grid {
     fn build(list: &[Entity]) -> Grid {
-        let mut g = Grid { cells: Default::default(), at: Vec::with_capacity(list.len()) };
+        let mut g = Grid { cells: Default::default(), at: Vec::with_capacity(list.len()), ids: Vec::with_capacity(list.len()) };
         for (i, e) in list.iter().enumerate() {
             let s = section_of(e.pos);
             g.cells.entry(s).or_default().push(i);
             g.at.push(s);
+            g.ids.push(e.id);
         }
         g
     }
@@ -583,7 +587,7 @@ impl SimLevel<'_, '_, '_> {
     }
 
     fn index(&self, id: i32) -> Option<usize> {
-        self.list.binary_search_by_key(&id, |e| e.id).ok()
+        self.grid.ids.binary_search(&id).ok()
     }
 
     fn index_players(&mut self) {

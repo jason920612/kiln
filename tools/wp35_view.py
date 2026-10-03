@@ -28,7 +28,7 @@ import blocks_view  # noqa: E402
 import e2e  # noqa: E402
 from leash_view import offline_uuid  # noqa: E402
 
-ALL = ["chestboat", "donkey", "parrots", "knots", "trader", "riders", "breeze"]
+ALL = ["chestboat", "donkey", "parrots", "knots", "trader", "riders", "horses", "breeze"]
 
 
 def uuid_nbt(name):
@@ -239,22 +239,39 @@ def main():
         shot("riders-2")
         console("kill @e[type=!minecraft:player]", 0.5)
         console("time set 6000")
-        # A glass tank: nautili and zombie nautili, one with a drowned on its back.
-        console("fill 0 -61 8 16 -61 16 minecraft:stone")
-        console("fill 0 -60 8 16 -55 16 minecraft:glass hollow")
-        console("fill 1 -60 9 15 -56 15 minecraft:water")
-        console(f"tp {name} 8.5 -60 0.5 0 12")
-        console("summon minecraft:nautilus 4.5 -58 11.5 {PersistenceRequired:1b}")
-        console("summon minecraft:nautilus 12.5 -58 12.5 {PersistenceRequired:1b,Baby:1b}")
-        mounted_tank = "summon minecraft:zombie_nautilus 8.5 -58 11.5 {PersistenceRequired:1b}"
-        console(mounted_tank)
-        console("summon minecraft:drowned 8.5 -58 12.5 {PersistenceRequired:1b}")
+        # A glass tank (the player inside it): nautili and zombie nautili, one with a drowned on its back.
+        console("fill 0 -61 8 16 -61 22 minecraft:stone")
+        console("fill 0 -60 8 16 -55 22 minecraft:glass hollow")
+        console("fill 1 -60 9 15 -56 21 minecraft:water")
+        console(f"gamemode spectator {name}")
+        console(f"tp {name} 8.5 -58 10.5 0 5")
+        console("summon minecraft:nautilus 5.5 -58 15.5 {PersistenceRequired:1b}")
+        console("summon minecraft:nautilus 11.5 -58 17.5 {PersistenceRequired:1b,Baby:1b}")
+        console("summon minecraft:zombie_nautilus 8.5 -58 14.5 {PersistenceRequired:1b}")
+        console("summon minecraft:drowned 8.5 -58 15.5 {PersistenceRequired:1b}")
         console("ride @e[type=minecraft:drowned,limit=1] mount @e[type=minecraft:zombie_nautilus,limit=1]")
-        time.sleep(4)
+        time.sleep(3)
         shot("nautili")
+        console(f"tp {name} 8.5 -58 10.5 40 5")
+        time.sleep(1.5)
+        shot("nautili-2")
+        # Next to the zombie nautilus and its rider, wherever they swam to.
+        console(f"execute at @e[type=minecraft:zombie_nautilus,limit=1] run tp {name} ~ ~-2 ~-3 0 -20", 1.0)
+        time.sleep(1.0)
+        shot("nautili-zombie")
+        console(f"gamemode creative {name}")
         console("kill @e[type=!minecraft:player]", 0.5)
-        console("fill 0 -61 8 16 -55 16 minecraft:air", 0.5)
-        console("fill 0 -61 8 16 -61 16 minecraft:grass_block", 0.5)
+        console("fill 0 -61 8 16 -55 22 minecraft:air", 0.5)
+        console("fill 0 -61 8 16 -61 22 minecraft:grass_block", 0.5)
+
+    if "horses" in scenes:
+        clear()
+        console(f"tp {name} 8.5 -60 22.5 180 8")
+        for x, kind, extra in ((2.5, "skeleton_horse", ""), (6.5, "skeleton_horse", ",Tame:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1}}"),
+                               (10.5, "zombie_horse", ",Tame:1b,equipment:{saddle:{id:\"minecraft:saddle\",count:1}}"), (14.5, "horse", ",Tame:1b,Variant:1029")):
+            console(f"summon minecraft:{kind} {x} -60 17.5 {{PersistenceRequired:1b{extra}}}", 0.3)
+        time.sleep(3)
+        shot("horses")
 
     if "breeze" in scenes:
         clear()

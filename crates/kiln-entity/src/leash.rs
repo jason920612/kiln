@@ -306,7 +306,8 @@ pub fn get_or_create_knot(level: &mut dyn EntityLevel, pos: BlockPos) -> i32 {
 /// cannot take part, snaps it when too far, pulls the entity in when stretched, and turns it by
 /// the lead's angular momentum.
 pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn EntityLevel) {
-    if e.leash.as_ref().is_some_and(|d| d.delayed.is_some()) {
+    let restoring = e.leash.as_ref().is_some_and(|d| d.delayed.is_some());
+    if restoring {
         restore(e, level);
     }
     let Some(holder_id) = e.leash.as_ref().and_then(|d| d.holder) else { return };
@@ -315,9 +316,9 @@ pub fn tick_leash(e: &mut Entity, mut m: Option<&mut MobData>, level: &mut dyn E
         Some(m) => !e.is_removed() && m.health > 0.0,
         None => alive(e),
     };
-    // (A knot made this tick, by a lead restored from a save, is still under its stand-in id:
-    // the simulation adds it right after the tick, and the lead is already tied to it.)
-    let holder_alive = holder_id < 0 || level.entity(holder_id).is_some_and(alive_holder);
+    // (A knot made by this very restore is still under its stand-in id: the simulation adds it
+    // right after the tick, and the lead is already tied to it.)
+    let holder_alive = (restoring && holder_id < 0) || level.entity(holder_id).is_some_and(alive_holder);
     if !is_alive || !holder_alive || e.vehicle.is_some() {
         if e.vehicle.is_some() || level.entity_drops() {
             drop_leash(e, m.as_deref_mut(), level);
