@@ -113,3 +113,50 @@ fn on_normal_about_half_and_on_easy_none() {
         assert!((lo..=hi).contains(&converted), "{difficulty}: {converted} of 12 converted");
     }
 }
+
+fn have_datapack() -> bool {
+    static FOUND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FOUND.get_or_init(|| {
+        if let Some(dir) = std::env::var_os("KILN_DATAPACK") {
+            return std::path::Path::new(&dir).join("data/minecraft/loot_table").is_dir();
+        }
+        eprintln!("no vanilla datapack (KILN_DATAPACK): skipped");
+        false
+    })
+}
+
+impl World {
+    /// The `id`s of the item entities lying around.
+    fn items(&self) -> Vec<String> {
+        self.nbt_of("minecraft:item")
+            .iter()
+            .filter_map(|t| t.get("Item"))
+            .flat_map(|i| {
+                let id = i.get("id").and_then(Tag::as_str).unwrap_or("").to_owned();
+                std::iter::repeat_n(id, i.get("count").and_then(Tag::as_i64).unwrap_or(1) as usize)
+            })
+            .collect()
+    }
+}
+
+/// The carried block drops by its loot table as mined by a silk touch diamond axe
+/// (`Enderman.dropCustomDeathLoot`): gravel as gravel, never as flint, and short grass (which wants
+/// shears) not at all.
+#[test]
+fn an_endermans_carried_block_drops_by_its_loot_table() {
+    if !have_datapack() {
+        return;
+    }
+    let mut w = World::new("normal");
+    for i in 0..30 {
+        w.summon("minecraft:enderman", [i as f64 * 0.5, 0.0, 10.0], r#"{PersistenceRequired:1b,NoAI:1b,carriedBlockState:{Name:"minecraft:gravel"}}"#);
+    }
+    w.summon("minecraft:enderman", [0.0, 0.0, 14.0], r#"{PersistenceRequired:1b,NoAI:1b,carriedBlockState:{Name:"minecraft:short_grass"}}"#);
+    w.console("kill @e[type=minecraft:enderman]");
+    w.ticks(25);
+    assert_eq!(w.count("minecraft:enderman"), 0);
+    let items = w.items();
+    let gravel = items.iter().filter(|i| *i == "minecraft:gravel").count();
+    assert_eq!(gravel, 30, "{items:?}");
+    assert!(!items.iter().any(|i| i == "minecraft:flint" || i == "minecraft:short_grass"), "{items:?}");
+}

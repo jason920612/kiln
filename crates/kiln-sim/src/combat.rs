@@ -495,10 +495,11 @@ impl Player {
         if strength <= 0.0 {
             return;
         }
+        use kiln_javamath::random::RandomSource as _;
         let (mut dx, mut dz) = (dx, dz);
         while dx * dx + dz * dz < 9.999999747378752e-6 {
-            dx = (self.rng.next_f64() - self.rng.next_f64()) * 0.01;
-            dz = (self.rng.next_f64() - self.rng.next_f64()) * 0.01;
+            dx = (self.entity_rng.next_double() - self.entity_rng.next_double()) * 0.01;
+            dz = (self.entity_rng.next_double() - self.entity_rng.next_double()) * 0.01;
         }
         let len = (dx * dx + dz * dz).sqrt();
         let (kx, kz) = if len < 9.999999747378752e-6 { (0.0, 0.0) } else { (dx / len * strength, dz / len * strength) };

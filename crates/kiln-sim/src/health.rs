@@ -265,6 +265,42 @@ enum DeathMessageType {
     IntentionalGameDesign,
 }
 
+/// `DamageEffects`: which sound a damage type's victims hurt with (`DamageType.effects`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum DamageEffects {
+    Hurt,
+    Thorns,
+    Drowning,
+    Burning,
+    Poking,
+    Freezing,
+}
+
+impl DamageEffects {
+    /// `DamageEffects.sound`.
+    fn sound(self) -> &'static str {
+        match self {
+            DamageEffects::Hurt | DamageEffects::Thorns => "minecraft:entity.player.hurt",
+            DamageEffects::Drowning => "minecraft:entity.player.hurt_drown",
+            DamageEffects::Burning => "minecraft:entity.player.hurt_on_fire",
+            DamageEffects::Poking => "minecraft:entity.player.hurt_sweet_berry_bush",
+            DamageEffects::Freezing => "minecraft:entity.player.hurt_freeze",
+        }
+    }
+
+    /// By the name the datapack gives (`effects`; absent: `hurt`).
+    fn by_name(name: Option<&str>) -> DamageEffects {
+        match name {
+            Some("thorns") => DamageEffects::Thorns,
+            Some("drowning") => DamageEffects::Drowning,
+            Some("burning") => DamageEffects::Burning,
+            Some("poking") => DamageEffects::Poking,
+            Some("freezing") => DamageEffects::Freezing,
+            _ => DamageEffects::Hurt,
+        }
+    }
+}
+
 /// A damage type's definition (`DamageType`, from the vanilla datapack).
 struct DamageTypeInfo {
     name: &'static str,
@@ -274,6 +310,46 @@ struct DamageTypeInfo {
     exhaustion: f32,
     scaling: Scaling,
     death_message: DeathMessageType,
+    effects: DamageEffects,
+}
+
+/// The `effects` of a damage type by name (`minecraft:` left off).
+const fn effects_of(name: &str) -> DamageEffects {
+    const fn is(a: &str, b: &str) -> bool {
+        let (a, b) = (a.as_bytes(), b.as_bytes());
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut i = 0;
+        while i < a.len() {
+            if a[i] != b[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+    if is(name, "thorns") {
+        DamageEffects::Thorns
+    } else if is(name, "drown") {
+        DamageEffects::Drowning
+    } else if is(name, "campfire")
+        || is(name, "fireball")
+        || is(name, "hot_floor")
+        || is(name, "in_fire")
+        || is(name, "lava")
+        || is(name, "on_fire")
+        || is(name, "sulfur_cube_hot")
+        || is(name, "unattributed_fireball")
+    {
+        DamageEffects::Burning
+    } else if is(name, "freeze") {
+        DamageEffects::Freezing
+    } else if is(name, "sweet_berry_bush") {
+        DamageEffects::Poking
+    } else {
+        DamageEffects::Hurt
+    }
 }
 
 macro_rules! damage_types {
@@ -285,6 +361,7 @@ macro_rules! damage_types {
             exhaustion: $exh,
             scaling: Scaling::$scaling,
             death_message: DeathMessageType::$death,
+            effects: effects_of($name),
         },)*]
     };
 }
@@ -589,6 +666,12 @@ impl Player {
             {
                 let (dx, dz) = (a.pos[0] - self.pos[0], a.pos[2] - self.pos[2]);
                 self.knockback(0.4000000059604645, dx, dz);
+                // `ServerPlayer.indicateDamage` (unless the hit was blocked): the player's own client
+                // tilts the camera away from where the hit came from.
+                if !blocked {
+                    let hurt_dir = (kiln_command::coords::mth_atan2(dz, dx) * 57.2957763671875 - self.rot[0] as f64) as f32;
+                    self.send(entity::hurt_animation(self.entity_id, hurt_dir));
+                }
             }
         }
         // `EntityHurtPlayerTrigger` (dealt before armor and effects, taken after).
@@ -612,7 +695,14 @@ impl Player {
             lightning_fires: None,
         });
         self.hurt_trigger("minecraft:entity_hurt_player", killer.as_ref(), amount, taken, source.cause.damage_type());
-        if self.health <= 0.0 && !self.check_totem_death_protection(source) {
+        let dying = self.health <= 0.0;
+        if dying && !self.check_totem_death_protection(source) {
+            if full {
+                // `makeSound(getDeathSound())` and `playSecondaryHurtSound`: `Player.playSound` is
+                // heard by everyone near but the player (whose client plays its own).
+                self.voice_sound("minecraft:entity.player.death");
+                self.secondary_hurt_sound(source);
+            }
             let death = self.die(ctx);
             ctx.deaths.push(death);
             // `KilledTrigger` for the killer's side (`entity_killed_player`).
@@ -620,8 +710,26 @@ impl Player {
                 self.killed("minecraft:entity_killed_player", k, source.cause.damage_type(), source.direct.is_none());
             }
         }
+        if !dying && full {
+            // `playHurtSound`: the damage type's sound.
+            self.voice_sound(source.info().effects.sound());
+            self.secondary_hurt_sound(source);
+        }
         // A hit the shield blocked entirely does not count as one (an arrow bounces off).
         !(blocked && amount <= 0.0)
+    }
+
+    /// `LivingEntity.makeSound` for a player: `Player.playSound(sound, 1, getVoicePitch())`, a
+    /// pitch of 1 (`Player.getVoicePitch`).
+    fn voice_sound(&mut self, sound: &str) {
+        self.queue_sound(sound, 1.0, 1.0);
+    }
+
+    /// `LivingEntity.playSecondaryHurtSound`: thorns' hit, heard by everyone (the player too).
+    fn secondary_hurt_sound(&mut self, source: &Source) {
+        if source.type_name() == "minecraft:thorns" {
+            self.sound_for_all("minecraft:enchant.thorns.hit", kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
+        }
     }
 
     /// Whether the damage's attacker is a player.
@@ -1071,6 +1179,7 @@ mod tests {
                 _ => DeathMessageType::Default,
             };
             assert_eq!(t.death_message, death, "{name}");
+            assert_eq!(t.effects, DamageEffects::by_name(v.get("effects").and_then(|e| e.as_str())), "{name}");
             seen += 1;
         }
         assert_eq!(seen, DAMAGE_TYPES.len());
