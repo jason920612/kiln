@@ -475,6 +475,8 @@ struct Player {
     vehicle: Option<i32>,
     /// The type of that entity (for the vehicle entity predicates of criteria).
     vehicle_type: Option<&'static str>,
+    /// A saved `RootVehicle` waiting to be put back under the player.
+    returning_vehicle: Option<persist::ReturningVehicle>,
     /// `ServerPlayer.levitationStartTime` and `levitationStartPos` (the `levitation` trigger).
     levitation_start: Option<(i32, [f64; 3])>,
     /// `startingToFallPosition` (`fall_from_height`), `enteredNetherPosition`
@@ -2060,6 +2062,10 @@ impl Sim {
                 Self::resolve_placeholders(d, &placeholders);
             }
         }
+        // Riders that joined with a saved `RootVehicle`.
+        if self.players.values().any(|p| p.returning_vehicle.is_some()) {
+            self.seat_returning_players();
+        }
     }
 
     /// Replaces the placeholder ids of `placeholders` in the vehicles and passengers of the
@@ -2354,6 +2360,7 @@ impl Sim {
                 self.waypoints_remove_player(dim, conn, p.uuid);
             }
             self.save_player(&p);
+            self.player_stops_riding(&p);
             self.plugins_left(&p);
             self.announce_leave(&p, conn);
             self.broadcast_system(yellow(&format!("{} left the game", p.name)));
@@ -2435,6 +2442,7 @@ impl Sim {
         let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).expect("spawn chunk loaded");
         let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
         let shoulders = [shoulder::load(joining.saved.raw(), "ShoulderEntityLeft"), shoulder::load(joining.saved.raw(), "ShoulderEntityRight")];
+        let returning_vehicle = persist::returning_vehicle(joining.saved.raw().get("RootVehicle"));
         recipe_book.retain_existing(&self.rules);
         let warden_tracker = sculk::shrieker::WardenSpawnTracker::load(joining.saved.raw().get("warden_spawn_tracker"));
         let mut player = Player {
@@ -2572,6 +2580,7 @@ impl Sim {
             pending_travel: None,
             vehicle: None,
             vehicle_type: None,
+            returning_vehicle,
             levitation_start: None,
             raid_omen_position: None,
             raid_omen_trigger: None,

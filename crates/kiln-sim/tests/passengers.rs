@@ -170,3 +170,47 @@ fn data_get_entity_has_the_passengers() {
     let count = |tag: &str| sim.entity_nbt().into_iter().filter(|t| tags_of(t).contains(&tag.to_owned())).count();
     assert_eq!((count("found"), count("carrier"), count("wrong")), (1, 1, 0));
 }
+
+/// A player riding a horse that carries a skeleton leaves: the stack goes with them (it is in
+/// their data as `RootVehicle`), and comes back under them when they join again.
+#[test]
+fn a_riding_players_stack_leaves_and_returns_with_them() {
+    let dir = world("passengers-root-vehicle");
+    let (mut sim, mut client, at) = start(&dir);
+    console(&mut sim, &format!("summon minecraft:horse {} {} {} {{Tags:[\"mount\"],Passengers:[{{id:\"minecraft:skeleton\",Tags:[\"pillion\"]}}]}}", at[0] + 1, at[1], at[2] + 1));
+    settle(&mut sim, &mut client, 3);
+    console(&mut sim, "ride Rider mount @e[type=minecraft:horse,limit=1]");
+    settle(&mut sim, &mut client, 5);
+    let horse = sim.entity_ids_of("minecraft:horse")[0];
+    assert_eq!(sim.vehicle_of(1), Some(horse));
+    let uuids = |sim: &Sim| -> Vec<(String, Tag)> {
+        let mut v: Vec<_> = sim.entity_nbt().into_iter().map(|t| (t.get("id").and_then(Tag::as_str).unwrap().to_owned(), t.get("UUID").cloned().unwrap())).collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        v
+    };
+    let before = uuids(&sim);
+    assert_eq!(before.len(), 2);
+    let skeleton = sim.entity_ids_of("minecraft:skeleton")[0];
+
+    // Leaving: the horse and its skeleton go with the player.
+    assert!(sim.step([ToSim::Leave(1)]));
+    assert!(sim.step([]));
+    assert!(sim.riding().is_empty(), "the stack left the level with its player: {:?}", sim.riding());
+
+    // Joining again: the stack is back, the player on it, in front of the skeleton.
+    let (msg, stats) = join(1, "Rider", 2);
+    assert!(sim.step([msg]));
+    let mut client = Client::new(1, stats);
+    settle(&mut sim, &mut client, 5);
+    assert_eq!(uuids(&sim), before, "the same horse and skeleton");
+    let horse = sim.entity_ids_of("minecraft:horse")[0];
+    assert_eq!(sim.vehicle_of(1), Some(horse));
+    let skeleton_back = sim.entity_ids_of("minecraft:skeleton")[0];
+    let riding = sim.riding();
+    let h = riding.iter().find(|r| r.0 == horse).unwrap();
+    assert_eq!(h.2.len(), 2, "{h:?}");
+    assert_eq!(h.2[1], skeleton_back, "the player first, as the controlling passenger: {h:?}");
+    let s = riding.iter().find(|r| r.0 == skeleton_back).unwrap();
+    assert_eq!(s.1, Some(horse));
+    let _ = skeleton;
+}

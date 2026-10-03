@@ -68,6 +68,27 @@ pub(crate) struct Joining {
     pub saved: PlayerData,
 }
 
+/// A saved `RootVehicle` of a joining player: the stack the player rode, waiting to join the level
+/// and take the player back (`ServerPlayer.loadAndSpawnParentVehicle`).
+pub(crate) struct ReturningVehicle {
+    /// The UUID of what the player rode (the root or one of its riders).
+    attach: u128,
+    /// The root's saved compound.
+    root: Tag,
+    spawned: bool,
+    tries: u32,
+}
+
+/// Ticks a returning vehicle is waited for before it is given up on.
+const RETURNING_TRIES: u32 = 100;
+
+pub(crate) fn returning_vehicle(saved: Option<&Tag>) -> Option<ReturningVehicle> {
+    let saved = saved?;
+    let attach = saved.get("Attach").and_then(persist::uuid_from_tag)?;
+    let root = saved.get("Entity")?.clone();
+    Some(ReturningVehicle { attach, root, spawned: false, tries: 0 })
+}
+
 /// `locator_bar_icon` of saved player data.
 pub(crate) fn saved_waypoint_icon(data: &Tag) -> crate::waypoints::Icon {
     let mut icon = crate::waypoints::Icon::default();
@@ -244,6 +265,14 @@ impl Sim {
             }
             fields.retain(|(k, _)| k != "fall_distance");
             fields.push(("fall_distance".to_owned(), Tag::Double(p.fall_distance)));
+            // `ServerPlayer.saveParentVehicle`.
+            fields.retain(|(k, _)| k != "RootVehicle");
+            if let Some((root_vehicle, _)) = self.root_vehicle_of(p) {
+                fields.push(("RootVehicle".to_owned(), root_vehicle));
+            } else if let Some(rv) = &p.returning_vehicle {
+                // Still on its way back: it is still what the player rides.
+                fields.push(("RootVehicle".to_owned(), Tag::Compound(vec![("Attach".into(), persist::uuid_to_tag(rv.attach)), ("Entity".into(), rv.root.clone())])));
+            }
             // `Player.addAdditionalSaveData`: the shoulders' entities, when there are any.
             fields.retain(|(k, _)| k != "ShoulderEntityLeft" && k != "ShoulderEntityRight");
             for (key, tag) in [("ShoulderEntityLeft", &p.shoulders[0]), ("ShoulderEntityRight", &p.shoulders[1])] {
@@ -390,6 +419,118 @@ impl Sim {
         }
         all.sort_by_key(|(id, _)| *id);
         all.into_iter().map(|(_, t)| t).collect()
+    }
+
+    /// `ServerPlayer.saveParentVehicle`: what the player rides, when the stack it is the only
+    /// player on (`hasExactlyOnePlayerPassenger`): the `RootVehicle` data (`Attach` the UUID of
+    /// the entity the player sits on, `Entity` the root saved with its riders) and the network
+    /// ids of the stack's entities (the player left out).
+    pub(crate) fn root_vehicle_of(&self, p: &Player) -> Option<(Tag, Vec<i32>)> {
+        let vehicle = p.vehicle?;
+        let owners = self.owner_uuids();
+        let owner = |id: i32| owners.get(&id).copied();
+        for r in self.dims[p.dim].regions.iter() {
+            let list = &r.part().0.list;
+            let Some(i) = list.iter().position(|e| e.id == vehicle && !e.removed) else { continue };
+            let root = entities::root_in(list, i);
+            let (mut tree, mut players, mut todo) = (Vec::new(), 0, vec![list[root].id]);
+            while let Some(id) = todo.pop() {
+                match list.binary_search_by_key(&id, |e| e.id) {
+                    Ok(j) if !list[j].removed => {
+                        tree.push(id);
+                        todo.extend(list[j].phys.as_ref().map(|e| e.passengers.clone()).unwrap_or_default());
+                    }
+                    _ if id == p.entity_id || self.players.values().any(|q| q.entity_id == id && !q.disconnected) => players += 1,
+                    _ => {}
+                }
+            }
+            if players != 1 {
+                return None;
+            }
+            let tag = Tag::Compound(vec![
+                ("Attach".into(), persist::uuid_to_tag(list[i].uuid.as_u128())),
+                ("Entity".into(), entities::save_in(list, root, &owner)),
+            ]);
+            return Some((tag, tree));
+        }
+        None
+    }
+
+    /// `PlayerList.remove` for a rider: the player stops riding, and a stack that carried only
+    /// that player leaves the level with it (it is in the player's data: `RootVehicle`).
+    pub(crate) fn player_stops_riding(&mut self, p: &Player) {
+        let Some(vehicle) = p.vehicle else { return };
+        let tree = self.root_vehicle_of(p).map(|(_, t)| t);
+        for r in self.dims[p.dim].regions.iter_mut() {
+            for e in r.part_mut().0.list.iter_mut() {
+                if tree.as_ref().is_some_and(|t| t.contains(&e.id)) {
+                    e.removed = true;
+                } else if e.id == vehicle
+                    && let Some(phys) = e.phys.as_mut()
+                {
+                    kiln_entity::ride::remove_passenger(phys, p.entity_id);
+                }
+            }
+        }
+    }
+
+    /// `loadAndSpawnParentVehicle`, finished: players that joined with a `RootVehicle` get their
+    /// stack spawned (unless it is in the world already, as after a crash) and sit on what
+    /// they rode; when it never turns up the stack is discarded and they stand.
+    pub(crate) fn seat_returning_players(&mut self) {
+        let conns: Vec<ConnId> = self.players.iter().filter(|(_, p)| p.returning_vehicle.is_some()).map(|(c, _)| *c).collect();
+        let mut again = false;
+        for conn in conns {
+            let Some(p) = self.players.get(&conn) else { continue };
+            let (dim, pid) = (p.dim, p.entity_id);
+            let rv = p.returning_vehicle.as_ref().expect("filtered");
+            let attach = rv.attach;
+            let found = self.dims[dim].regions.iter().find_map(|r| {
+                let e = r.part().0.list.iter().find(|e| !e.removed && e.uuid.as_u128() == attach)?;
+                Some((e.id, e.kind.name))
+            });
+            if let Some((vid, type_name)) = found {
+                let first_is_player = |first: i32, players: &HashMap<ConnId, Player>| players.values().any(|q| q.entity_id == first);
+                for r in self.dims[dim].regions.iter_mut() {
+                    if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == vid)
+                        && let Some(phys) = e.phys.as_mut()
+                    {
+                        let first = phys.passengers.first().is_some_and(|&f| first_is_player(f, &self.players));
+                        kiln_entity::ride::add_passenger(phys, pid, true, first);
+                    }
+                }
+                let p = self.players.get_mut(&conn).expect("present");
+                p.vehicle = Some(vid);
+                p.vehicle_type = Some(type_name);
+                p.returning_vehicle = None;
+                continue;
+            }
+            let p = self.players.get_mut(&conn).expect("present");
+            let rv = p.returning_vehicle.as_mut().expect("filtered");
+            if !rv.spawned {
+                rv.spawned = true;
+                let uuid = rv.root.get("UUID").and_then(persist::uuid_from_tag).unwrap_or(0);
+                match entities::Spawn::from_saved(&rv.root, entities::seed_for_uuid(uuid), true) {
+                    Ok(spawn) => {
+                        self.dims[dim].spawns.push(spawn);
+                        again = true;
+                    }
+                    Err(_) => {
+                        warn!("couldn't reattach entity to player {}", p.name);
+                        p.returning_vehicle = None;
+                    }
+                }
+            } else {
+                rv.tries += 1;
+                if rv.tries > RETURNING_TRIES {
+                    warn!("couldn't reattach entity to player {}", p.name);
+                    p.returning_vehicle = None;
+                }
+            }
+        }
+        if again {
+            self.materialize_spawns();
+        }
     }
 
     /// The entity `id` of dimension `dim` saved with its passengers (`saveWithoutId`).

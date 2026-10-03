@@ -81,8 +81,12 @@ SUMMONS = [
     ("trader llama", f'trader_llama 138.5 {Y} -44.5 {{NoAI:1b,Tame:1b,PersistenceRequired:1b,Strength:2,Variant:3,DespawnDelay:30000,'
                      f'ChestedHorse:1b,Items:[{{Slot:3b,id:"minecraft:gold_ingot",count:7}}],'
                      f'equipment:{{body:{{id:"minecraft:blue_carpet",count:1}}}},Tags:["kiln"]}}'),
+    # wp34: a riding stack (a cow carrying a husk that carries a chicken) saved by its root.
+    ("riding stack", f'cow 141.5 {Y} -44.5 {{NoAI:1b,PersistenceRequired:1b,Tags:["kiln","stack"],'
+                     f'Passengers:[{{id:"minecraft:husk",NoAI:1b,PersistenceRequired:1b,Tags:["kiln","pillion"],'
+                     f'Passengers:[{{id:"minecraft:chicken",NoAI:1b,PersistenceRequired:1b,Tags:["kiln","topmost"]}}]}}]}}'),
 ]
-SIMULATED = {"minecraft:item", "minecraft:experience_orb", "minecraft:arrow", "minecraft:falling_block",
+SIMULATED = {"minecraft:cow", "minecraft:chicken","minecraft:item", "minecraft:experience_orb", "minecraft:arrow", "minecraft:falling_block",
              "minecraft:tnt", "minecraft:snowball", "minecraft:pig", "minecraft:zombie", "minecraft:chest_minecart",
              "minecraft:hopper_minecart", "minecraft:furnace_minecart", "minecraft:tnt_minecart", "minecraft:oak_chest_boat",
              "minecraft:bamboo_chest_raft", "minecraft:donkey", "minecraft:llama", "minecraft:trader_llama"}
@@ -128,6 +132,13 @@ def entities(world):
     for e in val(get(root, "Entities")) or ():
         out[uuid_of(e)] = e
     return out
+
+
+def rider_chain(e):
+    """The riders of `e` (its `Passengers`, and theirs), depth first."""
+    for p in val(get(e, "Passengers")) or ():
+        yield p
+        yield from rider_chain(p)
 
 
 def typ(e):
@@ -234,11 +245,15 @@ def main():
     try:
         c = EntityClient("127.0.0.1", a.kiln_port, NAME)
         want = {u for u, e in before.items() if typ(e) in SIMULATED}
+        stack = next(e for e in before.values() if typ(e) == "minecraft:cow")
+        riders = list(rider_chain(stack))
+        check("vanilla saved the stack inside its root (fixture sanity)", [typ(r) for r in riders] == ["minecraft:husk", "minecraft:chicken"], f"{riders}")
+        want |= {uuid_of(r) for r in riders}
         c.pump(15, lambda: c.pos is not None and want <= {u for _, u, _ in c.spawned})
         c.loaded()
         c.pump(2)
         seen = {u: t for _, u, t in c.spawned}
-        missing = [typ(before[u]) for u in want if u not in seen]
+        missing = [typ(before[u]) if u in before else "rider" for u in want if u not in seen]
         check("Kiln spawns the vanilla-saved simulated entities for the client", not missing, f"missing {missing}")
         wrong = [(t, typ(before[u])) for u, t in seen.items() if u in before and t != typ(before[u])]
         check("with vanilla's UUIDs and types", not wrong, f"{wrong}")
@@ -341,6 +356,16 @@ def main():
           trader is not None and val(get(trader, "Strength")) == 2 and val(get(trader, "Variant")) == 3 and val(get(trader, "ChestedHorse")) == 1
           and slots(trader) == {3: ("minecraft:gold_ingot", 7)} and val(get(trader, "equipment", "body", "id")) == "minecraft:blue_carpet"
           and val(get(trader, "DespawnDelay")) == 30000, f"{trader}")
+    cow = one("minecraft:cow", lambda e: get(e, "Passengers") is not None)
+    cow_riders = list(rider_chain(cow)) if cow else []
+    check("riding stack: the cow keeps its husk and the husk its chicken, with vanilla's UUIDs and tags",
+          cow is not None and [typ(r) for r in cow_riders] == ["minecraft:husk", "minecraft:chicken"]
+          and [uuid_of(r) for r in cow_riders] == [uuid_of(r) for r in rider_chain(stack)]
+          and [val(get(r, "Tags")) for r in cow_riders] == [val(get(r, "Tags")) for r in rider_chain(stack)], f"{cow}")
+    check("riders are not entities of the chunk of their own", len([e for e in saved.values() if typ(e) in ("minecraft:husk", "minecraft:chicken")]) == 0,
+          f"{[typ(e) for e in saved.values()]}")
+    check("a rider's position is its vehicle's x and z",
+          cow is not None and all(val(get(r, "Pos"))[0] == val(get(cow, "Pos"))[0] and val(get(r, "Pos"))[2] == val(get(cow, "Pos"))[2] for r in cow_riders), "")
     snow = one("minecraft:snowball")
     check("snowball kept", snow is not None and val(get(snow, "NoGravity")) == 1, f"{snow}")
     emerald = one("minecraft:item", lambda e: val(get(e, "Item", "id")) == "minecraft:emerald")
@@ -369,6 +394,12 @@ def main():
         for u, e in saved.items():
             line = s.query(f"data get entity {u}", r"has the following entity data|No entity was found|Found no elements")
             check(f"vanilla has the {typ(e)} {u}", line and "has the following entity data" in line, (line or "no answer")[-120:])
+        for r in cow_riders:
+            line = s.query(f"data get entity {uuid_of(r)}", r"has the following entity data|No entity was found|Found no elements")
+            check(f"vanilla has the rider {typ(r)} {uuid_of(r)}", line and "has the following entity data" in line, (line or "no answer")[-120:])
+        line = s.query('execute as @e[type=chicken,tag=topmost] on vehicle if entity @s[type=husk,tag=pillion] on vehicle if entity @s[type=cow,tag=stack]',
+                       r"Test passed|Test failed")
+        check("vanilla loads the stack riding: the chicken on the husk on the cow", line and "Test passed" in line, line or "")
         line = s.query(f"data get entity {emerald_uuid(emerald)} Item" if emerald else "list", r"has the following entity data|No entity")
         check("vanilla sees Kiln's emeralds", line and "minecraft:emerald" in line and "count: 4" in line, (line or "")[-120:])
         line = s.query('execute if entity @e[type=pig,name=Porky,tag=kiln]', r"Test passed|Test failed")
