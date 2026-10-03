@@ -852,7 +852,8 @@ impl SimLevel<'_, '_, '_> {
             }
         }
         found.sort_unstable();
-        found.into_iter().map(|(_, id)| id).collect()
+        // (Read in place: moving the inline array out costs more than the search.)
+        found.iter().map(|&(_, id)| id).collect()
     }
 }
 
@@ -1615,9 +1616,13 @@ impl Proxy {
         if let Some(e) = self.made() {
             return e.bounding_box();
         }
-        static WIDTH: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
-        let w = *WIDTH.get_or_init(|| kiln_data::entities::by_name("minecraft:player").expect("the player type").width) / 2.0;
-        let h: f32 = if self.seed.sneaking { 1.5 } else { kiln_data::entities::by_name("minecraft:player").expect("the player type").height };
+        static SIZE: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
+        let (width, height) = *SIZE.get_or_init(|| {
+            let t = kiln_data::entities::by_name("minecraft:player").expect("the player type");
+            (t.width, t.height)
+        });
+        let w = width / 2.0;
+        let h: f32 = if self.seed.sneaking { 1.5 } else { height };
         let p = self.seed.pos;
         Aabb::new(p[0] - w as f64, p[1], p[2] - w as f64, p[0] + w as f64, p[1] + h as f64, p[2] + w as f64)
     }
