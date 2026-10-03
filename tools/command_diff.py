@@ -1518,7 +1518,7 @@ data get entity Diff0 Health
 ! summon cow 9 100 3 {Tags:["dmg4"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b,Invulnerable:1b}
 ! summon cow 11 100 3 {Tags:["dmg5"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
 ! summon cow 13 100 3 {Tags:["dmg6"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
-! summon zombie 15 100 3 {Tags:["dmg7"],NoAI:1b,NoGravity:1b,Health:20f,PersistenceRequired:1b}
+! summon iron_golem 15 100 3 {Tags:["dmg7"],NoAI:1b,NoGravity:1b,Health:20f,PersistenceRequired:1b}
 ! summon pig 17 100 3 {Tags:["dmg8"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
 damage @e[tag=dmg1,limit=1] 3
 data get entity @e[tag=dmg1,limit=1] Health
