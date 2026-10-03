@@ -20,8 +20,20 @@ pub struct Property {
 
 /// Block of a state id.
 pub fn block_of(state: u16) -> &'static BlockInfo {
-    let i = BLOCKS.partition_point(|b| b.first <= state) - 1;
-    &BLOCKS[i]
+    // One table read instead of a binary search over the blocks (this runs per block read in
+    // entity ticks).
+    static INDEX: OnceLock<Vec<u16>> = OnceLock::new();
+    let index = INDEX.get_or_init(|| {
+        let mut out = vec![0u16; STATE_COUNT as usize];
+        for (i, b) in BLOCKS.iter().enumerate() {
+            out[b.first as usize..=b.last as usize].fill(i as u16);
+        }
+        out
+    });
+    match index.get(state as usize) {
+        Some(&i) => &BLOCKS[i as usize],
+        None => &BLOCKS[BLOCKS.partition_point(|b| b.first <= state) - 1],
+    }
 }
 
 pub fn block_by_name(name: &str) -> Option<&'static BlockInfo> {
@@ -92,7 +104,9 @@ fn flags() -> &'static [u8] {
 
 /// Air, cave air or void air (not counted as blocks by the client).
 pub fn is_air(state: u16) -> bool {
-    flags()[state as usize] & AIR != 0
+    // The three air blocks have one state each: three compares, no table (this is asked of
+    // every block of every box an entity scans).
+    state == crate::blocks::default_state::AIR || state == crate::blocks::default_state::VOID_AIR || state == crate::blocks::default_state::CAVE_AIR
 }
 
 /// Has a non-empty fluid state (water, lava, waterlogged, ...).
@@ -104,6 +118,23 @@ pub fn has_fluid(state: u16) -> bool {
 mod tests {
     use super::*;
     use crate::blocks::default_state as d;
+
+    /// The table behind `block_of` agrees with a binary search over the blocks for every state.
+    #[test]
+    fn is_air_by_states_matches_the_names() {
+        for s in 0..STATE_COUNT as u16 {
+            assert_eq!(is_air(s), flags()[s as usize] & AIR != 0, "{}", block_of(s).name);
+        }
+    }
+
+    #[test]
+    fn block_of_every_state() {
+        for s in 0..STATE_COUNT as u16 {
+            let b = block_of(s);
+            assert!(b.first <= s && s <= b.last, "state {s} not in {}", b.name);
+            assert_eq!(b.name, BLOCKS[BLOCKS.partition_point(|b| b.first <= s) - 1].name);
+        }
+    }
 
     #[test]
     fn properties_roundtrip() {

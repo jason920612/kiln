@@ -1535,7 +1535,11 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     e.was_in_powder_snow = e.is_in_powder_snow;
     e.is_in_powder_snow = false;
     e.was_eye_in_water = e.fluid.is_eye_in_water();
-    e.update_fluid_interaction(level);
+    {
+        crate::prof!("col", "update_fluid_interaction");
+        e.update_fluid_interaction(level);
+    }
+    crate::prof!("col", "base_tick rest");
     if e.remaining_fire_ticks > 0 {
         if m.kind.fire_immune() {
             e.clear_fire();
@@ -1559,11 +1563,15 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
     // `LivingEntity.baseTick`.
     if is_alive(e, m) {
-        if in_wall(e, level) {
+        let in_wall_now = {
+            crate::prof!("col", "in_wall");
+            in_wall_memo(e, level)
+        };
+        if in_wall_now {
             hurt(e, m, level, DamageSource::of(DamageKind::InWall), 1.0);
         }
         let eye = BlockPos::containing(e.x(), e.eye_y(), e.z());
-        let bubble = crate::blocks::block_name(level.block(eye)) == "minecraft:bubble_column";
+        let bubble = crate::blocks::kind(level.block(eye)) == crate::blocks::Kind::BubbleColumn;
         if e.fluid.is_eye_in_water() && !bubble {
             if !m.kind.breathes_under_water() && !effects::has_water_breathing(m) {
                 e.air_supply -= 1;
@@ -1645,14 +1653,36 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     }
 }
 
-/// `Entity.isInWall`.
-fn in_wall(e: &Entity, level: &dyn EntityLevel) -> bool {
+/// `Entity.isInWall`, reusing the last answer for the same eye box while the blocks are unchanged.
+fn in_wall_memo(e: &mut Entity, level: &dyn EntityLevel) -> bool {
     if e.no_physics {
         return false;
     }
+    let b = in_wall_box(e);
+    let Some(epoch) = crate::memo::area_epoch(level, &b) else { return in_wall(&b, level) };
+    let key = crate::memo::BoxKey { epoch, bx: crate::memo::box_bits(&b) };
+    if let Some((k, v)) = e.memo.as_deref().and_then(|m| m.wall.as_ref())
+        && *k == key
+    {
+        crate::prof_count!("memo wall", true);
+        crate::memo::verify("wall", v, || in_wall(&b, level));
+        return *v;
+    }
+    crate::prof_count!("memo wall", false);
+    let v = in_wall(&b, level);
+    e.memo.get_or_insert_with(Default::default).wall = Some((key, v));
+    v
+}
+
+fn in_wall_box(e: &Entity) -> Aabb {
     let f = (e.width * 0.8) as f64;
     let (x, y, z) = (e.x(), e.eye_y(), e.z());
-    let b = Aabb::new(x - f / 2.0, y - 5.0e-7, z - f / 2.0, x + f / 2.0, y + 5.0e-7, z + f / 2.0);
+    Aabb::new(x - f / 2.0, y - 5.0e-7, z - f / 2.0, x + f / 2.0, y + 5.0e-7, z + f / 2.0)
+}
+
+/// `Entity.isInWall` for the eye box `b`.
+fn in_wall(b: &Aabb, level: &dyn EntityLevel) -> bool {
+    let b = *b;
     let (x0, y0, z0) = (crate::math::floor(b.min_x), crate::math::floor(b.min_y), crate::math::floor(b.min_z));
     let (x1, y1, z1) = (crate::math::floor(b.max_x), crate::math::floor(b.max_y), crate::math::floor(b.max_z));
     for bx in x0..=x1 {

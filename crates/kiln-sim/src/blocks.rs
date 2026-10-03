@@ -410,9 +410,14 @@ impl Level for RegionLevel<'_> {
     }
 
     fn set_raw(&mut self, pos: BlockPos, state: u16, flags: u32) -> Option<u16> {
+        // A jukebox that goes away gives its disc back (the block entity goes with it).
+        let disc = crate::jukebox::before_removal(self, pos, state);
         let old = self.cells.set_block(pos.x, pos.y, pos.z, state)?;
         if old == state {
             return None;
+        }
+        if let Some(disc) = disc {
+            crate::jukebox::removed(self, pos, disc);
         }
         if flags & flags::CLIENTS != 0 {
             self.out.changed.push([pos.x, pos.y, pos.z]);

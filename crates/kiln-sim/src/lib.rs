@@ -34,6 +34,7 @@ mod crossbow;
 mod trident;
 mod shield;
 mod tools;
+mod jukebox;
 mod golems;
 mod glide;
 mod slide;

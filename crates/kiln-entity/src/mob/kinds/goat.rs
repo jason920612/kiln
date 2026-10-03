@@ -589,6 +589,7 @@ impl LongJumpToRandomPos {
 
     fn pick_candidate(&mut self, cx: &mut Cx) {
         crate::prof!("jump", "goat pick");
+        let _tables = path::SharedTables::begin();
         while !self.candidates.is_empty() {
             let Some(target) = self.candidate(cx) else { continue };
             // `isAcceptableLandingPosition`.

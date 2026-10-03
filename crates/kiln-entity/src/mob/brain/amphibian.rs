@@ -180,6 +180,8 @@ impl LongJumpToRandomPos {
 
     /// `pickCandidate`.
     fn pick_candidate(&mut self, cx: &mut Cx) {
+        // Every candidate is searched for from the same spot over the same blocks.
+        let _tables = mob::path::SharedTables::begin();
         while !self.candidates.is_empty() {
             let Some((pos, _)) = self.jump_candidate(cx) else { continue };
             if !self.acceptable_landing(cx, pos) {

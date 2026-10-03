@@ -141,6 +141,8 @@ pub struct Entity {
     pub extra: Vec<(String, kiln_proto::nbt::Tag)>,
     /// `Leashable.getLeashData` (mobs and boats; see [`crate::leash`]).
     pub leash: Option<Box<crate::leash::LeashData>>,
+    /// Block scans reused while nothing changed (see [`crate::memo`]).
+    pub(crate) memo: Option<Box<crate::memo::BlockMemo>>,
 }
 
 impl Entity {
@@ -210,6 +212,7 @@ impl Entity {
             stands_on_lava: false,
             extra: Vec::new(),
             leash: None,
+            memo: None,
         };
         e.set_pos(Vec3::ZERO);
         e.bb = e.make_bounding_box(e.position);
@@ -587,12 +590,12 @@ impl Entity {
             let bb = self.bb;
             let below = Aabb::new(bb.min_x, bb.min_y - 1.0e-6, bb.min_z, bb.max_x, bb.min_y, bb.max_z);
             let ctx = self.collision_context();
-            let mut found = collision::find_supporting_block(level, &ctx, self.position, &below);
+            let mut found = self.find_supporting_memo(level, &ctx, &below);
             if found.is_some() || self.on_ground_no_blocks {
                 self.main_supporting_block_pos = found;
             } else if let Some(m) = movement {
                 let back = below.offset(-m.x, 0.0, -m.z);
-                found = collision::find_supporting_block(level, &ctx, self.position, &back);
+                found = self.find_supporting_memo(level, &ctx, &back);
                 self.main_supporting_block_pos = found;
             }
             self.on_ground_no_blocks = found.is_none();
@@ -600,6 +603,31 @@ impl Entity {
             self.on_ground_no_blocks = false;
             self.main_supporting_block_pos = None;
         }
+    }
+
+    /// `findSupportingBlock` of `bx`, reusing the last answer when the box, position, context and
+    /// blocks are the same.
+    fn find_supporting_memo(&mut self, level: &dyn EntityLevel, ctx: &CollisionContext, bx: &Aabb) -> Option<BlockPos> {
+        let Some(epoch) = crate::memo::area_epoch(level, bx) else {
+            return collision::find_supporting_block(level, ctx, self.position, bx);
+        };
+        let key = crate::memo::SupportKey {
+            epoch,
+            bx: crate::memo::box_bits(bx),
+            position: crate::memo::vec_bits(self.position),
+            ctx: crate::memo::ctx_bits(ctx),
+        };
+        if let Some((k, v)) = self.memo.as_deref().and_then(|m| m.support.as_ref())
+            && *k == key
+        {
+            crate::prof_count!("memo support", true);
+            crate::memo::verify("support", v, || collision::find_supporting_block(level, ctx, self.position, bx));
+            return *v;
+        }
+        crate::prof_count!("memo support", false);
+        let v = collision::find_supporting_block(level, ctx, self.position, bx);
+        self.memo.get_or_insert_with(Default::default).support = Some((key, v));
+        v
     }
 
     /// `getOnPos(offset)`.
@@ -667,7 +695,7 @@ impl Entity {
         movement = self.maybe_back_off_from_edge(level, movement, mover);
         let collided = {
             crate::prof!("mv", "collide");
-            self.collide(level, movement)
+            self.collide_memo(level, movement)
         };
         let d = collided.length_sqr();
         if d > 1.0e-7 || movement.length_sqr() - d < 1.0e-7 {
@@ -683,7 +711,7 @@ impl Entity {
             self.add_movement_this_tick(Movement { from, to, axis_dependent_original: Some(movement) });
             self.set_pos(to);
         }
-        crate::prof!("mv", "after collide");
+        crate::prof!("col", "after collide");
         let x_collision = !mth_equal(movement.x, collided.x);
         let z_collision = !mth_equal(movement.z, collided.z);
         self.horizontal_collision = x_collision || z_collision;
@@ -692,17 +720,21 @@ impl Entity {
             self.vertical_collision = movement.y != collided.y;
             self.vertical_collision_below = self.vertical_collision && movement.y < 0.0;
             let (below, horizontal) = (self.vertical_collision_below, self.horizontal_collision);
+            crate::prof!("col", "supporting block");
             self.set_on_ground_with_movement(level, below, horizontal, collided);
         }
+        crate::prof!("col", "move on_pos");
         self.minor_horizontal_collision = false;
         let on_pos = self.on_pos_legacy(level);
         let on_state = level.block(on_pos);
         if self.is_local_instance_authoritative() {
+            crate::prof!("col", "fall damage");
             self.check_fall_damage(level, collided.y, self.on_ground, on_state, on_pos);
         }
         if self.is_removed() {
             return;
         }
+        crate::prof!("col", "restitute");
         if self.can_simulate_movement() && ((vertical_move && self.vertical_collision) || self.horizontal_collision) {
             self.restitute_movement_after_collisions(level, on_state, x_collision, z_collision, collided);
         }
@@ -784,17 +816,57 @@ impl Entity {
 
     /// `Entity.collide`: block and entity collision, then step-up.
     pub fn collide(&self, level: &dyn EntityLevel, movement: Vec3) -> Vec3 {
+        let entity_shapes = self.entity_shapes_for(level, movement);
+        self.collide_with(level, movement, &entity_shapes)
+    }
+
+    fn entity_shapes_for(&self, level: &dyn EntityLevel, movement: Vec3) -> Vec<Collider> {
+        crate::prof!("mv", "entity_colliders");
+        collision::entity_colliders(level, self.id, &self.bb.expand_towards_vec(movement).expand_towards(0.0, self.max_up_step as f64, 0.0))
+    }
+
+    /// [`Entity::collide`] that reuses the last answer when the box, movement, collision context
+    /// and the blocks around are what they were and no entity's box is in the way (the common
+    /// case of a mob standing still).
+    fn collide_memo(&mut self, level: &dyn EntityLevel, movement: Vec3) -> Vec3 {
+        let entity_shapes = self.entity_shapes_for(level, movement);
+        if !entity_shapes.is_empty() || movement.length_sqr() == 0.0 {
+            crate::prof_count!("collide not memoable", false);
+            return self.collide_with(level, movement, &entity_shapes);
+        }
+        let area = self.bb.expand_towards_vec(movement).expand_towards(0.0, self.max_up_step as f64, 0.0);
+        let Some(epoch) = crate::memo::area_epoch(level, &area) else {
+            return self.collide_with(level, movement, &entity_shapes);
+        };
+        let key = crate::memo::CollideKey {
+            epoch,
+            bb: crate::memo::box_bits(&self.bb),
+            movement: crate::memo::vec_bits(movement),
+            ctx: crate::memo::ctx_bits(&self.collision_context()),
+            max_up_step: self.max_up_step.to_bits(),
+            on_ground: self.on_ground,
+        };
+        if let Some((k, v)) = self.memo.as_deref().and_then(|m| m.collide.as_ref())
+            && *k == key
+        {
+            crate::prof_count!("memo collide", true);
+            crate::memo::verify("collide", v, || self.collide_with(level, movement, &entity_shapes));
+            return *v;
+        }
+        crate::prof_count!("memo collide", false);
+        let v = self.collide_with(level, movement, &entity_shapes);
+        self.memo.get_or_insert_with(Default::default).collide = Some((key, v));
+        v
+    }
+
+    fn collide_with(&self, level: &dyn EntityLevel, movement: Vec3, entity_shapes: &[Collider]) -> Vec3 {
         let bb = self.bb;
         let ctx = self.collision_context();
-        let entity_shapes = {
-            crate::prof!("mv", "entity_colliders");
-            collision::entity_colliders(level, self.id, &bb.expand_towards_vec(movement).expand_towards(0.0, self.max_up_step as f64, 0.0))
-        };
         let collided = if movement.length_sqr() == 0.0 {
             movement
         } else {
             crate::prof!("mv", "collide_bounding_box");
-            collision::collide_bounding_box(level, &ctx, movement, &bb, &entity_shapes)
+            collision::collide_bounding_box(level, &ctx, movement, &bb, entity_shapes)
         };
         let x_changed = movement.x != collided.x;
         let y_changed = movement.y != collided.y;
@@ -806,7 +878,7 @@ impl Entity {
             if !on_ground_after {
                 step_box = step_box.expand_towards(0.0, -9.999999747378752e-6, 0.0);
             }
-            let colliders = collision::collect_colliders(level, &ctx, &entity_shapes, &step_box);
+            let colliders = collision::collect_colliders(level, &ctx, entity_shapes, &step_box);
             let fy = collided.y as f32;
             for h in candidate_step_up_heights(&base, &colliders, self.max_up_step, fy) {
                 let stepped = collision::collide_with_shapes(Vec3::new(movement.x, h as f64, movement.z), &base, &colliders);

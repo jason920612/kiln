@@ -22,6 +22,7 @@ pub mod item;
 pub mod leash;
 pub mod level;
 pub mod math;
+mod memo;
 pub mod memory;
 mod memory_poi;
 pub mod mob;

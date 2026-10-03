@@ -63,6 +63,8 @@ Settings come from the environment until there is a config file:
 | `KILN_REGIONS` | `unified` for one region per dimension (vanilla profile) |
 | `KILN_ONLINE_MODE` | authenticate with Mojang (`true`/`false`) |
 | `KILN_COMPACTION` | `inline` compacts native cell files on the saving thread (for comparisons); default is a background thread |
+| `KILN_MEMO` | `0` turns off the reuse of block scans by entities that stand still (collisions, supporting block, in-wall, inside blocks; results are identical, for comparisons) |
+| `KILN_MEMO_CHECK` | `1` checks every such reuse against a fresh scan and panics on a difference (tests, parity and sim_load runs) |
 | `KILN_PROFILE_LOOKUP` | `fetchprofile` looks names and ids up through the session service (default: on in online mode); a lookup sends only the name or id asked for |
 | `KILN_PROXY` | `none`, `velocity` or `bungeecord` |
 | `KILN_VELOCITY_SECRET`, `KILN_VELOCITY_SECRET_FILE` | Velocity modern forwarding secret |
@@ -101,6 +103,13 @@ cargo run --release -p kiln-sim --features prof --example sim_load -- --players 
                                      # a bell per group); with the prof feature the time spent in
                                      # named scopes (kiln_entity::prof!) is sampled and printed per
                                      # tick; KILN_SLOW_PRINT=<ms> lists the ticks over that cost
+                                     # (the prof feature also prints tallies, e.g. how often the memo of a
+                                     # block scan hit; the state hash printed at the end is the check that
+                                     # an optimisation changed no result)
+python tools/wp35_view.py [--scene chestboat|donkey|parrots|knots|trader|riders|horses|breeze]
+                                     # a real 26.3 client walks through recent features (menus, riders,
+                                     # shoulder and dancing parrots, knots, breeze) and screenshots the
+                                     # game window; `kiln interact <player> <pos> [sneak]` clicks an entity
 python tools/vanilla_baseline.py     # the same bot workload against the vanilla server
 KILN_PARITY=1 cargo test -p kiln-worldgen --release --test parity
                                      # worldgen bit parity (vectors from tools/worldgen_vectors.py)

@@ -611,6 +611,9 @@ type FastMap<K, V> = HashMap<K, V, std::hash::BuildHasherDefault<kiln_entity::me
 struct Grid {
     cells: FastMap<(i32, i32, i32), Vec<usize>>,
     at: Vec<(i32, i32, i32)>,
+    /// The ids of the list in its order (ascending): looked up by binary search, which over the
+    /// entities themselves (hundreds of bytes each) misses the cache at every step.
+    ids: Vec<i32>,
 }
 
 fn section_of(p: [f64; 3]) -> (i32, i32, i32) {
@@ -619,11 +622,12 @@ fn section_of(p: [f64; 3]) -> (i32, i32, i32) {
 
 impl Grid {
     fn build(list: &[Entity]) -> Grid {
-        let mut g = Grid { cells: Default::default(), at: Vec::with_capacity(list.len()) };
+        let mut g = Grid { cells: Default::default(), at: Vec::with_capacity(list.len()), ids: Vec::with_capacity(list.len()) };
         for (i, e) in list.iter().enumerate() {
             let s = section_of(e.pos);
             g.cells.entry(s).or_default().push(i);
             g.at.push(s);
+            g.ids.push(e.id);
         }
         g
     }
@@ -663,7 +667,7 @@ impl SimLevel<'_, '_, '_> {
     }
 
     fn index(&self, id: i32) -> Option<usize> {
-        self.list.binary_search_by_key(&id, |e| e.id).ok()
+        self.grid.ids.binary_search(&id).ok()
     }
 
     fn index_players(&mut self) {
@@ -784,17 +788,45 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
                 let Some(chunk) = self.level.cells.chunk(ChunkPos::new(cx, cz)) else { return false };
                 let (x0, x1) = (min.x.max(cx * 16), max.x.min(cx * 16 + 15));
                 let (z0, z1) = (min.z.max(cz * 16), max.z.min(cz * 16 + 15));
-                for y in min.y..=max.y {
-                    for z in z0..=z1 {
-                        let row = ((y - min.y) as usize * dz + (z - min.z) as usize) * dx;
-                        for x in x0..=x1 {
-                            out[row + (x - min.x) as usize] = chunk.get((x & 15) as usize, y, (z & 15) as usize);
-                        }
-                    }
+                let origin = (z0 - min.z) as usize * dx + (x0 - min.x) as usize;
+                chunk.read_box(
+                    ((x0 & 15) as usize, (x1 & 15) as usize),
+                    (min.y, max.y),
+                    ((z0 & 15) as usize, (z1 & 15) as usize),
+                    out,
+                    origin,
+                    dx,
+                    dx * dz,
+                );
+            }
+        }
+        true
+    }
+
+    fn no_fluid_in(&self, min: BlockPos, max: BlockPos) -> bool {
+        use kiln_world::Blocks;
+        for cz in (min.z >> 4)..=(max.z >> 4) {
+            for cx in (min.x >> 4)..=(max.x >> 4) {
+                match self.level.cells.chunk(ChunkPos::new(cx, cz)) {
+                    Some(chunk) if !chunk.may_have_fluid(min.y, max.y) => {}
+                    _ => return false,
                 }
             }
         }
         true
+    }
+
+    fn blocks_epoch(&self, min: BlockPos, max: BlockPos) -> Option<kiln_entity::level::BlocksEpoch> {
+        use kiln_world::Blocks;
+        let (x0, x1, z0, z1) = (min.x >> 4, max.x >> 4, min.z >> 4, max.z >> 4);
+        if x1 - x0 > 1 || z1 - z0 > 1 {
+            return None;
+        }
+        let mut key = [0u64; 4];
+        for (i, (cz, cx)) in (z0..=z1).flat_map(|cz| (x0..=x1).map(move |cx| (cz, cx))).enumerate() {
+            key[i] = self.level.cells.chunk(ChunkPos::new(cx, cz))?.block_epoch();
+        }
+        Some(kiln_entity::level::BlocksEpoch(key))
     }
 
     fn any_block_in(&self, min: BlockPos, max: BlockPos, pred: &dyn Fn(u16) -> bool) -> bool {

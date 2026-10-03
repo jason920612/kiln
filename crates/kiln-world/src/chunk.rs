@@ -8,6 +8,12 @@ use kiln_data::blocks_types::{block_of, is_air};
 use kiln_proto::WriteExt;
 use std::collections::BTreeMap;
 
+static EPOCHS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_epoch() -> u64 {
+    EPOCHS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Light of one section.
 #[derive(Clone)]
 pub enum Light {
@@ -59,6 +65,10 @@ pub struct Chunk {
     surface: Box<[u16; 256]>,
     version: u32,
     saved_version: u32,
+    /// A number no other chunk (or earlier state of this one) ever had: drawn when the chunk is
+    /// made and again whenever a block changes, so a result computed from this chunk's blocks
+    /// stays valid exactly while the number is the same ([`Chunk::block_epoch`]).
+    epoch: u64,
     /// Block changes since the chunk was loaded or generated (light changes not counted).
     edits: u32,
     /// Whether stored light is complete: generated here, or loaded with light. A chunk
@@ -131,6 +141,7 @@ impl Chunk {
             surface: Box::new([0; 256]),
             version: 0,
             saved_version: 0,
+            epoch: next_epoch(),
             edits: 0,
             light_trusted: true,
             cached: None,
@@ -267,6 +278,56 @@ impl Chunk {
         (rel >= 0 && rel < self.height()).then(|| ((rel >> 4) as usize, (rel & 15) as usize))
     }
 
+    /// Identifies the chunk's block states: equal numbers read at different times mean no block
+    /// changed in between (and it is the same chunk, not one loaded in its place).
+    pub fn block_epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// Whether any block with a fluid may lie in `y0..=y1` (absolute): false means none does.
+    pub fn may_have_fluid(&self, y0: i32, y1: i32) -> bool {
+        let (lo, hi) = (y0.max(self.min_y), y1.min(self.min_y + self.height() - 1));
+        if lo > hi {
+            return false;
+        }
+        (((lo - self.min_y) >> 4)..=((hi - self.min_y) >> 4)).any(|s| self.sections[s as usize].has_fluids())
+    }
+
+    /// Reads the block states of `x0..=x1` by `y0..=y1` (absolute) by `z0..=z1` (x and z within
+    /// the chunk, 0..16) into `out`: the state at `(x, y, z)` goes to
+    /// `origin + (y - y0) * layer + (z - z0) * row + (x - x0)`. Outside the world it is void air.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_box(
+        &self,
+        (x0, x1): (usize, usize),
+        (y0, y1): (i32, i32),
+        (z0, z1): (usize, usize),
+        out: &mut [u16],
+        origin: usize,
+        row: usize,
+        layer: usize,
+    ) {
+        let len = x1 - x0 + 1;
+        for y in y0..=y1 {
+            let base = origin + (y - y0) as usize * layer;
+            match self.section_of(y) {
+                Some((s, ly)) => {
+                    let blocks = &self.sections[s].blocks;
+                    for z in z0..=z1 {
+                        let at = base + (z - z0) * row;
+                        blocks.read_row(crate::section::block_index(x0, ly, z), &mut out[at..at + len]);
+                    }
+                }
+                None => {
+                    for z in z0..=z1 {
+                        let at = base + (z - z0) * row;
+                        out[at..at + len].fill(kiln_data::blocks::default_state::VOID_AIR);
+                    }
+                }
+            }
+        }
+    }
+
     /// `x`, `z` are within the chunk (0..16); `y` is absolute.
     pub fn get(&self, x: usize, y: i32, z: usize) -> u16 {
         match self.section_of(y) {
@@ -316,6 +377,7 @@ impl Chunk {
         let (s, ly) = self.section_of(y)?;
         let old = self.sections[s].set(x, ly, z, state);
         if old != state {
+            self.epoch = next_epoch();
             self.version += 1;
             self.edits += 1;
             if is_air(old) != is_air(state) {
