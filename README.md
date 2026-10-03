@@ -125,6 +125,14 @@ python tools/mob_vectors.py --filter spear_ --out work/wp34/mob_spear.jsonl
 python tools/combat_vectors.py --filter spear --out work/wp34/combat/vectors.jsonl
                                      # players' spears (stabs and charges, lunge); drop --filter for all
                                      # combat, enchantment, riptide, mount and spear parity
+python tools/mob_vectors.py --filter "kill_villager|ench_" --out work/wp36/mob_wp36.jsonl
+KILN_MOB_VECTORS=work/wp36/mob_wp36.jsonl KILN_DATAPACK=work/generated cargo test -p kiln-entity --test mob_parity
+                                     # zombies that kill villagers (conversion by difficulty, villager
+                                     # data kept) and mobs' enchanted spears (ench_* need the datapack)
+python tools/container_vectors.py --filter jukebox --out work/wp36/containers/vectors.jsonl
+KILN_CONTAINER_VECTORS=work/wp36/containers/vectors.jsonl cargo test -p kiln-sim container_parity
+                                     # jukeboxes (song end, comparator, hoppers, power) tick by tick
+python tools/command_diff.py           # vanilla vs Kiln consoles, including /summon with Passengers
 python tools/entity_persist_check.py   # entity chunks and riding stacks load in vanilla and back
 cargo test -p kiln-sim --test region_stacks
                                      # riding stacks, leads and open cart menus through region merges and

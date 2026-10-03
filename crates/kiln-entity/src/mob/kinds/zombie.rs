@@ -260,6 +260,67 @@ pub fn special_multiplier(effective: f32) -> f32 {
     }
 }
 
+// ---------------------------------------------------------------------- kills
+
+/// `Zombie.killedEntity(level, victim, source)` for a zombie of any type that dealt the killing
+/// blow to mob `e` (`m`, which just died): on normal difficulty half the villagers it kills, on
+/// hard all of them, turn into zombie villagers (`convertVillagerToZombieVillager`). Returns
+/// whether the death goes on to its loot and game event (`false` after a conversion).
+///
+/// The villager's own `die` runs first (vanilla's `Villager.die` frees its beds and job site
+/// before `LivingEntity.die` reaches the killer) and not again.
+pub(crate) fn killed_entity(killer: &mut mob::Killer, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource) -> bool {
+    let difficulty = level.difficulty();
+    if (difficulty != 2 && difficulty != 3) || m.kind != MobKind::Villager {
+        return true;
+    }
+    if difficulty != 3 && killer.random.next_bool() {
+        return true;
+    }
+    if let Some(k) = m.kind.ext() {
+        k.die(e, m, level, source);
+    }
+    // The villager's data, offers (generated now if it never traded: `getOffers`), gossips and xp.
+    let Some(v) = super::villager::state(m) else { return true };
+    let (vtype, profession, vlevel, finalized, xp, gossips) = (v.villager_type, v.profession, v.level, v.finalized, v.xp, v.gossips.clone());
+    let offers = super::villager::offers(e, m, level).to_vec();
+    let (silent, block) = (killer.silent, killer.block);
+    let converted = mob::convert::convert_to(e, m, level, MobKind::ZombieVillager, true, true, |ne, nm, level| {
+        let eff = level.effective_difficulty(ne.block_position());
+        let ctx = SpawnContext {
+            biome: None,
+            moon_brightness: 1.0,
+            special_multiplier: special_multiplier(eff),
+            effective_difficulty: eff,
+            hard: level.difficulty() == 3,
+            halloween: false,
+        };
+        // `setVillagerDataFinalized`, then `finalizeSpawn(CONVERSION, ZombieGroupData(false, true))`
+        // from the level's random.
+        if let Some(z) = super::zombie_villager::state_mut(nm) {
+            z.finalized = finalized;
+        }
+        mob::put(ne, Box::new(std::mem::replace(nm, MobData::new(MobKind::ZombieVillager, &mut kiln_javamath::random::LegacyRandom::new(0)))));
+        let mut group = GroupData { zombie_baby: Some(false), zombie_can_jockey: true, conversion: true, ..GroupData::default() };
+        mob::finalize_spawn(ne, level.random(), &ctx, &mut group, false);
+        *nm = *mob::take(ne);
+        // `setVillagerData`, `setGossips(copy)`, `setTradeOffers(copy)`, `setVillagerXp`.
+        if let Some(z) = super::zombie_villager::state_mut(nm) {
+            z.villager_type = vtype.to_owned();
+            z.profession = profession.to_owned();
+            z.level = vlevel;
+            z.gossips = Some(gossips);
+            z.offers = Some(offers);
+            z.xp = xp;
+        }
+        // The killer's `levelEvent(1026)` (the zombie's infection sound) unless it is silent.
+        if !silent {
+            level.emit(Event::LevelEvent { event: 1026, pos: block, data: 0 });
+        }
+    });
+    converted.is_none()
+}
+
 // ---------------------------------------------------------------------- spawning
 
 /// `Zombie.finalizeSpawn` (draws from `r`, the level's random; `handleAttributes` from the

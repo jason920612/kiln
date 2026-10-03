@@ -210,22 +210,40 @@ pub fn kinetic_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
     let (min, max) = spear::effective_range(&range, false, false);
     let base_damage = m.attrs.base(Attr::AttackDamage);
     let known = e.delta;
-    // The entities near the line of the stab: mobs and players, by id.
+    // The entities near the line of the stab (`PiercingWeapon.canHitEntity`: alive, not invulnerable,
+    // pickable, not riding the wielder's vehicle): mobs, players, boats, minecarts and the like, by
+    // id. An ender dragon is hit through its parts.
     let end = eye + head.scale(max as f64 + 0.0f64.max(known.dot(head)));
     let margin = range.hitbox_margin as f64;
-    let area = Aabb::new(eye.x.min(end.x), eye.y.min(end.y), eye.z.min(end.z), eye.x.max(end.x), eye.y.max(end.y), eye.z.max(end.z)).inflate(margin + 2.0, margin + 2.0, margin + 2.0);
+    // (A dragon's parts reach far from its own box: look wide enough to find the dragon; the stab
+    // itself tests each box exactly.)
+    let wide = margin + 2.0 + 12.0;
+    let area = Aabb::new(eye.x.min(end.x), eye.y.min(end.y), eye.z.min(end.z), eye.x.max(end.x), eye.y.max(end.y), eye.z.max(end.z)).inflate(wide, wide, wide);
     let own_root = root_id(level, e.id, e.vehicle);
-    let mut victims: Vec<(Living, Candidate)> = Vec::new();
-    for id in level.entities_in(&area, EntityFilter::Living, e.id) {
+    let mut victims: Vec<(Victim, Candidate)> = Vec::new();
+    for id in level.entities_in(&area, EntityFilter::Any, e.id) {
         let Some(o) = level.entity(id) else { continue };
-        if o.is_removed() || o.invulnerable || mob::data(o).is_none_or(|d| d.health <= 0.0 || d.dead) {
+        if o.is_removed() || o.invulnerable || root_id(level, id, o.vehicle) == own_root {
             continue;
         }
-        if root_id(level, id, o.vehicle) == own_root {
-            continue;
+        match mob::data(o) {
+            Some(d) if d.health <= 0.0 || d.dead => continue,
+            Some(_) => {
+                let Some(l) = goals::living(level, id) else { continue };
+                if let Some(dragon) = mob::kinds::ender_dragon::state_of(o) {
+                    // (`EnderDragon.isPickable` is false; its parts are what a stab meets.)
+                    for i in 0..dragon.parts.len() {
+                        victims.push((Victim::Living(l.clone()), Candidate { id, bb: dragon.part_box(i) }));
+                    }
+                } else {
+                    victims.push((Victim::Living(l), Candidate { id, bb: o.bounding_box() }));
+                }
+            }
+            None if spear::pickable_non_mob(o) => {
+                victims.push((Victim::Other { id, type_name: o.type_name }, Candidate { id, bb: o.bounding_box() }));
+            }
+            None => {}
         }
-        let Some(l) = goals::living(level, id) else { continue };
-        victims.push((l, Candidate { id, bb: o.bounding_box() }));
     }
     for p in level.players_in(&area) {
         if !p.alive || p.spectator || root_id(level, p.id, p.vehicle) == own_root {
@@ -233,7 +251,7 @@ pub fn kinetic_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
         }
         let l = goals::living_player(&p);
         let bb = l.bb;
-        victims.push((l, Candidate { id: p.id, bb }));
+        victims.push((Victim::Living(l), Candidate { id: p.id, bb }));
     }
     victims.sort_by_key(|(_, c)| c.id);
     let candidates: Vec<Candidate> = victims.iter().map(|(_, c)| *c).collect();
@@ -244,18 +262,19 @@ pub fn kinetic_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
     let now = level.game_time();
     let mut any = false;
     for hit in hits {
-        let Some((t, _)) = victims.iter().find(|(_, c)| c.id == hit.id) else { continue };
-        if m.recent_stabs.iter().any(|&(id, at)| id == t.id && now - at < kinetic.contact_cooldown_ticks as i64) {
+        let Some((victim, _)) = victims.iter().find(|(_, c)| c.id == hit.id) else { continue };
+        let victim_id = victim.id();
+        if m.recent_stabs.iter().any(|&(id, at)| id == victim_id && now - at < kinetic.contact_cooldown_ticks as i64) {
             continue;
         }
-        m.recent_stabs.retain(|&(id, _)| id != t.id);
-        m.recent_stabs.push((t.id, now));
-        // `getMotion(target)`: a mob's root vehicle's known speed, a player's own.
-        let theirs = if t.player {
-            level.known_movement(t.id).scale(spear::MOTION_SCALE)
+        m.recent_stabs.retain(|&(id, _)| id != victim_id);
+        m.recent_stabs.push((victim_id, now));
+        // `getMotion(target)`: a root vehicle's known speed, a player's own.
+        let theirs = if matches!(victim, Victim::Living(t) if t.player) {
+            level.known_movement(victim_id).scale(spear::MOTION_SCALE)
         } else {
-            let o = level.entity(t.id);
-            let root = o.and_then(|o| o.vehicle).map(|_| root_id(level, t.id, o.and_then(|o| o.vehicle)));
+            let o = level.entity(victim_id);
+            let root = o.and_then(|o| o.vehicle).map(|_| root_id(level, victim_id, o.and_then(|o| o.vehicle)));
             match root.and_then(|r| level.entity(r)).or(o) {
                 Some(r) => r.last_known_speed.scale(spear::MOTION_SCALE),
                 None => Vec3::ZERO,
@@ -263,8 +282,17 @@ pub fn kinetic_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel
         };
         let their_speed = look.dot(theirs);
         let Some(h) = spear::kinetic_hit(&kinetic, ticks, my_speed, their_speed, 0.2, base_damage) else { continue };
-        let t = t.clone();
-        any |= stab_attack(e, m, level, &held, &t, &h);
+        let victim = victim.clone();
+        // The dragon part the stab reached takes the blow (`EnderDragonPart.hurtServer`).
+        if let Some(o) = level.entity_mut(victim_id)
+            && mob::kinds::ender_dragon::state_of(o).is_some()
+        {
+            mob::kinds::ender_dragon::aim_at(o, hit.location);
+        }
+        any |= match &victim {
+            Victim::Living(t) => stab_attack(e, m, level, &held, t, &h),
+            Victim::Other { id, type_name } => stab_other(e, m, level, &held, *id, type_name, &h),
+        };
     }
     if any {
         level.emit(Event::EntityEvent { entity: e.id, event: 2 });
@@ -282,7 +310,26 @@ impl DefaultRange for Option<AttackRange> {
     }
 }
 
-/// `LivingEntity.stabAttack(slot, target, amount, damage, knockback, dismount)` of a mob.
+/// Whom a stab reached: a living thing, or another entity that can be hit (a boat, a minecart...).
+#[derive(Clone, Debug)]
+enum Victim {
+    Living(Living),
+    Other { id: i32, type_name: &'static str },
+}
+
+impl Victim {
+    fn id(&self) -> i32 {
+        match self {
+            Victim::Living(t) => t.id,
+            Victim::Other { id, .. } => *id,
+        }
+    }
+}
+
+/// `LivingEntity.stabAttack(slot, target, amount, damage, knockback, dismount)` of a mob at a
+/// living target: the damage through the weapon's enchantments, the hit, the push (0.4 and the
+/// attack knockback with the weapon's enchantments), the dismount, the weapon's post-attack
+/// effects.
 fn stab_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, weapon: &ItemStack, t: &Living, h: &KineticHit) -> bool {
     // `ItemStack.getDamageSource`: the weapon's damage type, else a mob attack.
     let kind = match weapon.get(keys::DAMAGE_TYPE).and_then(|d| kiln_item::registry::DAMAGE_TYPE.name(d.0)) {
@@ -290,14 +337,15 @@ fn stab_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wea
         None => DamageKind::MobAttack,
     };
     let source = DamageSource { kind, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+    let amount = mob::weapon::modify_damage(level, e, m, t, kind, h.amount);
     let old = level.motion(t.id);
     let mut landed = h.knockback;
-    let hurt = h.damage && mob::hurt_living(level, t, source, h.amount);
+    let hurt = h.damage && mob::hurt_living_by(level, e, m, t, source, amount);
     landed |= hurt;
     if h.knockback {
-        extra_knockback(e, level, t, 0.4, old);
-        let strength = m.attrs.value(Attr::AttackKnockback) as f32 / 2.0;
-        extra_knockback(e, level, t, strength, old);
+        mob::weapon::cause_extra_knockback(e, level, t, 0.4, old);
+        let strength = mob::weapon::attack_knockback(level, e, m, t, kind);
+        mob::weapon::cause_extra_knockback(e, level, t, strength, old);
     }
     if h.dismount {
         let passenger = if t.player { level.player(t.id).is_some_and(|p| p.vehicle.is_some()) } else { level.entity(t.id).is_some_and(|o| o.vehicle.is_some()) };
@@ -306,6 +354,9 @@ fn stab_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wea
             level.stop_riding(t.id);
         }
     }
+    if hurt {
+        mob::weapon::post_attack(level, e, m, t, kind);
+    }
     if !landed {
         return false;
     }
@@ -313,14 +364,32 @@ fn stab_attack(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, wea
     true
 }
 
-/// `LivingEntity.causeExtraKnockback`: the target is thrown from the wielder, who slows down.
-fn extra_knockback(e: &mut Entity, level: &mut dyn EntityLevel, t: &Living, strength: f32, old: Vec3) {
-    if strength <= 0.0 {
-        return;
+/// `LivingEntity.stabAttack` at an entity that is not living (a boat, a minecart, an end crystal):
+/// it takes the hit (a fireball or wind charge only has `markHurt` happen), a rider is thrown
+/// off, and there is no push.
+fn stab_other(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, weapon: &ItemStack, id: i32, type_name: &'static str, h: &KineticHit) -> bool {
+    let kind = match weapon.get(keys::DAMAGE_TYPE).and_then(|d| kiln_item::registry::DAMAGE_TYPE.name(d.0)) {
+        Some(name) => DamageKind::of_type(name),
+        None => DamageKind::MobAttack,
+    };
+    let source = DamageSource { kind, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+    // (`modifyDamage` has the weapon's enchantments weigh the target as an entity.)
+    let target = Living { id, type_name, pos: level.entity(id).map_or(Vec3::ZERO, |o| o.position()), eye_y: 0.0, alive: true, player: false, creative: false, spectator: false, invulnerable: false, sneaking: false, invisible: false, armor_cover: 0.0, bb: level.entity(id).map_or(Aabb::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), |o| o.bounding_box()) };
+    let amount = mob::weapon::modify_damage(level, e, m, &target, kind, h.amount);
+    let mut landed = false;
+    // `Projectile.hurtServer` (fireballs, wind charges) does nothing but `markHurt`.
+    if h.damage && !spear::redirectable_projectile(type_name) {
+        landed |= crate::ext_entity::fireball::hurt(level, id, source, amount);
     }
-    let rad = (e.y_rot * 0.017453292) as f64;
-    level.knockback_target(t.id, strength as f64, mob::mth::sin(rad) as f64, -(mob::mth::cos(rad)) as f64, old);
-    e.delta = Vec3::new(e.delta.x * 0.6, e.delta.y, e.delta.z * 0.6);
+    if h.dismount && level.entity(id).is_some_and(|o| o.vehicle.is_some()) && !mob::entity_type_tag(type_name, "minecraft:cannot_be_dismounted_by_item_usage") {
+        landed = true;
+        level.stop_riding(id);
+    }
+    if !landed {
+        return false;
+    }
+    m.last_hurt_mob = Some(id);
+    true
 }
 
 /// The kinetic weapon `m` charges with (its main hand), if any.

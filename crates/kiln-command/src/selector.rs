@@ -197,6 +197,11 @@ pub trait SelectorWorld: Source {
     fn scoreboard(&self) -> Option<&crate::scoreboard::Scoreboard> {
         None
     }
+    /// `nbt=`: whether the entity's saved data contains the compound `snbt`
+    /// (`NbtPredicate.matches`).
+    fn entity_nbt_matches(&self, entity: &Self::Entity, snbt: &str) -> bool {
+        entity.matches_nbt(snbt)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -828,7 +833,8 @@ impl Filter {
             Filter::Tag { tag, invert } => e.tags().contains(tag) != *invert,
             Filter::Team { team, invert } => (e.team().unwrap_or("") == team) != *invert,
             Filter::GameMode { mode, invert } => e.game_mode().is_some_and(|m| (m == *mode) != *invert),
-            Filter::Nbt { snbt, invert } => e.matches_nbt(snbt) != *invert,
+            // (`nbt=` reads the entity's saved data, which the world has: [`EntitySelector::nbt_ok`].)
+            Filter::Nbt { .. } => true,
             Filter::Scores(scores) => scores.iter().all(|(obj, range)| {
                 let score = match scoreboard {
                     Some(sb) => sb.objective(obj).and(sb.score(&e.scoreboard_name(), obj)),
@@ -886,6 +892,14 @@ impl EntitySelector {
             && self.distance.is_none_or(|r| r.matches_sqr(dist_sqr(e.position(), pos)))
     }
 
+    /// The `nbt=` filters (`NbtPredicate.matches(entity)`), which the world answers.
+    fn nbt_ok<W: SelectorWorld>(&self, world: &W, e: &W::Entity) -> bool {
+        self.filters.iter().all(|f| match f {
+            Filter::Nbt { snbt, invert } => world.entity_nbt_matches(e, snbt) != *invert,
+            _ => true,
+        })
+    }
+
     fn result_limit(&self) -> usize {
         if self.order == Order::Arbitrary { self.max_results } else { usize::MAX }
     }
@@ -928,7 +942,7 @@ impl EntitySelector {
         let aabb = self.relative_aabb().map(|b| b.offset(pos));
         let sb = world.scoreboard();
         if self.current_entity {
-            return Ok(world.source_entity().filter(|e| self.matches(e, pos, aabb.as_ref(), sb)).into_iter().collect());
+            return Ok(world.source_entity().filter(|e| self.matches(e, pos, aabb.as_ref(), sb) && self.nbt_ok(&*world, e)).into_iter().collect());
         }
         let dimension = self.world_limited.then(|| world.dimension().to_owned());
         let limit = self.result_limit();
@@ -936,6 +950,7 @@ impl EntitySelector {
         for e in world.entities(dimension.as_deref(), aabb.as_ref()) {
             if self.entity_type.as_ref().is_some_and(|t| t != e.entity_type())
                 || !self.matches(&e, pos, aabb.as_ref(), world.scoreboard())
+                || !self.nbt_ok(&*world, &e)
             {
                 continue;
             }
@@ -962,7 +977,7 @@ impl EntitySelector {
             let sb = world.scoreboard();
             return Ok(world
                 .source_entity()
-                .filter(|e| e.is_player() && self.matches(e, pos, aabb.as_ref(), sb))
+                .filter(|e| e.is_player() && self.matches(e, pos, aabb.as_ref(), sb) && self.nbt_ok(&*world, e))
                 .into_iter()
                 .collect());
         }
@@ -972,6 +987,7 @@ impl EntitySelector {
         for p in world.players() {
             if (self.world_limited && p.dimension() != dimension)
                 || !self.matches(&p, pos, aabb.as_ref(), world.scoreboard())
+                || !self.nbt_ok(&*world, &p)
             {
                 continue;
             }

@@ -24,7 +24,7 @@ use crate::mob::brain::util::{self, uniform};
 use crate::mob::brain::{self, Activity, ActivityData, Behavior, Brain, Control, Cx, Gate, Mem, Memories, Sensor, Status, Timed, Tracker, Val, shot};
 use crate::mob::ext::{self, Info, Kind, MobExt};
 use crate::mob::goals::{self, Living};
-use crate::mob::{self, DamageSource, GroupData, MobData, SpawnContext, control, mth, path};
+use crate::mob::{self, DamageSource, GroupData, MobData, SpawnContext, control, path};
 use crate::persist::{Input, Output};
 use crate::sensor_boilerplate;
 use crate::vibration::{self, Ear, VibrationData};
@@ -996,21 +996,6 @@ impl Kind for Warden {
             s.melee_hit = true;
         }
         let hit = mob::do_hurt_target_base(e, m, level, t);
-        if hit {
-            // `causeExtraKnockback` with the attack knockback of 1.5: the target is pushed, the
-            // warden slows down.
-            let strength = m.attrs.value(AttackKnockback) as f32 / 2.0;
-            let yaw = (e.y_rot * 0.017453292) as f64;
-            let (s, c) = (mth::sin(yaw), mth::cos(yaw));
-            if strength > 0.0 {
-                if let Some(o) = level.entity_mut(t.id) {
-                    let v = Vec3::new(s as f64, 0.0, -(c as f64)).normalize().scale(strength as f64);
-                    o.delta = Vec3::new(o.delta.x / 2.0 - v.x, if o.on_ground { 0.4f64.min(o.delta.y / 2.0 + strength as f64) } else { o.delta.y }, o.delta.z / 2.0 - v.z);
-                    o.needs_sync = true;
-                }
-                e.delta = e.delta.multiply(0.6, 1.0, 0.6);
-            }
-        }
         Some(hit)
     }
 

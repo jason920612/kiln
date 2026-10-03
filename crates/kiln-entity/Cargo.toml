@@ -15,11 +15,10 @@ kiln-data.workspace = true
 kiln-inventory.workspace = true
 kiln-item.workspace = true
 kiln-javamath.workspace = true
+kiln-loot.workspace = true
 kiln-proto.workspace = true
 smallvec.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 serde_json = { workspace = true, features = ["float_roundtrip"] }
-# The datapack's enchantment providers, for the finalizeSpawn enchanting parity test.
-kiln-loot.workspace = true

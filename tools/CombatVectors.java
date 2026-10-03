@@ -876,7 +876,25 @@ public class CombatVectors {
         Object motion = null;
         String death = null;
         List<Object> deathArgs = new ArrayList<>();
+        // wp36: what the player heard of the hurt and death sounds (`Player.playSound` excludes the hurt
+        // player himself), and the tilt his own client got (`ServerPlayer.indicateDamage`).
+        List<Object> hurtSounds = new ArrayList<>();
+        Object hurtAnimation = null;
         for (Object pkt : drain(p)) {
+            if (pkt instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket sp) {
+                String sound = sp.getSound().value().location().toString();
+                if (sound.startsWith("minecraft:entity.player.hurt") || sound.equals("minecraft:entity.player.death") || sound.equals("minecraft:enchant.thorns.hit")) {
+                    Map<String, Object> hs = new LinkedHashMap<>();
+                    hs.put("sound", sound);
+                    hs.put("source", sp.getSource().getName());
+                    hs.put("volume", sp.getVolume());
+                    hs.put("pitch", sp.getPitch());
+                    hurtSounds.add(hs);
+                }
+            }
+            if (pkt instanceof net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket ha && ha.id() == p.getId()) {
+                hurtAnimation = ha.yaw();
+            }
             if (pkt instanceof ClientboundSetEntityMotionPacket mp && mp.id() == p.getId()) {
                 motion = vec(mp.movement());
             }
@@ -888,6 +906,8 @@ public class CombatVectors {
         m.put("motion", motion);
         m.put("death", death);
         m.put("death_args", deathArgs);
+        m.put("hurt_sounds", hurtSounds);
+        m.put("hurt_animation", hurtAnimation);
         m.put("velocity", vec(p.getDeltaMovement()));
         return m;
     }

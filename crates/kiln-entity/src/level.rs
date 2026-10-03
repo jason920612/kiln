@@ -835,6 +835,14 @@ pub trait EntityLevel {
         let _ = (items, table, seed, origin, player);
     }
 
+    /// `BlockState.getDrops` of `state` for a loot context at `origin` with `tool` and `entity` as
+    /// `this_entity` (an enderman's carried block): the stacks its loot table rolls. Levels without
+    /// loot data give the block's own item.
+    fn block_loot(&mut self, state: u16, origin: Vec3, tool: &kiln_item::ItemStack, entity: i32) -> Vec<kiln_item::ItemStack> {
+        let _ = (origin, tool, entity);
+        kiln_item::ItemStack::of(crate::blocks::block_name(state), 1).into_iter().collect()
+    }
+
     /// A hopper minecart's `HopperBlockEntity.suckInItems` from the container block at `pos`
     /// (the block above it): one item goes from the first slot the container gives out
     /// downwards into `dest` (the minecart's slots). `None`: there is no container block.

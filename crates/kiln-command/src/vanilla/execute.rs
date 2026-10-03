@@ -132,13 +132,16 @@ fn entity_anchor<E: SelectorTarget>(e: &E, anchor: Anchor) -> [f64; 3] {
     }
 }
 
-/// `createRelationOperations`: entities related to the executing one. Kiln's entities are
-/// players, which have no owner, leash holder, target, attacker record, vehicle or
-/// passengers, so every relation finds nothing.
+/// `createRelationOperations`: entities related to the executing one (what the host knows of
+/// them: [`Host::related_entities`]); without an executing entity there are none.
 fn relations<S: Host + 'static>(exec: NodeId, b: Builder<S>) -> Builder<S> {
-    ["owner", "leasher", "target", "attacker", "vehicle", "controller", "origin", "passengers"]
-        .into_iter()
-        .fold(b, |b, relation| b.then(literal(relation).fork(exec, |_, _: &mut S| Ok(Vec::new()))))
+    ["owner", "leasher", "target", "attacker", "vehicle", "controller", "origin", "passengers"].into_iter().fold(b, |b, relation| {
+        b.then(literal(relation).fork(exec, move |_, s: &mut S| {
+            let Some(entity) = s.source_entity() else { return Ok(Vec::new()) };
+            let related = s.related_entities(relation, &entity);
+            Ok(related.into_iter().map(|e| s.stack().clone().with_entity(e)).collect())
+        }))
+    })
 }
 
 /// `ExecuteCommand.expect`: the source if the test came out as wanted.

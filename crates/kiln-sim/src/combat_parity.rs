@@ -178,6 +178,38 @@ pub(crate) fn motion_packet(stats: &SinkStats, entity_id: i32) -> Option<bytes::
     })
 }
 
+/// The hurt, death and thorns sounds a player's client got: (sound, volume, pitch), in order.
+fn hurt_sounds(stats: &SinkStats) -> Vec<(String, f32, f32)> {
+    let names = kiln_data::builtin_entries("minecraft:sound_event").unwrap();
+    packets_with_id(stats, kiln_data::packets::play::clientbound::SOUND)
+        .iter()
+        .filter_map(|p| {
+            let mut r = kiln_proto::codec::Reader::new(p);
+            r.varint().ok()?;
+            let id = r.varint().ok()? - 1;
+            let name = names.get(usize::try_from(id).ok()?)?;
+            if !(name.starts_with("minecraft:entity.player.hurt") || *name == "minecraft:entity.player.death" || *name == "minecraft:enchant.thorns.hit") {
+                return None;
+            }
+            r.varint().ok()?;
+            for _ in 0..3 {
+                r.i32().ok()?;
+            }
+            let (volume, pitch) = (r.f32().ok()?, r.f32().ok()?);
+            Some((name.to_string(), volume, pitch))
+        })
+        .collect()
+}
+
+/// The tilt a player's own client got (`ClientboundHurtAnimationPacket` for itself), if any.
+fn hurt_animation(stats: &SinkStats, entity_id: i32) -> Option<f32> {
+    packets_with_id(stats, kiln_data::packets::play::clientbound::HURT_ANIMATION).iter().find_map(|p| {
+        let mut r = kiln_proto::codec::Reader::new(p);
+        r.varint().ok()?;
+        (r.varint().ok()? == entity_id).then(|| r.f32().ok()).flatten()
+    })
+}
+
 fn check_side(sim: &Sim, conn: u64, stats: &SinkStats, want: &Value, errors: &mut Vec<String>, who: &str) {
     let p = &sim.players[&conn];
     let mut eq = |what: &str, got: String, expected: String| {
@@ -210,6 +242,20 @@ fn check_side(sim: &Sim, conn: u64, stats: &SinkStats, want: &Value, errors: &mu
     let expected_motion = want[motion_key].as_array().map(|_| kiln_proto::packets::entity::set_entity_motion(p.entity_id, vec_of(&want[motion_key])));
     let got_motion = motion_packet(stats, p.entity_id);
     eq("motion", format!("{got_motion:?}"), format!("{expected_motion:?}"));
+    // The hurt and death sounds others hear (not the hurt player: his client plays them itself),
+    // and the tilt of his own camera.
+    if let Some(sounds) = want.get("hurt_sounds").and_then(Value::as_array) {
+        let mut want_sounds: Vec<(String, f32, f32)> =
+            sounds.iter().map(|v| (v["sound"].as_str().unwrap().to_owned(), f32_of(&v["volume"]), f32_of(&v["pitch"]))).collect();
+        // (A sound the player's own damage makes for itself goes out at once, those it hears of
+        // others a phase later: the same sounds, not the order of a single stream.)
+        let mut got_sounds = hurt_sounds(stats);
+        want_sounds.sort_by(|a, b| a.0.cmp(&b.0));
+        got_sounds.sort_by(|a, b| a.0.cmp(&b.0));
+        eq("hurt_sounds", format!("{got_sounds:?}"), format!("{want_sounds:?}"));
+        let want_anim = want["hurt_animation"].as_f64().map(|y| y as f32);
+        eq("hurt_animation", format!("{:?}", hurt_animation(stats, p.entity_id)), format!("{want_anim:?}"));
+    }
     let death = death_message(stats);
     let want_death = want["death"].as_str().map(|k| {
         let args: Vec<String> = want["death_args"].as_array().unwrap().iter().map(|a| a.as_str().unwrap().to_owned()).collect();

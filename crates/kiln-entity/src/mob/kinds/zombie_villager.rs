@@ -59,6 +59,11 @@ fn st(m: &MobData) -> &ZombieVillagerState {
     crate::mob::ext::state::<ZombieVillagerState>(m).expect("zombie villager state")
 }
 
+/// The zombie villager state of `m`, if it is one.
+pub fn state_mut(m: &mut MobData) -> Option<&mut ZombieVillagerState> {
+    crate::mob::ext::state_mut::<ZombieVillagerState>(m)
+}
+
 fn st_mut(m: &mut MobData) -> &mut ZombieVillagerState {
     crate::mob::ext::state_mut::<ZombieVillagerState>(m).expect("zombie villager state")
 }
@@ -160,7 +165,7 @@ impl Kind for ZombieVillager {
         if !st(m).finalized {
             st_mut(m).villager_type = villager_type_for_biome(ctx.biome).into();
         }
-        zombie::finalize(e, m, r, ctx, group, false);
+        zombie::finalize(e, m, r, ctx, group, group.conversion);
     }
 
     fn load(&self, e: &mut Entity, m: &mut MobData, r: &mut Input) {

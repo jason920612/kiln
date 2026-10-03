@@ -1417,7 +1417,7 @@ impl Sim {
         let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
         let p = kiln_blocks::BlockPos::new(x, y, z);
         let part = &region.part().1;
-        part.sculk.map.get(&p).map(|b| b.save()).or_else(|| part.hearts.map.get(&p).map(|h| h.save()))
+        part.sculk.map.get(&p).map(|b| b.save()).or_else(|| part.hearts.map.get(&p).map(|h| h.save())).or_else(|| part.containers.map.get(&p).map(|c| c.save()))
     }
 
     /// Block state at a position in the level `dimension` (e.g. `minecraft:the_nether`), if

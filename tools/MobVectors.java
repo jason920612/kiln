@@ -1700,8 +1700,83 @@ public class MobVectors {
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
         scenariosSpears(out);
+        // -- wp36: kills (zombies and villagers)
+        scenariosWp36(out);
 
         return out;
+    }
+
+    // ---------------------------------------------------------- wp36
+    /// A zombie of any kind that kills a villager turns it into a zombie villager half the time on normal
+    /// (`Zombie.killedEntity`: its own random decides); the villager here has no AI and one heart.
+    static void scenariosWp36(List<Scenario> out) {
+        String[] killers = {"zombie", "husk", "drowned"};
+        for (String killer : killers) {
+            for (int seed = 1; seed <= 6; seed++) {
+                Scenario s = new Scenario("kill_villager_" + killer + "_" + seed);
+                floor(s, 30, "minecraft:stone");
+                MobSpec z = new MobSpec("minecraft:" + killer, 0.5, BY, 0.5, 90f, 36000L + 10 * seed + killer.length());
+                MobSpec v = new MobSpec("minecraft:villager", 3.5, BY, 0.5, 90f, 36100L + seed);
+                v.nbt = "{NoAI:1b,PersistenceRequired:1b,Health:1f,Xp:35,VillagerData:{profession:\"minecraft:none\",type:\"minecraft:snow\",level:2}}";
+                s.mobs.add(z);
+                s.mobs.add(v);
+                s.player = new double[] {-9.5, BY, 0.5};
+                s.playerCreative = true;
+                s.dayTime = 18000;
+                s.levelSeed = 600 + seed;
+                s.ticks = 80;
+                out.add(s);
+            }
+        }
+        // Zombies with enchanted weapons (a spear charged and stabbing, a sword in melee) hit a villager
+        // that takes it (a lot of health) and a survivor player: the weapon's enchantments change the damage
+        // (`modifyDamage`), the push (`getKnockback`) and set the target alight (`doPostAttackEffects`).
+        String[][] enchants = {
+            {"sharp", "{\"minecraft:sharpness\":5}"},
+            {"knock", "{\"minecraft:knockback\":2}"},
+            {"fire", "{\"minecraft:fire_aspect\":2}"},
+            {"mixed", "{\"minecraft:sharpness\":2,\"minecraft:knockback\":1,\"minecraft:fire_aspect\":1}"},
+        };
+        for (String[] en : enchants) {
+            for (String weapon : new String[] {"spear", "sword"}) {
+                for (int against = 0; against < 2; against++) {
+                    Scenario s = new Scenario("ench_" + weapon + "_" + (against == 0 ? "villager_" : "player_") + en[0]);
+                    floor(s, 30, "minecraft:stone");
+                    MobSpec z = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 90f, 37000L + en[0].length() * 10L + weapon.length());
+                    z.nbt = "{PersistenceRequired:1b,equipment:{mainhand:{id:\"minecraft:iron_" + weapon + "\",count:1,components:{\"minecraft:enchantments\":" + en[1] + "}}}}";
+                    s.mobs.add(z);
+                    if (against == 0) {
+                        MobSpec v = new MobSpec("minecraft:villager", 8.5, BY, 0.5, 90f, 37100L + en[0].length());
+                        v.nbt = "{NoAI:1b,PersistenceRequired:1b,Health:500f,attributes:[{id:\"minecraft:max_health\",base:500.0d}]}";
+                        s.mobs.add(v);
+                        s.player = new double[] {-9.5, BY, 0.5};
+                        s.playerCreative = true;
+                    } else {
+                        s.player = new double[] {8.5, BY, 0.5};
+                        s.playerHealth = 4000f;
+                    }
+                    s.dayTime = 18000;
+                    s.levelSeed = 620 + en[0].length();
+                    s.ticks = weapon.equals("spear") ? 260 : 140;
+                    out.add(s);
+                }
+            }
+        }
+        // A baby villager becomes a baby zombie villager.
+        for (int seed = 1; seed <= 4; seed++) {
+            Scenario s = new Scenario("kill_villager_baby_" + seed);
+            floor(s, 30, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 90f, 36500L + seed));
+            MobSpec v = new MobSpec("minecraft:villager", 3.5, BY, 0.5, 90f, 36600L + seed);
+            v.nbt = "{NoAI:1b,PersistenceRequired:1b,Health:1f,Age:-24000}";
+            s.mobs.add(v);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 610 + seed;
+            s.ticks = 80;
+            out.add(s);
+        }
     }
 
     // ---------------------------------------------------------- wp32: leads and wandering traders

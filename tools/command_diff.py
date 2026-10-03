@@ -1414,6 +1414,46 @@ ride @e[tag=p2,limit=1] dismount
 ride Nobody dismount
 ride @e[type=minecraft:pig] dismount
 
+# summon with passengers (wp36): whole stacks from the Passengers list (on easy: hostile mobs vanish on peaceful)
+! difficulty easy
+! gamerule mob_drops false
+! kill @e[type=!minecraft:player]
+! summon minecraft:horse 5 101 5 {NoAI:1b,Silent:1b,Tags:["s0"],Passengers:[{id:"minecraft:skeleton",NoAI:1b,Silent:1b,Tags:["s1"],Passengers:[{id:"minecraft:parrot",NoAI:1b,Silent:1b,Tags:["s2"]}]},{id:"minecraft:zombie",NoAI:1b,Silent:1b,Tags:["s3"]}]}
+execute if entity @e[tag=s0]
+execute if entity @e[tag=s1]
+execute if entity @e[tag=s2]
+execute if entity @e[tag=s3]
+execute if entity @e[type=minecraft:skeleton]
+execute if entity @e[type=minecraft:parrot]
+execute if entity @e[type=minecraft:zombie]
+execute if entity @e[type=minecraft:horse]
+data get entity @e[type=minecraft:horse,limit=1] Tags
+execute as @e[tag=s1] on vehicle if entity @s[tag=s0]
+execute as @e[tag=s2] on vehicle if entity @s[tag=s1]
+execute as @e[tag=s3] on vehicle if entity @s[tag=s0]
+execute as @e[tag=s0] on passengers if entity @s[tag=s1]
+execute as @e[tag=s0] on passengers if entity @s[tag=s3]
+execute as @e[tag=s0] on passengers if entity @s[tag=s2]
+execute as @e[tag=s2] on vehicle on vehicle if entity @s[tag=s0]
+data get entity @e[tag=s0,limit=1] Passengers[0].id
+data get entity @e[tag=s0,limit=1] Passengers[1].id
+data get entity @e[tag=s0,limit=1] Passengers[0].Passengers[0].id
+data get entity @e[tag=s1,limit=1] Passengers[0].id
+data get entity @e[tag=s2,limit=1] Passengers
+execute if entity @e[type=minecraft:horse,nbt={Passengers:[{id:"minecraft:zombie"}]}]
+execute if entity @e[type=minecraft:horse,nbt={Passengers:[{id:"minecraft:parrot"}]}]
+execute if entity @e[type=minecraft:skeleton,nbt={Passengers:[{id:"minecraft:parrot"}]}]
+! kill @e[type=!minecraft:player]
+summon minecraft:horse 5 101 5 {NoAI:1b,Silent:1b,Passengers:[{id:"minecraft:nonexistent"}]}
+execute as @e[type=minecraft:horse] on passengers if entity @s
+summon minecraft:minecart 5 101 5 {NoGravity:1b,Passengers:[{id:"minecraft:pig",NoAI:1b,Silent:1b,Tags:["s4"]}]}
+execute as @e[tag=s4] on vehicle if entity @s[type=minecraft:minecart]
+summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b,Passengers:[{id:"minecraft:pig",NoAI:1b,Silent:1b,Tags:["s5"]}]}
+execute as @e[tag=s5] on vehicle if entity @s[type=minecraft:pig]
+! kill @e[type=!minecraft:player]
+! gamerule mob_drops true
+! difficulty peaceful
+
 # clear and enchant
 ! clear @a
 clear Diff0

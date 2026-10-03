@@ -27,6 +27,7 @@ pub mod path;
 pub mod persist;
 pub mod random_pos;
 pub mod species;
+pub mod weapon;
 
 use crate::entity::{Entity, EntityKind, MoverType};
 use crate::level::{DamageKind, EntityFilter, EntityLevel, Event};
@@ -1321,6 +1322,15 @@ pub(crate) fn put(e: &mut Entity, m: Box<MobData>) {
     e.kind = EntityKind::Mob(m);
 }
 
+/// One `ItemStack.onUseTick` of a charging spear for the mob `e`, on its own (tests drive the
+/// weapon without the rest of the mob's tick).
+#[doc(hidden)]
+pub fn kinetic_tick_alone(e: &mut Entity, level: &mut dyn EntityLevel) {
+    let mut m = take(e);
+    kinds::spear_use::kinetic_tick(e, &mut m, level);
+    put(e, m);
+}
+
 // ---------------------------------------------------------------------- the tick
 
 /// `Mob.getControllingPassenger() instanceof Mob`: the first passenger when it is a mob that
@@ -2514,6 +2524,12 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
         direct: source.direct.or(source.attacker),
         equipment: m.equipment.iter().zip(SLOT_NAMES).filter(|(s, _)| !s.is_empty()).map(|(s, n)| (n, s.clone())).collect(),
     });
+    // `Entity.killedEntity` of the killer: a zombie that turned a villager into a zombie villager
+    // ends the death here (no game event, no loot; the type's own `die` ran before the conversion).
+    if !killer_notified(e, m, level, &source) {
+        level.emit(Event::EntityEvent { entity: e.id, event: 3 });
+        return;
+    }
     // `gameEvent(ENTITY_DIE)`: sculk sensors hear it; the nearest sculk catalyst takes the
     // experience as charge (`CatalystListener`: `getExperienceReward` if the mob would drop
     // any, then `skipDropExperience`).
@@ -2532,7 +2548,9 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
             level.emit(Event::Criterion { player, criterion });
         }
     }
-    if !m.baby() && level.mob_drops() {
+    // `shouldDropLoot`: the `mob_drops` rule, and for what does not extend `Monster` not a baby.
+    let should_drop = level.mob_drops() && (!m.baby() || extends_monster(m.kind));
+    if should_drop {
         level.emit(Event::DeathLoot {
             entity: e.id,
             table: m.kind.ext().and_then(|k| k.loot_table(m)).unwrap_or_else(|| m.kind.loot_table()),
@@ -2547,7 +2565,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     // `Mob.dropCustomDeathLoot`: equipment with its drop chance.
     for i in 0..6 {
         let chance = m.drop_chances[i];
-        if chance == 0.0 || m.equipment[i].is_empty() {
+        if !should_drop || chance == 0.0 || m.equipment[i].is_empty() {
             continue;
         }
         let preserved = chance > 1.0;
@@ -2565,7 +2583,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     // The same for the slots past the six (a horse's body armor and saddle).
     if let Some(k) = m.kind.ext() {
         for (mut stack, chance) in k.take_extra_equipment_for_drop(m) {
-            if chance == 0.0 || stack.is_empty() {
+            if !should_drop || chance == 0.0 || stack.is_empty() {
                 continue;
             }
             let preserved = chance > 1.0;
@@ -2579,6 +2597,10 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
                 spawn_at_location(e, level, stack);
             }
         }
+        // The type's own `dropCustomDeathLoot` (an enderman's carried block).
+        if should_drop {
+            k.drop_custom_death_loot(e, m, level, &source);
+        }
         // `dropEquipment`.
         k.drop_equipment(e, m, level);
     }
@@ -2590,6 +2612,14 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
     level.emit(Event::EntityEvent { entity: e.id, event: 3 });
     if let Some(k) = m.kind.ext() {
         k.die(e, m, level, &source);
+    }
+}
+
+/// Whether mob type `kind` extends `Monster` (`Monster.shouldDropLoot` ignores the baby flag).
+fn extends_monster(kind: MobKind) -> bool {
+    match kind.ext() {
+        Some(k) => k.info().extends_monster,
+        None => matches!(kind, MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper | MobKind::Spider),
     }
 }
 
@@ -2790,12 +2820,66 @@ pub fn hurt_living(level: &mut dyn EntityLevel, t: &Living, source: DamageSource
     }
 }
 
-/// The shared `Mob.doHurtTarget`.
-pub fn do_hurt_target_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> bool {
-    let damage = m.attrs.value(Attr::AttackDamage) as f32;
-    let source = DamageSource { kind: DamageKind::MobAttack, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+/// What a victim's `die` needs of the mob that dealt the killing blow
+/// (`DamageSource.getEntity().killedEntity(level, victim, source)`): the killer is out of the
+/// level while it ticks, so the hit carries what the hook reads (the killer's own random, its
+/// silence and where it stands).
+pub(crate) struct Killer {
+    pub(crate) id: i32,
+    /// `instanceof Zombie` (husks, drowned, zombie villagers and zombified piglins too).
+    pub(crate) zombie: bool,
+    pub(crate) random: kiln_javamath::random::LegacyRandom,
+    pub(crate) silent: bool,
+    pub(crate) block: BlockPos,
+}
+
+thread_local! {
+    static KILLER: std::cell::RefCell<Option<Killer>> = const { std::cell::RefCell::new(None) };
+}
+
+/// [`hurt_living`] for a blow by mob `killer` (`e`, `m`): when the target dies of it, the killer's
+/// `killedEntity` runs (a zombie turns a villager into a zombie villager).
+pub fn hurt_living_by(level: &mut dyn EntityLevel, e: &mut Entity, m: &MobData, t: &Living, source: DamageSource, damage: f32) -> bool {
+    if !m.kind.is_zombie() || t.player {
+        return hurt_living(level, t, source, damage);
+    }
+    let previous = KILLER.with(|k| {
+        k.borrow_mut().replace(Killer { id: e.id, zombie: true, random: e.random.clone(), silent: e.silent, block: e.block_position() })
+    });
     let hurt = hurt_living(level, t, source, damage);
+    KILLER.with(|k| {
+        let mut slot = k.borrow_mut();
+        if let Some(used) = slot.take() {
+            e.random = used.random;
+        }
+        *slot = previous;
+    });
+    hurt
+}
+
+/// `Entity.killedEntity` of the source's entity, for a victim of `source` that just died:
+/// `false` when the death is not to go on to its loot (a zombie converted it).
+fn killer_notified(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource) -> bool {
+    let Some(attacker) = source.attacker else { return true };
+    let Some(mut killer) = KILLER.with(|k| k.borrow_mut().take_if(|k| k.id == attacker)) else { return true };
+    let proceed = if killer.zombie { kinds::zombie::killed_entity(&mut killer, e, m, level, source) } else { true };
+    KILLER.with(|k| *k.borrow_mut() = Some(killer));
+    proceed
+}
+
+/// The shared `Mob.doHurtTarget`: the attack damage through the weapon's enchantments
+/// (`modifyDamage`), the hit under the item's damage type, the attack knockback with the
+/// weapon's (`getKnockback`), the weapon's post-attack effects.
+pub fn do_hurt_target_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> bool {
+    let kind = weapon::damage_kind(m);
+    let damage = weapon::modify_damage(level, e, m, t, kind, m.attrs.value(Attr::AttackDamage) as f32);
+    let old = level.motion(t.id);
+    let source = DamageSource { kind, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+    let hurt = hurt_living_by(level, e, m, t, source, damage);
     if hurt {
+        let knockback = weapon::attack_knockback(level, e, m, t, kind);
+        weapon::cause_extra_knockback(e, level, t, knockback, old);
+        weapon::post_attack(level, e, m, t, kind);
         m.last_hurt_mob = Some(t.id);
         // `Zombie.doHurtTarget`: a burning, empty-handed zombie sets its target on fire.
         if m.kind.is_zombie() && m.equipment[MAINHAND].is_empty() && e.is_on_fire() {
@@ -2856,6 +2940,9 @@ pub struct GroupData {
     /// 5x3x5 blocks of its box to ride (`getEntitiesOfClass(Chicken, ..., ENTITY_NOT_BEING_RIDDEN)`):
     /// the caller finds it (the level is not at hand here).
     pub nearby_chicken: bool,
+    /// `EntitySpawnReason.CONVERSION` (a zombie villager made of a villager): no loot pickup
+    /// roll and no equipment.
+    pub conversion: bool,
 }
 
 /// An entity `finalizeSpawn` makes along with the mob: a jockey. It stands where the mob does,
@@ -3006,7 +3093,9 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
         return;
     }
     let Some(m) = data(e) else { return };
-    if level.difficulty() == 0 && !m.kind.ext().and_then(|k| k.allowed_in_peaceful()).unwrap_or(m.kind.is_animal()) {
+    // (`EntityType.isAllowedInPeaceful`: everything but the monsters, which are `notInPeaceful`; golems and
+    // villagers stay.)
+    if level.difficulty() == 0 && !m.kind.ext().and_then(|k| k.allowed_in_peaceful()).unwrap_or(m.kind.category() != Category::Monster) {
         e.discard();
         return;
     }

@@ -410,14 +410,9 @@ impl Level for RegionLevel<'_> {
     }
 
     fn set_raw(&mut self, pos: BlockPos, state: u16, flags: u32) -> Option<u16> {
-        // A jukebox that goes away gives its disc back (the block entity goes with it).
-        let disc = crate::jukebox::before_removal(self, pos, state);
         let old = self.cells.set_block(pos.x, pos.y, pos.z, state)?;
         if old == state {
             return None;
-        }
-        if let Some(disc) = disc {
-            crate::jukebox::removed(self, pos, disc);
         }
         if flags & flags::CLIENTS != 0 {
             self.out.changed.push([pos.x, pos.y, pos.z]);
@@ -530,6 +525,10 @@ impl Level for RegionLevel<'_> {
             return v;
         }
         crate::container::analog(self, pos, state)
+    }
+
+    fn jukebox_playing(&self, pos: BlockPos) -> bool {
+        crate::jukebox::is_playing(self, pos)
     }
 
     fn container_openers(&self, pos: BlockPos) -> i32 {
@@ -970,6 +969,22 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     send_near(players, pos, 16.0 * volume.max(1.0) as f64, &pkt, others);
                 }
             }
+            // `JukeboxSongPlayer.spawnMusicParticles`: a note 1.2 above the block's bottom center.
+            Effect::MusicNote { pos, color } => {
+                if let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:note") {
+                    let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+                        particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
+                        override_limiter: false,
+                        always_show: false,
+                        pos: [pos.x as f64 + 0.5, pos.y as f64 + 1.2000000476837158, pos.z as f64 + 0.5],
+                        offset: [color, 0.0, 0.0],
+                        max_speed: [1.0, 0.0, 0.0],
+                        count: 0,
+                        randomization: world_fx::ParticleRandomization::Default,
+                    });
+                    send_near(players, pos, 32.0, &pkt, |_| true);
+                }
+            }
             Effect::NoteBlock { pos, instrument, note } => {
                 let (sound, pitch) = note_sound(instrument, note);
                 if let Some(pkt) = sound_packet(sound, world_fx::SoundSource::Records, pos, 3.0, pitch, env, i) {
@@ -1091,32 +1106,39 @@ fn block_drops(
     env: &BlockEnv,
     i: usize,
 ) -> Vec<Spawn> {
-    let Some(table_id) = loot.block_table(BlockId::of(state).name()) else { return Vec::new() };
-    let Some(table) = loot.table(&table_id) else { return Vec::new() };
-    // A player break also sets `this_entity` (the player).
-    let player = tool.is_some();
-    let ctx = BreakContext {
-        tool: tool.unwrap_or_else(kiln_item::ItemStack::empty),
-        player,
-        state,
-        origin: [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5],
-        block_entity,
-    };
     // Vanilla draws block drops from the server-wide random sequence of the table; parallel
     // regions cannot share one without the order depending on the partition, so each drop gets
     // its own seed from the position and tick (an approximation, I class).
-    let items = {
-        let seed = (effect_hash(env, pos, i) | 1) as i64;
-        let (mut sequences, mut level) = (kiln_loot::RandomSequences::new(0), kiln_javamath::random::LegacyRandom::new(seed));
-        let mut rng = table.random(seed, &mut sequences, &mut level);
-        loot.random_items(&table_id, &ctx, rng.source())
-    };
+    let origin = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+    let seed = (effect_hash(env, pos, i) | 1) as i64;
+    let items = block_items(loot, origin, state, tool, block_entity, seed);
     items
         .into_iter()
         .filter(|s| !s.is_empty())
         .enumerate()
         .map(|(k, stack)| pop_resource(pos, stack, effect_hash(env, pos, i.wrapping_mul(64).wrapping_add(k))))
         .collect()
+}
+
+/// The stacks the loot table of `state`'s block rolls for a context at `origin` with `tool`
+/// (`Block.getDrops`); a tool means an entity broke it (`this_entity` is set). `seed` stands in
+/// for the table's random sequence.
+pub(crate) fn block_items(
+    loot: &kiln_loot::LootData,
+    origin: [f64; 3],
+    state: u16,
+    tool: Option<kiln_item::ItemStack>,
+    block_entity: Option<Vec<kiln_item::component::Component>>,
+    seed: i64,
+) -> Vec<kiln_item::ItemStack> {
+    let Some(table_id) = loot.block_table(BlockId::of(state).name()) else { return Vec::new() };
+    let Some(table) = loot.table(&table_id) else { return Vec::new() };
+    // A player break also sets `this_entity` (the player).
+    let player = tool.is_some();
+    let ctx = BreakContext { tool: tool.unwrap_or_else(kiln_item::ItemStack::empty), player, state, origin, block_entity };
+    let (mut sequences, mut level) = (kiln_loot::RandomSequences::new(0), kiln_javamath::random::LegacyRandom::new(seed));
+    let mut rng = table.random(seed, &mut sequences, &mut level);
+    loot.random_items(&table_id, &ctx, rng.source())
 }
 
 /// The loot context of a block broken at `origin` (`LootContextParamSets.BLOCK`).

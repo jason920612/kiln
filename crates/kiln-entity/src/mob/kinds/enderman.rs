@@ -146,12 +146,14 @@ impl Kind for Enderman {
         Some(hurt)
     }
 
-    fn die(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, _source: &DamageSource) {
-        // `dropCustomDeathLoot`: the carried block's drops. Approximation: the block itself (the
-        // diamond axe with the enderman's loot enchantments mines most holdable blocks whole).
-        if let Some(s) = st(m).carried
-            && let Some(stack) = kiln_item::ItemStack::of(crate::blocks::block_name(s), 1)
-        {
+    /// `Enderman.dropCustomDeathLoot`: the carried block's drops, mined with a diamond axe
+    /// enchanted from `minecraft:enderman_loot_drop` (silk touch) and rolled from its loot table.
+    fn drop_custom_death_loot(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, _source: &DamageSource) {
+        let Some(carried) = st(m).carried else { return };
+        let Some(mut tool) = kiln_item::ItemStack::of("minecraft:diamond_axe", 1) else { return };
+        let special = super::zombie::special_multiplier(level.effective_difficulty(e.block_position()));
+        level.enchant_from_provider(&mut tool, "minecraft:enderman_loot_drop", special, &mut e.random);
+        for stack in level.block_loot(carried, e.position(), &tool, e.id) {
             mob::spawn_at_location(e, level, stack);
         }
     }

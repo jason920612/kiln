@@ -17,7 +17,7 @@ use crate::health::Source;
 use kiln_javamath::random::LegacyRandom;
 use kiln_loot::context::EntityTarget;
 use kiln_loot::effects::{EntityEffect, Target, Targeted};
-use kiln_loot::predicate::{DamageSourcePredicate, EntityPredicate, EntitySubPredicate};
+use kiln_loot::predicate::{DamageSourcePredicate, EntityPredicate};
 use kiln_loot::LootContext;
 use kiln_item::component::EquipmentSlot;
 use kiln_item::ItemStack;
@@ -35,6 +35,18 @@ impl kiln_entity::enchanting::Enchanter for LootEnchanter {
     fn enchant(&self, stack: &mut ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
         self.0.enchant_from_provider(provider, stack, special_multiplier, random);
     }
+
+    fn modify_damage(&self, hit: &kiln_entity::enchanting::Hit, damage: f32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
+        self.0.mob_modify_damage(hit.weapon, hit.attacker, hit.victim, hit.damage_type, damage, random)
+    }
+
+    fn modify_knockback(&self, hit: &kiln_entity::enchanting::Hit, value: f32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
+        self.0.mob_modify_knockback(hit.weapon, hit.attacker, hit.victim, hit.damage_type, value, random)
+    }
+
+    fn post_attack(&self, hit: &kiln_entity::enchanting::Hit, random: &mut dyn kiln_javamath::random::RandomSource) -> Vec<kiln_entity::enchanting::MobPostAttack> {
+        self.0.mob_post_attack(hit.weapon, hit.attacker, hit.victim, hit.damage_type, random)
+    }
 }
 
 /// Lets the mobs this thread runs enchant their spawn equipment from `loot`'s providers until
@@ -43,98 +55,11 @@ pub(crate) fn install_enchanter(loot: Option<&std::sync::Arc<kiln_loot::LootData
     kiln_entity::enchanting::install(loot.map(|l| std::rc::Rc::new(LootEnchanter(l.clone())) as std::rc::Rc<dyn kiln_entity::enchanting::Enchanter>))
 }
 
-/// What predicates can ask of an entity.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct EntityView {
-    /// `minecraft:entity_type` network id.
-    pub type_id: i32,
-    pub pos: [f64; 3],
-    pub on_ground: bool,
-    pub on_fire: bool,
-    pub sneaking: bool,
-    pub sprinting: bool,
-    pub flying: bool,
-    /// The entity rides something (`vehicle` predicates with no conditions match).
-    pub has_vehicle: bool,
-    pub fall_flying: bool,
-    pub in_water: bool,
-    /// What `type_specific/player` asks of a player.
-    pub player: Option<PlayerFacts>,
-}
-
-/// A player's game mode and stats, for `type_specific/player` predicates.
-#[derive(Debug, Clone, PartialEq, Default)]
-pub(crate) struct PlayerFacts {
-    /// 0 survival, 1 creative, 2 adventure, 3 spectator.
-    pub game_mode: u8,
-    pub food: i32,
-    pub saturation: f32,
-    pub level: i32,
-}
-
-impl PlayerFacts {
-    /// `PlayerPredicate.matches` for the parts Kiln can answer: `gamemode`, `food` and `level`;
-    /// anything else (advancements, recipes, stats, input, looking_at) does not match.
-    fn matches(&self, json: &kiln_loot::json::Json) -> bool {
-        use kiln_loot::json::Json;
-        let Json::Obj(entries) = json else { return false };
-        entries.iter().all(|(key, v)| match key.as_str() {
-            "gamemode" => {
-                let name = ["survival", "creative", "adventure", "spectator"][self.game_mode.min(3) as usize];
-                v.as_array().is_some_and(|l| l.iter().any(|m| m.as_str() == Some(name)))
-            }
-            "level" => bounds(v, self.level as f64),
-            "food" => entries_match(v, &[("level", self.food as f64), ("saturation", self.saturation as f64)]),
-            _ => false,
-        })
-    }
-}
-
-/// `MinMaxBounds.matches`: a plain number is exact, else the `min` and `max` given.
-fn bounds(v: &kiln_loot::json::Json, value: f64) -> bool {
-    use kiln_loot::json::Json;
-    match v {
-        Json::Obj(_) => v.get("min").and_then(|m| m.as_f64()).is_none_or(|m| value >= m) && v.get("max").and_then(|m| m.as_f64()).is_none_or(|m| value <= m),
-        other => other.as_f64().is_some_and(|x| x == value),
-    }
-}
-
-fn entries_match(v: &kiln_loot::json::Json, facts: &[(&str, f64)]) -> bool {
-    let kiln_loot::json::Json::Obj(entries) = v else { return false };
-    entries.iter().all(|(k, b)| facts.iter().find(|(name, _)| name == k).is_some_and(|(_, value)| bounds(b, *value)))
-}
+pub(crate) use kiln_loot::view::{EntityView, PlayerFacts};
 
 /// `minecraft:player`'s entity type id.
 pub(crate) fn player_type() -> i32 {
     kiln_item::registry::ENTITY_TYPE.id("minecraft:player").unwrap_or(-1)
-}
-
-impl EntityView {
-    /// `EntityPredicate.matches` for the parts Kiln can answer; anything about vehicles,
-    /// passengers, targets, locations, effects or NBT does not match (players ride nothing).
-    pub fn matches(&self, p: &EntityPredicate) -> bool {
-        p.parts.iter().all(|part| match part {
-            EntitySubPredicate::EntityType(set) => set.contains(self.type_id),
-            EntitySubPredicate::Flags(f) => {
-                let ok = |want: Option<bool>, have: bool| want.is_none_or(|w| w == have);
-                ok(f.is_on_ground, self.on_ground)
-                    && ok(f.is_on_fire, self.on_fire)
-                    && ok(f.is_sneaking, self.sneaking)
-                    && ok(f.is_sprinting, self.sprinting)
-                    && ok(f.is_flying, self.flying)
-                    && ok(f.is_baby, false)
-                    && ok(f.is_swimming, false)
-                    && ok(f.is_fall_flying, self.fall_flying)
-                    && ok(f.is_in_water, self.in_water)
-            }
-            // A vehicle with no conditions: whether there is one.
-            EntitySubPredicate::Vehicle(v) => v.parts.is_empty() && self.has_vehicle,
-            EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:type_specific/player" => {
-                self.player.as_ref().is_some_and(|p| p.matches(json))
-            }
-            _ => false,
-        })
-    }
 }
 
 impl Player {

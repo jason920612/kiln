@@ -89,6 +89,9 @@ pub(crate) fn dispense_from(level: &mut RegionLevel, pos: BlockPos, s: u16) {
         match container_at(level, pos.relative(facing)) {
             Some(target) => {
                 let left = with_target(level, &target, |dest: &mut View| add_item(dest, stack.copy_with_count(1), Some(facing.opposite()), None));
+                for p in target.positions() {
+                    crate::jukebox::settle(level, p);
+                }
                 match left {
                     Some(left) if left.is_empty() => {
                         for p in target.positions() {

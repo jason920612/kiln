@@ -164,7 +164,7 @@ impl Kind for Ravager {
     }
 
     /// `Ravager.doHurtTarget`: the attack animation, then `Mob.doHurtTarget` with the attack
-    /// knockback (the ravager slows to 60% of its own motion).
+    /// knockback (the base does the push; the ravager slows to 60% of its own motion).
     fn do_hurt_target(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> Option<bool> {
         st_mut(m).attack_tick = 10;
         level.emit(Event::EntityEvent { entity: e.id, event: 4 });
@@ -172,15 +172,6 @@ impl Kind for Ravager {
             level.emit(Event::Sound { pos: e.position(), sound: mob::sound_event("minecraft:entity.ravager.attack"), source: "hostile", volume: 1.0, pitch: 1.0 });
         }
         let hurt = mob::do_hurt_target_base(e, m, level, t);
-        if hurt {
-            let kb = (m.attrs.value(Attr::AttackKnockback) as f32) / 2.0;
-            if kb > 0.0 {
-                let yaw = e.y_rot * 0.017453292;
-                let (s, c) = (mob::mth::sin(yaw as f64), mob::mth::cos(yaw as f64));
-                knockback_target(level, t.id, kb as f64, s as f64, -c as f64);
-                e.delta = e.delta.multiply(0.6, 1.0, 0.6);
-            }
-        }
         Some(hurt)
     }
 
@@ -225,11 +216,6 @@ impl Kind for Ravager {
     fn experience(&self, e: &mut Entity, m: &MobData) -> Option<i32> {
         Some(super::evoker::experience_with_equipment(e, m, 20))
     }
-}
-
-/// `LivingEntity.knockback` of a hit target (a mob, or a player through its stand-in).
-fn knockback_target(level: &mut dyn EntityLevel, id: i32, strength: f64, dx: f64, dz: f64) {
-    raider::knockback_other(level, id, strength, dx, dz);
 }
 
 /// `Ravager.blockedByItem`: a shield blocked its bite. Half the time it is stunned for two
