@@ -379,6 +379,7 @@ pub(crate) fn tick(
             }
         }
     }
+    let dt = crate::diag::lap("s.a_union", dt);
     let roots: Vec<usize> = (0..stands.len()).map(|i| root(&mut parent, i)).collect();
     let mut ids: Vec<usize> = roots.clone();
     ids.sort_unstable();
@@ -428,6 +429,7 @@ pub(crate) fn tick(
             CATEGORIES.map(|cat| cat.max_instances() * n / 289)
         })
         .collect();
+    let dt = crate::diag::lap("s.b_caps", dt);
     let mut s = Spawner {
         pos: players.clone(),
         local: vec![[0; N]; players.len()],
@@ -460,6 +462,7 @@ pub(crate) fn tick(
     if categories.is_empty() {
         return;
     }
+    let dt = crate::diag::lap("s.c_state", dt);
     // `collectSpawningChunks`: loaded, ticking chunks with a player within 128 blocks.
     let mut chunks: Vec<(u64, ChunkPos)> = Vec::new();
     level.cells.for_each_cell(&mut |pos, cell| {

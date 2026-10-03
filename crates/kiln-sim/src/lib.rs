@@ -174,6 +174,10 @@ pub struct SimConfig {
     /// How a crowded region's entities tick ([`EntityTicking`]). Serial (vanilla's order) by
     /// default; islands and tiles are faster approximations, opt-in until approved.
     pub entity_ticking: EntityTicking,
+    /// Serial entity turns are first tried side by side against the phase's start and kept when
+    /// nothing they read changed before their turn (`entities/spec.rs`; the same result as
+    /// running them in order). On by default; `KILN_SPECULATE=0` turns it off.
+    pub speculate: bool,
     /// The locator bar takes the movers' turns every this many ticks (1: every tick, as
     /// vanilla; more sends fewer, coarser waypoint updates).
     pub locator_interval: u32,
@@ -251,6 +255,7 @@ impl SimConfig {
             access: kiln_link::access::AccessLists::new(None).shared(),
             keep_alive: true,
             entity_ticking: EntityTicking::Serial,
+            speculate: std::env::var("KILN_SPECULATE").map_or(true, |v| v != "0"),
             locator_interval: 1,
             prewake: Duration::ZERO,
             data_sync: Default::default(),
@@ -1904,6 +1909,7 @@ impl Sim {
             fire_watchers: std::sync::Arc::new(self.players.values().filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()),
             raids: self.dims[dim].raids.views.clone(),
             entity_ticking: self.config.entity_ticking,
+            speculate: self.config.speculate,
         }
     }
 

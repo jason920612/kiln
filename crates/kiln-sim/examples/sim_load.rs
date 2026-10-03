@@ -322,7 +322,8 @@ fn main() {
                         .filter(|(_, d)| d.as_secs_f64() >= 2e-4)
                         .map(|(n, d)| format!("{n} {:.2}", d.as_secs_f64() * 1e3))
                         .collect();
-                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms: {}", tick, tick - since, phases.join(" | "));
+                    let at = (start - wall0).as_secs_f64() * 1e3;
+                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms: at {at:.2} ms: {}", tick, tick - since, phases.join(" | "));
                 }
                 last_totals = totals;
                 if tick - since >= a.ticks {

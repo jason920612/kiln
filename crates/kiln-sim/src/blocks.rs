@@ -288,6 +288,8 @@ pub(crate) struct BlockEnv {
     pub dragon_fight: Option<crate::dragon_fight::FightEnv>,
     /// How a crowded region's entities tick.
     pub entity_ticking: crate::EntityTicking,
+    /// Serial entity turns tried side by side first (`SimConfig::speculate`).
+    pub speculate: bool,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -375,6 +377,8 @@ pub(crate) struct BlockOut {
     /// Sculk shriekers whose shriek ended (`tryRespond`) and their warning level: the region
     /// answers with darkness and maybe a warden.
     pub responds: Vec<(BlockPos, i32)>,
+    /// Block states changed so far (whatever the flags).
+    pub edits: u64,
 }
 
 /// A block entity's effect on the players whose box meets `min..max`.
@@ -416,6 +420,7 @@ impl Level for RegionLevel<'_> {
         if old == state {
             return None;
         }
+        self.out.edits += 1;
         if flags & flags::CLIENTS != 0 {
             self.out.changed.push([pos.x, pos.y, pos.z]);
         }
@@ -1361,6 +1366,7 @@ mod tests {
             raids: Default::default(),
             dragon_fight: None,
             entity_ticking: crate::EntityTicking::Serial,
+            speculate: true,
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {
