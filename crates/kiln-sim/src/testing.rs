@@ -57,40 +57,68 @@ fn track_ids() -> bool {
 }
 
 impl SinkStats {
-    fn record(&self, p: &Bytes) {
+    /// Counts a batch of packets: each lock is taken once per batch (a crowd's sinks see tens
+    /// of thousands of packets a tick, and this runs inside the measured tick).
+    fn record(&self, batch: &[Bytes]) {
+        const KEEP_ALIVE: i32 = kiln_data::packets::play::clientbound::KEEP_ALIVE;
+        const PLAYER_POSITION: i32 = kiln_data::packets::play::clientbound::PLAYER_POSITION;
         if let Some(log) = self.log.lock().unwrap().as_mut() {
-            log.push(p.clone());
+            log.extend(batch.iter().cloned());
         }
-        let mut r = Reader::new(p);
-        let id = r.varint().ok();
-        if track_digest() && id != Some(kiln_data::packets::play::clientbound::KEEP_ALIVE) {
+        let ids: Vec<Option<i32>> = batch.iter().map(|p| Reader::new(p).varint().ok()).collect();
+        if track_digest() {
             // FNV-1a over the length and the bytes.
             let mut d = self.digest.lock().unwrap();
-            let mut h = *d ^ 0xcbf2_9ce4_8422_2325;
-            for b in (p.len() as u32).to_le_bytes().iter().chain(p.iter()) {
-                h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            for (p, id) in batch.iter().zip(&ids) {
+                if *id == Some(KEEP_ALIVE) {
+                    continue;
+                }
+                let mut h = *d ^ 0xcbf2_9ce4_8422_2325;
+                for b in (p.len() as u32).to_le_bytes().iter().chain(p.iter()) {
+                    h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+                }
+                *d = h;
             }
-            *d = h;
         }
-        if id != Some(kiln_data::packets::play::clientbound::KEEP_ALIVE) {
-            self.packets.fetch_add(1, Relaxed);
-            self.bytes.fetch_add(p.len() as u64, Relaxed);
+        let (mut packets, mut bytes) = (0, 0);
+        for (p, id) in batch.iter().zip(&ids) {
+            if *id != Some(KEEP_ALIVE) {
+                packets += 1;
+                bytes += p.len() as u64;
+            }
         }
-        if (track_ids() || self.count_ids.load(Relaxed)) && let Some(id) = id {
+        self.packets.fetch_add(packets, Relaxed);
+        self.bytes.fetch_add(bytes, Relaxed);
+        if track_ids() || self.count_ids.load(Relaxed) {
             let mut m = self.by_id.lock().unwrap();
-            let e = m.entry(id).or_default();
-            e.0 += 1;
-            e.1 += p.len() as u64;
+            for (p, id) in batch.iter().zip(&ids) {
+                if let Some(id) = id {
+                    let e = m.entry(*id).or_default();
+                    e.0 += 1;
+                    e.1 += p.len() as u64;
+                }
+            }
         }
-        if id == Some(kiln_data::packets::play::clientbound::KEEP_ALIVE)
-            && let Ok(k) = r.i64()
-        {
-            *self.keep_alive.lock().unwrap() = Some(k);
-        }
-        if id == Some(kiln_data::packets::play::clientbound::PLAYER_POSITION)
-            && let (Ok(id), Ok(x), Ok(y), Ok(z)) = (r.varint(), r.f64(), r.f64(), r.f64())
-        {
-            *self.teleport.lock().unwrap() = Some((id, [x, y, z]));
+        for (p, id) in batch.iter().zip(&ids) {
+            match *id {
+                Some(KEEP_ALIVE) => {
+                    let mut r = Reader::new(p);
+                    if r.varint().is_ok()
+                        && let Ok(k) = r.i64()
+                    {
+                        *self.keep_alive.lock().unwrap() = Some(k);
+                    }
+                }
+                Some(PLAYER_POSITION) => {
+                    let mut r = Reader::new(p);
+                    if r.varint().is_ok()
+                        && let (Ok(id), Ok(x), Ok(y), Ok(z)) = (r.varint(), r.f64(), r.f64(), r.f64())
+                    {
+                        *self.teleport.lock().unwrap() = Some((id, [x, y, z]));
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -99,13 +127,13 @@ struct TestSink(Arc<SinkStats>);
 
 impl Sink for TestSink {
     fn send(&self, packet: Bytes) {
-        self.0.record(&packet);
+        self.0.record(std::slice::from_ref(&packet));
     }
     fn send_batch(&self, packets: Vec<Bytes>) {
-        packets.iter().for_each(|p| self.0.record(p));
+        self.0.record(&packets);
     }
     fn disconnect(&self, packet: Bytes) {
-        self.0.record(&packet);
+        self.0.record(std::slice::from_ref(&packet));
         self.0.disconnected.store(true, Relaxed);
     }
 }

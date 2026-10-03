@@ -239,6 +239,12 @@ impl Sampler {
         let idle = |n: &str| {
             n.starts_with("Nt") || n.starts_with("Zw") || n.contains("WaitFor") || n.contains("SleepEx") || n.contains("park") || n.contains("Sleep")
         };
+        // `KILN_SAMPLE_FILTER`: only the stacks with a function whose name contains it.
+        let filter = std::env::var("KILN_SAMPLE_FILTER").ok();
+        let counts: Vec<(Vec<u64>, u32)> = counts
+            .into_iter()
+            .filter(|(stack, _)| filter.as_ref().is_none_or(|f| stack.iter().any(|&a| name(a).contains(f.as_str()))))
+            .collect();
         let (mut selfs, mut totals): (HashMap<String, u64>, HashMap<String, u64>) = Default::default();
         let mut busy = 0u64;
         for (stack, n) in &counts {

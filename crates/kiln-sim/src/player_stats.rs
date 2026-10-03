@@ -11,7 +11,6 @@
 use crate::{Player, Sim};
 use bytes::{Bytes, BytesMut};
 use kiln_proto::WriteExt;
-use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
 
 /// `minecraft:stat_type` registry order.
@@ -205,9 +204,9 @@ pub(crate) enum Criterion {
 /// `ServerStatsCounter` of one player.
 #[derive(Debug, Default)]
 pub struct PlayerStats {
-    values: HashMap<Stat, i32>,
+    values: crate::FastMap<Stat, i32>,
     /// Changed since the client last asked (`getDirty`).
-    dirty: HashSet<Stat>,
+    dirty: crate::FastSet<Stat>,
     /// Scoreboard updates for the serial phase.
     pub(crate) scores: Vec<(Criterion, ScoreOp)>,
     /// `lastRecorded*` of `ServerPlayer.doTick` for the game-maintained criteria: health

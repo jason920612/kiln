@@ -204,7 +204,7 @@ pub(crate) struct WaypointManager {
     /// Receivers.
     players: Vec<ConnId>,
     /// Every transmitter's and receiver's slot.
-    slots: HashMap<ConnId, u32>,
+    slots: crate::FastMap<ConnId, u32>,
     members: Vec<Member>,
     free: Vec<u32>,
     /// Transmitters (by slot) a connection was made from this tick before the movers' turns:
@@ -623,7 +623,9 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
                 & ((k1 & (t.settled_block[i] | st)) | (k2 & (t.settled_chunk[i] | st) & !vis[i]));
             among(i) & t.present[i] & !quiet
         });
-        each_bit(words).filter(|&s| s != r).collect()
+        let open: Vec<usize> = each_bit(words).filter(|&s| s != r).collect();
+        prefetch(row, &open);
+        open
     };
     let by_rank = |mut v: Vec<usize>| {
         v.sort_unstable_by_key(|&s| t.rank[s]);
@@ -652,6 +654,19 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
     for s in by_rank(open(row, &|i| all_movers[i] & !earlier[i], &|_| !0)) {
         full_step(row, s, me, t, out);
     }
+}
+
+/// Asks for the connections about to be stepped (scattered over a row that other work has
+/// pushed out of the cache since the last tick) all at once, rather than one miss at a time.
+fn prefetch(row: &Row, slots: &[usize]) {
+    #[cfg(target_arch = "x86_64")]
+    for &s in slots {
+        if let Some(d) = row.data.get(s) {
+            // SAFETY: a prefetch of a valid address has no effect beyond the cache.
+            unsafe { std::arch::x86_64::_mm_prefetch(std::ptr::from_ref(d).cast::<i8>(), std::arch::x86_64::_MM_HINT_T0) };
+        }
+    }
+    let _ = (row, slots);
 }
 
 /// One step of the connection from transmitter `s` to the receiver `me` in full.

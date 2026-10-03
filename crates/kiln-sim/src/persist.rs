@@ -499,7 +499,7 @@ impl Sim {
                 Some((e.id, e.kind.name))
             });
             if let Some((vid, type_name)) = found {
-                let first_is_player = |first: i32, players: &HashMap<ConnId, Player>| players.values().any(|q| q.entity_id == first);
+                let first_is_player = |first: i32, players: &crate::FastMap<ConnId, Player>| players.values().any(|q| q.entity_id == first);
                 for r in self.dims[dim].regions.iter_mut() {
                     if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == vid)
                         && let Some(phys) = e.phys.as_mut()

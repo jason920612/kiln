@@ -206,6 +206,7 @@ fn main() {
     #[cfg(windows)]
     let mut sampling: Option<sampler::Sampler> = None;
     let mut wall0 = Instant::now();
+    let mut last_totals: Vec<(&str, std::time::Duration)> = Vec::new();
     loop {
         for _ in 0..joins_per_tick {
             let i = walkers.len();
@@ -284,9 +285,18 @@ fn main() {
             }
             Some(since) => {
                 times.push(elapsed);
+                // The phases' time this tick (the totals' change), for the slow ones.
+                let totals = sim.phase_totals();
                 if std::env::var_os("KILN_SLOW_PRINT").is_some_and(|v| v.to_str().and_then(|v| v.parse::<f64>().ok()).is_some_and(|ms| elapsed > ms)) {
-                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms", tick, tick - since);
+                    let phases: Vec<String> = totals
+                        .iter()
+                        .map(|(n, d)| (n, d.saturating_sub(last_totals.iter().find(|(m, _)| m == n).map_or(std::time::Duration::ZERO, |(_, d)| *d))))
+                        .filter(|(_, d)| d.as_secs_f64() >= 2e-4)
+                        .map(|(n, d)| format!("{n} {:.2}", d.as_secs_f64() * 1e3))
+                        .collect();
+                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms: {}", tick, tick - since, phases.join(" | "));
                 }
+                last_totals = totals;
                 if tick - since >= a.ticks {
                     break;
                 }

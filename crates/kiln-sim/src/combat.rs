@@ -192,6 +192,9 @@ fn java_string_hash(s: &str) -> i32 {
 /// current modifiers in insertion order, which matches vanilla unless removals reshuffled
 /// colliding slots.
 fn sort_like_open_hash_map(mods: &mut [(String, f64, AttributeOperation)]) {
+    if mods.len() <= 1 {
+        return;
+    }
     const SLOTS: usize = 32;
     let slot_of = |id: &str| -> i32 {
         let (ns, path) = id.split_once(':').unwrap_or(("minecraft", id));

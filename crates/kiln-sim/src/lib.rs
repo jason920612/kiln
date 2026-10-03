@@ -121,6 +121,13 @@ use region::{Env, RegionOut, RegionWork};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+
+/// Maps and sets of small keys (connection ids, chunk positions, statistics) looked up per
+/// player and tick: a multiplicative hash instead of SipHash. Nothing iterates them in hash
+/// order where it could show.
+pub(crate) type FastHash = std::hash::BuildHasherDefault<kiln_entity::memory::FastHasher>;
+pub(crate) type FastMap<K, V> = HashMap<K, V, FastHash>;
+pub(crate) type FastSet<K> = HashSet<K, FastHash>;
 use uuid::Uuid;
 
 /// A container block entity for tests and tools: (slot, item name, count) of its non-empty slots,
@@ -283,7 +290,7 @@ struct Player {
     horizontal_collision: bool,
     view_distance: i32,
     center: ChunkPos,
-    sent_chunks: HashSet<ChunkPos>,
+    sent_chunks: FastSet<ChunkPos>,
     awaiting_teleport: Option<i32>,
     keep_alive: Option<(i64, Instant)>,
     last_keep_alive: Instant,
@@ -915,7 +922,7 @@ pub struct Sim {
     /// Angles players at the world spawn face.
     spawn_rot: [f32; 2],
     storage: Option<persist::Storage>,
-    players: HashMap<ConnId, Player>,
+    players: FastMap<ConnId, Player>,
     next_entity_id: i32,
     started: Instant,
     stats: stats::TickStats,
@@ -1122,7 +1129,7 @@ impl Sim {
             spawn,
             spawn_rot: level.as_ref().map_or([0.0; 2], |l| [l.spawn.yaw, l.spawn.pitch]),
             storage,
-            players: HashMap::new(),
+            players: FastMap::default(),
             next_entity_id: 1,
             started: Instant::now(),
             stats: stats::TickStats::default(),
@@ -2510,7 +2517,7 @@ impl Sim {
             horizontal_collision: false,
             view_distance,
             center: player_chunk(spawn),
-            sent_chunks: HashSet::new(),
+            sent_chunks: FastSet::default(),
             awaiting_teleport: Some(1),
             keep_alive: None,
             last_keep_alive: Instant::now(),

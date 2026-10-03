@@ -399,7 +399,7 @@ impl SimPlugins {
 
 /// What B0 routes tasks and results with: the players and the level regions.
 struct SimWorld<'a> {
-    players: &'a std::collections::HashMap<ConnId, Player>,
+    players: &'a crate::FastMap<ConnId, Player>,
     dims: &'a [crate::Dim],
     ops: &'a HashSet<Uuid>,
 }
