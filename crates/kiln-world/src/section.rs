@@ -77,6 +77,26 @@ impl BlockContainer {
         }
     }
 
+    /// Reads `out.len()` consecutive entries from index `start` (a run along x).
+    pub fn read_row(&self, start: usize, out: &mut [u16]) {
+        match self {
+            Self::Single(s) => out.fill(*s),
+            Self::Nibble { palette, indices } => {
+                for (k, o) in out.iter_mut().enumerate() {
+                    let i = start + k;
+                    *o = palette[((indices[i >> 1] >> ((i & 1) * 4)) & 0xf) as usize];
+                }
+            }
+            Self::Byte { palette, indices } => {
+                let len = out.len();
+                for (o, &ix) in out.iter_mut().zip(&indices[start..start + len]) {
+                    *o = palette[ix as usize];
+                }
+            }
+            Self::Direct(d) => out.copy_from_slice(&d[start..start + out.len()]),
+        }
+    }
+
     pub fn get(&self, i: usize) -> u16 {
         match self {
             Self::Single(s) => *s,
@@ -331,6 +351,11 @@ impl Section {
 
     pub fn is_empty(&self) -> bool {
         self.non_air == 0
+    }
+
+    /// Whether any block of the section has a fluid.
+    pub fn has_fluids(&self) -> bool {
+        self.fluids > 0
     }
 
     /// Whether any block (or fluid) in the section ticks randomly

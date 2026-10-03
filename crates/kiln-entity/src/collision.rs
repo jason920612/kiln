@@ -119,7 +119,11 @@ pub fn for_each_block_collision(
     // The whole box read at once when it is loaded and small enough for the stack.
     let mut buf = [0u16; 384];
     let n = (w * h * d) as usize;
-    let bulk = n <= buf.len() && level.read_blocks(BlockPos::new(x0, y0, z0), BlockPos::new(x1, y1, z1), &mut buf[..n]);
+    let bulk = {
+        crate::prof!("col", "read_blocks");
+        n <= buf.len() && level.read_blocks(BlockPos::new(x0, y0, z0), BlockPos::new(x1, y1, z1), &mut buf[..n])
+    };
+    crate::prof!("col", "block loop");
     for z in 0..d {
         for y in 0..h {
             for x in 0..w {
@@ -279,6 +283,7 @@ pub fn collide_bounding_box(
     entity_shapes: &[Collider],
 ) -> Vec3 {
     let shapes = collect_colliders(level, ctx, entity_shapes, &bx.expand_towards_vec(movement));
+    crate::prof!("col", "collide_with_shapes");
     collide_with_shapes(movement, bx, &shapes)
 }
 

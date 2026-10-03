@@ -158,6 +158,10 @@ impl FluidInteraction {
         let (dx, dy, dz) = (x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
         let mut buf = [0u16; 64];
         let n = (dx.max(0) * dy.max(0) * dz.max(0)) as usize;
+        // No fluid anywhere in the box (the sections count theirs): nothing to measure.
+        if n > 0 && level.no_fluid_in(BlockPos::new(x0, y0, z0), BlockPos::new(x1, y1, z1)) {
+            return false;
+        }
         let bulk = n > 0 && n <= buf.len() && level.read_blocks(BlockPos::new(x0, y0, z0), BlockPos::new(x1, y1, z1), &mut buf[..n]);
         for x in x0..=x1 {
             for y in y0..=y1 {

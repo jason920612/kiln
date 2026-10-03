@@ -125,6 +125,7 @@ impl Entity {
             return;
         }
         if self.on_ground {
+            crate::prof!("col", "step_on");
             let pos = self.on_pos_legacy(level);
             let state = level.block(pos);
             self.step_on(level, pos, state);
@@ -133,6 +134,7 @@ impl Entity {
         let was_freezing = self.ticks_frozen > 0;
         let fire_before = self.remaining_fire_ticks;
         self.check_inside_blocks(level, movements);
+        crate::prof!("col", "inside apply");
         self.apply_and_clear_inside(level);
         if self.is_in_rain(level) {
             self.clear_fire();
@@ -308,7 +310,13 @@ impl Entity {
         visited: &mut SmallSet,
         max_steps: i32,
     ) -> i32 {
+        crate::prof!("col", "inside enumerate");
         let bb = self.make_bounding_box(to).deflate_all(9.999999747378752e-6);
+        // A box that did not move (a mob standing still) visits its own blocks, all at step 0;
+        // when they are all air nothing happens and the walk used one step.
+        if max_steps >= 1 && (to - from).length_sqr() < (1.0e-5f32 * 1.0e-5f32) as f64 && self.all_air_around(level, &bb) {
+            return 1;
+        }
         let too_far = from.distance_to_sqr(to) > 0.9999900000002526 * 0.9999900000002526;
         let mut counter = 0;
         let mut blocks: smallvec::SmallVec<[(BlockPos, i32); 32]> = smallvec::SmallVec::new();
@@ -320,6 +328,7 @@ impl Entity {
             true
         });
         // The states of the blocks' bounding box at once when it is loaded and small.
+        crate::prof!("col", "inside read");
         let mut buf = [0u16; 64];
         let (mut lo, mut hi) = (BlockPos::new(i32::MAX, i32::MAX, i32::MAX), BlockPos::new(i32::MIN, i32::MIN, i32::MIN));
         for (p, _) in &blocks {
@@ -328,6 +337,7 @@ impl Entity {
         }
         let (dx, dy, dz) = (hi.x as i64 - lo.x as i64 + 1, hi.y as i64 - lo.y as i64 + 1, hi.z as i64 - lo.z as i64 + 1);
         let bulk = !blocks.is_empty() && dx * dy * dz <= buf.len() as i64 && level.read_blocks(lo, hi, &mut buf[..(dx * dy * dz) as usize]);
+        crate::prof!("col", "inside blocks");
         for (pos, step) in blocks {
             if !self.is_alive() {
                 break;
@@ -379,6 +389,33 @@ impl Entity {
             }
         }
         counter + 1
+    }
+
+    /// Whether every block `bb` touches is air, remembered while the box and the blocks around
+    /// it stay the same.
+    fn all_air_around(&mut self, level: &dyn EntityLevel, bb: &Aabb) -> bool {
+        let epoch = crate::memo::area_epoch(level, bb);
+        let key = epoch.map(|epoch| crate::memo::BoxKey { epoch, bx: crate::memo::box_bits(bb) });
+        if let (Some(key), Some(m)) = (&key, self.memo.as_deref())
+            && m.air.as_ref() == Some(key)
+        {
+            return true;
+        }
+        let lo = BlockPos::containing(bb.min_x, bb.min_y, bb.min_z);
+        let hi = BlockPos::containing(bb.max_x, bb.max_y, bb.max_z);
+        let (dx, dy, dz) = (hi.x as i64 - lo.x as i64 + 1, hi.y as i64 - lo.y as i64 + 1, hi.z as i64 - lo.z as i64 + 1);
+        let n = dx * dy * dz;
+        let mut buf = [0u16; 64];
+        if n < 1 || n > buf.len() as i64 || !level.read_blocks(lo, hi, &mut buf[..n as usize]) {
+            return false;
+        }
+        if !buf[..n as usize].iter().all(|&s| physics::is_air(s)) {
+            return false;
+        }
+        if let Some(key) = key {
+            self.memo.get_or_insert_with(Default::default).air = Some(key);
+        }
+        true
     }
 
     /// `getEntityInsideCollisionShape`; `None` for the full block.

@@ -454,6 +454,10 @@ pub fn nearest_player_to(level: &dyn EntityLevel, at: Vec3, mut accept: impl FnM
     best.map(|(_, p)| p)
 }
 
+/// See [`EntityLevel::blocks_epoch`]: one number per chunk the box touches (at most 2x2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BlocksEpoch(pub [u64; 4]);
+
 /// World access for entity ticks.
 ///
 /// The entity being ticked is not reachable through `entity_mut` (the caller holds it); every
@@ -474,6 +478,23 @@ pub trait EntityLevel {
     fn read_blocks(&self, min: BlockPos, max: BlockPos, out: &mut [u16]) -> bool {
         let _ = (min, max, out);
         false
+    }
+
+    /// True when the box `min..=max` is known to hold no block with a fluid (every chunk loaded
+    /// and every section it touches counts none); false when there may be one or the level
+    /// cannot tell.
+    fn no_fluid_in(&self, min: BlockPos, max: BlockPos) -> bool {
+        let _ = (min, max);
+        false
+    }
+
+    /// Identifies the block states of the box `min..=max`: the same value at two times means no
+    /// block of the box (or around it, within the chunks it touches) changed in between. `None`
+    /// when the level cannot tell or the box spans more than 2x2 chunks or reaches an unloaded
+    /// one; results derived from blocks are then not reused.
+    fn blocks_epoch(&self, min: BlockPos, max: BlockPos) -> Option<BlocksEpoch> {
+        let _ = (min, max);
+        None
     }
 
     /// Whether `pred` holds for any block state in the box `min..=max` (unloaded chunks read as
