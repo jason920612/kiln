@@ -64,7 +64,6 @@ fn after_tick(exhaustion: f32) -> f32 {
 
 struct World {
     sim: Sim,
-    clients: Vec<Client>,
     stats: Vec<Arc<SinkStats>>,
     base: [f64; 3],
 }
@@ -88,7 +87,7 @@ impl World {
             assert!(sim.step(inbox));
         }
         let base = sim.players[&1].pos;
-        let mut w = World { sim, clients, stats, base };
+        let mut w = World { sim, stats, base };
         for c in ["difficulty normal", "gamerule minecraft:spawn_mobs false", "gamerule minecraft:pvp true", "tick freeze"] {
             w.console(c);
         }
@@ -149,15 +148,6 @@ impl World {
 
     fn player(&mut self, conn: u64) -> &mut crate::Player {
         self.sim.players.get_mut(&conn).unwrap()
-    }
-}
-
-fn game_mode(name: &str) -> u8 {
-    match name {
-        "creative" => 1,
-        "adventure" => 2,
-        "spectator" => 3,
-        _ => 0,
     }
 }
 

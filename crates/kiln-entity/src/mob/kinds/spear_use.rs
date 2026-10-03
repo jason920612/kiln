@@ -85,7 +85,8 @@ fn reduced(ticks: i32) -> i32 {
 }
 
 fn able_to_attack(m: &MobData, level: &dyn EntityLevel) -> bool {
-    goals::target(m, level).is_some() && m.equipment[MAINHAND].get(keys::KINETIC_WEAPON).is_some()
+    // (The weapon first: most mobs hold none, and the target takes a lookup.)
+    m.equipment[MAINHAND].get(keys::KINETIC_WEAPON).is_some() && goals::target(m, level).is_some()
 }
 
 /// `MAX_FLEEING_TIME`.

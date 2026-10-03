@@ -24,7 +24,7 @@ fn target(cx: &Cx) -> Option<Living> {
 }
 
 fn able_to_attack(cx: &Cx) -> bool {
-    target(cx).is_some() && cx.m.equipment[MAINHAND].get(keys::KINETIC_WEAPON).is_some()
+    cx.m.equipment[MAINHAND].get(keys::KINETIC_WEAPON).is_some() && target(cx).is_some()
 }
 
 /// `Mob.chargeSpeedModifier` of the root vehicle.

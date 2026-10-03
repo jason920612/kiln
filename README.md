@@ -110,6 +110,13 @@ python tools/mob_vectors.py --filter finalize --out work/wp33/finalize.jsonl
 KILN_FINALIZE_VECTORS=work/wp33/finalize.jsonl cargo test -p kiln-entity --test finalize_parity
                                      # finalizeSpawn of natural spawns (jockeys and their riders, the
                                      # level random after) against vanilla, seed by seed
+python tools/mob_vectors.py --filter spear_ --out work/wp34/mob_spear.jsonl
+                                     # mobs with spears (zombies, husks, zombified piglins, riders of
+                                     # zombie horses and camel husks, piglins) tick by tick
+python tools/combat_vectors.py --filter spear --out work/wp34/combat/vectors.jsonl
+                                     # players' spears (stabs and charges, lunge); drop --filter for all
+                                     # combat, enchantment, riptide, mount and spear parity
+python tools/entity_persist_check.py   # entity chunks and riding stacks load in vanilla and back
 ```
 
 Packets Kiln encodes are checked by decoding them with vanilla's own codecs
