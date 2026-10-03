@@ -1655,8 +1655,11 @@ fn in_wall_memo(e: &mut Entity, level: &dyn EntityLevel) -> bool {
     if let Some((k, v)) = e.memo.as_deref().and_then(|m| m.wall.as_ref())
         && *k == key
     {
+        crate::prof_count!("memo wall", true);
+        crate::memo::verify("wall", v, || in_wall(&b, level));
         return *v;
     }
+    crate::prof_count!("memo wall", false);
     let v = in_wall(&b, level);
     e.memo.get_or_insert_with(Default::default).wall = Some((key, v));
     v

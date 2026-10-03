@@ -620,8 +620,11 @@ impl Entity {
         if let Some((k, v)) = self.memo.as_deref().and_then(|m| m.support.as_ref())
             && *k == key
         {
+            crate::prof_count!("memo support", true);
+            crate::memo::verify("support", v, || collision::find_supporting_block(level, ctx, self.position, bx));
             return *v;
         }
+        crate::prof_count!("memo support", false);
         let v = collision::find_supporting_block(level, ctx, self.position, bx);
         self.memo.get_or_insert_with(Default::default).support = Some((key, v));
         v
@@ -828,6 +831,7 @@ impl Entity {
     fn collide_memo(&mut self, level: &dyn EntityLevel, movement: Vec3) -> Vec3 {
         let entity_shapes = self.entity_shapes_for(level, movement);
         if !entity_shapes.is_empty() || movement.length_sqr() == 0.0 {
+            crate::prof_count!("collide not memoable", false);
             return self.collide_with(level, movement, &entity_shapes);
         }
         let area = self.bb.expand_towards_vec(movement).expand_towards(0.0, self.max_up_step as f64, 0.0);
@@ -845,8 +849,11 @@ impl Entity {
         if let Some((k, v)) = self.memo.as_deref().and_then(|m| m.collide.as_ref())
             && *k == key
         {
+            crate::prof_count!("memo collide", true);
+            crate::memo::verify("collide", v, || self.collide_with(level, movement, &entity_shapes));
             return *v;
         }
+        crate::prof_count!("memo collide", false);
         let v = self.collide_with(level, movement, &entity_shapes);
         self.memo.get_or_insert_with(Default::default).collide = Some((key, v));
         v

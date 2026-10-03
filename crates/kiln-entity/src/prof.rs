@@ -20,6 +20,21 @@ macro_rules! prof {
     };
 }
 
+/// Counts one event of a named tally (`prof_count!("memo collide", hit)`: hits and misses),
+/// printed by `report`; nothing is compiled without the `prof` feature.
+#[macro_export]
+macro_rules! prof_count {
+    ($name:expr, $hit:expr) => {
+        {
+            #[cfg(feature = "prof")]
+            {
+                static TALLY: $crate::prof::Tally = $crate::prof::Tally::new($name);
+                TALLY.count($hit);
+            }
+        }
+    };
+}
+
 #[cfg(not(feature = "prof"))]
 mod imp {
     pub fn start() {}
@@ -86,6 +101,29 @@ mod imp {
                 cell
             }
         })
+    }
+
+    static TALLIES: Mutex<Vec<&'static Tally>> = Mutex::new(Vec::new());
+
+    /// Hits and misses of one `prof_count!` site.
+    pub struct Tally {
+        name: &'static str,
+        hits: AtomicU64,
+        misses: AtomicU64,
+        registered: AtomicBool,
+    }
+
+    impl Tally {
+        pub const fn new(name: &'static str) -> Self {
+            Tally { name, hits: AtomicU64::new(0), misses: AtomicU64::new(0), registered: AtomicBool::new(false) }
+        }
+
+        pub fn count(&'static self, hit: bool) {
+            if !self.registered.swap(true, Relaxed) {
+                TALLIES.lock().unwrap().push(self);
+            }
+            if hit { &self.hits } else { &self.misses }.fetch_add(1, Relaxed);
+        }
     }
 
     pub struct Scope {
@@ -156,6 +194,10 @@ mod imp {
         rows.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
         let total: u64 = rows.iter().map(|(_, n)| n).sum();
         println!("sampled {loops} times, {:.1} us apart; {:.3} ms/tick inside scopes", per_sample_ms * 1e3, total as f64 * per_sample_ms / t);
+        for tally in TALLIES.lock().unwrap().iter() {
+            let (h, m) = (tally.hits.swap(0, Relaxed), tally.misses.swap(0, Relaxed));
+            println!("tally {:<40} {:.1} hits/tick, {:.1} misses/tick", tally.name, h as f64 / t, m as f64 / t);
+        }
         println!("{:<56} {:>10}", "scope (time directly in it)", "ms/tick");
         for ((tag, name), n) in rows.iter().take(60) {
             println!("{:<56} {:>10.3}", format!("{tag} {name}"), *n as f64 * per_sample_ms / t);
@@ -165,4 +207,4 @@ mod imp {
 
 pub use imp::{report, start};
 #[cfg(feature = "prof")]
-pub use imp::{Scope, scope};
+pub use imp::{Scope, Tally, scope};

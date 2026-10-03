@@ -282,6 +282,24 @@ impl EntityLevel for MemoryLevel {
         self.blocks.get(&pos).copied().unwrap_or(floor)
     }
 
+    /// The states themselves, hashed: tests poke `blocks` directly, so there is no change counter
+    /// to trust, and this makes the reuse of block scans (`memo`) depend on the blocks alone.
+    fn blocks_epoch(&self, min: BlockPos, max: BlockPos) -> Option<crate::level::BlocksEpoch> {
+        let mut h = [0xcbf2_9ce4_8422_2325u64, 0x9e37_79b9_7f4a_7c15, 0x1234_5678_9abc_def1, 0x0fed_cba9_8765_4321];
+        for y in min.y..=max.y {
+            for z in min.z..=max.z {
+                for x in min.x..=max.x {
+                    let s = self.block(BlockPos::new(x, y, z)) as u64 + 1;
+                    for (i, v) in h.iter_mut().enumerate() {
+                        *v = (*v ^ s).wrapping_mul(0x100_0000_01b3 + 2 * i as u64);
+                        *v ^= *v >> 29;
+                    }
+                }
+            }
+        }
+        Some(crate::level::BlocksEpoch(h))
+    }
+
     fn set_block(&mut self, pos: BlockPos, state: u16, _flags: u32) -> bool {
         // `FrogspawnBlock.onPlace` schedules its hatching with a draw from the level's random
         // (the real level runs the block's behaviour; this one only keeps the states).

@@ -12,6 +12,20 @@ use crate::collision::CollisionContext;
 use crate::level::{BlocksEpoch, EntityLevel};
 use crate::math::{Aabb, BlockPos, Vec3, floor};
 
+/// `KILN_MEMO_CHECK=1`: every reuse is checked against a fresh scan (tests and parity runs).
+pub(crate) fn checking() -> bool {
+    static CHECK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CHECK.get_or_init(|| std::env::var_os("KILN_MEMO_CHECK").is_some_and(|v| v != "0"))
+}
+
+/// Panics when a reused result differs from the fresh one.
+pub(crate) fn verify<T: PartialEq + std::fmt::Debug>(what: &str, reused: &T, fresh: impl FnOnce() -> T) {
+    if checking() {
+        let fresh = fresh();
+        assert_eq!(*reused, fresh, "stale {what} memo");
+    }
+}
+
 pub(crate) type BoxBits = [u64; 6];
 pub(crate) type VecBits = [u64; 3];
 

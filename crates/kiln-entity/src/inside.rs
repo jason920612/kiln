@@ -391,6 +391,10 @@ impl Entity {
         counter + 1
     }
 
+    fn air_range(bb: &Aabb) -> (BlockPos, BlockPos) {
+        (BlockPos::containing(bb.min_x, bb.min_y, bb.min_z), BlockPos::containing(bb.max_x, bb.max_y, bb.max_z))
+    }
+
     /// Whether every block `bb` touches is air, remembered while the box and the blocks around
     /// it stay the same.
     fn all_air_around(&mut self, level: &dyn EntityLevel, bb: &Aabb) -> bool {
@@ -399,10 +403,17 @@ impl Entity {
         if let (Some(key), Some(m)) = (&key, self.memo.as_deref())
             && m.air.as_ref() == Some(key)
         {
+            crate::prof_count!("memo air", true);
+            if crate::memo::checking() {
+                let mut buf = [0u16; 64];
+                let (lo, hi) = Self::air_range(bb);
+                let n = ((hi.x - lo.x + 1) * (hi.y - lo.y + 1) * (hi.z - lo.z + 1)) as usize;
+                assert!(n <= 64 && level.read_blocks(lo, hi, &mut buf[..n]) && buf[..n].iter().all(|&s| physics::is_air(s)), "stale air memo");
+            }
             return true;
         }
-        let lo = BlockPos::containing(bb.min_x, bb.min_y, bb.min_z);
-        let hi = BlockPos::containing(bb.max_x, bb.max_y, bb.max_z);
+        crate::prof_count!("memo air", false);
+        let (lo, hi) = Self::air_range(bb);
         let (dx, dy, dz) = (hi.x as i64 - lo.x as i64 + 1, hi.y as i64 - lo.y as i64 + 1, hi.z as i64 - lo.z as i64 + 1);
         let n = dx * dy * dz;
         let mut buf = [0u16; 64];
