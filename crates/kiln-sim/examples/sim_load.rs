@@ -101,6 +101,9 @@ struct Args {
     /// Players that crouch, go spectator and leave and rejoin while measuring (waypoint and
     /// tracking churn); for comparing packet streams between builds.
     churn: bool,
+    /// `--entity-ticking serial|islands|tiles` and `--locator-interval n` (see `SimConfig`).
+    entity_ticking: Option<kiln_sim::EntityTicking>,
+    locator_interval: u32,
 }
 
 fn args() -> Args {
@@ -127,6 +130,8 @@ fn args() -> Args {
         village: false,
         day_time: None,
         churn: false,
+        entity_ticking: None,
+        locator_interval: 1,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -150,6 +155,8 @@ fn args() -> Args {
             "--mobs" => a.mobs = value().parse().unwrap(),
             "--village" => a.village = true,
             "--churn" => a.churn = true,
+            "--entity-ticking" => a.entity_ticking = Some(kiln_sim::EntityTicking::parse(&value()).expect("serial, islands or tiles")),
+            "--locator-interval" => a.locator_interval = value().parse().unwrap(),
             "--day-time" => a.day_time = Some(value().parse().unwrap()),
             "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
@@ -168,6 +175,10 @@ fn main() {
     let mut config = SimConfig::new(a.players, 10, None);
     config.pool.workers = a.threads;
     config.unified_regions = a.unified;
+    if let Some(t) = a.entity_ticking {
+        config.entity_ticking = t;
+    }
+    config.locator_interval = a.locator_interval;
     let us = std::time::Duration::from_micros;
     if let Some(v) = a.spin_us {
         config.pool.spin = us(v);

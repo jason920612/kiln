@@ -275,6 +275,10 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
         return false;
     }
     let Some(region) = sim.level.region_ref() else { return false };
+    let mode = region.env.entity_ticking;
+    if mode == crate::EntityTicking::Serial {
+        return false;
+    }
     if !region.blocks.hearts.is_empty() || crate::sculk::listening(region) || sim.list.iter().any(|e| SERIAL.contains(&e.kind.name)) {
         return false;
     }
@@ -282,10 +286,12 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
     let n = sim.list.len();
     let largest = islands.iter().map(|g| g.0.len()).max().unwrap_or(0);
     let mut next = sim.next_placeholder;
-    let batches = if islands.len() >= 2 && largest * ISLAND_SHARE <= n {
+    let batches = if islands.len() >= 2 && (largest * ISLAND_SHARE <= n || mode == crate::EntityTicking::Islands) {
         vec![islands.into_iter().map(|(ents, players)| Group { ents, players, ticks: None }).collect()]
-    } else {
+    } else if mode == crate::EntityTicking::Tiles {
         tile_batches(sim.list, sim.players)
+    } else {
+        return false;
     };
     // Which player each stand-in and view is.
     let player_at: crate::FastMap<i32, usize> = sim.players.iter().enumerate().map(|(j, p)| (p.entity_id, j)).collect();

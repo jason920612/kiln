@@ -170,6 +170,11 @@ pub struct SimConfig {
     /// Keep-alives every 15 s of wall-clock time; `false` sends none (replays and
     /// determinism tests, whose packet streams must not depend on how fast they run).
     pub keep_alive: bool,
+    /// How a crowded region's entities tick ([`EntityTicking`]).
+    pub entity_ticking: EntityTicking,
+    /// The locator bar takes the movers' turns every this many ticks (1: every tick, as
+    /// vanilla; more sends fewer, coarser waypoint updates).
+    pub locator_interval: u32,
     /// Where the data packs publish the feature flags and tags that logins send.
     pub data_sync: std::sync::Arc<kiln_link::DataSync>,
     /// Looks game profiles up for `fetchprofile` (the session service); without one only
@@ -177,6 +182,31 @@ pub struct SimConfig {
     pub profile_lookup: Option<std::sync::Arc<dyn kiln_link::ProfileLookup>>,
     /// The simulation's own inbox, for answers that arrive from other threads.
     pub replies: Option<crossbeam_channel::Sender<ToSim>>,
+}
+
+/// How a region with many entities ticks them (`entities/islands.rs`). Every choice is
+/// deterministic and independent of the workers and the regions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntityTicking {
+    /// One after another in list order, as vanilla.
+    Serial,
+    /// Groups more than 24 blocks apart side by side (the same result as serial while they do
+    /// not meet).
+    Islands,
+    /// Islands, and 16-block tiles in nine passes when the islands join into one.
+    Tiles,
+}
+
+impl EntityTicking {
+    /// `serial`, `islands` or `tiles`.
+    pub fn parse(s: &str) -> Option<EntityTicking> {
+        match s {
+            "serial" => Some(EntityTicking::Serial),
+            "islands" => Some(EntityTicking::Islands),
+            "tiles" => Some(EntityTicking::Tiles),
+            _ => None,
+        }
+    }
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -208,6 +238,8 @@ impl SimConfig {
             world_format: kiln_storage::WorldFormat::Anvil,
             access: kiln_link::access::AccessLists::new(None).shared(),
             keep_alive: true,
+            entity_ticking: EntityTicking::Tiles,
+            locator_interval: 1,
             data_sync: Default::default(),
             profile_lookup: None,
             replies: None,
@@ -1840,6 +1872,7 @@ impl Sim {
                 conns.into_iter().filter_map(|c| self.players.get(c)).filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()
             }),
             raids: self.dims[dim].raids.views.clone(),
+            entity_ticking: self.config.entity_ticking,
         }
     }
 

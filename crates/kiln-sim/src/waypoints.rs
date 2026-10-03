@@ -851,7 +851,11 @@ impl Sim {
                 self.track_waypoint(dim, conn);
             }
         }
-        if on {
+        // `SimConfig::locator_interval`: the movers' turns every so many ticks (positions and
+        // the connections made meanwhile wait for them).
+        let interval = i64::from(self.config.locator_interval.max(1));
+        let turns = !on || self.game_time % interval == 0;
+        if on && turns {
             let mut moved: [Vec<ConnId>; 3] = Default::default();
             for &conn in &conns {
                 let p = &self.players[&conn];
@@ -866,11 +870,15 @@ impl Sim {
             }
         }
         for p in self.players.values_mut() {
-            p.waypoint_last_pos = p.pos;
+            if turns {
+                p.waypoint_last_pos = p.pos;
+            }
             p.waypoint_first_tick = false;
         }
-        for m in &mut self.waypoints {
-            m.dirty.iter_mut().for_each(|d| *d = false);
+        if turns {
+            for m in &mut self.waypoints {
+                m.dirty.iter_mut().for_each(|d| *d = false);
+            }
         }
     }
 
