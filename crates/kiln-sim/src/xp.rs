@@ -123,7 +123,7 @@ pub(crate) fn pick_up_orbs(entities: &mut Entities, players: &mut [&mut Player])
             continue;
         }
         let (lo, hi, _) = e.body();
-        let Some(EntityKind::ExperienceOrb(orb)) = e.phys.as_mut().map(|p| &mut p.kind) else { continue };
+        let Some(EntityKind::ExperienceOrb(orb)) = e.phys.as_deref_mut().map(|p| &mut p.kind) else { continue };
         // The player's box inflated by (1, 0.5, 1), as for items.
         let touching = |p: &Player| {
             let pmin = [p.pos[0] - 1.3, p.pos[1] - 0.5, p.pos[2] - 1.3];
@@ -152,7 +152,7 @@ pub(crate) fn pick_up_orbs(entities: &mut Entities, players: &mut [&mut Player])
         }
         if orb.count <= 0 {
             e.removed = true;
-            if let Some(phys) = e.phys.as_mut() {
+            if let Some(phys) = e.phys.as_deref_mut() {
                 phys.discard();
             }
         }

@@ -175,7 +175,7 @@ fn partition(list: &[Entity], players: &[&mut Player]) -> Vec<(Vec<usize>, Vec<u
     // Riders and vehicles, leads, pets and owners, fishing hooks and anglers.
     let by_id = |id: i32| list.binary_search_by_key(&id, |e| e.id).ok().or_else(|| players.iter().position(|p| p.entity_id == id).map(|j| n + j));
     for (i, e) in list.iter().enumerate() {
-        let Some(phys) = e.phys.as_ref() else { continue };
+        let Some(phys) = e.phys.as_deref() else { continue };
         let mut related: SmallVec<[usize; 4]> = SmallVec::new();
         related.extend(phys.vehicle.and_then(by_id));
         related.extend(phys.passengers.iter().filter_map(|&p| by_id(p)));
@@ -223,7 +223,7 @@ fn tile_batches(list: &[Entity], players: &[&mut Player]) -> Vec<Vec<Group>> {
     let tile = |p: [f64; 3]| ((p[0] / TILE).floor() as i32, (p[2] / TILE).floor() as i32);
     let root = |mut i: usize| {
         for _ in 0..8 {
-            let Some(v) = list[i].phys.as_ref().and_then(|p| p.vehicle) else { break };
+            let Some(v) = list[i].phys.as_deref().and_then(|p| p.vehicle) else { break };
             match list.binary_search_by_key(&v, |e| e.id) {
                 Ok(j) if j != i => i = j,
                 _ => break,

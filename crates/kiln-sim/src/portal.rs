@@ -435,10 +435,10 @@ impl Sim {
                         && e.kind.name != "minecraft:ender_dragon"
                         && !d.portal_cooldowns.contains_key(&e.uuid.as_u128())
                         // `canUsePortal(false)`: a passenger does not (its vehicle does, with it).
-                        && e.phys.as_ref().is_none_or(|p| p.vehicle.is_none())
-                        && !e.phys.as_ref().is_some_and(kiln_entity::mob::kinds::creaking::is_heart_bound)
+                        && e.phys.as_deref().is_none_or(|p| p.vehicle.is_none())
+                        && !e.phys.as_deref().is_some_and(kiln_entity::mob::kinds::creaking::is_heart_bound)
                 }) {
-                    let Some(phys) = e.phys.as_ref() else { continue };
+                    let Some(phys) = e.phys.as_deref() else { continue };
                     let half = phys.width as f64 / 2.0 - 1.0e-5;
                     let (min, max) = ([e.pos[0] - half, e.pos[1] + 1.0e-5, e.pos[2] - half], [e.pos[0] + half, e.pos[1] + phys.height as f64 - 1.0e-5, e.pos[2] + half]);
                     'find: for x in min[0].floor() as i32..=max[0].floor() as i32 {
@@ -471,7 +471,7 @@ impl Sim {
                 .iter()
                 .flat_map(|r| r.part().0.list.iter())
                 .find(|e| e.id == id)
-                .and_then(|e| e.phys.as_ref().map(|p| (e.pos, [p.y_rot, p.x_rot], [p.width, p.height])))
+                .and_then(|e| e.phys.as_deref().map(|p| (e.pos, [p.y_rot, p.x_rot], [p.width, p.height])))
             else {
                 continue;
             };
@@ -523,7 +523,7 @@ impl Sim {
             // `placePortalTicket`: the arrival chunks load.
             self.load_area(to, floor_pos(pos), 1);
             self.dims[to].portal_cooldowns.insert(e.uuid.as_u128(), now + ENTITY_PORTAL_COOLDOWN);
-            self.dims[to].spawns.push(crate::entities::Spawn { kind: e.kind, pos, vel: [0.0; 3], body: crate::entities::Body::Loaded(Box::new(phys)) });
+            self.dims[to].spawns.push(crate::entities::Spawn { kind: e.kind, pos, vel: [0.0; 3], body: crate::entities::Body::Loaded(phys) });
             info!("{} went from {} to {} at {pos:?}", e.kind.name, DIMENSIONS[from].0, DIMENSIONS[to].0);
         }
     }

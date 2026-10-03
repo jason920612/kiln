@@ -75,7 +75,7 @@ impl Sim {
             }
             return true;
         }
-        let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_mut()) else { return false };
+        let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_deref_mut()) else { return false };
         let mut tags = tags_in(&Tag::Compound(phys.extra.clone()));
         if !change_tag(&mut tags, tag, add) {
             return false;
@@ -119,7 +119,7 @@ impl Sim {
         match kiln_entity::persist::load(&Tag::Compound(fields), e.id, seed) {
             Ok(mut loaded) => {
                 loaded.uuid = e.uuid.as_u128();
-                e.phys = Some(loaded);
+                e.phys = Some(Box::new(loaded));
                 e.sync();
                 Ok(())
             }
@@ -138,7 +138,7 @@ impl Sim {
             }
             return;
         }
-        let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_mut()) else { return };
+        let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_deref_mut()) else { return };
         phys.y_rot = rot[0];
         phys.x_rot = rot[1];
         if let Some(m) = kiln_entity::mob::data_mut(phys) {
@@ -163,7 +163,7 @@ impl Sim {
             }
             Some(id) => {
                 let Some(e) = self.entity_mut(target) else { return false };
-                if e.phys.as_ref().and_then(kiln_entity::mob::data).is_none() {
+                if e.phys.as_deref().and_then(kiln_entity::mob::data).is_none() {
                     return false;
                 }
                 (id, e.seen_by.clone())
@@ -182,7 +182,7 @@ impl Sim {
     fn vehicle_id(&mut self, target: &PlayerRef) -> Option<i32> {
         match target.entity {
             None => self.players.get(&target.conn)?.vehicle,
-            Some(_) => self.entity_mut(target)?.phys.as_ref()?.vehicle,
+            Some(_) => self.entity_mut(target)?.phys.as_deref()?.vehicle,
         }
     }
 
@@ -209,7 +209,7 @@ impl Sim {
             return self.vehicle_of_target(target).into_iter().collect();
         }
         // Players are entities with a vehicle only: nothing else hangs off them.
-        let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_ref()) else { return Vec::new() };
+        let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_deref()) else { return Vec::new() };
         match relation {
             "passengers" => {
                 let ids = phys.passengers.clone();
@@ -258,7 +258,7 @@ impl Sim {
         let mut i = 0;
         while i < out.len() {
             if out[i].entity.is_some() {
-                let passengers = self.entity_mut(&out[i]).and_then(|e| e.phys.as_ref().map(|p| p.passengers.clone())).unwrap_or_default();
+                let passengers = self.entity_mut(&out[i]).and_then(|e| e.phys.as_deref().map(|p| p.passengers.clone())).unwrap_or_default();
                 for pid in passengers {
                     if let Some(k) = ids.iter().position(|&id| id == pid) {
                         out.push(all[k].clone());
@@ -278,10 +278,10 @@ impl Sim {
                 let Some(pid) = self.players.get(&target.conn).map(|p| p.entity_id) else { return false };
                 let first_is_player = {
                     let players: Vec<i32> = self.players.values().map(|p| p.entity_id).collect();
-                    let Some(phys) = self.entity_mut(vehicle).and_then(|e| e.phys.as_ref()) else { return false };
+                    let Some(phys) = self.entity_mut(vehicle).and_then(|e| e.phys.as_deref()) else { return false };
                     phys.passengers.first().is_some_and(|f| players.contains(f))
                 };
-                let Some(phys) = self.entity_mut(vehicle).and_then(|e| e.phys.as_mut()) else { return false };
+                let Some(phys) = self.entity_mut(vehicle).and_then(|e| e.phys.as_deref_mut()) else { return false };
                 kiln_entity::ride::add_passenger(phys, pid, true, first_is_player);
                 let at = phys.passengers.iter().position(|&x| x == pid).unwrap_or(0);
                 let seat = kiln_entity::ride::rider_position(phys, at, "minecraft:player", 1.0);
@@ -302,7 +302,7 @@ impl Sim {
                         continue;
                     };
                     let mut rider = list[ti].phys.take().expect("rider state");
-                    let ok = list[vi].phys.as_mut().is_some_and(|v| kiln_entity::ride::start_riding(&mut rider, v, false));
+                    let ok = list[vi].phys.as_deref_mut().is_some_and(|v| kiln_entity::ride::start_riding(&mut rider, v, false));
                     list[ti].phys = Some(rider);
                     list[ti].sync();
                     return ok;
@@ -323,13 +323,13 @@ impl Sim {
                 p.entity_id
             }
             Some(id) => {
-                if let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_mut()) {
+                if let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_deref_mut()) {
                     phys.vehicle = None;
                 }
                 id
             }
         };
-        if let Some(phys) = self.entity_mut(&vehicle).and_then(|e| e.phys.as_mut()) {
+        if let Some(phys) = self.entity_mut(&vehicle).and_then(|e| e.phys.as_deref_mut()) {
             kiln_entity::ride::remove_passenger(phys, rider);
         }
     }
@@ -343,7 +343,7 @@ impl Sim {
             }
             Some(id) => {
                 let dim = crate::dim_id(r.dim)?;
-                let phys = self.dims[dim].regions.iter().find_map(|reg| reg.part().0.list.iter().find(|e| e.id == id && !e.removed))?.phys.as_ref()?;
+                let phys = self.dims[dim].regions.iter().find_map(|reg| reg.part().0.list.iter().find(|e| e.id == id && !e.removed))?.phys.as_deref()?;
                 let pos = phys.position();
                 let pos = [pos.x, pos.y, pos.z];
                 Some(DamageParty { id, pos, player: false, attacker: crate::health::Attacker::mob(id, phys.type_name, pos) })
@@ -488,7 +488,7 @@ impl Sim {
                 Some((!stack.is_empty()).then(|| stack.to_nbt()))
             }
             ItemHolder::Entity(e) => {
-                let phys = self.entity_mut(e)?.phys.as_ref()?;
+                let phys = self.entity_mut(e)?.phys.as_deref()?;
                 let m = kiln_entity::mob::data(phys)?;
                 let stack = mob_slot(m, slot)?;
                 Some((!stack.is_empty()).then(|| stack.to_nbt()))
@@ -553,7 +553,7 @@ impl Sim {
                 true
             }
             ItemHolder::Entity(e) => {
-                let Some(m) = self.entity_mut(e).and_then(|en| en.phys.as_mut()).and_then(kiln_entity::mob::data_mut) else { return false };
+                let Some(m) = self.entity_mut(e).and_then(|en| en.phys.as_deref_mut()).and_then(kiln_entity::mob::data_mut) else { return false };
                 set_mob_slot(m, slot, stack)
             }
             ItemHolder::Block { dimension, pos } => {
@@ -632,7 +632,7 @@ impl Sim {
             EnchantOutcome::Applied
         };
         if target.entity.is_some() {
-            let Some(m) = self.entity_mut(target).and_then(|e| e.phys.as_mut()).and_then(kiln_entity::mob::data_mut) else {
+            let Some(m) = self.entity_mut(target).and_then(|e| e.phys.as_deref_mut()).and_then(kiln_entity::mob::data_mut) else {
                 return EnchantOutcome::NotLiving;
             };
             return apply(&mut m.equipment[0]);
@@ -748,7 +748,7 @@ impl Sim {
             let modifiers = p.attribute_modifiers(with_base).into_iter().map(|(id, amount, _)| (id, amount)).collect();
             return Ok(Some(AttributeState { base: with_base.default_base(), value: p.attribute(*attr), modifiers }));
         }
-        let m = self.entity_mut(target).and_then(|e| e.phys.as_ref()).and_then(kiln_entity::mob::data).ok_or(())?;
+        let m = self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(kiln_entity::mob::data).ok_or(())?;
         let Some(attr) = kiln_entity::mob::attributes::Attr::by_name(name) else { return Ok(None) };
         let Some(i) = m.attrs.get(attr) else { return Ok(None) };
         Ok(Some(AttributeState { base: i.base, value: i.value(), modifiers: i.modifiers.iter().map(|m| (m.id.clone(), m.amount)).collect() }))
@@ -782,7 +782,7 @@ impl Sim {
             p.attributes_dirty |= changed;
             return changed;
         }
-        let Some(m) = self.entity_mut(target).and_then(|e| e.phys.as_mut()).and_then(kiln_entity::mob::data_mut) else { return false };
+        let Some(m) = self.entity_mut(target).and_then(|e| e.phys.as_deref_mut()).and_then(kiln_entity::mob::data_mut) else { return false };
         let Some(attr) = kiln_entity::mob::attributes::Attr::by_name(name) else { return false };
         let default = m.kind.attributes().base(attr);
         let Some(i) = m.attrs.get_mut(attr) else { return false };
@@ -1085,7 +1085,7 @@ impl Sim {
                 let (table, type_name, baby) = if target.entity.is_none() {
                     ("minecraft:entities/player".to_owned(), "minecraft:player", false)
                 } else {
-                    let found = self.entity_mut(target).and_then(|e| e.phys.as_ref()).and_then(|p| {
+                    let found = self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(|p| {
                         let m = kiln_entity::mob::data(p)?;
                         Some((m.kind.ext().and_then(|k| k.loot_table(m)).unwrap_or_else(|| m.kind.loot_table()), p.type_name, m.baby()))
                     });
@@ -1095,7 +1095,7 @@ impl Sim {
                     }
                 };
                 let weapon = killer.as_ref().filter(|k| k.entity.is_none()).and_then(|k| self.players.get(&k.conn)).map(|p| p.inv.selected_item().clone());
-                let raider = self.entity_mut(target).and_then(|e| e.phys.as_ref()).and_then(kiln_entity::mob::data).and_then(|m| {
+                let raider = self.entity_mut(target).and_then(|e| e.phys.as_deref()).and_then(kiln_entity::mob::data).and_then(|m| {
                     let r = kiln_entity::mob::kinds::raider::raider(m)?;
                     Some((r.raid.is_some(), r.patrol_leader && m.drop_chances[kiln_entity::mob::HEAD] >= 2.0))
                 });
@@ -1306,7 +1306,7 @@ impl Sim {
             let p = self.players.get(&target.conn)?;
             if offhand { p.inv.equipment[4].clone() } else { p.inv.selected_item().clone() }
         } else {
-            let m = self.entity_mut(target)?.phys.as_ref().and_then(kiln_entity::mob::data)?;
+            let m = self.entity_mut(target)?.phys.as_deref().and_then(kiln_entity::mob::data)?;
             m.equipment[offhand as usize].clone()
         };
         Some((!stack.is_empty()).then(|| stack.to_nbt()))

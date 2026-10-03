@@ -342,7 +342,7 @@ fn raiders_of(d: &Dim, raid: i32) -> Vec<RaiderInfo> {
             if e.removed {
                 continue;
             }
-            let Some(p) = e.phys.as_ref() else { continue };
+            let Some(p) = e.phys.as_deref() else { continue };
             let Some(m) = mob::data(p) else { continue };
             let Some(st) = raider::raider(m) else { continue };
             if st.raid != Some(raid) || m.is_dead_or_dying() || p.is_removed() {
@@ -413,7 +413,7 @@ fn with_mob(d: &mut Dim, id: i32, f: impl FnOnce(&mut kiln_entity::Entity, &mut 
     for r in d.regions.iter_mut() {
         let list = &mut r.part_mut().0.list;
         if let Ok(i) = list.binary_search_by_key(&id, |e| e.id)
-            && let Some(p) = list[i].phys.as_mut()
+            && let Some(p) = list[i].phys.as_deref_mut()
         {
             let mut kind = std::mem::replace(&mut p.kind, kiln_entity::EntityKind::MobTicking { gravity: 0.08 });
             if let kiln_entity::EntityKind::Mob(m) = &mut kind {
@@ -890,7 +890,7 @@ impl Sim {
         let mut leaders: Vec<(i32, i32)> = Vec::new();
         for r in d.regions.iter_mut() {
             for e in r.part_mut().0.list.iter_mut().filter(|e| e.id >= first_id) {
-                let Some(p) = e.phys.as_mut() else { continue };
+                let Some(p) = e.phys.as_deref_mut() else { continue };
                 let mut take = |key: &str| -> Option<i32> {
                     let i = p.extra.iter().position(|(k, _)| k == key)?;
                     p.extra.remove(i).1.as_i64().map(|v| v as i32)
@@ -919,7 +919,7 @@ impl Sim {
                 if let Some(mut p) = list[i].phys.take() {
                     // The vehicle is in the same region (same spawn position).
                     if let Ok(j) = list.binary_search_by_key(&vehicle, |e| e.id)
-                        && let Some(v) = list[j].phys.as_mut()
+                        && let Some(v) = list[j].phys.as_deref_mut()
                     {
                         kiln_entity::ride::start_riding(&mut p, v, false);
                     }

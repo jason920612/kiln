@@ -146,7 +146,7 @@ fn root_of_entity(entities: &Entities, id: i32) -> Root {
     let mut at = id;
     for _ in 0..64 {
         let Ok(i) = entities.list.binary_search_by_key(&at, |e| e.id) else { break };
-        match entities.list[i].phys.as_ref().and_then(|p| p.vehicle) {
+        match entities.list[i].phys.as_deref().and_then(|p| p.vehicle) {
             Some(v) => at = v,
             None => break,
         }
@@ -245,7 +245,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             out.push((Victim::Player(i), Candidate { id: p.entity_id, bb: p.bounding_box() }));
         }
         for e in self.entities.list.iter().filter(|e| !e.removed) {
-            let Some(phys) = e.phys.as_ref() else { continue };
+            let Some(phys) = e.phys.as_deref() else { continue };
             // `Entity.isInvulnerableToPiercingWeapon`, `canBeHitByProjectile`.
             if phys.invulnerable || phys.invulnerable_time > 0 || !phys.is_alive() {
                 continue;
@@ -288,7 +288,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         let (view, victim_id) = match victim {
             Victim::Player(t) => (self.players[t].view(), self.players[t].entity_id),
             Victim::Entity(id) => {
-                let e = self.entities.list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| self.entities.list[i].phys.as_ref());
+                let e = self.entities.list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| self.entities.list[i].phys.as_deref());
                 let (type_id, pos) = e.map_or((-1, [0.0; 3]), |e| {
                     let v = e.position();
                     (kiln_item::registry::ENTITY_TYPE.id(e.type_name).unwrap_or(-1), [v.x, v.y, v.z])
@@ -376,7 +376,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         let id = self.players[t].entity_id;
         if let Some(v) = self.players[t].vehicle.take() {
             if let Ok(i) = self.entities.list.binary_search_by_key(&v, |e| e.id)
-                && let Some(phys) = self.entities.list[i].phys.as_mut()
+                && let Some(phys) = self.entities.list[i].phys.as_deref_mut()
             {
                 kiln_entity::ride::remove_passenger(phys, id);
             }
@@ -451,7 +451,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         let (victim_id, living) = match victim {
             Victim::Player(t) => (self.players[t].entity_id, true),
             Victim::Entity(id) => {
-                let living = self.entities.list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| self.entities.list[i].phys.as_ref()).is_some_and(|e| kiln_entity::mob::data(e).is_some());
+                let living = self.entities.list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| self.entities.list[i].phys.as_deref()).is_some_and(|e| kiln_entity::mob::data(e).is_some());
                 (id, living)
             }
         };
@@ -484,7 +484,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         // `damageStatsAndHearts`.
         let health_now = match victim {
             Victim::Player(t) => Some(self.players[t].health),
-            Victim::Entity(id) => self.entities.list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| self.entities.list[i].phys.as_ref()).and_then(|e| kiln_entity::mob::data(e)).map(|m| m.health),
+            Victim::Entity(id) => self.entities.list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| self.entities.list[i].phys.as_deref()).and_then(|e| kiln_entity::mob::data(e)).map(|m| m.health),
         };
         if let Some(now) = health_now {
             let dealt = health_before - now;
@@ -494,7 +494,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                 let at = match victim {
                     Victim::Player(t) => [self.players[t].pos[0], self.players[t].pos[1] + 0.9, self.players[t].pos[2]],
                     Victim::Entity(id) => {
-                        let e = self.entities.list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| self.entities.list[i].phys.as_ref());
+                        let e = self.entities.list.binary_search_by_key(&id, |e| e.id).ok().and_then(|i| self.entities.list[i].phys.as_deref());
                         e.map_or([0.0; 3], |e| [e.x(), e.y() + e.height as f64 * 0.5, e.z()])
                     }
                 };
@@ -764,7 +764,7 @@ fn motion_of_victim(w: &Work<'_, '_, '_>, victim: Victim) -> Vec3 {
                 .list
                 .binary_search_by_key(&root, |e| e.id)
                 .ok()
-                .and_then(|i| w.entities.list[i].phys.as_ref())
+                .and_then(|i| w.entities.list[i].phys.as_deref())
                 .map_or(Vec3::ZERO, |e| e.last_known_speed.scale(spear::MOTION_SCALE))
         }
     }

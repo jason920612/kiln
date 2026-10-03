@@ -331,7 +331,7 @@ pub(crate) fn deny_interact(hook: &mut RegionHook, p: &mut Player, entities: &mu
         return false;
     }
     // The vanilla state carries the NBT fields Kiln does not model, `kiln:plugin` among them.
-    let Some(phys) = e.phys.as_mut() else { return false };
+    let Some(phys) = e.phys.as_deref_mut() else { return false };
     let mut data = entity_data(&phys.extra);
     let before = data.clone();
     let a = actor(p, &hook.ops);

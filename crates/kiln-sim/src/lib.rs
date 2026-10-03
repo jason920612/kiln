@@ -1349,7 +1349,7 @@ impl Sim {
             .flat_map(|d| d.regions.iter())
             .flat_map(|r| r.part().0.list.iter())
             .map(|e| {
-                let mob = e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
+                let mob = e.phys.as_deref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
                 (e.id, e.kind.id, e.pos.map(f64::to_bits), e.vel.map(f64::to_bits), mob)
             })
             .collect();
@@ -1515,7 +1515,7 @@ impl Sim {
             .flat_map(|d| d.regions.iter())
             .flat_map(|r| r.part().0.list.iter())
             .filter(|e| !e.removed)
-            .filter_map(|e| e.phys.as_ref().map(|p| (e.id, p.vehicle, p.passengers.clone())))
+            .filter_map(|e| e.phys.as_deref().map(|p| (e.id, p.vehicle, p.passengers.clone())))
             .collect();
         out.sort_by_key(|r| r.0);
         out
@@ -1525,7 +1525,7 @@ impl Sim {
     /// still holds unrolled (for tests and tools).
     pub fn cart_items(&self, id: i32) -> Option<(Vec<(usize, &'static str, i32)>, Option<String>)> {
         let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
-        let c = kiln_entity::ext_entity::container(e.phys.as_ref()?)?;
+        let c = kiln_entity::ext_entity::container(e.phys.as_deref()?)?;
         Some((c.items.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i, s.item_name(), s.count())).collect(), c.loot_table.clone()))
     }
 
@@ -1533,7 +1533,7 @@ impl Sim {
     /// the hopper's `enabled` (for tests and tools).
     pub fn cart_state(&self, id: i32) -> Option<(i32, i32, bool)> {
         let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
-        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_ref()?)?;
+        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_deref()?)?;
         Some((cart.fuel, cart.fuse, cart.enabled))
     }
 
@@ -1558,7 +1558,7 @@ impl Sim {
     /// banner) (for tests and tools).
     pub fn raider(&self, id: i32) -> Option<(Option<i32>, i32, bool, bool, bool)> {
         let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id)?;
-        let m = kiln_entity::mob::data(e.phys.as_ref()?)?;
+        let m = kiln_entity::mob::data(e.phys.as_deref()?)?;
         let r = kiln_entity::mob::kinds::raider::raider(m)?;
         Some((r.raid, r.wave, r.patrol_leader, r.patrolling, kiln_entity::mob::kinds::raider::is_ominous_banner(&m.equipment[kiln_entity::mob::HEAD])))
     }
@@ -1570,7 +1570,7 @@ impl Sim {
             .iter()
             .flat_map(|d| d.regions.iter())
             .flat_map(|r| r.part().0.list.iter())
-            .filter_map(|e| e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (e.id, e.kind.name, e.pos, m.health))))
+            .filter_map(|e| e.phys.as_deref().and_then(|p| kiln_entity::mob::data(p).map(|m| (e.id, e.kind.name, e.pos, m.health))))
             .collect();
         out.sort_by_key(|m| m.0);
         out
@@ -1611,7 +1611,7 @@ impl Sim {
             .iter()
             .flat_map(|r| r.part().0.list.iter())
             .filter(|e| !e.removed)
-            .filter_map(|e| e.phys.as_ref().and_then(kiln_entity::ext_entity::fishing_hook::get))
+            .filter_map(|e| e.phys.as_deref().and_then(kiln_entity::ext_entity::fishing_hook::get))
             .map(|h| (h.owner, h.biting, h.state == kiln_entity::ext_entity::fishing_hook::State::Bobbing))
             .collect()
     }
@@ -1696,7 +1696,7 @@ impl Sim {
             .iter()
             .flat_map(|r| r.part().0.list.iter())
             .filter(|e| !e.removed)
-            .filter_map(|e| match e.phys.as_ref().map(|p| &p.kind) {
+            .filter_map(|e| match e.phys.as_deref().map(|p| &p.kind) {
                 Some(kiln_entity::EntityKind::Item(d)) => Some(d.stack.clone()),
                 _ => None,
             })
@@ -2123,7 +2123,7 @@ impl Sim {
             let Some(region) = d.regions.at_mut(chunk.cell()) else { continue };
             let list = &mut region.part_mut().0.list;
             let Ok(i) = list.binary_search_by_key(&id, |e| e.id) else { continue };
-            let vehicle = list[i].phys.as_mut().and_then(|p| {
+            let vehicle = list[i].phys.as_deref_mut().and_then(|p| {
                 p.vehicle = p.vehicle.map(real);
                 for x in p.passengers.iter_mut() {
                     *x = real(*x);
@@ -2132,7 +2132,7 @@ impl Sim {
             });
             if let Some(v) = vehicle
                 && let Ok(j) = list.binary_search_by_key(&v, |e| e.id)
-                && let Some(vp) = list[j].phys.as_mut()
+                && let Some(vp) = list[j].phys.as_deref_mut()
             {
                 for x in vp.passengers.iter_mut() {
                     if *x == placeholder {
@@ -2152,7 +2152,7 @@ impl Sim {
             cells.push(cell);
             let Some(region) = d.regions.at_mut(cell) else { continue };
             for e in region.part_mut().0.list.iter_mut() {
-                if let Some(l) = e.phys.as_mut().and_then(|p| p.leash.as_mut())
+                if let Some(l) = e.phys.as_deref_mut().and_then(|p| p.leash.as_mut())
                     && let Some(h) = l.holder
                     && h < 0
                 {

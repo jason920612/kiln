@@ -122,7 +122,7 @@ impl PlayerRef {
             rot,
             dim: crate::DIMENSIONS[dim].0,
             mode: GameMode::Survival,
-            display: match e.phys.as_ref().map(|p| &p.kind) {
+            display: match e.phys.as_deref().map(|p| &p.kind) {
                 Some(kiln_entity::EntityKind::Item(d)) => crate::command_data::hover_name(&d.stack),
                 _ => Text::translate(format!("entity.minecraft.{path}"), Vec::new()),
             },
@@ -131,8 +131,8 @@ impl PlayerRef {
             size: [e.kind.width as f64, e.kind.height as f64],
             eye,
             alive,
-            living: e.phys.as_ref().is_some_and(|p| kiln_entity::mob::data(p).is_some()),
-            tags: e.phys.as_ref().map_or_else(Vec::new, |p| crate::command_data::tags_in(&Tag::Compound(p.extra.clone()))),
+            living: e.phys.as_deref().is_some_and(|p| kiln_entity::mob::data(p).is_some()),
+            tags: e.phys.as_deref().map_or_else(Vec::new, |p| crate::command_data::tags_in(&Tag::Compound(p.extra.clone()))),
         }
     }
 }
@@ -286,7 +286,7 @@ impl Sim {
         let dim = crate::dim_id(entity.dim)?;
         for r in self.dims[dim].regions.iter_mut() {
             if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == id) {
-                return e.phys.as_mut().and_then(kiln_entity::mob::data_mut).map(f);
+                return e.phys.as_deref_mut().and_then(kiln_entity::mob::data_mut).map(f);
             }
         }
         None
@@ -710,7 +710,7 @@ impl Host for Sim {
             let Some(dim) = crate::dim_id(entity.dim) else { return };
             for r in self.dims[dim].regions.iter_mut() {
                 if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == id) {
-                    if let Some(p) = e.phys.as_mut() {
+                    if let Some(p) = e.phys.as_deref_mut() {
                         if kiln_entity::mob::data(p).is_some() {
                             if p.type_name == "minecraft:ender_dragon" {
                                 // `EnderDragon.kill`: it goes at once (the fight is told), without a death.

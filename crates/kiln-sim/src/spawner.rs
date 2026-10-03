@@ -265,7 +265,7 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     };
     // `createState`: mobs per category, persistent ones excluded.
     for e in &entities.list {
-        let Some(m) = e.phys.as_ref().and_then(mob::data) else { continue };
+        let Some(m) = e.phys.as_deref().and_then(mob::data) else { continue };
         if m.persistence_required || e.removed {
             continue;
         }

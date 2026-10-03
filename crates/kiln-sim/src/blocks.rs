@@ -330,7 +330,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
     out.extend(entities.list.iter().filter(|e| !e.removed && e.phys.is_some()).map(|e| {
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
-        let living = e.phys.as_ref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
+        let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
         EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None }
     }));
     out

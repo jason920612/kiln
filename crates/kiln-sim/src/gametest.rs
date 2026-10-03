@@ -687,7 +687,7 @@ impl Sim {
             for e in r.part_mut().0.list.iter_mut() {
                 let inside = (0..3).all(|i| e.pos[i] >= lo[i] - inflate && e.pos[i] <= hi[i] + inflate);
                 if inside && !e.removed {
-                    match e.phys.as_mut() {
+                    match e.phys.as_deref_mut() {
                         Some(p) => {
                             p.removed.get_or_insert(kiln_entity::entity::RemovalReason::Discarded);
                         }

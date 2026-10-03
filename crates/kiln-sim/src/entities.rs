@@ -62,7 +62,7 @@ pub(crate) struct Entity {
     pub age: i32,
     pub removed: bool,
     /// The vanilla state; `None` only while the entity is being ticked.
-    pub phys: Option<kiln_entity::Entity>,
+    pub phys: Option<Box<kiln_entity::Entity>>,
     tracker: MovementTracker,
     /// Velocity the viewers last got.
     sent_vel: [f64; 3],
@@ -179,7 +179,7 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
     if jockeys.nearby_chicken
         && let Some(chicken) = nearby_unridden_chicken(list, mount)
     {
-        if let Some(c) = list.iter_mut().find(|e| e.id == chicken).and_then(|e| e.phys.as_mut()).and_then(kiln_entity::mob::data_mut) {
+        if let Some(c) = list.iter_mut().find(|e| e.id == chicken).and_then(|e| e.phys.as_deref_mut()).and_then(kiln_entity::mob::data_mut) {
             c.chicken_jockey = true;
         }
         links.push((mount, chicken));
@@ -190,7 +190,7 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
             continue;
         }
         let Some(mut rp) = list[ri].phys.take() else { continue };
-        if let Some(vp) = list[vi].phys.as_mut()
+        if let Some(vp) = list[vi].phys.as_deref_mut()
             && kiln_entity::ride::start_riding(&mut rp, vp, false)
         {
             // (A rider loaded from saved data stays where it was saved unless that is far from
@@ -206,11 +206,11 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
 }
 
 fn nearby_unridden_chicken(list: &[Entity], mount: i32) -> Option<i32> {
-    let me = list.iter().find(|e| e.id == mount)?.phys.as_ref()?;
+    let me = list.iter().find(|e| e.id == mount)?.phys.as_deref()?;
     let area = me.bounding_box().inflate(5.0, 3.0, 5.0);
     list.iter()
         .filter(|e| e.id != mount && !e.removed)
-        .filter(|e| e.phys.as_ref().is_some_and(|p| p.is_alive() && p.type_name == "minecraft:chicken" && p.passengers.is_empty() && p.vehicle.is_none() && p.bounding_box().intersects(&area)))
+        .filter(|e| e.phys.as_deref().is_some_and(|p| p.is_alive() && p.type_name == "minecraft:chicken" && p.passengers.is_empty() && p.vehicle.is_none() && p.bounding_box().intersects(&area)))
         .map(|e| e.id)
         .min()
 }
@@ -342,7 +342,7 @@ impl Entity {
             on_ground,
             age: 0,
             removed: false,
-            phys: Some(phys),
+            phys: Some(Box::new(phys)),
             tracker: MovementTracker::new(id, spawn.kind.update_interval, &state),
             sent_vel: vel,
             seen_by: Vec::new(),
@@ -363,7 +363,7 @@ impl Entity {
     }
 
     fn phys(&self) -> &kiln_entity::Entity {
-        self.phys.as_ref().expect("entity state is back after its tick")
+        self.phys.as_deref().expect("entity state is back after its tick")
     }
 
     /// Copies what the rest of the simulation reads from the vanilla state.
@@ -379,7 +379,7 @@ impl Entity {
     /// `teleportSetPosition` of a command or portal teleport: the entity stands at `pos` (facing
     /// `rot` if given), still and on the ground, as if it had always been there.
     pub(crate) fn relocate(&mut self, pos: [f64; 3], rot: Option<[f32; 2]>) {
-        let Some(p) = self.phys.as_mut() else { return };
+        let Some(p) = self.phys.as_deref_mut() else { return };
         p.set_pos(Vec3::new(pos[0], pos[1], pos[2]));
         if let Some([yaw, pitch]) = rot {
             p.y_rot = yaw;
@@ -520,7 +520,7 @@ impl Entity {
     /// (`Entity.blocksBuilding`: primed TNT and falling blocks).
     /// `Monster.isPreventingPlayerRest`: monsters do, zombified piglins only while angry.
     pub fn prevents_rest(&self) -> bool {
-        let Some(m) = self.phys.as_ref().and_then(kiln_entity::mob::data) else { return false };
+        let Some(m) = self.phys.as_deref().and_then(kiln_entity::mob::data) else { return false };
         if m.health <= 0.0 || m.kind.category() != kiln_entity::mob::Category::Monster {
             return false;
         }
@@ -583,7 +583,7 @@ pub(crate) fn chunk_of(pos: [f64; 3]) -> ChunkPos {
 /// The entity at `i` of a region's id-ordered `list`, saved with the passengers it carries
 /// (`Entity.saveWithoutId`, `Passengers` and all).
 pub(crate) fn save_in(list: &[Entity], i: usize, owners: &dyn Fn(i32) -> Option<u128>) -> kiln_proto::nbt::Tag {
-    let lookup = |id: i32| list.binary_search_by_key(&id, |e| e.id).ok().map(|j| &list[j]).filter(|e| !e.removed).and_then(|e| e.phys.as_ref());
+    let lookup = |id: i32| list.binary_search_by_key(&id, |e| e.id).ok().map(|j| &list[j]).filter(|e| !e.removed).and_then(|e| e.phys.as_deref());
     kiln_entity::persist::save_with(list[i].phys(), owners, &lookup)
 }
 
@@ -592,10 +592,10 @@ pub(crate) fn save_in(list: &[Entity], i: usize, owners: &dyn Fn(i32) -> Option<
 pub(crate) fn root_in(list: &[Entity], i: usize) -> usize {
     let mut at = i;
     for _ in 0..list.len().min(64) {
-        let Some(p) = list[at].phys.as_ref() else { break };
+        let Some(p) = list[at].phys.as_deref() else { break };
         let Some(v) = p.vehicle else { break };
         let Ok(j) = list.binary_search_by_key(&v, |e| e.id) else { break };
-        if list[j].removed || !list[j].phys.as_ref().is_some_and(|vp| vp.passengers.contains(&p.id)) {
+        if list[j].removed || !list[j].phys.as_deref().is_some_and(|vp| vp.passengers.contains(&p.id)) {
             break;
         }
         at = j;
@@ -991,14 +991,14 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
         let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
         if span > self.grid.cells.len() as i64 * 4 {
-            found.extend(self.list.iter().filter_map(|e| e.phys.as_ref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+            found.extend(self.list.iter().filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
         } else {
             for x in lo.0..=hi.0 {
                 for y in lo.1..=hi.1 {
                     for z in lo.2..=hi.2 {
                         let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
                         for &i in v {
-                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_ref())
+                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_deref())
                                 && wanted(e)
                             {
                                 found.push((section_key(e), e.id));
@@ -1026,7 +1026,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn entity_mut(&mut self, id: i32) -> Option<&mut kiln_entity::Entity> {
         if let Some(i) = self.index(id) {
-            return self.list[i].phys.as_mut();
+            return self.list[i].phys.as_deref_mut();
         }
         let i = self.proxy_index(id)?;
         self.proxies.get_mut(i)
@@ -1034,7 +1034,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn entity(&self, id: i32) -> Option<&kiln_entity::Entity> {
         if let Some(i) = self.index(id) {
-            return self.list[i].phys.as_ref();
+            return self.list[i].phys.as_deref();
         }
         let i = self.proxy_index(id)?;
         self.proxies.get(i)
@@ -1277,7 +1277,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn entity_by_uuid(&self, uuid: u128) -> Option<&kiln_entity::Entity> {
-        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_ref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid))
+        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_deref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid))
     }
 
     fn known_movement(&self, id: i32) -> Vec3 {
@@ -1360,7 +1360,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
         let attacker = player_attacker.or_else(|| {
             let a = source.attacker?;
-            let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
+            let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref())?;
             Some(health::Attacker::mob(a, e.type_name, arr(e.position())))
         });
         // A projectile's hit judges blocking from where it comes (`getSourcePosition`).
@@ -1453,7 +1453,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             if let Some(p) = self.players.iter().find(|p| p.entity_id == o) {
                 return Some(p.as_attacker());
             }
-            let e = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
+            let e = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref())?;
             Some(health::Attacker::mob(o, e.type_name, arr(e.position())))
         });
         let env = self.level.env();
@@ -1580,7 +1580,7 @@ pub(crate) fn tick(
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
     for e in sim.list.iter_mut() {
-        if let Some(p) = e.phys.as_mut() {
+        if let Some(p) = e.phys.as_deref_mut() {
             kiln_entity::mob::update_data_before_sync(p);
         }
     }
@@ -1630,23 +1630,23 @@ pub(crate) fn tick(
 pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_player: bool, turn: &mut dyn FnMut(&SimLevel, usize) -> bool) {
     for i in 0..sim.list.len() {
         // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
-        let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
-        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
+        let vehicle = sim.list[i].phys.as_deref().and_then(|p| p.vehicle);
+        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_deref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
             continue;
         }
         if !turn(sim, i) {
             continue;
         }
         let me = sim.list[i].id;
-        if let Some(phys) = sim.list[i].phys.as_mut()
+        if let Some(phys) = sim.list[i].phys.as_deref_mut()
             && let Some(v) = phys.vehicle.take()
             && let Some(j) = sim.index(v)
-            && let Some(vp) = sim.list[j].phys.as_mut()
+            && let Some(vp) = sim.list[j].phys.as_deref_mut()
         {
             kiln_entity::ride::remove_passenger(vp, me);
         }
         tick_entity(sim, i, ticking, any_player, None);
-        let passengers = sim.list[i].phys.as_ref().map(|p| p.passengers.clone()).unwrap_or_default();
+        let passengers = sim.list[i].phys.as_deref().map(|p| p.passengers.clone()).unwrap_or_default();
         for id in passengers {
             if let Some(j) = sim.index(id) {
                 tick_entity(sim, j, ticking, any_player, Some(i));
@@ -1665,7 +1665,7 @@ pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_playe
 /// equipment drops, death events), in loaded chunks that do not tick too.
 fn process_pending_kills(sim: &mut SimLevel) {
     for i in 0..sim.list.len() {
-        let queued = sim.list[i].phys.as_ref().is_some_and(|p| !p.pending_hurts.is_empty() && matches!(p.kind, EntityKind::Mob(_)));
+        let queued = sim.list[i].phys.as_deref().is_some_and(|p| !p.pending_hurts.is_empty() && matches!(p.kind, EntityKind::Mob(_)));
         if !queued {
             continue;
         }
@@ -1692,7 +1692,7 @@ fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
     let Body::Ready(boxed) = &mut sim.spawns[k].body else { return };
     let marker = kiln_entity::Entity::new("minecraft:marker", 0, 0, kiln_entity::EntityKind::Other { type_name: "minecraft:marker" }, 0);
     let mut phys = std::mem::replace(&mut **boxed, marker);
-    if phys.is_removed() || phys.vehicle != sim.list[vehicle].phys.as_ref().map(|p| p.id) {
+    if phys.is_removed() || phys.vehicle != sim.list[vehicle].phys.as_deref().map(|p| p.id) {
         if let Body::Ready(b) = &mut sim.spawns[k].body {
             **b = phys;
         }
@@ -1704,7 +1704,7 @@ fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
     phys.common_tick();
     if let Some(mut v) = sim.list[vehicle].phys.clone() {
         if kiln_entity::ride::ride_tick(&mut phys, sim, &mut v)
-            && let Some(real) = sim.list[vehicle].phys.as_mut()
+            && let Some(real) = sim.list[vehicle].phys.as_deref_mut()
         {
             kiln_entity::ride::copy_steering_back(&v, real);
         }
@@ -1745,7 +1745,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
             Some((vi, mut v)) => {
                 // (The vehicle is ticked as a copy: what its rider steered it by comes back.)
                 if kiln_entity::ride::ride_tick(&mut phys, sim, &mut v)
-                    && let Some(real) = sim.list[vi].phys.as_mut()
+                    && let Some(real) = sim.list[vi].phys.as_deref_mut()
                 {
                     kiln_entity::ride::copy_steering_back(&v, real);
                 }
@@ -1773,12 +1773,12 @@ fn ride_players(sim: &mut SimLevel) {
     for k in 0..sim.players.len() {
         let Some(v) = sim.players[k].vehicle else { continue };
         let pid = sim.players[k].entity_id;
-        let idx = sim.index(v).filter(|&j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.is_alive()));
-        let seated = idx.is_some_and(|j| sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&pid)));
+        let idx = sim.index(v).filter(|&j| !sim.list[j].removed && sim.list[j].phys.as_deref().is_some_and(|p| p.is_alive()));
+        let seated = idx.is_some_and(|j| sim.list[j].phys.as_deref().is_some_and(|p| p.passengers.contains(&pid)));
         // A teleport of the player's own got it off at once (`Entity.teleport`: `stopRiding`): it
         // stays where it went.
         if std::mem::take(&mut sim.players[k].dismount_on_teleport) {
-            if let Some(vp) = idx.and_then(|j| sim.list[j].phys.as_mut()) {
+            if let Some(vp) = idx.and_then(|j| sim.list[j].phys.as_deref_mut()) {
                 kiln_entity::ride::remove_passenger(vp, pid);
             }
             let p = &mut *sim.players[k];
@@ -1790,7 +1790,7 @@ fn ride_players(sim: &mut SimLevel) {
         let leave = !seated || p.sneaking || p.dead || p.disconnected;
         if !leave {
 
-            let vp = sim.list[idx.unwrap()].phys.as_ref().expect("vehicle state");
+            let vp = sim.list[idx.unwrap()].phys.as_deref().expect("vehicle state");
             let at = vp.passengers.iter().position(|&x| x == pid).unwrap_or(0);
             let pos = kiln_entity::ride::rider_position(vp, at, "minecraft:player", 1.0);
             let p = &mut *sim.players[k];
@@ -1802,7 +1802,7 @@ fn ride_players(sim: &mut SimLevel) {
         // `stopRiding` → `dismountVehicle`.
         let mut to = sim.players[k].pos;
         if let Some(j) = idx {
-            if let Some(vp) = sim.list[j].phys.as_mut() {
+            if let Some(vp) = sim.list[j].phys.as_deref_mut() {
                 kiln_entity::ride::remove_passenger(vp, pid);
             }
             let vp = sim.list[j].phys.clone().expect("vehicle state");
@@ -1829,7 +1829,7 @@ pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player],
     }
     let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
     let view = view(p, now);
-    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref_mut() else { return };
     let steers = phys.passengers.first() == Some(&p.entity_id)
         && (kiln_entity::mob::data(phys).is_some_and(|m| m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)))
             || kiln_entity::ext_entity::boat::is_boat(phys.type_name));
@@ -1875,7 +1875,7 @@ pub(crate) fn paddle_boat(entities: &mut Entities, players: &[&mut Player], i: u
     let p = &*players[i];
     let Some(v) = p.vehicle else { return };
     let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
-    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref_mut() else { return };
     if phys.passengers.first() != Some(&p.entity_id) {
         return;
     }
@@ -1892,7 +1892,7 @@ pub(crate) fn riding_jump(entities: &mut Entities, players: &mut [&mut Player], 
     }
     let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
     let pid = players[i].entity_id;
-    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref_mut() else { return };
     if phys.passengers.first() != Some(&pid) {
         return;
     }
@@ -2100,7 +2100,7 @@ pub(crate) fn stab_mob(
         dismounted = true;
         phys.vehicle = None;
         if let Ok(j) = sim.list.binary_search_by_key(&v, |e| e.id)
-            && let Some(vp) = sim.list[j].phys.as_mut()
+            && let Some(vp) = sim.list[j].phys.as_deref_mut()
         {
             kiln_entity::ride::remove_passenger(vp, stab.target);
         }
@@ -2149,7 +2149,7 @@ pub(crate) fn interact_mob(
         if p.dead || entities.list[idx].removed {
             return false;
         }
-        let Some(phys) = entities.list[idx].phys.as_ref() else { return false };
+        let Some(phys) = entities.list[idx].phys.as_deref() else { return false };
         if kiln_entity::mob::data(phys).is_none() && !matches!(phys.kind, EntityKind::Ext(_)) {
             return false;
         }
@@ -2512,7 +2512,7 @@ fn carry_out(
         Event::DeathLoot { entity: id, table, pos, killer, attacker, direct: _, kind, on_fire } => {
             let Some(loot) = env.loot.clone() else { return };
             let Ok(i) = list.binary_search_by_key(&id, |e| e.id) else { return };
-            let Some(phys) = list[i].phys.as_ref() else { return };
+            let Some(phys) = list[i].phys.as_deref() else { return };
             let weapon = killer.and_then(|k| players.iter().find(|p| p.entity_id == k)).map(|p| p.inv.selected_item().clone());
             // The killer as `damage_source_properties` sees it (a frog's variant decides the froglight).
             let attacker_view = attacker.and_then(|a| {
@@ -2520,7 +2520,7 @@ fn carry_out(
                     return Some(crate::mobs::AttackerView { type_name: "minecraft:player", components: Vec::new() });
                 }
                 let i = list.binary_search_by_key(&a, |e| e.id).ok()?;
-                let e = list[i].phys.as_ref()?;
+                let e = list[i].phys.as_deref()?;
                 Some(crate::mobs::AttackerView { type_name: e.type_name, components: kiln_entity::mob::data(e).map(kiln_entity::mob::variant_components).unwrap_or_default() })
             });
             let ctx = crate::mobs::DeathContext {
@@ -2575,7 +2575,7 @@ fn carry_out(
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
                 p.killed_entity(entity_type);
                 let dim = crate::DIMENSIONS[env.dim].0;
-                if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_ref()) {
+                if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_deref()) {
                     let mut subject = crate::advancements::triggers::mob_subject(e, dim);
                     // `minecraft:equipment` as the mob wore it when it died (a captain's banner).
                     subject.equipment = equipment.iter().map(|(slot, s)| (*slot, s)).collect();
@@ -2588,7 +2588,7 @@ fn carry_out(
         // `ThrownEnderpearl.onHit`: its player goes to where the pearl was at the start of the
         // tick, takes 5 `ender_pearl` damage and hears the teleport.
         Event::ProjectileHit { projectile, projectile_type: "minecraft:ender_pearl", owner: Some(owner), .. } => {
-            let Some(to) = list.binary_search_by_key(&projectile, |e| e.id).ok().and_then(|i| list[i].phys.as_ref()).map(|e| arr(e.old_pos)) else { return };
+            let Some(to) = list.binary_search_by_key(&projectile, |e| e.id).ok().and_then(|i| list[i].phys.as_deref()).map(|e| arr(e.old_pos)) else { return };
             let Some(p) = players.iter_mut().find(|p| p.entity_id == owner && !p.dead && !p.disconnected) else { return };
             let now = env.game_time;
             let rot = p.rot;
@@ -2760,7 +2760,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
             continue;
         }
         let (lo, hi, _) = e.body();
-        let Some(EntityKind::Item(item)) = e.phys.as_mut().map(|p| &mut p.kind) else { continue };
+        let Some(EntityKind::Item(item)) = e.phys.as_deref_mut().map(|p| &mut p.kind) else { continue };
         if item.pickup_delay > 0 {
             continue;
         }
@@ -2791,7 +2791,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
         }
         if item.stack.is_empty() {
             e.removed = true;
-            if let Some(p) = e.phys.as_mut() {
+            if let Some(p) = e.phys.as_deref_mut() {
                 p.discard();
             }
         } else {
@@ -2817,7 +2817,7 @@ fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
             continue;
         }
         let (lo, hi, _) = e.body();
-        let Some(phys) = e.phys.as_ref() else { continue };
+        let Some(phys) = e.phys.as_deref() else { continue };
         // (at rest, pickup mode, the item, a loyal trident's owner)
         let (resting, mode, item, owner) = match &phys.kind {
             EntityKind::Arrow(a) => (
@@ -2871,7 +2871,7 @@ fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
             }
         }
         e.removed = true;
-        if let Some(p) = e.phys.as_mut() {
+        if let Some(p) = e.phys.as_deref_mut() {
             p.discard();
         }
     }
@@ -2963,7 +2963,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked
         }
     }
     // `ServerBossEvent`: a boss's bar for the players that see it.
-    let boss = e.phys.as_ref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
+    let boss = e.phys.as_deref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
     let bar_id = Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72);
     if let Some(progress) = boss {
         let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
@@ -3004,12 +3004,12 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked
         return t;
     }
     let mut packets = e.tracker.tick(&e.move_state());
-    if let Some(EntityKind::Mob(m)) = e.phys.as_mut().map(|p| &mut p.kind) {
+    if let Some(EntityKind::Mob(m)) = e.phys.as_deref_mut().map(|p| &mut p.kind) {
         if std::mem::take(&mut m.swing) {
             packets.push(entity::swing_animation(e.id, false, entity::swing::WHACK, entity::swing::DEFAULT_DURATION));
         }
     }
-    if let Some(phys) = e.phys.as_ref()
+    if let Some(phys) = e.phys.as_deref()
         && let EntityKind::Ext(x) = &phys.kind
     {
         let mut meta = EntityData::new();
@@ -3021,7 +3021,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked
             e.meta_sent = meta.entries().to_vec();
         }
     }
-    if let Some(phys) = e.phys.as_ref()
+    if let Some(phys) = e.phys.as_deref()
         && let EntityKind::Mob(m) = &phys.kind
     {
         let meta = crate::mobs::metadata(phys, m);
@@ -3047,7 +3047,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked
         }
     }
     // Arrows: crit and in-ground flags change in flight (extension entities: above).
-    if e.phys.as_ref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
+    if e.phys.as_deref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
         let meta = e.metadata();
         if meta.entries() != e.meta_sent.as_slice() {
             if !e.meta_sent.is_empty() || e.age > 1 {
@@ -3056,14 +3056,14 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked
             e.meta_sent = meta.entries().to_vec();
         }
     }
-    if let Some(phys) = e.phys.as_ref()
+    if let Some(phys) = e.phys.as_deref()
         && phys.passengers != e.passengers_sent
     {
         e.passengers_sent = phys.passengers.clone();
         packets.push(entity::set_passengers(e.id, &e.passengers_sent));
     }
     // `Leashable.setLeashedTo` / `dropLeash`: Set Entity Link when the holder changes.
-    if let Some(phys) = e.phys.as_ref() {
+    if let Some(phys) = e.phys.as_deref() {
         let holder = kiln_entity::leash::holder_of(phys);
         if holder != e.leash_sent {
             // (A knot made this tick is still under a stand-in id: the link waits.)
@@ -3075,7 +3075,7 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked
     }
     // `ServerEntity.sendChanges`: velocity on update ticks when it changed, or at once
     // after an impulse (explosion knockback).
-    let impulse = e.phys.as_mut().is_some_and(|p| std::mem::take(&mut p.needs_sync));
+    let impulse = e.phys.as_deref_mut().is_some_and(|p| std::mem::take(&mut p.needs_sync));
     if e.kind.track_deltas && (impulse || e.age % e.kind.update_interval.max(1) == 0) {
         let d: f64 = (0..3).map(|i| (e.vel[i] - e.sent_vel[i]).powi(2)).sum();
         let still = e.vel.iter().all(|&v| v == 0.0);
