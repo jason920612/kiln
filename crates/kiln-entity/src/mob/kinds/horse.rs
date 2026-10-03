@@ -418,6 +418,15 @@ impl Equine {
 }
 
 impl Kind for Equine {
+    /// `SpawnPlacements`: a zombie horse spawns by `Monster.checkMonsterSpawnRules` (dark enough,
+    /// not in peaceful), not by the animals' rules (light and grass) the other horses use.
+    fn check_spawn_rules(&self, view: &dyn ext::SpawnView, pos: crate::math::BlockPos, r: &mut kiln_javamath::random::LegacyRandom) -> Option<bool> {
+        match self.0 {
+            Which::Zombie => Some(super::zombie::monster_rules(view, pos, r)),
+            _ => None,
+        }
+    }
+
     fn info(&self) -> &'static Info {
         match self.0 {
             Which::Horse => &HORSE_INFO,
