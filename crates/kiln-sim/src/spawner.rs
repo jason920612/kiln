@@ -125,8 +125,6 @@ struct Spawner<'a> {
     /// Per stand chunk, mobs per category in the chunks at most 8 away (chessboard): every
     /// mob close to one of its players is among them, so this bounds their local counts.
     upper: Vec<[i32; N]>,
-    /// Each player's stand chunk.
-    stand_of: Vec<usize>,
     /// Categories whose local counts are made (all players at once).
     known: [bool; N],
     /// Per counted category and stand chunk, the players that had room when last looked at.
@@ -385,13 +383,11 @@ pub(crate) fn tick(
     let mut keyed: Vec<(ChunkPos, usize)> = players.iter().enumerate().map(|(i, p)| (chunk_of(p), i)).collect();
     keyed.sort_unstable();
     let order: Vec<usize> = keyed.iter().map(|&(_, i)| i).collect();
-    let mut stand_of = vec![0; players.len()];
     let mut starts = Vec::with_capacity(stands.len() + 1);
     let mut next = 0;
-    for (k, &c) in stands.iter().enumerate() {
+    for &c in &stands {
         starts.push(next);
         while next < keyed.len() && keyed[next].0 == c {
-            stand_of[keyed[next].1] = k;
             next += 1;
         }
     }
@@ -432,7 +428,6 @@ pub(crate) fn tick(
         local: vec![[0; N]; players.len()],
         mobs: Vec::new(),
         upper: vec![[0; N]; stands.len()],
-        stand_of,
         known: [false; N],
         room: Default::default(),
         counts: vec![[0; N]; ids.len()],
