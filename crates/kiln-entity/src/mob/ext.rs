@@ -574,6 +574,11 @@ pub trait Kind: Sync + Send {
     fn player_touch(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, player: &Living) {
         let _ = (e, m, level, player);
     }
+    /// Whether [`Kind::player_touch`] is the type's own (the simulation looks for touching
+    /// players only around such mobs).
+    fn touches_players(&self) -> bool {
+        false
+    }
     /// `getMaxSpawnClusterSize`.
     fn max_spawn_cluster(&self) -> i32 {
         4

@@ -438,11 +438,13 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 3);
         let spawned_before = self.out.times[9];
         self.tick_entities(env, ctx);
+        let mut tq = std::time::Instant::now();
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         self.post_cart_closes(env);
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
+        crate::pt(8, &mut tq);
         mark(&mut self.out.times, 4);
         // The spawner's share of the entity phase is its own sub-phase.
         self.out.times[4] = self.out.times[4].saturating_sub(self.out.times[9] - spawned_before);

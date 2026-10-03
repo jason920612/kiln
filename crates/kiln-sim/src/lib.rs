@@ -2895,3 +2895,11 @@ fn player_chunk(pos: [f64; 3]) -> ChunkPos {
 fn yellow(s: &str) -> Tag {
     Tag::Compound(vec![("text".into(), Tag::String(s.into())), ("color".into(), Tag::String("yellow".into()))])
 }
+
+/// TEMP wp39 timers.
+pub static PT: [std::sync::atomic::AtomicU64; 12] = [const { std::sync::atomic::AtomicU64::new(0) }; 12];
+pub(crate) fn pt(i: usize, t: &mut std::time::Instant) {
+    let now = std::time::Instant::now();
+    PT[i].fetch_add((now - *t).as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+    *t = now;
+}

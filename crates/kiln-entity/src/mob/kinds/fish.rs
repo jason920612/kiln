@@ -205,6 +205,9 @@ fn can_be_followed(s: &FishState, kind: MobKind) -> bool {
 }
 
 impl Kind for Fish {
+    fn touches_players(&self) -> bool {
+        true
+    }
     fn info(&self) -> &'static Info {
         match self.0 {
             FishType::Cod => &COD_INFO,

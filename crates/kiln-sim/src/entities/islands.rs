@@ -73,7 +73,7 @@ struct Job<'p> {
     global: Vec<usize>,
     list: Vec<Entity>,
     players: Vec<&'p mut Player>,
-    proxies: Vec<Box<kiln_entity::Entity>>,
+    proxies: Vec<Proxy>,
     views: Vec<PlayerView>,
     placeholder: i32,
     spawns: Vec<Spawn>,
@@ -310,7 +310,7 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
     let player_at: crate::FastMap<i32, usize> = sim.players.iter().enumerate().map(|(j, p)| (p.entity_id, j)).collect();
     let mut taken: Vec<Option<Entity>> = std::mem::take(sim.list).into_iter().map(Some).collect();
     // The players' stand-ins go to their groups and come back, like the entities.
-    let mut stand_ins: Vec<Option<Box<kiln_entity::Entity>>> = std::mem::take(&mut sim.proxies).into_iter().map(Some).collect();
+    let mut stand_ins: Vec<Option<Proxy>> = std::mem::take(&mut sim.proxies).into_iter().map(Some).collect();
     if batches.len() > 1 {
         // Tiles: each group as soon as the groups of earlier passes that share its tiles are done.
         let groups: Vec<(usize, Group)> = batches.into_iter().enumerate().flat_map(|(pass, b)| b.into_iter().map(move |g| (pass, g))).collect();
@@ -333,7 +333,7 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
 fn run_batch(
     sim: &mut SimLevel,
     taken: &mut [Option<Entity>],
-    stand_ins: &mut [Option<Box<kiln_entity::Entity>>],
+    stand_ins: &mut [Option<Proxy>],
     groups: Vec<Group>,
     player_at: &crate::FastMap<i32, usize>,
     ticking: &blocks::Ticking,
@@ -464,7 +464,7 @@ struct Done {
 fn run_tiles(
     sim: &mut SimLevel,
     taken: &mut [Option<Entity>],
-    stand_ins: &mut [Option<Box<kiln_entity::Entity>>],
+    stand_ins: &mut [Option<Proxy>],
     groups: Vec<(usize, Group)>,
     player_at: &crate::FastMap<i32, usize>,
     ticking: &blocks::Ticking,
