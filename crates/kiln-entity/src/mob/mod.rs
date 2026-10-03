@@ -3076,7 +3076,9 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
         return;
     }
     let Some(m) = data(e) else { return };
-    if level.difficulty() == 0 && !m.kind.ext().and_then(|k| k.allowed_in_peaceful()).unwrap_or(m.kind.is_animal()) {
+    // (`EntityType.isAllowedInPeaceful`: everything but the monsters, which are `notInPeaceful`; golems and
+    // villagers stay.)
+    if level.difficulty() == 0 && !m.kind.ext().and_then(|k| k.allowed_in_peaceful()).unwrap_or(m.kind.category() != Category::Monster) {
         e.discard();
         return;
     }

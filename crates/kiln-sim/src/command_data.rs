@@ -192,6 +192,62 @@ impl Sim {
         kiln_command::selector::SelectorWorld::entities(self, Some(target.dim), None).into_iter().find(|e| e.entity == Some(id))
     }
 
+    /// The entity (or player) with network id `id` among the candidates of `dim`.
+    fn entity_with_id(&mut self, dim: &'static str, id: i32) -> Option<PlayerRef> {
+        let all = kiln_command::selector::SelectorWorld::entities(self, Some(dim), None);
+        all.into_iter().find(|e| e.entity.map_or_else(|| self.players.get(&e.conn).is_some_and(|p| p.entity_id == id), |x| x == id))
+    }
+
+    /// `execute on <relation>`: `ExecuteCommand`'s relations of an entity. `owner` (a tamed
+    /// animal's owner among the players), `leasher`, `target`, `attacker` (`getLastHurtByMob`),
+    /// `vehicle`, `origin` (a projectile's owner) and `passengers` (the direct ones, in
+    /// order). The `controller` is not known (no entity names its controlling passenger yet).
+    pub(crate) fn related_to(&mut self, relation: &str, target: &PlayerRef) -> Vec<PlayerRef> {
+        let dim = target.dim;
+        let one = |id: Option<i32>, this: &mut Sim| id.and_then(|id| this.entity_with_id(dim, id)).into_iter().collect::<Vec<_>>();
+        if relation == "vehicle" {
+            return self.vehicle_of_target(target).into_iter().collect();
+        }
+        // Players are entities with a vehicle only: nothing else hangs off them.
+        let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_ref()) else { return Vec::new() };
+        match relation {
+            "passengers" => {
+                let ids = phys.passengers.clone();
+                ids.into_iter().filter_map(|id| self.entity_with_id(dim, id)).collect()
+            }
+            "leasher" => {
+                let holder = phys.leash.as_ref().and_then(|l| l.holder);
+                one(holder, self)
+            }
+            "target" => {
+                let t = kiln_entity::mob::data(phys).and_then(|m| m.target);
+                one(t, self)
+            }
+            "attacker" => {
+                let a = kiln_entity::mob::data(phys).and_then(|m| m.last_hurt_by_mob);
+                one(a, self)
+            }
+            "owner" => {
+                let owner = kiln_entity::mob::data(phys).and_then(kiln_entity::mob::kinds::tame::get).and_then(|t| t.owner);
+                owner
+                    .and_then(|u| self.players.iter().find(|(_, p)| p.uuid.as_u128() == u).map(|(&c, p)| PlayerRef::of(c, p, &self.commands.scoreboard)))
+                    .into_iter()
+                    .collect()
+            }
+            "origin" => {
+                use kiln_entity::entity::EntityKind as K;
+                let owner = match &phys.kind {
+                    K::Throwable(d) => d.owner,
+                    K::Arrow(d) => d.owner,
+                    K::Tnt(d) => d.owner,
+                    _ => None,
+                };
+                one(owner, self)
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// The entity and everything riding it, recursively.
     pub(crate) fn self_and_passengers_of(&mut self, target: &PlayerRef) -> Vec<PlayerRef> {
         let all = kiln_command::selector::SelectorWorld::entities(self, Some(target.dim), None);

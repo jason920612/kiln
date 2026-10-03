@@ -160,3 +160,45 @@ fn an_endermans_carried_block_drops_by_its_loot_table() {
     assert_eq!(gravel, 30, "{items:?}");
     assert!(!items.iter().any(|i| i == "minecraft:flint" || i == "minecraft:short_grass"), "{items:?}");
 }
+
+/// `/summon` with `Passengers` loads whole stacks (`EntityType.loadEntityRecursive`): mobs on
+/// mobs several deep, a boat and a minecart with their riders.
+#[test]
+fn summon_reads_passengers_into_whole_stacks() {
+    let mut w = World::new("normal");
+    w.summon(
+        "minecraft:skeleton_horse",
+        [3.0, 0.0, 0.0],
+        r#"{Tags:["a"],Passengers:[{id:"minecraft:spider",Tags:["b"],Passengers:[{id:"minecraft:skeleton",Tags:["c"],Passengers:[{id:"minecraft:parrot",Tags:["d"]}]}]}]}"#,
+    );
+    w.summon("minecraft:oak_boat", [8.0, 0.0, 0.0], r#"{Tags:["e"],Passengers:[{id:"minecraft:pig",Tags:["f"]},{id:"minecraft:cow",Tags:["g"]}]}"#);
+    w.summon("minecraft:minecart", [12.0, 0.0, 0.0], r#"{Tags:["h"],Passengers:[{id:"minecraft:zombie",Tags:["i"],Passengers:[{id:"minecraft:chicken",Tags:["j"]}]}]}"#);
+    w.ticks(2);
+    let tags = |t: &Tag| -> String { t.get("Tags").and_then(Tag::as_list).and_then(|l| l.first()).and_then(Tag::as_str).unwrap_or("?").to_owned() };
+    let mut ids: std::collections::HashMap<&str, i32> = std::collections::HashMap::new();
+    for (kind, tag) in [
+        ("minecraft:skeleton_horse", "a"),
+        ("minecraft:spider", "b"),
+        ("minecraft:skeleton", "c"),
+        ("minecraft:parrot", "d"),
+        ("minecraft:oak_boat", "e"),
+        ("minecraft:pig", "f"),
+        ("minecraft:cow", "g"),
+        ("minecraft:minecart", "h"),
+        ("minecraft:zombie", "i"),
+        ("minecraft:chicken", "j"),
+    ] {
+        let found = w.sim.entity_ids_of(kind);
+        assert_eq!(found.len(), 1, "{kind}");
+        assert!(w.sim.entity_nbt().iter().any(|t| tags(t) == tag), "{kind} is there with its tag");
+        ids.insert(tag, found[0]);
+    }
+    let riding = w.sim.riding();
+    let vehicle = |tag: &str| riding.iter().find(|r| r.0 == ids[tag]).and_then(|r| r.1);
+    for (rider, mount) in [("b", "a"), ("c", "b"), ("d", "c"), ("f", "e"), ("g", "e"), ("i", "h"), ("j", "i")] {
+        assert_eq!(vehicle(rider), Some(ids[mount]), "{rider} rides {mount}");
+    }
+    for root in ["a", "e", "h"] {
+        assert_eq!(vehicle(root), None, "{root} rides nothing");
+    }
+}

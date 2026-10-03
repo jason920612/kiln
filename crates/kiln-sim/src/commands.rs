@@ -597,6 +597,15 @@ impl SelectorWorld for Sim {
     fn scoreboard(&self) -> Option<&Scoreboard> {
         Some(&self.commands.scoreboard)
     }
+
+    /// `NbtPredicate.matches(entity)`: `compareNbt(predicate, saved data, true)` over what
+    /// `/data get entity` would show (a player's with its `SelectedItem`).
+    fn entity_nbt_matches(&self, entity: &PlayerRef, snbt: &str) -> bool {
+        let mut reader = kiln_command::StringReader::new(snbt);
+        let Ok(expected) = kiln_command::snbt::parse_compound(&mut reader) else { return false };
+        let Some(actual) = self.entity_data_of(entity.conn, entity.entity, entity.dim) else { return false };
+        kiln_command::blocks::compare_nbt(&expected, &actual, true)
+    }
 }
 
 impl Host for Sim {
@@ -1445,6 +1454,10 @@ impl Host for Sim {
 
     fn vehicle_of(&mut self, entity: &PlayerRef) -> Option<PlayerRef> {
         self.vehicle_of_target(entity)
+    }
+
+    fn related_entities(&mut self, relation: &str, entity: &PlayerRef) -> Vec<PlayerRef> {
+        self.related_to(relation, entity)
     }
 
     fn self_and_passengers(&mut self, entity: &PlayerRef) -> Vec<PlayerRef> {

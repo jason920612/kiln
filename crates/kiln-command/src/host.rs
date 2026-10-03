@@ -1008,6 +1008,11 @@ pub trait Host: SelectorWorld {
     fn vehicle_of(&mut self, _entity: &Self::Entity) -> Option<Self::Entity> {
         None
     }
+    /// `execute on <relation>`: the entities `relation` (`owner`, `leasher`, `target`,
+    /// `attacker`, `vehicle`, `controller`, `origin` or `passengers`) leads to from `entity`.
+    fn related_entities(&mut self, _relation: &str, _entity: &Self::Entity) -> Vec<Self::Entity> {
+        Vec::new()
+    }
     /// `getSelfAndPassengers` (recursively).
     fn self_and_passengers(&mut self, entity: &Self::Entity) -> Vec<Self::Entity> {
         vec![entity.clone()]
