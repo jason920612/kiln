@@ -1878,11 +1878,8 @@ impl Sim {
             },
             fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
             dragon_fight: self.fight_env(dim),
-            fire_watchers: std::sync::Arc::new({
-                let mut conns: Vec<&ConnId> = self.players.keys().collect();
-                conns.sort_unstable();
-                conns.into_iter().filter_map(|c| self.players.get(c)).filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()
-            }),
+            // Only asked whether any is near (in no order).
+            fire_watchers: std::sync::Arc::new(self.players.values().filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()),
             raids: self.dims[dim].raids.views.clone(),
             entity_ticking: self.config.entity_ticking,
         }
