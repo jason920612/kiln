@@ -34,7 +34,6 @@ use kiln_command::vanilla::misc::TEAM_RGB;
 use kiln_link::ConnId;
 use kiln_proto::packets::hud::{self, WaypointAt, WaypointOp};
 use kiln_sched::Window;
-use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 
@@ -510,8 +509,9 @@ struct Turns<'a> {
     snaps: Vec<Option<Snap>>,
     tx: Vec<Option<Tx>>,
     icons: &'a [(String, Option<i32>)],
-    /// `before[i]`: the moving transmitters whose turn comes before turn `i` (the last: all).
-    before: Vec<Bits>,
+    /// Set `i` (`words` long from `i * words`): the moving transmitters whose turn comes
+    /// before turn `i` (the last: all).
+    before: Vec<u64>,
     /// Present transmitters, and those of them that are spectators.
     present: Bits,
     spectators: Bits,
@@ -521,7 +521,7 @@ struct Turns<'a> {
     settled_block: Bits,
     settled_chunk: Bits,
     /// Present transmitters by chunk, for the chunks a receiver sees.
-    by_chunk: HashMap<[i32; 2], Vec<u32>>,
+    by_chunk: crate::FastMap<[i32; 2], Vec<u32>>,
     words: usize,
 }
 
@@ -611,7 +611,8 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
     let vis = visible_set(t, me);
     let own = t.rank[r];
     let w = t.words;
-    let all_movers = t.before.last().expect("movers");
+    let earlier_than = |i: usize| &t.before[i * w..(i + 1) * w];
+    let all_movers = earlier_than(t.before.len() / w.max(1) - 1);
     // The steps of `among` that may send anything; `stepped`: whose connection to this
     // receiver was stepped already this tick.
     let open = |row: &Row, among: &dyn Fn(usize) -> u64, stepped: &dyn Fn(usize) -> u64| -> Vec<usize> {
@@ -638,7 +639,7 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
         }
         return;
     }
-    let earlier = &t.before[own as usize];
+    let earlier = earlier_than(own as usize);
     // `updateWaypoint` of the movers before this receiver: their connections to it.
     for s in by_rank(open(row, &|i| earlier[i], &|_| 0)) {
         full_step(row, s, me, t, out);
@@ -922,7 +923,7 @@ impl Sim {
         }
         // A moving receiver's own turn sits between the moving transmitters' turns: `before`
         // is indexed by the movers' order, so it counts the transmitting ones ahead of each.
-        let mut before: Vec<Bits> = Vec::with_capacity(movers as usize + 1);
+        let mut before: Vec<u64> = Vec::with_capacity((movers as usize + 1) * words);
         let mut acc = vec![0u64; words];
         let mut next = turns.iter().peekable();
         for i in 0..=movers {
@@ -933,7 +934,7 @@ impl Sim {
                 acc[s as usize / 64] |= 1 << (s % 64);
                 next.next();
             }
-            before.push(acc.clone());
+            before.extend_from_slice(&acc);
         }
         let transmitters: Vec<u32> = mgr.waypoints.iter().filter_map(|c| mgr.slot(*c)).map(|s| s as u32).collect();
         let mut tpos = vec![u32::MAX; n];
@@ -942,7 +943,7 @@ impl Sim {
         }
         let (mut present, mut spectators, mut settled_block, mut settled_chunk) =
             (vec![0u64; words], vec![0u64; words], vec![0u64; words], vec![0u64; words]);
-        let mut by_chunk: HashMap<[i32; 2], Vec<u32>> = HashMap::new();
+        let mut by_chunk: crate::FastMap<[i32; 2], Vec<u32>> = Default::default();
         for &s in &transmitters {
             let s = s as usize;
             let Some(snap) = snaps[s] else { continue };
