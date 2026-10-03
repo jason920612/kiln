@@ -12,8 +12,9 @@ use kiln_world::ChunkPos;
 use std::collections::HashMap;
 use kiln_sched::{Ctx, Window};
 
-/// Per-player windows of a crowd (a few microseconds per player).
-const PLAYER_WINDOW: Window = Window::new();
+/// Per-player windows of a crowd: encoding a player's movement (hints from measurements with
+/// the vanilla datapack save the timed prefix).
+const PLAYER_WINDOW: Window = Window::new().item_ns(170);
 /// Visibility: each player checks every mover (or everyone, when it moved).
 const VISIBILITY_WINDOW: Window = Window::new();
 
@@ -386,7 +387,7 @@ pub(crate) fn broadcast_movement(players: &mut [&mut Player], ctx: &Ctx<'_>) {
         start += n;
     }
     let encoded = &encoded[..];
-    ctx.map_mut_with(Window::new(), &mut runs, |_, (lo, run)| deliver_movement(*lo, run, encoded));
+    ctx.map_mut_with(Window::new().item_ns(19_000), &mut runs, |_, (lo, run)| deliver_movement(*lo, run, encoded));
 }
 
 /// Players per viewer run in [`broadcast_movement`]'s delivery window.

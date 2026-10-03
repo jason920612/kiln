@@ -1957,11 +1957,12 @@ impl Sim {
         f: impl Fn(&mut RegionWork, &Env, &kiln_sched::Ctx<'_>) + Sync,
     ) -> Vec<(DimId, RegionOut)> {
         let dt = Instant::now();
-        let envs: Vec<Env> = (0..self.dims.len()).map(|d| self.env(d)).collect();
+        // The levels with regions to run.
+        let envs: Vec<Option<Env>> = (0..self.dims.len()).map(|d| self.dims[d].regions.iter().next().is_some().then(|| self.env(d))).collect();
         let dt = diag::lap("rr.envs", dt);
-        let mut buckets: BTreeMap<(DimId, RegionId), Vec<&mut Player>> = BTreeMap::new();
-        for p in self.players.values_mut() {
-            buckets.entry((p.dim, p.region)).or_default().push(p);
+        let mut buckets: BTreeMap<(DimId, RegionId), Vec<(ConnId, &mut Player)>> = BTreeMap::new();
+        for (&conn, p) in self.players.iter_mut() {
+            buckets.entry((p.dim, p.region)).or_default().push((conn, p));
         }
         let mut hooks = self.plugins.as_mut().map(|pl| pl.hooks()).unwrap_or_default();
         let mut work: Vec<RegionWork> = Vec::new();
@@ -1971,8 +1972,9 @@ impl Sim {
             let lent = &d.lent;
             work.extend(regions.filter(|r| !lent.contains(&r.id())).map(|r| {
                 let key = (dim, r.id());
-                let mut players = buckets.remove(&key).unwrap_or_default();
-                players.sort_unstable_by_key(|p| p.conn);
+                let mut keyed = buckets.remove(&key).unwrap_or_default();
+                keyed.sort_unstable_by_key(|&(conn, _)| conn);
+                let players: Vec<&mut Player> = keyed.into_iter().map(|(_, p)| p).collect();
                 let packets = packets.remove(&key).unwrap_or_default();
                 let (cells, (entities, blocks)) = r.cells_and_part_mut();
                 let plugins = hooks.remove(&key);
@@ -1986,7 +1988,7 @@ impl Sim {
             20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
         };
         let dt = diag::lap("rr.work", dt);
-        let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, &envs[w.dim], ctx));
+        let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, envs[w.dim].as_ref().expect("the environment of a level with regions"), ctx));
         diag::lap("rr.units", dt);
         self.independent.last_fork = work.iter().zip(&report.unit_ns).map(|(w, &ns)| (w.dim, w.region, ns)).collect();
         work.into_iter().map(|w| (w.dim, w.out)).collect()
@@ -2001,16 +2003,42 @@ impl Sim {
     ) -> (BTreeMap<(DimId, RegionId), Vec<(ConnId, PlayIn)>>, Vec<(ConnId, PlayIn)>) {
         let (mut local, mut exclusive) = (BTreeMap::<(DimId, RegionId), Vec<_>>::new(), Vec::new());
         let mut stopped = HashSet::new();
+        // A connection's packets come in a row: its key is looked up once per row, and a row
+        // of one region's packets goes into its stream at once.
+        let mut last: Option<(ConnId, Option<(DimId, RegionId)>)> = None;
+        let mut run: Option<((DimId, RegionId), Vec<(ConnId, PlayIn)>)> = None;
+        let flush = |local: &mut BTreeMap<(DimId, RegionId), Vec<(ConnId, PlayIn)>>, run: &mut Option<((DimId, RegionId), Vec<(ConnId, PlayIn)>)>| {
+            if let Some((k, v)) = run.take() {
+                match local.entry(k) {
+                    std::collections::btree_map::Entry::Vacant(e) => {
+                        e.insert(v);
+                    }
+                    std::collections::btree_map::Entry::Occupied(e) => e.into_mut().extend(v),
+                }
+            }
+        };
         for (conn, pkt) in packets {
-            let Some(p) = self.players.get(&conn) else { continue };
-            let key = (p.dim, p.region);
-            if stopped.contains(&key) || region::is_exclusive(&pkt) {
+            let key = match last {
+                Some((c, key)) if c == conn => key,
+                _ => self.players.get(&conn).map(|p| (p.dim, p.region)),
+            };
+            last = Some((conn, key));
+            let Some(key) = key else { continue };
+            if (!stopped.is_empty() && stopped.contains(&key)) || region::is_exclusive(&pkt) {
+                flush(&mut local, &mut run);
                 stopped.insert(key);
                 exclusive.push((conn, pkt));
             } else {
-                local.entry(key).or_default().push((conn, pkt));
+                match &mut run {
+                    Some((k, v)) if *k == key => v.push((conn, pkt)),
+                    _ => {
+                        flush(&mut local, &mut run);
+                        run = Some((key, vec![(conn, pkt)]));
+                    }
+                }
             }
         }
+        flush(&mut local, &mut run);
         (local, exclusive)
     }
 

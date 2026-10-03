@@ -520,7 +520,7 @@ pub(crate) fn tick(
 }
 
 /// The spawning pass's chunks, a few microseconds each.
-const SPAWN_WINDOW: kiln_sched::Window = kiln_sched::Window::new();
+const SPAWN_WINDOW: kiln_sched::Window = kiln_sched::Window::new().item_ns(2_500);
 
 /// Chunk `c`'s turn against `s` as it stands: per category, whether its caps let it try; `None`
 /// if something spawned (or a cap needs counts not made yet).

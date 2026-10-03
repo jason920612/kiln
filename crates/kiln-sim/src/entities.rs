@@ -1603,7 +1603,7 @@ fn occupancy_of(o: kiln_entity::level::PoiOccupancy) -> kiln_world::poi::Occupan
 }
 
 /// The players' stand-ins and views, a microsecond or so each.
-const PLAYER_VIEWS: kiln_sched::Window = kiln_sched::Window::new();
+const PLAYER_VIEWS: kiln_sched::Window = kiln_sched::Window::new().item_ns(110);
 
 /// What a player's stand-in is made from: the player as the entities see it
 /// (`minecraft:player`, standing or sneaking).
@@ -3148,12 +3148,12 @@ pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers
         start += n;
     }
     let encoded = &encoded[..];
-    ctx.map_mut_with(kiln_sched::Window::new(), &mut runs, |_, (_, run)| deliver_tracking(run, encoded));
+    ctx.map_mut_with(kiln_sched::Window::new().item_ns(850), &mut runs, |_, (_, run)| deliver_tracking(run, encoded));
     entities.list.retain(|e| !e.removed);
 }
 
 /// Entities per chunk of the encoding window, and players per delivery run.
-const TRACK_WINDOW: kiln_sched::Window = kiln_sched::Window::new();
+const TRACK_WINDOW: kiln_sched::Window = kiln_sched::Window::new().item_ns(1_000);
 const TRACK_RUN: usize = 32;
 
 /// The region's players by connection, for dropping viewers that left: a bit per connection
