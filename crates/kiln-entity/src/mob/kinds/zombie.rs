@@ -208,8 +208,8 @@ pub fn register_base_goals(m: &mut MobData) {
 pub fn register_goals(m: &mut MobData) {
     register_base_goals(m);
     let g = &mut m.goals;
-    // `SpearUseGoal` (no spear) and `MoveThroughVillageGoal` (no villages) never start.
-    g.add(2, Goal::Never);
+    // `MoveThroughVillageGoal` (no villages) never starts.
+    g.add(2, Goal::Custom(Box::new(super::spear_use::SpearUseGoal::new(1.0, 1.0, 10.0, 2.0))));
     g.add(3, melee(1.0));
     g.add(6, Goal::Never);
     g.add(7, stroll(1.0, true));

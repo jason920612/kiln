@@ -4,6 +4,8 @@ use super::MobKind;
 use super::ext::Kind;
 
 pub mod zombie;
+pub mod spear_use;
+pub mod spear_brain;
 pub mod skeleton;
 pub mod husk;
 pub mod stray;

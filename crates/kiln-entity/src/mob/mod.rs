@@ -606,6 +606,9 @@ pub struct MobData {
     pub drop_chances: [f32; 6],
     /// Ticks the current item (a bow) has been used.
     pub using_item: Option<i32>,
+    /// `recentKineticEnemies`: the entities a charging weapon touched and the game time of it
+    /// (cleared when the use begins).
+    pub recent_stabs: Vec<(i32, i64)>,
     pub species: Species,
     /// `*_variant` and `*_sound_variant` registry ids (pigs, cows, chickens).
     pub variant: i32,
@@ -735,6 +738,7 @@ impl MobData {
             equipment: std::array::from_fn(|_| ItemStack::empty()),
             drop_chances: [0.085; 6],
             using_item: None,
+            recent_stabs: Vec::new(),
             species,
             variant: kiln_data::synced_id(&format!("{}_variant", kind.type_name()), "minecraft:temperate").unwrap_or(0),
             sound_variant: kiln_data::synced_id(&format!("{}_sound_variant", kind.type_name()), "minecraft:classic").unwrap_or(0),
@@ -804,6 +808,7 @@ impl MobData {
     pub fn start_using_item(&mut self) {
         if self.using_item.is_none() {
             self.using_item = Some(0);
+            self.recent_stabs.clear();
         }
     }
 
@@ -1424,6 +1429,10 @@ fn living_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         && let Some(k) = m.kind.ext()
     {
         k.update_using_item(e, m, level);
+    }
+    // `ItemStack.onUseTick`: a charging spear hits what it touches.
+    if m.using_item.is_some() && !e.is_removed() && kinds::spear_use::charging_weapon(m).is_some() {
+        kinds::spear_use::kinetic_tick(e, m, level);
     }
     if let Some(t) = m.using_item.as_mut() {
         *t += 1;
@@ -2676,22 +2685,32 @@ pub fn clip_blocks(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> bool {
 /// `Mob.isWithinMeleeAttackRange` (`DEFAULT_ATTACK_REACH`: sqrt(2.04) - 0.6). A rider's attack
 /// box takes in the mount's footprint (`getAttackBoundingBox`; known for a mount the rider
 /// steers).
+///
+/// The item in use (else the main hand) may carry an `attack_range` (a spear): the mob then
+/// reaches as far as its `max_reach` times the item's `mob_factor`, but not closer than the
+/// `min_reach` (also times the factor): the target's box has to be in the outer attack box and
+/// out of the inner one.
 pub fn within_melee_range(e: &Entity, m: &MobData, t: &Living) -> bool {
-    let reach = 2.04f64.sqrt() - 0.6000000238418579;
+    let default_reach = 2.04f64.sqrt() - 0.6000000238418579;
+    let range = m.equipment[MAINHAND].get(kiln_item::keys::ATTACK_RANGE);
+    let (reach, min) = match range {
+        None => (default_reach, 0.0),
+        Some(r) => ((r.max_reach * r.mob_factor) as f64, (r.min_reach * r.mob_factor) as f64),
+    };
     let own = e.bounding_box();
-    let mut b = match &m.mount {
+    let base = match &m.mount {
         Some(c) => {
             let v = c.e.bounding_box();
             Aabb::new(own.min_x.min(v.min_x), own.min_y, own.min_z.min(v.min_z), own.max_x.max(v.max_x), own.max_y, own.max_z.max(v.max_z))
         }
         None => own,
-    }
-    .inflate(reach, 0.0, reach);
-    // `Ravager.getAttackBoundingBox`: a little narrower.
-    if e.type_name == "minecraft:ravager" {
-        b = b.deflate(0.05, 0.0, 0.05);
-    }
-    b.intersects(&t.bb)
+    };
+    // `Mob.getAttackBoundingBox(reach)`; `Ravager`'s is a little narrower.
+    let attack_box = |reach: f64| {
+        let b = base.inflate(reach, 0.0, reach);
+        if e.type_name == "minecraft:ravager" { b.deflate(0.05, 0.0, 0.05) } else { b }
+    };
+    attack_box(reach).intersects(&t.bb) && (min <= 0.0 || !attack_box(min).intersects(&t.bb))
 }
 
 /// `Mob.lookAt(entity, maxY, maxX)`: turns the body directly.

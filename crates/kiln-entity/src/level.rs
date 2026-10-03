@@ -357,6 +357,14 @@ pub enum DragonFightEvent {
     CrystalDestroyed { crystal: i32, uuid: u128, pos: Vec3, kind: DamageKind, attacker: Option<i32> },
 }
 
+/// `Entity.stopRiding` for a mob or other entity of the level.
+pub fn stop_riding_entity<L: EntityLevel + ?Sized>(level: &mut L, id: i32) {
+    let Some(v) = level.entity_mut(id).and_then(|e| e.vehicle.take()) else { return };
+    if let Some(ve) = level.entity_mut(v) {
+        crate::ride::remove_passenger(ve, id);
+    }
+}
+
 /// A player's collision box from its view.
 pub fn player_box(p: &PlayerView) -> Aabb {
     let h = if p.sneaking { 1.5 } else { 1.8 };
@@ -848,6 +856,25 @@ pub trait EntityLevel {
             e.delta = e.delta + v;
             e.needs_sync = true;
         }
+    }
+
+    /// `Entity.getDeltaMovement` of player or entity `id` (a player's server-side motion).
+    fn motion(&self, id: i32) -> Vec3 {
+        self.entity(id).map_or(Vec3::ZERO, |e| e.delta)
+    }
+
+    /// `LivingEntity.knockback(strength, dx, dz)` on player or mob `id`, as `causeExtraKnockback`
+    /// calls it (a player is told its new motion at once and keeps `old_motion` on the server).
+    fn knockback_target(&mut self, id: i32, strength: f64, dx: f64, dz: f64, old_motion: Vec3) {
+        let _ = old_motion;
+        if let Some(e) = self.entity_mut(id) {
+            crate::mob::knockback_entity(e, strength, dx, dz);
+        }
+    }
+
+    /// `Entity.stopRiding` on player or entity `id`.
+    fn stop_riding(&mut self, id: i32) {
+        stop_riding_entity(self, id);
     }
 
     /// Player `id`'s active `effect` as (amplifier, remaining ticks; -1 infinite).

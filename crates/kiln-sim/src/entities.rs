@@ -1241,6 +1241,42 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
     }
 
+    fn motion(&self, id: i32) -> Vec3 {
+        if let Some(p) = self.players.iter().find(|p| p.entity_id == id) {
+            return vec3(p.vel);
+        }
+        self.entity(id).map_or(Vec3::ZERO, |e| e.delta)
+    }
+
+    fn knockback_target(&mut self, id: i32, strength: f64, dx: f64, dz: f64, old_motion: Vec3) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+            p.knockback(strength, dx, dz);
+            // (A player is told at once; the server keeps the motion it had.)
+            if p.sync_velocity {
+                p.send(kiln_proto::packets::entity::set_entity_motion(p.entity_id, p.vel));
+                p.sync_velocity = false;
+                p.vel = arr(old_motion);
+            }
+            return;
+        }
+        if let Some(e) = self.entity_mut(id) {
+            kiln_entity::mob::knockback_entity(e, strength, dx, dz);
+        }
+    }
+
+    fn stop_riding(&mut self, id: i32) {
+        if let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) {
+            if let Some(v) = p.vehicle.take() {
+                p.vehicle_type = None;
+                if let Some(ve) = self.entity_mut(v) {
+                    kiln_entity::ride::remove_passenger(ve, id);
+                }
+            }
+            return;
+        }
+        kiln_entity::level::stop_riding_entity(self, id);
+    }
+
     fn is_thundering(&self) -> bool {
         self.level.env.weather.weather.thundering
     }

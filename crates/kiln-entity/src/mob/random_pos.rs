@@ -254,6 +254,25 @@ pub fn land_pos_away(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i3
     })
 }
 
+/// `LandRandomPos.getPosAway(mob, min, max, v, from)`: the spot is between `min` and `max` blocks
+/// away (not the spear goal's clamped distances: `max` may be below `min`).
+pub fn land_pos_away_between(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, min: f64, max: f64, v: i32, from: Vec3) -> Option<Vec3> {
+    let mut d = e.position() - from;
+    if d.length() == 0.0 {
+        d = Vec3::new(e.random.next_double() - 0.5, 0.0, e.random.next_double() - 0.5);
+    }
+    let home = m.home;
+    let restrict = mob_restricted(e, home, max);
+    generate(e, m, level, |e| {
+        let dir = direction_within_radians(e, min, max, v, 0, d.x, d.z, std::f32::consts::FRAC_PI_2 as f64)?;
+        let p = toward_home(e, max, dir, home);
+        if outside_limits(level, p) || (restrict && !within_home(home, p)) || !path::stable_destination(m, level, p) {
+            return None;
+        }
+        move_up_out_of_solid(m, level, p)
+    })
+}
+
 /// `DefaultRandomPos.getPosAway(mob, h, v, from)`.
 pub fn default_pos_away(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, h: i32, v: i32, from: Vec3) -> Option<Vec3> {
     let d = e.position() - from;

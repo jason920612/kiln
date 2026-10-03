@@ -151,7 +151,7 @@ impl Kind for ZombifiedPiglin {
     /// `Zombie.registerGoals` with `ZombifiedPiglin.addBehaviourGoals`.
     fn register_goals(&self, m: &mut MobData) {
         zombie::register_base_goals(m);
-        m.goals.add(1, Goal::Never);
+        m.goals.add(1, Goal::Custom(Box::new(super::spear_use::SpearUseGoal::new(1.0, 1.0, 10.0, 2.0))));
         m.goals.add(
             2,
             Goal::Melee { kind: MeleeKind::Zombie, speed: 1.0, follow_unseen: false, path: None, recalc: 0, next_attack: 0, last_can_use: 0, pathed: crate::math::Vec3::ZERO, raise_arm: 0 },

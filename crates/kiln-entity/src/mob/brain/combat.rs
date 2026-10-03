@@ -10,12 +10,20 @@ use crate::mob::{self};
 
 use Status::{Registered, ValueAbsent, ValuePresent};
 
-/// `Mob.canUseNonMeleeWeapon` for what is held: a bow or a crossbow.
-fn holds_usable_non_melee(cx: &Cx) -> bool {
+/// A bow or a crossbow in a hand (`ProjectileWeaponItem`).
+fn holds_projectile_weapon(cx: &Cx) -> bool {
     [mob::MAINHAND, mob::OFFHAND].iter().any(|&i| {
         let s = &cx.m.equipment[i];
         !s.is_empty() && matches!(mob::item_name(s), "minecraft:bow" | "minecraft:crossbow")
     })
+}
+
+/// `MeleeAttack.isHoldingUsableNonMeleeWeapon` (`Mob.canUseNonMeleeWeapon` of what is held): a
+/// bow or a crossbow, and for a piglin a spear (a `kinetic_weapon`: it charges instead).
+fn holds_usable_non_melee(cx: &Cx) -> bool {
+    holds_projectile_weapon(cx)
+        || (cx.m.kind == mob::MobKind::Piglin
+            && [mob::MAINHAND, mob::OFFHAND].iter().any(|&i| cx.m.equipment[i].get(kiln_item::keys::KINETIC_WEAPON).is_some()))
 }
 
 /// `MeleeAttack.create(cooldown)`: hits the attack target in reach and in sight, then cools down.
@@ -130,7 +138,7 @@ pub fn set_walk_target_from_attack_target_if_out_of_reach(speed: fn(&Cx) -> f32)
 /// `BehaviorUtils.isWithinAttackRange(mob, target, extra)`: ranged weapons shoot from range
 /// (the holder's default range less `extra`), everything else from melee reach.
 pub fn within_attack_range(cx: &Cx, t: &Living, extra: i32) -> bool {
-    if holds_usable_non_melee(cx) {
+    if holds_projectile_weapon(cx) {
         // `getDefaultProjectileRange`: bows 15, crossbows 8 (`CROSSBOW_RANGE`), less the extra.
         let range = if cx.m.holding_bow() { 15 } else { 8 } - extra;
         return cx.e.position().distance_to_sqr(t.pos) < (range as f64) * (range as f64);

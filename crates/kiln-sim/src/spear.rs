@@ -168,7 +168,6 @@ struct Wielder {
     look: Vec3,
     known_movement: Vec3,
     creative: bool,
-    pos: [f64; 3],
 }
 
 impl Wielder {
@@ -179,7 +178,6 @@ impl Wielder {
             look: crate::use_item::view_vector(p.rot),
             known_movement: Vec3::new(p.known_movement[0], p.known_movement[1], p.known_movement[2]),
             creative: p.game_mode == 1,
-            pos: p.pos,
         }
     }
 }

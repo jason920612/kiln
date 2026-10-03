@@ -1699,6 +1699,7 @@ public class MobVectors {
         scenariosParrot(out);
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
+        scenariosSpears(out);
 
         return out;
     }
@@ -6788,6 +6789,112 @@ public class MobVectors {
             s.dayTime = 18000;
             s.levelSeed = 365 + seed;
             s.ticks = 300;
+            out.add(s);
+        }
+    }
+
+    // ---------------------------------------------------------- wp34: mobs with spears
+    /// Zombies, husks and zombified piglins with a kinetic weapon charge their target (`SpearUseGoal`),
+    /// back off and charge again; a zombie horse's or camel husk's rider charges faster.
+    static void scenariosSpears(List<Scenario> out) {
+        String[] spears = {"minecraft:wooden_spear", "minecraft:iron_spear", "minecraft:netherite_spear"};
+        for (int i = 0; i < spears.length; i++) {
+            for (int seed = 1; seed <= 2; seed++) {
+                Scenario s = new Scenario("spear_zombie_player_" + i + "_" + seed);
+                floor(s, 30, "minecraft:stone");
+                MobSpec z = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 90f * seed, 34000L + 10 * i + seed);
+                z.mainHand = spears[i];
+                s.mobs.add(z);
+                s.player = new double[] {13.5 + seed, BY, 0.5};
+                s.dayTime = 18000;
+                s.levelSeed = 400 + 10 * i + seed;
+                s.ticks = 500;
+                out.add(s);
+            }
+        }
+        for (String kind : new String[] {"husk", "zombie_villager"}) {
+            Scenario s = new Scenario("spear_" + kind + "_player");
+            floor(s, 30, "minecraft:stone");
+            MobSpec z = new MobSpec("minecraft:" + kind, 0.5, BY, 0.5, 40f, 34100L);
+            z.mainHand = "minecraft:iron_spear";
+            s.mobs.add(z);
+            s.player = new double[] {12.5, BY, 3.5};
+            s.dayTime = 18000;
+            s.levelSeed = 420;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A zombie with a spear charges villagers (no AI: they stand and are thrown back).
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("spear_zombie_villager_" + seed);
+            floor(s, 30, "minecraft:stone");
+            MobSpec z = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 60f, 34200L + seed);
+            z.mainHand = "minecraft:iron_spear";
+            MobSpec v = new MobSpec("minecraft:villager", 11.5, BY, 0.5 + seed, 90f, 34210L + seed);
+            v.nbt = "{NoAI:1b,PersistenceRequired:1b}";
+            s.mobs.add(z);
+            s.mobs.add(v);
+            s.player = new double[] {-9.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 425 + seed;
+            // (A zombie that kills a villager converts it half the time: `Zombie.killedEntity`.)
+            s.ticks = 200;
+            out.add(s);
+        }
+        // An angry zombified piglin with a spear.
+        {
+            Scenario s = new Scenario("spear_zombified_piglin");
+            floor(s, 30, "minecraft:stone");
+            MobSpec z = new MobSpec("minecraft:zombified_piglin", 0.5, BY, 0.5, 60f, 34300L);
+            z.mainHand = "minecraft:iron_spear";
+            s.mobs.add(z);
+            s.player = new double[] {11.5, BY, 0.5};
+            s.hurts.put(3, new double[] {0, 1.0});
+            s.dayTime = 18000;
+            s.levelSeed = 430;
+            s.ticks = 400;
+            out.add(s);
+        }
+        // A piglin with a spear: its brain's spear behaviours never start in vanilla (the piglin
+        // does not register `spear_status`), it fights with the spear as a plain melee weapon.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = nether("spear_piglin_attack_" + seed, 300);
+            netherMob(s, "piglin", 0.5, 0.5, 0f, 34600L + seed, "{IsImmuneToZombification:1b,equipment:{mainhand:{id:\"minecraft:golden_spear\",count:1}}}");
+            s.player = new double[] {9.5 + seed, BY, 0.5};
+            out.add(s);
+        }
+        // Zombies on zombie horses and camel husks.
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("spear_zombie_horse_rider_" + seed);
+            floor(s, 40, "minecraft:stone");
+            MobSpec h = new MobSpec("minecraft:zombie_horse", 0.5, BY, 0.5, 30f * seed, 34400L + seed);
+            h.nbt = "{PersistenceRequired:1b}";
+            MobSpec r = new MobSpec("minecraft:zombie", 0.5, BY, 0.5, 30f * seed, 34410L + seed);
+            r.mainHand = "minecraft:iron_spear";
+            r.vehicle = 0;
+            s.mobs.add(h);
+            s.mobs.add(r);
+            s.player = new double[] {16.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.levelSeed = 435 + seed;
+            s.ticks = 400;
+            out.add(s);
+        }
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("spear_camel_husk_rider_" + seed);
+            floor(s, 40, "minecraft:sand");
+            MobSpec c = new MobSpec("minecraft:camel_husk", 0.5, BY, 0.5, 30f * seed, 34500L + seed);
+            c.nbt = "{PersistenceRequired:1b}";
+            MobSpec r = new MobSpec("minecraft:husk", 0.5, BY, 0.5, 30f * seed, 34510L + seed);
+            r.mainHand = "minecraft:iron_spear";
+            r.vehicle = 0;
+            s.mobs.add(c);
+            s.mobs.add(r);
+            s.player = new double[] {16.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.levelSeed = 440 + seed;
+            s.ticks = 400;
             out.add(s);
         }
     }
