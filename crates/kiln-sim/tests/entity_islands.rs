@@ -1,10 +1,12 @@
 //! A region's entities tick in parallel islands or tiles (`entities/islands.rs`): the result
 //! must not depend on the workers, the scheduling or how the world splits into regions. Each
 //! scenario summons a crowd of mobs around a few players and compares every tick's state hash
-//! and every player's packet stream.
+//! and every player's packet stream (with `KILN_DATAPACK`, the packet and byte counts: the
+//! streams then carry advancement dates from the clock).
 
 use kiln_sim::testing::{Client, Walker, group_offset, join, stream_digest};
 use kiln_sim::{Sim, SimConfig};
+use std::sync::atomic::Ordering::Relaxed;
 
 const SURFACE_Y: f64 = -60.0;
 const PLAYERS: usize = 12;
@@ -12,8 +14,8 @@ const GROUPS: usize = 4;
 const MOBS: usize = 96;
 const KINDS: [&str; 8] = ["pig", "cow", "zombie", "rabbit", "fox", "goat", "frog", "wolf"];
 
-/// Per-tick state hashes and the players' stream digest.
-fn run(spacing: f64, workers: usize, chaos: Option<u64>, unified: bool) -> (Vec<u64>, u64) {
+/// Per-tick state hashes, the players' stream digest, and their packet and byte counts.
+fn run(spacing: f64, workers: usize, chaos: Option<u64>, unified: bool) -> (Vec<u64>, u64, Vec<(u64, u64)>) {
     kiln_sim::testing::hash_packets();
     let mut config = SimConfig::new(PLAYERS, 4, None);
     config.keep_alive = false;
@@ -58,7 +60,8 @@ fn run(spacing: f64, workers: usize, chaos: Option<u64>, unified: bool) -> (Vec<
         }
         assert!(tick < 399 || summoned, "players did not settle");
     }
-    (hashes, stream_digest(&walkers, &[]))
+    let counts = walkers.iter().map(|w| (w.client.stats.packets.load(Relaxed), w.client.stats.bytes.load(Relaxed))).collect();
+    (hashes, stream_digest(&walkers, &[]), counts)
 }
 
 fn check(spacing: f64) {
@@ -67,7 +70,10 @@ fn check(spacing: f64) {
     for (workers, chaos, unified) in [(4, Some(3), true), (7, Some(11), true), (7, Some(5), false)] {
         let r = run(spacing, workers, chaos, unified);
         assert_eq!(r.0, reference.0, "state hashes, {workers} workers, chaos {chaos:?}, unified {unified}");
-        assert_eq!(r.1, reference.1, "packet streams, {workers} workers, chaos {chaos:?}, unified {unified}");
+        assert_eq!(r.2, reference.2, "packet counts, {workers} workers, chaos {chaos:?}, unified {unified}");
+        if std::env::var_os("KILN_DATAPACK").is_none() {
+            assert_eq!(r.1, reference.1, "packet streams, {workers} workers, chaos {chaos:?}, unified {unified}");
+        }
     }
 }
 
