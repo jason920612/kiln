@@ -2544,6 +2544,13 @@ impl Sim {
             p.disconnect("Server closed");
         }
         self.save();
+        // Compactions still copying cell files in the background finish and swap in before the
+        // server stops, so a store opened right after (a restart, a tool) sees the final files.
+        for d in &self.dims {
+            if let Some(store) = &d.native {
+                store.lock().unwrap().finish_compactions();
+            }
+        }
     }
 
     fn save(&mut self) {
