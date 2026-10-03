@@ -373,7 +373,45 @@ impl Entity {
         self.removed |= removed;
     }
 
+    /// `teleportSetPosition` of a command or portal teleport: the entity stands at `pos` (facing
+    /// `rot` if given), still and on the ground, as if it had always been there.
+    pub(crate) fn relocate(&mut self, pos: [f64; 3], rot: Option<[f32; 2]>) {
+        let Some(p) = self.phys.as_mut() else { return };
+        p.set_pos(Vec3::new(pos[0], pos[1], pos[2]));
+        if let Some([yaw, pitch]) = rot {
+            p.y_rot = yaw;
+            p.x_rot = pitch;
+        }
+        // `setYHeadRot(yRot)`.
+        let yaw = p.y_rot;
+        if let Some(m) = kiln_entity::mob::data_mut(p) {
+            m.y_head_rot = yaw;
+            m.y_head_rot_o = yaw;
+        }
+        p.set_old_pos_and_rot();
+        p.delta = Vec3::ZERO;
+        p.on_ground = true;
+        self.sync();
+        self.cell = chunk_of(self.pos).cell();
+    }
+
+    /// The entity no longer has viewers and what they were last sent (it moved to another region,
+    /// where it is paired afresh): the players that were watching it, who have to be told it is gone.
+    pub(crate) fn forget_viewers(&mut self) -> Vec<ConnId> {
+        let viewers = std::mem::take(&mut self.seen_by);
+        self.section = None;
+        self.tracker = MovementTracker::new(self.id, self.kind.update_interval, &self.move_state());
+        self.sent_vel = self.vel;
+        self.meta_sent = Vec::new();
+        self.passengers_sent = Vec::new();
+        self.equipment_sent = Vec::new();
+        self.leash_sent = None;
+        self.boss_sent = None;
+        viewers
+    }
+
     fn move_state(&self) -> MoveState {
+
         let p = self.phys();
         let head_yaw = kiln_entity::mob::data(p).map_or(p.y_rot, |m| m.y_head_rot);
         MoveState { pos: self.pos, yaw: p.y_rot, pitch: p.x_rot, head_yaw, on_ground: self.on_ground }
@@ -1641,9 +1679,21 @@ fn ride_players(sim: &mut SimLevel) {
         let pid = sim.players[k].entity_id;
         let idx = sim.index(v).filter(|&j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.is_alive()));
         let seated = idx.is_some_and(|j| sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&pid)));
+        // A teleport of the player's own got it off at once (`Entity.teleport`: `stopRiding`): it
+        // stays where it went.
+        if std::mem::take(&mut sim.players[k].dismount_on_teleport) {
+            if let Some(vp) = idx.and_then(|j| sim.list[j].phys.as_mut()) {
+                kiln_entity::ride::remove_passenger(vp, pid);
+            }
+            let p = &mut *sim.players[k];
+            p.vehicle = None;
+            p.vehicle_type = None;
+            continue;
+        }
         let p = &*sim.players[k];
         let leave = !seated || p.sneaking || p.dead || p.disconnected;
         if !leave {
+
             let vp = sim.list[idx.unwrap()].phys.as_ref().expect("vehicle state");
             let at = vp.passengers.iter().position(|&x| x == pid).unwrap_or(0);
             let pos = kiln_entity::ride::rider_position(vp, at, "minecraft:player", 1.0);
@@ -2436,6 +2486,7 @@ fn carry_out(
             let Some(p) = players.iter_mut().find(|p| p.entity_id == owner && !p.dead && !p.disconnected) else { return };
             let now = env.game_time;
             let rot = p.rot;
+            p.dismount_on_teleport |= p.vehicle.is_some();
             p.teleport(to, rot, now);
             p.fall_distance = 0.0;
             let source = health::Source { cause: health::Cause::Other("minecraft:ender_pearl"), attacker: None, direct: None, weapon: None, position: None };

@@ -208,7 +208,38 @@ impl Sim {
         }
     }
 
+    /// Entities seen by players that are in another region now (they were teleported or the
+    /// regions split): tracking only runs within a region, so the viewer is told the entity is
+    /// gone, as it would be in one region when the player moves out of range.
+    pub(crate) fn drop_cross_region_viewers(&mut self) {
+        let home: HashMap<ConnId, (crate::DimId, kiln_region::RegionId)> = self.players.iter().map(|(&c, p)| (c, (p.dim, p.region))).collect();
+        let mut forget: Vec<(ConnId, i32)> = Vec::new();
+        for (dim, d) in self.dims.iter_mut().enumerate() {
+            for r in d.regions.iter_mut() {
+                let rid = r.id();
+                for e in r.part_mut().0.list.iter_mut().filter(|e| !e.seen_by.is_empty()) {
+                    let id = e.id;
+                    e.seen_by.retain(|v| match home.get(v) {
+                        Some(&(d2, r2)) if d2 == dim && r2 == rid => true,
+                        Some(_) => {
+                            forget.push((*v, id));
+                            false
+                        }
+                        None => false,
+                    });
+                }
+            }
+        }
+        forget.sort_unstable();
+        for (viewer, id) in forget {
+            if let Some(v) = self.players.get_mut(&viewer) {
+                v.send(entity::remove_entities(&[id]));
+            }
+        }
+    }
+
     /// Ends pairings between players now in different regions (one was teleported away):
+
     /// tracking only runs within a region, so the viewer forgets the entity.
     pub(crate) fn drop_cross_region_pairs(&mut self) {
         let region: HashMap<ConnId, ((crate::DimId, kiln_region::RegionId), i32)> =

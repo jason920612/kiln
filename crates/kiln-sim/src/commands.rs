@@ -649,8 +649,21 @@ impl Host for Sim {
         let Some(dim) = crate::dim_id(&to.dimension) else {
             return Err(CommandError::new(Text::literal("Unknown dimension")));
         };
+        // Another entity: `Entity.teleport` (it keeps its id inside a level, its riders go along).
+        if let Some(id) = entity.entity {
+            let Some(from) = crate::dim_id(entity.dim) else { return Ok(()) };
+            let rot = match (to.facing, to.rotation) {
+                (Some(f), _) => Some(kiln_command::host::look_at([to.pos[0], to.pos[1] + entity.eye, to.pos[2]], f)),
+                (None, r) => r,
+            };
+            self.teleport_entity(from, id, dim, to.pos, rot);
+            return Ok(());
+        }
+        // A player gets off what it rides first (`Entity.teleport`: `stopRiding`).
+        self.stop_riding_player(entity.conn);
         let Some(p) = self.players.get_mut(&entity.conn) else { return Ok(()) };
         let rot = match (to.facing, to.rotation) {
+
             (Some(f), _) => kiln_command::host::look_at([to.pos[0], to.pos[1] + 1.62, to.pos[2]], f),
             (None, Some(r)) => r,
             (None, None) => p.rot,

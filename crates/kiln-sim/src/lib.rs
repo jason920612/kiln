@@ -41,6 +41,8 @@ mod slide;
 mod firework;
 mod boats;
 mod carts;
+mod stacks;
+
 mod xp;
 mod container;
 mod datapacks;
@@ -489,6 +491,9 @@ struct Player {
     vehicle: Option<i32>,
     /// The type of that entity (for the vehicle entity predicates of criteria).
     vehicle_type: Option<&'static str>,
+    /// A teleport of the player's own (chorus fruit, an ender pearl) takes it off what it rides
+    /// (`Entity.teleport` stops the riding): the region sees to it at the next ride tick.
+    dismount_on_teleport: bool,
     /// A saved `RootVehicle` waiting to be put back under the player.
     returning_vehicle: Option<persist::ReturningVehicle>,
     /// `ServerPlayer.levitationStartTime` and `levitationStartPos` (the `levitation` trigger).
@@ -1997,7 +2002,9 @@ impl Sim {
         }
         if moved {
             self.drop_cross_region_pairs();
+            self.drop_cross_region_viewers();
         }
+
     }
 
     /// After the serial phases: players whose chunk is not loaded (teleported into the gap
@@ -2602,6 +2609,8 @@ impl Sim {
             pending_travel: None,
             vehicle: None,
             vehicle_type: None,
+            dismount_on_teleport: false,
+
             returning_vehicle,
             levitation_start: None,
             raid_omen_position: None,
