@@ -1562,7 +1562,7 @@ fn base_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             hurt(e, m, level, DamageSource::of(DamageKind::InWall), 1.0);
         }
         let eye = BlockPos::containing(e.x(), e.eye_y(), e.z());
-        let bubble = crate::blocks::block_name(level.block(eye)) == "minecraft:bubble_column";
+        let bubble = crate::blocks::kind(level.block(eye)) == crate::blocks::Kind::BubbleColumn;
         if e.fluid.is_eye_in_water() && !bubble {
             if !m.kind.breathes_under_water() && !effects::has_water_breathing(m) {
                 e.air_supply -= 1;

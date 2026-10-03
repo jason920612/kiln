@@ -42,7 +42,7 @@ execute if block 3 -60 12 minecraft:redstone_wire[power=15]
 
 def start_server(port):
     e2e.stop_server(port)
-    env = dict(os.environ, KILN_PORT=str(port), RUST_LOG="info", KILN_OPS="KilnView")
+    env = dict(os.environ, KILN_PORT=str(port), RUST_LOG="info", KILN_OPS=os.environ.get("KILN_OPS", "KilnView"))
     exe = e2e.WORK / f"kiln-{port}{e2e.EXE.suffix}"
     shutil.copy2(e2e.EXE, exe)
     log = open(e2e.SERVER_LOG, "w", encoding="utf-8")

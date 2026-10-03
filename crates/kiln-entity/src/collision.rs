@@ -140,6 +140,10 @@ pub fn for_each_block_collision(
                     }
                     level.block(pos)
                 };
+                // Air has no shape (the loop would find nothing in it).
+                if kiln_data::blocks_types::is_air(state) {
+                    continue;
+                }
                 if edges == 1 && !physics::has_large_collision_shape(state) {
                     continue;
                 }

@@ -186,7 +186,12 @@ impl GoalSelector {
 /// `GoalSelector.tick`.
 pub fn tick(sel: &mut GoalSelector, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     for i in 0..sel.goals.len() {
-        if sel.goals[i].running && (sel.goals[i].goal.flags() & sel.disabled != 0 || !can_continue(&mut sel.goals[i].goal, e, m, level)) {
+        if sel.goals[i].running
+            && (sel.goals[i].goal.flags() & sel.disabled != 0 || {
+                crate::prof!("gc", sel.goals[i].goal.name());
+                !can_continue(&mut sel.goals[i].goal, e, m, level)
+            })
+        {
             stop_goal(sel, i, e, m, level);
         }
     }
@@ -206,7 +211,10 @@ pub fn tick(sel: &mut GoalSelector, e: &mut Entity, m: &mut MobData, level: &mut
             None => priority < i32::MAX,
             Some(j) => interruptable(&sel.goals[j].goal) && priority < sel.goals[j].priority,
         });
-        if !replaceable || !can_use(&mut sel.goals[i].goal, e, m, level) {
+        if !replaceable || !{
+            crate::prof!("gu", sel.goals[i].goal.name());
+            can_use(&mut sel.goals[i].goal, e, m, level)
+        } {
             continue;
         }
         for b in 0..4 {
@@ -236,6 +244,7 @@ fn stop_goal(sel: &mut GoalSelector, i: usize, e: &mut Entity, m: &mut MobData, 
 pub fn tick_running(sel: &mut GoalSelector, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, all: bool) {
     for w in sel.goals.iter_mut() {
         if w.running && (all || w.goal.every_tick()) {
+            crate::prof!("gt", w.goal.name());
             tick_goal(&mut w.goal, e, m, level);
         }
     }
@@ -1221,6 +1230,13 @@ fn is_turtle_egg_target(level: &dyn EntityLevel, p: BlockPos) -> bool {
 fn find_turtle_egg(e: &Entity, level: &dyn EntityLevel) -> Option<BlockPos> {
     let (range, vrange) = (24, 3);
     let base = e.block_position();
+    // The walk below visits exactly the box x and z within 23, y from 4 below to 2 above: no
+    // turtle egg anywhere in it (the sections' palettes tell) means it finds nothing.
+    let egg = kiln_data::blocks_types::block_by_name("minecraft:turtle_egg").expect("turtle eggs");
+    let (min, max) = (BlockPos::new(base.x - 23, base.y - 4, base.z - 23), BlockPos::new(base.x + 23, base.y + 2, base.z + 23));
+    if !level.any_block_in(min, max, &|s| (egg.first..=egg.last).contains(&s)) {
+        return None;
+    }
     let mut k = 0;
     while k <= vrange {
         for l in 0..range {

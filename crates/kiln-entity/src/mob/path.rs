@@ -399,6 +399,8 @@ struct Search<'a> {
     /// `PathfindingContext.mobPosition`.
     mob_pos: BlockPos,
     heap: Vec<u32>,
+    /// The tables above belong to a [`SharedTables`] session and stay filled.
+    shared: bool,
 }
 
 /// The tables of a finished search, kept for the next one on the thread (a mob that long-jumps or
@@ -415,6 +417,35 @@ struct Spare {
 
 thread_local! {
     static SPARE: std::cell::RefCell<Vec<Spare>> = const { std::cell::RefCell::new(Vec::new()) };
+    static SHARED: std::cell::RefCell<Option<Shared>> = const { std::cell::RefCell::new(None) };
+}
+
+/// What searches of one mob over one unchanged level share while a [`SharedTables`] guard lives:
+/// the path types, floor levels and collision answers of positions, which depend on the blocks
+/// and the mob alone, not on where the search starts or ends.
+#[derive(Default)]
+struct Shared {
+    types: FastMap<i64, PathType>,
+    collisions: FastMap<[u64; 6], bool>,
+    floors: FastMap<i64, f64>,
+}
+
+/// Keeps the per-position tables of the searches started while it lives (a mob that tries
+/// hundreds of jump targets in a tick searches from the same spot each time). Only for searches of
+/// one mob while nothing changes the level; the tables are dropped with the guard.
+pub struct SharedTables(());
+
+impl SharedTables {
+    pub fn begin() -> SharedTables {
+        SHARED.with(|s| *s.borrow_mut() = Some(Shared::default()));
+        SharedTables(())
+    }
+}
+
+impl Drop for SharedTables {
+    fn drop(&mut self) {
+        SHARED.with(|s| *s.borrow_mut() = None);
+    }
 }
 
 impl<'a> Search<'a> {
@@ -427,15 +458,22 @@ impl<'a> Search<'a> {
             floors: FastMap::with_capacity_and_hasher(256, Default::default()),
             heap: Vec::with_capacity(64),
         });
+        // The shared tables replace the emptied ones (which go back with the rest on recycle).
+        let shared = SHARED.with(|s| s.borrow_mut().as_mut().map(std::mem::take));
+        let (types, collisions, floors, is_shared) = match shared {
+            Some(sh) => (sh.types, sh.collisions, sh.floors, true),
+            None => (sp.types, sp.collisions, sp.floors, false),
+        };
         Search {
             level,
             e,
             m,
             nodes: sp.nodes,
             by_hash: sp.by_hash,
-            types: sp.types,
-            collisions: sp.collisions,
-            floors: sp.floors,
+            types,
+            collisions,
+            floors,
+            shared: is_shared,
             home: if m.nav.amphibious { None } else { m.kind.ext().and_then(|k| k.path_home(m)) },
             width: floor((e.width + 1.0) as f64),
             height: floor((e.height + 1.0) as f64),
@@ -457,6 +495,14 @@ impl<'a> Search<'a> {
     /// Hands the tables back for the next search (emptied; a search that grew them very large
     /// lets them go).
     fn recycle(mut self) {
+        if self.shared {
+            let (types, collisions, floors) = (std::mem::take(&mut self.types), std::mem::take(&mut self.collisions), std::mem::take(&mut self.floors));
+            SHARED.with(|s| {
+                if let Some(sh) = s.borrow_mut().as_mut() {
+                    *sh = Shared { types, collisions, floors };
+                }
+            });
+        }
         if self.nodes.capacity() > 16384 {
             return;
         }

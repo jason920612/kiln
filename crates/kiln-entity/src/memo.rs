@@ -18,6 +18,12 @@ pub(crate) fn checking() -> bool {
     *CHECK.get_or_init(|| std::env::var_os("KILN_MEMO_CHECK").is_some_and(|v| v != "0"))
 }
 
+/// `KILN_MEMO=0` turns the reuse off (to compare against a fresh scan every time).
+fn enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KILN_MEMO").is_none_or(|v| v != "0"))
+}
+
 /// Panics when a reused result differs from the fresh one.
 pub(crate) fn verify<T: PartialEq + std::fmt::Debug>(what: &str, reused: &T, fresh: impl FnOnce() -> T) {
     if checking() {
@@ -52,6 +58,9 @@ pub(crate) fn ctx_bits(c: &CollisionContext) -> [u64; 3] {
 /// The epoch of the chunks a scan of `area` reads: its blocks, one block of margin for the
 /// shape tests and one more for safety.
 pub(crate) fn area_epoch(level: &dyn EntityLevel, area: &Aabb) -> Option<BlocksEpoch> {
+    if !enabled() {
+        return None;
+    }
     let lo = BlockPos::new(floor(area.min_x) - 2, floor(area.min_y) - 2, floor(area.min_z) - 2);
     let hi = BlockPos::new(floor(area.max_x) + 2, floor(area.max_y) + 2, floor(area.max_z) + 2);
     level.blocks_epoch(lo, hi)
@@ -90,4 +99,23 @@ pub(crate) struct BlockMemo {
     pub air: Option<BoxKey>,
     /// `isInWall` for the eye box: the answer.
     pub wall: Option<(BoxKey, bool)>,
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::physics;
+
+    /// `Section` counts fluids with `has_fluid`, and the fluid scan skips boxes by that count: the
+    /// two must agree with the fluid states entities see, for every block state.
+    #[test]
+    fn section_fluid_flag_matches_fluid_states() {
+        for s in 0..kiln_data::blocks::STATE_COUNT as u16 {
+            assert_eq!(
+                kiln_data::blocks_types::has_fluid(s),
+                !physics::fluid_state(s).is_empty(),
+                "state {s} ({})",
+                crate::blocks::block_name(s)
+            );
+        }
+    }
 }

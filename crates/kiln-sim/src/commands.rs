@@ -1069,7 +1069,7 @@ impl Host for Sim {
         true
     }
 
-    fn kiln_interact(&mut self, player: &PlayerRef, pos: [i32; 3]) -> bool {
+    fn kiln_interact(&mut self, player: &PlayerRef, pos: [i32; 3], sneak: bool) -> bool {
         let Some(p) = self.players.get(&player.conn) else { return false };
         let at = [pos[0] as f64 + 0.5, pos[1] as f64 + 0.5, pos[2] as f64 + 0.5];
         let nearest = self.dims[p.dim]
@@ -1085,7 +1085,7 @@ impl Host for Sim {
             entity_id,
             hand: kiln_proto::packets::serverbound::Hand::Main,
             location: [0.0, 0.5, 0.0],
-            sneaking: p.sneaking,
+            sneaking: p.sneaking || sneak,
         };
         self.commands.injected.push((player.conn, pkt));
         true
