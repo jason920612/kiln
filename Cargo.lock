@@ -1116,6 +1116,7 @@ dependencies = [
  "kiln-inventory",
  "kiln-item",
  "kiln-javamath",
+ "kiln-loot",
  "kiln-proto",
  "serde_json",
  "smallvec",
