@@ -771,6 +771,59 @@ impl SimLevel<'_, '_, '_> {
     fn proxy_index(&self, id: i32) -> Option<usize> {
         if self.proxy_at.is_empty() { self.proxies.iter().position(|e| e.id == id) } else { self.proxy_at.get(&id).copied() }
     }
+
+    /// [`EntityLevel::entities_in`], with the players' stand-ins only if `players`.
+    fn entities_in_with(&self, area: &Aabb, filter: EntityFilter, exclude: i32, players: bool) -> Vec<i32> {
+        let wanted = |e: &kiln_entity::Entity| {
+            let kind = match filter {
+                EntityFilter::Any => true,
+                EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
+                EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
+                EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
+            };
+            kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)
+        };
+        // Within a section vanilla keeps insertion order, which id order follows here. The
+        // sections within 2 blocks of the area hold every entity whose box can touch it.
+        let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
+        let hi = section_of([area.max_x + 2.0, area.max_y + 2.0, area.max_z + 2.0]);
+        let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
+        let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
+        if span > self.grid.cells.len() as i64 * 4 {
+            found.extend(self.list.iter().filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+        } else {
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
+                        for &i in v {
+                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_deref())
+                                && wanted(e)
+                            {
+                                found.push((section_key(e), e.id));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !players {
+            // Stand-ins left out.
+        } else if self.proxy_grid.is_empty() || span > self.proxy_grid.len() as i64 * 4 {
+            found.extend(self.proxies.iter().filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+        } else {
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        let Some(v) = self.proxy_grid.get(&(x, y, z)) else { continue };
+                        found.extend(v.iter().map(|&i| &self.proxies[i]).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+                    }
+                }
+            }
+        }
+        found.sort_unstable();
+        found.into_iter().map(|(_, id)| id).collect()
+    }
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -975,53 +1028,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
         kiln_entity::prof!("lvl", "entities_in");
-        let wanted = |e: &kiln_entity::Entity| {
-            let kind = match filter {
-                EntityFilter::Any => true,
-                EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
-                EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
-                EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
-            };
-            kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)
-        };
-        // Within a section vanilla keeps insertion order, which id order follows here. The
-        // sections within 2 blocks of the area hold every entity whose box can touch it.
-        let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
-        let hi = section_of([area.max_x + 2.0, area.max_y + 2.0, area.max_z + 2.0]);
-        let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
-        let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
-        if span > self.grid.cells.len() as i64 * 4 {
-            found.extend(self.list.iter().filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
-        } else {
-            for x in lo.0..=hi.0 {
-                for y in lo.1..=hi.1 {
-                    for z in lo.2..=hi.2 {
-                        let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
-                        for &i in v {
-                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_deref())
-                                && wanted(e)
-                            {
-                                found.push((section_key(e), e.id));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if self.proxy_grid.is_empty() || span > self.proxy_grid.len() as i64 * 4 {
-            found.extend(self.proxies.iter().filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
-        } else {
-            for x in lo.0..=hi.0 {
-                for y in lo.1..=hi.1 {
-                    for z in lo.2..=hi.2 {
-                        let Some(v) = self.proxy_grid.get(&(x, y, z)) else { continue };
-                        found.extend(v.iter().map(|&i| &self.proxies[i]).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
-                    }
-                }
-            }
-        }
-        found.sort_unstable();
-        found.into_iter().map(|(_, id)| id).collect()
+        self.entities_in_with(area, filter, exclude, true)
     }
 
     fn entity_mut(&mut self, id: i32) -> Option<&mut kiln_entity::Entity> {
@@ -1599,7 +1606,8 @@ pub(crate) fn tick(
         })
         .collect();
     for (pid, area) in touchers {
-        for id in sim.entities_in(&area, EntityFilter::Living, pid) {
+        // Only mobs are touched: the players' stand-ins stay out of the search.
+        for id in sim.entities_in_with(&area, EntityFilter::Living, pid, false) {
             let Some(i) = sim.index(id) else { continue };
             let Some(mut phys) = sim.list[i].phys.take() else { continue };
             if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
