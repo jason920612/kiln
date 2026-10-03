@@ -318,10 +318,10 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
     };
     // Each player's viewer changes depend only on the snapshots and its own viewer list, so
     // the players split into windows; the changes apply below in connection order.
-    let seen: Vec<&[ConnId]> = players.iter().map(|p| p.seen_by.as_slice()).collect();
+    let seen: &[&mut Player] = players;
     let targets: Vec<usize> = (0..snaps.len()).collect();
     let diffs = ctx.map_indexed_with(VISIBILITY_WINDOW, &targets, |_, &ti| {
-        let (t, seen) = (&snaps[ti], seen[ti]);
+        let (t, seen) = (&snaps[ti], seen[ti].seen_by.as_slice());
         let (added, removed) = if t.moved {
             let want: Vec<ConnId> = snaps.iter().filter(|v| sees(v, t)).map(|v| v.conn).collect();
             if seen[..] == want[..] {
@@ -344,7 +344,6 @@ pub(crate) fn update_visibility(players: &mut [&mut Player], ctx: &Ctx<'_>) -> V
         };
         Some((ti, added, removed))
     });
-    drop(seen);
     let changes: Vec<(usize, Vec<ConnId>, Vec<ConnId>)> = diffs.into_iter().flatten().collect();
     let index = |conn: ConnId| snaps.binary_search_by_key(&conn, |s| s.conn).ok();
     for (ti, added, removed) in changes {

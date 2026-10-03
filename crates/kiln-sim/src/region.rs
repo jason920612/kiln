@@ -89,6 +89,9 @@ pub(crate) struct RegionWork<'a> {
     pub blocks: &'a mut RegionBlocks,
     /// Sorted by connection id.
     pub players: Vec<&'a mut Player>,
+    /// The players' connection ids, side by side (a search through the players themselves
+    /// misses the cache at every step).
+    pub conns: Vec<ConnId>,
     /// This region's packets for the tick, in arrival order.
     pub packets: Vec<(ConnId, PlayIn)>,
     /// The region's plugin instances.
@@ -100,7 +103,7 @@ pub(crate) struct RegionWork<'a> {
 
 impl RegionWork<'_> {
     fn index_of(&self, conn: ConnId) -> Option<usize> {
-        self.players.binary_search_by_key(&conn, |p| p.conn).ok()
+        self.conns.binary_search(&conn).ok()
     }
 
     /// P1: applies the region's packets in arrival order. Runs of packets that each touch only
@@ -345,14 +348,11 @@ impl RegionWork<'_> {
     fn apply_player_packets(&mut self, run: Vec<(ConnId, PlayIn)>, env: &Env, ctx: &Ctx<'_>) {
         let dt = Instant::now();
         let mut jobs: Vec<Vec<(usize, PlayIn)>> = (0..self.players.len()).map(|_| Vec::new()).collect();
-        // (The connections side by side: a search through the players themselves misses the
-        // cache at every step.)
-        let conns: Vec<ConnId> = self.players.iter().map(|p| p.conn).collect();
         let mut last: Option<(ConnId, Option<usize>)> = None;
         for (seq, (conn, pkt)) in run.into_iter().enumerate() {
             let at = match last {
                 Some((c, at)) if c == conn => at,
-                _ => conns.binary_search(&conn).ok(),
+                _ => self.index_of(conn),
             };
             last = Some((conn, at));
             if let Some(i) = at {

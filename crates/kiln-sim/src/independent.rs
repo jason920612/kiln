@@ -335,6 +335,7 @@ impl Sim {
             let mut pool = kiln_sched::TickPool::new(1);
             let out = {
                 let refs: Vec<&mut Player> = players.iter_mut().collect();
+                let conns: Vec<ConnId> = refs.iter().map(|p| p.conn).collect();
                 let (entities, blocks) = (&mut part.0, &mut part.1);
                 let mut work = RegionWork {
                     dim,
@@ -343,6 +344,7 @@ impl Sim {
                     entities,
                     blocks,
                     players: refs,
+                    conns,
                     packets: Vec::new(),
                     plugins: None,
                     delay,

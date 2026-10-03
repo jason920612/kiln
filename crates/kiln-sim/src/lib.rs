@@ -1989,12 +1989,13 @@ impl Sim {
                 let key = (dim, r.id());
                 let mut keyed = buckets.remove(&key).unwrap_or_default();
                 keyed.sort_unstable_by_key(|&(conn, _)| conn);
+                let conns: Vec<ConnId> = keyed.iter().map(|&(c, _)| c).collect();
                 let players: Vec<&mut Player> = keyed.into_iter().map(|(_, p)| p).collect();
                 let packets = packets.remove(&key).unwrap_or_default();
                 let (cells, (entities, blocks)) = r.cells_and_part_mut();
                 let plugins = hooks.remove(&key);
                 let delay = inject.map_or(Duration::ZERO, |i| i.delay_for(dim, cells));
-                RegionWork { dim, region: key.1, cells, entities, blocks, players, packets, plugins, delay, out: RegionOut::default() }
+                RegionWork { dim, region: key.1, cells, entities, blocks, players, conns, packets, plugins, delay, out: RegionOut::default() }
             }));
         }
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
