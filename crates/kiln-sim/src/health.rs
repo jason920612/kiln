@@ -269,6 +269,8 @@ enum DeathMessageType {
 struct DamageTypeInfo {
     name: &'static str,
     message_id: &'static str,
+    /// `death.attack.<message_id>`.
+    key: &'static str,
     exhaustion: f32,
     scaling: Scaling,
     death_message: DeathMessageType,
@@ -279,6 +281,7 @@ macro_rules! damage_types {
         &[$(DamageTypeInfo {
             name: concat!("minecraft:", $name),
             message_id: $msg,
+            key: concat!("death.attack.", $msg),
             exhaustion: $exh,
             scaling: Scaling::$scaling,
             death_message: DeathMessageType::$death,
@@ -341,6 +344,11 @@ const DAMAGE_TYPES: &[DamageTypeInfo] = damage_types! {
     "wither" "wither" 0.0 WhenCausedByLivingNonPlayer Default;
     "wither_skull" "witherSkull" 0.1 WhenCausedByLivingNonPlayer Default;
 };
+
+/// The translation key of a damage type's death message (`death.attack.<message_id>`).
+pub(crate) fn death_message_key(name: &str) -> &'static str {
+    damage_type_info(name).key
+}
 
 /// The `'static` name of a vanilla damage type (`generic` for unknown ones).
 pub(crate) fn static_damage_type(name: &str) -> &'static str {

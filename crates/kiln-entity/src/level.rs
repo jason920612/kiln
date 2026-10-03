@@ -251,6 +251,10 @@ pub enum DamageKind {
     // -- wp30: llamas
     /// `minecraft:spit` (llama spit).
     Spit,
+
+    // -- wp34: `/damage` and spears
+    /// Any other entry of the `minecraft:damage_type` registry (`/damage ... minecraft:spear`).
+    Named(&'static str),
 }
 
 /// Side effects the simulation carries out or broadcasts.

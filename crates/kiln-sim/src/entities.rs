@@ -2763,6 +2763,6 @@ pub(crate) fn damage_type(kind: DamageKind) -> (&'static str, &'static str) {
         DamageKind::DryOut => ("minecraft:dry_out", "death.attack.dryout"),
         DamageKind::NoAggroMobAttack => ("minecraft:mob_attack_no_aggro", "death.attack.mob"),
         DamageKind::Spit => ("minecraft:spit", "death.attack.mob"),
-
+        DamageKind::Named(name) => (name, health::death_message_key(name)),
     }
 }

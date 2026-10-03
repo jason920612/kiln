@@ -2985,9 +2985,67 @@ pub fn check_despawn(e: &mut Entity, level: &dyn EntityLevel, nearest: Option<f6
 }
 
 impl DamageKind {
+    /// The kind of the `minecraft:damage_type` entry `name`: one of the named kinds, else any
+    /// other entry of the registry as [`DamageKind::Named`] (`generic` for an unknown name).
+    pub fn of_type(name: &str) -> DamageKind {
+        const KNOWN: [DamageKind; 37] = [
+            DamageKind::OnFire,
+            DamageKind::InFire,
+            DamageKind::Lava,
+            DamageKind::FallingBlock,
+            DamageKind::FallingAnvil,
+            DamageKind::FallingStalactite,
+            DamageKind::Explosion,
+            DamageKind::Cactus,
+            DamageKind::SweetBerryBush,
+            DamageKind::HotFloor,
+            DamageKind::Freeze,
+            DamageKind::Arrow,
+            DamageKind::Thrown,
+            DamageKind::Generic,
+            DamageKind::MobAttack,
+            DamageKind::PlayerAttack,
+            DamageKind::Drown,
+            DamageKind::InWall,
+            DamageKind::OutOfWorld,
+            DamageKind::Fall,
+            DamageKind::Kill,
+            DamageKind::Cramming,
+            DamageKind::PlayerExplosion,
+            DamageKind::Fireball,
+            DamageKind::Trident,
+            DamageKind::Fireworks,
+            DamageKind::MobProjectile,
+            DamageKind::Magic,
+            DamageKind::IndirectMagic,
+            DamageKind::LightningBolt,
+            DamageKind::Wither,
+            DamageKind::Starve,
+            DamageKind::WitherSkull,
+            DamageKind::Thorns,
+            DamageKind::SonicBoom,
+            DamageKind::WindCharge,
+            DamageKind::DryOut,
+        ];
+        if let Some(k) = KNOWN.iter().find(|k| k.type_name() == name) {
+            return *k;
+        }
+        match name {
+            "minecraft:mob_attack_no_aggro" => return DamageKind::NoAggroMobAttack,
+            "minecraft:spit" => return DamageKind::Spit,
+            _ => {}
+        }
+        kiln_data::registries::SYNCHRONIZED
+            .iter()
+            .find(|(r, _)| *r == "minecraft:damage_type")
+            .and_then(|(_, ids)| ids.iter().copied().find(|t| *t == name))
+            .map_or(DamageKind::Generic, DamageKind::Named)
+    }
+
     /// The `minecraft:damage_type` entry.
     pub fn type_name(self) -> &'static str {
         match self {
+            DamageKind::Named(name) => name,
             DamageKind::OnFire => "minecraft:on_fire",
             DamageKind::InFire => "minecraft:in_fire",
             DamageKind::Lava => "minecraft:lava",

@@ -6,6 +6,14 @@ use crate::{Player, Sim, entities};
 use kiln_command::CommandError;
 use kiln_proto::nbt::Tag;
 
+/// An entity that dealt or caused `/damage`.
+struct DamageParty {
+    id: i32,
+    pos: [f64; 3],
+    player: bool,
+    attacker: crate::health::Attacker,
+}
+
 /// `Entity.addTag`'s limit.
 const MAX_TAGS: usize = 1024;
 
@@ -270,26 +278,122 @@ impl Sim {
         }
     }
 
-    /// `/damage` on a player (`hurtServer` with a source of `damage_type`).
-    pub(crate) fn damage_target(&mut self, target: &PlayerRef, amount: f32, damage_type: &str) -> Result<bool, CommandError> {
-        if target.entity.is_some() {
-            return Err(CommandError::unsupported("Damaging entities by command"));
+    /// Who an entity reference is, as a damage source needs it (`None` when it is gone).
+    fn damage_party(&mut self, r: &PlayerRef) -> Option<DamageParty> {
+        match r.entity {
+            None => {
+                let p = self.players.get(&r.conn)?;
+                Some(DamageParty { id: p.entity_id, pos: p.pos, player: true, attacker: p.as_attacker() })
+            }
+            Some(id) => {
+                let dim = crate::dim_id(r.dim)?;
+                let phys = self.dims[dim].regions.iter().find_map(|reg| reg.part().0.list.iter().find(|e| e.id == id && !e.removed))?.phys.as_ref()?;
+                let pos = phys.position();
+                let pos = [pos.x, pos.y, pos.z];
+                Some(DamageParty { id, pos, player: false, attacker: crate::health::Attacker::mob(id, phys.type_name, pos) })
+            }
         }
+    }
+
+    /// `/damage`: `hurtServer` of `target` with a damage source of `damage_type`: `at` a
+    /// position, or from the entity `by` (what dealt it), caused by `from` (else by `by`).
+    pub(crate) fn damage_target(
+        &mut self,
+        target: &PlayerRef,
+        amount: f32,
+        damage_type: &str,
+        at: Option<[f64; 3]>,
+        by: Option<&PlayerRef>,
+        from: Option<&PlayerRef>,
+    ) -> Result<bool, CommandError> {
         let ty = kiln_data::registries::SYNCHRONIZED
             .iter()
             .find(|(r, _)| *r == "minecraft:damage_type")
             .and_then(|(_, ids)| ids.iter().copied().find(|t| *t == damage_type))
             .unwrap_or("minecraft:generic");
-        let (rules, game_time) = (self.damage_rules(), self.game_time);
-        let Some(p) = self.players.get_mut(&target.conn) else { return Ok(false) };
-        let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
-        let mut ctx = crate::health::DamageCtx { rules, game_time, spawns: &mut spawns, deaths: &mut deaths, level_rng: None };
-        let cause = if ty == "minecraft:generic_kill" { crate::health::Cause::Kill } else { crate::health::Cause::Other(ty) };
-        let hurt = p.hurt(amount, &cause.into(), &mut ctx);
-        let dim = p.dim;
-        self.dims[dim].spawns.extend(spawns);
-        self.announce_deaths(deaths);
+        let direct = by.and_then(|b| self.damage_party(b));
+        let causing = from.or(by).and_then(|b| self.damage_party(b));
+        let causing_id = causing.as_ref().map(|c| c.id);
+        let direct_id = direct.as_ref().map(|d| d.id).filter(|d| Some(*d) != causing_id);
+        // `DamageSource.getSourcePosition`: the given position, else where the direct entity is.
+        let position = at.or_else(|| direct.as_ref().map(|d| d.pos));
+        let Some(dim) = crate::dim_id(target.dim) else { return Ok(false) };
+        if target.entity.is_none() {
+            let (rules, game_time) = (self.damage_rules(), self.game_time);
+            let Some(p) = self.players.get_mut(&target.conn) else { return Ok(false) };
+            let (mut spawns, mut deaths) = (Vec::new(), Vec::new());
+            let mut ctx = crate::health::DamageCtx { rules, game_time, spawns: &mut spawns, deaths: &mut deaths, level_rng: None };
+            let cause = if ty == "minecraft:generic_kill" { crate::health::Cause::Kill } else { crate::health::Cause::Other(ty) };
+            // (A direct entity other than the attacker, or a position, is what blocking and
+            // knockback face; the attacker's own position is the default.)
+            let position = at.or_else(|| direct_id.and_then(|_| direct.as_ref().map(|d| d.pos)));
+            let source = crate::health::Source { cause, attacker: causing.map(|c| c.attacker), direct: direct_id, weapon: None, position };
+            let hurt = p.hurt(amount, &source, &mut ctx);
+            self.dims[dim].spawns.extend(spawns);
+            self.announce_deaths(deaths);
+            return Ok(hurt);
+        }
+        let Some(id) = target.entity else { return Ok(false) };
+        let Some(pos) = self.dims[dim].regions.iter().find_map(|r| r.part().0.list.iter().find(|e| e.id == id && !e.removed)).map(|e| e.pos) else {
+            return Ok(false);
+        };
+        let kind = kiln_entity::level::DamageKind::of_type(ty);
+        let source = kiln_entity::mob::DamageSource {
+            kind,
+            attacker: causing_id,
+            direct: direct_id,
+            pos: position.map(|p| kiln_entity::math::Vec3::new(p[0], p[1], p[2])),
+            attacker_is_player: causing.as_ref().is_some_and(|c| c.player),
+        };
+        let hurt = self
+            .region_work(dim, entities::chunk_of(pos), |ents, level, players, spawns, deaths| {
+                entities::with_entity(ents, level, players, id, spawns, deaths, 0x6461_6d67, |e, lvl| {
+                    if matches!(e.kind, kiln_entity::EntityKind::Mob(_)) {
+                        kiln_entity::mob::hurt_entity(e, lvl, source, amount)
+                    } else {
+                        e.hurt(lvl, kind, amount, causing_id)
+                    }
+                })
+            })
+            .flatten()
+            .unwrap_or(false);
         Ok(hurt)
+    }
+
+    /// Runs `f` with the region of `dim` owning `chunk` and its players as an entity level
+    /// (serially, outside any tick), then carries out what it did: block changes, deaths and
+    /// the entities it made.
+    pub(crate) fn region_work<R>(
+        &mut self,
+        dim: crate::DimId,
+        chunk: kiln_world::ChunkPos,
+        f: impl FnOnce(&mut entities::Entities, &mut crate::blocks::RegionLevel, &mut [&mut Player], &mut Vec<entities::Spawn>, &mut Vec<crate::health::Death>) -> R,
+    ) -> Option<R> {
+        let env = self.block_env(dim);
+        let mut deaths = Vec::new();
+        let result = {
+            let Sim { dims, players, .. } = self;
+            let d = &mut dims[dim];
+            let region = d.regions.at_mut(chunk.cell())?;
+            let id = region.id();
+            let (cells, part) = region.cells_and_part_mut();
+            let (ents, blks) = (&mut part.0, &mut part.1);
+            let bodies = crate::blocks::entity_boxes(players.values().filter(|p| p.dim == dim && p.region == id), ents);
+            let mut out = crate::blocks::BlockOut::default();
+            let r = {
+                let mut here: Vec<&mut Player> = players.values_mut().filter(|p| p.dim == dim && p.region == id).collect();
+                here.sort_unstable_by_key(|p| p.conn);
+                let mut level =
+                    crate::blocks::RegionLevel { cells: &mut *cells, blocks: blks, env: &env, out: &mut out, bodies: &bodies, actor: None };
+                f(ents, &mut level, &mut here, &mut d.spawns, &mut deaths)
+            };
+            let mut everyone: Vec<&mut Player> = players.values_mut().filter(|p| p.dim == dim).collect();
+            crate::blocks::finish(cells, out, &mut everyone, &mut d.spawns, &env);
+            r
+        };
+        self.announce_deaths(deaths);
+        self.materialize_spawns();
+        Some(result)
     }
 
     /// `ServerPlayer.setCamera`.

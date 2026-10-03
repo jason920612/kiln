@@ -158,6 +158,51 @@ fn a_stack_survives_a_restart() {
     assert_eq!(links(&sim), before);
 }
 
+/// The native world format keeps the stack too, and converting the world to Anvil (and a Sim on
+/// that) gives the same stack.
+#[test]
+fn a_stack_survives_the_native_format_and_its_conversion() {
+    let dir = world("passengers-native");
+    let mut config = SimConfig::new(8, 4, Some(dir.clone()));
+    config.world_format = kiln_storage::WorldFormat::Native;
+    let mut sim = Sim::new(config);
+    let (msg, stats) = join(1, "Rider", 2);
+    assert!(sim.step([msg]));
+    let mut client = Client::new(1, stats);
+    for c in ["gamerule minecraft:spawn_mobs false", "gamemode creative Rider"] {
+        console(&mut sim, c);
+    }
+    settle(&mut sim, &mut client, 5);
+    let at = client.pos.map(|c| c.floor() as i32);
+    summon_stack(&mut sim, &mut client, at);
+    settle(&mut sim, &mut client, 10);
+    let before = links(&sim);
+    assert_eq!(before.len(), 4);
+    let (done, _wait) = std::sync::mpsc::channel();
+    assert!(!sim.step([ToSim::Shutdown { done }]));
+    drop(sim);
+    assert_eq!(kiln_storage::WorldFormat::of(&dir), kiln_storage::WorldFormat::Native);
+
+    let boot = |dir: &std::path::Path| {
+        let mut sim = Sim::new(SimConfig::new(8, 4, Some(dir.to_owned())));
+        let (msg, stats) = join(1, "Rider", 2);
+        assert!(sim.step([msg]));
+        let mut client = Client::new(1, stats);
+        settle(&mut sim, &mut client, 3);
+        sim
+    };
+    let sim = boot(&dir);
+    assert_eq!(links(&sim), before, "back from the native world");
+    drop(sim);
+
+    let anvil = dir.with_file_name("passengers-native-anvil");
+    let _ = std::fs::remove_dir_all(&anvil);
+    kiln_storage::native::convert::convert_world(&dir, &anvil, kiln_storage::WorldFormat::Anvil, 2).unwrap();
+    let sim = boot(&anvil);
+    assert_eq!(links(&sim), before, "back from the converted Anvil world");
+    check_saved(&sim.entity_stacks_nbt());
+}
+
 #[test]
 fn data_get_entity_has_the_passengers() {
     let dir = world("passengers-data");

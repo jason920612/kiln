@@ -1511,6 +1511,35 @@ damage Diff0 1 minecraft:nonexistent
 damage Nobody 1
 data get entity Diff0 Health
 ! gamerule natural_health_regeneration true
+# damage on other entities (wp34): any damage type, at a position, by and from entities
+! summon cow 3 100 3 {Tags:["dmg1"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
+! summon cow 5 100 3 {Tags:["dmg2"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
+! summon cow 7 100 3 {Tags:["dmg3"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
+! summon cow 9 100 3 {Tags:["dmg4"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b,Invulnerable:1b}
+! summon cow 11 100 3 {Tags:["dmg5"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
+! summon cow 13 100 3 {Tags:["dmg6"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
+! summon zombie 15 100 3 {Tags:["dmg7"],NoAI:1b,NoGravity:1b,Health:20f,PersistenceRequired:1b}
+! summon pig 17 100 3 {Tags:["dmg8"],NoAI:1b,NoGravity:1b,Health:10f,PersistenceRequired:1b}
+damage @e[tag=dmg1,limit=1] 3
+data get entity @e[tag=dmg1,limit=1] Health
+damage @e[tag=dmg2,limit=1] 4 minecraft:fall by Diff0
+data get entity @e[tag=dmg2,limit=1] Health
+damage @e[tag=dmg3,limit=1] 1.5 minecraft:magic at 7 100 3
+data get entity @e[tag=dmg3,limit=1] Health
+damage @e[tag=dmg4,limit=1] 2 minecraft:generic
+data get entity @e[tag=dmg4,limit=1] Health
+damage @e[tag=dmg4,limit=1] 2 minecraft:out_of_world
+damage @e[tag=dmg5,limit=1] 2.5 minecraft:spear by Other0 from Diff0
+data get entity @e[tag=dmg5,limit=1] Health
+damage @e[tag=dmg6,limit=1] 0 minecraft:generic
+damage @e[tag=dmg6,limit=1] 1 minecraft:lava
+data get entity @e[tag=dmg6,limit=1] Health
+damage @e[tag=dmg7,limit=1] 3 minecraft:cactus
+data get entity @e[tag=dmg7,limit=1] Health
+damage @e[tag=dmg8,limit=1] 100 minecraft:generic_kill
+damage @e[tag=dmg8,limit=1] 1
+damage @e[tag=dmg8] 1 minecraft:generic by Diff0
+! kill @e[type=!minecraft:player]
 ! kill @e[type=!minecraft:player]
 # worldborder
 worldborder get
