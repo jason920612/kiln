@@ -123,6 +123,10 @@ pub fn for_each_block_collision(
         crate::prof!("col", "read_blocks");
         n <= buf.len() && level.read_blocks(BlockPos::new(x0, y0, z0), BlockPos::new(x1, y1, z1), &mut buf[..n])
     };
+    // Nothing but air in reach (the usual case): nothing to visit.
+    if bulk && buf[..n].iter().all(|&s| kiln_data::blocks_types::is_air(s)) {
+        return;
+    }
     crate::prof!("col", "block loop");
     for z in 0..d {
         for y in 0..h {

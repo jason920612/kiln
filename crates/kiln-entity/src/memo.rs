@@ -108,6 +108,13 @@ mod tests {
     /// `Section` counts fluids with `has_fluid`, and the fluid scan skips boxes by that count: the
     /// two must agree with the fluid states entities see, for every block state.
     #[test]
+    fn air_by_state_ids_matches_the_physics_flag() {
+        for s in 0..kiln_data::blocks::STATE_COUNT as u16 {
+            assert_eq!(physics::is_air(s), crate::physics::entry_is_air(s), "state {s} ({})", crate::blocks::block_name(s));
+        }
+    }
+
+    #[test]
     fn section_fluid_flag_matches_fluid_states() {
         for s in 0..kiln_data::blocks::STATE_COUNT as u16 {
             assert_eq!(

@@ -104,7 +104,9 @@ fn flags() -> &'static [u8] {
 
 /// Air, cave air or void air (not counted as blocks by the client).
 pub fn is_air(state: u16) -> bool {
-    flags()[state as usize] & AIR != 0
+    // The three air blocks have one state each: three compares, no table (this is asked of
+    // every block of every box an entity scans).
+    state == crate::blocks::default_state::AIR || state == crate::blocks::default_state::VOID_AIR || state == crate::blocks::default_state::CAVE_AIR
 }
 
 /// Has a non-empty fluid state (water, lava, waterlogged, ...).
@@ -118,6 +120,13 @@ mod tests {
     use crate::blocks::default_state as d;
 
     /// The table behind `block_of` agrees with a binary search over the blocks for every state.
+    #[test]
+    fn is_air_by_states_matches_the_names() {
+        for s in 0..STATE_COUNT as u16 {
+            assert_eq!(is_air(s), flags()[s as usize] & AIR != 0, "{}", block_of(s).name);
+        }
+    }
+
     #[test]
     fn block_of_every_state() {
         for s in 0..STATE_COUNT as u16 {

@@ -249,6 +249,12 @@ pub fn is_face_sturdy(state: u16, dir: crate::math::Direction) -> bool {
 }
 
 pub fn is_air(state: u16) -> bool {
+    kiln_data::blocks_types::is_air(state)
+}
+
+/// The air flag of the generated tables (what `is_air` read before it compared state ids).
+#[cfg(test)]
+pub(crate) fn entry_is_air(state: u16) -> bool {
     entry(state).flags & AIR != 0
 }
 
