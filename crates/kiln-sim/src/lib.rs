@@ -227,8 +227,16 @@ pub struct NoiseConfig {
     pub threads: usize,
 }
 
+/// The tick pool's size on a machine with `cores` logical cores: all but a fifth of them (at
+/// least one) for the network, generation and storage threads, at most 13. wp40: with the tick
+/// threads above normal priority, 13 of 16 beat 7 (1,000 players 4.28 -> 3.75 ms, p99 6.1 ->
+/// 4.8; spread over 20 regions 4.17 -> 3.39) for about half again the CPU per tick.
+pub fn default_workers(cores: usize) -> usize {
+    cores.saturating_sub((cores / 5).max(1)).clamp(1, 13)
+}
+
 impl SimConfig {
-    /// Defaults for a server on this machine: all cores but one tick (at most 7), regions on.
+    /// Defaults for a server on this machine: [`default_workers`] tick, regions on.
     pub fn new(max_players: usize, view_distance: u8, world: Option<std::path::PathBuf>) -> Self {
         let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
         Self {
@@ -238,9 +246,10 @@ impl SimConfig {
             world,
             online_mode: false,
             pool: {
-                let mut pool = kiln_sched::PoolConfig::new(cores.saturating_sub(1).clamp(1, 7));
+                let mut pool = kiln_sched::PoolConfig::new(default_workers(cores));
                 // wp40: the tick threads above other programs' (on a busy machine a worker that
-                // loses its core mid-window holds up the tick: 1,000 players p99 9.6 -> 6.6 ms).
+                // loses its core mid-window holds up the tick: 1,000 players p99 9.6 -> 6.6 ms
+                // with 7 workers).
                 // `KILN_TICK_PRIORITY` overrides (0: normal).
                 pool.priority = std::env::var("KILN_TICK_PRIORITY").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
                 pool
@@ -1268,22 +1277,28 @@ impl Sim {
         packets.splice(0..0, std::mem::take(&mut self.commands.injected));
         // Independent mode: regions back from ticking away rejoin; anything that needs the
         // whole server waits for all of them.
+        let dt = Instant::now();
         let packets = self.independent_b0(packets, !joins.is_empty() || !leaves.is_empty() || !console.is_empty());
         self.track_idle(&packets);
+        let dt = diag::lap("b0.idle", dt);
         self.maintain_chunks();
+        let dt = diag::lap("b0.chunks", dt);
         self.rendezvous_for_topology();
         let joining: Vec<_> = joins.into_iter().map(|j| (self.joining(j.uuid), j)).collect();
         for (jn, _) in &joining {
             self.dims[jn.dim].load_chunk(player_chunk(jn.pos));
         }
         let changed = self.apply_topology();
+        let dt = diag::lap("b0.topology", dt);
         self.plugins_b0();
         for (jn, j) in joining {
             let conn = j.conn;
             self.join(j, jn);
             self.plugins_joined(conn);
         }
+        let dt = diag::lap("b0.joins", dt);
         self.update_membership(changed);
+        diag::lap("b0.membership", dt);
         lap(&mut self.stats, "b0");
 
         // P: region-local packets in parallel.
@@ -2048,8 +2063,15 @@ impl Sim {
     fn maintain_chunks(&mut self) {
         // Entities loaded with a chunk have their ids before the chunk can leave again.
         self.materialize_spawns();
+        // Every player's own chunk, by level (one pass over the players).
+        let mut own_chunks: Vec<HashSet<ChunkPos>> = (0..self.dims.len()).map(|_| HashSet::new()).collect();
+        for p in self.players.values() {
+            if let Some(set) = own_chunks.get_mut(p.dim) {
+                set.insert(player_chunk(p.pos));
+            }
+        }
         for dim in 0..self.dims.len() {
-            let mut keep: HashSet<ChunkPos> = self.players.values().filter(|p| p.dim == dim).map(|p| player_chunk(p.pos)).collect();
+            let mut keep: HashSet<ChunkPos> = std::mem::take(&mut own_chunks[dim]);
             // Force-loaded chunks (`/forceload`) stay, and load like a player's own chunk.
             keep.extend(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)));
             // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),

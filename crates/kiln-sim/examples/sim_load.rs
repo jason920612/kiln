@@ -120,7 +120,7 @@ fn args() -> Args {
         ticks: 1200,
         view_distance: 2,
         walk: false,
-        threads: cores.saturating_sub(1).clamp(1, 7),
+        threads: kiln_sim::default_workers(cores),
         unified: false,
         inline: false,
         independent: false,
@@ -319,7 +319,7 @@ fn main() {
                     let phases: Vec<String> = totals
                         .iter()
                         .map(|(n, d)| (n, d.saturating_sub(last_totals.iter().find(|(m, _)| m == n).map_or(std::time::Duration::ZERO, |(_, d)| *d))))
-                        .filter(|(_, d)| d.as_secs_f64() >= 2e-4)
+                        .filter(|(_, d)| d.as_secs_f64() >= 1e-5)
                         .map(|(n, d)| format!("{n} {:.2}", d.as_secs_f64() * 1e3))
                         .collect();
                     let at = (start - wall0).as_secs_f64() * 1e3;

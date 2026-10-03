@@ -803,11 +803,7 @@ impl SimLevel<'_, '_, '_> {
     fn index_players(&mut self) {
         self.proxy_at = self.proxies.iter().enumerate().map(|(i, e)| (e.id, i)).collect();
         self.view_index = kiln_entity::level::PlayerGrid::build(&self.views);
-        self.proxy_grid.clear();
-        for (i, e) in self.proxies.iter().enumerate() {
-            let p = e.position();
-            self.proxy_grid.entry(section_of([p.x, p.y, p.z])).or_default().push(i);
-        }
+        self.proxy_grid = proxy_sections(&self.proxies);
     }
 
     /// Logs `id` for [`SimLevel::touched`] (once, with its box and liveness as they were).
@@ -1602,6 +1598,19 @@ fn occupancy_of(o: kiln_entity::level::PoiOccupancy) -> kiln_world::poi::Occupan
     }
 }
 
+/// The stand-ins by entity section.
+fn proxy_sections(proxies: &[Proxy]) -> FastMap<(i32, i32, i32), Vec<usize>> {
+    let mut m: FastMap<(i32, i32, i32), Vec<usize>> = FastMap::default();
+    for (i, e) in proxies.iter().enumerate() {
+        let p = e.position();
+        m.entry(section_of([p.x, p.y, p.z])).or_default().push(i);
+    }
+    m
+}
+
+/// The entity phase's indexes, built side by side (tens of microseconds each in a crowd).
+const INDEX_WINDOW: kiln_sched::Window = kiln_sched::Window::new().chunk(1).strategy(kiln_sched::Strategy::Parallel);
+
 /// The players' stand-ins and views, a microsecond or so each.
 const PLAYER_VIEWS: kiln_sched::Window = kiln_sched::Window::new().item_ns(110);
 
@@ -1741,7 +1750,36 @@ pub(crate) fn tick(
         crate::shoulder::mark_views(players, &block, &mut views);
     }
     let dt = crate::diag::lap("e.views", dt);
-    let nearest = Nearest::build(&views);
+    // The indexes over the players and the entities, side by side.
+    enum Built {
+        Nearest(Nearest),
+        Grid(Grid),
+        ProxyAt(FastMap<i32, usize>),
+        Views(kiln_entity::level::PlayerGrid),
+        ProxyGrid(FastMap<(i32, i32, i32), Vec<usize>>),
+    }
+    let built = {
+        let (views, proxies, list) = (&views, &proxies, &entities.list);
+        let jobs: [u8; 5] = [0, 1, 2, 3, 4];
+        ctx.map_indexed_with(INDEX_WINDOW, &jobs, |_, &k| match k {
+            0 => Built::Nearest(Nearest::build(views)),
+            1 => Built::Grid(Grid::build(list)),
+            2 => Built::ProxyAt(proxies.iter().enumerate().map(|(i, e)| (e.id, i)).collect()),
+            3 => Built::Views(kiln_entity::level::PlayerGrid::build(views)),
+            _ => Built::ProxyGrid(proxy_sections(proxies)),
+        })
+    };
+    let (mut nearest, mut grid, mut proxy_at, mut view_index, mut proxy_grid) = (None, Grid::default(), FastMap::default(), Default::default(), FastMap::default());
+    for b in built {
+        match b {
+            Built::Nearest(n) => nearest = Some(n),
+            Built::Grid(g) => grid = g,
+            Built::ProxyAt(m) => proxy_at = m,
+            Built::Views(v) => view_index = v,
+            Built::ProxyGrid(m) => proxy_grid = m,
+        }
+    }
+    let nearest = nearest.expect("built");
     let Entities { list, spec: pace } = entities;
     let mut sim = SimLevel {
         level: World::Region(level),
@@ -1757,16 +1795,14 @@ pub(crate) fn tick(
         seeds: 0,
         current_source: None,
         rng: LegacyRandom::new(0),
-        grid: Grid::default(),
-        proxy_at: Default::default(),
-        proxy_grid: Default::default(),
-        view_index: Default::default(),
+        grid,
+        proxy_at,
+        proxy_grid,
+        view_index,
         despawn: Some(&nearest),
         player_writes: 0,
         touched: None,
     };
-    sim.grid = Grid::build(sim.list);
-    sim.index_players();
     let dt = crate::diag::lap("e.index", dt);
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);

@@ -588,14 +588,17 @@ struct Turns<'a> {
     settled_chunk: Bits,
     /// Present transmitters by chunk, for the chunks a receiver sees.
     by_chunk: crate::FastMap<[i32; 2], Vec<u32>>,
+    /// [`visible_set`] of each view (centre chunk and distance) a receiver has: a crowd's
+    /// receivers share a few.
+    views: crate::FastMap<([i32; 2], i32), Bits>,
     words: usize,
     /// The members' odometers, by slot.
     odo: &'a [f64],
 }
 
 /// The transmitters in the chunks `me` sees (`ChunkTrackingView.isInViewDistance`).
-fn visible_set(t: &Turns, me: &Snap) -> Bits {
-    let mut vis = vec![0u64; t.words];
+fn visible_set(by_chunk: &crate::FastMap<[i32; 2], Vec<u32>>, words: usize, me: &Snap) -> Bits {
+    let mut vis = vec![0u64; words];
     let v = me.view.max(0);
     let mut add = |chunk: &[i32; 2], slots: &Vec<u32>| {
         if chunk_visible(*chunk, me) {
@@ -605,16 +608,16 @@ fn visible_set(t: &Turns, me: &Snap) -> Bits {
         }
     };
     let side = 2 * i64::from(v) + 1;
-    if (side * side) as usize <= t.by_chunk.len() {
+    if (side * side) as usize <= by_chunk.len() {
         for x in me.center[0] - v..=me.center[0] + v {
             for z in me.center[1] - v..=me.center[1] + v {
-                if let Some(slots) = t.by_chunk.get(&[x, z]) {
+                if let Some(slots) = by_chunk.get(&[x, z]) {
                     add(&[x, z], slots);
                 }
             }
         }
     } else {
-        for (chunk, slots) in &t.by_chunk {
+        for (chunk, slots) in by_chunk {
             add(chunk, slots);
         }
     }
@@ -676,7 +679,14 @@ fn every_step(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes
 }
 
 fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
-    let vis = visible_set(t, me);
+    let own;
+    let vis: &Bits = match t.views.get(&(me.center, me.view)) {
+        Some(v) => v,
+        None => {
+            own = visible_set(&t.by_chunk, t.words, me);
+            &own
+        }
+    };
     let own = t.rank[r];
     let w = t.words;
     let earlier_than = |i: usize| &t.before[i * w..(i + 1) * w];
@@ -1106,6 +1116,12 @@ impl Sim {
                 outbox: Mutex::new(outboxes[slot].take()),
             })
             .collect();
+        let mut views: crate::FastMap<([i32; 2], i32), Bits> = Default::default();
+        for share in &shares {
+            if let Some(me) = snaps[share.slot].as_ref() {
+                views.entry((me.center, me.view)).or_insert_with(|| visible_set(&by_chunk, words, me));
+            }
+        }
         let turns = Turns {
             rank,
             tpos,
@@ -1120,6 +1136,7 @@ impl Sim {
             settled_block,
             settled_chunk,
             by_chunk,
+            views,
             words,
             odo: &mgr.odo,
         };
