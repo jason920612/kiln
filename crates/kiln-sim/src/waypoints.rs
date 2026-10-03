@@ -15,11 +15,16 @@
 //! goes to the receiver, so each receiver's share of the movers' turns (the moving
 //! transmitters' turns in connection order, with its own `updatePlayer` turn at its place)
 //! depends on nothing but its own connections and one snapshot of the players. The receivers
-//! therefore run in parallel on the tick pool and their packets are appended afterwards, which
-//! gives every receiver the bytes, in the order, the serial loop would. Members of a level have
+//! therefore run in parallel on the tick pool, each appending to its own outbox, which gives
+//! every receiver the bytes, in the order, the serial loop would. Members of a level have
 //! dense slots, connections are small `Copy` values in per-receiver rows indexed by the
 //! transmitter's slot, and a transmitter's common packets (its block or chunk with its current
 //! icon) are encoded once and shared by all receivers.
+//!
+//! Most steps in a crowd are quiet (nothing changed that the receiver was told), and which
+//! ones are follows from the connections' kinds and the transmitters' movement alone (see
+//! [`run_share`]), so a receiver finds the steps to run with set operations over the slots
+//! instead of visiting every pair: the work follows the packets sent, not the pairs.
 
 use crate::{DimId, Player, Sim};
 use bytes::Bytes;
@@ -60,13 +65,124 @@ enum Link {
     Azimuth(f32),
 }
 
-/// One connection: what was sent, and the style (an index into the level's styles) and color
-/// it was made with (`Icon.cloneAndAssignStyle` when the connection was made).
+/// One connection: what was sent, and the style and color it was made with
+/// (`Icon.cloneAndAssignStyle` when the connection was made) as an index into the level's
+/// icons.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Connection {
     link: Link,
-    style: u32,
-    color: Option<i32>,
+    icon: u32,
+}
+
+/// A connection as a row keeps it (16 bytes; a crowd's rows hold a million): the position,
+/// chunk or angle bits, and the kind (low two bits, 0: no connection) with the icon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Stored {
+    at: [i32; 3],
+    meta: u32,
+}
+
+impl Stored {
+    const NONE: Stored = Stored { at: [0; 3], meta: 0 };
+
+    fn of(c: Option<Connection>) -> Stored {
+        let Some(c) = c else { return Stored::NONE };
+        let (at, kind) = match c.link {
+            Link::Block(p) => (p, 1),
+            Link::Chunk([x, z]) => ([x, z, 0], 2),
+            Link::Azimuth(a) => ([a.to_bits() as i32, 0, 0], 3),
+        };
+        Stored { at, meta: c.icon << 2 | kind }
+    }
+
+    fn get(self) -> Option<Connection> {
+        let link = match self.meta & 3 {
+            0 => return None,
+            1 => Link::Block(self.at),
+            2 => Link::Chunk([self.at[0], self.at[1]]),
+            _ => Link::Azimuth(f32::from_bits(self.at[0] as u32)),
+        };
+        Some(Connection { link, icon: self.meta >> 2 })
+    }
+}
+
+/// A set of slots.
+type Bits = Vec<u64>;
+
+fn set_bit(b: &mut Bits, i: usize, on: bool) {
+    if b.len() <= i / 64 {
+        if !on {
+            return;
+        }
+        b.resize(i / 64 + 1, 0);
+    }
+    if on {
+        b[i / 64] |= 1 << (i % 64);
+    } else {
+        b[i / 64] &= !(1 << (i % 64));
+    }
+}
+
+/// Word `i` of a set (zero past its end).
+fn word(b: &[u64], i: usize) -> u64 {
+    b.get(i).copied().unwrap_or(0)
+}
+
+/// The slots in a set, in slot order.
+fn each_bit(words: impl Iterator<Item = u64>) -> impl Iterator<Item = usize> {
+    words.enumerate().flat_map(|(i, mut w)| {
+        std::iter::from_fn(move || {
+            (w != 0).then(|| {
+                let b = w.trailing_zeros() as usize;
+                w &= w - 1;
+                i * 64 + b
+            })
+        })
+    })
+}
+
+/// A receiver's connections by the transmitter's slot, with the sets of transmitters it has
+/// a block, chunk and azimuth connection from (so a turn can tell which steps may send
+/// anything without looking at each connection).
+#[derive(Debug, Default, Clone, PartialEq)]
+struct Row {
+    data: Vec<Stored>,
+    /// Block, chunk and azimuth connections.
+    kinds: [Bits; 3],
+}
+
+impl Row {
+    fn get(&self, s: usize) -> Option<Connection> {
+        self.data.get(s).and_then(|d| d.get())
+    }
+
+    /// Replaces the connection; returns the old one.
+    fn put(&mut self, s: usize, c: Option<Connection>) -> Option<Connection> {
+        if self.data.len() <= s {
+            if c.is_none() {
+                return None;
+            }
+            self.data.resize(s + 1, Stored::NONE);
+        }
+        let new = Stored::of(c);
+        let old = std::mem::replace(&mut self.data[s], new);
+        let (was, now) = ((old.meta & 3) as usize, (new.meta & 3) as usize);
+        if was != now {
+            if was != 0 {
+                set_bit(&mut self.kinds[was - 1], s, false);
+            }
+            if now != 0 {
+                set_bit(&mut self.kinds[now - 1], s, true);
+            }
+        }
+        old.get()
+    }
+
+    /// The slots of the transmitters this receiver has a connection from.
+    fn sources(&self) -> Vec<usize> {
+        let n = self.kinds.iter().map(Vec::len).max().unwrap_or(0);
+        each_bit((0..n).map(|i| word(&self.kinds[0], i) | word(&self.kinds[1], i) | word(&self.kinds[2], i))).collect()
+    }
 }
 
 /// A transmitter's or receiver's place in a level.
@@ -77,7 +193,7 @@ struct Member {
     transmitting: bool,
     receiving: bool,
     /// As a receiver: the connection from each transmitter, by the transmitter's slot.
-    row: Vec<Option<Connection>>,
+    row: Row,
 }
 
 /// One level's `ServerWaypointManager`.
@@ -91,20 +207,23 @@ pub(crate) struct WaypointManager {
     slots: HashMap<ConnId, u32>,
     members: Vec<Member>,
     free: Vec<u32>,
-    /// The styles connections were made with.
-    styles: Vec<String>,
+    /// Transmitters (by slot) a connection was made from this tick before the movers' turns:
+    /// their connections may hold a position other than their last tick's.
+    dirty: Vec<bool>,
+    /// The styles and colors connections were made with.
+    icons: Vec<(String, Option<i32>)>,
     /// Buckets of vanilla's `HashSet` of transmitters (16, doubling past a load of 0.75,
     /// never shrinking), for its iteration order.
     capacity: usize,
 }
 
 impl WaypointManager {
-    fn style_id(&mut self, style: &str) -> u32 {
-        match self.styles.iter().position(|s| s == style) {
+    fn icon_id(&mut self, style: &str, color: Option<i32>) -> u32 {
+        match self.icons.iter().position(|(s, c)| s == style && *c == color) {
             Some(i) => i as u32,
             None => {
-                self.styles.push(style.to_owned());
-                (self.styles.len() - 1) as u32
+                self.icons.push((style.to_owned(), color));
+                (self.icons.len() - 1) as u32
             }
         }
     }
@@ -127,6 +246,7 @@ impl WaypointManager {
         };
         self.members[s].conn = Some(conn);
         self.slots.insert(conn, s as u32);
+        self.mark_dirty(s);
         s
     }
 
@@ -139,29 +259,23 @@ impl WaypointManager {
         if let Some(conn) = m.conn.take() {
             self.slots.remove(&conn);
         }
-        m.row = Vec::new();
+        m.row = Row::default();
         for m in &mut self.members {
-            if let Some(c) = m.row.get_mut(s) {
-                *c = None;
-            }
+            m.row.put(s, None);
         }
         self.free.push(s as u32);
     }
 
-    fn connection(&self, receiver: usize, source: usize) -> Option<Connection> {
-        self.members[receiver].row.get(source).copied().flatten()
-    }
-
     /// Replaces the connection; returns the old one.
     fn set(&mut self, receiver: usize, source: usize, c: Option<Connection>) -> Option<Connection> {
-        let row = &mut self.members[receiver].row;
-        if row.len() <= source {
-            if c.is_none() {
-                return None;
-            }
-            row.resize(source + 1, None);
+        self.members[receiver].row.put(source, c)
+    }
+
+    fn mark_dirty(&mut self, s: usize) {
+        if self.dirty.len() <= s {
+            self.dirty.resize(s + 1, false);
         }
-        std::mem::replace(&mut row[source], c)
+        self.dirty[s] = true;
     }
 }
 
@@ -169,7 +283,6 @@ impl WaypointManager {
 #[derive(Debug, Clone, Copy)]
 struct Snap {
     conn: ConnId,
-    uuid: Uuid,
     pos: [f64; 3],
     block: [i32; 3],
     chunk: [i32; 2],
@@ -178,14 +291,17 @@ struct Snap {
     view: i32,
     mode: u8,
     first_tick: bool,
+    /// Its block (chunk) differs from the one at the last tick's turns.
+    block_moved: bool,
+    chunk_moved: bool,
 }
 
 impl Snap {
     fn of(p: &Player) -> Snap {
         let block = p.pos.map(|c| c.floor() as i32);
+        let last = p.waypoint_last_pos.map(|c| c.floor() as i32);
         Snap {
             conn: p.conn,
-            uuid: p.uuid,
             pos: p.pos,
             block,
             chunk: [block[0] >> 4, block[2] >> 4],
@@ -193,6 +309,8 @@ impl Snap {
             view: p.view_distance,
             mode: p.game_mode,
             first_tick: p.waypoint_first_tick,
+            block_moved: last != block,
+            chunk_moved: [last[0] >> 4, last[2] >> 4] != [block[0] >> 4, block[2] >> 4],
         }
     }
 }
@@ -267,13 +385,14 @@ fn next_link(link: Link, source: &Snap, receiver: &Snap) -> Option<Link> {
     }
 }
 
-fn packet(op: WaypointOp, uuid: Uuid, styles: &[String], c: &Connection) -> Bytes {
+fn packet(op: WaypointOp, uuid: Uuid, icons: &[(String, Option<i32>)], c: &Connection) -> Bytes {
     let at = match c.link {
         Link::Block(p) => WaypointAt::Block(p),
         Link::Chunk(p) => WaypointAt::Chunk(p),
         Link::Azimuth(a) => WaypointAt::Azimuth(a),
     };
-    hud::tracked_waypoint(op, uuid, &styles[c.style as usize], c.color, at)
+    let (style, color) = &icons[c.icon as usize];
+    hud::tracked_waypoint(op, uuid, style, *color, at)
 }
 
 fn untrack_packet(uuid: Uuid) -> Bytes {
@@ -297,7 +416,7 @@ enum Step {
 /// `createConnection` for a pair without a connection, `updateConnection` for one with: an
 /// intact connection sends what changed, a broken one is remade, and a pair that cannot have
 /// a connection (the transmitter's first tick, a spectator) has none.
-fn step_pair(entry: &mut Option<Connection>, source: &Snap, receiver: &Snap, fresh: (u32, Option<i32>)) -> Step {
+fn step_pair(entry: &mut Option<Connection>, source: &Snap, receiver: &Snap, fresh: u32) -> Step {
     match entry {
         Some(c) => {
             if !is_broken(c.link, source, receiver) {
@@ -311,7 +430,7 @@ fn step_pair(entry: &mut Option<Connection>, source: &Snap, receiver: &Snap, fre
             }
             match make_link(source, receiver) {
                 Some(link) => {
-                    *c = Connection { link, style: fresh.0, color: fresh.1 };
+                    *c = Connection { link, icon: fresh };
                     Step::Send(WaypointOp::Track, *c)
                 }
                 None => {
@@ -322,7 +441,7 @@ fn step_pair(entry: &mut Option<Connection>, source: &Snap, receiver: &Snap, fre
         }
         None => match make_link(source, receiver) {
             Some(link) => {
-                let c = Connection { link, style: fresh.0, color: fresh.1 };
+                let c = Connection { link, icon: fresh };
                 *entry = Some(c);
                 Step::Send(WaypointOp::Track, c)
             }
@@ -331,87 +450,220 @@ fn step_pair(entry: &mut Option<Connection>, source: &Snap, receiver: &Snap, fre
     }
 }
 
-/// A level member during the movers' turns: its snapshot and, as a transmitter, the style and
-/// color a new connection gets and its packets shared by all receivers.
-struct Info {
-    snap: Snap,
-    fresh: (u32, Option<i32>),
+/// A transmitter during the movers' turns: the icon a new connection from it gets, and its
+/// packets shared by all receivers.
+struct Tx {
+    uuid: Uuid,
+    block: [i32; 3],
+    chunk: [i32; 2],
+    fresh: u32,
     /// Track and update of its block and of its chunk with `fresh`, and its untrack.
     shared: [OnceLock<Bytes>; 5],
 }
 
-impl Info {
+impl Tx {
     /// The packet for a step of a connection from this transmitter.
-    fn bytes(&self, op: WaypointOp, c: &Connection, styles: &[String]) -> Bytes {
+    fn bytes(&self, op: WaypointOp, c: &Connection, icons: &[(String, Option<i32>)]) -> Bytes {
         let op_i = match op {
             WaypointOp::Track => 0,
             WaypointOp::Update => 1,
             WaypointOp::Untrack => return self.untrack(),
         };
-        let shared = (c.style, c.color) == self.fresh
+        let shared = c.icon == self.fresh
             && match c.link {
-                Link::Block(b) => b == self.snap.block,
-                Link::Chunk(ch) => ch == self.snap.chunk,
+                Link::Block(b) => b == self.block,
+                Link::Chunk(ch) => ch == self.chunk,
                 Link::Azimuth(_) => false,
             };
         if !shared {
-            return packet(op, self.snap.uuid, styles, c);
+            return packet(op, self.uuid, icons, c);
         }
         let i = op_i * 2 + usize::from(matches!(c.link, Link::Chunk(_)));
-        self.shared[i].get_or_init(|| packet(op, self.snap.uuid, styles, c)).clone()
+        self.shared[i].get_or_init(|| packet(op, self.uuid, icons, c)).clone()
     }
 
     fn untrack(&self) -> Bytes {
-        self.shared[4].get_or_init(|| untrack_packet(self.snap.uuid)).clone()
+        self.shared[4].get_or_init(|| untrack_packet(self.uuid)).clone()
     }
 }
 
-/// A mover's turn as one receiver sees it.
-#[derive(Clone, Copy)]
-struct Turn {
+/// One receiver's share of the movers' turns: its row (moved out of the level while the
+/// receivers run) and its player's outbox, which gets its packets.
+struct Share<'p> {
     slot: usize,
-    transmitting: bool,
+    row: Mutex<Row>,
+    outbox: Mutex<Option<&'p mut Vec<Bytes>>>,
 }
 
-/// One receiver's share of the movers' turns: its row (moved out of the level while the
-/// receivers run) and the packets it gets.
-struct Share {
-    slot: usize,
-    row: Mutex<Vec<Option<Connection>>>,
+/// The level during the movers' turns, by slot: the members' snapshots (`None`: gone), the
+/// transmitters' icons and packets, and sets of slots for telling the steps that may send
+/// anything from the quiet ones.
+struct Turns<'a> {
+    /// Each mover's turn, in connection order (`u32::MAX`: not moving), by slot.
+    rank: Vec<u32>,
+    /// Each transmitter's place in their order (`u32::MAX`: not transmitting), by slot.
+    tpos: Vec<u32>,
+    /// The movers (with whether they transmit) and the transmitters in their orders, for
+    /// [`verify`].
+    movers: Vec<(u32, bool)>,
+    transmitters: Vec<u32>,
+    snaps: Vec<Option<Snap>>,
+    tx: Vec<Option<Tx>>,
+    icons: &'a [(String, Option<i32>)],
+    /// `before[i]`: the moving transmitters whose turn comes before turn `i` (the last: all).
+    before: Vec<Bits>,
+    /// Present transmitters, and those of them that are spectators.
+    present: Bits,
+    spectators: Bits,
+    /// Transmitters whose every block (chunk) connection holds their current block (chunk):
+    /// they have not changed block (chunk) since the last tick's turns and no connection was
+    /// made from them since.
+    settled_block: Bits,
+    settled_chunk: Bits,
+    /// Present transmitters by chunk, for the chunks a receiver sees.
+    by_chunk: HashMap<[i32; 2], Vec<u32>>,
+    words: usize,
+}
+
+/// The transmitters in the chunks `me` sees (`ChunkTrackingView.isInViewDistance`).
+fn visible_set(t: &Turns, me: &Snap) -> Bits {
+    let mut vis = vec![0u64; t.words];
+    let v = me.view.max(0);
+    let mut add = |chunk: &[i32; 2], slots: &Vec<u32>| {
+        if chunk_visible(*chunk, me) {
+            for &s in slots {
+                vis[s as usize / 64] |= 1 << (s % 64);
+            }
+        }
+    };
+    let side = 2 * i64::from(v) + 1;
+    if (side * side) as usize <= t.by_chunk.len() {
+        for x in me.center[0] - v..=me.center[0] + v {
+            for z in me.center[1] - v..=me.center[1] + v {
+                if let Some(slots) = t.by_chunk.get(&[x, z]) {
+                    add(&[x, z], slots);
+                }
+            }
+        }
+    } else {
+        for (chunk, slots) in &t.by_chunk {
+            add(chunk, slots);
+        }
+    }
+    vis
 }
 
 /// Runs one receiver's share: the moving transmitters' turns in connection order and, at its
 /// own place among them, its own `updatePlayer` turn over every transmitter.
-fn run_share(share: &Share, turns: &[Turn], transmitters: &[usize], info: &[Option<Info>], styles: &[String]) -> Vec<Bytes> {
+///
+/// A block or chunk connection always holds the transmitter's block or chunk of its last step.
+/// While that is still the transmitter's current one (it has not changed block since, or its
+/// connection to this receiver was already stepped this tick), the step of an intact block
+/// connection is quiet, and so is that of a chunk connection while the receiver does not see
+/// the chunk (`is_broken` false, nothing to update), unless the transmitter is a spectator.
+/// The share finds the other steps with set operations over the slots, in three parts (the
+/// turns before its own, its own, the turns after), and runs only those in full, in order.
+fn run_share(share: &Share, t: &Turns) {
     let r = share.slot;
-    let Some(me) = info[r].as_ref() else { return Vec::new() };
+    let Some(me) = t.snaps[r].as_ref() else { return };
     let mut row = share.row.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if row.len() < info.len() {
-        row.resize(info.len(), None);
+    let row = &mut *row;
+    let mut outbox = share.outbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(out) = outbox.as_deref_mut() else { return };
+    if VERIFY.load(std::sync::atomic::Ordering::Relaxed) {
+        let (before, sent) = (row.clone(), out.len());
+        quick_share(row, r, me, t, out);
+        let (mut want_row, mut want) = (before, Vec::new());
+        every_step(&mut want_row, r, me, t, &mut want);
+        assert!(out[sent..] == want[..] && *row == want_row, "locator bar: the quick share of slot {r} differs from stepping every pair");
+        return;
     }
-    let mut out = Vec::new();
-    let mut pair = |row: &mut Vec<Option<Connection>>, s: usize| {
-        let Some(src) = info[s].as_ref() else { return };
-        match step_pair(&mut row[s], &src.snap, &me.snap, src.fresh) {
-            Step::Quiet => {}
-            Step::Send(op, c) => out.push(src.bytes(op, &c, styles)),
-            Step::Untrack => out.push(src.untrack()),
-        }
-    };
-    for t in turns {
-        if t.slot == r {
-            // `updatePlayer`: this receiver's connection to every transmitter.
-            for &w in transmitters {
-                if w != r {
-                    pair(&mut row, w);
+    quick_share(row, r, me, t, out);
+}
+
+/// Checks every quick share against stepping every pair ([`verify`]).
+static VERIFY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// From now on, every receiver's share is checked against stepping every pair, as the
+/// straightforward loop over the movers does (tests).
+pub fn verify(on: bool) {
+    VERIFY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A receiver's share the straightforward way: every moving transmitter's turn and its own
+/// turn over every transmitter, each pair stepped in full.
+fn every_step(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+    for &(m, transmitting) in &t.movers {
+        let m = m as usize;
+        if m == r {
+            for &w in &t.transmitters {
+                if w as usize != r && t.snaps[w as usize].is_some() {
+                    full_step(row, w as usize, me, t, out);
                 }
             }
-        } else if t.transmitting {
-            // `updateWaypoint` of the mover: its connection to this receiver.
-            pair(&mut row, t.slot);
+        } else if transmitting {
+            full_step(row, m, me, t, out);
         }
     }
-    out
+}
+
+fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+    let vis = visible_set(t, me);
+    let own = t.rank[r];
+    let w = t.words;
+    let all_movers = t.before.last().expect("movers");
+    // The steps of `among` that may send anything; `stepped`: whose connection to this
+    // receiver was stepped already this tick.
+    let open = |row: &Row, among: &dyn Fn(usize) -> u64, stepped: &dyn Fn(usize) -> u64| -> Vec<usize> {
+        let words = (0..w).map(|i| {
+            let (k1, k2) = (word(&row.kinds[0], i), word(&row.kinds[1], i));
+            let st = stepped(i);
+            let quiet = t.present[i]
+                & !t.spectators[i]
+                & ((k1 & (t.settled_block[i] | st)) | (k2 & (t.settled_chunk[i] | st) & !vis[i]));
+            among(i) & t.present[i] & !quiet
+        });
+        each_bit(words).filter(|&s| s != r).collect()
+    };
+    let by_rank = |mut v: Vec<usize>| {
+        v.sort_unstable_by_key(|&s| t.rank[s]);
+        v
+    };
+    if own == u32::MAX {
+        // Not moving: the moving transmitters' turns.
+        for s in by_rank(open(row, &|i| all_movers[i], &|_| 0)) {
+            full_step(row, s, me, t, out);
+        }
+        return;
+    }
+    let earlier = &t.before[own as usize];
+    // `updateWaypoint` of the movers before this receiver: their connections to it.
+    for s in by_rank(open(row, &|i| earlier[i], &|_| 0)) {
+        full_step(row, s, me, t, out);
+    }
+    // `updatePlayer`: this receiver's connection to every transmitter, in their order.
+    let mut mine = open(row, &|_| !0, &|i| earlier[i]);
+    mine.retain(|&s| t.tpos[s] != u32::MAX);
+    mine.sort_unstable_by_key(|&s| t.tpos[s]);
+    for s in mine {
+        full_step(row, s, me, t, out);
+    }
+    // `updateWaypoint` of the movers after it (all stepped at its turn).
+    for s in by_rank(open(row, &|i| all_movers[i] & !earlier[i], &|_| !0)) {
+        full_step(row, s, me, t, out);
+    }
+}
+
+/// One step of the connection from transmitter `s` to the receiver `me` in full.
+fn full_step(row: &mut Row, s: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+    let (Some(src), Some(tx)) = (t.snaps[s].as_ref(), t.tx[s].as_ref()) else { return };
+    let mut c = row.get(s);
+    match step_pair(&mut c, src, me, tx.fresh) {
+        Step::Quiet => return,
+        Step::Send(op, c) => out.push(tx.bytes(op, &c, t.icons)),
+        Step::Untrack => out.push(tx.untrack()),
+    }
+    row.put(s, c);
 }
 
 /// Window hint: a receiver's share is a few microseconds in a crowd.
@@ -435,23 +687,24 @@ impl Sim {
             return;
         }
         let (Some(s), Some(r)) = (self.players.get(&source), self.players.get(&receiver)) else { return };
-        let (ss, rs) = (Snap::of(s), Snap::of(r));
+        let (ss, rs, uuid) = (Snap::of(s), Snap::of(r), s.uuid);
         let mgr = &mut self.waypoints[dim];
         let (Some(ri), Some(si)) = (mgr.slot(receiver), mgr.slot(source)) else { return };
         match make_link(&ss, &rs) {
             Some(link) => {
                 let color = s.waypoint_icon.color.or_else(|| team_color(&self.commands.scoreboard, &s.name));
-                let style = mgr.style_id(&s.waypoint_icon.style);
-                let c = Connection { link, style, color };
+                let icon = mgr.icon_id(&s.waypoint_icon.style, color);
+                let c = Connection { link, icon };
                 mgr.set(ri, si, Some(c));
-                let pkt = packet(WaypointOp::Track, ss.uuid, &mgr.styles, &c);
+                mgr.mark_dirty(si);
+                let pkt = packet(WaypointOp::Track, uuid, &mgr.icons, &c);
                 if let Some(r) = self.players.get_mut(&receiver) {
                     r.send(pkt);
                 }
             }
             None => {
                 if mgr.set(ri, si, None).is_some() {
-                    self.send_untrack(receiver, ss.uuid);
+                    self.send_untrack(receiver, uuid);
                 }
             }
         }
@@ -481,9 +734,7 @@ impl Sim {
         let Some(s) = m.slot(source) else { return };
         let mut receivers: Vec<ConnId> = Vec::new();
         for member in &mut m.members {
-            if let Some(c) = member.row.get_mut(s)
-                && c.take().is_some()
-            {
+            if member.row.put(s, None).is_some() {
                 receivers.extend(member.conn);
             }
         }
@@ -544,12 +795,7 @@ impl Sim {
         let m = &mut self.waypoints[dim];
         let Some(slot) = m.slot(conn) else { return };
         let row = std::mem::take(&mut m.members[slot].row);
-        let mut sources: Vec<ConnId> = row
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.is_some())
-            .filter_map(|(s, _)| m.members[s].conn)
-            .collect();
+        let mut sources: Vec<ConnId> = row.sources().into_iter().filter_map(|s| m.members[s].conn).collect();
         sources.sort_unstable();
         for s in sources {
             if let Some(src) = self.players.get(&s).map(|p| p.uuid) {
@@ -608,60 +854,122 @@ impl Sim {
             p.waypoint_last_pos = p.pos;
             p.waypoint_first_tick = false;
         }
+        for m in &mut self.waypoints {
+            m.dirty.iter_mut().for_each(|d| *d = false);
+        }
     }
 
     /// The movers' turns in one level (`moved`: in connection order).
     fn waypoint_moves(&mut self, dim: DimId, moved: &[ConnId]) {
         let (players, scoreboard, pool) = (&self.players, &self.commands.scoreboard, &mut self.pool);
         let mgr = &mut self.waypoints[dim];
-        // The styles new connections from each transmitter get, interned before the receivers
-        // run.
-        let mut fresh: Vec<(u32, Option<i32>)> = vec![(0, None); mgr.members.len()];
+        // The icons new connections from each transmitter get, interned before the receivers
+        // run, and the members' snapshots.
+        let mut tx: Vec<Option<Tx>> = Vec::with_capacity(mgr.members.len());
+        let mut snaps: Vec<Option<Snap>> = Vec::with_capacity(mgr.members.len());
         for i in 0..mgr.members.len() {
             let m = &mgr.members[i];
-            if let (true, Some(p)) = (m.transmitting, m.conn.and_then(|c| players.get(&c))) {
-                let color = p.waypoint_icon.color.or_else(|| team_color(scoreboard, &p.name));
-                fresh[i] = (mgr.style_id(&p.waypoint_icon.style), color);
+            let p = m.conn.and_then(|c| players.get(&c));
+            snaps.push(p.map(Snap::of));
+            tx.push(match (m.transmitting, p) {
+                (true, Some(p)) => {
+                    let color = p.waypoint_icon.color.or_else(|| team_color(scoreboard, &p.name));
+                    let fresh = mgr.icon_id(&p.waypoint_icon.style, color);
+                    let snap = snaps[i].expect("snapshot");
+                    Some(Tx { uuid: p.uuid, block: snap.block, chunk: snap.chunk, fresh, shared: Default::default() })
+                }
+                _ => None,
+            });
+        }
+        let n = mgr.members.len();
+        let words = n.div_ceil(64);
+        let mut rank = vec![u32::MAX; n];
+        let mut turns: Vec<u32> = Vec::new();
+        let mut all_movers: Vec<(u32, bool)> = Vec::new();
+        let mut movers = 0;
+        for &c in moved {
+            let Some(slot) = mgr.slot(c) else { continue };
+            rank[slot] = movers;
+            movers += 1;
+            let transmitting = mgr.members[slot].transmitting && snaps[slot].is_some();
+            all_movers.push((slot as u32, transmitting));
+            if transmitting {
+                turns.push(slot as u32);
             }
         }
-        let info: Vec<Option<Info>> = mgr
-            .members
-            .iter()
-            .zip(&fresh)
-            .map(|(m, &fresh)| {
-                let p = players.get(&m.conn?)?;
-                Some(Info { snap: Snap::of(p), fresh, shared: Default::default() })
-            })
-            .collect();
-        let turns: Vec<Turn> = moved
-            .iter()
-            .filter_map(|c| mgr.slot(*c))
-            .map(|slot| Turn { slot, transmitting: mgr.members[slot].transmitting })
-            .collect();
-        let transmitters: Vec<usize> = mgr.waypoints.iter().filter_map(|c| mgr.slot(*c)).collect();
-        let any_transmitting = turns.iter().any(|t| t.transmitting);
-        let mut moved_slot = vec![false; mgr.members.len()];
-        for t in &turns {
-            moved_slot[t.slot] = true;
+        // A moving receiver's own turn sits between the moving transmitters' turns: `before`
+        // is indexed by the movers' order, so it counts the transmitting ones ahead of each.
+        let mut before: Vec<Bits> = Vec::with_capacity(movers as usize + 1);
+        let mut acc = vec![0u64; words];
+        let mut next = turns.iter().peekable();
+        for i in 0..=movers {
+            while let Some(&&s) = next.peek() {
+                if rank[s as usize] >= i {
+                    break;
+                }
+                acc[s as usize / 64] |= 1 << (s % 64);
+                next.next();
+            }
+            before.push(acc.clone());
         }
+        let transmitters: Vec<u32> = mgr.waypoints.iter().filter_map(|c| mgr.slot(*c)).map(|s| s as u32).collect();
+        let mut tpos = vec![u32::MAX; n];
+        for (i, &s) in transmitters.iter().enumerate() {
+            tpos[s as usize] = i as u32;
+        }
+        let (mut present, mut spectators, mut settled_block, mut settled_chunk) =
+            (vec![0u64; words], vec![0u64; words], vec![0u64; words], vec![0u64; words]);
+        let mut by_chunk: HashMap<[i32; 2], Vec<u32>> = HashMap::new();
+        for &s in &transmitters {
+            let s = s as usize;
+            let Some(snap) = snaps[s] else { continue };
+            let dirty = mgr.dirty.get(s).copied().unwrap_or(false);
+            set_bit(&mut present, s, true);
+            set_bit(&mut spectators, s, snap.mode == 3);
+            set_bit(&mut settled_block, s, !snap.block_moved && !dirty);
+            set_bit(&mut settled_chunk, s, !snap.chunk_moved && !dirty);
+            by_chunk.entry(snap.chunk).or_default().push(s as u32);
+        }
+        let any_transmitting = !turns.is_empty();
         // Receivers that have turns to take: all of them when a transmitter moved, else the
         // moving receivers.
         let slots: Vec<usize> =
-            mgr.players.iter().filter_map(|c| mgr.slot(*c)).filter(|&s| any_transmitting || moved_slot[s]).collect();
-        let shares: Vec<Share> =
-            slots.into_iter().map(|slot| Share { slot, row: Mutex::new(std::mem::take(&mut mgr.members[slot].row)) }).collect();
-        let styles = &mgr.styles;
-        let out = pool.serial(|ctx| {
-            ctx.map_indexed_with(SHARE_WINDOW, &shares, |_, share| run_share(share, &turns, &transmitters, &info, styles))
-        });
-        for (share, packets) in shares.into_iter().zip(out) {
-            let m = &mut mgr.members[share.slot];
-            m.row = share.row.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !packets.is_empty()
-                && let Some(p) = m.conn.and_then(|c| self.players.get_mut(&c))
-            {
-                p.outbox.extend(packets);
+            mgr.players.iter().filter_map(|c| mgr.slot(*c)).filter(|&s| any_transmitting || rank[s] != u32::MAX).collect();
+        // The receivers' outboxes, by slot: each share appends to its own.
+        let mut outboxes: Vec<Option<&mut Vec<Bytes>>> = (0..n).map(|_| None).collect();
+        for p in self.players.values_mut() {
+            if let Some(s) = mgr.slot(p.conn) {
+                outboxes[s] = Some(&mut p.outbox);
             }
+        }
+        let shares: Vec<Share> = slots
+            .into_iter()
+            .map(|slot| Share {
+                slot,
+                row: Mutex::new(std::mem::take(&mut mgr.members[slot].row)),
+                outbox: Mutex::new(outboxes[slot].take()),
+            })
+            .collect();
+        let turns = Turns {
+            rank,
+            tpos,
+            movers: all_movers,
+            transmitters,
+            snaps,
+            tx,
+            icons: &mgr.icons,
+            before,
+            present,
+            spectators,
+            settled_block,
+            settled_chunk,
+            by_chunk,
+            words,
+        };
+        pool.serial(|ctx| ctx.map_indexed_with(SHARE_WINDOW, &shares, |_, share| run_share(share, &turns)));
+        drop(turns);
+        for share in shares {
+            mgr.members[share.slot].row = share.row.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 
@@ -684,8 +992,8 @@ impl Sim {
             let mut broken: Vec<(ConnId, ConnId)> = Vec::new();
             for r in 0..m.members.len() {
                 let row = std::mem::take(&mut m.members[r].row);
-                for (s, c) in row.iter().enumerate() {
-                    if let (Some(_), Some(rc), Some(sc)) = (c, m.members[r].conn, m.members[s].conn) {
+                for s in row.sources() {
+                    if let (Some(rc), Some(sc)) = (m.members[r].conn, m.members[s].conn) {
                         broken.push((rc, sc));
                     }
                 }

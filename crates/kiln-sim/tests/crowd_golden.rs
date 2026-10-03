@@ -29,6 +29,7 @@ fn no_events(_: usize, _: &mut Vec<kiln_link::ToSim>) {}
 /// Same script as `sim_load --churn` (5 joins per tick, then `ticks` measured ticks).
 fn run(s: &Scenario) -> (u64, u64, usize) {
     kiln_sim::testing::hash_packets();
+    kiln_sim::testing::verify_locator_bar();
     let mut config = SimConfig::new(s.players, 10, None);
     config.keep_alive = false;
     config.pool.workers = 3;

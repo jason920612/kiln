@@ -13,6 +13,10 @@
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+#[cfg(windows)]
+#[path = "support/sampler.rs"]
+mod sampler;
+
 use kiln_sim::testing::{Client, Walker, group_offset, join};
 use kiln_sim::{Sim, SimConfig};
 use std::sync::atomic::Ordering::Relaxed;
@@ -199,6 +203,8 @@ fn main() {
     let mut measuring_since: Option<usize> = None;
     let mut churn = kiln_sim::testing::Churn::new(a.players);
     let mut cpu0 = None;
+    #[cfg(windows)]
+    let mut sampling: Option<sampler::Sampler> = None;
     let mut wall0 = Instant::now();
     loop {
         for _ in 0..joins_per_tick {
@@ -268,6 +274,10 @@ fn main() {
                 sim.reset_pool_stats();
                 sim.reset_phase_totals();
                 kiln_entity::prof::start();
+                #[cfg(windows)]
+                {
+                    sampling = sampler::Sampler::start();
+                }
                 wall0 = Instant::now();
                 packets0 = walkers.iter().map(|w| w.client.stats.packets.load(Relaxed)).sum();
                 bytes0 = walkers.iter().map(|w| w.client.stats.bytes.load(Relaxed)).sum();
@@ -285,6 +295,8 @@ fn main() {
         }
     }
     let cpu1 = cpu::now();
+    #[cfg(windows)]
+    let sampling = sampling.take();
     let wall = wall0.elapsed().as_secs_f64();
     // Regions ticking away (independent mode) come back before anything is counted.
     sim.rendezvous();
@@ -366,6 +378,10 @@ fn main() {
     let phases: Vec<String> = sim.phase_totals().iter().map(|(n, d)| format!("{n} {:.3}", d.as_secs_f64() * 1e3 / t)).collect();
     println!("phases ms/tick: {}", phases.join(" | "));
     kiln_entity::prof::report(times.len() as u64);
+    #[cfg(windows)]
+    if let Some(s) = sampling {
+        s.report();
+    }
     if let Some(r) = sim.last_report() {
         println!("last window: {r}");
     }

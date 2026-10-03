@@ -40,6 +40,12 @@ pub fn hash_packets() {
     DIGESTS.store(true, Relaxed);
 }
 
+/// Makes the locator bar check every receiver's quick share of the movers' turns against
+/// stepping every pair (slow; for tests).
+pub fn verify_locator_bar() {
+    crate::waypoints::verify(true);
+}
+
 fn track_digest() -> bool {
     static TRACK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     DIGESTS.load(Relaxed) || *TRACK.get_or_init(|| std::env::var_os("KILN_SINK_DIGEST").is_some())
