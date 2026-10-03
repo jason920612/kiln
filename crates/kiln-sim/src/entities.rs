@@ -1545,6 +1545,9 @@ fn occupancy_of(o: kiln_entity::level::PoiOccupancy) -> kiln_world::poi::Occupan
     }
 }
 
+/// The players' stand-ins and views, a microsecond or so each.
+const PLAYER_VIEWS: kiln_sched::Window = kiln_sched::Window::new();
+
 /// A player as the entities see it (`minecraft:player`, standing or sneaking).
 fn proxy(p: &Player) -> kiln_entity::Entity {
     let mut e = kiln_entity::Entity::new("minecraft:player", p.entity_id, p.uuid.as_u128(), EntityKind::Other { type_name: "minecraft:player" }, 0);
@@ -1577,9 +1580,18 @@ pub(crate) fn tick(
     }
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
-    let live =|p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
-    let mut views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    // The players' stand-ins and views, made side by side (a crowd has a thousand).
+    let now = level.env.game_time;
+    let made: Vec<(Option<Box<kiln_entity::Entity>>, Option<PlayerView>)> = ctx.map_mut_with(PLAYER_VIEWS, players, |_, p| {
+        let alive = !p.disconnected && !p.dead;
+        ((alive && p.game_mode != 3).then(|| Box::new(proxy(p))), alive.then(|| view(p, now)))
+    });
+    let mut proxies: Vec<Box<kiln_entity::Entity>> = Vec::with_capacity(made.len());
+    let mut views: Vec<PlayerView> = Vec::with_capacity(made.len());
+    for (e, v) in made {
+        proxies.extend(e);
+        views.extend(v);
+    }
     // wp32 parrots: what parrots need to know of their owners' footing.
     if entities.list.iter().any(|e| e.kind.name == "minecraft:parrot") {
         let block = |pos: BlockPos| level.block(kb(pos));
