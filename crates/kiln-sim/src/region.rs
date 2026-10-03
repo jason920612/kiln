@@ -449,7 +449,7 @@ impl RegionWork<'_> {
         for p in self.players.iter_mut() {
             p.decay_velocity();
         }
-        entities::track(self.entities, &mut self.players, &movers);
+        entities::track(self.entities, &mut self.players, &movers, ctx);
         mark(&mut self.out.times, 6);
         self.send_light_updates();
         mark(&mut self.out.times, 7);

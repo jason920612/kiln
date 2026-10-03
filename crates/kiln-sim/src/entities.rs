@@ -2830,187 +2830,245 @@ fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
 /// triggers: an entity whose section changed is re-evaluated against every player, and every
 /// entity against the players in `movers` (whose section changed). Then sends movement and
 /// velocity, and removes dead entities from their viewers and the region.
-pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers: &[ConnId]) {
-    let sees = |p: &Player, e: &Entity| {
-        let range = (e.kind.tracking_range as f64 * 16.0).min(p.view_distance as f64 * 16.0);
+///
+/// Two windows: each entity works out its viewers and encodes its packets (touching only
+/// itself, against a snapshot of the players), then each run of consecutive players collects
+/// what the entities it sees encoded, in list order; every player gets the packets a serial
+/// loop over the entities would have sent it, in the same order.
+pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers: &[ConnId], ctx: &kiln_sched::Ctx<'_>) {
+    let viewers: Vec<Viewer> = players.iter().map(|p| Viewer { conn: p.conn, pos: p.pos, view: p.view_distance }).collect();
+    let movers: Vec<usize> = movers.iter().filter_map(|m| viewers.binary_search_by_key(m, |v| v.conn).ok()).collect();
+    let encoded = ctx.map_mut_with(TRACK_WINDOW, &mut entities.list, |_, e| track_entity(e, &viewers, &movers));
+    let mut runs: Vec<(usize, &mut [&mut Player])> = Vec::new();
+    let mut start = 0;
+    for run in players.chunks_mut(TRACK_RUN) {
+        let n = run.len();
+        runs.push((start, run));
+        start += n;
+    }
+    let encoded = &encoded[..];
+    ctx.map_mut_with(kiln_sched::Window::new(), &mut runs, |_, (_, run)| deliver_tracking(run, encoded));
+    entities.list.retain(|e| !e.removed);
+}
+
+/// Entities per chunk of the encoding window, and players per delivery run.
+const TRACK_WINDOW: kiln_sched::Window = kiln_sched::Window::new();
+const TRACK_RUN: usize = 32;
+
+/// What tracking reads of a player.
+struct Viewer {
+    conn: ConnId,
+    pos: [f64; 3],
+    view: i32,
+}
+
+/// One entity's tracking changes this tick, by viewer: (who, packets) in send order.
+#[derive(Default)]
+struct Tracked {
+    /// Players that start seeing it, and stop (sorted), and what they get.
+    added: Vec<ConnId>,
+    removed: Vec<ConnId>,
+    /// The boss bar's progress for those that keep seeing it (wither), and who they are.
+    boss_progress: Option<Bytes>,
+    progress_to: Vec<ConnId>,
+    /// Boss bar add for `added`, remove for `removed`.
+    boss_add: Option<Bytes>,
+    boss_remove: Option<Bytes>,
+    spawn: Vec<Bytes>,
+    despawn: Option<Bytes>,
+    /// Its viewers after the changes (sorted), and what they all get.
+    viewers: Vec<ConnId>,
+    packets: Vec<Bytes>,
+}
+
+fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked {
+    let sees = |p: &Viewer, e: &Entity| {
+        let range = (e.kind.tracking_range as f64 * 16.0).min(p.view as f64 * 16.0);
         let (dx, dz) = (p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]);
         let (pc, ec) = (chunk_of(p.pos), chunk_of(e.pos));
-        !e.removed
-            && dx * dx + dz * dz <= range * range
-            && (pc.x - ec.x).abs() <= p.view_distance
-            && (pc.z - ec.z).abs() <= p.view_distance
+        !e.removed && dx * dx + dz * dz <= range * range && (pc.x - ec.x).abs() <= p.view && (pc.z - ec.z).abs() <= p.view
     };
-    let index = |players: &[&mut Player], conn: ConnId| players.binary_search_by_key(&conn, |p| p.conn).ok();
-    for e in &mut entities.list {
-        let section = e.pos.map(|c| c.floor() as i32 >> 4);
-        let moved = e.section != Some(section);
-        e.section = Some(section);
-        let (mut added, mut removed) = (Vec::new(), Vec::new());
-        let mut check = |p: &Player, seen: bool| match (sees(p, e), seen) {
+    let index = |conn: ConnId| viewers.binary_search_by_key(&conn, |v| v.conn).ok();
+    let mut t = Tracked::default();
+    let section = e.pos.map(|c| c.floor() as i32 >> 4);
+    let moved = e.section != Some(section);
+    e.section = Some(section);
+    {
+        let (added, removed) = (&mut t.added, &mut t.removed);
+        let mut check = |p: &Viewer, seen: bool| match (sees(p, e), seen) {
             (true, false) => added.push(p.conn),
             (false, true) => removed.push(p.conn),
             _ => {}
         };
         if moved || e.removed {
-            for p in players.iter() {
+            for p in viewers {
                 check(p, e.seen_by.binary_search(&p.conn).is_ok());
             }
         } else {
             for &m in movers {
-                if let Some(i) = index(players, m) {
-                    check(players[i], e.seen_by.binary_search(&m).is_ok());
-                }
-            }
-        }
-        // `ServerBossEvent`: a boss's bar for the players that see it.
-        let boss = e.phys.as_ref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
-        let bar_id = Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72);
-        if let Some(progress) = boss {
-            let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
-            let op = hud::BossEvent::Add {
-                name: &name,
-                progress,
-                color: hud::BossBarColor::Purple,
-                overlay: hud::BossBarOverlay::Progress,
-                flags: hud::boss_flags::DARKEN_SCREEN,
-            };
-            let add = hud::boss_event(bar_id, &op);
-            for &c in &added {
-                if let Some(i) = index(players, c) {
-                    players[i].send(add.clone());
-                }
-            }
-            if e.boss_sent.is_some_and(|p| p != progress) {
-                let pkt = hud::boss_event(bar_id, &hud::BossEvent::Progress(progress));
-                for v in e.seen_by.iter().filter(|v| !added.contains(v) && !removed.contains(v)) {
-                    if let Some(i) = index(players, *v) {
-                        players[i].send(pkt.clone());
-                    }
-                }
-            }
-            e.boss_sent = Some(progress);
-        }
-        if (boss.is_some() || e.boss_sent.is_some()) && !removed.is_empty() {
-            let pkt = hud::boss_event(bar_id, &hud::BossEvent::Remove);
-            for &c in &removed {
-                if let Some(i) = index(players, c) {
-                    players[i].send(pkt.clone());
-                }
-            }
-        }
-        if !added.is_empty() {
-            let spawn = e.spawn_packets();
-            for &c in &added {
-                if let Some(i) = index(players, c) {
-                    spawn.iter().for_each(|pkt| players[i].send(pkt.clone()));
-                }
-            }
-        }
-        if !removed.is_empty() {
-            let despawn = entity::remove_entities(&[e.id]);
-            for &c in &removed {
-                if let Some(i) = index(players, c) {
-                    players[i].send(despawn.clone());
-                }
-            }
-        }
-        e.seen_by.retain(|v| removed.binary_search(v).is_err());
-        e.seen_by.extend(added);
-        e.seen_by.sort_unstable();
-        // Players that left the region or the game are no longer viewers.
-        e.seen_by.retain(|&v| index(players, v).is_some());
-
-        if e.removed {
-            continue;
-        }
-        let mut packets = e.tracker.tick(&e.move_state());
-        if let Some(EntityKind::Mob(m)) = e.phys.as_mut().map(|p| &mut p.kind) {
-            if std::mem::take(&mut m.swing) {
-                packets.push(entity::swing_animation(e.id, false, entity::swing::WHACK, entity::swing::DEFAULT_DURATION));
-            }
-        }
-        if let Some(phys) = e.phys.as_ref()
-            && let EntityKind::Ext(x) = &phys.kind
-        {
-            let mut meta = EntityData::new();
-            x.entity_data(phys, &mut meta);
-            if meta.entries() != e.meta_sent.as_slice() {
-                if !e.meta_sent.is_empty() {
-                    packets.push(entity::set_entity_data(e.id, &meta));
-                }
-                e.meta_sent = meta.entries().to_vec();
-            }
-        }
-        if let Some(phys) = e.phys.as_ref()
-            && let EntityKind::Mob(m) = &phys.kind
-        {
-            let meta = crate::mobs::metadata(phys, m);
-            if meta.entries() != e.meta_sent.as_slice() {
-                if !e.meta_sent.is_empty() {
-                    packets.push(entity::set_entity_data(e.id, &meta));
-                }
-                e.meta_sent = meta.entries().to_vec();
-            }
-            let worn = crate::mobs::shown_equipment(m);
-            if worn.len() != e.equipment_sent.len() || worn.iter().zip(&e.equipment_sent).any(|(a, b)| a.0 != b.0 || !kiln_inventory::stack::matches(&a.1, &b.1)) {
-                let mut slots: Vec<(u8, kiln_item::ItemStack)> = worn.clone();
-                for (i, _) in &e.equipment_sent {
-                    if !slots.iter().any(|(j, _)| j == i) {
-                        slots.push((*i, kiln_item::ItemStack::empty()));
-                    }
-                }
-                if !slots.is_empty() && !(e.equipment_sent.is_empty() && e.age <= 1) {
-                    let refs: Vec<(u8, &kiln_item::ItemStack)> = slots.iter().map(|(i, s)| (*i, s)).collect();
-                    packets.push(crate::players::set_equipment(e.id, &refs));
-                }
-                e.equipment_sent = worn;
-            }
-        }
-        // Arrows: crit and in-ground flags change in flight (extension entities: above).
-        if e.phys.as_ref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
-            let meta = e.metadata();
-            if meta.entries() != e.meta_sent.as_slice() {
-                if !e.meta_sent.is_empty() || e.age > 1 {
-                    packets.push(entity::set_entity_data(e.id, &meta));
-                }
-                e.meta_sent = meta.entries().to_vec();
-            }
-        }
-        if let Some(phys) = e.phys.as_ref()
-            && phys.passengers != e.passengers_sent
-        {
-            e.passengers_sent = phys.passengers.clone();
-            packets.push(entity::set_passengers(e.id, &e.passengers_sent));
-        }
-        // `Leashable.setLeashedTo` / `dropLeash`: Set Entity Link when the holder changes.
-        if let Some(phys) = e.phys.as_ref() {
-            let holder = kiln_entity::leash::holder_of(phys);
-            if holder != e.leash_sent {
-                // (A knot made this tick is still under a stand-in id: the link waits.)
-                if !holder.is_some_and(|h| h < 0) {
-                    e.leash_sent = holder;
-                    packets.push(entity::set_entity_link(e.id, holder.unwrap_or(0)));
-                }
-            }
-        }
-        // `ServerEntity.sendChanges`: velocity on update ticks when it changed, or at once
-        // after an impulse (explosion knockback).
-        let impulse = e.phys.as_mut().is_some_and(|p| std::mem::take(&mut p.needs_sync));
-        if e.kind.track_deltas && (impulse || e.age % e.kind.update_interval.max(1) == 0) {
-            let d: f64 = (0..3).map(|i| (e.vel[i] - e.sent_vel[i]).powi(2)).sum();
-            let still = e.vel.iter().all(|&v| v == 0.0);
-            if impulse || d > 1.0e-7 || (d > 0.0 && still) {
-                e.sent_vel = e.vel;
-                packets.push(entity::set_entity_motion(e.id, e.vel));
-            }
-        }
-        for v in &e.seen_by {
-            if let Some(i) = index(players, *v) {
-                packets.iter().for_each(|pkt| players[i].send(pkt.clone()));
+                let p = &viewers[m];
+                check(p, e.seen_by.binary_search(&p.conn).is_ok());
             }
         }
     }
-    entities.list.retain(|e| !e.removed);
+    // `ServerBossEvent`: a boss's bar for the players that see it.
+    let boss = e.phys.as_ref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
+    let bar_id = Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72);
+    if let Some(progress) = boss {
+        let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
+        let op = hud::BossEvent::Add {
+            name: &name,
+            progress,
+            color: hud::BossBarColor::Purple,
+            overlay: hud::BossBarOverlay::Progress,
+            flags: hud::boss_flags::DARKEN_SCREEN,
+        };
+        t.boss_add = Some(hud::boss_event(bar_id, &op));
+        if e.boss_sent.is_some_and(|p| p != progress) {
+            t.boss_progress = Some(hud::boss_event(bar_id, &hud::BossEvent::Progress(progress)));
+        }
+        e.boss_sent = Some(progress);
+    }
+    if (boss.is_some() || e.boss_sent.is_some()) && !t.removed.is_empty() {
+        t.boss_remove = Some(hud::boss_event(bar_id, &hud::BossEvent::Remove));
+    }
+    if !t.added.is_empty() {
+        t.spawn = e.spawn_packets();
+    }
+    if !t.removed.is_empty() {
+        t.despawn = Some(entity::remove_entities(&[e.id]));
+    }
+    // (The progress goes to the viewers before this tick's changes that keep seeing it.)
+    let before = std::mem::take(&mut e.seen_by);
+    let mut seen_by: Vec<ConnId> = before.iter().copied().filter(|v| t.removed.binary_search(v).is_err()).collect();
+    if t.boss_progress.is_some() {
+        t.progress_to = before.iter().copied().filter(|v| !t.added.contains(v) && !t.removed.contains(v)).collect();
+    }
+    seen_by.extend(t.added.iter().copied());
+    seen_by.sort_unstable();
+    // Players that left the region or the game are no longer viewers.
+    seen_by.retain(|&v| index(v).is_some());
+    e.seen_by = seen_by;
+    if e.removed {
+        return t;
+    }
+    let mut packets = e.tracker.tick(&e.move_state());
+    if let Some(EntityKind::Mob(m)) = e.phys.as_mut().map(|p| &mut p.kind) {
+        if std::mem::take(&mut m.swing) {
+            packets.push(entity::swing_animation(e.id, false, entity::swing::WHACK, entity::swing::DEFAULT_DURATION));
+        }
+    }
+    if let Some(phys) = e.phys.as_ref()
+        && let EntityKind::Ext(x) = &phys.kind
+    {
+        let mut meta = EntityData::new();
+        x.entity_data(phys, &mut meta);
+        if meta.entries() != e.meta_sent.as_slice() {
+            if !e.meta_sent.is_empty() {
+                packets.push(entity::set_entity_data(e.id, &meta));
+            }
+            e.meta_sent = meta.entries().to_vec();
+        }
+    }
+    if let Some(phys) = e.phys.as_ref()
+        && let EntityKind::Mob(m) = &phys.kind
+    {
+        let meta = crate::mobs::metadata(phys, m);
+        if meta.entries() != e.meta_sent.as_slice() {
+            if !e.meta_sent.is_empty() {
+                packets.push(entity::set_entity_data(e.id, &meta));
+            }
+            e.meta_sent = meta.entries().to_vec();
+        }
+        let worn = crate::mobs::shown_equipment(m);
+        if worn.len() != e.equipment_sent.len() || worn.iter().zip(&e.equipment_sent).any(|(a, b)| a.0 != b.0 || !kiln_inventory::stack::matches(&a.1, &b.1)) {
+            let mut slots: Vec<(u8, kiln_item::ItemStack)> = worn.clone();
+            for (i, _) in &e.equipment_sent {
+                if !slots.iter().any(|(j, _)| j == i) {
+                    slots.push((*i, kiln_item::ItemStack::empty()));
+                }
+            }
+            if !slots.is_empty() && !(e.equipment_sent.is_empty() && e.age <= 1) {
+                let refs: Vec<(u8, &kiln_item::ItemStack)> = slots.iter().map(|(i, s)| (*i, s)).collect();
+                packets.push(crate::players::set_equipment(e.id, &refs));
+            }
+            e.equipment_sent = worn;
+        }
+    }
+    // Arrows: crit and in-ground flags change in flight (extension entities: above).
+    if e.phys.as_ref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
+        let meta = e.metadata();
+        if meta.entries() != e.meta_sent.as_slice() {
+            if !e.meta_sent.is_empty() || e.age > 1 {
+                packets.push(entity::set_entity_data(e.id, &meta));
+            }
+            e.meta_sent = meta.entries().to_vec();
+        }
+    }
+    if let Some(phys) = e.phys.as_ref()
+        && phys.passengers != e.passengers_sent
+    {
+        e.passengers_sent = phys.passengers.clone();
+        packets.push(entity::set_passengers(e.id, &e.passengers_sent));
+    }
+    // `Leashable.setLeashedTo` / `dropLeash`: Set Entity Link when the holder changes.
+    if let Some(phys) = e.phys.as_ref() {
+        let holder = kiln_entity::leash::holder_of(phys);
+        if holder != e.leash_sent {
+            // (A knot made this tick is still under a stand-in id: the link waits.)
+            if !holder.is_some_and(|h| h < 0) {
+                e.leash_sent = holder;
+                packets.push(entity::set_entity_link(e.id, holder.unwrap_or(0)));
+            }
+        }
+    }
+    // `ServerEntity.sendChanges`: velocity on update ticks when it changed, or at once
+    // after an impulse (explosion knockback).
+    let impulse = e.phys.as_mut().is_some_and(|p| std::mem::take(&mut p.needs_sync));
+    if e.kind.track_deltas && (impulse || e.age % e.kind.update_interval.max(1) == 0) {
+        let d: f64 = (0..3).map(|i| (e.vel[i] - e.sent_vel[i]).powi(2)).sum();
+        let still = e.vel.iter().all(|&v| v == 0.0);
+        if impulse || d > 1.0e-7 || (d > 0.0 && still) {
+            e.sent_vel = e.vel;
+            packets.push(entity::set_entity_motion(e.id, e.vel));
+        }
+    }
+    if !packets.is_empty() {
+        t.viewers = e.seen_by.clone();
+    }
+    t.packets = packets;
+    t
+}
+
+/// Hands the players of `run` (consecutive, sorted) what every entity encoded for them, in
+/// list order.
+fn deliver_tracking(run: &mut [&mut Player], encoded: &[Tracked]) {
+    let (Some(first), Some(last)) = (run.first().map(|p| p.conn), run.last().map(|p| p.conn)) else { return };
+    let send = |run: &mut [&mut Player], to: &[ConnId], packets: &mut dyn Iterator<Item = &Bytes>| {
+        let packets: SmallVec<[&Bytes; 8]> = packets.collect();
+        if packets.is_empty() {
+            return;
+        }
+        let from = to.partition_point(|&v| v < first);
+        let upto = to.partition_point(|&v| v <= last);
+        let mut j = 0;
+        for &v in &to[from..upto] {
+            while j < run.len() && run[j].conn < v {
+                j += 1;
+            }
+            if j < run.len() && run[j].conn == v {
+                run[j].outbox.extend(packets.iter().map(|p| (*p).clone()));
+            }
+        }
+    };
+    for t in encoded {
+        send(run, &t.added, &mut t.boss_add.iter());
+        send(run, &t.progress_to, &mut t.boss_progress.iter());
+        send(run, &t.removed, &mut t.boss_remove.iter());
+        send(run, &t.added, &mut t.spawn.iter());
+        send(run, &t.removed, &mut t.despawn.iter());
+        send(run, &t.viewers, &mut t.packets.iter());
+    }
 }
 
 /// Health damage cause for an entity damage kind.
