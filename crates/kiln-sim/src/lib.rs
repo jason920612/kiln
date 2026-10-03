@@ -2897,7 +2897,7 @@ fn yellow(s: &str) -> Tag {
 }
 
 /// TEMP wp39 timers.
-pub static PT: [std::sync::atomic::AtomicU64; 16] = [const { std::sync::atomic::AtomicU64::new(0) }; 16];
+pub static PT: [std::sync::atomic::AtomicU64; 24] = [const { std::sync::atomic::AtomicU64::new(0) }; 24];
 pub(crate) fn pt(i: usize, t: &mut std::time::Instant) {
     let now = std::time::Instant::now();
     PT[i].fetch_add((now - *t).as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);

@@ -487,7 +487,13 @@ fn run_tiles(
         let Some(ca) = groups[a].1.centre else { continue };
         for b in a + 1..n {
             let Some(cb) = groups[b].1.centre else { continue };
-            if groups[a].0 < groups[b].0 && (ca.0 - cb.0).abs() <= 2 && (ca.1 - cb.1).abs() <= 2 {
+            // Only what they share matters: tiles overlapping without an entity or a player in
+            // common leave each other alone.
+            if groups[a].0 < groups[b].0
+                && (ca.0 - cb.0).abs() <= 2
+                && (ca.1 - cb.1).abs() <= 2
+                && (sorted_meet(&groups[a].1.ents, &groups[b].1.ents) || sorted_meet(&groups[a].1.players, &groups[b].1.players))
+            {
                 succ[a].push(b);
                 *preds[b].get_mut() += 1;
             }
@@ -613,6 +619,19 @@ fn run_tiles(
         let o = &mut done[k].out;
         merge_turn(sim, o, j);
     }
+}
+
+/// Whether two ascending lists have an element in common.
+fn sorted_meet(a: &[usize], b: &[usize]) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => return true,
+        }
+    }
+    false
 }
 
 /// Moves turn `j`'s outputs (0: before the first turn) of a group into the region.
