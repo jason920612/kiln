@@ -50,6 +50,11 @@ pub struct PoolConfig {
     pub chaos: Option<u64>,
     /// Stack size of the spawned workers (the caller keeps its own stack).
     pub stack_size: Option<usize>,
+    /// The workers' and the coordinator's thread priority, relative to the process's (Windows
+    /// `SetThreadPriority`: 0 normal, 1 above normal, 2 highest; ignored elsewhere). Above
+    /// normal keeps other programs' threads from taking a core in the middle of a window, which
+    /// every worker then waits for; the workers park when idle, so they take nothing away.
+    pub priority: i32,
 }
 
 impl PoolConfig {
@@ -67,6 +72,7 @@ impl PoolConfig {
             phase: PhaseMode::Auto,
             chaos: None,
             stack_size: None,
+            priority: 0,
         }
     }
 }

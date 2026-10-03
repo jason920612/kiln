@@ -49,6 +49,7 @@ mod datapacks;
 mod tags;
 mod zip_pack;
 pub mod lobby;
+mod diag;
 mod digging;
 mod dragon_fight;
 mod effects;
@@ -232,7 +233,14 @@ impl SimConfig {
             simulation_distance: view_distance,
             world,
             online_mode: false,
-            pool: kiln_sched::PoolConfig::new(cores.saturating_sub(1).clamp(1, 7)),
+            pool: {
+                let mut pool = kiln_sched::PoolConfig::new(cores.saturating_sub(1).clamp(1, 7));
+                // wp40: the tick threads above other programs' (on a busy machine a worker that
+                // loses its core mid-window holds up the tick: 1,000 players p99 9.6 -> 6.6 ms).
+                // `KILN_TICK_PRIORITY` overrides (0: normal).
+                pool.priority = std::env::var("KILN_TICK_PRIORITY").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+                pool
+            },
             unified_regions: false,
             noise: None,
             require_resource_pack: false,
@@ -1206,6 +1214,9 @@ impl Sim {
         sim.load_dragon_fight();
         sim.init_packs(vanilla_pack);
         sim.load_plugins();
+        // Tables built on first use, built now rather than in the middle of a tick (the path
+        // types of every block state: 13 ms the first time a mob looks for a path).
+        kiln_entity::mob::path::path_type_from_state(0);
         sim
     }
 
@@ -1271,13 +1282,18 @@ impl Sim {
         lap(&mut self.stats, "b0");
 
         // P: region-local packets in parallel.
+        let w0 = kiln_sched::window_ns();
+        let dt = Instant::now();
         let (local, exclusive) = self.route(packets);
+        let dt = diag::lap("p.route", dt);
         let outs = self.run_regions(local, |w, env, ctx| w.apply_packets(env, ctx));
+        diag::lap("p.run", dt);
         for (dim, out) in outs {
             self.dims[dim].spawns.extend(out.spawns);
             self.announce_deaths(out.deaths);
         }
         self.deliver_plugin_messages();
+        diag::add("packets~", Duration::from_nanos(kiln_sched::window_ns() - w0));
         lap(&mut self.stats, "packets");
 
         // PX: chat, commands and what followed them, in arrival order.
@@ -1336,6 +1352,9 @@ impl Sim {
             for (t, d) in times.iter_mut().zip(out.times) {
                 *t += d;
             }
+            for (name, d) in region::SUB_WIN.iter().zip(out.win) {
+                diag::add(name, d);
+            }
         }
         self.materialize_spawns();
         // What the dragon and the crystals told the fight.
@@ -1356,6 +1375,9 @@ impl Sim {
             self.stats.phase(name, d);
         }
 
+        for (name, d) in diag::take() {
+            self.stats.phase(name, d);
+        }
         self.record_tick_time(start.elapsed().as_nanos() as i64);
         if let Some(report) = self.stats.record(start.elapsed()) {
             info!(
@@ -1928,7 +1950,9 @@ impl Sim {
         mut packets: BTreeMap<(DimId, RegionId), Vec<(ConnId, PlayIn)>>,
         f: impl Fn(&mut RegionWork, &Env, &kiln_sched::Ctx<'_>) + Sync,
     ) -> Vec<(DimId, RegionOut)> {
+        let dt = Instant::now();
         let envs: Vec<Env> = (0..self.dims.len()).map(|d| self.env(d)).collect();
+        let dt = diag::lap("rr.envs", dt);
         let mut buckets: BTreeMap<(DimId, RegionId), Vec<&mut Player>> = BTreeMap::new();
         for p in self.players.values_mut() {
             buckets.entry((p.dim, p.region)).or_default().push(p);
@@ -1955,7 +1979,9 @@ impl Sim {
         let cost = |w: &RegionWork| {
             20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
         };
+        let dt = diag::lap("rr.work", dt);
         let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, &envs[w.dim], ctx));
+        diag::lap("rr.units", dt);
         self.independent.last_fork = work.iter().zip(&report.unit_ns).map(|(w, &ns)| (w.dim, w.region, ns)).collect();
         work.into_iter().map(|w| (w.dim, w.out)).collect()
     }

@@ -344,6 +344,7 @@ pub(crate) fn tick(
     if !rules.spawn_mobs {
         return;
     }
+    let dt = std::time::Instant::now();
     let spawn_enemies = rules.difficulty != 0 && rules.spawn_monsters;
     let spawn_persistent = env.game_time % 400 == 0;
     if spawn_enemies {
@@ -472,6 +473,7 @@ pub(crate) fn tick(
         }
     });
     chunks.sort_unstable();
+    let dt = crate::diag::lap("s.setup", dt);
     // The categories whose local caps may bind are counted now, so the chunks below can be
     // looked at side by side.
     for &cat in &categories {
@@ -489,6 +491,7 @@ pub(crate) fn tick(
         let (lvl, sp, cats, counts) = (&*level, &s, &categories, &start_counts);
         ctx.map_indexed_with(SPAWN_WINDOW, &chunks, |_, &(_, c)| speculate(lvl, sp, c, cats, counts, ticking))
     };
+    let dt = crate::diag::lap("s.spec", dt);
     let mut spawned_any = false;
     for (&(_, c), guess) in chunks.iter().zip(speculated) {
         let global = |s: &Spawner, cat: Category| s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
@@ -510,6 +513,7 @@ pub(crate) fn tick(
             }
         }
     }
+    crate::diag::lap("s.confirm", dt);
 }
 
 /// The spawning pass's chunks, a few microseconds each.

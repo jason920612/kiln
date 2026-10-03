@@ -794,6 +794,9 @@ fn full_step(row: &mut Row, r: usize, s: usize, me: &Snap, t: &Turns, out: &mut 
     row.put(s, c);
 }
 
+/// Window hint: a member's snapshot, a few cache misses.
+const SNAP_WINDOW: Window = Window::new().item_ns(300);
+
 /// Window hint: a receiver's share is a few microseconds in a crowd.
 const SHARE_WINDOW: Window = Window::new().item_ns(5_000);
 
@@ -997,26 +1000,41 @@ impl Sim {
 
     /// The movers' turns in one level (`moved`: in connection order).
     fn waypoint_moves(&mut self, dim: DimId, moved: &[ConnId]) {
+        let t0 = std::time::Instant::now();
         let (players, scoreboard, pool) = (&self.players, &self.commands.scoreboard, &mut self.pool);
         let mgr = &mut self.waypoints[dim];
         // The icons new connections from each transmitter get, interned before the receivers
         // run, and the members' snapshots.
-        let mut tx: Vec<Option<Tx>> = Vec::with_capacity(mgr.members.len());
-        let mut snaps: Vec<Option<Snap>> = Vec::with_capacity(mgr.members.len());
-        for i in 0..mgr.members.len() {
-            let m = &mgr.members[i];
-            let p = m.conn.and_then(|c| players.get(&c));
-            snaps.push(p.map(Snap::of));
-            tx.push(match (m.transmitting, p) {
-                (true, Some(p)) => {
-                    let color = p.waypoint_icon.color.or_else(|| team_color(scoreboard, &p.name));
-                    let fresh = mgr.icon_id(&p.waypoint_icon.style, color);
-                    let snap = snaps[i].expect("snapshot");
-                    Some(Tx { uuid: p.uuid, block: snap.block, chunk: snap.chunk, fresh, shared: Default::default() })
-                }
-                _ => None,
-            });
+        // (Side by side: a crowd's players are a thousand scattered structures.)
+        let looked: Vec<(Option<Snap>, Option<(Uuid, &str, Option<i32>, Option<u32>)>)> = {
+            let icons = &mgr.icons;
+            pool.serial(|ctx| {
+                ctx.map_indexed_with(SNAP_WINDOW, &mgr.members, |_, m| {
+                    let p = m.conn.and_then(|c| players.get(&c));
+                    let tx = match (m.transmitting, p) {
+                        (true, Some(p)) => {
+                            let color = p.waypoint_icon.color.or_else(|| team_color(scoreboard, &p.name));
+                            let style = p.waypoint_icon.style.as_str();
+                            let known = icons.iter().position(|(s, c)| s == style && *c == color).map(|i| i as u32);
+                            Some((p.uuid, style, color, known))
+                        }
+                        _ => None,
+                    };
+                    (p.map(Snap::of), tx)
+                })
+            })
+        };
+        let mut tx: Vec<Option<Tx>> = Vec::with_capacity(looked.len());
+        let mut snaps: Vec<Option<Snap>> = Vec::with_capacity(looked.len());
+        for (snap, t) in looked {
+            tx.push(t.map(|(uuid, style, color, known)| {
+                let fresh = known.unwrap_or_else(|| mgr.icon_id(style, color));
+                let snap = snap.expect("snapshot");
+                Tx { uuid, block: snap.block, chunk: snap.chunk, fresh, shared: Default::default() }
+            }));
+            snaps.push(snap);
         }
+        let ta = std::time::Instant::now();
         mgr.advance_odometers(&snaps);
         let n = mgr.members.len();
         let words = n.div_ceil(64);
@@ -1067,6 +1085,7 @@ impl Sim {
             set_bit(&mut settled_chunk, s, !snap.chunk_moved && !dirty);
             by_chunk.entry(snap.chunk).or_default().push(s as u32);
         }
+        let td = std::time::Instant::now();
         let any_transmitting = !turns.is_empty();
         // Receivers that have turns to take: all of them when a transmitter moved, else the
         // moving receivers.
@@ -1104,11 +1123,18 @@ impl Sim {
             words,
             odo: &mgr.odo,
         };
+        let t1 = std::time::Instant::now();
         pool.serial(|ctx| ctx.map_indexed_with(SHARE_WINDOW, &shares, |_, share| run_share(share, &turns)));
+        let t2 = std::time::Instant::now();
         drop(turns);
         for share in shares {
             mgr.members[share.slot].row = share.row.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
         }
+        crate::diag::add("w.snaps", ta - t0);
+        crate::diag::add("w.sets", td - ta);
+        crate::diag::add("w.prepare", t1 - td);
+        crate::diag::add("w.shares", t2 - t1);
+        crate::diag::lap("w.after", t2);
     }
 
     /// `/waypoint modify`: `mutateIcon` (untrack, change, track again).

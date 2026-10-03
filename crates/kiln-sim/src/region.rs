@@ -71,8 +71,12 @@ pub(crate) struct RegionOut {
     pub saved_entities: Vec<kiln_proto::nbt::Tag>,
     /// CPU time per sub-phase, for the statistics.
     pub times: [Duration; SUB_PHASES.len()],
+    /// Of which in split windows (owner's wall time).
+    pub win: [Duration; SUB_PHASES.len()],
 }
 
+pub(crate) const SUB_WIN: [&str; 10] =
+    ["menus~", "connections~", "chunks~", "blocks~", "entities~", "visibility~", "movement~", "light~", "egress~", "spawning~"];
 pub(crate) const SUB_PHASES: [&str; 10] =
     ["menus", "connections", "chunks", "blocks", "entities", "visibility", "movement", "light", "egress", "spawning"];
 
@@ -370,10 +374,15 @@ impl RegionWork<'_> {
             std::thread::sleep(self.delay);
         }
         let mut lap = Instant::now();
+        let mut wlap = kiln_sched::window_ns();
+        let mut win = [Duration::ZERO; SUB_PHASES.len()];
         let mut mark = |times: &mut [Duration; SUB_PHASES.len()], i: usize| {
             let now = Instant::now();
             times[i] += now - lap;
             lap = now;
+            let w = kiln_sched::window_ns();
+            win[i] += Duration::from_nanos(w - wlap);
+            wlap = w;
         };
         // Menu changes first, like vanilla's container broadcast at the start of a player tick,
         // then `stillValid`: a menu whose block went away or is out of reach closes.
@@ -439,26 +448,34 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 2);
         // The chunks that tick, for the block and entity phases (no player changes chunk
         // between them).
+        let dt = std::time::Instant::now();
         let ticking = ticking_chunks(&self.players, env);
+        crate::diag::lap("b.ticking", dt);
         self.tick_blocks(env, &ticking);
         mark(&mut self.out.times, 3);
         let spawned_before = self.out.times[9];
         self.tick_entities(env, ctx, &ticking);
+        let dt = std::time::Instant::now();
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         self.post_cart_closes(env);
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
+        crate::diag::lap("ent.after", dt);
         mark(&mut self.out.times, 4);
         // The spawner's share of the entity phase is its own sub-phase.
         self.out.times[4] = self.out.times[4].saturating_sub(self.out.times[9] - spawned_before);
         let movers = crate::players::update_visibility(&mut self.players, ctx);
         mark(&mut self.out.times, 5);
+        let dt = std::time::Instant::now();
         crate::players::broadcast_movement(&mut self.players, ctx);
+        let dt = crate::diag::lap("mv.broadcast", dt);
         for p in self.players.iter_mut() {
             p.decay_velocity();
         }
+        let dt = crate::diag::lap("mv.decay", dt);
         entities::track(self.entities, &mut self.players, &movers, ctx);
+        crate::diag::lap("mv.track", dt);
         mark(&mut self.out.times, 6);
         self.send_light_updates();
         mark(&mut self.out.times, 7);
@@ -467,12 +484,15 @@ impl RegionWork<'_> {
         }
         ctx.map_mut_with(PLAYER_WINDOW, &mut self.players, |_, p| p.flush());
         mark(&mut self.out.times, 8);
+        self.out.win = win;
     }
 
     /// The block phases: players' digging, pressure plates under bodies, then scheduled
     /// ticks, random ticks, block events and moving pistons in chunks near players.
     fn tick_blocks(&mut self, env: &Env, ticking: &Ticking) {
+        let dt = std::time::Instant::now();
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        let dt = crate::diag::lap("b.bodies", dt);
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
             crate::plugins::watch_delayed_breaks(h, &self.players, self.cells);
@@ -493,11 +513,15 @@ impl RegionWork<'_> {
             for p in self.players.iter_mut().filter(|p| !p.disconnected) {
                 crate::sleep::tick_player(p, &mut level);
             }
+            let dt = crate::diag::lap("b.dig_sleep", dt);
             // A frozen game (`/tick freeze`) ticks no blocks.
             if !env.frozen {
                 blocks::press_plates(&mut level);
+                let dt = crate::diag::lap("b.plates", dt);
                 crate::sculk::players_step_on(&mut level, &self.players);
+                let dt = crate::diag::lap("b.sculk_step", dt);
                 blocks::tick_blocks(&mut level, &ticking);
+                crate::diag::lap("b.tick_blocks", dt);
                 for pos in std::mem::take(&mut level.out.rechecks) {
                     crate::container::open::recheck_openers(&mut level, &self.players, pos);
                 }

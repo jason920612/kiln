@@ -1666,6 +1666,7 @@ pub(crate) fn tick(
     }
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
+    let dt = std::time::Instant::now();
     // The players' stand-ins and views, made side by side (a crowd has a thousand).
     let now = level.env.game_time;
     let made: Vec<(Option<Proxy>, Option<PlayerView>)> = ctx.map_mut_with(PLAYER_VIEWS, players, |_, p| {
@@ -1683,6 +1684,7 @@ pub(crate) fn tick(
         let block = |pos: BlockPos| level.block(kb(pos));
         crate::shoulder::mark_views(players, &block, &mut views);
     }
+    let dt = crate::diag::lap("e.views", dt);
     let nearest = Nearest::build(&views);
     let mut sim = SimLevel {
         level: World::Region(level),
@@ -1706,12 +1708,14 @@ pub(crate) fn tick(
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
+    let dt = crate::diag::lap("e.index", dt);
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
     process_pending_kills(&mut sim);
     if !islands::tick_islands(&mut sim, ticking, any_player, ctx) {
         tick_list(&mut sim, ticking, any_player, &mut |_, _| true);
     }
+    let dt = crate::diag::lap("e.list", dt);
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
     for e in sim.list.iter_mut() {
@@ -1769,6 +1773,7 @@ pub(crate) fn tick(
             sim.list[i].phys = Some(phys);
         }
     }
+    let dt = crate::diag::lap("e.post_touch", dt);
     ride_players(&mut sim);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     let level = level.into_region();
@@ -1783,6 +1788,7 @@ pub(crate) fn tick(
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
+    crate::diag::lap("e.carry", dt);
 }
 
 /// The entities' turns in list order (`tick` for a region, an island or a tile): passengers

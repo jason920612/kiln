@@ -452,6 +452,25 @@ pub struct TickPool {
     threads: Vec<JoinHandle<()>>,
     coord: Option<ThreadId>,
     next_family: u64,
+    /// [`PoolConfig::priority`], given to the coordinator when it binds.
+    priority: i32,
+}
+
+/// Sets the calling thread's priority ([`PoolConfig::priority`]); nothing for 0 or off Windows.
+fn set_thread_priority(priority: i32) {
+    #[cfg(windows)]
+    if priority != 0 {
+        unsafe extern "system" {
+            fn GetCurrentThread() -> isize;
+            fn SetThreadPriority(thread: isize, priority: i32) -> i32;
+        }
+        // SAFETY: the current-thread pseudo-handle and a documented priority value.
+        unsafe {
+            SetThreadPriority(GetCurrentThread(), priority.clamp(-2, 2));
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = priority;
 }
 
 impl TickPool {
@@ -476,10 +495,15 @@ impl TickPool {
                 if let Some(size) = cfg.stack_size {
                     b = b.stack_size(size);
                 }
-                b.spawn(move || worker_main(sh, i, seed)).expect("failed to spawn a tick worker")
+                let priority = cfg.priority;
+                b.spawn(move || {
+                    set_thread_priority(priority);
+                    worker_main(sh, i, seed)
+                })
+                .expect("failed to spawn a tick worker")
             })
             .collect();
-        TickPool { local: WorkerLocal::new(shared.clone(), 0, seed), shared, threads, coord: None, next_family: 1 }
+        TickPool { local: WorkerLocal::new(shared.clone(), 0, seed), shared, threads, coord: None, next_family: 1, priority: cfg.priority }
     }
 
     pub fn workers(&self) -> usize {
@@ -490,6 +514,7 @@ impl TickPool {
     fn bind(&mut self) {
         let t = thread::current();
         if self.coord != Some(t.id()) {
+            set_thread_priority(self.priority);
             self.coord = Some(t.id());
             *self.shared.coord.lock().unwrap_or_else(PoisonError::into_inner) = Some(t);
         }
