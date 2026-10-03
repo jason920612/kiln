@@ -27,16 +27,54 @@ pub(crate) struct Slot {
 pub struct CellSet<C> {
     pub(crate) slots: Vec<Slot>,
     cells: Vec<Box<C>>,
+    /// Open-addressed index of the slots by key (slot + 1, 0 empty): every block read finds
+    /// its cell here, which a binary search over the slots made a few mispredicted branches.
+    index: Vec<u32>,
 }
 
 impl<C> CellSet<C> {
     fn new() -> Self {
-        Self { slots: Vec::new(), cells: Vec::new() }
+        Self { slots: Vec::new(), cells: Vec::new(), index: Vec::new() }
     }
 
     fn find(&self, pos: CellPos) -> Result<usize, usize> {
         let key = pos.key();
         self.slots.binary_search_by_key(&key, |s| s.key)
+    }
+
+    fn bucket(key: u64, mask: usize) -> usize {
+        (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize & mask
+    }
+
+    /// Rebuilds [`Self::index`] after the slots changed.
+    fn reindex(&mut self) {
+        let size = (self.slots.len() * 2).next_power_of_two().max(8);
+        self.index.clear();
+        self.index.resize(size, 0);
+        for (i, s) in self.slots.iter().enumerate() {
+            let mut b = Self::bucket(s.key, size - 1);
+            while self.index[b] != 0 {
+                b = (b + 1) & (size - 1);
+            }
+            self.index[b] = i as u32 + 1;
+        }
+    }
+
+    /// The slot of `pos`, through the index.
+    fn lookup(&self, pos: CellPos) -> Option<usize> {
+        if self.index.is_empty() {
+            return None;
+        }
+        let key = pos.key();
+        let mask = self.index.len() - 1;
+        let mut b = Self::bucket(key, mask);
+        loop {
+            match self.index[b] {
+                0 => return None,
+                i if self.slots[i as usize - 1].key == key => return Some(i as usize - 1),
+                _ => b = (b + 1) & mask,
+            }
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -48,15 +86,15 @@ impl<C> CellSet<C> {
     }
 
     pub fn contains(&self, pos: CellPos) -> bool {
-        self.find(pos).is_ok()
+        self.lookup(pos).is_some()
     }
 
     pub fn get(&self, pos: CellPos) -> Option<&C> {
-        self.find(pos).ok().map(|i| &*self.cells[i])
+        self.lookup(pos).map(|i| &*self.cells[i])
     }
 
     pub fn get_mut(&mut self, pos: CellPos) -> Option<&mut C> {
-        self.find(pos).ok().map(|i| &mut *self.cells[i])
+        self.lookup(pos).map(|i| &mut *self.cells[i])
     }
 
     pub fn positions(&self) -> impl ExactSizeIterator<Item = CellPos> + '_ {
@@ -72,19 +110,22 @@ impl<C> CellSet<C> {
     }
 
     pub(crate) fn index_of(&self, pos: CellPos) -> Option<usize> {
-        self.find(pos).ok()
+        self.lookup(pos)
     }
 
     pub(crate) fn insert(&mut self, pos: CellPos, cell: Box<C>) {
         let i = self.find(pos).expect_err("cell already in region");
         self.slots.insert(i, Slot { key: pos.key(), pos, label: UNLABELED });
         self.cells.insert(i, cell);
+        self.reindex();
     }
 
     pub(crate) fn remove(&mut self, pos: CellPos) -> Option<Box<C>> {
         let i = self.find(pos).ok()?;
         self.slots.remove(i);
-        Some(self.cells.remove(i))
+        let cell = self.cells.remove(i);
+        self.reindex();
+        Some(cell)
     }
 
     /// Merges `other` in; its labels are shifted by `label_offset`.
@@ -113,6 +154,7 @@ impl<C> CellSet<C> {
             self.slots.push(s);
             self.cells.push(c);
         }
+        self.reindex();
     }
 
     /// Stable partition into `n` sets; `piece_of[i]` is the destination of cell `i`.
@@ -121,6 +163,9 @@ impl<C> CellSet<C> {
         for ((s, c), &p) in self.slots.into_iter().zip(self.cells).zip(piece_of) {
             out[p].slots.push(s);
             out[p].cells.push(c);
+        }
+        for set in &mut out {
+            set.reindex();
         }
         out
     }
