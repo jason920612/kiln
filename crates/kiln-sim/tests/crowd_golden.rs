@@ -73,6 +73,13 @@ fn run(s: &Scenario) -> (u64, u64, usize) {
 }
 
 fn check(s: Scenario, hash: u64, digest: u64, regions: usize) {
+    // The constants are for the built-in data. A datapack (`KILN_DATAPACK`) brings natural
+    // spawning and advancements, whose Update Advancements packets carry the wall-clock time a
+    // criterion was obtained (vanilla's `Instant.now()`): no stream repeats from run to run.
+    if std::env::var_os("KILN_DATAPACK").is_some() {
+        eprintln!("crowd_golden: skipped with KILN_DATAPACK (advancement dates follow the clock)");
+        return;
+    }
     let got = run(&s);
     assert_eq!(got.2, regions, "regions");
     assert_eq!(
