@@ -73,8 +73,8 @@ pub(crate) struct RegionOut {
     pub times: [Duration; SUB_PHASES.len()],
 }
 
-pub(crate) const SUB_PHASES: [&str; 9] =
-    ["menus", "connections", "chunks", "blocks", "entities", "visibility", "movement", "light", "egress"];
+pub(crate) const SUB_PHASES: [&str; 10] =
+    ["menus", "connections", "chunks", "blocks", "entities", "visibility", "movement", "light", "egress", "spawning"];
 
 pub(crate) struct RegionWork<'a> {
     /// The level the region is in.
@@ -436,6 +436,7 @@ impl RegionWork<'_> {
         mark(&mut self.out.times, 2);
         self.tick_blocks(env);
         mark(&mut self.out.times, 3);
+        let spawned_before = self.out.times[9];
         self.tick_entities(env, ctx);
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
@@ -443,6 +444,8 @@ impl RegionWork<'_> {
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
         mark(&mut self.out.times, 4);
+        // The spawner's share of the entity phase is its own sub-phase.
+        self.out.times[4] = self.out.times[4].saturating_sub(self.out.times[9] - spawned_before);
         let movers = crate::players::update_visibility(&mut self.players, ctx);
         mark(&mut self.out.times, 5);
         crate::players::broadcast_movement(&mut self.players, ctx);
@@ -539,7 +542,9 @@ impl RegionWork<'_> {
                 actor: None,
             };
             let any_player = !self.players.is_empty();
+            let spawning = Instant::now();
             crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns);
+            self.out.times[9] += spawning.elapsed();
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player, ctx);
             crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
