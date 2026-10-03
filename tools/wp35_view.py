@@ -272,6 +272,15 @@ def main():
             console(f"summon minecraft:{kind} {x} -60 17.5 {{PersistenceRequired:1b{extra}}}", 0.3)
         time.sleep(3)
         shot("horses")
+        console("kill @e[type=!minecraft:player]", 0.5)
+        # Camels next to a camel husk with a parched on it, close up in daylight.
+        console(f"tp {name} 8.5 -60 20.5 180 6")
+        console("summon minecraft:camel 4.5 -60 15.5 {PersistenceRequired:1b}", 0.3)
+        console("summon minecraft:camel_husk 10.5 -60 15.5 {PersistenceRequired:1b}", 0.3)
+        console("summon minecraft:parched 10.5 -60 18.5 {PersistenceRequired:1b}", 0.3)
+        console("ride @e[type=minecraft:parched,limit=1] mount @e[type=minecraft:camel_husk,limit=1]")
+        time.sleep(3)
+        shot("camels")
 
     if "breeze" in scenes:
         clear()
