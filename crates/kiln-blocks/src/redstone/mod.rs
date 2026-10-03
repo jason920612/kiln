@@ -28,6 +28,8 @@ pub fn weak<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Direction,
         }
         BlockClass::ComparatorBlock => diode::output_signal(level, s, pos, dir),
         BlockClass::TrappedChestBlock => crate::behaviour::container::trapped_chest_signal(level, pos),
+        // `JukeboxBlock.ownSignal`: 15 while a song plays.
+        BlockClass::JukeboxBlock => if level.jukebox_playing(pos) { 15 } else { 0 },
         _ => logic::weak_signal(s, dir as u8) as i32,
     }
 }

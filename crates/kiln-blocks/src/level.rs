@@ -105,6 +105,9 @@ pub enum Effect {
     /// `FrogspawnBlock.tick`: the tadpoles that hatch at `pos` (the spawn is gone): for each,
     /// the x and z offsets in the block and the yaw.
     HatchFrogspawn { pos: BlockPos, tadpoles: Vec<(f64, f64, i32)> },
+    /// `JukeboxSongPlayer.spawnMusicParticles`: a note particle above the block, coloured by
+    /// `color` (`random.nextInt(4) / 24`).
+    MusicNote { pos: BlockPos, color: f32 },
 }
 
 pub trait Level {
@@ -174,6 +177,12 @@ pub trait Level {
     /// rails with minecarts, ...), read from side `dir`.
     fn block_entity_analog(&self, _pos: BlockPos, _state: u16, _dir: Direction) -> i32 {
         0
+    }
+
+    /// Whether the jukebox at `pos` is playing a song (`JukeboxSongPlayer.isPlaying`): it powers
+    /// its neighbours with 15 (`JukeboxBlock.ownSignal`).
+    fn jukebox_playing(&self, _pos: BlockPos) -> bool {
+        false
     }
 
     /// Players looking into the container block entity at `pos` (`ContainerOpenersCounter`):

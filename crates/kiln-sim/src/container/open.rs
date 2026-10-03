@@ -406,7 +406,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         BeKind::Furnace(kind) => single(furnace_menu(kind)),
         BeKind::BrewingStand => single(Menu::brewing_stand),
         BeKind::Beacon => single(Menu::beacon),
-        BeKind::EnderChest => return None,
+        BeKind::EnderChest | BeKind::Jukebox => return None,
     })
 }
 
@@ -454,7 +454,10 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         }
         return Some(true);
     }
-    level.blocks.containers.get(pos)?;
+    // (A jukebox has no menu: its own `useWithoutItem` takes the disc out.)
+    if level.blocks.containers.get(pos)?.kind == BeKind::Jukebox {
+        return None;
+    }
     if let Some(provider) = container_provider(level, pos, s) {
         open_menu(p, level, provider, spawns);
         if let Some(stat) = crate::player_stats::interact_stat(s) {

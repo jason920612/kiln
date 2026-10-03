@@ -142,6 +142,29 @@ pub struct LootData {
     pub errors: Vec<FileError>,
     /// Villager trade sets and trades (`trade_set/`, `villager_trade/`).
     pub trades: crate::trade::Trades,
+    /// By `minecraft:jukebox_song` network id (`jukebox_song/`).
+    pub(crate) songs: Vec<Option<JukeboxSong>>,
+}
+
+/// A `minecraft:jukebox_song` (`JukeboxSong`): how long it plays and what a comparator reads.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct JukeboxSong {
+    pub length_in_seconds: f32,
+    pub comparator_output: i32,
+}
+
+impl JukeboxSong {
+    /// `JukeboxSong.lengthInTicks`: `Mth.ceil(length_in_seconds * 20)`.
+    pub fn length_in_ticks(&self) -> i32 {
+        let v = self.length_in_seconds * 20.0;
+        let i = v as i32;
+        if v > i as f32 { i + 1 } else { i }
+    }
+
+    /// `JukeboxSong.hasFinished`: past its length and a second more.
+    pub fn has_finished(&self, ticks_since_started: i64) -> bool {
+        ticks_since_started >= self.length_in_ticks() as i64 + 20
+    }
 }
 
 fn io(path: &Path) -> impl FnOnce(std::io::Error) -> LoadError + '_ {
@@ -275,6 +298,27 @@ impl LootData {
             data.providers = providers;
         }
 
+        // Jukebox songs (`jukebox_song/`).
+        {
+            let mut songs: Vec<Option<JukeboxSong>> = vec![None; registry::JUKEBOX_SONG.len()];
+            for (id, path) in list_pack_files(packs, "jukebox_song")? {
+                let text = std::fs::read_to_string(&path).map_err(io(&path))?;
+                let result = Json::parse(&text).map_err(|e| ParseError::new(e.to_string())).and_then(|j| {
+                    let net = crate::parse::registry_id(registry::JUKEBOX_SONG, &id)?;
+                    let song = JukeboxSong {
+                        length_in_seconds: crate::parse::req(&j, "length_in_seconds", crate::parse::float)?,
+                        comparator_output: crate::parse::req(&j, "comparator_output", crate::parse::int)?,
+                    };
+                    Ok((net, song))
+                });
+                match result {
+                    Ok((net, song)) => songs[net as usize] = Some(song),
+                    Err(e) => errors.push(FileError { element: format!("jukebox_song/{id}"), error: e.to_string() }),
+                }
+            }
+            data.songs = songs;
+        }
+
         // Loot registries.
         for (kind, id, path) in files {
             let text = std::fs::read_to_string(&path).map_err(io(&path))?;
@@ -322,6 +366,11 @@ impl LootData {
             data.errors.push(FileError { element: element.to_owned(), error: error.to_owned() });
         }
         Ok(data)
+    }
+
+    /// The jukebox song with `minecraft:jukebox_song` network id `id`.
+    pub fn jukebox_song(&self, id: i32) -> Option<JukeboxSong> {
+        usize::try_from(id).ok().and_then(|i| self.songs.get(i).copied().flatten())
     }
 
     /// Decodes one loot table from JSON against this data (for tables built at run time, such

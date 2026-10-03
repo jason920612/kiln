@@ -49,6 +49,8 @@ pub(crate) enum BeKind {
     BrewingStand,
     /// Holds no items (the payment is the menu's); ticks its beam and powers.
     Beacon,
+    /// One slot for a music disc (`JukeboxBlockEntity`); plays the disc's song.
+    Jukebox,
 }
 
 impl BeKind {
@@ -68,6 +70,7 @@ impl BeKind {
             "ender_chest" => BeKind::EnderChest,
             "brewing_stand" => BeKind::BrewingStand,
             "beacon" => BeKind::Beacon,
+            "jukebox" => BeKind::Jukebox,
             _ => return None,
         })
     }
@@ -80,13 +83,14 @@ impl BeKind {
             BeKind::Dispenser | BeKind::Dropper => 9,
             BeKind::Furnace(_) => 3,
             BeKind::BrewingStand => 5,
+            BeKind::Jukebox => 1,
             BeKind::EnderChest | BeKind::Beacon => 0,
         }
     }
 
     /// `RandomizableContainerBlockEntity`: can hold an unopened loot table.
     pub fn randomizable(self) -> bool {
-        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon)
+        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox)
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
@@ -109,12 +113,15 @@ impl BeKind {
             BeKind::EnderChest => "container.enderchest",
             BeKind::BrewingStand => "container.brewing",
             BeKind::Beacon => "container.beacon",
+            BeKind::Jukebox => "container.jukebox",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 24] = [
+const MODELED: [&str; 26] = [
+    "RecordItem",
+    "ticks_since_song_started",
     "primary_effect",
     "secondary_effect",
     "Levels",
@@ -186,6 +193,15 @@ pub(crate) struct ContainerBe {
     /// A furnace's input changed to another item (its `setItem` on slot 0): the cook timer
     /// resets once the recipes are at hand ([`furnace::apply_input_change`]).
     pub input_changed: bool,
+    /// A jukebox's `JukeboxSongPlayer`: the song playing (`minecraft:jukebox_song` network id) and
+    /// the ticks since it started.
+    pub song: Option<(i32, i64)>,
+    /// `song` was read from the saved data and has yet to be checked against the song's length
+    /// (the data of the songs is the level's, not at hand when the chunk loads).
+    pub song_unchecked: bool,
+    /// A jukebox's item changed (`setTheItem`): its block state, song and neighbours follow once
+    /// the block entity is back in the level.
+    pub item_changed: bool,
     /// `setChanged` calls: comparators and the chunk's saved data follow.
     pub changes: u64,
     /// Changed since its NBT was last written into the chunk.
@@ -210,6 +226,19 @@ impl ContainerBe {
             Tag::Compound(fields) => fields.iter().filter(|(k, _)| !MODELED.contains(&k.as_str())).cloned().collect(),
             _ => Vec::new(),
         };
+        // `JukeboxBlockEntity.loadAdditional`: the disc, and how far its song had got.
+        let mut list = list;
+        let (mut song, mut song_unchecked) = (None, false);
+        if kind == BeKind::Jukebox {
+            let disc = nbt.get("RecordItem").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty);
+            if let Some(ticks) = nbt.get("ticks_since_song_started").and_then(Tag::as_i64)
+                && let Some(id) = crate::jukebox::song_id(&disc)
+            {
+                song = Some((id, ticks));
+                song_unchecked = true;
+            }
+            list.stacks = vec![disc];
+        }
         // `BrewingStandBlockEntity.loadAdditional`: brewing under way remembers its ingredient.
         let ingredient = (kind == BeKind::BrewingStand && int("BrewTime", 0) > 0).then(|| list.stacks.get(3).map_or(0, ItemStack::item));
         static SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -238,6 +267,9 @@ impl ContainerBe {
             last_bottles: None,
             beacon: (kind == BeKind::Beacon).then(|| beacon::Beacon::load(nbt)),
             input_changed: false,
+            song,
+            song_unchecked,
+            item_changed: false,
             changes: 0,
             dirty: false,
             extra,
@@ -255,6 +287,14 @@ impl ContainerBe {
         }
         match self.kind {
             BeKind::EnderChest => {}
+            BeKind::Jukebox => {
+                if let Some(disc) = self.items.first().filter(|s| !s.is_empty()) {
+                    out.push(("RecordItem".into(), disc.to_nbt()));
+                }
+                if let Some((_, ticks)) = self.song {
+                    out.push(("ticks_since_song_started".into(), Tag::Long(ticks)));
+                }
+            }
             BeKind::Beacon => {
                 if let Some(b) = &self.beacon {
                     b.save(&mut out);
@@ -419,6 +459,10 @@ impl kiln_inventory::Container for ContainerBe {
         let max = self.max_stack_size_for(&stack);
         stack.limit_size(max);
         self.items[slot] = stack;
+        // `JukeboxBlockEntity.setTheItem`: block state, song and neighbours follow.
+        if self.kind == BeKind::Jukebox {
+            self.item_changed = true;
+        }
         // `HopperBlockEntity.setItem` does not call `setChanged`.
         if self.kind != BeKind::Hopper {
             self.mark_changed();
@@ -427,6 +471,10 @@ impl kiln_inventory::Container for ContainerBe {
 
     fn remove_item(&mut self, slot: usize, count: i32) -> ItemStack {
         let removed = kiln_inventory::container::remove_item(&mut self.items, slot, count);
+        // `JukeboxBlockEntity.splitTheItem`: the whole item goes.
+        if self.kind == BeKind::Jukebox && !removed.is_empty() {
+            self.item_changed = true;
+        }
         // `HopperBlockEntity.removeItem` does not call `setChanged`.
         if !removed.is_empty() && self.kind != BeKind::Hopper {
             self.mark_changed();
@@ -435,7 +483,16 @@ impl kiln_inventory::Container for ContainerBe {
     }
 
     fn remove_item_no_update(&mut self, slot: usize) -> ItemStack {
-        kiln_inventory::container::take_item(&mut self.items, slot)
+        let removed = kiln_inventory::container::take_item(&mut self.items, slot);
+        if self.kind == BeKind::Jukebox && !removed.is_empty() {
+            self.item_changed = true;
+        }
+        removed
+    }
+
+    /// `JukeboxBlockEntity.getMaxStackSize`: one disc.
+    fn max_stack_size(&self) -> i32 {
+        if self.kind == BeKind::Jukebox { 1 } else { 99 }
     }
 
     fn set_changed(&mut self) {
@@ -502,7 +559,9 @@ impl Containers {
         let lo = BlockPos::new(pos.x * 16, i32::MIN, pos.z * 16);
         let hi = BlockPos::new(pos.x * 16 + 15, i32::MAX, pos.z * 16 + 15);
         for (p, c) in self.map.range_mut(lo..=hi) {
-            if !c.dirty || chunk_of(*p) != pos {
+            // (A jukebox's song advances without `setChanged`: it is saved as it stands.)
+            let playing = c.kind == BeKind::Jukebox && c.song.is_some();
+            if !(c.dirty || playing) || chunk_of(*p) != pos {
                 continue;
             }
             c.dirty = false;
@@ -596,6 +655,16 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
     let now = level.cells.chunk(chunk_of(pos)).and_then(|c| c.block_entity(x, pos.y, z));
     let Some(mut removed) = level.blocks.containers.block_changed(pos, now) else { return };
     level.out.removed_components.push((pos, removed.components()));
+    // `JukeboxBlockEntity.preRemoveSideEffects`: the disc pops out; a jukebox cleared by a command
+    // (`Clearable.tryClear`, no side effects) loses it and the music stops.
+    if removed.kind == BeKind::Jukebox {
+        if flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS != 0 {
+            crate::jukebox::cleared(level, pos, &mut removed);
+        } else {
+            crate::jukebox::removed(level, pos, &mut removed);
+        }
+        return;
+    }
     if flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS != 0 || !removed.kind.is_container() || removed.kind == BeKind::ShulkerBox {
         return;
     }
@@ -617,6 +686,9 @@ pub(crate) fn analog(level: &RegionLevel, pos: BlockPos, s: u16) -> i32 {
     let Some(c) = level.blocks.containers.get(pos) else { return 0 };
     if !c.kind.is_container() {
         return 0;
+    }
+    if c.kind == BeKind::Jukebox {
+        return crate::jukebox::comparator_output(level, c);
     }
     if kiln_blocks::behaviour::container::is_chest(s) {
         let blocked = |p: BlockPos| kiln_data::block_logic::is_redstone_conductor(level.block(p.above()));
@@ -654,7 +726,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
         .containers
         .map
         .iter()
-        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon))
+        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox))
         .filter(|(p, _)| ticking.contains(chunk_of(**p)))
         .map(|(p, c)| (*p, c.kind))
         .collect();
@@ -671,6 +743,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
                 level.out.spawns.append(&mut spawns);
             }
             BeKind::Beacon => beacon::tick(level, pos),
+            BeKind::Jukebox => crate::jukebox::tick(level, pos),
             _ => {
                 let mut spawns = std::mem::take(&mut level.out.spawns);
                 furnace::server_tick(level, pos, &mut spawns);

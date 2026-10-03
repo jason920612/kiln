@@ -158,6 +158,8 @@ impl<'a> View<'a> {
                 _ => true,
             },
             BeKind::BrewingStand => self.rules.as_deref().is_some_and(|r| super::brewing::can_place_item(&self.parts[0], slot, stack, r)),
+            // `JukeboxBlockEntity.canPlaceItem`: a disc, into the empty slot.
+            BeKind::Jukebox => stack.get(kiln_item::keys::JUKEBOX_PLAYABLE).is_some() && self.parts[0].items[0].is_empty(),
             _ => true,
         }
     }
@@ -294,7 +296,7 @@ fn inventory_full(h: &ContainerBe) -> bool {
 }
 
 /// `BlockEntity.setChanged(level, pos, state)`: comparators re-read the container.
-fn changed(level: &mut RegionLevel, pos: BlockPos) {
+pub(crate) fn changed(level: &mut RegionLevel, pos: BlockPos) {
     let s = level.block(pos);
     if !kiln_data::blocks_types::is_air(s) {
         kiln_blocks::update::update_neighbour_for_output_signal(level, pos, kiln_blocks::BlockId::of(s));
@@ -374,6 +376,9 @@ fn eject_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Block
         false
     });
     level.blocks.containers.map.insert(pos, hopper);
+    for p in target.positions() {
+        crate::jukebox::settle(level, p);
+    }
     let moved = result.unwrap_or(false);
     if moved {
         for p in target.positions() {
@@ -488,6 +493,9 @@ fn suck_in_items(level: &mut RegionLevel, items: &mut dyn ItemEntities, pos: Blo
             false
         });
         level.blocks.containers.map.insert(pos, hopper);
+        for p in source.positions() {
+            crate::jukebox::settle(level, p);
+        }
         let moved = result.unwrap_or(false);
         if moved {
             for p in source.positions() {
@@ -531,6 +539,9 @@ pub(crate) fn take_into_cart(level: &mut RegionLevel, pos: BlockPos, dest: &mut 
         false
     });
     *dest = hopper.items;
+    for p in source.positions() {
+        crate::jukebox::settle(level, p);
+    }
     let moved = moved.unwrap_or(false);
     if moved {
         for p in source.positions() {
@@ -544,6 +555,10 @@ pub(crate) fn take_into_cart(level: &mut RegionLevel, pos: BlockPos, dest: &mut 
 fn try_take_in_item_from_slot(hopper: &mut ContainerBe, src: &mut View, slot: usize, face: Direction, source_ticked: Option<i64>) -> bool {
     let item = src.item(slot).clone();
     if item.is_empty() || !src.can_take_from(&item, slot, face) {
+        return false;
+    }
+    // `JukeboxBlockEntity.canTakeItem`: only where the hopper has room (`hasAnyMatching(isEmpty)`).
+    if src.kind() == BeKind::Jukebox && !hopper.items.iter().any(ItemStack::is_empty) {
         return false;
     }
     let count = item.count();

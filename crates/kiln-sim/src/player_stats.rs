@@ -177,6 +177,7 @@ pub mod stat {
         INSPECT_DROPPER = "minecraft:inspect_dropper",
         INSPECT_DISPENSER = "minecraft:inspect_dispenser",
         SLEEP_IN_BED = "minecraft:sleep_in_bed",
+        PLAY_RECORD = "minecraft:play_record",
     }
 }
 

@@ -410,14 +410,9 @@ impl Level for RegionLevel<'_> {
     }
 
     fn set_raw(&mut self, pos: BlockPos, state: u16, flags: u32) -> Option<u16> {
-        // A jukebox that goes away gives its disc back (the block entity goes with it).
-        let disc = crate::jukebox::before_removal(self, pos, state);
         let old = self.cells.set_block(pos.x, pos.y, pos.z, state)?;
         if old == state {
             return None;
-        }
-        if let Some(disc) = disc {
-            crate::jukebox::removed(self, pos, disc);
         }
         if flags & flags::CLIENTS != 0 {
             self.out.changed.push([pos.x, pos.y, pos.z]);
@@ -530,6 +525,10 @@ impl Level for RegionLevel<'_> {
             return v;
         }
         crate::container::analog(self, pos, state)
+    }
+
+    fn jukebox_playing(&self, pos: BlockPos) -> bool {
+        crate::jukebox::is_playing(self, pos)
     }
 
     fn container_openers(&self, pos: BlockPos) -> i32 {
@@ -968,6 +967,22 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
             Effect::ActorSound { pos, sound, volume, pitch } => {
                 if let Some(pkt) = sound_packet(sound, world_fx::SoundSource::Blocks, pos, volume, pitch, env, i) {
                     send_near(players, pos, 16.0 * volume.max(1.0) as f64, &pkt, others);
+                }
+            }
+            // `JukeboxSongPlayer.spawnMusicParticles`: a note 1.2 above the block's bottom center.
+            Effect::MusicNote { pos, color } => {
+                if let Some(kind) = kiln_data::builtin_id("minecraft:particle_type", "minecraft:note") {
+                    let pkt = world_fx::level_particles(&world_fx::LevelParticles {
+                        particle: world_fx::Particle { kind, options: world_fx::ParticleOptions::None },
+                        override_limiter: false,
+                        always_show: false,
+                        pos: [pos.x as f64 + 0.5, pos.y as f64 + 1.2000000476837158, pos.z as f64 + 0.5],
+                        offset: [color, 0.0, 0.0],
+                        max_speed: [1.0, 0.0, 0.0],
+                        count: 0,
+                        randomization: world_fx::ParticleRandomization::Default,
+                    });
+                    send_near(players, pos, 32.0, &pkt, |_| true);
                 }
             }
             Effect::NoteBlock { pos, instrument, note } => {

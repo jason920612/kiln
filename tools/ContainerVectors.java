@@ -247,7 +247,80 @@ public class ContainerVectors {
                 .container(0, -1, 0, "minecraft:chest")
                 .comparator(0, -1, 1, "north"));
         cartScenarios(out);
+        jukeboxScenarios(out);
         return out;
+    }
+
+    /** wp36: jukeboxes: songs ending by their length, comparators, redstone power, hoppers and dispensers. */
+    static void jukeboxScenarios(List<Scenario> out) {
+        // The jukebox at (0, 0, 1) is read by a comparator at (0, 0, 0) and powers a lamp at (-1, 0, 1)
+        // (placed before it: the jukebox's placement tells the lamp).
+        String disc = "{RecordItem:{id:\"minecraft:music_disc_%s\",count:1},ticks_since_song_started:%dL}";
+        String lamp = "minecraft:redstone_lamp";
+        // A song near its end finishes by itself: the disc stays, the power and the music go.
+        out.add(new Scenario("jukebox_song_ends", 50)
+                .block(-1, 0, 1, lamp).state(-1, 0, 1)
+                .container(0, 0, 1, "minecraft:jukebox[has_record=true]" + String.format(Locale.ROOT, disc, "11", 1400))
+                .state(0, 0, 1)
+                .comparator(0, 0, 0, "south"));
+        // A song with plenty left: playing, powering, ticking.
+        out.add(new Scenario("jukebox_song_plays", 30)
+                .block(-1, 0, 1, lamp).state(-1, 0, 1)
+                .container(0, 0, 1, "minecraft:jukebox[has_record=true]" + String.format(Locale.ROOT, disc, "13", 100))
+                .state(0, 0, 1)
+                .comparator(0, 0, 0, "south"));
+        // A song that is already over when the block entity loads is not started.
+        out.add(new Scenario("jukebox_song_over_at_load", 20)
+                .block(-1, 0, 1, lamp).state(-1, 0, 1)
+                .container(0, 0, 1, "minecraft:jukebox[has_record=true]" + String.format(Locale.ROOT, disc, "11", 1500))
+                .state(0, 0, 1)
+                .comparator(0, 0, 0, "south"));
+        // The comparator reads the disc's song.
+        for (String d : new String[] {"5", "cat", "pigstep", "otherside"}) {
+            out.add(new Scenario("jukebox_comparator_" + d, 8)
+                    .container(0, 0, 1, "minecraft:jukebox[has_record=true]" + String.format(Locale.ROOT, disc, d, 0))
+                    .comparator(0, 0, 0, "south"));
+        }
+        // A hopper above puts a disc in: it starts playing at once (and, powered by the jukebox, locks).
+        out.add(new Scenario("jukebox_hopper_inserts_disc", 40)
+                .container(0, 1, 1, "minecraft:hopper[facing=down]" + items(slot(0, "stick", 2), slot(1, "music_disc_13", 1)))
+                .state(0, 1, 1)
+                .container(0, 0, 1, "minecraft:jukebox")
+                .block(1, 0, 1, lamp).state(1, 0, 1).state(0, 0, 1)
+                .comparator(0, 0, 0, "south"));
+        // A hopper facing into the side of a jukebox that holds a (finished) disc leaves its disc be.
+        out.add(new Scenario("jukebox_full_refuses_a_second_disc", 40)
+                .container(0, 0, 1, "minecraft:jukebox[has_record=true]" + String.format(Locale.ROOT, disc, "13", 3700))
+                .container(-1, 0, 1, "minecraft:hopper[facing=east]" + items(slot(0, "music_disc_5", 1)))
+                .state(0, 0, 1));
+        // A hopper below takes the disc out (only where it has room): has_record goes, the comparator follows.
+        out.add(new Scenario("jukebox_hopper_takes_disc", 40)
+                .container(0, 1, 1, "minecraft:jukebox[has_record=true]" + String.format(Locale.ROOT, disc, "13", 3700))
+                .container(0, 0, 1, "minecraft:hopper[facing=down]")
+                .container(0, -1, 1, "minecraft:chest")
+                .state(0, 1, 1)
+                .comparator(0, 1, 0, "south"));
+        // While a song plays the jukebox powers the hopper under it: it takes nothing (locked).
+        out.add(new Scenario("jukebox_playing_locks_the_hopper_under_it", 30)
+                .container(0, 1, 1, "minecraft:jukebox[has_record=true]" + String.format(Locale.ROOT, disc, "13", 100))
+                .container(0, 0, 1, "minecraft:hopper[facing=down]")
+                .state(0, 0, 1).state(0, 1, 1));
+        // A full hopper cannot take it.
+        out.add(new Scenario("jukebox_full_hopper_takes_nothing", 30)
+                .container(0, 1, 1, "minecraft:jukebox[has_record=true]" + String.format(Locale.ROOT, disc, "13", 3700))
+                .container(0, 0, 1, "minecraft:hopper[facing=down]"
+                        + items(slot(0, "stone", 64), slot(1, "stone", 64), slot(2, "stone", 64), slot(3, "stone", 64), slot(4, "stone", 64)))
+                .state(0, 1, 1));
+        // A dispenser puts its disc in (the first slot with an item, as it always does).
+        out.add(new Scenario("jukebox_dispenser_inserts_disc", 30)
+                .container(-1, 0, 1, "minecraft:dispenser[facing=east]" + items(slot(3, "music_disc_cat", 1)))
+                .container(0, 0, 1, "minecraft:jukebox")
+                .block(1, 0, 1, lamp).state(1, 0, 1).state(0, 0, 1)
+                .comparator(0, 0, 0, "south")
+                .at(5, "setblock ~-1 ~1 ~1 minecraft:redstone_block"));
+        out.add(new Scenario("jukebox_empty_comparator", 8)
+                .container(0, 0, 1, "minecraft:jukebox")
+                .comparator(0, 0, 0, "south"));
     }
 
     /** Hoppers and container minecarts exchanging items (the minecarts hang in the air, at rest). */
@@ -474,6 +547,10 @@ public class ContainerVectors {
         }
         m.put("items", items);
         if (be instanceof HopperBlockEntity) m.put("cooldown", field(be, "cooldownTime"));
+        // wp36: a jukebox's song player (playing, ticks since the song started).
+        if (be instanceof net.minecraft.world.level.block.entity.JukeboxBlockEntity j) {
+            m.put("jukebox", List.of(j.getSongPlayer().isPlaying() ? 1 : 0, j.getSongPlayer().getTicksSinceSongStarted()));
+        }
         if (be instanceof AbstractFurnaceBlockEntity) {
             m.put("furnace", List.of(field(be, "litTimeRemaining"), field(be, "litTotalTime"), field(be, "cookingTimer"),
                     field(be, "cookingTotalTime")));

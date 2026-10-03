@@ -36,6 +36,10 @@ fn container_json(sim: &Sim, pos: BlockPos) -> Value {
         crate::container::BeKind::Furnace(_) => {
             m.insert("furnace".into(), json!([c.lit_remaining, c.lit_total, c.cook_timer, c.cook_total]));
         }
+        // The song player: playing, ticks since the song started.
+        crate::container::BeKind::Jukebox => {
+            m.insert("jukebox".into(), json!([i32::from(c.song.is_some()), c.song.map_or(0, |s| s.1)]));
+        }
         _ => {}
     }
     Value::Object(m)
