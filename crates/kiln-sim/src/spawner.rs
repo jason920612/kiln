@@ -23,7 +23,6 @@ use kiln_blocks::{BlockPos as KBlockPos, Level};
 use kiln_entity::mob::{self, Category, MobKind};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
 use kiln_world::{Blocks, CellStore, ChunkPos};
-use std::collections::HashMap;
 
 /// `MobSpawnSettings.SpawnerData`: a type, its weight and its group size.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,7 +40,8 @@ pub(crate) struct SpawnerData {
 /// ([`Category::SPAWNING`] order), by biome network id.
 #[derive(Debug, Default)]
 pub(crate) struct SpawnTable {
-    biomes: HashMap<u16, [Vec<SpawnerData>; N]>,
+    /// By biome network id (looked up for every spawn attempt).
+    biomes: Vec<Option<[Vec<SpawnerData>; N]>>,
 }
 
 /// The number of spawning categories.
@@ -77,13 +77,17 @@ impl SpawnTable {
                     })
                     .unwrap_or_default()
             };
-            t.biomes.insert(id as u16, Category::SPAWNING.map(|c| list(c.name())));
+            let id = id as usize;
+            if t.biomes.len() <= id {
+                t.biomes.resize_with(id + 1, || None);
+            }
+            t.biomes[id] = Some(Category::SPAWNING.map(|c| list(c.name())));
         }
         Some(t)
     }
 
     fn list(&self, biome: u16, category: Category) -> &[SpawnerData] {
-        self.biomes.get(&biome).map_or(&[], |b| &b[cat_index(category)])
+        self.biomes.get(biome as usize).and_then(Option::as_ref).map_or(&[], |b| &b[cat_index(category)])
     }
 }
 
@@ -345,6 +349,7 @@ pub(crate) fn tick(
     if spawn_enemies {
         phantoms(level, players, spawns);
     }
+    let mut tq = std::time::Instant::now();
     let players: Vec<[f64; 3]> =
         players.iter().filter(|p| !p.disconnected && !p.dead && p.game_mode != 3).map(|p| p.pos).collect();
     if players.is_empty() {
@@ -439,6 +444,7 @@ pub(crate) fn tick(
         order,
         starts,
     };
+    crate::pt(11, &mut tq);
     // `createState`: mobs per category, persistent ones excluded.
     for e in &entities.list {
         let Some(m) = e.phys.as_deref().and_then(mob::data) else { continue };
@@ -455,6 +461,7 @@ pub(crate) fn tick(
     if categories.is_empty() {
         return;
     }
+    crate::pt(12, &mut tq);
     // `collectSpawningChunks`: loaded, ticking chunks with a player within 128 blocks.
     let mut chunks: Vec<(u64, ChunkPos)> = Vec::new();
     level.cells.for_each_cell(&mut |pos, cell| {
@@ -468,6 +475,7 @@ pub(crate) fn tick(
         }
     });
     chunks.sort_unstable();
+    crate::pt(13, &mut tq);
     // The categories whose local caps may bind are counted now, so the chunks below can be
     // looked at side by side.
     for &cat in &categories {
@@ -481,10 +489,12 @@ pub(crate) fn tick(
     // chunk sees (its caps), and spawns are rare: in turn, a chunk that spawned nothing and
     // whose caps still say the same is done; the others run again, so the outcome is the
     // serial one whatever the workers.
+    crate::pt(14, &mut tq);
     let speculated: Vec<Option<smallvec::SmallVec<[bool; N]>>> = {
         let (lvl, sp, cats, counts) = (&*level, &s, &categories, &start_counts);
         ctx.map_indexed_with(SPAWN_WINDOW, &chunks, |_, &(_, c)| speculate(lvl, sp, c, cats, counts, ticking))
     };
+    crate::pt(15, &mut tq);
     let mut spawned_any = false;
     for (&(_, c), guess) in chunks.iter().zip(speculated) {
         let global = |s: &Spawner, cat: Category| s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
