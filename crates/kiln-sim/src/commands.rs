@@ -672,6 +672,10 @@ impl Host for Sim {
         p.game_mode = mode as u8;
         const CHANGE_GAME_MODE: u8 = 3;
         p.send(packets::game_event(CHANGE_GAME_MODE, mode as u8 as f32));
+        // `ServerPlayer.setGameMode` into spectator: the shoulders' parrots fly off.
+        if mode == GameMode::Spectator {
+            p.remove_entities_on_shoulder(self.game_time);
+        }
         let pkt = crate::players::game_mode_update(p.uuid, mode as i32);
         self.broadcast(pkt);
         true

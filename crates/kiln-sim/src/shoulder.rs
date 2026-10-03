@@ -239,6 +239,34 @@ mod tests {
         assert_eq!(sim.entity_ids_of("minecraft:parrot").len(), 1);
     }
 
+    /// `ServerPlayer.setGameMode` (into spectator) and `ServerPlayer.die` both call
+    /// `removeEntitiesOnShoulder`: the parrots fly off, to live in the chunk (survival: not at
+    /// all while they sat down less than twenty ticks ago).
+    #[test]
+    fn parrots_leave_when_the_player_becomes_a_spectator_or_dies() {
+        for (command, label) in [("gamemode spectator Perch", "spectator"), ("kill Perch", "death")] {
+            let (mut sim, _client) = world();
+            {
+                let p = sim.players.get_mut(&1).unwrap();
+                p.shoulders = [Some(parrot(1)), Some(parrot(3))];
+                p.shoulder_time = -100;
+            }
+            assert!(sim.step([]));
+            assert!(sim.players[&1].shoulders.iter().all(Option::is_some), "{label}: nothing yet");
+            assert!(sim.step([ToSim::Console(command.into())]));
+            assert!(sim.step([]));
+            assert!(sim.players[&1].shoulders.iter().all(Option::is_none), "{label}: both parrots left");
+            let mut variants: Vec<i64> = sim
+                .entity_nbt()
+                .into_iter()
+                .filter(|t| t.get("id").and_then(Tag::as_str) == Some("minecraft:parrot"))
+                .filter_map(|t| t.get("Variant").and_then(Tag::as_i64))
+                .collect();
+            variants.sort();
+            assert_eq!(variants, [1, 3], "{label}: they are parrots of the world again");
+        }
+    }
+
     #[test]
     fn shoulder_parrots_are_saved_and_shown() {
         let (mut sim, _client) = world();

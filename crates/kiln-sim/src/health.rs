@@ -759,6 +759,8 @@ impl Player {
         self.sync_on_fire_flag();
         self.death_location = Some(self.pos.map(|c| c.floor() as i32));
         self.death_dim = self.dim;
+        // `ServerPlayer.die`: what sits on the shoulders flies off (before the loot drops).
+        self.remove_entities_on_shoulder(ctx.game_time);
         // `ServerPlayer.die`: unless `keepInventory` (or a spectator), the items with the curse of
         // vanishing are destroyed (`destroyVanishingCursedItems`, over the whole container:
         // items, armor, off hand), then `Inventory.dropAll` scatters the rest.
