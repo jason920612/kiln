@@ -367,6 +367,16 @@ fn main() {
         (bytes - bytes0) as f64 / n / 1e3,
         sim.state_hash()
     );
+    // What lives in the world at the end (natural spawns included), most common first.
+    let mut census: std::collections::BTreeMap<&str, usize> = Default::default();
+    for (kind, _) in sim.entities() {
+        *census.entry(kind.trim_start_matches("minecraft:")).or_default() += 1;
+    }
+    let mut census: Vec<_> = census.into_iter().collect();
+    census.sort_by_key(|&(k, n)| (std::cmp::Reverse(n), k));
+    let total: usize = census.iter().map(|(_, n)| n).sum();
+    let top: Vec<String> = census.iter().take(10).map(|(k, n)| format!("{k} {n}")).collect();
+    println!("entities at the end: {total} ({})", top.join(", "));
     if std::env::var_os("KILN_SINK_DIGEST").is_some() {
         println!("packet stream digest {:016x} ({} players)", churn.stream_digest(&walkers), walkers.len());
     }
