@@ -104,6 +104,8 @@ struct Args {
     /// `--entity-ticking serial|islands|tiles` and `--locator-interval n` (see `SimConfig`).
     entity_ticking: Option<kiln_sim::EntityTicking>,
     locator_interval: u32,
+    /// `--prewake-us n`: workers spin this long from each tick's start.
+    prewake_us: u64,
 }
 
 fn args() -> Args {
@@ -132,6 +134,7 @@ fn args() -> Args {
         churn: false,
         entity_ticking: None,
         locator_interval: 1,
+        prewake_us: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -157,6 +160,7 @@ fn args() -> Args {
             "--churn" => a.churn = true,
             "--entity-ticking" => a.entity_ticking = Some(kiln_sim::EntityTicking::parse(&value()).expect("serial, islands or tiles")),
             "--locator-interval" => a.locator_interval = value().parse().unwrap(),
+            "--prewake-us" => a.prewake_us = value().parse().unwrap(),
             "--day-time" => a.day_time = Some(value().parse().unwrap()),
             "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
@@ -179,6 +183,7 @@ fn main() {
         config.entity_ticking = t;
     }
     config.locator_interval = a.locator_interval;
+    config.prewake = std::time::Duration::from_micros(a.prewake_us);
     let us = std::time::Duration::from_micros;
     if let Some(v) = a.spin_us {
         config.pool.spin = us(v);

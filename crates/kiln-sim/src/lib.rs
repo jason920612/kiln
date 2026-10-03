@@ -175,6 +175,9 @@ pub struct SimConfig {
     /// The locator bar takes the movers' turns every this many ticks (1: every tick, as
     /// vanilla; more sends fewer, coarser waypoint updates).
     pub locator_interval: u32,
+    /// How long the idle workers keep spinning from the start of each tick (`TickPool::
+    /// prewake`; zero: they park between windows and pay the wake-up).
+    pub prewake: Duration,
     /// Where the data packs publish the feature flags and tags that logins send.
     pub data_sync: std::sync::Arc<kiln_link::DataSync>,
     /// Looks game profiles up for `fetchprofile` (the session service); without one only
@@ -240,6 +243,7 @@ impl SimConfig {
             keep_alive: true,
             entity_ticking: EntityTicking::Tiles,
             locator_interval: 1,
+            prewake: Duration::ZERO,
             data_sync: Default::default(),
             profile_lookup: None,
             replies: None,
@@ -1213,6 +1217,11 @@ impl Sim {
             mark = now;
         };
 
+        // The workers spin through the tick's windows instead of parking between them
+        // (`SimConfig::prewake`: CPU for latency).
+        if !self.config.prewake.is_zero() {
+            self.pool.prewake(self.config.prewake);
+        }
         // `ServerTickRateManager.tick`: whether the levels run this tick.
         self.world.tick_rate.tick();
         // B0: connection events, chunks, topology, joins, membership.

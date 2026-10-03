@@ -219,7 +219,7 @@ struct Group {
 
 /// The tiles of one tick, one batch per colour: each centre tile with its neighbourhood. An
 /// entity is in its root vehicle's tile, so riders tick with their vehicle.
-fn tile_batches(list: &[Entity], players: &[&mut Player]) -> Vec<Vec<Group>> {
+fn tile_batches(list: &[Entity], players: &[&mut Player], island: &[usize], island_players: &[usize]) -> [Vec<Group>; 9] {
     let tile = |p: [f64; 3]| ((p[0] / TILE).floor() as i32, (p[2] / TILE).floor() as i32);
     let root = |mut i: usize| {
         for _ in 0..8 {
@@ -232,22 +232,21 @@ fn tile_batches(list: &[Entity], players: &[&mut Player]) -> Vec<Vec<Group>> {
         i
     };
     let mut ents: crate::FastMap<(i32, i32), Vec<usize>> = Default::default();
-    let mut at: Vec<(i32, i32)> = Vec::with_capacity(list.len());
-    for i in 0..list.len() {
+    let mut at: crate::FastMap<usize, (i32, i32)> = Default::default();
+    for &i in island {
         let t = tile(list[root(i)].pos);
         ents.entry(t).or_default().push(i);
-        at.push(t);
+        at.insert(i, t);
     }
     let mut pls: crate::FastMap<(i32, i32), Vec<usize>> = Default::default();
-    for (j, p) in players.iter().enumerate() {
-        pls.entry(tile(p.pos)).or_default().push(j);
+    for &j in island_players {
+        pls.entry(tile(players[j].pos)).or_default().push(j);
     }
     let mut centres: Vec<(i32, i32)> = ents.keys().copied().collect();
     centres.sort_unstable();
-    let mut batches: Vec<Vec<Group>> = Vec::new();
-    for colour in 0..9 {
-        let mut batch = Vec::new();
-        for &c in centres.iter().filter(|c| c.0.rem_euclid(3) * 3 + c.1.rem_euclid(3) == colour) {
+    let mut batches: [Vec<Group>; 9] = Default::default();
+    for (colour, batch) in batches.iter_mut().enumerate() {
+        for &c in centres.iter().filter(|c| (c.0.rem_euclid(3) * 3 + c.1.rem_euclid(3)) as usize == colour) {
             let mut g = Group { ents: Vec::new(), players: Vec::new(), ticks: None };
             for dx in -1..=1 {
                 for dz in -1..=1 {
@@ -258,11 +257,8 @@ fn tile_batches(list: &[Entity], players: &[&mut Player]) -> Vec<Vec<Group>> {
             }
             g.ents.sort_unstable();
             g.players.sort_unstable();
-            g.ticks = Some(g.ents.iter().map(|&i| at[i] == c).collect());
+            g.ticks = Some(g.ents.iter().map(|&i| at[&i] == c).collect());
             batch.push(g);
-        }
-        if !batch.is_empty() {
-            batches.push(batch);
         }
     }
     batches
@@ -286,10 +282,25 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
     let n = sim.list.len();
     let largest = islands.iter().map(|g| g.0.len()).max().unwrap_or(0);
     let mut next = sim.next_placeholder;
-    let batches = if islands.len() >= 2 && (largest * ISLAND_SHARE <= n || mode == crate::EntityTicking::Islands) {
+    // Islands with more than their share of the entities tick in tiles (their own entities and
+    // players only, so no tile reaches another island), the others whole, in the first batch.
+    let batches: Vec<Vec<Group>> = if largest * ISLAND_SHARE <= n && islands.len() >= 2 {
         vec![islands.into_iter().map(|(ents, players)| Group { ents, players, ticks: None }).collect()]
     } else if mode == crate::EntityTicking::Tiles {
-        tile_batches(sim.list, sim.players)
+        let mut batches: Vec<Vec<Group>> = (0..9).map(|_| Vec::new()).collect();
+        for (ents, players) in islands {
+            if ents.len() * ISLAND_SHARE > n {
+                for (colour, groups) in tile_batches(sim.list, sim.players, &ents, &players).into_iter().enumerate() {
+                    batches[colour].extend(groups);
+                }
+            } else {
+                batches[0].push(Group { ents, players, ticks: None });
+            }
+        }
+        batches.retain(|b| !b.is_empty());
+        batches
+    } else if islands.len() >= 2 {
+        vec![islands.into_iter().map(|(ents, players)| Group { ents, players, ticks: None }).collect()]
     } else {
         return false;
     };

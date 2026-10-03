@@ -3095,9 +3095,8 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize]) -> Tracked
 /// list order.
 fn deliver_tracking(run: &mut [&mut Player], encoded: &[Tracked]) {
     let (Some(first), Some(last)) = (run.first().map(|p| p.conn), run.last().map(|p| p.conn)) else { return };
-    let send = |run: &mut [&mut Player], to: &[ConnId], packets: &mut dyn Iterator<Item = &Bytes>| {
-        let packets: SmallVec<[&Bytes; 8]> = packets.collect();
-        if packets.is_empty() {
+    let send = |run: &mut [&mut Player], to: &[ConnId], packets: &[Bytes]| {
+        if packets.is_empty() || to.is_empty() {
             return;
         }
         let from = to.partition_point(|&v| v < first);
@@ -3108,17 +3107,17 @@ fn deliver_tracking(run: &mut [&mut Player], encoded: &[Tracked]) {
                 j += 1;
             }
             if j < run.len() && run[j].conn == v {
-                run[j].outbox.extend(packets.iter().map(|p| (*p).clone()));
+                run[j].outbox.extend(packets.iter().cloned());
             }
         }
     };
     for t in encoded {
-        send(run, &t.added, &mut t.boss_add.iter());
-        send(run, &t.progress_to, &mut t.boss_progress.iter());
-        send(run, &t.removed, &mut t.boss_remove.iter());
-        send(run, &t.added, &mut t.spawn.iter());
-        send(run, &t.removed, &mut t.despawn.iter());
-        send(run, &t.viewers, &mut t.packets.iter());
+        send(run, &t.added, t.boss_add.as_slice());
+        send(run, &t.progress_to, t.boss_progress.as_slice());
+        send(run, &t.removed, t.boss_remove.as_slice());
+        send(run, &t.added, &t.spawn);
+        send(run, &t.removed, t.despawn.as_slice());
+        send(run, &t.viewers, &t.packets);
     }
 }
 
