@@ -125,13 +125,13 @@ fn close(a: [f64; 3], b: [f64; 3]) -> bool {
 }
 
 /// The islands: (entity indices, player indices), ordered by their first entity. Nodes in one
-/// cell of half the link distance are always close; nodes in neighbouring cells are compared
+/// cell of the link distance are always close; nodes in neighbouring cells are compared
 /// until one close pair (with an entity in it) joins the cells' sets.
 fn partition(list: &[Entity], players: &[&mut Player]) -> Vec<(Vec<usize>, Vec<usize>)> {
     let (n, m) = (list.len(), players.len());
     let pos = |k: usize| if k < n { list[k].pos } else { players[k - n].pos };
     let mut sets = Sets((0..(n + m) as u32).collect());
-    const CELL: f64 = LINK / 2.0;
+    const CELL: f64 = LINK;
     let cell_of = |p: [f64; 3]| ((p[0] / CELL).floor() as i32, (p[1] / CELL).floor() as i32, (p[2] / CELL).floor() as i32);
     // Cell → (entities, players).
     let mut cells: crate::FastMap<(i32, i32, i32), (Vec<usize>, Vec<usize>)> = Default::default();
@@ -153,9 +153,9 @@ fn partition(list: &[Entity], players: &[&mut Player]) -> Vec<(Vec<usize>, Vec<u
         if ents.is_empty() {
             continue;
         }
-        for dx in -2..=2 {
-            for dy in -2..=2 {
-                for dz in -2..=2 {
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
                     let other = (key.0 + dx, key.1 + dy, key.2 + dz);
                     if other == *key {
                         continue;
