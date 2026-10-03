@@ -227,12 +227,12 @@ pub struct NoiseConfig {
     pub threads: usize,
 }
 
-/// The tick pool's size on a machine with `cores` logical cores: all but a fifth of them (at
-/// least one) for the network, generation and storage threads, at most 13. wp40: with the tick
-/// threads above normal priority, 13 of 16 beat 7 (1,000 players 4.28 -> 3.75 ms, p99 6.1 ->
-/// 4.8; spread over 20 regions 4.17 -> 3.39) for about half again the CPU per tick.
+/// The tick pool's size on a machine with `cores` logical cores: it follows the machine, and
+/// leaves a quarter of the cores (at least two) to the rest of the machine (the network,
+/// generation and storage threads, and other programs running there): 16 cores tick on 12, 8 on
+/// 6, 4 on 2. `KILN_TICK_THREADS` overrides. Idle workers park, so a light tick uses fewer.
 pub fn default_workers(cores: usize) -> usize {
-    cores.saturating_sub((cores / 5).max(1)).clamp(1, 13)
+    cores.saturating_sub((cores / 4).max(2)).max(1)
 }
 
 impl SimConfig {
@@ -247,11 +247,10 @@ impl SimConfig {
             online_mode: false,
             pool: {
                 let mut pool = kiln_sched::PoolConfig::new(default_workers(cores));
-                // wp40: the tick threads above other programs' (on a busy machine a worker that
-                // loses its core mid-window holds up the tick: 1,000 players p99 9.6 -> 6.6 ms
-                // with 7 workers).
-                // `KILN_TICK_PRIORITY` overrides (0: normal).
-                pool.priority = std::env::var("KILN_TICK_PRIORITY").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+                // Normal priority: the server shares the machine with its other programs.
+                // `KILN_TICK_PRIORITY` raises it (1, 2: above normal, highest; wp40 measured the
+                // 1,000-player p99 9.6 -> 6.6 ms at 2 on a busy desktop).
+                pool.priority = std::env::var("KILN_TICK_PRIORITY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
                 pool
             },
             unified_regions: false,
