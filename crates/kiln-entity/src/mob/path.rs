@@ -372,11 +372,11 @@ struct Search<'a> {
     e: &'a Entity,
     m: &'a MobData,
     nodes: Vec<Node>,
-    by_hash: FastMap<i32, u32>,
-    types: FastMap<i64, PathType>,
+    /// The node, the path type and the floor level of every position the search looked at.
+    pos: PosTable,
+    /// Tells this search's nodes in `pos` from those of earlier searches (the table may be shared).
+    epoch: u32,
     collisions: FastMap<[u64; 6], bool>,
-    /// `getFloorLevel` by block (the level does not change during a search).
-    floors: FastMap<i64, f64>,
     /// `Creaking.HomeNodeEvaluator`'s home (`path_home`), read once.
     home: Option<BlockPos>,
     width: i32,
@@ -398,6 +398,9 @@ struct Search<'a> {
     frog: bool,
     /// `PathfindingContext.mobPosition`.
     mob_pos: BlockPos,
+    /// [`Search::malus`] by `PathType` ordinal as it was asked for (NaN: not yet), since the
+    /// mob's maluses do not change during a search and are read many times for every node.
+    malus_of: [std::cell::Cell<f32>; 27],
     heap: Vec<u32>,
     /// The tables above belong to a [`SharedTables`] session and stay filled.
     shared: bool,
@@ -408,11 +411,88 @@ struct Search<'a> {
 /// tables for each cost more than the searching).
 struct Spare {
     nodes: Vec<Node>,
-    by_hash: FastMap<i32, u32>,
-    types: FastMap<i64, PathType>,
+    pos: PosTable,
     collisions: FastMap<[u64; 6], bool>,
-    floors: FastMap<i64, f64>,
     heap: Vec<u32>,
+}
+
+/// What a search knows of one position (the table keeps these in blocks of 8x8x8 positions, so
+/// a node and its neighbours share one hash lookup instead of paying three each: the node, its
+/// path type and its floor level).
+#[derive(Clone, Copy)]
+struct PosRec {
+    /// `getFloorLevel` (NaN: not computed; the level does not change during a search).
+    floor: f64,
+    /// The node of the search `node_epoch`.
+    node: u32,
+    node_epoch: u32,
+}
+
+/// No path type computed yet.
+const NO_TYPE: u8 = u8::MAX;
+
+struct PosBlock {
+    /// `PathType` ordinals ([`NO_TYPE`]: not computed).
+    ty: [u8; 512],
+    rec: [PosRec; 512],
+}
+
+impl PosBlock {
+    const EMPTY: PosBlock = PosBlock { ty: [NO_TYPE; 512], rec: [PosRec { floor: f64::NAN, node: 0, node_epoch: 0 }; 512] };
+}
+
+/// Positions by block of 8x8x8 with the last block looked at remembered: the lookups of a search
+/// stay inside a few blocks, so most of them are an array index.
+struct PosTable {
+    map: FastMap<u64, u32>,
+    blocks: Vec<PosBlock>,
+    last_key: u64,
+    last: u32,
+}
+
+impl Default for PosTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PosTable {
+    fn new() -> PosTable {
+        PosTable { map: FastMap::default(), blocks: Vec::new(), last_key: u64::MAX, last: 0 }
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.blocks.clear();
+        self.last_key = u64::MAX;
+    }
+
+    /// (block, offset in it) of the position, adding the block if it is new.
+    #[inline]
+    fn locate(&mut self, x: i32, y: i32, z: i32) -> (usize, usize) {
+        let key = ((x >> 3) as u64 & 0x3ff_ffff) << 38 | ((z >> 3) as u64 & 0x3ff_ffff) << 12 | ((y >> 3) as u64 & 0xfff);
+        let off = ((y & 7) << 6 | (z & 7) << 3 | (x & 7)) as usize;
+        if key == self.last_key {
+            return (self.last as usize, off);
+        }
+        let idx = match self.map.get(&key) {
+            Some(&i) => i,
+            None => {
+                let i = self.blocks.len() as u32;
+                self.blocks.push(PosBlock::EMPTY);
+                self.map.insert(key, i);
+                i
+            }
+        };
+        self.last_key = key;
+        self.last = idx;
+        (idx as usize, off)
+    }
+}
+
+thread_local! {
+    /// Numbers the searches of a thread (`Search::epoch`).
+    static EPOCH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
 }
 
 thread_local! {
@@ -425,10 +505,10 @@ thread_local! {
 /// and the mob alone, not on where the search starts or ends.
 #[derive(Default)]
 struct Shared {
-    types: FastMap<i64, PathType>,
+    pos: PosTable,
     collisions: FastMap<[u64; 6], bool>,
-    floors: FastMap<i64, f64>,
 }
+
 
 /// Keeps the per-position tables of the searches started while it lives (a mob that tries
 /// hundreds of jump targets in a tick searches from the same spot each time). Only for searches of
@@ -452,27 +532,29 @@ impl<'a> Search<'a> {
     fn new(level: &'a dyn EntityLevel, e: &'a Entity, m: &'a MobData) -> Search<'a> {
         let sp = SPARE.with(|s| s.borrow_mut().pop()).unwrap_or_else(|| Spare {
             nodes: Vec::with_capacity(256),
-            by_hash: FastMap::with_capacity_and_hasher(256, Default::default()),
-            types: FastMap::with_capacity_and_hasher(256, Default::default()),
+            pos: PosTable::new(),
             collisions: FastMap::default(),
-            floors: FastMap::with_capacity_and_hasher(256, Default::default()),
             heap: Vec::with_capacity(64),
         });
         // The shared tables replace the emptied ones (which go back with the rest on recycle).
         let shared = SHARED.with(|s| s.borrow_mut().as_mut().map(std::mem::take));
-        let (types, collisions, floors, is_shared) = match shared {
-            Some(sh) => (sh.types, sh.collisions, sh.floors, true),
-            None => (sp.types, sp.collisions, sp.floors, false),
+        let (pos, collisions, is_shared) = match shared {
+            Some(sh) => (sh.pos, sh.collisions, true),
+            None => (sp.pos, sp.collisions, false),
         };
+        let epoch = EPOCH.with(|e| {
+            let v = e.get().wrapping_add(1).max(1);
+            e.set(v);
+            v
+        });
         Search {
             level,
             e,
             m,
             nodes: sp.nodes,
-            by_hash: sp.by_hash,
-            types,
+            pos,
+            epoch,
             collisions,
-            floors,
             shared: is_shared,
             home: if m.nav.amphibious { None } else { m.kind.ext().and_then(|k| k.path_home(m)) },
             width: floor((e.width + 1.0) as f64),
@@ -488,6 +570,7 @@ impl<'a> Search<'a> {
             fly: m.nav.fly,
             frog: m.nav.frog,
             mob_pos: e.block_position(),
+            malus_of: [const { std::cell::Cell::new(f32::NAN) }; 27],
             heap: sp.heap,
         }
     }
@@ -496,23 +579,21 @@ impl<'a> Search<'a> {
     /// lets them go).
     fn recycle(mut self) {
         if self.shared {
-            let (types, collisions, floors) = (std::mem::take(&mut self.types), std::mem::take(&mut self.collisions), std::mem::take(&mut self.floors));
+            let (pos, collisions) = (std::mem::take(&mut self.pos), std::mem::take(&mut self.collisions));
             SHARED.with(|s| {
                 if let Some(sh) = s.borrow_mut().as_mut() {
-                    *sh = Shared { types, collisions, floors };
+                    *sh = Shared { pos, collisions };
                 }
             });
         }
-        if self.nodes.capacity() > 16384 {
+        if self.nodes.capacity() > 16384 || self.pos.blocks.capacity() > 256 {
             return;
         }
         self.nodes.clear();
-        self.by_hash.clear();
-        self.types.clear();
+        self.pos.clear();
         self.collisions.clear();
-        self.floors.clear();
         self.heap.clear();
-        let sp = Spare { nodes: self.nodes, by_hash: self.by_hash, types: self.types, collisions: self.collisions, floors: self.floors, heap: self.heap };
+        let sp = Spare { nodes: self.nodes, pos: self.pos, collisions: self.collisions, heap: self.heap };
         SPARE.with(|s| {
             let mut s = s.borrow_mut();
             if s.len() < 4 {
@@ -521,14 +602,19 @@ impl<'a> Search<'a> {
         });
     }
 
+    /// `Node` of a position, made on first use (vanilla's `Long2ObjectOpenHashMap` keyed by the node hash: two
+    /// positions share a node only when their hashes agree, which needs a search spanning 256 blocks
+    /// of height or 32768 of width).
     fn node(&mut self, x: i32, y: i32, z: i32) -> u32 {
-        let h = node_hash(x, y, z);
-        if let Some(&i) = self.by_hash.get(&h) {
-            return i;
+        let (b, off) = self.pos.locate(x, y, z);
+        let r = &mut self.pos.blocks[b].rec[off];
+        if r.node_epoch == self.epoch {
+            return r.node;
         }
         let i = self.nodes.len() as u32;
+        r.node = i;
+        r.node_epoch = self.epoch;
         self.nodes.push(Node::new(x, y, z));
-        self.by_hash.insert(h, i);
         i
     }
 
@@ -540,7 +626,18 @@ impl<'a> Search<'a> {
         &mut self.nodes[i as usize]
     }
 
+    #[inline]
     fn malus(&self, t: PathType) -> f32 {
+        let known = self.malus_of[t as usize].get();
+        if !known.is_nan() {
+            return known;
+        }
+        let v = self.malus_uncached(t);
+        self.malus_of[t as usize].set(v);
+        v
+    }
+
+    fn malus_uncached(&self, t: PathType) -> f32 {
         // `AmphibiousNodeEvaluator.prepare`: walkable 6 and water border 4 while searching.
         if self.amphibious {
             match t {
@@ -551,6 +648,7 @@ impl<'a> Search<'a> {
         }
         malus(self.m, t)
     }
+
 
     /// `getPathType(context, x, y, z)`: the static type, or the amphibious evaluator's (water
     /// next to a blocked block is a water border).
@@ -585,12 +683,13 @@ impl<'a> Search<'a> {
     }
 
     fn cached_type(&mut self, x: i32, y: i32, z: i32) -> PathType {
-        let key = BlockPos::new(x, y, z).as_long();
-        if let Some(&t) = self.types.get(&key) {
-            return t;
+        let (b, off) = self.pos.locate(x, y, z);
+        let t = self.pos.blocks[b].ty[off];
+        if t != NO_TYPE {
+            return PathType::ALL[t as usize];
         }
         let t = if self.swim { swim_type_of_mob(self.level, x, y, z, self.width, self.height, self.depth) } else { self.type_of_mob(x, y, z) };
-        self.types.insert(key, t);
+        self.pos.blocks[b].ty[off] = t as u8;
         t
     }
 
@@ -665,17 +764,19 @@ impl<'a> Search<'a> {
 
     fn floor_level(&mut self, pos: BlockPos) -> f64 {
         crate::prof!("path", "floor_level");
-        let key = pos.as_long();
-        if let Some(&f) = self.floors.get(&key) {
-            return f;
+        let (b, off) = self.pos.locate(pos.x, pos.y, pos.z);
+        let known = self.pos.blocks[b].rec[off].floor;
+        if !known.is_nan() {
+            return known;
         }
         let f = if (self.can_float || self.amphibious) && crate::fluid::fluid_at(self.level, pos).kind.is_water() {
             pos.y as f64 + 0.5
         } else {
             floor_level(self.level, pos)
         };
-        self.floors.insert(key, f);
+        self.pos.blocks[b].rec[off].floor = f;
         f
+
     }
 
     fn has_collisions(&mut self, b: &Aabb) -> bool {

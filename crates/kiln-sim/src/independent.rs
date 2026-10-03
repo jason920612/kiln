@@ -25,7 +25,15 @@
 //! players. A server running `#minecraft:tick` functions or plugins never detaches regions
 //! (they would need a rendezvous every tick, Q27).
 //!
+//! **Stacks.** A vehicle and everything that rides it (players, jockeys, leashed mobs near them,
+//! a cart whose menu a player has open) stand in one region, so they are lent and come back
+//! together; nothing of a stack waits for another region. What moves a stack across regions or
+//! levels (the `/tp` command on an entity or a rider, a portal trip with riders) is serial work
+//! and meets every lent region first, like any console command. `tests/region_stacks.rs` checks
+//! that riding, leads and menus survive this (invariants only: hashes vary here).
+//!
 //! **Not deterministic.** How many ticks a lent region misses depends on wall time, so
+
 //! independent mode is not reproducible and state hashes vary; lockstep stays the default
 //! and the determinism tests run in lockstep. Inspecting the world (`state_hash`,
 //! `block_at`, ...) sees lent regions as absent: call [`Sim::rendezvous`] first.
