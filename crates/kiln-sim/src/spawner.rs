@@ -23,7 +23,6 @@ use kiln_blocks::{BlockPos as KBlockPos, Level};
 use kiln_entity::mob::{self, Category, MobKind};
 use kiln_javamath::random::{LegacyRandom, RandomSource};
 use kiln_world::{Blocks, CellStore, ChunkPos};
-use std::collections::HashMap;
 
 /// `MobSpawnSettings.SpawnerData`: a type, its weight and its group size.
 #[derive(Clone, Debug, PartialEq)]
@@ -41,7 +40,8 @@ pub(crate) struct SpawnerData {
 /// ([`Category::SPAWNING`] order), by biome network id.
 #[derive(Debug, Default)]
 pub(crate) struct SpawnTable {
-    biomes: HashMap<u16, [Vec<SpawnerData>; N]>,
+    /// By biome network id (looked up for every spawn attempt).
+    biomes: Vec<Option<[Vec<SpawnerData>; N]>>,
 }
 
 /// The number of spawning categories.
@@ -77,13 +77,17 @@ impl SpawnTable {
                     })
                     .unwrap_or_default()
             };
-            t.biomes.insert(id as u16, Category::SPAWNING.map(|c| list(c.name())));
+            let id = id as usize;
+            if t.biomes.len() <= id {
+                t.biomes.resize_with(id + 1, || None);
+            }
+            t.biomes[id] = Some(Category::SPAWNING.map(|c| list(c.name())));
         }
         Some(t)
     }
 
     fn list(&self, biome: u16, category: Category) -> &[SpawnerData] {
-        self.biomes.get(&biome).map_or(&[], |b| &b[cat_index(category)])
+        self.biomes.get(biome as usize).and_then(Option::as_ref).map_or(&[], |b| &b[cat_index(category)])
     }
 }
 
@@ -117,24 +121,54 @@ fn chunk_random(seed: i64, game_time: i64, c: ChunkPos) -> LegacyRandom {
 /// The spawner's view of a region.
 struct Spawner<'a> {
     pos: Vec<[f64; 3]>,
-    /// Per player, mobs per category nearby (`LocalMobCapCalculator.MobCounts`).
+    /// Per player, mobs per category nearby (`LocalMobCapCalculator.MobCounts`), for the
+    /// categories counted (`known`; see [`Spawner::local_ok`]).
     local: Vec<[i32; N]>,
+    /// The counted mobs: chunk and category index.
+    mobs: Vec<(ChunkPos, usize)>,
+    /// Per stand chunk, mobs per category in the chunks at most 8 away (chessboard): every
+    /// mob close to one of its players is among them, so this bounds their local counts.
+    upper: Vec<[i32; N]>,
+    /// Categories whose local counts are made (all players at once).
+    known: [bool; N],
+    /// Per counted category and stand chunk, the players that had room when last looked at.
+    room: [Vec<Vec<usize>>; N],
     /// Players whose spawning squares (8 chunks around them) overlap form a cluster; each
     /// cluster has vanilla's category cap for its chunks, so how players are grouped into
     /// regions does not matter. Per cluster, mobs per category and the cap.
     counts: Vec<[i32; N]>,
     caps: Vec<[i32; N]>,
     table: &'a SpawnTable,
-    /// The distinct chunks players stand in and each one's cluster.
+    /// The distinct chunks players stand in (sorted) and each one's cluster.
     stands: Vec<ChunkPos>,
     stand_cluster: Vec<usize>,
-    /// Players by the chunk they stand in, for distance checks that need only whether some
-    /// player is within a radius (a crowd stands in a few chunks).
-    by_chunk: std::collections::HashMap<ChunkPos, Vec<usize>>,
+    /// The players standing in `stands[k]`: `order[starts[k]..starts[k + 1]]`. Distance checks
+    /// look only at the players of stand chunks close enough to matter (a crowd stands in a
+    /// few chunks), each checked exactly as a scan over all players would.
+    order: Vec<usize>,
+    starts: Vec<usize>,
+    /// The bounds (min, max corners) of each stand chunk's players' positions.
+    boxes: Vec<([f64; 3], [f64; 3])>,
 }
 
 fn cat_index(c: Category) -> usize {
     CATEGORIES.iter().position(|&x| x == c).unwrap_or(0)
+}
+
+/// The least and the greatest squared distance from `at` to the points of `b` (min, max
+/// corners), over `axes` (indices into x, y, z), summed in that order:
+/// for every point in the box, `(p - at)²` summed the same way lies between them, rounding
+/// included (each step is monotonic).
+fn box_distances(b: &([f64; 3], [f64; 3]), at: [f64; 3], axes: &[usize]) -> (f64, f64) {
+    let (mut near, mut far) = (0.0, 0.0);
+    for &a in axes {
+        let (lo, hi) = (b.0[a], b.1[a]);
+        let n = if at[a] < lo { lo - at[a] } else if at[a] > hi { at[a] - hi } else { 0.0 };
+        let f = (at[a] - lo).abs().max((hi - at[a]).abs());
+        near += n * n;
+        far += f * f;
+    }
+    (near, far)
 }
 
 /// Chunk distance (chessboard) at most 8 around a player's chunk: `getPlayersCloseForSpawning`
@@ -148,30 +182,126 @@ impl Spawner<'_> {
     /// The cluster whose spawning squares hold chunk `c` (players within 8 chunks of one
     /// chunk are all in one cluster, so any stand chunk that close tells).
     fn cluster(&self, c: ChunkPos) -> Option<usize> {
-        self.stands.iter().position(|pc| (pc.x - c.x).abs() <= 8 && (pc.z - c.z).abs() <= 8).map(|k| self.stand_cluster[k])
+        self.stands_near(c, 8).next().map(|k| self.stand_cluster[k])
     }
 
-    /// Whether some player is within `sqrt(r2)` blocks of (`x`, `y`, `z`): the players of the
-    /// chunks that close, each checked exactly as a scan over all players would.
+    /// The stand chunks at most `reach` chunks (chessboard) from `c`, in order (`stands` is
+    /// sorted by x first, so only the run with x in range is looked at).
+    fn stands_near(&self, c: ChunkPos, reach: i32) -> impl Iterator<Item = usize> + '_ {
+        let lo = self.stands.partition_point(|s| s.x < c.x - reach);
+        let hi = self.stands.partition_point(|s| s.x <= c.x + reach);
+        (lo..hi.max(lo)).filter(move |&k| (self.stands[k].z - c.z).abs() <= reach)
+    }
+
+    /// The players standing in chunks at most `reach` chunks (chessboard) from `c`.
+    fn players_near(&self, c: ChunkPos, reach: i32) -> impl Iterator<Item = usize> + '_ {
+        self.stands_near(c, reach).flat_map(|k| self.order[self.starts[k]..self.starts[k + 1]].iter().copied())
+    }
+
+    /// The players [`close_for_spawning`] to `c`: only players within 8 chunks can be (a
+    /// player 9 chunks away is at least 136 blocks from the chunk's centre).
+    fn close_players(&self, c: ChunkPos) -> impl Iterator<Item = usize> + '_ {
+        self.players_near(c, 8).filter(move |&i| close_for_spawning(self.pos[i], c))
+    }
+
+    /// Whether some player is within `sqrt(r2)` blocks of (`x`, `y`, `z`).
     fn player_within(&self, x: f64, y: f64, z: f64, r2: f64) -> bool {
         // |dx| <= r moves the chunk by at most ceil(r / 16).
         let reach = (r2.sqrt().ceil() as i32 + 15) / 16;
         let c = ChunkPos::of_block(x.floor() as i32, z.floor() as i32);
-        (c.x - reach..=c.x + reach).any(|cx| {
-            (c.z - reach..=c.z + reach).any(|cz| {
-                self.by_chunk.get(&ChunkPos::new(cx, cz)).is_some_and(|ps| {
-                    ps.iter().any(|&i| {
-                        let p = self.pos[i];
-                        (p[0] - x).powi(2) + (p[1] - y).powi(2) + (p[2] - z).powi(2) <= r2
-                    })
-                })
+        let at = [x, y, z];
+        self.stands_near(c, reach).any(|k| {
+            // The stand's box first: all its players beyond reach, or all within it.
+            let (near, far) = box_distances(&self.boxes[k], at, &[0, 1, 2]);
+            if near > r2 {
+                return false;
+            }
+            if far <= r2 {
+                return true;
+            }
+            self.order[self.starts[k]..self.starts[k + 1]].iter().any(|&i| {
+                let p = self.pos[i];
+                (p[0] - x).powi(2) + (p[1] - y).powi(2) + (p[2] - z).powi(2) <= r2
             })
         })
     }
 
-    fn local_ok(&self, c: ChunkPos, cat: Category) -> bool {
+    /// Whether some player is [`close_for_spawning`] to `c`.
+    fn any_close(&self, c: ChunkPos) -> bool {
+        let centre = [c.x as f64 * 16.0 + 8.0, 0.0, c.z as f64 * 16.0 + 8.0];
+        self.stands_near(c, 8).any(|k| {
+            let (near, far) = box_distances(&self.boxes[k], centre, &[0, 2]);
+            if near >= 16384.0 {
+                return false;
+            }
+            if far < 16384.0 {
+                return true;
+            }
+            self.order[self.starts[k]..self.starts[k + 1]].iter().any(|&i| close_for_spawning(self.pos[i], c))
+        })
+    }
+
+    /// `LocalMobCapCalculator.canSpawn`: some player close to `c` has room for `cat`. While
+    /// the stand chunks within 8 of `c` bound their players' counts below the cap, any close
+    /// player has room; else the category's counts are made (once) and only the players
+    /// with room are looked at.
+    fn local_ok(&mut self, c: ChunkPos, cat: Category) -> bool {
         let i = cat_index(cat);
-        self.pos.iter().zip(&self.local).any(|(p, n)| close_for_spawning(*p, c) && n[i] < cat.max_instances())
+        let max = cat.max_instances();
+        if !self.known[i] {
+            if self.stands_near(c, 8).all(|k| self.upper[k][i] < max) {
+                return self.any_close(c);
+            }
+            self.count_category(i, max);
+        }
+        let near: smallvec::SmallVec<[usize; 32]> = self.stands_near(c, 8).collect();
+        for k in near {
+            let room = &mut self.room[i][k];
+            // Players that filled up since stay out.
+            room.retain(|&p| self.local[p][i] < max);
+            if room.iter().any(|&p| close_for_spawning(self.pos[p], c)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// [`Spawner::local_ok`] without counting: `None` if it would need counts not made yet.
+    fn local_ok_now(&self, c: ChunkPos, cat: Category) -> Option<bool> {
+        let i = cat_index(cat);
+        let max = cat.max_instances();
+        if !self.known[i] {
+            return self.stands_near(c, 8).all(|k| self.upper[k][i] < max).then(|| self.any_close(c));
+        }
+        Some(self.stands_near(c, 8).any(|k| self.room[i][k].iter().any(|&p| self.local[p][i] < max && close_for_spawning(self.pos[p], c))))
+    }
+
+    /// Every player's local count of category index `i`, and the players with room per stand.
+    fn count_category(&mut self, i: usize, max: i32) {
+        self.known[i] = true;
+        let mut chunks: Vec<ChunkPos> = self.mobs.iter().filter(|&&(_, k)| k == i).map(|&(c, _)| c).collect();
+        chunks.sort_unstable();
+        // Distinct mob chunks with their mob counts.
+        let mut weighted: Vec<(ChunkPos, i32)> = Vec::new();
+        for c in chunks {
+            match weighted.last_mut() {
+                Some((last, n)) if *last == c => *n += 1,
+                _ => weighted.push((c, 1)),
+            }
+        }
+        self.room[i] = vec![Vec::new(); self.stands.len()];
+        for k in 0..self.stands.len() {
+            let sc = self.stands[k];
+            let near: Vec<(ChunkPos, i32)> = weighted.iter().copied().filter(|(c, _)| (sc.x - c.x).abs() <= 8 && (sc.z - c.z).abs() <= 8).collect();
+            for &p in &self.order[self.starts[k]..self.starts[k + 1]] {
+                let at = self.pos[p];
+                let n = near.iter().filter(|(c, _)| close_for_spawning(at, *c)).map(|(_, n)| n).sum::<i32>();
+                self.local[p][i] = n;
+                if n < max {
+                    self.room[i][k].push(p);
+                }
+            }
+        }
     }
 
     fn add(&mut self, c: ChunkPos, cat: Category) {
@@ -183,16 +313,31 @@ impl Spawner<'_> {
         if let Some(k) = self.cluster(c) {
             self.counts[k][i] += 1;
         }
-        for (p, n) in self.pos.iter().zip(self.local.iter_mut()) {
-            if close_for_spawning(*p, c) {
-                n[i] += 1;
+        self.mobs.push((c, i));
+        let near: smallvec::SmallVec<[usize; 32]> = self.stands_near(c, 8).collect();
+        for k in near {
+            self.upper[k][i] += 1;
+        }
+        // Counted players keep their counts.
+        if self.known[i] {
+            let close: smallvec::SmallVec<[usize; 64]> = self.close_players(c).collect();
+            for p in close {
+                self.local[p][i] += 1;
             }
         }
     }
 }
 
 /// One tick of natural spawning in a region (`ServerChunkCache.tickChunks`' spawning part).
-pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut Player], ticking: &Ticking, spawns: &mut Vec<Spawn>) {
+#[inline(never)]
+pub(crate) fn tick(
+    level: &mut RegionLevel,
+    entities: &Entities,
+    players: &[&mut Player],
+    ticking: &Ticking,
+    spawns: &mut Vec<Spawn>,
+    ctx: &kiln_sched::Ctx<'_>,
+) {
     let env = level.env;
     let rules = env.mobs;
     let Some(table) = env.spawn_table.clone() else { return };
@@ -238,30 +383,65 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     ids.sort_unstable();
     ids.dedup();
     let stand_cluster: Vec<usize> = roots.iter().map(|r| ids.binary_search(r).unwrap()).collect();
-    let mut by_chunk: std::collections::HashMap<ChunkPos, Vec<usize>> = Default::default();
-    for (i, p) in players.iter().enumerate() {
-        by_chunk.entry(chunk_of(p)).or_default().push(i);
-    }
-    // `getNaturalSpawnChunkCount` per cluster: chunks within 8 of its players (chessboard).
-    let mut near: Vec<std::collections::HashSet<ChunkPos>> = vec![Default::default(); ids.len()];
-    for (k, c) in stands.iter().enumerate() {
-        for x in c.x - 8..=c.x + 8 {
-            for z in c.z - 8..=c.z + 8 {
-                near[stand_cluster[k]].insert(ChunkPos::new(x, z));
-            }
+    // Players grouped by the chunk they stand in, in player order within a chunk.
+    let mut keyed: Vec<(ChunkPos, usize)> = players.iter().enumerate().map(|(i, p)| (chunk_of(p), i)).collect();
+    keyed.sort_unstable();
+    let order: Vec<usize> = keyed.iter().map(|&(_, i)| i).collect();
+    let mut starts = Vec::with_capacity(stands.len() + 1);
+    let mut next = 0;
+    for &c in &stands {
+        starts.push(next);
+        while next < keyed.len() && keyed[next].0 == c {
+            next += 1;
         }
     }
-    let caps: Vec<[i32; N]> =
-        near.iter().map(|n| CATEGORIES.map(|cat| cat.max_instances() * n.len() as i32 / 289)).collect();
+    starts.push(next);
+    let boxes: Vec<([f64; 3], [f64; 3])> = (0..stands.len())
+        .map(|k| {
+            let mut b = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+            for &(_, i) in &keyed[starts[k]..starts[k + 1]] {
+                for a in 0..3 {
+                    b.0[a] = b.0[a].min(players[i][a]);
+                    b.1[a] = b.1[a].max(players[i][a]);
+                }
+            }
+            b
+        })
+        .collect();
+    // `getNaturalSpawnChunkCount` per cluster: chunks within 8 of its players (chessboard),
+    // counted on a bitmap over the cluster's bounds.
+    let caps: Vec<[i32; N]> = (0..ids.len())
+        .map(|k| {
+            let mine = || stands.iter().zip(&stand_cluster).filter(move |(_, sc)| **sc == k).map(|(c, _)| *c);
+            let (x0, x1) = (mine().map(|c| c.x).min().unwrap() - 8, mine().map(|c| c.x).max().unwrap() + 8);
+            let (z0, z1) = (mine().map(|c| c.z).min().unwrap() - 8, mine().map(|c| c.z).max().unwrap() + 8);
+            let w = (x1 - x0 + 1) as usize;
+            let mut seen = vec![false; w * (z1 - z0 + 1) as usize];
+            for c in mine() {
+                for z in c.z - 8..=c.z + 8 {
+                    let row = (z - z0) as usize * w;
+                    seen[row + (c.x - 8 - x0) as usize..=row + (c.x + 8 - x0) as usize].fill(true);
+                }
+            }
+            let n = seen.iter().filter(|&&b| b).count() as i32;
+            CATEGORIES.map(|cat| cat.max_instances() * n / 289)
+        })
+        .collect();
     let mut s = Spawner {
         pos: players.clone(),
         local: vec![[0; N]; players.len()],
+        mobs: Vec::new(),
+        upper: vec![[0; N]; stands.len()],
+        known: [false; N],
+        room: Default::default(),
         counts: vec![[0; N]; ids.len()],
         caps,
         table: &table,
         stands,
         stand_cluster,
-        by_chunk,
+        boxes,
+        order,
+        starts,
     };
     // `createState`: mobs per category, persistent ones excluded.
     for e in &entities.list {
@@ -283,7 +463,7 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     let mut chunks: Vec<(u64, ChunkPos)> = Vec::new();
     level.cells.for_each_cell(&mut |pos, cell| {
         for (c, _) in cell.chunks(pos) {
-            if ticking.contains(c) && players.iter().any(|p| close_for_spawning(*p, c)) {
+            if ticking.contains(c) && s.any_close(c) {
                 let mut h = (env.seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.game_time as u64;
                 h ^= (c.x as u32 as u64) << 32 | c.z as u32 as u64;
                 h = (h ^ (h >> 31)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -292,15 +472,74 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
         }
     });
     chunks.sort_unstable();
-    for (_, c) in chunks {
+    // The categories whose local caps may bind are counted now, so the chunks below can be
+    // looked at side by side.
+    for &cat in &categories {
+        let (i, max) = (cat_index(cat), cat.max_instances());
+        if !s.known[i] && s.upper.iter().any(|u| u[i] >= max) {
+            s.count_category(i, max);
+        }
+    }
+    // Every chunk alone against the state before the first one, in parallel: what each
+    // category's caps said and whether anything spawned. Only a spawn changes what a later
+    // chunk sees (its caps), and spawns are rare: in turn, a chunk that spawned nothing and
+    // whose caps still say the same is done; the others run again, so the outcome is the
+    // serial one whatever the workers.
+    let speculated: Vec<Option<smallvec::SmallVec<[bool; N]>>> = {
+        let (lvl, sp, cats, counts) = (&*level, &s, &categories, &start_counts);
+        ctx.map_indexed_with(SPAWN_WINDOW, &chunks, |_, &(_, c)| speculate(lvl, sp, c, cats, counts, ticking))
+    };
+    let mut spawned_any = false;
+    for (&(_, c), guess) in chunks.iter().zip(speculated) {
+        let global = |s: &Spawner, cat: Category| s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
+        if let Some(said) = guess
+            && (!spawned_any || categories.iter().zip(&said).all(|(&cat, &ok)| (global(&s, cat) && s.local_ok(c, cat)) == ok))
+        {
+            continue;
+        }
         let mut r = chunk_random(env.seed, env.game_time, c);
         for &cat in &categories {
-            let global = s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
-            if global && s.local_ok(c, cat) {
-                spawn_category_for_chunk(level, &mut s, &mut r, cat, c, ticking, spawns);
+            if global(&s, cat) && s.local_ok(c, cat) {
+                let mut made = Vec::new();
+                spawn_category_for_chunk(level, &s, &mut r, cat, c, ticking, &mut made);
+                for (spawn, pc) in made {
+                    spawns.push(spawn);
+                    s.add(pc, cat);
+                    spawned_any = true;
+                }
             }
         }
     }
+}
+
+/// The spawning pass's chunks, a few microseconds each.
+const SPAWN_WINDOW: kiln_sched::Window = kiln_sched::Window::new();
+
+/// Chunk `c`'s turn against `s` as it stands: per category, whether its caps let it try; `None`
+/// if something spawned (or a cap needs counts not made yet).
+fn speculate(
+    level: &RegionLevel,
+    s: &Spawner,
+    c: ChunkPos,
+    categories: &[Category],
+    start_counts: &[[i32; N]],
+    ticking: &Ticking,
+) -> Option<smallvec::SmallVec<[bool; N]>> {
+    let mut r = chunk_random(level.env.seed, level.env.game_time, c);
+    let mut said = smallvec::SmallVec::new();
+    for &cat in categories {
+        let global = s.cluster(c).is_some_and(|k| start_counts[k][cat_index(cat)] < s.caps[k][cat_index(cat)]);
+        let ok = global && s.local_ok_now(c, cat)?;
+        said.push(ok);
+        if ok {
+            let mut made = Vec::new();
+            spawn_category_for_chunk(level, s, &mut r, cat, c, ticking, &mut made);
+            if !made.is_empty() {
+                return None;
+            }
+        }
+    }
+    Some(said)
 }
 
 /// `PhantomSpawner.tick`, per region. Approximations: the pass comes every 1200 ticks with a
@@ -351,15 +590,17 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
     }
 }
 
-/// `spawnCategoryForChunk` + `spawnCategoryForPosition`.
+/// `spawnCategoryForChunk` + `spawnCategoryForPosition`: what spawns, with the chunk each
+/// counts in.
+#[inline(never)]
 fn spawn_category_for_chunk(
-    level: &mut RegionLevel,
-    s: &mut Spawner,
+    level: &RegionLevel,
+    s: &Spawner,
     r: &mut LegacyRandom,
     cat: Category,
     c: ChunkPos,
     ticking: &Ticking,
-    spawns: &mut Vec<Spawn>,
+    spawns: &mut Vec<(Spawn, ChunkPos)>,
 ) {
     let env = level.env;
     let min_y = env.min_y;
@@ -454,8 +695,8 @@ fn spawn_category_for_chunk(
             let camel_space = kind == MobKind::Husk
                 && kiln_data::entities::by_name("minecraft:camel_husk").is_some_and(|c| no_collision(level, [fx.floor() + 0.5, y as f64, fz.floor() + 0.5], c.width, c.height));
             let fin = crate::mobs::Finalize { ctx, seed, persistent: false, natural: true, monsters_disabled, camel_space };
-            spawns.push(crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)));
-            s.add(pc, cat);
+            // The caller counts it (nothing below reads the counts).
+            spawns.push((crate::mobs::spawn(kind, [fx, y as f64, fz], Some(yaw), Some(fin)), pc));
             spawned += 1;
             in_group += 1;
             if spawned >= kind.ext().map_or(4, |k| k.max_spawn_cluster()) {
@@ -540,6 +781,10 @@ impl kiln_entity::mob::ext::SpawnView for View<'_, '_> {
     }
     fn sea_level(&self) -> i32 {
         63
+    }
+    fn world_surface(&self, x: i32, z: i32) -> Option<i32> {
+        let chunk = self.0.cells.chunk(ChunkPos::of_block(x, z))?;
+        Some(chunk.column_height((x & 15) as usize, (z & 15) as usize, |b| !kiln_data::blocks_types::is_air(b)))
     }
 }
 

@@ -228,6 +228,12 @@ pub trait SpawnView {
     fn moon_brightness(&self) -> f32;
     fn min_y(&self) -> i32;
     fn sea_level(&self) -> i32;
+    /// One above the highest non-air block of the column at `x`, `z` (`WORLD_SURFACE`), if the
+    /// view knows it without scanning; `None` makes callers scan the column.
+    fn world_surface(&self, x: i32, z: i32) -> Option<i32> {
+        let _ = (x, z);
+        None
+    }
 }
 
 /// `SpawnPlacementTypes` of a type.
@@ -567,6 +573,11 @@ pub trait Kind: Sync + Send {
     /// the player's `aiStep`; the simulation calls [`super::player_touch`] after the entity tick).
     fn player_touch(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, player: &Living) {
         let _ = (e, m, level, player);
+    }
+    /// Whether [`Kind::player_touch`] is the type's own (the simulation looks for touching
+    /// players only around such mobs).
+    fn touches_players(&self) -> bool {
+        false
     }
     /// `getMaxSpawnClusterSize`.
     fn max_spawn_cluster(&self) -> i32 {

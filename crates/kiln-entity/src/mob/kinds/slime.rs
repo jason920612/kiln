@@ -406,6 +406,9 @@ pub fn check_mob_spawn_rules(view: &dyn SpawnView, pos: BlockPos) -> bool {
 }
 
 impl Kind for Slime {
+    fn touches_players(&self) -> bool {
+        true
+    }
     fn info(&self) -> &'static Info {
         &INFO
     }

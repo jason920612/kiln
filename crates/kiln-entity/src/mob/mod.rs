@@ -2337,6 +2337,11 @@ pub fn checks_fall_damage(type_name: &str) -> bool {
 }
 
 /// `Entity.playerTouch`: player `player` touches mob `e` (slimes and magma cubes hurt it).
+/// Whether [`player_touch`] can do anything to `e` (its type has its own `playerTouch`).
+pub fn touches_players(e: &Entity) -> bool {
+    data(e).and_then(|m| m.kind.ext()).is_some_and(|k| k.touches_players())
+}
+
 pub fn player_touch(e: &mut Entity, level: &mut dyn EntityLevel, player: i32) {
     let Some(k) = data(e).and_then(|m| m.kind.ext()) else { return };
     let Some(p) = goals::living(level, player) else { return };

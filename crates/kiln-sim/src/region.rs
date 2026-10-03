@@ -73,8 +73,8 @@ pub(crate) struct RegionOut {
     pub times: [Duration; SUB_PHASES.len()],
 }
 
-pub(crate) const SUB_PHASES: [&str; 9] =
-    ["menus", "connections", "chunks", "blocks", "entities", "visibility", "movement", "light", "egress"];
+pub(crate) const SUB_PHASES: [&str; 10] =
+    ["menus", "connections", "chunks", "blocks", "entities", "visibility", "movement", "light", "egress", "spawning"];
 
 pub(crate) struct RegionWork<'a> {
     /// The level the region is in.
@@ -105,7 +105,10 @@ impl RegionWork<'_> {
     /// any packet) everything applies in order on this thread.
     pub fn apply_packets(&mut self, env: &Env, ctx: &Ctx<'_>) {
         let mut out = BlockOut::default();
-        let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
+        // The boxes at the start of the phase, for the packets that place or use things (a
+        // crowd's ticks are mostly movement, which needs none).
+        let needs_bodies = self.plugins.is_some() || self.packets.iter().any(|(c, p)| !is_player_packet(p) || self.rod_use(*c, p));
+        let bodies = if needs_bodies { blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities) } else { Vec::new() };
         let mut packets = std::mem::take(&mut self.packets).into_iter().peekable();
         while let Some((conn, pkt)) = packets.next() {
             if self.plugins.is_none() && is_player_packet(&pkt) && !self.rod_use(conn, &pkt) {
@@ -434,15 +437,21 @@ impl RegionWork<'_> {
             self.find_unloads();
         }
         mark(&mut self.out.times, 2);
-        self.tick_blocks(env);
+        // The chunks that tick, for the block and entity phases (no player changes chunk
+        // between them).
+        let ticking = ticking_chunks(&self.players, env);
+        self.tick_blocks(env, &ticking);
         mark(&mut self.out.times, 3);
-        self.tick_entities(env, ctx);
+        let spawned_before = self.out.times[9];
+        self.tick_entities(env, ctx, &ticking);
         crate::trading::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         crate::carts::check_menus(self.entities, &mut self.players, &env.rules, &mut self.out.spawns);
         self.post_cart_closes(env);
         entities::pickups(self.entities, &mut self.players);
         crate::xp::pick_up_orbs(self.entities, &mut self.players);
         mark(&mut self.out.times, 4);
+        // The spawner's share of the entity phase is its own sub-phase.
+        self.out.times[4] = self.out.times[4].saturating_sub(self.out.times[9] - spawned_before);
         let movers = crate::players::update_visibility(&mut self.players, ctx);
         mark(&mut self.out.times, 5);
         crate::players::broadcast_movement(&mut self.players, ctx);
@@ -462,8 +471,7 @@ impl RegionWork<'_> {
 
     /// The block phases: players' digging, pressure plates under bodies, then scheduled
     /// ticks, random ticks, block events and moving pistons in chunks near players.
-    fn tick_blocks(&mut self, env: &Env) {
-        let ticking = ticking_chunks(&self.players, env);
+    fn tick_blocks(&mut self, env: &Env, ticking: &Ticking) {
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         if let Some(h) = self.plugins.as_mut() {
@@ -505,7 +513,7 @@ impl RegionWork<'_> {
 
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
-    fn tick_entities(&mut self, env: &Env, ctx: &Ctx<'_>) {
+    fn tick_entities(&mut self, env: &Env, ctx: &Ctx<'_>, ticking_now: &Ticking) {
         // `TickRateManager.isEntityFrozen`: nothing but players ticks while frozen.
         if env.frozen {
             return;
@@ -519,14 +527,18 @@ impl RegionWork<'_> {
             self.blocks.sculk.retain_allays(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
         }
         if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
-            self.tick_block_entities(env);
+            self.tick_block_entities(env, ticking_now);
             return;
         }
-        let mut ticking = ticking_chunks(&self.players, env);
         // `TicketType.DRAGON`: the fight's arena ticks while its boss bar has players.
-        if let Some(f) = env.blocks.dragon_fight.as_ref().filter(|f| f.active) {
-            ticking.add(f.arena_center, f.arena_radius);
-        }
+        let with_arena;
+        let ticking = match env.blocks.dragon_fight.as_ref().filter(|f| f.active) {
+            Some(f) => {
+                with_arena = ticking_now.with_arena(f.arena_center, f.arena_radius);
+                &with_arena
+            }
+            None => ticking_now,
+        };
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         {
@@ -539,21 +551,22 @@ impl RegionWork<'_> {
                 actor: None,
             };
             let any_player = !self.players.is_empty();
-            crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns);
+            let spawning = Instant::now();
+            crate::spawner::tick(&mut level, self.entities, &self.players, &ticking, &mut self.out.spawns, ctx);
+            self.out.times[9] += spawning.elapsed();
             entities::tick(self.entities, &mut level, &ticking, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, any_player, ctx);
             crate::sculk::requests(&mut level, &mut self.players, self.entities, &mut self.out.spawns);
         }
         blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
-        self.tick_block_entities(env);
+        self.tick_block_entities(env, ticking_now);
     }
 
     /// `Level.tickBlockEntities`: hoppers and furnaces in ticking chunks. Hoppers take item
     /// entities; their viewers see the new counts.
-    fn tick_block_entities(&mut self, env: &Env) {
+    fn tick_block_entities(&mut self, env: &Env, ticking: &Ticking) {
         if self.blocks.containers.len() == 0 && self.blocks.sculk.len() == 0 {
             return;
         }
-        let ticking = ticking_chunks(&self.players, env);
         let bodies = blocks::entity_boxes(self.players.iter().map(|p| &**p), self.entities);
         let mut out = BlockOut::default();
         let mut items = crate::container::hopper::EntityItems::new(self.entities);

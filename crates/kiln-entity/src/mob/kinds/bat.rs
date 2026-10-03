@@ -177,7 +177,11 @@ impl Kind for Bat {
     /// `checkBatSpawnRules`: under the surface, in the dark, on a stone-like floor.
     fn check_spawn_rules(&self, view: &dyn SpawnView, pos: BlockPos, r: &mut LegacyRandom) -> Option<bool> {
         // `WORLD_SURFACE`: something non-air above.
-        let covered = (1..=384).any(|dy| !kiln_data::blocks_types::is_air(view.block(pos.offset(0, dy, 0))));
+        let covered = match view.world_surface(pos.x, pos.z) {
+            // Some non-air block above `pos`: the highest one (surface - 1) is above it.
+            Some(surface) => surface - 1 > pos.y,
+            None => (1..=384).any(|dy| !kiln_data::blocks_types::is_air(view.block(pos.offset(0, dy, 0)))),
+        };
         if !covered || r.next_bool() {
             return Some(false);
         }

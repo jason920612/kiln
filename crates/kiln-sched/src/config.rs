@@ -58,8 +58,10 @@ impl PoolConfig {
             workers,
             spin: Duration::from_micros(50),
             inline_below: Duration::from_micros(100),
-            chunk_target: Duration::from_micros(100),
-            helper_share: Duration::from_micros(50),
+            // wp39: smaller chunks and shares balance the crowd windows better (1,000 players
+            // with the vanilla datapack 6.2 -> 5.6 ms, 200 with 800 mobs 12.6 -> 12.2 ms).
+            chunk_target: Duration::from_micros(40),
+            helper_share: Duration::from_micros(25),
             small_unit: Duration::from_micros(200),
             unit_batch: Duration::from_millis(1),
             phase: PhaseMode::Auto,

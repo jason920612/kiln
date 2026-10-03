@@ -646,6 +646,13 @@ impl Ticking {
         }
     }
 
+    /// These chunks and those within `r` of `center` (the dragon fight's arena).
+    pub fn with_arena(&self, center: ChunkPos, r: i32) -> Ticking {
+        let mut t = Ticking(self.0.clone());
+        t.add(center, r);
+        t
+    }
+
     pub fn contains(&self, c: ChunkPos) -> bool {
         let bit = c.z.rem_euclid(CELL_CHUNKS) * CELL_CHUNKS + c.x.rem_euclid(CELL_CHUNKS);
         self.0.get(&c.cell()).is_some_and(|m| m & (1 << bit) != 0)
@@ -859,9 +866,27 @@ pub(crate) fn tick_pistons(level: &mut RegionLevel, ticking: &Ticking) {
 /// `Entity.checkInsideBlocks` for pressure plates: every body standing in a plate presses it.
 pub(crate) fn press_plates(level: &mut RegionLevel) {
     let mut plates = Vec::new();
+    let is_plate = |s: u16| kiln_data::block_logic::is_instance(s, kiln_data::block_logic::BlockClass::BasePressurePlateBlock);
+    // Whether a section's palette has a plate, looked at once per section: most bodies stand
+    // in sections without any and skip the block lookups.
+    let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
+    let min_y = level.env.min_y;
     for b in level.bodies {
         let lo = [b.min[0] + 1e-5, b.min[1] + 1e-5, b.min[2] + 1e-5].map(|c| c.floor() as i32);
         let hi = [b.max[0] - 1e-5, b.max[1] - 1e-5, b.max[2] - 1e-5].map(|c| c.floor() as i32);
+        let mut any = false;
+        for sx in lo[0] >> 4..=hi[0] >> 4 {
+            for sy in (lo[1] - min_y) >> 4..=(hi[1] - min_y) >> 4 {
+                for sz in lo[2] >> 4..=hi[2] >> 4 {
+                    any |= *may_have.entry((sx, sy, sz)).or_insert_with(|| {
+                        level.cells.chunk(ChunkPos::new(sx, sz)).and_then(|c| usize::try_from(sy).ok().and_then(|i| c.sections.get(i))).is_some_and(|s| s.blocks.maybe_has(is_plate))
+                    });
+                }
+            }
+        }
+        if !any {
+            continue;
+        }
         for x in lo[0]..=hi[0] {
             for y in lo[1]..=hi[1] {
                 for z in lo[2]..=hi[2] {

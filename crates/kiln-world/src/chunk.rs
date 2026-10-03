@@ -497,10 +497,17 @@ impl Chunk {
     /// Height of the first block above the column's topmost block matching `pred` (the value a
     /// vanilla heightmap stores, as an absolute y; `min_y` for an empty column).
     pub fn column_height(&self, x: usize, z: usize, pred: impl Fn(u16) -> bool) -> i32 {
-        for rel in (0..self.height()).rev() {
-            let (s, ly) = ((rel >> 4) as usize, (rel & 15) as usize);
-            if !self.sections[s].is_empty() && pred(self.sections[s].get(x, ly, z)) {
-                return self.min_y + rel + 1;
+        // Top section down, skipping the all-air ones whole.
+        let top = ((self.height() + 15) >> 4) as usize;
+        for s in (0..top.min(self.sections.len())).rev() {
+            if self.sections[s].is_empty() {
+                continue;
+            }
+            for ly in (0..16).rev() {
+                let rel = (s as i32) << 4 | ly;
+                if rel < self.height() && pred(self.sections[s].get(x, ly as usize, z)) {
+                    return self.min_y + rel + 1;
+                }
             }
         }
         self.min_y

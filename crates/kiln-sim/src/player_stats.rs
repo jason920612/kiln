@@ -478,6 +478,13 @@ impl Sim {
     /// Serial upkeep of what region work queued on players: scoreboard objectives following
     /// stats and game-maintained criteria.
     pub(crate) fn flush_stat_scores(&mut self) {
+        // Without an objective that follows a statistic, the updates only go away.
+        if self.commands.scoreboard.objectives().iter().all(|o| o.criterion == "dummy" || o.criterion == "trigger") {
+            for p in self.players.values_mut() {
+                p.stats.scores.clear();
+            }
+            return;
+        }
         let mut conns: Vec<_> = self.players.keys().copied().collect();
         conns.sort_unstable();
         let mut touched = false;

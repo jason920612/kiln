@@ -48,11 +48,15 @@ pub(crate) fn effect_packet(e: &Effect, entity_id: i32, blend: bool) -> bytes::B
 
 impl Player {
     pub(crate) fn has_effect(&self, name: &str) -> bool {
-        effect_id(name).is_some_and(|id| self.effects.contains_key(&id))
+        // Most players have none: no name lookup then.
+        !self.effects.is_empty() && effect_id(name).is_some_and(|id| self.effects.contains_key(&id))
     }
 
     /// The amplifier of the active `name` effect.
     pub(crate) fn effect_amplifier(&self, name: &str) -> Option<i32> {
+        if self.effects.is_empty() {
+            return None;
+        }
         effect_id(name).and_then(|id| self.effects.get(&id)).map(|e| e.amplifier)
     }
 

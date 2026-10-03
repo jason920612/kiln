@@ -55,7 +55,14 @@ pub fn by_id(id: i32) -> Option<&'static EntityType> {
 }
 
 pub fn by_name(name: &str) -> Option<&'static EntityType> {
-    TYPES.iter().find(|t| t.name == name)
+    // Looked up for every entity made (players' stand-ins each tick): the names sorted once.
+    static SORTED: std::sync::OnceLock<Vec<(&'static str, usize)>> = std::sync::OnceLock::new();
+    let sorted = SORTED.get_or_init(|| {
+        let mut v: Vec<(&'static str, usize)> = TYPES.iter().enumerate().map(|(i, t)| (t.name, i)).collect();
+        v.sort_unstable();
+        v
+    });
+    sorted.binary_search_by(|(n, _)| (*n).cmp(name)).ok().map(|k| &TYPES[sorted[k].1])
 }
 
 /// `EntityDataSerializers` network ids (registration order).

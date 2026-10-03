@@ -26,6 +26,9 @@ static INFO: Info = Info {
 };
 
 impl Kind for MagmaCube {
+    fn touches_players(&self) -> bool {
+        true
+    }
     fn info(&self) -> &'static Info {
         &INFO
     }

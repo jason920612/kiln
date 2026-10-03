@@ -21,6 +21,18 @@ impl Identifier {
         (ns_ok && path_ok).then(|| Identifier(format!("{ns}:{path}")))
     }
 
+    /// Whether `parse(s)` gives this identifier, without making one (checked every tick).
+    pub fn is(&self, s: &str) -> bool {
+        let (ns, path) = match s.find(':') {
+            Some(0) => ("minecraft", &s[1..]),
+            Some(i) => (&s[..i], &s[i + 1..]),
+            None => ("minecraft", s),
+        };
+        let ns_ok = ns.bytes().all(|c| matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-'));
+        let path_ok = path.bytes().all(|c| matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'/'));
+        ns_ok && path_ok && self.namespace() == ns && self.path() == path
+    }
+
     /// An identifier known to be valid (e.g. from generated tables).
     pub fn new_unchecked(s: impl Into<String>) -> Identifier {
         Identifier(s.into())

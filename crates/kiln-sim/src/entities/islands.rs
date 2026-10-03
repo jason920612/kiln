@@ -24,7 +24,10 @@
 //! entities in list order against the entities and players of its tile and the eight around
 //! it, which no other tile of the pass reaches, so the pass's tiles run in parallel. The
 //! entities tick in the order of the passes rather than the list, and see no further than the
-//! neighbouring tiles; what they leave behind is merged per pass in list order.
+//! neighbouring tiles; what they leave behind is merged per pass in list order. There is no
+//! barrier between the passes: a tile's group runs once the groups of earlier passes it shares
+//! an entity or a player with are done ([`run_tiles`]), and the blocks the groups change reach
+//! the region after all the passes.
 
 use super::*;
 use crate::entity_world::{Deferred, IslandWorld, World};
@@ -73,7 +76,7 @@ struct Job<'p> {
     global: Vec<usize>,
     list: Vec<Entity>,
     players: Vec<&'p mut Player>,
-    proxies: Vec<Box<kiln_entity::Entity>>,
+    proxies: Vec<Proxy>,
     views: Vec<PlayerView>,
     placeholder: i32,
     spawns: Vec<Spawn>,
@@ -215,6 +218,8 @@ struct Group {
     ents: Vec<usize>,
     players: Vec<usize>,
     ticks: Option<Vec<bool>>,
+    /// The centre tile of a tile's group (`None`: a whole island).
+    centre: Option<(i32, i32)>,
 }
 
 /// The tiles of one tick, one batch per colour: each centre tile with its neighbourhood. An
@@ -247,7 +252,7 @@ fn tile_batches(list: &[Entity], players: &[&mut Player], island: &[usize], isla
     let mut batches: [Vec<Group>; 9] = Default::default();
     for (colour, batch) in batches.iter_mut().enumerate() {
         for &c in centres.iter().filter(|c| (c.0.rem_euclid(3) * 3 + c.1.rem_euclid(3)) as usize == colour) {
-            let mut g = Group { ents: Vec::new(), players: Vec::new(), ticks: None };
+            let mut g = Group { ents: Vec::new(), players: Vec::new(), ticks: None, centre: Some(c) };
             for dx in -1..=1 {
                 for dz in -1..=1 {
                     let t = (c.0 + dx, c.1 + dz);
@@ -285,7 +290,7 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
     // Islands with more than their share of the entities tick in tiles (their own entities and
     // players only, so no tile reaches another island), the others whole, in the first batch.
     let batches: Vec<Vec<Group>> = if largest * ISLAND_SHARE <= n && islands.len() >= 2 {
-        vec![islands.into_iter().map(|(ents, players)| Group { ents, players, ticks: None }).collect()]
+        vec![islands.into_iter().map(|(ents, players)| Group { ents, players, ticks: None, centre: None }).collect()]
     } else if mode == crate::EntityTicking::Tiles {
         let mut batches: Vec<Vec<Group>> = (0..9).map(|_| Vec::new()).collect();
         for (ents, players) in islands {
@@ -294,13 +299,13 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
                     batches[colour].extend(groups);
                 }
             } else {
-                batches[0].push(Group { ents, players, ticks: None });
+                batches[0].push(Group { ents, players, ticks: None, centre: None });
             }
         }
         batches.retain(|b| !b.is_empty());
         batches
     } else if islands.len() >= 2 {
-        vec![islands.into_iter().map(|(ents, players)| Group { ents, players, ticks: None }).collect()]
+        vec![islands.into_iter().map(|(ents, players)| Group { ents, players, ticks: None, centre: None }).collect()]
     } else {
         return false;
     };
@@ -308,9 +313,15 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
     let player_at: crate::FastMap<i32, usize> = sim.players.iter().enumerate().map(|(j, p)| (p.entity_id, j)).collect();
     let mut taken: Vec<Option<Entity>> = std::mem::take(sim.list).into_iter().map(Some).collect();
     // The players' stand-ins go to their groups and come back, like the entities.
-    let mut stand_ins: Vec<Option<Box<kiln_entity::Entity>>> = std::mem::take(&mut sim.proxies).into_iter().map(Some).collect();
-    for batch in batches {
-        run_batch(sim, &mut taken, &mut stand_ins, batch, &player_at, ticking, any_player, ctx, &mut next);
+    let mut stand_ins: Vec<Option<Proxy>> = std::mem::take(&mut sim.proxies).into_iter().map(Some).collect();
+    if batches.len() > 1 {
+        // Tiles: each group as soon as the groups of earlier passes that share its tiles are done.
+        let groups: Vec<(usize, Group)> = batches.into_iter().enumerate().flat_map(|(pass, b)| b.into_iter().map(move |g| (pass, g))).collect();
+        run_tiles(sim, &mut taken, &mut stand_ins, groups, &player_at, ticking, any_player, ctx, &mut next);
+    } else {
+        for batch in batches {
+            run_batch(sim, &mut taken, &mut stand_ins, batch, &player_at, ticking, any_player, ctx, &mut next);
+        }
     }
     *sim.list = taken.into_iter().map(|e| e.expect("every entity back from its group")).collect();
     sim.proxies = stand_ins.into_iter().map(|e| e.expect("every stand-in back from its group")).collect();
@@ -325,7 +336,7 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
 fn run_batch(
     sim: &mut SimLevel,
     taken: &mut [Option<Entity>],
-    stand_ins: &mut [Option<Box<kiln_entity::Entity>>],
+    stand_ins: &mut [Option<Proxy>],
     groups: Vec<Group>,
     player_at: &crate::FastMap<i32, usize>,
     ticking: &blocks::Ticking,
@@ -382,6 +393,7 @@ fn run_batch(
         jobs.sort_by_key(|j| std::cmp::Reverse(j.ticks.as_ref().map_or(j.list.len(), |t| t.iter().filter(|&&b| b).count())));
         ctx.map_mut_with(Window::new().chunk(1).strategy(Strategy::Parallel), &mut jobs, |_, job| run_island(job, &shared));
     }
+
     // Back in the region, in list order, with the groups' outputs in the order of the turns
     // that made them: each group's turns in order, the groups' turns interleaved by list index.
     let mut parts: Vec<(usize, usize, usize)> = Vec::new();
@@ -407,27 +419,244 @@ fn run_batch(
     }
     parts.sort_unstable();
     for (_, k, j) in parts {
-        let o = &mut outs[k];
-        // Turn `j` (0: before the first) ends where the next one starts.
-        let end = |f: fn(&Mark) -> usize, all: usize| o.marks.get(j).map_or(all, f);
-        let start = |f: fn(&Mark) -> usize| if j == 0 { 0 } else { f(&o.marks[j - 1]) };
-        let n = |f: fn(&Mark) -> usize, all: usize| end(f, all) - start(f);
-        let (sp, de, ev, df, pk) = (
-            n(|m| m.spawns, usize::MAX),
-            n(|m| m.deaths, usize::MAX),
-            n(|m| m.events, usize::MAX),
-            n(|m| m.deferred, usize::MAX),
-            n(|m| m.packets, usize::MAX),
-        );
-        sim.spawns.extend(o.spawns.by_ref().take(sp));
-        sim.deaths.extend(o.deaths.by_ref().take(de));
-        sim.events.extend(o.events.by_ref().take(ev));
-        let region = sim.level.region().expect("a region");
-        for f in o.deferred.by_ref().take(df) {
-            f(region);
-        }
-        region.out.packets.extend(o.packets.by_ref().take(pk));
+        merge_turn(sim, &mut outs[k], j);
     }
+}
+
+/// Slots that the tile groups take their entities, players and stand-ins from and put them back
+/// into, on whichever worker runs them.
+struct Slots<T>(Vec<std::cell::UnsafeCell<Option<T>>>);
+
+// SAFETY: a slot is only reached through `take` and `put`, whose callers hold it alone.
+unsafe impl<T: Send> Sync for Slots<T> {}
+
+impl<T> Slots<T> {
+    fn new(items: impl Iterator<Item = Option<T>>) -> Self {
+        Slots(items.map(std::cell::UnsafeCell::new).collect())
+    }
+
+    /// SAFETY: nothing else reaches slot `i` meanwhile.
+    unsafe fn take(&self, i: usize) -> Option<T> {
+        unsafe { (*self.0[i].get()).take() }
+    }
+
+    /// SAFETY: nothing else reaches slot `i` meanwhile.
+    unsafe fn put(&self, i: usize, v: T) {
+        unsafe { *self.0[i].get() = Some(v) }
+    }
+
+    fn into_inner(self) -> impl Iterator<Item = Option<T>> {
+        self.0.into_iter().map(std::cell::UnsafeCell::into_inner)
+    }
+}
+
+/// What a group left behind, for the merge.
+struct Done {
+    pass: usize,
+    first: usize,
+    out: Outputs,
+}
+
+/// The tiles' passes without a barrier between them: a group (a centre tile and the eight
+/// around it) runs once every group of an earlier pass whose tiles overlap its own is done, so
+/// it sees exactly what it would after its pass's predecessors, and groups that share no tile
+/// run side by side. Which groups run when depends on the workers; what each sees does not.
+/// Blocks the groups change reach the region after all the passes (a group reads its own at
+/// once). What the groups left behind is merged pass by pass, in list order.
+#[allow(clippy::too_many_arguments)]
+fn run_tiles(
+    sim: &mut SimLevel,
+    taken: &mut [Option<Entity>],
+    stand_ins: &mut [Option<Proxy>],
+    groups: Vec<(usize, Group)>,
+    player_at: &crate::FastMap<i32, usize>,
+    ticking: &blocks::Ticking,
+    any_player: bool,
+    ctx: &Ctx<'_>,
+    next: &mut i32,
+) {
+    let n = groups.len();
+    // Placeholder ids in pass order, as the passes would hand them out.
+    let placeholders: Vec<i32> = (0..n)
+        .map(|_| {
+            *next -= PLACEHOLDERS;
+            *next + PLACEHOLDERS
+        })
+        .collect();
+    // An earlier pass's group whose tiles overlap (centres at most two tiles apart) goes first.
+    let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut preds: Vec<std::sync::atomic::AtomicUsize> = (0..n).map(|_| std::sync::atomic::AtomicUsize::new(0)).collect();
+    for a in 0..n {
+        let Some(ca) = groups[a].1.centre else { continue };
+        for b in a + 1..n {
+            let Some(cb) = groups[b].1.centre else { continue };
+            // Only what they share matters: tiles overlapping without an entity or a player in
+            // common leave each other alone.
+            if groups[a].0 < groups[b].0
+                && (ca.0 - cb.0).abs() <= 2
+                && (ca.1 - cb.1).abs() <= 2
+                && (sorted_meet(&groups[a].1.ents, &groups[b].1.ents) || sorted_meet(&groups[a].1.players, &groups[b].1.players))
+            {
+                succ[a].push(b);
+                *preds[b].get_mut() += 1;
+            }
+        }
+    }
+    let ticking_count = |g: &Group| g.ticks.as_ref().map_or(g.ents.len(), |t| t.iter().filter(|&&b| b).count());
+    let mut ready: Vec<usize> = (0..n).filter(|&k| *preds[k].get_mut() == 0).collect();
+    // Largest first, so the long ones start early.
+    ready.sort_by_key(|&k| std::cmp::Reverse(ticking_count(&groups[k].1)));
+    let queue = std::sync::Mutex::new((std::collections::VecDeque::from(ready), n));
+    let results: Slots<Done> = Slots::new((0..n).map(|_| None));
+    {
+        let SimLevel { level, players, views, despawn, .. } = &mut *sim;
+        let region = level.region_ref().expect("a region");
+        let nearest = despawn.expect("the region's players");
+        let shared = Shared { cells: &*region.cells, env: region.env, ticking, nearest, any_player };
+        let stand_of: Vec<Option<usize>> = {
+            let mut of = vec![None; players.len()];
+            for (s, e) in stand_ins.iter().enumerate() {
+                if let Some(&j) = e.as_ref().and_then(|e| player_at.get(&e.id)) {
+                    of[j] = Some(s);
+                }
+            }
+            of
+        };
+        let mut view_of: Vec<Option<usize>> = vec![None; players.len()];
+        for (v, view) in views.iter().enumerate() {
+            if let Some(&j) = player_at.get(&view.id) {
+                view_of[j] = Some(v);
+            }
+        }
+        let views = &*views;
+        let ents = Slots::new(taken.iter_mut().map(Option::take));
+        let pls = Slots::new(players.iter_mut().map(|p| Some(&mut **p)));
+        let stands = Slots::new(stand_ins.iter_mut().map(Option::take));
+        let run = |k: usize| {
+            let (pass, g) = &groups[k];
+            // SAFETY: the groups that share an entity, a player or a stand-in with this one are
+            // ordered before or after it, and the queue hands each group out once.
+            let mut job = unsafe {
+                Job {
+                    global: g.ents.clone(),
+                    list: g.ents.iter().map(|&i| ents.take(i).expect("an entity in one group at a time")).collect(),
+                    players: g.players.iter().map(|&j| pls.take(j).expect("a player in one group at a time")).collect(),
+                    proxies: g.players.iter().filter_map(|&j| stand_of[j]).map(|s| stands.take(s).expect("a stand-in")).collect(),
+                    proxy_slots: g.players.iter().filter_map(|&j| stand_of[j]).collect(),
+                    views: g.players.iter().filter_map(|&j| view_of[j]).map(|v| views[v]).collect(),
+                    placeholder: placeholders[k],
+                    spawns: Vec::new(),
+                    deaths: Vec::new(),
+                    events: Vec::new(),
+                    deferred: Vec::new(),
+                    packets: Vec::new(),
+                    marks: Vec::new(),
+                    ticks: g.ticks.clone(),
+                }
+            };
+            run_island(&mut job, &shared);
+            let Job { global, list, players: back, proxies, proxy_slots, spawns, deaths, events, deferred, packets, marks, .. } = job;
+            // SAFETY: as above.
+            unsafe {
+                for (&i, e) in global.iter().zip(list) {
+                    ents.put(i, e);
+                }
+                for (&j, p) in g.players.iter().zip(back) {
+                    pls.put(j, p);
+                }
+                for (s, p) in proxy_slots.into_iter().zip(proxies) {
+                    stands.put(s, p);
+                }
+                let out = Outputs {
+                    marks,
+                    spawns: spawns.into_iter(),
+                    deaths: deaths.into_iter(),
+                    events: events.into_iter(),
+                    deferred: deferred.into_iter(),
+                    packets: packets.into_iter(),
+                };
+                results.put(k, Done { pass: *pass, first: global.first().copied().unwrap_or(0), out });
+            }
+        };
+        let lanes: Vec<usize> = (0..ctx.workers().max(1)).collect();
+        ctx.map_indexed_with(Window::new().chunk(1).strategy(Strategy::Parallel), &lanes, |_, _| {
+            loop {
+                let k = {
+                    let mut q = queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    match q.0.pop_front() {
+                        Some(k) => k,
+                        None if q.1 == 0 => break,
+                        None => {
+                            drop(q);
+                            std::thread::yield_now();
+                            continue;
+                        }
+                    }
+                };
+                run(k);
+                let mut q = queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                q.1 -= 1;
+                for &b in &succ[k] {
+                    if preds[b].fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+                        q.0.push_back(b);
+                    }
+                }
+            }
+        });
+        for (slot, e) in taken.iter_mut().zip(ents.into_inner()) {
+            *slot = e;
+        }
+        for (slot, e) in stand_ins.iter_mut().zip(stands.into_inner()) {
+            *slot = e;
+        }
+    }
+    // The merge, pass by pass, as the passes would have left it.
+    let mut done: Vec<Done> = results.into_inner().map(|d| d.expect("every group ran")).collect();
+    let mut parts: Vec<(usize, usize, usize, usize)> = Vec::new();
+    for (k, d) in done.iter().enumerate() {
+        parts.push((d.pass, d.first, k, 0));
+        parts.extend(d.out.marks.iter().enumerate().map(|(j, m)| (d.pass, m.global, k, j + 1)));
+    }
+    parts.sort_unstable();
+    for (_, _, k, j) in parts {
+        let o = &mut done[k].out;
+        merge_turn(sim, o, j);
+    }
+}
+
+/// Whether two ascending lists have an element in common.
+fn sorted_meet(a: &[usize], b: &[usize]) -> bool {
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => return true,
+        }
+    }
+    false
+}
+
+/// Moves turn `j`'s outputs (0: before the first turn) of a group into the region.
+fn merge_turn(sim: &mut SimLevel, o: &mut Outputs, j: usize) {
+    let end = |f: fn(&Mark) -> usize, all: usize| o.marks.get(j).map_or(all, f);
+    let start = |f: fn(&Mark) -> usize| if j == 0 { 0 } else { f(&o.marks[j - 1]) };
+    let n = |f: fn(&Mark) -> usize, all: usize| end(f, all) - start(f);
+    let (sp, de, ev, df, pk) = (
+        n(|m| m.spawns, usize::MAX),
+        n(|m| m.deaths, usize::MAX),
+        n(|m| m.events, usize::MAX),
+        n(|m| m.deferred, usize::MAX),
+        n(|m| m.packets, usize::MAX),
+    );
+    sim.spawns.extend(o.spawns.by_ref().take(sp));
+    sim.deaths.extend(o.deaths.by_ref().take(de));
+    sim.events.extend(o.events.by_ref().take(ev));
+    let region = sim.level.region().expect("a region");
+    for f in o.deferred.by_ref().take(df) {
+        f(region);
+    }
+    region.out.packets.extend(o.packets.by_ref().take(pk));
 }
 
 /// A group's outputs, taken turn by turn.

@@ -695,6 +695,9 @@ impl Sim {
     /// the announcement to everyone. Commands call this right away (vanilla announces before
     /// the command's feedback); region work leaves it to the next upkeep.
     pub(crate) fn grant_completed(&mut self, conn: ConnId) {
+        if self.players.get(&conn).is_none_or(|p| p.advancements.completed.advancements.is_empty()) {
+            return;
+        }
         let announce = self.rule_bool("minecraft:show_advancement_messages");
         let rules = self.rules.clone();
         let loot = self.loot.clone();

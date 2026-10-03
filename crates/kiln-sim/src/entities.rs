@@ -617,7 +617,7 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     players: &'a mut [&'p mut Player],
     deaths: &'a mut Vec<health::Death>,
     /// Players as `Other` entities, in connection order.
-    proxies: Vec<Box<kiln_entity::Entity>>,
+    proxies: Vec<Proxy>,
     views: Vec<PlayerView>,
     spawns: &'a mut Vec<Spawn>,
     events: Vec<Event>,
@@ -651,7 +651,8 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
 /// there is one only those are compared.
 pub(crate) struct Nearest {
     cubes: FastMap<(i32, i32, i32), Vec<Vec3>>,
-    all: Vec<Vec3>,
+    /// Each cube's players' bounds (min, max corners) and its key, for the far search.
+    bounds: Vec<(Vec3, Vec3, (i32, i32, i32))>,
 }
 
 impl Nearest {
@@ -660,12 +661,20 @@ impl Nearest {
     }
 
     pub(crate) fn build(views: &[PlayerView]) -> Nearest {
-        let all: Vec<Vec3> = views.iter().filter(|v| !v.spectator).map(|v| v.pos).collect();
         let mut cubes: FastMap<(i32, i32, i32), Vec<Vec3>> = Default::default();
-        for &p in &all {
+        for p in views.iter().filter(|v| !v.spectator).map(|v| v.pos) {
             cubes.entry(Self::cube(p)).or_default().push(p);
         }
-        Nearest { cubes, all }
+        let mut bounds: Vec<(Vec3, Vec3, (i32, i32, i32))> = cubes
+            .iter()
+            .map(|(&k, ps)| {
+                let lo = ps.iter().fold(ps[0], |a, b| Vec3::new(a.x.min(b.x), a.y.min(b.y), a.z.min(b.z)));
+                let hi = ps.iter().fold(ps[0], |a, b| Vec3::new(a.x.max(b.x), a.y.max(b.y), a.z.max(b.z)));
+                (lo, hi, k)
+            })
+            .collect();
+        bounds.sort_unstable_by_key(|b| b.2);
+        Nearest { cubes, bounds }
     }
 
     /// The squared distance from `p` to the nearest player, as a scan of every player gives it.
@@ -684,10 +693,31 @@ impl Nearest {
                 }
             }
         }
-        match best {
-            Some(d) if d <= 32.0 * 32.0 => Some(d),
-            _ => self.all.iter().map(|q| q.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b)),
+        if let Some(d) = best
+            && d <= 32.0 * 32.0
+        {
+            return Some(d);
         }
+        // Farther: the other cubes whose players' bounds could hold someone nearer. Each
+        // axis's gap to the bounds is at most that axis's difference for any player inside,
+        // and the squares add up in the same order, so the bound never exceeds a distance.
+        for (lo, hi, k) in &self.bounds {
+            if (k.0 - c.0).abs() <= 1 && (k.1 - c.1).abs() <= 1 && (k.2 - c.2).abs() <= 1 {
+                continue;
+            }
+            let gap = |v: f64, lo: f64, hi: f64| if v < lo { lo - v } else if v > hi { v - hi } else { 0.0 };
+            let (gx, gy, gz) = (gap(p.x, lo.x, hi.x), gap(p.y, lo.y, hi.y), gap(p.z, lo.z, hi.z));
+            if best.is_some_and(|b| gx * gx + gy * gy + gz * gz >= b) {
+                continue;
+            }
+            for q in &self.cubes[k] {
+                let d = q.distance_to_sqr(p);
+                if best.is_none_or(|b| d < b) {
+                    best = Some(d);
+                }
+            }
+        }
+        best
     }
 }
 
@@ -770,6 +800,60 @@ impl SimLevel<'_, '_, '_> {
 
     fn proxy_index(&self, id: i32) -> Option<usize> {
         if self.proxy_at.is_empty() { self.proxies.iter().position(|e| e.id == id) } else { self.proxy_at.get(&id).copied() }
+    }
+
+    /// [`EntityLevel::entities_in`], with the players' stand-ins only if `players`.
+    fn entities_in_with(&self, area: &Aabb, filter: EntityFilter, exclude: i32, players: bool) -> Vec<i32> {
+        let wanted = |e: &kiln_entity::Entity| {
+            let kind = match filter {
+                EntityFilter::Any => true,
+                EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
+                EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
+                EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
+            };
+            kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)
+        };
+        // Within a section vanilla keeps insertion order, which id order follows here. The
+        // sections within 2 blocks of the area hold every entity whose box can touch it.
+        let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
+        let hi = section_of([area.max_x + 2.0, area.max_y + 2.0, area.max_z + 2.0]);
+        let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
+        let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
+        if span > self.grid.cells.len() as i64 * 4 {
+            found.extend(self.list.iter().filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+        } else {
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
+                        for &i in v {
+                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_deref())
+                                && wanted(e)
+                            {
+                                found.push((section_key(e), e.id));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if !players {
+            // Stand-ins left out.
+        } else if self.proxy_grid.is_empty() || span > self.proxy_grid.len() as i64 * 4 {
+            found.extend(self.proxies.iter().filter(|e| e.wanted(filter, exclude, area)).map(|e| (e.section_key(), e.id)));
+        } else {
+            for x in lo.0..=hi.0 {
+                for y in lo.1..=hi.1 {
+                    for z in lo.2..=hi.2 {
+                        let Some(v) = self.proxy_grid.get(&(x, y, z)) else { continue };
+                        found.extend(v.iter().map(|&i| &self.proxies[i]).filter(|e| e.wanted(filter, exclude, area)).map(|e| (e.section_key(), e.id)));
+                    }
+                }
+            }
+        }
+        found.sort_unstable();
+        // (Read in place: moving the inline array out costs more than the search.)
+        found.iter().map(|&(_, id)| id).collect()
     }
 }
 
@@ -975,53 +1059,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
         kiln_entity::prof!("lvl", "entities_in");
-        let wanted = |e: &kiln_entity::Entity| {
-            let kind = match filter {
-                EntityFilter::Any => true,
-                EntityFilter::Item => matches!(e.kind, EntityKind::Item(_)),
-                EntityFilter::ExperienceOrb => matches!(e.kind, EntityKind::ExperienceOrb(_)),
-                EntityFilter::Living => matches!(e.kind, EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_)),
-            };
-            kind && e.id != exclude && e.is_alive() && e.bounding_box().intersects(area)
-        };
-        // Within a section vanilla keeps insertion order, which id order follows here. The
-        // sections within 2 blocks of the area hold every entity whose box can touch it.
-        let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
-        let hi = section_of([area.max_x + 2.0, area.max_y + 2.0, area.max_z + 2.0]);
-        let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
-        let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
-        if span > self.grid.cells.len() as i64 * 4 {
-            found.extend(self.list.iter().filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
-        } else {
-            for x in lo.0..=hi.0 {
-                for y in lo.1..=hi.1 {
-                    for z in lo.2..=hi.2 {
-                        let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
-                        for &i in v {
-                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_deref())
-                                && wanted(e)
-                            {
-                                found.push((section_key(e), e.id));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if self.proxy_grid.is_empty() || span > self.proxy_grid.len() as i64 * 4 {
-            found.extend(self.proxies.iter().filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
-        } else {
-            for x in lo.0..=hi.0 {
-                for y in lo.1..=hi.1 {
-                    for z in lo.2..=hi.2 {
-                        let Some(v) = self.proxy_grid.get(&(x, y, z)) else { continue };
-                        found.extend(v.iter().map(|&i| &self.proxies[i]).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
-                    }
-                }
-            }
-        }
-        found.sort_unstable();
-        found.into_iter().map(|(_, id)| id).collect()
+        self.entities_in_with(area, filter, exclude, true)
     }
 
     fn entity_mut(&mut self, id: i32) -> Option<&mut kiln_entity::Entity> {
@@ -1029,7 +1067,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             return self.list[i].phys.as_deref_mut();
         }
         let i = self.proxy_index(id)?;
-        self.proxies.get_mut(i).map(|b| &mut **b)
+        self.proxies.get_mut(i).map(Proxy::get_mut)
     }
 
     fn entity(&self, id: i32) -> Option<&kiln_entity::Entity> {
@@ -1037,7 +1075,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             return self.list[i].phys.as_deref();
         }
         let i = self.proxy_index(id)?;
-        self.proxies.get(i).map(|b| &**b)
+        self.proxies.get(i).map(Proxy::get)
     }
 
     fn add_entity(&mut self, entity: kiln_entity::Entity) {
@@ -1277,7 +1315,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn entity_by_uuid(&self, uuid: u128) -> Option<&kiln_entity::Entity> {
-        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_deref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid).map(|b| &**b))
+        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_deref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid).map(Proxy::get))
     }
 
     fn known_movement(&self, id: i32) -> Vec3 {
@@ -1508,16 +1546,104 @@ fn occupancy_of(o: kiln_entity::level::PoiOccupancy) -> kiln_world::poi::Occupan
     }
 }
 
-/// A player as the entities see it (`minecraft:player`, standing or sneaking).
-fn proxy(p: &Player) -> kiln_entity::Entity {
-    let mut e = kiln_entity::Entity::new("minecraft:player", p.entity_id, p.uuid.as_u128(), EntityKind::Other { type_name: "minecraft:player" }, 0);
-    if p.sneaking {
-        e.height = 1.5;
-        e.eye_height = 1.27;
+/// The players' stand-ins and views, a microsecond or so each.
+const PLAYER_VIEWS: kiln_sched::Window = kiln_sched::Window::new();
+
+/// What a player's stand-in is made from: the player as the entities see it
+/// (`minecraft:player`, standing or sneaking).
+#[derive(Clone, Copy)]
+struct ProxySeed {
+    id: i32,
+    uuid: u128,
+    pos: [f64; 3],
+    sneaking: bool,
+    invulnerable: bool,
+}
+
+impl ProxySeed {
+    fn of(p: &Player) -> ProxySeed {
+        ProxySeed { id: p.entity_id, uuid: p.uuid.as_u128(), pos: p.pos, sneaking: p.sneaking, invulnerable: matches!(p.game_mode, 1 | 3) }
     }
-    e.set_pos(vec3(p.pos));
-    e.invulnerable = matches!(p.game_mode, 1 | 3);
-    e
+
+    fn make(&self) -> kiln_entity::Entity {
+        let mut e = kiln_entity::Entity::new("minecraft:player", self.id, self.uuid, EntityKind::Other { type_name: "minecraft:player" }, 0);
+        if self.sneaking {
+            e.height = 1.5;
+            e.eye_height = 1.27;
+        }
+        e.set_pos(vec3(self.pos));
+        e.invulnerable = self.invulnerable;
+        e
+    }
+}
+
+/// A player's stand-in, made the first time an entity reaches for it (a crowd's players are
+/// mostly only searched, which the seed answers as the made one would).
+pub(crate) struct Proxy {
+    pub(crate) id: i32,
+    pub(crate) uuid: u128,
+    seed: ProxySeed,
+    made: std::cell::OnceCell<Box<kiln_entity::Entity>>,
+}
+
+impl Proxy {
+    fn of(p: &Player) -> Proxy {
+        let seed = ProxySeed::of(p);
+        Proxy { id: seed.id, uuid: seed.uuid, seed, made: std::cell::OnceCell::new() }
+    }
+
+    fn get(&self) -> &kiln_entity::Entity {
+        self.made.get_or_init(|| Box::new(self.seed.make()))
+    }
+
+    fn get_mut(&mut self) -> &mut kiln_entity::Entity {
+        if self.made.get().is_none() {
+            let _ = self.made.set(Box::new(self.seed.make()));
+        }
+        self.made.get_mut().expect("just made")
+    }
+
+    fn made(&self) -> Option<&kiln_entity::Entity> {
+        self.made.get().map(|b| &**b)
+    }
+
+    fn position(&self) -> Vec3 {
+        self.made().map_or_else(|| vec3(self.seed.pos), |e| e.position())
+    }
+
+    /// The box a fresh stand-in has (`EntityDimensions.makeBoundingBox`), or the made one's.
+    fn bounding_box(&self) -> Aabb {
+        if let Some(e) = self.made() {
+            return e.bounding_box();
+        }
+        static SIZE: std::sync::OnceLock<(f32, f32)> = std::sync::OnceLock::new();
+        let (width, height) = *SIZE.get_or_init(|| {
+            let t = kiln_data::entities::by_name("minecraft:player").expect("the player type");
+            (t.width, t.height)
+        });
+        let w = width / 2.0;
+        let h: f32 = if self.seed.sneaking { 1.5 } else { height };
+        let p = self.seed.pos;
+        Aabb::new(p[0] - w as f64, p[1], p[2] - w as f64, p[0] + w as f64, p[1] + h as f64, p[2] + w as f64)
+    }
+
+    /// [`section_key`] of the stand-in.
+    fn section_key(&self) -> (i32, i64) {
+        match self.made() {
+            Some(e) => section_key(e),
+            None => {
+                let (sx, sy, sz) = ((self.seed.pos[0].floor() as i32) >> 4, (self.seed.pos[1].floor() as i32) >> 4, (self.seed.pos[2].floor() as i32) >> 4);
+                (sx, (((sz as i64) & 0x3F_FFFF) << 20) | ((sy as i64) & 0xF_FFFF))
+            }
+        }
+    }
+
+    /// Whether an area search with `filter`, leaving out `exclude`, finds it in `area`.
+    fn wanted(&self, filter: EntityFilter, exclude: i32, area: &Aabb) -> bool {
+        // A stand-in is an `Other` entity: living, neither an item nor an orb.
+        let kind = matches!(filter, EntityFilter::Any | EntityFilter::Living);
+        kind && self.id != exclude && self.made().is_none_or(|e| e.is_alive()) && self.bounding_box().intersects(area)
+    }
 }
 
 /// L8: ticks the region's entities in order (`commonTick` then `tick`, as `ServerLevel`
@@ -1540,9 +1666,18 @@ pub(crate) fn tick(
     }
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
-    let live =|p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
-    let mut views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
+    // The players' stand-ins and views, made side by side (a crowd has a thousand).
+    let now = level.env.game_time;
+    let made: Vec<(Option<Proxy>, Option<PlayerView>)> = ctx.map_mut_with(PLAYER_VIEWS, players, |_, p| {
+        let alive = !p.disconnected && !p.dead;
+        ((alive && p.game_mode != 3).then(|| Proxy::of(p)), alive.then(|| view(p, now)))
+    });
+    let mut proxies: Vec<Proxy> = Vec::with_capacity(made.len());
+    let mut views: Vec<PlayerView> = Vec::with_capacity(made.len());
+    for (e, v) in made {
+        proxies.extend(e);
+        views.extend(v);
+    }
     // wp32 parrots: what parrots need to know of their owners' footing.
     if entities.list.iter().any(|e| e.kind.name == "minecraft:parrot") {
         let block = |pos: BlockPos| level.block(kb(pos));
@@ -1598,9 +1733,35 @@ pub(crate) fn tick(
             (v.id, Aabb::new(v.pos.x - 0.3, v.pos.y, v.pos.z - 0.3, v.pos.x + 0.3, v.pos.y + h, v.pos.z + 0.3).inflate(1.0, 0.5, 1.0))
         })
         .collect();
-    for (pid, area) in touchers {
-        for id in sim.entities_in(&area, EntityFilter::Living, pid) {
-            let Some(i) = sim.index(id) else { continue };
+    // Only mobs whose type touches back are looked for (by entity section, as the area search
+    // finds them, in its order).
+    let mut by_section: FastMap<(i32, i32, i32), Vec<usize>> = Default::default();
+    for (i, e) in sim.list.iter().enumerate() {
+        if !e.removed && e.phys.as_deref().is_some_and(kiln_entity::mob::touches_players) {
+            by_section.entry(section_of(e.pos)).or_default().push(i);
+        }
+    }
+    for (pid, area) in touchers.into_iter().filter(|_| !by_section.is_empty()) {
+        let lo = section_of([area.min_x - 2.0, area.min_y - 2.0, area.min_z - 2.0]);
+        let hi = section_of([area.max_x + 2.0, area.max_y + 2.0, area.max_z + 2.0]);
+        let mut found: SmallVec<[((i32, i64), i32, usize); 8]> = SmallVec::new();
+        for x in lo.0..=hi.0 {
+            for y in lo.1..=hi.1 {
+                for z in lo.2..=hi.2 {
+                    for &i in by_section.get(&(x, y, z)).into_iter().flatten() {
+                        if let Some(e) = sim.list[i].phys.as_deref()
+                            && e.id != pid
+                            && e.is_alive()
+                            && e.bounding_box().intersects(&area)
+                        {
+                            found.push((section_key(e), e.id, i));
+                        }
+                    }
+                }
+            }
+        }
+        found.sort_unstable();
+        for (_, _, i) in found {
             let Some(mut phys) = sim.list[i].phys.take() else { continue };
             if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
                 kiln_entity::mob::player_touch(&mut phys, &mut sim, pid);
@@ -1612,7 +1773,7 @@ pub(crate) fn tick(
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
     let level = level.into_region();
     // Explosion knockback reaches the pushed player's client (it owns its movement).
-    for pr in proxies.iter().filter(|e| e.delta != Vec3::ZERO) {
+    for pr in proxies.iter().filter_map(Proxy::made).filter(|e| e.delta != Vec3::ZERO) {
         if let Some(p) = players.iter_mut().find(|p| p.entity_id == pr.id)
             && !(p.game_mode == 1 && p.flying)
         {
@@ -1920,7 +2081,7 @@ pub(crate) fn hit_mob(
     let target = hit.target - hit.part.map_or(0, |p| p as i32 + 1);
     let Ok(i) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
+    let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x6869_74, hit.target);
     let mut sim = SimLevel {
@@ -2036,7 +2197,7 @@ pub(crate) fn stab_mob(
 ) -> Option<MobStabOutcome> {
     let i = entities.list.binary_search_by_key(&stab.target, |e| e.id).ok()?;
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
+    let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x7374_6162, stab.target);
     let mut sim = SimLevel {
@@ -2172,7 +2333,7 @@ pub(crate) fn interact_mob(
     let stack = players[i].inv.equipped(slot).clone();
     let who = kiln_entity::mob::interact::Interactor { id: players[i].entity_id, creative: players[i].game_mode == 1, sneaking: players[i].sneaking };
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
+    let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x696e_74, target);
     let mut sim = SimLevel {
@@ -2330,7 +2491,7 @@ pub(crate) fn with_entity<R>(
     }
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
+    let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, target);
     let mut sim = SimLevel {
@@ -2381,7 +2542,7 @@ pub(crate) fn with_level<R>(
     f: impl FnOnce(&mut dyn EntityLevel) -> R,
 ) -> R {
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
+    let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, 0);
     let mut sim = SimLevel {

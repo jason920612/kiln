@@ -61,6 +61,7 @@ unsafe extern "system" {
     fn Thread32Next(snap: HANDLE, e: *mut ThreadEntry32) -> i32;
     fn CloseHandle(h: HANDLE) -> i32;
     fn GetCurrentProcessId() -> u32;
+    fn GetLastError() -> u32;
     fn GetCurrentThreadId() -> u32;
     fn GetCurrentProcess() -> HANDLE;
     fn OpenThread(access: u32, inherit: i32, tid: u32) -> HANDLE;
@@ -286,7 +287,13 @@ impl Sampler {
                 let mut l: LineW64 = std::mem::zeroed();
                 l.SizeOfStruct = std::mem::size_of::<LineW64>() as u32;
                 let mut disp = 0u32;
-                if SymGetLineFromAddrW64(process, stack[0], &mut disp, &mut l) != 0 { l.LineNumber } else { 0 }
+                if SymGetLineFromAddrW64(process, stack[0], &mut disp, &mut l) != 0 {
+                    l.LineNumber
+                } else {
+                    static ONCE: std::sync::Once = std::sync::Once::new();
+                    ONCE.call_once(|| eprintln!("sampler: no line for {:#x}: error {}", stack[0], GetLastError()));
+                    0
+                }
             };
             *lines.entry((leaf, line)).or_default() += *n as u64;
         }
