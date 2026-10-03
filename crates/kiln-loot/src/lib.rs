@@ -35,6 +35,7 @@ pub mod table;
 pub mod tags;
 pub mod text;
 pub mod trade;
+pub mod view;
 
 pub use condition::Condition;
 pub use context::{EmptyContext, EntityTarget, LootContext, Source};

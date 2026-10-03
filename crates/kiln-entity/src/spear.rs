@@ -31,6 +31,29 @@ pub fn effective_range(range: &AttackRange, player: bool, creative: bool) -> (f3
     }
 }
 
+/// `Entity.isPickable` of entities that are not mobs (what `canBeHitByProjectile` asks besides
+/// `isAlive`, which the caller has checked): vehicles, end crystals, falling blocks and primed
+/// TNT, shulker bullets and the redirectable projectiles. (Arrows, items, orbs and the like
+/// cannot be hit.)
+pub fn pickable_non_mob(o: &crate::entity::Entity) -> bool {
+    use crate::entity::EntityKind;
+    if matches!(o.kind, EntityKind::FallingBlock(_) | EntityKind::Tnt(_)) {
+        return true;
+    }
+    let name = o.type_name;
+    name.ends_with("_boat")
+        || name.ends_with("_raft")
+        || name.ends_with("minecart")
+        || matches!(name, "minecraft:end_crystal" | "minecraft:leash_knot" | "minecraft:shulker_bullet")
+        || redirectable_projectile(name)
+}
+
+/// `#minecraft:redirectable_projectile`: fireballs and wind charges, which a hit with a weapon
+/// turns around (a player's; a mob's stab leaves them be).
+pub fn redirectable_projectile(type_name: &str) -> bool {
+    matches!(type_name, "minecraft:fireball" | "minecraft:wind_charge" | "minecraft:breeze_wind_charge")
+}
+
 /// `Level.clip` with `ClipContext.Block.COLLIDER` and no fluids: where the first block in the way
 /// of `from → to` is hit.
 pub fn clip_collider(level: &dyn EntityLevel, from: Vec3, to: Vec3) -> Option<Vec3> {

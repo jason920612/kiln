@@ -783,6 +783,32 @@ fn vectors() -> Option<PathBuf> {
     p.exists().then_some(p)
 }
 
+/// The datapack's enchantment definitions, for what a weapon does to a blow (the replay does not
+/// enchant what mobs spawn with: the scenarios give their gear in NBT).
+struct AttackEnchanter(kiln_loot::LootData);
+
+impl kiln_entity::enchanting::Enchanter for AttackEnchanter {
+    fn enchant(&self, _stack: &mut kiln_item::ItemStack, _provider: &str, _special_multiplier: f32, _random: &mut dyn kiln_javamath::random::RandomSource) {}
+
+    fn modify_damage(&self, hit: &kiln_entity::enchanting::Hit, damage: f32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
+        self.0.mob_modify_damage(hit.weapon, hit.attacker, hit.victim, hit.damage_type, damage, random)
+    }
+
+    fn modify_knockback(&self, hit: &kiln_entity::enchanting::Hit, value: f32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
+        self.0.mob_modify_knockback(hit.weapon, hit.attacker, hit.victim, hit.damage_type, value, random)
+    }
+
+    fn post_attack(&self, hit: &kiln_entity::enchanting::Hit, random: &mut dyn kiln_javamath::random::RandomSource) -> Vec<kiln_entity::enchanting::MobPostAttack> {
+        self.0.mob_post_attack(hit.weapon, hit.attacker, hit.victim, hit.damage_type, random)
+    }
+}
+
+/// The datapack (`KILN_DATAPACK`, else `work/generated`).
+fn datapack() -> Option<PathBuf> {
+    let dir = std::env::var_os("KILN_DATAPACK").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work/generated"));
+    dir.join("data/minecraft/enchantment").is_dir().then_some(dir)
+}
+
 #[test]
 fn mobs_match_vanilla() {
     let Some(path) = vectors() else {
@@ -791,11 +817,19 @@ fn mobs_match_vanilla() {
     };
     let text = std::fs::read_to_string(&path).unwrap();
     let filter = std::env::var("KILN_PARITY_FILTER").ok();
+    let loot = datapack().and_then(|d| kiln_loot::LootData::load(&d).ok());
+    let have_datapack = loot.is_some();
+    let _enchanting = loot.map(|l| kiln_entity::enchanting::install(Some(std::rc::Rc::new(AttackEnchanter(l)))));
     let (mut pass, mut fail, mut states) = (0, 0, 0);
     for line in text.lines() {
         let s: Value = serde_json::from_str(line).unwrap();
         let name = s["name"].as_str().unwrap().to_owned();
         if filter.as_deref().is_some_and(|f| !f.split('|').any(|f| name.contains(f))) {
+            continue;
+        }
+        // Enchanted weapons need the datapack's enchantments.
+        if name.starts_with("ench_") && !have_datapack {
+            eprintln!("skip {name}: no datapack (KILN_DATAPACK)");
             continue;
         }
         // Raid wave compositions are checked by kiln-sim's raid tests.

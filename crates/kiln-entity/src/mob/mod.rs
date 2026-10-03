@@ -27,6 +27,7 @@ pub mod path;
 pub mod persist;
 pub mod random_pos;
 pub mod species;
+pub mod weapon;
 
 use crate::entity::{Entity, EntityKind, MoverType};
 use crate::level::{DamageKind, EntityFilter, EntityLevel, Event};
@@ -1319,6 +1320,15 @@ pub(crate) fn take(e: &mut Entity) -> Box<MobData> {
 
 pub(crate) fn put(e: &mut Entity, m: Box<MobData>) {
     e.kind = EntityKind::Mob(m);
+}
+
+/// One `ItemStack.onUseTick` of a charging spear for the mob `e`, on its own (tests drive the
+/// weapon without the rest of the mob's tick).
+#[doc(hidden)]
+pub fn kinetic_tick_alone(e: &mut Entity, level: &mut dyn EntityLevel) {
+    let mut m = take(e);
+    kinds::spear_use::kinetic_tick(e, &mut m, level);
+    put(e, m);
 }
 
 // ---------------------------------------------------------------------- the tick
@@ -2857,12 +2867,19 @@ fn killer_notified(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel,
     proceed
 }
 
-/// The shared `Mob.doHurtTarget`.
+/// The shared `Mob.doHurtTarget`: the attack damage through the weapon's enchantments
+/// (`modifyDamage`), the hit under the item's damage type, the attack knockback with the
+/// weapon's (`getKnockback`), the weapon's post-attack effects.
 pub fn do_hurt_target_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, t: &Living) -> bool {
-    let damage = m.attrs.value(Attr::AttackDamage) as f32;
-    let source = DamageSource { kind: DamageKind::MobAttack, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+    let kind = weapon::damage_kind(m);
+    let damage = weapon::modify_damage(level, e, m, t, kind, m.attrs.value(Attr::AttackDamage) as f32);
+    let old = level.motion(t.id);
+    let source = DamageSource { kind, attacker: Some(e.id), direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
     let hurt = hurt_living_by(level, e, m, t, source, damage);
     if hurt {
+        let knockback = weapon::attack_knockback(level, e, m, t, kind);
+        weapon::cause_extra_knockback(e, level, t, knockback, old);
+        weapon::post_attack(level, e, m, t, kind);
         m.last_hurt_mob = Some(t.id);
         // `Zombie.doHurtTarget`: a burning, empty-handed zombie sets its target on fire.
         if m.kind.is_zombie() && m.equipment[MAINHAND].is_empty() && e.is_on_fire() {

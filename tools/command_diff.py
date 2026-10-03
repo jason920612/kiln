@@ -1416,6 +1416,7 @@ ride @e[type=minecraft:pig] dismount
 
 # summon with passengers (wp36): whole stacks from the Passengers list (on easy: hostile mobs vanish on peaceful)
 ! difficulty easy
+! gamerule mob_drops false
 ! kill @e[type=!minecraft:player]
 ! summon minecraft:horse 5 101 5 {NoAI:1b,Silent:1b,Tags:["s0"],Passengers:[{id:"minecraft:skeleton",NoAI:1b,Silent:1b,Tags:["s1"],Passengers:[{id:"minecraft:parrot",NoAI:1b,Silent:1b,Tags:["s2"]}]},{id:"minecraft:zombie",NoAI:1b,Silent:1b,Tags:["s3"]}]}
 execute if entity @e[tag=s0]
@@ -1450,6 +1451,7 @@ execute as @e[tag=s4] on vehicle if entity @s[type=minecraft:minecart]
 summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b,Passengers:[{id:"minecraft:pig",NoAI:1b,Silent:1b,Tags:["s5"]}]}
 execute as @e[tag=s5] on vehicle if entity @s[type=minecraft:pig]
 ! kill @e[type=!minecraft:player]
+! gamerule mob_drops true
 ! difficulty peaceful
 
 # clear and enchant
