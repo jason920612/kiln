@@ -57,7 +57,7 @@ fn main() -> Result<()> {
         sim_config.pool.workers = n;
     }
     sim_config.unified_regions = std::env::var("KILN_REGIONS").is_ok_and(|v| v == "unified");
-    // KILN_ENTITY_TICKING=serial|islands|tiles (default tiles); KILN_LOCATOR_INTERVAL=n (1).
+    // KILN_ENTITY_TICKING=serial|islands|tiles (default serial); KILN_LOCATOR_INTERVAL=n (1).
     if let Some(t) = std::env::var("KILN_ENTITY_TICKING").ok().and_then(|v| kiln_sim::EntityTicking::parse(&v)) {
         sim_config.entity_ticking = t;
     }

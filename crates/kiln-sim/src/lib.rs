@@ -170,7 +170,8 @@ pub struct SimConfig {
     /// Keep-alives every 15 s of wall-clock time; `false` sends none (replays and
     /// determinism tests, whose packet streams must not depend on how fast they run).
     pub keep_alive: bool,
-    /// How a crowded region's entities tick ([`EntityTicking`]).
+    /// How a crowded region's entities tick ([`EntityTicking`]). Serial (vanilla's order) by
+    /// default; islands and tiles are faster approximations, opt-in until approved.
     pub entity_ticking: EntityTicking,
     /// The locator bar takes the movers' turns every this many ticks (1: every tick, as
     /// vanilla; more sends fewer, coarser waypoint updates).
@@ -241,7 +242,7 @@ impl SimConfig {
             world_format: kiln_storage::WorldFormat::Anvil,
             access: kiln_link::access::AccessLists::new(None).shared(),
             keep_alive: true,
-            entity_ticking: EntityTicking::Tiles,
+            entity_ticking: EntityTicking::Serial,
             locator_interval: 1,
             prewake: Duration::ZERO,
             data_sync: Default::default(),
