@@ -7,6 +7,26 @@ use kiln_proto::{DecodeError, Reader, WriteExt};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+/// FNV-1a for the name indexes: names are looked up per entity and tick (attributes, effects),
+/// and SipHash's protection against crafted keys is wasted on the game's own names.
+#[derive(Default)]
+pub struct NameHasher(u64);
+
+impl std::hash::Hasher for NameHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut h = if self.0 == 0 { 0xcbf2_9ce4_8422_2325 } else { self.0 };
+        for &b in bytes {
+            h = (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        self.0 = h;
+    }
+}
+
+type Names<V> = HashMap<&'static str, V, std::hash::BuildHasherDefault<NameHasher>>;
+
 /// A registry key such as `minecraft:item`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Registry(pub &'static str);
@@ -50,7 +70,7 @@ impl Registry {
 
     /// Network id of `name` (a missing namespace means `minecraft`).
     pub fn id(self, name: &str) -> Option<i32> {
-        type Index = HashMap<&'static str, HashMap<&'static str, i32>>;
+        type Index = Names<Names<i32>>;
         static INDEX: OnceLock<Index> = OnceLock::new();
         let all = INDEX.get_or_init(|| {
             let regs = kiln_data::registries::BUILTIN.iter().chain(kiln_data::registries::SYNCHRONIZED);

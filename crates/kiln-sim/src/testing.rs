@@ -27,6 +27,28 @@ pub struct SinkStats {
     pub count_ids: AtomicBool,
     /// Every packet sent, once set to `Some` (tests that inspect packets).
     pub log: Mutex<Option<Vec<Bytes>>>,
+    /// Order-dependent hash of every packet received (keep-alives left out), when
+    /// `KILN_SINK_DIGEST` is set: two runs sent a player the same stream iff the digests agree.
+    pub digest: Mutex<u64>,
+}
+
+static DIGESTS: AtomicBool = AtomicBool::new(false);
+
+/// Makes every sink hash its packets from now on (as `KILN_SINK_DIGEST` does); call before the
+/// first join.
+pub fn hash_packets() {
+    DIGESTS.store(true, Relaxed);
+}
+
+/// Makes the locator bar check every receiver's quick share of the movers' turns against
+/// stepping every pair (slow; for tests).
+pub fn verify_locator_bar() {
+    crate::waypoints::verify(true);
+}
+
+fn track_digest() -> bool {
+    static TRACK: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    DIGESTS.load(Relaxed) || *TRACK.get_or_init(|| std::env::var_os("KILN_SINK_DIGEST").is_some())
 }
 
 fn track_ids() -> bool {
@@ -35,31 +57,68 @@ fn track_ids() -> bool {
 }
 
 impl SinkStats {
-    fn record(&self, p: &Bytes) {
+    /// Counts a batch of packets: each lock is taken once per batch (a crowd's sinks see tens
+    /// of thousands of packets a tick, and this runs inside the measured tick).
+    fn record(&self, batch: &[Bytes]) {
+        const KEEP_ALIVE: i32 = kiln_data::packets::play::clientbound::KEEP_ALIVE;
+        const PLAYER_POSITION: i32 = kiln_data::packets::play::clientbound::PLAYER_POSITION;
         if let Some(log) = self.log.lock().unwrap().as_mut() {
-            log.push(p.clone());
+            log.extend(batch.iter().cloned());
         }
-        let mut r = Reader::new(p);
-        let id = r.varint().ok();
-        if id != Some(kiln_data::packets::play::clientbound::KEEP_ALIVE) {
-            self.packets.fetch_add(1, Relaxed);
-            self.bytes.fetch_add(p.len() as u64, Relaxed);
+        let ids: Vec<Option<i32>> = batch.iter().map(|p| Reader::new(p).varint().ok()).collect();
+        if track_digest() {
+            // FNV-1a over the length and the bytes.
+            let mut d = self.digest.lock().unwrap();
+            for (p, id) in batch.iter().zip(&ids) {
+                if *id == Some(KEEP_ALIVE) {
+                    continue;
+                }
+                let mut h = *d ^ 0xcbf2_9ce4_8422_2325;
+                for b in (p.len() as u32).to_le_bytes().iter().chain(p.iter()) {
+                    h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+                }
+                *d = h;
+            }
         }
-        if (track_ids() || self.count_ids.load(Relaxed)) && let Some(id) = id {
+        let (mut packets, mut bytes) = (0, 0);
+        for (p, id) in batch.iter().zip(&ids) {
+            if *id != Some(KEEP_ALIVE) {
+                packets += 1;
+                bytes += p.len() as u64;
+            }
+        }
+        self.packets.fetch_add(packets, Relaxed);
+        self.bytes.fetch_add(bytes, Relaxed);
+        if track_ids() || self.count_ids.load(Relaxed) {
             let mut m = self.by_id.lock().unwrap();
-            let e = m.entry(id).or_default();
-            e.0 += 1;
-            e.1 += p.len() as u64;
+            for (p, id) in batch.iter().zip(&ids) {
+                if let Some(id) = id {
+                    let e = m.entry(*id).or_default();
+                    e.0 += 1;
+                    e.1 += p.len() as u64;
+                }
+            }
         }
-        if id == Some(kiln_data::packets::play::clientbound::KEEP_ALIVE)
-            && let Ok(k) = r.i64()
-        {
-            *self.keep_alive.lock().unwrap() = Some(k);
-        }
-        if id == Some(kiln_data::packets::play::clientbound::PLAYER_POSITION)
-            && let (Ok(id), Ok(x), Ok(y), Ok(z)) = (r.varint(), r.f64(), r.f64(), r.f64())
-        {
-            *self.teleport.lock().unwrap() = Some((id, [x, y, z]));
+        for (p, id) in batch.iter().zip(&ids) {
+            match *id {
+                Some(KEEP_ALIVE) => {
+                    let mut r = Reader::new(p);
+                    if r.varint().is_ok()
+                        && let Ok(k) = r.i64()
+                    {
+                        *self.keep_alive.lock().unwrap() = Some(k);
+                    }
+                }
+                Some(PLAYER_POSITION) => {
+                    let mut r = Reader::new(p);
+                    if r.varint().is_ok()
+                        && let (Ok(id), Ok(x), Ok(y), Ok(z)) = (r.varint(), r.f64(), r.f64(), r.f64())
+                    {
+                        *self.teleport.lock().unwrap() = Some((id, [x, y, z]));
+                    }
+                }
+                _ => {}
+            }
         }
     }
 }
@@ -68,13 +127,13 @@ struct TestSink(Arc<SinkStats>);
 
 impl Sink for TestSink {
     fn send(&self, packet: Bytes) {
-        self.0.record(&packet);
+        self.0.record(std::slice::from_ref(&packet));
     }
     fn send_batch(&self, packets: Vec<Bytes>) {
-        packets.iter().for_each(|p| self.0.record(p));
+        self.0.record(&packets);
     }
     fn disconnect(&self, packet: Bytes) {
-        self.0.record(&packet);
+        self.0.record(std::slice::from_ref(&packet));
         self.0.disconnected.store(true, Relaxed);
     }
 }
@@ -201,4 +260,85 @@ pub fn group_offset(g: usize, groups: usize, spacing: f64) -> [f64; 2] {
     let rows = groups.div_ceil(cols);
     let at = |i: usize, n: usize| (i as f64 - (n - 1) as f64 / 2.0) * spacing;
     [at(g % cols, cols), at(g / cols, rows)]
+}
+
+/// Players that crouch, go spectator, and leave and rejoin while a crowd runs (locator bar and
+/// tracking churn), scripted from the tick number so two builds can be compared.
+pub struct Churn {
+    crouching: Vec<bool>,
+    spectators: Vec<(usize, usize)>,
+    retired: Vec<Arc<SinkStats>>,
+    next_conn: u64,
+}
+
+impl Churn {
+    pub fn new(players: usize) -> Self {
+        Self { crouching: vec![false; players], spectators: Vec::new(), retired: Vec::new(), next_conn: players as u64 }
+    }
+
+    /// Adds tick `k`'s events to `inbox`.
+    pub fn tick(&mut self, k: usize, walkers: &mut Vec<Walker>, inbox: &mut Vec<ToSim>, groups: usize, spacing: f64, view_distance: u8, y: f64) {
+        let n = walkers.len();
+        for i in 0..n {
+            // About 2.5% of the players flip their crouch each tick.
+            if (i * 7 + k) % 40 == 0 {
+                self.crouching[i] = !self.crouching[i];
+                let flags = if self.crouching[i] { 0x20 } else { 0 };
+                inbox.push(ToSim::Packet(walkers[i].client.conn, PlayIn::PlayerInput { flags }));
+            }
+        }
+        if k % 50 == 0 {
+            let i = (k / 50 * 13) % n;
+            inbox.push(ToSim::Console(format!("gamemode spectator W{}", walkers[i].client.conn - 1)));
+            self.spectators.push((k + 25, i));
+        }
+        while let Some(&(when, i)) = self.spectators.first() {
+            if when > k {
+                break;
+            }
+            self.spectators.remove(0);
+            inbox.push(ToSim::Console(format!("gamemode survival W{}", walkers[i].client.conn - 1)));
+        }
+        if k % 97 == 96 {
+            // One player leaves; a new one takes its place in the group.
+            let i = (k / 97 * 31) % n;
+            let old = walkers.remove(i);
+            self.crouching.remove(i);
+            self.retired.push(old.client.stats.clone());
+            inbox.push(ToSim::Leave(old.client.conn));
+            self.next_conn += 1;
+            let name = format!("W{}", self.next_conn - 1);
+            let (msg, stats) = join(self.next_conn, &name, view_distance);
+            inbox.push(msg);
+            let [ox, oz] = group_offset(i % groups, groups, spacing);
+            let center = [8.5 + ox, 8.5 + oz];
+            inbox.push(ToSim::Console(format!("tp {name} {} {y} {}", center[0], center[1])));
+            walkers.insert(i, Walker::new(Client::new(self.next_conn, stats), center, self.next_conn));
+            self.crouching.insert(i, false);
+        }
+    }
+
+    /// One hash of every player's packet stream (needs `KILN_SINK_DIGEST`), the players who
+    /// left included, combined in connection order.
+    pub fn stream_digest(&self, walkers: &[Walker]) -> u64 {
+        stream_digest(walkers, &self.retired)
+    }
+}
+
+/// One hash of the packet streams of `walkers` and of `retired` connections (needs
+/// `KILN_SINK_DIGEST`).
+pub fn stream_digest(walkers: &[Walker], retired: &[Arc<SinkStats>]) -> u64 {
+    let mut all: Vec<(u64, u64)> = walkers
+        .iter()
+        .map(|w| (w.client.conn, *w.client.stats.digest.lock().unwrap()))
+        .chain(retired.iter().map(|r| (0, *r.digest.lock().unwrap())))
+        .collect();
+    all.sort_unstable();
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for (c, d) in &all {
+        for b in c.to_le_bytes().iter().chain(d.to_le_bytes().iter()) {
+            h = (h ^ *b as u64).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    h
 }

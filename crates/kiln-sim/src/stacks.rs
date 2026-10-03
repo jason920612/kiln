@@ -51,7 +51,7 @@ impl Sim {
 
     /// Whether anything (a player included) rides entity `id` of level `dim`.
     pub(crate) fn entity_has_riders(&self, dim: DimId, id: i32) -> bool {
-        self.entity_in(dim, id).and_then(|e| e.phys.as_ref()).is_some_and(|p| !p.passengers.is_empty())
+        self.entity_in(dim, id).and_then(|e| e.phys.as_deref()).is_some_and(|p| !p.passengers.is_empty())
     }
 
     /// `root` and everything that rides it, in level `dim`.
@@ -62,7 +62,7 @@ impl Sim {
         while let Some(id) = todo.pop() {
             let Some(e) = self.entity_in(dim, id) else { continue };
             stack.entities.push(id);
-            let riders = e.phys.as_ref().map(|p| p.passengers.clone()).unwrap_or_default();
+            let riders = e.phys.as_deref().map(|p| p.passengers.clone()).unwrap_or_default();
             // Depth first, in seat order.
             for &r in riders.iter().rev() {
                 match self.players.iter().find(|(_, p)| p.dim == dim && p.entity_id == r) {
@@ -78,8 +78,8 @@ impl Sim {
     /// `Entity.stopRiding` for the entity `id` of level `dim`: it leaves its vehicle.
     pub(crate) fn stop_riding_entity(&mut self, dim: DimId, id: i32) {
         let Some(e) = self.entity_in_mut(dim, id) else { return };
-        let Some(vehicle) = e.phys.as_mut().and_then(|p| p.vehicle.take()) else { return };
-        if let Some(vp) = self.entity_in_mut(dim, vehicle).and_then(|v| v.phys.as_mut()) {
+        let Some(vehicle) = e.phys.as_deref_mut().and_then(|p| p.vehicle.take()) else { return };
+        if let Some(vp) = self.entity_in_mut(dim, vehicle).and_then(|v| v.phys.as_deref_mut()) {
             kiln_entity::ride::remove_passenger(vp, id);
         }
     }
@@ -91,7 +91,7 @@ impl Sim {
         let (Some(vehicle), dim, pid) = (p.vehicle.take(), p.dim, p.entity_id) else { return };
         p.vehicle_type = None;
         p.dismount_on_teleport = false;
-        if let Some(vp) = self.entity_in_mut(dim, vehicle).and_then(|v| v.phys.as_mut()) {
+        if let Some(vp) = self.entity_in_mut(dim, vehicle).and_then(|v| v.phys.as_deref_mut()) {
             kiln_entity::ride::remove_passenger(vp, pid);
         }
     }
@@ -135,7 +135,7 @@ impl Sim {
             for (k, &rider) in vp.passengers.iter().enumerate() {
                 if let Some(ri) = order(&taken, rider) {
                     // `positionRider`, then it stands there like the rest (still, on its seat).
-                    let Some(rp) = taken[ri].phys.as_mut() else { continue };
+                    let Some(rp) = taken[ri].phys.as_deref_mut() else { continue };
                     kiln_entity::ride::position_rider(rp, &vp);
                     let at = rp.position();
                     taken[ri].relocate([at.x, at.y, at.z], None);

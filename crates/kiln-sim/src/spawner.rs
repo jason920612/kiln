@@ -265,7 +265,7 @@ pub(crate) fn tick(level: &mut RegionLevel, entities: &Entities, players: &[&mut
     };
     // `createState`: mobs per category, persistent ones excluded.
     for e in &entities.list {
-        let Some(m) = e.phys.as_ref().and_then(mob::data) else { continue };
+        let Some(m) = e.phys.as_deref().and_then(mob::data) else { continue };
         if m.persistence_required || e.removed {
             continue;
         }
@@ -468,8 +468,13 @@ fn spawn_category_for_chunk(
 
 /// The biome of the stored 4×4×4 cell holding `pos`.
 pub(crate) fn biome_at(level: &RegionLevel, pos: KBlockPos) -> u16 {
-    let Some(chunk) = level.cells.chunk(ChunkPos::of_block(pos.x, pos.z)) else { return 0 };
-    let rel = pos.y - level.env.min_y;
+    biome_at_in(level.cells, level.env, pos)
+}
+
+/// [`biome_at`] from the cells and the environment.
+pub(crate) fn biome_at_in(cells: &kiln_region::CellSet<kiln_world::Cell>, env: &crate::blocks::BlockEnv, pos: KBlockPos) -> u16 {
+    let Some(chunk) = cells.chunk(ChunkPos::of_block(pos.x, pos.z)) else { return 0 };
+    let rel = pos.y - env.min_y;
     let Some(section) = chunk.sections.get((rel >> 4).max(0) as usize) else { return 0 };
     match &section.biomes {
         kiln_world::section::Biomes::Single(b) => *b,

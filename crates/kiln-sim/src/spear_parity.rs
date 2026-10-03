@@ -230,7 +230,7 @@ fn stab(line: &Value) -> Vec<String> {
         let pid = w.sim.players[&1].entity_id;
         for dim in w.sim.dims.iter_mut() {
             for r in dim.regions.iter_mut() {
-                if let Some(phys) = r.part_mut().0.list.iter_mut().find(|e| e.id == pig).and_then(|e| e.phys.as_mut()) {
+                if let Some(phys) = r.part_mut().0.list.iter_mut().find(|e| e.id == pig).and_then(|e| e.phys.as_deref_mut()) {
                     kiln_entity::ride::add_passenger(phys, pid, true, false);
                 }
             }
@@ -328,7 +328,7 @@ fn charge(line: &Value) -> Vec<String> {
                     let list = &mut r.part_mut().0.list;
                     if let (Ok(z), Ok(p)) = (list.binary_search_by_key(&zombie, |e| e.id), list.binary_search_by_key(&pig, |e| e.id)) {
                         let mut rider = list[z].phys.take().unwrap();
-                        if let Some(vp) = list[p].phys.as_mut() {
+                        if let Some(vp) = list[p].phys.as_deref_mut() {
                             kiln_entity::ride::start_riding(&mut rider, vp, false);
                         }
                         list[z].phys = Some(rider);
@@ -419,7 +419,7 @@ fn move_mobs(w: &mut World, kind: &str, step: f64) {
     for dim in w.sim.dims.iter_mut() {
         for r in dim.regions.iter_mut() {
             for e in r.part_mut().0.list.iter_mut() {
-                let Some(phys) = e.phys.as_mut() else { continue };
+                let Some(phys) = e.phys.as_deref_mut() else { continue };
                 let is_mount = phys.type_name == "minecraft:pig";
                 let is_rider = phys.type_name == "minecraft:zombie";
                 if !(is_mount || is_rider) {

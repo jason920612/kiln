@@ -53,6 +53,7 @@ mod digging;
 mod dragon_fight;
 mod effects;
 mod entities;
+mod entity_world;
 mod fishing;
 mod gametest;
 mod profiles;
@@ -121,6 +122,13 @@ use region::{Env, RegionOut, RegionWork};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+
+/// Maps and sets of small keys (connection ids, chunk positions, statistics) looked up per
+/// player and tick: a multiplicative hash instead of SipHash. Nothing iterates them in hash
+/// order where it could show.
+pub(crate) type FastHash = std::hash::BuildHasherDefault<kiln_entity::memory::FastHasher>;
+pub(crate) type FastMap<K, V> = HashMap<K, V, FastHash>;
+pub(crate) type FastSet<K> = HashSet<K, FastHash>;
 use uuid::Uuid;
 
 /// A container block entity for tests and tools: (slot, item name, count) of its non-empty slots,
@@ -162,6 +170,14 @@ pub struct SimConfig {
     /// Keep-alives every 15 s of wall-clock time; `false` sends none (replays and
     /// determinism tests, whose packet streams must not depend on how fast they run).
     pub keep_alive: bool,
+    /// How a crowded region's entities tick ([`EntityTicking`]).
+    pub entity_ticking: EntityTicking,
+    /// The locator bar takes the movers' turns every this many ticks (1: every tick, as
+    /// vanilla; more sends fewer, coarser waypoint updates).
+    pub locator_interval: u32,
+    /// How long the idle workers keep spinning from the start of each tick (`TickPool::
+    /// prewake`; zero: they park between windows and pay the wake-up).
+    pub prewake: Duration,
     /// Where the data packs publish the feature flags and tags that logins send.
     pub data_sync: std::sync::Arc<kiln_link::DataSync>,
     /// Looks game profiles up for `fetchprofile` (the session service); without one only
@@ -169,6 +185,31 @@ pub struct SimConfig {
     pub profile_lookup: Option<std::sync::Arc<dyn kiln_link::ProfileLookup>>,
     /// The simulation's own inbox, for answers that arrive from other threads.
     pub replies: Option<crossbeam_channel::Sender<ToSim>>,
+}
+
+/// How a region with many entities ticks them (`entities/islands.rs`). Every choice is
+/// deterministic and independent of the workers and the regions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EntityTicking {
+    /// One after another in list order, as vanilla.
+    Serial,
+    /// Groups more than 24 blocks apart side by side (the same result as serial while they do
+    /// not meet).
+    Islands,
+    /// Islands, and 16-block tiles in nine passes when the islands join into one.
+    Tiles,
+}
+
+impl EntityTicking {
+    /// `serial`, `islands` or `tiles`.
+    pub fn parse(s: &str) -> Option<EntityTicking> {
+        match s {
+            "serial" => Some(EntityTicking::Serial),
+            "islands" => Some(EntityTicking::Islands),
+            "tiles" => Some(EntityTicking::Tiles),
+            _ => None,
+        }
+    }
 }
 
 /// Vanilla overworld generation: the seed and the vanilla datapack directory (the data
@@ -200,6 +241,9 @@ impl SimConfig {
             world_format: kiln_storage::WorldFormat::Anvil,
             access: kiln_link::access::AccessLists::new(None).shared(),
             keep_alive: true,
+            entity_ticking: EntityTicking::Tiles,
+            locator_interval: 1,
+            prewake: Duration::ZERO,
             data_sync: Default::default(),
             profile_lookup: None,
             replies: None,
@@ -283,7 +327,7 @@ struct Player {
     horizontal_collision: bool,
     view_distance: i32,
     center: ChunkPos,
-    sent_chunks: HashSet<ChunkPos>,
+    sent_chunks: FastSet<ChunkPos>,
     awaiting_teleport: Option<i32>,
     keep_alive: Option<(i64, Instant)>,
     last_keep_alive: Instant,
@@ -535,7 +579,9 @@ impl Player {
     }
     fn flush(&mut self) {
         if !self.outbox.is_empty() {
-            self.sink.send_batch(std::mem::take(&mut self.outbox));
+            // (The next tick's outbox starts with room for as many packets.)
+            let n = self.outbox.len();
+            self.sink.send_batch(std::mem::replace(&mut self.outbox, Vec::with_capacity(n)));
         }
     }
     fn disconnect(&mut self, reason: &str) {
@@ -915,7 +961,7 @@ pub struct Sim {
     /// Angles players at the world spawn face.
     spawn_rot: [f32; 2],
     storage: Option<persist::Storage>,
-    players: HashMap<ConnId, Player>,
+    players: FastMap<ConnId, Player>,
     next_entity_id: i32,
     started: Instant,
     stats: stats::TickStats,
@@ -1122,7 +1168,7 @@ impl Sim {
             spawn,
             spawn_rot: level.as_ref().map_or([0.0; 2], |l| [l.spawn.yaw, l.spawn.pitch]),
             storage,
-            players: HashMap::new(),
+            players: FastMap::default(),
             next_entity_id: 1,
             started: Instant::now(),
             stats: stats::TickStats::default(),
@@ -1173,6 +1219,11 @@ impl Sim {
             mark = now;
         };
 
+        // The workers spin through the tick's windows instead of parking between them
+        // (`SimConfig::prewake`: CPU for latency).
+        if !self.config.prewake.is_zero() {
+            self.pool.prewake(self.config.prewake);
+        }
         // `ServerTickRateManager.tick`: whether the levels run this tick.
         self.world.tick_rate.tick();
         // B0: connection events, chunks, topology, joins, membership.
@@ -1248,11 +1299,16 @@ impl Sim {
         for (request, result) in profile_results {
             self.profile_lookup_finished(request, result);
         }
+        lap(&mut self.stats, "g.console");
         self.tick_global();
+        lap(&mut self.stats, "g.tick_global");
         self.flush_stat_scores();
+        lap(&mut self.stats, "g.stat_scores");
         self.advancement_upkeep();
+        lap(&mut self.stats, "g.advancements");
         // Players teleported in PX or G tick in their destination's region from now on.
         self.settle_teleported();
+        lap(&mut self.stats, "g.settle");
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
 
@@ -1336,7 +1392,7 @@ impl Sim {
             .flat_map(|d| d.regions.iter())
             .flat_map(|r| r.part().0.list.iter())
             .map(|e| {
-                let mob = e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
+                let mob = e.phys.as_deref().and_then(|p| kiln_entity::mob::data(p).map(|m| (m.health.to_bits(), m.target, m.y_head_rot.to_bits())));
                 (e.id, e.kind.id, e.pos.map(f64::to_bits), e.vel.map(f64::to_bits), mob)
             })
             .collect();
@@ -1450,6 +1506,16 @@ impl Sim {
         self.pool.stats()
     }
 
+    /// Time per tick phase (b0, packets, px, global, regions, then the regions' sub-phases as
+    /// summed CPU time) since `reset_phase_totals`.
+    pub fn phase_totals(&self) -> Vec<(&'static str, Duration)> {
+        self.stats.totals().to_vec()
+    }
+
+    pub fn reset_phase_totals(&mut self) {
+        self.stats.reset_totals();
+    }
+
     pub fn reset_pool_stats(&self) {
         self.pool.reset_stats();
     }
@@ -1492,7 +1558,7 @@ impl Sim {
             .flat_map(|d| d.regions.iter())
             .flat_map(|r| r.part().0.list.iter())
             .filter(|e| !e.removed)
-            .filter_map(|e| e.phys.as_ref().map(|p| (e.id, p.vehicle, p.passengers.clone())))
+            .filter_map(|e| e.phys.as_deref().map(|p| (e.id, p.vehicle, p.passengers.clone())))
             .collect();
         out.sort_by_key(|r| r.0);
         out
@@ -1502,7 +1568,7 @@ impl Sim {
     /// still holds unrolled (for tests and tools).
     pub fn cart_items(&self, id: i32) -> Option<(Vec<(usize, &'static str, i32)>, Option<String>)> {
         let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
-        let c = kiln_entity::ext_entity::container(e.phys.as_ref()?)?;
+        let c = kiln_entity::ext_entity::container(e.phys.as_deref()?)?;
         Some((c.items.iter().enumerate().filter(|(_, s)| !s.is_empty()).map(|(i, s)| (i, s.item_name(), s.count())).collect(), c.loot_table.clone()))
     }
 
@@ -1510,7 +1576,7 @@ impl Sim {
     /// the hopper's `enabled` (for tests and tools).
     pub fn cart_state(&self, id: i32) -> Option<(i32, i32, bool)> {
         let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id && !e.removed)?;
-        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_ref()?)?;
+        let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e.phys.as_deref()?)?;
         Some((cart.fuel, cart.fuse, cart.enabled))
     }
 
@@ -1535,7 +1601,7 @@ impl Sim {
     /// banner) (for tests and tools).
     pub fn raider(&self, id: i32) -> Option<(Option<i32>, i32, bool, bool, bool)> {
         let e = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter()).find(|e| e.id == id)?;
-        let m = kiln_entity::mob::data(e.phys.as_ref()?)?;
+        let m = kiln_entity::mob::data(e.phys.as_deref()?)?;
         let r = kiln_entity::mob::kinds::raider::raider(m)?;
         Some((r.raid, r.wave, r.patrol_leader, r.patrolling, kiln_entity::mob::kinds::raider::is_ominous_banner(&m.equipment[kiln_entity::mob::HEAD])))
     }
@@ -1547,7 +1613,7 @@ impl Sim {
             .iter()
             .flat_map(|d| d.regions.iter())
             .flat_map(|r| r.part().0.list.iter())
-            .filter_map(|e| e.phys.as_ref().and_then(|p| kiln_entity::mob::data(p).map(|m| (e.id, e.kind.name, e.pos, m.health))))
+            .filter_map(|e| e.phys.as_deref().and_then(|p| kiln_entity::mob::data(p).map(|m| (e.id, e.kind.name, e.pos, m.health))))
             .collect();
         out.sort_by_key(|m| m.0);
         out
@@ -1588,7 +1654,7 @@ impl Sim {
             .iter()
             .flat_map(|r| r.part().0.list.iter())
             .filter(|e| !e.removed)
-            .filter_map(|e| e.phys.as_ref().and_then(kiln_entity::ext_entity::fishing_hook::get))
+            .filter_map(|e| e.phys.as_deref().and_then(kiln_entity::ext_entity::fishing_hook::get))
             .map(|h| (h.owner, h.biting, h.state == kiln_entity::ext_entity::fishing_hook::State::Bobbing))
             .collect()
     }
@@ -1673,7 +1739,7 @@ impl Sim {
             .iter()
             .flat_map(|r| r.part().0.list.iter())
             .filter(|e| !e.removed)
-            .filter_map(|e| match e.phys.as_ref().map(|p| &p.kind) {
+            .filter_map(|e| match e.phys.as_deref().map(|p| &p.kind) {
                 Some(kiln_entity::EntityKind::Item(d)) => Some(d.stack.clone()),
                 _ => None,
             })
@@ -1817,6 +1883,7 @@ impl Sim {
                 conns.into_iter().filter_map(|c| self.players.get(c)).filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()
             }),
             raids: self.dims[dim].raids.views.clone(),
+            entity_ticking: self.config.entity_ticking,
         }
     }
 
@@ -2100,7 +2167,7 @@ impl Sim {
             let Some(region) = d.regions.at_mut(chunk.cell()) else { continue };
             let list = &mut region.part_mut().0.list;
             let Ok(i) = list.binary_search_by_key(&id, |e| e.id) else { continue };
-            let vehicle = list[i].phys.as_mut().and_then(|p| {
+            let vehicle = list[i].phys.as_deref_mut().and_then(|p| {
                 p.vehicle = p.vehicle.map(real);
                 for x in p.passengers.iter_mut() {
                     *x = real(*x);
@@ -2109,7 +2176,7 @@ impl Sim {
             });
             if let Some(v) = vehicle
                 && let Ok(j) = list.binary_search_by_key(&v, |e| e.id)
-                && let Some(vp) = list[j].phys.as_mut()
+                && let Some(vp) = list[j].phys.as_deref_mut()
             {
                 for x in vp.passengers.iter_mut() {
                     if *x == placeholder {
@@ -2129,7 +2196,7 @@ impl Sim {
             cells.push(cell);
             let Some(region) = d.regions.at_mut(cell) else { continue };
             for e in region.part_mut().0.list.iter_mut() {
-                if let Some(l) = e.phys.as_mut().and_then(|p| p.leash.as_mut())
+                if let Some(l) = e.phys.as_deref_mut().and_then(|p| p.leash.as_mut())
                     && let Some(h) = l.holder
                     && h < 0
                 {
@@ -2495,7 +2562,7 @@ impl Sim {
             horizontal_collision: false,
             view_distance,
             center: player_chunk(spawn),
-            sent_chunks: HashSet::new(),
+            sent_chunks: FastSet::default(),
             awaiting_teleport: Some(1),
             keep_alive: None,
             last_keep_alive: Instant::now(),
@@ -2722,6 +2789,12 @@ impl Sim {
 
     /// G: world age and time, autosave.
     fn tick_global(&mut self) {
+        let mut mark = Instant::now();
+        let mut lap = |stats: &mut stats::TickStats, name| {
+            let now = Instant::now();
+            stats.phase(name, now - mark);
+            mark = now;
+        };
         // A frozen game (`/tick freeze`) keeps its time, weather and border; functions run.
         let normal = self.world.tick_rate.runs_normally();
         if normal {
@@ -2741,16 +2814,22 @@ impl Sim {
         }
         // The levels' `tick`: the border, the weather, sleeping, then (in the regions) the
         // blocks.
+        lap(&mut self.stats, "g.time");
         self.update_sleeping();
         if normal {
             self.tick_borders();
             self.tick_weather();
         }
+        lap(&mut self.stats, "g.border_weather");
         self.tick_sleep();
+        lap(&mut self.stats, "g.sleep");
         self.send_post_effects();
+        lap(&mut self.stats, "g.effects");
         self.tick_waypoints();
+        lap(&mut self.stats, "g.waypoints");
         self.tick_raids();
         self.tick_dragon_fight();
+        lap(&mut self.stats, "g.raids_dragon");
         // `save-all` asks for a save; `save-off` stops the autosave.
         let autosave = normal && self.commands.auto_save && self.game_time % AUTOSAVE_TICKS == 0;
         if std::mem::take(&mut self.commands.save_requested) || autosave {

@@ -4,6 +4,9 @@
 
 use crate::Player;
 use crate::blocks::{self, RegionLevel};
+use crate::entity_world::World;
+
+mod islands;
 use crate::health;
 use bytes::Bytes;
 use kiln_blocks::{Effect, Level};
@@ -59,7 +62,7 @@ pub(crate) struct Entity {
     pub age: i32,
     pub removed: bool,
     /// The vanilla state; `None` only while the entity is being ticked.
-    pub phys: Option<kiln_entity::Entity>,
+    pub phys: Option<Box<kiln_entity::Entity>>,
     tracker: MovementTracker,
     /// Velocity the viewers last got.
     sent_vel: [f64; 3],
@@ -176,7 +179,7 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
     if jockeys.nearby_chicken
         && let Some(chicken) = nearby_unridden_chicken(list, mount)
     {
-        if let Some(c) = list.iter_mut().find(|e| e.id == chicken).and_then(|e| e.phys.as_mut()).and_then(kiln_entity::mob::data_mut) {
+        if let Some(c) = list.iter_mut().find(|e| e.id == chicken).and_then(|e| e.phys.as_deref_mut()).and_then(kiln_entity::mob::data_mut) {
             c.chicken_jockey = true;
         }
         links.push((mount, chicken));
@@ -187,7 +190,7 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
             continue;
         }
         let Some(mut rp) = list[ri].phys.take() else { continue };
-        if let Some(vp) = list[vi].phys.as_mut()
+        if let Some(vp) = list[vi].phys.as_deref_mut()
             && kiln_entity::ride::start_riding(&mut rp, vp, false)
         {
             // (A rider loaded from saved data stays where it was saved unless that is far from
@@ -203,11 +206,11 @@ pub(crate) fn add_jockeys(list: &mut Vec<Entity>, mount: i32, jockeys: Jockeys, 
 }
 
 fn nearby_unridden_chicken(list: &[Entity], mount: i32) -> Option<i32> {
-    let me = list.iter().find(|e| e.id == mount)?.phys.as_ref()?;
+    let me = list.iter().find(|e| e.id == mount)?.phys.as_deref()?;
     let area = me.bounding_box().inflate(5.0, 3.0, 5.0);
     list.iter()
         .filter(|e| e.id != mount && !e.removed)
-        .filter(|e| e.phys.as_ref().is_some_and(|p| p.is_alive() && p.type_name == "minecraft:chicken" && p.passengers.is_empty() && p.vehicle.is_none() && p.bounding_box().intersects(&area)))
+        .filter(|e| e.phys.as_deref().is_some_and(|p| p.is_alive() && p.type_name == "minecraft:chicken" && p.passengers.is_empty() && p.vehicle.is_none() && p.bounding_box().intersects(&area)))
         .map(|e| e.id)
         .min()
 }
@@ -339,7 +342,7 @@ impl Entity {
             on_ground,
             age: 0,
             removed: false,
-            phys: Some(phys),
+            phys: Some(Box::new(phys)),
             tracker: MovementTracker::new(id, spawn.kind.update_interval, &state),
             sent_vel: vel,
             seen_by: Vec::new(),
@@ -360,7 +363,7 @@ impl Entity {
     }
 
     fn phys(&self) -> &kiln_entity::Entity {
-        self.phys.as_ref().expect("entity state is back after its tick")
+        self.phys.as_deref().expect("entity state is back after its tick")
     }
 
     /// Copies what the rest of the simulation reads from the vanilla state.
@@ -376,7 +379,7 @@ impl Entity {
     /// `teleportSetPosition` of a command or portal teleport: the entity stands at `pos` (facing
     /// `rot` if given), still and on the ground, as if it had always been there.
     pub(crate) fn relocate(&mut self, pos: [f64; 3], rot: Option<[f32; 2]>) {
-        let Some(p) = self.phys.as_mut() else { return };
+        let Some(p) = self.phys.as_deref_mut() else { return };
         p.set_pos(Vec3::new(pos[0], pos[1], pos[2]));
         if let Some([yaw, pitch]) = rot {
             p.y_rot = yaw;
@@ -517,7 +520,7 @@ impl Entity {
     /// (`Entity.blocksBuilding`: primed TNT and falling blocks).
     /// `Monster.isPreventingPlayerRest`: monsters do, zombified piglins only while angry.
     pub fn prevents_rest(&self) -> bool {
-        let Some(m) = self.phys.as_ref().and_then(kiln_entity::mob::data) else { return false };
+        let Some(m) = self.phys.as_deref().and_then(kiln_entity::mob::data) else { return false };
         if m.health <= 0.0 || m.kind.category() != kiln_entity::mob::Category::Monster {
             return false;
         }
@@ -580,7 +583,7 @@ pub(crate) fn chunk_of(pos: [f64; 3]) -> ChunkPos {
 /// The entity at `i` of a region's id-ordered `list`, saved with the passengers it carries
 /// (`Entity.saveWithoutId`, `Passengers` and all).
 pub(crate) fn save_in(list: &[Entity], i: usize, owners: &dyn Fn(i32) -> Option<u128>) -> kiln_proto::nbt::Tag {
-    let lookup = |id: i32| list.binary_search_by_key(&id, |e| e.id).ok().map(|j| &list[j]).filter(|e| !e.removed).and_then(|e| e.phys.as_ref());
+    let lookup = |id: i32| list.binary_search_by_key(&id, |e| e.id).ok().map(|j| &list[j]).filter(|e| !e.removed).and_then(|e| e.phys.as_deref());
     kiln_entity::persist::save_with(list[i].phys(), owners, &lookup)
 }
 
@@ -589,10 +592,10 @@ pub(crate) fn save_in(list: &[Entity], i: usize, owners: &dyn Fn(i32) -> Option<
 pub(crate) fn root_in(list: &[Entity], i: usize) -> usize {
     let mut at = i;
     for _ in 0..list.len().min(64) {
-        let Some(p) = list[at].phys.as_ref() else { break };
+        let Some(p) = list[at].phys.as_deref() else { break };
         let Some(v) = p.vehicle else { break };
         let Ok(j) = list.binary_search_by_key(&v, |e| e.id) else { break };
-        if list[j].removed || !list[j].phys.as_ref().is_some_and(|vp| vp.passengers.contains(&p.id)) {
+        if list[j].removed || !list[j].phys.as_deref().is_some_and(|vp| vp.passengers.contains(&p.id)) {
             break;
         }
         at = j;
@@ -608,13 +611,13 @@ fn kb(p: BlockPos) -> kiln_blocks::BlockPos {
 /// and explosions update their neighbours), the region's entities by id, and its players as
 /// stand-ins that explosions can hurt and push.
 pub(crate) struct SimLevel<'a, 'l, 'p> {
-    pub(crate) level: &'a mut RegionLevel<'l>,
+    pub(crate) level: World<'a, 'l>,
     list: &'a mut Vec<Entity>,
     /// The region's players, which mobs hurt directly.
     players: &'a mut [&'p mut Player],
     deaths: &'a mut Vec<health::Death>,
     /// Players as `Other` entities, in connection order.
-    proxies: Vec<kiln_entity::Entity>,
+    proxies: Vec<Box<kiln_entity::Entity>>,
     views: Vec<PlayerView>,
     spawns: &'a mut Vec<Spawn>,
     events: Vec<Event>,
@@ -639,6 +642,53 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     /// Player views (spectators too) by id, UUID and section, for [`EntityLevel::player`],
     /// [`EntityLevel::player_by_uuid`] and [`EntityLevel::players_in`].
     view_index: kiln_entity::level::PlayerGrid,
+    /// The region's players for `Mob.checkDespawn` (`views` may hold only an island's).
+    despawn: Option<&'a Nearest>,
+}
+
+/// The non-spectator players' positions by 32-block cube, for `Mob.checkDespawn`'s nearest
+/// player: a player in the 27 cubes around a mob's is nearer than any outside them, so when
+/// there is one only those are compared.
+pub(crate) struct Nearest {
+    cubes: FastMap<(i32, i32, i32), Vec<Vec3>>,
+    all: Vec<Vec3>,
+}
+
+impl Nearest {
+    fn cube(p: Vec3) -> (i32, i32, i32) {
+        ((p.x / 32.0).floor() as i32, (p.y / 32.0).floor() as i32, (p.z / 32.0).floor() as i32)
+    }
+
+    pub(crate) fn build(views: &[PlayerView]) -> Nearest {
+        let all: Vec<Vec3> = views.iter().filter(|v| !v.spectator).map(|v| v.pos).collect();
+        let mut cubes: FastMap<(i32, i32, i32), Vec<Vec3>> = Default::default();
+        for &p in &all {
+            cubes.entry(Self::cube(p)).or_default().push(p);
+        }
+        Nearest { cubes, all }
+    }
+
+    /// The squared distance from `p` to the nearest player, as a scan of every player gives it.
+    pub(crate) fn nearest_sqr(&self, p: Vec3) -> Option<f64> {
+        let c = Self::cube(p);
+        let mut best: Option<f64> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    for q in self.cubes.get(&(c.0 + dx, c.1 + dy, c.2 + dz)).into_iter().flatten() {
+                        let d = q.distance_to_sqr(p);
+                        if best.is_none_or(|b| d < b) {
+                            best = Some(d);
+                        }
+                    }
+                }
+            }
+        }
+        match best {
+            Some(d) if d <= 32.0 * 32.0 => Some(d),
+            _ => self.all.iter().map(|q| q.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b)),
+        }
+    }
 }
 
 /// Maps of small integer keys (entity ids, sections): looked up several times per entity and tick.
@@ -732,15 +782,15 @@ fn section_key(e: &kiln_entity::Entity) -> (i32, i64) {
 
 impl EntityLevel for SimLevel<'_, '_, '_> {
     fn biome(&self, pos: BlockPos) -> Option<i32> {
-        Some(crate::spawner::biome_at(self.level, kb(pos)) as i32)
+        Some(crate::spawner::biome_at_in(self.level.cells(), self.level.env(), kb(pos)) as i32)
     }
 
     fn piglins_zombify(&self) -> bool {
-        !self.level.env.rules.fast_lava
+        !self.level.env().rules.fast_lava
     }
 
     fn snow_golem_melts(&self, pos: Vec3) -> bool {
-        if self.level.env.rules.fast_lava {
+        if self.level.env().rules.fast_lava {
             return true;
         }
         // The biomes whose `minecraft:gameplay/snow_golem_melts` is on.
@@ -753,36 +803,36 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             "minecraft:windswept_savanna",
             "minecraft:wooded_badlands",
         ];
-        let b = crate::spawner::biome_at(self.level, kb(BlockPos::containing(pos.x, pos.y, pos.z))) as i32;
+        let b = crate::spawner::biome_at_in(self.level.cells(), self.level.env(), kb(BlockPos::containing(pos.x, pos.y, pos.z))) as i32;
         HOT.iter().any(|n| kiln_data::synced_id("minecraft:worldgen/biome", n) == Some(b))
     }
 
     fn trade_offers(&mut self, set: &str, merchant: &kiln_entity::level::TradeMerchant) -> Vec<kiln_item::trading::MerchantOffer> {
-        let env = self.level.env;
+        let env = self.level.env();
         crate::trading::roll_offers(env.loot.as_deref(), env.seed, env.game_time, set, merchant)
     }
 
     fn raid(&self, id: i32) -> Option<&kiln_entity::level::RaidView> {
-        self.level.env.raids.iter().find(|r| r.id == id)
+        self.level.env().raids.iter().find(|r| r.id == id)
     }
 
     fn raid_at(&self, pos: BlockPos) -> Option<&kiln_entity::level::RaidView> {
-        crate::raid::raid_at_view(&self.level.env.raids, pos)
+        crate::raid::raid_at_view(&self.level.env().raids, pos)
     }
 
     fn village_centers_near(&self, section: (i32, i32, i32), radius: i32) -> Option<Vec<(i32, i32, i32)>> {
-        Some(crate::poi::village_centers(&*self.level.cells, [section.0, section.1, section.2], radius))
+        Some(crate::poi::village_centers(self.level.cells(), [section.0, section.1, section.2], radius))
     }
 
     fn sections_to_village(&self, pos: BlockPos) -> i32 {
         kiln_entity::prof!("lvl", "sections_to_village");
-        crate::poi::sections_to_village(&*self.level.cells, [pos.x, pos.y, pos.z])
+        crate::poi::sections_to_village(self.level.cells(), [pos.x, pos.y, pos.z])
     }
 
     fn poi_in_range(&self, types: &[&str], center: BlockPos, radius: i32, occupancy: kiln_entity::level::PoiOccupancy) -> Vec<BlockPos> {
         kiln_entity::prof!("lvl", "poi_in_range");
         let kinds = crate::poi::kinds_of(types);
-        crate::poi::in_range(&*self.level.cells, &kinds, [center.x, center.y, center.z], radius, occupancy_of(occupancy))
+        crate::poi::in_range(self.level.cells(), &kinds, [center.x, center.y, center.z], radius, occupancy_of(occupancy))
             .into_iter()
             .map(|r| BlockPos::new(r.pos[0], r.pos[1], r.pos[2]))
             .collect()
@@ -791,20 +841,23 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     fn poi_take(&mut self, types: &[&str], center: BlockPos, radius: i32, accept: &dyn Fn(&str, BlockPos) -> bool) -> Option<BlockPos> {
         let kinds = crate::poi::kinds_of(types);
         let accept = |k: u8, p: [i32; 3]| accept(kiln_world::poi::TYPES[k as usize].name, BlockPos::new(p[0], p[1], p[2]));
-        crate::poi::take(&mut *self.level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]))
+        let level = self.level.region()?;
+        crate::poi::take(&mut *level.cells, &kinds, [center.x, center.y, center.z], radius, &accept).map(|p| BlockPos::new(p[0], p[1], p[2]))
     }
 
     fn poi_release(&mut self, pos: BlockPos) {
-        crate::poi::release(&mut *self.level.cells, [pos.x, pos.y, pos.z]);
+        if let Some(level) = self.level.region() {
+            crate::poi::release(&mut *level.cells, [pos.x, pos.y, pos.z]);
+        }
     }
 
     fn poi_type(&self, pos: BlockPos) -> Option<&'static str> {
-        crate::poi::type_at(&*self.level.cells, [pos.x, pos.y, pos.z]).map(|k| kiln_world::poi::TYPES[k as usize].name)
+        crate::poi::type_at(self.level.cells(), [pos.x, pos.y, pos.z]).map(|k| kiln_world::poi::TYPES[k as usize].name)
     }
 
     fn motion_blocking_no_leaves_height(&self, x: i32, z: i32) -> i32 {
         use kiln_world::Blocks;
-        let Some(chunk) = self.level.cells.chunk(ChunkPos::of_block(x, z)) else { return self.level.env.min_y };
+        let Some(chunk) = self.level.cells().chunk(ChunkPos::of_block(x, z)) else { return self.level.env().min_y };
         chunk.column_height((x & 15) as usize, (z & 15) as usize, |s| {
             kiln_data::block_props::motion_blocking(s) && !kiln_data::blocks_types::block_of(s).name.ends_with("_leaves")
         })
@@ -823,7 +876,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let (dx, dz) = ((max.x - min.x + 1) as usize, (max.z - min.z + 1) as usize);
         for cz in (min.z >> 4)..=(max.z >> 4) {
             for cx in (min.x >> 4)..=(max.x >> 4) {
-                let Some(chunk) = self.level.cells.chunk(ChunkPos::new(cx, cz)) else { return false };
+                let Some(chunk) = self.level.cells().chunk(ChunkPos::new(cx, cz)) else { return false };
                 let (x0, x1) = (min.x.max(cx * 16), max.x.min(cx * 16 + 15));
                 let (z0, z1) = (min.z.max(cz * 16), max.z.min(cz * 16 + 15));
                 let origin = (z0 - min.z) as usize * dx + (x0 - min.x) as usize;
@@ -845,7 +898,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         use kiln_world::Blocks;
         for cz in (min.z >> 4)..=(max.z >> 4) {
             for cx in (min.x >> 4)..=(max.x >> 4) {
-                match self.level.cells.chunk(ChunkPos::new(cx, cz)) {
+                match self.level.cells().chunk(ChunkPos::new(cx, cz)) {
                     Some(chunk) if !chunk.may_have_fluid(min.y, max.y) => {}
                     _ => return false,
                 }
@@ -862,7 +915,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         }
         let mut key = [0u64; 4];
         for (i, (cz, cx)) in (z0..=z1).flat_map(|cz| (x0..=x1).map(move |cx| (cz, cx))).enumerate() {
-            key[i] = self.level.cells.chunk(ChunkPos::new(cx, cz))?.block_epoch();
+            key[i] = self.level.cells().chunk(ChunkPos::new(cx, cz))?.block_epoch();
         }
         Some(kiln_entity::level::BlocksEpoch(key))
     }
@@ -874,7 +927,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             for cz in (min.z >> 4)..=(max.z >> 4) {
                 let (x0, x1) = (min.x.max(cx * 16), max.x.min(cx * 16 + 15));
                 let (z0, z1) = (min.z.max(cz * 16), max.z.min(cz * 16 + 15));
-                match self.level.cells.chunk(ChunkPos::new(cx, cz)) {
+                match self.level.cells().chunk(ChunkPos::new(cx, cz)) {
                     Some(chunk) => {
                         let local = |a: i32, b: i32, o: i32| ((a - o) as usize, (b - o) as usize);
                         if chunk.any_block_in(local(x0, x1, cx * 16), (min.y, max.y), local(z0, z1, cz * 16), pred) {
@@ -893,11 +946,11 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn set_block(&mut self, pos: BlockPos, state: u16, flags: u32) -> bool {
-        kiln_blocks::set_block(self.level, kb(pos), state, flags)
+        self.level.set_block(kb(pos), state, flags)
     }
 
     fn destroy_block(&mut self, pos: BlockPos, drop: bool) -> bool {
-        kiln_blocks::destroy_block(self.level, kb(pos), drop, 512)
+        self.level.destroy_block(kb(pos), drop)
     }
 
     fn random(&mut self) -> &mut LegacyRandom {
@@ -905,19 +958,19 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn game_time(&self) -> i64 {
-        self.level.env.game_time
+        self.level.env().game_time
     }
 
     fn day_time(&self) -> i64 {
-        self.level.env.mobs.day_time
+        self.level.env().mobs.day_time
     }
 
     fn min_y(&self) -> i32 {
-        self.level.env.min_y
+        self.level.env().min_y
     }
 
     fn max_y(&self) -> i32 {
-        self.level.env.min_y + self.level.env.height - 1
+        self.level.env().min_y + self.level.env().height - 1
     }
 
     fn entities_in(&self, area: &Aabb, filter: EntityFilter, exclude: i32) -> Vec<i32> {
@@ -938,14 +991,14 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let mut found: SmallVec<[((i32, i64), i32); 32]> = SmallVec::new();
         let span = (hi.0 - lo.0 + 1) as i64 * (hi.1 - lo.1 + 1) as i64 * (hi.2 - lo.2 + 1) as i64;
         if span > self.grid.cells.len() as i64 * 4 {
-            found.extend(self.list.iter().filter_map(|e| e.phys.as_ref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
+            found.extend(self.list.iter().filter_map(|e| e.phys.as_deref()).filter(|e| wanted(e)).map(|e| (section_key(e), e.id)));
         } else {
             for x in lo.0..=hi.0 {
                 for y in lo.1..=hi.1 {
                     for z in lo.2..=hi.2 {
                         let Some(v) = self.grid.cells.get(&(x, y, z)) else { continue };
                         for &i in v {
-                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_ref())
+                            if let Some(e) = self.list.get(i).and_then(|e| e.phys.as_deref())
                                 && wanted(e)
                             {
                                 found.push((section_key(e), e.id));
@@ -973,18 +1026,18 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn entity_mut(&mut self, id: i32) -> Option<&mut kiln_entity::Entity> {
         if let Some(i) = self.index(id) {
-            return self.list[i].phys.as_mut();
+            return self.list[i].phys.as_deref_mut();
         }
         let i = self.proxy_index(id)?;
-        self.proxies.get_mut(i)
+        self.proxies.get_mut(i).map(|b| &mut **b)
     }
 
     fn entity(&self, id: i32) -> Option<&kiln_entity::Entity> {
         if let Some(i) = self.index(id) {
-            return self.list[i].phys.as_ref();
+            return self.list[i].phys.as_deref();
         }
         let i = self.proxy_index(id)?;
-        self.proxies.get(i)
+        self.proxies.get(i).map(|b| &**b)
     }
 
     fn add_entity(&mut self, entity: kiln_entity::Entity) {
@@ -999,7 +1052,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
 
     fn fresh_seed(&mut self) -> i64 {
         self.seeds += 1;
-        let mut h = (self.level.env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.level.env.seed as u64;
+        let mut h = (self.level.env().game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.level.env().seed as u64;
         for v in [self.current as u64, self.seeds] {
             h = (h ^ v).wrapping_mul(0xBF58_476D_1CE4_E5B9);
             h ^= h >> 31;
@@ -1017,7 +1070,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn enchant_from_provider(&self, stack: &mut kiln_item::ItemStack, provider: &str, special_multiplier: f32, random: &mut dyn kiln_javamath::random::RandomSource) {
-        if let Some(loot) = self.level.env.loot.as_deref() {
+        if let Some(loot) = self.level.env().loot.as_deref() {
             crate::enchant::enchant_from_provider(loot, stack, provider, special_multiplier, random);
         }
     }
@@ -1033,9 +1086,11 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     fn emit(&mut self, event: Event) {
         if let Event::GameEvent { event, pos, entity } = event {
             // `ServerLevel.gameEvent`: listeners hear it now.
-            if crate::sculk::listening(self.level) {
+            if self.level.listening() {
                 let source = entity.and_then(|id| self.game_event_source(id));
-                crate::sculk::post(self.level, event, pos, kiln_entity::vibration::Context { source, affected_state: None });
+                if let Some(l) = self.level.region() {
+                    crate::sculk::post(l, event, pos, kiln_entity::vibration::Context { source, affected_state: None });
+                }
             }
             return;
         }
@@ -1043,48 +1098,60 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn block_game_event(&mut self, event: &'static str, pos: Vec3, entity: Option<i32>, state: u16) {
-        if crate::sculk::listening(self.level) {
+        if self.level.listening() {
             let source = entity.and_then(|id| self.game_event_source(id));
-            crate::sculk::post(self.level, event, pos, kiln_entity::vibration::Context { source, affected_state: Some(state) });
+            if let Some(l) = self.level.region() {
+                crate::sculk::post(l, event, pos, kiln_entity::vibration::Context { source, affected_state: Some(state) });
+            }
         }
     }
 
     fn sculk_step_on(&mut self, pos: BlockPos, entity: i32, at: Vec3) {
         if let Some(mut source) = self.game_event_source(entity) {
             source.pos = at;
-            crate::sculk::step_on(self.level, kb(pos), source);
+            if let Some(l) = self.level.region() {
+                crate::sculk::step_on(l, kb(pos), source);
+            }
         }
     }
 
     fn sculk_catalyst_near(&self, pos: Vec3) -> bool {
-        crate::sculk::catalyst::nearest(self.level, pos).is_some()
+        self.level.region_ref().is_some_and(|l| crate::sculk::catalyst::nearest(l, pos).is_some())
     }
 
     fn feed_sculk_catalyst(&mut self, pos: Vec3, charge: i32) {
-        if let Some(at) = crate::sculk::catalyst::nearest(self.level, pos) {
-            crate::sculk::catalyst::feed(self.level, at, pos, charge);
+        if let Some(l) = self.level.region()
+            && let Some(at) = crate::sculk::catalyst::nearest(l, pos)
+        {
+            crate::sculk::catalyst::feed(l, at, pos, charge);
         }
     }
 
     fn take_vibrations(&mut self, id: i32) -> Vec<kiln_entity::vibration::Heard> {
-        self.level.blocks.sculk.take_heard(id)
+        self.level.region().map(|l| l.blocks.sculk.take_heard(id)).unwrap_or_default()
     }
 
     fn set_listener(&mut self, id: i32, ear: Option<kiln_entity::vibration::Ear>) {
-        self.level.blocks.sculk.set_warden(id, ear);
+        if let Some(l) = self.level.region() {
+            l.blocks.sculk.set_warden(id, ear);
+        }
     }
 
     fn take_allay_vibrations(&mut self, id: i32) -> Vec<kiln_entity::vibration::Heard> {
-        self.level.blocks.sculk.take_heard_allay(id)
+        self.level.region().map(|l| l.blocks.sculk.take_heard_allay(id)).unwrap_or_default()
     }
 
     fn set_allay_listener(&mut self, id: i32, ear: Option<kiln_entity::vibration::Ear>) {
-        self.level.blocks.sculk.set_allay(id, ear);
+        if let Some(l) = self.level.region() {
+            l.blocks.sculk.set_allay(id, ear);
+        }
     }
 
     fn vibration_particle(&mut self, from: Vec3, entity: i32, y_offset: f32, ticks: i32) {
         let dest = kiln_proto::packets::world_fx::PositionSource::Entity { id: entity, y_offset };
-        crate::sculk::send_vibration_particle(self.level, from, dest, ticks);
+        if let Some(l) = self.level.region() {
+            crate::sculk::send_vibration_particle(l, from, dest, ticks);
+        }
     }
 
     fn darkness_around(&mut self, pos: Vec3, radius: f64) {
@@ -1103,7 +1170,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             count: 1,
             randomization: world_fx::ParticleRandomization::Default,
         });
-        self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
+        self.level.push_packet(([pos.x, pos.y, pos.z], 32.0, pkt));
     }
 
     fn trail_particle(&mut self, pos: Vec3, target: Vec3, color: i32, duration: i32) {
@@ -1119,7 +1186,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             randomization: world_fx::ParticleRandomization::Default,
         });
         // `overrideLimiter`: players within 512 blocks.
-        self.level.out.packets.push(([pos.x, pos.y, pos.z], 512.0, pkt));
+        self.level.push_packet(([pos.x, pos.y, pos.z], 512.0, pkt));
     }
 
     fn crumble_particles(&mut self, pos: Vec3, state: u16, count: i32, spread: Vec3) {
@@ -1134,31 +1201,31 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             count,
             randomization: world_fx::ParticleRandomization::Default,
         });
-        self.level.out.packets.push(([pos.x, pos.y, pos.z], 32.0, pkt));
+        self.level.push_packet(([pos.x, pos.y, pos.z], 32.0, pkt));
     }
 
     fn mob_griefing(&self) -> bool {
-        self.level.env.mobs.griefing
+        self.level.env().mobs.griefing
     }
 
     fn dragon_fight(&self) -> Option<kiln_entity::level::DragonFightView> {
-        self.level.env.dragon_fight.as_ref().map(|f| f.view)
+        self.level.env().dragon_fight.as_ref().map(|f| f.view)
     }
 
     fn mob_drops(&self) -> bool {
-        self.level.env.mobs.drops
+        self.level.env().mobs.drops
     }
 
     fn entity_drops(&self) -> bool {
-        self.level.env.mobs.entity_drops
+        self.level.env().mobs.entity_drops
     }
 
     fn tnt_explodes(&self) -> bool {
-        self.level.env.rules.tnt_explodes
+        self.level.env().rules.tnt_explodes
     }
 
     fn fill_container_loot(&mut self, items: &mut [kiln_item::ItemStack], table: &str, seed: i64, origin: Vec3, player: Option<i32>) {
-        let env = self.level.env;
+        let env = self.level.env();
         let Some(loot) = env.loot.clone() else { return };
         let at = [origin.x.floor() as i32, origin.y.floor() as i32, origin.z.floor() as i32];
         crate::container::fill_from_table(items, &loot, table, seed, arr(origin), at, player.is_some(), env.game_time, env.seed);
@@ -1174,7 +1241,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn block_loot(&mut self, state: u16, origin: Vec3, tool: &kiln_item::ItemStack, entity: i32) -> Vec<kiln_item::ItemStack> {
-        let env = self.level.env;
+        let env = self.level.env();
         let Some(loot) = env.loot.clone() else {
             return kiln_item::ItemStack::of(kiln_entity::blocks::block_name(state), 1).into_iter().collect();
         };
@@ -1183,26 +1250,26 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn hopper_take_from_block(&mut self, pos: BlockPos, dest: &mut Vec<kiln_item::ItemStack>) -> Option<bool> {
-        crate::container::hopper::take_into_cart(self.level, kb(pos), dest)
+        crate::container::hopper::take_into_cart(self.level.region()?, kb(pos), dest)
     }
 
     fn difficulty(&self) -> u8 {
-        self.level.env.mobs.difficulty
+        self.level.env().mobs.difficulty
     }
 
     fn creaking_active(&self, _pos: BlockPos) -> bool {
-        self.level.env.mobs.creaking_active
+        self.level.env().mobs.creaking_active
     }
 
     fn spawning_monsters(&self) -> bool {
-        self.level.env.mobs.spawn_mobs && self.level.env.mobs.spawn_monsters
+        self.level.env().mobs.spawn_mobs && self.level.env().mobs.spawn_monsters
     }
 
     /// A creaking whose heart is in a chunk that is not loaded stays as it is (vanilla loads
     /// the chunk to look).
     fn heart_protects(&mut self, home: BlockPos, id: i32, uuid: u128) -> bool {
         let h = kb(home);
-        !self.level.is_loaded(h) || crate::heart::protects(self.level, h, id, uuid)
+        !self.level.is_loaded(h) || self.level.region_ref().is_none_or(|l| crate::heart::protects(l, h, id, uuid))
     }
 
     fn heart_creaking_hurt(&mut self, home: BlockPos, id: i32, uuid: u128, at: Vec3) {
@@ -1210,7 +1277,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn entity_by_uuid(&self, uuid: u128) -> Option<&kiln_entity::Entity> {
-        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_ref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid))
+        self.list.iter().find(|e| e.uuid.as_u128() == uuid && !e.removed).and_then(|e| e.phys.as_deref()).or_else(|| self.proxies.iter().find(|p| p.uuid == uuid).map(|b| &**b))
     }
 
     fn known_movement(&self, id: i32) -> Vec3 {
@@ -1223,13 +1290,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn pos_random(&mut self, pos: BlockPos, salt: i64) -> LegacyRandom {
-        crate::container::pos_random(self.level, kb(pos), salt as u64)
+        crate::container::pos_random_in(self.level.env(), kb(pos), salt as u64)
     }
 
     fn update_neighbours_for_output_signal(&mut self, pos: BlockPos) {
         let p = kb(pos);
         let s = self.level.block(p);
-        kiln_blocks::update::update_neighbour_for_output_signal(self.level, p, kiln_blocks::BlockId::of(s));
+        self.level.change(move |l| kiln_blocks::update::update_neighbour_for_output_signal(l, p, kiln_blocks::BlockId::of(s)));
     }
 
     /// The entity keeps the UUID it was made with (a heart holds its creaking by it).
@@ -1239,23 +1306,24 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn sky_darken(&self) -> i32 {
-        self.level.env.mobs.sky_darken
+        self.level.env().mobs.sky_darken
     }
 
     fn is_raining_at(&self, pos: BlockPos) -> bool {
-        crate::weather::is_raining_at(self.level.cells, self.level.env, kb(pos))
+        crate::weather::is_raining_at(self.level.cells(), self.level.env(), kb(pos))
     }
 
     fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
-        kiln_blocks::Level::can_spread_fire_around(&*self.level, kb(pos))
+        self.level.region_ref().is_some_and(|l| kiln_blocks::Level::can_spread_fire_around(l, kb(pos)))
     }
 
     fn place_lightning_fire(&mut self, pos: BlockPos) -> bool {
-        crate::weather::place_lightning_fire(&mut *self.level, kb(pos))
+        self.level.region().is_some_and(|l| crate::weather::place_lightning_fire(l, kb(pos)))
     }
 
     fn lightning_strike_block(&mut self, pos: BlockPos) {
-        kiln_blocks::weather::lightning_strike(&mut *self.level, kb(pos));
+        let pos = kb(pos);
+        self.level.change(move |l| kiln_blocks::weather::lightning_strike(l, pos));
     }
 
     fn thunder_hit_player(&mut self, id: i32) {
@@ -1264,26 +1332,26 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let ticks = p.fire_ticks + 1;
         p.set_fire_ticks(if ticks == 0 { 160 } else { ticks });
         let source = health::Source { cause: health::Cause::Entity(DamageKind::LightningBolt), attacker: None, direct: None, weapon: None, position: None };
-        let env = self.level.env;
+        let env = self.level.env();
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         p.hurt(5.0, &source, &mut ctx);
     }
 
     fn monsters_burn(&self) -> bool {
-        self.level.env.mobs.monsters_burn
+        self.level.env().mobs.monsters_burn
     }
 
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
-        kiln_blocks::Level::raw_brightness(&*self.level, kb(pos), sky_darken)
+        self.level.raw_brightness(kb(pos), sky_darken)
     }
 
     fn sky_light(&self, pos: BlockPos) -> i32 {
-        kiln_world::light::light_at(&*self.level.cells, kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z)
-            .map_or(if pos.y >= self.level.env.min_y + self.level.env.height { 15 } else { 0 }, i32::from)
+        kiln_world::light::light_at(self.level.cells(), kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z)
+            .map_or(if pos.y >= self.level.env().min_y + self.level.env().height { 15 } else { 0 }, i32::from)
     }
 
     fn effective_difficulty(&self, _pos: BlockPos) -> f32 {
-        crate::mobs::difficulty_instance(self.level.env.mobs.difficulty, self.level.env.game_time, 0, 1.0).effective_difficulty
+        crate::mobs::difficulty_instance(self.level.env().mobs.difficulty, self.level.env().game_time, 0, 1.0).effective_difficulty
     }
 
     fn hurt_player(&mut self, id: i32, source: kiln_entity::mob::DamageSource, amount: f32) -> bool {
@@ -1292,13 +1360,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return false };
         let attacker = player_attacker.or_else(|| {
             let a = source.attacker?;
-            let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
+            let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref())?;
             Some(health::Attacker::mob(a, e.type_name, arr(e.position())))
         });
         // A projectile's hit judges blocking from where it comes (`getSourcePosition`).
         let position = source.direct.filter(|_| source.kind.is_tag("minecraft:is_projectile")).and(source.pos).map(arr);
         let source = health::Source { cause: health::Cause::Entity(source.kind), attacker, direct: source.direct.filter(|d| Some(*d) != source.attacker), weapon: None, position };
-        let env = self.level.env;
+        let env = self.level.env();
         let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns: self.spawns, deaths: self.deaths, level_rng: None };
         let hurt = p.hurt(amount, &source, &mut ctx);
         if hurt && let Some(a) = source.attacker.as_ref().map(|a| a.id) {
@@ -1357,7 +1425,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn is_thundering(&self) -> bool {
-        self.level.env.weather.weather.thundering
+        self.level.env().weather.weather.thundering
     }
 
     fn add_effect(&mut self, id: i32, effect: &'static str, duration: i32, amplifier: i32, _source: Option<i32>) -> bool {
@@ -1385,10 +1453,10 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
             if let Some(p) = self.players.iter().find(|p| p.entity_id == o) {
                 return Some(p.as_attacker());
             }
-            let e = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_ref())?;
+            let e = self.list.binary_search_by_key(&o, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref())?;
             Some(health::Attacker::mob(o, e.type_name, arr(e.position())))
         });
-        let env = self.level.env;
+        let env = self.level.env();
         let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id) else { return };
         match effect.kind() {
             kiln_entity::effect::Kind::HealOrHarm { harm: false } => {
@@ -1409,7 +1477,7 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
     }
 
     fn max_entity_cramming(&self) -> i32 {
-        self.level.env.mobs.cramming
+        self.level.env().mobs.cramming
     }
 
     fn player_effect(&self, id: i32, effect: &str) -> Option<(i32, i32)> {
@@ -1465,6 +1533,7 @@ pub(crate) fn tick(
     spawns: &mut Vec<Spawn>,
     deaths: &mut Vec<health::Death>,
     any_player: bool,
+    ctx: &kiln_sched::Ctx<'_>,
 ) {
     if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() {
         return;
@@ -1472,15 +1541,16 @@ pub(crate) fn tick(
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live =|p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let mut views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     // wp32 parrots: what parrots need to know of their owners' footing.
     if entities.list.iter().any(|e| e.kind.name == "minecraft:parrot") {
         let block = |pos: BlockPos| level.block(kb(pos));
         crate::shoulder::mark_views(players, &block, &mut views);
     }
+    let nearest = Nearest::build(&views);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -1497,43 +1567,20 @@ pub(crate) fn tick(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn: Some(&nearest),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
     // Creakings that lost their heart in the block phase go before the entities tick.
     crate::heart::process_released(&mut sim);
     process_pending_kills(&mut sim);
-    for i in 0..sim.list.len() {
-        // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
-        let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
-        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
-            continue;
-        }
-        let me = sim.list[i].id;
-        if let Some(phys) = sim.list[i].phys.as_mut()
-            && let Some(v) = phys.vehicle.take()
-            && let Some(j) = sim.index(v)
-            && let Some(vp) = sim.list[j].phys.as_mut()
-        {
-            kiln_entity::ride::remove_passenger(vp, me);
-        }
-        tick_entity(&mut sim, i, ticking, any_player, None);
-        let passengers = sim.list[i].phys.as_ref().map(|p| p.passengers.clone()).unwrap_or_default();
-        for id in passengers {
-            if let Some(j) = sim.index(id) {
-                tick_entity(&mut sim, j, ticking, any_player, Some(i));
-            } else if id < 0 {
-                // A rider the vehicle's own tick just made (the skeleton of a trap horse, still
-                // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
-                // joined the level meanwhile.
-                tick_new_passenger(&mut sim, id, i);
-            }
-        }
+    if !islands::tick_islands(&mut sim, ticking, any_player, ctx) {
+        tick_list(&mut sim, ticking, any_player, &mut |_, _| true);
     }
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
     for e in sim.list.iter_mut() {
-        if let Some(p) = e.phys.as_mut() {
+        if let Some(p) = e.phys.as_deref_mut() {
             kiln_entity::mob::update_data_before_sync(p);
         }
     }
@@ -1563,6 +1610,7 @@ pub(crate) fn tick(
     }
     ride_players(&mut sim);
     let SimLevel { level, list, proxies, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     // Explosion knockback reaches the pushed player's client (it owns its movement).
     for pr in proxies.iter().filter(|e| e.delta != Vec3::ZERO) {
         if let Some(p) = players.iter_mut().find(|p| p.entity_id == pr.id)
@@ -1576,19 +1624,55 @@ pub(crate) fn tick(
     }
 }
 
+/// The entities' turns in list order (`tick` for a region, an island or a tile): passengers
+/// right after their vehicle. `turn` sees each turn (by list index) before it runs, and says
+/// whether it runs.
+pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_player: bool, turn: &mut dyn FnMut(&SimLevel, usize) -> bool) {
+    for i in 0..sim.list.len() {
+        // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
+        let vehicle = sim.list[i].phys.as_deref().and_then(|p| p.vehicle);
+        if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_deref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
+            continue;
+        }
+        if !turn(sim, i) {
+            continue;
+        }
+        let me = sim.list[i].id;
+        if let Some(phys) = sim.list[i].phys.as_deref_mut()
+            && let Some(v) = phys.vehicle.take()
+            && let Some(j) = sim.index(v)
+            && let Some(vp) = sim.list[j].phys.as_deref_mut()
+        {
+            kiln_entity::ride::remove_passenger(vp, me);
+        }
+        tick_entity(sim, i, ticking, any_player, None);
+        let passengers = sim.list[i].phys.as_deref().map(|p| p.passengers.clone()).unwrap_or_default();
+        for id in passengers {
+            if let Some(j) = sim.index(id) {
+                tick_entity(sim, j, ticking, any_player, Some(i));
+            } else if id < 0 {
+                // A rider the vehicle's own tick just made (the skeleton of a trap horse, still
+                // waiting for its id) ticks in this very tick, as `tickPassenger` does for what
+                // joined the level meanwhile.
+                tick_new_passenger(sim, id, i);
+            }
+        }
+    }
+}
+
 /// `/kill` of mobs (`LivingEntity.kill`: `hurtServer(genericKill, Float.MAX_VALUE)`): whatever
 /// the command queued runs through the mob's own damage code (death sound, loot, experience,
 /// equipment drops, death events), in loaded chunks that do not tick too.
 fn process_pending_kills(sim: &mut SimLevel) {
     for i in 0..sim.list.len() {
-        let queued = sim.list[i].phys.as_ref().is_some_and(|p| !p.pending_hurts.is_empty() && matches!(p.kind, EntityKind::Mob(_)));
+        let queued = sim.list[i].phys.as_deref().is_some_and(|p| !p.pending_hurts.is_empty() && matches!(p.kind, EntityKind::Mob(_)));
         if !queued {
             continue;
         }
         let Some(mut phys) = sim.list[i].phys.take() else { continue };
         (sim.current, sim.seeds) = (phys.id, 0x6b69_6c6c);
-        sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
-        sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time ^ 0x6b69_6c6c, phys.id);
+        sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+        sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time ^ 0x6b69_6c6c, phys.id);
         for (kind, amount, attacker) in std::mem::take(&mut phys.pending_hurts) {
             let mut source = kiln_entity::mob::DamageSource::of(kind);
             source.attacker = attacker;
@@ -1608,19 +1692,19 @@ fn tick_new_passenger(sim: &mut SimLevel, id: i32, vehicle: usize) {
     let Body::Ready(boxed) = &mut sim.spawns[k].body else { return };
     let marker = kiln_entity::Entity::new("minecraft:marker", 0, 0, kiln_entity::EntityKind::Other { type_name: "minecraft:marker" }, 0);
     let mut phys = std::mem::replace(&mut **boxed, marker);
-    if phys.is_removed() || phys.vehicle != sim.list[vehicle].phys.as_ref().map(|p| p.id) {
+    if phys.is_removed() || phys.vehicle != sim.list[vehicle].phys.as_deref().map(|p| p.id) {
         if let Body::Ready(b) = &mut sim.spawns[k].body {
             **b = phys;
         }
         return;
     }
     (sim.current, sim.seeds) = (phys.id, 0);
-    sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
-    sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
+    sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+    sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
     phys.common_tick();
     if let Some(mut v) = sim.list[vehicle].phys.clone() {
         if kiln_entity::ride::ride_tick(&mut phys, sim, &mut v)
-            && let Some(real) = sim.list[vehicle].phys.as_mut()
+            && let Some(real) = sim.list[vehicle].phys.as_deref_mut()
         {
             kiln_entity::ride::copy_steering_back(&v, real);
         }
@@ -1643,13 +1727,16 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     e.age += 1;
     let Some(mut phys) = e.phys.take() else { return };
     (sim.current, sim.seeds) = (phys.id, 0);
-    sim.current_source = crate::sculk::listening(sim.level).then(|| kiln_entity::vibration::source_of(&phys, &*sim));
-    sim.rng = entity_level_random(sim.level.env.seed, sim.level.env.game_time, phys.id);
+    sim.current_source = sim.level.listening().then(|| kiln_entity::vibration::source_of(&phys, &*sim));
+    sim.rng = entity_level_random(sim.level.env().seed, sim.level.env().game_time, phys.id);
     // `Mob.checkDespawn` runs before the tick, against the nearest player (regions are
     // farther apart than the despawn distance, so the region's players decide).
     if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
         let p = phys.position();
-        let nearest = sim.views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b));
+        let nearest = match sim.despawn {
+            Some(n) => n.nearest_sqr(p),
+            None => sim.views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b)),
+        };
         kiln_entity::mob::check_despawn(&mut phys, &*sim, nearest.or(any_player.then_some(f64::MAX)));
     }
     if !phys.is_removed() {
@@ -1658,7 +1745,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
             Some((vi, mut v)) => {
                 // (The vehicle is ticked as a copy: what its rider steered it by comes back.)
                 if kiln_entity::ride::ride_tick(&mut phys, sim, &mut v)
-                    && let Some(real) = sim.list[vi].phys.as_mut()
+                    && let Some(real) = sim.list[vi].phys.as_deref_mut()
                 {
                     kiln_entity::ride::copy_steering_back(&v, real);
                 }
@@ -1673,7 +1760,7 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     sim.grid.moved(i, pos);
     let e = &mut sim.list[i];
     let cell = chunk_of(e.pos).cell();
-    if sim.level.cells.cell(cell).is_some() {
+    if sim.level.cells().cell(cell).is_some() {
         e.cell = cell;
     }
 }
@@ -1682,16 +1769,16 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
 /// player (or one whose mount is gone or threw it off) gets off at the mount's dismount
 /// location; the others sit where the mount carries them.
 fn ride_players(sim: &mut SimLevel) {
-    let now = sim.level.env.game_time;
+    let now = sim.level.env().game_time;
     for k in 0..sim.players.len() {
         let Some(v) = sim.players[k].vehicle else { continue };
         let pid = sim.players[k].entity_id;
-        let idx = sim.index(v).filter(|&j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.is_alive()));
-        let seated = idx.is_some_and(|j| sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&pid)));
+        let idx = sim.index(v).filter(|&j| !sim.list[j].removed && sim.list[j].phys.as_deref().is_some_and(|p| p.is_alive()));
+        let seated = idx.is_some_and(|j| sim.list[j].phys.as_deref().is_some_and(|p| p.passengers.contains(&pid)));
         // A teleport of the player's own got it off at once (`Entity.teleport`: `stopRiding`): it
         // stays where it went.
         if std::mem::take(&mut sim.players[k].dismount_on_teleport) {
-            if let Some(vp) = idx.and_then(|j| sim.list[j].phys.as_mut()) {
+            if let Some(vp) = idx.and_then(|j| sim.list[j].phys.as_deref_mut()) {
                 kiln_entity::ride::remove_passenger(vp, pid);
             }
             let p = &mut *sim.players[k];
@@ -1703,7 +1790,7 @@ fn ride_players(sim: &mut SimLevel) {
         let leave = !seated || p.sneaking || p.dead || p.disconnected;
         if !leave {
 
-            let vp = sim.list[idx.unwrap()].phys.as_ref().expect("vehicle state");
+            let vp = sim.list[idx.unwrap()].phys.as_deref().expect("vehicle state");
             let at = vp.passengers.iter().position(|&x| x == pid).unwrap_or(0);
             let pos = kiln_entity::ride::rider_position(vp, at, "minecraft:player", 1.0);
             let p = &mut *sim.players[k];
@@ -1715,7 +1802,7 @@ fn ride_players(sim: &mut SimLevel) {
         // `stopRiding` → `dismountVehicle`.
         let mut to = sim.players[k].pos;
         if let Some(j) = idx {
-            if let Some(vp) = sim.list[j].phys.as_mut() {
+            if let Some(vp) = sim.list[j].phys.as_deref_mut() {
                 kiln_entity::ride::remove_passenger(vp, pid);
             }
             let vp = sim.list[j].phys.clone().expect("vehicle state");
@@ -1742,7 +1829,7 @@ pub(crate) fn move_vehicle(entities: &mut Entities, players: &mut [&mut Player],
     }
     let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
     let view = view(p, now);
-    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref_mut() else { return };
     let steers = phys.passengers.first() == Some(&p.entity_id)
         && (kiln_entity::mob::data(phys).is_some_and(|m| m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)))
             || kiln_entity::ext_entity::boat::is_boat(phys.type_name));
@@ -1788,7 +1875,7 @@ pub(crate) fn paddle_boat(entities: &mut Entities, players: &[&mut Player], i: u
     let p = &*players[i];
     let Some(v) = p.vehicle else { return };
     let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
-    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref_mut() else { return };
     if phys.passengers.first() != Some(&p.entity_id) {
         return;
     }
@@ -1805,7 +1892,7 @@ pub(crate) fn riding_jump(entities: &mut Entities, players: &mut [&mut Player], 
     }
     let Ok(idx) = entities.list.binary_search_by_key(&v, |e| e.id) else { return };
     let pid = players[i].entity_id;
-    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref_mut() else { return };
     if phys.passengers.first() != Some(&pid) {
         return;
     }
@@ -1833,11 +1920,11 @@ pub(crate) fn hit_mob(
     let target = hit.target - hit.part.map_or(0, |p| p as i32 + 1);
     let Ok(i) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x6869_74, hit.target);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -1854,6 +1941,7 @@ pub(crate) fn hit_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -1895,6 +1983,7 @@ pub(crate) fn hit_mob(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == hit.attacker) {
         p.last_hurt_mob = Some((hit.target, level.env.game_time));
         // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
@@ -1947,11 +2036,11 @@ pub(crate) fn stab_mob(
 ) -> Option<MobStabOutcome> {
     let i = entities.list.binary_search_by_key(&stab.target, |e| e.id).ok()?;
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x7374_6162, stab.target);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -1968,6 +2057,7 @@ pub(crate) fn stab_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2010,7 +2100,7 @@ pub(crate) fn stab_mob(
         dismounted = true;
         phys.vehicle = None;
         if let Ok(j) = sim.list.binary_search_by_key(&v, |e| e.id)
-            && let Some(vp) = sim.list[j].phys.as_mut()
+            && let Some(vp) = sim.list[j].phys.as_deref_mut()
         {
             kiln_entity::ride::remove_passenger(vp, stab.target);
         }
@@ -2024,6 +2114,7 @@ pub(crate) fn stab_mob(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == stab.attacker) {
         p.last_hurt_mob = Some((stab.target, level.env.game_time));
         // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
@@ -2058,7 +2149,7 @@ pub(crate) fn interact_mob(
         if p.dead || entities.list[idx].removed {
             return false;
         }
-        let Some(phys) = entities.list[idx].phys.as_ref() else { return false };
+        let Some(phys) = entities.list[idx].phys.as_deref() else { return false };
         if kiln_entity::mob::data(phys).is_none() && !matches!(phys.kind, EntityKind::Ext(_)) {
             return false;
         }
@@ -2081,11 +2172,11 @@ pub(crate) fn interact_mob(
     let stack = players[i].inv.equipped(slot).clone();
     let who = kiln_entity::mob::interact::Interactor { id: players[i].entity_id, creative: players[i].game_mode == 1, sneaking: players[i].sneaking };
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x696e_74, target);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -2102,6 +2193,7 @@ pub(crate) fn interact_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2109,9 +2201,9 @@ pub(crate) fn interact_mob(
     let out = kiln_entity::mob::interact::interact(&mut phys, &mut sim, &who, &stack);
     // Sheared wool: each item on its own, thrown up from the sheep with a push from its random.
     if let Some(table) = &out.shear
-        && let Some(loot) = sim.level.env.loot.clone()
+        && let Some(loot) = sim.level.env().loot.clone()
     {
-        let env = sim.level.env;
+        let env = sim.level.env();
         let ctx = crate::mobs::DeathContext {
             type_name: phys.type_name,
             origin: arr(phys.position()),
@@ -2150,7 +2242,7 @@ pub(crate) fn interact_mob(
         kiln_entity::ride::add_passenger(&mut phys, pid, true, first_is_player);
         let at = phys.passengers.iter().position(|&x| x == pid).unwrap_or(0);
         let seat = kiln_entity::ride::rider_position(&phys, at, "minecraft:player", 1.0);
-        let now = sim.level.env.game_time;
+        let now = sim.level.env().game_time;
         let p = &mut *sim.players[i];
         p.vehicle = Some(target);
         p.vehicle_type = Some(phys.type_name);
@@ -2162,6 +2254,7 @@ pub(crate) fn interact_mob(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     let p = &mut *players[i];
     // `PlayerInteractTrigger`: the item as it was when the interaction used it.
     if let Some(seen) = seen {
@@ -2237,11 +2330,11 @@ pub(crate) fn with_entity<R>(
     }
     let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, target);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -2258,6 +2351,7 @@ pub(crate) fn with_entity<R>(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2267,6 +2361,7 @@ pub(crate) fn with_entity<R>(
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
@@ -2286,11 +2381,11 @@ pub(crate) fn with_level<R>(
     f: impl FnOnce(&mut dyn EntityLevel) -> R,
 ) -> R {
     let live = |p: &Player| !p.disconnected && !p.dead;
-    let proxies: Vec<kiln_entity::Entity> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| proxy(p)).collect();
+    let proxies: Vec<Box<kiln_entity::Entity>> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Box::new(proxy(p))).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
     let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, 0);
     let mut sim = SimLevel {
-        level,
+        level: World::Region(level),
         list: &mut entities.list,
         players,
         deaths,
@@ -2307,6 +2402,7 @@ pub(crate) fn with_level<R>(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2315,6 +2411,7 @@ pub(crate) fn with_level<R>(
         e.sync();
     }
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
+    let level = level.into_region();
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
@@ -2415,7 +2512,7 @@ fn carry_out(
         Event::DeathLoot { entity: id, table, pos, killer, attacker, direct: _, kind, on_fire } => {
             let Some(loot) = env.loot.clone() else { return };
             let Ok(i) = list.binary_search_by_key(&id, |e| e.id) else { return };
-            let Some(phys) = list[i].phys.as_ref() else { return };
+            let Some(phys) = list[i].phys.as_deref() else { return };
             let weapon = killer.and_then(|k| players.iter().find(|p| p.entity_id == k)).map(|p| p.inv.selected_item().clone());
             // The killer as `damage_source_properties` sees it (a frog's variant decides the froglight).
             let attacker_view = attacker.and_then(|a| {
@@ -2423,7 +2520,7 @@ fn carry_out(
                     return Some(crate::mobs::AttackerView { type_name: "minecraft:player", components: Vec::new() });
                 }
                 let i = list.binary_search_by_key(&a, |e| e.id).ok()?;
-                let e = list[i].phys.as_ref()?;
+                let e = list[i].phys.as_deref()?;
                 Some(crate::mobs::AttackerView { type_name: e.type_name, components: kiln_entity::mob::data(e).map(kiln_entity::mob::variant_components).unwrap_or_default() })
             });
             let ctx = crate::mobs::DeathContext {
@@ -2478,7 +2575,7 @@ fn carry_out(
             if let Some(p) = credit.and_then(|k| players.iter_mut().find(|p| p.entity_id == k)) {
                 p.killed_entity(entity_type);
                 let dim = crate::DIMENSIONS[env.dim].0;
-                if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_ref()) {
+                if let Some(e) = list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| list[i].phys.as_deref()) {
                     let mut subject = crate::advancements::triggers::mob_subject(e, dim);
                     // `minecraft:equipment` as the mob wore it when it died (a captain's banner).
                     subject.equipment = equipment.iter().map(|(slot, s)| (*slot, s)).collect();
@@ -2491,7 +2588,7 @@ fn carry_out(
         // `ThrownEnderpearl.onHit`: its player goes to where the pearl was at the start of the
         // tick, takes 5 `ender_pearl` damage and hears the teleport.
         Event::ProjectileHit { projectile, projectile_type: "minecraft:ender_pearl", owner: Some(owner), .. } => {
-            let Some(to) = list.binary_search_by_key(&projectile, |e| e.id).ok().and_then(|i| list[i].phys.as_ref()).map(|e| arr(e.old_pos)) else { return };
+            let Some(to) = list.binary_search_by_key(&projectile, |e| e.id).ok().and_then(|i| list[i].phys.as_deref()).map(|e| arr(e.old_pos)) else { return };
             let Some(p) = players.iter_mut().find(|p| p.entity_id == owner && !p.dead && !p.disconnected) else { return };
             let now = env.game_time;
             let rot = p.rot;
@@ -2663,7 +2760,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
             continue;
         }
         let (lo, hi, _) = e.body();
-        let Some(EntityKind::Item(item)) = e.phys.as_mut().map(|p| &mut p.kind) else { continue };
+        let Some(EntityKind::Item(item)) = e.phys.as_deref_mut().map(|p| &mut p.kind) else { continue };
         if item.pickup_delay > 0 {
             continue;
         }
@@ -2694,7 +2791,7 @@ pub(crate) fn pickups(entities: &mut Entities, players: &mut [&mut Player]) {
         }
         if item.stack.is_empty() {
             e.removed = true;
-            if let Some(p) = e.phys.as_mut() {
+            if let Some(p) = e.phys.as_deref_mut() {
                 p.discard();
             }
         } else {
@@ -2720,7 +2817,7 @@ fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
             continue;
         }
         let (lo, hi, _) = e.body();
-        let Some(phys) = e.phys.as_ref() else { continue };
+        let Some(phys) = e.phys.as_deref() else { continue };
         // (at rest, pickup mode, the item, a loyal trident's owner)
         let (resting, mode, item, owner) = match &phys.kind {
             EntityKind::Arrow(a) => (
@@ -2774,7 +2871,7 @@ fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
             }
         }
         e.removed = true;
-        if let Some(p) = e.phys.as_mut() {
+        if let Some(p) = e.phys.as_deref_mut() {
             p.discard();
         }
     }
@@ -2784,187 +2881,273 @@ fn arrow_pickups(entities: &mut Entities, players: &mut [&mut Player]) {
 /// triggers: an entity whose section changed is re-evaluated against every player, and every
 /// entity against the players in `movers` (whose section changed). Then sends movement and
 /// velocity, and removes dead entities from their viewers and the region.
-pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers: &[ConnId]) {
-    let sees = |p: &Player, e: &Entity| {
-        let range = (e.kind.tracking_range as f64 * 16.0).min(p.view_distance as f64 * 16.0);
+///
+/// Two windows: each entity works out its viewers and encodes its packets (touching only
+/// itself, against a snapshot of the players), then each run of consecutive players collects
+/// what the entities it sees encoded, in list order; every player gets the packets a serial
+/// loop over the entities would have sent it, in the same order.
+pub(crate) fn track(entities: &mut Entities, players: &mut [&mut Player], movers: &[ConnId], ctx: &kiln_sched::Ctx<'_>) {
+    let viewers: Vec<Viewer> = players.iter().map(|p| Viewer { conn: p.conn, pos: p.pos, view: p.view_distance }).collect();
+    let movers: Vec<usize> = movers.iter().filter_map(|m| viewers.binary_search_by_key(m, |v| v.conn).ok()).collect();
+    let present = Present::of(&viewers);
+    let encoded = ctx.map_mut_with(TRACK_WINDOW, &mut entities.list, |_, e| track_entity(e, &viewers, &movers, &present));
+    let mut runs: Vec<(usize, &mut [&mut Player])> = Vec::new();
+    let mut start = 0;
+    for run in players.chunks_mut(TRACK_RUN) {
+        let n = run.len();
+        runs.push((start, run));
+        start += n;
+    }
+    let encoded = &encoded[..];
+    ctx.map_mut_with(kiln_sched::Window::new(), &mut runs, |_, (_, run)| deliver_tracking(run, encoded));
+    entities.list.retain(|e| !e.removed);
+}
+
+/// Entities per chunk of the encoding window, and players per delivery run.
+const TRACK_WINDOW: kiln_sched::Window = kiln_sched::Window::new();
+const TRACK_RUN: usize = 32;
+
+/// The region's players by connection, for dropping viewers that left: a bit per connection
+/// id when the ids are small (they are handed out in order), else the sorted list.
+enum Present {
+    Bits(Vec<u64>),
+    Sorted(Vec<ConnId>),
+}
+
+impl Present {
+    fn of(viewers: &[Viewer]) -> Present {
+        match viewers.last() {
+            Some(v) if v.conn < 1 << 20 => {
+                let mut bits = vec![0u64; v.conn as usize / 64 + 1];
+                for v in viewers {
+                    bits[v.conn as usize / 64] |= 1 << (v.conn % 64);
+                }
+                Present::Bits(bits)
+            }
+            _ => Present::Sorted(viewers.iter().map(|v| v.conn).collect()),
+        }
+    }
+
+    fn contains(&self, conn: ConnId) -> bool {
+        match self {
+            Present::Bits(b) => b.get(conn as usize / 64).is_some_and(|w| w >> (conn % 64) & 1 != 0),
+            Present::Sorted(v) => v.binary_search(&conn).is_ok(),
+        }
+    }
+}
+
+/// What tracking reads of a player.
+struct Viewer {
+    conn: ConnId,
+    pos: [f64; 3],
+    view: i32,
+}
+
+/// One entity's tracking changes this tick, by viewer: (who, packets) in send order.
+#[derive(Default)]
+struct Tracked {
+    /// Players that start seeing it, and stop (sorted), and what they get.
+    added: Vec<ConnId>,
+    removed: Vec<ConnId>,
+    /// The boss bar's progress for those that keep seeing it (wither), and who they are.
+    boss_progress: Option<Bytes>,
+    progress_to: Vec<ConnId>,
+    /// Boss bar add for `added`, remove for `removed`.
+    boss_add: Option<Bytes>,
+    boss_remove: Option<Bytes>,
+    spawn: Vec<Bytes>,
+    despawn: Option<Bytes>,
+    /// Its viewers after the changes (sorted), and what they all get.
+    viewers: Vec<ConnId>,
+    packets: Vec<Bytes>,
+}
+
+fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &Present) -> Tracked {
+    let sees = |p: &Viewer, e: &Entity| {
+        let range = (e.kind.tracking_range as f64 * 16.0).min(p.view as f64 * 16.0);
         let (dx, dz) = (p.pos[0] - e.pos[0], p.pos[2] - e.pos[2]);
         let (pc, ec) = (chunk_of(p.pos), chunk_of(e.pos));
-        !e.removed
-            && dx * dx + dz * dz <= range * range
-            && (pc.x - ec.x).abs() <= p.view_distance
-            && (pc.z - ec.z).abs() <= p.view_distance
+        !e.removed && dx * dx + dz * dz <= range * range && (pc.x - ec.x).abs() <= p.view && (pc.z - ec.z).abs() <= p.view
     };
-    let index = |players: &[&mut Player], conn: ConnId| players.binary_search_by_key(&conn, |p| p.conn).ok();
-    for e in &mut entities.list {
-        let section = e.pos.map(|c| c.floor() as i32 >> 4);
-        let moved = e.section != Some(section);
-        e.section = Some(section);
-        let (mut added, mut removed) = (Vec::new(), Vec::new());
-        let mut check = |p: &Player, seen: bool| match (sees(p, e), seen) {
+    let mut t = Tracked::default();
+    let section = e.pos.map(|c| c.floor() as i32 >> 4);
+    let moved = e.section != Some(section);
+    e.section = Some(section);
+    {
+        let (added, removed) = (&mut t.added, &mut t.removed);
+        let mut check = |p: &Viewer, seen: bool| match (sees(p, e), seen) {
             (true, false) => added.push(p.conn),
             (false, true) => removed.push(p.conn),
             _ => {}
         };
         if moved || e.removed {
-            for p in players.iter() {
+            for p in viewers {
                 check(p, e.seen_by.binary_search(&p.conn).is_ok());
             }
         } else {
             for &m in movers {
-                if let Some(i) = index(players, m) {
-                    check(players[i], e.seen_by.binary_search(&m).is_ok());
-                }
-            }
-        }
-        // `ServerBossEvent`: a boss's bar for the players that see it.
-        let boss = e.phys.as_ref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
-        let bar_id = Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72);
-        if let Some(progress) = boss {
-            let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
-            let op = hud::BossEvent::Add {
-                name: &name,
-                progress,
-                color: hud::BossBarColor::Purple,
-                overlay: hud::BossBarOverlay::Progress,
-                flags: hud::boss_flags::DARKEN_SCREEN,
-            };
-            let add = hud::boss_event(bar_id, &op);
-            for &c in &added {
-                if let Some(i) = index(players, c) {
-                    players[i].send(add.clone());
-                }
-            }
-            if e.boss_sent.is_some_and(|p| p != progress) {
-                let pkt = hud::boss_event(bar_id, &hud::BossEvent::Progress(progress));
-                for v in e.seen_by.iter().filter(|v| !added.contains(v) && !removed.contains(v)) {
-                    if let Some(i) = index(players, *v) {
-                        players[i].send(pkt.clone());
-                    }
-                }
-            }
-            e.boss_sent = Some(progress);
-        }
-        if (boss.is_some() || e.boss_sent.is_some()) && !removed.is_empty() {
-            let pkt = hud::boss_event(bar_id, &hud::BossEvent::Remove);
-            for &c in &removed {
-                if let Some(i) = index(players, c) {
-                    players[i].send(pkt.clone());
-                }
-            }
-        }
-        if !added.is_empty() {
-            let spawn = e.spawn_packets();
-            for &c in &added {
-                if let Some(i) = index(players, c) {
-                    spawn.iter().for_each(|pkt| players[i].send(pkt.clone()));
-                }
-            }
-        }
-        if !removed.is_empty() {
-            let despawn = entity::remove_entities(&[e.id]);
-            for &c in &removed {
-                if let Some(i) = index(players, c) {
-                    players[i].send(despawn.clone());
-                }
-            }
-        }
-        e.seen_by.retain(|v| removed.binary_search(v).is_err());
-        e.seen_by.extend(added);
-        e.seen_by.sort_unstable();
-        // Players that left the region or the game are no longer viewers.
-        e.seen_by.retain(|&v| index(players, v).is_some());
-
-        if e.removed {
-            continue;
-        }
-        let mut packets = e.tracker.tick(&e.move_state());
-        if let Some(EntityKind::Mob(m)) = e.phys.as_mut().map(|p| &mut p.kind) {
-            if std::mem::take(&mut m.swing) {
-                packets.push(entity::swing_animation(e.id, false, entity::swing::WHACK, entity::swing::DEFAULT_DURATION));
-            }
-        }
-        if let Some(phys) = e.phys.as_ref()
-            && let EntityKind::Ext(x) = &phys.kind
-        {
-            let mut meta = EntityData::new();
-            x.entity_data(phys, &mut meta);
-            if meta.entries() != e.meta_sent.as_slice() {
-                if !e.meta_sent.is_empty() {
-                    packets.push(entity::set_entity_data(e.id, &meta));
-                }
-                e.meta_sent = meta.entries().to_vec();
-            }
-        }
-        if let Some(phys) = e.phys.as_ref()
-            && let EntityKind::Mob(m) = &phys.kind
-        {
-            let meta = crate::mobs::metadata(phys, m);
-            if meta.entries() != e.meta_sent.as_slice() {
-                if !e.meta_sent.is_empty() {
-                    packets.push(entity::set_entity_data(e.id, &meta));
-                }
-                e.meta_sent = meta.entries().to_vec();
-            }
-            let worn = crate::mobs::shown_equipment(m);
-            if worn.len() != e.equipment_sent.len() || worn.iter().zip(&e.equipment_sent).any(|(a, b)| a.0 != b.0 || !kiln_inventory::stack::matches(&a.1, &b.1)) {
-                let mut slots: Vec<(u8, kiln_item::ItemStack)> = worn.clone();
-                for (i, _) in &e.equipment_sent {
-                    if !slots.iter().any(|(j, _)| j == i) {
-                        slots.push((*i, kiln_item::ItemStack::empty()));
-                    }
-                }
-                if !slots.is_empty() && !(e.equipment_sent.is_empty() && e.age <= 1) {
-                    let refs: Vec<(u8, &kiln_item::ItemStack)> = slots.iter().map(|(i, s)| (*i, s)).collect();
-                    packets.push(crate::players::set_equipment(e.id, &refs));
-                }
-                e.equipment_sent = worn;
-            }
-        }
-        // Arrows: crit and in-ground flags change in flight (extension entities: above).
-        if e.phys.as_ref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
-            let meta = e.metadata();
-            if meta.entries() != e.meta_sent.as_slice() {
-                if !e.meta_sent.is_empty() || e.age > 1 {
-                    packets.push(entity::set_entity_data(e.id, &meta));
-                }
-                e.meta_sent = meta.entries().to_vec();
-            }
-        }
-        if let Some(phys) = e.phys.as_ref()
-            && phys.passengers != e.passengers_sent
-        {
-            e.passengers_sent = phys.passengers.clone();
-            packets.push(entity::set_passengers(e.id, &e.passengers_sent));
-        }
-        // `Leashable.setLeashedTo` / `dropLeash`: Set Entity Link when the holder changes.
-        if let Some(phys) = e.phys.as_ref() {
-            let holder = kiln_entity::leash::holder_of(phys);
-            if holder != e.leash_sent {
-                // (A knot made this tick is still under a stand-in id: the link waits.)
-                if !holder.is_some_and(|h| h < 0) {
-                    e.leash_sent = holder;
-                    packets.push(entity::set_entity_link(e.id, holder.unwrap_or(0)));
-                }
-            }
-        }
-        // `ServerEntity.sendChanges`: velocity on update ticks when it changed, or at once
-        // after an impulse (explosion knockback).
-        let impulse = e.phys.as_mut().is_some_and(|p| std::mem::take(&mut p.needs_sync));
-        if e.kind.track_deltas && (impulse || e.age % e.kind.update_interval.max(1) == 0) {
-            let d: f64 = (0..3).map(|i| (e.vel[i] - e.sent_vel[i]).powi(2)).sum();
-            let still = e.vel.iter().all(|&v| v == 0.0);
-            if impulse || d > 1.0e-7 || (d > 0.0 && still) {
-                e.sent_vel = e.vel;
-                packets.push(entity::set_entity_motion(e.id, e.vel));
-            }
-        }
-        for v in &e.seen_by {
-            if let Some(i) = index(players, *v) {
-                packets.iter().for_each(|pkt| players[i].send(pkt.clone()));
+                let p = &viewers[m];
+                check(p, e.seen_by.binary_search(&p.conn).is_ok());
             }
         }
     }
-    entities.list.retain(|e| !e.removed);
+    // `ServerBossEvent`: a boss's bar for the players that see it.
+    let boss = e.phys.as_deref().and_then(kiln_entity::mob::data).and_then(kiln_entity::mob::kinds::wither::boss_bar);
+    let bar_id = Uuid::from_u128(e.uuid.as_u128() ^ 0x626f_7373_6261_72);
+    if let Some(progress) = boss {
+        let name = kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String("entity.minecraft.wither".into()))]);
+        let op = hud::BossEvent::Add {
+            name: &name,
+            progress,
+            color: hud::BossBarColor::Purple,
+            overlay: hud::BossBarOverlay::Progress,
+            flags: hud::boss_flags::DARKEN_SCREEN,
+        };
+        t.boss_add = Some(hud::boss_event(bar_id, &op));
+        if e.boss_sent.is_some_and(|p| p != progress) {
+            t.boss_progress = Some(hud::boss_event(bar_id, &hud::BossEvent::Progress(progress)));
+        }
+        e.boss_sent = Some(progress);
+    }
+    if (boss.is_some() || e.boss_sent.is_some()) && !t.removed.is_empty() {
+        t.boss_remove = Some(hud::boss_event(bar_id, &hud::BossEvent::Remove));
+    }
+    if !t.added.is_empty() {
+        t.spawn = e.spawn_packets();
+    }
+    if !t.removed.is_empty() {
+        t.despawn = Some(entity::remove_entities(&[e.id]));
+    }
+    // (The progress goes to the viewers before this tick's changes that keep seeing it.)
+    let before = std::mem::take(&mut e.seen_by);
+    let mut seen_by: Vec<ConnId> = before.iter().copied().filter(|v| t.removed.binary_search(v).is_err()).collect();
+    if t.boss_progress.is_some() {
+        t.progress_to = before.iter().copied().filter(|v| !t.added.contains(v) && !t.removed.contains(v)).collect();
+    }
+    seen_by.extend(t.added.iter().copied());
+    seen_by.sort_unstable();
+    // Players that left the region or the game are no longer viewers.
+    seen_by.retain(|&v| present.contains(v));
+    e.seen_by = seen_by;
+    if e.removed {
+        return t;
+    }
+    let mut packets = e.tracker.tick(&e.move_state());
+    if let Some(EntityKind::Mob(m)) = e.phys.as_deref_mut().map(|p| &mut p.kind) {
+        if std::mem::take(&mut m.swing) {
+            packets.push(entity::swing_animation(e.id, false, entity::swing::WHACK, entity::swing::DEFAULT_DURATION));
+        }
+    }
+    if let Some(phys) = e.phys.as_deref()
+        && let EntityKind::Ext(x) = &phys.kind
+    {
+        let mut meta = EntityData::new();
+        x.entity_data(phys, &mut meta);
+        if meta.entries() != e.meta_sent.as_slice() {
+            if !e.meta_sent.is_empty() {
+                packets.push(entity::set_entity_data(e.id, &meta));
+            }
+            e.meta_sent = meta.entries().to_vec();
+        }
+    }
+    if let Some(phys) = e.phys.as_deref()
+        && let EntityKind::Mob(m) = &phys.kind
+    {
+        let meta = crate::mobs::metadata(phys, m);
+        if meta.entries() != e.meta_sent.as_slice() {
+            if !e.meta_sent.is_empty() {
+                packets.push(entity::set_entity_data(e.id, &meta));
+            }
+            e.meta_sent = meta.entries().to_vec();
+        }
+        let worn = crate::mobs::shown_equipment(m);
+        if worn.len() != e.equipment_sent.len() || worn.iter().zip(&e.equipment_sent).any(|(a, b)| a.0 != b.0 || !kiln_inventory::stack::matches(&a.1, &b.1)) {
+            let mut slots: Vec<(u8, kiln_item::ItemStack)> = worn.clone();
+            for (i, _) in &e.equipment_sent {
+                if !slots.iter().any(|(j, _)| j == i) {
+                    slots.push((*i, kiln_item::ItemStack::empty()));
+                }
+            }
+            if !slots.is_empty() && !(e.equipment_sent.is_empty() && e.age <= 1) {
+                let refs: Vec<(u8, &kiln_item::ItemStack)> = slots.iter().map(|(i, s)| (*i, s)).collect();
+                packets.push(crate::players::set_equipment(e.id, &refs));
+            }
+            e.equipment_sent = worn;
+        }
+    }
+    // Arrows: crit and in-ground flags change in flight (extension entities: above).
+    if e.phys.as_deref().is_some_and(|p| matches!(p.kind, EntityKind::Arrow(_))) {
+        let meta = e.metadata();
+        if meta.entries() != e.meta_sent.as_slice() {
+            if !e.meta_sent.is_empty() || e.age > 1 {
+                packets.push(entity::set_entity_data(e.id, &meta));
+            }
+            e.meta_sent = meta.entries().to_vec();
+        }
+    }
+    if let Some(phys) = e.phys.as_deref()
+        && phys.passengers != e.passengers_sent
+    {
+        e.passengers_sent = phys.passengers.clone();
+        packets.push(entity::set_passengers(e.id, &e.passengers_sent));
+    }
+    // `Leashable.setLeashedTo` / `dropLeash`: Set Entity Link when the holder changes.
+    if let Some(phys) = e.phys.as_deref() {
+        let holder = kiln_entity::leash::holder_of(phys);
+        if holder != e.leash_sent {
+            // (A knot made this tick is still under a stand-in id: the link waits.)
+            if !holder.is_some_and(|h| h < 0) {
+                e.leash_sent = holder;
+                packets.push(entity::set_entity_link(e.id, holder.unwrap_or(0)));
+            }
+        }
+    }
+    // `ServerEntity.sendChanges`: velocity on update ticks when it changed, or at once
+    // after an impulse (explosion knockback).
+    let impulse = e.phys.as_deref_mut().is_some_and(|p| std::mem::take(&mut p.needs_sync));
+    if e.kind.track_deltas && (impulse || e.age % e.kind.update_interval.max(1) == 0) {
+        let d: f64 = (0..3).map(|i| (e.vel[i] - e.sent_vel[i]).powi(2)).sum();
+        let still = e.vel.iter().all(|&v| v == 0.0);
+        if impulse || d > 1.0e-7 || (d > 0.0 && still) {
+            e.sent_vel = e.vel;
+            packets.push(entity::set_entity_motion(e.id, e.vel));
+        }
+    }
+    if !packets.is_empty() {
+        t.viewers = e.seen_by.clone();
+    }
+    t.packets = packets;
+    t
+}
+
+/// Hands the players of `run` (consecutive, sorted) what every entity encoded for them, in
+/// list order.
+fn deliver_tracking(run: &mut [&mut Player], encoded: &[Tracked]) {
+    let (Some(first), Some(last)) = (run.first().map(|p| p.conn), run.last().map(|p| p.conn)) else { return };
+    let send = |run: &mut [&mut Player], to: &[ConnId], packets: &[Bytes]| {
+        if packets.is_empty() || to.is_empty() {
+            return;
+        }
+        let from = to.partition_point(|&v| v < first);
+        let upto = to.partition_point(|&v| v <= last);
+        let mut j = 0;
+        for &v in &to[from..upto] {
+            while j < run.len() && run[j].conn < v {
+                j += 1;
+            }
+            if j < run.len() && run[j].conn == v {
+                run[j].outbox.extend(packets.iter().cloned());
+            }
+        }
+    };
+    for t in encoded {
+        send(run, &t.added, t.boss_add.as_slice());
+        send(run, &t.progress_to, t.boss_progress.as_slice());
+        send(run, &t.removed, t.boss_remove.as_slice());
+        send(run, &t.added, &t.spawn);
+        send(run, &t.removed, t.despawn.as_slice());
+        send(run, &t.viewers, &t.packets);
+    }
 }
 
 /// Health damage cause for an entity damage kind.

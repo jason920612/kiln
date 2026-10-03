@@ -548,7 +548,7 @@ impl Sim {
             if let Ok(i) = part.0.list.binary_search_by_key(&id, |e| e.id) {
                 let e = &mut part.0.list[i];
                 e.removed = true;
-                if let Some(p) = e.phys.as_mut() {
+                if let Some(p) = e.phys.as_deref_mut() {
                     p.discard();
                 }
             }
@@ -714,7 +714,7 @@ impl Sim {
         for r in self.dims[END_ID].regions.iter_mut() {
             let (_, part) = r.cells_and_part_mut();
             for e in part.0.list.iter_mut().filter(|e| !e.removed) {
-                let Some(phys) = e.phys.as_mut() else { continue };
+                let Some(phys) = e.phys.as_deref_mut() else { continue };
                 if phys.type_name != "minecraft:end_crystal" || !select(phys) {
                     continue;
                 }
@@ -1013,11 +1013,11 @@ pub(crate) fn bottle_breath(ents: &mut entities::Entities, p: &mut Player, off_h
     let dragons: Vec<i32> = ents.list.iter().filter(|e| !e.removed && e.kind.name == "minecraft:ender_dragon").map(|e| e.id).collect();
     let cloud = ents.list.iter_mut().filter(|e| !e.removed).find(|e| {
         let (min, max, _) = e.body();
-        let owner = e.phys.as_ref().and_then(|x| kiln_entity::ext_entity::get::<AreaEffectCloud>(x)).and_then(|c| c.owner);
+        let owner = e.phys.as_deref().and_then(|x| kiln_entity::ext_entity::get::<AreaEffectCloud>(x)).and_then(|c| c.owner);
         owner.is_some_and(|o| dragons.contains(&o)) && (0..3).all(|i| min[i] < hi[i] && max[i] > lo[i])
     });
     let Some(cloud) = cloud else { return false };
-    if let Some(c) = cloud.phys.as_mut().and_then(kiln_entity::ext_entity::get_mut::<AreaEffectCloud>) {
+    if let Some(c) = cloud.phys.as_deref_mut().and_then(kiln_entity::ext_entity::get_mut::<AreaEffectCloud>) {
         c.radius = (c.radius - 0.5).clamp(0.0, 32.0);
     }
     if let Some(id) = kiln_data::builtin_id("minecraft:sound_event", "minecraft:item.bottle.fill_dragonbreath") {

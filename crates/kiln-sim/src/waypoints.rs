@@ -8,12 +8,34 @@
 //!
 //! Vanilla updates on every position change; Kiln updates once a tick for the players that
 //! moved, which sends the same packets.
+//!
+//! A crowd makes this the quadratic part of the tick: every mover meets every other player
+//! twice (as a transmitter in `updateWaypoint`, as a receiver in `updatePlayer`). A pair's
+//! connection only changes when one of the two players takes its turn, and what it sends
+//! goes to the receiver, so each receiver's share of the movers' turns (the moving
+//! transmitters' turns in connection order, with its own `updatePlayer` turn at its place)
+//! depends on nothing but its own connections and one snapshot of the players. The receivers
+//! therefore run in parallel on the tick pool, each appending to its own outbox, which gives
+//! every receiver the bytes, in the order, the serial loop would. Members of a level have
+//! dense slots, connections are small `Copy` values in per-receiver rows indexed by the
+//! transmitter's slot, and a transmitter's common packets (its block or chunk with its current
+//! icon) are encoded once and shared by all receivers.
+//!
+//! Most steps in a crowd are quiet (nothing changed that the receiver was told), and which
+//! ones are follows from the connections' kinds and the transmitters' movement alone (see
+//! [`run_share`]), so a receiver finds the steps to run with set operations over the slots
+//! instead of visiting every pair: the work follows the packets sent, not the pairs.
 
 use crate::{DimId, Player, Sim};
+use bytes::Bytes;
+use kiln_command::scoreboard::Scoreboard;
 use kiln_command::selector::SelectorTarget;
+use kiln_command::vanilla::misc::TEAM_RGB;
 use kiln_link::ConnId;
 use kiln_proto::packets::hud::{self, WaypointAt, WaypointOp};
-use std::collections::HashMap;
+use kiln_sched::Window;
+use std::sync::{Mutex, OnceLock};
+use uuid::Uuid;
 
 /// `WaypointStyleAssets.DEFAULT`.
 pub(crate) const DEFAULT_STYLE: &str = "minecraft:default";
@@ -42,12 +64,135 @@ enum Link {
     Azimuth(f32),
 }
 
-#[derive(Debug, Clone)]
+/// One connection: what was sent, and the style and color it was made with
+/// (`Icon.cloneAndAssignStyle` when the connection was made) as an index into the level's
+/// icons.
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Connection {
     link: Link,
-    /// `Icon.cloneAndAssignStyle` when the connection was made.
-    style: String,
-    color: Option<i32>,
+    icon: u32,
+}
+
+/// A connection as a row keeps it (16 bytes; a crowd's rows hold a million): the position,
+/// chunk or angle bits, and the kind (low two bits, 0: no connection) with the icon.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Stored {
+    at: [i32; 3],
+    meta: u32,
+}
+
+impl Stored {
+    const NONE: Stored = Stored { at: [0; 3], meta: 0 };
+
+    fn of(c: Option<Connection>) -> Stored {
+        let Some(c) = c else { return Stored::NONE };
+        let (at, kind) = match c.link {
+            Link::Block(p) => (p, 1),
+            Link::Chunk([x, z]) => ([x, z, 0], 2),
+            Link::Azimuth(a) => ([a.to_bits() as i32, 0, 0], 3),
+        };
+        Stored { at, meta: c.icon << 2 | kind }
+    }
+
+    fn get(self) -> Option<Connection> {
+        let link = match self.meta & 3 {
+            0 => return None,
+            1 => Link::Block(self.at),
+            2 => Link::Chunk([self.at[0], self.at[1]]),
+            _ => Link::Azimuth(f32::from_bits(self.at[0] as u32)),
+        };
+        Some(Connection { link, icon: self.meta >> 2 })
+    }
+}
+
+/// A set of slots.
+type Bits = Vec<u64>;
+
+fn set_bit(b: &mut Bits, i: usize, on: bool) {
+    if b.len() <= i / 64 {
+        if !on {
+            return;
+        }
+        b.resize(i / 64 + 1, 0);
+    }
+    if on {
+        b[i / 64] |= 1 << (i % 64);
+    } else {
+        b[i / 64] &= !(1 << (i % 64));
+    }
+}
+
+/// Word `i` of a set (zero past its end).
+fn word(b: &[u64], i: usize) -> u64 {
+    b.get(i).copied().unwrap_or(0)
+}
+
+/// The slots in a set, in slot order.
+fn each_bit(words: impl Iterator<Item = u64>) -> impl Iterator<Item = usize> {
+    words.enumerate().flat_map(|(i, mut w)| {
+        std::iter::from_fn(move || {
+            (w != 0).then(|| {
+                let b = w.trailing_zeros() as usize;
+                w &= w - 1;
+                i * 64 + b
+            })
+        })
+    })
+}
+
+/// A receiver's connections by the transmitter's slot, with the sets of transmitters it has
+/// a block, chunk and azimuth connection from (so a turn can tell which steps may send
+/// anything without looking at each connection).
+#[derive(Debug, Default, Clone, PartialEq)]
+struct Row {
+    data: Vec<Stored>,
+    /// Block, chunk and azimuth connections.
+    kinds: [Bits; 3],
+}
+
+impl Row {
+    fn get(&self, s: usize) -> Option<Connection> {
+        self.data.get(s).and_then(|d| d.get())
+    }
+
+    /// Replaces the connection; returns the old one.
+    fn put(&mut self, s: usize, c: Option<Connection>) -> Option<Connection> {
+        if self.data.len() <= s {
+            if c.is_none() {
+                return None;
+            }
+            self.data.resize(s + 1, Stored::NONE);
+        }
+        let new = Stored::of(c);
+        let old = std::mem::replace(&mut self.data[s], new);
+        let (was, now) = ((old.meta & 3) as usize, (new.meta & 3) as usize);
+        if was != now {
+            if was != 0 {
+                set_bit(&mut self.kinds[was - 1], s, false);
+            }
+            if now != 0 {
+                set_bit(&mut self.kinds[now - 1], s, true);
+            }
+        }
+        old.get()
+    }
+
+    /// The slots of the transmitters this receiver has a connection from.
+    fn sources(&self) -> Vec<usize> {
+        let n = self.kinds.iter().map(Vec::len).max().unwrap_or(0);
+        each_bit((0..n).map(|i| word(&self.kinds[0], i) | word(&self.kinds[1], i) | word(&self.kinds[2], i))).collect()
+    }
+}
+
+/// A transmitter's or receiver's place in a level.
+#[derive(Debug, Default)]
+struct Member {
+    /// `None`: a free slot.
+    conn: Option<ConnId>,
+    transmitting: bool,
+    receiving: bool,
+    /// As a receiver: the connection from each transmitter, by the transmitter's slot.
+    row: Row,
 }
 
 /// One level's `ServerWaypointManager`.
@@ -57,188 +202,537 @@ pub(crate) struct WaypointManager {
     waypoints: Vec<ConnId>,
     /// Receivers.
     players: Vec<ConnId>,
-    /// (receiver, transmitter) → connection.
-    connections: HashMap<(ConnId, ConnId), Connection>,
+    /// Every transmitter's and receiver's slot.
+    slots: crate::FastMap<ConnId, u32>,
+    members: Vec<Member>,
+    free: Vec<u32>,
+    /// Transmitters (by slot) a connection was made from this tick before the movers' turns:
+    /// their connections may hold a position other than their last tick's.
+    dirty: Vec<bool>,
+    /// The styles and colors connections were made with.
+    icons: Vec<(String, Option<i32>)>,
     /// Buckets of vanilla's `HashSet` of transmitters (16, doubling past a load of 0.75,
     /// never shrinking), for its iteration order.
     capacity: usize,
 }
 
-use kiln_command::vanilla::misc::TEAM_RGB;
+impl WaypointManager {
+    fn icon_id(&mut self, style: &str, color: Option<i32>) -> u32 {
+        match self.icons.iter().position(|(s, c)| s == style && *c == color) {
+            Some(i) => i as u32,
+            None => {
+                self.icons.push((style.to_owned(), color));
+                (self.icons.len() - 1) as u32
+            }
+        }
+    }
 
-fn block_of(p: &Player) -> [i32; 3] {
-    p.pos.map(|c| c.floor() as i32)
+    fn slot(&self, conn: ConnId) -> Option<usize> {
+        self.slots.get(&conn).map(|&s| s as usize)
+    }
+
+    /// The member's slot, taking a free one for a newcomer.
+    fn join(&mut self, conn: ConnId) -> usize {
+        if let Some(s) = self.slot(conn) {
+            return s;
+        }
+        let s = match self.free.pop() {
+            Some(s) => s as usize,
+            None => {
+                self.members.push(Member::default());
+                self.members.len() - 1
+            }
+        };
+        self.members[s].conn = Some(conn);
+        self.slots.insert(conn, s as u32);
+        self.mark_dirty(s);
+        s
+    }
+
+    /// Frees the slot of a member that neither transmits nor receives any more.
+    fn leave_if_idle(&mut self, s: usize) {
+        let m = &mut self.members[s];
+        if m.transmitting || m.receiving {
+            return;
+        }
+        if let Some(conn) = m.conn.take() {
+            self.slots.remove(&conn);
+        }
+        m.row = Row::default();
+        for m in &mut self.members {
+            m.row.put(s, None);
+        }
+        self.free.push(s as u32);
+    }
+
+    /// Replaces the connection; returns the old one.
+    fn set(&mut self, receiver: usize, source: usize, c: Option<Connection>) -> Option<Connection> {
+        self.members[receiver].row.put(source, c)
+    }
+
+    fn mark_dirty(&mut self, s: usize) {
+        if self.dirty.len() <= s {
+            self.dirty.resize(s + 1, false);
+        }
+        self.dirty[s] = true;
+    }
 }
 
-fn chunk_of(p: &Player) -> [i32; 2] {
-    [(p.pos[0].floor() as i32) >> 4, (p.pos[2].floor() as i32) >> 4]
+/// What the locator bar reads of a player: its position as vanilla compares it.
+#[derive(Debug, Clone, Copy)]
+struct Snap {
+    conn: ConnId,
+    pos: [f64; 3],
+    block: [i32; 3],
+    chunk: [i32; 2],
+    /// The chunk the receiver's view is centered on, and its view distance.
+    center: [i32; 2],
+    view: i32,
+    mode: u8,
+    first_tick: bool,
+    /// Its block (chunk) differs from the one at the last tick's turns.
+    block_moved: bool,
+    chunk_moved: bool,
+}
+
+impl Snap {
+    fn of(p: &Player) -> Snap {
+        let block = p.pos.map(|c| c.floor() as i32);
+        let last = p.waypoint_last_pos.map(|c| c.floor() as i32);
+        Snap {
+            conn: p.conn,
+            pos: p.pos,
+            block,
+            chunk: [block[0] >> 4, block[2] >> 4],
+            center: [p.center.x, p.center.z],
+            view: p.view_distance,
+            mode: p.game_mode,
+            first_tick: p.waypoint_first_tick,
+            block_moved: last != block,
+            chunk_moved: [last[0] >> 4, last[2] >> 4] != [block[0] >> 4, block[2] >> 4],
+        }
+    }
 }
 
 /// `Entity.distanceTo` (single precision, as vanilla compares it).
-fn distance(a: &Player, b: &Player) -> f32 {
+fn distance(a: &Snap, b: &Snap) -> f32 {
     let d: f64 = (0..3).map(|i| (a.pos[i] - b.pos[i]).powi(2)).sum();
     (d as f32).sqrt()
 }
 
 /// `ChunkTrackingView.isInViewDistance` of the receiver.
-fn chunk_visible(chunk: [i32; 2], receiver: &Player) -> bool {
-    let dx = i64::from(((chunk[0] - receiver.center.x).abs() - 1).max(0));
-    let dz = i64::from(((chunk[1] - receiver.center.z).abs() - 1).max(0));
-    dx * dx + dz * dz < i64::from(receiver.view_distance) * i64::from(receiver.view_distance)
+fn chunk_visible(chunk: [i32; 2], receiver: &Snap) -> bool {
+    let dx = i64::from(((chunk[0] - receiver.center[0]).abs() - 1).max(0));
+    let dz = i64::from(((chunk[1] - receiver.center[1]).abs() - 1).max(0));
+    dx * dx + dz * dz < i64::from(receiver.view) * i64::from(receiver.view)
 }
 
 /// `WaypointTransmitter.doesSourceIgnoreReceiver`: spectators transmit to spectators only.
-fn ignores(source: &Player, receiver: &Player) -> bool {
-    receiver.game_mode != 3 && source.game_mode == 3
+fn ignores(source: &Snap, receiver: &Snap) -> bool {
+    receiver.mode != 3 && source.mode == 3
 }
 
 /// `EntityAzimuthConnection`'s angle: `atan2` of the receiver-to-source offset turned 90°.
-fn azimuth(source: &Player, receiver: &Player) -> f32 {
+fn azimuth(source: &Snap, receiver: &Snap) -> f32 {
     let (dx, dz) = (receiver.pos[0] - source.pos[0], receiver.pos[2] - source.pos[2]);
     // `Vec3.rotateClockwise90`: (x, y, z) -> (-z, y, x).
     kiln_command::coords::mth_atan2(dx, -dz) as f32
 }
 
-/// `LivingEntity.makeWaypointConnectionWith`.
-fn make_connection(source: &Player, receiver: &Player, team_color: Option<i32>) -> Option<Connection> {
-    if source.waypoint_first_tick || source.conn == receiver.conn || ignores(source, receiver) {
+/// `LivingEntity.makeWaypointConnectionWith`: the link a new connection starts with.
+fn make_link(source: &Snap, receiver: &Snap) -> Option<Link> {
+    if source.first_tick || source.conn == receiver.conn || ignores(source, receiver) {
         return None;
     }
-    let link = if distance(source, receiver) > REALLY_FAR {
+    Some(if distance(source, receiver) > REALLY_FAR {
         Link::Azimuth(azimuth(source, receiver))
-    } else if !chunk_visible(chunk_of(source), receiver) {
-        Link::Chunk(chunk_of(source))
+    } else if !chunk_visible(source.chunk, receiver) {
+        Link::Chunk(source.chunk)
     } else {
-        Link::Block(block_of(source))
-    };
-    let color = source.waypoint_icon.color.or(team_color);
-    Some(Connection { link, style: source.waypoint_icon.style.clone(), color })
+        Link::Block(source.block)
+    })
 }
 
 /// `Connection.isBroken`.
-fn is_broken(c: &Connection, source: &Player, receiver: &Player) -> bool {
-    match c.link {
+fn is_broken(link: Link, source: &Snap, receiver: &Snap) -> bool {
+    match link {
         Link::Block(last) => {
-            let now = block_of(source);
+            let now = source.block;
             (0..3).map(|i| (now[i] - last[i]).abs()).sum::<i32>() > 1 || ignores(source, receiver)
         }
         Link::Chunk(last) => {
-            let now = chunk_of(source);
+            let now = source.chunk;
             (now[0] - last[0]).abs().max((now[1] - last[1]).abs()) > 1
                 || ignores(source, receiver)
                 || chunk_visible(last, receiver)
         }
         Link::Azimuth(_) => {
-            ignores(source, receiver) || chunk_visible(chunk_of(source), receiver) || distance(source, receiver) <= REALLY_FAR
+            ignores(source, receiver) || chunk_visible(source.chunk, receiver) || distance(source, receiver) <= REALLY_FAR
         }
     }
 }
 
-fn packet(op: WaypointOp, source: &Player, c: &Connection) -> bytes::Bytes {
+/// What an intact connection sends when its transmitter moved (`Connection.update`).
+fn next_link(link: Link, source: &Snap, receiver: &Snap) -> Option<Link> {
+    match link {
+        Link::Block(last) => (source.block != last).then_some(Link::Block(source.block)),
+        Link::Chunk(last) => (source.chunk != last).then_some(Link::Chunk(source.chunk)),
+        Link::Azimuth(last) => {
+            let now = azimuth(source, receiver);
+            ((now - last).abs() > 0.008_726_646).then_some(Link::Azimuth(now))
+        }
+    }
+}
+
+fn packet(op: WaypointOp, uuid: Uuid, icons: &[(String, Option<i32>)], c: &Connection) -> Bytes {
     let at = match c.link {
         Link::Block(p) => WaypointAt::Block(p),
         Link::Chunk(p) => WaypointAt::Chunk(p),
         Link::Azimuth(a) => WaypointAt::Azimuth(a),
     };
-    hud::tracked_waypoint(op, source.uuid, &c.style, c.color, at)
+    let (style, color) = &icons[c.icon as usize];
+    hud::tracked_waypoint(op, uuid, style, *color, at)
 }
 
-impl Sim {
-    /// `Waypoint.Icon.cloneAndAssignStyle`'s team color: the transmitter's team color (black
-    /// drawn as dark gray).
-    fn waypoint_team_color(&self, p: &Player) -> Option<i32> {
-        let team = self.commands.scoreboard.team_of(&p.name)?;
-        team.color.map(|i| if i == 0 { -13_619_152 } else { TEAM_RGB[i] })
+fn untrack_packet(uuid: Uuid) -> Bytes {
+    hud::tracked_waypoint(WaypointOp::Untrack, uuid, DEFAULT_STYLE, None, WaypointAt::Empty)
+}
+
+/// `Waypoint.Icon.cloneAndAssignStyle`'s team color: the transmitter's team color (black
+/// drawn as dark gray).
+fn team_color(scoreboard: &Scoreboard, name: &str) -> Option<i32> {
+    let team = scoreboard.team_of(name)?;
+    team.color.map(|i| if i == 0 { -13_619_152 } else { TEAM_RGB[i] })
+}
+
+/// What one transmitter-receiver pair does at the transmitter's or the receiver's turn.
+enum Step {
+    Quiet,
+    Send(WaypointOp, Connection),
+    Untrack,
+}
+
+/// `createConnection` for a pair without a connection, `updateConnection` for one with: an
+/// intact connection sends what changed, a broken one is remade, and a pair that cannot have
+/// a connection (the transmitter's first tick, a spectator) has none.
+fn step_pair(entry: &mut Option<Connection>, source: &Snap, receiver: &Snap, fresh: u32) -> Step {
+    match entry {
+        Some(c) => {
+            if !is_broken(c.link, source, receiver) {
+                return match next_link(c.link, source, receiver) {
+                    Some(link) => {
+                        c.link = link;
+                        Step::Send(WaypointOp::Update, *c)
+                    }
+                    None => Step::Quiet,
+                };
+            }
+            match make_link(source, receiver) {
+                Some(link) => {
+                    *c = Connection { link, icon: fresh };
+                    Step::Send(WaypointOp::Track, *c)
+                }
+                None => {
+                    *entry = None;
+                    Step::Untrack
+                }
+            }
+        }
+        None => match make_link(source, receiver) {
+            Some(link) => {
+                let c = Connection { link, icon: fresh };
+                *entry = Some(c);
+                Step::Send(WaypointOp::Track, c)
+            }
+            None => Step::Quiet,
+        },
+    }
+}
+
+/// A transmitter during the movers' turns: the icon a new connection from it gets, and its
+/// packets shared by all receivers.
+struct Tx {
+    uuid: Uuid,
+    block: [i32; 3],
+    chunk: [i32; 2],
+    fresh: u32,
+    /// Track and update of its block and of its chunk with `fresh`, and its untrack.
+    shared: [OnceLock<Bytes>; 5],
+}
+
+impl Tx {
+    /// The packet for a step of a connection from this transmitter.
+    fn bytes(&self, op: WaypointOp, c: &Connection, icons: &[(String, Option<i32>)]) -> Bytes {
+        let op_i = match op {
+            WaypointOp::Track => 0,
+            WaypointOp::Update => 1,
+            WaypointOp::Untrack => return self.untrack(),
+        };
+        let shared = c.icon == self.fresh
+            && match c.link {
+                Link::Block(b) => b == self.block,
+                Link::Chunk(ch) => ch == self.chunk,
+                Link::Azimuth(_) => false,
+            };
+        if !shared {
+            return packet(op, self.uuid, icons, c);
+        }
+        let i = op_i * 2 + usize::from(matches!(c.link, Link::Chunk(_)));
+        self.shared[i].get_or_init(|| packet(op, self.uuid, icons, c)).clone()
     }
 
+    fn untrack(&self) -> Bytes {
+        self.shared[4].get_or_init(|| untrack_packet(self.uuid)).clone()
+    }
+}
+
+/// One receiver's share of the movers' turns: its row (moved out of the level while the
+/// receivers run) and its player's outbox, which gets its packets.
+struct Share<'p> {
+    slot: usize,
+    row: Mutex<Row>,
+    outbox: Mutex<Option<&'p mut Vec<Bytes>>>,
+}
+
+/// The level during the movers' turns, by slot: the members' snapshots (`None`: gone), the
+/// transmitters' icons and packets, and sets of slots for telling the steps that may send
+/// anything from the quiet ones.
+struct Turns<'a> {
+    /// Each mover's turn, in connection order (`u32::MAX`: not moving), by slot.
+    rank: Vec<u32>,
+    /// Each transmitter's place in their order (`u32::MAX`: not transmitting), by slot.
+    tpos: Vec<u32>,
+    /// The movers (with whether they transmit) and the transmitters in their orders, for
+    /// [`verify`].
+    movers: Vec<(u32, bool)>,
+    transmitters: Vec<u32>,
+    snaps: Vec<Option<Snap>>,
+    tx: Vec<Option<Tx>>,
+    icons: &'a [(String, Option<i32>)],
+    /// Set `i` (`words` long from `i * words`): the moving transmitters whose turn comes
+    /// before turn `i` (the last: all).
+    before: Vec<u64>,
+    /// Present transmitters, and those of them that are spectators.
+    present: Bits,
+    spectators: Bits,
+    /// Transmitters whose every block (chunk) connection holds their current block (chunk):
+    /// they have not changed block (chunk) since the last tick's turns and no connection was
+    /// made from them since.
+    settled_block: Bits,
+    settled_chunk: Bits,
+    /// Present transmitters by chunk, for the chunks a receiver sees.
+    by_chunk: crate::FastMap<[i32; 2], Vec<u32>>,
+    words: usize,
+}
+
+/// The transmitters in the chunks `me` sees (`ChunkTrackingView.isInViewDistance`).
+fn visible_set(t: &Turns, me: &Snap) -> Bits {
+    let mut vis = vec![0u64; t.words];
+    let v = me.view.max(0);
+    let mut add = |chunk: &[i32; 2], slots: &Vec<u32>| {
+        if chunk_visible(*chunk, me) {
+            for &s in slots {
+                vis[s as usize / 64] |= 1 << (s % 64);
+            }
+        }
+    };
+    let side = 2 * i64::from(v) + 1;
+    if (side * side) as usize <= t.by_chunk.len() {
+        for x in me.center[0] - v..=me.center[0] + v {
+            for z in me.center[1] - v..=me.center[1] + v {
+                if let Some(slots) = t.by_chunk.get(&[x, z]) {
+                    add(&[x, z], slots);
+                }
+            }
+        }
+    } else {
+        for (chunk, slots) in &t.by_chunk {
+            add(chunk, slots);
+        }
+    }
+    vis
+}
+
+/// Runs one receiver's share: the moving transmitters' turns in connection order and, at its
+/// own place among them, its own `updatePlayer` turn over every transmitter.
+///
+/// A block or chunk connection always holds the transmitter's block or chunk of its last step.
+/// While that is still the transmitter's current one (it has not changed block since, or its
+/// connection to this receiver was already stepped this tick), the step of an intact block
+/// connection is quiet, and so is that of a chunk connection while the receiver does not see
+/// the chunk (`is_broken` false, nothing to update), unless the transmitter is a spectator.
+/// The share finds the other steps with set operations over the slots, in three parts (the
+/// turns before its own, its own, the turns after), and runs only those in full, in order.
+fn run_share(share: &Share, t: &Turns) {
+    let r = share.slot;
+    let Some(me) = t.snaps[r].as_ref() else { return };
+    let mut row = share.row.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let row = &mut *row;
+    let mut outbox = share.outbox.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some(out) = outbox.as_deref_mut() else { return };
+    if VERIFY.load(std::sync::atomic::Ordering::Relaxed) {
+        let (before, sent) = (row.clone(), out.len());
+        quick_share(row, r, me, t, out);
+        let (mut want_row, mut want) = (before, Vec::new());
+        every_step(&mut want_row, r, me, t, &mut want);
+        assert!(out[sent..] == want[..] && *row == want_row, "locator bar: the quick share of slot {r} differs from stepping every pair");
+        return;
+    }
+    quick_share(row, r, me, t, out);
+}
+
+/// Checks every quick share against stepping every pair ([`verify`]).
+static VERIFY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// From now on, every receiver's share is checked against stepping every pair, as the
+/// straightforward loop over the movers does (tests).
+pub fn verify(on: bool) {
+    VERIFY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A receiver's share the straightforward way: every moving transmitter's turn and its own
+/// turn over every transmitter, each pair stepped in full.
+fn every_step(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+    for &(m, transmitting) in &t.movers {
+        let m = m as usize;
+        if m == r {
+            for &w in &t.transmitters {
+                if w as usize != r && t.snaps[w as usize].is_some() {
+                    full_step(row, w as usize, me, t, out);
+                }
+            }
+        } else if transmitting {
+            full_step(row, m, me, t, out);
+        }
+    }
+}
+
+fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+    let vis = visible_set(t, me);
+    let own = t.rank[r];
+    let w = t.words;
+    let earlier_than = |i: usize| &t.before[i * w..(i + 1) * w];
+    let all_movers = earlier_than(t.before.len() / w.max(1) - 1);
+    // The steps of `among` that may send anything; `stepped`: whose connection to this
+    // receiver was stepped already this tick.
+    let open = |row: &Row, among: &dyn Fn(usize) -> u64, stepped: &dyn Fn(usize) -> u64| -> Vec<usize> {
+        let words = (0..w).map(|i| {
+            let (k1, k2) = (word(&row.kinds[0], i), word(&row.kinds[1], i));
+            let st = stepped(i);
+            let quiet = t.present[i]
+                & !t.spectators[i]
+                & ((k1 & (t.settled_block[i] | st)) | (k2 & (t.settled_chunk[i] | st) & !vis[i]));
+            among(i) & t.present[i] & !quiet
+        });
+        let open: Vec<usize> = each_bit(words).filter(|&s| s != r).collect();
+        prefetch(row, &open);
+        open
+    };
+    let by_rank = |mut v: Vec<usize>| {
+        v.sort_unstable_by_key(|&s| t.rank[s]);
+        v
+    };
+    if own == u32::MAX {
+        // Not moving: the moving transmitters' turns.
+        for s in by_rank(open(row, &|i| all_movers[i], &|_| 0)) {
+            full_step(row, s, me, t, out);
+        }
+        return;
+    }
+    let earlier = earlier_than(own as usize);
+    // `updateWaypoint` of the movers before this receiver: their connections to it.
+    for s in by_rank(open(row, &|i| earlier[i], &|_| 0)) {
+        full_step(row, s, me, t, out);
+    }
+    // `updatePlayer`: this receiver's connection to every transmitter, in their order.
+    let mut mine = open(row, &|_| !0, &|i| earlier[i]);
+    mine.retain(|&s| t.tpos[s] != u32::MAX);
+    mine.sort_unstable_by_key(|&s| t.tpos[s]);
+    for s in mine {
+        full_step(row, s, me, t, out);
+    }
+    // `updateWaypoint` of the movers after it (all stepped at its turn).
+    for s in by_rank(open(row, &|i| all_movers[i] & !earlier[i], &|_| !0)) {
+        full_step(row, s, me, t, out);
+    }
+}
+
+/// Asks for the connections about to be stepped (scattered over a row that other work has
+/// pushed out of the cache since the last tick) all at once, rather than one miss at a time.
+fn prefetch(row: &Row, slots: &[usize]) {
+    #[cfg(target_arch = "x86_64")]
+    for &s in slots {
+        if let Some(d) = row.data.get(s) {
+            // SAFETY: a prefetch of a valid address has no effect beyond the cache.
+            unsafe { std::arch::x86_64::_mm_prefetch(std::ptr::from_ref(d).cast::<i8>(), std::arch::x86_64::_MM_HINT_T0) };
+        }
+    }
+    let _ = (row, slots);
+}
+
+/// One step of the connection from transmitter `s` to the receiver `me` in full.
+fn full_step(row: &mut Row, s: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+    let (Some(src), Some(tx)) = (t.snaps[s].as_ref(), t.tx[s].as_ref()) else { return };
+    let mut c = row.get(s);
+    match step_pair(&mut c, src, me, tx.fresh) {
+        Step::Quiet => return,
+        Step::Send(op, c) => out.push(tx.bytes(op, &c, t.icons)),
+        Step::Untrack => out.push(tx.untrack()),
+    }
+    row.put(s, c);
+}
+
+/// Window hint: a receiver's share is a few microseconds in a crowd.
+const SHARE_WINDOW: Window = Window::new().item_ns(5_000);
+
+impl Sim {
     fn locator_bar(&self) -> bool {
         self.rule_bool("minecraft:locator_bar")
     }
 
-    /// Sends `op` for the connection to `receiver`.
-    fn send_waypoint(&mut self, receiver: ConnId, source: ConnId, op: WaypointOp, c: &Connection) {
-        let Some(s) = self.players.get(&source) else { return };
-        let pkt = packet(op, s, c);
-        if let Some(r) = self.players.get_mut(&receiver) {
-            r.send(pkt);
-        }
-    }
-
     /// Untrack packet for a connection whose transmitter may be gone.
-    fn send_untrack(&mut self, receiver: ConnId, source_uuid: uuid::Uuid) {
+    fn send_untrack(&mut self, receiver: ConnId, source_uuid: Uuid) {
         if let Some(r) = self.players.get_mut(&receiver) {
-            r.send(hud::tracked_waypoint(WaypointOp::Untrack, source_uuid, DEFAULT_STYLE, None, WaypointAt::Empty));
+            r.send(untrack_packet(source_uuid));
         }
     }
 
     /// `createConnection`: a fresh connection replaces any old one.
-    fn create_waypoint_connection(&mut self, dim: DimId, receiver: ConnId, source: ConnId) {
-        if receiver == source || !self.locator_bar() {
+    fn create_waypoint_connection(&mut self, dim: DimId, receiver: ConnId, source: ConnId, on: bool) {
+        if receiver == source || !on {
             return;
         }
         let (Some(s), Some(r)) = (self.players.get(&source), self.players.get(&receiver)) else { return };
-        let made = make_connection(s, r, self.waypoint_team_color(s));
-        let source_uuid = s.uuid;
-        match made {
-            Some(c) => {
-                self.waypoints[dim].connections.insert((receiver, source), c.clone());
-                self.send_waypoint(receiver, source, WaypointOp::Track, &c);
+        let (ss, rs, uuid) = (Snap::of(s), Snap::of(r), s.uuid);
+        let mgr = &mut self.waypoints[dim];
+        let (Some(ri), Some(si)) = (mgr.slot(receiver), mgr.slot(source)) else { return };
+        match make_link(&ss, &rs) {
+            Some(link) => {
+                let color = s.waypoint_icon.color.or_else(|| team_color(&self.commands.scoreboard, &s.name));
+                let icon = mgr.icon_id(&s.waypoint_icon.style, color);
+                let c = Connection { link, icon };
+                mgr.set(ri, si, Some(c));
+                mgr.mark_dirty(si);
+                let pkt = packet(WaypointOp::Track, uuid, &mgr.icons, &c);
+                if let Some(r) = self.players.get_mut(&receiver) {
+                    r.send(pkt);
+                }
             }
             None => {
-                if self.waypoints[dim].connections.remove(&(receiver, source)).is_some() {
-                    self.send_untrack(receiver, source_uuid);
+                if mgr.set(ri, si, None).is_some() {
+                    self.send_untrack(receiver, uuid);
                 }
-            }
-        }
-    }
-
-    /// `updateConnection`: an intact connection sends what changed; a broken one is remade.
-    fn update_waypoint_connection(&mut self, dim: DimId, receiver: ConnId, source: ConnId) {
-        if receiver == source || !self.locator_bar() {
-            return;
-        }
-        let Some(c) = self.waypoints[dim].connections.get(&(receiver, source)).cloned() else { return };
-        let (Some(s), Some(r)) = (self.players.get(&source), self.players.get(&receiver)) else { return };
-        if !is_broken(&c, s, r) {
-            let next = match c.link {
-                Link::Block(last) => {
-                    let now = block_of(s);
-                    ((0..3).map(|i| (now[i] - last[i]).abs()).sum::<i32>() > 0).then_some(Link::Block(now))
-                }
-                Link::Chunk(last) => {
-                    let now = chunk_of(s);
-                    ((now[0] - last[0]).abs().max((now[1] - last[1]).abs()) > 0).then_some(Link::Chunk(now))
-                }
-                Link::Azimuth(last) => {
-                    let now = azimuth(s, r);
-                    ((now - last).abs() > 0.008_726_646).then_some(Link::Azimuth(now))
-                }
-            };
-            if let Some(link) = next {
-                let updated = Connection { link, ..c };
-                self.send_waypoint(receiver, source, WaypointOp::Update, &updated);
-                self.waypoints[dim].connections.insert((receiver, source), updated);
-            }
-            return;
-        }
-        let made = make_connection(s, r, self.waypoint_team_color(s));
-        let source_uuid = s.uuid;
-        match made {
-            Some(new) => {
-                self.waypoints[dim].connections.insert((receiver, source), new.clone());
-                self.send_waypoint(receiver, source, WaypointOp::Track, &new);
-            }
-            None => {
-                self.waypoints[dim].connections.remove(&(receiver, source));
-                self.send_untrack(receiver, source_uuid);
             }
         }
     }
 
     /// `trackWaypoint`.
     pub(crate) fn track_waypoint(&mut self, dim: DimId, source: ConnId) {
+        let on = self.locator_bar();
         let m = &mut self.waypoints[dim];
-        if !m.waypoints.contains(&source) {
+        let s = m.join(source);
+        if !m.members[s].transmitting {
+            m.members[s].transmitting = true;
             m.waypoints.push(source);
             m.capacity = m.capacity.max(16);
             if m.waypoints.len() > m.capacity * 3 / 4 {
@@ -246,29 +740,44 @@ impl Sim {
             }
         }
         for r in self.waypoints[dim].players.clone() {
-            self.create_waypoint_connection(dim, r, source);
+            self.create_waypoint_connection(dim, r, source, on);
         }
     }
 
     /// `untrackWaypoint`.
-    pub(crate) fn untrack_waypoint(&mut self, dim: DimId, source: ConnId, source_uuid: uuid::Uuid) {
-        let receivers: Vec<ConnId> =
-            self.waypoints[dim].connections.keys().filter(|(_, s)| *s == source).map(|(r, _)| *r).collect();
+    pub(crate) fn untrack_waypoint(&mut self, dim: DimId, source: ConnId, source_uuid: Uuid) {
+        let m = &mut self.waypoints[dim];
+        let Some(s) = m.slot(source) else { return };
+        let mut receivers: Vec<ConnId> = Vec::new();
+        for member in &mut m.members {
+            if member.row.put(s, None).is_some() {
+                receivers.extend(member.conn);
+            }
+        }
+        receivers.sort_unstable();
         for r in receivers {
-            self.waypoints[dim].connections.remove(&(r, source));
             self.send_untrack(r, source_uuid);
         }
-        self.waypoints[dim].waypoints.retain(|w| *w != source);
+        let m = &mut self.waypoints[dim];
+        if m.members[s].transmitting {
+            m.members[s].transmitting = false;
+            m.waypoints.retain(|w| *w != source);
+        }
+        m.leave_if_idle(s);
     }
 
     /// `addPlayer` when a player enters a level: it receives the level's waypoints and
     /// transmits its own (unless crouching).
     pub(crate) fn waypoints_add_player(&mut self, dim: DimId, conn: ConnId) {
-        if !self.waypoints[dim].players.contains(&conn) {
-            self.waypoints[dim].players.push(conn);
+        let on = self.locator_bar();
+        let m = &mut self.waypoints[dim];
+        let s = m.join(conn);
+        if !m.members[s].receiving {
+            m.members[s].receiving = true;
+            m.players.push(conn);
         }
         for w in self.waypoints[dim].waypoints.clone() {
-            self.create_waypoint_connection(dim, conn, w);
+            self.create_waypoint_connection(dim, conn, w, on);
         }
         if self.players.get(&conn).is_some_and(|p| !p.sneaking) {
             self.track_waypoint(dim, conn);
@@ -298,22 +807,30 @@ impl Sim {
     }
 
     /// `removePlayer` when a player leaves a level (or the server).
-    pub(crate) fn waypoints_remove_player(&mut self, dim: DimId, conn: ConnId, uuid: uuid::Uuid) {
-        let sources: Vec<ConnId> =
-            self.waypoints[dim].connections.keys().filter(|(r, _)| *r == conn).map(|(_, s)| *s).collect();
+    pub(crate) fn waypoints_remove_player(&mut self, dim: DimId, conn: ConnId, uuid: Uuid) {
+        let m = &mut self.waypoints[dim];
+        let Some(slot) = m.slot(conn) else { return };
+        let row = std::mem::take(&mut m.members[slot].row);
+        let mut sources: Vec<ConnId> = row.sources().into_iter().filter_map(|s| m.members[s].conn).collect();
+        sources.sort_unstable();
         for s in sources {
             if let Some(src) = self.players.get(&s).map(|p| p.uuid) {
                 self.send_untrack(conn, src);
             }
-            self.waypoints[dim].connections.remove(&(conn, s));
         }
         self.untrack_waypoint(dim, conn, uuid);
-        self.waypoints[dim].players.retain(|p| *p != conn);
+        let m = &mut self.waypoints[dim];
+        if let Some(slot) = m.slot(conn) {
+            m.members[slot].receiving = false;
+            m.leave_if_idle(slot);
+        }
+        m.players.retain(|p| *p != conn);
     }
 
     /// Once a tick: `updateWaypoint` and `updatePlayer` for the players that moved, then the
     /// joined players' first tick ends.
     pub(crate) fn tick_waypoints(&mut self) {
+        let on = self.locator_bar();
         let mut conns: Vec<ConnId> = self.players.keys().copied().collect();
         conns.sort_unstable();
         for &conn in &conns {
@@ -327,46 +844,156 @@ impl Sim {
                 self.players.get_mut(&conn).expect("player").waypoint_dim = Some(dim);
             }
             // Crouching zeroes `waypoint_transmit_range` (`updatePlayerAttributes`).
-            let transmitting = self.waypoints[dim].waypoints.contains(&conn);
+            let m = &self.waypoints[dim];
+            let transmitting = m.slot(conn).is_some_and(|s| m.members[s].transmitting);
             if sneaking && transmitting {
                 self.untrack_waypoint(dim, conn, uuid);
             } else if !sneaking && !transmitting {
                 self.track_waypoint(dim, conn);
             }
         }
-        let moved: Vec<(DimId, ConnId)> = self
-            .players
-            .values()
-            .filter(|p| !p.waypoint_first_tick && p.waypoint_last_pos != p.pos)
-            .map(|p| (p.dim, p.conn))
-            .collect();
-        let mut moved = moved;
-        moved.sort_unstable_by_key(|(_, c)| *c);
-        for (dim, conn) in moved {
-            if self.waypoints[dim].waypoints.contains(&conn) {
-                // `updateWaypoint`.
-                for r in self.waypoints[dim].players.clone() {
-                    if self.waypoints[dim].connections.contains_key(&(r, conn)) {
-                        self.update_waypoint_connection(dim, r, conn);
-                    } else {
-                        self.create_waypoint_connection(dim, r, conn);
-                    }
+        // `SimConfig::locator_interval`: the movers' turns every so many ticks (positions and
+        // the connections made meanwhile wait for them).
+        let interval = i64::from(self.config.locator_interval.max(1));
+        let turns = !on || self.game_time % interval == 0;
+        if on && turns {
+            let mut moved: [Vec<ConnId>; 3] = Default::default();
+            for &conn in &conns {
+                let p = &self.players[&conn];
+                if !p.waypoint_first_tick && p.waypoint_last_pos != p.pos {
+                    moved[p.dim].push(conn);
                 }
             }
-            if self.waypoints[dim].players.contains(&conn) {
-                // `updatePlayer`.
-                for w in self.waypoints[dim].waypoints.clone() {
-                    if self.waypoints[dim].connections.contains_key(&(conn, w)) {
-                        self.update_waypoint_connection(dim, conn, w);
-                    } else {
-                        self.create_waypoint_connection(dim, conn, w);
-                    }
+            for (dim, moved) in moved.iter().enumerate() {
+                if !moved.is_empty() {
+                    self.waypoint_moves(dim, moved);
                 }
             }
         }
         for p in self.players.values_mut() {
-            p.waypoint_last_pos = p.pos;
+            if turns {
+                p.waypoint_last_pos = p.pos;
+            }
             p.waypoint_first_tick = false;
+        }
+        if turns {
+            for m in &mut self.waypoints {
+                m.dirty.iter_mut().for_each(|d| *d = false);
+            }
+        }
+    }
+
+    /// The movers' turns in one level (`moved`: in connection order).
+    fn waypoint_moves(&mut self, dim: DimId, moved: &[ConnId]) {
+        let (players, scoreboard, pool) = (&self.players, &self.commands.scoreboard, &mut self.pool);
+        let mgr = &mut self.waypoints[dim];
+        // The icons new connections from each transmitter get, interned before the receivers
+        // run, and the members' snapshots.
+        let mut tx: Vec<Option<Tx>> = Vec::with_capacity(mgr.members.len());
+        let mut snaps: Vec<Option<Snap>> = Vec::with_capacity(mgr.members.len());
+        for i in 0..mgr.members.len() {
+            let m = &mgr.members[i];
+            let p = m.conn.and_then(|c| players.get(&c));
+            snaps.push(p.map(Snap::of));
+            tx.push(match (m.transmitting, p) {
+                (true, Some(p)) => {
+                    let color = p.waypoint_icon.color.or_else(|| team_color(scoreboard, &p.name));
+                    let fresh = mgr.icon_id(&p.waypoint_icon.style, color);
+                    let snap = snaps[i].expect("snapshot");
+                    Some(Tx { uuid: p.uuid, block: snap.block, chunk: snap.chunk, fresh, shared: Default::default() })
+                }
+                _ => None,
+            });
+        }
+        let n = mgr.members.len();
+        let words = n.div_ceil(64);
+        let mut rank = vec![u32::MAX; n];
+        let mut turns: Vec<u32> = Vec::new();
+        let mut all_movers: Vec<(u32, bool)> = Vec::new();
+        let mut movers = 0;
+        for &c in moved {
+            let Some(slot) = mgr.slot(c) else { continue };
+            rank[slot] = movers;
+            movers += 1;
+            let transmitting = mgr.members[slot].transmitting && snaps[slot].is_some();
+            all_movers.push((slot as u32, transmitting));
+            if transmitting {
+                turns.push(slot as u32);
+            }
+        }
+        // A moving receiver's own turn sits between the moving transmitters' turns: `before`
+        // is indexed by the movers' order, so it counts the transmitting ones ahead of each.
+        let mut before: Vec<u64> = Vec::with_capacity((movers as usize + 1) * words);
+        let mut acc = vec![0u64; words];
+        let mut next = turns.iter().peekable();
+        for i in 0..=movers {
+            while let Some(&&s) = next.peek() {
+                if rank[s as usize] >= i {
+                    break;
+                }
+                acc[s as usize / 64] |= 1 << (s % 64);
+                next.next();
+            }
+            before.extend_from_slice(&acc);
+        }
+        let transmitters: Vec<u32> = mgr.waypoints.iter().filter_map(|c| mgr.slot(*c)).map(|s| s as u32).collect();
+        let mut tpos = vec![u32::MAX; n];
+        for (i, &s) in transmitters.iter().enumerate() {
+            tpos[s as usize] = i as u32;
+        }
+        let (mut present, mut spectators, mut settled_block, mut settled_chunk) =
+            (vec![0u64; words], vec![0u64; words], vec![0u64; words], vec![0u64; words]);
+        let mut by_chunk: crate::FastMap<[i32; 2], Vec<u32>> = Default::default();
+        for &s in &transmitters {
+            let s = s as usize;
+            let Some(snap) = snaps[s] else { continue };
+            let dirty = mgr.dirty.get(s).copied().unwrap_or(false);
+            set_bit(&mut present, s, true);
+            set_bit(&mut spectators, s, snap.mode == 3);
+            set_bit(&mut settled_block, s, !snap.block_moved && !dirty);
+            set_bit(&mut settled_chunk, s, !snap.chunk_moved && !dirty);
+            by_chunk.entry(snap.chunk).or_default().push(s as u32);
+        }
+        let any_transmitting = !turns.is_empty();
+        // Receivers that have turns to take: all of them when a transmitter moved, else the
+        // moving receivers.
+        let slots: Vec<usize> =
+            mgr.players.iter().filter_map(|c| mgr.slot(*c)).filter(|&s| any_transmitting || rank[s] != u32::MAX).collect();
+        // The receivers' outboxes, by slot: each share appends to its own.
+        let mut outboxes: Vec<Option<&mut Vec<Bytes>>> = (0..n).map(|_| None).collect();
+        for p in self.players.values_mut() {
+            if let Some(s) = mgr.slot(p.conn) {
+                outboxes[s] = Some(&mut p.outbox);
+            }
+        }
+        let shares: Vec<Share> = slots
+            .into_iter()
+            .map(|slot| Share {
+                slot,
+                row: Mutex::new(std::mem::take(&mut mgr.members[slot].row)),
+                outbox: Mutex::new(outboxes[slot].take()),
+            })
+            .collect();
+        let turns = Turns {
+            rank,
+            tpos,
+            movers: all_movers,
+            transmitters,
+            snaps,
+            tx,
+            icons: &mgr.icons,
+            before,
+            present,
+            spectators,
+            settled_block,
+            settled_chunk,
+            by_chunk,
+            words,
+        };
+        pool.serial(|ctx| ctx.map_indexed_with(SHARE_WINDOW, &shares, |_, share| run_share(share, &turns)));
+        drop(turns);
+        for share in shares {
+            mgr.members[share.slot].row = share.row.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 
@@ -383,18 +1010,28 @@ impl Sim {
     /// The `locator_bar` game rule changed (`MinecraftServer.onGameRuleChanged`): connections
     /// break when it turns off and are made again when it turns on.
     pub(crate) fn locator_bar_changed(&mut self) {
+        let on = self.locator_bar();
         for dim in 0..self.waypoints.len() {
-            let keys: Vec<(ConnId, ConnId)> = self.waypoints[dim].connections.keys().copied().collect();
-            for (r, s) in keys {
-                self.waypoints[dim].connections.remove(&(r, s));
+            let m = &mut self.waypoints[dim];
+            let mut broken: Vec<(ConnId, ConnId)> = Vec::new();
+            for r in 0..m.members.len() {
+                let row = std::mem::take(&mut m.members[r].row);
+                for s in row.sources() {
+                    if let (Some(rc), Some(sc)) = (m.members[r].conn, m.members[s].conn) {
+                        broken.push((rc, sc));
+                    }
+                }
+            }
+            broken.sort_unstable();
+            for (r, s) in broken {
                 if let Some(uuid) = self.players.get(&s).map(|p| p.uuid) {
                     self.send_untrack(r, uuid);
                 }
             }
-            if self.locator_bar() {
+            if on {
                 for w in self.waypoints[dim].waypoints.clone() {
                     for r in self.waypoints[dim].players.clone() {
-                        self.create_waypoint_connection(dim, r, w);
+                        self.create_waypoint_connection(dim, r, w, on);
                     }
                 }
             }

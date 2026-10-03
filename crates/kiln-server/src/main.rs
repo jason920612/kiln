@@ -57,6 +57,13 @@ fn main() -> Result<()> {
         sim_config.pool.workers = n;
     }
     sim_config.unified_regions = std::env::var("KILN_REGIONS").is_ok_and(|v| v == "unified");
+    // KILN_ENTITY_TICKING=serial|islands|tiles (default tiles); KILN_LOCATOR_INTERVAL=n (1).
+    if let Some(t) = std::env::var("KILN_ENTITY_TICKING").ok().and_then(|v| kiln_sim::EntityTicking::parse(&v)) {
+        sim_config.entity_ticking = t;
+    }
+    if let Some(n) = std::env::var("KILN_LOCATOR_INTERVAL").ok().and_then(|v| v.parse().ok()) {
+        sim_config.locator_interval = n;
+    }
     // KILN_TICK_WINDOWS=inline: every phase window inline (A/B measurements of the windows).
     if std::env::var("KILN_TICK_WINDOWS").is_ok_and(|v| v == "inline") {
         sim_config.pool.phase = kiln_sched::PhaseMode::Inline;

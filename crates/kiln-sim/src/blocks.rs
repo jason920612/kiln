@@ -286,6 +286,8 @@ pub(crate) struct BlockEnv {
     pub raids: std::sync::Arc<Vec<kiln_entity::level::RaidView>>,
     /// The End's dragon fight as the level's entities see it (`None` elsewhere).
     pub dragon_fight: Option<crate::dragon_fight::FightEnv>,
+    /// How a crowded region's entities tick.
+    pub entity_ticking: crate::EntityTicking,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -330,7 +332,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
     out.extend(entities.list.iter().filter(|e| !e.removed && e.phys.is_some()).map(|e| {
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
-        let living = e.phys.as_ref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
+        let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
         EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None }
     }));
     out
@@ -1333,6 +1335,7 @@ mod tests {
             fire_watchers: Default::default(),
             raids: Default::default(),
             dragon_fight: None,
+            entity_ticking: crate::EntityTicking::Serial,
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

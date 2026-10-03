@@ -52,7 +52,7 @@ fn cart_json(sim: &Sim, pos: BlockPos) -> Value {
     let hi = [pos.x as f64 + 0.99, pos.y as f64 + 0.99, pos.z as f64 + 0.99];
     for region in sim.dims[OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
-            let Some(phys) = e.phys.as_ref() else { continue };
+            let Some(phys) = e.phys.as_deref() else { continue };
             let bb = phys.bounding_box();
             if !(bb.min_x < hi[0] && bb.max_x > lo[0] && bb.min_y < hi[1] && bb.max_y > lo[1] && bb.min_z < hi[2] && bb.max_z > lo[2]) {
                 continue;

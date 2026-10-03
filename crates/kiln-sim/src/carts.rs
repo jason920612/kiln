@@ -23,7 +23,7 @@ fn contents(entities: &Entities, id: i32) -> Option<&Contents> {
     if e.removed {
         return None;
     }
-    kiln_entity::ext_entity::container(e.phys.as_ref()?)
+    kiln_entity::ext_entity::container(e.phys.as_deref()?)
 }
 
 /// The screen's slots of the mount with id `id` (saddle, body armor, chest).
@@ -33,7 +33,7 @@ fn mount_slots(entities: &Entities, id: i32) -> Option<Vec<kiln_item::ItemStack>
     if e.removed {
         return None;
     }
-    kiln_entity::mob::kinds::horse::mount_slots(kiln_entity::mob::data(e.phys.as_ref()?)?)
+    kiln_entity::mob::kinds::horse::mount_slots(kiln_entity::mob::data(e.phys.as_deref()?)?)
 }
 
 fn contents_mut(entities: &mut Entities, id: i32) -> Option<&mut Contents> {
@@ -42,7 +42,7 @@ fn contents_mut(entities: &mut Entities, id: i32) -> Option<&mut Contents> {
     if e.removed {
         return None;
     }
-    kiln_entity::ext_entity::container_mut(e.phys.as_mut()?)
+    kiln_entity::ext_entity::container_mut(e.phys.as_deref_mut()?)
 }
 
 /// Before a menu operation of `p`: its open minecart's slots into the player's copy. Returns
@@ -78,7 +78,7 @@ pub(crate) fn push(entities: &mut Entities, p: &Player, cart: Option<i32>) {
     if e.removed {
         return;
     }
-    if let Some(phys) = e.phys.as_mut() {
+    if let Some(phys) = e.phys.as_deref_mut() {
         kiln_entity::mob::kinds::horse::set_mount_slots(phys, &p.containers.cart.items);
     }
 }
@@ -91,7 +91,7 @@ fn posts_close(type_name: &str) -> bool {
 
 fn position_of(entities: &Entities, id: i32) -> Option<[f64; 3]> {
     let idx = entities.list.binary_search_by_key(&id, |e| e.id).ok()?;
-    let p = entities.list[idx].phys.as_ref()?.position();
+    let p = entities.list[idx].phys.as_deref()?.position();
     Some([p.x, p.y, p.z])
 }
 
@@ -108,7 +108,7 @@ fn title(phys: &kiln_entity::Entity) -> Tag {
 /// for `p` (another open screen closes first).
 pub(crate) fn open(entities: &Entities, level: &mut RegionLevel, p: &mut Player, target: i32, spawns: &mut Vec<Spawn>) {
     let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
-    let Some(phys) = entities.list[idx].phys.as_ref() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref() else { return };
     let Some(c) = contents(entities, target) else {
         return open_mount(entities, level, p, target, spawns);
     };
@@ -131,7 +131,7 @@ pub(crate) fn open(entities: &Entities, level: &mut RegionLevel, p: &mut Player,
 /// `Player.openHorseInventory`: the screen of the tame animal `target`.
 fn open_mount(entities: &Entities, level: &mut RegionLevel, p: &mut Player, target: i32, spawns: &mut Vec<Spawn>) {
     let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
-    let Some(phys) = entities.list[idx].phys.as_ref() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref() else { return };
     let Some(m) = kiln_entity::mob::data(phys) else { return };
     let Some(slots) = kiln_entity::mob::kinds::horse::mount_slots(m) else { return };
     let Some((columns, saddle_usable, serial)) = kiln_entity::mob::kinds::horse::mount_info(phys, m) else { return };
@@ -159,13 +159,13 @@ pub(crate) fn check_menus(entities: &Entities, players: &mut [&mut Player], rule
             // `AbstractMountInventoryMenu.stillValid`: alive, and the inventory is the one it was
             // opened on.
             let i = entities.list.binary_search_by_key(&entity, |e| e.id).ok()?;
-            let phys = entities.list[i].phys.as_ref()?;
+            let phys = entities.list[i].phys.as_deref()?;
             let m = kiln_entity::mob::data(phys)?;
             let (_, _, serial) = kiln_entity::mob::kinds::horse::mount_info(phys, m)?;
             Some(!entities.list[i].removed && kiln_entity::mob::is_alive(phys, m) && p.containers.cart_serial == Some(serial))
         };
         let valid = (contents(entities, entity).is_some() || mount_ok() == Some(true))
-            && entities.list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| entities.list[i].phys.as_ref()).is_some_and(|phys| {
+            && entities.list.binary_search_by_key(&entity, |e| e.id).ok().and_then(|i| entities.list[i].phys.as_deref()).is_some_and(|phys| {
                 let bb = phys.bounding_box();
                 let eye = p.eye_position();
                 let d = |v: f64, lo: f64, hi: f64| if v < lo { lo - v } else if v > hi { v - hi } else { 0.0 };

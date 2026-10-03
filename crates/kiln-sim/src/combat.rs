@@ -192,6 +192,9 @@ fn java_string_hash(s: &str) -> i32 {
 /// current modifiers in insertion order, which matches vanilla unless removals reshuffled
 /// colliding slots.
 fn sort_like_open_hash_map(mods: &mut [(String, f64, AttributeOperation)]) {
+    if mods.len() <= 1 {
+        return;
+    }
     const SLOTS: usize = 32;
     let slot_of = |id: &str| -> i32 {
         let (ns, path) = id.split_once(':').unwrap_or(("minecraft", id));
@@ -273,7 +276,7 @@ fn dragon_part(entities: &entities::Entities, id: i32) -> Option<Target> {
     if e.removed || part >= kiln_entity::mob::kinds::ender_dragon::PARTS.len() {
         return None;
     }
-    let phys = e.phys.as_ref()?;
+    let phys = e.phys.as_deref()?;
     let s = kiln_entity::mob::kinds::ender_dragon::state_of(phys)?;
     let p = s.parts[part];
     Some(Target::Entity {
@@ -711,7 +714,7 @@ fn find_target(players: &[&mut Player], a: usize, target_id: i32, entities: &ent
             .list
             .iter()
             .find(|e| e.id == target_id && !e.removed)
-            .and_then(|e| e.phys.as_ref())
+            .and_then(|e| e.phys.as_deref())
             .map(|e| Target::Entity {
                 bb: e.bounding_box(),
                 kind: classify(e),
@@ -751,7 +754,7 @@ pub(crate) fn spin_touch(players: &[&mut Player], a: usize, entities: &entities:
         }
     }
     for e in entities.list.iter().filter(|e| !e.removed) {
-        let Some(phys) = e.phys.as_ref() else { continue };
+        let Some(phys) = e.phys.as_deref() else { continue };
         if !phys.bounding_box().intersects(&bb) {
             continue;
         }

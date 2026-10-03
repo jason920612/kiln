@@ -80,7 +80,7 @@ pub(crate) fn use_rod(entities: &mut Entities, level: &mut RegionLevel, players:
     let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
     let rod = players[i].inv.equipped(slot).clone();
     let mut rng = crate::container::pos_random(level, kiln_blocks::BlockPos::new(pid, 0, 0), 0x6669_7368);
-    let hook = entities.list.iter().position(|e| !e.removed && e.phys.as_ref().and_then(fishing_hook::get).is_some_and(|h| h.owner == pid));
+    let hook = entities.list.iter().position(|e| !e.removed && e.phys.as_deref().and_then(fishing_hook::get).is_some_and(|h| h.owner == pid));
     let at = players[i].pos;
     match hook {
         Some(idx) => {
@@ -125,7 +125,7 @@ fn sound(players: &mut [&mut Player], env: &crate::blocks::BlockEnv, at: [f64; 3
 fn retrieve(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mut Player], i: usize, idx: usize, rod: &ItemStack, spawns: &mut Vec<Spawn>) -> i32 {
     let env = level.env;
     let dim = crate::DIMENSIONS[env.dim].0;
-    let Some(phys) = entities.list[idx].phys.as_ref() else { return 0 };
+    let Some(phys) = entities.list[idx].phys.as_deref() else { return 0 };
     let Some(hook) = fishing_hook::get(phys).cloned() else { return 0 };
     let hook_pos = phys.position();
     let on_ground = phys.on_ground;
@@ -144,7 +144,7 @@ fn retrieve(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mu
             let mut hooked_seen = None;
             let mut item = None;
             if let Ok(t) = entities.list.binary_search_by_key(&target, |e| e.id)
-                && let Some(te) = entities.list[t].phys.as_mut()
+                && let Some(te) = entities.list[t].phys.as_deref_mut()
             {
                 te.delta = te.delta + pull;
                 if let kiln_entity::EntityKind::Item(d) = &te.kind {
@@ -168,7 +168,7 @@ fn retrieve(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mu
             let ctx = Catch { origin: [hook_pos.x, hook_pos.y, hook_pos.z], tool: rod, luck, open_water: hook.open_water, dim, probe: &probe };
             let seed = crate::mobs::loot_seed(env.seed, env.game_time, entities.list[idx].id, 0x6669_7368);
             let items = loot.as_deref().map(|l| crate::mobs::roll(l, "minecraft:gameplay/fishing", &ctx, seed)).unwrap_or_default();
-            let seen = entities.list[idx].phys.as_ref().map(kiln_entity::level::Seen::of);
+            let seen = entities.list[idx].phys.as_deref().map(kiln_entity::level::Seen::of);
             let subject = seen.as_ref().map(|s| crate::advancements::triggers::seen_subject(s, dim));
             players[i].fishing_rod_hooked(rod, subject.as_ref(), &items);
             let fishes = |s: &ItemStack| kiln_inventory::tags::contains("minecraft:item", "minecraft:fishes", s.item());
@@ -183,7 +183,7 @@ fn retrieve(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mu
                     body: Body::Item { stack, pickup_delay: 0, thrower: None },
                 });
                 // The experience from the bobber's random.
-                let value = entities.list[idx].phys.as_mut().map_or(1, |h| h.random.next_int_bounded(6) + 1);
+                let value = entities.list[idx].phys.as_deref_mut().map_or(1, |h| h.random.next_int_bounded(6) + 1);
                 let orb_seed = crate::mobs::loot_seed(env.seed, env.game_time, entities.list[idx].id, 0x6f72_6200 | value as u64);
                 let orb = kiln_entity::xp_orb::new_at(0, 0, Vec3::new(owner[0], owner[1] + 0.5, owner[2] + 0.5), value, orb_seed);
                 spawns.push(Spawn {
@@ -203,7 +203,7 @@ fn retrieve(entities: &mut Entities, level: &mut RegionLevel, players: &mut [&mu
         }
     }
     let e = &mut entities.list[idx];
-    if let Some(ph) = e.phys.as_mut() {
+    if let Some(ph) = e.phys.as_deref_mut() {
         ph.discard();
     }
     e.removed = true;

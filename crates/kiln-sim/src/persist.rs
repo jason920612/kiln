@@ -447,7 +447,7 @@ impl Sim {
                 match list.binary_search_by_key(&id, |e| e.id) {
                     Ok(j) if !list[j].removed => {
                         tree.push(id);
-                        todo.extend(list[j].phys.as_ref().map(|e| e.passengers.clone()).unwrap_or_default());
+                        todo.extend(list[j].phys.as_deref().map(|e| e.passengers.clone()).unwrap_or_default());
                     }
                     _ if id == p.entity_id || self.players.values().any(|q| q.entity_id == id && !q.disconnected) => players += 1,
                     _ => {}
@@ -475,7 +475,7 @@ impl Sim {
                 if tree.as_ref().is_some_and(|t| t.contains(&e.id)) {
                     e.removed = true;
                 } else if e.id == vehicle
-                    && let Some(phys) = e.phys.as_mut()
+                    && let Some(phys) = e.phys.as_deref_mut()
                 {
                     kiln_entity::ride::remove_passenger(phys, p.entity_id);
                 }
@@ -499,10 +499,10 @@ impl Sim {
                 Some((e.id, e.kind.name))
             });
             if let Some((vid, type_name)) = found {
-                let first_is_player = |first: i32, players: &HashMap<ConnId, Player>| players.values().any(|q| q.entity_id == first);
+                let first_is_player = |first: i32, players: &crate::FastMap<ConnId, Player>| players.values().any(|q| q.entity_id == first);
                 for r in self.dims[dim].regions.iter_mut() {
                     if let Some(e) = r.part_mut().0.list.iter_mut().find(|e| e.id == vid)
-                        && let Some(phys) = e.phys.as_mut()
+                        && let Some(phys) = e.phys.as_deref_mut()
                     {
                         let first = phys.passengers.first().is_some_and(|&f| first_is_player(f, &self.players));
                         kiln_entity::ride::add_passenger(phys, pid, true, first);

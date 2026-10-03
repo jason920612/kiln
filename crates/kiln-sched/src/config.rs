@@ -57,9 +57,9 @@ impl PoolConfig {
         PoolConfig {
             workers,
             spin: Duration::from_micros(50),
-            inline_below: Duration::from_micros(500),
+            inline_below: Duration::from_micros(100),
             chunk_target: Duration::from_micros(100),
-            helper_share: Duration::from_micros(250),
+            helper_share: Duration::from_micros(50),
             small_unit: Duration::from_micros(200),
             unit_batch: Duration::from_millis(1),
             phase: PhaseMode::Auto,

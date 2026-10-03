@@ -616,7 +616,7 @@ impl<'a> EntityItems<'a> {
             .list
             .iter()
             .enumerate()
-            .filter(|(_, e)| !e.removed && matches!(e.phys.as_ref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(_))))
+            .filter(|(_, e)| !e.removed && matches!(e.phys.as_deref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(_))))
             .map(|(i, e)| {
                 let (min, max, _) = e.body();
                 (i, min, max)
@@ -626,7 +626,7 @@ impl<'a> EntityItems<'a> {
             .list
             .iter()
             .enumerate()
-            .filter(|(_, e)| !e.removed && e.phys.as_ref().is_some_and(is_container_cart))
+            .filter(|(_, e)| !e.removed && e.phys.as_deref().is_some_and(is_container_cart))
             .map(|(i, e)| {
                 let (min, max, _) = e.body();
                 (i, min, max)
@@ -698,7 +698,7 @@ impl ItemEntities for crate::entities::Entities {
             .iter()
             .enumerate()
             .filter(|(_, e)| !e.removed)
-            .filter(|(_, e)| matches!(e.phys.as_ref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(_))))
+            .filter(|(_, e)| matches!(e.phys.as_deref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(_))))
             .filter(|(_, e)| {
                 let (min, max, _) = e.body();
                 (0..3).all(|k| min[k] < hi[k] && max[k] > lo[k])
@@ -708,7 +708,7 @@ impl ItemEntities for crate::entities::Entities {
     }
 
     fn stack_mut(&mut self, i: usize) -> &mut ItemStack {
-        match self.list[i].phys.as_mut().map(|p| &mut p.kind) {
+        match self.list[i].phys.as_deref_mut().map(|p| &mut p.kind) {
             Some(kiln_entity::EntityKind::Item(d)) => &mut d.stack,
             _ => unreachable!("not an item entity"),
         }
@@ -718,7 +718,7 @@ impl ItemEntities for crate::entities::Entities {
         self.list
             .iter()
             .enumerate()
-            .filter(|(_, e)| !e.removed && e.phys.as_ref().is_some_and(is_container_cart))
+            .filter(|(_, e)| !e.removed && e.phys.as_deref().is_some_and(is_container_cart))
             .filter(|(_, e)| {
                 let (min, max, _) = e.body();
                 (0..3).all(|k| min[k] < hi[k] && max[k] > lo[k])
@@ -728,7 +728,7 @@ impl ItemEntities for crate::entities::Entities {
     }
 
     fn cart(&mut self, i: usize) -> Option<(&mut kiln_entity::ext_entity::minecart::Contents, [f64; 3])> {
-        let phys = self.list.get_mut(i)?.phys.as_mut()?;
+        let phys = self.list.get_mut(i)?.phys.as_deref_mut()?;
         let p = phys.position();
         let contents = kiln_entity::ext_entity::container_mut(phys)?;
         Some((contents, [p.x, p.y, p.z]))
@@ -736,10 +736,10 @@ impl ItemEntities for crate::entities::Entities {
 
     fn changed(&mut self, i: usize) {
         let e = &mut self.list[i];
-        let empty = matches!(e.phys.as_ref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(d)) if d.stack.is_empty());
+        let empty = matches!(e.phys.as_deref().map(|p| &p.kind), Some(kiln_entity::EntityKind::Item(d)) if d.stack.is_empty());
         if empty {
             e.removed = true;
-            if let Some(p) = e.phys.as_mut() {
+            if let Some(p) = e.phys.as_deref_mut() {
                 p.discard();
             }
         }

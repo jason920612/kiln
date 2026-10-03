@@ -9,9 +9,18 @@
 //!
 //! Prints the process CPU time per measured tick next to the wall time: idle workers spinning
 //! cost CPU without showing in mspt.
+//!
+//! `KILN_SLOW_PRINT=<ms>` prints the measured ticks slower than that with their phases;
+//! `KILN_SAMPLE=1` (Windows) samples every thread's stack while measuring and prints the
+//! functions by self and total time (`KILN_SAMPLE_US` interval, `KILN_SAMPLE_TOP` rows,
+//! `KILN_SAMPLE_FILTER` keeps the stacks through a function whose name contains it).
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(windows)]
+#[path = "support/sampler.rs"]
+mod sampler;
 
 use kiln_sim::testing::{Client, Walker, group_offset, join};
 use kiln_sim::{Sim, SimConfig};
@@ -89,6 +98,14 @@ struct Args {
     village: bool,
     /// `time set` this many ticks when the mobs come (villager schedules: 2000 work, 9000 meet, 13000 rest).
     day_time: Option<i64>,
+    /// Players that crouch, go spectator and leave and rejoin while measuring (waypoint and
+    /// tracking churn); for comparing packet streams between builds.
+    churn: bool,
+    /// `--entity-ticking serial|islands|tiles` and `--locator-interval n` (see `SimConfig`).
+    entity_ticking: Option<kiln_sim::EntityTicking>,
+    locator_interval: u32,
+    /// `--prewake-us n`: workers spin this long from each tick's start.
+    prewake_us: u64,
 }
 
 fn args() -> Args {
@@ -114,6 +131,10 @@ fn args() -> Args {
         kinds: Vec::new(),
         village: false,
         day_time: None,
+        churn: false,
+        entity_ticking: None,
+        locator_interval: 1,
+        prewake_us: 0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -136,6 +157,10 @@ fn args() -> Args {
             "--chunk-us" => a.chunk_us = Some(value().parse().unwrap()),
             "--mobs" => a.mobs = value().parse().unwrap(),
             "--village" => a.village = true,
+            "--churn" => a.churn = true,
+            "--entity-ticking" => a.entity_ticking = Some(kiln_sim::EntityTicking::parse(&value()).expect("serial, islands or tiles")),
+            "--locator-interval" => a.locator_interval = value().parse().unwrap(),
+            "--prewake-us" => a.prewake_us = value().parse().unwrap(),
             "--day-time" => a.day_time = Some(value().parse().unwrap()),
             "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
@@ -154,6 +179,11 @@ fn main() {
     let mut config = SimConfig::new(a.players, 10, None);
     config.pool.workers = a.threads;
     config.unified_regions = a.unified;
+    if let Some(t) = a.entity_ticking {
+        config.entity_ticking = t;
+    }
+    config.locator_interval = a.locator_interval;
+    config.prewake = std::time::Duration::from_micros(a.prewake_us);
     let us = std::time::Duration::from_micros;
     if let Some(v) = a.spin_us {
         config.pool.spin = us(v);
@@ -192,8 +222,12 @@ fn main() {
     let (mut packets0, mut bytes0) = (0, 0);
     let warmup_done = |w: &[Walker]| w.len() == a.players && w.iter().all(|w| w.client.settled());
     let mut measuring_since: Option<usize> = None;
+    let mut churn = kiln_sim::testing::Churn::new(a.players);
     let mut cpu0 = None;
+    #[cfg(windows)]
+    let mut sampling: Option<sampler::Sampler> = None;
     let mut wall0 = Instant::now();
+    let mut last_totals: Vec<(&str, std::time::Duration)> = Vec::new();
     loop {
         for _ in 0..joins_per_tick {
             let i = walkers.len();
@@ -210,6 +244,9 @@ fn main() {
         }
         for w in &mut walkers {
             w.tick(a.radius, a.walk, &mut inbox);
+        }
+        if a.churn && let Some(since) = measuring_since {
+            churn.tick(tick - since, &mut walkers, &mut inbox, a.groups, a.spacing, a.view_distance, SURFACE_Y);
         }
         let start = Instant::now();
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
@@ -257,16 +294,30 @@ fn main() {
                 }
                 cpu0 = cpu::now();
                 sim.reset_pool_stats();
+                sim.reset_phase_totals();
                 kiln_entity::prof::start();
+                #[cfg(windows)]
+                {
+                    sampling = sampler::Sampler::start();
+                }
                 wall0 = Instant::now();
                 packets0 = walkers.iter().map(|w| w.client.stats.packets.load(Relaxed)).sum();
                 bytes0 = walkers.iter().map(|w| w.client.stats.bytes.load(Relaxed)).sum();
             }
             Some(since) => {
                 times.push(elapsed);
+                // The phases' time this tick (the totals' change), for the slow ones.
+                let totals = sim.phase_totals();
                 if std::env::var_os("KILN_SLOW_PRINT").is_some_and(|v| v.to_str().and_then(|v| v.parse::<f64>().ok()).is_some_and(|ms| elapsed > ms)) {
-                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms", tick, tick - since);
+                    let phases: Vec<String> = totals
+                        .iter()
+                        .map(|(n, d)| (n, d.saturating_sub(last_totals.iter().find(|(m, _)| m == n).map_or(std::time::Duration::ZERO, |(_, d)| *d))))
+                        .filter(|(_, d)| d.as_secs_f64() >= 2e-4)
+                        .map(|(n, d)| format!("{n} {:.2}", d.as_secs_f64() * 1e3))
+                        .collect();
+                    eprintln!("slow tick {} (measured tick {}): {elapsed:.1} ms: {}", tick, tick - since, phases.join(" | "));
                 }
+                last_totals = totals;
                 if tick - since >= a.ticks {
                     break;
                 }
@@ -275,6 +326,8 @@ fn main() {
         }
     }
     let cpu1 = cpu::now();
+    #[cfg(windows)]
+    let sampling = sampling.take();
     let wall = wall0.elapsed().as_secs_f64();
     // Regions ticking away (independent mode) come back before anything is counted.
     sim.rendezvous();
@@ -314,6 +367,9 @@ fn main() {
         (bytes - bytes0) as f64 / n / 1e3,
         sim.state_hash()
     );
+    if std::env::var_os("KILN_SINK_DIGEST").is_some() {
+        println!("packet stream digest {:016x} ({} players)", churn.stream_digest(&walkers), walkers.len());
+    }
     if std::env::var_os("KILN_SINK_IDS").is_some() {
         let mut total: std::collections::BTreeMap<i32, (u64, u64)> = Default::default();
         for w in &walkers {
@@ -350,7 +406,13 @@ fn main() {
         sum(|w| w.parked).as_secs_f64() * 1e3 / t,
         helpers.iter().map(|w| w.chunks).sum::<u64>() as f64 / t,
     );
+    let phases: Vec<String> = sim.phase_totals().iter().map(|(n, d)| format!("{n} {:.3}", d.as_secs_f64() * 1e3 / t)).collect();
+    println!("phases ms/tick: {}", phases.join(" | "));
     kiln_entity::prof::report(times.len() as u64);
+    #[cfg(windows)]
+    if let Some(s) = sampling {
+        s.report();
+    }
     if let Some(r) = sim.last_report() {
         println!("last window: {r}");
     }

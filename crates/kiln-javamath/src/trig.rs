@@ -67,12 +67,49 @@ fn reduce(x: f64) -> (i64, Dd) {
     (n as i64, r)
 }
 
-/// Taylor series of `sin` (odd) or `cos` (even) on the reduced argument.
+/// Terms of the series beyond the first.
+const TERMS: usize = 16;
+
+/// The series' coefficients in double-double: `(-1)^k / (2k+1)!` (sine) and `(-1)^k / (2k)!`
+/// (cosine) for `k` in `0..=TERMS`, made once by the same division steps the term-by-term sum
+/// takes.
+fn coefficients() -> &'static [[Dd; TERMS + 1]; 2] {
+    static C: std::sync::OnceLock<[[Dd; TERMS + 1]; 2]> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        let mut c = [[Dd(0.0, 0.0); TERMS + 1]; 2];
+        for (even, row) in c.iter_mut().enumerate() {
+            let (mut term, mut k) = if even == 1 { (Dd(1.0, 0.0), 0.0) } else { (Dd(1.0, 0.0), 1.0) };
+            row[0] = term;
+            for slot in row.iter_mut().skip(1) {
+                term = div_f64(div_f64(term.neg(), k + 1.0), k + 2.0);
+                k += 2.0;
+                *slot = term;
+            }
+        }
+        c
+    })
+}
+
+/// Taylor series of `sin` (odd) or `cos` (even) on the reduced argument, by Horner's rule in
+/// `r²` (the precision is double-double either way, which leaves the rounded result as the
+/// term-by-term sum gives it).
 fn series(r: Dd, even: bool) -> Dd {
+    let r2 = mul(r, r);
+    let c = &coefficients()[usize::from(even)];
+    let mut sum = c[TERMS];
+    for k in (0..TERMS).rev() {
+        sum = add(mul(sum, r2), c[k]);
+    }
+    if even { sum } else { mul(sum, r) }
+}
+
+/// The term-by-term sum (the reference [`series`] is checked against).
+#[cfg(test)]
+fn series_by_terms(r: Dd, even: bool) -> Dd {
     let r2 = mul(r, r);
     let (mut term, mut k) = if even { (Dd(1.0, 0.0), 0.0) } else { (r, 1.0) };
     let mut sum = term;
-    for _ in 0..16 {
+    for _ in 0..TERMS {
         term = div_f64(div_f64(mul(term, r2).neg(), k + 1.0), k + 2.0);
         k += 2.0;
         sum = add(sum, term);
@@ -278,5 +315,23 @@ mod tests {
         assert_eq!(sin(0.0), 0.0);
         assert_eq!(cos(0.0), 1.0);
         assert_eq!(sin(-0.0).to_bits(), (-0.0f64).to_bits());
+    }
+
+    /// Horner's rule rounds as the term-by-term sum on a million arguments across the reduced
+    /// range (and a spread of whole arguments).
+    #[test]
+    fn horner_rounds_as_the_terms() {
+        let mut x = 0x9e37_79b9_7f4a_7c15u64;
+        for i in 0..1_000_000u32 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            let unit = (x >> 11) as f64 / (1u64 << 53) as f64;
+            let r = if i % 2 == 0 { (unit - 0.5) * std::f64::consts::FRAC_PI_2 } else { (unit - 0.5) * 2000.0 };
+            let (_, red) = reduce(r);
+            for even in [false, true] {
+                assert_eq!(series(red, even).0.to_bits(), series_by_terms(red, even).0.to_bits(), "series({r}, {even})");
+            }
+        }
     }
 }

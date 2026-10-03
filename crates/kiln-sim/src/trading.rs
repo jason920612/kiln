@@ -74,7 +74,7 @@ fn merchant_view(m: &mut kiln_entity::mob::MobData) -> Option<MerchantView<'_>> 
 /// (`Merchant.openTradingScreen`): Open Screen, the menu's content, then the offers.
 pub(crate) fn open_if_requested(entities: &mut Entities, p: &mut Player, target: i32, rules: &kiln_inventory::Rules, spawns: &mut Vec<Spawn>) {
     let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
-    let Some(phys) = entities.list[idx].phys.as_mut() else { return };
+    let Some(phys) = entities.list[idx].phys.as_deref_mut() else { return };
     let Some(m) = kiln_entity::mob::data_mut(phys) else { return };
     let Some(mv) = merchant_view(m) else { return };
     if *mv.open_for != Some(p.entity_id) {
@@ -120,7 +120,7 @@ pub(crate) fn apply_events(
             MerchantEvent::Trade { index } => {
                 // `TradeTrigger` (the traded item is not known here: item conditions fail).
                 if let Ok(k) = entities.list.binary_search_by_key(&target, |e| e.id)
-                    && let Some(phys) = entities.list[k].phys.as_ref()
+                    && let Some(phys) = entities.list[k].phys.as_deref()
                 {
                     let subject = crate::advancements::triggers::mob_subject(phys, crate::DIMENSIONS[level.env.dim].0);
                     players[i].traded(&subject, &kiln_item::ItemStack::empty());
@@ -170,7 +170,7 @@ pub(crate) fn apply_events(
 
 fn stop_trading(entities: &mut Entities, target: i32) {
     let Ok(idx) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
-    if let Some(m) = entities.list[idx].phys.as_mut().and_then(kiln_entity::mob::data_mut) {
+    if let Some(m) = entities.list[idx].phys.as_deref_mut().and_then(kiln_entity::mob::data_mut) {
         villager::stop_trading(m);
         wandering_trader::stop_trading(m);
     }
@@ -184,7 +184,7 @@ pub(crate) fn check_menus(entities: &mut Entities, players: &mut [&mut Player], 
         let Some(target) = p.open_menu.as_ref().and_then(|m| m.merchant_state()).map(|s| s.merchant) else { continue };
         let valid = entities.list.binary_search_by_key(&target, |e| e.id).ok().is_some_and(|idx| {
             let e = &entities.list[idx];
-            let Some(phys) = e.phys.as_ref() else { return false };
+            let Some(phys) = e.phys.as_deref() else { return false };
             let Some(m) = kiln_entity::mob::data(phys) else { return false };
             let trading = trading_player_of(m) == Some(p.entity_id);
             let bb = phys.bounding_box();
@@ -206,7 +206,7 @@ pub(crate) fn check_menus(entities: &mut Entities, players: &mut [&mut Player], 
         }
     }
     for e in entities.list.iter_mut() {
-        let Some(m) = e.phys.as_mut().and_then(kiln_entity::mob::data_mut) else { continue };
+        let Some(m) = e.phys.as_deref_mut().and_then(kiln_entity::mob::data_mut) else { continue };
         let Some(who) = trading_player_of(m) else { continue };
         let id = e.id;
         let screen_open = players.iter().any(|p| p.entity_id == who && p.open_menu.as_ref().and_then(|m| m.merchant_state()).is_some_and(|s| s.merchant == id));
