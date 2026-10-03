@@ -232,3 +232,50 @@ impl Sim {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::{Client, join};
+    use crate::{Sim, SimConfig};
+    use kiln_link::ToSim;
+
+    /// A chorus fruit or an ender pearl teleports a rider (`Entity.teleport` stops the riding):
+    /// it stays where it went, the mount lets go of it.
+    #[test]
+    fn a_rider_that_teleports_itself_gets_off() {
+        let mut sim = Sim::new(SimConfig::new(2, 4, None));
+        let (msg, stats) = join(1, "Rider", 2);
+        let cmds = ["gamemode creative Rider", "gamerule minecraft:spawn_mobs false"];
+        assert!(sim.step(std::iter::once(msg).chain(cmds.iter().map(|c| ToSim::Console((*c).into())))));
+        let mut client = Client::new(1, stats);
+        let mut settle = |sim: &mut Sim, n: usize| {
+            for _ in 0..n {
+                let mut inbox = Vec::new();
+                client.tick(None, &mut inbox);
+                assert!(sim.step(inbox));
+            }
+        };
+        settle(&mut sim, 5);
+        let at = sim.players[&1].pos;
+        assert!(sim.step([ToSim::Console(format!("summon minecraft:oak_boat {} {} {}", at[0] + 1.0, at[1], at[2]))]));
+        settle(&mut sim, 2);
+        assert!(sim.step([ToSim::Console("ride Rider mount @e[type=minecraft:oak_boat,limit=1]".into())]));
+        settle(&mut sim, 3);
+        let boat = sim.entity_ids_of("minecraft:oak_boat")[0];
+        assert_eq!(sim.vehicle_of(1), Some(boat));
+        // The region's player tick moved it by itself, as chorus fruit does.
+        let to = [at[0] + 9.0, at[1], at[2] + 9.0];
+        {
+            let p = sim.players.get_mut(&1).unwrap();
+            p.dismount_on_teleport = true;
+            p.teleport(to, [0.0, 0.0], 100);
+        }
+        settle(&mut sim, 3);
+        assert_eq!(sim.vehicle_of(1), None, "got off");
+        let riders = sim.riding().into_iter().find(|r| r.0 == boat).unwrap().2;
+        assert!(riders.is_empty(), "the boat let go of it: {riders:?}");
+        let now = sim.players[&1].pos;
+        assert!((now[0] - to[0]).abs() < 0.5 && (now[2] - to[2]).abs() < 0.5, "it stayed where it went: {now:?}");
+    }
+}
+
