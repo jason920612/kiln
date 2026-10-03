@@ -17,6 +17,14 @@
 //! state at once. Regions with what an island cannot leave for later (villages' points of
 //! interest, sculk listeners, creaking hearts, lightning, hopper minecarts, the dragon and the
 //! wither) tick their entities serially.
+//!
+//! Mobs that roam join the islands into one, which leaves nothing to share out. Then the region
+//! ticks in tiles instead ([`TILE`] blocks square, on fixed coordinates): nine passes, one per
+//! tile colour (`x mod 3`, `z mod 3`), and in each pass every tile of that colour ticks its
+//! entities in list order against the entities and players of its tile and the eight around
+//! it, which no other tile of the pass reaches, so the pass's tiles run in parallel. The
+//! entities tick in the order of the passes rather than the list, and see no further than the
+//! neighbouring tiles; what they leave behind is merged per pass in list order.
 
 use super::*;
 use crate::entity_world::{Deferred, IslandWorld, World};
@@ -28,6 +36,9 @@ use kiln_sched::{Ctx, Strategy, Window};
 const LINK: f64 = 24.0;
 /// Regions with fewer entities tick them serially.
 const MIN_ENTITIES: usize = 32;
+/// Islands are used while none holds more than this share of the entities (one in four), else
+/// tiles; never the workers, so the result does not depend on them.
+const ISLAND_SHARE: usize = 4;
 /// Entity types whose tick needs region state an island cannot change later.
 const SERIAL: [&str; 9] = [
     "minecraft:villager",
@@ -40,8 +51,10 @@ const SERIAL: [&str; 9] = [
     "minecraft:end_crystal",
     "minecraft:wither",
 ];
-/// Placeholder ids each island may hand out.
-const PLACEHOLDERS: i32 = 100_000;
+/// Placeholder ids each island or tile may hand out.
+const PLACEHOLDERS: i32 = 10_000;
+/// The tiles' side (blocks): an entity reaches at least this far into the tiles around its own.
+const TILE: f64 = 24.0;
 
 /// Where an island's outputs stood when one of its entities' turns began.
 #[derive(Clone, Copy)]
@@ -69,6 +82,10 @@ struct Job<'p> {
     deferred: Vec<Deferred>,
     packets: Vec<([f64; 3], f64, Bytes)>,
     marks: Vec<Mark>,
+    /// Which of `list` tick (`None`: all).
+    ticks: Option<Vec<bool>>,
+    /// Where `proxies` came from in the region's.
+    proxy_slots: Vec<usize>,
 }
 
 /// What every island reads.
@@ -77,7 +94,7 @@ struct Shared<'s> {
     env: &'s blocks::BlockEnv,
     ticking: &'s blocks::Ticking,
     /// The region's players, for `Mob.checkDespawn` (the nearest player decides).
-    views: &'s [PlayerView],
+    nearest: &'s Nearest,
     any_player: bool,
 }
 
@@ -192,18 +209,69 @@ fn partition(list: &[Entity], players: &[&mut Player]) -> Vec<(Vec<usize>, Vec<u
     islands
 }
 
-/// Splits `v` at the marks' offsets: what came before the first mark, then each turn's part.
-fn split<T>(mut v: Vec<T>, offsets: impl DoubleEndedIterator<Item = usize>) -> Vec<Vec<T>> {
-    let mut parts: Vec<Vec<T>> = offsets.rev().map(|o| v.split_off(o.min(v.len()))).collect();
-    parts.push(v);
-    parts.reverse();
-    parts
+/// A job of one parallel batch: entities (indices in the region's list, ascending), players
+/// (indices), and which of the entities tick (`None`: all).
+struct Group {
+    ents: Vec<usize>,
+    players: Vec<usize>,
+    ticks: Option<Vec<bool>>,
+}
+
+/// The tiles of one tick, one batch per colour: each centre tile with its neighbourhood. An
+/// entity is in its root vehicle's tile, so riders tick with their vehicle.
+fn tile_batches(list: &[Entity], players: &[&mut Player]) -> Vec<Vec<Group>> {
+    let tile = |p: [f64; 3]| ((p[0] / TILE).floor() as i32, (p[2] / TILE).floor() as i32);
+    let root = |mut i: usize| {
+        for _ in 0..8 {
+            let Some(v) = list[i].phys.as_ref().and_then(|p| p.vehicle) else { break };
+            match list.binary_search_by_key(&v, |e| e.id) {
+                Ok(j) if j != i => i = j,
+                _ => break,
+            }
+        }
+        i
+    };
+    let mut ents: crate::FastMap<(i32, i32), Vec<usize>> = Default::default();
+    let mut at: Vec<(i32, i32)> = Vec::with_capacity(list.len());
+    for i in 0..list.len() {
+        let t = tile(list[root(i)].pos);
+        ents.entry(t).or_default().push(i);
+        at.push(t);
+    }
+    let mut pls: crate::FastMap<(i32, i32), Vec<usize>> = Default::default();
+    for (j, p) in players.iter().enumerate() {
+        pls.entry(tile(p.pos)).or_default().push(j);
+    }
+    let mut centres: Vec<(i32, i32)> = ents.keys().copied().collect();
+    centres.sort_unstable();
+    let mut batches: Vec<Vec<Group>> = Vec::new();
+    for colour in 0..9 {
+        let mut batch = Vec::new();
+        for &c in centres.iter().filter(|c| c.0.rem_euclid(3) * 3 + c.1.rem_euclid(3) == colour) {
+            let mut g = Group { ents: Vec::new(), players: Vec::new(), ticks: None };
+            for dx in -1..=1 {
+                for dz in -1..=1 {
+                    let t = (c.0 + dx, c.1 + dz);
+                    g.ents.extend(ents.get(&t).into_iter().flatten());
+                    g.players.extend(pls.get(&t).into_iter().flatten());
+                }
+            }
+            g.ents.sort_unstable();
+            g.players.sort_unstable();
+            g.ticks = Some(g.ents.iter().map(|&i| at[i] == c).collect());
+            batch.push(g);
+        }
+        if !batch.is_empty() {
+            batches.push(batch);
+        }
+    }
+    batches
 }
 
 /// Ticks the region's entities as islands, if the region qualifies; returns whether it did
 /// (else the caller ticks them serially).
 pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_player: bool, ctx: &Ctx<'_>) -> bool {
-    if ctx.workers() < 2 || sim.list.len() < MIN_ENTITIES {
+    if sim.list.len() < MIN_ENTITIES {
         return false;
     }
     let Some(region) = sim.level.region_ref() else { return false };
@@ -211,99 +279,154 @@ pub(super) fn tick_islands(sim: &mut SimLevel, ticking: &blocks::Ticking, any_pl
         return false;
     }
     let islands = partition(sim.list, sim.players);
-    if islands.len() < 2 {
-        return false;
-    }
     let n = sim.list.len();
-    let base = sim.next_placeholder;
+    let largest = islands.iter().map(|g| g.0.len()).max().unwrap_or(0);
+    let mut next = sim.next_placeholder;
+    let batches = if islands.len() >= 2 && largest * ISLAND_SHARE <= n {
+        vec![islands.into_iter().map(|(ents, players)| Group { ents, players, ticks: None }).collect()]
+    } else {
+        tile_batches(sim.list, sim.players)
+    };
+    // Which player each stand-in and view is.
+    let player_at: crate::FastMap<i32, usize> = sim.players.iter().enumerate().map(|(j, p)| (p.entity_id, j)).collect();
     let mut taken: Vec<Option<Entity>> = std::mem::take(sim.list).into_iter().map(Some).collect();
-    let mut jobs: Vec<Job> = Vec::with_capacity(islands.len());
+    // The players' stand-ins go to their groups and come back, like the entities.
+    let mut stand_ins: Vec<Option<kiln_entity::Entity>> = std::mem::take(&mut sim.proxies).into_iter().map(Some).collect();
+    for batch in batches {
+        run_batch(sim, &mut taken, &mut stand_ins, batch, &player_at, ticking, any_player, ctx, &mut next);
+    }
+    *sim.list = taken.into_iter().map(|e| e.expect("every entity back from its group")).collect();
+    sim.proxies = stand_ins.into_iter().map(|e| e.expect("every stand-in back from its group")).collect();
+    sim.next_placeholder = next;
+    sim.grid = Grid::build(sim.list);
+    sim.index_players();
+    true
+}
+
+/// Runs one batch of groups in parallel and merges what they left behind in list order.
+#[allow(clippy::too_many_arguments)]
+fn run_batch(
+    sim: &mut SimLevel,
+    taken: &mut [Option<Entity>],
+    stand_ins: &mut [Option<kiln_entity::Entity>],
+    groups: Vec<Group>,
+    player_at: &crate::FastMap<i32, usize>,
+    ticking: &blocks::Ticking,
+    any_player: bool,
+    ctx: &Ctx<'_>,
+    next: &mut i32,
+) {
+    let mut jobs: Vec<Job> = Vec::with_capacity(groups.len());
     {
-        let SimLevel { level, players, proxies, views, .. } = &mut *sim;
+        let SimLevel { level, players, views, despawn, .. } = &mut *sim;
         let region = level.region_ref().expect("a region");
-        let shared = Shared {
-            cells: &*region.cells,
-            env: region.env,
-            ticking,
-            views: views.as_slice(),
-            any_player,
-        };
+        let nearest = despawn.expect("the region's players");
+        let shared = Shared { cells: &*region.cells, env: region.env, ticking, nearest, any_player };
         let mut slots: Vec<Option<&mut Player>> = players.iter_mut().map(|p| Some(&mut **p)).collect();
-        for (k, (ents, pls)) in islands.into_iter().enumerate() {
-            let island_players: Vec<&mut Player> = pls.iter().map(|&j| slots[j].take().expect("a player in one island")).collect();
-            let ids: Vec<i32> = island_players.iter().map(|p| p.entity_id).collect();
+        let mut job_of: Vec<usize> = vec![usize::MAX; slots.len()];
+        for (k, g) in groups.iter().enumerate() {
+            for &j in &g.players {
+                job_of[j] = k;
+            }
+        }
+        for g in groups {
+            let group_players: Vec<&mut Player> = g.players.iter().map(|&j| slots[j].take().expect("a player in one group")).collect();
+            *next -= PLACEHOLDERS;
             jobs.push(Job {
-                list: ents.iter().map(|&i| taken[i].take().expect("an entity in one island")).collect(),
-                global: ents,
-                proxies: proxies.iter().filter(|e| ids.contains(&e.id)).cloned().collect(),
-                views: views.iter().filter(|v| ids.contains(&v.id)).copied().collect(),
-                players: island_players,
-                placeholder: base - k as i32 * PLACEHOLDERS,
+                list: g.ents.iter().map(|&i| taken[i].take().expect("an entity in one group")).collect(),
+                global: g.ents,
+                proxies: Vec::with_capacity(group_players.len()),
+                views: Vec::with_capacity(group_players.len()),
+                players: group_players,
+                placeholder: *next + PLACEHOLDERS,
                 spawns: Vec::new(),
                 deaths: Vec::new(),
                 events: Vec::new(),
                 deferred: Vec::new(),
                 packets: Vec::new(),
                 marks: Vec::new(),
+                ticks: g.ticks,
+                proxy_slots: Vec::with_capacity(g.players.len()),
             });
         }
-        // Largest first, one island per chunk, so the long ones start early.
-        jobs.sort_by_key(|j| std::cmp::Reverse(j.list.len()));
+        let job = |id: i32| player_at.get(&id).map(|&j| job_of[j]).filter(|&k| k != usize::MAX);
+        for (i, slot) in stand_ins.iter_mut().enumerate() {
+            if let Some(k) = slot.as_ref().and_then(|e| job(e.id)) {
+                jobs[k].proxies.push(slot.take().expect("a stand-in"));
+                jobs[k].proxy_slots.push(i);
+            }
+        }
+        for v in views.iter() {
+            if let Some(k) = job(v.id) {
+                jobs[k].views.push(*v);
+            }
+        }
+        // Largest first, one group per chunk, so the long ones start early.
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.ticks.as_ref().map_or(j.list.len(), |t| t.iter().filter(|&&b| b).count())));
         ctx.map_mut_with(Window::new().chunk(1).strategy(Strategy::Parallel), &mut jobs, |_, job| run_island(job, &shared));
     }
-    // Back in the region, in list order, with the islands' outputs in the order of the turns
-    // that made them.
-    let mut back: Vec<Option<Entity>> = (0..n).map(|_| None).collect();
+    // Back in the region, in list order, with the groups' outputs in the order of the turns
+    // that made them: each group's turns in order, the groups' turns interleaved by list index.
     let mut parts: Vec<(usize, usize, usize)> = Vec::new();
-    #[allow(clippy::type_complexity)]
-    let mut outputs: Vec<(Vec<Vec<Spawn>>, Vec<Vec<health::Death>>, Vec<Vec<Event>>, Vec<Vec<Deferred>>, Vec<Vec<([f64; 3], f64, Bytes)>>)> = Vec::new();
-    let mut proxies: Vec<kiln_entity::Entity> = Vec::new();
+    let mut outs: Vec<Outputs> = Vec::with_capacity(jobs.len());
     for (k, job) in jobs.into_iter().enumerate() {
         for (g, e) in job.global.iter().zip(job.list) {
-            back[*g] = Some(e);
+            taken[*g] = Some(e);
         }
-        proxies.extend(job.proxies);
-        let marks = &job.marks;
+        for (i, p) in job.proxy_slots.into_iter().zip(job.proxies) {
+            stand_ins[i] = Some(p);
+        }
         let first = job.global.first().copied().unwrap_or(0);
         parts.push((first, k, 0));
-        parts.extend(marks.iter().enumerate().map(|(j, m)| (m.global, k, j + 1)));
-        outputs.push((
-            split(job.spawns, marks.iter().map(|m| m.spawns)),
-            split(job.deaths, marks.iter().map(|m| m.deaths)),
-            split(job.events, marks.iter().map(|m| m.events)),
-            split(job.deferred, marks.iter().map(|m| m.deferred)),
-            split(job.packets, marks.iter().map(|m| m.packets)),
-        ));
+        parts.extend(job.marks.iter().enumerate().map(|(j, m)| (m.global, k, j + 1)));
+        outs.push(Outputs {
+            marks: job.marks,
+            spawns: job.spawns.into_iter(),
+            deaths: job.deaths.into_iter(),
+            events: job.events.into_iter(),
+            deferred: job.deferred.into_iter(),
+            packets: job.packets.into_iter(),
+        });
     }
-    *sim.list = back.into_iter().map(|e| e.expect("every entity ticked in an island")).collect();
-    parts.sort_by_key(|&(g, k, j)| (g, k, j));
+    parts.sort_unstable();
     for (_, k, j) in parts {
-        let o = &mut outputs[k];
-        sim.spawns.append(&mut o.0[j]);
-        sim.deaths.append(&mut o.1[j]);
-        sim.events.append(&mut o.2[j]);
+        let o = &mut outs[k];
+        // Turn `j` (0: before the first) ends where the next one starts.
+        let end = |f: fn(&Mark) -> usize, all: usize| o.marks.get(j).map_or(all, f);
+        let start = |f: fn(&Mark) -> usize| if j == 0 { 0 } else { f(&o.marks[j - 1]) };
+        let n = |f: fn(&Mark) -> usize, all: usize| end(f, all) - start(f);
+        let (sp, de, ev, df, pk) = (
+            n(|m| m.spawns, usize::MAX),
+            n(|m| m.deaths, usize::MAX),
+            n(|m| m.events, usize::MAX),
+            n(|m| m.deferred, usize::MAX),
+            n(|m| m.packets, usize::MAX),
+        );
+        sim.spawns.extend(o.spawns.by_ref().take(sp));
+        sim.deaths.extend(o.deaths.by_ref().take(de));
+        sim.events.extend(o.events.by_ref().take(ev));
         let region = sim.level.region().expect("a region");
-        for f in std::mem::take(&mut o.3[j]) {
+        for f in o.deferred.by_ref().take(df) {
             f(region);
         }
-        region.out.packets.append(&mut o.4[j]);
+        region.out.packets.extend(o.packets.by_ref().take(pk));
     }
-    // Explosions push the players' stand-ins; the region's copies take what happened to them.
-    for p in proxies {
-        if let Some(i) = sim.proxies.iter().position(|q| q.id == p.id) {
-            sim.proxies[i] = p;
-        }
-    }
-    sim.next_placeholder = base - outputs.len() as i32 * PLACEHOLDERS;
-    sim.grid = Grid::build(sim.list);
-    sim.index_players();
-    true
+}
+
+/// A group's outputs, taken turn by turn.
+struct Outputs {
+    marks: Vec<Mark>,
+    spawns: std::vec::IntoIter<Spawn>,
+    deaths: std::vec::IntoIter<health::Death>,
+    events: std::vec::IntoIter<Event>,
+    deferred: std::vec::IntoIter<Deferred>,
+    packets: std::vec::IntoIter<([f64; 3], f64, Bytes)>,
 }
 
 /// One island's turns.
 fn run_island(job: &mut Job, sh: &Shared) {
     let _enchanting = crate::enchant::install_enchanter(sh.env.loot.as_ref());
-    let Job { global, list, players, proxies, views, placeholder, spawns, deaths, events, deferred, packets, marks } = job;
+    let Job { global, list, players, proxies, views, placeholder, spawns, deaths, events, deferred, packets, marks, ticks, .. } = job;
     let mut sim = SimLevel {
         level: World::Island(IslandWorld::new(sh.cells, sh.env)),
         list,
@@ -322,12 +445,15 @@ fn run_island(job: &mut Job, sh: &Shared) {
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
-        despawn_views: Some(sh.views),
+        despawn: Some(sh.nearest),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
     tick_list(&mut sim, sh.ticking, sh.any_player, &mut |sim, i| {
-        let World::Island(w) = &sim.level else { return };
+        if ticks.as_ref().is_some_and(|t| !t[i]) {
+            return false;
+        }
+        let World::Island(w) = &sim.level else { return true };
         marks.push(Mark {
             global: global[i],
             spawns: sim.spawns.len(),
@@ -336,6 +462,7 @@ fn run_island(job: &mut Job, sh: &Shared) {
             deferred: w.deferred.len(),
             packets: w.packets.len(),
         });
+        true
     });
     let SimLevel { level, events: made, proxies: moved, .. } = sim;
     let World::Island(w) = level else { unreachable!("an island's level") };

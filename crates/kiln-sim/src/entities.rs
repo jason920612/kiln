@@ -642,8 +642,53 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     /// Player views (spectators too) by id, UUID and section, for [`EntityLevel::player`],
     /// [`EntityLevel::player_by_uuid`] and [`EntityLevel::players_in`].
     view_index: kiln_entity::level::PlayerGrid,
-    /// The region's players for `Mob.checkDespawn` when `views` holds only an island's.
-    despawn_views: Option<&'a [PlayerView]>,
+    /// The region's players for `Mob.checkDespawn` (`views` may hold only an island's).
+    despawn: Option<&'a Nearest>,
+}
+
+/// The non-spectator players' positions by 32-block cube, for `Mob.checkDespawn`'s nearest
+/// player: a player in the 27 cubes around a mob's is nearer than any outside them, so when
+/// there is one only those are compared.
+pub(crate) struct Nearest {
+    cubes: FastMap<(i32, i32, i32), Vec<Vec3>>,
+    all: Vec<Vec3>,
+}
+
+impl Nearest {
+    fn cube(p: Vec3) -> (i32, i32, i32) {
+        ((p.x / 32.0).floor() as i32, (p.y / 32.0).floor() as i32, (p.z / 32.0).floor() as i32)
+    }
+
+    pub(crate) fn build(views: &[PlayerView]) -> Nearest {
+        let all: Vec<Vec3> = views.iter().filter(|v| !v.spectator).map(|v| v.pos).collect();
+        let mut cubes: FastMap<(i32, i32, i32), Vec<Vec3>> = Default::default();
+        for &p in &all {
+            cubes.entry(Self::cube(p)).or_default().push(p);
+        }
+        Nearest { cubes, all }
+    }
+
+    /// The squared distance from `p` to the nearest player, as a scan of every player gives it.
+    pub(crate) fn nearest_sqr(&self, p: Vec3) -> Option<f64> {
+        let c = Self::cube(p);
+        let mut best: Option<f64> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    for q in self.cubes.get(&(c.0 + dx, c.1 + dy, c.2 + dz)).into_iter().flatten() {
+                        let d = q.distance_to_sqr(p);
+                        if best.is_none_or(|b| d < b) {
+                            best = Some(d);
+                        }
+                    }
+                }
+            }
+        }
+        match best {
+            Some(d) if d <= 32.0 * 32.0 => Some(d),
+            _ => self.all.iter().map(|q| q.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b)),
+        }
+    }
 }
 
 /// Maps of small integer keys (entity ids, sections): looked up several times per entity and tick.
@@ -1503,6 +1548,7 @@ pub(crate) fn tick(
         let block = |pos: BlockPos| level.block(kb(pos));
         crate::shoulder::mark_views(players, &block, &mut views);
     }
+    let nearest = Nearest::build(&views);
     let mut sim = SimLevel {
         level: World::Region(level),
         list: &mut entities.list,
@@ -1521,7 +1567,7 @@ pub(crate) fn tick(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
-        despawn_views: None,
+        despawn: Some(&nearest),
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -1529,7 +1575,7 @@ pub(crate) fn tick(
     crate::heart::process_released(&mut sim);
     process_pending_kills(&mut sim);
     if !islands::tick_islands(&mut sim, ticking, any_player, ctx) {
-        tick_list(&mut sim, ticking, any_player, &mut |_, _| {});
+        tick_list(&mut sim, ticking, any_player, &mut |_, _| true);
     }
     // `ServerEntity.sendChanges` → `updateDataBeforeSync`: the invisible flag follows the
     // effects once all the entities have ticked.
@@ -1578,16 +1624,19 @@ pub(crate) fn tick(
     }
 }
 
-/// The entities' turns in list order (`tick` for a region or an island): passengers right after
-/// their vehicle. `mark` sees each turn (by list index) before it runs.
-pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_player: bool, mark: &mut dyn FnMut(&SimLevel, usize)) {
+/// The entities' turns in list order (`tick` for a region, an island or a tile): passengers
+/// right after their vehicle. `turn` sees each turn (by list index) before it runs, and says
+/// whether it runs.
+pub(crate) fn tick_list(sim: &mut SimLevel, ticking: &blocks::Ticking, any_player: bool, turn: &mut dyn FnMut(&SimLevel, usize) -> bool) {
     for i in 0..sim.list.len() {
         // Passengers tick right after their vehicle (`ServerLevel.tickPassenger`).
         let vehicle = sim.list[i].phys.as_ref().and_then(|p| p.vehicle);
         if vehicle.is_some_and(|v| sim.index(v).is_some_and(|j| !sim.list[j].removed && sim.list[j].phys.as_ref().is_some_and(|p| p.passengers.contains(&sim.list[i].id)))) {
             continue;
         }
-        mark(sim, i);
+        if !turn(sim, i) {
+            continue;
+        }
         let me = sim.list[i].id;
         if let Some(phys) = sim.list[i].phys.as_mut()
             && let Some(v) = phys.vehicle.take()
@@ -1684,8 +1733,10 @@ fn tick_entity(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_play
     // farther apart than the despawn distance, so the region's players decide).
     if matches!(phys.kind, EntityKind::Mob(_)) && !phys.is_removed() {
         let p = phys.position();
-        let views = sim.despawn_views.unwrap_or(&sim.views);
-        let nearest = views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b));
+        let nearest = match sim.despawn {
+            Some(n) => n.nearest_sqr(p),
+            None => sim.views.iter().filter(|v| !v.spectator).map(|v| v.pos.distance_to_sqr(p)).min_by(|a, b| a.total_cmp(b)),
+        };
         kiln_entity::mob::check_despawn(&mut phys, &*sim, nearest.or(any_player.then_some(f64::MAX)));
     }
     if !phys.is_removed() {
@@ -1890,7 +1941,7 @@ pub(crate) fn hit_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
-        despawn_views: None,
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2006,7 +2057,7 @@ pub(crate) fn stab_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
-        despawn_views: None,
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2142,7 +2193,7 @@ pub(crate) fn interact_mob(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
-        despawn_views: None,
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2300,7 +2351,7 @@ pub(crate) fn with_entity<R>(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
-        despawn_views: None,
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2351,7 +2402,7 @@ pub(crate) fn with_level<R>(
         proxy_at: Default::default(),
         proxy_grid: Default::default(),
         view_index: Default::default(),
-        despawn_views: None,
+        despawn: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
