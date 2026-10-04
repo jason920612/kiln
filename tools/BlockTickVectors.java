@@ -749,6 +749,7 @@ public class BlockTickVectors {
                 "setblock ~3 ~1 ~3 minecraft:chorus_flower[age=0]", "setblock ~10 ~1 ~5 minecraft:chorus_flower[age=1]", "setblock ~6 ~1 ~12 minecraft:chorus_flower[age=0]")
                 .rtTick(40, 3).set(3, 99, 3, "minecraft:air").set(3, 100, 3, "minecraft:stone").set(10, 100, 5, "minecraft:air").rtTick(20, 3).tick(30));
         scenariosWet(out);
+        scenariosCuts(out);
     }
 
     /// Corals that die out of water, scaffolding that settles or falls, sponges that soak up water.
@@ -801,6 +802,60 @@ public class BlockTickVectors {
                 "setblock ~12 ~1 ~12 minecraft:sponge", "setblock ~2 ~1 ~13 minecraft:sponge")
                 .tick(20).set(0, 101, 0, "minecraft:sponge").set(7, 101, 7, "minecraft:sponge").tick(30).set(3, 101, 3, "minecraft:water").tick(30)
                 .set(12, 101, 12, "minecraft:air").set(12, 101, 12, "minecraft:sponge").tick(30));
+    }
+
+    /// Plants cut in the middle or robbed of their support: what breaks drops (loot is rolled with the level
+    /// random, which Kiln does not replay), so the scenarios reseed after the cut and keep growing.
+    static void scenariosCuts(List<Sc> out) {
+        Sc w = new Sc("growth_cut_weeping", 410).cmd("fill ~0 ~9 ~0 ~15 ~9 ~15 minecraft:stone");
+        Sc t = new Sc("growth_cut_twisting", 411).cmd("fill ~0 ~10 ~0 ~15 ~10 ~15 minecraft:stone", "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:stone");
+        Sc c = new Sc("growth_cut_cave_vines", 412).cmd("fill ~0 ~9 ~0 ~15 ~9 ~15 minecraft:stone");
+        Sc k = new Sc("growth_cut_kelp", 413);
+        Sc ch = new Sc("growth_cut_chorus", 414).cmd("fill ~0 ~ ~0 ~15 ~ ~15 minecraft:end_stone");
+        for (int i = 0; i < 6; i++) {
+            int x = 2 + 2 * i, z = 3 + (i % 3) * 4;
+            w.cmd(String.format("fill ~%d ~8 ~%d ~%d ~5 ~%d minecraft:weeping_vines_plant", x, z, x, z),
+                    String.format("setblock ~%d ~4 ~%d minecraft:weeping_vines[age=%d]", x, z, i * 4));
+            t.cmd(String.format("fill ~%d ~1 ~%d ~%d ~4 ~%d minecraft:twisting_vines_plant", x, z, x, z),
+                    String.format("setblock ~%d ~5 ~%d minecraft:twisting_vines[age=%d]", x, z, i * 4));
+            c.cmd(String.format("fill ~%d ~8 ~%d ~%d ~5 ~%d minecraft:cave_vines_plant[berries=%s]", x, z, x, z, i % 2 == 0 ? "true" : "false"),
+                    String.format("setblock ~%d ~4 ~%d minecraft:cave_vines[age=%d,berries=%s]", x, z, i * 3, i % 3 == 0 ? "true" : "false"));
+            ch.cmd(String.format("fill ~%d ~1 ~%d ~%d ~4 ~%d minecraft:chorus_plant", x, z, x, z),
+                    String.format("setblock ~%d ~5 ~%d minecraft:chorus_flower[age=%d]", x, z, i % 3));
+        }
+        for (int i = 0; i < 4; i++) {
+            int x = 1 + 4 * i, z = 1 + 7 * (i % 2);
+            tank(k, x, z, 8, "minecraft:sand");
+            k.cmd(String.format("fill ~%d ~1 ~%d ~%d ~4 ~%d minecraft:kelp_plant", x + 1, z + 1, x + 1, z + 1),
+                    String.format("setblock ~%d ~5 ~%d minecraft:kelp[age=%d]", x + 1, z + 1, i * 6));
+        }
+        w.rtTick(30, 2);
+        t.rtTick(30, 2);
+        c.rtTick(30, 2);
+        k.rtTick(30, 2);
+        ch.rtTick(30, 2);
+        for (int i = 0; i < 4; i++) {
+            int x = 2 + 2 * i, z = 3 + (i % 3) * 4;
+            w.set(x, 106, z, "minecraft:air");
+            t.set(x, 103, z, "minecraft:air");
+            c.set(x, 106, z, "minecraft:air");
+            ch.set(x, 102, z, "minecraft:air");
+            k.set(2 + 4 * i, 103, 2 + 7 * (i % 2), "minecraft:water");
+        }
+        out.add(w.tick(8).reseed(5001).rtTick(70, 2));
+        out.add(t.tick(8).reseed(5002).rtTick(70, 2));
+        out.add(c.tick(8).reseed(5003).rtTick(70, 2));
+        out.add(k.tick(8).reseed(5004).rtTick(70, 2));
+        out.add(ch.tick(8).reseed(5005).rtTick(70, 2));
+        // vines over a wall lose pieces of it
+        Sc v = new Sc("growth_cut_vines", 415).cmd(
+                "fill ~0 ~ ~0 ~15 ~10 ~0 minecraft:stone", "fill ~0 ~10 ~0 ~15 ~10 ~8 minecraft:stone",
+                "setblock ~4 ~5 ~1 minecraft:vine[north=true]", "setblock ~10 ~7 ~1 minecraft:vine[north=true]", "setblock ~13 ~3 ~1 minecraft:vine[north=true]",
+                "setblock ~7 ~9 ~1 minecraft:vine[north=true,up=true]").rt(80);
+        v.set(4, 105, 0, "minecraft:air").set(5, 105, 0, "minecraft:air").set(10, 107, 0, "minecraft:air").set(13, 103, 0, "minecraft:air")
+                .set(7, 104, 0, "minecraft:air").set(8, 106, 0, "minecraft:air").set(9, 109, 0, "minecraft:air").tick(6).reseed(5006).rt(80)
+                .set(2, 102, 0, "minecraft:air").set(11, 101, 0, "minecraft:air").set(12, 108, 0, "minecraft:air").set(6, 107, 0, "minecraft:air").tick(6).reseed(5007).rt(60);
+        out.add(v);
     }
 
     /// A 3x3 stone tank, open on top, with a column of `depth` water blocks over `base` in its middle.
