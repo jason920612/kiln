@@ -14,6 +14,7 @@ pub mod rail;
 pub mod sculk;
 pub mod spread;
 pub mod support;
+pub mod wet;
 
 use crate::fluid;
 use crate::level::Level;
@@ -44,6 +45,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::NoteBlock => devices::note_neighbor_changed(level, s, pos),
         C::TntBlock => devices::tnt_neighbor_changed(level, pos),
         C::FrostedIceBlock => spread::frosted_neighbor_changed(level, s, pos, source),
+        C::SpongeBlock => wet::sponge_try_absorb(level, pos),
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
         C::PistonBaseBlock => piston::check_if_extend(level, s, pos),
         C::PistonHeadBlock => piston::head_neighbor_changed(level, s, pos, source),
@@ -119,6 +121,11 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         C::VineBlock => return growth::vine_update_shape(level, s, pos, dir),
         C::ChorusPlantBlock => return growth::chorus_plant_update_shape(level, s, pos, dir, neighbor_state),
         C::ChorusFlowerBlock => return growth::chorus_flower_update_shape(level, s, pos, dir),
+        C::ScaffoldingBlock => {
+            wet::scaffolding_schedule(level, s, pos);
+            return s;
+        }
+        _ if wet::is_coral(s) => return wet::coral_update_shape(level, s, pos, dir),
         _ => {}
     }
     if class == C::SeagrassBlock {
@@ -204,6 +211,10 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::SnifferEggBlock if !state::same_block(old, s) => misc::sniffer_egg_on_place(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_on_place(level, s, pos),
         C::FrostedIceBlock => spread::frosted_on_place(level, s, pos),
+        C::SpongeBlock if !state::same_block(old, s) => wet::sponge_try_absorb(level, pos),
+        C::WetSpongeBlock => wet::wet_sponge_on_place(level, pos),
+        C::ScaffoldingBlock => wet::scaffolding_schedule(level, s, pos),
+        C::CoralPlantBlock | C::CoralFanBlock | C::CoralWallFanBlock => wet::coral_on_place(level, s, pos),
         // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it; one that cannot
         // survive goes out.
         C::FireBlock | C::SoulFireBlock => {
@@ -262,6 +273,8 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::FrogspawnBlock => misc::frogspawn_tick(level, pos),
         C::FrostedIceBlock => spread::frosted_tick(level, s, pos),
         C::ChorusPlantBlock | C::ChorusFlowerBlock => growth::chorus_tick(level, s, pos),
+        C::ScaffoldingBlock => wet::scaffolding_tick(level, s, pos),
+        C::CoralPlantBlock | C::CoralFanBlock | C::CoralWallFanBlock | C::CoralBlock => wet::coral_tick(level, s, pos),
         _ if growth::is_growing_plant(s) => growth::plant_tick(level, s, pos),
         C::CreakingHeartBlock => misc::creaking_heart_tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)

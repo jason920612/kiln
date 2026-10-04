@@ -115,6 +115,7 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
         C::ChorusFlowerBlock => super::growth::chorus_flower_can_survive(level, pos),
         C::ChorusPlantBlock => super::growth::chorus_plant_can_survive(level, pos),
         _ if super::growth::is_growing_plant(s) => super::growth::plant_can_survive(level, s, pos),
+        _ if super::wet::is_coral(s) && logic::block_class(s) != C::CoralBlock => super::wet::coral_can_survive(level, s, pos),
         C::FrogspawnBlock => super::misc::frogspawn_can_survive(level, pos),
         C::PistonHeadBlock => super::piston::head_can_survive(level, s, pos),
         C::PressurePlateBlock | C::WeightedPressurePlateBlock => {

@@ -1354,6 +1354,7 @@ mod tests {
                 fast_lava: false,
                 water_evaporates: false,
                 tnt_explodes: true,
+                spread_vines: true,
                 infiniburn: "minecraft:infiniburn_overworld",
             },
             dim: crate::OVERWORLD_ID,
