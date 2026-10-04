@@ -446,9 +446,14 @@ impl PosBlock {
 struct PosTable {
     map: FastMap<u64, u32>,
     blocks: Vec<PosBlock>,
+    /// Key of the block looked at last; meaningful only while `last` is not `NO_LAST`. Every
+    /// 64-bit value is a key (blocks of 8x8x8 at x, y and z from -8 to -1 give all ones), so
+    /// "nothing looked at" cannot be a key value.
     last_key: u64,
     last: u32,
 }
+
+const NO_LAST: u32 = u32::MAX;
 
 impl Default for PosTable {
     fn default() -> Self {
@@ -458,13 +463,13 @@ impl Default for PosTable {
 
 impl PosTable {
     fn new() -> PosTable {
-        PosTable { map: FastMap::default(), blocks: Vec::new(), last_key: u64::MAX, last: 0 }
+        PosTable { map: FastMap::default(), blocks: Vec::new(), last_key: 0, last: NO_LAST }
     }
 
     fn clear(&mut self) {
         self.map.clear();
         self.blocks.clear();
-        self.last_key = u64::MAX;
+        self.last = NO_LAST;
     }
 
     /// (block, offset in it) of the position, adding the block if it is new.
@@ -472,7 +477,7 @@ impl PosTable {
     fn locate(&mut self, x: i32, y: i32, z: i32) -> (usize, usize) {
         let key = ((x >> 3) as u64 & 0x3ff_ffff) << 38 | ((z >> 3) as u64 & 0x3ff_ffff) << 12 | ((y >> 3) as u64 & 0xfff);
         let off = ((y & 7) << 6 | (z & 7) << 3 | (x & 7)) as usize;
-        if key == self.last_key {
+        if self.last != NO_LAST && key == self.last_key {
             return (self.last as usize, off);
         }
         let idx = match self.map.get(&key) {
@@ -2201,5 +2206,27 @@ pub fn should_recompute_path(e: &Entity, m: &MobData, pos: BlockPos) -> bool {
 pub fn on_block_changed(e: &Entity, m: &mut MobData, level: &dyn EntityLevel, pos: BlockPos) {
     if should_recompute_path(e, m, pos) {
         recompute_path(e, m, level);
+    }
+}
+
+#[cfg(test)]
+mod pos_table_tests {
+    use super::*;
+
+    /// The key of the block holding x, y, z all in -8..=-1 is all ones, which used to be the
+    /// "no block looked at" marker: a fresh table then answered with block 0 that did not exist
+    /// (a survival test server went down on `index out of bounds: the len is 0`).
+    #[test]
+    fn the_all_ones_key_is_a_block_like_any_other() {
+        let mut t = PosTable::new();
+        let (b, off) = t.locate(-4, -4, -4);
+        assert_eq!((b, t.blocks.len()), (0, 1));
+        assert_eq!(off, (4 << 6) | (4 << 3) | 4);
+        // The same block again takes the remembered path; another one gets its own index.
+        assert_eq!(t.locate(-1, -8, -2).0, 0);
+        assert_eq!(t.locate(0, 0, 0).0, 1);
+        t.clear();
+        assert_eq!(t.locate(-4, -4, -4), (0, off));
+        assert_eq!(t.blocks.len(), 1);
     }
 }
