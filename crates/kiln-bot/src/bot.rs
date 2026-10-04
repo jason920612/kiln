@@ -117,6 +117,16 @@ pub(crate) struct Out {
 }
 
 impl Out {
+    pub(crate) fn new(threshold: Option<usize>) -> Self {
+        Out { threshold, scratch: BytesMut::with_capacity(256), buf: BytesMut::with_capacity(1024), packets: 0 }
+    }
+
+    /// The framed packets written so far (tests decode them with the server's codec).
+    #[cfg(test)]
+    pub(crate) fn take_framed(&mut self) -> BytesMut {
+        self.buf.split()
+    }
+
     pub(crate) fn send(&mut self, build: impl FnOnce(&mut BytesMut)) {
         self.scratch.clear();
         build(&mut self.scratch);
@@ -171,12 +181,7 @@ pub(crate) async fn run(
         shared: shared.clone(),
         state: State::Login,
         inbound: Inbound::default(),
-        out: Out {
-            threshold: None,
-            scratch: BytesMut::with_capacity(256),
-            buf: BytesMut::with_capacity(1024),
-            packets: 0,
-        },
+        out: Out::new(None),
         traffic: Traffic::default(),
         started: now,
         last_flush: None,

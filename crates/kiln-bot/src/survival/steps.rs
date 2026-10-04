@@ -419,7 +419,8 @@ impl Agent {
                     return Res::Done;
                 }
                 st.wait += 1;
-                if st.wait > 12 {
+                // A laggy server breaks the block late (its clock is behind): give it time.
+                if st.wait > 40 {
                     *tries -= 1;
                     if *tries == 0 {
                         return Res::Failed("dig: the server kept the block");
@@ -444,24 +445,42 @@ impl Agent {
         let w = &self.world;
         let at = |q: [i32; 3]| w.get(q[0], q[1], q[2]);
         let (Some(_), Some(_), Some(fl)) = (at(ahead), at(head), at(floor)) else { return Res::Working };
-        // Fluids next to the new cells: leave them alone.
+        // Fluids in the new cells turn the tunnel away; fluids next to them are plugged with
+        // cobblestone first, as a careful miner does.
         let mut ores = Vec::new();
+        let mut plugs: Vec<[i32; 3]> = Vec::new();
         for cell in [ahead, head] {
+            let s = w.block(cell[0], cell[1], cell[2]);
+            if world::is_lava(s) || world::is_water(s) {
+                return Res::Failed("fluid ahead in the tunnel");
+            }
             for d in [Dir::Down, Dir::Up, Dir::North, Dir::South, Dir::West, Dir::East] {
                 let n = add(cell, d.vec());
                 let s = w.block(n[0], n[1], n[2]);
-                if world::is_lava(s) || world::is_water(s) {
-                    return Res::Failed("fluid next to the tunnel");
+                if (world::is_lava(s) || world::is_water(s)) && !plugs.contains(&n) {
+                    plugs.push(n);
                 }
                 if world::name(s).ends_with("_ore") && !ores.contains(&n) && n != p && n != add(p, [0, 1, 0]) {
                     ores.push(n);
                 }
             }
         }
-        if world::is_air(fl) || world::is_lava(fl) || world::is_water(fl) {
-            return Res::Failed("gap in the floor");
+        if plugs.len() > 4 {
+            return Res::Failed("too much fluid next to the tunnel");
         }
         let mut steps = Vec::new();
+        if !plugs.is_empty() || world::is_air(fl) {
+            steps.push(Step::Equip { slot: 5, item: "cobblestone", count: 6 });
+        }
+        for n in &plugs {
+            steps.push(Step::place(PlaceSpec { pos: *n, slot: 5, expect: "minecraft:cobblestone", look: None, from: None, facing: None }));
+        }
+        if world::is_lava(fl) || world::is_water(fl) {
+            return Res::Failed("fluid in the floor");
+        }
+        if world::is_air(fl) {
+            steps.push(Step::place(PlaceSpec { pos: floor, slot: 5, expect: "minecraft:cobblestone", look: None, from: None, facing: None }));
+        }
         for cell in [ahead, head] {
             let s = w.block(cell[0], cell[1], cell[2]);
             if !world::is_air(s) {

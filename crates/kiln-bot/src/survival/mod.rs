@@ -14,6 +14,8 @@
 mod plans;
 mod redstone;
 mod steps;
+#[cfg(test)]
+mod tests;
 pub mod tools;
 
 use crate::behavior::Rng;
@@ -185,7 +187,7 @@ enum ViewChange {
 
 /// Settings of one survival bot.
 #[derive(Debug, Clone)]
-pub struct Settings {
+pub(crate) struct Settings {
     pub role: Role,
     /// The group's site: the bot teleports near it and stays around it (explorers leave).
     pub site: [f64; 2],
@@ -196,7 +198,7 @@ pub struct Settings {
     pub stay: bool,
 }
 
-pub struct Agent {
+pub(crate) struct Agent {
     pub(crate) cfg: Settings,
     pub(crate) world: World,
     pub(crate) body: Body,
@@ -234,6 +236,7 @@ pub struct Agent {
     pub(crate) site_y: Option<i32>,
     arrived: bool,
     survival_set: bool,
+    last_teleport: Option<[f64; 3]>,
     /// Hostile mobs in view: entity id and last known position.
     mobs: HashMap<i32, [f64; 3]>,
     hostile: Vec<i32>,
@@ -254,6 +257,9 @@ impl Agent {
         let mut rng = Rng::new(cfg.seed);
         let radius = cfg.view_distance.clamp(2, 32);
         let chat = cfg.chat_interval.map(|d| (rng.unit() * d.as_secs_f64() * 20.0) as u64 + 40).unwrap_or(u64::MAX);
+        // Players of a group arrive within a few blocks of each other, not on one block.
+        let (angle, dist) = (rng.range(0.0, std::f64::consts::TAU), 10.0 * rng.unit().sqrt());
+        let plan = plans::State::arriving_at([dist * angle.cos(), dist * angle.sin()]);
         Agent {
             body: Body::new(pos, yaw, pitch),
             world: World::default(),
@@ -265,7 +271,7 @@ impl Agent {
             tick_no: 0,
             track: ChunkTrack { radius, center: None, have: HashSet::new(), want: HashMap::new(), since: None },
             queue: VecDeque::new(),
-            plan: plans::State::default(),
+            plan,
             seq: 0,
             pending: Vec::new(),
             held: 0,
@@ -287,6 +293,7 @@ impl Agent {
             site_y: None,
             arrived: false,
             survival_set: false,
+            last_teleport: None,
             mobs: HashMap::new(),
             hostile: [
                 "zombie", "husk", "drowned", "skeleton", "stray", "spider", "cave_spider", "creeper", "zombie_villager", "witch", "slime",
@@ -418,10 +425,14 @@ impl Agent {
         if self.expected_tps > 0 {
             self.expected_tps -= 1;
             self.counts.own_teleports += 1;
+        } else if self.last_teleport == Some(pos) {
+            // The server asks again when a confirmation takes more than a second (a slow tick).
+            self.counts.teleport_resends += 1;
         } else {
             self.counts.teleports += 1;
             self.shared.problem(format!("server correction at tick {}: to {pos:.1?}", self.tick_no));
         }
+        self.last_teleport = Some(pos);
         self.body.teleport(pos, yaw, pitch);
         self.sent.pos = pos;
         self.sent.rot = (yaw, pitch);
@@ -735,10 +746,18 @@ impl Agent {
                 }
             }
         }
-        if loaded {
+        // Waiting for a teleport, the bot stays where it is (it would fall from the sky while a
+        // slow server answers).
+        let holding = matches!(self.phase, Phase::HighAbove | Phase::Landing);
+        if loaded && !holding {
+            let before = self.body.pos;
             self.body.tick(&self.world, input);
-            self.counts.walk_ticks += (input.forward && self.phase == Phase::Active) as u64;
-        } else if self.phase == Phase::Active {
+            if self.phase == Phase::Active {
+                self.counts.walk_ticks += input.forward as u64;
+                let d = (self.body.pos[0] - before[0]).hypot(self.body.pos[2] - before[2]);
+                self.counts.walked_dm += (d * 10.0) as u64;
+            }
+        } else if self.phase == Phase::Active && !loaded {
             self.counts.stall_ticks += 1;
         }
         self.send_pose(out, input);

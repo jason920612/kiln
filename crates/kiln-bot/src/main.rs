@@ -63,6 +63,9 @@ struct Args {
     /// Teleport bots to their group centre with /tp (the server must make them operators).
     #[arg(long)]
     teleport_to_group: bool,
+    /// Seconds a bot waits for the world after connecting before it gives up.
+    #[arg(long, default_value_t = 60.0)]
+    join_timeout: f64,
     /// Seconds between progress lines.
     #[arg(long, default_value_t = 5.0)]
     report_interval: f64,
@@ -72,6 +75,9 @@ struct Args {
     /// Print the final report as JSON.
     #[arg(long)]
     json: bool,
+    /// Stop (and print the report) when a line `stop` arrives on standard input.
+    #[arg(long)]
+    stdin_control: bool,
 }
 
 fn secs(s: f64, what: &str) -> Result<Duration> {
@@ -98,6 +104,7 @@ fn main() -> Result<()> {
         group_spacing: a.group_spacing,
         teleport_to_group: a.teleport_to_group,
         group_size: a.group_size,
+        join_timeout: secs(a.join_timeout, "join timeout")?,
         roles: a.roles.unwrap_or_else(|| Config::default().roles),
         ..Config::default()
     };
@@ -107,9 +114,29 @@ fn main() -> Result<()> {
         rt.worker_threads(n);
     }
     let rt = rt.thread_name("bot").enable_all().build()?;
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    if a.stdin_control {
+        std::thread::spawn(move || {
+            for line in std::io::stdin().lines().map_while(Result::ok) {
+                if line.trim() == "stop" {
+                    let _ = stop_tx.send(());
+                    return;
+                }
+            }
+        });
+    }
     let ctrl_c = async {
-        if tokio::signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await;
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => {
+                if r.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+            r = stop_rx => {
+                if r.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
         }
     };
     let report = rt.block_on(kiln_bot::run_with(config, |r| println!("{}", r.summary_line()), ctrl_c))?;

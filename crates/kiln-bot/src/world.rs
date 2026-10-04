@@ -276,6 +276,37 @@ impl World {
     }
 }
 
+/// A world of stone below y=0 over chunks -2..2, built from chunk packets in the server's layout.
+#[cfg(test)]
+pub(crate) fn test_world() -> World {
+    use bytes::{BufMut, BytesMut};
+    use kiln_data::blocks::default_state as d;
+    use kiln_proto::WriteExt;
+    let mut w = World::default();
+    for cx in -2..2 {
+        for cz in -2..2 {
+            let mut b = BytesMut::new();
+            b.put_i32(cx);
+            b.put_i32(cz);
+            b.put_varint(0);
+            let mut data = BytesMut::new();
+            for s in 0..SECTIONS {
+                data.put_i16(0);
+                data.put_i16(0);
+                data.put_u8(0);
+                data.put_varint(if s < 4 { d::STONE } else { d::AIR } as i32);
+                data.put_u8(0);
+                data.put_varint(1);
+            }
+            b.put_varint(data.len() as i32);
+            b.put_slice(&data);
+            let (x, z, c) = Column::parse(&b).unwrap();
+            w.insert(x, z, c);
+        }
+    }
+    w
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

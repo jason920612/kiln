@@ -57,10 +57,10 @@ struct Args {
     #[arg(long, default_value_t = 50)]
     count: usize,
     /// Bots per group site.
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 10)]
     group_size: usize,
     /// Blocks between group sites.
-    #[arg(long, default_value_t = 512.0)]
+    #[arg(long, default_value_t = 700.0)]
     spacing: f64,
     #[arg(long, default_value_t = 25584)]
     port: u16,
@@ -392,18 +392,18 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     server.command("defaultgamemode survival");
     std::thread::sleep(Duration::from_millis(500));
 
-    // Time for everyone to join, walk to the sites and settle, then the measured stretch.
+    // Everyone joins and walks to a site; once 95% have arrived and the warmup is over, the
+    // measured stretch starts. The bots run until told to stop.
     let join_secs = a.count as f64 / a.rate;
-    let arrive_secs = 40.0;
-    let total = join_secs + arrive_secs + a.warmup + a.measure + 5.0;
     let mut bot_cmd = Command::new(&a.bot);
     bot_cmd
         .args(["--addr", &format!("127.0.0.1:{}", a.port), "--count", &a.count.to_string(), "--rate", &a.rate.to_string()])
-        .args(["--behavior", "survival", "--duration", &format!("{total:.0}"), "--name-prefix", "SB"])
+        .args(["--behavior", "survival", "--duration", "86400", "--stdin-control", "--name-prefix", "SB"])
         .args(["--group-size", &a.group_size.to_string(), "--group-spacing", &a.spacing.to_string()])
         .args(["--view-distance", &a.view_distance.to_string(), "--roles", &a.roles])
         .args(["--chat-interval", &a.chat_interval.to_string(), "--seed", &a.seed.to_string()])
-        .args(["--report-interval", "10", "--json", "--center", "0,0"])
+        .args(["--report-interval", "10", "--json", "--center", "0,0", "--join-timeout", "900"])
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let bots_started = now_ms();
@@ -423,14 +423,36 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         });
     }
 
-    // Sample CPU while the measured stretch runs.
-    let measure_from = bots_started + ((join_secs + arrive_secs + a.warmup) * 1000.0) as u128;
-    let measure_to = measure_from + (a.measure * 1000.0) as u128;
+    // Wait for the arrival, then sample CPU while the measured stretch runs.
+    let arrive_limit = bots_started + ((join_secs + 900.0) * 1000.0) as u128;
+    let mut arrived_at: Option<u128> = None;
+    let mut measure_from = u128::MAX;
+    let mut measure_to = u128::MAX;
     let mut at_from: Option<(f64, f64, Option<(f64, f64)>)> = None;
     let mut at_to: Option<(f64, f64, Option<(f64, f64)>)> = None;
     let mut next_note = Instant::now();
+    let mut stop_sent = false;
     loop {
         let t = now_ms();
+        if arrived_at.is_none() {
+            let arrived = out_buf.lock().unwrap().lines().rev().find_map(|l| {
+                let (_, rest) = l.split_once(" arrived ")?;
+                rest.split_whitespace().next()?.parse::<usize>().ok()
+            });
+            if arrived.is_some_and(|n| n as f64 >= a.count as f64 * 0.95) || t >= arrive_limit {
+                arrived_at = Some(t);
+                measure_from = t + (a.warmup * 1000.0) as u128;
+                measure_to = measure_from + (a.measure * 1000.0) as u128;
+                eprintln!("[{label}] {} bots arrived after {:.0} s; measuring from +{:.0} s", arrived.unwrap_or(0), (t - bots_started) as f64 / 1000.0, (measure_from - bots_started) as f64 / 1000.0);
+            }
+        }
+        if !stop_sent && t >= measure_to.saturating_add(2000) {
+            stop_sent = true;
+            if let Some(stdin) = bots.stdin.as_mut() {
+                let _ = writeln!(stdin, "stop");
+                let _ = stdin.flush();
+            }
+        }
         if at_from.is_none() && t >= measure_from {
             at_from = Some((cpu::process(&server.child).unwrap_or(0.0), cpu::process(&bots).unwrap_or(0.0), cpu::system()));
         }
@@ -444,7 +466,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
             next_note += Duration::from_secs(30);
             let lines = server.snapshot();
             let last = lines.iter().rev().find_map(|(t, l)| parse_report(*t, l));
-            let phase = if t < measure_from { "joining/warmup" } else if t < measure_to { "measuring" } else { "wind-down" };
+            let phase = if arrived_at.is_none() { "joining" } else if t < measure_from { "warmup" } else if t < measure_to { "measuring" } else { "wind-down" };
             eprintln!(
                 "[{label}] +{:.0}s {phase}{}",
                 (t - bots_started) as f64 / 1000.0,
@@ -541,6 +563,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
                 "server_cores": (t.0 - f.0) / secs,
                 "bots_cores": (t.1 - f.1) / secs,
                 "machine_utilisation": sys,
+                "background_cores": sys.map(|u| (u * logical_cores() - (t.0 - f.0) / secs - (t.1 - f.1) / secs).max(0.0)),
             })
         }
         _ => Value::Null,
@@ -553,6 +576,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         "count": a.count,
         "view_distance": a.view_distance,
         "all_bots_in_after_s": full_at.map(|t| (t.saturating_sub(bots_started)) as f64 / 1000.0),
+        "bots_arrived_after_s": arrived_at.map(|t| (t.saturating_sub(bots_started)) as f64 / 1000.0),
         "mspt_measured": stats_json(stats(measured)),
         "mspt_whole_run": stats_json(stats(all)),
         "mspt_window_reports": {
@@ -572,6 +596,10 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     print_summary(&result);
     std::fs::write(a.out.join(format!("{}-{label}.json", a.tag)), serde_json::to_string_pretty(&result)?)?;
     Ok(result)
+}
+
+fn logical_cores() -> f64 {
+    std::thread::available_parallelism().map_or(1.0, |n| n.get() as f64)
 }
 
 fn f(v: &Value, path: &str) -> f64 {
@@ -622,8 +650,8 @@ fn print_summary(r: &Value) {
     let t = &b["traffic"];
     let (walk, stall) = (f(t, "walk_ticks"), f(t, "stall_ticks"));
     println!(
-        "bots   joined {:.0}, failed {:.0}, dropped {:.0}; corrections {:.0}; decode errors {:.0}; waited for chunks {:.1}% of walking time; deaths {:.0}",
-        f(b, "joined"), f(b, "failed"), f(b, "dropped"), f(t, "teleports"), f(t, "decode_errors"), stall / (walk + stall).max(1.0) * 100.0, f(t, "deaths")
+        "bots   joined {:.0}, failed {:.0}, dropped {:.0}; corrections {:.0} (+{:.0} repeats); decode errors {:.0}; waited for chunks {:.1}% of walking time; walked {:.0} blocks; deaths {:.0}",
+        f(b, "joined"), f(b, "failed"), f(b, "dropped"), f(t, "teleports"), f(t, "teleport_resends"), f(t, "decode_errors"), stall / (walk + stall).max(1.0) * 100.0, f(t, "walked_dm") / 10.0, f(t, "deaths")
     );
     println!(
         "bots   dig {:.0} started / {:.0} done / {:.0} rejected; placed {:.0} (rejected {:.0}, wrong state {:.0}); containers {:.0}; commands {:.0}; chat {:.0}",
@@ -631,8 +659,9 @@ fn print_summary(r: &Value) {
         f(t, "containers_opened"), f(t, "commands"), f(t, "chat_sent")
     );
     println!(
-        "cpu    server {:.2} cores, bots {:.2} cores, machine {:.0}% busy",
-        f(&r["cpu"], "server_cores"), f(&r["cpu"], "bots_cores"), f(&r["cpu"], "machine_utilisation") * 100.0
+        "cpu    server {:.2} cores, bots {:.2} cores, machine {:.0}% busy (other programs about {:.1} cores of {:.0})",
+        f(&r["cpu"], "server_cores"), f(&r["cpu"], "bots_cores"), f(&r["cpu"], "machine_utilisation") * 100.0,
+        f(&r["cpu"], "background_cores"), logical_cores()
     );
     if let Some(p) = b["problems"].as_array() {
         for x in p.iter().take(12) {

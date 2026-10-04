@@ -77,6 +77,8 @@ traffic!(
     levers,
     walk_ticks,
     stall_ticks,
+    walked_dm,
+    teleport_resends,
     blocks_seen_changed,
 );
 
@@ -108,9 +110,19 @@ pub(crate) struct Shared {
     pub problems: Mutex<BTreeMap<String, u64>>,
 }
 
-const HIST_MS: usize = 60_001;
+/// 1 ms buckets up to 10 s, then 100 ms buckets up to 20 minutes.
+const HIST_FINE: usize = 10_000;
+const HIST_MS: usize = HIST_FINE + 12_000 + 1;
 
-/// Milliseconds histogram (1 ms buckets up to a minute, then one overflow bucket).
+fn bucket(ms: usize) -> usize {
+    if ms < HIST_FINE { ms } else { (HIST_FINE + (ms - HIST_FINE) / 100).min(HIST_MS - 1) }
+}
+
+fn bucket_ms(i: usize) -> f64 {
+    if i < HIST_FINE { i as f64 } else { (HIST_FINE + (i - HIST_FINE) * 100) as f64 }
+}
+
+/// Milliseconds histogram (see [`bucket`]); values past twenty minutes land in the last bucket.
 pub struct Hist {
     buckets: Box<[AtomicU64]>,
     sum_us: AtomicU64,
@@ -141,8 +153,7 @@ pub struct Latency {
 
 impl Hist {
     pub fn add(&self, d: Duration) {
-        let ms = (d.as_millis() as usize).min(HIST_MS - 1);
-        self.buckets[ms].fetch_add(1, Relaxed);
+        self.buckets[bucket(d.as_millis() as usize)].fetch_add(1, Relaxed);
         self.sum_us.fetch_add(d.as_micros() as u64, Relaxed);
     }
 
@@ -158,10 +169,10 @@ impl Hist {
             for (ms, c) in counts.iter().enumerate() {
                 seen += c;
                 if seen >= want {
-                    return ms as f64;
+                    return bucket_ms(ms);
                 }
             }
-            (HIST_MS - 1) as f64
+            bucket_ms(HIST_MS - 1)
         };
         Latency {
             n,
@@ -169,7 +180,7 @@ impl Hist {
             p50_ms: at(0.5),
             p90_ms: at(0.9),
             p99_ms: at(0.99),
-            max_ms: counts.iter().rposition(|c| *c > 0).unwrap_or(0) as f64,
+            max_ms: bucket_ms(counts.iter().rposition(|c| *c > 0).unwrap_or(0)),
         }
     }
 }
@@ -409,8 +420,8 @@ impl fmt::Display for Report {
             write!(f, "{}", lat("view ready (join)", &self.area_ready_join))?;
             writeln!(
                 f,
-                "  walking    {} ticks moving, {} ticks waiting for chunks",
-                t.walk_ticks, t.stall_ticks
+                "  walking    {} ticks moving ({:.0} blocks), {} ticks waiting for chunks",
+                t.walk_ticks, t.walked_dm as f64 / 10.0, t.stall_ticks
             )?;
             writeln!(
                 f,
@@ -436,8 +447,8 @@ impl fmt::Display for Report {
         }
         writeln!(
             f,
-            "  teleports  {} after spawning (server corrections); {} we asked for",
-            t.teleports, t.own_teleports
+            "  teleports  {} after spawning (server corrections); {} we asked for; {} repeats of one",
+            t.teleports, t.own_teleports, t.teleport_resends
         )?;
         writeln!(f, "  chat       sent {}, received {}", t.chat_sent, t.chat_received)?;
         if self.disconnect_reasons.is_empty() {

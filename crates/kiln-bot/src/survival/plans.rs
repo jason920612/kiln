@@ -29,6 +29,10 @@ pub struct State {
 }
 
 impl State {
+    pub fn arriving_at(offset: [f64; 2]) -> Self {
+        Self { arrival_offset: offset, ..Default::default() }
+    }
+
     /// Forget what was in progress (after a teleport or a death).
     pub fn reset(&mut self) {
         self.build.clear();

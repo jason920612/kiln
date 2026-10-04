@@ -259,37 +259,10 @@ impl Body {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::world::Column;
-    use bytes::{BufMut, BytesMut};
     use kiln_data::blocks::default_state as d;
-    use kiln_proto::WriteExt;
 
-    /// A world of stone below y=0 (chunks -2..2) built from real chunk packets.
     fn flat() -> World {
-        let mut w = World::default();
-        for cx in -2..2 {
-            for cz in -2..2 {
-                let mut b = BytesMut::new();
-                b.put_i32(cx);
-                b.put_i32(cz);
-                b.put_varint(0);
-                let mut data = BytesMut::new();
-                for s in 0..24 {
-                    data.put_i16(0);
-                    data.put_i16(0);
-                    data.put_u8(0);
-                    // sections below y=0 (s < 4) are stone
-                    data.put_varint(if s < 4 { d::STONE } else { d::AIR } as i32);
-                    data.put_u8(0);
-                    data.put_varint(1);
-                }
-                b.put_varint(data.len() as i32);
-                b.put_slice(&data);
-                let (x, z, c) = Column::parse(&b).unwrap();
-                w.insert(x, z, c);
-            }
-        }
-        w
+        crate::world::test_world()
     }
 
     fn run(b: &mut Body, w: &World, ticks: usize, input: Input) {
