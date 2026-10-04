@@ -6,6 +6,7 @@
 
 pub mod connect;
 pub mod container;
+pub mod farming;
 pub mod growth;
 pub mod misc;
 pub mod piston;
@@ -134,6 +135,9 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         if !kiln_data::blocks_types::is_air(new) {
             crate::level::schedule_fluid_tick(level, pos, crate::FluidType::Water, 5);
         }
+        return new;
+    }
+    if let Some(new) = farming::update_shape(level, s, pos, dir, neighbor_state) {
         return new;
     }
     if let Some(new) = support::pop_off(level, s, pos, dir, neighbor_state) {
@@ -277,6 +281,9 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::CoralPlantBlock | C::CoralFanBlock | C::CoralWallFanBlock | C::CoralBlock => wet::coral_tick(level, s, pos),
         _ if growth::is_growing_plant(s) => growth::plant_tick(level, s, pos),
         C::CreakingHeartBlock => misc::creaking_heart_tick(level, s, pos),
+        C::FarmlandBlock | C::SugarCaneBlock | C::CactusBlock | C::BambooStalkBlock => {
+            farming::tick(level, s, pos);
+        }
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.
         C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock => level.block_entity_tick(pos, s),
@@ -293,6 +300,9 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
 /// it is implemented; the positions are still drawn so the random-tick sequence stays aligned.
 pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     use BlockClass as C;
+    if farming::random_tick(level, s, pos) {
+        return;
+    }
     if logic::is_instance(s, C::LeavesBlock) {
         misc::leaves_random_tick(level, s, pos);
     } else if logic::block_class(s) == C::LiquidBlock && logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {

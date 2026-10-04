@@ -194,6 +194,10 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
                 let s = state::parse_state(op[4].as_str().unwrap()).expect("state");
                 crate::update::set_block(&mut level, BlockPos::new(x0 + at(op, 1), at(op, 2), z0 + at(op, 3)), s, flags::ALL);
             }
+            "seed" => {
+                level.set_random_seed(op[1].as_i64().unwrap());
+                drops_seen = false;
+            }
             other => panic!("op {other}"),
         }
         drops_seen |= level.effects.iter().any(|e| matches!(e, crate::Effect::Drop { .. }));

@@ -83,6 +83,9 @@ fn may_place_on<L: Level + ?Sized>(level: &L, plant: u16, below: u16, below_pos:
 pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool {
     use BlockClass as C;
     let below = || level.block(pos.below());
+    if let Some(survives) = super::farming::can_survive(level, s, pos) {
+        return survives;
+    }
     match logic::block_class(s) {
         C::WallTorchBlock | C::RedstoneWallTorchBlock => {
             let facing = state::get_dir(s, "facing").unwrap_or(Direction::North);
