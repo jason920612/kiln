@@ -134,6 +134,8 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
     let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK]);
     level.load_chunks((-4, -4), (4, 4));
     level.difficulty = v["difficulty"].as_i64().unwrap() as i32;
+    // The harness server has no players: lava never tries to spread fire.
+    level.player_near_for_fire = false;
     for x in x0 + LO..=x0 + HI {
         for z in z0 + LO..=z0 + HI {
             level.set_raw(BlockPos::new(x, FLOOR, z), d::STONE, flags::NONE);
@@ -143,6 +145,9 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
         level.set_raw(BlockPos::new(x0 + x, y, z0 + z), s, flags::NONE);
     }
     level.game_time = v["game_time"].as_i64().unwrap();
+    if let Some(t) = v["day_time"].as_i64() {
+        level.day_time = t;
+    }
     set_light(&mut level, &v["initial_light"], x0, z0);
     level.set_random_seed(v["seed"].as_i64().unwrap());
     let ops = v["ops"].as_array().unwrap();
@@ -151,6 +156,7 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
     // simulation's (own seeding, loot parity is tested elsewhere), so once a block dropped
     // the random draws are no longer comparable. Blocks and ticks still are.
     let mut drops_seen = false;
+    let mut first_drop = None;
     for (i, (op, want)) in ops.iter().zip(results).enumerate() {
         let kind = op[0].as_str().unwrap();
         match kind {
@@ -166,15 +172,19 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
             }
             other => panic!("op {other}"),
         }
-        drops_seen |= level.effects.iter().any(|e| matches!(e, crate::Effect::Drop { .. }));
-        level.effects.clear();
+        if !drops_seen && level.effects.iter().any(|e| matches!(e, crate::Effect::Drop { .. })) {
+            drops_seen = true;
+            first_drop = Some(i);
+        }
+        let effects = std::mem::take(&mut level.effects);
         let probe = level.random().next_long();
         let (got, want_blocks) = (snapshot(&level, x0, z0), parse_blocks(&want[0]));
         let (got_ticks, want_ticks) = (pending(&level, x0, z0), pending_expected(&want[1], x0, z0));
         let probe_ok = drops_seen || probe == want[3].as_i64().unwrap();
         if got != want_blocks || got_ticks != want_ticks || !probe_ok {
             let ticks_diff = if got_ticks != want_ticks { format!("; ticks want {want_ticks:?} got {got_ticks:?}") } else { String::new() };
-            return Err(format!("op {i} ({kind}): random probe ok {probe_ok}; {:?}{ticks_diff}", state_diff(&want_blocks, &got)));
+            let fx = if std::env::var_os("KILN_PARITY_EFFECTS").is_some() { format!("; effects {:?}", effects.iter().take(12).collect::<Vec<_>>()) } else { String::new() };
+            return Err(format!("op {i} ({kind}): random probe ok {probe_ok}{}; {:?}{ticks_diff}{fx}", first_drop.map_or(String::new(), |d| format!(" (not compared: a block dropped at op {d})")), state_diff(&want_blocks, &got)));
         }
         set_light(&mut level, &want[2], x0, z0);
     }

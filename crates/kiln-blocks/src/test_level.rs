@@ -69,6 +69,10 @@ pub struct TestLevel {
     /// elsewhere.
     pub brightness: HashMap<BlockPos, i32>,
     pub default_brightness: i32,
+    /// The overworld clock (`gameplay/turtle_egg_hatch_chance` follows it); noon.
+    pub day_time: i64,
+    /// `ServerLevel.canSpreadFireAround`: whether a player is near (lava's random tick needs one).
+    pub player_near_for_fire: bool,
 }
 
 impl TestLevel {
@@ -96,6 +100,8 @@ impl TestLevel {
             difficulty: 2,
             brightness: HashMap::new(),
             default_brightness: 15,
+            day_time: 6000,
+            player_near_for_fire: true,
         }
     }
 
@@ -289,6 +295,14 @@ impl Level for TestLevel {
 
     fn difficulty(&self) -> i32 {
         self.difficulty
+    }
+
+    fn can_spread_fire_around(&self, _pos: BlockPos) -> bool {
+        self.player_near_for_fire
+    }
+
+    fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
+        if (21062..21905).contains(&self.day_time.rem_euclid(24000)) { 1.0 } else { 0.002 }
     }
 
     fn raw_brightness(&self, pos: BlockPos, _sky_darken: i32) -> i32 {

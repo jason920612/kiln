@@ -108,6 +108,16 @@ pub enum Effect {
     /// `JukeboxSongPlayer.spawnMusicParticles`: a note particle above the block, coloured by
     /// `color` (`random.nextInt(4) / 24`).
     MusicNote { pos: BlockPos, color: f32 },
+    /// `TurtleEggBlock.randomTick`: `eggs` baby turtles hatch at `pos` (the eggs are gone); the
+    /// i-th is placed at (x + 0.3 + i * 0.2, y, z + 0.3), a baby (age -24000) whose home is `pos`.
+    HatchTurtles { pos: BlockPos, eggs: i32 },
+    /// `DriedGhastBlock.spawnGhastling`: a baby happy ghast faces `yaw` degrees at the bottom
+    /// center of `pos` (the block is gone).
+    HatchGhastling { pos: BlockPos, yaw: f32 },
+    /// `SpeleothemBlock.spawnFallingStalactite` for the tip of a falling stalactite: the block left
+    /// `pos` as a falling entity that hurts what it lands on, `per_distance` (at most 40) per block
+    /// fallen.
+    FallingStalactite { pos: BlockPos, state: u16, per_distance: f32 },
 }
 
 pub trait Level {
@@ -266,6 +276,13 @@ pub trait Level {
     /// biomes).
     fn increased_fire_burnout(&self, _pos: BlockPos) -> bool {
         false
+    }
+
+    /// The `minecraft:gameplay/turtle_egg_hatch_chance` environment attribute at `pos`: a turtle
+    /// egg on sand hatches a stage per random tick with this chance (1 at dawn in the
+    /// overworld, else 1/500).
+    fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
+        0.002
     }
 }
 
