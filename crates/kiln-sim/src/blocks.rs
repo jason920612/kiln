@@ -286,6 +286,9 @@ pub(crate) struct BlockEnv {
     pub raids: std::sync::Arc<Vec<kiln_entity::level::RaidView>>,
     /// The End's dragon fight as the level's entities see it (`None` elsewhere).
     pub dragon_fight: Option<crate::dragon_fight::FightEnv>,
+    /// The level's generation pipeline, for the eye of ender's `findNearestMapStructure`
+    /// (`None` without generated terrain).
+    pub pipeline: Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>,
     /// How a crowded region's entities tick.
     pub entity_ticking: crate::EntityTicking,
     /// Serial entity turns tried side by side first (`SimConfig::speculate`).
@@ -987,6 +990,13 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                 let pkt = world_fx::level_event(id, [pos.x, pos.y, pos.z], data, false);
                 send_near(players, pos, 64.0, &pkt, |_| true);
             }
+            // Approximation as for the entities' global events: every player of the region.
+            Effect::GlobalLevelEvent { id, pos, data } => {
+                let pkt = world_fx::level_event(id, [pos.x, pos.y, pos.z], data, true);
+                for p in players.iter_mut() {
+                    p.send(pkt.clone());
+                }
+            }
             Effect::ActorLevelEvent { id, pos, data } => {
                 let pkt = world_fx::level_event(id, [pos.x, pos.y, pos.z], data, false);
                 send_near(players, pos, 64.0, &pkt, others);
@@ -1365,6 +1375,7 @@ mod tests {
             fire_watchers: Default::default(),
             raids: Default::default(),
             dragon_fight: None,
+            pipeline: None,
             entity_ticking: crate::EntityTicking::Serial,
             speculate: true,
         };

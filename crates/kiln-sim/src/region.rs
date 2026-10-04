@@ -1043,6 +1043,9 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             } else if name == crate::firework::ITEM {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::firework::use_item(p, &mut level, off, fx.spawns);
+            } else if name == crate::end_eye::ITEM {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::end_eye::use_item(p, &mut level, off, fx.spawns);
             } else if crate::boats::is_boat_item(name) {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::boats::use_item(p, &mut level, off, fx.spawns);
@@ -1182,6 +1185,9 @@ fn use_on_block(
         return;
     }
     if item_name == Some(crate::firework::ITEM) && actor.may_build && crate::firework::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
+        return;
+    }
+    if item_name == Some(crate::end_eye::ITEM) && actor.may_build && crate::end_eye::use_on(p, level, bp, !main_hand) {
         return;
     }
     if actor.may_build && crate::tools::item_use_on(p, level, bp, dir, !main_hand, spawns) {

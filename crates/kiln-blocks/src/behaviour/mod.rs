@@ -6,6 +6,7 @@
 
 pub mod connect;
 pub mod container;
+pub mod end_portal;
 pub mod misc;
 pub mod piston;
 pub mod portal;

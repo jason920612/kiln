@@ -90,6 +90,12 @@ public class BlockTickVectors {
             return this;
         }
 
+        /** `EnderEyeItem.useOn` by a player (survival, standing above) clicking the top of the block at area-relative x, y (absolute), z. */
+        Sc eye(int x, int y, int z) {
+            ops.add(new Object[] {"eye", x, y, z});
+            return this;
+        }
+
         /** `Level.setBlock(pos, state, 3)` at area-relative x, y (absolute), z. */
         Sc set(int x, int y, int z, String state) {
             ops.add(new Object[] {"set", x, y, z, state});
@@ -112,6 +118,7 @@ public class BlockTickVectors {
         scenariosGrowth(out);
         scenariosSpread(out);
         scenariosMisc(out);
+        scenariosEnd(out);
     }
 
     // ================================================================ checks of the harness itself
@@ -146,6 +153,95 @@ public class BlockTickVectors {
     // ================================================================ family: misc
     // copper oxidation, turtle eggs, redstone ore, budding amethyst, dripstone, lightning rods
     static void scenariosMisc(List<Sc> out) {
+    }
+
+    // ================================================================ family: end (wp44)
+    // end portal frames: an eye of ender used on a frame (comparators, the ring that opens a portal)
+
+    /** The twelve frames of a ring around the interior centred at area-relative (cx, cz), y 100, as setup commands; `eyes` says which have their eye, `wrong` faces the other way, `lowered` stands a block lower. */
+    static List<String> ringFrames(int cx, int cz, boolean[] eyes, int wrong, int lowered) {
+        String[] facing = {"south", "south", "south", "north", "north", "north", "east", "east", "east", "west", "west", "west"};
+        java.util.Map<String, String> opposite = java.util.Map.of("south", "north", "north", "south", "east", "west", "west", "east");
+        List<String> cmds = new ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            int[] at = frameAt(cx, cz, i);
+            String f = i == wrong ? opposite.get(facing[i]) : facing[i];
+            cmds.add(String.format("setblock ~%d ~%d ~%d minecraft:end_portal_frame[facing=%s,eye=%s]", at[0], i == lowered ? -1 : 0, at[1], f, eyes[i]));
+        }
+        return cmds;
+    }
+
+    static int[] frameAt(int cx, int cz, int i) {
+        int g = i / 3, k = i % 3 - 1;
+        return switch (g) {
+            case 0 -> new int[] {cx + k, cz - 2};
+            case 1 -> new int[] {cx + k, cz + 2};
+            case 2 -> new int[] {cx - 2, cz + k};
+            default -> new int[] {cx + 2, cz + k};
+        };
+    }
+
+    static void scenariosEnd(List<Sc> out) {
+        String[] interiors = {"air", "stone", "water", "short_grass", "torch", "lava", "oak_slab", "cobweb"};
+        // Each of the twelve frames being the last to be filled, over different interiors.
+        for (int last = 0; last < 12; last++) {
+            boolean[] eyes = new boolean[12];
+            java.util.Arrays.fill(eyes, true);
+            eyes[last] = false;
+            Sc sc = new Sc("end_ring/last" + last, 70 + last);
+            for (String c : ringFrames(8, 8, eyes, -1, -1)) sc.cmd(c);
+            String inside = interiors[last % interiors.length];
+            sc.cmd("fill ~7 ~ ~7 ~9 ~ ~9 minecraft:" + inside);
+            int[] f = frameAt(8, 8, last);
+            sc.eye(f[0], 100, f[1]).tick(5);
+            out.add(sc);
+        }
+        // Not a portal: a frame faces the wrong way / is a block lower / lacks its eye / eye already in / not a frame.
+        for (int bad = 0; bad < 4; bad++) {
+            for (int k = 0; k < 3; k++) {
+                boolean[] eyes = new boolean[12];
+                java.util.Arrays.fill(eyes, true);
+                int last = 1 + k * 4;
+                if (bad < 3) eyes[last] = false;
+                int broken = (last + 5) % 12;
+                Sc sc = new Sc("end_ring/broken" + bad + "_" + k, 90 + bad * 3 + k);
+                List<String> frames = switch (bad) {
+                    case 0 -> ringFrames(8, 8, eyes, broken, -1);
+                    case 1 -> ringFrames(8, 8, eyes, -1, broken);
+                    case 2 -> {
+                        eyes[broken] = false;
+                        yield ringFrames(8, 8, eyes, -1, -1);
+                    }
+                    default -> ringFrames(8, 8, eyes, -1, -1);
+                };
+                for (String c : frames) sc.cmd(c);
+                int[] f = frameAt(8, 8, last);
+                sc.eye(f[0], 100, f[1]);
+                if (bad == 3) sc.eye(f[0], 100, f[1]);
+                if (bad == 3) {
+                    // On the filled frame again and on a block that is no frame.
+                    sc.eye(8, 99, 8);
+                }
+                sc.tick(3);
+                out.add(sc);
+            }
+        }
+        // Comparators beside a frame read 15 once the eye is in, and 0 before.
+        for (int k = 0; k < 4; k++) {
+            Sc sc = new Sc("end_comparator/" + k, 120 + k);
+            sc.cmd("setblock ~8 ~ ~8 minecraft:end_portal_frame[facing=south,eye=false]");
+            String[] dirs = {"east", "west", "south", "north"};
+            int[][] off = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            int[] o = off[k];
+            sc.cmd(String.format("setblock ~%d ~ ~%d minecraft:comparator[facing=%s]", 8 + o[0], 8 + o[1], dirs[k]));
+            sc.cmd(String.format("setblock ~%d ~ ~%d minecraft:redstone_wire", 8 + 2 * o[0], 8 + 2 * o[1]));
+            if (k >= 2) {
+                // Through a block (comparators read a container behind a conductor too).
+                sc.cmd(String.format("setblock ~%d ~ ~%d minecraft:redstone_lamp", 8 + 3 * o[0], 8 + 3 * o[1]));
+            }
+            sc.tick(4).eye(8, 100, 8).tick(4);
+            out.add(sc);
+        }
     }
 
     // ---------------------------------------------------------------- runner
@@ -249,6 +345,7 @@ public class BlockTickVectors {
                 case "tick" -> {
                     for (int i = 0; i < (Integer) op[1]; i++) tickLevel();
                 }
+                case "eye" -> useEye(new BlockPos(x0 + (Integer) op[1], (Integer) op[2], z0 + (Integer) op[3]));
                 case "set" -> {
                     BlockPos p = new BlockPos(x0 + (Integer) op[1], (Integer) op[2], z0 + (Integer) op[3]);
                     var parsed = BlockStateParser.parseForBlock(level.registryAccess().lookupOrThrow(net.minecraft.core.registries.Registries.BLOCK), (String) op[4], false);
@@ -266,6 +363,22 @@ public class BlockTickVectors {
         m.put("ops", ops);
         m.put("results", results);
         return toJson(m);
+    }
+
+    static net.minecraft.server.level.ServerPlayer fakePlayer;
+
+    /** `ItemStack.useOn` of an eye of ender clicked on the top of the block at `pos` by a survival player standing four blocks above it. */
+    static void useEye(BlockPos pos) {
+        if (fakePlayer == null) {
+            var profile = new com.mojang.authlib.GameProfile(java.util.UUID.nameUUIDFromBytes(new byte[] {1}), "Kiln");
+            fakePlayer = new net.minecraft.server.level.ServerPlayer(server, level, profile, net.minecraft.server.level.ClientInformation.createDefault());
+        }
+        fakePlayer.setPos(pos.getX() + 0.5, pos.getY() + 4, pos.getZ() + 0.5);
+        var hand = net.minecraft.world.InteractionHand.MAIN_HAND;
+        var stack = new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.ENDER_EYE);
+        fakePlayer.setItemInHand(hand, stack);
+        var hit = new net.minecraft.world.phys.BlockHitResult(net.minecraft.world.phys.Vec3.atCenterOf(pos).add(0, 0.5, 0), net.minecraft.core.Direction.UP, pos, false);
+        stack.useOn(new net.minecraft.world.item.context.UseOnContext(fakePlayer, hand, hit));
     }
 
     static void randomTickArea(int x0, int z0) {
@@ -407,7 +520,7 @@ public class BlockTickVectors {
     }
 
     static MinecraftServer awaitServer() throws Exception {
-        for (int i = 0; i < 600; i++) {
+        for (int i = 0; i < 3000; i++) {
             for (Thread t : Thread.getAllStackTraces().keySet()) {
                 if (!t.getName().equals("Server thread")) continue;
                 Field holderField = Thread.class.getDeclaredField("holder");

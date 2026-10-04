@@ -38,6 +38,7 @@ mod jukebox;
 mod golems;
 mod glide;
 mod slide;
+mod end_eye;
 mod firework;
 mod boats;
 mod carts;
@@ -1920,6 +1921,7 @@ impl Sim {
             },
             fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
             dragon_fight: self.fight_env(dim),
+            pipeline: self.world.pipelines.get(dim).cloned().flatten(),
             // Only asked whether any is near (in no order).
             fire_watchers: std::sync::Arc::new(self.players.values().filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()),
             raids: self.dims[dim].raids.views.clone(),

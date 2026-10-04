@@ -160,6 +160,10 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
                     level.tick(0, &[]);
                 }
             }
+            // An eye of ender used on the top of a block (`EnderEyeItem.useOn`; the item is the player's).
+            "eye" => {
+                crate::behaviour::end_portal::insert_eye(&mut level, BlockPos::new(x0 + at(op, 1), at(op, 2), z0 + at(op, 3)));
+            }
             "set" => {
                 let s = state::parse_state(op[4].as_str().unwrap()).expect("state");
                 crate::update::set_block(&mut level, BlockPos::new(x0 + at(op, 1), at(op, 2), z0 + at(op, 3)), s, flags::ALL);

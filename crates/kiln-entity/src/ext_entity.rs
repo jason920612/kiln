@@ -13,6 +13,7 @@ pub mod area_effect_cloud;
 pub mod evoker_fangs;
 pub mod dragon_fireball;
 pub mod end_crystal;
+pub mod eye_of_ender;
 pub mod fireball;
 pub mod minecart;
 pub mod firework;
@@ -123,6 +124,8 @@ pub const TYPES: &[&str] = &[
     "minecraft:llama_spit",
     // -- wp32: leads
     "minecraft:leash_knot",
+    // -- wp44: the End
+    "minecraft:eye_of_ender",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -142,6 +145,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:wither_skull" => wither_skull::load(r),
         "minecraft:llama_spit" => llama_spit::load(r),
         "minecraft:leash_knot" => leash_knot::load(r),
+        "minecraft:eye_of_ender" => eye_of_ender::load(r),
         _ => None,
     }
 }

@@ -86,6 +86,15 @@ fn spawn(spec: &Value) -> Entity {
             };
             projectile::new(id, 0, kind, vec3(&spec["pos"]), vec3(&spec["motion"]), None, seed)
         }
+        "eye_of_ender" => {
+            use kiln_entity::ext_entity::eye_of_ender;
+            let mut e = eye_of_ender::new(vec3(&spec["pos"]), &ItemStack::of("minecraft:ender_eye", 1).unwrap(), seed);
+            e.id = id;
+            if let Some(t) = spec.get("target") {
+                eye_of_ender::signal_to(&mut e, vec3(&t[0]));
+            }
+            e
+        }
         "minecart" => {
             let mut e = kiln_entity::ext_entity::minecart::new("minecraft:minecart", vec3(&spec["pos"]), seed);
             e.id = id;
@@ -184,6 +193,10 @@ fn state(e: &Entity) -> Vec<f64> {
         EntityKind::Ext(_) if kiln_entity::ext_entity::get::<kiln_entity::ext_entity::firework::Firework>(e).is_some() => {
             let r = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::firework::Firework>(e).unwrap();
             out.extend([r.life as f64, r.lifetime as f64]);
+        }
+        EntityKind::Ext(_) if kiln_entity::ext_entity::get::<kiln_entity::ext_entity::eye_of_ender::EyeOfEnder>(e).is_some() => {
+            let x = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::eye_of_ender::EyeOfEnder>(e).unwrap();
+            out.extend([x.life as f64, b(x.survive_after_death)]);
         }
         EntityKind::Ext(_) if kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e).is_some() => {
             let cart = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::minecart::Minecart>(e).unwrap();
