@@ -521,3 +521,110 @@ fn bamboo_sapling_random_tick<L: Level>(level: &mut L, pos: BlockPos) {
         set_block_and_update(level, pos.above(), small);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_level::TestLevel;
+
+    fn level() -> TestLevel {
+        let mut l = TestLevel::flat(-64, 384, &[d::BEDROCK]);
+        l.load_chunks((-2, -2), (2, 2));
+        l
+    }
+
+    fn rt(l: &mut TestLevel, pos: BlockPos) {
+        let s = l.block(pos);
+        random_tick(l, s, pos);
+    }
+
+    fn farmland(l: &mut TestLevel, x0: i32, z0: i32, x1: i32, z1: i32, moisture: i32) {
+        for x in x0..=x1 {
+            for z in z0..=z1 {
+                l.set_raw(BlockPos::new(x, 63, z), state::set_int(d::FARMLAND, "moisture", moisture), flags::NONE);
+            }
+        }
+    }
+
+    #[test]
+    fn growth_speed_counts_soil_and_rows() {
+        let mut l = level();
+        let at = BlockPos::new(0, 64, 0);
+        farmland(&mut l, -1, -1, 1, 1, 7);
+        l.set_raw(at, d::WHEAT, flags::NONE);
+        assert_eq!(growth_speed(&l, d::WHEAT, at), 10.0);
+        farmland(&mut l, -1, -1, 1, 1, 0);
+        assert_eq!(growth_speed(&l, d::WHEAT, at), 4.0);
+        farmland(&mut l, -1, -1, 1, 1, 7);
+        l.set_raw(at.offset(1, 0, 0), d::WHEAT, flags::NONE);
+        assert_eq!(growth_speed(&l, d::WHEAT, at), 10.0, "a neighbour on one axis alone costs nothing");
+        l.set_raw(at.offset(0, 0, 1), d::WHEAT, flags::NONE);
+        assert_eq!(growth_speed(&l, d::WHEAT, at), 5.0, "neighbours on both axes halve it");
+        l.set_raw(at.offset(0, 0, 1), d::AIR, flags::NONE);
+        l.set_raw(at.offset(1, 0, 0), d::AIR, flags::NONE);
+        l.set_raw(at.offset(1, 0, 1), d::WHEAT, flags::NONE);
+        assert_eq!(growth_speed(&l, d::WHEAT, at), 5.0, "so does a diagonal one");
+        l.set_raw(at.offset(1, 0, 1), d::CARROTS, flags::NONE);
+        assert_eq!(growth_speed(&l, d::WHEAT, at), 10.0, "another crop does not count");
+    }
+
+    #[test]
+    fn farmland_dries_out_and_turns_to_dirt() {
+        let mut l = level();
+        let at = BlockPos::new(0, 63, 0);
+        farmland(&mut l, 0, 0, 0, 0, 2);
+        rt(&mut l, at);
+        assert_eq!(state::get_int(l.block(at), "moisture"), 1);
+        rt(&mut l, at);
+        rt(&mut l, at);
+        assert!(state::is(l.block(at), d::DIRT), "no water, no crop: dirt");
+        // Water within four blocks (one level up counts) wets it, a crop keeps it.
+        farmland(&mut l, 0, 0, 0, 0, 0);
+        l.set_raw(BlockPos::new(4, 64, 4), d::WATER, flags::NONE);
+        rt(&mut l, at);
+        assert_eq!(state::get_int(l.block(at), "moisture"), 7);
+        l.set_raw(BlockPos::new(4, 64, 4), d::AIR, flags::NONE);
+        farmland(&mut l, 0, 0, 0, 0, 0);
+        l.set_raw(at.above(), d::WHEAT, flags::NONE);
+        rt(&mut l, at);
+        assert!(state::is(l.block(at), d::FARMLAND), "a crop on it keeps it");
+    }
+
+    #[test]
+    fn sugar_cane_needs_water_beside_its_ground_and_breaks_without() {
+        let mut l = level();
+        let ground = BlockPos::new(0, 63, 0);
+        l.set_raw(ground, d::SAND, flags::NONE);
+        l.set_raw(ground.offset(1, 0, 0), d::WATER, flags::NONE);
+        let cane = ground.above();
+        l.set_raw(cane, d::SUGAR_CANE, flags::NONE);
+        assert!(can_survive(&l, d::SUGAR_CANE, cane) == Some(true));
+        l.set_raw(ground.offset(1, 0, 0), d::AIR, flags::NONE);
+        assert!(can_survive(&l, d::SUGAR_CANE, cane) == Some(false));
+        let s = l.block(cane);
+        assert_eq!(update_shape(&mut l, s, cane, Direction::East, d::AIR), Some(s));
+        assert!(l.block_ticks().has_scheduled_tick(cane, BlockId::of(s)), "the check is scheduled");
+        tick(&mut l, s, cane);
+        assert!(is_air(l.block(cane)));
+        assert!(l.effects.iter().any(|e| matches!(e, Effect::Drop { pos, .. } if *pos == cane)));
+    }
+
+    #[test]
+    fn cactus_grows_until_three_high_and_pops_beside_a_solid_block() {
+        let mut l = level();
+        l.set_raw(BlockPos::new(0, 63, 0), d::SAND, flags::NONE);
+        let base = BlockPos::new(0, 64, 0);
+        l.set_raw(base, state::set_int(d::CACTUS, "age", 15), flags::NONE);
+        rt(&mut l, base);
+        assert!(state::is(l.block(base.above()), d::CACTUS), "age 15 starts the next block");
+        assert_eq!(state::get_int(l.block(base), "age"), 0);
+        l.set_raw(base.above(), state::set_int(d::CACTUS, "age", 15), flags::NONE);
+        rt(&mut l, base.above());
+        assert!(state::is(l.block(base.offset(0, 2, 0)), d::CACTUS));
+        l.set_raw(base.offset(0, 2, 0), state::set_int(d::CACTUS, "age", 15), flags::NONE);
+        rt(&mut l, base.offset(0, 2, 0));
+        assert!(is_air(l.block(base.offset(0, 3, 0))), "three high is the limit");
+        l.set_raw(base.offset(1, 0, 0), d::STONE, flags::NONE);
+        assert_eq!(can_survive(&l, d::CACTUS, base), Some(false));
+    }
+}
