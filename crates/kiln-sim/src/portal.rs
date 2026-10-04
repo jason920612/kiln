@@ -421,7 +421,11 @@ impl Sim {
     /// `Entity.getDimensionChangingDelay` (300 ticks) before another trip. It arrives as a
     /// copy with a new network id, as vanilla's `teleportCrossDimension` makes one; end
     /// gateways and riders are not handled.
-    pub(crate) fn entity_portals(&mut self) {
+    ///
+    /// `only`: the entities the regions found may touch a portal block ([`portal_candidates`]),
+    /// sorted, and the first id given out after the regions ran: only those and the newer ones
+    /// are looked at (`None`: every entity, when blocks or entities may have changed since).
+    pub(crate) fn entity_portals(&mut self, only: Option<(&[(DimId, i32)], i32)>) {
         const ENTITY_PORTAL_COOLDOWN: i64 = 300;
         let now = self.game_time;
         let mut trips = Vec::new();
@@ -431,7 +435,8 @@ impl Sim {
                 // `EnderDragon.canUsePortal`: never.
                 // `Creaking.canUsePortal`: not while bound to a heart.
                 for e in r.part().0.list.iter().filter(|e| {
-                    !e.removed
+                    only.is_none_or(|(ids, first_new)| e.id >= first_new || ids.binary_search(&(dim, e.id)).is_ok())
+                        && !e.removed
                         && e.kind.name != "minecraft:ender_dragon"
                         && !d.portal_cooldowns.contains_key(&e.uuid.as_u128())
                         // `canUsePortal(false)`: a passenger does not (its vehicle does, with it).
@@ -528,6 +533,47 @@ impl Sim {
         }
     }
 
+}
+
+/// The region's entities whose box may meet a nether or end portal block, as the region's cells
+/// stand (a box in a chunk the region does not have counts): only the sections whose palette
+/// has a portal block are looked at, so a region without portals finds none at once.
+pub(crate) fn portal_candidates(entities: &crate::entities::Entities, cells: &kiln_region::CellSet<kiln_world::Cell>, min_y: i32) -> Vec<i32> {
+    let is_portal = |s: u16| {
+        let first = kiln_data::blocks_types::block_of(s).first;
+        first == block::NETHER_PORTAL || first == block::END_PORTAL
+    };
+    let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
+    let mut out = Vec::new();
+    for e in entities.list.iter().filter(|e| !e.removed) {
+        let Some(phys) = e.phys.as_deref() else { continue };
+        // The box `entity_portals` looks in.
+        let half = phys.width as f64 / 2.0 - 1.0e-5;
+        let lo = [e.pos[0] - half, e.pos[1] + 1.0e-5, e.pos[2] - half].map(|c| c.floor() as i32);
+        let hi = [e.pos[0] + half, e.pos[1] + phys.height as f64 - 1.0e-5, e.pos[2] + half].map(|c| c.floor() as i32);
+        let mut any = false;
+        'sections: for sx in lo[0] >> 4..=hi[0] >> 4 {
+            for sz in lo[2] >> 4..=hi[2] >> 4 {
+                for sy in (lo[1] - min_y) >> 4..=(hi[1] - min_y) >> 4 {
+                    any |= *may_have.entry((sx, sy, sz)).or_insert_with(|| match cells.chunk(ChunkPos::new(sx, sz)) {
+                        // Outside the level's height: air.
+                        Some(c) => usize::try_from(sy).ok().and_then(|i| c.sections.get(i)).is_some_and(|s| s.blocks.maybe_has(is_portal)),
+                        None => true,
+                    });
+                    if any {
+                        break 'sections;
+                    }
+                }
+            }
+        }
+        if any {
+            out.push(e.id);
+        }
+    }
+    out
+}
+
+impl Sim {
     /// `TeleportTransition.PLAY_PORTAL_SOUND`.
     fn portal_sound(&mut self, conn: ConnId) {
         if let Some(p) = self.players.get_mut(&conn) {

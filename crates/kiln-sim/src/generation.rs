@@ -9,6 +9,17 @@ use std::collections::HashSet;
 /// Chunks queued or being generated at most; further requests wait for the next tick.
 const MAX_IN_FLIGHT: usize = 256;
 
+/// Chunks the generation threads finished and the time they took (all levels, since start).
+static GENERATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static GENERATING_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many chunks the generation threads have made since start, and the time they spent on
+/// them (summed over the threads), for load tools.
+pub fn generation_totals() -> (u64, std::time::Duration) {
+    use std::sync::atomic::Ordering::Relaxed;
+    (GENERATED.load(Relaxed), std::time::Duration::from_nanos(GENERATING_NS.load(Relaxed)))
+}
+
 pub(crate) struct GenPool {
     requests: Sender<ChunkPos>,
     results: Receiver<(ChunkPos, Chunk)>,
@@ -26,8 +37,11 @@ impl GenPool {
                 .name(format!("kiln-gen-{i}"))
                 .spawn(move || {
                     for pos in jobs {
+                        let t = std::time::Instant::now();
                         let mut chunk = generator.generate(pos, dimension);
                         chunk.mark_new();
+                        GENERATING_NS.fetch_add(t.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
+                        GENERATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if done.send((pos, chunk)).is_err() {
                             break;
                         }
@@ -49,6 +63,11 @@ impl GenPool {
         self.in_flight.insert(pos);
         let _ = self.requests.send(pos);
         true
+    }
+
+    /// Chunks queued or being generated.
+    pub fn in_flight(&self) -> usize {
+        self.in_flight.len()
     }
 
     pub fn is_queued(&self, pos: ChunkPos) -> bool {

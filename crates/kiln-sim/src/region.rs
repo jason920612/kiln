@@ -69,6 +69,9 @@ pub(crate) struct RegionOut {
     /// Entities that came out of saved compounds this phase (what sat on a player's shoulder),
     /// to be loaded like the ones a chunk brings.
     pub saved_entities: Vec<kiln_proto::nbt::Tag>,
+    /// Entities that may be touching a nether or end portal block at the end of the tick (the
+    /// only ones [`crate::Sim::entity_portals`] looks at, with the entities spawned after).
+    pub portal_candidates: Vec<i32>,
     /// CPU time per sub-phase, for the statistics.
     pub times: [Duration; SUB_PHASES.len()],
     /// Of which in split windows (owner's wall time).
@@ -495,6 +498,7 @@ impl RegionWork<'_> {
         crate::diag::lap("mv.track", dt);
         mark(&mut self.out.times, 6);
         self.send_light_updates();
+        self.out.portal_candidates = crate::portal::portal_candidates(self.entities, self.cells, env.min_y);
         mark(&mut self.out.times, 7);
         for p in self.players.iter_mut() {
             self.out.saved_entities.append(&mut p.released_shoulders);

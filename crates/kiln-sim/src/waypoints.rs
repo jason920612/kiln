@@ -163,11 +163,28 @@ fn each_bit(words: impl Iterator<Item = u64>) -> impl Iterator<Item = usize> {
 /// A receiver's connections by the transmitter's slot, with the sets of transmitters it has
 /// a block, chunk and azimuth connection from (so a turn can tell which steps may send
 /// anything without looking at each connection).
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone)]
 struct Row {
     data: Vec<Stored>,
     /// Block, chunk and azimuth connections.
     kinds: [Bits; 3],
+    /// Each azimuth connection's quiet deadline ([`azimuth_deadline`]) rounded down to `f32`, 0
+    /// elsewhere, side by side (as long as `data`): a turn compares a word of slots at a time
+    /// against the odometers instead of visiting each connection.
+    deadlines: Vec<f32>,
+}
+
+/// Equal connections; the deadlines are a cache.
+impl PartialEq for Row {
+    fn eq(&self, other: &Row) -> bool {
+        self.data == other.data && self.kinds == other.kinds
+    }
+}
+
+/// `d` rounded down to `f32` (a deadline that comes no later).
+fn round_down(d: f64) -> f32 {
+    let f = d as f32;
+    if f64::from(f) > d { f.next_down() } else { f }
 }
 
 impl Row {
@@ -182,9 +199,11 @@ impl Row {
                 return None;
             }
             self.data.resize(s + 1, Stored::NONE);
+            self.deadlines.resize(s + 1, 0.0);
         }
         let new = Stored::of(c);
         let old = std::mem::replace(&mut self.data[s], new);
+        self.deadlines[s] = 0.0;
         let (was, now) = ((old.meta & 3) as usize, (new.meta & 3) as usize);
         if was != now {
             if was != 0 {
@@ -433,7 +452,9 @@ fn azimuth_deadline(odo: f64, src: &Snap, me: &Snap, now: f32, told: f32) -> f64
     let far = dist - f64::from(REALLY_FAR) - 0.05;
     let slack = f64::from(AZIMUTH_STEP) - f64::from((now - told).abs()) - 2.0 * ATAN2_ERROR - 1e-5;
     let cut = std::f64::consts::PI - f64::from(now.abs()) - ATAN2_ERROR - 1e-5;
-    let turn = slack.min(cut) * horizontal / std::f64::consts::FRAC_PI_2;
+    // An offset `horizontal` long moved by `b` turns by at most `asin(b / horizontal)`.
+    let turn = horizontal * slack.min(cut).min(std::f64::consts::FRAC_PI_2).sin() * (1.0 - 1e-9);
+
     let budget = far.min(turn) - 1e-6;
     if budget <= 0.0 { 0.0 } else { odo + budget }
 }
@@ -705,14 +726,17 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
                 & !t.spectators[i]
                 & ((k1 & (t.settled_block[i] | st)) | (k2 & (t.settled_chunk[i] | st) & !vis[i]));
             let mut open = among(i) & t.present[i] & !quiet;
-            let mut azimuths = open & word(&row.kinds[2], i) & unbreakable(i);
-            while azimuths != 0 {
-                let b = azimuths.trailing_zeros() as usize;
-                azimuths &= azimuths - 1;
-                let s = i * 64 + b;
-                if t.odo[s] + odo_r < row.data[s].deadline() {
-                    open &= !(1 << b);
+            let azimuths = open & word(&row.kinds[2], i) & unbreakable(i);
+            if azimuths != 0 {
+                // The word's connections before their deadlines, all 64 compared at once.
+                let at = (i * 64).min(row.deadlines.len());
+                let deadlines = &row.deadlines[at..(at + 64).min(row.deadlines.len())];
+                let odo = &t.odo[at.min(t.odo.len())..(at + deadlines.len()).min(t.odo.len())];
+                let mut before = 0u64;
+                for (k, (&o, &d)) in odo.iter().zip(deadlines).enumerate() {
+                    before |= u64::from(o + odo_r < f64::from(d)) << k;
                 }
+                open &= !(azimuths & before);
             }
             open
         });
@@ -790,8 +814,10 @@ fn full_step(row: &mut Row, r: usize, s: usize, me: &Snap, t: &Turns, out: &mut 
             } else {
                 (stored, last)
             };
-            new.set_deadline(azimuth_deadline(odo, src, me, now, told));
+            let deadline = azimuth_deadline(odo, src, me, now, told);
+            new.set_deadline(deadline);
             row.data[s] = new;
+            row.deadlines[s] = round_down(deadline);
             return;
         }
     }
