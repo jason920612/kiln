@@ -1452,6 +1452,7 @@ summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b,Passengers:[{id:"minecraft:pig",
 execute as @e[tag=s5] on vehicle if entity @s[type=minecraft:pig]
 ! kill @e[type=!minecraft:player]
 # execute on controller (wp41): getControllingPassenger of boats, saddled mounts and mob mounts
+! fill 2 100 2 8 100 8 stone
 ! summon minecraft:horse 5 101 5 {Silent:1b,Tags:["c0"],Passengers:[{id:"minecraft:pig",NoAI:1b,Silent:1b,Tags:["c1"]}]}
 execute as @e[tag=c0] on controller if entity @s[tag=c1]
 execute as @e[tag=c0] on controller if entity @s[type=minecraft:pig]
@@ -1499,6 +1500,7 @@ execute as @e[tag=c5] on controller if entity @s[name=Diff0]
 execute as @e[tag=c5] on controller if entity @s
 ! ride Diff0 dismount
 ! kill @e[type=!minecraft:player]
+! fill 2 100 2 8 100 8 air
 ! gamerule mob_drops true
 ! difficulty peaceful
 

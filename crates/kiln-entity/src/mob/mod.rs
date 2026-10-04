@@ -1072,8 +1072,9 @@ fn register_goals(m: &mut MobData) {
                 *spider = true;
             }
             t.add(2, sp.clone());
+            // `SpiderTargetGoal<IronGolem>`.
             if let Goal::NearestAttackable { wanted, .. } = &mut sp {
-                *wanted = Wanted::Unsimulated;
+                *wanted = Wanted::Types(kinds::zombie::IRON_GOLEM);
             }
             t.add(3, sp);
         }
@@ -2258,8 +2259,9 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
 
 /// `vehicle.push(mob)` for a boat or minecart touched by mob `e` (`LivingEntity.doPush`). A boat
 /// takes it only when the mob's box starts no higher than the boat's bottom (`AbstractBoat.push`),
-/// then the two are pushed apart by `Entity.push` (neither with riders); a minecart pushes
-/// itself back by a tenth of that, and the mob by a quarter of that, whatever either carries.
+/// then the two are pushed apart by `Entity.push` (neither with riders); a minecart is pushed
+/// away by 0.05 (0.1 * 0.5 of the unit vector) and the mob by a quarter of that, whatever either
+/// carries.
 fn push_vehicle(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, id: i32) {
     let Some(o) = level.entity(id) else { return };
     if e.no_physics || o.no_physics {

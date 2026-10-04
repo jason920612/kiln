@@ -129,6 +129,15 @@ python tools/mob_vectors.py --filter "kill_villager|ench_" --out work/wp36/mob_w
 KILN_MOB_VECTORS=work/wp36/mob_wp36.jsonl KILN_DATAPACK=work/generated cargo test -p kiln-entity --test mob_parity
                                      # zombies that kill villagers (conversion by difficulty, villager
                                      # data kept) and mobs' enchanted spears (ench_* need the datapack)
+python tools/mob_vectors.py --filter "push_|avoid_|spider_golem" --out work/wp41/mob_wp41.jsonl
+                                     # mobs bumping into boats and minecarts (the vehicles' motion is traced too,
+                                     # bit for bit) and the monsters that run from cats, wolves, armadillos and
+                                     # creakings or hunt iron golems; replay: KILN_MOB_VECTORS=<file> cargo test -p
+                                     # kiln-entity --test mob_parity
+python tools/combat_vectors.py --filter spear --out work/wp41/combat/vectors.jsonl
+KILN_WORK=work KILN_SPEAR_VECTORS=work/wp41/combat/spear.jsonl cargo test -p kiln-sim --lib spear_parity
+                                     # (without KILN_PARITY_FILTER) spears and fists turning fireballs and wind
+                                     # charges around (stab_projectile, melee_projectile) and stabbing boats and carts
 python tools/container_vectors.py --filter jukebox --out work/wp36/containers/vectors.jsonl
 KILN_CONTAINER_VECTORS=work/wp36/containers/vectors.jsonl cargo test -p kiln-sim container_parity
                                      # jukeboxes (song end, comparator, hoppers, power) tick by tick

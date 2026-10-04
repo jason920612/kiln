@@ -317,7 +317,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
         // charge hit by a stab with knockback flies on along the wielder's look. Without the
         // knockback the stab hurts nothing (`AbstractHurtingProjectile.hurtServer` is false).
         if let Victim::Entity(id) = victim
-            && let Some(i) = self.entities.list.binary_search_by_key(&id, |e| e.id).ok()
+            && let Ok(i) = self.entities.list.binary_search_by_key(&id, |e| e.id)
             && self.entities.list[i].phys.as_deref().is_some_and(|e| matches!(classify(e), EntityClass::Redirectable))
         {
             if !s.knockback {

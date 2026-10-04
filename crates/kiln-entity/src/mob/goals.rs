@@ -21,9 +21,6 @@ pub enum Wanted {
     /// Players at most this many blocks above or below the mob (slimes, magma cubes, ghasts:
     /// `Math.abs(target.getY() - getY()) <= 4`).
     PlayerWithinDy(u8),
-    /// A type Kiln does not simulate yet (turtles, ...): the search always comes back empty,
-    /// but the goal still draws its randomness.
-    Unsimulated,
     /// Mobs of these types (`getNearestEntity` over `getEntitiesOfClass` in the follow range box).
     Types(&'static [&'static str]),
     /// `Turtle.class` with `Turtle.BABY_ON_LAND_SELECTOR`: baby turtles out of the water.
@@ -711,7 +708,6 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                     let (y, dy) = (e.y(), *dy as f64);
                     nearest_attackable_player(e, m, level, range, |p| (p.pos.y - y).abs() <= dy).map(|p| p.id)
                 }
-                Wanted::Unsimulated => None,
                 Wanted::Types(types) => nearest_mob(e, m, level, range, true, types),
                 Wanted::BabyTurtlesOnLand => {
                     let on_land = |id: i32| level.entity(id).is_some_and(|o| !o.is_in_water() && super::data(o).is_some_and(|om| om.baby()));

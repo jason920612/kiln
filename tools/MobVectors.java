@@ -1746,6 +1746,22 @@ public class MobVectors {
                 }
             }
         }
+        // A boat takes a push only from what starts no higher than its bottom (`AbstractBoat.push`):
+        // a floating pig above it, one level with it and one below its bottom; a cart takes any.
+        for (String vehicle : new String[] {"minecraft:oak_boat", "minecraft:minecart"}) {
+            for (double dy : new double[] {0.4, 0.0, -0.3}) {
+                Scenario s = new Scenario("push_" + vehicle.substring(10) + "_level" + Math.round(dy * 10));
+                floor(s, 20, "minecraft:stone");
+                MobSpec m = new MobSpec("minecraft:pig", 0.9, BY + dy, 0.5, 90f, 41300L + n);
+                m.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b,NoGravity:1b}";
+                s.mobs.add(m);
+                s.others.add(new MobSpec(vehicle, 0.5, BY, 0.5, 0f, 41700L + n));
+                s.levelSeed = 780 + n;
+                s.ticks = 40;
+                out.add(s);
+                n++;
+            }
+        }
         // Two boats and a mob between them, a boat and a cart, two boats.
         {
             Scenario s = new Scenario("push_two_boats_pig");
@@ -1808,6 +1824,23 @@ public class MobVectors {
                 out.add(s);
                 n++;
             }
+        }
+        // Spiders (at night) hunt iron golems too (`SpiderTargetGoal<IronGolem>`).
+        for (double d : new double[] {4.0, 8.0}) {
+            Scenario s = new Scenario("avoid_spider_golem_target_" + (int) d);
+            floor(s, 24, "minecraft:stone");
+            MobSpec a = new MobSpec("minecraft:spider", 0.5, BY, 0.5, 0f, 42300L + (int) d);
+            a.nbt = "{PersistenceRequired:1b,Silent:1b}";
+            MobSpec b = new MobSpec("minecraft:iron_golem", 0.5 + d, BY, 0.5, 90f, 42310L + (int) d);
+            b.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+            s.mobs.add(a);
+            s.mobs.add(b);
+            s.player = new double[] {-20.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 898 + (int) d;
+            s.ticks = 100;
+            out.add(s);
         }
         // A scared armadillo is no reason to run.
         {
