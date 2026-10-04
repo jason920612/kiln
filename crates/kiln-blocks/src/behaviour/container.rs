@@ -70,6 +70,16 @@ pub fn chest_placement<L: Level + ?Sized>(level: &L, d: u16, pos: BlockPos, hori
 /// `ChestBlock.updateShape` (after the waterlogged check): a single chest joins a neighbour
 /// that became its other half; a double chest whose other half left becomes single.
 pub fn chest_update_shape(s: u16, dir: Direction, neighbor: u16) -> u16 {
+    let r = chest_update_shape_base(s, dir, neighbor);
+    // `CopperChestBlock.updateShape`: a half of a double chest takes the weathering stage of the
+    // half it is connected to (the neighbour's block with its own properties).
+    if is_copper_chest(s) && is_copper_chest(neighbor) && state::get(r, "type") != Some("single") && connected_direction(r) == dir {
+        return state::with_properties_of(BlockId::of(neighbor).default_state(), r);
+    }
+    r
+}
+
+fn chest_update_shape_base(s: u16, dir: Direction, neighbor: u16) -> u16 {
     if chest_can_connect_to(s, neighbor) && dir.is_horizontal() {
         let other = state::get(neighbor, "type").unwrap_or("single");
         if state::get(s, "type") == Some("single")

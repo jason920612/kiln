@@ -146,6 +146,162 @@ public class BlockTickVectors {
     // ================================================================ family: misc
     // copper oxidation, turtle eggs, redstone ore, budding amethyst, dripstone, lightning rods
     static void scenariosMisc(List<Sc> out) {
+        miscCopper(out);
+    }
+
+    /** A setup command placing `block` at area-relative x, y (absolute), z. */
+    static Sc miscPut(Sc sc, int x, int y, int z, String block) {
+        return sc.cmd(String.format("setblock ~%d ~%d ~%d %s", x, y - Y0, z, block));
+    }
+
+    // Copper: every shape class of the weathering family, alone (5 apart: nothing in each other's
+    // scan), in clusters of stages, and waxed ones among them.
+    static void miscCopper(List<Sc> out) {
+        String[][] isoA = {
+            {"copper_block", "cut_copper", "chiseled_copper"},
+            {"cut_copper_stairs[facing=east,half=top,shape=straight]", "cut_copper_slab[type=double]", "cut_copper_slab[type=top]"},
+            {"exposed_copper", "weathered_cut_copper", "exposed_chiseled_copper"},
+        };
+        String[][] isoB = {
+            {"copper_grate", "copper_grate", "copper_bulb[lit=true]"},
+            {"copper_bulb[lit=false,powered=true]", "copper_trapdoor[open=true,facing=north,half=top]", "copper_trapdoor[open=false,facing=west,half=bottom]"},
+            {"exposed_copper_bulb[lit=true,powered=true]", "weathered_copper_grate", "exposed_copper_trapdoor[open=true,half=top]"},
+        };
+        String[][] isoC = {
+            {"copper_chain[axis=x]", "copper_bars", "copper_lantern[hanging=false]"},
+            {"lightning_rod[facing=up]", "lightning_rod[facing=east,powered=true]", "exposed_lightning_rod[facing=down]"},
+            {"copper_chest[facing=south]", "copper_golem_statue[facing=east,copper_golem_pose=sitting]", "weathered_copper_chain[axis=z]"},
+        };
+        String[][][] iso = {isoA, isoB, isoC};
+        String[] isoNames = {"a", "b", "c"};
+        for (int k = 0; k < 3; k++) {
+            Sc sc = new Sc("misc_copper_iso_" + isoNames[k], 100 + k);
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) miscPut(sc, 1 + i * 5, 100, 1 + j * 5, iso[k][i][j]);
+            sc.rtTick(120, 2);
+            out.add(sc);
+        }
+        // Doors (both halves), alone.
+        {
+            Sc sc = new Sc("misc_copper_doors", 110);
+            String[] doors = {"copper_door", "exposed_copper_door", "weathered_copper_door"};
+            for (int i = 0; i < 3; i++)
+                for (int j = 0; j < 3; j++) {
+                    String props = String.format("facing=%s,hinge=%s,open=%s,powered=false", new String[] {"north", "east", "south"}[i], j == 1 ? "right" : "left", j == 2 ? "true" : "false");
+                    miscPut(sc, 1 + i * 5, 100, 1 + j * 5, "minecraft:" + doors[j] + "[half=lower," + props + "]");
+                    miscPut(sc, 1 + i * 5, 101, 1 + j * 5, "minecraft:" + doors[j] + "[half=upper," + props + "]");
+                }
+            sc.rtTick(150, 2);
+            out.add(sc);
+        }
+        // Chests: single, double (left and right halves), trapped-like facing variants.
+        {
+            Sc sc = new Sc("misc_copper_chests", 111);
+            miscPut(sc, 1, 100, 1, "copper_chest[facing=north,type=single]");
+            miscPut(sc, 6, 100, 1, "copper_chest[facing=north,type=left]");
+            miscPut(sc, 7, 100, 1, "copper_chest[facing=north,type=right]");
+            miscPut(sc, 1, 100, 8, "copper_chest[facing=east,type=left]");
+            miscPut(sc, 1, 100, 9, "copper_chest[facing=east,type=right]");
+            miscPut(sc, 12, 100, 1, "exposed_copper_chest[facing=south,type=single]");
+            miscPut(sc, 12, 100, 8, "weathered_copper_chest[facing=west,type=single]");
+            miscPut(sc, 6, 100, 12, "copper_chest[facing=south,type=left]");
+            miscPut(sc, 5, 100, 12, "copper_chest[facing=south,type=right]");
+            sc.rtTick(200, 2);
+            out.add(sc);
+        }
+        // Clusters: a 6x6 slab of copper blocks (the chance is small while the neighbours are
+        // alike), a 5x5x3 cube, layers of stages.
+        {
+            Sc sc = new Sc("misc_copper_slab_cluster", 120);
+            sc.cmd("fill ~2 ~ ~2 ~7 ~ ~7 minecraft:copper_block");
+            sc.rt(400);
+            out.add(sc);
+        }
+        {
+            Sc sc = new Sc("misc_copper_cube", 121);
+            sc.cmd("fill ~2 ~ ~2 ~6 ~2 ~6 minecraft:cut_copper");
+            sc.rt(500);
+            out.add(sc);
+        }
+        {
+            Sc sc = new Sc("misc_copper_stages", 122);
+            sc.cmd("fill ~1 ~ ~1 ~9 ~ ~9 minecraft:copper_block",
+                    "fill ~1 ~ ~1 ~5 ~ ~5 minecraft:weathered_copper",
+                    "fill ~3 ~ ~3 ~4 ~ ~4 minecraft:oxidized_copper",
+                    "fill ~7 ~ ~7 ~9 ~ ~9 minecraft:exposed_copper",
+                    "setblock ~12 ~ ~2 minecraft:copper_block");
+            sc.rt(400);
+            out.add(sc);
+        }
+        // Waxed blocks never change and do not count as neighbours.
+        {
+            Sc sc = new Sc("misc_copper_waxed", 123);
+            sc.cmd("fill ~1 ~ ~1 ~8 ~ ~8 minecraft:waxed_copper_block",
+                    "fill ~4 ~ ~4 ~5 ~ ~5 minecraft:copper_block",
+                    "fill ~11 ~ ~1 ~13 ~ ~3 minecraft:waxed_cut_copper_stairs[facing=north]",
+                    "setblock ~12 ~ ~2 minecraft:cut_copper_stairs[facing=north]",
+                    "setblock ~12 ~ ~8 minecraft:waxed_lightning_rod",
+                    "setblock ~10 ~ ~8 minecraft:lightning_rod");
+            sc.rt(400);
+            out.add(sc);
+        }
+        // Stairs in shape-changing arrangements (the shape is recomputed when a neighbour
+        // changes stage).
+        {
+            Sc sc = new Sc("misc_copper_stairs", 124);
+            sc.cmd("fill ~1 ~ ~1 ~4 ~ ~1 minecraft:cut_copper_stairs[facing=east]",
+                    "fill ~1 ~ ~2 ~4 ~ ~2 minecraft:cut_copper_stairs[facing=south]",
+                    "fill ~7 ~ ~1 ~7 ~ ~4 minecraft:cut_copper_stairs[facing=west,half=top]",
+                    "fill ~8 ~ ~1 ~8 ~ ~4 minecraft:cut_copper_slab[type=top]",
+                    "fill ~1 ~ ~7 ~6 ~ ~7 minecraft:cut_copper_slab");
+            sc.rtTick(200, 2);
+            out.add(sc);
+        }
+        // Stairs in L shapes: pairs that age slowly and reshape their neighbours.
+        {
+            Sc sc = new Sc("misc_copper_stairs_pairs", 126);
+            sc.cmd("setblock ~1 ~ ~1 minecraft:cut_copper_stairs[facing=east]",
+                    "setblock ~2 ~ ~1 minecraft:cut_copper_stairs[facing=north]",
+                    "setblock ~7 ~ ~1 minecraft:cut_copper_stairs[facing=west,half=top]",
+                    "setblock ~7 ~ ~2 minecraft:cut_copper_stairs[facing=south,half=top]",
+                    "setblock ~1 ~ ~8 minecraft:cut_copper_stairs[facing=south]",
+                    "setblock ~2 ~ ~8 minecraft:cut_copper_stairs[facing=south]",
+                    "setblock ~2 ~ ~9 minecraft:cut_copper_stairs[facing=east]",
+                    "setblock ~12 ~ ~1 minecraft:cut_copper_stairs[facing=north]",
+                    "setblock ~12 ~ ~12 minecraft:cut_copper_slab[type=double]",
+                    "setblock ~13 ~ ~12 minecraft:cut_copper_slab[type=bottom]");
+            sc.rtTick(500, 2);
+            out.add(sc);
+        }
+        // Double chests of copper next to waxed ones: a half takes the stage of the half it joins.
+        {
+            Sc sc = new Sc("misc_copper_waxed_chests", 127);
+            miscPut(sc, 1, 100, 1, "waxed_copper_chest[facing=south,type=left]");
+            miscPut(sc, 0, 100, 1, "copper_chest[facing=south,type=right]");
+            miscPut(sc, 7, 100, 1, "copper_chest[facing=south,type=left]");
+            miscPut(sc, 6, 100, 1, "waxed_exposed_copper_chest[facing=south,type=right]");
+            miscPut(sc, 1, 100, 8, "exposed_copper_chest[facing=north,type=right]");
+            miscPut(sc, 2, 100, 8, "waxed_copper_chest[facing=north,type=left]");
+            miscPut(sc, 8, 100, 8, "copper_chest[facing=east,type=right]");
+            miscPut(sc, 8, 100, 9, "copper_chest[facing=east,type=left]");
+            sc.rtTick(400, 2);
+            out.add(sc);
+        }
+        // A powered, a lit and an open mixture of everything in one cluster.
+        {
+            Sc sc = new Sc("misc_copper_mixed", 125);
+            sc.cmd("fill ~1 ~ ~1 ~3 ~ ~3 minecraft:copper_bulb[lit=true]",
+                    "fill ~5 ~ ~1 ~7 ~ ~3 minecraft:copper_grate",
+                    "fill ~1 ~ ~5 ~3 ~ ~5 minecraft:copper_trapdoor[open=true]",
+                    "fill ~5 ~ ~5 ~5 ~3 ~5 minecraft:lightning_rod[facing=up]",
+                    "fill ~7 ~ ~5 ~9 ~ ~5 minecraft:copper_chain[axis=x]",
+                    "fill ~1 ~ ~8 ~1 ~ ~12 minecraft:copper_bars",
+                    "setblock ~7 ~ ~8 minecraft:copper_golem_statue[facing=north]",
+                    "setblock ~9 ~ ~8 minecraft:copper_lantern",
+                    "setblock ~11 ~ ~8 minecraft:copper_chest[facing=north]");
+            sc.rtTick(250, 2);
+            out.add(sc);
+        }
     }
 
     // ---------------------------------------------------------------- runner
@@ -221,8 +377,10 @@ public class BlockTickVectors {
         command("difficulty " + new String[] {"peaceful", "easy", "normal", "hard"}[sc.difficulty]);
         command(String.format("fill %d %d %d %d %d %d minecraft:air", x0 + LO, FLOOR, z0 + LO, x0 + HI, Y0 + HEIGHT - 1, z0 + HI));
         command(String.format("fill %d %d %d %d %d %d minecraft:stone", x0 + LO, FLOOR, z0 + LO, x0 + HI, FLOOR, z0 + HI));
-        for (String c : sc.setup) command(String.format("execute positioned %d %d %d run %s", x0, Y0, z0, c));
+        // The clock is reset before the setup so that what the setup schedules (water, ...) is due
+        // relative to START_TIME, not to wherever the previous scenario left the clock.
         setGameTime(START_TIME);
+        for (String c : sc.setup) command(String.format("execute positioned %d %d %d run %s", x0, Y0, z0, c));
         // Whatever the setup scheduled runs out first, so every scenario starts without pending ticks
         // (the replay places the starting blocks without updates).
         awaitLight();

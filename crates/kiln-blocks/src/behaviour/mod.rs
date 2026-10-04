@@ -6,6 +6,7 @@
 
 pub mod connect;
 pub mod container;
+pub mod copper;
 pub mod misc;
 pub mod piston;
 pub mod portal;
@@ -297,7 +298,9 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
 /// Other random-tick behaviour (crop growth, grass spread, ...) is not simulated yet; the
 /// positions are still drawn so the random-tick sequence stays aligned.
 pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
-    if logic::is_instance(s, BlockClass::LeavesBlock) {
+    if copper::is_weathering(s) {
+        copper::random_tick(level, s, pos);
+    } else if logic::is_instance(s, BlockClass::LeavesBlock) {
         misc::leaves_random_tick(level, s, pos);
     } else if logic::block_class(s) == BlockClass::LiquidBlock && logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
         crate::fire::lava_random_tick(level, pos);
