@@ -2051,6 +2051,16 @@ impl Sim {
         let old = std::mem::take(&mut self.unit_costs[kind]);
         self.unit_costs[kind] =
             self.independent.last_fork.iter().map(|&(d, r, ns)| ((d, r), old.get(&(d, r)).map_or(ns, |&o| (o * 3 + ns) / 4))).collect();
+        if kind == 1 && self.game_time % 100 == 0 && std::env::var_os("KILN_TMP_REGIONS").is_some() {
+            let mut v: Vec<(u64, usize, String)> = work.iter().zip(&report.unit_ns).map(|(w, &ns)| {
+                let mut c: BTreeMap<&str, usize> = BTreeMap::new();
+                for e in &w.entities.list { *c.entry(e.kind.name.trim_start_matches("minecraft:")).or_default() += 1; }
+                let pos = w.players.first().map(|p| [p.pos[0] as i32, p.pos[1] as i32, p.pos[2] as i32]);
+                (ns / 1000, w.players.len(), format!("{pos:?} spec {} {c:?}", w.entities.spec.wanted))
+            }).collect();
+            v.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            for r in v.iter().take(4) { eprintln!("TMP {r:?}"); }
+        }
         if let Some(&max) = report.unit_ns.iter().max() {
             diag::add(["rr.max_unit_p", "rr.max_unit"][kind], Duration::from_nanos(max));
             diag::add(["rr.sum_units_p", "rr.sum_units"][kind], Duration::from_nanos(report.unit_ns.iter().sum()));
