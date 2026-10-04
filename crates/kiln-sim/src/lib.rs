@@ -53,6 +53,9 @@ mod diag;
 mod digging;
 mod dragon_fight;
 mod effects;
+mod fall;
+mod phantom;
+mod freeze;
 mod entities;
 mod entity_world;
 mod fishing;
@@ -456,8 +459,6 @@ struct Player {
     attributes_dirty: bool,
     /// Shared flags changed in a way the player's own client must see (burning, invisible).
     self_meta_dirty: bool,
-    /// Where the last block effects pass left the player (`applyEffectsFromBlocks`).
-    block_effects_from: [f64; 3],
     /// Sounds the player made this tick, for its viewers.
     pending_sounds: Vec<Bytes>,
     /// `Level.soundSeedGenerator` stand-in for this player's sounds.
@@ -467,6 +468,26 @@ struct Player {
     saturation: f32,
     /// Distance fallen since last on the ground.
     fall_distance: f64,
+    /// `Entity.mainSupportingBlockPos`, `onGroundNoBlocks` and `wasTouchingWater` (the landing
+    /// block of a fall is found through the first, the water state decides the second's reset).
+    main_supporting_block: Option<kiln_entity::math::BlockPos>,
+    on_ground_no_blocks: bool,
+    was_touching_water: bool,
+    /// The server's own body of the player (see [`phantom`]): its velocity, its stuck
+    /// multiplier (`makeStuckInBlock`) and the movements of the tick.
+    phantom: Option<Box<kiln_entity::entity::Entity>>,
+    server_delta: [f64; 3],
+    stuck_speed: [f64; 3],
+    movements: Vec<phantom::Mv>,
+    /// `isEyeInFluid(WATER)` as the last fluid update left it.
+    was_eye_in_water: bool,
+    /// `Entity.ticksFrozen`, `isInPowderSnow` and the powder snow speed modifier's amount.
+    ticks_frozen: i32,
+    is_in_powder_snow: bool,
+    frost_speed: Option<f64>,
+    /// Block changes a player's own tick asks of its region (melted powder snow, trampled
+    /// farmland).
+    block_edits: Vec<fall::BlockEdit>,
     /// Flying (creative or spectator), from the client's abilities packet.
     flying: bool,
     /// Dead until the client asks to respawn.
@@ -703,7 +724,9 @@ impl Player {
     fn teleport(&mut self, pos: [f64; 3], rot: [f32; 2], now: i64) {
         self.pos = pos;
         self.rot = rot;
-        self.block_effects_from = pos;
+        // A teleport is not movement through blocks, and it ends the server body's momentum.
+        self.movements.clear();
+        self.server_delta = [0.0; 3];
         self.teleport_id += 1;
         self.awaiting_teleport = Some(self.teleport_id);
         self.teleport_sent = now;
@@ -2419,7 +2442,6 @@ impl Sim {
             p.send(packets::world_fx::sound(&packets::world_fx::Sound::Registered(id), packets::world_fx::SoundSource::Blocks, at, 1.0, 1.0, seed));
         }
         p.teleport(pos, rot, now);
-        p.block_effects_from = pos;
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
@@ -2712,13 +2734,24 @@ impl Sim {
             effects_dirty: true,
             attributes_dirty: true,
             self_meta_dirty: true,
-            block_effects_from: spawn,
             pending_sounds: Vec::new(),
             sound_seed: kiln_javamath::random::LegacyRandom::new(!(j.uuid.as_u64_pair().0 as i64)),
             health: joining.health,
             food: joining.food,
             saturation: joining.saturation,
             fall_distance: 0.0,
+            main_supporting_block: None,
+            on_ground_no_blocks: false,
+            was_touching_water: false,
+            phantom: None,
+            server_delta: [0.0; 3],
+            stuck_speed: [0.0; 3],
+            movements: Vec::new(),
+            was_eye_in_water: false,
+            ticks_frozen: 0,
+            is_in_powder_snow: false,
+            frost_speed: None,
+            block_edits: Vec::new(),
             flying: false,
             dead: joining.health <= 0.0,
             died: false,

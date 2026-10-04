@@ -174,20 +174,23 @@ pub fn for_each_block_collision(
     }
 }
 
-/// `Entity.collide` over blocks alone, for a mover the level's entities do not know (a player the
-/// region moves by hand): how far `bx` gets with `movement` through the block shapes `blocks`
-/// gives (`None`: not loaded).
-pub fn collide_blocks(blocks: &dyn Fn(BlockPos) -> Option<u16>, ctx: &CollisionContext, movement: Vec3, bx: &Aabb) -> Vec3 {
-    let area = bx.expand_towards_vec(movement);
+/// Visits the block shapes of vanilla's `BlockCollisions` over `area` for a block reader that
+/// is not an entity level (`None`: not loaded): every shape that intersects `area`, moved to its
+/// position by the caller (`pos`, shape, whether it is `Shapes.block()`).
+pub fn for_each_collision_in(
+    blocks: &dyn Fn(BlockPos) -> Option<u16>,
+    ctx: &CollisionContext,
+    area: &Aabb,
+    mut visit: impl FnMut(BlockPos, Cow<'static, Shape>, bool),
+) {
     let x0 = floor(area.min_x - 1.0e-7) - 1;
     let x1 = floor(area.max_x + 1.0e-7) + 1;
     let y0 = floor(area.min_y - 1.0e-7) - 1;
     let y1 = floor(area.max_y + 1.0e-7) + 1;
     let z0 = floor(area.min_z - 1.0e-7) - 1;
     let z1 = floor(area.max_z + 1.0e-7) + 1;
-    let entity_shape = BoxShape::new(&area);
+    let entity_shape = BoxShape::new(area);
     let (w, h, d) = (x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1);
-    let mut shapes: Vec<Collider> = Vec::new();
     for z in 0..d {
         for y in 0..h {
             for x in 0..w {
@@ -211,12 +214,45 @@ pub fn collide_blocks(blocks: &dyn Fn(BlockPos) -> Option<u16>, ctx: &CollisionC
                     !shape.is_empty() && entity_shape.as_ref().is_some_and(|e| intersects_box(&shape, [px, py, pz], e))
                 };
                 if hit {
-                    shapes.push(Collider { shape, offset: [px, py, pz] });
+                    visit(pos, shape, cube);
                 }
             }
         }
     }
+}
+
+/// `Entity.collide` over blocks alone, for a mover the level's entities do not know (a player the
+/// region moves by hand): how far `bx` gets with `movement` through the block shapes `blocks`
+/// gives (`None`: not loaded).
+pub fn collide_blocks(blocks: &dyn Fn(BlockPos) -> Option<u16>, ctx: &CollisionContext, movement: Vec3, bx: &Aabb) -> Vec3 {
+    let area = bx.expand_towards_vec(movement);
+    let mut shapes: Vec<Collider> = Vec::new();
+    for_each_collision_in(blocks, ctx, &area, |pos, shape, _| {
+        shapes.push(Collider { shape, offset: [pos.x as f64, pos.y as f64, pos.z as f64] });
+    });
     collide_with_shapes(movement, bx, &shapes)
+}
+
+/// `CollisionGetter.findSupportingBlock` over a plain block reader (see [`for_each_collision_in`]).
+pub fn find_supporting_block_in(
+    blocks: &dyn Fn(BlockPos) -> Option<u16>,
+    ctx: &CollisionContext,
+    position: Vec3,
+    bx: &Aabb,
+) -> Option<BlockPos> {
+    let mut best: Option<BlockPos> = None;
+    let mut best_d = f64::MAX;
+    for_each_collision_in(blocks, ctx, bx, |pos, _, _| {
+        let dx = pos.x as f64 + 0.5 - position.x;
+        let dy = pos.y as f64 + 0.5 - position.y;
+        let dz = pos.z as f64 + 0.5 - position.z;
+        let d = dx * dx + dy * dy + dz * dz;
+        if d < best_d || (d == best_d && best.is_none_or(|b| compare(b, pos) < 0)) {
+            best = Some(pos);
+            best_d = d;
+        }
+    });
+    best
 }
 
 /// `LiquidBlock.STABLE_SHAPE`: the lower half of the block.

@@ -272,7 +272,6 @@ impl Player {
                 self.dismount_on_teleport |= self.vehicle.is_some();
                 self.teleport(to, self.rot, now);
 
-                self.block_effects_from = to;
                 self.entity_events.push(TELEPORT);
                 self.send(entity::entity_event(self.entity_id, TELEPORT));
                 self.queue_sound("minecraft:item.chorus_fruit.teleport", 1.0, 1.0);

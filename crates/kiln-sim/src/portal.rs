@@ -1061,7 +1061,6 @@ impl Sim {
         p.sent_chunks.clear();
         p.unacked_batches = 0;
         p.teleport(pos, rot, now);
-        p.block_effects_from = pos;
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         // `PlayerList.sendLevelInfo`: world border (default), time, spawn position, weather.

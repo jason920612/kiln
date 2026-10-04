@@ -526,6 +526,24 @@ impl RegionWork<'_> {
             for p in self.players.iter_mut().filter(|p| p.digging.is_some() || p.delayed_destroy.is_some()) {
                 digging::tick(p, &mut level);
             }
+            // What the players' own ticks asked for (melted powder snow, trampled farmland).
+            for p in self.players.iter_mut().filter(|p| !p.block_edits.is_empty()) {
+                for edit in std::mem::take(&mut p.block_edits) {
+                    match edit {
+                        crate::fall::BlockEdit::Destroy(pos) => {
+                            let pos = BlockPos::new(pos.x, pos.y, pos.z);
+                            kiln_blocks::destroy_block(&mut level, pos, false, 512);
+                        }
+                        crate::fall::BlockEdit::Dirt(pos) => {
+                            let pos = BlockPos::new(pos.x, pos.y, pos.z);
+                            // `FarmBlock.turnToDirt`.
+                            if kiln_entity::blocks::kind(level.block(pos)) == kiln_entity::blocks::Kind::Farmland {
+                                kiln_blocks::set_block(&mut level, pos, kiln_data::blocks::default_state::DIRT, 3);
+                            }
+                        }
+                    }
+                }
+            }
             // `Player.tick`'s sleeping part and the insomnia statistic.
             for p in self.players.iter_mut().filter(|p| !p.disconnected) {
                 crate::sleep::tick_player(p, &mut level);
@@ -698,6 +716,8 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
         p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
     }
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
+    p.tick_peaceful_regeneration(env.natural_regen, ctx.rules.difficulty);
+    p.tick_fall_resets(&block);
     p.tick_glide();
     p.tick_spin();
     {
@@ -714,9 +734,15 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     p.tick_using(&block, &mut ctx);
     p.tick_cooldowns();
     p.tick_combat();
+    // The server's body moves on its own (gravity, drag, a ladder's grip) and the blocks it
+    // passes through take effect, then the connection puts the position back (`doTick`).
+    let snap = p.pos;
+    p.phantom_travel(cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
     let (_, h, _) = p.dimensions();
     let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
     p.block_effects(&block, env.dim, in_rain, &mut ctx);
+    p.tick_freezing(&block, &mut ctx);
+    p.pos = snap;
     if let Some(travel) = p.pending_travel.take() {
         t.portals.push(travel);
     }
@@ -853,13 +879,16 @@ pub(crate) fn player_packet(
             }
         }
         PlayIn::Move { pos, rot, on_ground, horizontal_collision } => {
-            let (from, was_on_ground) = (p.pos, p.on_ground);
+            let from = p.pos;
+            // `player.onGround()` as the server holds it (its own body's, not the client's).
+            let was_on_ground = p.on_ground;
             let y0 = p.pos[1];
-            if handle_move(p, cells, env, pos, rot, on_ground) {
+            let dbg_ok = handle_move(p, cells, env, pos, rot, on_ground);
+            if std::env::var_os("KILN_DBG_MOVE").is_some() { eprintln!("DBG move {pos:?} og={on_ground} ok={dbg_ok} lt={} aw={:?} fg={:?}", p.load_timeout, p.awaiting_teleport, p.first_good); }
+            if dbg_ok {
                 // `setOnGroundWithMovement`: the client's own report of running into a wall.
                 p.horizontal_collision = horizontal_collision;
                 let feet = p.pos.map(|c| c.floor() as i32);
-                let in_fluid = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
                 let d = [p.pos[0] - from[0], p.pos[1] - from[1], p.pos[2] - from[2]];
                 // `handlePlayerKnownMovement`.
                 p.known_movement = d;
@@ -868,17 +897,22 @@ pub(crate) fn player_packet(
                 if on_ground {
                     p.vel[1] = 0.0;
                 }
-                p.exhaust_for_move(d, was_on_ground, in_fluid);
-                // `jumpFromGround` and `checkMovementStatistics`.
+                // `jumpFromGround` (when the server holds the player on the ground; a body that
+                // bounced off slime or a bed is not), then the fall, then `checkMovementStatistics`.
                 if was_on_ground && !on_ground && d[1] > 0.0 {
                     p.award_stat(*crate::player_stats::stat::JUMP, 1);
                 }
-                let eye = [feet[0], (p.pos[1] + if p.sneaking { 1.27 } else { 1.62 }).floor() as i32, feet[2]];
-                let eyes_in_water = cells.get_block(eye[0], eye[1], eye[2]).is_some_and(kiln_data::blocks_types::has_fluid);
-                let climbing = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(crate::player_stats::climbable);
-                p.movement_stats(d, in_fluid, eyes_in_water, climbing);
+                p.exhaust_for_jump(d, was_on_ground);
+                if was_on_ground && !on_ground && d[1] > 0.0 {
+                    p.server_jump(from, cells, env.game_time, env.min_y);
+                }
+                p.record_packet_move(from, d);
                 let mut ctx = damage_ctx(env, spawns, deaths);
-                p.check_fall(p.pos[1] - y0, on_ground, in_fluid, &mut ctx);
+                let blocks = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z);
+                p.after_move_fall(d, on_ground, p.pos[1] - y0 > 0.0, &blocks, &mut ctx);
+                let climbing = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(crate::player_stats::climbable);
+                let (in_water, eyes_in_water) = (p.was_touching_water, p.was_eye_in_water);
+                p.movement_stats(d, in_water, eyes_in_water, climbing);
             }
         }
         PlayIn::PlayerAbilities { flying } => p.flying = flying && matches!(p.game_mode, 1 | 3),

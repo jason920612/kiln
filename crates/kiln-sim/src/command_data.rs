@@ -686,7 +686,7 @@ fn normalize_items(fields: &mut [(String, Tag)]) {
 
 /// `Player.createAttributes` (with `LivingEntity.createLivingAttributes`): every attribute a
 /// player has, with its default base and range.
-const PLAYER_ATTRIBUTES: [crate::combat::Attr; 36] = {
+pub(crate) const PLAYER_ATTRIBUTES: [crate::combat::Attr; 36] = {
     use crate::combat::Attr as A;
     [
         A::new("minecraft:max_health", 20.0, 1.0, 1024.0),
