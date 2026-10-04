@@ -240,6 +240,20 @@ impl World {
         }
     }
 
+    /// Topmost y whose block has collision or holds a fluid (grass, flowers and snow layers are
+    /// no ground), searching down from `from`.
+    pub fn surface_y(&self, x: i32, z: i32, from: i32) -> Option<i32> {
+        let mut y = from;
+        loop {
+            y = self.top_block_y(x, z, y)?;
+            let s = self.get(x, y, z)?;
+            if is_solid(s) || kiln_data::blocks_types::has_fluid(s) {
+                return Some(y);
+            }
+            y -= 1;
+        }
+    }
+
     /// Topmost y with a non-air block in the column, searching down from `from`.
     pub fn top_block_y(&self, x: i32, z: i32, from: i32) -> Option<i32> {
         let c = self.cols.get(&(x >> 4, z >> 4))?;

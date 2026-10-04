@@ -30,6 +30,21 @@ use std::time::Instant;
 
 pub use steps::Step;
 
+/// `KILN_BOT_TRACE=1`: bots print what they do (steps, digs, placements) to stderr.
+pub(crate) fn tracing_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("KILN_BOT_TRACE").is_some())
+}
+
+macro_rules! trace {
+    ($self:expr, $($arg:tt)*) => {
+        if $crate::survival::tracing_on() {
+            eprintln!("[bot {:?} tick {}] {}", $self.cfg.role, $self.tick_no, format!($($arg)*));
+        }
+    };
+}
+pub(crate) use trace;
+
 /// What a bot does with its time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -217,6 +232,12 @@ pub struct Agent {
     last_place_tick: u64,
     pub(crate) dig_cooldown: u32,
     pub(crate) site_y: Option<i32>,
+    arrived: bool,
+    survival_set: bool,
+    /// Hostile mobs in view: entity id and last known position.
+    mobs: HashMap<i32, [f64; 3]>,
+    hostile: Vec<i32>,
+    attack_cooldown: u32,
 }
 
 /// What the server last heard about the body.
@@ -264,12 +285,23 @@ impl Agent {
             last_place_tick: 0,
             dig_cooldown: 0,
             site_y: None,
+            arrived: false,
+            survival_set: false,
+            mobs: HashMap::new(),
+            hostile: [
+                "zombie", "husk", "drowned", "skeleton", "stray", "spider", "cave_spider", "creeper", "zombie_villager", "witch", "slime",
+            ]
+            .iter()
+            .filter_map(|n| kiln_data::entities::by_name(&format!("minecraft:{n}")).map(|t| t.id))
+            .collect(),
+            attack_cooldown: 0,
             cfg,
         }
     }
 
     /// The server put the bot at `pos`: that is where its body starts.
     pub fn spawn_at(&mut self, pos: [f64; 3], yaw: f32, pitch: f32) {
+        trace!(self, "spawn at {pos:.1?}");
         self.body.teleport(pos, yaw, pitch);
         self.sent.pos = pos;
         self.sent.rot = (yaw, pitch);
@@ -354,6 +386,15 @@ impl Agent {
     }
 
     pub fn on_block_update(&mut self, pos: [i32; 3], state: u16) {
+        self.counts.blocks_seen_changed += 1;
+        if tracing_on() {
+            let n = world::name(state);
+            if ["observer", "lamp", "piston", "hopper", "repeater", "lever"].iter().any(|k| n.contains(k)) {
+                let b = kiln_data::blocks_types::block_of(state);
+                let props: Vec<String> = b.properties.iter().map(|p| format!("{}={}", p.name, b.property(state, p.name).unwrap_or("?"))).collect();
+                trace!(self, "block {pos:?} -> {n} {}", props.join(","));
+            }
+        }
         self.world.set(pos[0], pos[1], pos[2], state);
     }
 
@@ -368,6 +409,7 @@ impl Agent {
             let (x, z, y) = (((local >> 8) & 15) as i32, ((local >> 4) & 15) as i32, (local & 15) as i32);
             self.world.set(sx * 16 + x, sy * 16 + y, sz * 16 + z, state);
         }
+        self.counts.blocks_seen_changed += n.max(0) as u64;
         Ok(())
     }
 
@@ -393,6 +435,9 @@ impl Agent {
     }
 
     pub fn on_health(&mut self, health: f32, food: i32) {
+        if (health - self.health).abs() > 0.01 || food != self.food {
+            trace!(self, "health {health} food {food} at {:.1?} on_ground {}", self.body.pos, self.body.on_ground);
+        }
         self.health = health;
         self.food = food;
         if health <= 0.0 && self.dead_since.is_none() {
@@ -419,6 +464,90 @@ impl Agent {
         self.expected_tps += 1; // the respawn position is not a correction
     }
 
+    /// Add Entity: hostile mobs are tracked from here on.
+    pub fn on_add_entity(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        let id = r.varint()?;
+        r.uuid()?;
+        let kind = r.varint()?;
+        let pos = [r.f64()?, r.f64()?, r.f64()?];
+        if self.hostile.contains(&kind) {
+            self.mobs.insert(id, pos);
+        }
+        Ok(())
+    }
+
+    /// Move Entity Pos (with or without rotation): a relative move in 1/4096 blocks, possibly in steps.
+    pub fn on_entity_move(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        let id = r.varint()?;
+        if !self.mobs.contains_key(&id) {
+            return Ok(());
+        }
+        let props = r.varint()?;
+        let stepped = props >> 1 > 0;
+        let steps = (props >> 1).max(1);
+        let mut d = [0.0f64; 3];
+        for _ in 0..steps {
+            if stepped {
+                r.varint()?;
+            }
+            for c in &mut d {
+                *c += r.i16()? as f64 / 4096.0;
+            }
+        }
+        if let Some(p) = self.mobs.get_mut(&id) {
+            for i in 0..3 {
+                p[i] += d[i];
+            }
+        }
+        Ok(())
+    }
+
+    /// Entity Position Sync: an absolute position (the last step of a stepped path).
+    pub fn on_entity_sync(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        let id = r.varint()?;
+        if !self.mobs.contains_key(&id) {
+            return Ok(());
+        }
+        let stepped = r.varint()? != 0;
+        let n = if stepped { r.varint()? } else { 1 };
+        let mut pos = [0.0; 3];
+        for _ in 0..n {
+            pos = [r.f64()?, r.f64()?, r.f64()?];
+            if stepped {
+                r.varint()?;
+            }
+        }
+        self.mobs.insert(id, pos);
+        Ok(())
+    }
+
+    pub fn on_entity_teleport(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        let id = r.varint()?;
+        if !self.mobs.contains_key(&id) {
+            return Ok(());
+        }
+        let pos = [r.f64()?, r.f64()?, r.f64()?];
+        for _ in 0..3 {
+            r.f64()?;
+        }
+        r.f32()?;
+        r.f32()?;
+        let relative = r.i32()?;
+        if relative & 7 == 0 {
+            self.mobs.insert(id, pos);
+        }
+        Ok(())
+    }
+
+    pub fn on_remove_entities(&mut self, r: &mut Reader) -> Result<(), DecodeError> {
+        let n = r.varint()?;
+        for _ in 0..n {
+            let id = r.varint()?;
+            self.mobs.remove(&id);
+        }
+        Ok(())
+    }
+
     pub fn on_open_screen(&mut self, id: i32) {
         self.window = Some(Window { id, state_id: 0, slots: 0 });
         self.counts.containers_opened += 1;
@@ -428,6 +557,15 @@ impl Agent {
         if let Some(w) = self.window.as_mut().filter(|w| w.id == id) {
             w.state_id = state_id;
             w.slots = slots;
+        }
+    }
+
+    /// Set Player Inventory: inventory slot 0..9 are the hotbar.
+    pub fn on_inventory_slot(&mut self, slot: i32) {
+        if let Some((s, _)) = self.awaiting_slot
+            && slot == s as i32
+        {
+            self.awaiting_slot = None;
         }
     }
 
@@ -460,6 +598,7 @@ impl Agent {
             match p {
                 Pending::Dig { pos, was } => {
                     let now = self.world.get(pos[0], pos[1], pos[2]).unwrap_or(was);
+                    trace!(self, "ack dig {pos:?}: {} -> {}", world::name(was), world::name(now));
                     if now != was {
                         self.counts.dig_done += 1;
                     } else {
@@ -468,6 +607,7 @@ impl Agent {
                 }
                 Pending::Place { pos, expect, facing, slot } => {
                     let now = self.world.get(pos[0], pos[1], pos[2]).unwrap_or(0);
+                    trace!(self, "ack place {pos:?}: wanted {expect}, found {}", world::name(now));
                     let info = kiln_data::blocks_types::block_of(now);
                     if info.name == expect {
                         self.counts.placed += 1;
@@ -537,7 +677,11 @@ impl Agent {
         let loaded = self.world.has_chunk(here[0] >> 4, here[2] >> 4);
         match self.phase {
             Phase::Settle(n) => {
-                if n == 0 {
+                if n == 0 && !self.survival_set {
+                    // Operators join in the server's default game mode; play survival.
+                    self.survival_set = true;
+                    self.command(out, "gamemode survival");
+                } else if n == 0 {
                     self.phase = if self.cfg.stay || self.near_site() {
                         Phase::Active
                     } else {
@@ -556,7 +700,7 @@ impl Agent {
                 let [x, z] = self.site_target();
                 let (bx, bz) = (x.floor() as i32, z.floor() as i32);
                 if self.expected_tps == 0 && self.world.has_chunk(bx >> 4, bz >> 4) {
-                    match self.world.top_block_y(bx, bz, 319) {
+                    match self.world.surface_y(bx, bz, 319) {
                         Some(y) => {
                             let top = self.world.block(bx, y, bz);
                             if world::is_lava(top) || y < world::MIN_Y + 2 {
@@ -582,6 +726,10 @@ impl Agent {
             }
             Phase::Landing => {}
             Phase::Active => {
+                if !self.arrived {
+                    self.arrived = true;
+                    self.shared.arrived.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
                 if loaded {
                     self.act(out, &mut input);
                 }
@@ -590,7 +738,7 @@ impl Agent {
         if loaded {
             self.body.tick(&self.world, input);
             self.counts.walk_ticks += (input.forward && self.phase == Phase::Active) as u64;
-        } else {
+        } else if self.phase == Phase::Active {
             self.counts.stall_ticks += 1;
         }
         self.send_pose(out, input);
@@ -619,6 +767,36 @@ impl Agent {
         }
     }
 
+    /// Fights the nearest hostile mob within a few blocks; returns whether it did.
+    fn fight(&mut self, out: &mut Out, input: &mut Input) -> bool {
+        if self.attack_cooldown > 0 {
+            self.attack_cooldown -= 1;
+        }
+        let me = self.body.pos;
+        let near = self
+            .mobs
+            .iter()
+            .map(|(id, p)| (*id, *p, (p[0] - me[0]).hypot(p[2] - me[2])))
+            .filter(|(_, p, d)| *d < 6.0 && (p[1] - me[1]).abs() < 3.0)
+            .min_by(|a, b| a.2.total_cmp(&b.2));
+        let Some((id, p, dist)) = near else { return false };
+        let (yaw, pitch) = look_at(self.body.eye(), [p[0], p[1] + 1.0, p[2]]);
+        self.body.yaw = yaw;
+        self.body.pitch = pitch.clamp(-90.0, 90.0);
+        self.select(out, 7);
+        if dist > 2.7 {
+            input.forward = true;
+            input.sprint = true;
+            input.jump = self.body.horizontal_collision && self.body.on_ground;
+        } else if self.attack_cooldown == 0 && self.held == 7 {
+            out.send(|b| proto::attack(b, id));
+            out.send(proto::punch);
+            self.counts.attacks += 1;
+            self.attack_cooldown = 12;
+        }
+        true
+    }
+
     /// Runs the step queue: plans when empty, executes the first step.
     fn act(&mut self, out: &mut Out, input: &mut Input) {
         if self.dig_cooldown > 0 {
@@ -627,7 +805,10 @@ impl Agent {
         if !self.can_act() {
             return;
         }
-        // A real player eats when hungry and fights what attacks them; the planner covers eating.
+        // A real player fights what comes at them; the planner covers eating.
+        if self.fight(out, input) {
+            return;
+        }
         if self.queue.is_empty() {
             let steps = self.plan_next();
             self.queue.extend(steps);
@@ -636,15 +817,24 @@ impl Agent {
             }
         }
         let mut step = self.queue.pop_front().expect("queue not empty");
+        let before = if tracing_on() { Some(format!("{step:?}")) } else { None };
         match self.exec(&mut step, out, input) {
             steps::Res::Working => self.queue.push_front(step),
-            steps::Res::Done => {}
+            steps::Res::Done => {
+                if let Some(b) = before {
+                    trace!(self, "done {}", b.chars().take(100).collect::<String>());
+                }
+            }
             steps::Res::Expand(v) => {
+                if let Some(b) = before {
+                    trace!(self, "expand {} into {} steps", b.chars().take(60).collect::<String>(), v.len());
+                }
                 for s in v.into_iter().rev() {
                     self.queue.push_front(s);
                 }
             }
             steps::Res::Failed(why) => {
+                trace!(self, "FAILED {why}: {step:?}");
                 self.shared.problem(format!("{:?} step failed: {why}", self.cfg.role));
                 self.queue.clear();
                 self.plan.failed();

@@ -94,7 +94,7 @@ impl Step {
     }
 
     pub fn walk_to_cell(pos: [i32; 3]) -> Step {
-        Step::walk([pos[0] as f64 + 0.5, pos[2] as f64 + 0.5], 0.2, false)
+        Step::walk([pos[0] as f64 + 0.5, pos[2] as f64 + 0.5], 0.3, false)
     }
 
     pub fn dig(pos: [i32; 3]) -> Step {

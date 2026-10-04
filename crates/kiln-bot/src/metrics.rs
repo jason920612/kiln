@@ -88,6 +88,8 @@ pub(crate) struct Shared {
     pub joined: AtomicU64,
     pub failed: AtomicU64,
     pub dropped: AtomicU64,
+    /// Survival bots that reached their site and started to play.
+    pub arrived: AtomicU64,
     traffic: SharedTraffic,
     reasons: Mutex<BTreeMap<String, u64>>,
     join_ms: Mutex<Vec<f64>>,
@@ -192,6 +194,7 @@ pub(crate) struct Snapshot {
     joined: u64,
     failed: u64,
     dropped: u64,
+    arrived: u64,
     traffic: Traffic,
 }
 
@@ -235,6 +238,7 @@ impl Shared {
             joined: self.joined.load(Relaxed),
             failed: self.failed.load(Relaxed),
             dropped: self.dropped.load(Relaxed),
+            arrived: self.arrived.load(Relaxed),
             traffic: self.traffic.load(),
         }
     }
@@ -275,6 +279,8 @@ pub struct Report {
     pub failed: u64,
     /// Connections that ended after joining, before the run stopped.
     pub dropped: u64,
+    /// Survival bots at their site, playing.
+    pub arrived: u64,
     /// Why connections ended, most frequent first, prefixed with the protocol state.
     pub disconnect_reasons: Vec<(String, u64)>,
     pub traffic: Traffic,
@@ -311,6 +317,7 @@ impl Report {
             joined: to.joined,
             failed: to.failed,
             dropped: to.dropped,
+            arrived: to.arrived,
             disconnect_reasons: shared.reasons(),
             traffic: to.traffic,
             rx_packets_per_sec: delta.rx_packets as f64 / window,
@@ -332,13 +339,14 @@ impl Report {
     /// One line for periodic progress output.
     pub fn summary_line(&self) -> String {
         format!(
-            "[{:6.1}s] bots {} conn {} online {} joined {} failed {} dropped {} | rx {}/s {}/s, per bot {}/s {}/s \
+            "[{:6.1}s] bots {} conn {} online {} joined {} arrived {} failed {} dropped {} | rx {}/s {}/s, per bot {}/s {}/s \
              | tx {}/s | chunks {} | join p50 {} p99 {}",
             self.elapsed_secs,
             self.launched,
             self.connected,
             self.online,
             self.joined,
+            self.arrived,
             self.failed,
             self.dropped,
             count(self.rx_packets_per_sec),

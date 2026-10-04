@@ -53,7 +53,7 @@ impl Agent {
     pub(super) fn plan_redstone(&mut self) -> Vec<Step> {
         if !self.plan.machines.kit_done {
             self.plan.machines.kit_done = true;
-            return vec![Step::Equip { slot: 8, item: "cooked_beef", count: 1 }];
+            return vec![Step::Equip { slot: 7, item: "iron_sword", count: 1 }, Step::Equip { slot: 8, item: "cooked_beef", count: 1 }];
         }
         if self.food <= 12 {
             return vec![Step::Equip { slot: 8, item: "cooked_beef", count: 1 }, Step::Eat { slot: 8, waited: 0 }];
@@ -61,7 +61,7 @@ impl Agent {
         const MAX_MACHINES: u32 = 6;
         if self.plan.machines.built < MAX_MACHINES {
             let around = [self.body.pos[0].floor() as i32, self.body.pos[2].floor() as i32];
-            let Some(site) = self.find_flat_site(around, 4, 40) else {
+            let Some(site) = self.find_flat_site(around, (-3, 3), (0, 0), 4, 48) else {
                 let h = self.rng.range(0.0, std::f64::consts::TAU);
                 let p = self.body.pos;
                 return vec![Step::walk([p[0] + h.cos() * 30.0, p[2] + h.sin() * 30.0], 3.0, false)];
@@ -96,11 +96,17 @@ fn machine(kind: u32, site: [i32; 3]) -> (Vec<Step>, Vec<[i32; 3]>) {
     let mut levers = Vec::new();
     match kind % 5 {
         0 => {
-            // Two observers face to face; the second one placed makes the first see a change.
+            // Two observers face to face. An observer placed against a block faces into it, so
+            // the first goes against a stone in the second one's place, which then makes way.
             let (o1, o2) = (origin, add(origin, [1, 0, 0]));
+            v.push(eq(SOLID, "stone"));
+            v.push(pl(o2, SOLID, "minecraft:stone", None, Some(Dir::Down), None));
             v.push(eq(OBSERVER, "observer"));
-            v.push(pl(o1, OBSERVER, "minecraft:observer", Some(Dir::West), Some(Dir::Down), Some(Dir::East)));
-            v.push(pl(o2, OBSERVER, "minecraft:observer", Some(Dir::East), Some(Dir::Down), Some(Dir::West)));
+            v.push(pl(o1, OBSERVER, "minecraft:observer", None, Some(Dir::East), Some(Dir::East)));
+            v.push(eq(0, "iron_pickaxe"));
+            v.push(Step::dig(o2));
+            v.push(eq(OBSERVER, "observer"));
+            v.push(pl(o2, OBSERVER, "minecraft:observer", None, Some(Dir::West), Some(Dir::West)));
             // A lamp behind the first observer shows the pulses.
             v.push(eq(MISC, "redstone_lamp"));
             v.push(pl(add(origin, [-1, 0, 0]), MISC, "minecraft:redstone_lamp", None, Some(Dir::Down), None));

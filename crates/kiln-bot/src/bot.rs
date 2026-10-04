@@ -95,6 +95,13 @@ fn needs_body(state: State, id: i32, survival: bool) -> bool {
                             | cb::CONTAINER_SET_CONTENT
                             | cb::CONTAINER_SET_SLOT
                             | cb::CONTAINER_CLOSE
+                            | cb::SET_PLAYER_INVENTORY
+                            | cb::ADD_ENTITY
+                            | cb::REMOVE_ENTITIES
+                            | cb::MOVE_ENTITY_POS
+                            | cb::MOVE_ENTITY_POS_ROT
+                            | cb::ENTITY_POSITION_SYNC
+                            | cb::TELEPORT_ENTITY
                             | cb::BLOCK_CHANGED_ACK
                     ))
         }
@@ -381,6 +388,15 @@ impl Bot {
                 self.agent.as_mut().unwrap().on_container_slot(id, state, slot as i32);
             }
             cb::CONTAINER_CLOSE if self.agent.is_some() => self.agent.as_mut().unwrap().on_container_close(),
+            cb::ADD_ENTITY if self.agent.is_some() => self.agent.as_mut().unwrap().on_add_entity(r)?,
+            cb::REMOVE_ENTITIES if self.agent.is_some() => self.agent.as_mut().unwrap().on_remove_entities(r)?,
+            cb::MOVE_ENTITY_POS | cb::MOVE_ENTITY_POS_ROT if self.agent.is_some() => self.agent.as_mut().unwrap().on_entity_move(r)?,
+            cb::ENTITY_POSITION_SYNC if self.agent.is_some() => self.agent.as_mut().unwrap().on_entity_sync(r)?,
+            cb::TELEPORT_ENTITY if self.agent.is_some() => self.agent.as_mut().unwrap().on_entity_teleport(r)?,
+            cb::SET_PLAYER_INVENTORY if self.agent.is_some() => {
+                let slot = r.varint()?;
+                self.agent.as_mut().unwrap().on_inventory_slot(slot);
+            }
             cb::BLOCK_CHANGED_ACK if self.agent.is_some() => {
                 let seq = r.varint()?;
                 self.agent.as_mut().unwrap().on_ack(seq);
