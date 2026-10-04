@@ -421,19 +421,19 @@ fn jump_vector_for_angle(cx: &Cx, target: Vec3, max_speed: f32, angle: i32) -> O
     let aim = target - toward;
     let d = aim - pos;
     let a = ((angle as f32) * 3.1415927f32) / 180.0f32;
-    let heading = d.z.atan2(d.x);
+    let heading = kiln_javamath::atan::atan2(d.z, d.x);
     let horizontal_sqr = Vec3::new(d.x, d.y - d.y, d.z).length_sqr();
     let horizontal = horizontal_sqr.sqrt();
     let dy = d.y;
     let gravity = cx.m.attrs.value(Gravity);
-    let sin2a = ((2.0f32 * a) as f64).sin();
+    let sin2a = kiln_javamath::trig::sin((2.0f32 * a) as f64);
     let cos_sq = {
-        let c = (a as f64).cos();
+        let c = kiln_javamath::trig::cos(a as f64);
         c * c
     };
-    let sin_a = (a as f64).sin();
-    let cos_a = (a as f64).cos();
-    let (sin_h, cos_h) = (heading.sin(), heading.cos());
+    let sin_a = kiln_javamath::trig::sin(a as f64);
+    let cos_a = kiln_javamath::trig::cos(a as f64);
+    let (sin_h, cos_h) = (kiln_javamath::trig::sin(heading), kiln_javamath::trig::cos(heading));
     let v_sqr = (horizontal_sqr * gravity) / ((horizontal * sin2a) - ((2.0 * dy) * cos_sq));
     if !(v_sqr >= 0.0) {
         return None;
