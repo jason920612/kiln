@@ -1682,6 +1682,12 @@ impl Host for Sim {
         Some(kiln_command::host::Located { pos, id })
     }
 
+    fn locate_structure(&mut self, dimension: &str, origin: [i32; 3], structures: &[String]) -> Option<kiln_command::host::Located> {
+        let d = crate::dim_id(dimension)?;
+        let (pos, id) = Sim::locate_structure(self, d, origin, structures)?;
+        Some(kiln_command::host::Located { pos, id })
+    }
+
     fn locate_poi(&mut self, dimension: &str, origin: [i32; 3], matches: &dyn Fn(&str) -> bool) -> Option<kiln_command::host::Located> {
         let d = crate::dim_id(dimension)?;
         let (pos, id) = Sim::locate_poi(self, d, origin, matches)?;

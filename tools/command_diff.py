@@ -15,6 +15,7 @@ console lines that arrived meanwhile (results that come over ticks or from other
 """
 
 import argparse
+import json
 import os
 import queue
 import re
@@ -2198,6 +2199,41 @@ execute store result score fp fp run fetchprofile name Diff0
 ~ 5
 """
 
+# ---- wp44-end: /locate structure on generated worlds (python tools/command_diff.py --structures) ----
+# A separate mode: both servers run a generated world (vanilla `level-type=normal`, Kiln
+# KILN_GENERATOR=noise, the same seed, structures on) instead of the flat test world, once per
+# seed. `execute in <dimension> positioned x y z run locate structure ...` needs no player.
+STRUCTURE_SEEDS = [1, 4242, -777777]
+STRUCTURE_ORIGINS = ["0 64 0", "2400 70 -3100", "-5000 64 4400"]
+OVERWORLD_STRUCTURES = [
+    "minecraft:village_plains", "minecraft:village_desert", "minecraft:village_savanna", "minecraft:village_snowy",
+    "minecraft:village_taiga", "#minecraft:village", "minecraft:stronghold", "#minecraft:eye_of_ender_located",
+    "minecraft:mansion", "#minecraft:on_woodland_mansion_maps", "minecraft:monument", "minecraft:shipwreck",
+    "minecraft:shipwreck_beached", "#minecraft:shipwreck", "minecraft:ruined_portal", "#minecraft:ruined_portal",
+    "minecraft:pillager_outpost", "minecraft:trial_chambers", "minecraft:ancient_city", "minecraft:buried_treasure",
+    "minecraft:ocean_ruin_cold", "minecraft:ocean_ruin_warm", "#minecraft:ocean_ruin", "minecraft:igloo",
+    "minecraft:desert_pyramid", "minecraft:jungle_pyramid", "minecraft:swamp_hut", "minecraft:mineshaft",
+    "minecraft:mineshaft_mesa", "#minecraft:mineshaft", "minecraft:trail_ruins", "minecraft:abandoned_camp_forest",
+    "#minecraft:abandoned_camp", "#minecraft:on_treasure_maps", "#minecraft:on_ocean_monument_maps",
+    # not generated in this dimension, unknown ids and tags
+    "minecraft:fortress", "minecraft:end_city", "minecraft:nothing", "#minecraft:nothing",
+]
+NETHER_STRUCTURES = ["minecraft:fortress", "minecraft:bastion_remnant", "minecraft:nether_fossil", "minecraft:ruined_portal_nether", "minecraft:stronghold"]
+END_STRUCTURES = ["minecraft:end_city", "minecraft:stronghold"]
+
+
+def structure_cases():
+    lines = ["# structures: unknown arguments", "locate structure", "locate structure minecraft:village_plains extra"]
+    for origin in STRUCTURE_ORIGINS:
+        lines.append(f"# structures: overworld from {origin}")
+        lines += [f"execute in minecraft:overworld positioned {origin} run locate structure {s}" for s in OVERWORLD_STRUCTURES]
+    for origin in STRUCTURE_ORIGINS[:2]:
+        lines.append(f"# structures: the nether from {origin}")
+        lines += [f"execute in minecraft:the_nether positioned {origin} run locate structure {s}" for s in NETHER_STRUCTURES]
+    lines.append("# structures: the end")
+    lines += [f"execute in minecraft:the_end positioned 0 64 0 run locate structure {s}" for s in END_STRUCTURES]
+    return "\n".join(lines)
+
 
 def english_lang(dest: Path) -> Path:
     """Extracts en_us.json from the vanilla server jar (bundled or unpacked)."""
@@ -2316,8 +2352,9 @@ def write_zip_pack(dest: Path):
             z.writestr(name, text)
 
 
-def start_vanilla(port: int) -> Server:
-    base = SCRATCH / "vanilla"
+def start_vanilla(port: int, seed=None) -> Server:
+    """The vanilla server: a flat world, or with `seed` a generated one with structures."""
+    base = SCRATCH / ("vanilla" if seed is None else "vanilla-gen")
     base.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(base / "world", ignore_errors=True)
     reset_lists(base)
@@ -2330,9 +2367,9 @@ def start_vanilla(port: int) -> Server:
         "online-mode=false",
         "white-list=false",
         "enforce-secure-profile=false",
-        "level-type=minecraft\\:flat",
-        "level-seed=1",
-        "generate-structures=false",
+        "level-type=minecraft\\:flat" if seed is None else "level-type=minecraft\\:normal",
+        f"level-seed={1 if seed is None else seed}",
+        f"generate-structures={'false' if seed is None else 'true'}",
         "difficulty=peaceful",
         "spawn-protection=0",
         "allow-flight=true",
@@ -2350,8 +2387,8 @@ def start_vanilla(port: int) -> Server:
     return Server("vanilla", argv, base, os.environ.copy(), VANILLA_LINE, SCRATCH / "vanilla.log")
 
 
-def start_kiln(port: int, exe: Path, lang: Path) -> Server:
-    base = SCRATCH / "kiln"
+def start_kiln(port: int, exe: Path, lang: Path, seed=None) -> Server:
+    base = SCRATCH / ("kiln" if seed is None else "kiln-gen")
     base.mkdir(parents=True, exist_ok=True)
     reset_lists(base)
     copy = SCRATCH / "kiln-diff.exe"
@@ -2368,6 +2405,8 @@ def start_kiln(port: int, exe: Path, lang: Path) -> Server:
     # The vanilla pack (recipes, loot, advancements, the feature packs).
     env.setdefault("KILN_DATAPACK", str(WORK / "generated"))
     env.pop("KILN_OPS", None)
+    if seed is not None:
+        env.update({"KILN_GENERATOR": "noise", "KILN_SEED": str(seed)})
     # Vanilla's offline server asks the session service about every name and id; so does Kiln
     # when told to (its default is to answer offline servers without the network).
     env["KILN_PROFILE_LOOKUP"] = "true"
@@ -2399,6 +2438,80 @@ def parse_cases(text):
     return cases
 
 
+def first_free_port(candidates, wait=1800):
+    """The first free port of `candidates`; waits (the harness ports are shared) up to `wait` s."""
+    end = time.time() + wait
+    while True:
+        for port in candidates:
+            if port_free(port):
+                return port
+        if time.time() > end:
+            sys.exit(f"none of the ports {list(candidates)} is free")
+        time.sleep(5)
+
+
+def run_server_cases(server, commands, marker):
+    """The console feedback of each command, in order."""
+    out = []
+    for n, command in enumerate(commands):
+        out.append(server.run(command, f"{marker}{n}", 300))
+    return out
+
+
+def main_structures(a) -> int:
+    """Per seed: the `structure_cases` on a generated world, vanilla and then Kiln, one server at
+    a time on one port (the first free of --kiln-port / --vanilla-port); vanilla's answers are
+    kept per seed in the scratch directory (`locate-vanilla-<seed>.json`, delete to refresh)."""
+    seeds = [int(x) for x in a.seeds.split(",")] if a.seeds else STRUCTURE_SEEDS
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    lang = english_lang(SCRATCH)
+    cases = [(section, command) for kind, section, command in parse_cases(structure_cases()) if kind == "compare"]
+    cases = [(s, c) for s, c in cases if (not a.sections or any(s.startswith(p) for p in a.sections)) and (not a.filter or a.filter in c)]
+    commands = [c for _, c in cases]
+    total_passed, total_failed = 0, []
+    for seed in seeds:
+        cache = SCRATCH / f"locate-vanilla-{seed}.json"
+        want_all = None
+        if cache.exists():
+            saved = json.loads(cache.read_text(encoding="utf-8"))
+            if all(c in saved for c in commands):
+                want_all = [saved[c] for c in commands]
+        if want_all is None:
+            port = first_free_port([a.vanilla_port, a.kiln_port, 25581, 25582, 25583])
+            vanilla = start_vanilla(port, seed)
+            try:
+                if not vanilla.wait_for("Done (", 900):
+                    sys.exit("vanilla did not start")
+                want_all = run_server_cases(vanilla, commands, "zqsyncv")
+            finally:
+                vanilla.stop()
+            saved = json.loads(cache.read_text(encoding="utf-8")) if cache.exists() else {}
+            saved.update(dict(zip(commands, want_all)))
+            cache.write_text(json.dumps(saved, indent=1), encoding="utf-8")
+        port = first_free_port([a.kiln_port, a.vanilla_port, 25581, 25582, 25583])
+        kiln = start_kiln(port, Path(a.kiln_exe), lang, seed)
+        try:
+            if not kiln.wait_for("listening on", 120):
+                sys.exit("kiln did not start")
+            got_all = run_server_cases(kiln, commands, "zqsynck")
+        finally:
+            kiln.stop()
+        for (section, command), want, got in zip(cases, want_all, got_all):
+            ok = want == got
+            if ok:
+                total_passed += 1
+            else:
+                total_failed.append((seed, section, command, want, got))
+            if a.verbose or not ok:
+                print(f"{'PASS' if ok else 'FAIL'} [seed {seed}] [{section}] {command}", flush=True)
+                for line in want:
+                    print(f"    vanilla: {line}")
+                for line in got:
+                    print(f"    kiln:    {line}")
+    print(f"\n{total_passed}/{total_passed + len(total_failed)} locate lines match vanilla {VERSION} (seeds {seeds})")
+    return 0 if not total_failed else 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kiln-port", type=int, default=25587)
@@ -2408,7 +2521,11 @@ def main():
     ap.add_argument("-s", dest="sections", action="append", help="only run the sections starting with this text (and the setup lines before the first section)")
     ap.add_argument("-k", dest="filter", help="only compare cases containing this text")
     ap.add_argument("-v", "--verbose", action="store_true", help="print every case")
+    ap.add_argument("--structures", action="store_true", help="instead of the flat-world cases, run the /locate structure cases on generated worlds")
+    ap.add_argument("--seeds", help="with --structures: comma separated world seeds (default %s)" % STRUCTURE_SEEDS)
     a = ap.parse_args()
+    if a.structures:
+        return main_structures(a)
 
     for port in (a.kiln_port, a.vanilla_port):
         if not port_free(port):

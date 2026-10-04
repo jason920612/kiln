@@ -955,6 +955,14 @@ impl Sim {
         }
     }
 
+    /// `ChunkGenerator.findNearestMapStructure(level, structures, origin, 100, false)` over the
+    /// level's generator: the nearest start of any of `structures` (ids).
+    pub(crate) fn locate_structure(&mut self, dim: crate::DimId, origin: [i32; 3], structures: &[String]) -> Option<([i32; 3], String)> {
+        let pipeline = self.world.pipelines.get(dim).cloned().flatten()?;
+        let mut gs = kiln_worldgen::generator::GenScratch::default();
+        pipeline.find_nearest_structure(&mut gs, structures, origin, 100)
+    }
+
     /// `PoiManager.findClosestWithType(types, origin, 256, ANY)` over the loaded chunks'
     /// blocks: the nearest (3D) point of interest within 256 blocks.
     pub(crate) fn locate_poi(
