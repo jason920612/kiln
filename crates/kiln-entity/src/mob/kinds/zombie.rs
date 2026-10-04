@@ -640,19 +640,26 @@ pub fn entity_data(_e: &Entity, m: &MobData, d: &mut kiln_proto::packets::entity
     }
 }
 
-/// `Monster.checkMonsterSpawnRules` for natural spawning: not peaceful, dark enough
-/// (`isDarkEnoughToSpawn`, two draws), a valid spawn block below.
+/// `Monster.checkMonsterSpawnRules`: not peaceful, dark enough (`isDarkEnoughToSpawn`), and a valid
+/// spawn block below (`Mob.checkMobSpawnRules`: not for a spawner).
 pub fn monster_rules(view: &dyn crate::mob::ext::SpawnView, pos: BlockPos, r: &mut kiln_javamath::random::LegacyRandom) -> bool {
-    view.difficulty() != 0 && dark_enough_view(view, pos, r) && crate::mob::path::valid_spawn(view.block(pos.below()), false)
+    view.difficulty() != 0 && dark_enough_view(view, pos, r) && (view.spawner() || crate::mob::path::valid_spawn(view.block(pos.below()), false))
 }
 
-/// `Monster.isDarkEnoughToSpawn` over a [`SpawnView`](crate::mob::ext::SpawnView).
+/// `Monster.isDarkEnoughToSpawn` over a [`SpawnView`](crate::mob::ext::SpawnView): the sky light
+/// against a draw, the block light against the dimension's limit, and the light (the thunder's
+/// when it thunders) against the dimension's test (a draw unless it is a constant).
 pub fn dark_enough_view(view: &dyn crate::mob::ext::SpawnView, pos: BlockPos, r: &mut kiln_javamath::random::LegacyRandom) -> bool {
     if view.sky_light(pos) > r.next_int_bounded(32) {
         return false;
     }
-    if view.block_light(pos) > 0 {
+    let limit = view.monster_block_light_limit();
+    if limit < 15 && view.block_light(pos) > limit {
         return false;
     }
-    view.raw_brightness(pos, view.sky_darken()) <= r.next_int_bounded(8)
+    let darken = if view.thundering() { 10 } else { view.sky_darken() };
+    let light = view.raw_brightness(pos, darken);
+    let (lo, hi) = view.monster_light_test();
+    let test = if lo == hi { lo } else { r.next_int_bounded(hi - lo + 1) + lo };
+    light <= test
 }

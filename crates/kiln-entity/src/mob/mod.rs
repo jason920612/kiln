@@ -56,6 +56,8 @@ pub enum MobKind {
     Skeleton,
     Creeper,
     Spider,
+    /// `CaveSpider`: a spider that poisons, with 12 health and no `finalizeSpawn`.
+    CaveSpider,
     // Extension types (behaviour in `kinds`).
     Husk,
     Stray,
@@ -232,6 +234,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Skeleton,
     MobKind::Creeper,
     MobKind::Spider,
+    MobKind::CaveSpider,
     MobKind::Husk,
     MobKind::Stray,
     MobKind::Drowned,
@@ -355,6 +358,7 @@ impl MobKind {
             MobKind::Skeleton => "minecraft:skeleton",
             MobKind::Creeper => "minecraft:creeper",
             MobKind::Spider => "minecraft:spider",
+            MobKind::CaveSpider => "minecraft:cave_spider",
             _ => unreachable!("extension type"),
         }
     }
@@ -412,6 +416,7 @@ impl MobKind {
             ]),
             MobKind::Skeleton | MobKind::Creeper => v.push((MovementSpeed, 0.25)),
             MobKind::Spider => v.extend([(MaxHealth, 16.0), (MovementSpeed, 0.30000001192092896)]),
+            MobKind::CaveSpider => v.extend([(MaxHealth, 12.0), (MovementSpeed, 0.30000001192092896)]),
             _ => {}
         }
         Attributes::new(&v)
@@ -472,7 +477,7 @@ impl MobKind {
 
     /// The type's `entity.<name>.<what>` sound, if it has one.
     fn sound_opt(self, what: &str) -> Option<&'static str> {
-        let base = self.ext().and_then(|k| k.info().sounds).unwrap_or(self.short_name());
+        let base = self.ext().and_then(|k| k.info().sounds).unwrap_or(if self == MobKind::CaveSpider { "spider" } else { self.short_name() });
         let s = format!("minecraft:entity.{base}.{what}");
         kiln_data::builtin_entries("minecraft:sound_event").and_then(|e| e.iter().find(|x| **x == s).copied())
     }
@@ -678,7 +683,7 @@ impl MobData {
             MobKind::Creeper => {
                 Species::Creeper { swell: 0, old_swell: 0, swell_dir: -1, max_swell: 30, radius: 3, powered: false, ignited: false }
             }
-            MobKind::Spider => Species::Spider { climbing: false },
+            MobKind::Spider | MobKind::CaveSpider => Species::Spider { climbing: false },
             _ => Species::Plain,
         };
         let mut m = MobData {
@@ -730,7 +735,7 @@ impl MobData {
             mov: control::MoveControl::default(),
             jump: control::JumpControl::default(),
             body: control::BodyRotationControl::default(),
-            nav: path::Navigation::new(kind == MobKind::Spider),
+            nav: path::Navigation::new(matches!(kind, MobKind::Spider | MobKind::CaveSpider)),
             maluses: Vec::new(),
             seen: Vec::new(),
             unseen: Vec::new(),
@@ -1049,7 +1054,7 @@ fn register_goals(m: &mut MobData) {
             t.add(1, nearest(Wanted::Player, true));
             t.add(2, hurt_by(false));
         }
-        MobKind::Spider => {
+        MobKind::Spider | MobKind::CaveSpider => {
             g.add(1, Goal::Float);
             g.add(2, Goal::AvoidEntity);
             g.add(3, Goal::LeapAtTarget { yd: 0.4, target: None });
@@ -2183,6 +2188,8 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             // `AbstractHorse.isPushable` (horses, donkeys, camels...): `!isVehicle()`.
             && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || matches!(om.kind, MobKind::Camel | MobKind::CamelHusk | MobKind::Nautilus | MobKind::ZombieNautilus)))
             && !riding(id, o.vehicle)
+            // `LivingEntity.isPushable`: not while climbing (`getPushableEntities` leaves it out).
+            && !on_climbable(o, om, &*level)
         {
             others.push((id, o.x(), o.z(), false));
         }
@@ -2213,7 +2220,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         dx *= 0.05000000074505806;
         dz *= 0.05000000074505806;
         // `Entity.push`: vehicles and dead (not `isPushable`) mobs are not pushed.
-        if e.passengers.is_empty() && m.health > 0.0 && m.kind.ext().is_none_or(|k| k.can_be_pushed(m)) {
+        if e.passengers.is_empty() && m.health > 0.0 && m.kind.ext().is_none_or(|k| k.can_be_pushed(m)) && !on_climbable(e, m, &*level) {
             e.delta = e.delta.add(-dx, 0.0, -dz);
             e.needs_sync = true;
         }
@@ -2624,7 +2631,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
 fn extends_monster(kind: MobKind) -> bool {
     match kind.ext() {
         Some(k) => k.info().extends_monster,
-        None => matches!(kind, MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper | MobKind::Spider),
+        None => matches!(kind, MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper | MobKind::Spider | MobKind::CaveSpider),
     }
 }
 
@@ -2803,6 +2810,17 @@ pub fn do_hurt_target(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
     let r = do_hurt_target_base(e, m, level, t);
     if r && let Some(k) = k {
         k.after_hurt_target(e, m, level, t);
+    }
+    // `CaveSpider.doHurtTarget`: poison for 7 seconds on normal, 15 on hard.
+    if r && m.kind == MobKind::CaveSpider {
+        let seconds = match level.difficulty() {
+            2 => 7,
+            3 => 15,
+            _ => 0,
+        };
+        if seconds > 0 {
+            level.add_effect(t.id, "minecraft:poison", seconds * 20, 0, Some(e.id));
+        }
     }
     r
 }
@@ -3005,6 +3023,11 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     let mut m = take(e);
     let kind = m.kind;
     group.natural = natural;
+    // `CaveSpider.finalizeSpawn` returns the group data as it is: nothing is drawn.
+    if kind == MobKind::CaveSpider {
+        put(e, m);
+        return;
+    }
     if kind == MobKind::Zombie {
         kinds::zombie::finalize(e, &mut m, r, ctx, group, false);
         put(e, m);

@@ -86,6 +86,12 @@ pub struct MemoryLevel {
     pub hearts: FastMap<BlockPos, crate::mob::kinds::creaking_heart::HeartBe>,
     /// The `minecraft:gameplay/creaking_active` attribute.
     pub creaking_active: bool,
+    /// The mob spawners (their block entities) by position.
+    pub spawners: FastMap<BlockPos, crate::spawner::SpawnerBe>,
+    /// Light levels fed from a recording: (sky, block) by position, where known.
+    pub lights: FastMap<BlockPos, (i32, i32)>,
+    /// `spawner_blocks_work`.
+    pub spawner_blocks_work: bool,
 }
 
 /// Vanilla iterates entity sections by x, then by the packed (z, y) section key.
@@ -128,6 +134,21 @@ impl MemoryLevel {
             heard: Vec::new(),
             hearts: FastMap::default(),
             creaking_active: false,
+            spawners: FastMap::default(),
+            lights: FastMap::default(),
+            spawner_blocks_work: true,
+        }
+    }
+
+    /// Ticks the mob spawners (`Level.tickBlockEntities`), in position order.
+    pub fn tick_spawners(&mut self) {
+        let mut at: Vec<BlockPos> = self.spawners.keys().copied().collect();
+        at.sort_by_key(|p| (p.x, p.y, p.z));
+        for p in at {
+            if let Some(mut be) = self.spawners.remove(&p) {
+                crate::spawner::tick(self, p, &mut be);
+                self.spawners.insert(p, be);
+            }
         }
     }
 
@@ -354,12 +375,55 @@ impl EntityLevel for MemoryLevel {
     }
 
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {
-        (self.sky_light(pos) - sky_darken).max(0)
+        (self.sky_light(pos) - sky_darken).max(self.block_light(pos)).max(0)
+    }
+
+    fn block_light(&self, pos: BlockPos) -> i32 {
+        self.lights.get(&pos).map_or(0, |l| l.1)
+    }
+
+    fn spawner_blocks_enabled(&self) -> bool {
+        self.spawner_blocks_work
+    }
+
+    fn add_entity_stack(&mut self, root: Entity, companions: Vec<crate::mob::Companion>, _loaded: bool, _nearby_chicken: bool) -> bool {
+        use crate::mob::Seat;
+        let root_id = root.id;
+        self.add_entity(root);
+        let mut ids = Vec::new();
+        for c in companions {
+            ids.push(c.entity.id);
+            let (id, seat) = (c.entity.id, c.seat);
+            self.add_entity(c.entity);
+            // Seats only where the entities are in the level at once.
+            if self.immediate_adds {
+                let (rider, vehicle) = match seat {
+                    Seat::OnMob => (id, root_id),
+                    Seat::OnCompanion(i) => (id, ids[i]),
+                    Seat::UnderMob => (root_id, id),
+                    Seat::Loose => continue,
+                };
+                let marker = Entity::new("minecraft:marker", -5, 0, EntityKind::Other { type_name: "minecraft:marker" }, 0);
+                if let Some(slot) = self.entity_mut(vehicle) {
+                    let mut v = std::mem::replace(slot, marker);
+                    if let Some(r) = self.entity_mut(rider) {
+                        crate::ride::start_riding(r, &mut v, false);
+                    }
+                    if let Some(slot) = self.entity_mut(vehicle) {
+                        *slot = v;
+                    }
+                }
+            }
+        }
+        true
     }
 
     /// Open sky above the harness floor, darkness below it; water above dims it by one per
     /// block (its light opacity), as straight down a pool.
     fn sky_light(&self, pos: BlockPos) -> i32 {
+        if let Some(l) = self.lights.get(&pos) {
+            return l.0;
+        }
         let mut sky = 15;
         for (p, s) in self.blocks.iter() {
             if p.x == pos.x && p.z == pos.z && p.y > pos.y && !kiln_data::blocks_types::is_air(*s) {

@@ -421,7 +421,7 @@ impl Kind for Camel {
     fn check_spawn_rules(&self, view: &dyn SpawnView, pos: BlockPos, r: &mut LegacyRandom) -> Option<bool> {
         if self.0 {
             // `Monster.checkSurfaceMonstersSpawnRules`: dark enough, and under the open sky.
-            return Some(super::zombie::monster_rules(view, pos, r) && view.sky_light(pos) >= 15);
+            return Some(super::zombie::monster_rules(view, pos, r) && (view.spawner() || view.sky_light(pos) >= 15));
         }
         Some(super::wolf::block_in_tag(view.block(pos.below()), "minecraft:camels_spawnable_on") && view.raw_brightness(pos, 0) > 8)
     }

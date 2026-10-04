@@ -388,7 +388,7 @@ fn spawn_protector(level: &mut dyn EntityLevel, r: &mut LegacyRandom, pos: Block
 /// armor stands, falling blocks, primed TNT, boats and minecarts.
 fn blocks_building(e: &Entity) -> bool {
     matches!(e.kind, EntityKind::Mob(_) | EntityKind::MobTicking { .. } | EntityKind::Player(_) | EntityKind::FallingBlock(_) | EntityKind::Tnt(_))
-        || matches!(e.type_name, "minecraft:end_crystal" | "minecraft:armor_stand" | "minecraft:falling_block" | "minecraft:tnt")
+        || matches!(e.type_name, "minecraft:end_crystal" | "minecraft:armor_stand" | "minecraft:falling_block" | "minecraft:tnt" | "minecraft:player")
         || e.type_name.ends_with("minecart")
         || e.type_name.ends_with("boat")
         || e.type_name.ends_with("raft")

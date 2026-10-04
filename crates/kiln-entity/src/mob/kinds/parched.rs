@@ -54,6 +54,6 @@ impl Kind for Parched {
 
     /// `Monster.checkSurfaceMonstersSpawnRules`: dark enough, and under the open sky.
     fn check_spawn_rules(&self, view: &dyn SpawnView, pos: BlockPos, r: &mut LegacyRandom) -> Option<bool> {
-        Some(zombie::monster_rules(view, pos, r) && view.sky_light(pos) >= 15)
+        Some(zombie::monster_rules(view, pos, r) && (view.spawner() || view.sky_light(pos) >= 15))
     }
 }

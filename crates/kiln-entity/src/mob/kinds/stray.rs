@@ -48,6 +48,6 @@ impl Kind for Stray {
         while crate::blocks::block_name(view.block(p)) == "minecraft:powder_snow" {
             p = p.above();
         }
-        Some(zombie::monster_rules(view, pos, r) && view.sky_light(p.below()) >= 15)
+        Some(zombie::monster_rules(view, pos, r) && (view.spawner() || view.sky_light(p.below()) >= 15))
     }
 }
