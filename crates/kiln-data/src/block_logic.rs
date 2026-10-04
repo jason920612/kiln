@@ -23,6 +23,25 @@ pub fn block_item(item: &str) -> Option<(&'static str, Option<(&'static str, &'s
     Some((block, wall))
 }
 
+/// The block item that places `block` (a standing or wall variant): `Block.asItem()`, `None`
+/// for blocks without one (air, fire, water...).
+pub fn item_of_block(block: &str) -> Option<&'static str> {
+    static BY_BLOCK: OnceLock<std::collections::HashMap<&'static str, &'static str>> = OnceLock::new();
+    BY_BLOCK
+        .get_or_init(|| {
+            let mut m = std::collections::HashMap::new();
+            for &(item, block, wall) in items::BLOCK_ITEMS {
+                m.insert(block, item);
+                if let Some((wall_block, _)) = wall {
+                    m.insert(wall_block, item);
+                }
+            }
+            m
+        })
+        .get(block)
+        .copied()
+}
+
 #[path = "gen/flammability.rs"]
 mod flammability;
 

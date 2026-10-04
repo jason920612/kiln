@@ -101,6 +101,10 @@ mod container_parity;
 #[cfg(test)]
 mod sculk_parity;
 mod enchant;
+mod equip;
+mod signs;
+mod books;
+mod pick;
 #[cfg(test)]
 mod enchant_parity;
 #[cfg(test)]
@@ -109,6 +113,8 @@ mod effect_parity;
 mod weather_parity;
 #[cfg(test)]
 mod item_parity;
+#[cfg(test)]
+mod interact_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -1518,6 +1524,14 @@ impl Sim {
         part.sculk.map.get(&p).map(|b| b.save()).or_else(|| part.hearts.map.get(&p).map(|h| h.save())).or_else(|| part.containers.map.get(&p).map(|c| c.save()))
     }
 
+    /// The saved form (`saveWithFullMetadata`) of the block entity at an overworld position as
+    /// its chunk holds it (container block entities may lag the live container; for tests and
+    /// tools).
+    pub fn block_entity_saved(&self, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
+        let chunk = self.dims[OVERWORLD_ID].regions.chunk(ChunkPos::of_block(x, z))?;
+        chunk.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| be.saved([x, y, z]))
+    }
+
     /// Block state at a position in the level `dimension` (e.g. `minecraft:the_nether`), if
     /// its chunk is loaded.
     pub fn block_in(&self, dimension: &str, x: i32, y: i32, z: i32) -> Option<u16> {
@@ -1741,6 +1755,16 @@ impl Sim {
     /// A player's inventory as (item id, count) per container slot.
     pub fn inventory(&self, conn: ConnId) -> Option<Vec<Option<(i32, i32)>>> {
         self.players.get(&conn).map(Player::menu_view)
+    }
+
+    /// A player's game mode id (0 survival, 1 creative, 2 adventure, 3 spectator).
+    pub fn game_mode(&self, conn: ConnId) -> Option<u8> {
+        self.players.get(&conn).map(|p| p.game_mode as u8)
+    }
+
+    /// A player's selected hotbar slot.
+    pub fn selected_slot(&self, conn: ConnId) -> Option<usize> {
+        self.players.get(&conn).map(|p| p.inv.selected)
     }
 
     /// A player's open merchant screen: container id, the villager, and (item id, count) of the

@@ -89,7 +89,23 @@ pub fn sends_updates(kind: u16) -> bool {
 impl BlockEntity {
     /// A block entity with default contents: vanilla loads missing fields as defaults.
     pub fn new(kind: u16) -> Self {
-        Self { kind, nbt: Tag::Compound(vec![("id".into(), Tag::String(type_name(kind).to_owned()))]) }
+        let name = type_name(kind);
+        let mut fields = vec![("id".into(), Tag::String(name.to_owned()))];
+        // A new sign saves both sides empty, black and unwaxed (`SignBlockEntity.saveAdditional`).
+        if matches!(name, "minecraft:sign" | "minecraft:hanging_sign") {
+            let side = || {
+                Tag::Compound(vec![
+                    ("color".into(), Tag::String("black".into())),
+                    ("has_glowing_text".into(), Tag::Byte(0)),
+                    ("messages".into(), Tag::List(vec![Tag::String(String::new()), Tag::String(String::new()), Tag::String(String::new()), Tag::String(String::new())])),
+                ])
+            };
+            fields.push(("front_text".into(), side()));
+            fields.push(("back_text".into(), side()));
+            fields.push(("is_waxed".into(), Tag::Byte(0)));
+            fields.push(("components".into(), Tag::Compound(Vec::new())));
+        }
+        Self { kind, nbt: Tag::Compound(fields) }
     }
 
     /// From a chunk's `block_entities` entry; `None` if its `id` is not a known type.

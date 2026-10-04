@@ -420,6 +420,13 @@ pub fn section_blocks_update(section: [i32; 3], blocks: &[([u8; 3], u32)]) -> By
     b.freeze()
 }
 
+/// Opens the book in a hand (0 main hand, 1 off hand).
+pub fn open_book(hand: i32) -> Bytes {
+    let mut b = packet(ids::OPEN_BOOK);
+    b.put_varint(hand);
+    b.freeze()
+}
+
 /// Opens the sign editor for the front or back text.
 pub fn open_sign_editor(pos: [i32; 3], front: bool) -> Bytes {
     let mut b = packet(ids::OPEN_SIGN_EDITOR);

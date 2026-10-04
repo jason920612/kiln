@@ -53,6 +53,8 @@ pub(crate) struct RegionBlocks {
     pub sculk: crate::sculk::Sculk,
     /// Creaking heart block entities.
     pub hearts: crate::heart::Hearts,
+    /// Who may edit which sign (`SignBlockEntity.playerWhoMayEdit`).
+    pub sign_editors: crate::signs::SignEditors,
 }
 
 impl Default for RegionBlocks {
@@ -68,6 +70,7 @@ impl Default for RegionBlocks {
             raid_events: Vec::new(),
             sculk: Default::default(),
             hearts: Default::default(),
+            sign_editors: Default::default(),
         }
     }
 }
@@ -187,6 +190,7 @@ impl RegionPart for RegionBlocks {
         into.raid_events.append(&mut from.raid_events);
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
+        into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -232,13 +236,17 @@ impl RegionPart for RegionBlocks {
             let mut hearts: SmallVec<[&mut crate::heart::Hearts; 4]> = parts.iter_mut().map(|p| &mut p.hearts).collect();
             self.hearts.split_into(&mut hearts, |c| owner((c.x, c.z)));
         }
+        {
+            let mut editors: SmallVec<[&mut crate::signs::SignEditors; 4]> = parts.iter_mut().map(|p| &mut p.sign_editors).collect();
+            self.sign_editors.split_into(&mut editors, |p| owner(p.chunk()));
+        }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -711,6 +719,8 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
         }
     }
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
+    // `SignBlockEntity.tick`: editing locks of players who left.
+    crate::signs::tick(level);
 }
 
 /// `ServerLevel.tickThunder` for chunk `c`, with the chunk's random: during a thunderstorm one
