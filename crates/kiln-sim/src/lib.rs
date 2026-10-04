@@ -2018,7 +2018,7 @@ impl Sim {
             }));
         }
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
-        // The pool starts the biggest first: what the region's work took last time, else a rough
+        // The pool starts the biggest first: what the region's work took lately, else a rough
         // estimate (players dominate a crowd's region, entities a spread one's).
         let last = &self.unit_costs[kind];
         let cost = |w: &RegionWork| {
@@ -2026,11 +2026,28 @@ impl Sim {
                 20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
             })
         };
+        // Speculation (exact either way) pays only in a region that takes longer than its share
+        // of the workers' time: elsewhere the workers are busy with other regions anyway and the
+        // copies only cost CPU. Once on, it stays on until the region falls well below its share
+        // (a region it speeds up would otherwise flip back and forth).
+        if kind == 1 {
+            let costs: Vec<u64> = work.iter().map(&cost).collect();
+            let total: u64 = costs.iter().sum();
+            let workers = self.pool.workers() as u64;
+            for (w, c) in work.iter_mut().zip(costs) {
+                let pace = &mut w.entities.spec;
+                pace.wanted = if pace.wanted { c * workers * 10 >= total * 6 } else { c * workers > total };
+            }
+        }
         let dt = diag::lap("rr.work", dt);
         let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, envs[w.dim].as_ref().expect("the environment of a level with regions"), ctx));
         diag::lap("rr.units", dt);
         self.independent.last_fork = work.iter().zip(&report.unit_ns).map(|(w, &ns)| (w.dim, w.region, ns)).collect();
-        self.unit_costs[kind] = self.independent.last_fork.iter().map(|&(d, r, ns)| ((d, r), ns)).collect();
+        // Smoothed (a quarter of the new time), so one tick held up by the machine does not
+        // reorder everything.
+        let old = std::mem::take(&mut self.unit_costs[kind]);
+        self.unit_costs[kind] =
+            self.independent.last_fork.iter().map(|&(d, r, ns)| ((d, r), old.get(&(d, r)).map_or(ns, |&o| (o * 3 + ns) / 4))).collect();
         if let Some(&max) = report.unit_ns.iter().max() {
             diag::add(["rr.max_unit_p", "rr.max_unit"][kind], Duration::from_nanos(max));
             diag::add(["rr.sum_units_p", "rr.sum_units"][kind], Duration::from_nanos(report.unit_ns.iter().sum()));
