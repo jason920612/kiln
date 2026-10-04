@@ -27,7 +27,7 @@ def main():
     args = ap.parse_args()
     out = Path(args.out).resolve()
     if not args.skip_java:
-        server_dir = WORK / "wp4-entities" / "server"
+        server_dir = out.parent / "server"
         server_dir.mkdir(parents=True, exist_ok=True)
         cmd = ["java", "--add-opens", "java.base/java.lang=ALL-UNNAMED", "-cp", classpath(),
                str(ROOT / "tools" / "EntityVectors.java"), str(out)]
