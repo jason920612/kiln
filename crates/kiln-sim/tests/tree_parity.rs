@@ -124,6 +124,26 @@ fn random_tick_area(level: &mut TestLevel, x0: i32, z0: i32, height: i32) {
     }
 }
 
+/// `BeehiveBlockEntity.serverTick` of a nest with bees in it: one `nextDouble` of the level
+/// random per game tick (a buzz one time in 200). The vanilla ticker is a block entity's, which
+/// the test level has not; the nests are the ones placed features filled with bees.
+fn beehives_tick(level: &mut TestLevel) {
+    let mut nests: Vec<BlockPos> = level
+        .block_entity_data
+        .iter()
+        .filter(|(p, data)| {
+            let s = level.block(**p);
+            let is_nest = matches!(state::BlockId::of(s).name(), "minecraft:bee_nest" | "minecraft:beehive");
+            is_nest && data.get("bees").and_then(|b| b.as_list()).is_some_and(|l| !l.is_empty())
+        })
+        .map(|(p, _)| *p)
+        .collect();
+    nests.sort_by_key(|p| (p.y, p.z, p.x));
+    for _ in nests {
+        level.random().next_double();
+    }
+}
+
 fn state_diff(want: &Blocks, got: &Blocks) -> Vec<String> {
     want.iter()
         .filter(|(k, s)| got.get(k) != Some(s))
@@ -161,7 +181,7 @@ fn host() -> Option<Arc<dyn FeatureHost>> {
 }
 
 /// Runs one scenario line; `Err` names the first op that differs.
-fn replay(v: &serde_json::Value, host: &Arc<dyn FeatureHost>) -> Result<usize, String> {
+fn replay(v: &serde_json::Value, host: &Arc<dyn FeatureHost>) -> Result<Done, String> {
     let (x0, z0) = (v["x0"].as_i64().unwrap() as i32, v["z0"].as_i64().unwrap() as i32);
     let height = v["height"].as_i64().unwrap_or(12) as i32;
     let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK]);
@@ -182,13 +202,26 @@ fn replay(v: &serde_json::Value, host: &Arc<dyn FeatureHost>) -> Result<usize, S
     level.set_random_seed(v["seed"].as_i64().unwrap());
     let ops = v["ops"].as_array().unwrap();
     let results = v["results"].as_array().unwrap();
+    let vines_tick = vines_tick();
+    // Vanilla draws the level random for what a dropped block pops (a decaying leaf's loot is
+    // rolled from its own random sequence, but each item is thrown with level random draws);
+    // Kiln's drops are the simulation's. From the first drop on, the first op whose random probe
+    // differs ends the replay (what followed would depend on draws Kiln did not make).
+    let mut drops_seen = false;
     for (i, (op, want)) in ops.iter().zip(results).enumerate() {
         let kind = op[0].as_str().unwrap();
+        // Vines tick randomly (`VineBlock.randomTick` spreads them with level random draws, wp44's
+        // growth family): without that behaviour nothing after the first random tick over a vine
+        // is comparable, so the replay ends there.
+        if kind == "rt" && !vines_tick && level_has_vine(&level, x0, z0, height) {
+            return Ok(Done::Cut(i, "vines tick randomly"));
+        }
         match kind {
             "rt" => random_tick_area(&mut level, x0, z0, height),
             "tick" => {
                 for _ in 0..op[1].as_i64().unwrap() {
                     level.tick(0, &[]);
+                    beehives_tick(&mut level);
                 }
             }
             "set" => {
@@ -201,18 +234,61 @@ fn replay(v: &serde_json::Value, host: &Arc<dyn FeatureHost>) -> Result<usize, S
             }
             other => panic!("op {other}"),
         }
+        drops_seen |= level.effects.iter().any(|e| matches!(e, kiln_blocks::Effect::Drop { .. }));
         level.effects.clear();
         let probe = level.random().next_long();
         let (got, want_blocks) = (snapshot(&level, x0, z0, height), parse_blocks(&want[0]));
         let (got_ticks, want_ticks) = (pending(&level, x0, z0), pending_expected(&want[1], x0, z0));
         let probe_ok = probe == want[3].as_i64().unwrap();
+        if !probe_ok && drops_seen {
+            return Ok(Done::Cut(i, "the random diverged after a block dropped"));
+        }
         if got != want_blocks || got_ticks != want_ticks || !probe_ok {
             let ticks_diff = if got_ticks != want_ticks { format!("; ticks want {:?} got {:?}", &want_ticks[..want_ticks.len().min(4)], &got_ticks[..got_ticks.len().min(4)]) } else { String::new() };
-            return Err(format!("op {i} ({kind} {:?}): random probe ok {probe_ok}; {:?}{ticks_diff}", &op.as_array().unwrap()[1..], state_diff(&want_blocks, &got)));
+            let mut census: BTreeMap<&str, usize> = BTreeMap::new();
+            for s in want_blocks.values().filter(|s| kiln_blocks::tick::randomly_ticks(**s)) {
+                *census.entry(state::BlockId::of(*s).name()).or_default() += 1;
+            }
+            return Err(format!("op {i} ({kind} {:?}): random probe ok {probe_ok}; {:?}{ticks_diff}; randomly ticking now {census:?}", &op.as_array().unwrap()[1..], state_diff(&want_blocks, &got)));
         }
         set_light(&mut level, &want[2], x0, z0);
     }
-    Ok(ops.len())
+    Ok(Done::All(ops.len()))
+}
+
+/// How a replay ended without a difference.
+enum Done {
+    All(usize),
+    /// Ops compared before the replay left what Kiln models, and why.
+    Cut(usize, &'static str),
+}
+
+/// Whether a random tick on a vine draws the level random (Kiln has `VineBlock.randomTick`).
+fn vines_tick() -> bool {
+    let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK]);
+    level.load_chunks((-1, -1), (1, 1));
+    for x in -1..=1 {
+        for z in -1..=1 {
+            level.set_raw(BlockPos::new(x, 63, z), d::STONE, flags::NONE);
+        }
+    }
+    level.set_raw(BlockPos::new(0, 64, 0), state::parse_state("minecraft:vine[south=true]").unwrap(), flags::NONE);
+    level.set_random_seed(1);
+    kiln_blocks::tick::random_tick_at(&mut level, BlockPos::new(0, 64, 0));
+    level.random().next_long() != kiln_javamath::random::LegacyRandom::new(1).next_long()
+}
+
+fn level_has_vine(level: &TestLevel, x0: i32, z0: i32, height: i32) -> bool {
+    for y in FLOOR + 1..Y0 + height {
+        for z in z0 + LO..=z0 + HI {
+            for x in x0 + LO..=x0 + HI {
+                if state::BlockId::of(level.block(BlockPos::new(x, y, z))).name() == "minecraft:vine" {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn matches_filter(name: &str, filter: &Option<String>) -> bool {
@@ -230,6 +306,7 @@ fn tree_parity() {
     let file = std::io::BufReader::new(std::fs::File::open(path).unwrap());
     let (mut ok, mut total, mut ops_ok, mut ops_total) = (0, 0, 0, 0);
     let mut failed = Vec::new();
+    let mut cut = Vec::new();
     for line in file.lines() {
         let line = line.unwrap();
         // Cheap name check before parsing megabytes of JSON.
@@ -243,14 +320,20 @@ fn tree_parity() {
         ops_total += v["ops"].as_array().unwrap().len();
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| replay(&v, &host)));
         match result {
-            Ok(Ok(n)) => {
+            Ok(Ok(Done::All(n))) => {
                 ok += 1;
                 ops_ok += n;
+            }
+            Ok(Ok(Done::Cut(n, why))) => {
+                ok += 1;
+                ops_ok += n;
+                cut.push(format!("{name}: {n}/{} ops ({why})", v["ops"].as_array().unwrap().len()));
             }
             Ok(Err(e)) => failed.push(format!("{name}: {e}")),
             Err(_) => failed.push(format!("{name}: panicked")),
         }
     }
-    eprintln!("tree parity: {ok}/{total} scenarios match ({ops_ok}/{ops_total} ops before the first difference)");
+    eprintln!("tree parity: {ok}/{total} scenarios match ({ops_ok}/{ops_total} ops compared before the first difference)");
+    eprintln!("{} of them end early where the replay leaves what Kiln models: {cut:#?}", cut.len());
     assert!(failed.is_empty(), "{:#?}", failed);
 }

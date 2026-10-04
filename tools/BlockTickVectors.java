@@ -483,7 +483,7 @@ public class BlockTickVectors {
         level.getFluidTicks().clearArea(area);
         curHeight = sc.height;
         if (!sc.biome.equals(curBiome)) {
-            command(String.format("fillbiome %d %d %d %d %d %d %s", x0 + LO - 4, FLOOR - 3, z0 + LO - 4, x0 + HI + 4, FLOOR + 24, z0 + HI + 4, sc.biome));
+            command(String.format("fillbiome %d %d %d %d %d %d %s", x0 + LO - 4, FLOOR - 7, z0 + LO - 4, x0 + HI + 4, FLOOR + 12, z0 + HI + 4, sc.biome));
             curBiome = sc.biome;
         }
         command(String.format("fill %d %d %d %d %d %d minecraft:stone", x0 + LO, FLOOR, z0 + LO, x0 + HI, FLOOR, z0 + HI));
