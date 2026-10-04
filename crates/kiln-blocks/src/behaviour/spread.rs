@@ -159,3 +159,95 @@ pub fn frosted_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, 
         melt(level, s, pos);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::level::Level;
+    use crate::test_level::TestLevel;
+    use kiln_data::blocks_types::is_air;
+
+    fn level() -> TestLevel {
+        let mut l = TestLevel::flat(-64, 384, &[d::STONE]);
+        l.load_chunks((-2, -2), (2, 2));
+        l
+    }
+
+    #[test]
+    fn ice_evaporates_where_water_does() {
+        // `IceBlock.melt`: nothing but air where `water_evaporates` (the nether), else water.
+        let (mut wet, mut nether) = (level(), level());
+        nether.rules.water_evaporates = true;
+        let pos = BlockPos::new(0, 70, 0);
+        for l in [&mut wet, &mut nether] {
+            l.set_raw(pos, d::ICE, flags::NONE);
+            l.block_brightness.insert(pos, 15);
+            ice_random_tick(l, d::ICE, pos);
+        }
+        assert!(state::is(wet.block(pos), d::WATER));
+        assert!(is_air(nether.block(pos)));
+    }
+
+    #[test]
+    fn ice_needs_more_than_ten_block_light() {
+        // `getBrightness(BLOCK) > 11 - lightDampening` and ice dampens by 1.
+        let mut l = level();
+        let pos = BlockPos::new(0, 70, 0);
+        l.set_raw(pos, d::ICE, flags::NONE);
+        l.block_brightness.insert(pos, 10);
+        ice_random_tick(&mut l, d::ICE, pos);
+        assert!(state::is(l.block(pos), d::ICE));
+        l.block_brightness.insert(pos, 11);
+        ice_random_tick(&mut l, d::ICE, pos);
+        assert!(state::is(l.block(pos), d::WATER));
+    }
+
+    #[test]
+    fn frosted_ice_in_the_end_reads_block_light_only() {
+        // `FrostedIceBlock.tick`: brightness is the block light in the End, the sky included elsewhere.
+        let pos = BlockPos::new(0, 70, 0);
+        let frosted = state::set_int(d::FROSTED_ICE, "age", 3);
+        for (end, melts) in [(false, true), (true, false)] {
+            let mut l = level();
+            l.end = end;
+            l.set_raw(pos, frosted, flags::NONE);
+            l.default_brightness = 15; // full sky light everywhere
+            // Skip the one-in-three roll and the neighbour count: five neighbours would stop the
+            // melt, so give it none and try until the roll lets the check through.
+            for _ in 0..40 {
+                if !state::is(l.block(pos), d::FROSTED_ICE) {
+                    break;
+                }
+                let current = l.block(pos);
+                frosted_tick(&mut l, current, pos);
+            }
+            assert_eq!(!state::is(l.block(pos), d::FROSTED_ICE), melts, "end {end}");
+        }
+    }
+
+    #[test]
+    fn grass_dies_under_a_full_block_and_lives_under_glass() {
+        let mut l = level();
+        let grass = BlockPos::new(0, 70, 0);
+        l.set_raw(grass, d::GRASS_BLOCK, flags::NONE);
+        l.set_raw(grass.above(), d::GLASS, flags::NONE);
+        spreading_random_tick(&mut l, d::GRASS_BLOCK, grass);
+        assert!(state::is(l.block(grass), d::GRASS_BLOCK));
+        l.set_raw(grass.above(), d::STONE, flags::NONE);
+        spreading_random_tick(&mut l, d::GRASS_BLOCK, grass);
+        assert!(state::is(l.block(grass), d::DIRT));
+    }
+
+    #[test]
+    fn grass_under_one_layer_of_snow_survives_but_not_under_two() {
+        let mut l = level();
+        let grass = BlockPos::new(0, 70, 0);
+        l.set_raw(grass, d::GRASS_BLOCK, flags::NONE);
+        l.set_raw(grass.above(), d::SNOW, flags::NONE);
+        spreading_random_tick(&mut l, d::GRASS_BLOCK, grass);
+        assert!(state::is(l.block(grass), d::GRASS_BLOCK));
+        l.set_raw(grass.above(), state::set_int(d::SNOW, "layers", 2), flags::NONE);
+        spreading_random_tick(&mut l, d::GRASS_BLOCK, grass);
+        assert!(state::is(l.block(grass), d::DIRT));
+    }
+}

@@ -555,3 +555,80 @@ pub fn chorus_flower_random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos)
         place_dead_flower(level, pos);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::level::Level;
+    use crate::test_level::TestLevel;
+
+    fn level() -> TestLevel {
+        let mut l = TestLevel::flat(-64, 384, &[d::STONE]);
+        l.load_chunks((-2, -2), (2, 2));
+        l
+    }
+
+    #[test]
+    fn kelp_cannot_stand_on_magma() {
+        let mut l = level();
+        let pos = BlockPos::new(0, 70, 0);
+        l.set_raw(pos.below(), d::MAGMA_BLOCK, flags::NONE);
+        l.set_raw(pos, d::KELP, flags::NONE);
+        assert!(!plant_can_survive(&l, d::KELP, pos));
+        l.set_raw(pos.below(), d::SAND, flags::NONE);
+        assert!(plant_can_survive(&l, d::KELP, pos));
+    }
+
+    #[test]
+    fn vines_do_not_spread_when_the_rule_is_off() {
+        let mut l = level();
+        l.rules.spread_vines = false;
+        let wall = BlockPos::new(0, 70, 0);
+        l.set_raw(wall, d::STONE, flags::NONE);
+        let vine = state::set_bool(d::VINE, "north", true);
+        l.set_raw(wall.relative(Direction::South), vine, flags::NONE);
+        let before = l.random().state();
+        for _ in 0..50 {
+            vine_random_tick(&mut l, vine, wall.relative(Direction::South));
+        }
+        assert_eq!(l.random().state(), before, "no draw is made when the rule is off");
+    }
+
+    #[test]
+    fn mushrooms_stop_spreading_when_four_grow_around() {
+        // `MushroomBlock.canSpread`: at most four of the same mushroom in the 9x3x9 box.
+        let mut l = level();
+        let base = BlockPos::new(0, 70, 0);
+        for x in 0..5 {
+            l.set_raw(base.offset(x, -1, 0), d::STONE, flags::NONE);
+            l.set_raw(base.offset(x, 0, 0), d::BROWN_MUSHROOM, flags::NONE);
+        }
+        l.default_brightness = 0;
+        assert!(!at_most_matched(&l, base, 4, |s| state::is(s, d::BROWN_MUSHROOM)));
+        let before = l.random().state();
+        // The 1-in-25 roll is drawn, then `canSpread` stops the spread before any other draw.
+        let mut rolls = 0;
+        for _ in 0..200 {
+            let state = l.random().state();
+            mushroom_random_tick(&mut l, d::BROWN_MUSHROOM, base);
+            if l.random().state() != state {
+                rolls += 1;
+            }
+        }
+        assert_eq!(rolls, 200);
+        assert_ne!(before, l.random().state());
+        assert!((0..9).all(|x| !state::is(l.block(base.offset(x - 2, 0, 3)), d::BROWN_MUSHROOM)));
+    }
+
+    #[test]
+    fn nylium_without_cover_stays_and_with_a_block_on_top_goes() {
+        let mut l = level();
+        let pos = BlockPos::new(0, 70, 0);
+        l.set_raw(pos, d::CRIMSON_NYLIUM, flags::NONE);
+        nylium_random_tick(&mut l, d::CRIMSON_NYLIUM, pos);
+        assert!(state::is(l.block(pos), d::CRIMSON_NYLIUM));
+        l.set_raw(pos.above(), d::DIRT, flags::NONE);
+        nylium_random_tick(&mut l, d::CRIMSON_NYLIUM, pos);
+        assert!(state::is(l.block(pos), d::NETHERRACK));
+    }
+}

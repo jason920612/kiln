@@ -252,3 +252,70 @@ pub fn wet_sponge_on_place<L: Level>(level: &mut L, pos: BlockPos) {
         level.effect(Effect::Sound { pos, sound: "minecraft:block.wet_sponge.dries", volume: 1.0, pitch });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::level::Level;
+    use crate::test_level::TestLevel;
+    use kiln_data::blocks_types::is_air;
+
+    fn level() -> TestLevel {
+        let mut l = TestLevel::flat(-64, 384, &[d::STONE]);
+        l.load_chunks((-2, -2), (2, 2));
+        l
+    }
+
+    #[test]
+    fn wet_sponges_dry_where_water_evaporates() {
+        let pos = BlockPos::new(0, 70, 0);
+        let mut nether = level();
+        nether.rules.water_evaporates = true;
+        nether.set_raw(pos, d::WET_SPONGE, flags::NONE);
+        wet_sponge_on_place(&mut nether, pos);
+        assert!(state::is(nether.block(pos), d::SPONGE));
+        let mut over = level();
+        over.set_raw(pos, d::WET_SPONGE, flags::NONE);
+        wet_sponge_on_place(&mut over, pos);
+        assert!(state::is(over.block(pos), d::WET_SPONGE));
+    }
+
+    #[test]
+    fn a_sponge_in_a_pool_takes_the_water_within_six_blocks() {
+        let mut l = level();
+        let pos = BlockPos::new(0, 70, 0);
+        for x in -7..=7 {
+            l.set_raw(BlockPos::new(x, 70, 0), d::WATER, flags::NONE);
+        }
+        l.set_raw(pos, d::SPONGE, flags::NONE);
+        sponge_try_absorb(&mut l, pos);
+        assert!(state::is(l.block(pos), d::WET_SPONGE));
+        // Six blocks either side were soaked up; the seventh stays.
+        assert!(is_air(l.block(BlockPos::new(6, 70, 0))) && is_air(l.block(BlockPos::new(-6, 70, 0))));
+        assert!(state::is(l.block(BlockPos::new(7, 70, 0)), d::WATER) && state::is(l.block(BlockPos::new(-7, 70, 0)), d::WATER));
+    }
+
+    #[test]
+    fn a_lone_sponge_stays_dry() {
+        let mut l = level();
+        let pos = BlockPos::new(0, 70, 0);
+        l.set_raw(pos, d::SPONGE, flags::NONE);
+        sponge_try_absorb(&mut l, pos);
+        assert!(state::is(l.block(pos), d::SPONGE));
+    }
+
+    #[test]
+    fn scaffolding_distance_counts_from_the_supported_one() {
+        let mut l = level();
+        let base = BlockPos::new(0, 70, 0);
+        for x in 0..3 {
+            l.set_raw(base.offset(x, 0, 0), state::set_int(d::SCAFFOLDING, "distance", x), flags::NONE);
+        }
+        // Over air, the nearest neighbour's distance plus one; over a sturdy block, 0; nothing around, 7.
+        assert_eq!(scaffolding_distance(&l, base.offset(1, 0, 0)), 1);
+        assert_eq!(scaffolding_distance(&l, base.offset(3, 0, 0)), 3);
+        assert_eq!(scaffolding_distance(&l, base.offset(8, 0, 0)), 7);
+        l.set_raw(base.offset(3, -1, 0), d::STONE, flags::NONE);
+        assert_eq!(scaffolding_distance(&l, base.offset(3, 0, 0)), 0);
+    }
+}

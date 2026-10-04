@@ -73,6 +73,8 @@ pub struct TestLevel {
     pub block_brightness: HashMap<BlockPos, i32>,
     /// `Level.getSkyDarken`.
     pub sky_darken: i32,
+    /// Whether this level is the End (`dimension() == Level.END`).
+    pub end: bool,
 }
 
 impl TestLevel {
@@ -102,6 +104,7 @@ impl TestLevel {
             default_brightness: 15,
             block_brightness: HashMap::new(),
             sky_darken: 0,
+            end: false,
         }
     }
 
@@ -307,5 +310,9 @@ impl Level for TestLevel {
 
     fn sky_darken(&self) -> i32 {
         self.sky_darken
+    }
+
+    fn is_end(&self) -> bool {
+        self.end
     }
 }
