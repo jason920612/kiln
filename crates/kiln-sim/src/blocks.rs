@@ -597,6 +597,14 @@ impl Level for RegionLevel<'_> {
         self.cells.light_at(LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
     }
 
+    fn sky_darken(&self) -> i32 {
+        self.env.mobs.sky_darken
+    }
+
+    fn is_end(&self) -> bool {
+        self.env.dim == crate::END_ID
+    }
+
     fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
         let r = self.env.fire_spread_radius;
         let at = [pos.x as f64, pos.y as f64, pos.z as f64];

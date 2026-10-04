@@ -49,6 +49,8 @@ pub struct Rules {
     pub water_evaporates: bool,
     /// `minecraft:tnt_explodes`.
     pub tnt_explodes: bool,
+    /// `minecraft:spread_vines`.
+    pub spread_vines: bool,
     /// The dimension's `infiniburn` block tag (fire never burns out on these).
     pub infiniburn: &'static str,
 }
@@ -62,6 +64,7 @@ impl Default for Rules {
             fast_lava: false,
             water_evaporates: false,
             tnt_explodes: true,
+            spread_vines: true,
             infiniburn: "minecraft:infiniburn_overworld",
         }
     }
@@ -233,6 +236,22 @@ pub trait Level {
     /// `getBrightness(LightLayer.BLOCK, pos)`.
     fn block_light(&self, _pos: BlockPos) -> i32 {
         0
+    }
+
+    /// `Level.getSkyDarken`: what daylight, rain and thunder take from the sky light (0 at noon in
+    /// clear weather).
+    fn sky_darken(&self) -> i32 {
+        0
+    }
+
+    /// `LevelReader.getMaxLocalRawBrightness(pos)`.
+    fn max_local_raw_brightness(&self, pos: BlockPos) -> i32 {
+        self.raw_brightness(pos, self.sky_darken())
+    }
+
+    /// Whether this is the End (`level.dimension() == Level.END`).
+    fn is_end(&self) -> bool {
+        false
     }
 
     /// `Level.isRainingAt`.

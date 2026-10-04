@@ -69,6 +69,10 @@ pub struct TestLevel {
     /// elsewhere.
     pub brightness: HashMap<BlockPos, i32>,
     pub default_brightness: i32,
+    /// Block light (`getBrightness(LightLayer.BLOCK, pos)`) of the positions the table names, 0 elsewhere.
+    pub block_brightness: HashMap<BlockPos, i32>,
+    /// `Level.getSkyDarken`.
+    pub sky_darken: i32,
 }
 
 impl TestLevel {
@@ -96,6 +100,8 @@ impl TestLevel {
             difficulty: 2,
             brightness: HashMap::new(),
             default_brightness: 15,
+            block_brightness: HashMap::new(),
+            sky_darken: 0,
         }
     }
 
@@ -293,5 +299,13 @@ impl Level for TestLevel {
 
     fn raw_brightness(&self, pos: BlockPos, _sky_darken: i32) -> i32 {
         self.brightness.get(&pos).copied().unwrap_or(self.default_brightness)
+    }
+
+    fn block_light(&self, pos: BlockPos) -> i32 {
+        self.block_brightness.get(&pos).copied().unwrap_or(0)
+    }
+
+    fn sky_darken(&self) -> i32 {
+        self.sky_darken
     }
 }

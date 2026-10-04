@@ -6,11 +6,13 @@
 
 pub mod connect;
 pub mod container;
+pub mod growth;
 pub mod misc;
 pub mod piston;
 pub mod portal;
 pub mod rail;
 pub mod sculk;
+pub mod spread;
 pub mod support;
 
 use crate::fluid;
@@ -41,6 +43,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::RedstoneLampBlock => components::lamp_neighbor_changed(level, s, pos),
         C::NoteBlock => devices::note_neighbor_changed(level, s, pos),
         C::TntBlock => devices::tnt_neighbor_changed(level, pos),
+        C::FrostedIceBlock => spread::frosted_neighbor_changed(level, s, pos, source),
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
         C::PistonBaseBlock => piston::check_if_extend(level, s, pos),
         C::PistonHeadBlock => piston::head_neighbor_changed(level, s, pos, source),
@@ -109,8 +112,14 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if logic::is_instance(s, C::SnowyBlock) && dir == Direction::Up {
         return state::set_bool(s, "snowy", connect::snowy_setting(neighbor_state));
     }
-    if matches!(class, C::KelpBlock | C::KelpPlantBlock) {
-        return kelp_update_shape(level, s, pos, dir, neighbor_state);
+    if growth::is_growing_plant(s) {
+        return growth::plant_update_shape(level, s, pos, dir, neighbor_state);
+    }
+    match class {
+        C::VineBlock => return growth::vine_update_shape(level, s, pos, dir),
+        C::ChorusPlantBlock => return growth::chorus_plant_update_shape(level, s, pos, dir, neighbor_state),
+        C::ChorusFlowerBlock => return growth::chorus_flower_update_shape(level, s, pos, dir),
+        _ => {}
     }
     if class == C::SeagrassBlock {
         // `SeagrassBlock.updateShape`: the water around it flows again while it stays.
@@ -123,37 +132,6 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if let Some(new) = support::pop_off(level, s, pos, dir, neighbor_state) {
         return new;
     }
-    s
-}
-
-/// `GrowingPlantHeadBlock.updateShape` / `GrowingPlantBodyBlock.updateShape` of kelp
-/// (grows up, keeps its water flowing).
-fn kelp_update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Direction, neighbor: u16) -> u16 {
-    use kiln_data::blocks::default_state as d;
-    let is_kelp = |b: u16| state::is(b, d::KELP) || state::is(b, d::KELP_PLANT);
-    let head = state::is(s, d::KELP);
-    if dir == Direction::Down {
-        let below = level.block(pos.below());
-        let survives = !state::is(below, d::MAGMA_BLOCK) && (is_kelp(below) || sturdy(below, Direction::Up, Support::Full));
-        if !survives {
-            crate::level::schedule_block_tick(level, pos, BlockId::of(s), 1, crate::ticks::TickPriority::Normal);
-        }
-        if head && is_kelp(level.block(pos.above())) {
-            return d::KELP_PLANT;
-        }
-    }
-    if dir == Direction::Up {
-        if head && is_kelp(neighbor) {
-            return d::KELP_PLANT;
-        }
-        if !head && !is_kelp(neighbor) {
-            // `getHeadBlock().getStateForPlacement(random)`: a random age from the level random.
-            use kiln_javamath::random::RandomSource;
-            let age = level.random().next_int_bounded(25);
-            return state::set(d::KELP, "age", &age.to_string());
-        }
-    }
-    crate::level::schedule_fluid_tick(level, pos, crate::FluidType::Water, 5);
     s
 }
 
@@ -225,6 +203,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_on_place(level, s, pos, old),
         C::SnifferEggBlock if !state::same_block(old, s) => misc::sniffer_egg_on_place(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_on_place(level, s, pos),
+        C::FrostedIceBlock => spread::frosted_on_place(level, s, pos),
         // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it; one that cannot
         // survive goes out.
         C::FireBlock | C::SoulFireBlock => {
@@ -281,6 +260,9 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::SculkCatalystBlock => sculk::catalyst_tick(level, s, pos),
         C::SnifferEggBlock => misc::sniffer_egg_tick(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_tick(level, pos),
+        C::FrostedIceBlock => spread::frosted_tick(level, s, pos),
+        C::ChorusPlantBlock | C::ChorusFlowerBlock => growth::chorus_tick(level, s, pos),
+        _ if growth::is_growing_plant(s) => growth::plant_tick(level, s, pos),
         C::CreakingHeartBlock => misc::creaking_heart_tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.
@@ -293,14 +275,31 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     }
 }
 
-/// `randomTick`: leaf decay and lava setting fire (`LiquidBlock.randomTick`: the fluid's).
-/// Other random-tick behaviour (crop growth, grass spread, ...) is not simulated yet; the
-/// positions are still drawn so the random-tick sequence stays aligned.
+/// `randomTick`: leaf decay, lava setting fire (`LiquidBlock.randomTick`: the fluid's), grass
+/// and mycelium spreading, snow and ice melting. Other random-tick behaviour is dispatched as
+/// it is implemented; the positions are still drawn so the random-tick sequence stays aligned.
 pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
-    if logic::is_instance(s, BlockClass::LeavesBlock) {
+    use BlockClass as C;
+    if logic::is_instance(s, C::LeavesBlock) {
         misc::leaves_random_tick(level, s, pos);
-    } else if logic::block_class(s) == BlockClass::LiquidBlock && logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
+    } else if logic::block_class(s) == C::LiquidBlock && logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
         crate::fire::lava_random_tick(level, pos);
+    } else if logic::is_instance(s, C::SpreadingSnowyBlock) {
+        spread::spreading_random_tick(level, s, pos);
+    } else if logic::block_class(s) == C::SnowLayerBlock {
+        spread::snow_random_tick(level, s, pos);
+    } else if logic::is_instance(s, C::IceBlock) {
+        spread::ice_random_tick(level, s, pos);
+    } else if growth::is_growing_plant(s) {
+        growth::plant_random_tick(level, s, pos);
+    } else {
+        match logic::block_class(s) {
+            C::VineBlock => growth::vine_random_tick(level, s, pos),
+            C::MushroomBlock => growth::mushroom_random_tick(level, s, pos),
+            C::NyliumBlock => growth::nylium_random_tick(level, s, pos),
+            C::ChorusFlowerBlock => growth::chorus_flower_random_tick(level, s, pos),
+            _ => {}
+        }
     }
 }
 

@@ -141,6 +141,173 @@ public class BlockTickVectors {
     // ================================================================ family: spread
     // grass, mycelium, nylium, saplings (trees), azalea, snow and ice melting
     static void scenariosSpread(List<Sc> out) {
+        // ---- grass and mycelium over dirt
+        for (int i = 0; i < 3; i++) {
+            out.add(new Sc("spread_grass_flat_" + i, 100 + i).cmd(
+                    "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt",
+                    "setblock ~3 ~ ~3 minecraft:grass_block",
+                    "setblock ~12 ~ ~11 minecraft:grass_block",
+                    "setblock ~7 ~ ~13 minecraft:mycelium").rt(70));
+        }
+        for (int i = 0; i < 3; i++) {
+            out.add(new Sc("spread_grass_terraces_" + i, 110 + i).cmd(
+                    "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt",
+                    "fill ~2 ~1 ~2 ~7 ~1 ~7 minecraft:dirt",
+                    "fill ~4 ~2 ~4 ~6 ~2 ~6 minecraft:dirt",
+                    "fill ~9 ~1 ~8 ~13 ~1 ~13 minecraft:dirt",
+                    "fill ~10 ~2 ~9 ~12 ~3 ~11 minecraft:dirt",
+                    "fill ~0 ~1 ~12 ~3 ~1 ~15 minecraft:coarse_dirt",
+                    "fill ~8 ~1 ~0 ~11 ~1 ~3 minecraft:podzol",
+                    "setblock ~1 ~ ~1 minecraft:grass_block",
+                    "setblock ~5 ~2 ~5 minecraft:grass_block",
+                    "setblock ~14 ~ ~14 minecraft:mycelium",
+                    "setblock ~11 ~3 ~10 minecraft:mycelium").rt(80));
+        }
+        // under a roof the light fades with the distance from its edge; torches light patches again
+        out.add(new Sc("spread_grass_roof_0", 120).cmd(
+                "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt",
+                "fill ~0 ~4 ~0 ~15 ~4 ~15 minecraft:oak_planks",
+                "setblock ~2 ~ ~2 minecraft:grass_block",
+                "setblock ~13 ~ ~13 minecraft:mycelium",
+                "setblock ~7 ~ ~7 minecraft:grass_block",
+                "setblock ~8 ~1 ~8 minecraft:torch",
+                "setblock ~3 ~1 ~12 minecraft:torch").rt(80));
+        out.add(new Sc("spread_grass_roof_1", 121).cmd(
+                "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt",
+                "fill ~0 ~2 ~0 ~15 ~2 ~15 minecraft:glass",
+                "fill ~3 ~2 ~3 ~12 ~2 ~12 minecraft:stone",
+                "setblock ~2 ~ ~2 minecraft:grass_block",
+                "setblock ~8 ~ ~8 minecraft:grass_block",
+                "setblock ~6 ~1 ~9 minecraft:soul_torch",
+                "setblock ~9 ~1 ~4 minecraft:glowstone").rt(80));
+        out.add(new Sc("spread_grass_roof_2", 122).cmd(
+                "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt",
+                "fill ~1 ~5 ~1 ~14 ~5 ~14 minecraft:stone_slab[type=bottom]",
+                "setblock ~3 ~ ~3 minecraft:mycelium",
+                "setblock ~12 ~ ~12 minecraft:grass_block").rt(60)
+                .set(7, 105, 7, "minecraft:air").rt(30).set(8, 105, 8, "minecraft:air").set(6, 105, 6, "minecraft:air").rt(30));
+        // what covers grass: it dies to dirt unless the cover lets the light through
+        String[] covers = {
+                "minecraft:stone", "minecraft:oak_slab[type=bottom]", "minecraft:oak_slab[type=top]", "minecraft:oak_slab[type=double]",
+                "minecraft:oak_stairs[half=bottom,facing=east]", "minecraft:oak_stairs[half=top,facing=east]", "minecraft:glass",
+                "minecraft:tinted_glass", "minecraft:oak_leaves[persistent=true]", "minecraft:water", "minecraft:snow[layers=1]",
+                "minecraft:snow[layers=2]", "minecraft:snow[layers=8]", "minecraft:oak_trapdoor[half=bottom,open=false]",
+                "minecraft:oak_trapdoor[half=top,open=false]", "minecraft:oak_trapdoor[open=true,facing=north]", "minecraft:oak_fence",
+                "minecraft:cobweb", "minecraft:ice", "minecraft:honey_block", "minecraft:slime_block", "minecraft:torch",
+                "minecraft:white_carpet", "minecraft:chest", "minecraft:iron_bars",
+                "minecraft:glowstone", "minecraft:hopper", "minecraft:composter", "minecraft:bell[attachment=floor]",
+                "minecraft:dirt_path", "minecraft:oak_pressure_plate", "minecraft:short_grass",
+                "minecraft:oak_sign", "minecraft:flower_pot", "minecraft:lantern", "minecraft:oak_button[face=floor]", "minecraft:cauldron",
+                "minecraft:redstone_wire", "minecraft:white_stained_glass", "minecraft:glass_pane",
+                "minecraft:sea_pickle[pickles=1]", "minecraft:chain[axis=y]",
+                "minecraft:end_rod", "minecraft:iron_trapdoor[half=top]", "minecraft:powder_snow",
+                "minecraft:amethyst_cluster", "minecraft:campfire", "minecraft:oak_leaves[persistent=true,waterlogged=true]",
+                "minecraft:pale_moss_carpet", "minecraft:moss_carpet", "minecraft:sculk_vein[down=true]", "minecraft:big_dripleaf",
+                "minecraft:oak_fence_gate", "minecraft:cobblestone_wall", "minecraft:scaffolding"};
+        for (int part = 0; part < 3; part++) {
+            for (int variant = 0; variant < 2; variant++) {
+                Sc sc = new Sc("spread_grass_covers_" + (variant == 0 ? "grass_" : "dirt_") + part, 130 + part * 2 + variant).cmd(
+                        "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt");
+                for (int i = 0; i < 25; i++) {
+                    int idx = part * 20 + i;
+                    if (idx >= covers.length) break;
+                    int x = 1 + 3 * (i % 5), z = 1 + 3 * (i / 5);
+                    if (variant == 0) sc.cmd("setblock ~" + x + " ~ ~" + z + " minecraft:grass_block");
+                    else sc.cmd("setblock ~" + (x + 1) + " ~ ~" + z + " minecraft:" + (i % 2 == 0 ? "grass_block" : "mycelium"));
+                    sc.cmd("setblock ~" + x + " ~1 ~" + z + " " + covers[idx]);
+                }
+                out.add(sc.rt(60));
+            }
+        }
+        // grass and mycelium compete for the same dirt, with snow on top coming and going
+        for (int i = 0; i < 2; i++) {
+            out.add(new Sc("spread_compete_" + i, 150 + i).cmd(
+                    "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt",
+                    "fill ~0 ~ ~0 ~1 ~ ~15 minecraft:grass_block",
+                    "fill ~14 ~ ~0 ~15 ~ ~15 minecraft:mycelium",
+                    "fill ~7 ~ ~6 ~8 ~ ~9 minecraft:podzol").rt(120));
+        }
+        out.add(new Sc("spread_snowy", 160).cmd(
+                "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt",
+                "fill ~0 ~ ~0 ~3 ~ ~15 minecraft:grass_block",
+                "setblock ~14 ~ ~14 minecraft:mycelium",
+                "fill ~1 ~1 ~1 ~2 ~1 ~14 minecraft:snow[layers=1]",
+                "fill ~3 ~1 ~5 ~3 ~1 ~9 minecraft:snow[layers=4]",
+                "setblock ~3 ~ ~12 minecraft:podzol",
+                "setblock ~3 ~1 ~12 minecraft:snow_block").rt(30)
+                .set(6, 101, 6, "minecraft:snow_block").set(7, 101, 6, "minecraft:snow[layers=1]").set(6, 101, 7, "minecraft:powder_snow").rt(40)
+                .set(2, 101, 3, "minecraft:air").set(1, 101, 3, "minecraft:stone").set(2, 101, 4, "minecraft:snow[layers=3]").rt(40));
+        // blocks above and below the dirt change while it spreads
+        out.add(new Sc("spread_changes", 170).cmd(
+                "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt",
+                "setblock ~2 ~ ~2 minecraft:grass_block",
+                "setblock ~12 ~ ~12 minecraft:mycelium").rt(20)
+                .set(2, 101, 2, "minecraft:stone").rt(10).set(2, 101, 2, "minecraft:air").set(12, 101, 12, "minecraft:water").rt(30)
+                .set(6, 100, 6, "minecraft:stone").set(6, 100, 7, "minecraft:coarse_dirt").set(5, 100, 5, "minecraft:dirt").rt(20));
+
+        // ---- snow layers melt in block light above 11
+        String[] lamps = {"minecraft:torch", "minecraft:glowstone", "minecraft:candle[lit=true,candles=4]", "minecraft:soul_torch",
+                "minecraft:sea_lantern", "minecraft:lantern[hanging=false]", "minecraft:redstone_lamp[lit=true]", "minecraft:campfire[lit=true]"};
+        for (int i = 0; i < 4; i++) {
+            Sc sc = new Sc("snow_melt_" + i, 180 + i).cmd("fill ~0 ~ ~0 ~15 ~ ~15 minecraft:dirt");
+            // rows of snow of every depth, a lamp at the start of each row
+            for (int row = 0; row < 8; row++) {
+                int z = 1 + 2 * row;
+                sc.cmd("setblock ~0 ~1 ~" + z + " " + lamps[(row + i) % lamps.length]);
+                for (int x = 1; x <= 8; x++) sc.cmd("setblock ~" + x + " ~1 ~" + z + " minecraft:snow[layers=" + (1 + (x + row + i) % 8) + "]");
+            }
+            sc.cmd("fill ~10 ~ ~0 ~15 ~ ~15 minecraft:grass_block", "fill ~10 ~1 ~0 ~15 ~1 ~15 minecraft:snow[layers=2]");
+            out.add(sc.rt(40));
+        }
+        out.add(new Sc("snow_melt_tall", 190).cmd(
+                "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:grass_block",
+                "fill ~0 ~1 ~0 ~15 ~1 ~15 minecraft:snow[layers=1]",
+                "fill ~4 ~1 ~4 ~11 ~1 ~11 minecraft:snow[layers=8]",
+                "setblock ~7 ~2 ~7 minecraft:glowstone").rt(10)
+                .set(4, 101, 4, "minecraft:torch").set(11, 101, 11, "minecraft:lava").rt(10).set(2, 100, 2, "minecraft:air").set(3, 101, 3, "minecraft:glowstone").rt(30));
+
+        // ---- ice melts in block light above 11 - 1; frosted ice fades with age
+        for (int i = 0; i < 3; i++) {
+            Sc sc = new Sc("ice_melt_" + i, 200 + i).cmd("fill ~0 ~ ~0 ~15 ~ ~15 minecraft:stone");
+            for (int row = 0; row < 8; row++) {
+                int z = 1 + 2 * row;
+                sc.cmd("setblock ~0 ~1 ~" + z + " " + lamps[(row + i) % lamps.length]);
+                for (int x = 1; x <= 8; x++) {
+                    String b = (x + row) % 5 == 0 ? "minecraft:packed_ice" : (x + row) % 7 == 0 ? "minecraft:blue_ice" : "minecraft:ice";
+                    sc.cmd("setblock ~" + x + " ~1 ~" + z + " " + b);
+                }
+            }
+            sc.cmd("fill ~11 ~1 ~1 ~14 ~1 ~14 minecraft:ice", "fill ~12 ~2 ~2 ~13 ~2 ~13 minecraft:ice", "setblock ~12 ~3 ~7 minecraft:glowstone");
+            out.add(sc.rtTick(40, 8));
+        }
+        out.add(new Sc("ice_melt_water", 210).cmd(
+                "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:stone",
+                "fill ~2 ~1 ~2 ~13 ~1 ~13 minecraft:ice",
+                "fill ~5 ~1 ~5 ~10 ~1 ~10 minecraft:water",
+                "setblock ~7 ~1 ~7 minecraft:ice",
+                "setblock ~1 ~1 ~1 minecraft:torch",
+                "setblock ~14 ~1 ~14 minecraft:glowstone").rtTick(30, 6));
+        out.add(new Sc("ice_melt_lava", 211).cmd(
+                "fill ~0 ~ ~0 ~15 ~ ~15 minecraft:stone",
+                "fill ~3 ~1 ~3 ~12 ~1 ~12 minecraft:ice",
+                "setblock ~7 ~1 ~7 minecraft:lava",
+                "setblock ~1 ~1 ~1 minecraft:glowstone",
+                "setblock ~14 ~1 ~14 minecraft:torch").rtTick(30, 6));
+        for (int i = 0; i < 3; i++) {
+            Sc sc = new Sc("ice_frosted_" + i, 220 + i).cmd(
+                    "fill ~-1 ~ ~-1 ~12 ~ ~12 minecraft:stone hollow",
+                    "fill ~0 ~ ~0 ~11 ~ ~11 minecraft:water");
+            if (i == 1) sc.cmd("setblock ~1 ~1 ~1 minecraft:torch", "fill ~9 ~1 ~9 ~10 ~1 ~10 minecraft:glowstone");
+            if (i == 2) sc.cmd("fill ~-1 ~1 ~-1 ~12 ~1 ~12 minecraft:stone hollow", "fill ~-1 ~2 ~-1 ~12 ~2 ~12 minecraft:stone");
+            // a block of it, a line, a pair and a single, then more at different ages
+            for (int x = 2; x <= 4; x++) for (int z = 2; z <= 4; z++) sc.set(x, 100, z, "minecraft:frosted_ice[age=" + ((x + z) % 4) + "]");
+            for (int x = 6; x <= 10; x++) sc.set(x, 100, 7, "minecraft:frosted_ice[age=0]");
+            sc.set(1, 100, 9, "minecraft:frosted_ice[age=1]").set(2, 100, 9, "minecraft:frosted_ice[age=2]").set(9, 100, 1, "minecraft:frosted_ice[age=3]");
+            sc.rtTick(25, 15);
+            sc.set(6, 100, 3, "minecraft:frosted_ice[age=0]").set(7, 100, 3, "minecraft:frosted_ice[age=0]").set(7, 100, 4, "minecraft:frosted_ice[age=1]");
+            sc.rtTick(25, 15);
+            out.add(sc);
+        }
     }
 
     // ================================================================ family: misc
@@ -218,6 +385,11 @@ public class BlockTickVectors {
     }
 
     static String runScenario(Sc sc, int x0, int z0) throws Exception {
+        // Ticks a scenario that ran long left pending would sit far in the future once the time is reset.
+        setGameTime(START_TIME);
+        var cleared = new net.minecraft.world.level.levelgen.structure.BoundingBox(x0 + LO, FLOOR, z0 + LO, x0 + HI, Y0 + HEIGHT - 1, z0 + HI);
+        level.getBlockTicks().clearArea(cleared);
+        level.getFluidTicks().clearArea(cleared);
         command("difficulty " + new String[] {"peaceful", "easy", "normal", "hard"}[sc.difficulty]);
         command(String.format("fill %d %d %d %d %d %d minecraft:air", x0 + LO, FLOOR, z0 + LO, x0 + HI, Y0 + HEIGHT - 1, z0 + HI));
         command(String.format("fill %d %d %d %d %d %d minecraft:stone", x0 + LO, FLOOR, z0 + LO, x0 + HI, FLOOR, z0 + HI));
@@ -229,7 +401,7 @@ public class BlockTickVectors {
         for (int i = 0; i < 400 && pendingCount(x0, z0) > 0; i++) {
             tickLevel();
         }
-        if (pendingCount(x0, z0) > 0) throw new IllegalStateException("setup of " + sc.name + " never settles");
+        if (pendingCount(x0, z0) > 0) throw new IllegalStateException("setup of " + sc.name + " never settles: " + pending(x0, z0).subList(0, Math.min(4, pendingCount(x0, z0))));
         awaitLight();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", sc.name);
@@ -268,6 +440,24 @@ public class BlockTickVectors {
         return toJson(m);
     }
 
+    /// Debugging aid (tools/block_seq_diff.py): with KILN_SEQ_TRACE=<file> every random tick of an `rt` op
+    /// appends "SEQ x,y,z <level random state> <block>", which the Rust replay writes the same way, so
+    /// the first block whose tick drew a different number of random numbers shows.
+    static final String SEQ_TRACE = System.getenv("KILN_SEQ_TRACE");
+
+    static void traceSeq(BlockPos p, BlockState s) {
+        try {
+            var rnd = level.getRandom();
+            var f = rnd.getClass().getDeclaredField("seed");
+            f.setAccessible(true);
+            long seed = ((java.util.concurrent.atomic.AtomicLong) f.get(rnd)).get();
+            Files.writeString(Path.of(SEQ_TRACE + "_vanilla.txt"), "SEQ " + p.getX() + "," + p.getY() + "," + p.getZ() + " " + seed + " "
+                    + BuiltInRegistries.BLOCK.getKey(s.getBlock()) + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+        } catch (Throwable e) {
+            e.printStackTrace();
+        }
+    }
+
     static void randomTickArea(int x0, int z0) {
         List<BlockPos> ticking = new ArrayList<>();
         for (int y = FLOOR; y < Y0 + HEIGHT; y++)
@@ -282,6 +472,7 @@ public class BlockTickVectors {
             // read before the block's tick.
             BlockState s = level.getBlockState(p);
             var fluid = s.getFluidState();
+            if (SEQ_TRACE != null) traceSeq(p, s);
             if (s.isRandomlyTicking()) s.randomTick(level, p, level.getRandom());
             if (fluid.isRandomlyTicking()) fluid.randomTick(level, p, level.getRandom());
         }
@@ -328,14 +519,17 @@ public class BlockTickVectors {
         return out;
     }
 
-    // [dx, dy, dz, brightness] of every position above the floor whose raw brightness is not 15.
+    // [dx, dy, dz, brightness, block light] of every position above the floor whose raw brightness is
+    // not 15 or whose block light is not 0 (snow, ice and frosted ice read the block light alone).
     static List<Object> light(int x0, int z0) {
         List<Object> out = new ArrayList<>();
         for (int y = Y0; y < Y0 + HEIGHT; y++)
             for (int z = z0 + LO; z <= z0 + HI; z++)
                 for (int x = x0 + LO; x <= x0 + HI; x++) {
-                    int b = level.getRawBrightness(new BlockPos(x, y, z), 0);
-                    if (b != 15) out.add(List.of(x - x0, y, z - z0, b));
+                    BlockPos p = new BlockPos(x, y, z);
+                    int b = level.getRawBrightness(p, 0);
+                    int bl = level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, p);
+                    if (b != 15 || bl != 0) out.add(List.of(x - x0, y, z - z0, b, bl));
                 }
         return out;
     }

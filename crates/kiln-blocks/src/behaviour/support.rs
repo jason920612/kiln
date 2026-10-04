@@ -110,6 +110,11 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
             }
         }
         C::LeafLitterBlock => sturdy(below(), Direction::Up, Support::Full),
+        C::SnowLayerBlock => crate::weather::snow_can_survive(level, pos),
+        C::VineBlock => super::growth::vine_can_survive(level, s, pos),
+        C::ChorusFlowerBlock => super::growth::chorus_flower_can_survive(level, pos),
+        C::ChorusPlantBlock => super::growth::chorus_plant_can_survive(level, pos),
+        _ if super::growth::is_growing_plant(s) => super::growth::plant_can_survive(level, s, pos),
         C::FrogspawnBlock => super::misc::frogspawn_can_survive(level, pos),
         C::PistonHeadBlock => super::piston::head_can_survive(level, s, pos),
         C::PressurePlateBlock | C::WeightedPressurePlateBlock => {
@@ -156,7 +161,7 @@ pub fn pop_off<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Directi
         C::TorchBlock | C::RedstoneTorchBlock | C::PressurePlateBlock | C::WeightedPressurePlateBlock => {
             breaks(dir == Direction::Down)
         }
-        C::CarpetBlock | C::WoolCarpetBlock | C::FrogspawnBlock => breaks(true),
+        C::CarpetBlock | C::WoolCarpetBlock | C::FrogspawnBlock | C::SnowLayerBlock => breaks(true),
         C::LeverBlock | C::ButtonBlock => breaks(attached_direction(s).opposite() == dir),
         C::RepeaterBlock => dir == Direction::Down && !can_support_rigid(neighbor),
         C::RedstoneWireBlock => dir == Direction::Down && !wire_can_survive_on(neighbor),
