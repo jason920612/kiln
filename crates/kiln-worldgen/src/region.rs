@@ -22,6 +22,18 @@ pub struct RegionStats {
     pub far_writes: u64,
 }
 
+/// What a feature asked of the level, as [`Region::start_ops`] records it: the calls vanilla's
+/// `ServerLevel` would have got, in order (a live level replays them through its own `setBlock`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum RegionOp {
+    /// `setBlock(pos, state, flags)`.
+    Set(BlockPos, u16, i32),
+    /// `scheduleTick(pos, block, delay)`.
+    BlockTick(BlockPos, &'static str, i32),
+    /// `scheduleTick(pos, fluid, delay)`.
+    FluidTick(BlockPos, &'static str, i32),
+}
+
 /// `WorldGenRegion` over nine owned proto-chunks.
 pub struct Region<'a> {
     // Boxed: chunks move between the pipeline and regions without copying their arrays.
@@ -33,6 +45,7 @@ pub struct Region<'a> {
     scratch: &'a mut GenScratch,
     pub stats: RegionStats,
     log: Option<Vec<(BlockPos, u16)>>,
+    ops: Option<Vec<RegionOp>>,
     level_random: Option<PositionalRandom>,
 }
 
@@ -44,7 +57,7 @@ impl<'a> Region<'a> {
         for (i, c) in chunks.iter().enumerate() {
             debug_assert_eq!((c.x, c.z), (cx + i as i32 % 3 - 1, cz + i as i32 / 3 - 1), "chunk {i} out of place");
         }
-        Self { chunks, cx, cz, generator, scratch, stats: RegionStats::default(), log: None, level_random: None }
+        Self { chunks, cx, cz, generator, scratch, stats: RegionStats::default(), log: None, ops: None, level_random: None }
     }
 
     /// `WorldGenRegion.addFreshEntity`: stored in the chunk holding the entity's position
@@ -94,6 +107,16 @@ impl<'a> Region<'a> {
     /// The changes recorded since [`Region::start_log`] (or the last call), oldest first.
     pub fn take_log(&mut self) -> Vec<(BlockPos, u16)> {
         self.log.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// Starts recording what the features ask of the level ([`RegionOp`]).
+    pub fn start_ops(&mut self) {
+        self.ops = Some(Vec::new());
+    }
+
+    /// The operations recorded since [`Region::start_ops`], oldest first.
+    pub fn take_ops(&mut self) -> Vec<RegionOp> {
+        self.ops.take().unwrap_or_default()
     }
 
     pub fn min_y(&self) -> i32 {
@@ -156,6 +179,9 @@ impl<'a> Region<'a> {
             self.stats.far_writes += 1;
             return false;
         };
+        if let Some(ops) = &mut self.ops {
+            ops.push(RegionOp::Set(p, s, flags));
+        }
         let chunk = &mut self.chunks[i];
         let (lx, lz) = ((p.x & 15) as usize, (p.z & 15) as usize);
         let before = chunk.get(lx, p.y, lz);
@@ -239,15 +265,21 @@ impl<'a> Region<'a> {
 
     /// `LevelAccessor.scheduleTick(pos, block, delay)`. A proto-chunk keeps one tick per
     /// position and type and drops the delay (`ProtoChunkTicks.schedule` saves 0).
-    pub fn schedule_block_tick(&mut self, p: BlockPos, block: &'static str, _delay: i32) {
+    pub fn schedule_block_tick(&mut self, p: BlockPos, block: &'static str, delay: i32) {
         if let Some(i) = self.slot(p.x >> 4, p.z >> 4) {
+            if let Some(ops) = &mut self.ops {
+                ops.push(RegionOp::BlockTick(p, block, delay));
+            }
             schedule(&mut self.chunks[i].block_ticks, p, block);
         }
     }
 
     /// `LevelAccessor.scheduleTick(pos, fluid, delay)`, like [`Self::schedule_block_tick`].
-    pub fn schedule_fluid_tick(&mut self, p: BlockPos, fluid: &'static str, _delay: i32) {
+    pub fn schedule_fluid_tick(&mut self, p: BlockPos, fluid: &'static str, delay: i32) {
         if let Some(i) = self.slot(p.x >> 4, p.z >> 4) {
+            if let Some(ops) = &mut self.ops {
+                ops.push(RegionOp::FluidTick(p, fluid, delay));
+            }
             schedule(&mut self.chunks[i].fluid_ticks, p, fluid);
         }
     }

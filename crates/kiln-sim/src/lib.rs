@@ -1155,6 +1155,11 @@ impl Sim {
                 }
             })
             .collect();
+        // What grows in each level (saplings, bone meal) is placed by the level's own worldgen.
+        let feature_hosts: Vec<Option<std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>>> = pipelines
+            .iter()
+            .map(|p| p.as_ref().map(|p| std::sync::Arc::new(kiln_worldgen::host::WorldgenHost::new(p.world().clone())) as std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>))
+            .collect();
         let spawn = spawn.expect("overworld spawn");
         let policy = if config.unified_regions { RegionPolicy::unified() } else { RegionPolicy::default() };
         let threads = config.noise.as_ref().map_or(1, |n| n.threads);
@@ -1213,7 +1218,7 @@ impl Sim {
             plugins: None,
             independent: Default::default(),
             trader: Default::default(),
-            world: world_state::WorldState { pipelines, ..Default::default() },
+            world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -1925,6 +1930,7 @@ impl Sim {
             raids: self.dims[dim].raids.views.clone(),
             entity_ticking: self.config.entity_ticking,
             speculate: self.config.speculate,
+            features: self.world.feature_hosts.get(dim).cloned().flatten(),
         }
     }
 

@@ -49,6 +49,9 @@ pub struct Decorator {
     biome_steps: Vec<Vec<Vec<usize>>>,
     /// Biomes the biome source can produce (`BiomeSource.possibleBiomes`).
     possible: Vec<bool>,
+    /// Per biome, `BiomeGenerationSettings.getBoneMealFeatures()`: the configured features of
+    /// its placed features (nested ones too) tagged `#minecraft:can_spawn_from_bone_meal`.
+    pub bone_meal: Vec<Vec<usize>>,
 }
 
 impl Decorator {
@@ -74,6 +77,24 @@ impl Decorator {
         }
         let sets = lists.iter().map(|steps| steps.iter().flatten().copied().collect::<HashSet<_>>()).collect();
         features.set_biome_features(sets);
+        let tagged: HashSet<usize> = l
+            .pack
+            .tag("worldgen/feature", "minecraft:can_spawn_from_bone_meal")
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|n| features.feature_id(n))
+            .collect();
+        let bone_meal = lists
+            .iter()
+            .map(|steps| {
+                let mut all = Vec::new();
+                for &p in steps.iter().flatten() {
+                    features.placed_features_of(p, &mut all);
+                }
+                all.retain(|f| tagged.contains(f));
+                all
+            })
+            .collect();
 
         // `BiomeSource.possibleBiomes`: parameter list order, first occurrence.
         let order: Vec<u16> = generator.possible_biomes();
@@ -94,7 +115,7 @@ impl Decorator {
                     .collect()
             })
             .collect();
-        Ok(Decorator { features, steps, biome_steps, possible })
+        Ok(Decorator { features, steps, biome_steps, possible, bone_meal })
     }
 
     /// `applyBiomeDecoration` for the region's center chunk: per step, the pieces of the

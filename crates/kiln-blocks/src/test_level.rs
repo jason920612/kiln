@@ -69,6 +69,14 @@ pub struct TestLevel {
     /// elsewhere.
     pub brightness: HashMap<BlockPos, i32>,
     pub default_brightness: i32,
+    /// The worldgen features grow with (saplings, bone meal); `None`: nothing grows.
+    pub feature_host: Option<std::sync::Arc<dyn crate::feature_host::FeatureHost>>,
+    /// The biome everywhere (`minecraft:plains`...), for what reads `Level.getBiome`.
+    pub biome: Option<String>,
+    /// `Level.getSkyDarken`.
+    pub sky_darken: i32,
+    /// Fields features filled into block entities, by position.
+    pub block_entity_data: HashMap<BlockPos, kiln_proto::nbt::Tag>,
 }
 
 impl TestLevel {
@@ -96,6 +104,10 @@ impl TestLevel {
             difficulty: 2,
             brightness: HashMap::new(),
             default_brightness: 15,
+            feature_host: None,
+            biome: None,
+            sky_darken: 0,
+            block_entity_data: HashMap::new(),
         }
     }
 
@@ -293,5 +305,25 @@ impl Level for TestLevel {
 
     fn raw_brightness(&self, pos: BlockPos, _sky_darken: i32) -> i32 {
         self.brightness.get(&pos).copied().unwrap_or(self.default_brightness)
+    }
+
+    fn feature_host(&self) -> Option<std::sync::Arc<dyn crate::feature_host::FeatureHost>> {
+        self.feature_host.clone()
+    }
+
+    fn legacy_random(&mut self) -> Option<&mut LegacyRandom> {
+        Some(&mut self.random)
+    }
+
+    fn biome_name(&self, _pos: BlockPos) -> Option<String> {
+        self.biome.clone()
+    }
+
+    fn sky_darken(&self) -> i32 {
+        self.sky_darken
+    }
+
+    fn set_block_entity_data(&mut self, pos: BlockPos, data: &kiln_proto::nbt::Tag) {
+        self.block_entity_data.insert(pos, data.clone());
     }
 }

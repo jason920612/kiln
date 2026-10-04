@@ -12,6 +12,7 @@ pub mod portal;
 pub mod rail;
 pub mod sculk;
 pub mod support;
+pub mod trees;
 
 use crate::fluid;
 use crate::level::Level;
@@ -299,6 +300,8 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
 pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     if logic::is_instance(s, BlockClass::LeavesBlock) {
         misc::leaves_random_tick(level, s, pos);
+    } else if trees::ticks_randomly(s) {
+        trees::random_tick(level, s, pos);
     } else if logic::block_class(s) == BlockClass::LiquidBlock && logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
         crate::fire::lava_random_tick(level, pos);
     }

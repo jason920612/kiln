@@ -25,6 +25,7 @@ pub mod end;
 pub mod feature;
 pub mod function;
 pub mod generator;
+pub mod host;
 pub mod interval;
 pub mod json;
 pub mod material;
