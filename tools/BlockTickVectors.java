@@ -174,7 +174,7 @@ public class BlockTickVectors {
     // bone meal on saplings, azaleas, huge mushrooms and grass (the biome's flowers).
     static int treeSeed = 4400;
 
-    static final String[] SAPLINGS = {"oak", "birch", "spruce", "jungle", "acacia", "dark_oak", "cherry", "pale_oak"};
+    static final String[] SAPLINGS = {"oak", "birch", "spruce", "jungle", "acacia", "dark_oak", "cherry", "pale_oak", "poplar"};
 
     /// A sapling (or any block) at area-relative x, z on `ground` (the block below, y 99).
     static Sc plant(Sc sc, String block, int x, int z, String ground) {
@@ -391,7 +391,7 @@ public class BlockTickVectors {
             // Beside obstacles: walls, water, dirt strips (the walks stop where the ground is not grass).
             Sc sc = newTree("trees_bonemeal_grass_obstacles");
             sc.cmd("fill ~0 ~-1 ~0 ~15 ~-1 ~15 minecraft:grass_block", "fill ~6 ~-1 ~0 ~7 ~-1 ~15 minecraft:dirt", "fill ~10 ~ ~0 ~10 ~2 ~15 minecraft:stone",
-                    "fill ~12 ~-1 ~4 ~13 ~-1 ~6 minecraft:water");
+                    "fill ~12 ~ ~4 ~13 ~ ~6 minecraft:water");
             for (int i = 0; i < 5; i++) sc.bonemeal(2, 99, 2 + i * 3).bonemeal(8 + i, 99, 8).bonemeal(14, 99, 14);
             out.add(sc);
         }
@@ -476,6 +476,11 @@ public class BlockTickVectors {
         // Two fills (a fill is limited to 32768 blocks): the window up to the tallest scenario's top.
         command(String.format("fill %d %d %d %d %d %d minecraft:air", x0 + LO, FLOOR, z0 + LO, x0 + HI, Y0 + 23, z0 + HI));
         command(String.format("fill %d %d %d %d %d %d minecraft:air", x0 + LO, Y0 + 24, z0 + LO, x0 + HI, Y0 + 47, z0 + HI));
+        // Ticks the previous scenario left (at times its clock reached, which this one starts below)
+        // would otherwise run out much later than the setup does.
+        var area = new net.minecraft.world.level.levelgen.structure.BoundingBox(x0 + LO, FLOOR, z0 + LO, x0 + HI, Y0 + 47, z0 + HI);
+        level.getBlockTicks().clearArea(area);
+        level.getFluidTicks().clearArea(area);
         curHeight = sc.height;
         if (!sc.biome.equals(curBiome)) {
             command(String.format("fillbiome %d %d %d %d %d %d %s", x0 + LO - 4, FLOOR - 3, z0 + LO - 4, x0 + HI + 4, FLOOR + 24, z0 + HI + 4, sc.biome));
@@ -490,7 +495,12 @@ public class BlockTickVectors {
         for (int i = 0; i < 400 && pendingCount(x0, z0) > 0; i++) {
             tickLevel();
         }
-        if (pendingCount(x0, z0) > 0) throw new IllegalStateException("setup of " + sc.name + " never settles");
+        if (pendingCount(x0, z0) > 0) {
+            List<Object> pp = pending(x0, z0);
+            List<?> row = (List<?>) pp.get(0);
+            BlockPos q = new BlockPos(x0 + (Integer) row.get(1), (Integer) row.get(2), z0 + (Integer) row.get(3));
+            throw new IllegalStateException("setup of " + sc.name + " never settles: " + pp.size() + " pending, first " + row + " block there " + level.getBlockState(q));
+        }
         awaitLight();
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", sc.name);
