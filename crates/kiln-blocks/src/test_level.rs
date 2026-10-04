@@ -64,6 +64,11 @@ pub struct TestLevel {
     pub climate: Option<Box<dyn Fn(BlockPos, BlockPos) -> Option<crate::weather::Climate>>>,
     /// `Difficulty.getId` (fire spread odds).
     pub difficulty: i32,
+    /// Raw brightness of positions the table names (the light engine is not simulated; the
+    /// vanilla parity replay feeds the numbers vanilla had); [`TestLevel::default_brightness`]
+    /// elsewhere.
+    pub brightness: HashMap<BlockPos, i32>,
+    pub default_brightness: i32,
 }
 
 impl TestLevel {
@@ -89,6 +94,8 @@ impl TestLevel {
             weather: Default::default(),
             climate: None,
             difficulty: 2,
+            brightness: HashMap::new(),
+            default_brightness: 15,
         }
     }
 
@@ -282,5 +289,9 @@ impl Level for TestLevel {
 
     fn difficulty(&self) -> i32 {
         self.difficulty
+    }
+
+    fn raw_brightness(&self, pos: BlockPos, _sky_darken: i32) -> i32 {
+        self.brightness.get(&pos).copied().unwrap_or(self.default_brightness)
     }
 }
