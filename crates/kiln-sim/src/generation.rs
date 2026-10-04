@@ -4,7 +4,9 @@
 use crossbeam_channel::{Receiver, Sender};
 use kiln_world::chunk::Chunk;
 use kiln_world::{ChunkGenerator, ChunkPos, Dimension};
-use std::collections::HashSet;
+use crate::chunkstats;
+use std::collections::HashMap;
+use std::time::Instant;
 
 /// Chunks queued or being generated at most; further requests wait for the next tick.
 const MAX_IN_FLIGHT: usize = 256;
@@ -12,7 +14,8 @@ const MAX_IN_FLIGHT: usize = 256;
 pub(crate) struct GenPool {
     requests: Sender<ChunkPos>,
     results: Receiver<(ChunkPos, Chunk)>,
-    in_flight: HashSet<ChunkPos>,
+    /// Queued or running chunks and when each was requested.
+    in_flight: HashMap<ChunkPos, Instant>,
 }
 
 impl GenPool {
@@ -26,7 +29,10 @@ impl GenPool {
                 .name(format!("kiln-gen-{i}"))
                 .spawn(move || {
                     for pos in jobs {
+                        let started = Instant::now();
                         let mut chunk = generator.generate(pos, dimension);
+                        chunkstats::count(&chunkstats::GEN_DONE);
+                        chunkstats::add_ns(&chunkstats::GEN_BUSY_NS, started.elapsed());
                         chunk.mark_new();
                         if done.send((pos, chunk)).is_err() {
                             break;
@@ -35,31 +41,33 @@ impl GenPool {
                 })
                 .expect("spawning a generation thread");
         }
-        Self { requests, results, in_flight: HashSet::new() }
+        Self { requests, results, in_flight: HashMap::new() }
     }
 
     /// Queues `pos` unless it is already queued; `false` when the queue is full.
     pub fn request(&mut self, pos: ChunkPos) -> bool {
-        if self.in_flight.contains(&pos) {
+        if self.in_flight.contains_key(&pos) {
             return true;
         }
         if self.in_flight.len() >= MAX_IN_FLIGHT {
             return false;
         }
-        self.in_flight.insert(pos);
+        self.in_flight.insert(pos, Instant::now());
         let _ = self.requests.send(pos);
         true
     }
 
     pub fn is_queued(&self, pos: ChunkPos) -> bool {
-        self.in_flight.contains(&pos)
+        self.in_flight.contains_key(&pos)
     }
 
     /// Chunks finished since the last call, in position order.
     pub fn finished(&mut self) -> Vec<(ChunkPos, Chunk)> {
         let mut out: Vec<_> = self.results.try_iter().collect();
         for (pos, _) in &out {
-            self.in_flight.remove(pos);
+            if let Some(at) = self.in_flight.remove(pos) {
+                chunkstats::GEN_LATENCY.add(at.elapsed());
+            }
         }
         out.sort_unstable_by_key(|(pos, _)| *pos);
         out

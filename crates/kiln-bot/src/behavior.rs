@@ -24,6 +24,9 @@ pub enum Behavior {
     Crowd,
     /// Walk to a random point within the radius of the origin, then stand still.
     Spread,
+    /// Survival players with roles (explorer, miner, builder, redstone engineer); the radius
+    /// is unused. They need operator permission for `/item replace` and `/tp`.
+    Survival,
 }
 
 impl Behavior {
@@ -35,6 +38,7 @@ impl Behavior {
             Behavior::Circle => 16.0,
             Behavior::Crowd => 6.0,
             Behavior::Spread => 256.0,
+            Behavior::Survival => 0.0,
         }
     }
 }
@@ -113,6 +117,7 @@ impl Mover {
             Behavior::Circle => Plan::Circle { dir: if rng.unit() < 0.5 { 1.0 } else { -1.0 } },
             Behavior::Crowd => Plan::Crowd { target: None, pause: 0 },
             Behavior::Spread => Plan::Spread { target: Some(rng.in_disc(origin, radius)) },
+            Behavior::Survival => Plan::Idle,
         };
         Self {
             rng,

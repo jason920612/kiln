@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use kiln_bot::{Behavior, Config};
+use kiln_bot::{Behavior, Config, Role};
 use std::time::Duration;
 
 #[global_allocator]
@@ -32,7 +32,8 @@ struct Args {
     /// Bot i is named <prefix><i>.
     #[arg(long, default_value = "Bot")]
     name_prefix: String,
-    /// Radius of the behavior [default: walk 64, circle 16, crowd 6, spread 256].
+    /// Radius of the behavior [default: walk 64, circle 16, crowd 6, spread 256]. Survival bots
+    /// ignore it; their group sites are --group-spacing apart around --center.
     #[arg(long)]
     radius: Option<f64>,
     /// Seconds between chat messages per bot [default: no chat].
@@ -53,6 +54,12 @@ struct Args {
     /// Blocks between neighbouring group centres.
     #[arg(long, default_value_t = 48.0)]
     group_spacing: f64,
+    /// Survival roles dealt to the bots in turn (explorer, miner, builder, redstone).
+    #[arg(long, value_delimiter = ',')]
+    roles: Option<Vec<Role>>,
+    /// Survival: bots [k*size, (k+1)*size) share a site (overrides --groups).
+    #[arg(long)]
+    group_size: Option<usize>,
     /// Teleport bots to their group centre with /tp (the server must make them operators).
     #[arg(long)]
     teleport_to_group: bool,
@@ -90,6 +97,8 @@ fn main() -> Result<()> {
         groups: a.groups,
         group_spacing: a.group_spacing,
         teleport_to_group: a.teleport_to_group,
+        group_size: a.group_size,
+        roles: a.roles.unwrap_or_else(|| Config::default().roles),
         ..Config::default()
     };
 

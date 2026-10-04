@@ -36,6 +36,11 @@ macro_rules! traffic {
         }
 
         impl Traffic {
+            /// Adds another set of counters.
+            pub fn merge(&mut self, o: &Traffic) {
+                $(self.$field += o.$field;)*
+            }
+
             fn since(&self, earlier: &Traffic) -> Traffic {
                 Traffic { $($field: self.$field - earlier.$field,)* }
             }
@@ -43,7 +48,37 @@ macro_rules! traffic {
     };
 }
 
-traffic!(rx_packets, rx_bytes, tx_packets, tx_bytes, chunks, teleports, chat_sent, chat_received, connected_nanos);
+traffic!(
+    rx_packets,
+    rx_bytes,
+    tx_packets,
+    tx_bytes,
+    chunks,
+    teleports,
+    chat_sent,
+    chat_received,
+    connected_nanos,
+    // Survival bots.
+    decode_errors,
+    commands,
+    own_teleports,
+    dig_started,
+    dig_done,
+    dig_rejected,
+    placed,
+    place_rejected,
+    place_wrong_state,
+    deaths,
+    respawns,
+    containers_opened,
+    items_moved,
+    eaten,
+    attacks,
+    levers,
+    walk_ticks,
+    stall_ticks,
+    blocks_seen_changed,
+);
 
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
@@ -58,6 +93,93 @@ pub(crate) struct Shared {
     join_ms: Mutex<Vec<f64>>,
     /// Shared centre of the movement scripts: configured, or where the first bot spawned.
     pub origin: OnceLock<[f64; 2]>,
+    /// Chunk Data arrival latency: from the chunk entering the view until it arrived.
+    pub chunk_latency: Hist,
+    /// From a bot's chunk position changing (walking over a chunk border) until every chunk
+    /// of its new view had arrived.
+    pub area_ready_walk: Hist,
+    /// The same after a teleport (the view jumped).
+    pub area_ready_teleport: Hist,
+    /// From the first Chunk Batch Start after joining until the whole first view had arrived.
+    pub area_ready_join: Hist,
+    /// Distinct decode problems seen, by text, with how often.
+    pub problems: Mutex<BTreeMap<String, u64>>,
+}
+
+const HIST_MS: usize = 60_001;
+
+/// Milliseconds histogram (1 ms buckets up to a minute, then one overflow bucket).
+pub struct Hist {
+    buckets: Box<[AtomicU64]>,
+    sum_us: AtomicU64,
+}
+
+impl Default for Hist {
+    fn default() -> Self {
+        Self { buckets: (0..HIST_MS).map(|_| AtomicU64::new(0)).collect(), sum_us: AtomicU64::new(0) }
+    }
+}
+
+impl std::fmt::Debug for Hist {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Hist({} samples)", self.summary().n)
+    }
+}
+
+/// Count, mean, percentiles and maximum of a [`Hist`], in milliseconds.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct Latency {
+    pub n: u64,
+    pub mean_ms: f64,
+    pub p50_ms: f64,
+    pub p90_ms: f64,
+    pub p99_ms: f64,
+    pub max_ms: f64,
+}
+
+impl Hist {
+    pub fn add(&self, d: Duration) {
+        let ms = (d.as_millis() as usize).min(HIST_MS - 1);
+        self.buckets[ms].fetch_add(1, Relaxed);
+        self.sum_us.fetch_add(d.as_micros() as u64, Relaxed);
+    }
+
+    pub fn summary(&self) -> Latency {
+        let counts: Vec<u64> = self.buckets.iter().map(|b| b.load(Relaxed)).collect();
+        let n: u64 = counts.iter().sum();
+        if n == 0 {
+            return Latency::default();
+        }
+        let at = |q: f64| {
+            let want = ((n as f64 * q).ceil() as u64).max(1);
+            let mut seen = 0;
+            for (ms, c) in counts.iter().enumerate() {
+                seen += c;
+                if seen >= want {
+                    return ms as f64;
+                }
+            }
+            (HIST_MS - 1) as f64
+        };
+        Latency {
+            n,
+            mean_ms: self.sum_us.load(Relaxed) as f64 / n as f64 / 1e3,
+            p50_ms: at(0.5),
+            p90_ms: at(0.9),
+            p99_ms: at(0.99),
+            max_ms: counts.iter().rposition(|c| *c > 0).unwrap_or(0) as f64,
+        }
+    }
+}
+
+impl Shared {
+    /// Notes a problem (a packet the bot could not decode, ...) once per distinct text.
+    pub fn problem(&self, text: String) {
+        let mut p = self.problems.lock().unwrap();
+        if p.len() < 50 || p.contains_key(&text) {
+            *p.entry(text).or_default() += 1;
+        }
+    }
 }
 
 /// Counter values at one instant.
@@ -166,6 +288,12 @@ pub struct Report {
     pub join_ms_p50: Option<f64>,
     pub join_ms_p99: Option<f64>,
     pub join_ms_max: Option<f64>,
+    /// Survival bots: chunk arrival latency and the time until a new view was complete.
+    pub chunk_latency: Latency,
+    pub area_ready_walk: Latency,
+    pub area_ready_teleport: Latency,
+    pub area_ready_join: Latency,
+    pub problems: Vec<(String, u64)>,
 }
 
 impl Report {
@@ -193,6 +321,11 @@ impl Report {
             join_ms_p50: p50,
             join_ms_p99: p99,
             join_ms_max: max,
+            chunk_latency: shared.chunk_latency.summary(),
+            area_ready_walk: shared.area_ready_walk.summary(),
+            area_ready_teleport: shared.area_ready_teleport.summary(),
+            area_ready_join: shared.area_ready_join.summary(),
+            problems: shared.problems.lock().unwrap().iter().map(|(k, v)| (k.clone(), *v)).collect(),
         }
     }
 
@@ -254,7 +387,50 @@ impl fmt::Display for Report {
             count(self.tx_packets_per_sec)
         )?;
         writeln!(f, "  chunks     {}", t.chunks)?;
-        writeln!(f, "  teleports  {} after spawning (server corrections)", t.teleports)?;
+        if t.walk_ticks + t.stall_ticks > 0 || self.chunk_latency.n > 0 {
+            let lat = |name: &str, l: &Latency| {
+                format!(
+                    "  {name:<19} n {} mean {:.0} p50 {:.0} p90 {:.0} p99 {:.0} max {:.0} ms
+",
+                    l.n, l.mean_ms, l.p50_ms, l.p90_ms, l.p99_ms, l.max_ms
+                )
+            };
+            write!(f, "{}", lat("chunk arrival", &self.chunk_latency))?;
+            write!(f, "{}", lat("view ready (walk)", &self.area_ready_walk))?;
+            write!(f, "{}", lat("view ready (tp)", &self.area_ready_teleport))?;
+            write!(f, "{}", lat("view ready (join)", &self.area_ready_join))?;
+            writeln!(
+                f,
+                "  walking    {} ticks moving, {} ticks waiting for chunks",
+                t.walk_ticks, t.stall_ticks
+            )?;
+            writeln!(
+                f,
+                "  survival   dig {} started / {} done / {} rejected; placed {} (rejected {}, wrong state {}); deaths {};                  commands {}; containers {} ({} stacks moved); eaten {}; attacks {}; levers {}; decode errors {}",
+                t.dig_started,
+                t.dig_done,
+                t.dig_rejected,
+                t.placed,
+                t.place_rejected,
+                t.place_wrong_state,
+                t.deaths,
+                t.commands,
+                t.containers_opened,
+                t.items_moved,
+                t.eaten,
+                t.attacks,
+                t.levers,
+                t.decode_errors
+            )?;
+            for (p, n) in &self.problems {
+                writeln!(f, "  problem    {n:>6}  {p}")?;
+            }
+        }
+        writeln!(
+            f,
+            "  teleports  {} after spawning (server corrections); {} we asked for",
+            t.teleports, t.own_teleports
+        )?;
         writeln!(f, "  chat       sent {}, received {}", t.chat_sent, t.chat_received)?;
         if self.disconnect_reasons.is_empty() {
             writeln!(f, "  ended      none before the run stopped")?;

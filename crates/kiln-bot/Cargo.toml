@@ -21,3 +21,6 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 uuid.workspace = true
+
+[dev-dependencies]
+kiln-world.workspace = true
