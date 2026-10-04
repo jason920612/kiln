@@ -853,6 +853,7 @@ impl Sim {
         };
         match registry {
             "minecraft:loot_table" => loot.parse_table(&json).err().map(|e| dfu_message(&e)),
+            "minecraft:predicate" => loot.parse_predicate(&json).err().map(|e| dfu_message(&e)),
             "minecraft:item_modifier" => loot.parse_modifier(&json).err().map(|e| either(&e)),
             "minecraft:slot_source" => loot.parse_slot_source(&json).err().map(|e| either(&e)),
             "minecraft:context_int_provider" | "minecraft:context_float_provider" => {
@@ -1077,6 +1078,7 @@ impl Sim {
                     state,
                     origin: [pos[0] as f64 + 0.5, pos[1] as f64 + 0.5, pos[2] as f64 + 0.5],
                     block_entity: None,
+                    explosion: None,
                 };
                 let (items, _) = self.roll_table(&kiln_command::host::LootTableArg::Id(table_id.to_string()), &ctx)?;
                 (items, Some(table_id.to_string()))
@@ -1406,4 +1408,113 @@ pub(crate) fn hover_name(stack: &kiln_item::ItemStack) -> kiln_command::Text {
     let (ns, path) = name.split_once(':').unwrap_or(("minecraft", name));
     let kind = if kiln_data::builtin_id("minecraft:block", name).is_some() { "block" } else { "item" };
     kiln_command::Text::translate(format!("{kind}.{ns}.{path}"), Vec::new())
+}
+
+// ---------------------------------------------------------------------------- loot predicates
+
+/// The loot context of `execute if predicate` and of the `predicate=` selector option
+/// (`LootContextParamSets.COMMAND` and `SELECTOR`): `this_entity` when there is one, and the
+/// `origin`.
+struct PredicateContext<'a> {
+    this: Option<&'a crate::advancements::criteria::Subject<'a>>,
+    tags: &'a kiln_loot::tags::Tags,
+    origin: [f64; 3],
+    dim: &'static str,
+    /// `Entity.getScoreboardName` of `this_entity`.
+    this_name: Option<String>,
+    sim: &'a Sim,
+    raining: bool,
+    thundering: bool,
+}
+
+impl kiln_loot::LootContext for PredicateContext<'_> {
+    fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
+        target == kiln_loot::EntityTarget::This && self.this.is_some()
+    }
+    fn origin(&self) -> Option<[f64; 3]> {
+        Some(self.origin)
+    }
+    fn entity_matches(&self, target: kiln_loot::EntityTarget, predicate: &kiln_loot::predicate::EntityPredicate) -> bool {
+        target == kiln_loot::EntityTarget::This && self.this.is_some_and(|s| s.matches(self.tags, predicate, self.origin))
+    }
+    fn location_matches(&self, predicate: &kiln_loot::predicate::LocationPredicate, pos: [f64; 3]) -> bool {
+        crate::advancements::criteria::location_matches(predicate, pos, self.dim, None)
+    }
+    fn score(&self, holder: &kiln_loot::context::ScoreHolder<'_>, objective: &str) -> Option<i32> {
+        let name = match holder {
+            kiln_loot::context::ScoreHolder::Name(n) => (*n).to_owned(),
+            kiln_loot::context::ScoreHolder::Entity(kiln_loot::EntityTarget::This) => self.this_name.clone()?,
+            kiln_loot::context::ScoreHolder::Entity(_) => return None,
+        };
+        let sb = &self.sim.commands.scoreboard;
+        sb.objective(objective)?;
+        sb.score(&name, objective)
+    }
+    fn is_raining(&self) -> bool {
+        self.raining
+    }
+    fn is_thundering(&self) -> bool {
+        self.thundering
+    }
+    fn clock_total_ticks(&self, clock: &kiln_item::Identifier) -> i64 {
+        match clock.as_str() {
+            "minecraft:overworld" => self.sim.day_time,
+            "minecraft:the_end" => self.sim.end_time,
+            _ => 0,
+        }
+    }
+    fn storage(&self, id: &kiln_item::Identifier) -> Option<Tag> {
+        let id = id.to_string();
+        self.sim.commands.storage.keys().any(|k| k == id).then(|| self.sim.commands.storage.get(&id))
+    }
+}
+
+impl Sim {
+    /// Evaluates a loot predicate (an id of `predicate/` or an inline condition) with `this` as
+    /// `this_entity` (if any) and `origin` as the origin: `None` when it does not exist or does
+    /// not decode.
+    pub(crate) fn test_predicate_at(&self, predicate: &kiln_command::host::LootTableArg, this: Option<&PlayerRef>, origin: [f64; 3], dim: &str) -> Option<bool> {
+        use kiln_command::host::LootTableArg;
+        let loot = self.loot.as_ref()?;
+        let condition = match predicate {
+            LootTableArg::Id(id) => loot.predicate(&kiln_item::Identifier::parse(id)?)?.clone(),
+            LootTableArg::Inline(tag) => {
+                let mut json = String::new();
+                nbt_json(tag, &mut json);
+                loot.parse_predicate(&json).ok()?
+            }
+        };
+        let dim_id = crate::dim_id(dim).unwrap_or(crate::OVERWORLD_ID);
+        let dim_key = crate::DIMENSIONS[dim_id].0;
+        let run = |subject: Option<&crate::advancements::criteria::Subject<'_>>| {
+            let ctx = PredicateContext {
+                this: subject,
+                tags: &loot.tags,
+                origin,
+                dim: dim_key,
+                this_name: this.map(kiln_command::selector::SelectorTarget::scoreboard_name),
+                sim: self,
+                raining: self.is_raining(dim_id),
+                thundering: self.is_thundering(dim_id),
+            };
+            let mut rng = kiln_javamath::random::LegacyRandom::new(self.game_time ^ 0x7072_6564);
+            let mut eval = kiln_loot::Eval::new(loot, &ctx, &mut rng);
+            eval.test(&kiln_loot::parse::Ref::direct(condition.clone()))
+        };
+        let Some(e) = this else { return Some(run(None)) };
+        if e.entity.is_none() {
+            let p = self.players.get(&e.conn)?;
+            let subject = p.subject(None);
+            return Some(run(Some(&subject)));
+        }
+        for r in self.dims[dim_id].regions.iter() {
+            if let Some(ent) = r.part().0.list.iter().find(|x| Some(x.id) == e.entity)
+                && let Some(phys) = ent.phys.as_deref()
+            {
+                let subject = crate::advancements::triggers::mob_subject(phys, dim_key);
+                return Some(run(Some(&subject)));
+            }
+        }
+        Some(run(None))
+    }
 }

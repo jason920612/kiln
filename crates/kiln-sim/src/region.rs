@@ -35,6 +35,11 @@ pub(crate) struct Env {
     pub max_view: i32,
     /// `minecraft:player_movement_check`.
     pub movement_check: bool,
+    /// `minecraft:elytra_movement_check`: whether a gliding player's moves are checked too.
+    pub elytra_movement_check: bool,
+    /// `minecraft:spectators_generate_chunks`: whether a spectator's view asks for chunks to
+    /// be loaded and generated (`ChunkMap.skipPlayer`).
+    pub spectators_generate_chunks: bool,
     /// `minecraft:natural_health_regeneration`.
     pub natural_regen: bool,
     pub biome_count: usize,
@@ -1375,7 +1380,8 @@ fn handle_move(
     }
     let to = pos.map_or(p.pos, movement::clamp_position);
     p.move_packets += 1;
-    if env.movement_check && movement::too_fast(p.first_good, to, 0.0, p.move_packets, p.fall_flying) {
+    // `ServerGamePacketListenerImpl.shouldCheckPlayerMovement`.
+    if env.movement_check && (!p.fall_flying || env.elytra_movement_check) && movement::too_fast(p.first_good, to, 0.0, p.move_packets, p.fall_flying) {
         let d = [to[0] - p.first_good[0], to[1] - p.first_good[1], to[2] - p.first_good[2]];
         warn!("{} moved too quickly! {d:?}", p.name);
         p.teleport(p.pos, p.rot, now);
@@ -1461,11 +1467,12 @@ fn send_chunks(p: &mut Player, missing: Vec<ChunkPos>, cells: &mut CellSet<Cell>
     let mut batch = Vec::new();
     // Ask for about what the client takes in the next tick or two, nearest first.
     let mut asked = 0;
+    let skipped = p.game_mode == 3 && !env.spectators_generate_chunks;
     for c in missing {
         match cells.chunk_mut(c) {
             Some(chunk) if batch.len() < budget => batch.push((c, chunk.packet(c.x, c.z, env.biome_count))),
             Some(_) => {}
-            None if asked < 2 * budget => {
+            None if asked < 2 * budget && !skipped => {
                 wanted.push((asked as u32, p.conn, c));
                 asked += 1;
             }

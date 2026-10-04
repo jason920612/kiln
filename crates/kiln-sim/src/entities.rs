@@ -1242,6 +1242,27 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.env().mobs.griefing
     }
 
+    fn universal_anger(&self) -> bool {
+        self.level.env().mobs.universal_anger
+    }
+
+    fn forgive_dead_players(&self) -> bool {
+        self.level.env().mobs.forgive_dead_players
+    }
+
+    fn ender_pearls_vanish_on_death(&self) -> bool {
+        self.level.env().mobs.ender_pearls_vanish
+    }
+
+    fn explosion_drop_decay(&self, rule: kiln_entity::explosion::DecayRule) -> bool {
+        let decay = self.level.env().mobs.explosion_decay;
+        match rule {
+            kiln_entity::explosion::DecayRule::Block => decay[0],
+            kiln_entity::explosion::DecayRule::Mob => decay[1],
+            kiln_entity::explosion::DecayRule::Tnt => decay[2],
+        }
+    }
+
     fn dragon_fight(&self) -> Option<kiln_entity::level::DragonFightView> {
         self.level.env().dragon_fight.as_ref().map(|f| f.view)
     }
@@ -2742,7 +2763,9 @@ fn carry_out(
             send_sound(players, env, n, arr(pos), sound, source_of(source), volume, pitch);
         }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
-        Event::BlockExploded { pos, state, .. } => level.effect(Effect::Drop { pos: kb(pos), state }),
+        Event::BlockExploded { pos, state, decay, radius, .. } => {
+            level.effect(if decay { Effect::ExplosionDrop { pos: kb(pos), state, radius } } else { Effect::Drop { pos: kb(pos), state } })
+        }
         Event::Hurt { target, amount, kind, attacker } => {
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == target) {
                 // kiln-entity's attacker is the entity that dealt the damage (TNT, a falling
@@ -2889,12 +2912,32 @@ fn carry_out(
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
         Event::GameEvent { .. } | Event::EntityInsideBlock { .. } | Event::ProjectileHit { .. } => {}
         Event::Raid(ev) => level.blocks.raid_events.push(ev),
-        // `globalLevelEvent`: approximation, every player of the region hears it (vanilla: every
-        // player on the server).
+        // `ServerLevel.globalLevelEvent`: with `global_sound_events` every player (here: of the
+        // region) hears it, from where it is heard best within 32 blocks of them; without, only
+        // the players within 64 blocks of it, as an ordinary level event.
         Event::GlobalLevelEvent { event, pos, data } => {
-            let pkt = world_fx::level_event(event, [pos.x, pos.y, pos.z], data, true);
-            for p in players.iter_mut() {
-                p.send(pkt.clone());
+            if env.mobs.global_sound_events {
+                let center = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+                for p in players.iter_mut() {
+                    let d = [center[0] - p.pos[0], center[1] - p.pos[1], center[2] - p.pos[2]];
+                    let sq = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+                    let at = if sq < 1024.0 {
+                        center
+                    } else {
+                        let len = sq.sqrt();
+                        [p.pos[0] + d[0] / len * 32.0, p.pos[1] + d[1] / len * 32.0, p.pos[2] + d[2] / len * 32.0]
+                    };
+                    let at = [at[0].floor() as i32, at[1].floor() as i32, at[2].floor() as i32];
+                    p.send(world_fx::level_event(event, at, data, true));
+                }
+            } else {
+                let pkt = world_fx::level_event(event, [pos.x, pos.y, pos.z], data, false);
+                for p in players.iter_mut() {
+                    let d = [pos.x as f64 - p.pos[0], pos.y as f64 - p.pos[1], pos.z as f64 - p.pos[2]];
+                    if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < 64.0 * 64.0 {
+                        p.send(pkt.clone());
+                    }
+                }
             }
         }
         Event::PlayerGameEvent { player, event, param } => {

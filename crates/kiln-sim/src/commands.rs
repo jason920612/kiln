@@ -78,6 +78,8 @@ pub struct PlayerRef {
     living: bool,
     /// `Entity.entityTags`.
     tags: Vec<String>,
+    /// A player's `experienceLevel` (`level=`).
+    xp_level: Option<i32>,
 }
 
 /// The connection of a non-player selector target: no player has it.
@@ -102,6 +104,7 @@ impl PlayerRef {
             alive: true,
             living: true,
             tags: p.tags(),
+            xp_level: Some(p.xp_level),
         }
     }
 
@@ -133,6 +136,7 @@ impl PlayerRef {
             alive,
             living: e.phys.as_deref().is_some_and(|p| kiln_entity::mob::data(p).is_some()),
             tags: e.phys.as_deref().map_or_else(Vec::new, |p| crate::command_data::tags_in(&Tag::Compound(p.extra.clone()))),
+            xp_level: None,
         }
     }
 }
@@ -188,6 +192,9 @@ impl SelectorTarget for PlayerRef {
     }
     fn tags(&self) -> &[String] {
         &self.tags
+    }
+    fn experience_level(&self) -> Option<i32> {
+        self.xp_level
     }
 }
 
@@ -525,6 +532,9 @@ impl Source for Sim {
             "minecraft:worldgen/template_pool" => crate::world_state::worldgen_ids("worldgen/template_pool").clone(),
             "minecraft:test_instance" => self.commands.gametests.defs.test_ids(),
             "minecraft:loot_table" => self.loot.as_ref().map_or_else(Vec::new, |l| l.table_ids().iter().map(|i| i.to_string()).collect()),
+            "minecraft:predicate" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::Predicate).iter().map(|i| i.to_string()).collect())
+            }
             "minecraft:context_int_provider" => {
                 self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::IntProvider).iter().map(|i| i.to_string()).collect())
             }
@@ -612,32 +622,63 @@ impl SelectorWorld for Sim {
         let Some(actual) = self.entity_data_of(entity.conn, entity.entity, entity.dim) else { return false };
         kiln_command::blocks::compare_nbt(&expected, &actual, true)
     }
+
+    /// `advancements=`: `PlayerAdvancements.getOrStartProgress(advancement).isDone()`; `None` when
+    /// the advancement does not exist.
+    fn entity_advancement_done(&self, entity: &PlayerRef, id: &str) -> Option<bool> {
+        let p = self.players.get(&entity.conn)?;
+        let i = p.advancements.data.get(id)?;
+        Some(p.advancements.is_done(i))
+    }
+
+    /// `advancements={id={criterion=..}}`: `None` when the advancement or criterion does not exist.
+    fn entity_criterion_done(&self, entity: &PlayerRef, id: &str, criterion: &str) -> Option<bool> {
+        self.criterion_done(entity.conn, id, criterion)
+    }
+
+    /// `predicate=`: the loot predicate with the entity as `this_entity` at its position (the
+    /// `SELECTOR` parameter set); a predicate that does not exist matches nothing.
+    fn entity_predicate(&self, entity: &PlayerRef, id: &str) -> Option<bool> {
+        self.test_predicate_at(&kiln_command::host::LootTableArg::Id(id.to_owned()), Some(entity), entity.pos, entity.dim)
+    }
 }
 
 impl Host for Sim {
+    /// `CommandSourceStack.sendSuccess`: the source gets the message unless it is a player and
+    /// `send_command_feedback` is off (the console always does); when the command may be
+    /// logged, the other operators see "[Source: message]" with the rule on, and the server log
+    /// has it for a player's command with `log_admin_commands` on.
     fn send_success(&mut self, text: Text, broadcast: bool) {
         if self.commands.stack.silent {
             return;
         }
+        let feedback = self.rule_bool("minecraft:send_command_feedback");
+        let me = match self.commands.source {
+            CommandSource::Player(c) => Some(c),
+            CommandSource::Console => None,
+        };
         if broadcast {
             // Other operators see a gray, italic "[Source: message]" (chat.type.admin).
             let admin = kiln_command::tr!("chat.type.admin", self.source_name(), text.clone()).color("gray").italic();
-            let pkt = packets::system_chat(admin.to_nbt(), false);
-            let me = match self.commands.source {
-                CommandSource::Player(c) => Some(c),
-                CommandSource::Console => None,
-            };
-            let ops: Vec<ConnId> = self
-                .players
-                .iter()
-                .filter(|(c, p)| Some(**c) != me && self.commands.is_op(&p.name))
-                .map(|(c, _)| *c)
-                .collect();
-            for c in ops {
-                self.send_to(c, pkt.clone());
+            if feedback {
+                let pkt = packets::system_chat(admin.to_nbt(), false);
+                let ops: Vec<ConnId> = self
+                    .players
+                    .iter()
+                    .filter(|(c, p)| Some(**c) != me && self.commands.is_op(&p.name))
+                    .map(|(c, _)| *c)
+                    .collect();
+                for c in ops {
+                    self.send_to(c, pkt.clone());
+                }
+            }
+            if me.is_some() && self.rule_bool("minecraft:log_admin_commands") {
+                self.reply_console(&admin);
             }
         }
-        self.reply(text);
+        if me.is_none() || feedback {
+            self.reply(text);
+        }
     }
 
     fn send_system(&mut self, player: &PlayerRef, text: Text) {
@@ -1052,6 +1093,25 @@ impl Host for Sim {
 
     fn set_game_rule(&mut self, rule: &str, value: GameRuleValue) {
         self.commands.game_rules.insert(rule.to_owned(), value);
+        // `MinecraftServer.onGameRuleChanged`: what clients show follows the rule.
+        let on = matches!(value, GameRuleValue::Bool(true));
+        match rule {
+            "minecraft:reduced_debug_info" => {
+                let status = if on { 22 } else { 23 };
+                let ids: Vec<(ConnId, i32)> = self.players.iter().map(|(c, p)| (*c, p.entity_id)).collect();
+                for (conn, id) in ids {
+                    self.send_to(conn, kiln_proto::packets::entity::entity_event(id, status));
+                }
+            }
+            "minecraft:immediate_respawn" => self.broadcast(packets::game_event(11, f32::from(on))),
+            "minecraft:limited_crafting" => {
+                for p in self.players.values_mut() {
+                    p.limited_crafting = on;
+                }
+                self.broadcast(packets::game_event(12, f32::from(on)));
+            }
+            _ => {}
+        }
         // `MinecraftServer.onGameRuleChanged`: clients stop or restart their clocks.
         if rule == "minecraft:advance_time" {
             let pkt = self.time_packet();
@@ -1375,6 +1435,13 @@ impl Host for Sim {
         self.commands.stopwatches.push((id.to_owned(), std::time::Instant::now(), 0));
         self.commands.stopwatches_dirty = true;
         true
+    }
+
+    fn test_loot_predicate(&mut self, predicate: &kiln_command::host::LootTableArg) -> Result<bool, CommandError> {
+        let this = kiln_command::host::Source::source_entity(self);
+        let origin = kiln_command::host::Source::origin(self);
+        let dim = kiln_command::host::Source::dimension(self).to_owned();
+        self.test_predicate_at(predicate, this.as_ref(), origin, &dim).ok_or_else(|| CommandError::unsupported("Loot predicates"))
     }
 
     fn stopwatch_seconds(&self, id: &str) -> Option<f64> {

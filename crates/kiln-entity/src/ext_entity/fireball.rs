@@ -155,7 +155,7 @@ impl Fireball {
         }
         if !self.small {
             let griefing = level.mob_griefing();
-            let interaction = if griefing { crate::explosion::Interaction::DestroyWithDecay } else { crate::explosion::Interaction::Keep };
+            let interaction = if griefing { crate::explosion::Interaction::Mob } else { crate::explosion::Interaction::Keep };
             crate::explosion::explode(level, Some(e.id), e.position(), self.explosion_power as f32, griefing, interaction);
         }
         e.discard();

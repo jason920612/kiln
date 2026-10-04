@@ -72,6 +72,10 @@ impl Default for Rules {
 pub enum Effect {
     /// `Block.dropResources`: the block at `pos` (in `state`) drops its loot.
     Drop { pos: BlockPos, state: u16 },
+    /// A block an explosion with drop decay destroyed: its loot rolls with the
+    /// `explosion_radius` parameter (`survives_explosion` keeps each drop with a chance of
+    /// `1 / radius`).
+    ExplosionDrop { pos: BlockPos, state: u16, radius: f32 },
     /// `levelEvent(id, pos, data)`: particles and sounds (1501 lava fizz, 1502 redstone torch
     /// burnout, 2001 block destroyed with data = state id, ...).
     LevelEvent { id: i32, pos: BlockPos, data: i32 },

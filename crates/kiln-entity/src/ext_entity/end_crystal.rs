@@ -83,8 +83,8 @@ impl EntityExt for EndCrystal {
         if !e.is_removed() {
             e.removed = Some(crate::entity::RemovalReason::Killed);
             if !kind.is_tag("minecraft:is_explosion") {
-                let griefing_decay = crate::explosion::Interaction::DestroyWithDecay;
-                crate::explosion::explode(level, Some(e.id), e.position(), 6.0, false, griefing_decay);
+                // `ExplosionInteraction.BLOCK`.
+                crate::explosion::explode(level, Some(e.id), e.position(), 6.0, false, crate::explosion::Interaction::Block);
             }
             level.emit(Event::DragonFight(DragonFightEvent::CrystalDestroyed { crystal: e.id, uuid: e.uuid, pos: e.position(), kind, attacker }));
         }

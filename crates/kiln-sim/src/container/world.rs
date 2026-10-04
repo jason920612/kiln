@@ -27,6 +27,9 @@ pub(crate) struct SimWorld<'a> {
     pub player_rng: &'a mut kiln_javamath::random::LegacyRandom,
     /// Bookshelves around the open enchanting table.
     pub bookshelves: i32,
+    /// `minecraft:limited_crafting` and the player's recipe book.
+    pub limited_crafting: bool,
+    pub recipes: &'a crate::recipe_book::RecipeBook,
 }
 
 impl SimWorld<'_> {
@@ -36,6 +39,14 @@ impl SimWorld<'_> {
 }
 
 impl kiln_inventory::World for SimWorld<'_> {
+    fn limited_crafting(&self) -> bool {
+        self.limited_crafting
+    }
+
+    fn knows_recipe(&self, recipe: &str) -> bool {
+        self.recipes.contains(recipe)
+    }
+
     fn translate(&self, key: &str) -> Option<String> {
         lang().get(key).cloned()
     }

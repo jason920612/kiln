@@ -598,6 +598,9 @@ struct Player {
     advancements: advancements::progress::PlayerAdvancements,
     /// Base values and permanent modifiers `/attribute` set.
     command_attributes: combat::CommandAttributes,
+    /// `minecraft:limited_crafting`, kept up to date for the menus (only recipes the player's
+    /// recipe book has can be crafted).
+    limited_crafting: bool,
 }
 
 impl Player {
@@ -1891,6 +1894,8 @@ impl Sim {
             game_time: self.game_time,
             max_view: self.config.view_distance as i32,
             movement_check: self.rule_bool("minecraft:player_movement_check"),
+            elytra_movement_check: self.rule_bool("minecraft:elytra_movement_check"),
+            spectators_generate_chunks: self.rule_bool("minecraft:spectators_generate_chunks"),
             natural_regen: self.rule_bool("minecraft:natural_health_regeneration"),
             biome_count: self.dims[dim].provider.biome_count,
             now: Instant::now(),
@@ -1938,6 +1943,16 @@ impl Sim {
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
                 spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
                 spawn_phantoms: self.rule_bool("minecraft:spawn_phantoms"),
+                universal_anger: self.rule_bool("minecraft:universal_anger"),
+                forgive_dead_players: self.rule_bool("minecraft:forgive_dead_players"),
+                ender_pearls_vanish: self.rule_bool("minecraft:ender_pearls_vanish_on_death"),
+                explosion_decay: [
+                    self.rule_bool("minecraft:block_explosion_drop_decay"),
+                    self.rule_bool("minecraft:mob_explosion_drop_decay"),
+                    self.rule_bool("minecraft:tnt_explosion_drop_decay"),
+                ],
+                global_sound_events: self.rule_bool("minecraft:global_sound_events"),
+                projectiles_break_blocks: self.rule_bool("minecraft:projectiles_can_break_blocks"),
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,
@@ -2823,6 +2838,7 @@ impl Sim {
             recipe_book,
             advancements: self.load_player_advancements(j.uuid),
             command_attributes: combat::CommandAttributes::default(),
+            limited_crafting: self.rule_bool("minecraft:limited_crafting"),
         };
 
         player.send(packets::play_login(&packets::Login {

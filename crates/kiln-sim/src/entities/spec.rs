@@ -369,6 +369,22 @@ impl EntityLevel for SpecLevel<'_, '_, '_, '_> {
         self.base.mob_griefing()
     }
 
+    fn universal_anger(&self) -> bool {
+        self.base.universal_anger()
+    }
+
+    fn forgive_dead_players(&self) -> bool {
+        self.base.forgive_dead_players()
+    }
+
+    fn ender_pearls_vanish_on_death(&self) -> bool {
+        self.base.ender_pearls_vanish_on_death()
+    }
+
+    fn explosion_drop_decay(&self, rule: kiln_entity::explosion::DecayRule) -> bool {
+        self.base.explosion_drop_decay(rule)
+    }
+
     fn dragon_fight(&self) -> Option<kiln_entity::level::DragonFightView> {
         self.base.dragon_fight()
     }
