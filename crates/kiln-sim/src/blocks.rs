@@ -977,6 +977,12 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                         let at = [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5];
                         spawns.push(crate::mobs::spawn(kiln_entity::mob::MobKind::Silverfish, at, Some(0.0), None));
                     }
+                    // `Block.dropResources` then `spawnAfterBreak(.., dropExperience = true)` for a
+                    // player's break: ores, sculk and spawners pop experience (explosions and
+                    // other breaks pass false, or have no tool).
+                    if let (Some(loot), Some(tool)) = (&env.loot, tool.as_ref()) {
+                        spawns.extend(block_experience_orbs(loot, pos, state, tool, env, i));
+                    }
                     match &env.loot {
                         Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i)),
                         None => spawns.extend(drop_stand_in(pos, state, env, i)),
@@ -1125,6 +1131,22 @@ fn note_sound(instrument: &str, note: i32) -> (&'static str, f32) {
         .and_then(|e| e.iter().find(|s| s.strip_prefix("minecraft:block.note_block.") == Some(instrument)).copied())
         .unwrap_or("minecraft:block.note_block.harp");
     (sound, 2f32.powf((note - 12) as f32 / 12.0))
+}
+
+/// `Block.spawnAfterBreak` of a block a player broke with `tool`: the experience orbs
+/// (`popExperience` at the block's centre). The level random is stood in for by a random seeded
+/// from the position and tick, like the drops.
+fn block_experience_orbs(loot: &kiln_loot::LootData, pos: BlockPos, state: u16, tool: &kiln_item::ItemStack, env: &BlockEnv, i: usize) -> Vec<Spawn> {
+    use kiln_javamath::random::LegacyRandom;
+    if !env.drops || kiln_loot::block_xp::xp_rule(BlockId::of(state).name()).is_none() {
+        return Vec::new();
+    }
+    let mut rng = LegacyRandom::new((effect_hash(env, pos, i.wrapping_add(0x58)) | 1) as i64);
+    let amount = loot.block_experience(BlockId::of(state).name(), tool, &mut rng);
+    let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+    let mut spawns = Vec::new();
+    crate::container::furnace::award_experience(at, amount, &mut rng, &mut spawns);
+    spawns
 }
 
 /// What a broken block drops (`Block.getDrops` with the block loot table), each stack popped
@@ -1382,6 +1404,33 @@ mod tests {
         assert_eq!(drops(d::WALL_TORCH, None), ["minecraft:torch"]);
         assert!(drops(d::GLASS, pick).is_empty());
         assert!(drops(d::WATER, None).is_empty());
+        // Ores pop experience orbs for a player's break, silk touch takes it away, and plain
+        // blocks have none (`spawnAfterBreak`).
+        let orbs = |state: u16, tool: &kiln_item::ItemStack, i: usize| -> i32 {
+            block_experience_orbs(&loot, BlockPos::new(0, 64, 0), state, tool, &env, i)
+                .into_iter()
+                .map(|s| match s.body {
+                    entities::Body::Ready(e) => match e.kind {
+                        kiln_entity::EntityKind::ExperienceOrb(o) => o.value,
+                        _ => panic!("not an orb"),
+                    },
+                    _ => panic!("not a ready entity"),
+                })
+                .sum()
+        };
+        let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1).unwrap();
+        let mut silk = pick.clone();
+        silk.insert(kiln_item::keys::ENCHANTMENTS, {
+            let mut e = kiln_item::component::Enchantments::default();
+            e.0.push((kiln_item::registry::ENCHANTMENT.id("minecraft:silk_touch").unwrap(), 1));
+            e
+        });
+        let diamond: Vec<i32> = (0..40).map(|i| orbs(d::DIAMOND_ORE, &pick, i)).collect();
+        assert!(diamond.iter().all(|&v| (3..=7).contains(&v)), "{diamond:?}");
+        assert!(diamond.iter().collect::<std::collections::HashSet<_>>().len() > 2);
+        assert!((0..40).all(|i| orbs(d::DIAMOND_ORE, &silk, i) == 0));
+        assert!((0..40).all(|i| orbs(d::STONE, &pick, i) == 0));
+        assert!((0..40).all(|i| orbs(d::SPAWNER, &silk, i) >= 15));
     }
 
     #[test]
