@@ -1730,9 +1730,9 @@ impl Host for Sim {
             Placement::Template { id, rotation, mirror, integrity, seed, strict } => {
                 self.place_template(dim, id.as_str(), pos, *rotation, *mirror, *integrity, *seed, *strict)
             }
-            Placement::Feature { .. } => Err(CommandError::unsupported("place feature")),
-            Placement::Jigsaw { .. } => Err(CommandError::unsupported("place jigsaw")),
-            Placement::Structure(_) => Err(CommandError::unsupported("place structure")),
+            Placement::Feature { id, .. } => self.place_generated_feature(dim, id.as_ref().map(|i| i.as_str()), pos),
+            Placement::Jigsaw { pool, target, max_depth } => self.place_generated_jigsaw(dim, pool.as_str(), target.as_str(), *max_depth, pos),
+            Placement::Structure(id) => self.place_generated_structure(dim, id.as_str(), pos),
         }
     }
 }

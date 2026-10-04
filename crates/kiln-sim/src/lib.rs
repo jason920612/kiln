@@ -39,6 +39,7 @@ mod golems;
 mod glide;
 mod slide;
 mod end_eye;
+mod place_gen;
 mod firework;
 mod boats;
 mod carts;

@@ -275,7 +275,8 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 - 原版 `commands.json` 94 個頂層指令，扣整合伺服器專用的 `publish`／`unpublish` 剩 92 個，**全部註冊**；指令樹語法 92 個逐節點對 `commands.json`（B）。
 - `tools/command_diff.py`：雙伺服器現場對跑，**1,937 個比較單位全部相符**（`work/wp36/command_diff_full3.log`，約 58 個區段；`execute` 349、`scoreboard` 160、`data` 155、`item` 87、`test` 102…）。
 - 級別：A 72 條、C 20 條（`time`、`weather`、`tp`、`kill`、`give`、`list`、`seed`、`msg`、`me`、`kick`、`op`、`deop`、`stop`、`difficulty`、`spawnpoint`、`setworldspawn`、`version`…只有 mock 單元測試）。
-- 缺口：`/locate structure` 永遠找不到（`host.rs:1194`）；`/place feature|jigsaw|structure` 回「not supported yet」；選擇器 `level=`、`advancements=`、`predicate=` 永遠不符合；`execute if predicate` 未實作；`send_command_feedback` 被忽略；權限等級低者被拒未驗證（全以 console 等級跑）。
+- wp44-end：`/locate structure` 已接上（`ChunkGenerator.findNearestMapStructure`：隨機散布環、同心環、`#tag`），`python tools/command_diff.py --structures` 在三個種子的生成世界上與原版逐行相符（393 行）；`/place structure|jigsaw|feature` 以即時區塊組成 `Region` 執行生成器的放置（`place_gen.rs`，原版以 `level.getRandom()` 放置，故用 `tools/place_diff.py` 做統計比對）。
+- 缺口：選擇器 `level=`、`advancements=`、`predicate=` 永遠不符合；`execute if predicate` 未實作；`send_command_feedback` 被忽略；權限等級低者被拒未驗證（全以 console 等級跑）。
 
 ### 3.8 協定
 
@@ -310,7 +311,7 @@ A 的證據是 `tools/MobVectors.java`（逐 tick 比對位置、速度、旋轉
 | 1 | 方塊隨機 tick：作物、農田、草蔓延、藤蔓、昆布、竹、仙人掌、甘蔗、冰雪融化、銅氧化、海龜蛋、紅石礦… | D（101 個方塊類別沒有行為） | `BlockTickVectors.java`：原版伺服器對區域呼叫 `randomTick` 與排程 tick，逐輪比對方塊、待處理 tick、亂數 | 做了（4 條分支） |
 | 2 | 樹苗長成樹、骨粉長樹與草上的花 | D | 同上 harness 加 kiln-worldgen 的樹特徵；重放需在 kiln-sim 層 | 未做（計畫見下） |
 | 3 | 刷怪磚與結構生怪覆寫（要塞烈焰人、地牢、沼澤小屋、神殿、哨站） | D | `MobVectors` 的 spawner scenario；`NaturalSpawner.mobsAt` 取樣向量 | 做了 |
-| 4 | 終界入口：末影之眼、終界傳送門框架、`/locate structure` | D | 方塊更新向量＋`command_diff.py` 加 locate | 未做 |
+| 4 | 終界入口：末影之眼、終界傳送門框架、`/locate structure` | D → A／B | 方塊更新向量＋`command_diff.py` 加 locate | 做了（wp44-end：`/locate structure` 393／393 與原版相符；末影之眼飛行 40 個向量逐位元相符；框架與傳送門 28 個向量相符） |
 | 5 | 告示牌與書編輯、挖礦經驗、右鍵穿裝備 | D | `LootVectors` 加經驗；其餘 B（`persist_check`） | 做了 |
 | 6 | 摔落傷害與落地方塊、玩家環境傷害（仙人掌、甜莓、粉雪、窒息） | C／D | `EffectVectors` 加 fall／hazard scenario | 做了 |
 | 7 | 玩家打生物、橫掃、重錘 | C／D | `CombatVectors` 目標改成生物 | 做了 |

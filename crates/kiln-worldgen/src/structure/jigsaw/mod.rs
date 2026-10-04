@@ -44,6 +44,10 @@ impl Kind for JigsawStructure {
         let pos = BlockPos::new(ctx.chunk.0 << 4, y, ctx.chunk.1 << 4);
         placement::add_pieces(self, ctx, pos)
     }
+
+    fn as_jigsaw(&self) -> Option<&JigsawStructure> {
+        Some(self)
+    }
 }
 
 thread_local! {

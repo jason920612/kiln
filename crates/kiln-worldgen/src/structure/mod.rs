@@ -262,6 +262,75 @@ impl Structures {
 
     /// `ChunkGenerator.tryGenerateStructure` / `Structure.generate`.
     fn try_generate(&self, generator: &Generator, scratch: &mut StructureScratch, last: &mut LastResult, st: usize, cx: i32, cz: i32) -> Option<Start> {
+        self.generate_at(generator, scratch, last, st, cx, cz, true)
+    }
+
+    /// `Structure.generate(...)` with `biome -> true`, as `/place structure` calls it: the start
+    /// of structure `st` generated from chunk `(cx, cz)` wherever its biomes are not.
+    pub fn generate_anywhere(&self, generator: &Generator, scratch: &mut StructureScratch, st: usize, cx: i32, cz: i32) -> Option<Start> {
+        scratch.climate.reset_caches();
+        let mut last: LastResult = None;
+        self.generate_at(generator, scratch, &mut last, st, cx, cz, false)
+    }
+
+    /// `JigsawPlacement.generateJigsaw`'s pieces (`/place jigsaw`): `pool` grown from its
+    /// `target` jigsaw at `pos` to `max_depth`, with the generation random of the chunk holding
+    /// `pos`. `like` names a jigsaw structure whose loaded pools are used.
+    pub fn generate_jigsaw(
+        &self,
+        generator: &Generator,
+        scratch: &mut StructureScratch,
+        pool: &str,
+        target: &str,
+        max_depth: i32,
+        pos: BlockPos,
+    ) -> Option<Vec<Box<dyn Piece>>> {
+        let (st, base) = self.structures.iter().enumerate().find_map(|(i, d)| d.kind.as_jigsaw().map(|j| (i, j)))?;
+        let s = jigsaw::JigsawStructure {
+            pools: base.pools.clone(),
+            start_pool: pool.to_owned(),
+            start_jigsaw_name: Some(target.to_owned()),
+            max_depth,
+            start_height: base.start_height.clone(),
+            use_expansion_hack: false,
+            project_start_to_heightmap: None,
+            max_distance: (128, 128),
+            aliases: Vec::new(),
+            padding: None,
+            liquid: crate::structure::template::LiquidSettings::ApplyWaterlogging,
+        };
+        scratch.climate.reset_caches();
+        let mut last: LastResult = None;
+        let (cx, cz) = (pos.x >> 4, pos.z >> 4);
+        let mut random = WorldgenRandom::legacy(0);
+        random.set_large_feature_seed(self.seed, cx, cz);
+        let mut ctx = GenCtx {
+            generator,
+            structures: self,
+            structure: st,
+            seed: self.seed,
+            chunk: (cx, cz),
+            random,
+            climate: &mut scratch.climate,
+            last: &mut last,
+            heights: &mut scratch.heights,
+        };
+        let stub = jigsaw::placement::add_pieces(&s, &mut ctx, pos)?;
+        let mut pieces: Vec<Box<dyn Piece>> = Vec::new();
+        (stub.build)(&mut ctx, &mut pieces);
+        (!pieces.is_empty()).then_some(pieces)
+    }
+
+    fn generate_at(
+        &self,
+        generator: &Generator,
+        scratch: &mut StructureScratch,
+        last: &mut LastResult,
+        st: usize,
+        cx: i32,
+        cz: i32,
+        check_biome: bool,
+    ) -> Option<Start> {
         let def = &self.structures[st];
         if let Some(gap) = def.kind.gap() {
             self.gaps[gap].1.fetch_add(1, Ordering::Relaxed);
@@ -281,7 +350,7 @@ impl Structures {
             heights: &mut scratch.heights,
         };
         let stub = def.kind.find(&mut ctx)?;
-        if !ctx.is_valid_biome(stub.pos) {
+        if check_biome && !ctx.is_valid_biome(stub.pos) {
             return None;
         }
         let mut pieces: Vec<Box<dyn Piece>> = Vec::new();

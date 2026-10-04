@@ -29,6 +29,8 @@ pub struct Region<'a> {
     chunks: Vec<Box<ProtoChunk>>,
     pub cx: i32,
     pub cz: i32,
+    /// The window is `(2 * radius + 1)` chunks across (1 while generating).
+    radius: i32,
     pub generator: &'a Generator,
     scratch: &'a mut GenScratch,
     pub stats: RegionStats,
@@ -40,11 +42,18 @@ impl<'a> Region<'a> {
     /// `chunks` are the 3×3 chunks around `(cx, cz)`, row by row from the north-west
     /// (`index = (dz + 1) * 3 + dx + 1`).
     pub fn new(chunks: Vec<Box<ProtoChunk>>, cx: i32, cz: i32, generator: &'a Generator, scratch: &'a mut GenScratch) -> Self {
-        assert_eq!(chunks.len(), 9, "a region holds the 3x3 chunks around its center");
+        Self::with_radius(chunks, cx, cz, 1, generator, scratch)
+    }
+
+    /// A window of `(2 * radius + 1)` chunks across, row by row from the north-west, for
+    /// commands that place things into a live world (`/place`).
+    pub fn with_radius(chunks: Vec<Box<ProtoChunk>>, cx: i32, cz: i32, radius: i32, generator: &'a Generator, scratch: &'a mut GenScratch) -> Self {
+        let w = (2 * radius + 1) as usize;
+        assert_eq!(chunks.len(), w * w, "a region holds the chunks around its center");
         for (i, c) in chunks.iter().enumerate() {
-            debug_assert_eq!((c.x, c.z), (cx + i as i32 % 3 - 1, cz + i as i32 / 3 - 1), "chunk {i} out of place");
+            debug_assert_eq!((c.x, c.z), (cx + (i % w) as i32 - radius, cz + (i / w) as i32 - radius), "chunk {i} out of place");
         }
-        Self { chunks, cx, cz, generator, scratch, stats: RegionStats::default(), log: None, level_random: None }
+        Self { chunks, cx, cz, radius, generator, scratch, stats: RegionStats::default(), log: None, level_random: None }
     }
 
     /// `WorldGenRegion.addFreshEntity`: stored in the chunk holding the entity's position
@@ -67,7 +76,8 @@ impl<'a> Region<'a> {
     #[inline]
     fn slot(&self, cx: i32, cz: i32) -> Option<usize> {
         let (dx, dz) = (cx - self.cx, cz - self.cz);
-        (dx.abs() <= 1 && dz.abs() <= 1).then(|| ((dz + 1) * 3 + dx + 1) as usize)
+        let r = self.radius;
+        (dx.abs() <= r && dz.abs() <= r).then(|| ((dz + r) * (2 * r + 1) + dx + r) as usize)
     }
 
     pub fn chunk(&self, cx: i32, cz: i32) -> Option<&ProtoChunk> {
@@ -79,7 +89,7 @@ impl<'a> Region<'a> {
     }
 
     pub fn center(&self) -> &ProtoChunk {
-        &self.chunks[4]
+        &self.chunks[(self.radius * (2 * self.radius + 1) + self.radius) as usize]
     }
 
     pub fn chunks(&self) -> &[Box<ProtoChunk>] {
@@ -219,11 +229,11 @@ impl<'a> Region<'a> {
     /// chunks' stored biomes).
     pub fn biome(&mut self, p: BlockPos) -> u16 {
         let generator = self.generator;
-        let (chunks, scratch, (cx, cz)) = (&self.chunks, &mut *self.scratch, (self.cx, self.cz));
+        let (chunks, scratch, (cx, cz), r) = (&self.chunks, &mut *self.scratch, (self.cx, self.cz), self.radius);
         zoomed_biome(generator.zoom_seed, p.x, p.y, p.z, &mut |qx, qy, qz| {
             let (dx, dz) = ((qx >> 2) - cx, (qz >> 2) - cz);
-            if dx.abs() <= 1 && dz.abs() <= 1 {
-                chunks[((dz + 1) * 3 + dx + 1) as usize].quart_biome(qx, qy, qz)
+            if dx.abs() <= r && dz.abs() <= r {
+                chunks[((dz + r) * (2 * r + 1) + dx + r) as usize].quart_biome(qx, qy, qz)
             } else {
                 scratch.noise_biome(generator, qx, qy, qz)
             }

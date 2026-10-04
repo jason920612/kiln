@@ -17,6 +17,11 @@ pub trait Kind: Send + Sync {
         None
     }
 
+    /// A jigsaw structure's configuration, for `/place jigsaw` (which reuses its pools).
+    fn as_jigsaw(&self) -> Option<&super::jigsaw::JigsawStructure> {
+        None
+    }
+
     /// `Structure.afterPlace`: runs after the start's pieces were placed in a chunk.
     fn after_place(
         &self,
