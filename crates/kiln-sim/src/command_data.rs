@@ -201,12 +201,15 @@ impl Sim {
     /// `execute on <relation>`: `ExecuteCommand`'s relations of an entity. `owner` (a tamed
     /// animal's owner among the players), `leasher`, `target`, `attacker` (`getLastHurtByMob`),
     /// `vehicle`, `origin` (a projectile's owner) and `passengers` (the direct ones, in
-    /// order). The `controller` is not known (no entity names its controlling passenger yet).
+    /// order) and `controller` (`getControllingPassenger`, see [`Sim::controller_of`]).
     pub(crate) fn related_to(&mut self, relation: &str, target: &PlayerRef) -> Vec<PlayerRef> {
         let dim = target.dim;
         let one = |id: Option<i32>, this: &mut Sim| id.and_then(|id| this.entity_with_id(dim, id)).into_iter().collect::<Vec<_>>();
         if relation == "vehicle" {
             return self.vehicle_of_target(target).into_iter().collect();
+        }
+        if relation == "controller" {
+            return self.controller_of(target).into_iter().collect();
         }
         // Players are entities with a vehicle only: nothing else hangs off them.
         let Some(phys) = self.entity_mut(target).and_then(|e| e.phys.as_deref()) else { return Vec::new() };
@@ -246,6 +249,36 @@ impl Sim {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// `Entity.getControllingPassenger`: a boat's first passenger when it is a player; a mob's
+    /// player rider when its type lets that player steer it (`AbstractHorse`, `Strider`,
+    /// `AbstractNautilus`: saddled, a strider also needs its fungus on a stick), or else its
+    /// first passenger when that is a mob that can control a vehicle (`Mob.getControllingPassenger`;
+    /// nothing with no AI). Everything else (minecarts, items, players) has none.
+    fn controller_of(&mut self, target: &PlayerRef) -> Option<PlayerRef> {
+        let dim = target.dim;
+        let (first, boat) = {
+            let phys = self.entity_mut(target)?.phys.as_deref()?;
+            (*phys.passengers.first()?, kiln_entity::ext_entity::boat::is_boat(phys.type_name))
+        };
+        let now = self.game_time;
+        let player = self.players.iter().find(|(_, p)| p.entity_id == first).map(|(&c, p)| (PlayerRef::of(c, p, &self.commands.scoreboard), crate::entities::view(p, now)));
+        if boat {
+            return player.map(|(r, _)| r);
+        }
+        if let Some((rider, view)) = player {
+            let phys = self.entity_mut(target)?.phys.as_deref()?;
+            let m = kiln_entity::mob::data(phys)?;
+            return m.kind.ext().is_some_and(|k| k.steerable_by(m, &view)).then_some(rider);
+        }
+        if kiln_entity::mob::data(self.entity_mut(target)?.phys.as_deref()?)?.no_ai {
+            return None;
+        }
+        let rider = self.entity_with_id(dim, first)?;
+        let phys = self.entity_mut(&rider)?.phys.as_deref()?;
+        let mob = matches!(phys.kind, kiln_entity::entity::EntityKind::Mob(_) | kiln_entity::entity::EntityKind::MobTicking { .. });
+        (mob && !kiln_entity::mob::entity_type_tag(phys.type_name, "minecraft:non_controlling_rider")).then_some(rider)
     }
 
     /// The entity and everything riding it, recursively.

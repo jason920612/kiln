@@ -55,7 +55,6 @@ pub enum Goal {
     Melee { kind: MeleeKind, speed: f64, follow_unseen: bool, path: Option<path::Path>, recalc: i32, next_attack: i32, last_can_use: i64, pathed: Vec3, raise_arm: i32 },
     RangedBow { speed: f64, interval_min: i32, radius_sqr: f32, attack_time: i32, see_time: i32, strafing_clockwise: bool, strafing_backwards: bool, strafing_time: i32 },
     Swell { target: Option<i32> },
-    AvoidEntity,
     LeapAtTarget { yd: f32, target: Option<i32> },
     RestrictSun,
     FleeSun { speed: f64, wanted: Vec3 },
@@ -74,7 +73,7 @@ impl Goal {
         match self {
             Goal::Custom(c) => c.flags(),
             Goal::Float => JUMP,
-            Goal::Panic { .. } | Goal::RandomStroll { .. } | Goal::Swell { .. } | Goal::FleeSun { .. } | Goal::AvoidEntity => MOVE,
+            Goal::Panic { .. } | Goal::RandomStroll { .. } | Goal::Swell { .. } | Goal::FleeSun { .. } => MOVE,
             Goal::Tempt { .. } | Goal::Breed { .. } | Goal::Melee { .. } | Goal::RangedBow { .. } | Goal::RandomLookAround { .. } => MOVE | LOOK,
             Goal::LookAtPlayer { .. } => LOOK,
             Goal::EatBlock { .. } => MOVE | LOOK | JUMP,
@@ -108,7 +107,6 @@ impl Goal {
             Goal::Melee { .. } => "melee",
             Goal::RangedBow { .. } => "bow",
             Goal::Swell { .. } => "swell",
-            Goal::AvoidEntity => "avoid",
             Goal::LeapAtTarget { .. } => "leap",
             Goal::RestrictSun => "restrict_sun",
             Goal::FleeSun { .. } => "flee_sun",
@@ -512,7 +510,7 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                 None => false,
             }
         }
-        Goal::Idle | Goal::Never | Goal::AvoidEntity => false,
+        Goal::Idle | Goal::Never => false,
         Goal::Breed { partner, .. } => {
             if m.in_love <= 0 {
                 return false;

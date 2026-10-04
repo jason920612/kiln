@@ -1040,8 +1040,10 @@ fn register_goals(m: &mut MobData) {
         MobKind::Creeper => {
             g.add(1, Goal::Float);
             g.add(2, Goal::Swell { target: None });
-            g.add(3, Goal::AvoidEntity);
-            g.add(3, Goal::AvoidEntity);
+            // `AvoidEntityGoal<Ocelot>` and `<Cat>` (6.0F, 1.0, 1.2).
+            for types in [&["minecraft:ocelot"], &["minecraft:cat"]] {
+                g.add(3, Goal::Custom(Box::new(kinds::common_a::AvoidEntityGoal::new("AvoidEntityGoal", kinds::common_a::Avoid::Types(types), 6.0, 1.0, 1.2))));
+            }
             g.add(4, melee(MeleeKind::Plain, 1.0, false));
             g.add(5, stroll(0.8));
             g.add(6, look(8.0));
@@ -1051,7 +1053,14 @@ fn register_goals(m: &mut MobData) {
         }
         MobKind::Spider => {
             g.add(1, Goal::Float);
-            g.add(2, Goal::AvoidEntity);
+            // `AvoidEntityGoal<Armadillo>(this, Armadillo.class, 6.0F, 1.0, 1.2, e -> !e.isScared())`.
+            g.add(
+                2,
+                Goal::Custom(Box::new(
+                    kinds::common_a::AvoidEntityGoal::new("AvoidEntityGoal", kinds::common_a::Avoid::Types(&["minecraft:armadillo"]), 6.0, 1.0, 1.2)
+                        .filter(|_, level, t| !level.entity(t.id).and_then(data).is_some_and(kinds::armadillo::is_scared)),
+                )),
+            );
             g.add(3, Goal::LeapAtTarget { yd: 0.4, target: None });
             g.add(4, melee(MeleeKind::Spider, 1.0, true));
             g.add(5, stroll(0.8));
@@ -2154,8 +2163,23 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     // Players first: they joined the entity sections before the mobs around them (the order
     // the pushes add up in shows in the last bits of the motion). Riding together: no pushes
     // between a vehicle and its passengers or passengers of the same vehicle.
-    let near = level.entities_in(&bb, EntityFilter::Living, e.id);
     let riding = |id: i32, vehicle: Option<i32>| e.vehicle == Some(id) || e.passengers.contains(&id) || (e.vehicle.is_some() && vehicle == e.vehicle);
+    // (One search: the living and the boats and minecarts among what is there.)
+    let found = level.entities_in(&bb, EntityFilter::Any, e.id);
+    let mut near = Vec::with_capacity(found.len());
+    let mut vehicles: Vec<i32> = Vec::new();
+    for id in found {
+        let Some(o) = level.entity(id) else { continue };
+        match &o.kind {
+            EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_) => near.push(id),
+            EntityKind::Ext(_)
+                if (crate::ext_entity::boat::is_boat(o.type_name) || crate::ext_entity::minecart::is_minecart(o.type_name)) && !o.is_removed() && !riding(id, o.vehicle) =>
+            {
+                vehicles.push(id)
+            }
+            _ => {}
+        }
+    }
     for &id in &near {
         if let Some(p) = level.player(id)
             && !p.spectator
@@ -2186,6 +2210,11 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         {
             others.push((id, o.x(), o.z(), false));
         }
+    }
+    // Boats and minecarts are pushable too (`isPushable`): `doPush(vehicle)` is `vehicle.push(mob)`,
+    // with the vehicle's own rules (see [`push_vehicle`]). Not the one the mob rides.
+    for id in vehicles {
+        push_vehicle(e, m, level, id);
     }
     for (id, ox, oz, player) in others {
         // `doPush` of a parrot ignores players (wp32).
@@ -2224,6 +2253,61 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             o.delta = o.delta.add(dx, 0.0, dz);
             o.needs_sync = true;
         }
+    }
+}
+
+/// `vehicle.push(mob)` for a boat or minecart touched by mob `e` (`LivingEntity.doPush`). A boat
+/// takes it only when the mob's box starts no higher than the boat's bottom (`AbstractBoat.push`),
+/// then the two are pushed apart by `Entity.push` (neither with riders); a minecart pushes
+/// itself back by a tenth of that, and the mob by a quarter of that, whatever either carries.
+fn push_vehicle(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, id: i32) {
+    let Some(o) = level.entity(id) else { return };
+    if e.no_physics || o.no_physics {
+        return;
+    }
+    let (ox, oz) = (o.x(), o.z());
+    if crate::ext_entity::boat::is_boat(o.type_name) {
+        if e.bounding_box().min_y > o.bounding_box().min_y {
+            return;
+        }
+        let (dx, dz) = (e.x() - ox, e.z() - oz);
+        let mut d = dx.abs().max(dz.abs());
+        if d < 0.009999999776482582 {
+            return;
+        }
+        d = d.sqrt();
+        let (mut dx, mut dz) = (dx / d, dz / d);
+        let f = (1.0 / d).min(1.0);
+        dx *= f;
+        dz *= f;
+        dx *= 0.05000000074505806;
+        dz *= 0.05000000074505806;
+        let boat_free = o.passengers.is_empty();
+        if e.passengers.is_empty() && m.health > 0.0 && m.kind.ext().is_none_or(|k| k.can_be_pushed(m)) {
+            e.delta = e.delta.add(dx, 0.0, dz);
+            e.needs_sync = true;
+        }
+        if boat_free {
+            level.push(id, Vec3::new(-dx, 0.0, -dz));
+        }
+    } else {
+        let (dx, dz) = (e.x() - ox, e.z() - oz);
+        let mut dd = dx * dx + dz * dz;
+        if dd < 9.999999747378752E-5 {
+            return;
+        }
+        dd = dd.sqrt();
+        let (mut dx, mut dz) = (dx / dd, dz / dd);
+        let pow = (1.0 / dd).min(1.0);
+        dx *= pow;
+        dz *= pow;
+        dx *= 0.10000000149011612;
+        dz *= 0.10000000149011612;
+        dx *= 0.5;
+        dz *= 0.5;
+        level.push(id, Vec3::new(-dx, 0.0, -dz));
+        e.delta = e.delta.add(dx / 4.0, 0.0, dz / 4.0);
+        e.needs_sync = true;
     }
 }
 

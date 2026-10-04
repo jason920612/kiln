@@ -654,6 +654,7 @@ public class MobVectors {
             if (v >= 0 && !tracked.get(i).startRiding(tracked.get(v), true, false)) throw new IllegalStateException("could not ride: " + s.mobs.get(i).type);
         }
         StringBuilder trace = new StringBuilder();
+        StringBuilder othersTrace = new StringBuilder();
         StringBuilder heartTrace = new StringBuilder();
         StringBuilder hits = new StringBuilder();
         StringBuilder spawned = new StringBuilder();
@@ -789,6 +790,17 @@ public class MobVectors {
                 trace.append(state(nm));
             }
             trace.append(']');
+            // wp41: where the scenario's other entities (boats, minecarts) are, and how fast.
+            if (tick > 0) othersTrace.append(',');
+            othersTrace.append('[');
+            for (int i = initial; i < initial + s.others.size(); i++) {
+                if (i > initial) othersTrace.append(',');
+                Entity oe = tracked.get(i);
+                Vec3 op = oe.position(), ov = oe.getDeltaMovement();
+                othersTrace.append('[').append(oe.getId()).append(',').append(d(op.x)).append(',').append(d(op.y)).append(',').append(d(op.z))
+                        .append(',').append(d(ov.x)).append(',').append(d(ov.y)).append(',').append(d(ov.z)).append(',').append(oe.isRemoved() ? 1 : 0).append(']');
+            }
+            othersTrace.append(']');
         }
         // wp28 creaking: the blocks around the hearts as the scenario left them (resin), and
         // the hearts' positions.
@@ -828,8 +840,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, heartsJson, creakingActive, endBlocks, heartTrace, nextId, s.checkLevelRandom ? Long.toString(((java.util.concurrent.atomic.AtomicLong) get(level.getRandom(), "seed")).get()) : "null", trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, s.checkLevelRandom ? Long.toString(((java.util.concurrent.atomic.AtomicLong) get(level.getRandom(), "seed")).get()) : "null", trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1702,6 +1714,8 @@ public class MobVectors {
         scenariosSpears(out);
         // -- wp36: kills (zombies and villagers)
         scenariosWp36(out);
+        scenariosPush(out);
+        scenariosAvoid(out);
 
         return out;
     }
@@ -1709,6 +1723,118 @@ public class MobVectors {
     // ---------------------------------------------------------- wp36
     /// A zombie of any kind that kills a villager turns it into a zombie villager half the time on normal
     /// (`Zombie.killedEntity`: its own random decides); the villager here has no AI and one heart.
+    /// wp41: mobs touching boats and minecarts (`LivingEntity.pushEntities` with `AbstractBoat.push`
+    /// and `AbstractMinecart.push`, and the boat's own `pushableBy` pass): both sides' motion is
+    /// traced (`others_trace`).
+    static void scenariosPush(List<Scenario> out) {
+        String[] vehicles = {"minecraft:oak_boat", "minecraft:bamboo_raft", "minecraft:minecart", "minecraft:chest_minecart"};
+        String[] mobs = {"minecraft:pig", "minecraft:zombie", "minecraft:cow"};
+        int n = 0;
+        for (String vehicle : vehicles) {
+            for (String mob : mobs) {
+                for (double dx : new double[] {0.4, -0.7, 0.05}) {
+                    Scenario s = new Scenario("push_" + vehicle.substring(10) + "_" + mob.substring(10) + "_" + (dx > 0 ? "r" : "l") + Math.round(Math.abs(dx) * 100));
+                    floor(s, 20, "minecraft:stone");
+                    MobSpec m = new MobSpec(mob, 0.5 + dx, BY, 0.5 + (dx == 0.05 ? 0.3 : 0.0), 90f, 41000L + n);
+                    m.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+                    s.mobs.add(m);
+                    s.others.add(new MobSpec(vehicle, 0.5, BY, 0.5, 0f, 41500L + n));
+                    s.levelSeed = 700 + n;
+                    s.ticks = 40;
+                    out.add(s);
+                    n++;
+                }
+            }
+        }
+        // Two boats and a mob between them, a boat and a cart, two boats.
+        {
+            Scenario s = new Scenario("push_two_boats_pig");
+            floor(s, 20, "minecraft:stone");
+            MobSpec a = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 90f, 41110L);
+            a.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+            s.mobs.add(a);
+            s.others.add(new MobSpec("minecraft:oak_boat", -0.4, BY, 0.5, 0f, 41610L));
+            s.others.add(new MobSpec("minecraft:birch_boat", 1.3, BY, 0.6, 0f, 41611L));
+            s.levelSeed = 791;
+            s.ticks = 40;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("push_boat_cart");
+            floor(s, 20, "minecraft:stone");
+            s.others.add(new MobSpec("minecraft:oak_boat", 0.5, BY, 0.5, 0f, 41620L));
+            s.others.add(new MobSpec("minecraft:minecart", 1.4, BY, 0.5, 0f, 41621L));
+            s.levelSeed = 792;
+            s.ticks = 40;
+            s.mobs.add(idle(0.5, BY + 8, 8.5));
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("push_boat_boat");
+            floor(s, 20, "minecraft:stone");
+            s.others.add(new MobSpec("minecraft:oak_boat", 0.5, BY, 0.5, 0f, 41630L));
+            s.others.add(new MobSpec("minecraft:oak_boat", 1.4, BY, 0.7, 0f, 41631L));
+            s.levelSeed = 793;
+            s.ticks = 40;
+            s.mobs.add(idle(0.5, BY + 8, 8.5));
+            out.add(s);
+        }
+    }
+
+    /// wp41: `AvoidEntityGoal` of the monsters that run from other mobs: creepers from cats and
+    /// ocelots, skeletons from wolves, spiders from (unscared) armadillos, illagers from creakings.
+    static void scenariosAvoid(List<Scenario> out) {
+        String[][] pairs = {
+            {"creeper", "cat"}, {"creeper", "ocelot"}, {"skeleton", "wolf"}, {"spider", "armadillo"},
+            {"pillager", "creaking"}, {"vindicator", "creaking"}, {"evoker", "creaking"}, {"illusioner", "creaking"},
+        };
+        int n = 0;
+        for (String[] pair : pairs) {
+            for (double d : new double[] {2.5, 4.5, 7.0}) {
+                Scenario s = new Scenario("avoid_" + pair[0] + "_" + pair[1] + "_" + (int) d);
+                floor(s, 24, "minecraft:stone");
+                MobSpec a = new MobSpec("minecraft:" + pair[0], 0.5, BY, 0.5, 30f * n, 42000L + n);
+                a.nbt = "{PersistenceRequired:1b,Silent:1b}";
+                if (pair[0].equals("skeleton")) a.mainHand = "minecraft:bow";
+                MobSpec b = new MobSpec("minecraft:" + pair[1], 0.5 + d, BY, 0.5, 90f, 42100L + n);
+                b.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+                s.mobs.add(a);
+                s.mobs.add(b);
+                s.player = new double[] {-20.5, BY, 0.5};
+                s.playerCreative = true;
+                s.dayTime = 18000;
+                s.levelSeed = 800 + n;
+                s.ticks = 100;
+                out.add(s);
+                n++;
+            }
+        }
+        // A scared armadillo is no reason to run.
+        {
+            Scenario s = new Scenario("avoid_spider_armadillo_scared");
+            floor(s, 24, "minecraft:stone");
+            MobSpec a = new MobSpec("minecraft:spider", 0.5, BY, 0.5, 0f, 42200L);
+            a.nbt = "{PersistenceRequired:1b,Silent:1b}";
+            MobSpec b = new MobSpec("minecraft:armadillo", 3.0, BY, 0.5, 90f, 42201L);
+            b.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b,state:\"scared\"}";
+            s.mobs.add(a);
+            s.mobs.add(b);
+            s.player = new double[] {-20.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 899;
+            s.ticks = 100;
+            out.add(s);
+        }
+    }
+
+    /// A pig far from everything, to give a scenario a mob to trace.
+    static MobSpec idle(double x, double y, double z) {
+        MobSpec m = new MobSpec("minecraft:pig", x, y, z, 0f, 41999L);
+        m.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b,NoGravity:1b}";
+        return m;
+    }
+
     static void scenariosWp36(List<Scenario> out) {
         String[] killers = {"zombie", "husk", "drowned"};
         for (String killer : killers) {

@@ -208,6 +208,9 @@ pub fn position_rider(e: &mut Entity, vehicle: &Entity) {
     let baby = crate::mob::data(e).is_some_and(|m| m.baby());
     let p = riding_position(vehicle, index) - vehicle_attachment_of_age(e.type_name, baby, age_scale(e));
     e.set_pos(p);
+    if let Some(boat) = crate::ext_entity::get::<crate::ext_entity::boat::Boat>(vehicle) {
+        boat_clamp_rotation(e, vehicle, boat);
+    }
     // `AbstractHorse.positionRider`, `Chicken.positionRider`: the rider's body faces the
     // mount's way.
     if let (EntityKind::Mob(vm), EntityKind::Mob(rm)) = (&vehicle.kind, &mut e.kind)
@@ -215,6 +218,34 @@ pub fn position_rider(e: &mut Entity, vehicle: &Entity) {
     {
         rm.y_body_rot = vm.y_body_rot;
     }
+}
+
+/// `AbstractBoat.positionRider` after the position, for a mob rider (breezes turn on their own,
+/// `#can_turn_in_boats`): the boat's turn since the last tick is added to the rider's yaw and head,
+/// then `clampRotation`: the body takes the boat's yaw (an animal in a full boat sits sideways),
+/// the mob faces where its body does and its head stays within its limit of it.
+fn boat_clamp_rotation(e: &mut Entity, vehicle: &Entity, boat: &crate::ext_entity::boat::Boat) {
+    if crate::mob::entity_type_tag(e.type_name, "minecraft:can_turn_in_boats") {
+        return;
+    }
+    let id = e.id;
+    let EntityKind::Mob(rm) = &mut e.kind else { return };
+    let dr = boat.delta_rotation();
+    e.y_rot += dr;
+    rm.y_head_rot += dr;
+    let body = if rm.kind.is_animal() && vehicle.passengers.len() == boat.max_passengers() {
+        vehicle.y_rot + if id % 2 == 0 { 90.0 } else { 270.0 }
+    } else {
+        vehicle.y_rot
+    };
+    rm.y_body_rot = body;
+    e.y_rot = body;
+    // `Mob.clampHeadRotationToBody`.
+    let max = rm.kind.max_head_y_rot() as f32;
+    let head = rm.y_head_rot;
+    let d = crate::mob::mth::wrap_degrees(body - head);
+    let clamped = d.clamp(-max, max);
+    rm.y_head_rot = head + d - clamped;
 }
 
 /// `Entity.startRiding` + `addPassenger` for two entities of the level: `rider` rides `vehicle`

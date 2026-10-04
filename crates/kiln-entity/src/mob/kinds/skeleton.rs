@@ -2,6 +2,7 @@
 //! skeletons): the goals, `finalizeSpawn`, and the skeleton's powder snow conversion into a
 //! stray. The plain skeleton lives in the shared mob code and calls in here.
 
+use super::common_a::{Avoid, AvoidEntityGoal};
 use super::zombie::{self, IRON_GOLEM, PIGLINS, hurt_by, nearest, stroll};
 use crate::entity::Entity;
 use crate::level::{EntityLevel, Event};
@@ -21,8 +22,8 @@ pub fn register_goals(m: &mut MobData) {
     let g = &mut m.goals;
     g.add(2, Goal::RestrictSun);
     g.add(3, Goal::FleeSun { speed: 1.0, wanted: Vec3::ZERO });
-    // `AvoidEntityGoal<Wolf>` (not simulated: never starts).
-    g.add(3, Goal::AvoidEntity);
+    // `AvoidEntityGoal<Wolf>(this, Wolf.class, 6.0F, 1.0, 1.2)`.
+    g.add(3, Goal::Custom(Box::new(AvoidEntityGoal::new("AvoidEntityGoal", Avoid::Types(&["minecraft:wolf"]), 6.0, 1.0, 1.2))));
     g.add(5, stroll(1.0, true));
     g.add(6, Goal::LookAtPlayer { dist: 8.0, probability: 0.02, look_at: None, look_time: 0 });
     g.add(6, Goal::RandomLookAround { rel_x: 0.0, rel_z: 0.0, look_time: 0 });

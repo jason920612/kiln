@@ -715,6 +715,21 @@ fn replay(s: &Value) -> Result<usize, String> {
                 }
             }
         }
+        // wp41: the scenario's boats and minecarts (position and motion, bit for bit).
+        if let Some(others) = s.get("others_trace").and_then(Value::as_array).and_then(|t| t.get(tick as usize)).and_then(Value::as_array) {
+            for (k, want) in others.iter().enumerate() {
+                let want: Vec<f64> = want.as_array().unwrap().iter().map(f).collect();
+                let Some(e) = other_ids.get(k).and_then(|&id| level.entity(id)) else { continue };
+                let got = [e.x(), e.y(), e.z(), e.delta.x, e.delta.y, e.delta.z];
+                for (i, name) in ["x", "y", "z", "vx", "vy", "vz"].iter().enumerate() {
+                    if got[i].to_bits() != want[1 + i].to_bits() {
+                        return Err(format!("tick {tick} other {k} ({}): {name} = {} (kiln) vs {} (vanilla)
+  kiln    {got:?}
+  vanilla {:?}", e.type_name, got[i], want[1 + i], &want[1..7]));
+                    }
+                }
+            }
+        }
         for (k, want) in expected.as_array().unwrap().iter().enumerate() {
             let want = want.as_array().unwrap();
             let want_goals = want.last().unwrap().as_str().unwrap();

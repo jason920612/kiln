@@ -2192,6 +2192,10 @@ pub(crate) fn hit_mob(
     deaths: &mut Vec<health::Death>,
     hit: &crate::combat::MobHit,
 ) {
+    if hit.deflect {
+        aim_deflect(entities, hit.target, (hit.attacker, hit.attacker_uuid), [hit.yaw, hit.pitch]);
+        return;
+    }
     let target = hit.target - hit.part.map_or(0, |p| p as i32 + 1);
     let Ok(i) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
     let live = |p: &Player| !p.disconnected && !p.dead;
@@ -2271,6 +2275,17 @@ pub(crate) fn hit_mob(
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
+}
+
+/// `Player.deflectProjectile` on entity `id`: a fireball or wind charge flies on along the look
+/// (`rot` = yaw, pitch) of player `by`, who owns it from now on. False when it is not one.
+pub(crate) fn aim_deflect(entities: &mut Entities, id: i32, by: (i32, u128), rot: [f32; 2]) -> bool {
+    let Ok(i) = entities.list.binary_search_by_key(&id, |e| e.id) else { return false };
+    let Some(phys) = entities.list[i].phys.as_deref_mut() else { return false };
+    let look = kiln_entity::ext_entity::fireball::view_vector(rot[1], rot[0]);
+    let done = phys.aim_deflect(by, look);
+    entities.list[i].sync();
+    done
 }
 
 /// A player's stab on an entity (`Player.stabAttack` with a spear), carried out against the
@@ -2951,7 +2966,7 @@ fn loot_drop(env: &blocks::BlockEnv, spawns: &mut Vec<Spawn>, id: i32, table: &s
 }
 
 /// A player as the entities see it (`now`: the game time).
-fn view(p: &Player, now: i64) -> PlayerView {
+pub(crate) fn view(p: &Player, now: i64) -> PlayerView {
     use kiln_item::component::EquipmentSlot as S;
     let armor = [S::Feet, S::Legs, S::Chest, S::Head].iter().filter(|s| !p.inv.equipped(**s).is_empty()).count();
     PlayerView {

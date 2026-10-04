@@ -66,7 +66,7 @@ impl Kind for Evoker {
         g.add(0, Goal::Float);
         g.add(1, Goal::Custom(Box::new(CastingSpellGoal { name: "EvokerCastingSpellGoal" })));
         g.add(2, Goal::Custom(Box::new(super::cat::AvoidPlayerGoal::new("AvoidEntityGoal", 8.0, 0.6, 1.0))));
-        g.add(3, raider::never());
+        g.add(3, raider::avoid_creaking(0.6, 1.0));
         g.add(4, Goal::Custom(Box::new(UseSpellGoal::new(Spell::SummonVex))));
         g.add(5, Goal::Custom(Box::new(UseSpellGoal::new(Spell::Fangs))));
         g.add(6, Goal::Custom(Box::new(UseSpellGoal::new(Spell::Wololo))));

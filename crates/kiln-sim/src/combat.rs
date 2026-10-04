@@ -298,6 +298,9 @@ pub(crate) enum EntityClass {
     Unhurtable,
     /// A mob: a living target the simulation hurts after the attack (see [`MobHit`]).
     Mob,
+    /// A fireball or wind charge (`#minecraft:redirectable_projectile`): `Player.deflectProjectile`
+    /// turns it along the attacker's look before any damage.
+    Redirectable,
 }
 
 /// A player's hit on a mob, carried out against the region's entities by
@@ -308,13 +311,18 @@ pub(crate) struct MobHit {
     /// The ender dragon part hit (`target` is the part's id, the dragon's plus one plus this).
     pub part: Option<usize>,
     pub attacker: i32,
+    pub attacker_uuid: u128,
     pub attacker_pos: [f64; 3],
     pub amount: f32,
     /// `causeExtraKnockback` strength (enchantments and sprinting), along `yaw`.
     pub knockback: f32,
     pub yaw: f32,
+    pub pitch: f32,
     /// Fire aspect: seconds the mob burns.
     pub fire_seconds: f32,
+    /// A redirectable projectile the attacker turned around (`deflectProjectile`): nothing else
+    /// of the hit applies.
+    pub deflect: bool,
 }
 
 pub(crate) fn classify(e: &kiln_entity::Entity) -> EntityClass {
@@ -327,6 +335,7 @@ pub(crate) fn classify(e: &kiln_entity::Entity) -> EntityClass {
         // `EndCrystal.hurtServer`: an attack breaks it.
         EntityKind::Ext(_) if e.type_name == "minecraft:end_crystal" => EntityClass::Mob,
         EntityKind::Mob(_) => EntityClass::NotAttackable,
+        EntityKind::Ext(_) if kiln_entity::spear::redirectable_projectile(e.type_name) => EntityClass::Redirectable,
         EntityKind::Ext(x) if x.attackable() => EntityClass::Mob,
         _ => EntityClass::Unhurtable,
     }
@@ -678,7 +687,7 @@ pub(crate) fn handle_attack(
         return;
     }
     let held = attacker.inv.selected_item();
-    // Spears stab instead (`stabAttack`, not modelled): a plain attack does nothing.
+    // Spears stab instead (`stabAttack`, see [`crate::spear`]): a plain attack does nothing.
     if held.has(kiln_item::component::ids::PIERCING_WEAPON) {
         return;
     }
@@ -857,6 +866,14 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
     let enchant_bonus = scale * (p.enchanted_damage(&target_view, damage, &source, attack_rng(ctx)) - damage);
     damage *= 0.2 + scale * scale * 0.8;
     p.attack_ticker = 0;
+    // `deflectProjectile` (after `onAttack`, before any damage): a fireball or wind charge flies
+    // on along the player's look, the player its owner; the exhaustion and wear are skipped.
+    if let Target::Entity { kind: EntityClass::Redirectable, .. } = target {
+        let (attacker, attacker_uuid, attacker_pos, [yaw, pitch]) = (p.entity_id, p.uuid.as_u128(), p.pos, p.rot);
+        mob_hits.push(MobHit { target: target_id, part: None, attacker, attacker_uuid, attacker_pos, amount: 0.0, knockback: 0.0, yaw, pitch, fire_seconds: 0.0, deflect: true });
+        play_sounds(players, a, &["minecraft:entity.player.attack.nodamage"], env);
+        return;
+    }
     if !(damage > 0.0 || enchant_bonus > 0.0) {
         return;
     }
@@ -890,11 +907,14 @@ fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32,
                 target: target_id,
                 part: target.part(),
                 attacker: players[a].entity_id,
+                attacker_uuid: players[a].uuid.as_u128(),
                 attacker_pos: players[a].pos,
                 amount: total,
                 knockback: strength,
                 yaw,
+                pitch: players[a].rot[1],
                 fire_seconds: 4.0 * fire as f32,
+                deflect: false,
             });
             if strength > 0.0 {
                 let p = &mut *players[a];

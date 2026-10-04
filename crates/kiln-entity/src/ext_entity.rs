@@ -69,7 +69,14 @@ pub trait EntityExt: Any + Debug + Send + Sync {
     fn container_mut(&mut self) -> Option<&mut minecart::Contents> {
         None
     }
-    /// `hurtServer`: whether the hit did something (a deflected fireball).
+    /// `Projectile.deflect(ProjectileDeflection.AIM_DEFLECT, by, owner = by, byAttack = true, 1.0)`
+    /// as `Player.deflectProjectile` does for a projectile of `#minecraft:redirectable_projectile`:
+    /// it flies on along `look` (the player's) with `by` (network id, UUID) as its owner. False for the rest.
+    fn aim_deflect(&mut self, e: &mut Entity, by: (i32, u128), look: crate::math::Vec3) -> bool {
+        let _ = (e, by, look);
+        false
+    }
+    /// `hurtServer`: whether the hit did something.
     fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>) -> bool {
         let _ = (e, level, kind, amount, attacker);
         false
