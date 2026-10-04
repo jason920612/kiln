@@ -247,6 +247,26 @@ pub fn level_particles(p: &LevelParticles) -> Bytes {
     b.freeze()
 }
 
+/// `ClientboundExplodePacket` without block particles: an explosion of `radius` at `center` that
+/// destroyed `block_count` blocks, with the knockback the receiving player takes (if any).
+pub fn explode(center: [f64; 3], radius: f32, block_count: i32, knockback: Option<[f64; 3]>, particle: &Particle, sound: &Sound, play_sound: bool) -> Bytes {
+    let mut b = packet(ids::EXPLODE);
+    center.iter().for_each(|c| b.put_f64(*c));
+    b.put_f32(radius);
+    b.put_i32(block_count);
+    b.put_bool(knockback.is_some());
+    if let Some(k) = knockback {
+        k.iter().for_each(|c| b.put_f64(*c));
+    }
+    b.put_varint(particle.kind);
+    particle.options.write(&mut b);
+    sound.write(&mut b);
+    // The (empty) weighted list of block particles.
+    b.put_varint(0);
+    b.put_bool(play_sound);
+    b.freeze()
+}
+
 // ---- level and game events ----------------------------------------------------------------
 
 /// A `LevelEvent` (sound and/or particles the client derives from an id, e.g. 2001 block

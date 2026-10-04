@@ -150,6 +150,24 @@ pub enum EntityEffect {
     ApplyImpulse { direction: [f64; 3], coordinate_scale: [f64; 3], magnitude: LevelBasedValue },
     /// `play_sound`: one of `sounds` (by the enchantment's level), heard by everyone.
     PlaySound { sounds: Vec<Identifier>, volume: crate::provider::Floats, pitch: crate::provider::Floats },
+    /// `explode` (the mace's wind burst): an explosion at the enchanted entity.
+    Explode {
+        /// Whether the enchanted entity is the explosion's source (`attribute_to_user`).
+        attribute_to_user: bool,
+        /// A damage type makes the explosion hurt entities; none: knockback only.
+        has_damage_type: bool,
+        knockback_multiplier: Option<LevelBasedValue>,
+        /// The `immune_blocks` block tag (`#minecraft:blocks_wind_charge_explosions`).
+        immune_blocks: Option<String>,
+        offset: [f64; 3],
+        radius: LevelBasedValue,
+        create_fire: bool,
+        /// `block_interaction`: `none`, `block`, `mob`, `tnt`, `trigger`...
+        interaction: String,
+        small_particle: String,
+        large_particle: String,
+        sound: Identifier,
+    },
     Other(Identifier),
 }
 
@@ -195,6 +213,25 @@ impl EntityEffect {
                 volume: opt(j, "volume", crate::provider::Floats::parse)?.unwrap_or(crate::provider::Floats::Constant(1.0)),
                 pitch: opt(j, "pitch", crate::provider::Floats::parse)?.unwrap_or(crate::provider::Floats::Constant(1.0)),
             },
+            "minecraft:explode" => {
+                let particle = |key: &str| -> PResult<String> { req(j, key, |v| req(v, "type", |t| ident(t).map(|i| i.as_str().to_owned()))) };
+                EntityEffect::Explode {
+                    attribute_to_user: opt(j, "attribute_to_user", crate::parse::boolean)?.unwrap_or(false),
+                    has_damage_type: j.get("damage_type").is_some(),
+                    knockback_multiplier: opt(j, "knockback_multiplier", LevelBasedValue::parse)?,
+                    immune_blocks: opt(j, "immune_blocks", crate::parse::string)?,
+                    offset: match opt(j, "offset", |v| list(v, crate::parse::float))? {
+                        Some(v) if v.len() == 3 => [v[0] as f64, v[1] as f64, v[2] as f64],
+                        _ => [0.0; 3],
+                    },
+                    radius: lbv("radius")?,
+                    create_fire: opt(j, "create_fire", crate::parse::boolean)?.unwrap_or(false),
+                    interaction: opt(j, "block_interaction", crate::parse::string)?.unwrap_or_else(|| "none".to_owned()),
+                    small_particle: particle("small_particle")?,
+                    large_particle: particle("large_particle")?,
+                    sound: req(j, "sound", ident)?,
+                }
+            }
             _ => EntityEffect::Other(ty),
         })
     }

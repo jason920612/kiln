@@ -348,6 +348,11 @@ pub fn seen_percent(level: &dyn EntityLevel, center: Vec3, e: &Entity) -> f32 {
 
 /// [`seen_percent`] of a box (an ender dragon part's).
 pub fn seen_percent_box(level: &dyn EntityLevel, center: Vec3, bb: &Aabb, ctx: &crate::collision::CollisionContext) -> f32 {
+    seen_percent_with(&|pos| level.block(pos), center, bb, ctx)
+}
+
+/// [`seen_percent_box`] reading the blocks through `block`.
+pub fn seen_percent_with(block: &dyn Fn(BlockPos) -> u16, center: Vec3, bb: &Aabb, ctx: &crate::collision::CollisionContext) -> f32 {
     let bb = *bb;
     let sx = 1.0 / ((bb.max_x - bb.min_x) * 2.0 + 1.0);
     let sy = 1.0 / ((bb.max_y - bb.min_y) * 2.0 + 1.0);
@@ -366,7 +371,7 @@ pub fn seen_percent_box(level: &dyn EntityLevel, center: Vec3, bb: &Aabb, ctx: &
             while z <= 1.0 {
                 let p = Vec3::new(lerp(x, bb.min_x, bb.max_x) + ox, lerp(y, bb.min_y, bb.max_y), lerp(z, bb.min_z, bb.max_z) + oz);
                 let blocked = clip::traverse_blocks(p, center, |pos| {
-                    let (shape, _) = collision::collision_shape(level.block(pos), pos, ctx);
+                    let (shape, _) = collision::collision_shape(block(pos), pos, ctx);
                     clip::shape_clips(&shape, p, center, pos).then_some(())
                 });
                 if blocked.is_none() {
@@ -380,4 +385,65 @@ pub fn seen_percent_box(level: &dyn EntityLevel, center: Vec3, bb: &Aabb, ctx: &
         x += sx;
     }
     hits as f32 / total as f32
+}
+
+/// `ServerExplosion.calculateExplodedPositions` and the shuffle of `interactWithBlocks` for an
+/// explosion whose damage calculator knows no block resistance but the `immune` blocks' (a wind
+/// burst: `SimpleExplosionDamageCalculator` with `#blocks_wind_charge_explosions`), drawing from
+/// `rng` (the level's random as the caller keeps it). The positions are returned in the order
+/// they would be triggered.
+pub fn burst_positions(
+    block: &dyn Fn(BlockPos) -> u16,
+    rng: &mut dyn RandomSource,
+    (min_y, max_y): (i32, i32),
+    center: Vec3,
+    radius: f32,
+    immune: &dyn Fn(u16) -> bool,
+    shuffle: bool,
+) -> Vec<BlockPos> {
+    let mut set: Vec<BlockPos> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..16 {
+        for j in 0..16 {
+            for k in 0..16 {
+                if i != 0 && i != 15 && j != 0 && j != 15 && k != 0 && k != 15 {
+                    continue;
+                }
+                let mut dx = (i as f32 / 15.0 * 2.0 - 1.0) as f64;
+                let mut dy = (j as f32 / 15.0 * 2.0 - 1.0) as f64;
+                let mut dz = (k as f32 / 15.0 * 2.0 - 1.0) as f64;
+                let len = (dx * dx + dy * dy + dz * dz).sqrt();
+                dx /= len;
+                dy /= len;
+                dz /= len;
+                let mut strength = radius * (0.7 + rng.next_float() * 0.6);
+                let (mut x, mut y, mut z) = (center.x, center.y, center.z);
+                while strength > 0.0 {
+                    let pos = BlockPos::containing(x, y, z);
+                    if pos.y < min_y || pos.y > max_y || pos.x.abs() >= 30_000_000 || pos.z.abs() >= 30_000_000 {
+                        break;
+                    }
+                    let state = block(pos);
+                    if immune(state) {
+                        strength -= (3600000.0f32 + 0.3) * 0.3;
+                    }
+                    if strength > 0.0 && seen.insert(pos) {
+                        set.push(pos);
+                    }
+                    x += dx * 0.30000001192092896;
+                    y += dy * 0.30000001192092896;
+                    z += dz * 0.30000001192092896;
+                    strength -= 0.22500001;
+                }
+            }
+        }
+    }
+    let mut list = java_hash_set_order(set);
+    let mut i = if shuffle { list.len() } else { 0 };
+    while i > 1 {
+        let j = rng.next_int_bounded(i as i32) as usize;
+        list.swap(i - 1, j);
+        i -= 1;
+    }
+    list
 }

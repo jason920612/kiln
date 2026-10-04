@@ -23,6 +23,7 @@
 mod advancements;
 mod blocks;
 mod combat;
+mod melee;
 mod command_data;
 mod commands;
 mod consume;
@@ -95,6 +96,8 @@ pub mod testing;
 mod combat_parity;
 #[cfg(test)]
 mod spear_parity;
+#[cfg(test)]
+mod melee_parity;
 mod shoulder;
 #[cfg(test)]
 mod container_parity;
@@ -138,6 +141,26 @@ pub type ContainerView = (Vec<(usize, &'static str, i32)>, [i32; 4]);
 
 /// An open menu for tests and tools: its `minecraft:menu` type and (item name, count) per slot.
 pub type MenuView = (&'static str, Vec<Option<(&'static str, i32)>>);
+
+/// A mob's combat state (for tests and tools, see [`Sim::mob_state`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MobState {
+    pub health: f32,
+    pub alive: bool,
+    pub delta: [f64; 3],
+    pub fire_ticks: i32,
+    pub hurt_time: i32,
+    pub damage_cooldown: i32,
+    pub last_hurt: f32,
+    pub absorption: f32,
+    /// Durability damage per slot (feet, legs, chest, head, main hand, off hand, body).
+    pub equipment_damage: [Option<i32>; 7],
+    /// (effect name, amplifier, duration).
+    pub effects: Vec<(&'static str, i32, i32)>,
+    pub on_ground: bool,
+    pub vehicle: Option<&'static str>,
+    pub pos: [f64; 3],
+}
 
 pub struct SimConfig {
     pub max_players: usize,
@@ -1659,6 +1682,32 @@ impl Sim {
             .collect();
         out.sort_by_key(|m| m.0);
         out
+    }
+
+    /// A mob's combat state, as `tools/CombatVectors.java` records it (for tests and tools).
+    pub fn mob_state(&self, id: i32) -> Option<MobState> {
+        let list = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter());
+        let e = list.clone().find(|e| e.id == id)?;
+        let phys = e.phys.as_deref()?;
+        let m = kiln_entity::mob::data(phys)?;
+        use kiln_entity::mob::{CHEST, FEET, HEAD, LEGS, MAINHAND, OFFHAND};
+        let damage = |slot: usize| (!m.equipment[slot].is_empty()).then(|| m.equipment[slot].damage());
+        let vehicle = phys.vehicle.and_then(|v| list.clone().find(|o| o.id == v)).map(|o| o.kind.name);
+        Some(MobState {
+            health: m.health,
+            alive: m.health > 0.0 && !e.removed,
+            delta: [phys.delta.x, phys.delta.y, phys.delta.z],
+            fire_ticks: phys.remaining_fire_ticks,
+            hurt_time: m.hurt_time,
+            damage_cooldown: m.damage_cooldown,
+            last_hurt: m.last_hurt,
+            absorption: m.absorption,
+            equipment_damage: [damage(FEET), damage(LEGS), damage(CHEST), damage(HEAD), damage(MAINHAND), damage(OFFHAND), None],
+            effects: m.effects.values().map(|f| (kiln_entity::effect::effect_type(f.id).map_or("?", |t| t.name), f.amplifier, f.duration)).collect(),
+            on_ground: phys.on_ground,
+            vehicle,
+            pos: e.pos,
+        })
     }
 
     /// The ticks a player's riptide spin has left (for tests and tools).

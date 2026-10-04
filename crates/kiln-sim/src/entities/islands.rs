@@ -694,6 +694,7 @@ fn run_island(job: &mut Job, sh: &Shared) {
         despawn: Some(sh.nearest),
         player_writes: 0,
         touched: None,
+        current_info: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();

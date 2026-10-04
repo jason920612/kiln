@@ -252,7 +252,7 @@ fn attribute_value(attr: Attr, mods: impl Iterator<Item = (f64, AttributeOperati
 }
 
 /// A projection of the target of an attack.
-enum Target {
+pub(crate) enum Target {
     Player(usize),
     /// A kiln-entity entity: its bounding box, what it is and its entity type id.
     /// `part`: an ender dragon part (the entity is its dragon).
@@ -296,26 +296,10 @@ pub(crate) enum EntityClass {
     NotAttackable,
     /// Attackable, but hurting it does nothing (primed TNT, thrown items).
     Unhurtable,
-    /// A mob: a living target the simulation hurts after the attack (see [`MobHit`]).
+    /// A mob: a living target hurt through the region's entities (see [`crate::melee`]).
     Mob,
 }
 
-/// A player's hit on a mob, carried out against the region's entities by
-/// [`crate::entities::hit_mob`].
-#[derive(Debug, Clone)]
-pub(crate) struct MobHit {
-    pub target: i32,
-    /// The ender dragon part hit (`target` is the part's id, the dragon's plus one plus this).
-    pub part: Option<usize>,
-    pub attacker: i32,
-    pub attacker_pos: [f64; 3],
-    pub amount: f32,
-    /// `causeExtraKnockback` strength (enchantments and sprinting), along `yaw`.
-    pub knockback: f32,
-    pub yaw: f32,
-    /// Fire aspect: seconds the mob burns.
-    pub fire_seconds: f32,
-}
 
 pub(crate) fn classify(e: &kiln_entity::Entity) -> EntityClass {
     match &e.kind {
@@ -323,10 +307,10 @@ pub(crate) fn classify(e: &kiln_entity::Entity) -> EntityClass {
         // `AbstractArrow.isAttackable`: only redirectable projectiles (none of Kiln's arrows).
         EntityKind::Arrow(_) => EntityClass::Invalid,
         EntityKind::FallingBlock(_) => EntityClass::NotAttackable,
-        EntityKind::Mob(m) if m.health > 0.0 => EntityClass::Mob,
         // `EndCrystal.hurtServer`: an attack breaks it.
         EntityKind::Ext(_) if e.type_name == "minecraft:end_crystal" => EntityClass::Mob,
-        EntityKind::Mob(_) => EntityClass::NotAttackable,
+        // A dying mob is attackable, but nothing hurts it (the hit sounds as no damage).
+        EntityKind::Mob(_) => EntityClass::Mob,
         EntityKind::Ext(x) if x.attackable() => EntityClass::Mob,
         _ => EntityClass::Unhurtable,
     }
@@ -585,13 +569,20 @@ impl Player {
 
     /// `Player.canCriticalAttack`: falling, in the air, not climbing, in water, riding or
     /// sprinting, against a living target (blindness does not exist yet).
-    fn can_critical_attack(&self, climbing: bool, in_water: bool) -> bool {
-        self.fall_distance > 0.0 && !self.on_ground && !climbing && !in_water && !self.sprinting
+    pub(crate) fn can_critical_attack(&self, climbing: bool, in_water: bool) -> bool {
+        // (`isMobilityRestricted`: blindness; `isPassenger`: riding.)
+        self.fall_distance > 0.0
+            && !self.on_ground
+            && !climbing
+            && !in_water
+            && !self.has_effect("minecraft:blindness")
+            && self.vehicle.is_none()
+            && !self.sprinting
     }
 
     /// `Player.isSweepAttack`: a full-strength, grounded, slow, non-critical, non-sprinting hit
     /// with a sword.
-    fn is_sweep_attack(&self, full: bool, crit: bool, sprint_knockback: bool) -> bool {
+    pub(crate) fn is_sweep_attack(&self, full: bool, crit: bool, sprint_knockback: bool) -> bool {
         if !full || crit || sprint_knockback || !self.on_ground {
             return false;
         }
@@ -640,23 +631,16 @@ fn aabb_distance_sqr(bb: &kiln_entity::math::Aabb, p: [f64; 3]) -> f64 {
     x * x + y * y + z * z
 }
 
-/// The world around an attack: blocks for the critical hit checks, sounds and particles.
-pub(crate) struct AttackEnv<'a> {
-    pub cells: &'a kiln_region::CellSet<kiln_world::Cell>,
-    pub game_time: i64,
-    pub seed: i64,
-}
-
 /// `ServerGamePacketListenerImpl.handleAttack` then `Player.attack`, for player `a` of a
 /// region's players (sorted by connection) hitting the entity with network id `target_id`.
 pub(crate) fn handle_attack(
+    entities: &mut entities::Entities,
+    level: &mut crate::blocks::RegionLevel<'_>,
     players: &mut [&mut Player],
     a: usize,
     target_id: i32,
-    entities: &entities::Entities,
-    env: &AttackEnv,
-    ctx: &mut DamageCtx,
-    mob_hits: &mut Vec<MobHit>,
+    spawns: &mut Vec<entities::Spawn>,
+    deaths: &mut Vec<crate::health::Death>,
 ) {
     let attacker = &*players[a];
     if !attacker.client_loaded() || attacker.game_mode == 3 {
@@ -690,16 +674,10 @@ pub(crate) fn handle_attack(
     if attacker.cannot_attack_with_item(held, 5) {
         return;
     }
-    // The whole attack draws enchantment randomness from the attacker's level random.
-    let lent = std::mem::replace(&mut players[a].level_rng, kiln_javamath::random::LegacyRandom::new(0));
-    let outer = ctx.level_rng.replace(lent);
     // `Player.attack` reads the spin's damage and weapon whoever asks (a click while spinning).
     let p = &*players[a];
     let spin = (p.spin_ticks > 0).then(|| Spin { damage: p.spin_damage, item: p.spin_item.clone(), off_hand: p.spin_off_hand });
-    attack(players, a, target, target_id, env, ctx, mob_hits, spin.as_ref());
-    if let Some(r) = std::mem::replace(&mut ctx.level_rng, outer) {
-        players[a].level_rng = r;
-    }
+    crate::melee::run_attack(entities, level, players, a, target, target_id, spin.as_ref(), spawns, deaths);
 }
 
 /// The target of an attack by player `a` on entity `target_id`: another player, a
@@ -727,10 +705,10 @@ fn find_target(players: &[&mut Player], a: usize, target_id: i32, entities: &ent
 }
 
 /// What a riptide spin hits with (`autoSpinAttackDmg`, `autoSpinAttackItemStack`).
-struct Spin {
-    damage: f32,
-    item: ItemStack,
-    off_hand: bool,
+pub(crate) struct Spin {
+    pub(crate) damage: f32,
+    pub(crate) item: ItemStack,
+    pub(crate) off_hand: bool,
 }
 
 /// What a riptide spin meets (`checkAutoSpinAttack`).
@@ -769,13 +747,13 @@ pub(crate) fn spin_touch(players: &[&mut Player], a: usize, entities: &entities:
 /// `LivingEntity.doAutoAttackOnTouch` for player `a` on entity `target_id`: `Player.attack`
 /// with the spin's damage and its trident as the weapon.
 pub(crate) fn spin_attack(
+    entities: &mut entities::Entities,
+    level: &mut crate::blocks::RegionLevel<'_>,
     players: &mut [&mut Player],
     a: usize,
     target_id: i32,
-    entities: &entities::Entities,
-    env: &AttackEnv,
-    ctx: &mut DamageCtx,
-    mob_hits: &mut Vec<MobHit>,
+    spawns: &mut Vec<entities::Spawn>,
+    deaths: &mut Vec<crate::health::Death>,
 ) {
     let Some(target) = find_target(players, a, target_id, entities) else { return };
     if let Target::Entity { kind: EntityClass::Invalid, .. } = target {
@@ -783,12 +761,7 @@ pub(crate) fn spin_attack(
     }
     let p = &*players[a];
     let spin = Spin { damage: p.spin_damage, item: p.spin_item.clone(), off_hand: p.spin_off_hand };
-    let lent = std::mem::replace(&mut players[a].level_rng, kiln_javamath::random::LegacyRandom::new(0));
-    let outer = ctx.level_rng.replace(lent);
-    attack(players, a, target, target_id, env, ctx, mob_hits, Some(&spin));
-    if let Some(r) = std::mem::replace(&mut ctx.level_rng, outer) {
-        players[a].level_rng = r;
-    }
+    crate::melee::run_attack(entities, level, players, a, target, target_id, Some(&spin), spawns, deaths);
 }
 
 impl Player {
@@ -832,217 +805,11 @@ fn translatable(key: &str) -> kiln_proto::nbt::Tag {
     kiln_proto::nbt::Tag::Compound(vec![("translate".into(), kiln_proto::nbt::Tag::String(key.into()))])
 }
 
-/// `Player.attack`.
-#[allow(clippy::too_many_arguments)]
-fn attack(players: &mut [&mut Player], a: usize, target: Target, target_id: i32, env: &AttackEnv, ctx: &mut DamageCtx, mob_hits: &mut Vec<MobHit>, spin: Option<&Spin>) {
-    let living = match target {
-        Target::Player(_) => true,
-        Target::Entity { kind: EntityClass::NotAttackable, .. } => return,
-        Target::Entity { kind: EntityClass::Mob, .. } => true,
-        Target::Entity { .. } => false,
-    };
-    let target_view = match &target {
-        Target::Player(t) => players[*t].view(),
-        Target::Entity { type_id, pos, .. } => crate::enchant::EntityView { type_id: *type_id, pos: *pos, ..Default::default() },
-    };
-    let p = &mut *players[a];
-    // `isAutoSpinAttack ? autoSpinAttackDmg : ATTACK_DAMAGE`, and `getWeaponItem` (the trident
-    // of the spin, else what is held).
-    let mut damage = spin.map_or_else(|| p.attribute(ATTACK_DAMAGE) as f32, |s| s.damage);
-    let weapon = spin.map_or_else(|| p.inv.selected_item().clone(), |s| s.item.clone());
-    let slot = if spin.is_some_and(|s| s.off_hand) { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
-    let source = Source::melee(p.as_attacker(), weapon.clone());
-    let scale = p.attack_strength_scale(0.5);
-    // `scale * (getEnchantedDamage(target, damage, source) - damage)`.
-    let enchant_bonus = scale * (p.enchanted_damage(&target_view, damage, &source, attack_rng(ctx)) - damage);
-    damage *= 0.2 + scale * scale * 0.8;
-    p.attack_ticker = 0;
-    if !(damage > 0.0 || enchant_bonus > 0.0) {
-        return;
-    }
-    let full = scale > 0.9;
-    let sprint_knockback = p.sprinting && full;
-    let mut sounds: Vec<&'static str> = Vec::new();
-    if sprint_knockback {
-        sounds.push("minecraft:entity.player.attack.knockback");
-    }
-    let (climbing, in_water) = feet_state(p, env.cells);
-    let crit = full && living && p.can_critical_attack(climbing, in_water);
-    if crit {
-        damage *= 1.5;
-    }
-    let total = damage + enchant_bonus;
-    let sweep = p.is_sweep_attack(full, crit, sprint_knockback);
-    let yaw = p.rot[0];
-    let t = match target {
-        Target::Player(t) => t,
-        Target::Entity { kind: EntityClass::Mob, .. } => {
-            // The mob is hurt against the region's entities afterwards; the attacker's side of
-            // the attack (knockback strength, sounds, durability, exhaustion) happens here.
-            let strength =
-                players[a].attack_knockback(&target_view, &source, attack_rng(ctx)) + if sprint_knockback { 0.5 } else { 0.0 };
-            let fire = source
-                .weapon
-                .as_ref()
-                .and_then(kiln_loot::predicate::item::enchantments)
-                .map_or(0, |e| e.level(kiln_item::registry::ENCHANTMENT.id("minecraft:fire_aspect").unwrap_or(-1)));
-            mob_hits.push(MobHit {
-                target: target_id,
-                part: target.part(),
-                attacker: players[a].entity_id,
-                attacker_pos: players[a].pos,
-                amount: total,
-                knockback: strength,
-                yaw,
-                fire_seconds: 4.0 * fire as f32,
-            });
-            if strength > 0.0 {
-                let p = &mut *players[a];
-                p.vel = [p.vel[0] * 0.6, p.vel[1], p.vel[2] * 0.6];
-                if p.sprinting {
-                    p.sprinting = false;
-                    p.meta_dirty = true;
-                }
-            }
-            if crit {
-                sounds.push("minecraft:entity.player.attack.crit");
-                let pkt = entity::animate(target_id, entity::animation::CRITICAL_HIT);
-                send_to_trackers_and_self(players, a, &pkt);
-            } else {
-                sounds.push(if full { "minecraft:entity.player.attack.strong" } else { "minecraft:entity.player.attack.weak" });
-            }
-            let per_attack = weapon.get(keys::WEAPON).map(|w| w.item_damage_per_attack);
-            if let Some(n) = per_attack
-                && !weapon.is_empty()
-            {
-                players[a].award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, weapon.item()), 1);
-                // The stack lives where it was held: a spin's trident wears in its hand.
-                if players[a].inv.equipped(slot).item() == weapon.item() {
-                    players[a].hurt_and_break(slot, n, ctx.level_rng.as_mut());
-                }
-            }
-            players[a].exhaust(0.1);
-            play_sounds(players, a, &sounds, env);
-            return;
-        }
-        Target::Entity { .. } => {
-            // `hurtOrSimulate` is false for TNT and thrown items.
-            sounds.push("minecraft:entity.player.attack.nodamage");
-            play_sounds(players, a, &sounds, env);
-            return;
-        }
-    };
-    let health_before = players[t].health;
-    let old_vel = players[t].vel;
-    let hurt = players[t].hurt(total, &source, ctx);
-    if !hurt {
-        sounds.push("minecraft:entity.player.attack.nodamage");
-        play_sounds(players, a, &sounds, env);
-        return;
-    }
-    // `causeExtraKnockback` with `getKnockback(target, source)`.
-    let strength =
-        players[a].attack_knockback(&target_view, &source, attack_rng(ctx)) + if sprint_knockback { 0.5 } else { 0.0 };
-    let rad = (yaw * 0.017453292) as f64;
-    if strength > 0.0 {
-        players[t].knockback(strength as f64, mth_sin(rad) as f64, -mth_cos(rad) as f64);
-        let p = &mut *players[a];
-        p.vel = [p.vel[0] * 0.6, p.vel[1], p.vel[2] * 0.6];
-        if p.sprinting {
-            p.sprinting = false;
-            p.meta_dirty = true;
-        }
-    }
-    let victim = &mut *players[t];
-    if victim.sync_velocity {
-        victim.send(entity::set_entity_motion(victim.entity_id, victim.vel));
-        victim.sync_velocity = false;
-        victim.vel = old_vel;
-    }
-    if sweep {
-        sweep_attack(players, a, t, damage, &source, scale, env, ctx);
-    }
-    // `attackVisualEffects`.
-    if crit {
-        sounds.push("minecraft:entity.player.attack.crit");
-        let pkt = entity::animate(target_id, entity::animation::CRITICAL_HIT);
-        send_to_trackers_and_self(players, a, &pkt);
-    }
-    if !crit && !sweep {
-        sounds.push(if full { "minecraft:entity.player.attack.strong" } else { "minecraft:entity.player.attack.weak" });
-    }
-    // `itemAttackInteraction`: the post-attack enchantment effects (any held item, even
-    // none), then a weapon (the `weapon` component, `hurtEnemy`) loses durability.
-    let per_attack = weapon.get(keys::WEAPON).map(|w| w.item_damage_per_attack);
-    post_attack(players, a, t, &source, ctx);
-    if let Some(n) = per_attack
-        && !weapon.is_empty()
-    {
-        // `ItemStack.hurtEnemy`: a weapon counts as used.
-        players[a].award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, weapon.item()), 1);
-        if players[a].inv.equipped(slot).item() == weapon.item() {
-            players[a].hurt_and_break(slot, n, ctx.level_rng.as_mut());
-        }
-    }
-    // `damageStatsAndHearts`: the damage statistic, heart particles for more than a heart.
-    let dealt = health_before - players[t].health;
-    players[a].award_stat(*crate::player_stats::stat::DAMAGE_DEALT, (dealt * 10.0).round() as i32);
-    if dealt > 2.0 {
-        let count = (dealt as f64 * 0.5) as i32;
-        let at = [players[t].pos[0], players[t].pos[1] + 0.9, players[t].pos[2]];
-        send_particles(players, "minecraft:damage_indicator", at, count, [0.1, 0.0, 0.1], 0.2);
-    }
-    players[a].exhaust(0.1);
-    play_sounds(players, a, &sounds, env);
-}
 
-/// `Player.doSweepAttack`: other living entities near the target take `1 + ratio * damage`
-/// (times the attack strength) and a small knockback.
-#[allow(clippy::too_many_arguments)]
-fn sweep_attack(
-    players: &mut [&mut Player],
-    a: usize,
-    t: usize,
-    damage: f32,
-    source: &Source,
-    scale: f32,
-    env: &AttackEnv,
-    ctx: &mut DamageCtx,
-) {
-    let sweep = 1.0 + players[a].attribute(SWEEPING_DAMAGE_RATIO) as f32 * damage;
-    let bb = players[t].bounding_box().inflate(1.0, 0.25, 1.0);
-    let (attacker_pos, yaw) = (players[a].pos, players[a].rot[0]);
-    let rad = (yaw * 0.017453292) as f64;
-    // `getEntitiesOfClass(LivingEntity, ...)` skips spectators.
-    let hit: Vec<usize> = (0..players.len())
-        .filter(|&i| i != a && i != t)
-        .filter(|&i| !players[i].dead && players[i].game_mode != 3 && !players[i].disconnected)
-        .filter(|&i| players[i].bounding_box().intersects(&bb))
-        .collect();
-    for i in hit {
-        let p = &players[i].pos;
-        let d2 = (p[0] - attacker_pos[0]).powi(2) + (p[1] - attacker_pos[1]).powi(2) + (p[2] - attacker_pos[2]).powi(2);
-        if d2 >= 9.0 {
-            continue;
-        }
-        // `getEnchantedDamage(entity, sweep, source) * scale`.
-        let view = players[i].view();
-        let amount = players[a].enchanted_damage(&view, sweep, source, attack_rng(ctx)) * scale;
-        if players[i].hurt(amount, source, ctx) {
-            players[i].knockback(0.4000000059604645, mth_sin(rad) as f64, -mth_cos(rad) as f64);
-            // `doPostAttackEffects`: the source's attacker is a living entity, so its weapon too.
-            post_attack(players, a, i, source, ctx);
-        }
-    }
-    let (dx, dz) = (-mth_sin(rad) as f64, mth_cos(rad) as f64);
-    let at = [attacker_pos[0] + dx, attacker_pos[1] + 0.9, attacker_pos[2] + dz];
-    send_particles(players, "minecraft:sweep_attack", at, 0, [dx as f32, 0.0, dz as f32], 0.0);
-    play_sounds(players, a, &["minecraft:entity.player.attack.sweep"], env);
-}
 
 /// Whether the player's feet are in a climbable block or in water (`onClimbable`,
 /// `isInWater` approximated by the block at the feet).
-fn feet_state(p: &Player, cells: &kiln_region::CellSet<kiln_world::Cell>) -> (bool, bool) {
+pub(crate) fn feet_state(p: &Player, cells: &kiln_region::CellSet<kiln_world::Cell>) -> (bool, bool) {
     use kiln_world::Blocks;
     let f = p.pos.map(|c| c.floor() as i32);
     let Some(state) = cells.get_block(f[0], f[1], f[2]) else { return (false, false) };
@@ -1052,11 +819,11 @@ fn feet_state(p: &Player, cells: &kiln_region::CellSet<kiln_world::Cell>) -> (bo
 }
 
 /// `Level.playSound(null, attacker position, ...)`: heard by players within 16 blocks.
-fn play_sounds(players: &mut [&mut Player], a: usize, sounds: &[&str], env: &AttackEnv) {
+pub(crate) fn play_sounds(players: &mut [&mut Player], a: usize, sounds: &[&str], game_time: i64, level_seed: i64) {
     let at = players[a].pos;
     for (n, sound) in sounds.iter().enumerate() {
         let Some(id) = kiln_data::builtin_id("minecraft:sound_event", sound) else { continue };
-        let mut seed = (env.game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ env.seed as u64;
+        let mut seed = (game_time as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ level_seed as u64;
         for v in [players[a].entity_id as u64, n as u64, at[0].to_bits(), at[2].to_bits()] {
             seed = (seed ^ v).wrapping_mul(0xBF58_476D_1CE4_E5B9);
             seed ^= seed >> 31;

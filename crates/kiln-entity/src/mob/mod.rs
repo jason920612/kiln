@@ -2248,6 +2248,10 @@ pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, soun
         volume = k.sound_volume(m);
         pitch = k.voice_pitch(m, pitch);
     }
+    // `AbstractCow.getSoundVolume`.
+    if m.kind == MobKind::Cow {
+        volume = 0.4;
+    }
     play_sound(e, m, level, sound, volume, pitch);
 }
 
@@ -2298,6 +2302,16 @@ pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> b
         }
         _ => false,
     }
+}
+
+/// `LivingEntity.addEffect(effect, source)` on a mob entity from outside its tick (bane of
+/// arthropods' slowness).
+pub fn add_effect_entity(e: &mut Entity, level: &mut dyn EntityLevel, effect: crate::effect::Effect, source: Option<i32>) -> bool {
+    let Some(_) = data(e) else { return false };
+    let mut m = take(e);
+    let r = effects::add(e, &mut m, level, effect, source);
+    put(e, m);
+    r
 }
 
 pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSource, amount: f32) -> bool {
@@ -2438,13 +2452,13 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     if m.is_dead_or_dying() {
         if full {
-            let sound = m.kind.ext().and_then(|k| k.death_sound_for(m)).unwrap_or_else(|| m.kind.death_sound());
+            let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.death_sound_for(m)).unwrap_or_else(|| m.kind.death_sound())));
             make_sound(e, m, level, sound);
         }
         die(e, m, level, source);
     } else if full {
         m.ambient_sound_time = -m.kind.ambient_sound_interval();
-        let sound = m.kind.ext().and_then(|k| k.hurt_sound_for(m)).unwrap_or_else(|| m.kind.hurt_sound());
+        let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.hurt_sound_for(m)).unwrap_or_else(|| m.kind.hurt_sound())));
         make_sound(e, m, level, sound);
     }
     m.last_damage_source = Some(source);
@@ -2456,6 +2470,25 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     true
 }
 
+/// `Guardian.getHurtSound` / `getDeathSound`: out of water the `_land` sounds.
+fn land_variant(e: &Entity, m: &MobData, sound: &'static str) -> &'static str {
+    if !matches!(m.kind.type_name(), "minecraft:guardian" | "minecraft:elder_guardian") || e.was_touching_water {
+        return sound;
+    }
+    let name = format!("{sound}_land");
+    kiln_item::registry::SOUND_EVENT.id(&name).and_then(|id| kiln_item::registry::SOUND_EVENT.name(id)).unwrap_or(sound)
+}
+
+/// The voice of a baby (`entity.baby_pig.hurt` for `entity.pig.hurt`), where the game has one.
+fn baby_variant(m: &MobData, sound: &'static str) -> &'static str {
+    if !m.baby() {
+        return sound;
+    }
+    let Some((ty, event)) = sound.strip_prefix("minecraft:entity.").and_then(|r| r.split_once('.')) else { return sound };
+    let name = format!("minecraft:entity.baby_{ty}.{event}");
+    kiln_item::registry::SOUND_EVENT.id(&name).and_then(|id| kiln_item::registry::SOUND_EVENT.name(id)).unwrap_or(sound)
+}
+
 /// `LivingEntity.actuallyHurt`: armor, absorption, health.
 fn actually_hurt(id: i32, m: &mut MobData, source: DamageSource, amount: f32) {
     let mut amount = amount;
@@ -2464,10 +2497,34 @@ fn actually_hurt(id: i32, m: &mut MobData, source: DamageSource, amount: f32) {
         let toughness = m.attrs.value(Attr::ArmorToughness) as f32;
         let f = 2.0 + toughness / 4.0;
         let g = mth::clamp(armor - amount / f, armor * 0.2, 20.0);
-        amount *= 1.0 - g / 25.0;
+        // The weapon's enchantments change how much the armor counts (breach).
+        let victim_view = crate::enchanting::EntityView { type_id: kiln_item::registry::ENTITY_TYPE.id(m.kind.type_name()).unwrap_or(-1), ..Default::default() };
+        let damage_type = kiln_data::synced_id("minecraft:damage_type", source.kind.type_name()).unwrap_or(0);
+        let mut random = kiln_javamath::random::LegacyRandom::new(0);
+        let h = crate::enchanting::armor_effectiveness(&victim_view, damage_type, g / 25.0, &mut random).clamp(0.0, 1.0);
+        amount *= 1.0 - h;
     }
     // `getDamageAfterMagicAbsorb`: resistance, then the type's additions.
     amount = effects::resist(m, &source, amount);
+    // The equipment's enchantment protection, unless the type bypasses enchantments.
+    if amount > 0.0 && !source.kind.is_tag("minecraft:bypasses_enchantments") && !source.kind.is_tag("minecraft:bypasses_effects") {
+        use kiln_item::component::EquipmentSlot as S;
+        let equipment: Vec<(S, &ItemStack)> = [(S::MainHand, MAINHAND), (S::OffHand, OFFHAND), (S::Feet, FEET), (S::Legs, LEGS), (S::Chest, CHEST), (S::Head, HEAD)]
+            .into_iter()
+            .filter(|(_, i)| !m.equipment[*i].is_empty())
+            .map(|(s, i)| (s, &m.equipment[i]))
+            .collect();
+        if !equipment.is_empty() {
+            let victim_view = crate::enchanting::EntityView { type_id: kiln_item::registry::ENTITY_TYPE.id(m.kind.type_name()).unwrap_or(-1), ..Default::default() };
+            let damage_type = kiln_data::synced_id("minecraft:damage_type", source.kind.type_name()).unwrap_or(0);
+            let mut random = kiln_javamath::random::LegacyRandom::new(0);
+            let protection = crate::enchanting::damage_protection(&equipment, &victim_view, damage_type, &mut random);
+            if protection > 0.0 {
+                // `CombatRules.getDamageAfterMagicAbsorb`.
+                amount *= 1.0 - protection.clamp(0.0, 20.0) / 25.0;
+            }
+        }
+    }
     if let Some(k) = m.kind.ext() {
         amount = k.damage_after_magic_absorb(id, m, &source, amount);
     }
