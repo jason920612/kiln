@@ -205,7 +205,11 @@ pub(crate) struct CommandState {
     pub packs: crate::datapacks::Packs,
     /// Operators by name (permission level 4).
     pub ops: std::collections::HashSet<String>,
+    /// Permission levels of the operators `ops.json` lists (others, `KILN_OPS` and `/op`, have 4).
+    pub op_levels: HashMap<String, u8>,
     pub difficulty: Difficulty,
+    /// `WorldData.isDifficultyLocked` (`Data.difficulty_settings.locked`).
+    pub difficulty_locked: bool,
     pub game_rules: HashMap<String, GameRuleValue>,
     pub seed: i64,
     /// Shuffle state for `@r` / `sort=random` (xorshift).
@@ -257,7 +261,9 @@ impl CommandState {
             storage: kiln_command::CommandStorage::default(),
             packs: crate::datapacks::Packs::new(None, "work/generated".into(), crate::datapacks::PackConfig { enabled: vec!["vanilla".into()], disabled: Vec::new(), features: None }),
             ops,
+            op_levels: HashMap::new(),
             difficulty: Difficulty::Normal,
+            difficulty_locked: false,
             game_rules: HashMap::new(),
             seed: 0,
             rng: 0x9E37_79B9_7F4A_7C15,
@@ -353,7 +359,7 @@ impl Sim {
 
     pub(crate) fn permission_level_of(&self, conn: ConnId) -> u8 {
         match self.players.get(&conn) {
-            Some(p) if self.commands.is_op(&p.name) => 4,
+            Some(p) if self.commands.is_op(&p.name) => self.commands.op_levels.get(&p.name).copied().unwrap_or(4),
             _ => 0,
         }
     }
@@ -986,10 +992,21 @@ impl Host for Sim {
     }
 
     fn set_operator(&mut self, profile: &Profile, op: bool) {
-        if op {
-            self.commands.ops.insert(profile.name.clone());
-        } else {
-            self.commands.ops.remove(&profile.name);
+        {
+            // `PlayerList.op` / `deop`: `ops.json` follows.
+            let mut access = self.config.access.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let key = profile.uuid.to_string();
+            if op {
+                self.commands.ops.insert(profile.name.clone());
+                self.commands.op_levels.remove(&profile.name);
+                let user = kiln_link::access::NameAndId { uuid: profile.uuid, name: profile.name.clone() };
+                access.op_list.put(key, kiln_link::access::OpEntry { user, level: 4, bypasses_player_limit: false });
+            } else {
+                self.commands.ops.remove(&profile.name);
+                self.commands.op_levels.remove(&profile.name);
+                access.op_list.remove(&key);
+            }
+            access.save_ops();
         }
         self.sync_ops();
         let conn = self.players.iter().find(|(_, p)| p.name == profile.name).map(|(c, _)| *c);
@@ -1003,8 +1020,10 @@ impl Host for Sim {
     }
 
     fn set_difficulty(&mut self, difficulty: Difficulty) {
-        self.commands.difficulty = difficulty;
-        self.broadcast(packets::change_difficulty(difficulty as u8, false));
+        // `MinecraftServer.setDifficulty`: a hardcore world stays hard.
+        let hardcore = self.storage.as_ref().is_some_and(|s| s.level.hardcore());
+        self.commands.difficulty = if hardcore { Difficulty::Hard } else { difficulty };
+        self.broadcast(packets::change_difficulty(self.commands.difficulty as u8, self.commands.difficulty_locked));
     }
 
     fn set_weather(&mut self, weather: Weather, duration: Option<i32>) -> i32 {
@@ -1055,7 +1074,9 @@ impl Host for Sim {
     fn summon(&mut self, entity: &Identifier, pos: [f64; 3], nbt: Option<&Tag>, initialize: bool) -> Result<Text, CommandError> {
         let dim = crate::dim_id(kiln_command::host::Source::dimension(self)).unwrap_or(0);
         let seed = crate::mobs::loot_seed(self.config.noise.as_ref().map_or(0, |n| n.seed), self.game_time, self.dims[dim].spawns.len() as i32, 0x73756d6d);
-        let name = crate::mobs::summon(&mut self.dims[dim].spawns, entity.as_str(), pos, nbt, initialize, self.commands.difficulty as u8, self.game_time, seed)
+        // `ServerLevel.getCurrentDifficultyAt`: the chunk the mob appears in has been inhabited so long.
+        let inhabited = self.dims[dim].regions.chunk(kiln_world::ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)).map_or(0, |c| c.inhabited_time());
+        let name = crate::mobs::summon(&mut self.dims[dim].spawns, entity.as_str(), pos, nbt, initialize, self.commands.difficulty as u8, self.game_time, inhabited, seed)
             .ok_or_else(|| CommandError::new(kiln_command::tr!("commands.summon.failed")))?;
         Ok(Text::raw(name))
     }

@@ -95,7 +95,17 @@ pub struct Chunk {
     /// Points of interest once the simulation took the chunk in ([`Chunk::init_pois`]); block
     /// changes keep them up to date from then on.
     pub pois: Option<Box<crate::poi::ChunkPois>>,
+    /// Ticks players spent near this chunk (`ChunkAccess.inhabitedTime`, saved as
+    /// `InhabitedTime`); regional difficulty grows with it.
+    inhabited_time: i64,
+    /// What `inhabited_time` was when the chunk was loaded or last saved.
+    inhabited_saved: i64,
 }
+
+/// A chunk is written again for its inhabited time alone once it grew this much (a minute of
+/// a player nearby): vanilla's chunks are saved when anything changes in them, which a chunk
+/// players stay near does all the time; Kiln writes the unchanged ones less eagerly.
+pub const INHABITED_SAVE_TICKS: i64 = 1200;
 
 /// Work a freshly generated chunk leaves for the simulation, to run once the chunk (and its
 /// neighbours) tick: vanilla's `ProtoChunk.postProcessing` positions (a fluid there starts
@@ -153,6 +163,8 @@ impl Chunk {
             pending: None,
             generated_entities: Vec::new(),
             pois: None,
+            inhabited_time: 0,
+            inhabited_saved: 0,
         };
         for x in 0..16 {
             for z in 0..16 {
@@ -222,11 +234,28 @@ impl Chunk {
     }
 
     pub fn needs_save(&self) -> bool {
-        self.version != self.saved_version
+        self.version != self.saved_version || self.inhabited_time - self.inhabited_saved >= INHABITED_SAVE_TICKS
     }
 
     pub fn mark_saved(&mut self) {
         self.saved_version = self.version;
+        self.inhabited_saved = self.inhabited_time;
+    }
+
+    /// `ChunkAccess.getInhabitedTime`: ticks players spent near the chunk.
+    pub fn inhabited_time(&self) -> i64 {
+        self.inhabited_time
+    }
+
+    /// `LevelChunk.incrementInhabitedTime` (one tick of a player being near).
+    pub fn increment_inhabited_time(&mut self) {
+        self.inhabited_time += 1;
+    }
+
+    /// A loaded chunk's saved `InhabitedTime`.
+    pub fn set_inhabited_time(&mut self, ticks: i64) {
+        self.inhabited_time = ticks;
+        self.inhabited_saved = ticks;
     }
 
     /// Marks a newly generated chunk as unsaved.

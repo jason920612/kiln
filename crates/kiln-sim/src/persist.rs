@@ -5,6 +5,7 @@ use crate::{Player, Sim, entities};
 use kiln_entity::persist::{self, LoadError};
 use kiln_link::ConnId;
 use kiln_proto::nbt::Tag;
+use kiln_storage::level::SavedRule;
 use kiln_storage::{LevelState, LevelStore, PlayerData, PlayerStore, WorldSpawn};
 use kiln_world::{Blocks, ChunkPos};
 use std::collections::{HashMap, HashSet};
@@ -34,6 +35,8 @@ impl Storage {
 /// Saved data ids (`data/minecraft/<id>.dat`).
 const SCOREBOARD: &str = "scoreboard";
 const BOSS_EVENTS: &str = "custom_boss_events";
+/// `data/<namespace>/command_storage.dat`.
+const COMMAND_STORAGE: &str = "command_storage";
 
 /// How a joining player starts: their saved state, or vanilla's defaults for a new player.
 pub(crate) struct Joining {
@@ -378,10 +381,109 @@ impl Sim {
             spawn: WorldSpawn { dimension: OVERWORLD.to_owned(), pos: self.spawn, yaw: self.spawn_rot[0], pitch: self.spawn_rot[1] },
             data_packs: Some((self.commands.packs.selected.clone(), self.commands.packs.disabled.clone())),
             enabled_features: Some(self.commands.packs.features.clone()),
+            difficulty: Some((self.commands.difficulty as u8, self.commands.difficulty_locked)),
         };
+        let rules = self.saved_game_rules();
         let Some(storage) = &mut self.storage else { return };
+        storage.level.set_game_rules(&rules);
         if let Err(e) = storage.level.save(&state) {
             warn!("failed to save level data: {e}");
+        }
+        self.save_command_storage();
+    }
+
+    /// Every game rule the world has, as vanilla writes the whole map: the rules of the enabled
+    /// features (`max_minecart_speed` needs `minecart_improvements`) with their current values.
+    fn saved_game_rules(&self) -> Vec<(String, SavedRule)> {
+        let minecarts = self.commands.packs.features.iter().any(|f| f == "minecraft:minecart_improvements");
+        kiln_data::game_rules::GAME_RULES
+            .iter()
+            .filter(|(name, _)| minecarts || *name != "minecraft:max_minecart_speed")
+            .map(|(name, _)| {
+                let rule = match kiln_command::host::Host::game_rule(self, name) {
+                    kiln_command::GameRuleValue::Bool(b) => SavedRule::Bool(b),
+                    kiln_command::GameRuleValue::Int(v) => SavedRule::Int(v),
+                };
+                ((*name).to_owned(), rule)
+            })
+            .collect()
+    }
+
+    /// Loads what the save says of the world's administration: difficulty and its lock, the game
+    /// rules, the operators of `ops.json` and the command storage (`/data ... storage`).
+    pub(crate) fn load_admin_state(&mut self) {
+        let level_difficulty = self.storage.as_ref().filter(|s| s.level.exists()).and_then(|s| s.level.difficulty());
+        let hardcore = self.storage.as_ref().is_some_and(|s| s.level.hardcore());
+        // `DedicatedServer.forceDifficulty`: the server's setting wins over the save's, and a
+        // hardcore world is hard (`MinecraftServer.setDifficulty`).
+        let difficulty = self.config.difficulty.or(level_difficulty.map(|d| d.0));
+        if let Some(d) = difficulty {
+            self.commands.difficulty = kiln_command::Difficulty::ALL[usize::from(d.min(3))];
+        }
+        if hardcore {
+            self.commands.difficulty = kiln_command::Difficulty::Hard;
+        }
+        self.commands.difficulty_locked = level_difficulty.is_some_and(|d| d.1);
+        if let Some(storage) = &self.storage {
+            for (name, rule) in storage.level.game_rules() {
+                let Some(default) = kiln_data::game_rule_default(&name) else { continue };
+                let value = match (default, rule) {
+                    (kiln_data::GameRuleDefault::Bool(_), SavedRule::Bool(b)) => kiln_command::GameRuleValue::Bool(b),
+                    (kiln_data::GameRuleDefault::Bool(_), SavedRule::Int(v)) => kiln_command::GameRuleValue::Bool(v != 0),
+                    (kiln_data::GameRuleDefault::Int(_), SavedRule::Int(v)) => kiln_command::GameRuleValue::Int(v),
+                    (kiln_data::GameRuleDefault::Int(_), SavedRule::Bool(b)) => kiln_command::GameRuleValue::Int(i32::from(b)),
+                };
+                self.commands.game_rules.insert(name, value);
+            }
+        }
+        {
+            let access = self.config.access.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+            for entry in access.op_list.values() {
+                self.commands.ops.insert(entry.user.name.clone());
+                if entry.level != 4 {
+                    self.commands.op_levels.insert(entry.user.name.clone(), entry.level);
+                }
+            }
+        }
+        self.load_command_storage();
+    }
+
+    /// `data/<namespace>/command_storage.dat` of every namespace that has one.
+    fn load_command_storage(&mut self) {
+        let Some(storage) = &self.storage else { return };
+        for namespace in kiln_storage::saved_data::namespaces_with(&storage.dir, COMMAND_STORAGE) {
+            let Some(Tag::Compound(contents)) =
+                kiln_storage::saved_data::read_ns(&storage.dir, &namespace, COMMAND_STORAGE).and_then(|d| d.get("contents").cloned())
+            else {
+                continue;
+            };
+            for (path, tag) in contents {
+                self.commands.storage.load(&format!("{namespace}:{path}"), tag);
+            }
+        }
+    }
+
+    /// Writes the command storage when it changed: a file per namespace holding its `contents`.
+    fn save_command_storage(&mut self) {
+        if !self.commands.storage.take_dirty() {
+            return;
+        }
+        let Some(storage) = &self.storage else { return };
+        let dir = storage.dir.clone();
+        let mut by_namespace: std::collections::BTreeMap<String, Vec<(String, Tag)>> = std::collections::BTreeMap::new();
+        for (id, tag) in self.commands.storage.entries() {
+            let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
+            by_namespace.entry(namespace.to_owned()).or_default().push((path.to_owned(), tag.clone()));
+        }
+        // A namespace whose entries were all removed keeps its (empty) file, as vanilla's container.
+        for namespace in kiln_storage::saved_data::namespaces_with(&dir, COMMAND_STORAGE) {
+            by_namespace.entry(namespace).or_default();
+        }
+        for (namespace, contents) in by_namespace {
+            let data = Tag::Compound(vec![("contents".to_owned(), Tag::Compound(contents))]);
+            if let Err(e) = kiln_storage::saved_data::write_ns(&dir, &namespace, COMMAND_STORAGE, data) {
+                warn!("failed to save command storage {namespace}: {e}");
+            }
         }
     }
 

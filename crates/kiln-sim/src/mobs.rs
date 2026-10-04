@@ -26,6 +26,8 @@ pub(crate) struct MobRules {
     pub spawn_monsters: bool,
     /// `minecraft:spawn_wardens`.
     pub spawn_wardens: bool,
+    /// `minecraft:spawn_phantoms`.
+    pub spawn_phantoms: bool,
     pub cramming: i32,
     pub difficulty: u8,
     /// The world spawn (no natural spawns within 24 blocks).
@@ -45,6 +47,7 @@ impl Default for MobRules {
             spawn_mobs: true,
             spawn_monsters: true,
             spawn_wardens: true,
+            spawn_phantoms: true,
             cramming: 24,
             difficulty: 2,
             spawn_point: [0, 64, 0],
@@ -185,6 +188,7 @@ pub(crate) fn summon(
     initialize: bool,
     difficulty: u8,
     game_time: i64,
+    inhabited: i64,
     seed: i64,
 ) -> Option<kiln_proto::nbt::Tag> {
     use kiln_proto::nbt::Tag;
@@ -214,7 +218,7 @@ pub(crate) fn summon(
             spawns.push(Spawn::from_saved(&Tag::Compound(c), seed, false).ok()?);
         }
         _ => {
-            let finalize = initialize.then(|| Finalize::command(difficulty_instance(difficulty, game_time, 0, 1.0), seed, false, difficulty == 0));
+            let finalize = initialize.then(|| Finalize::command(difficulty_instance(difficulty, game_time, inhabited, 1.0), seed, false, difficulty == 0));
             spawns.push(spawn(kind, pos, None, finalize));
         }
     }

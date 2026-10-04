@@ -30,6 +30,11 @@ pub fn read_spawn(world_dir: &Path) -> Option<[i32; 3]> {
     }
 }
 
+/// The world seed a save records (`data/minecraft/world_gen_settings.dat`, `seed`).
+pub fn read_seed(world_dir: &Path) -> Option<i64> {
+    saved_data::read(world_dir, "world_gen_settings")?.get("seed")?.as_i64()
+}
+
 /// Upper bound on a decompressed NBT file (level.dat, player data, saved data).
 const MAX_FILE_NBT: u64 = 64 * 1024 * 1024;
 

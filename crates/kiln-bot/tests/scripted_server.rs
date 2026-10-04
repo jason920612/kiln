@@ -143,6 +143,11 @@ async fn serve(stream: TcpStream, port: u16, seen: Arc<Mutex<Vec<Seen>>>) {
         is_flat: true,
         sea_level: 63,
         online_mode: false,
+        hashed_seed: 0,
+        hardcore: false,
+        reduced_debug_info: false,
+        show_death_screen: true,
+        limited_crafting: false,
     };
     c.send(&pk::play_login(&login)).await;
     c.send(&pk::player_position(TELEPORT_ID, SPAWN, 0.0, 0.0)).await;
