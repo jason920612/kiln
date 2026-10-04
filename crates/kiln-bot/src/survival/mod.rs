@@ -236,7 +236,7 @@ pub(crate) struct Agent {
     pub(crate) site_y: Option<i32>,
     arrived: bool,
     survival_set: bool,
-    last_teleport: Option<[f64; 3]>,
+    recent_teleports: VecDeque<[f64; 3]>,
     /// Hostile mobs in view: entity id and last known position.
     mobs: HashMap<i32, [f64; 3]>,
     hostile: Vec<i32>,
@@ -293,7 +293,7 @@ impl Agent {
             site_y: None,
             arrived: false,
             survival_set: false,
-            last_teleport: None,
+            recent_teleports: VecDeque::new(),
             mobs: HashMap::new(),
             hostile: [
                 "zombie", "husk", "drowned", "skeleton", "stray", "spider", "cave_spider", "creeper", "zombie_villager", "witch", "slime",
@@ -422,17 +422,22 @@ impl Agent {
 
     /// A teleport from the server; `ours` when it answers a `/tp` the bot ran.
     pub fn on_teleport(&mut self, pos: [f64; 3], yaw: f32, pitch: f32) {
-        if self.expected_tps > 0 {
+        if self.recent_teleports.contains(&pos) {
+            // The server asks again when a confirmation takes more than a second (a slow tick),
+            // and the repeat can arrive after the next teleport: neither a correction nor the
+            // answer to a `/tp` still to come.
+            self.counts.teleport_resends += 1;
+        } else if self.expected_tps > 0 {
             self.expected_tps -= 1;
             self.counts.own_teleports += 1;
-        } else if self.last_teleport == Some(pos) {
-            // The server asks again when a confirmation takes more than a second (a slow tick).
-            self.counts.teleport_resends += 1;
         } else {
             self.counts.teleports += 1;
             self.shared.problem(format!("server correction at tick {}: to {pos:.1?}", self.tick_no));
         }
-        self.last_teleport = Some(pos);
+        if self.recent_teleports.len() == 8 {
+            self.recent_teleports.pop_front();
+        }
+        self.recent_teleports.push_back(pos);
         self.body.teleport(pos, yaw, pitch);
         self.sent.pos = pos;
         self.sent.rot = (yaw, pitch);

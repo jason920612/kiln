@@ -775,6 +775,7 @@ impl LoadChunks for Dim {
             let chunk = self.provider.load_or_generate(pos);
             chunkstats::count(&chunkstats::SYNC_LOADS);
             chunkstats::add_ns(&chunkstats::SYNC_NS, started.elapsed());
+            chunkstats::max_ns(&chunkstats::SYNC_MAX_NS, started.elapsed());
             if self.install(pos, chunk) {
                 return self.regions.chunk_mut(pos).unwrap();
             }

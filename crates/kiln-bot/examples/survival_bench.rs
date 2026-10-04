@@ -515,6 +515,8 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     let text = std::fs::read_to_string(&trace).unwrap_or_default();
     let mut all = Vec::new();
     let mut measured = Vec::new();
+    // Ticks that took over a second: they freeze every player, whatever the cause.
+    let (mut long_ticks, mut long_ms, mut longest) = (0u32, 0.0f64, 0.0f64);
     let mut full_at = None;
     for l in text.lines() {
         let mut w = l.split_whitespace();
@@ -522,6 +524,11 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         let (Ok(t), Ok(p), Ok(us)) = (t.parse::<u128>(), p.parse::<usize>(), us.parse::<f64>()) else { continue };
         let ms = us / 1000.0;
         all.push(ms);
+        if ms > 1000.0 {
+            long_ticks += 1;
+            long_ms += ms;
+            longest = longest.max(ms);
+        }
         if p as f64 >= a.count as f64 * 0.98 && full_at.is_none() {
             full_at = Some(t);
         }
@@ -568,6 +575,10 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         "install_max_ms": last.get("install_max_ms").copied().unwrap_or(0.0),
         "sync_loads_in_window": d("sync_loads"),
         "sync_ms_in_window": d("sync_ms"),
+        "sync_loads_whole_run": last.get("sync_loads"),
+        "sync_ms_whole_run": last.get("sync_ms"),
+        "sync_max_ms_whole_run": last.get("sync_max_ms"),
+        "ticks_over_1s_whole_run": { "count": long_ticks, "total_ms": long_ms, "longest_ms": longest },
         "gen_request_to_ready_ms_whole_run": {
             "n": last.get("gen_latency_n"), "mean": last.get("gen_latency_mean_ms"), "p50": last.get("gen_latency_p50_ms"),
             "p99": last.get("gen_latency_p99_ms"), "max": last.get("gen_latency_max_ms"),
@@ -658,6 +669,11 @@ fn print_summary(r: &Value) {
         "gen request->ready (whole run) mean {:.0} p50 {:.0} p99 {:.0} max {:.0} ms",
         f(c, "gen_request_to_ready_ms_whole_run.mean"), f(c, "gen_request_to_ready_ms_whole_run.p50"),
         f(c, "gen_request_to_ready_ms_whole_run.p99"), f(c, "gen_request_to_ready_ms_whole_run.max")
+    );
+    println!(
+        "stalls whole run: {:.0} chunks generated on the tick thread ({:.1} s in all, longest {:.1} s); {:.0} ticks over 1 s ({:.1} s in all, longest {:.1} s)",
+        f(c, "sync_loads_whole_run"), f(c, "sync_ms_whole_run") / 1000.0, f(c, "sync_max_ms_whole_run") / 1000.0,
+        f(c, "ticks_over_1s_whole_run.count"), f(c, "ticks_over_1s_whole_run.total_ms") / 1000.0, f(c, "ticks_over_1s_whole_run.longest_ms") / 1000.0
     );
     let b = &r["bots"];
     let lat = |name: &str, k: &str| {

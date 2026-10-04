@@ -457,7 +457,7 @@ impl Agent {
             for d in [Dir::Down, Dir::Up, Dir::North, Dir::South, Dir::West, Dir::East] {
                 let n = add(cell, d.vec());
                 let s = w.block(n[0], n[1], n[2]);
-                if (world::is_lava(s) || world::is_water(s)) && !plugs.contains(&n) {
+                if (world::is_lava(s) || world::is_water(s)) && !plugs.contains(&n) && n != p && n != add(p, [0, 1, 0]) {
                     plugs.push(n);
                 }
                 if world::name(s).ends_with("_ore") && !ores.contains(&n) && n != p && n != add(p, [0, 1, 0]) {

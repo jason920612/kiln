@@ -75,6 +75,7 @@ pub(crate) static INSTALL_MAX_NS: AtomicU64 = AtomicU64::new(0);
 /// teleports, commands), and the time that took (ns).
 pub(crate) static SYNC_LOADS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static SYNC_NS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static SYNC_MAX_NS: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn count(counter: &AtomicU64) {
     counter.fetch_add(1, Relaxed);
@@ -98,7 +99,7 @@ pub(crate) fn line(gen_threads: usize) -> String {
         "chunk totals: gen_done={} gen_busy_ms={:.0} gen_threads={gen_threads} gen_latency_n={n} gen_latency_mean_ms={mean:.1} \
          gen_latency_p50_ms={p50} gen_latency_p99_ms={p99} gen_latency_max_ms={max} \
          disk_hits={} disk_ms={:.1} disk_max_ms={:.2} disk_misses={} disk_miss_ms={:.1} \
-         installed={} install_ms={:.1} install_max_ms={:.2} sync_loads={} sync_ms={:.1}",
+         installed={} install_ms={:.1} install_max_ms={:.2} sync_loads={} sync_ms={:.1} sync_max_ms={:.1}",
         GEN_DONE.load(Relaxed),
         ms(&GEN_BUSY_NS),
         DISK_HITS.load(Relaxed),
@@ -111,6 +112,7 @@ pub(crate) fn line(gen_threads: usize) -> String {
         ms(&INSTALL_MAX_NS),
         SYNC_LOADS.load(Relaxed),
         ms(&SYNC_NS),
+        ms(&SYNC_MAX_NS),
     );
     s
 }
