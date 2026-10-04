@@ -1218,6 +1218,7 @@ impl Sim {
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
+        sim.commands.seed = seed;
         sim.load_scoreboard();
         sim.load_stopwatches();
         sim.load_weather();
@@ -2850,7 +2851,7 @@ impl Sim {
         packets::player::SpawnInfo {
             dimension_type: kiln_data::synced_id("minecraft:dimension_type", key).expect("dimension type"),
             dimension: key,
-            hashed_seed: 0,
+            hashed_seed: self.zoom_seed,
             game_mode: p.game_mode,
             previous_game_mode: None,
             is_debug: false,
