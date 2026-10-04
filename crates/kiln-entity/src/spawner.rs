@@ -349,10 +349,6 @@ impl SpawnerBe {
     }
 }
 
-fn dbg() -> bool {
-    std::env::var_os("KILN_SPAWNER_DEBUG").is_some()
-}
-
 /// A draw of the level's random: vanilla's own stream when replaying it, otherwise a stream
 /// seeded by the spawner and the game time.
 struct Draw {
@@ -378,6 +374,21 @@ fn finish(level: &mut dyn EntityLevel, d: Draw) {
 /// `Level.hasNearbyAlivePlayer` (a negative range is any distance).
 fn near_player(level: &dyn EntityLevel, at: Vec3, range: f64) -> bool {
     level.players().iter().any(|p| !p.spectator && p.alive && (range < 0.0 || p.pos.distance_to_sqr(at) < range * range))
+}
+
+/// Whether a player is within `range` of the spawner at `pos` (`isNearPlayer`).
+pub fn player_near(level: &dyn EntityLevel, pos: BlockPos, range: i32) -> bool {
+    near_player(level, Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5), range as f64)
+}
+
+/// A random for a spawn egg used on the spawner at `pos` (standing in for the level random).
+pub fn egg_random(seed: i64, game_time: i64, pos: BlockPos) -> LegacyRandom {
+    let mut h = (seed as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ game_time as u64 ^ 0x4547_47;
+    for v in [pos.x as u32 as u64, pos.y as u32 as u64, pos.z as u32 as u64] {
+        h = (h ^ v).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        h ^= h >> 31;
+    }
+    LegacyRandom::new(h as i64)
 }
 
 /// `SpawnerBlockEntity.serverTick` for the spawner at `pos`.
@@ -434,9 +445,6 @@ fn server_tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut SpawnerBe, r
         let height = (scale * et.height) as f64;
         let spawn_box = Aabb::new(x - half, y, z - half, x + half, y + height, z + half);
         if !collision::no_collision(level, &CollisionContext::EMPTY, i32::MIN, &spawn_box) {
-            if dbg() {
-                eprintln!("spawner {pos:?}: {type_name} at {x} {y} {z}: collision");
-            }
             continue;
         }
         let at = BlockPos::containing(x, y, z);
@@ -450,9 +458,6 @@ fn server_tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut SpawnerBe, r
                 continue;
             }
         } else if !check_spawn_rules(&*level, et.name, at, r) {
-            if dbg() {
-                eprintln!("spawner {pos:?}: {type_name} at {x} {y} {z}: spawn rules");
-            }
             continue;
         }
         // `EntityType.loadEntityRecursive`: the entity and its riders, from the saved form.
@@ -464,9 +469,6 @@ fn server_tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut SpawnerBe, r
         let seed = level.fresh_seed();
         let loaded = crate::persist::load_stack(&Tag::Compound(tag), id, &|u| if u != 0 { u as i64 ^ (u >> 64) as i64 } else { seed }, false);
         let Ok((mut e, mut riders)) = loaded else {
-            if dbg() {
-                eprintln!("spawner {pos:?}: {type_name}: not loaded: {:?}", loaded.err());
-            }
             be.reset_delay(level, pos, r);
             return;
         };
@@ -482,9 +484,6 @@ fn server_tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut SpawnerBe, r
             .count() as i32;
         count += level.pending_spawns(&around).iter().filter(|(t, _, _)| *t == e.type_name).count() as i32;
         if count >= be.max_nearby {
-            if dbg() {
-                eprintln!("spawner {pos:?}: {type_name}: {count} nearby");
-            }
             be.reset_delay(level, pos, r);
             return;
         }
@@ -494,18 +493,16 @@ fn server_tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut SpawnerBe, r
         e.y_rot = yaw;
         e.x_rot = 0.0;
         e.set_old_pos_and_rot();
-        if dbg() {
-            eprintln!("spawner {pos:?}: {type_name} snapped at {x} {y} {z} yaw {yaw}");
-        }
         let mut companions = Vec::new();
         let mut nearby_chicken = false;
         if matches!(e.kind, EntityKind::Mob(_)) {
-            // `checkSpawnRules` of the mob itself is true for every type; `checkSpawnObstruction`:
-            // no liquid in its box and nobody in the way.
+            // `Mob.checkSpawnRules` (without custom rules): a `PathfinderMob` wants a walk target value of
+            // at least 0 where it stands (monsters: light 12 at most); `checkSpawnObstruction`: no liquid in
+            // its box and nobody in the way.
+            if data.rules.is_none() && !walk_target_ok(&*level, &e, at) {
+                continue;
+            }
             if !spawn_obstruction_ok(level, &e) {
-                if dbg() {
-                    eprintln!("spawner {pos:?}: {type_name} at {x} {y} {z}: obstruction");
-                }
                 continue;
             }
             if data.id_only() {
@@ -528,12 +525,13 @@ fn server_tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut SpawnerBe, r
             })
             .chain(companions)
             .collect();
+        // `Mob.spawnAnim`: the poof, shown to the viewers once it is in the level.
+        if let Some(m) = mob::data_mut(&mut e) {
+            m.spawn_anim = true;
+        }
         // (A cube mob's move control remembers the yaw it was made with, which is random in vanilla: here the one it
         // ends up facing.)
         mob::kinds::slime::pin_move_yaw_of(&mut e);
-        if dbg() {
-            eprintln!("spawner {pos:?}: {type_name} added with yaw {}", e.y_rot);
-        }
         if !level.add_entity_stack(e, riders, !data.id_only(), nearby_chicken) {
             be.reset_delay(level, pos, r);
             return;
@@ -570,6 +568,13 @@ fn spawn_context(level: &dyn EntityLevel, e: &Entity) -> mob::SpawnContext {
         (effective - 2.0) / 2.0
     };
     mob::SpawnContext { biome: level.biome(at), moon_brightness: level.moon_brightness(), special_multiplier: special, effective_difficulty: effective, hard: level.difficulty() == 3, halloween: false }
+}
+
+/// `PathfinderMob.checkSpawnRules`: the walk target value at the mob's block is not negative (types that are
+/// no `PathfinderMob`, or have no preference, pass).
+fn walk_target_ok(level: &dyn EntityLevel, e: &Entity, at: BlockPos) -> bool {
+    let Some(m) = mob::data(e) else { return true };
+    m.kind.ext().is_some_and(|k| k.spawn_ignores_light()) || mob::walk_target_value(m, level, at) >= 0.0
 }
 
 /// `Mob.checkSpawnObstruction`: no liquid in the box, and nothing that blocks building in it.

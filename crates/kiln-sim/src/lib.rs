@@ -81,6 +81,8 @@ mod region;
 mod rng;
 mod sculk;
 mod heart;
+mod mob_spawner;
+mod structure_spawns;
 mod sleep;
 mod stats;
 mod trading;
@@ -1515,7 +1517,13 @@ impl Sim {
         let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
         let p = kiln_blocks::BlockPos::new(x, y, z);
         let part = &region.part().1;
-        part.sculk.map.get(&p).map(|b| b.save()).or_else(|| part.hearts.map.get(&p).map(|h| h.save())).or_else(|| part.containers.map.get(&p).map(|c| c.save()))
+        part.sculk
+            .map
+            .get(&p)
+            .map(|b| b.save())
+            .or_else(|| part.hearts.map.get(&p).map(|h| h.save()))
+            .or_else(|| part.spawners.map.get(&p).map(|s| s.save()))
+            .or_else(|| part.containers.map.get(&p).map(|c| c.save()))
     }
 
     /// Block state at a position in the level `dimension` (e.g. `minecraft:the_nether`), if
@@ -1901,6 +1909,7 @@ impl Sim {
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
                 spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
+                spawner_blocks: self.rule_bool("minecraft:spawner_blocks_work"),
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,

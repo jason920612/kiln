@@ -1923,6 +1923,14 @@ public class MobVectors {
             for (int[] l : lights) block(s, l[0], l[1], l[2], "minecraft:light[level=1]");
             out.add(s);
         }
+        // Types whose rules look at no light still do not stand where it is brighter than 12 (`PathfinderMob.checkSpawnRules`):
+        // light blocks of level 13 to 15 in the room, and level 12 (fine) among them.
+        for (String t : new String[] {"blaze", "silverfish"}) {
+            Scenario s = spawnerScenario("spawner_" + t + "_lit", "{" + spawnData("{id:\"minecraft:" + t + "\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:30}", 6, 300, 4697L + t.length());
+            int[][] lights = {{1, BY, 1, 13}, {-1, BY, 2, 15}, {2, BY + 1, -1, 14}, {0, BY + 1, 1, 12}, {3, BY, 0, 13}, {-2, BY, -2, 15}, {1, BY + 1, 0, 12}, {0, BY, 2, 14}, {-1, BY + 1, -1, 13}, {2, BY, 2, 12}, {-3, BY + 1, 1, 13}, {1, BY, -2, 14}};
+            for (int[] l : lights) block(s, l[0], l[1], l[2], "minecraft:light[level=" + l[3] + "]");
+            out.add(s);
+        }
         // Custom spawn rules (light ranges in place of the type's rules; no draws).
         {
             Scenario s = spawnerScenario("spawner_custom_rules", "{SpawnData:{entity:{id:\"minecraft:zombie\",NoAI:1b},custom_spawn_rules:{block_light_limit:[0,7],sky_light_limit:[0,7]}},SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:12}", 0, 200, 4693L);

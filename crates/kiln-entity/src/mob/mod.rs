@@ -622,6 +622,8 @@ pub struct MobData {
     pub is_vehicle: bool,
     /// Arm swung this tick (for the animation packet).
     pub swing: bool,
+    /// `Mob.spawnAnim` (a spawner's new mob): the poof entity event for its viewers, once.
+    pub spawn_anim: bool,
     /// Entity events for viewers (hurt, death, eating...) are emitted as [`Event::EntityEvent`].
     pub air_supply_max: i32,
     /// `ServerEntity` needs the last hurt direction for the damage event.
@@ -750,6 +752,7 @@ impl MobData {
             sound_variant: kiln_data::synced_id(&format!("{}_sound_variant", kind.type_name()), "minecraft:classic").unwrap_or(0),
             is_vehicle: false,
             swing: false,
+            spawn_anim: false,
             air_supply_max: 300,
             hurt_by: None,
             equip_mods: Vec::new(),

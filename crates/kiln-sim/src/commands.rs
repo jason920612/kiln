@@ -304,6 +304,7 @@ impl Sim {
             let (cells, part) = region.cells_and_part_mut();
             if let Some(chunk) = cells.chunk_mut(chunk_pos) {
                 part.1.containers.store(chunk_pos, chunk);
+                part.1.spawners.store(chunk_pos, chunk);
             }
         }
         let Some(chunk) = self.dims[dim].regions.chunk_mut(chunk_pos) else { return false };
@@ -323,6 +324,7 @@ impl Sim {
             part.1.containers.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.sculk.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.hearts.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+            part.1.spawners.reload(kiln_blocks::BlockPos::new(x, y, z), be);
         }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);
@@ -1178,6 +1180,7 @@ impl Host for Sim {
             let (cells, part) = region.cells_and_part_mut();
             if let Some(chunk) = cells.chunk_mut(ChunkPos::of_block(x, z)) {
                 part.1.containers.store(ChunkPos::of_block(x, z), chunk);
+                part.1.spawners.store(ChunkPos::of_block(x, z), chunk);
             }
         }
         let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;

@@ -43,6 +43,10 @@ pub(crate) enum Body {
     /// A stack loaded from its root's saved data (`Passengers`): the root, and the riders
     /// depth first, each with the index of what it rides (0 the root, n the rider n - 1).
     LoadedStack(Box<kiln_entity::Entity>, Vec<kiln_entity::persist::Rider>),
+    /// An entity kiln-entity built during a tick with the jockeys that go with it (a spawner's
+    /// spawn: the entity, its riders, `loaded`: riders read from saved data; `nearby_chicken`: a
+    /// baby zombie asks for a chicken): keeps its UUID unless it had none.
+    Stacked(Box<kiln_entity::Entity>, Vec<kiln_entity::mob::Companion>, bool, bool),
     /// A new mob facing `yaw`; `finalize` runs its `finalizeSpawn`.
     /// `yaw`: `None` keeps the constructor's random yaw.
     Mob { kind: kiln_entity::mob::MobKind, yaw: Option<f32>, finalize: Option<crate::mobs::Finalize> },
@@ -262,7 +266,7 @@ impl Entity {
     /// The entity of `spawn` with network id `id`; `uuid` unless it was loaded with one.
     pub fn new(id: i32, uuid: Uuid, spawn: Spawn) -> Self {
         let uuid = match &spawn.body {
-            Body::Loaded(e) | Body::LoadedStack(e, _) if e.uuid != 0 => Uuid::from_u128(e.uuid),
+            Body::Loaded(e) | Body::LoadedStack(e, _) | Body::Stacked(e, ..) if e.uuid != 0 => Uuid::from_u128(e.uuid),
             _ => uuid,
         };
         let (u, seed, pos) = (uuid.as_u128(), seed_for(id), vec3(spawn.pos));
@@ -315,6 +319,13 @@ impl Entity {
                 let mut e = *e;
                 e.id = id;
                 e.uuid = u;
+                e
+            }
+            Body::Stacked(e, companions, loaded, nearby_chicken) => {
+                let mut e = *e;
+                e.id = id;
+                e.uuid = u;
+                jockeys = Some(Box::new(Jockeys { companions, loaded, nearby_chicken }));
                 e
             }
             Body::LoadedStack(e, riders) => {
@@ -1338,6 +1349,47 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         self.level.env().mobs.sky_darken
     }
 
+    fn spawner_blocks_enabled(&self) -> bool {
+        self.level.env().mobs.spawner_blocks
+    }
+
+    fn block_light(&self, pos: BlockPos) -> i32 {
+        kiln_world::light::light_at(self.level.cells(), kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
+    }
+
+    /// The dimension type's `monster_spawn_block_light_limit` and `monster_spawn_light_level`.
+    fn monster_light_rules(&self) -> (i32, i32, i32) {
+        crate::spawner::monster_light_rules(self.level.env().dim)
+    }
+
+    fn moon_brightness(&self) -> f32 {
+        crate::spawner::moon_brightness(self.level.env().mobs.day_time)
+    }
+
+    fn world_seed(&self) -> i64 {
+        self.level.env().seed
+    }
+
+    fn pending_spawns(&self, area: &Aabb) -> Vec<(&'static str, Aabb, bool)> {
+        self.spawns
+            .iter()
+            .filter_map(|s| {
+                let living = kiln_entity::mob::MobKind::by_name(s.kind.name).is_some();
+                let (hw, h) = (s.kind.width as f64 / 2.0, s.kind.height as f64);
+                let b = Aabb::new(s.pos[0] - hw, s.pos[1], s.pos[2] - hw, s.pos[0] + hw, s.pos[1] + h, s.pos[2] + hw);
+                b.intersects(area).then_some((s.kind.name, b, living))
+            })
+            .collect()
+    }
+
+    fn add_entity_stack(&mut self, root: kiln_entity::Entity, companions: Vec<kiln_entity::mob::Companion>, loaded: bool, nearby_chicken: bool) -> bool {
+        let Some(kind) = kiln_data::entities::by_name(root.type_name) else { return false };
+        let (pos, vel) = (arr(root.position()), arr(root.delta));
+        let body = if companions.is_empty() && !nearby_chicken { Body::Loaded(Box::new(root)) } else { Body::Stacked(Box::new(root), companions, loaded, nearby_chicken) };
+        self.spawns.push(Spawn { kind, pos, vel, body });
+        true
+    }
+
     fn is_raining_at(&self, pos: BlockPos) -> bool {
         crate::weather::is_raining_at(self.level.cells(), self.level.env(), kb(pos))
     }
@@ -1726,7 +1778,7 @@ pub(crate) fn tick(
     any_player: bool,
     ctx: &kiln_sched::Ctx<'_>,
 ) {
-    if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() {
+    if entities.list.is_empty() && players.iter().all(|p| p.vehicle.is_none()) && level.blocks.hearts.is_empty() && (level.blocks.spawners.is_empty() || players.is_empty()) {
         return;
     }
     // Mobs finalized during the tick (reinforcements, summoned vexes) enchant from the datapack.
@@ -1820,6 +1872,8 @@ pub(crate) fn tick(
     }
     // `Level.tickBlockEntities`: the creaking hearts, after the entities.
     crate::heart::tick_all(&mut sim, ticking);
+    // ... and the mob spawners.
+    crate::mob_spawner::tick_all(&mut sim, ticking);
     // `Player.aiStep` → `touch`: mobs in the player's box inflated by (1, 0.5, 1) (slimes and
     // magma cubes hurt the player). Vanilla runs it in the player's tick; here after the
     // entities'.
@@ -2742,6 +2796,11 @@ fn carry_out(
             send_sound(players, env, n, arr(pos), sound, source_of(source), volume, pitch);
         }
         Event::LevelEvent { event, pos, data } => level.effect(Effect::LevelEvent { id: event, pos: kb(pos), data }),
+        Event::BlockEvent { pos, a, b } => {
+            let at = kb(pos);
+            let block = kiln_blocks::BlockId::of(level.block(at));
+            level.effect(Effect::BlockEvent { pos: at, block, a, b });
+        }
         Event::BlockExploded { pos, state, .. } => level.effect(Effect::Drop { pos: kb(pos), state }),
         Event::Hurt { target, amount, kind, attacker } => {
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == target) {
@@ -3321,6 +3380,10 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
     if let Some(EntityKind::Mob(m)) = e.phys.as_deref_mut().map(|p| &mut p.kind) {
         if std::mem::take(&mut m.swing) {
             packets.push(entity::swing_animation(e.id, false, entity::swing::WHACK, entity::swing::DEFAULT_DURATION));
+        }
+        // `Mob.spawnAnim`: entity event 20, the poof of a spawner's new mob.
+        if std::mem::take(&mut m.spawn_anim) {
+            packets.push(entity::entity_event(e.id, 20));
         }
     }
     if let Some(phys) = e.phys.as_deref()

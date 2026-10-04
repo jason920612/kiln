@@ -129,6 +129,16 @@ python tools/mob_vectors.py --filter "kill_villager|ench_" --out work/wp36/mob_w
 KILN_MOB_VECTORS=work/wp36/mob_wp36.jsonl KILN_DATAPACK=work/generated cargo test -p kiln-entity --test mob_parity
                                      # zombies that kill villagers (conversion by difficulty, villager
                                      # data kept) and mobs' enchanted spears (ench_* need the datapack)
+python tools/mob_vectors.py --filter "spawner_|cavespider_" --out work/wp44/spawner/vectors.jsonl
+KILN_MOB_VECTORS=work/wp44/spawner/vectors.jsonl cargo test -p kiln-entity --test mob_parity
+                                     # mob spawner blocks tick by tick (delay, potentials and weights,
+                                     # spawn range, nearby cap, light and custom spawn rules, the player
+                                     # range and the spawner_blocks_work rule, spawn eggs, the level random
+                                     # and the saved block entity after) and cave spiders
+python tools/spawn_vectors.py        # natural spawning's structure overrides: the mob lists NaturalSpawner.mobsAt
+                                     # gives in and around fortresses, bastions, swamp huts, monuments,
+                                     # outposts, trial chambers, ancient cities... of a generated vanilla world
+                                     # against kiln-sim's spawn table (cargo test -p kiln-sim structure_spawns)
 python tools/container_vectors.py --filter jukebox --out work/wp36/containers/vectors.jsonl
 KILN_CONTAINER_VECTORS=work/wp36/containers/vectors.jsonl cargo test -p kiln-sim container_parity
                                      # jukeboxes (song end, comparator, hoppers, power) tick by tick
