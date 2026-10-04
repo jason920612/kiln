@@ -10,7 +10,7 @@ use std::fmt::Write;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::Duration;
 
-const BUCKETS: usize = 10_001;
+const BUCKETS: usize = 120_001;
 
 /// Milliseconds histogram with a last bucket for everything slower.
 pub(crate) struct Hist {

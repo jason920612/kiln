@@ -100,6 +100,20 @@ struct Args {
     /// Tag for file names.
     #[arg(long, default_value = "run")]
     tag: String,
+    /// Windows priority class of the server and bot processes: `normal`, `above-normal` or `high`.
+    /// Other programs on the machine (builds, browsers) then take less of the benchmark's CPU.
+    #[arg(long, default_value = "above-normal")]
+    priority: String,
+}
+
+/// Process creation flag for a Windows priority class.
+#[cfg(windows)]
+fn priority_flag(name: &str) -> u32 {
+    match name {
+        "above-normal" => 0x0000_8000,
+        "high" => 0x0000_0080,
+        _ => 0x0000_0020,
+    }
 }
 
 fn now_ms() -> u128 {
@@ -210,6 +224,11 @@ impl Server {
         for kv in &a.env {
             let (k, v) = kv.split_once('=').context("--env wants KEY=VALUE")?;
             cmd.env(k, v);
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(priority_flag(&a.priority));
         }
         let mut child = cmd
             .stdin(Stdio::piped())
@@ -406,6 +425,11 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        bot_cmd.creation_flags(priority_flag(&a.priority));
+    }
     let bots_started = now_ms();
     let sys0 = cpu::system();
     let mut bots = bot_cmd.spawn().with_context(|| format!("starting {}", a.bot.display()))?;
