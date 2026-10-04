@@ -243,3 +243,45 @@ fn emit_state<L: Level>(level: &mut L, pos: BlockPos, attached: bool, powered: b
         level.effect(Effect::GameEvent { pos, event: "minecraft:block_detach" });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_level::TestLevel;
+    use crate::update::set_block;
+
+    /// Something stepping on the string powers both hooks; when nothing is left on it the hooks
+    /// let go again a few ticks later.
+    #[test]
+    fn an_entity_on_the_string_powers_the_hooks() {
+        let mut level = TestLevel::flat(-64, 384, &[d::BEDROCK, d::STONE]);
+        level.load_chunks((-2, -2), (2, 2));
+        let y = -62;
+        let (west, east) = (BlockPos::new(0, y, 0), BlockPos::new(5, y, 0));
+        for p in [west.relative(Direction::West), east.relative(Direction::East)] {
+            set_block(&mut level, p, d::STONE, crate::flags::ALL);
+        }
+        let hook = |facing: &str| state::set(d::TRIPWIRE_HOOK, "facing", facing);
+        set_block(&mut level, west, hook("east"), crate::flags::ALL);
+        set_block(&mut level, east, hook("west"), crate::flags::ALL);
+        // The strings attach the hooks as they are placed (a hook placed by a player attaches
+        // itself; `setBlock` of one does not).
+        for x in 1..5 {
+            set_block(&mut level, BlockPos::new(x, y, 0), d::TRIPWIRE, crate::flags::ALL);
+        }
+        for p in [west, east] {
+            assert!(state::get_bool(level.block(p), "attached") && !state::get_bool(level.block(p), "powered"));
+        }
+        wire_entity_inside(&mut level, BlockPos::new(2, y, 0), false);
+        for p in [west, east] {
+            assert!(state::get_bool(level.block(p), "powered"), "hook at {p:?} powered");
+        }
+        // Nobody on it any more (TestLevel has no entities): the recheck lets go.
+        for _ in 0..12 {
+            level.tick(0, &[]);
+        }
+        for p in [west, east] {
+            assert!(!state::get_bool(level.block(p), "powered"), "hook at {p:?} released");
+        }
+    }
+}

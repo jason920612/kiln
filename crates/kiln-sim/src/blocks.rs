@@ -875,10 +875,13 @@ pub(crate) fn tick_pistons(level: &mut RegionLevel, ticking: &Ticking) {
     kiln_blocks::tick_moving_pistons(level, |p| ticking.contains(chunk_of(p)));
 }
 
-/// `Entity.checkInsideBlocks` for pressure plates: every body standing in a plate presses it.
+/// `Entity.checkInsideBlocks` for pressure plates and tripwires: every body standing in a plate
+/// presses it, every body whose box meets a tripwire's shape presses that.
 pub(crate) fn press_plates(level: &mut RegionLevel) {
+    use kiln_data::block_logic::{BlockClass, is_instance};
     let mut plates = Vec::new();
-    let is_plate = |s: u16| kiln_data::block_logic::is_instance(s, kiln_data::block_logic::BlockClass::BasePressurePlateBlock);
+    let mut wires = Vec::new();
+    let is_plate = |s: u16| is_instance(s, BlockClass::BasePressurePlateBlock) || is_instance(s, BlockClass::TripWireBlock);
     // Whether a section's palette has a plate, looked at once per section: most bodies stand
     // in sections without any and skip the block lookups.
     let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
@@ -903,8 +906,17 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
             for y in lo[1]..=hi[1] {
                 for z in lo[2]..=hi[2] {
                     let pos = BlockPos::new(x, y, z);
-                    if kiln_data::block_logic::is_instance(level.block(pos), kiln_data::block_logic::BlockClass::BasePressurePlateBlock) {
+                    let s = level.block(pos);
+                    if is_instance(s, BlockClass::BasePressurePlateBlock) {
                         plates.push(pos);
+                    } else if is_instance(s, BlockClass::TripWireBlock) {
+                        // `getEntityInsideCollisionShape` is the string's shape: a flat strip when
+                        // attached, a low slab otherwise.
+                        let (y0, y1) = if kiln_blocks::state::get_bool(s, "attached") { (1.0 / 16.0, 2.5 / 16.0) } else { (0.0, 0.5) };
+                        let (by0, by1) = (y as f64 + y0, y as f64 + y1);
+                        if b.min[1] + 1e-5 < by1 && b.max[1] - 1e-5 > by0 {
+                            wires.push(pos);
+                        }
                     }
                 }
             }
@@ -914,6 +926,11 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
     plates.dedup();
     for pos in plates {
         kiln_blocks::redstone::components::plate_entity_inside(level, pos);
+    }
+    wires.sort_unstable();
+    wires.dedup();
+    for pos in wires {
+        kiln_blocks::behaviour::tripwire::wire_entity_inside(level, pos, false);
     }
 }
 
@@ -1054,7 +1071,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                     let mut e = kiln_entity::mob::new(kiln_entity::mob::MobKind::Turtle, 0, 0, h as i64);
                     if let Some(mut md) = kiln_entity::mob::data(&e).cloned() {
                         kiln_entity::mob::set_age(&mut e, &mut md, -24000);
-                        kiln_entity::mob::kinds::turtle::set_home(&mut md, pos);
+                        kiln_entity::mob::kinds::turtle::set_home(&mut md, kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z));
                         if let Some(slot) = kiln_entity::mob::data_mut(&mut e) {
                             *slot = md;
                         }
