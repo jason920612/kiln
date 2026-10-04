@@ -1022,6 +1022,8 @@ pub struct Sim {
     independent: independent::Independent,
     /// What each region's packet and tick work took last time (ns), so the biggest start first.
     unit_costs: [FastMap<(DimId, RegionId), u64>; 2],
+    /// Some player's post effects may have changed since they were last sent.
+    post_effects_pending: bool,
     /// `WanderingTraderSpawner` (the overworld's).
     trader: trader::TraderSpawner,
     /// Borders, tick rate, forced chunks and random sequences (the world commands).
@@ -1216,6 +1218,7 @@ impl Sim {
             plugins: None,
             independent: Default::default(),
             unit_costs: Default::default(),
+            post_effects_pending: false,
             trader: Default::default(),
             world: world_state::WorldState { pipelines, ..Default::default() },
         };
@@ -2110,14 +2113,15 @@ impl Sim {
         // Entities loaded with a chunk have their ids before the chunk can leave again.
         self.materialize_spawns();
         // Every player's own chunk, by level (one pass over the players).
-        let mut own_chunks: Vec<HashSet<ChunkPos>> = (0..self.dims.len()).map(|_| HashSet::new()).collect();
+        let mut own_chunks: Vec<Vec<ChunkPos>> = (0..self.dims.len()).map(|_| Vec::new()).collect();
         for p in self.players.values() {
-            if let Some(set) = own_chunks.get_mut(p.dim) {
-                set.insert(player_chunk(p.pos));
+            if let Some(list) = own_chunks.get_mut(p.dim) {
+                list.push(player_chunk(p.pos));
             }
         }
         for dim in 0..self.dims.len() {
-            let mut keep: HashSet<ChunkPos> = std::mem::take(&mut own_chunks[dim]);
+            // (Sorted and without repeats; a set only when chunks are to unload.)
+            let mut keep: Vec<ChunkPos> = std::mem::take(&mut own_chunks[dim]);
             // Force-loaded chunks (`/forceload`) stay, and load like a player's own chunk.
             keep.extend(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)));
             // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),
@@ -2135,8 +2139,10 @@ impl Sim {
                     }
                 }
             }
+            keep.sort_unstable();
+            keep.dedup();
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
-            let unloaded = self.dims[dim].unload(unloads, &keep);
+            let unloaded = if unloads.is_empty() { Vec::new() } else { self.dims[dim].unload(unloads, &keep.iter().copied().collect()) };
             if !unloaded.is_empty() {
                 debug!("unloaded {} chunks of {}", unloaded.len(), self.dims[dim].key);
                 let owners = self.owner_uuids();
@@ -2146,9 +2152,7 @@ impl Sim {
             let d = &mut self.dims[dim];
             d.install_generated();
             // Every player's own chunk, uncapped: each player must stand in an owned cell.
-            let mut own: Vec<ChunkPos> = keep.into_iter().collect();
-            own.sort_unstable();
-            for pos in own {
+            for pos in keep {
                 if !d.is_loaded(pos) {
                     d.load_chunk(pos);
                 }
@@ -2406,6 +2410,7 @@ impl Sim {
         // Viewers in the old level saw the death (or the player walk into the portal): they
         // forget it and get the entity again once tracking re-evaluates it.
         self.untrack_everywhere(conn);
+        self.post_effects_pending = true;
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info_packet);
         // `PlayerList.respawn` sends the post effects again; the new player starts its first
@@ -2654,6 +2659,7 @@ impl Sim {
     }
 
     fn join(&mut self, j: JoinInfo, joining: persist::Joining) {
+        self.post_effects_pending = true;
         let entity_id = self.next_entity_id;
         self.next_entity_id += 1;
         let spawn = joining.pos;

@@ -194,6 +194,9 @@ impl SelectorTarget for PlayerRef {
 /// Server-wide state the commands change.
 pub(crate) struct CommandState {
     pub dispatcher: Arc<Dispatcher<Sim>>,
+    /// A player asked for tab completions since the last answers (the players are looked at
+    /// only then).
+    pub suggestions_pending: bool,
     /// Who receives feedback for the running command.
     pub source: CommandSource,
     /// Where and as whom it runs (`execute` changes this per fork).
@@ -250,6 +253,7 @@ impl CommandState {
         kiln_command::vanilla::register_all(&mut d);
         Self {
             dispatcher: Arc::new(d),
+            suggestions_pending: false,
             source: CommandSource::Console,
             stack: SourceStack::new(Text::literal("Server"), OVERWORLD, [0.0; 3]),
             scoreboard: Scoreboard::default(),
@@ -434,9 +438,13 @@ impl Sim {
             return;
         }
         p.pending_suggestion = Some((id, text));
+        self.commands.suggestions_pending = true;
     }
 
     pub(crate) fn answer_suggestions(&mut self) {
+        if !std::mem::take(&mut self.commands.suggestions_pending) {
+            return;
+        }
         let pending: Vec<(ConnId, i32, String)> = self
             .players
             .iter_mut()
@@ -1382,6 +1390,7 @@ impl Host for Sim {
     }
 
     fn add_post_effect(&mut self, player: &PlayerRef, id: &str) -> bool {
+        self.post_effects_pending = true;
         let Some(p) = self.players.get_mut(&player.conn) else { return false };
         if p.post_effects.iter().any(|e| e == id) {
             return false;
@@ -1392,6 +1401,7 @@ impl Host for Sim {
     }
 
     fn remove_post_effect(&mut self, player: &PlayerRef, id: &str) -> bool {
+        self.post_effects_pending = true;
         let Some(p) = self.players.get_mut(&player.conn) else { return false };
         let Some(i) = p.post_effects.iter().position(|e| e == id) else { return false };
         p.post_effects.remove(i);
@@ -1421,6 +1431,7 @@ impl Host for Sim {
     }
 
     fn clear_post_effects(&mut self, player: &PlayerRef) -> bool {
+        self.post_effects_pending = true;
         let Some(p) = self.players.get_mut(&player.conn) else { return false };
         if p.post_effects.is_empty() {
             return false;
@@ -1735,6 +1746,11 @@ impl Sim {
     /// `ServerPlayer.sendPostEffects` for players whose post effects changed (and after
     /// joining).
     pub(crate) fn send_post_effects(&mut self) {
+        // Only after something changed a player's effects (a command, a join, a respawn or a
+        // trip to another level): the players are not looked at otherwise.
+        if !std::mem::take(&mut self.post_effects_pending) {
+            return;
+        }
         for p in self.players.values_mut() {
             if std::mem::take(&mut p.post_effects_dirty) {
                 let ids: Vec<&str> = p.post_effects.iter().map(String::as_str).collect();

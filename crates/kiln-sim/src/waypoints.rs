@@ -670,8 +670,14 @@ fn run_share(share: &Share, t: &Turns) {
         assert!(out[sent..] == want[..] && *row == want_row, "locator bar: the quick share of slot {r} differs from stepping every pair");
         return;
     }
-    quick_share(row, r, me, t, out);
+    let sent = out.len();
+    let steps = quick_share(row, r, me, t, out);
+    COUNTS[0].fetch_add(steps, std::sync::atomic::Ordering::Relaxed);
+    COUNTS[1].fetch_add((out.len() - sent) as u64, std::sync::atomic::Ordering::Relaxed);
 }
+
+/// Steps run in full and packets sent by the shares since the last turns (`KILN_PHASE_DETAIL`).
+static COUNTS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 /// Checks every quick share against stepping every pair ([`verify`]).
 static VERIFY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -699,7 +705,9 @@ fn every_step(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes
     }
 }
 
-fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+/// Returns how many steps it ran in full.
+fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) -> u64 {
+    let steps = std::cell::Cell::new(0u64);
     let own;
     let vis: &Bits = match t.views.get(&(me.center, me.view)) {
         Some(v) => v,
@@ -742,6 +750,7 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
         });
         let open: Vec<usize> = each_bit(words).filter(|&s| s != r).collect();
         prefetch(row, &open);
+        steps.set(steps.get() + open.len() as u64);
         open
     };
     let by_rank = |mut v: Vec<usize>| {
@@ -753,7 +762,7 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
         for s in by_rank(open(row, &|i| all_movers[i], &|_| 0)) {
             full_step(row, r, s, me, t, out, true);
         }
-        return;
+        return steps.get();
     }
     let earlier = earlier_than(own as usize);
     // `updateWaypoint` of the movers before this receiver: their connections to it.
@@ -771,6 +780,7 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
     for s in by_rank(open(row, &|i| all_movers[i] & !earlier[i], &|_| !0)) {
         full_step(row, r, s, me, t, out, true);
     }
+    steps.get()
 }
 
 /// Asks for the connections about to be stepped (scattered over a row that other work has
@@ -982,11 +992,14 @@ impl Sim {
     /// joined players' first tick ends.
     pub(crate) fn tick_waypoints(&mut self) {
         let on = self.locator_bar();
-        let mut conns: Vec<ConnId> = self.players.keys().copied().collect();
-        conns.sort_unstable();
-        for &conn in &conns {
-            let p = &self.players[&conn];
-            let (dim, uuid, registered, sneaking) = (p.dim, p.uuid, p.waypoint_dim, p.sneaking);
+        // One pass over the players: what each needs, in connection order.
+        let mut looked: Vec<(ConnId, DimId, Uuid, Option<DimId>, bool, bool)> = self
+            .players
+            .iter()
+            .map(|(&c, p)| (c, p.dim, p.uuid, p.waypoint_dim, p.sneaking, !p.waypoint_first_tick && p.waypoint_last_pos != p.pos))
+            .collect();
+        looked.sort_unstable_by_key(|l| l.0);
+        for &(conn, dim, uuid, registered, sneaking, _) in &looked {
             if registered != Some(dim) {
                 if let Some(old) = registered {
                     self.waypoints_remove_player(old, conn, uuid);
@@ -1009,10 +1022,9 @@ impl Sim {
         let turns = !on || self.game_time % interval == 0;
         if on && turns {
             let mut moved: [Vec<ConnId>; 3] = Default::default();
-            for &conn in &conns {
-                let p = &self.players[&conn];
-                if !p.waypoint_first_tick && p.waypoint_last_pos != p.pos {
-                    moved[p.dim].push(conn);
+            for &(conn, dim, _, _, _, mover) in &looked {
+                if mover {
+                    moved[dim].push(conn);
                 }
             }
             for (dim, moved) in moved.iter().enumerate() {
@@ -1172,6 +1184,10 @@ impl Sim {
         drop(turns);
         for share in shares {
             mgr.members[share.slot].row = share.row.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        // As thousands per tick.
+        for (i, name) in ["w.steps_k", "w.sent_k"].into_iter().enumerate() {
+            crate::diag::add(name, std::time::Duration::from_nanos(COUNTS[i].swap(0, std::sync::atomic::Ordering::Relaxed) * 1000));
         }
         crate::diag::add("w.snaps", ta - t0);
         crate::diag::add("w.sets", td - ta);

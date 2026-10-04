@@ -1087,6 +1087,7 @@ impl Sim {
         let weather = self.level_info_packets(dim);
         let rules = self.rules.clone();
         self.untrack_everywhere(conn);
+        self.post_effects_pending = true;
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info);
         p.send(difficulty);
