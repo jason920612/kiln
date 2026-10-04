@@ -143,10 +143,10 @@ impl EntityExt for WindCharge {
 
     /// `AbstractWindCharge.tick` → `AbstractHurtingProjectile.tick` (no acceleration, inertia 1).
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
-        // `applyInertia`: inertia 1 in the air (`getInertia`), 0.8 in water.
+        // `applyInertia`: inertia 1 in the air (`getInertia`) and in water (`getLiquidInertia` of
+        // `AbstractWindCharge` is the same), plus the acceleration a player's deflection gave it.
         let v = e.delta;
-        let inertia = if e.is_in_water() { 0.8f32 } else { 1.0 };
-        e.delta = (v + v.normalize().scale(self.acceleration_power)).scale(inertia as f64);
+        e.delta = (v + v.normalize().scale(self.acceleration_power)).scale(1.0);
         if crate::math::floor(e.y()) > level.max_y() + 30 {
             burst(level, Some(e.id), e.position());
             e.discard();
