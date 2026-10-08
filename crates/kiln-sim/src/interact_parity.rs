@@ -446,6 +446,11 @@ fn run_case(line: &Value) -> Vec<String> {
     if line["ticking"].as_bool() == Some(true) && sim.loot.is_none() {
         sim.loot = crate::combat_parity::vanilla_loot();
     }
+    // (... and trial spawners the configs of the datapack.)
+    if line["ticking"].as_bool() == Some(true) && sim.trial_configs.len() == 0 {
+        let work = std::env::var_os("KILN_WORK").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../work"));
+        sim.trial_configs = std::sync::Arc::new(crate::mob_spawner::TrialConfigs::load(&work.join("generated")));
+    }
     let (msg, stats) = join(1, "Interact", view);
     assert!(sim.step([msg]));
     let mut client = Client::new(1, stats.clone());
