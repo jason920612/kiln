@@ -807,6 +807,7 @@ pub(crate) fn set_beacon(p: &mut Player, level: &mut RegionLevel, spawns: &mut V
 /// (`BlockEntity.applyComponentsFromItemStack`): custom name, lock, contents, loot table.
 pub(crate) fn apply_item_components(level: &mut RegionLevel, pos: BlockPos, stack: &ItemStack) {
     use kiln_item::keys;
+    use kiln_world::Blocks as _;
     let Some(c) = level.blocks.containers.get_mut(pos) else { return };
     let mut touched = false;
     if let Some(name) = stack.get(keys::CUSTOM_NAME) {
