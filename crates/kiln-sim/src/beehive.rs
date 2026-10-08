@@ -12,6 +12,7 @@ use crate::entities::{Body, Entities, Spawn};
 use kiln_blocks::{BlockPos, Direction, Effect, Level, state};
 use kiln_data::block_logic::{self as logic, BlockClass as C};
 use kiln_entity::level::BeehiveView;
+use kiln_inventory::Container as _;
 use kiln_item::ItemStack;
 use kiln_item::component::{BeeOccupant, Bees, Component, EntityData};
 use kiln_javamath::random::RandomSource;
@@ -143,7 +144,7 @@ impl Hive {
     }
 }
 
-fn hive(level: &RegionLevel, pos: BlockPos) -> Option<&Hive> {
+fn hive<'a>(level: &'a RegionLevel, pos: BlockPos) -> Option<&'a Hive> {
     level.blocks.containers.get(pos).and_then(|c| c.hive.as_deref())
 }
 
