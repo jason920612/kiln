@@ -2947,7 +2947,7 @@ pub fn mob_look_at(e: &mut Entity, t: &Living, max_y: f32, max_x: f32) {
         let w = mth::wrap_degrees(to - from).clamp(-max, max);
         from + w
     };
-    e.x_rot = rot(e.x_rot, pitch, max_x);
+    e.set_x_rot(rot(e.x_rot, pitch, max_x));
     e.y_rot = rot(e.y_rot, yaw, max_y);
 }
 

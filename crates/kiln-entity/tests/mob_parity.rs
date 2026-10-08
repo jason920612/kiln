@@ -369,6 +369,10 @@ fn pin_fresh(level: &mut MemoryLevel, id: i32, n: i64, tick: i64, pin_yaw: bool,
     if let mob::Species::Chicken { egg_time } = &mut m.species {
         *egg_time = 6000 + n as i32;
     }
+    // wp49 bees: the constructor's draws as the harness pins them.
+    if e.type_name == "minecraft:bee" {
+        kiln_entity::mob::kinds::bee::pin_constructor_draws(e, 40, 25, 35);
+    }
 }
 
 fn replay(s: &Value) -> Result<usize, String> {

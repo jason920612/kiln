@@ -38,7 +38,7 @@ pub fn tick_move(e: &mut Entity, m: &mut MobData, max_turn: f32, hovers: bool) {
     let sd = (xd * xd + zd * zd).sqrt();
     if yd.abs() > 1.0e-5f32 as f64 || sd.abs() > 1.0e-5f32 as f64 {
         let pitch = (-(mth::atan2(yd, sd) * 57.2957763671875)) as f32;
-        e.x_rot = control::rotlerp(e.x_rot, pitch, max_turn);
+        e.set_x_rot(control::rotlerp(e.x_rot, pitch, max_turn));
         m.yya = if yd > 0.0 { speed } else { -speed };
     }
 }

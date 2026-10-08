@@ -960,6 +960,15 @@ public class MobVectors {
                 nm.setYBodyRot(nm.getYRot());
                 nm.yBodyRotO = nm.getYRot();
                 if (nm instanceof net.minecraft.world.entity.animal.chicken.Chicken) set(nm, "eggTime", 6000 + pinned.size());
+                // wp49 bees: the constructor's unseeded draws are pinned (flower search 40, validate goals 25 and 35).
+                if (nm instanceof net.minecraft.world.entity.animal.bee.Bee) {
+                    set(nm, "remainingCooldownBeforeLocatingNewFlower", 40);
+                    for (WrappedGoal g : ((net.minecraft.world.entity.ai.goal.GoalSelector) get(nm, "goalSelector")).getAvailableGoals()) {
+                        String gn = g.getGoal().getClass().getSimpleName();
+                        if (gn.equals("ValidateHiveGoal")) set(g.getGoal(), "VALIDATE_HIVE_COOLDOWN", 25);
+                        if (gn.equals("ValidateFlowerGoal")) set(g.getGoal(), "validateFlowerCooldown", 35);
+                    }
+                }
                 pinCubeMoveYaw(nm);
                 pinned.add(nm);
             }

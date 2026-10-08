@@ -612,9 +612,6 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
             if *kind == MeleeKind::Spider && m.is_vehicle {
                 return false;
             }
-            if *kind == MeleeKind::Bee && !(super::kinds::bee::is_angry(m, level) && !super::kinds::bee::has_stung(m)) {
-                return false;
-            }
             let now = level.game_time();
             if now - *last_can_use < 20 {
                 return false;
@@ -625,7 +622,9 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                 return false;
             }
             *path = path::create_path_to_entity(e, m, level, t.block_pos(), 0);
-            path.is_some() || super::within_melee_range(e, m, &t)
+            let found = path.is_some() || super::within_melee_range(e, m, &t);
+            // `Bee$BeeAttackGoal.canUse`: after the melee check (which keeps its 20-tick pause).
+            found && (*kind != MeleeKind::Bee || (super::kinds::bee::is_angry(m, level) && !super::kinds::bee::has_stung(m)))
         }
         Goal::RangedBow { .. } => target(m, level).is_some() && m.holding_bow(),
         Goal::Swell { .. } => {

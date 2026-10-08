@@ -276,6 +276,13 @@ impl Entity {
         Aabb::new(p.x - w as f64, p.y, p.z - w as f64, p.x + w as f64, p.y + h as f64, p.z + w as f64)
     }
 
+    /// `Entity.setXRot`: wrapped to 360 and clamped to +-90.
+    pub fn set_x_rot(&mut self, v: f32) {
+        if v.is_finite() {
+            self.x_rot = (v % 360.0).clamp(-90.0, 90.0);
+        }
+    }
+
     /// `Entity.setOldPosAndRot`.
     pub fn set_old_pos_and_rot(&mut self) {
         self.old_pos = self.position;
