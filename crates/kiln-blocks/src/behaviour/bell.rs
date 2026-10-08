@@ -41,9 +41,9 @@ pub fn placement<L: Level + ?Sized>(level: &L, default: u16, pos: BlockPos, face
         return can_survive(level, s, pos).then_some(s);
     }
     let double = if face.axis() == crate::pos::Axis::X {
-        sturdy_at(pos.west(), Direction::East) && sturdy_at(pos.east(), Direction::West)
+        sturdy_at(pos.relative(Direction::West), Direction::East) && sturdy_at(pos.relative(Direction::East), Direction::West)
     } else {
-        sturdy_at(pos.north(), Direction::South) && sturdy_at(pos.south(), Direction::North)
+        sturdy_at(pos.relative(Direction::North), Direction::South) && sturdy_at(pos.relative(Direction::South), Direction::North)
     };
     let s = state::set(state::set_dir(default, "facing", face.opposite()), "attachment", if double { "double_wall" } else { "single_wall" });
     if can_survive(level, s, pos) {
@@ -115,7 +115,7 @@ pub fn on_hit<L: Level + ?Sized>(level: &mut L, pos: BlockPos, face: Direction, 
 }
 
 /// `BellBlock.neighborChanged`: a bell rings when power reaches it.
-pub fn neighbor_changed<L: Level + ?Sized>(level: &mut L, s: u16, pos: BlockPos) {
+pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     let signal = has_neighbor_signal(level, pos);
     if signal != state::get_bool(s, "powered") {
         if signal {
