@@ -792,18 +792,28 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     crate::diag::lap("tb.events", dt);
 }
 
+struct DiagOnDrop(&'static str, std::time::Instant);
+impl Drop for DiagOnDrop {
+    fn drop(&mut self) {
+        crate::diag::add(self.0, self.1.elapsed());
+    }
+}
+
 /// [`kiln_blocks::tick::tick_chunk_blocks`] for chunk `c` with the picked blocks read straight
 /// from the chunk: most picks land on blocks that do not tick, and those cost one read instead
 /// of a level lookup. The same picks, in the same order, reading the blocks as they are at the
 /// moment of each pick.
 fn tick_chunk_blocks(level: &mut RegionLevel, c: ChunkPos, sections: &[(i32, bool)], speed: i32) {
     let (x, z) = (c.x * 16, c.z * 16);
+    let dt = std::time::Instant::now();
     for _ in 0..speed {
         if level.blocks.random.next_int_bounded(48) == 0 {
             let pos = kiln_blocks::tick::block_random_pos(level, x, 0, z, 15);
             kiln_blocks::weather::tick_precipitation(level, pos);
         }
     }
+    let dt = crate::diag::lap("tb.precipitation", dt);
+    let _guard = DiagOnDrop("tb.picks", dt);
     if speed <= 0 {
         return;
     }
