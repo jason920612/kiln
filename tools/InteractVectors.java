@@ -644,7 +644,7 @@ public class InteractVectors {
         // The ground: stone up to y=61 (lakes and pools are flush with it, so nothing flows).
         for (int y = 56; y <= 60; y += 2) c.cmd("fill -64 " + y + " -64 63 " + (y + 1) + " 63 minecraft:stone");
         c.cmd("fill -64 61 -64 63 61 63 minecraft:stone");
-        c.cmd("fill -60 62 -60 -20 63 -20 minecraft:grass_block");
+        c.cmd("fill -60 62 -60 -20 63 -20 minecraft:slime_block");
         c.cmd("fill 0 62 -60 40 62 -20 minecraft:sand");
         c.cmd("fill 10 63 -50 30 64 -30 minecraft:sand");
         c.cmd("fill -60 60 20 -20 61 60 minecraft:water");
