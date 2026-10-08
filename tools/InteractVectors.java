@@ -735,6 +735,21 @@ public class InteractVectors {
                 .step(op("op", "menu_click", "slot", 30, "button", 0, "input", 1)).step(op("op", "menu_click", "slot", 31, "button", 0, "input", 1))
                 .step(op("op", "menu_click", "slot", 32, "button", 0, "input", 1)).step(op("op", "menu_close"));
         out.add(c);
+        // A map in an item frame: the frame is marked on the map, every player is sent the map, and the marker goes with the map.
+        c = mapCase("map_frame").hanging().cmd("setblock 2 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:map", 1));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20))
+                .step(op("op", "command", "command", "summon minecraft:item_frame 3 100 0 {Facing:5b}"))
+                .step(useEntity(3.0, 100.5, 0.5, 0, false)).step(op("op", "map_wait", "ticks", 25))
+                .step(op("op", "attack_entity", "pos", List.of(3.0, 100.5, 0.5))).step(op("op", "map_wait", "ticks", 12));
+        out.add(c);
+        c = mapCase("map_frame_glow_south").hanging().cmd("setblock 2 100 0 minecraft:stone").cmd("setblock 3 100 -1 minecraft:stone");
+        c.slot("h0", stack("minecraft:map", 1));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20))
+                .step(op("op", "command", "command", "summon minecraft:glow_item_frame 3 100 0 {Facing:3b}"))
+                .step(useEntity(3.0, 100.5, 0.0, 0, false)).step(op("op", "map_wait", "ticks", 12))
+                .step(useEntity(3.0, 100.5, 0.0, 0, false)).step(op("op", "map_wait", "ticks", 12));
+        out.add(c);
         // A banner outside the map's area is not taken.
         c = mapCase("map_banner_outside").cmd("setblock 70 62 70 minecraft:red_banner[rotation=4]");
         c.slot("h0", stack("minecraft:map", 1));
@@ -2222,6 +2237,15 @@ public class InteractVectors {
         for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
             ItemStack st = p.getInventory().getItem(i);
             if (!st.isEmpty()) sync.invoke(p, st);
+        }
+        // The level's tracking: `ServerEntity.sendChanges` of the item frames (a map in one is ticked every tenth call).
+        var tracked = (it.unimi.dsi.fastutil.ints.Int2ObjectMap<?>) get(server.overworld().getChunkSource().chunkMap, "entityMap");
+        for (var frame : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.ItemFrame.class, new AABB(-128, -64, -128, 128, 320, 128))) {
+            Object t = tracked.get(frame.getId());
+            if (t == null) continue;
+            Object serverEntity = get(t, "serverEntity");
+            Method send = serverEntity.getClass().getMethod("sendChanges");
+            send.invoke(serverEntity);
         }
     }
 

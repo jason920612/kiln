@@ -859,6 +859,11 @@ impl MapStore {
         self.maps.get_mut(&id)
     }
 
+    /// The frames the maps in memory mark: (map id, level, block position, frame entity id).
+    pub(crate) fn frame_markers(&self) -> Vec<(i32, String, [i32; 3], i32)> {
+        self.maps.iter().flat_map(|(id, m)| m.frames.values().map(move |f| (*id, m.dimension.clone(), f.pos, f.entity_id))).collect()
+    }
+
     /// Whether the map exists (in memory or saved).
     pub(crate) fn has(&mut self, id: i32) -> bool {
         self.get(id).is_some()

@@ -144,7 +144,9 @@ impl crate::Sim {
     /// carries notes the player, a map in a hand redraws the part of the world around the player, and
     /// what changed is sent.
     pub(crate) fn tick_maps(&mut self) {
-        if !self.players.values().any(|p| !map_ids(p).is_empty()) {
+        let frames = self.map_frames();
+        let marked = self.maps.lock().unwrap_or_else(|e| e.into_inner()).frame_markers();
+        if frames.is_empty() && marked.is_empty() && !self.players.values().any(|p| !map_ids(p).is_empty()) {
             return;
         }
         let viewers: std::collections::HashMap<uuid::Uuid, Viewer> = self
@@ -197,5 +199,69 @@ impl crate::Sim {
                 p.send(pkt);
             }
         }
+        // A frame that no longer holds the map it marked takes the marker off (`removedFromFrame`).
+        for (map_id, dim_name, pos, entity_id) in marked {
+            let Some(dim) = crate::dim_id(&dim_name) else { continue };
+            let held = frames.iter().any(|f| f.id == entity_id && f.dim == dim && f.map == map_id);
+            let loaded = self.dims[dim].regions.chunk(ChunkPos::of_block(pos[0], pos[2])).is_some();
+            if !held && loaded && let Some(data) = store.get(map_id) {
+                data.removed_from_frame(pos, entity_id);
+            }
+        }
+        // `ServerEntity.sendChanges` of an item frame holding a map, every tenth tick: the players of its
+        // level note the frame and are sent what changed.
+        let mut by_conn: Vec<_> = self.players.keys().copied().collect();
+        by_conn.sort();
+        for f in frames.iter().filter(|f| f.age % 10 == 0) {
+            let Some(data) = store.get(f.map) else { continue };
+            for conn in by_conn.iter().copied() {
+                let Some(p) = self.players.get_mut(&conn) else { continue };
+                if p.dim != f.dim {
+                    continue;
+                }
+                let viewer = viewers[&p.uuid].clone();
+                let info = maps::FrameInfo { pos: f.pos, direction: f.direction, entity_id: f.id };
+                data.tick_carried_by(&viewer, f.map, &f.item, Some(info), time, &lookup);
+                if let Some(pkt) = data.update_packet(f.map, p.uuid) {
+                    p.send(pkt);
+                }
+            }
+        }
     }
+
+    /// The item frames that hold a filled map, by level and entity id.
+    fn map_frames(&self) -> Vec<FrameRow> {
+        use kiln_entity::ext_entity::item_frame::ItemFrame;
+        let mut rows = Vec::new();
+        for (dim, d) in self.dims.iter().enumerate() {
+            for region in d.regions.iter() {
+                for e in region.part().0.list.iter().filter(|e| !e.removed && (e.kind.id == kiln_data::entities::types::ITEM_FRAME.id || e.kind.id == kiln_data::entities::types::GLOW_ITEM_FRAME.id)) {
+                    let Some(frame) = e.phys.as_deref().and_then(kiln_entity::ext_entity::get::<ItemFrame>) else { continue };
+                    let Some(map) = (!frame.item.is_empty()).then(|| maps::map_id_of(&frame.item)).flatten() else { continue };
+                    use kiln_entity::math::Direction as D;
+                    let direction = match frame.direction {
+                        D::South => 0,
+                        D::West => 1,
+                        D::North => 2,
+                        D::East => 3,
+                        _ => -1,
+                    };
+                    rows.push(FrameRow { dim, id: e.id, pos: [frame.pos.x, frame.pos.y, frame.pos.z], direction, item: frame.item.clone(), map, age: e.age });
+                }
+            }
+        }
+        rows.sort_by_key(|r| (r.dim, r.id));
+        rows
+    }
+}
+
+/// An item frame with a map in it.
+struct FrameRow {
+    dim: crate::DimId,
+    id: i32,
+    pos: [i32; 3],
+    direction: i32,
+    item: ItemStack,
+    map: i32,
+    age: i32,
 }
