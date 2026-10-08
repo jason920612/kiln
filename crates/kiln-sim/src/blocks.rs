@@ -113,12 +113,6 @@ impl RegionBlocks {
         self.sculk.chunk_loaded(pos, chunk);
         self.hearts.chunk_loaded(pos, chunk);
         self.spawners.chunk_loaded(pos, chunk);
-        if std::env::var_os("KILN_INITIAL_DEBUG").is_some() {
-            use std::io::Write as _;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
-                let _ = writeln!(f, "L chunk ({},{}) original_mobs {}", pos.x, pos.z, chunk.original_mobs);
-            }
-        }
         if std::mem::take(&mut chunk.original_mobs) {
             self.initial_mobs.push(pos);
         }
@@ -152,12 +146,6 @@ impl RegionBlocks {
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
-        if std::env::var_os("KILN_INITIAL_DEBUG").is_some() {
-            use std::io::Write as _;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
-                let _ = writeln!(f, "U chunk ({},{}) pending {}", pos.x, pos.z, self.initial_mobs.contains(&pos));
-            }
-        }
         self.initial_mobs.retain(|p| *p != pos);
         self.spawners.chunk_unloaded(pos);
     }

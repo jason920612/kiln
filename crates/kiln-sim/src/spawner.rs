@@ -1022,13 +1022,6 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
     // `region.getBiome(center.getWorldPosition().atY(region.getMaxY()))`.
     let biome = zoomed_biome_at(level, min_x, env.min_y + env.height - 1, min_z);
     let list = table.list(biome, Category::Creature);
-    if std::env::var_os("KILN_INITIAL_DEBUG").is_some() {
-        use std::io::Write as _;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
-            let nm = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").map_or("?", |(_, e)| e[biome as usize]);
-            let _ = writeln!(f, "C chunk ({},{}) biome {nm} creatures {} p {}", c.x, c.z, list.len(), table.world_gen_probability(biome));
-        }
-    }
     if list.is_empty() {
         return;
     }
@@ -1061,14 +1054,6 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                     continue;
                 };
                 let top = top_non_colliding(level, kind, x, z);
-                if std::env::var_os("KILN_INITIAL_DEBUG").is_some() {
-                    use std::io::Write as _;
-                    let nm = |p: KBlockPos| kiln_data::blocks_types::block_of(level.block(p)).name;
-                    let line = format!("T chunk ({},{}) {:?} xz {x},{z} top {top:?} placement {} below {} at {} above {} bright {}", c.x, c.z, kind, placement_ok(level, top, kind), nm(top.below()), nm(top), nm(top.above()), level.raw_brightness(top, 0));
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
-                        let _ = writeln!(f, "{line}");
-                    }
-                }
                 if placement_ok(level, top, kind) {
                     let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
                     let w = t.width as f64;
@@ -1093,12 +1078,6 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                     let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
                     let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
                     let fits = !(walk < 0.0 && !ignores_light) && (liquid_ok || !contains_liquid(level, [px, top.y as f64, pz], t.width, t.height));
-                    if std::env::var_os("KILN_INITIAL_DEBUG").is_some() {
-                        use std::io::Write as _;
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
-                            let _ = writeln!(f, "F chunk ({},{}) at {at:?} px {px} pz {pz} walk {walk} magic {magic} bright {} fits {fits} below {} liquid {}", c.x, c.z, level.raw_brightness(at, 0), kiln_data::blocks_types::block_of(level.block(at.below())).name, contains_liquid(level, [px, top.y as f64, pz], t.width, t.height));
-                        }
-                    }
                     if fits {
                         let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, moon);
                         ctx.biome = Some(biome as i32);
