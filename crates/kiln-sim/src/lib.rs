@@ -1880,6 +1880,7 @@ impl Sim {
                 fast_lava: kind.fast_lava,
                 water_evaporates: kind.water_evaporates,
                 tnt_explodes: self.rule_bool("minecraft:tnt_explodes"),
+                spread_vines: self.rule_bool("minecraft:spread_vines"),
                 infiniburn: kind.infiniburn.trim_start_matches('#'),
             },
             dim,

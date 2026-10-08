@@ -73,6 +73,12 @@ pub struct TestLevel {
     pub day_time: i64,
     /// `ServerLevel.canSpreadFireAround`: whether a player is near (lava's random tick needs one).
     pub player_near_for_fire: bool,
+    /// Block light (`getBrightness(LightLayer.BLOCK, pos)`) of the positions the table names, 0 elsewhere.
+    pub block_brightness: HashMap<BlockPos, i32>,
+    /// `Level.getSkyDarken`.
+    pub sky_darken: i32,
+    /// Whether this level is the End (`dimension() == Level.END`).
+    pub end: bool,
 }
 
 impl TestLevel {
@@ -102,6 +108,9 @@ impl TestLevel {
             default_brightness: 15,
             day_time: 6000,
             player_near_for_fire: true,
+            block_brightness: HashMap::new(),
+            sky_darken: 0,
+            end: false,
         }
     }
 
@@ -307,5 +316,17 @@ impl Level for TestLevel {
 
     fn raw_brightness(&self, pos: BlockPos, _sky_darken: i32) -> i32 {
         self.brightness.get(&pos).copied().unwrap_or(self.default_brightness)
+    }
+
+    fn block_light(&self, pos: BlockPos) -> i32 {
+        self.block_brightness.get(&pos).copied().unwrap_or(0)
+    }
+
+    fn sky_darken(&self) -> i32 {
+        self.sky_darken
+    }
+
+    fn is_end(&self) -> bool {
+        self.end
     }
 }

@@ -57,13 +57,18 @@ fn snapshot(level: &TestLevel, x0: i32, z0: i32) -> Blocks {
 /// The brightness the level reads: 15 above the floor unless the table says otherwise, 0 in it.
 fn set_light(level: &mut TestLevel, light: &serde_json::Value, x0: i32, z0: i32) {
     level.brightness.clear();
+    level.block_brightness.clear();
     for z in z0 + LO..=z0 + HI {
         for x in x0 + LO..=x0 + HI {
             level.brightness.insert(BlockPos::new(x, FLOOR, z), 0);
         }
     }
     for e in light.as_array().unwrap() {
-        level.brightness.insert(BlockPos::new(x0 + at(e, 0), at(e, 1), z0 + at(e, 2)), at(e, 3));
+        let p = BlockPos::new(x0 + at(e, 0), at(e, 1), z0 + at(e, 2));
+        level.brightness.insert(p, at(e, 3));
+        if e.as_array().is_some_and(|a| a.len() > 4) {
+            level.block_brightness.insert(p, at(e, 4));
+        }
     }
 }
 
@@ -101,7 +106,24 @@ fn pending_expected(v: &serde_json::Value, x0: i32, z0: i32) -> Vec<String> {
     out
 }
 
-/// The `rt` op: every randomly ticking block of the area in y, z, x order, as it was at the start.
+/// The names of the randomly ticking blocks of the area (what an `rt` op is about to tick).
+fn ticking_names(level: &TestLevel, x0: i32, z0: i32) -> String {
+    let mut names = std::collections::BTreeSet::new();
+    for y in FLOOR..Y0 + HEIGHT {
+        for z in z0 + LO..=z0 + HI {
+            for x in x0 + LO..=x0 + HI {
+                let s = level.block(BlockPos::new(x, y, z));
+                if crate::tick::randomly_ticks(s) {
+                    names.insert(crate::state::BlockId::of(s).name());
+                }
+            }
+        }
+    }
+    format!("{names:?}")
+}
+
+/// The `rt` op: every randomly ticking block of the area in y, z, x order, as it was at the start
+/// (with `KILN_SEQ_TRACE`, tracing the level random's state before each tick).
 fn random_tick_area(level: &mut TestLevel, x0: i32, z0: i32) {
     let mut ticking = Vec::new();
     for y in FLOOR..Y0 + HEIGHT {
@@ -114,7 +136,14 @@ fn random_tick_area(level: &mut TestLevel, x0: i32, z0: i32) {
             }
         }
     }
+    let trace = std::env::var("KILN_SEQ_TRACE").ok();
     for p in ticking {
+        if let Some(prefix) = &trace {
+            use std::io::Write;
+            let name = crate::state::BlockId::of(level.block(p)).name();
+            let mut file = std::fs::OpenOptions::new().create(true).append(true).open(format!("{prefix}_kiln.txt")).unwrap();
+            writeln!(file, "SEQ {},{},{} {} {}", p.x, p.y, p.z, level.random().state(), name).unwrap();
+        }
         crate::tick::random_tick_at(level, p);
     }
 }
@@ -124,7 +153,7 @@ fn state_diff(want: &Blocks, got: &Blocks) -> Vec<String> {
         .filter(|(k, s)| got.get(k) != Some(s))
         .map(|(k, s)| format!("{k:?} want {} got {}", state::state_string(*s), got.get(k).map_or("air".to_owned(), |g| state::state_string(*g))))
         .chain(got.iter().filter(|(k, _)| !want.contains_key(k)).map(|(k, g)| format!("{k:?} want air got {}", state::state_string(*g))))
-        .take(6)
+        .take(24)
         .collect()
 }
 
@@ -159,6 +188,7 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
     let mut first_drop = None;
     for (i, (op, want)) in ops.iter().zip(results).enumerate() {
         let kind = op[0].as_str().unwrap();
+        let before = if kind == "rt" { ticking_names(&level, x0, z0) } else { String::new() };
         match kind {
             "rt" => random_tick_area(&mut level, x0, z0),
             "tick" => {
@@ -187,8 +217,9 @@ fn replay(v: &serde_json::Value) -> Result<usize, String> {
         let probe_ok = drops_seen || probe == want[3].as_i64().unwrap();
         if got != want_blocks || got_ticks != want_ticks || !probe_ok {
             let ticks_diff = if got_ticks != want_ticks { format!("; ticks want {want_ticks:?} got {got_ticks:?}") } else { String::new() };
+            let ticking = if probe_ok { String::new() } else { format!("; ticking blocks before the op {before}") };
             let fx = if std::env::var_os("KILN_PARITY_EFFECTS").is_some() { format!("; effects {:?}", effects.iter().take(12).collect::<Vec<_>>()) } else { String::new() };
-            return Err(format!("op {i} ({kind}): random probe ok {probe_ok}{}; {:?}{ticks_diff}{fx}", first_drop.map_or(String::new(), |d| format!(" (not compared: a block dropped at op {d})")), state_diff(&want_blocks, &got)));
+            return Err(format!("op {i} ({kind}): random probe ok {probe_ok}{}; {:?}{ticks_diff}{ticking}{fx}", first_drop.map_or(String::new(), |d| format!(" (not compared: a block dropped at op {d})")), state_diff(&want_blocks, &got)));
         }
         set_light(&mut level, &want[2], x0, z0);
     }
