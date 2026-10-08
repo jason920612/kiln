@@ -345,15 +345,18 @@ public class InteractVectors {
     static void blocks49(List<Case> out) {
         Case c;
         // ---- campfires
-        String lit = "minecraft:campfire[facing=north,lit=true,waterlogged=false,signal_fire=false]";
+        // (The fire is out where the block entity is compared: Kiln's level ticks between the steps, vanilla's is frozen.)
+        String lit = "minecraft:campfire[facing=north,lit=false,waterlogged=false,signal_fire=false]";
         c = blockCase("campfire_five_foods", lit).custom("minecraft:interact_with_campfire");
         c.slot("h0", stack("minecraft:beef", 6));
         for (int i = 0; i < 6; i++) c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("campfire_unlit_food", "minecraft:campfire[facing=north,lit=false,waterlogged=false,signal_fire=false]").custom("minecraft:interact_with_campfire");
+        // A lit fire: the food goes on all the same (the block entity is not compared: it cooks in Kiln's ticks).
+        c = blockCase("campfire_lit_food", "minecraft:campfire[facing=north,lit=true,waterlogged=false,signal_fire=false]").custom("minecraft:interact_with_campfire");
+        c.watch.clear();
         c.slot("h0", stack("minecraft:potato", 2)).step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("campfire_soul", "minecraft:soul_campfire[facing=east,lit=true,waterlogged=false,signal_fire=false]").custom("minecraft:interact_with_campfire");
+        c = blockCase("campfire_soul", "minecraft:soul_campfire[facing=east,lit=false,waterlogged=false,signal_fire=false]").custom("minecraft:interact_with_campfire");
         c.slot("h0", stack("minecraft:cod", 2)).step(useOn(2, 100, 0, 1, 0));
         out.add(c);
         c = blockCase("campfire_creative", lit).custom("minecraft:interact_with_campfire");

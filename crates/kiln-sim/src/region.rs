@@ -1231,7 +1231,9 @@ fn use_on_block(
     }
     let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
-    if !(p.sneaking && have_something) && !held.is_empty() && actor.may_build {
+    // (`ServerPlayerGameMode.useItemOn` does not ask whether the player may build: pots, campfires and
+    // composters work in adventure mode.)
+    if !(p.sneaking && have_something) && !held.is_empty() {
         let used = held.clone();
         if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
