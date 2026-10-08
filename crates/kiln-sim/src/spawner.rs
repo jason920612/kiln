@@ -1097,6 +1097,9 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                         let companions = std::mem::take(&mut group.companions);
                         let chicken = group.nearby_chicken;
                         let body = if companions.is_empty() && !chicken { Body::Ready(Box::new(e)) } else { Body::Stacked(Box::new(e), companions, false, chicken) };
+                        if let Some(log) = crate::testing::INITIAL_LOG.lock().unwrap().as_mut() {
+                            log.push(((c.x, c.z), t.name, [px, top.y as f64, pz], yaw));
+                        }
                         spawns.push(Spawn { kind: t, pos: [px, top.y as f64, pz], vel: [0.0; 3], body });
                         spawned = true;
                     }

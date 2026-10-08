@@ -596,6 +596,13 @@ impl RegionWork<'_> {
     /// The entity phase: the region's entities tick against its blocks; what they change
     /// goes out like block work.
     fn tick_entities(&mut self, env: &Env, ctx: &Ctx<'_>, ticking_now: &Ticking) {
+        // The animals chunk generation makes for the chunks that came in new.
+        if !self.blocks.initial_mobs.is_empty() {
+            let pending = std::mem::take(&mut self.blocks.initial_mobs);
+            let mut out = BlockOut::default();
+            let level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &[], actor: None };
+            crate::spawner::initial_mobs(&level, &pending, &mut self.out.spawns);
+        }
         // `TickRateManager.isEntityFrozen`: nothing but players ticks while frozen.
         if env.frozen {
             return;
