@@ -398,14 +398,17 @@ impl Player {
         if self.swimming() {
             if full > 0 {
                 self.award_stat(*stat::SWIM_ONE_CM, full);
+                self.exhaust(0.01f32 * full as f32 * 0.01f32);
             }
         } else if eyes_in_water {
             if full > 0 {
                 self.award_stat(*stat::WALK_UNDER_WATER_ONE_CM, full);
+                self.exhaust(0.01f32 * full as f32 * 0.01f32);
             }
         } else if in_water {
             if horizontal > 0 {
                 self.award_stat(*stat::WALK_ON_WATER_ONE_CM, horizontal);
+                self.exhaust(0.01f32 * horizontal as f32 * 0.01f32);
             }
         } else if climbing {
             if d[1] > 0.0 {
@@ -414,6 +417,7 @@ impl Player {
         } else if self.on_ground {
             if horizontal > 0 {
                 let s = if self.sprinting {
+                    self.exhaust(0.1f32 * horizontal as f32 * 0.01f32);
                     *stat::SPRINT_ONE_CM
                 } else if self.sneaking {
                     *stat::CROUCH_ONE_CM

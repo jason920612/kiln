@@ -21,9 +21,6 @@ pub enum Wanted {
     /// Players at most this many blocks above or below the mob (slimes, magma cubes, ghasts:
     /// `Math.abs(target.getY() - getY()) <= 4`).
     PlayerWithinDy(u8),
-    /// A type Kiln does not simulate yet (turtles, ...): the search always comes back empty,
-    /// but the goal still draws its randomness.
-    Unsimulated,
     /// Mobs of these types (`getNearestEntity` over `getEntitiesOfClass` in the follow range box).
     Types(&'static [&'static str]),
     /// `Turtle.class` with `Turtle.BABY_ON_LAND_SELECTOR`: baby turtles out of the water.
@@ -55,7 +52,6 @@ pub enum Goal {
     Melee { kind: MeleeKind, speed: f64, follow_unseen: bool, path: Option<path::Path>, recalc: i32, next_attack: i32, last_can_use: i64, pathed: Vec3, raise_arm: i32 },
     RangedBow { speed: f64, interval_min: i32, radius_sqr: f32, attack_time: i32, see_time: i32, strafing_clockwise: bool, strafing_backwards: bool, strafing_time: i32 },
     Swell { target: Option<i32> },
-    AvoidEntity,
     LeapAtTarget { yd: f32, target: Option<i32> },
     RestrictSun,
     FleeSun { speed: f64, wanted: Vec3 },
@@ -74,7 +70,7 @@ impl Goal {
         match self {
             Goal::Custom(c) => c.flags(),
             Goal::Float => JUMP,
-            Goal::Panic { .. } | Goal::RandomStroll { .. } | Goal::Swell { .. } | Goal::FleeSun { .. } | Goal::AvoidEntity => MOVE,
+            Goal::Panic { .. } | Goal::RandomStroll { .. } | Goal::Swell { .. } | Goal::FleeSun { .. } => MOVE,
             Goal::Tempt { .. } | Goal::Breed { .. } | Goal::Melee { .. } | Goal::RangedBow { .. } | Goal::RandomLookAround { .. } => MOVE | LOOK,
             Goal::LookAtPlayer { .. } => LOOK,
             Goal::EatBlock { .. } => MOVE | LOOK | JUMP,
@@ -108,7 +104,6 @@ impl Goal {
             Goal::Melee { .. } => "melee",
             Goal::RangedBow { .. } => "bow",
             Goal::Swell { .. } => "swell",
-            Goal::AvoidEntity => "avoid",
             Goal::LeapAtTarget { .. } => "leap",
             Goal::RestrictSun => "restrict_sun",
             Goal::FleeSun { .. } => "flee_sun",
@@ -512,7 +507,7 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                 None => false,
             }
         }
-        Goal::Idle | Goal::Never | Goal::AvoidEntity => false,
+        Goal::Idle | Goal::Never => false,
         Goal::Breed { partner, .. } => {
             if m.in_love <= 0 {
                 return false;
@@ -713,7 +708,6 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
                     let (y, dy) = (e.y(), *dy as f64);
                     nearest_attackable_player(e, m, level, range, |p| (p.pos.y - y).abs() <= dy).map(|p| p.id)
                 }
-                Wanted::Unsimulated => None,
                 Wanted::Types(types) => nearest_mob(e, m, level, range, true, types),
                 Wanted::BabyTurtlesOnLand => {
                     let on_land = |id: i32| level.entity(id).is_some_and(|o| !o.is_in_water() && super::data(o).is_some_and(|om| om.baby()));

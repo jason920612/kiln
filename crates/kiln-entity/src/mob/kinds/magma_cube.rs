@@ -26,6 +26,9 @@ static INFO: Info = Info {
 };
 
 impl Kind for MagmaCube {
+    fn sound_volume(&self, m: &MobData) -> f32 {
+        0.4 * slime::size(m) as f32
+    }
     fn touches_players(&self) -> bool {
         true
     }

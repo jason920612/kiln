@@ -63,6 +63,11 @@ fn axis_name(d: Dir) -> &'static str {
 }
 
 impl TrunkPlacer {
+    /// `TrunkPlacer.getBaseHeight`.
+    pub fn base_height(&self) -> i32 {
+        self.base_height
+    }
+
     pub fn parse(json: &Json, l: &Loader) -> Result<TrunkPlacer, Error> {
         let ty = json.get("type").and_then(Json::as_str).unwrap_or("");
         let ip = |k: &str| IntProvider::parse(field(json, k)?);

@@ -83,6 +83,11 @@ impl Tag {
                 }
             }
             Tag::String(s) => put_mutf8(out, s),
+            // A list of mixed types (an SNBT list such as `[{a:1}, "b"]`) is written wrapped, as
+            // vanilla's `ListTag` writes it.
+            Tag::List(items) if items.windows(2).any(|w| w[0].id() != w[1].id()) => {
+                Tag::heterogeneous_list(items.clone()).write_payload(out);
+            }
             Tag::List(items) => {
                 let id = items.first().map_or(0, Tag::id);
                 out.put_u8(id);

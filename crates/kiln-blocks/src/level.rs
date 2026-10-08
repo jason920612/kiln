@@ -49,6 +49,8 @@ pub struct Rules {
     pub water_evaporates: bool,
     /// `minecraft:tnt_explodes`.
     pub tnt_explodes: bool,
+    /// `minecraft:spread_vines`.
+    pub spread_vines: bool,
     /// The dimension's `infiniburn` block tag (fire never burns out on these).
     pub infiniburn: &'static str,
 }
@@ -62,6 +64,7 @@ impl Default for Rules {
             fast_lava: false,
             water_evaporates: false,
             tnt_explodes: true,
+            spread_vines: true,
             infiniburn: "minecraft:infiniburn_overworld",
         }
     }
@@ -72,9 +75,16 @@ impl Default for Rules {
 pub enum Effect {
     /// `Block.dropResources`: the block at `pos` (in `state`) drops its loot.
     Drop { pos: BlockPos, state: u16 },
+    /// A block an explosion with drop decay destroyed: its loot rolls with the
+    /// `explosion_radius` parameter (`survives_explosion` keeps each drop with a chance of
+    /// `1 / radius`).
+    ExplosionDrop { pos: BlockPos, state: u16, radius: f32 },
     /// `levelEvent(id, pos, data)`: particles and sounds (1501 lava fizz, 1502 redstone torch
     /// burnout, 2001 block destroyed with data = state id, ...).
     LevelEvent { id: i32, pos: BlockPos, data: i32 },
+    /// `globalLevelEvent(id, pos, data)`: heard by every player of the level (1038 an end portal
+    /// opening).
+    GlobalLevelEvent { id: i32, pos: BlockPos, data: i32 },
     /// A sound event (`minecraft:block.lever.click`, ...) at the block's center.
     Sound { pos: BlockPos, sound: &'static str, volume: f32, pitch: f32 },
     /// A sound the acting player's client plays itself (`level.playSound(player, ...)`):
@@ -108,6 +118,16 @@ pub enum Effect {
     /// `JukeboxSongPlayer.spawnMusicParticles`: a note particle above the block, coloured by
     /// `color` (`random.nextInt(4) / 24`).
     MusicNote { pos: BlockPos, color: f32 },
+    /// `TurtleEggBlock.randomTick`: `eggs` baby turtles hatch at `pos` (the eggs are gone); the
+    /// i-th is placed at (x + 0.3 + i * 0.2, y, z + 0.3), a baby (age -24000) whose home is `pos`.
+    HatchTurtles { pos: BlockPos, eggs: i32 },
+    /// `DriedGhastBlock.spawnGhastling`: a baby happy ghast faces `yaw` degrees at the bottom
+    /// center of `pos` (the block is gone).
+    HatchGhastling { pos: BlockPos, yaw: f32 },
+    /// `SpeleothemBlock.spawnFallingStalactite` for the tip of a falling stalactite: the block left
+    /// `pos` as a falling entity that hurts what it lands on, `per_distance` (at most 40) per block
+    /// fallen.
+    FallingStalactite { pos: BlockPos, state: u16, per_distance: f32 },
 }
 
 pub trait Level {
@@ -235,6 +255,22 @@ pub trait Level {
         0
     }
 
+    /// `Level.getSkyDarken`: what daylight, rain and thunder take from the sky light (0 at noon in
+    /// clear weather).
+    fn sky_darken(&self) -> i32 {
+        0
+    }
+
+    /// `LevelReader.getMaxLocalRawBrightness(pos)`.
+    fn max_local_raw_brightness(&self, pos: BlockPos) -> i32 {
+        self.raw_brightness(pos, self.sky_darken())
+    }
+
+    /// Whether this is the End (`level.dimension() == Level.END`).
+    fn is_end(&self) -> bool {
+        false
+    }
+
     /// `Level.isRainingAt`.
     fn is_raining_at(&self, _pos: BlockPos) -> bool {
         false
@@ -262,10 +298,37 @@ pub trait Level {
         2
     }
 
+    /// The worldgen the level places features with when something grows (saplings, bone meal
+    /// on grass and mushrooms); `None` without worldgen data (nothing grows then).
+    fn feature_host(&self) -> Option<std::sync::Arc<dyn crate::feature_host::FeatureHost>> {
+        None
+    }
+
+    /// The level random as the legacy generator it is, for features that draw from it.
+    fn legacy_random(&mut self) -> Option<&mut kiln_javamath::random::LegacyRandom> {
+        None
+    }
+
+    /// `Level.getBiome(pos)`: the registry name of the biome at `pos` (`minecraft:plains`).
+    fn biome_name(&self, _pos: BlockPos) -> Option<String> {
+        None
+    }
+
+    /// Stores fields of a block entity a placed feature filled in (a beehive's bees) in the
+    /// block entity at `pos`.
+    fn set_block_entity_data(&mut self, _pos: BlockPos, _data: &kiln_proto::nbt::Tag) {}
+
     /// The `minecraft:gameplay/increased_fire_burnout` environment attribute at `pos` (wet
     /// biomes).
     fn increased_fire_burnout(&self, _pos: BlockPos) -> bool {
         false
+    }
+
+    /// The `minecraft:gameplay/turtle_egg_hatch_chance` environment attribute at `pos`: a turtle
+    /// egg on sand hatches a stage per random tick with this chance (1 at dawn in the
+    /// overworld, else 1/500).
+    fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
+        0.002
     }
 }
 

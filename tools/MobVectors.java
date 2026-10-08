@@ -134,6 +134,15 @@ public class MobVectors {
                 default -> net.minecraft.world.level.GameType.SURVIVAL;
             });
             case "move" -> player.snapTo(a.x, a.y, a.z, player.getYRot(), player.getXRot());
+            // wp44 spawners: the player uses the spawn egg `what` on the block at pos (`SpawnEggItem.useOn`).
+            case "egg" -> {
+                ItemStack stack = new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse(a.what)));
+                BlockPos bp = BlockPos.containing(a.x, a.y, a.z);
+                player.setItemInHand(net.minecraft.world.InteractionHand.MAIN_HAND, stack);
+                var ctx = new net.minecraft.world.item.context.UseOnContext(player, net.minecraft.world.InteractionHand.MAIN_HAND,
+                        new net.minecraft.world.phys.BlockHitResult(Vec3.atCenterOf(bp), net.minecraft.core.Direction.UP, bp, false));
+                stack.getItem().useOn(ctx);
+            }
             // wp28 creaking: the player turns (yaw = pos.x, pitch = pos.y): where it looks decides
             // whether creakings freeze.
             case "look" -> {
@@ -220,6 +229,10 @@ public class MobVectors {
         /// then).
         final List<BlockPos> hearts = new ArrayList<>();
         boolean spawnMonsters;
+        /// wp44 spawners: mob spawner blocks (position -> the block entity's NBT as SNBT) whose
+        /// `BaseSpawner.serverTick` runs every tick (after the entities), and the `spawner_blocks_work` rule.
+        final Map<BlockPos, String> spawners = new LinkedHashMap<>();
+        boolean spawnerBlocksWork = true;
         /// wp32 parrots: the level's random is compared at the end (what a scenario draws from it, imitations).
         boolean checkLevelRandom;
         Scenario(String name) { this.name = name; }
@@ -380,7 +393,7 @@ public class MobVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=" + System.getenv().getOrDefault("KILN_MOB_PORT", "25597"),
+                "server-port=" + (System.getenv("KILN_MOB_PORT") != null ? System.getenv("KILN_MOB_PORT") : harnessPort()),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
@@ -541,6 +554,26 @@ public class MobVectors {
     static String run(ServerLevel level, ServerPlayer player, Scenario s) throws Exception {
         for (var b : s.blocks.entrySet()) level.setBlock(b.getKey(), b.getValue(), FLAGS);
         awaitLight(level);
+        // wp44 spawners: the block entities get their NBT (`loadCustomOnly`), and the light around them is recorded.
+        StringBuilder spawnersJson = new StringBuilder();
+        StringBuilder lightsJson = new StringBuilder();
+        for (var sp : s.spawners.entrySet()) {
+            var be = (net.minecraft.world.level.block.entity.SpawnerBlockEntity) level.getBlockEntity(sp.getKey());
+            net.minecraft.nbt.CompoundTag tag = net.minecraft.nbt.TagParser.parseCompoundFully(sp.getValue());
+            be.loadCustomOnly(net.minecraft.world.level.storage.TagValueInput.create(net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess(), tag));
+            if (spawnersJson.length() > 0) spawnersJson.append(',');
+            spawnersJson.append(String.format(Locale.ROOT, "{\"pos\":[%d,%d,%d],\"nbt\":%s,\"loaded\":%s,\"end\":null}", sp.getKey().getX(), sp.getKey().getY(), sp.getKey().getZ(),
+                    tagJson(tag), tagJson(be.saveCustomOnly(level.registryAccess()))));
+            for (int dx = -9; dx <= 9; dx++)
+                for (int dz = -9; dz <= 9; dz++)
+                    for (int dy = -3; dy <= 4; dy++) {
+                        BlockPos lp = sp.getKey().offset(dx, dy, dz);
+                        if (lightsJson.length() > 0) lightsJson.append(',');
+                        lightsJson.append(String.format(Locale.ROOT, "[%d,%d,%d,%d,%d]", lp.getX(), lp.getY(), lp.getZ(),
+                                level.getBrightness(net.minecraft.world.level.LightLayer.SKY, lp), level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, lp)));
+                    }
+        }
+        if (!s.spawnerBlocksWork) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawner_blocks_work false");
         level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "time set " + s.dayTime);
         if (s.noMobDrops) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:mob_drops false");
         level.updateSkyBrightness();
@@ -654,6 +687,7 @@ public class MobVectors {
             if (v >= 0 && !tracked.get(i).startRiding(tracked.get(v), true, false)) throw new IllegalStateException("could not ride: " + s.mobs.get(i).type);
         }
         StringBuilder trace = new StringBuilder();
+        StringBuilder othersTrace = new StringBuilder();
         StringBuilder heartTrace = new StringBuilder();
         StringBuilder hits = new StringBuilder();
         StringBuilder spawned = new StringBuilder();
@@ -737,6 +771,11 @@ public class MobVectors {
                             level.getBlockState(hp).getValue(net.minecraft.world.level.block.CreakingHeartBlock.STATE), get(be, "ticker"), get(be, "emitter"), get(be, "ticksExisted"), get(be, "creakingInfo") == null ? 0 : 1));
                 }
             }
+            // wp44 spawners: `Level.tickBlockEntities` for the scenario's mob spawners.
+            for (BlockPos sp : s.spawners.keySet()) {
+                if (level.getBlockEntity(sp) instanceof net.minecraft.world.level.block.entity.SpawnerBlockEntity be)
+                    net.minecraft.world.level.block.entity.SpawnerBlockEntity.serverTick(level, sp, level.getBlockState(sp), be);
+            }
             if (s.player != null && player.getHealth() < healthBefore) {
                 if (hits.length() > 0) hits.append(',');
                 hits.append(String.format(Locale.ROOT, "[%d,%s]", tick, Float.toString(healthBefore - player.getHealth())));
@@ -789,6 +828,17 @@ public class MobVectors {
                 trace.append(state(nm));
             }
             trace.append(']');
+            // wp41: where the scenario's other entities (boats, minecarts) are, and how fast.
+            if (tick > 0) othersTrace.append(',');
+            othersTrace.append('[');
+            for (int i = initial; i < initial + s.others.size(); i++) {
+                if (i > initial) othersTrace.append(',');
+                Entity oe = tracked.get(i);
+                Vec3 op = oe.position(), ov = oe.getDeltaMovement();
+                othersTrace.append('[').append(oe.getId()).append(',').append(d(op.x)).append(',').append(d(op.y)).append(',').append(d(op.z))
+                        .append(',').append(d(ov.x)).append(',').append(d(ov.y)).append(',').append(d(ov.z)).append(',').append(oe.isRemoved() ? 1 : 0).append(']');
+            }
+            othersTrace.append(']');
         }
         // wp28 creaking: the blocks around the hearts as the scenario left them (resin), and
         // the hearts' positions.
@@ -807,6 +857,21 @@ public class MobVectors {
         }
         if (s.spawnMonsters) {
             level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawn_monsters false");
+        }
+        if (!s.spawnerBlocksWork) level.getServer().getCommands().performPrefixedCommand(level.getServer().createCommandSourceStack(), "gamerule minecraft:spawner_blocks_work true");
+        // wp44 spawners: where each spawner stood at the end (its block entity saved).
+        String levelRandomEnd = s.checkLevelRandom ? Long.toString(((java.util.concurrent.atomic.AtomicLong) get(level.getRandom(), "seed")).get()) : "null";
+        {
+            String text = spawnersJson.toString();
+            for (BlockPos sp : s.spawners.keySet()) {
+                if (level.getBlockEntity(sp) instanceof net.minecraft.world.level.block.entity.SpawnerBlockEntity be) {
+                    String key = String.format(Locale.ROOT, "{\"pos\":[%d,%d,%d],", sp.getX(), sp.getY(), sp.getZ());
+                    int at = text.indexOf(key);
+                    int endAt = text.indexOf("\"end\":null", at);
+                    text = text.substring(0, endAt) + "\"end\":" + tagJson(be.saveCustomOnly(level.registryAccess())) + text.substring(endAt + "\"end\":null".length());
+                }
+            }
+            spawnersJson = new StringBuilder(text);
         }
         // Flyers may end outside the cleanup box.
         for (Entity e : tracked) e.discard();
@@ -828,8 +893,8 @@ public class MobVectors {
                         s.playerHead == null ? "null" : "\"" + s.playerHead + "\"", java.util.Arrays.toString(net.minecraft.core.UUIDUtil.uuidToIntArray(player.getUUID())), player.tickCount, tickStamp);
         return String.format(Locale.ROOT,
                 "{\"name\":\"%s\",\"diverges\":%b,\"pin_passengers\":true,\"pin_yaw\":%b,\"compare_ticks\":%d,\"level_seed\":%d,\"ticks\":%d,\"game_time\":%d,\"day_time\":%d,\"sky_darken\":%d,\"actions\":%s,\"blocks\":[%s],\"mobs\":[%s],"
-                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"trace\":[%s]}",
-                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, heartsJson, creakingActive, endBlocks, heartTrace, nextId, s.checkLevelRandom ? Long.toString(((java.util.concurrent.atomic.AtomicLong) get(level.getRandom(), "seed")).get()) : "null", trace);
+                        + "\"player\":%s,\"hurts\":[%s],\"hits\":[%s],\"spawned\":[%s],\"others\":[%s],\"others_trace\":[%s],\"hearts\":[%s],\"creaking_active\":%b,\"end_blocks\":[%s],\"heart_trace\":[%s],\"next_id\":%d,\"level_random\":%s,\"spawners\":[%s],\"lights\":[%s],\"spawner_blocks_work\":%b,\"trace\":[%s]}",
+                s.name, s.diverges, s.pinYaw, s.compareTicks, s.levelSeed, s.ticks, startTime, s.dayTime, skyDarken, actionsJson(s.actions), blocks, specs, playerJson, hurts, hits, spawned, others, othersTrace, heartsJson, creakingActive, endBlocks, heartTrace, nextId, levelRandomEnd, spawnersJson, lightsJson, s.spawnerBlocksWork, trace);
     }
 
     /// What appears during a scenario: recorded (`spawned`), and a mob among it gets the pinned random,
@@ -1702,13 +1767,385 @@ public class MobVectors {
         scenariosSpears(out);
         // -- wp36: kills (zombies and villagers)
         scenariosWp36(out);
+        scenariosPush(out);
+        scenariosAvoid(out);
+        // -- wp44: mob spawner blocks
+        scenariosSpawners(out);
 
         return out;
+    }
+
+    // ---------------------------------------------------------- wp44: mob spawner blocks
+    /// A closed room (interior x, z in [-half, half], y from BY up `height` blocks) of cobblestone around the origin, on the
+    /// stone floor of the arena: dark inside (no sky light, no block light).
+    static void room(Scenario s, int half, int height) {
+        BlockState wall = parse("minecraft:cobblestone");
+        for (int x = -half - 1; x <= half + 1; x++)
+            for (int z = -half - 1; z <= half + 1; z++) {
+                boolean edge = Math.abs(x) == half + 1 || Math.abs(z) == half + 1;
+                s.blocks.put(new BlockPos(x, BY + height, z), wall);
+                if (edge) for (int y = BY; y < BY + height; y++) s.blocks.put(new BlockPos(x, y, z), wall);
+            }
+    }
+
+    /// A spawner scenario: the spawner block at the origin (on the floor), its block entity's NBT, a creative player in the
+    /// room, the level random compared at the end (what the spawner drew).
+    static Scenario spawnerScenario(String name, String nbt, int half, int ticks, long seed) {
+        Scenario s = new Scenario(name);
+        floor(s, 24, "minecraft:stone");
+        if (half > 0) room(s, half, 4);
+        block(s, 0, BY, 0, "minecraft:spawner");
+        s.spawners.put(new BlockPos(0, BY, 0), nbt);
+        s.player = new double[] {4.5, BY, 0.5};
+        s.playerCreative = true;
+        s.playerYaw = 90f;
+        s.dayTime = 18000;
+        s.levelSeed = seed;
+        s.checkLevelRandom = true;
+        s.ticks = ticks;
+        return s;
+    }
+
+    static String spawnData(String entity) {
+        return "SpawnData:{entity:" + entity + "}";
+    }
+
+    /// Cave spiders (a spider with 12 health, a poisonous bite and no `finalizeSpawn`): idle, chasing, climbing a wall.
+    static void scenariosCaveSpiders(List<Scenario> out) {
+        for (int seed = 1; seed <= 2; seed++) {
+            Scenario s = new Scenario("cavespider_idle_" + seed);
+            floor(s, 16, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:cave_spider", 0.5, BY, 0.5, 45f * seed, 9100L * seed + 3));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.playerCreative = true;
+            s.levelSeed = seed;
+            s.dayTime = 18000;
+            s.ticks = 300;
+            out.add(s);
+        }
+        for (int dist : new int[] {3, 8}) {
+            Scenario s = new Scenario("cavespider_chase_" + dist);
+            floor(s, 20, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:cave_spider", 0.5, BY, 0.5, 0f, 9150L + dist));
+            s.player = new double[] {0.5 + dist, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 160;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("cavespider_wall");
+            floor(s, 20, "minecraft:stone");
+            for (int z = -5; z <= 5; z++)
+                for (int y = BY; y <= BY + 2; y++) block(s, 3, y, z, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:cave_spider", 0.5, BY, 0.5, 0f, 9199L));
+            s.player = new double[] {8.5, BY, 0.5};
+            s.dayTime = 18000;
+            s.ticks = 200;
+            out.add(s);
+        }
+    }
+
+    static void scenariosSpawners(List<Scenario> out) {
+        scenariosCaveSpiders(out);
+        // The mobs of the spawners vanilla places (dungeons: zombie, skeleton, spider; mineshafts: cave spider; strongholds:
+        // silverfish; fortresses: blaze), `finalizeSpawn`ed (the entity tag is only its id).
+        String[] types = {"zombie", "skeleton", "spider", "cave_spider", "silverfish", "blaze"};
+        for (String t : types) {
+            for (int k = 1; k <= 2; k++) {
+                Scenario s = spawnerScenario("spawner_" + t + "_" + k,
+                        "{" + spawnData("{id:\"minecraft:" + t + "\"}") + ",SpawnPotentials:[],Delay:" + (k == 1 ? 5 : 20) + "s,MinSpawnDelay:20s,MaxSpawnDelay:60s,SpawnCount:3s,MaxNearbyEntities:5s}",
+                        6, 260, 4400L + k * 17 + t.length());
+                out.add(s);
+            }
+        }
+        // Slimes and magma cubes spawn into a box four times their size.
+        for (String t : new String[] {"slime", "magma_cube"}) {
+            Scenario s = spawnerScenario("spawner_" + t, "{" + spawnData("{id:\"minecraft:" + t + "\"}") + ",SpawnPotentials:[],Delay:5,MinSpawnDelay:20,MaxSpawnDelay:50,SpawnCount:2,MaxNearbyEntities:4}", 8, 200, 4500L + t.length());
+            out.add(s);
+        }
+        // `SpawnPotentials`: weights (3:1:2), the first spawn data chosen at the first spawn or at a delay.
+        String potentials = "SpawnPotentials:[{data:{entity:{id:\"minecraft:zombie\"}},weight:3},{data:{entity:{id:\"minecraft:skeleton\"}},weight:1},{data:{entity:{id:\"minecraft:spider\"}},weight:2}]";
+        for (int k = 1; k <= 3; k++) {
+            String head = k == 3 ? spawnData("{id:\"minecraft:zombie\"}") + "," : "";
+            Scenario s = spawnerScenario("spawner_potentials_" + k, "{" + head + potentials + ",Delay:" + (k == 2 ? 0 : 10) + ",MinSpawnDelay:15,MaxSpawnDelay:35,SpawnCount:2,MaxNearbyEntities:12}", 6, 300, 4600L + k);
+            out.add(s);
+        }
+        // Defaults: an empty spawner spawns nothing (no id) and keeps delaying; with an id only it is its own
+        // potential (the same object).
+        out.add(spawnerScenario("spawner_empty", "{}", 6, 120, 4650L));
+        out.add(spawnerScenario("spawner_id_only", "{" + spawnData("{id:\"minecraft:zombie\"}") + "}", 6, 400, 4651L));
+        // The delay: equal ends draw nothing, an inverted range is the minimum, -1 asks for a new delay.
+        out.add(spawnerScenario("spawner_delay_equal", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:3,MinSpawnDelay:15,MaxSpawnDelay:15,SpawnCount:1,MaxNearbyEntities:6}", 6, 160, 4660L));
+        out.add(spawnerScenario("spawner_delay_inverted", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:3,MinSpawnDelay:30,MaxSpawnDelay:10,SpawnCount:1,MaxNearbyEntities:6}", 6, 160, 4661L));
+        out.add(spawnerScenario("spawner_delay_minus_one", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:-1,MinSpawnDelay:20,MaxSpawnDelay:40,SpawnCount:1,MaxNearbyEntities:6}", 6, 160, 4662L));
+        // Entities that stay put (no AI: the tag holds more than the id, so no `finalizeSpawn`): the cap on what is nearby
+        // within the spawn range, the range itself, an explicit position.
+        out.add(spawnerScenario("spawner_cap", "{" + spawnData("{id:\"minecraft:zombie\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:3}", 6, 200, 4670L));
+        out.add(spawnerScenario("spawner_range_1", "{" + spawnData("{id:\"minecraft:zombie\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:3,MaxNearbyEntities:9,SpawnRange:1}", 6, 160, 4671L));
+        out.add(spawnerScenario("spawner_range_8", "{" + spawnData("{id:\"minecraft:zombie\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:3,MaxNearbyEntities:9,SpawnRange:8}", 12, 160, 4672L));
+        out.add(spawnerScenario("spawner_range_0", "{" + spawnData("{id:\"minecraft:zombie\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:2,MaxNearbyEntities:9,SpawnRange:0}", 6, 100, 4673L));
+        out.add(spawnerScenario("spawner_pos_given", "{" + spawnData("{id:\"minecraft:zombie\",NoAI:1b,Pos:[3.5d," + BY + "d,-2.5d]}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:2,MaxNearbyEntities:9}", 6, 120, 4674L));
+        out.add(spawnerScenario("spawner_baby", "{" + spawnData("{id:\"minecraft:zombie\",IsBaby:1b,NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:2,MaxNearbyEntities:9}", 6, 100, 4675L));
+        // The player: far (the spawner does nothing, draws nothing), arriving (it starts then), turning to a spectator (it stops).
+        {
+            Scenario s = spawnerScenario("spawner_player_far", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:2,MaxNearbyEntities:9,RequiredPlayerRange:6}", 6, 120, 4680L);
+            s.player = new double[] {5.5, BY, 5.5};
+            out.add(s);
+        }
+        {
+            Scenario s = spawnerScenario("spawner_player_arrives", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:2,MaxNearbyEntities:9,RequiredPlayerRange:5}", 6, 200, 4681L);
+            s.player = new double[] {6.0, BY, 6.0};
+            s.actions.add(move(60, 3.5, BY, 0.5));
+            out.add(s);
+        }
+        {
+            Scenario s = spawnerScenario("spawner_spectator", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:2,MaxNearbyEntities:9}", 6, 200, 4682L);
+            Action g = new Action(70, "gamemode");
+            g.what = "spectator";
+            s.actions.add(g);
+            Action g2 = new Action(140, "gamemode");
+            g2.what = "creative";
+            s.actions.add(g2);
+            out.add(s);
+        }
+        // The `spawner_blocks_work` rule off.
+        {
+            Scenario s = spawnerScenario("spawner_rule_off", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:2,MaxNearbyEntities:9}", 6, 120, 4683L);
+            s.spawnerBlocksWork = false;
+            out.add(s);
+        }
+        // Light: monsters need the dark (`isDarkEnoughToSpawn`: draws, sky light, block light, the night's brightness).
+        {
+            Scenario s = spawnerScenario("spawner_open_day", "{" + spawnData("{id:\"minecraft:zombie\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:12}", 0, 200, 4690L);
+            s.dayTime = 6000;
+            out.add(s);
+        }
+        {
+            Scenario s = spawnerScenario("spawner_open_night", "{" + spawnData("{id:\"minecraft:zombie\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:12}", 0, 200, 4691L);
+            out.add(s);
+        }
+        {
+            Scenario s = spawnerScenario("spawner_torches", "{" + spawnData("{id:\"minecraft:skeleton\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:12}", 6, 200, 4692L);
+            block(s, 2, BY, 2, "minecraft:torch");
+            block(s, -3, BY, 1, "minecraft:torch");
+            out.add(s);
+        }
+        // Light blocks of level 1 at places in the room: monsters do not spawn on exactly those (block light above 0).
+        {
+            Scenario s = spawnerScenario("spawner_light_blocks", "{" + spawnData("{id:\"minecraft:skeleton\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:20}", 6, 260, 4696L);
+            int[][] lights = {{1, BY, 1}, {-1, BY, 2}, {2, BY + 1, -1}, {0, BY + 1, 1}, {3, BY, 0}, {-2, BY, -2}, {1, BY + 1, 0}, {0, BY, 2}, {-1, BY + 1, -1}, {2, BY, 2}};
+            for (int[] l : lights) block(s, l[0], l[1], l[2], "minecraft:light[level=1]");
+            out.add(s);
+        }
+        // Types whose rules look at no light still do not stand where it is brighter than 12 (`PathfinderMob.checkSpawnRules`):
+        // light blocks of level 13 to 15 in the room, and level 12 (fine) among them.
+        for (String t : new String[] {"blaze", "silverfish"}) {
+            Scenario s = spawnerScenario("spawner_" + t + "_lit", "{" + spawnData("{id:\"minecraft:" + t + "\",NoAI:1b}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:30}", 6, 300, 4697L + t.length());
+            int[][] lights = {{1, BY, 1, 13}, {-1, BY, 2, 15}, {2, BY + 1, -1, 14}, {0, BY + 1, 1, 12}, {3, BY, 0, 13}, {-2, BY, -2, 15}, {1, BY + 1, 0, 12}, {0, BY, 2, 14}, {-1, BY + 1, -1, 13}, {2, BY, 2, 12}, {-3, BY + 1, 1, 13}, {1, BY, -2, 14}};
+            for (int[] l : lights) block(s, l[0], l[1], l[2], "minecraft:light[level=" + l[3] + "]");
+            out.add(s);
+        }
+        // Custom spawn rules (light ranges in place of the type's rules; no draws).
+        {
+            Scenario s = spawnerScenario("spawner_custom_rules", "{SpawnData:{entity:{id:\"minecraft:zombie\",NoAI:1b},custom_spawn_rules:{block_light_limit:[0,7],sky_light_limit:[0,7]}},SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:12}", 0, 200, 4693L);
+            out.add(s);
+        }
+        {
+            Scenario s = spawnerScenario("spawner_custom_rules_sky", "{SpawnData:{entity:{id:\"minecraft:zombie\",NoAI:1b},custom_spawn_rules:{block_light_limit:{min_inclusive:0,max_inclusive:15},sky_light_limit:[0,2]}},SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:12}", 0, 100, 4694L);
+            out.add(s);
+        }
+        // Blocked: stone all around, no room for any box.
+        {
+            Scenario s = spawnerScenario("spawner_boxed", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:10,MaxSpawnDelay:20,SpawnCount:4,MaxNearbyEntities:12}", 0, 120, 4695L);
+            for (int x = -5; x <= 5; x++)
+                for (int z = -5; z <= 5; z++)
+                    for (int y = BY; y <= BY + 3; y++)
+                        if (x != 0 || y != BY || z != 0) block(s, x, y, z, "minecraft:stone");
+            s.player = new double[] {8.5, BY, 0.5};
+            out.add(s);
+        }
+        // A spawn egg on the spawner (`SpawnEggItem.useOn`: the next spawn data's entity), in the middle of a run, before
+        // anything was chosen, and on potentials (the entry the egg changed stays changed).
+        {
+            Scenario s = spawnerScenario("spawner_egg_retarget", "{" + spawnData("{id:\"minecraft:zombie\"}") + ",SpawnPotentials:[],Delay:2,MinSpawnDelay:20,MaxSpawnDelay:40,SpawnCount:2,MaxNearbyEntities:6}", 6, 260, 4700L);
+            Action a = new Action(60, "egg");
+            a.what = "minecraft:skeleton_spawn_egg";
+            a.x = 0;
+            a.y = BY;
+            a.z = 0;
+            s.actions.add(a);
+            out.add(s);
+        }
+        {
+            Scenario s = spawnerScenario("spawner_egg_fresh", "{}", 6, 200, 4701L);
+            Action a = new Action(0, "egg");
+            a.what = "minecraft:spider_spawn_egg";
+            a.x = 0;
+            a.y = BY;
+            a.z = 0;
+            s.actions.add(a);
+            out.add(s);
+        }
+        {
+            Scenario s = spawnerScenario("spawner_egg_potentials", "{" + potentials + ",Delay:5,MinSpawnDelay:15,MaxSpawnDelay:30,SpawnCount:1,MaxNearbyEntities:12}", 6, 300, 4702L);
+            Action a = new Action(2, "egg");
+            a.what = "minecraft:creeper_spawn_egg";
+            a.x = 0;
+            a.y = BY;
+            a.z = 0;
+            s.actions.add(a);
+            out.add(s);
+        }
     }
 
     // ---------------------------------------------------------- wp36
     /// A zombie of any kind that kills a villager turns it into a zombie villager half the time on normal
     /// (`Zombie.killedEntity`: its own random decides); the villager here has no AI and one heart.
+    /// wp41: mobs touching boats and minecarts (`LivingEntity.pushEntities` with `AbstractBoat.push`
+    /// and `AbstractMinecart.push`, and the boat's own `pushableBy` pass): both sides' motion is
+    /// traced (`others_trace`).
+    static void scenariosPush(List<Scenario> out) {
+        String[] vehicles = {"minecraft:oak_boat", "minecraft:bamboo_raft", "minecraft:minecart", "minecraft:chest_minecart"};
+        String[] mobs = {"minecraft:pig", "minecraft:zombie", "minecraft:cow"};
+        int n = 0;
+        for (String vehicle : vehicles) {
+            for (String mob : mobs) {
+                for (double dx : new double[] {0.4, -0.7, 0.05}) {
+                    Scenario s = new Scenario("push_" + vehicle.substring(10) + "_" + mob.substring(10) + "_" + (dx > 0 ? "r" : "l") + Math.round(Math.abs(dx) * 100));
+                    floor(s, 20, "minecraft:stone");
+                    MobSpec m = new MobSpec(mob, 0.5 + dx, BY, 0.5 + (dx == 0.05 ? 0.3 : 0.0), 90f, 41000L + n);
+                    m.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+                    s.mobs.add(m);
+                    s.others.add(new MobSpec(vehicle, 0.5, BY, 0.5, 0f, 41500L + n));
+                    s.levelSeed = 700 + n;
+                    s.ticks = 40;
+                    out.add(s);
+                    n++;
+                }
+            }
+        }
+        // A boat takes a push only from what starts no higher than its bottom (`AbstractBoat.push`):
+        // a floating pig above it, one level with it and one below its bottom; a cart takes any.
+        for (String vehicle : new String[] {"minecraft:oak_boat", "minecraft:minecart"}) {
+            for (double dy : new double[] {0.4, 0.0, -0.3}) {
+                Scenario s = new Scenario("push_" + vehicle.substring(10) + "_level" + Math.round(dy * 10));
+                floor(s, 20, "minecraft:stone");
+                MobSpec m = new MobSpec("minecraft:pig", 0.9, BY + dy, 0.5, 90f, 41300L + n);
+                m.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b,NoGravity:1b}";
+                s.mobs.add(m);
+                s.others.add(new MobSpec(vehicle, 0.5, BY, 0.5, 0f, 41700L + n));
+                s.levelSeed = 780 + n;
+                s.ticks = 40;
+                out.add(s);
+                n++;
+            }
+        }
+        // Two boats and a mob between them, a boat and a cart, two boats.
+        {
+            Scenario s = new Scenario("push_two_boats_pig");
+            floor(s, 20, "minecraft:stone");
+            MobSpec a = new MobSpec("minecraft:pig", 0.5, BY, 0.5, 90f, 41110L);
+            a.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+            s.mobs.add(a);
+            s.others.add(new MobSpec("minecraft:oak_boat", -0.4, BY, 0.5, 0f, 41610L));
+            s.others.add(new MobSpec("minecraft:birch_boat", 1.3, BY, 0.6, 0f, 41611L));
+            s.levelSeed = 791;
+            s.ticks = 40;
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("push_boat_cart");
+            floor(s, 20, "minecraft:stone");
+            s.others.add(new MobSpec("minecraft:oak_boat", 0.5, BY, 0.5, 0f, 41620L));
+            s.others.add(new MobSpec("minecraft:minecart", 1.4, BY, 0.5, 0f, 41621L));
+            s.levelSeed = 792;
+            s.ticks = 40;
+            s.mobs.add(idle(0.5, BY + 8, 8.5));
+            out.add(s);
+        }
+        {
+            Scenario s = new Scenario("push_boat_boat");
+            floor(s, 20, "minecraft:stone");
+            s.others.add(new MobSpec("minecraft:oak_boat", 0.5, BY, 0.5, 0f, 41630L));
+            s.others.add(new MobSpec("minecraft:oak_boat", 1.4, BY, 0.7, 0f, 41631L));
+            s.levelSeed = 793;
+            s.ticks = 40;
+            s.mobs.add(idle(0.5, BY + 8, 8.5));
+            out.add(s);
+        }
+    }
+
+    /// wp41: `AvoidEntityGoal` of the monsters that run from other mobs: creepers from cats and
+    /// ocelots, skeletons from wolves, spiders from (unscared) armadillos, illagers from creakings.
+    static void scenariosAvoid(List<Scenario> out) {
+        String[][] pairs = {
+            {"creeper", "cat"}, {"creeper", "ocelot"}, {"skeleton", "wolf"}, {"spider", "armadillo"},
+            {"pillager", "creaking"}, {"vindicator", "creaking"}, {"evoker", "creaking"}, {"illusioner", "creaking"},
+        };
+        int n = 0;
+        for (String[] pair : pairs) {
+            for (double d : new double[] {2.5, 4.5, 7.0}) {
+                Scenario s = new Scenario("avoid_" + pair[0] + "_" + pair[1] + "_" + (int) d);
+                floor(s, 24, "minecraft:stone");
+                MobSpec a = new MobSpec("minecraft:" + pair[0], 0.5, BY, 0.5, 30f * n, 42000L + n);
+                a.nbt = "{PersistenceRequired:1b,Silent:1b}";
+                if (pair[0].equals("skeleton")) a.mainHand = "minecraft:bow";
+                MobSpec b = new MobSpec("minecraft:" + pair[1], 0.5 + d, BY, 0.5, 90f, 42100L + n);
+                b.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+                s.mobs.add(a);
+                s.mobs.add(b);
+                s.player = new double[] {-20.5, BY, 0.5};
+                s.playerCreative = true;
+                s.dayTime = 18000;
+                s.levelSeed = 800 + n;
+                s.ticks = 100;
+                out.add(s);
+                n++;
+            }
+        }
+        // Spiders (at night) hunt iron golems too (`SpiderTargetGoal<IronGolem>`).
+        for (double d : new double[] {4.0, 8.0}) {
+            Scenario s = new Scenario("avoid_spider_golem_target_" + (int) d);
+            floor(s, 24, "minecraft:stone");
+            MobSpec a = new MobSpec("minecraft:spider", 0.5, BY, 0.5, 0f, 42300L + (int) d);
+            a.nbt = "{PersistenceRequired:1b,Silent:1b}";
+            MobSpec b = new MobSpec("minecraft:iron_golem", 0.5 + d, BY, 0.5, 90f, 42310L + (int) d);
+            b.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b}";
+            s.mobs.add(a);
+            s.mobs.add(b);
+            s.player = new double[] {-20.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 898 + (int) d;
+            s.ticks = 100;
+            out.add(s);
+        }
+        // A scared armadillo is no reason to run.
+        {
+            Scenario s = new Scenario("avoid_spider_armadillo_scared");
+            floor(s, 24, "minecraft:stone");
+            MobSpec a = new MobSpec("minecraft:spider", 0.5, BY, 0.5, 0f, 42200L);
+            a.nbt = "{PersistenceRequired:1b,Silent:1b}";
+            MobSpec b = new MobSpec("minecraft:armadillo", 3.0, BY, 0.5, 90f, 42201L);
+            b.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b,state:\"scared\"}";
+            s.mobs.add(a);
+            s.mobs.add(b);
+            s.player = new double[] {-20.5, BY, 0.5};
+            s.playerCreative = true;
+            s.dayTime = 18000;
+            s.levelSeed = 899;
+            s.ticks = 100;
+            out.add(s);
+        }
+    }
+
+    /// A pig far from everything, to give a scenario a mob to trace.
+    static MobSpec idle(double x, double y, double z) {
+        MobSpec m = new MobSpec("minecraft:pig", x, y, z, 0f, 41999L);
+        m.nbt = "{NoAI:1b,PersistenceRequired:1b,Silent:1b,NoGravity:1b}";
+        return m;
+    }
+
     static void scenariosWp36(List<Scenario> out) {
         String[] killers = {"zombie", "husk", "drowned"};
         for (String killer : killers) {
@@ -7093,5 +7530,26 @@ public class MobVectors {
             s.ticks = 300;
             out.add(s);
         }
+    }
+
+    /// $KILN_HARNESS_PORT, else the first free port of 25581-25583 (wp44's; waits while all are busy).
+    static String harnessPort() {
+        String env = System.getenv("KILN_HARNESS_PORT");
+        if (env != null) return env;
+        for (int i = 0; i < 900; i++) {
+            for (int p = 25581; p <= 25583; p++) {
+                try (var s = new java.net.ServerSocket(p)) {
+                    return Integer.toString(p);
+                } catch (java.io.IOException e) {
+                    // busy
+                }
+            }
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        throw new IllegalStateException("no free harness port");
     }
 }

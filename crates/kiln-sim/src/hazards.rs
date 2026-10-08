@@ -48,7 +48,7 @@ fn fluid_at(block: BlockAt, pos: BlockPos) -> FluidState {
 }
 
 /// `FluidState.getHeight`: 1 under the same fluid, else `amount / 9`.
-fn fluid_height(block: BlockAt, pos: BlockPos, f: &FluidState) -> f32 {
+pub(crate) fn fluid_height(block: BlockAt, pos: BlockPos, f: &FluidState) -> f32 {
     if f.kind.is_same(fluid_at(block, pos.above()).kind) { 1.0 } else { f.own_height() }
 }
 
@@ -137,7 +137,15 @@ impl Player {
     /// void, the on-fire flag, the air supply and the effects. `commonTick` ages the player.
     pub(crate) fn base_tick(&mut self, block: BlockAt, min_y: i32, border: &crate::world_state::BorderBox, ctx: &mut DamageCtx) {
         self.tick_count += 1;
+        // `Entity.baseTick`: powder snow sets the flag again while the player is in it.
+        self.is_in_powder_snow = false;
         let fluids = self.fluids(block);
+        // `Entity.baseTick`: `updateFluidInteraction` (water ends a fall).
+        if fluids.in_water {
+            self.reset_fall_distance();
+        }
+        self.was_touching_water = fluids.in_water;
+        self.was_eye_in_water = fluids.eye_in_water;
         if self.fire_ticks > 0 {
             if self.fire_ticks % 20 == 0 && !fluids.in_lava {
                 self.hurt(1.0, &Cause::Other("minecraft:on_fire").into(), ctx);
@@ -149,11 +157,16 @@ impl Player {
         }
         self.check_void(min_y, ctx);
         self.sync_on_fire_flag();
-        // `LivingEntity.baseTick`: a player outside the world border past its buffer.
+        // `LivingEntity.baseTick`: suffocation in a wall, else a player outside the world
+        // border past its buffer.
         if self.alive() {
-            let (w, _, _) = self.dimensions();
-            if let Some(amount) = border.damage(self.pos, w as f64 / 2.0) {
-                self.hurt(amount, &Cause::Other("minecraft:outside_border").into(), ctx);
+            if self.is_in_wall(block) {
+                self.hurt(1.0, &Cause::Other("minecraft:in_wall").into(), ctx);
+            } else {
+                let (w, _, _) = self.dimensions();
+                if let Some(amount) = border.damage(self.pos, w as f64 / 2.0) {
+                    self.hurt(amount, &Cause::Other("minecraft:outside_border").into(), ctx);
+                }
             }
         }
         if self.alive() {
@@ -239,26 +252,32 @@ impl Player {
     /// step order, then rain (`isInRain`) puts the fire out; a player that is not burning
     /// afterwards rests at -20 fire ticks.
     pub(crate) fn block_effects(&mut self, block: BlockAt, dim: crate::DimId, in_rain: bool, ctx: &mut DamageCtx) {
-        let to = self.pos;
-        let mut from = std::mem::replace(&mut self.block_effects_from, to);
-        let d2 = (0..3).map(|i| (to[i] - from[i]).powi(2)).sum::<f64>();
-        // Teleports and respawns are not movement through blocks.
-        if d2 > 100.0 {
-            from = to;
+        // The movements of the tick (`applyEffectsFromBlocks`): the packet's and the server
+        // body's; none recorded: the box where it stands.
+        let mut movements = std::mem::take(&mut self.movements);
+        let here = Vec3::new(self.pos[0], self.pos[1], self.pos[2]);
+        match movements.last().copied() {
+            None => movements.push(crate::phantom::Mv { from: here, to: here, original: None }),
+            Some(last) if last.to.distance_to_sqr(here) > 9.999999439624929e-11 => {
+                movements.push(crate::phantom::Mv { from: last.to, to: here, original: None });
+            }
+            _ => {}
         }
         if self.game_mode == 3 {
             return;
         }
         if self.on_ground {
-            // `getOnPosLegacy`: 0.2 below the feet.
-            let below = BlockPos::containing(self.pos[0], self.pos[1] - 0.2f32 as f64, self.pos[2]);
+            // `getOnPosLegacy`: 0.2 below the feet, through the supporting block.
+            let at = |p: BlockPos| Some(block(p));
+            let below = self.on_pos(&at, 0.2);
             if kind(block(below)) == Kind::MagmaBlock && !self.sneaking {
                 self.hurt(1.0, &Cause::Other("minecraft:hot_floor").into(), ctx);
             }
         }
         let was_on_fire = self.fire_ticks > 0;
+        let was_freezing = self.ticks_frozen > 0;
         let fire_before = self.fire_ticks;
-        let effects = self.inside_blocks(block, dim, Vec3::new(from[0], from[1], from[2]), Vec3::new(to[0], to[1], to[2]), ctx);
+        let effects = self.inside_blocks(block, dim, &movements, ctx);
         for e in effects {
             if !self.alive() {
                 break;
@@ -271,12 +290,20 @@ impl Player {
                     self.hurt(damage, &Cause::Other("minecraft:in_fire").into(), ctx);
                 }
                 Inside::LavaHurt => self.lava_hurt(ctx),
+                Inside::Freeze => self.freeze_effect(),
+                Inside::ClearFreeze => self.ticks_frozen = 0,
+                Inside::MeltPowderSnow(pos) => {
+                    // A burning player melts the powder snow it stands in.
+                    if self.fire_ticks > 0 {
+                        self.block_edits.push(crate::fall::BlockEdit::Destroy(pos));
+                    }
+                }
             }
         }
         if in_rain {
             self.clear_fire();
         }
-        if was_on_fire && self.fire_ticks <= 0 {
+        if (was_on_fire && self.fire_ticks <= 0) || (was_freezing && self.ticks_frozen <= 0) {
             // `playEntityOnFireExtinguishedSound`.
             let pitch = 1.6 + (self.entity_rng.next_float() - self.entity_rng.next_float()) * 0.4;
             self.queue_sound("minecraft:entity.generic.extinguish_fire", 0.7, pitch);
@@ -288,13 +315,31 @@ impl Player {
 
     /// `checkInsideBlocks` for one movement: the collector's effects in apply order. Campfires
     /// hurt at once, as their `entityInside` does.
-    fn inside_blocks(&mut self, block: BlockAt, dim: crate::DimId, from: Vec3, to: Vec3, ctx: &mut DamageCtx) -> Vec<Inside> {
+    fn inside_blocks(&mut self, block: BlockAt, dim: crate::DimId, movements: &[crate::phantom::Mv], ctx: &mut DamageCtx) -> Vec<Inside> {
+        use kiln_entity::math::Axis;
         let mut collector = Collector::default();
         let mut visited = Vec::new();
-        let max_steps = 16;
-        let used = self.inside_segment(block, dim, from, to, &mut visited, max_steps, &mut collector, ctx);
-        if max_steps - used <= 0 {
-            self.inside_segment(block, dim, to, to, &mut visited, 1, &mut collector, ctx);
+        for m in movements {
+            let mut from = m.from;
+            let d = m.to - m.from;
+            let mut max_steps = 16;
+            match m.original {
+                // A move that follows its request axis by axis (`Entity.move`'s).
+                Some(original) if d.length_sqr() > 0.0 => {
+                    for axis in Axis::step_order(original) {
+                        let v = d.get(axis);
+                        if v != 0.0 {
+                            let to = from.relative(axis.positive(), v);
+                            max_steps -= self.inside_segment(block, dim, from, to, &mut visited, max_steps, &mut collector, ctx);
+                            from = to;
+                        }
+                    }
+                }
+                _ => max_steps -= self.inside_segment(block, dim, m.from, m.to, &mut visited, 16, &mut collector, ctx),
+            }
+            if max_steps <= 0 {
+                self.inside_segment(block, dim, m.to, m.to, &mut visited, 1, &mut collector, ctx);
+            }
         }
         collector.finish()
     }
@@ -314,6 +359,7 @@ impl Player {
         let bb = self.bounding_box_at([to.x, to.y, to.z]).deflate_all(9.999999747378752e-6);
         let from_box = self.bounding_box_at([from.x, from.y, from.z]);
         let travel = to - from;
+        let too_far = from.distance_to_sqr(to) > 0.9999900000002526 * 0.9999900000002526;
         let mut blocks = Vec::new();
         kiln_entity::inside::for_each_block_intersected_between(from, to, &bb, |pos, step| {
             if step >= max_steps {
@@ -332,7 +378,7 @@ impl Player {
             if physics::is_air(state) {
                 continue;
             }
-            let collided = match physics::inside_shape(state) {
+            let collided = match self.inside_shape(state) {
                 None => true,
                 Some(shape) => {
                     let boxes: Vec<Aabb> =
@@ -359,7 +405,8 @@ impl Player {
             visited.push(pos.as_long());
             if collided {
                 c.advance(step);
-                self.entity_inside(state, c, ctx);
+                let intersects = too_far || bb.intersects_block(pos);
+                self.entity_inside(state, pos, intersects, block, c, ctx);
                 self.portal_inside(state, [pos.x, pos.y, pos.z], dim);
             }
             if fluid_collided {
@@ -378,8 +425,22 @@ impl Player {
         counter + 1
     }
 
-    /// `BlockState.entityInside` for the blocks that affect players' fire.
-    fn entity_inside(&mut self, state: u16, c: &mut Collector, ctx: &mut DamageCtx) {
+    /// `getEntityInsideCollisionShape`; `None` for the full block. Powder snow's is what the
+    /// entity would collide with (the full block for one that walks on it).
+    fn inside_shape(&self, state: u16) -> Option<&'static kiln_entity::shape::Shape> {
+        if kind(state) == Kind::PowderSnow {
+            let feet = BlockPos::containing(self.pos[0], self.pos[1], self.pos[2]);
+            let (shape, _) = kiln_entity::collision::collision_shape(state, feet, &self.collision_context());
+            return match shape {
+                std::borrow::Cow::Borrowed(s) if !s.is_empty() => Some(s),
+                _ => None,
+            };
+        }
+        physics::inside_shape(state)
+    }
+
+    /// `BlockState.entityInside` for the blocks that affect players.
+    fn entity_inside(&mut self, state: u16, pos: BlockPos, intersects: bool, block: BlockAt, c: &mut Collector, ctx: &mut DamageCtx) {
         match kind(state) {
             Kind::Fire | Kind::SoulFire => {
                 let damage = if kind(state) == Kind::SoulFire { 2.0 } else { 1.0 };
@@ -400,15 +461,59 @@ impl Player {
                 c.run_after(Type::LavaIgnite, Inside::LavaHurt);
             }
             Kind::PowderSnow => {
+                // `makeStuckInBlock(0.9, 1.5, 0.9)` (the slowdown is the client's; the fall ends).
+                self.reset_fall_distance();
+                let known = self.known_movement;
+                if (known[0] != 0.0 || known[2] != 0.0) && self.level_rng.next_bool() {
+                    // (The snowflake particles.)
+                }
+                c.run_before(Type::Extinguish, Inside::MeltPowderSnow(pos));
                 c.apply(Type::Freeze);
                 c.apply(Type::Extinguish);
+            }
+            Kind::Cobweb => self.reset_fall_distance(),
+            Kind::SweetBerryBush => {
+                // `makeStuckInBlock(0.8, 0.75, 0.8)`, then a grown bush hurts a player that moves.
+                self.reset_fall_distance();
+                let info = kiln_data::blocks_types::block_of(state);
+                if info.property(state, "age") != Some("0") {
+                    let m = self.known_movement;
+                    if m[0] * m[0] + m[2] * m[2] > 0.0 && (m[0].abs() >= 0.003000000026077032 || m[2].abs() >= 0.003000000026077032) {
+                        self.hurt(1.0, &Cause::Other("minecraft:sweet_berry_bush").into(), ctx);
+                    }
+                }
+            }
+            Kind::Cactus => {
+                self.hurt(1.0, &Cause::Other("minecraft:cactus").into(), ctx);
+            }
+            Kind::WitherRose => {
+                // `WitherRoseBlock.entityInside`: not on peaceful, not for who the wither spares.
+                if ctx.rules.difficulty != 0 {
+                    self.add_effect(crate::effects::Effect::new(
+                        crate::effects::effect_id("minecraft:wither").expect("wither"),
+                        40,
+                        0,
+                        false,
+                        true,
+                        true,
+                    ));
+                }
+            }
+            Kind::BubbleColumn => {
+                // `BubbleColumnBlock.entityInside`: inside the column (not above it) the fall ends.
+                if intersects {
+                    let above = block(pos.above());
+                    if !(physics::collision_shape(above).is_empty() && physics::fluid_state(above).is_empty()) {
+                        self.reset_fall_distance();
+                    }
+                }
             }
             _ => {}
         }
     }
 }
 
-/// `InsideBlockEffectType`, in apply order (freezing is not modelled for players).
+/// `InsideBlockEffectType`, in apply order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Type {
     Freeze = 0,
@@ -426,14 +531,18 @@ enum Inside {
     FireIgnite,
     LavaIgnite,
     Extinguish,
+    Freeze,
+    ClearFreeze,
     FireHurt(f32),
     LavaHurt,
+    MeltPowderSnow(BlockPos),
 }
 
 /// `InsideBlockEffectApplier.StepBasedCollector`: per step, each type once with the actions
 /// attached before and after it.
 struct Collector {
     in_step: u8,
+    before: [Vec<Inside>; 5],
     after: [Vec<Inside>; 5],
     out: Vec<Inside>,
     last_step: i32,
@@ -441,13 +550,17 @@ struct Collector {
 
 impl Default for Collector {
     fn default() -> Self {
-        Collector { in_step: 0, after: Default::default(), out: Vec::new(), last_step: -1 }
+        Collector { in_step: 0, before: Default::default(), after: Default::default(), out: Vec::new(), last_step: -1 }
     }
 }
 
 impl Collector {
     fn apply(&mut self, t: Type) {
         self.in_step |= 1 << t as u8;
+    }
+
+    fn run_before(&mut self, t: Type, a: Inside) {
+        self.before[t as usize].push(a);
     }
 
     fn run_after(&mut self, t: Type, a: Inside) {
@@ -464,13 +577,15 @@ impl Collector {
     fn flush(&mut self) {
         for t in APPLY_ORDER {
             let i = t as usize;
+            self.out.append(&mut self.before[i]);
             if self.in_step & (1 << i) != 0 {
                 self.in_step &= !(1 << i);
                 match t {
                     Type::FireIgnite => self.out.push(Inside::FireIgnite),
                     Type::LavaIgnite => self.out.push(Inside::LavaIgnite),
                     Type::Extinguish => self.out.push(Inside::Extinguish),
-                    Type::Freeze | Type::ClearFreeze => {}
+                    Type::Freeze => self.out.push(Inside::Freeze),
+                    Type::ClearFreeze => self.out.push(Inside::ClearFreeze),
                 }
             }
             self.out.append(&mut self.after[i]);

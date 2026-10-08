@@ -224,6 +224,14 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
             let found = c.nearest().into_iter().filter(|dir| dir.is_horizontal()).map(|dir| state::set_dir(d, "facing", dir.opposite())).find(|&s| support::can_survive(level, s, pos))?;
             if class == C::LadderBlock { c.waterlogged(found) } else { found }
         }
+        // `WallHangingSignBlock.getStateForPlacement`: facing across the clicked face's axis, on
+        // the first of the looked-at directions where the board can hang from a neighbour.
+        C::WallHangingSignBlock => {
+            return c.nearest().into_iter().filter(|dir| dir.is_horizontal() && dir.axis() != c.face.axis()).find_map(|dir| {
+                let s = state::set_dir(d, "facing", dir.opposite());
+                (support::can_survive(level, s, pos) && wall_hanging_sign_can_place(level, s, pos)).then(|| c.waterlogged(s))
+            });
+        }
         C::LeverBlock | C::ButtonBlock => {
             return c.nearest().into_iter().find_map(|dir| {
                 let s = if dir.axis() == Axis::Y {
@@ -288,6 +296,22 @@ fn generic<L: Level + ?Sized>(c: &Ctx<L>, d: u16) -> u16 {
 
 fn property_values(s: u16, name: &str) -> Option<&'static [&'static str]> {
     BlockId::of(s).info().properties.iter().find(|p| p.name == name).map(|p| p.values)
+}
+
+/// `WallHangingSignBlock.canPlace`: a neighbour on either side along the board holds it (a
+/// full face, or a wall hanging sign along the same axis).
+fn wall_hanging_sign_can_place<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool {
+    let facing = state::get_dir(s, "facing").unwrap_or(Direction::North);
+    let attach = |side: Direction| {
+        let other = level.block(pos.relative(side));
+        let toward = side.opposite();
+        if logic::block_class(other) == BlockClass::WallHangingSignBlock {
+            state::get_dir(other, "facing").is_some_and(|f| f.axis() == facing.axis())
+        } else {
+            crate::behaviour::sturdy(other, toward, kiln_data::block_logic::Support::Full)
+        }
+    };
+    attach(facing.clockwise()) || attach(facing.counter_clockwise())
 }
 
 /// `DoorBlock.getHinge`.

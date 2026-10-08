@@ -155,6 +155,15 @@ pub struct NameAndId {
     pub name: String,
 }
 
+/// An operator (`ServerOpListEntry`): `ops.json` lists the player with a permission level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpEntry {
+    pub user: NameAndId,
+    /// 1..=4 (`op-permission-level`, 4 for operators made with `/op`).
+    pub level: u8,
+    pub bypasses_player_limit: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserBan {
     pub user: NameAndId,
@@ -212,6 +221,8 @@ pub struct AccessLists {
     pub whitelist: JavaHashOrder<NameAndId>,
     pub bans: JavaHashOrder<UserBan>,
     pub ip_bans: JavaHashOrder<IpBan>,
+    /// `ops.json`: the operators with their permission levels (the names are in `ops` too).
+    pub op_list: JavaHashOrder<OpEntry>,
     /// `white-list`.
     pub use_whitelist: bool,
     /// `enforce-whitelist`: turning the whitelist on or changing it kicks unlisted players.
@@ -296,6 +307,13 @@ impl AccessLists {
                 self.whitelist.put(u.uuid.to_string(), u);
             }
         }
+        for o in self.read_file("ops.json") {
+            if let Some(user) = Self::user(&o) {
+                let level = o.get("level").and_then(Value::as_i64).map_or(4, |l| l.clamp(0, 4) as u8);
+                let bypasses_player_limit = o.get("bypassesPlayerLimit").and_then(Value::as_bool).unwrap_or(false);
+                self.op_list.put(user.uuid.to_string(), OpEntry { user, level, bypasses_player_limit });
+            }
+        }
         for o in self.read_file("banned-players.json") {
             if let Some(u) = Self::user(&o) {
                 self.bans.put(u.uuid.to_string(), UserBan { user: u, ban: BanInfo::read(&o) });
@@ -320,6 +338,23 @@ impl AccessLists {
             })
             .collect();
         self.write_file("whitelist.json", entries);
+    }
+
+    /// Writes `ops.json` (vanilla's `ServerOpList`: uuid, name, level, bypassesPlayerLimit).
+    pub fn save_ops(&self) {
+        let entries = self
+            .op_list
+            .values()
+            .into_iter()
+            .map(|e| {
+                let mut o = Map::new();
+                Self::write_user(&e.user, &mut o);
+                o.insert("level".into(), e.level.into());
+                o.insert("bypassesPlayerLimit".into(), e.bypasses_player_limit.into());
+                o
+            })
+            .collect();
+        self.write_file("ops.json", entries);
     }
 
     pub fn save_bans(&self) {
@@ -424,6 +459,28 @@ mod tests {
             m.put(format!("k{i}"), "x");
         }
         assert_eq!(m.capacity, 32);
+    }
+
+    #[test]
+    fn ops_json_round_trip() {
+        let dir = std::env::temp_dir().join(format!("kiln-access-ops-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("ops.json"),
+            r#"[{"uuid":"00000000-0000-0000-0000-000000000007","name":"Alex","level":2,"bypassesPlayerLimit":true}]"#,
+        )
+        .unwrap();
+        let mut a = AccessLists::new(Some(dir.clone()));
+        let alex = a.op_list.get("00000000-0000-0000-0000-000000000007").unwrap().clone();
+        assert_eq!((alex.level, alex.bypasses_player_limit), (2, true));
+        let steve = NameAndId { uuid: Uuid::from_u128(8), name: "Steve".into() };
+        a.op_list.put(steve.uuid.to_string(), OpEntry { user: steve, level: 4, bypasses_player_limit: false });
+        a.save_ops();
+        let back = AccessLists::new(Some(dir.clone()));
+        assert_eq!(back.op_list.len(), 2);
+        assert_eq!(back.op_list.get("00000000-0000-0000-0000-000000000008").map(|e| e.level), Some(4));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

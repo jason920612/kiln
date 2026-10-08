@@ -83,6 +83,9 @@ fn may_place_on<L: Level + ?Sized>(level: &L, plant: u16, below: u16, below_pos:
 pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool {
     use BlockClass as C;
     let below = || level.block(pos.below());
+    if let Some(survives) = super::farming::can_survive(level, s, pos) {
+        return survives;
+    }
     match logic::block_class(s) {
         C::WallTorchBlock | C::RedstoneWallTorchBlock => {
             let facing = state::get_dir(s, "facing").unwrap_or(Direction::North);
@@ -110,6 +113,12 @@ pub fn can_survive<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos) -> bool 
             }
         }
         C::LeafLitterBlock => sturdy(below(), Direction::Up, Support::Full),
+        C::SnowLayerBlock => crate::weather::snow_can_survive(level, pos),
+        C::VineBlock => super::growth::vine_can_survive(level, s, pos),
+        C::ChorusFlowerBlock => super::growth::chorus_flower_can_survive(level, pos),
+        C::ChorusPlantBlock => super::growth::chorus_plant_can_survive(level, pos),
+        _ if super::growth::is_growing_plant(s) => super::growth::plant_can_survive(level, s, pos),
+        _ if super::wet::is_coral(s) && logic::block_class(s) != C::CoralBlock => super::wet::coral_can_survive(level, s, pos),
         C::FrogspawnBlock => super::misc::frogspawn_can_survive(level, pos),
         C::PistonHeadBlock => super::piston::head_can_survive(level, s, pos),
         C::PressurePlateBlock | C::WeightedPressurePlateBlock => {
@@ -156,7 +165,7 @@ pub fn pop_off<L: Level + ?Sized>(level: &L, s: u16, pos: BlockPos, dir: Directi
         C::TorchBlock | C::RedstoneTorchBlock | C::PressurePlateBlock | C::WeightedPressurePlateBlock => {
             breaks(dir == Direction::Down)
         }
-        C::CarpetBlock | C::WoolCarpetBlock | C::FrogspawnBlock => breaks(true),
+        C::CarpetBlock | C::WoolCarpetBlock | C::FrogspawnBlock | C::SnowLayerBlock => breaks(true),
         C::LeverBlock | C::ButtonBlock => breaks(attached_direction(s).opposite() == dir),
         C::RepeaterBlock => dir == Direction::Down && !can_support_rigid(neighbor),
         C::RedstoneWireBlock => dir == Direction::Down && !wire_can_survive_on(neighbor),

@@ -112,6 +112,9 @@ fn face_movement_direction(e: &mut Entity, m: &mut MobData, level: &dyn EntityLe
 }
 
 impl Kind for Ghast {
+    fn sound_volume(&self, _m: &MobData) -> f32 {
+        5.0
+    }
     fn info(&self) -> &'static Info {
         &INFO
     }

@@ -322,7 +322,7 @@ impl Kind for Wither {
             st_mut(m).boss_progress = 1.0 - n as f32 / 220.0;
             if n <= 0 {
                 let griefing = level.mob_griefing();
-                let interaction = if griefing { crate::explosion::Interaction::DestroyWithDecay } else { crate::explosion::Interaction::Keep };
+                let interaction = if griefing { crate::explosion::Interaction::Mob } else { crate::explosion::Interaction::Keep };
                 crate::explosion::explode(level, Some(e.id), Vec3::new(e.x(), e.eye_y(), e.z()), 7.0, false, interaction);
                 if !e.silent {
                     level.emit(Event::GlobalLevelEvent { event: 1023, pos: e.block_position(), data: 0 });

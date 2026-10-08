@@ -334,6 +334,15 @@ pub fn on_killed_removal(e: &mut Entity, m: &mut MobData, level: &mut dyn Entity
 
 /// The move control's remembered yaw as its constructor would see the current one (the
 /// constructor's own yaw is random and not reproducible: loading and splitting pin it).
+/// [`pin_move_yaw`] on a cube mob entity (no-op for other entities).
+pub fn pin_move_yaw_of(e: &mut Entity) {
+    if matches!(mob::data(e).map(|m| m.kind), Some(mob::MobKind::Slime | mob::MobKind::MagmaCube)) {
+        let mut m = mob::take(e);
+        pin_move_yaw(e, &mut m);
+        mob::put(e, m);
+    }
+}
+
 fn pin_move_yaw(e: &Entity, m: &mut MobData) {
     if let Some(c) = state_mut::<Cube>(m) {
         c.move_y_rot = 180.0 * e.y_rot / std::f32::consts::PI;
@@ -400,12 +409,15 @@ pub fn is_slime_chunk(world_seed: i64, cx: i32, cz: i32) -> bool {
     LegacyRandom::new(seed).next_int_bounded(10) == 0
 }
 
-/// `Mob.checkMobSpawnRules` (not from a spawner): a valid spawn block below.
+/// `Mob.checkMobSpawnRules`: a valid spawn block below (a spawner needs none).
 pub fn check_mob_spawn_rules(view: &dyn SpawnView, pos: BlockPos) -> bool {
-    mob::path::valid_spawn(view.block(pos.below()), false)
+    view.spawner() || mob::path::valid_spawn(view.block(pos.below()), false)
 }
 
 impl Kind for Slime {
+    fn sound_volume(&self, m: &MobData) -> f32 {
+        0.4 * size(m) as f32
+    }
     fn touches_players(&self) -> bool {
         true
     }
@@ -468,6 +480,9 @@ impl Kind for Slime {
     fn check_spawn_rules(&self, view: &dyn SpawnView, pos: BlockPos, r: &mut LegacyRandom) -> Option<bool> {
         if view.difficulty() == 0 {
             return Some(false);
+        }
+        if view.spawner() {
+            return Some(true);
         }
         if biome_in_tag(view.biome(pos), "minecraft:allows_surface_slime_spawns") && pos.y > 50 && pos.y < 70 {
             let chance = 0.5 * view.moon_brightness();

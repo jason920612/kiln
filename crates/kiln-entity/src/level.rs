@@ -264,6 +264,8 @@ pub enum Event {
     Sound { pos: Vec3, sound: &'static str, source: &'static str, volume: f32, pitch: f32 },
     /// `Level.levelEvent` (block break particles 2001, fizz 1501, ...).
     LevelEvent { event: i32, pos: BlockPos, data: i32 },
+    /// `Level.blockEvent(pos, block, a, b)` for the block at `pos` (a spawner's delay reset).
+    BlockEvent { pos: BlockPos, a: i32, b: i32 },
     /// A game event for vibrations (`minecraft:hit_ground`, `minecraft:entity_place`, ...).
     GameEvent { event: &'static str, pos: Vec3, entity: Option<i32> },
     /// Damage to an entity this crate does not simulate (mobs, players).
@@ -272,7 +274,7 @@ pub enum Event {
     EntityEvent { entity: i32, event: u8 },
     /// A block an explosion destroyed: the simulation drops its loot (`decay`: the
     /// `explosion_radius` loot parameter applies) before this crate sets it to air.
-    BlockExploded { pos: BlockPos, state: u16, decay: bool, source: Option<i32> },
+    BlockExploded { pos: BlockPos, state: u16, decay: bool, radius: f32, source: Option<i32> },
     /// Vanilla block side effects of an entity inside a block that this crate does not
     /// simulate (hoppers, pressure plates, tripwires, portals, detector rails).
     EntityInsideBlock { pos: BlockPos, state: u16, entity: i32 },
@@ -947,6 +949,19 @@ pub trait EntityLevel {
         false
     }
 
+    /// `minecraft:ender_pearls_vanish_on_death` (on by default): a pearl whose dead owner is
+    /// a player is discarded.
+    fn ender_pearls_vanish_on_death(&self) -> bool {
+        true
+    }
+
+    /// `ServerLevel.getDestroyType`: whether the explosions of this kind drop with decay (the
+    /// `block_explosion_drop_decay`, `mob_explosion_drop_decay` and `tnt_explosion_drop_decay`
+    /// game rules: on, on and off by default).
+    fn explosion_drop_decay(&self, rule: crate::explosion::DecayRule) -> bool {
+        rule != crate::explosion::DecayRule::Tnt
+    }
+
     /// wp28 nether: the `minecraft:forgive_dead_players` game rule (on by default).
     fn forgive_dead_players(&self) -> bool {
         true
@@ -1111,6 +1126,57 @@ pub trait EntityLevel {
     fn creaking_active(&self, pos: BlockPos) -> bool {
         let _ = pos;
         false
+    }
+
+    // -- wp44 spawners: `BaseSpawner` (`crate::spawner`) as the level lets it act.
+
+    /// `ServerLevel.isSpawnerBlockEnabled` (`spawner_blocks_work`).
+    fn spawner_blocks_enabled(&self) -> bool {
+        true
+    }
+
+    /// `getBrightness(LightLayer.BLOCK, pos)`.
+    fn block_light(&self, pos: BlockPos) -> i32 {
+        let _ = pos;
+        0
+    }
+
+    /// The dimension type's monster spawning light rules: `monster_spawn_block_light_limit` and
+    /// the inclusive range of `monster_spawn_light_level` (a constant is `(n, n)`: no draw).
+    /// The overworld's: (0, 0..=7).
+    fn monster_light_rules(&self) -> (i32, i32, i32) {
+        (0, 0, 7)
+    }
+
+    /// `DimensionType.moonBrightness` now (1 at full moon).
+    fn moon_brightness(&self) -> f32 {
+        1.0
+    }
+
+    /// The world seed (slime chunks).
+    fn world_seed(&self) -> i64 {
+        0
+    }
+
+    /// `Level.blockEvent` of the block entity's block at `pos` (a spawner's `1`: its delay was reset).
+    fn block_event(&mut self, pos: BlockPos, a: i32, b: i32) {
+        self.emit(Event::BlockEvent { pos, a, b });
+    }
+
+    /// Entities added during this tick that the level does not show yet (queued spawns), with
+    /// their type, their box and whether they are living, intersecting `area`.
+    fn pending_spawns(&self, area: &Aabb) -> Vec<(&'static str, Aabb, bool)> {
+        let _ = area;
+        Vec::new()
+    }
+
+    /// `ServerLevel.tryAddFreshEntityWithPassengers`: `root` and the jockeys that go with it
+    /// (`loaded`: riders read from saved data, which keep their UUIDs). False when it could
+    /// not be added.
+    fn add_entity_stack(&mut self, root: Entity, companions: Vec<crate::mob::Companion>, loaded: bool, nearby_chicken: bool) -> bool {
+        let _ = (companions, loaded, nearby_chicken);
+        self.add_entity_with_uuid(root);
+        true
     }
 }
 

@@ -934,6 +934,11 @@ pub trait Host: SelectorWorld {
     fn stopwatch_seconds(&self, _id: &str) -> Option<f64> {
         None
     }
+    /// `execute if predicate`: whether the loot predicate holds with the source's entity as
+    /// `this_entity` and the source's position as `origin` (the `COMMAND` parameter set).
+    fn test_loot_predicate(&mut self, _predicate: &LootTableArg) -> Result<bool, CommandError> {
+        Err(CommandError::unsupported("Loot predicates"))
+    }
     /// Restarts it from zero; false if there is none.
     fn stopwatch_restart(&mut self, _id: &str) -> bool {
         false

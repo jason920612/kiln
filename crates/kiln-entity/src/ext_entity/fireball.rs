@@ -19,6 +19,8 @@ pub struct Fireball {
     /// `SmallFireball` (else `LargeFireball`).
     pub small: bool,
     pub owner: Option<i32>,
+    /// The owner's UUID, as it is saved (`Owner`); what sets the owner sets it.
+    pub owner_uuid: Option<u128>,
     pub acceleration_power: f64,
     pub explosion_power: i32,
     pub left_owner: bool,
@@ -28,7 +30,7 @@ pub struct Fireball {
 /// A new fireball from `owner` (its feet, facing its rotation) heading along `dir`
 /// (`AbstractHurtingProjectile(type, owner, direction, level)`); the caller places it.
 pub fn new(small: bool, id: i32, owner: &Entity, dir: Vec3, explosion_power: i32, seed: i64) -> Entity {
-    let x = Fireball { small, owner: Some(owner.id), acceleration_power: 0.1, explosion_power, left_owner: false, has_been_shot: false };
+    let x = Fireball { small, owner: Some(owner.id), owner_uuid: Some(owner.uuid), acceleration_power: 0.1, explosion_power, left_owner: false, has_been_shot: false };
     let name = if small { "minecraft:small_fireball" } else { "minecraft:fireball" };
     let mut e = Entity::new(name, id, 0, EntityKind::Ext(Box::new(x)), seed);
     e.set_pos(owner.position());
@@ -46,6 +48,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
     Some(Box::new(Fireball {
         small: type_name == "minecraft:small_fireball",
         owner: None,
+        owner_uuid: r.uuid("Owner"),
         acceleration_power: r.num("acceleration_power").unwrap_or(0.1),
         explosion_power: r.byte_or("ExplosionPower", 1) as i32,
         left_owner: r.bool_or("leftOwner", false),
@@ -56,7 +59,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
 /// `ProjectileUtil.getHitResultOnMoveVector` (`COLLIDER` blocks, no fluids) with
 /// `canHitEntity` of an `AbstractHurtingProjectile`: not the owner until it left it.
 pub(crate) fn hit_on_move_vector(e: &Entity, level: &dyn EntityLevel, owner: Option<i32>, left_owner: bool) -> Option<Hit> {
-    Fireball { small: false, owner, acceleration_power: 0.0, explosion_power: 0, left_owner, has_been_shot: false }.hit_on_move_vector(e, level)
+    Fireball { small: false, owner, owner_uuid: None, acceleration_power: 0.0, explosion_power: 0, left_owner, has_been_shot: false }.hit_on_move_vector(e, level)
 }
 
 /// `Projectile.checkLeftOwner`: whether the projectile is clear of its owner's box.
@@ -125,7 +128,7 @@ impl Fireball {
         }
         let name = if self.small { "minecraft:small_fireball" } else { "minecraft:fireball" };
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: name, owner: self.owner, hit });
-        let source = DamageSource { kind: DamageKind::Fireball, attacker: self.owner, direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+        let source = DamageSource { kind: DamageKind::Fireball, attacker: self.owner, direct: Some(e.id), pos: Some(e.position()), attacker_is_player: self.owner.is_some_and(|o| level.player(o).is_some()) };
         match hit {
             Hit::Entity { id, .. } => {
                 if self.small {
@@ -155,7 +158,7 @@ impl Fireball {
         }
         if !self.small {
             let griefing = level.mob_griefing();
-            let interaction = if griefing { crate::explosion::Interaction::DestroyWithDecay } else { crate::explosion::Interaction::Keep };
+            let interaction = if griefing { crate::explosion::Interaction::Mob } else { crate::explosion::Interaction::Keep };
             crate::explosion::explode(level, Some(e.id), e.position(), self.explosion_power as f32, griefing, interaction);
         }
         e.discard();
@@ -247,6 +250,9 @@ impl EntityExt for Fireball {
     fn save(&self, _e: &Entity, o: &mut Output) {
         o.put("leftOwner", Tag::Byte(self.left_owner as i8));
         o.put("HasBeenShot", Tag::Byte(self.has_been_shot as i8));
+        if let Some(u) = self.owner_uuid {
+            o.put("Owner", crate::persist::uuid_to_tag(u));
+        }
         o.put("acceleration_power", Tag::Double(self.acceleration_power));
         if !self.small {
             o.put("ExplosionPower", Tag::Byte(self.explosion_power as i8));
@@ -257,23 +263,17 @@ impl EntityExt for Fireball {
         self.owner.unwrap_or(0)
     }
 
-    /// A hit (a player's attack) sends the fireball back along the attacker's look
-    /// (`ProjectileDeflection.AIM_DEFLECT`), with the attacker as its new owner.
-    fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>) -> bool {
-        let _ = (kind, amount);
-        let Some(a) = attacker else { return false };
-        // Players' rotations are not known here: straight back where it came from.
-        let look = match level.player(a) {
-            Some(_) => e.delta.normalize().scale(-1.0),
-            None => match level.entity(a) {
-                Some(o) => view_vector(o.x_rot, o.y_rot),
-                None => return false,
-            },
-        };
+    /// `AIM_DEFLECT` (the large fireball only; a small one is not redirectable): the player's
+    /// look as the new motion, the player as the owner, and `onDeflection(true)`: the
+    /// acceleration starts over at 0.1. (`AbstractHurtingProjectile.hurtServer` itself is false.)
+    fn aim_deflect(&mut self, e: &mut Entity, by: (i32, u128), look: Vec3) -> bool {
+        if self.small {
+            return false;
+        }
         e.delta = look;
         e.needs_sync = true;
-        self.owner = Some(a);
-        self.left_owner = true;
+        self.owner = Some(by.0);
+        self.owner_uuid = Some(by.1);
         self.acceleration_power = 0.1;
         true
     }

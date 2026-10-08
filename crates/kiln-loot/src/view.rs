@@ -27,6 +27,8 @@ pub struct EntityView {
     pub has_vehicle: bool,
     pub fall_flying: bool,
     pub in_water: bool,
+    /// `Entity.fallDistance` (the `movement` predicate's `fall_distance`).
+    pub fall_distance: f64,
     /// What `type_specific/player` asks of a player.
     pub player: Option<PlayerFacts>,
 }
@@ -83,7 +85,7 @@ impl EntityView {
                     && ok(f.is_on_fire, self.on_fire)
                     && ok(f.is_sneaking, self.sneaking)
                     && ok(f.is_sprinting, self.sprinting)
-                    && ok(f.is_flying, self.flying)
+                    && ok(f.is_flying, self.flying || self.fall_flying)
                     && ok(f.is_baby, false)
                     && ok(f.is_swimming, false)
                     && ok(f.is_fall_flying, self.fall_flying)
@@ -93,6 +95,11 @@ impl EntityView {
             EntitySubPredicate::Vehicle(v) => v.parts.is_empty() && self.has_vehicle,
             EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:type_specific/player" => {
                 self.player.as_ref().is_some_and(|p| p.matches(json))
+            }
+            // `MovementPredicate`: the fall distance (the speeds are not known here).
+            EntitySubPredicate::Other(id, json) if id.as_str() == "minecraft:movement" => {
+                let Json::Obj(entries) = json else { return false };
+                entries.iter().all(|(key, v)| key == "fall_distance" && bounds(v, self.fall_distance))
             }
             _ => false,
         })
@@ -186,6 +193,33 @@ impl LootData {
         rng: &mut dyn RandomSource,
     ) -> f32 {
         self.modify_damage(weapon, rng, damage, |level| MobDamageContext { level, this: victim, attacker, damage_type })
+    }
+
+    /// `EnchantmentHelper.modifyArmorEffectiveness` of `weapon` against a victim (a mob wearing
+    /// armor).
+    pub fn mob_armor_effectiveness(
+        &self,
+        weapon: &ItemStack,
+        attacker: &EntityView,
+        victim: &EntityView,
+        damage_type: i32,
+        value: f32,
+        rng: &mut dyn RandomSource,
+    ) -> f32 {
+        self.modify_armor_effectiveness(weapon, rng, value, |level| MobDamageContext { level, this: victim, attacker, damage_type })
+    }
+
+    /// `EnchantmentHelper.getDamageProtection(level, victim, source)` for a mob victim: its
+    /// equipment's `damage_protection` effects.
+    pub fn mob_damage_protection(
+        &self,
+        equipment: &[(EquipmentSlot, &ItemStack)],
+        victim: &EntityView,
+        attacker: &EntityView,
+        damage_type: i32,
+        rng: &mut dyn RandomSource,
+    ) -> f32 {
+        self.damage_protection(equipment, rng, |level| MobDamageContext { level, this: victim, attacker, damage_type })
     }
 
     /// `EnchantmentHelper.modifyKnockback(level, weapon, victim, source, value)` for a mob's weapon.

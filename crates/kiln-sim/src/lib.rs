@@ -23,6 +23,7 @@
 mod advancements;
 mod blocks;
 mod combat;
+mod melee;
 mod command_data;
 mod commands;
 mod consume;
@@ -38,6 +39,8 @@ mod jukebox;
 mod golems;
 mod glide;
 mod slide;
+mod end_eye;
+mod place_gen;
 mod firework;
 mod boats;
 mod carts;
@@ -53,6 +56,9 @@ mod diag;
 mod digging;
 mod dragon_fight;
 mod effects;
+mod fall;
+mod phantom;
+mod freeze;
 mod entities;
 mod entity_world;
 mod fishing;
@@ -81,6 +87,8 @@ mod region;
 mod rng;
 mod sculk;
 mod heart;
+mod mob_spawner;
+mod structure_spawns;
 mod sleep;
 mod stats;
 mod trading;
@@ -95,12 +103,18 @@ pub mod testing;
 mod combat_parity;
 #[cfg(test)]
 mod spear_parity;
+#[cfg(test)]
+mod melee_parity;
 mod shoulder;
 #[cfg(test)]
 mod container_parity;
 #[cfg(test)]
 mod sculk_parity;
 mod enchant;
+mod equip;
+mod signs;
+mod books;
+mod pick;
 #[cfg(test)]
 mod enchant_parity;
 #[cfg(test)]
@@ -109,6 +123,8 @@ mod effect_parity;
 mod weather_parity;
 #[cfg(test)]
 mod item_parity;
+#[cfg(test)]
+mod interact_parity;
 
 use bytes::Bytes;
 use crossbeam_channel::Receiver;
@@ -138,6 +154,26 @@ pub type ContainerView = (Vec<(usize, &'static str, i32)>, [i32; 4]);
 
 /// An open menu for tests and tools: its `minecraft:menu` type and (item name, count) per slot.
 pub type MenuView = (&'static str, Vec<Option<(&'static str, i32)>>);
+
+/// A mob's combat state (for tests and tools, see [`Sim::mob_state`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MobState {
+    pub health: f32,
+    pub alive: bool,
+    pub delta: [f64; 3],
+    pub fire_ticks: i32,
+    pub hurt_time: i32,
+    pub damage_cooldown: i32,
+    pub last_hurt: f32,
+    pub absorption: f32,
+    /// Durability damage per slot (feet, legs, chest, head, main hand, off hand, body).
+    pub equipment_damage: [Option<i32>; 7],
+    /// (effect name, amplifier, duration).
+    pub effects: Vec<(&'static str, i32, i32)>,
+    pub on_ground: bool,
+    pub vehicle: Option<&'static str>,
+    pub pos: [f64; 3],
+}
 
 pub struct SimConfig {
     pub max_players: usize,
@@ -191,6 +227,10 @@ pub struct SimConfig {
     pub profile_lookup: Option<std::sync::Arc<dyn kiln_link::ProfileLookup>>,
     /// The simulation's own inbox, for answers that arrive from other threads.
     pub replies: Option<crossbeam_channel::Sender<ToSim>>,
+    /// The difficulty the server starts in (`KILN_DIFFICULTY`, 0 peaceful .. 3 hard), as the
+    /// dedicated server's `difficulty` property, which it applies over the save's at every start.
+    /// Without it a world starts in its saved difficulty, a new one in normal.
+    pub difficulty: Option<u8>,
 }
 
 /// How a region with many entities ticks them (`entities/islands.rs`). Every choice is
@@ -269,6 +309,7 @@ impl SimConfig {
             data_sync: Default::default(),
             profile_lookup: None,
             replies: None,
+            difficulty: None,
         }
     }
 }
@@ -456,8 +497,6 @@ struct Player {
     attributes_dirty: bool,
     /// Shared flags changed in a way the player's own client must see (burning, invisible).
     self_meta_dirty: bool,
-    /// Where the last block effects pass left the player (`applyEffectsFromBlocks`).
-    block_effects_from: [f64; 3],
     /// Sounds the player made this tick, for its viewers.
     pending_sounds: Vec<Bytes>,
     /// `Level.soundSeedGenerator` stand-in for this player's sounds.
@@ -467,6 +506,26 @@ struct Player {
     saturation: f32,
     /// Distance fallen since last on the ground.
     fall_distance: f64,
+    /// `Entity.mainSupportingBlockPos`, `onGroundNoBlocks` and `wasTouchingWater` (the landing
+    /// block of a fall is found through the first, the water state decides the second's reset).
+    main_supporting_block: Option<kiln_entity::math::BlockPos>,
+    on_ground_no_blocks: bool,
+    was_touching_water: bool,
+    /// The server's own body of the player (see [`phantom`]): its velocity, its stuck
+    /// multiplier (`makeStuckInBlock`) and the movements of the tick.
+    phantom: Option<Box<kiln_entity::entity::Entity>>,
+    server_delta: [f64; 3],
+    stuck_speed: [f64; 3],
+    movements: Vec<phantom::Mv>,
+    /// `isEyeInFluid(WATER)` as the last fluid update left it.
+    was_eye_in_water: bool,
+    /// `Entity.ticksFrozen`, `isInPowderSnow` and the powder snow speed modifier's amount.
+    ticks_frozen: i32,
+    is_in_powder_snow: bool,
+    frost_speed: Option<f64>,
+    /// Block changes a player's own tick asks of its region (melted powder snow, trampled
+    /// farmland).
+    block_edits: Vec<fall::BlockEdit>,
     /// Flying (creative or spectator), from the client's abilities packet.
     flying: bool,
     /// Dead until the client asks to respawn.
@@ -593,6 +652,9 @@ struct Player {
     advancements: advancements::progress::PlayerAdvancements,
     /// Base values and permanent modifiers `/attribute` set.
     command_attributes: combat::CommandAttributes,
+    /// `minecraft:limited_crafting`, kept up to date for the menus (only recipes the player's
+    /// recipe book has can be crafted).
+    limited_crafting: bool,
 }
 
 impl Player {
@@ -675,6 +737,11 @@ impl Player {
         for (i, s) in self.inv.items.iter().enumerate() {
             out[if i < 9 { HOTBAR_START + i } else { i }] = view(s);
         }
+        // The inventory menu's armor slots 5 (head) to 8 (feet), and the off hand, 45.
+        for (i, s) in self.inv.equipment.iter().take(5).enumerate() {
+            let slot = [8, 7, 6, 5, 45][i];
+            out[slot] = view(s);
+        }
         out
     }
 
@@ -708,7 +775,9 @@ impl Player {
     fn teleport(&mut self, pos: [f64; 3], rot: [f32; 2], now: i64) {
         self.pos = pos;
         self.rot = rot;
-        self.block_effects_from = pos;
+        // A teleport is not movement through blocks, and it ends the server body's momentum.
+        self.movements.clear();
+        self.server_delta = [0.0; 3];
         self.teleport_id += 1;
         self.awaiting_teleport = Some(self.teleport_id);
         self.teleport_sent = now;
@@ -1160,11 +1229,26 @@ impl Sim {
                 }
             })
             .collect();
+        // What grows in each level (saplings, bone meal) is placed by the level's own worldgen.
+        let feature_hosts: Vec<Option<std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>>> = pipelines
+            .iter()
+            .map(|p| p.as_ref().map(|p| std::sync::Arc::new(kiln_worldgen::host::WorldgenHost::new(p.world().clone())) as std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>))
+            .collect();
         let spawn = spawn.expect("overworld spawn");
         let policy = if config.unified_regions { RegionPolicy::unified() } else { RegionPolicy::default() };
         let threads = config.noise.as_ref().map_or(1, |n| n.threads);
-        let storage = config.world.as_deref().map(persist::Storage::open);
+        let mut storage = config.world.as_deref().map(persist::Storage::open);
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
+        // The seed: the generator's, else the save's (`world_gen_settings.dat`); a world that
+        // generates with a seed and has none saved gets it written, so vanilla loads the same.
+        let seed = match (&config.noise, storage.as_mut()) {
+            (Some(n), Some(s)) => {
+                s.level.set_seed_if_missing(n.seed);
+                n.seed
+            }
+            (Some(n), None) => n.seed,
+            (None, s) => s.and_then(|s| s.level.seed()).unwrap_or(0),
+        };
         let game_time = level.as_ref().map_or(0, |l| l.game_time);
         let dims = providers
             .into_iter()
@@ -1184,7 +1268,6 @@ impl Sim {
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
-        let seed = config.noise.as_ref().map_or(0, |n| n.seed);
         let mut sim = Sim {
             rules,
             loot,
@@ -1218,11 +1301,13 @@ impl Sim {
             plugins: None,
             independent: Default::default(),
             trader: Default::default(),
-            world: world_state::WorldState { pipelines, ..Default::default() },
+            world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
+        sim.commands.seed = seed;
+        sim.load_admin_state();
         sim.load_scoreboard();
         sim.load_stopwatches();
         sim.load_weather();
@@ -1509,9 +1594,29 @@ impl Sim {
         self.game_time
     }
 
+    /// The world seed (`/seed`).
+    pub fn seed(&self) -> i64 {
+        self.commands.seed
+    }
+
+    /// Whether the difficulty is locked (`Data.difficulty_settings.locked`).
+    pub fn difficulty_locked(&self) -> bool {
+        self.commands.difficulty_locked
+    }
+
+    /// The permission level a player of this name would have (0 for non-operators).
+    pub fn permission_level_of_name(&self, name: &str) -> u8 {
+        if self.commands.is_op(name) { self.commands.op_levels.get(name).copied().unwrap_or(4) } else { 0 }
+    }
+
     /// Block state at a position in the overworld, if its chunk is loaded.
     pub fn block_at(&self, x: i32, y: i32, z: i32) -> Option<u16> {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
+    }
+
+    /// Ticks players spent near the loaded overworld chunk holding `x`, `z` (`InhabitedTime`).
+    pub fn inhabited_time_at(&self, x: i32, z: i32) -> Option<i64> {
+        self.dims[OVERWORLD_ID].regions.chunk(ChunkPos::of_block(x, z)).map(|c| c.inhabited_time())
     }
 
     /// The saved form of the live sculk block entity (sensor, shrieker, catalyst) at an
@@ -1520,7 +1625,21 @@ impl Sim {
         let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
         let p = kiln_blocks::BlockPos::new(x, y, z);
         let part = &region.part().1;
-        part.sculk.map.get(&p).map(|b| b.save()).or_else(|| part.hearts.map.get(&p).map(|h| h.save())).or_else(|| part.containers.map.get(&p).map(|c| c.save()))
+        part.sculk
+            .map
+            .get(&p)
+            .map(|b| b.save())
+            .or_else(|| part.hearts.map.get(&p).map(|h| h.save()))
+            .or_else(|| part.spawners.map.get(&p).map(|s| s.save()))
+            .or_else(|| part.containers.map.get(&p).map(|c| c.save()))
+    }
+
+    /// The saved form (`saveWithFullMetadata`) of the block entity at an overworld position as
+    /// its chunk holds it (container block entities may lag the live container; for tests and
+    /// tools).
+    pub fn block_entity_saved(&self, x: i32, y: i32, z: i32) -> Option<kiln_proto::nbt::Tag> {
+        let chunk = self.dims[OVERWORLD_ID].regions.chunk(ChunkPos::of_block(x, z))?;
+        chunk.block_entity((x & 15) as usize, y, (z & 15) as usize).map(|be| be.saved([x, y, z]))
     }
 
     /// Block state at a position in the level `dimension` (e.g. `minecraft:the_nether`), if
@@ -1666,6 +1785,32 @@ impl Sim {
         out
     }
 
+    /// A mob's combat state, as `tools/CombatVectors.java` records it (for tests and tools).
+    pub fn mob_state(&self, id: i32) -> Option<MobState> {
+        let list = self.dims.iter().flat_map(|d| d.regions.iter()).flat_map(|r| r.part().0.list.iter());
+        let e = list.clone().find(|e| e.id == id)?;
+        let phys = e.phys.as_deref()?;
+        let m = kiln_entity::mob::data(phys)?;
+        use kiln_entity::mob::{CHEST, FEET, HEAD, LEGS, MAINHAND, OFFHAND};
+        let damage = |slot: usize| (!m.equipment[slot].is_empty()).then(|| m.equipment[slot].damage());
+        let vehicle = phys.vehicle.and_then(|v| list.clone().find(|o| o.id == v)).map(|o| o.kind.name);
+        Some(MobState {
+            health: m.health,
+            alive: m.health > 0.0 && !e.removed,
+            delta: [phys.delta.x, phys.delta.y, phys.delta.z],
+            fire_ticks: phys.remaining_fire_ticks,
+            hurt_time: m.hurt_time,
+            damage_cooldown: m.damage_cooldown,
+            last_hurt: m.last_hurt,
+            absorption: m.absorption,
+            equipment_damage: [damage(FEET), damage(LEGS), damage(CHEST), damage(HEAD), damage(MAINHAND), damage(OFFHAND), None],
+            effects: m.effects.values().map(|f| (kiln_entity::effect::effect_type(f.id).map_or("?", |t| t.name), f.amplifier, f.duration)).collect(),
+            on_ground: phys.on_ground,
+            vehicle,
+            pos: e.pos,
+        })
+    }
+
     /// The ticks a player's riptide spin has left (for tests and tools).
     pub fn spin_ticks(&self, conn: ConnId) -> Option<i32> {
         Some(self.players.get(&conn)?.spin_ticks)
@@ -1746,6 +1891,16 @@ impl Sim {
     /// A player's inventory as (item id, count) per container slot.
     pub fn inventory(&self, conn: ConnId) -> Option<Vec<Option<(i32, i32)>>> {
         self.players.get(&conn).map(Player::menu_view)
+    }
+
+    /// A player's game mode id (0 survival, 1 creative, 2 adventure, 3 spectator).
+    pub fn game_mode(&self, conn: ConnId) -> Option<u8> {
+        self.players.get(&conn).map(|p| p.game_mode as u8)
+    }
+
+    /// A player's selected hotbar slot.
+    pub fn selected_slot(&self, conn: ConnId) -> Option<usize> {
+        self.players.get(&conn).map(|p| p.inv.selected)
     }
 
     /// A player's open merchant screen: container id, the villager, and (item id, count) of the
@@ -1860,6 +2015,8 @@ impl Sim {
             game_time: self.game_time,
             max_view: self.config.view_distance as i32,
             movement_check: self.rule_bool("minecraft:player_movement_check"),
+            elytra_movement_check: self.rule_bool("minecraft:elytra_movement_check"),
+            spectators_generate_chunks: self.rule_bool("minecraft:spectators_generate_chunks"),
             natural_regen: self.rule_bool("minecraft:natural_health_regeneration"),
             biome_count: self.dims[dim].provider.biome_count,
             now: Instant::now(),
@@ -1884,6 +2041,7 @@ impl Sim {
                 fast_lava: kind.fast_lava,
                 water_evaporates: kind.water_evaporates,
                 tnt_explodes: self.rule_bool("minecraft:tnt_explodes"),
+                spread_vines: self.rule_bool("minecraft:spread_vines"),
                 infiniburn: kind.infiniburn.trim_start_matches('#'),
             },
             dim,
@@ -1906,6 +2064,18 @@ impl Sim {
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
                 spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
+                spawn_phantoms: self.rule_bool("minecraft:spawn_phantoms"),
+                universal_anger: self.rule_bool("minecraft:universal_anger"),
+                forgive_dead_players: self.rule_bool("minecraft:forgive_dead_players"),
+                ender_pearls_vanish: self.rule_bool("minecraft:ender_pearls_vanish_on_death"),
+                explosion_decay: [
+                    self.rule_bool("minecraft:block_explosion_drop_decay"),
+                    self.rule_bool("minecraft:mob_explosion_drop_decay"),
+                    self.rule_bool("minecraft:tnt_explosion_drop_decay"),
+                ],
+                global_sound_events: self.rule_bool("minecraft:global_sound_events"),
+                projectiles_break_blocks: self.rule_bool("minecraft:projectiles_can_break_blocks"),
+                spawner_blocks: self.rule_bool("minecraft:spawner_blocks_work"),
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,
@@ -1924,11 +2094,13 @@ impl Sim {
             },
             fire_spread_radius: self.rule_int("minecraft:fire_spread_radius_around_player"),
             dragon_fight: self.fight_env(dim),
+            pipeline: self.world.pipelines.get(dim).cloned().flatten(),
             // Only asked whether any is near (in no order).
             fire_watchers: std::sync::Arc::new(self.players.values().filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()),
             raids: self.dims[dim].raids.views.clone(),
             entity_ticking: self.config.entity_ticking,
             speculate: self.config.speculate,
+            features: self.world.feature_hosts.get(dim).cloned().flatten(),
         }
     }
 
@@ -2424,7 +2596,6 @@ impl Sim {
             p.send(packets::world_fx::sound(&packets::world_fx::Sound::Registered(id), packets::world_fx::SoundSource::Blocks, at, 1.0, 1.0, seed));
         }
         p.teleport(pos, rot, now);
-        p.block_effects_from = pos;
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         p.send(packets::set_default_spawn_position(OVERWORLD, spawn, spawn_rot[0], spawn_rot[1]));
@@ -2717,13 +2888,24 @@ impl Sim {
             effects_dirty: true,
             attributes_dirty: true,
             self_meta_dirty: true,
-            block_effects_from: spawn,
             pending_sounds: Vec::new(),
             sound_seed: kiln_javamath::random::LegacyRandom::new(!(j.uuid.as_u64_pair().0 as i64)),
             health: joining.health,
             food: joining.food,
             saturation: joining.saturation,
             fall_distance: 0.0,
+            main_supporting_block: None,
+            on_ground_no_blocks: false,
+            was_touching_water: false,
+            phantom: None,
+            server_delta: [0.0; 3],
+            stuck_speed: [0.0; 3],
+            movements: Vec::new(),
+            was_eye_in_water: false,
+            ticks_frozen: 0,
+            is_in_powder_snow: false,
+            frost_speed: None,
+            block_edits: Vec::new(),
             flying: false,
             dead: joining.health <= 0.0,
             died: false,
@@ -2791,6 +2973,7 @@ impl Sim {
             recipe_book,
             advancements: self.load_player_advancements(j.uuid),
             command_attributes: combat::CommandAttributes::default(),
+            limited_crafting: self.rule_bool("minecraft:limited_crafting"),
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -2805,7 +2988,14 @@ impl Sim {
             is_flat: self.is_flat(dim),
             sea_level: SEA_LEVELS[dim],
             online_mode: self.config.online_mode,
+            hashed_seed: self.zoom_seed,
+            hardcore: self.storage.as_ref().is_some_and(|s| s.level.hardcore()),
+            reduced_debug_info: self.rule_bool("minecraft:reduced_debug_info"),
+            show_death_screen: !self.rule_bool("minecraft:immediate_respawn"),
+            limited_crafting: self.rule_bool("minecraft:limited_crafting"),
         }));
+        // `PlayerList.placeNewPlayer`: the difficulty follows the login.
+        player.send(packets::change_difficulty(self.commands.difficulty as u8, self.commands.difficulty_locked));
         player.send(packets::player_position(player.teleport_id, spawn, yaw, pitch));
         let [spawn_yaw, spawn_pitch] = self.spawn_rot;
         player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, spawn_yaw, spawn_pitch));
@@ -2855,7 +3045,7 @@ impl Sim {
         packets::player::SpawnInfo {
             dimension_type: kiln_data::synced_id("minecraft:dimension_type", key).expect("dimension type"),
             dimension: key,
-            hashed_seed: 0,
+            hashed_seed: self.zoom_seed,
             game_mode: p.game_mode,
             previous_game_mode: None,
             is_debug: false,

@@ -22,6 +22,18 @@ pub struct RegionStats {
     pub far_writes: u64,
 }
 
+/// What a feature asked of the level, as [`Region::start_ops`] records it: the calls vanilla's
+/// `ServerLevel` would have got, in order (a live level replays them through its own `setBlock`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum RegionOp {
+    /// `setBlock(pos, state, flags)`.
+    Set(BlockPos, u16, i32),
+    /// `scheduleTick(pos, block, delay)`.
+    BlockTick(BlockPos, &'static str, i32),
+    /// `scheduleTick(pos, fluid, delay)`.
+    FluidTick(BlockPos, &'static str, i32),
+}
+
 /// `WorldGenRegion` over nine owned proto-chunks.
 pub struct Region<'a> {
     // Boxed: chunks move between the pipeline and regions without copying their arrays.
@@ -29,10 +41,13 @@ pub struct Region<'a> {
     chunks: Vec<Box<ProtoChunk>>,
     pub cx: i32,
     pub cz: i32,
+    /// The window is `(2 * radius + 1)` chunks across (1 while generating).
+    radius: i32,
     pub generator: &'a Generator,
     scratch: &'a mut GenScratch,
     pub stats: RegionStats,
     log: Option<Vec<(BlockPos, u16)>>,
+    ops: Option<Vec<RegionOp>>,
     level_random: Option<PositionalRandom>,
 }
 
@@ -40,11 +55,18 @@ impl<'a> Region<'a> {
     /// `chunks` are the 3×3 chunks around `(cx, cz)`, row by row from the north-west
     /// (`index = (dz + 1) * 3 + dx + 1`).
     pub fn new(chunks: Vec<Box<ProtoChunk>>, cx: i32, cz: i32, generator: &'a Generator, scratch: &'a mut GenScratch) -> Self {
-        assert_eq!(chunks.len(), 9, "a region holds the 3x3 chunks around its center");
+        Self::with_radius(chunks, cx, cz, 1, generator, scratch)
+    }
+
+    /// A window of `(2 * radius + 1)` chunks across, row by row from the north-west, for
+    /// commands that place things into a live world (`/place`).
+    pub fn with_radius(chunks: Vec<Box<ProtoChunk>>, cx: i32, cz: i32, radius: i32, generator: &'a Generator, scratch: &'a mut GenScratch) -> Self {
+        let w = (2 * radius + 1) as usize;
+        assert_eq!(chunks.len(), w * w, "a region holds the chunks around its center");
         for (i, c) in chunks.iter().enumerate() {
-            debug_assert_eq!((c.x, c.z), (cx + i as i32 % 3 - 1, cz + i as i32 / 3 - 1), "chunk {i} out of place");
+            debug_assert_eq!((c.x, c.z), (cx + (i % w) as i32 - radius, cz + (i / w) as i32 - radius), "chunk {i} out of place");
         }
-        Self { chunks, cx, cz, generator, scratch, stats: RegionStats::default(), log: None, level_random: None }
+        Self { chunks, cx, cz, radius, generator, scratch, stats: RegionStats::default(), log: None, ops: None, level_random: None }
     }
 
     /// `WorldGenRegion.addFreshEntity`: stored in the chunk holding the entity's position
@@ -67,7 +89,8 @@ impl<'a> Region<'a> {
     #[inline]
     fn slot(&self, cx: i32, cz: i32) -> Option<usize> {
         let (dx, dz) = (cx - self.cx, cz - self.cz);
-        (dx.abs() <= 1 && dz.abs() <= 1).then(|| ((dz + 1) * 3 + dx + 1) as usize)
+        let r = self.radius;
+        (dx.abs() <= r && dz.abs() <= r).then(|| ((dz + r) * (2 * r + 1) + dx + r) as usize)
     }
 
     pub fn chunk(&self, cx: i32, cz: i32) -> Option<&ProtoChunk> {
@@ -79,7 +102,7 @@ impl<'a> Region<'a> {
     }
 
     pub fn center(&self) -> &ProtoChunk {
-        &self.chunks[4]
+        &self.chunks[(self.radius * (2 * self.radius + 1) + self.radius) as usize]
     }
 
     pub fn chunks(&self) -> &[Box<ProtoChunk>] {
@@ -94,6 +117,16 @@ impl<'a> Region<'a> {
     /// The changes recorded since [`Region::start_log`] (or the last call), oldest first.
     pub fn take_log(&mut self) -> Vec<(BlockPos, u16)> {
         self.log.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
+    /// Starts recording what the features ask of the level ([`RegionOp`]).
+    pub fn start_ops(&mut self) {
+        self.ops = Some(Vec::new());
+    }
+
+    /// The operations recorded since [`Region::start_ops`], oldest first.
+    pub fn take_ops(&mut self) -> Vec<RegionOp> {
+        self.ops.take().unwrap_or_default()
     }
 
     pub fn min_y(&self) -> i32 {
@@ -156,6 +189,9 @@ impl<'a> Region<'a> {
             self.stats.far_writes += 1;
             return false;
         };
+        if let Some(ops) = &mut self.ops {
+            ops.push(RegionOp::Set(p, s, flags));
+        }
         let chunk = &mut self.chunks[i];
         let (lx, lz) = ((p.x & 15) as usize, (p.z & 15) as usize);
         let before = chunk.get(lx, p.y, lz);
@@ -219,11 +255,11 @@ impl<'a> Region<'a> {
     /// chunks' stored biomes).
     pub fn biome(&mut self, p: BlockPos) -> u16 {
         let generator = self.generator;
-        let (chunks, scratch, (cx, cz)) = (&self.chunks, &mut *self.scratch, (self.cx, self.cz));
+        let (chunks, scratch, (cx, cz), r) = (&self.chunks, &mut *self.scratch, (self.cx, self.cz), self.radius);
         zoomed_biome(generator.zoom_seed, p.x, p.y, p.z, &mut |qx, qy, qz| {
             let (dx, dz) = ((qx >> 2) - cx, (qz >> 2) - cz);
-            if dx.abs() <= 1 && dz.abs() <= 1 {
-                chunks[((dz + 1) * 3 + dx + 1) as usize].quart_biome(qx, qy, qz)
+            if dx.abs() <= r && dz.abs() <= r {
+                chunks[((dz + r) * (2 * r + 1) + dx + r) as usize].quart_biome(qx, qy, qz)
             } else {
                 scratch.noise_biome(generator, qx, qy, qz)
             }
@@ -239,15 +275,21 @@ impl<'a> Region<'a> {
 
     /// `LevelAccessor.scheduleTick(pos, block, delay)`. A proto-chunk keeps one tick per
     /// position and type and drops the delay (`ProtoChunkTicks.schedule` saves 0).
-    pub fn schedule_block_tick(&mut self, p: BlockPos, block: &'static str, _delay: i32) {
+    pub fn schedule_block_tick(&mut self, p: BlockPos, block: &'static str, delay: i32) {
         if let Some(i) = self.slot(p.x >> 4, p.z >> 4) {
+            if let Some(ops) = &mut self.ops {
+                ops.push(RegionOp::BlockTick(p, block, delay));
+            }
             schedule(&mut self.chunks[i].block_ticks, p, block);
         }
     }
 
     /// `LevelAccessor.scheduleTick(pos, fluid, delay)`, like [`Self::schedule_block_tick`].
-    pub fn schedule_fluid_tick(&mut self, p: BlockPos, fluid: &'static str, _delay: i32) {
+    pub fn schedule_fluid_tick(&mut self, p: BlockPos, fluid: &'static str, delay: i32) {
         if let Some(i) = self.slot(p.x >> 4, p.z >> 4) {
+            if let Some(ops) = &mut self.ops {
+                ops.push(RegionOp::FluidTick(p, fluid, delay));
+            }
             schedule(&mut self.chunks[i].fluid_ticks, p, fluid);
         }
     }

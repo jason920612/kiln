@@ -202,6 +202,21 @@ pub trait SelectorWorld: Source {
     fn entity_nbt_matches(&self, entity: &Self::Entity, snbt: &str) -> bool {
         entity.matches_nbt(snbt)
     }
+    /// `advancements=`: whether a player has completed advancement `id` (`None` when it does
+    /// not exist).
+    fn entity_advancement_done(&self, entity: &Self::Entity, id: &str) -> Option<bool> {
+        entity.advancement_done(id)
+    }
+    /// `advancements={id={criterion=..}}`: whether the player has the criterion (`None` when the
+    /// advancement or criterion does not exist).
+    fn entity_criterion_done(&self, entity: &Self::Entity, id: &str, criterion: &str) -> Option<bool> {
+        entity.criterion_done(id, criterion)
+    }
+    /// `predicate=`: whether the loot predicate `id` holds with `entity` as `this_entity` at its
+    /// position (`None` when the predicate does not exist).
+    fn entity_predicate(&self, entity: &Self::Entity, id: &str) -> Option<bool> {
+        entity.test_predicate(id)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -842,17 +857,9 @@ impl Filter {
                 };
                 score.is_some_and(|v| range.matches(v))
             }),
-            Filter::Advancements(checks) => {
-                e.is_player()
-                    && checks.iter().all(|(id, check)| match check {
-                        AdvancementCheck::Done(want) => e.advancement_done(id) == Some(*want),
-                        AdvancementCheck::Criteria(cs) => {
-                            e.advancement_done(id).is_some()
-                                && cs.iter().all(|(c, want)| e.criterion_done(id, c) == Some(*want))
-                        }
-                    })
-            }
-            Filter::Predicate { id, invert } => e.test_predicate(id).is_some_and(|v| v != *invert),
+            // (`advancements=` and `predicate=` read the player's progress and the loot predicates,
+            // which the world has: [`EntitySelector::world_ok`].)
+            Filter::Advancements(_) | Filter::Predicate { .. } => true,
         }
     }
 }
@@ -892,10 +899,23 @@ impl EntitySelector {
             && self.distance.is_none_or(|r| r.matches_sqr(dist_sqr(e.position(), pos)))
     }
 
-    /// The `nbt=` filters (`NbtPredicate.matches(entity)`), which the world answers.
+    /// The filters the world answers: `nbt=` (`NbtPredicate.matches(entity)`), `advancements=`
+    /// (`PlayerAdvancements` progress of a player) and `predicate=` (a loot predicate with the
+    /// entity as `this_entity`).
     fn nbt_ok<W: SelectorWorld>(&self, world: &W, e: &W::Entity) -> bool {
         self.filters.iter().all(|f| match f {
             Filter::Nbt { snbt, invert } => world.entity_nbt_matches(e, snbt) != *invert,
+            Filter::Advancements(checks) => {
+                e.is_player()
+                    && checks.iter().all(|(id, check)| match check {
+                        AdvancementCheck::Done(want) => world.entity_advancement_done(e, id) == Some(*want),
+                        AdvancementCheck::Criteria(cs) => {
+                            world.entity_advancement_done(e, id).is_some()
+                                && cs.iter().all(|(c, want)| world.entity_criterion_done(e, id, c) == Some(*want))
+                        }
+                    })
+            }
+            Filter::Predicate { id, invert } => world.entity_predicate(e, id).is_some_and(|v| v != *invert),
             _ => true,
         })
     }

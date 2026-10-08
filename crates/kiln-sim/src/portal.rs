@@ -1035,7 +1035,7 @@ impl Sim {
         }
         let from = p.dim;
         let info = packets::player::respawn(&self.spawn_info(dim, p), packets::player::respawn_keep::ALL);
-        let difficulty = packets::change_difficulty(self.commands.difficulty as u8, false);
+        let difficulty = packets::change_difficulty(self.commands.difficulty as u8, self.commands.difficulty_locked);
         let (spawn, spawn_rot) = (self.spawn, self.spawn_rot);
         let time = self.time_packet();
         let weather = self.level_info_packets(dim);
@@ -1061,7 +1061,6 @@ impl Sim {
         p.sent_chunks.clear();
         p.unacked_batches = 0;
         p.teleport(pos, rot, now);
-        p.block_effects_from = pos;
         p.center = player_chunk(pos);
         p.send(packets::set_chunk_cache_center(p.center.x, p.center.z));
         // `PlayerList.sendLevelInfo`: world border (default), time, spawn position, weather.

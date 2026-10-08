@@ -129,6 +129,38 @@ python tools/mob_vectors.py --filter "kill_villager|ench_" --out work/wp36/mob_w
 KILN_MOB_VECTORS=work/wp36/mob_wp36.jsonl KILN_DATAPACK=work/generated cargo test -p kiln-entity --test mob_parity
                                      # zombies that kill villagers (conversion by difficulty, villager
                                      # data kept) and mobs' enchanted spears (ench_* need the datapack)
+python tools/mob_vectors.py --filter "push_|avoid_|spider_golem" --out work/wp41/mob_wp41.jsonl
+                                     # mobs bumping into boats and minecarts (the vehicles' motion is traced too,
+                                     # bit for bit) and the monsters that run from cats, wolves, armadillos and
+                                     # creakings or hunt iron golems; replay: KILN_MOB_VECTORS=<file> cargo test -p
+                                     # kiln-entity --test mob_parity
+python tools/combat_vectors.py --filter spear --out work/wp41/combat/vectors.jsonl
+KILN_WORK=work KILN_SPEAR_VECTORS=work/wp41/combat/spear.jsonl cargo test -p kiln-sim --lib spear_parity
+                                     # (without KILN_PARITY_FILTER) spears and fists turning fireballs and wind
+                                     # charges around (stab_projectile, melee_projectile) and stabbing boats and carts
+python tools/mob_vectors.py --filter "spawner_|cavespider_" --out work/wp44/spawner/vectors.jsonl
+KILN_MOB_VECTORS=work/wp44/spawner/vectors.jsonl cargo test -p kiln-entity --test mob_parity
+                                     # mob spawner blocks tick by tick (delay, potentials and weights,
+                                     # spawn range, nearby cap, light and custom spawn rules, the player
+                                     # range and the spawner_blocks_work rule, spawn eggs, the level random
+                                     # and the saved block entity after) and cave spiders
+python tools/spawn_vectors.py        # natural spawning's structure overrides: the mob lists NaturalSpawner.mobsAt
+                                     # gives in and around fortresses, bastions, swamp huts, monuments,
+                                     # outposts, trial chambers, ancient cities... of a generated vanilla world
+                                     # against kiln-sim's spawn table (cargo test -p kiln-sim structure_spawns)
+python tools/block_vectors.py        # what blocks do on their own, tick by tick against vanilla: random and scheduled
+                                     # ticks of crops, vines and kelp, grass spreading, melting, copper, turtle eggs,
+                                     # corals, sponges, tripwires, the end portal frame; kiln-blocks block_parity, and
+                                     # trees grown through the real worldgen features (kiln-sim --test tree_parity)
+python tools/interact_vectors.py     # signs (editing, dyes, wax, locks), books, armor worn by right click and middle
+                                     # click picking against vanilla (cargo test -p kiln-sim interact_parity)
+python tools/combat_vectors.py --filter melee --out work/wp45/combat/vectors.jsonl
+                                     # players' melee on mobs and players: sweeping, critical hits, the mace; replay:
+                                     # KILN_MELEE_VECTORS=work/wp45/combat/melee.jsonl cargo test -p kiln-sim --lib melee_parity
+python tools/effect_vectors.py       # also the player's falls (blocks that stop or bounce them) and hazards (cactus,
+                                     # powder snow, suffocation); effect_parity lists the few scenarios it does not match
+python tools/admin_check.py          # vanilla and Kiln load each other's saves: seed, game rules, command storage, ops
+python tools/parity_suites.py        # every suite that replays vanilla data, with its pass counts
 python tools/container_vectors.py --filter jukebox --out work/wp36/containers/vectors.jsonl
 KILN_CONTAINER_VECTORS=work/wp36/containers/vectors.jsonl cargo test -p kiln-sim container_parity
                                      # jukeboxes (song end, comparator, hoppers, power) tick by tick

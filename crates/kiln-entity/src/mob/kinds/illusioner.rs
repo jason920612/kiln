@@ -40,7 +40,7 @@ impl Kind for Illusioner {
         let g = &mut m.goals;
         g.add(0, Goal::Float);
         g.add(1, Goal::Custom(Box::new(CastingSpellGoal { name: "SpellcasterCastingSpellGoal" })));
-        g.add(3, raider::never());
+        g.add(3, raider::avoid_creaking(1.0, 1.2));
         g.add(4, Goal::Custom(Box::new(UseSpellGoal::new(Spell::Disappear))));
         g.add(5, Goal::Custom(Box::new(UseSpellGoal::new(Spell::Blindness))));
         g.add(

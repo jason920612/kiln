@@ -20,13 +20,34 @@ pub enum Interaction {
     Destroy,
     DestroyWithDecay,
     TriggerBlock,
-    /// `Level.ExplosionInteraction.TNT` with default game rules (`Destroy`).
+    /// `Level.ExplosionInteraction.TNT`: `Destroy`, or `DestroyWithDecay` when
+    /// `tnt_explosion_drop_decay` is on.
+    Tnt,
+    /// `Level.ExplosionInteraction.MOB` with `mob_griefing` on (creepers, ghast fireballs, the
+    /// wither): `DestroyWithDecay` unless `mob_explosion_drop_decay` is off.
+    Mob,
+    /// `Level.ExplosionInteraction.BLOCK` (end crystals, beds and respawn anchors): decays
+    /// with `block_explosion_drop_decay`.
+    Block,
+}
+
+/// The game rule that makes an explosion's drops decay (`ServerLevel.getDestroyType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecayRule {
+    Block,
+    Mob,
     Tnt,
 }
 
 impl Interaction {
-    fn resolved(self) -> Interaction {
-        if self == Interaction::Tnt { Interaction::Destroy } else { self }
+    fn resolved(self, level: &dyn EntityLevel) -> Interaction {
+        let by_rule = |rule| if level.explosion_drop_decay(rule) { Interaction::DestroyWithDecay } else { Interaction::Destroy };
+        match self {
+            Interaction::Tnt => by_rule(DecayRule::Tnt),
+            Interaction::Mob => by_rule(DecayRule::Mob),
+            Interaction::Block => by_rule(DecayRule::Block),
+            other => other,
+        }
     }
 }
 
@@ -88,7 +109,7 @@ pub fn explode_ruled(
     rules: BlockRules,
     damage: bool,
 ) -> Vec<BlockPos> {
-    let interaction = interaction.resolved();
+    let interaction = interaction.resolved(&*level);
     level.emit(Event::GameEvent { event: "minecraft:explode", pos: center, entity: source });
     // `getIndirectSourceEntity` of a primed TNT is its owner.
     let causing = rules.causing.or_else(|| {
@@ -103,7 +124,7 @@ pub fn explode_ruled(
         shuffle(&mut positions, level);
         for &pos in &positions {
             let state = level.block(pos);
-            on_explosion_hit(level, source, causing, pos, state, interaction);
+            on_explosion_hit(level, source, causing, pos, state, interaction, radius);
         }
     }
     if fire {
@@ -202,12 +223,12 @@ fn shuffle(list: &mut [BlockPos], level: &mut dyn EntityLevel) {
 }
 
 /// `BlockBehaviour.onExplosionHit` (+ `TntBlock.wasExploded`).
-fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, pos: BlockPos, state: u16, interaction: Interaction) {
+fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, pos: BlockPos, state: u16, interaction: Interaction, radius: f32) {
     if physics::is_air(state) || interaction == Interaction::TriggerBlock {
         return;
     }
     if kind(state) != Kind::Tnt {
-        level.emit(Event::BlockExploded { pos, state, decay: interaction == Interaction::DestroyWithDecay, source });
+        level.emit(Event::BlockExploded { pos, state, decay: interaction == Interaction::DestroyWithDecay, radius, source });
     }
     level.set_block(pos, 0, 3);
     if kind(state) == Kind::Tnt {
@@ -348,6 +369,11 @@ pub fn seen_percent(level: &dyn EntityLevel, center: Vec3, e: &Entity) -> f32 {
 
 /// [`seen_percent`] of a box (an ender dragon part's).
 pub fn seen_percent_box(level: &dyn EntityLevel, center: Vec3, bb: &Aabb, ctx: &crate::collision::CollisionContext) -> f32 {
+    seen_percent_with(&|pos| level.block(pos), center, bb, ctx)
+}
+
+/// [`seen_percent_box`] reading the blocks through `block`.
+pub fn seen_percent_with(block: &dyn Fn(BlockPos) -> u16, center: Vec3, bb: &Aabb, ctx: &crate::collision::CollisionContext) -> f32 {
     let bb = *bb;
     let sx = 1.0 / ((bb.max_x - bb.min_x) * 2.0 + 1.0);
     let sy = 1.0 / ((bb.max_y - bb.min_y) * 2.0 + 1.0);
@@ -366,7 +392,7 @@ pub fn seen_percent_box(level: &dyn EntityLevel, center: Vec3, bb: &Aabb, ctx: &
             while z <= 1.0 {
                 let p = Vec3::new(lerp(x, bb.min_x, bb.max_x) + ox, lerp(y, bb.min_y, bb.max_y), lerp(z, bb.min_z, bb.max_z) + oz);
                 let blocked = clip::traverse_blocks(p, center, |pos| {
-                    let (shape, _) = collision::collision_shape(level.block(pos), pos, ctx);
+                    let (shape, _) = collision::collision_shape(block(pos), pos, ctx);
                     clip::shape_clips(&shape, p, center, pos).then_some(())
                 });
                 if blocked.is_none() {
@@ -380,4 +406,65 @@ pub fn seen_percent_box(level: &dyn EntityLevel, center: Vec3, bb: &Aabb, ctx: &
         x += sx;
     }
     hits as f32 / total as f32
+}
+
+/// `ServerExplosion.calculateExplodedPositions` and the shuffle of `interactWithBlocks` for an
+/// explosion whose damage calculator knows no block resistance but the `immune` blocks' (a wind
+/// burst: `SimpleExplosionDamageCalculator` with `#blocks_wind_charge_explosions`), drawing from
+/// `rng` (the level's random as the caller keeps it). The positions are returned in the order
+/// they would be triggered.
+pub fn burst_positions(
+    block: &dyn Fn(BlockPos) -> u16,
+    rng: &mut dyn RandomSource,
+    (min_y, max_y): (i32, i32),
+    center: Vec3,
+    radius: f32,
+    immune: &dyn Fn(u16) -> bool,
+    shuffle: bool,
+) -> Vec<BlockPos> {
+    let mut set: Vec<BlockPos> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for i in 0..16 {
+        for j in 0..16 {
+            for k in 0..16 {
+                if i != 0 && i != 15 && j != 0 && j != 15 && k != 0 && k != 15 {
+                    continue;
+                }
+                let mut dx = (i as f32 / 15.0 * 2.0 - 1.0) as f64;
+                let mut dy = (j as f32 / 15.0 * 2.0 - 1.0) as f64;
+                let mut dz = (k as f32 / 15.0 * 2.0 - 1.0) as f64;
+                let len = (dx * dx + dy * dy + dz * dz).sqrt();
+                dx /= len;
+                dy /= len;
+                dz /= len;
+                let mut strength = radius * (0.7 + rng.next_float() * 0.6);
+                let (mut x, mut y, mut z) = (center.x, center.y, center.z);
+                while strength > 0.0 {
+                    let pos = BlockPos::containing(x, y, z);
+                    if pos.y < min_y || pos.y > max_y || pos.x.abs() >= 30_000_000 || pos.z.abs() >= 30_000_000 {
+                        break;
+                    }
+                    let state = block(pos);
+                    if immune(state) {
+                        strength -= (3600000.0f32 + 0.3) * 0.3;
+                    }
+                    if strength > 0.0 && seen.insert(pos) {
+                        set.push(pos);
+                    }
+                    x += dx * 0.30000001192092896;
+                    y += dy * 0.30000001192092896;
+                    z += dz * 0.30000001192092896;
+                    strength -= 0.22500001;
+                }
+            }
+        }
+    }
+    let mut list = java_hash_set_order(set);
+    let mut i = if shuffle { list.len() } else { 0 };
+    while i > 1 {
+        let j = rng.next_int_bounded(i as i32) as usize;
+        list.swap(i - 1, j);
+        i -= 1;
+    }
+    list
 }

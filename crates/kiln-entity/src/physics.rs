@@ -77,6 +77,8 @@ const OFFSET: u16 = 1 << 6;
 const SUFFOCATING: u16 = 1 << 7;
 const LARGE: u16 = 1 << 8;
 const CUBE: u16 = 1 << 9;
+/// The block uses the default `isSuffocating` predicate (`#causes_suffocation` with a full cube).
+const SUFFOCATING_DEFAULT: u16 = 1 << 10;
 
 /// Per-block movement factors (`BlockBehaviour.Properties`).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -278,9 +280,37 @@ pub fn has_offset(state: u16) -> bool {
     entry(state).flags & OFFSET != 0
 }
 
-/// `BlockState.isSuffocating` in an empty world.
+/// `BlockState.isSuffocating`: the blocks that set their own predicate (`SUFFOCATING`, read from
+/// vanilla), else the default one: `#minecraft:causes_suffocation` with a full-cube collision
+/// shape. (The extraction runs before vanilla loads its tags: it only tells which blocks use the
+/// default.)
 pub fn is_suffocating(state: u16) -> bool {
-    entry(state).flags & SUFFOCATING != 0
+    let flags = entry(state).flags;
+    if flags & SUFFOCATING_DEFAULT != 0 {
+        flags & CUBE != 0 && causes_suffocation(state)
+    } else {
+        flags & SUFFOCATING != 0
+    }
+}
+
+/// Whether the block of `state` is in `#minecraft:causes_suffocation`.
+fn causes_suffocation(state: u16) -> bool {
+    static STATES: OnceLock<Vec<bool>> = OnceLock::new();
+    let states = STATES.get_or_init(|| {
+        let mut out = vec![false; table().states.len()];
+        let tags = kiln_data::registries::TAGS.iter().find(|(r, _)| *r == "minecraft:block").map_or(&[][..], |(_, tags)| *tags);
+        let ids = tags.iter().find(|(t, _)| *t == "minecraft:causes_suffocation").map_or(&[][..], |(_, ids)| *ids);
+        let names = kiln_data::builtin_entries("minecraft:block").unwrap_or(&[]);
+        for &id in ids {
+            if let Some(info) = names.get(id as usize).and_then(|n| kiln_data::blocks_types::block_by_name(n)) {
+                for s in &mut out[info.first as usize..=info.last as usize] {
+                    *s = true;
+                }
+            }
+        }
+        out
+    });
+    states.get(state as usize).copied().unwrap_or(false)
 }
 
 /// `BlockState.getOffset(pos)` for offset blocks with collision (bamboo, pointed dripstone;

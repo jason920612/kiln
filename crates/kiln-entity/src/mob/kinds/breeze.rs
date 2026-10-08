@@ -365,7 +365,7 @@ impl Behavior for Shoot {
         let dy = t.pos.y + (t.bb.max_y - t.bb.min_y) * if riding { 0.8 } else { 0.3 } - firing_y(e);
         let id = cx.level.next_entity_id();
         let seed = cx.level.fresh_seed();
-        let mut charge = crate::ext_entity::wind_charge::new(id, e.id, Vec3::new(e.x(), firing_y(e), e.z()), seed);
+        let mut charge = crate::ext_entity::wind_charge::new(id, e.id, e.uuid, Vec3::new(e.x(), firing_y(e), e.z()), seed);
         mob::species::shoot(&mut charge, dx, dy, dz, 0.7, (5 - cx.level.difficulty() as i32 * 4) as f32);
         charge.set_old_pos_and_rot();
         cx.level.add_entity(charge);

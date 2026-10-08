@@ -944,10 +944,9 @@ fn hurt_timestamp(g: &Goal) -> i32 {
     }
 }
 
-/// A goal Kiln keeps in its slot but that has nothing to do yet: `AvoidEntityGoal<Creaking>`
-/// (creakings are not simulated).
-pub fn never() -> Goal {
-    Goal::Never
+/// `AvoidEntityGoal<Creaking>(this, Creaking.class, 8.0F, walk, sprint)` of the illagers.
+pub fn avoid_creaking(walk: f64, sprint: f64) -> Goal {
+    Goal::Custom(Box::new(super::common_a::AvoidEntityGoal::new("AvoidEntityGoal", super::common_a::Avoid::Types(&["minecraft:creaking"]), 8.0, walk, sprint)))
 }
 
 /// Knockback of `LivingEntity.knockback` on entity `id` (a mob, or a player's stand-in) from

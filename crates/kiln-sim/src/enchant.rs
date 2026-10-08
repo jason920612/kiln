@@ -44,6 +44,14 @@ impl kiln_entity::enchanting::Enchanter for LootEnchanter {
         self.0.mob_modify_knockback(hit.weapon, hit.attacker, hit.victim, hit.damage_type, value, random)
     }
 
+    fn armor_effectiveness(&self, weapon: &ItemStack, attacker: &EntityView, victim: &EntityView, damage_type: i32, value: f32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
+        self.0.mob_armor_effectiveness(weapon, attacker, victim, damage_type, value, random)
+    }
+
+    fn damage_protection(&self, equipment: &[(EquipmentSlot, &ItemStack)], victim: &EntityView, attacker: &EntityView, damage_type: i32, random: &mut dyn kiln_javamath::random::RandomSource) -> f32 {
+        self.0.mob_damage_protection(equipment, victim, attacker, damage_type, random)
+    }
+
     fn post_attack(&self, hit: &kiln_entity::enchanting::Hit, random: &mut dyn kiln_javamath::random::RandomSource) -> Vec<kiln_entity::enchanting::MobPostAttack> {
         self.0.mob_post_attack(hit.weapon, hit.attacker, hit.victim, hit.damage_type, random)
     }
@@ -76,6 +84,7 @@ impl Player {
             fall_flying: self.fall_flying,
             // (Where the water is needs the blocks: [`Player::view_in`].)
             in_water: false,
+            fall_distance: self.fall_distance,
             player: Some(PlayerFacts { game_mode: self.game_mode, food: self.food, saturation: self.saturation, level: self.xp_level }),
         }
     }
@@ -275,7 +284,7 @@ fn apply_entity_effect(
                 p.add_effect(crate::effects::Effect::simple(id, duration, amplifier));
             }
         }
-        EntityEffect::Other(_) | EntityEffect::ApplyExhaustion(_) | EntityEffect::ApplyImpulse { .. } | EntityEffect::PlaySound { .. } => {}
+        EntityEffect::Other(_) | EntityEffect::Explode { .. } | EntityEffect::ApplyExhaustion(_) | EntityEffect::ApplyImpulse { .. } | EntityEffect::PlaySound { .. } => {}
     }
 }
 

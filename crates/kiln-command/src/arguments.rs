@@ -562,14 +562,8 @@ impl ArgumentType {
                 if reader.can_read() && matches!(reader.peek(), '{' | '[' | '"' | '\'') {
                     ArgumentValue::Nbt(snbt::parse_tag(reader)?)
                 } else {
-                    let id = Identifier::read(reader)?;
-                    // No data-driven predicates are loaded.
-                    return Err(CommandError::new(tr!(
-                        "argument.resource_or_id.no_such_element",
-                        id.to_string(),
-                        "minecraft:predicate"
-                    ))
-                    .at(reader));
+                    // Looked up against the loaded predicates while parsing (see the dispatcher).
+                    ArgumentValue::Identifier(Identifier::read(reader)?)
                 }
             }
             ArgumentType::Dialog => {

@@ -9,7 +9,7 @@
 //! `EnchantmentHelper` (see [`crate::enchant`]): damage immunity (frost walker), protection,
 //! armor effectiveness (breach) and unbreaking on armor. Mob effects take part too: fire
 //! resistance makes fire damage miss, resistance takes 20% per level after armor. Totems of
-//! undying (`death_protection` in a hand) save a dying player. Not modelled yet: shields.
+//! undying (`death_protection` in a hand) save a dying player; shields block (see below).
 //!
 //! Food follows `FoodData`: exhaustion from sprinting, jumping, fighting and breaking blocks
 //! uses up saturation then food; a well-fed player heals, a starving one takes damage.
@@ -26,8 +26,6 @@ pub(crate) const MAX_HEALTH: f32 = 20.0;
 const VOID_DAMAGE: f32 = 4.0;
 /// Players take void damage this far below the dimension's bottom.
 pub(crate) const VOID_DEPTH: f64 = 64.0;
-/// `Attributes.SAFE_FALL_DISTANCE` base value.
-const SAFE_FALL_DISTANCE: f64 = 3.0;
 /// `FoodData.addExhaustion` cap.
 const MAX_EXHAUSTION: f32 = 40.0;
 /// `LivingEntity.damageCooldownTime` after a full hit; hits while it is above half only deal
@@ -165,6 +163,7 @@ impl Cause {
 }
 
 impl Source {
+    #[cfg(test)]
     pub(crate) fn melee(attacker: Attacker, weapon: kiln_item::ItemStack) -> Source {
         Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: Some(weapon), position: None }
     }
@@ -661,7 +660,7 @@ impl Player {
             }
             // `dealDefaultKnockback` from the source's position (melee: the attacker's).
             if !source.is("minecraft:no_knockback")
-                && matches!(source.cause, Cause::PlayerAttack | Cause::Other(_) | Cause::Entity(DamageKind::MobAttack))
+                && matches!(source.cause, Cause::PlayerAttack | Cause::Other(_) | Cause::Entity(DamageKind::MobAttack | DamageKind::Thorns))
                 && let Some(a) = &source.attacker
             {
                 let (dx, dz) = (a.pos[0] - self.pos[0], a.pos[2] - self.pos[2]);
@@ -1003,18 +1002,29 @@ impl Player {
         self.exhaustion = (self.exhaustion + amount).min(MAX_EXHAUSTION);
     }
 
-    /// `FoodData.tick` and the peaceful regeneration of `Player.aiStep`. `difficulty` is 0
-    /// (peaceful) to 3 (hard).
-    pub(crate) fn tick_food(&mut self, natural_regen: bool, ctx: &mut DamageCtx) {
-        let difficulty = ctx.rules.difficulty;
-        if difficulty == 0 && natural_regen {
-            if self.health < self.max_health() && ctx.game_time % 20 == 0 {
+    /// `ServerPlayer.tickRegeneration` (run by `Player.aiStep`): on peaceful the player heals a
+    /// point every 20 ticks, its saturation (below 20) and food level follow, by the player's
+    /// own tick count.
+    pub(crate) fn tick_peaceful_regeneration(&mut self, natural_regen: bool, difficulty: u8) {
+        if difficulty != 0 || !natural_regen {
+            return;
+        }
+        if self.tick_count % 20 == 0 {
+            if self.health < self.max_health() {
                 self.heal(1.0);
             }
-            if self.food < 20 && ctx.game_time % 10 == 0 {
-                self.food += 1;
+            if self.saturation < 20.0 {
+                self.saturation += 1.0;
             }
         }
+        if self.tick_count % 10 == 0 && self.food < 20 {
+            self.food += 1;
+        }
+    }
+
+    /// `FoodData.tick`. `difficulty` is 0 (peaceful) to 3 (hard).
+    pub(crate) fn tick_food(&mut self, natural_regen: bool, ctx: &mut DamageCtx) {
+        let difficulty = ctx.rules.difficulty;
         if self.exhaustion > 4.0 {
             self.exhaustion -= 4.0;
             if self.saturation > 0.0 {
@@ -1052,50 +1062,11 @@ impl Player {
         }
     }
 
-    /// Exhaustion from a move by `d` (`Player.checkMovementStatistics`) and from jumping
-    /// (`jumpFromGround`: left the ground going up).
-    pub(crate) fn exhaust_for_move(&mut self, d: [f64; 3], was_on_ground: bool, in_water: bool) {
-        if was_on_ground && !self.on_ground && d[1] > 0.0 {
+    /// Exhaustion from jumping (`ServerPlayer.jumpFromGround`: the client left the ground going
+    /// up, which the server's own idea of the player standing on the ground allows).
+    pub(crate) fn exhaust_for_jump(&mut self, d: [f64; 3], server_on_ground: bool) {
+        if server_on_ground && !self.on_ground && d[1] > 0.0 {
             self.exhaust(if self.sprinting { 0.2 } else { 0.05 });
-        }
-        let horizontal = ((d[0] * d[0] + d[2] * d[2]).sqrt() as f32 * 100.0).round();
-        if horizontal <= 0.0 {
-            return;
-        }
-        if in_water {
-            self.exhaust(0.01 * horizontal * 0.01);
-        } else if self.on_ground && self.sprinting {
-            self.exhaust(0.1 * horizontal * 0.01);
-        }
-    }
-
-    /// Vanilla `Entity.checkFallDamage` for a reported move by `dy` ending `on_ground`.
-    pub(crate) fn check_fall(&mut self, dy: f64, on_ground: bool, in_fluid: bool, ctx: &mut DamageCtx) {
-        if in_fluid || self.game_mode == 3 || self.flying {
-            self.reset_fall_distance();
-            return;
-        }
-        // The move itself counts, landing included.
-        if dy < 0.0 {
-            self.fall_distance -= dy;
-        }
-        // `trackStartFallingPosition`.
-        if self.fall_distance > 0.0 && self.starting_to_fall.is_none() {
-            self.starting_to_fall = Some(self.pos);
-        }
-        if on_ground {
-            let fell = self.fall_distance;
-            // `Player.causeFallDamage`: falls of two blocks or more count, except with `mayfly`.
-            if fell >= 2.0 && !matches!(self.game_mode, 1 | 3) {
-                self.award_stat(*crate::player_stats::stat::FALL_ONE_CM, (fell * 100.0).round() as i32);
-            }
-            // `LivingEntity.calculateFallDamage`; creative players (`mayfly`) take none.
-            let damage = (fell - SAFE_FALL_DISTANCE).floor();
-            if damage > 0.0 && self.game_mode != 1 {
-                self.hurt(damage as f32, &Cause::Fall(fell).into(), ctx);
-            }
-            // `resetFallDistance` after the damage, which the combat tracker records it with.
-            self.reset_fall_distance();
         }
     }
 

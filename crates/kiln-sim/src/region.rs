@@ -35,6 +35,11 @@ pub(crate) struct Env {
     pub max_view: i32,
     /// `minecraft:player_movement_check`.
     pub movement_check: bool,
+    /// `minecraft:elytra_movement_check`: whether a gliding player's moves are checked too.
+    pub elytra_movement_check: bool,
+    /// `minecraft:spectators_generate_chunks`: whether a spectator's view asks for chunks to
+    /// be loaded and generated (`ChunkMap.skipPlayer`).
+    pub spectators_generate_chunks: bool,
     /// `minecraft:natural_health_regeneration`.
     pub natural_regen: bool,
     pub biome_count: usize,
@@ -144,21 +149,15 @@ impl RegionWork<'_> {
             }
             if let PlayIn::Attack { entity_id } = pkt {
                 if !self.players[i].dead {
-                    let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
-                    let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
-                    let mut hits = Vec::new();
-                    crate::combat::handle_attack(&mut self.players, i, entity_id, self.entities, &attack_env, &mut ctx, &mut hits);
-                    for hit in hits {
-                        let mut level = RegionLevel {
-                            cells: &mut *self.cells,
-                            blocks: &mut *self.blocks,
-                            env: &env.blocks,
-                            out: &mut out,
-                            bodies: &bodies,
-                            actor: None,
-                        };
-                        entities::hit_mob(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &hit);
-                    }
+                    let mut level = RegionLevel {
+                        cells: &mut *self.cells,
+                        blocks: &mut *self.blocks,
+                        env: &env.blocks,
+                        out: &mut out,
+                        bodies: &bodies,
+                        actor: None,
+                    };
+                    crate::combat::handle_attack(self.entities, &mut level, &mut self.players, i, entity_id, &mut self.out.spawns, &mut self.out.deaths);
                 }
                 continue;
             }
@@ -291,16 +290,9 @@ impl RegionWork<'_> {
                 self.players[i].end_spin_on_collision();
             }
             if !self.players[i].dead && let Some(target) = touch.living {
-                let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
-                let mut hits = Vec::new();
+                let bodies = Vec::new();
+                let mut out = BlockOut::default();
                 {
-                    let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
-                    crate::combat::spin_attack(&mut self.players, i, target, self.entities, &attack_env, &mut ctx, &mut hits);
-                }
-                self.players[i].stop_spin_on_hit();
-                if !hits.is_empty() {
-                    let bodies = Vec::new();
-                    let mut out = BlockOut::default();
                     let mut level = RegionLevel {
                         cells: &mut *self.cells,
                         blocks: &mut *self.blocks,
@@ -309,11 +301,10 @@ impl RegionWork<'_> {
                         bodies: &bodies,
                         actor: None,
                     };
-                    for hit in hits {
-                        entities::hit_mob(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &hit);
-                    }
-                    blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+                    crate::combat::spin_attack(self.entities, &mut level, &mut self.players, i, target, &mut self.out.spawns, &mut self.out.deaths);
                 }
+                self.players[i].stop_spin_on_hit();
+                blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
             }
             self.players[i].spin_finished();
         }
@@ -526,6 +517,24 @@ impl RegionWork<'_> {
             for p in self.players.iter_mut().filter(|p| p.digging.is_some() || p.delayed_destroy.is_some()) {
                 digging::tick(p, &mut level);
             }
+            // What the players' own ticks asked for (melted powder snow, trampled farmland).
+            for p in self.players.iter_mut().filter(|p| !p.block_edits.is_empty()) {
+                for edit in std::mem::take(&mut p.block_edits) {
+                    match edit {
+                        crate::fall::BlockEdit::Destroy(pos) => {
+                            let pos = BlockPos::new(pos.x, pos.y, pos.z);
+                            kiln_blocks::destroy_block(&mut level, pos, false, 512);
+                        }
+                        crate::fall::BlockEdit::Dirt(pos) => {
+                            let pos = BlockPos::new(pos.x, pos.y, pos.z);
+                            // `FarmBlock.turnToDirt`.
+                            if kiln_entity::blocks::kind(level.block(pos)) == kiln_entity::blocks::Kind::Farmland {
+                                kiln_blocks::set_block(&mut level, pos, kiln_data::blocks::default_state::DIRT, 3);
+                            }
+                        }
+                    }
+                }
+            }
             // `Player.tick`'s sleeping part and the insomnia statistic.
             for p in self.players.iter_mut().filter(|p| !p.disconnected) {
                 crate::sleep::tick_player(p, &mut level);
@@ -567,7 +576,7 @@ impl RegionWork<'_> {
             let list = &self.entities.list;
             self.blocks.sculk.retain_allays(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
         }
-        if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
+        if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || (env.blocks.spawn_table.is_none() && self.blocks.spawners.is_empty())) {
             self.tick_block_entities(env, ticking_now);
             return;
         }
@@ -698,6 +707,8 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
         p.omen_raid_full = crate::raid::raid_at_view(&env.blocks.raids, bp).is_some_and(|r| r.omen_level >= 5);
     }
     p.base_tick(&block, env.min_y, &env.border, &mut ctx);
+    p.tick_peaceful_regeneration(env.natural_regen, ctx.rules.difficulty);
+    p.tick_fall_resets(&block);
     p.tick_glide();
     p.tick_spin();
     {
@@ -714,9 +725,15 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     p.tick_using(&block, &mut ctx);
     p.tick_cooldowns();
     p.tick_combat();
+    // The server's body moves on its own (gravity, drag, a ladder's grip) and the blocks it
+    // passes through take effect, then the connection puts the position back (`doTick`).
+    let snap = p.pos;
+    p.phantom_travel(cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
     let (_, h, _) = p.dimensions();
     let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
     p.block_effects(&block, env.dim, in_rain, &mut ctx);
+    p.tick_freezing(&block, &mut ctx);
+    p.pos = snap;
     if let Some(travel) = p.pending_travel.take() {
         t.portals.push(travel);
     }
@@ -853,13 +870,14 @@ pub(crate) fn player_packet(
             }
         }
         PlayIn::Move { pos, rot, on_ground, horizontal_collision } => {
-            let (from, was_on_ground) = (p.pos, p.on_ground);
+            let from = p.pos;
+            // `player.onGround()` as the server holds it (its own body's, not the client's).
+            let was_on_ground = p.on_ground;
             let y0 = p.pos[1];
             if handle_move(p, cells, env, pos, rot, on_ground) {
                 // `setOnGroundWithMovement`: the client's own report of running into a wall.
                 p.horizontal_collision = horizontal_collision;
                 let feet = p.pos.map(|c| c.floor() as i32);
-                let in_fluid = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(kiln_data::blocks_types::has_fluid);
                 let d = [p.pos[0] - from[0], p.pos[1] - from[1], p.pos[2] - from[2]];
                 // `handlePlayerKnownMovement`.
                 p.known_movement = d;
@@ -868,17 +886,22 @@ pub(crate) fn player_packet(
                 if on_ground {
                     p.vel[1] = 0.0;
                 }
-                p.exhaust_for_move(d, was_on_ground, in_fluid);
-                // `jumpFromGround` and `checkMovementStatistics`.
+                // `jumpFromGround` (when the server holds the player on the ground; a body that
+                // bounced off slime or a bed is not), then the fall, then `checkMovementStatistics`.
                 if was_on_ground && !on_ground && d[1] > 0.0 {
                     p.award_stat(*crate::player_stats::stat::JUMP, 1);
                 }
-                let eye = [feet[0], (p.pos[1] + if p.sneaking { 1.27 } else { 1.62 }).floor() as i32, feet[2]];
-                let eyes_in_water = cells.get_block(eye[0], eye[1], eye[2]).is_some_and(kiln_data::blocks_types::has_fluid);
-                let climbing = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(crate::player_stats::climbable);
-                p.movement_stats(d, in_fluid, eyes_in_water, climbing);
+                p.exhaust_for_jump(d, was_on_ground);
+                if was_on_ground && !on_ground && d[1] > 0.0 {
+                    p.server_jump(from, cells, env.game_time, env.min_y);
+                }
+                p.record_packet_move(from, d);
                 let mut ctx = damage_ctx(env, spawns, deaths);
-                p.check_fall(p.pos[1] - y0, on_ground, in_fluid, &mut ctx);
+                let blocks = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z);
+                p.after_move_fall(d, on_ground, p.pos[1] - y0 > 0.0, &blocks, &mut ctx);
+                let climbing = cells.get_block(feet[0], feet[1], feet[2]).is_some_and(crate::player_stats::climbable);
+                let (in_water, eyes_in_water) = (p.was_touching_water, p.was_eye_in_water);
+                p.movement_stats(d, in_water, eyes_in_water, climbing);
             }
         }
         PlayIn::PlayerAbilities { flying } => p.flying = flying && matches!(p.game_mode, 1 | 3),
@@ -1043,6 +1066,11 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             } else if name == crate::firework::ITEM {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::firework::use_item(p, &mut level, off, fx.spawns);
+            } else if matches!(name, "minecraft:writable_book" | "minecraft:written_book") {
+                p.use_book(off);
+            } else if name == crate::end_eye::ITEM {
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                crate::end_eye::use_item(p, &mut level, off, fx.spawns);
             } else if crate::boats::is_boat_item(name) {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::boats::use_item(p, &mut level, off, fx.spawns);
@@ -1056,6 +1084,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::trident::use_item(p, &mut level, off);
             } else if crate::ranged::use_held(p, off, &held) {
+            } else if held.get(kiln_item::keys::CONSUMABLE).is_none() && p.use_equippable(off, &env.blocks.menus, fx.spawns) {
+                // `Item.use` of armor and the like: swapped with what is worn.
             } else {
                 let cells = &*world.cells;
                 let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
@@ -1069,6 +1099,15 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             let may_interact = env.border.contains(pos[0] as f64, pos[2] as f64);
             use_item_on(p, &mut level, hand, pos, face, cursor, may_interact, fx.spawns);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
+        }
+        PlayIn::EditBook { slot, pages, title } => p.edit_book(slot, &pages, title.as_deref()),
+        PlayIn::PickItemFromBlock { pos, .. } => {
+            let state = world.cells.get_block(pos[0], pos[1], pos[2]);
+            p.pick_item_from_block(BlockPos::new(pos[0], pos[1], pos[2]), state);
+        }
+        PlayIn::SignUpdate { pos, lines, front } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::signs::update_text(p, &mut level, BlockPos::new(pos[0], pos[1], pos[2]), &lines, front);
         }
         // `handlePunch`: the swing resets the attack strength.
         PlayIn::Punch => {
@@ -1148,10 +1187,15 @@ fn use_on_block(
 ) {
     use kiln_item::component::EquipmentSlot;
     let main_hand = hand == 0;
-    let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     let have_something = !p.inv.selected_item().is_empty() || !p.inv.equipped(EquipmentSlot::OffHand).is_empty();
     let bp = BlockPos::new(pos[0], pos[1], pos[2]);
     let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
+    // `SignBlock.useItemOn`, then `useWithoutItem` for the main hand: dyes and honeycomb, the
+    // editor, the refusal of waxed signs.
+    if !(p.sneaking && have_something) && crate::signs::use_on(p, level, bp, !main_hand) {
+        return;
+    }
+    let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
     if !(p.sneaking && have_something) && !held.is_empty() && actor.may_build {
         let used = held.clone();
@@ -1184,11 +1228,32 @@ fn use_on_block(
     if item_name == Some(crate::firework::ITEM) && actor.may_build && crate::firework::use_on(p, level, bp, dir, cursor, !main_hand, spawns) {
         return;
     }
+    if item_name == Some(crate::end_eye::ITEM) && actor.may_build && crate::end_eye::use_on(p, level, bp, !main_hand) {
+        return;
+    }
     if actor.may_build && crate::tools::item_use_on(p, level, bp, dir, !main_hand, spawns) {
         return;
     }
     if item_name == Some("minecraft:flint_and_steel") && actor.may_build {
         light_fire(p, level, main_hand, pos, dir);
+        return;
+    }
+    // `SpawnEggItem.useOn` on a mob spawner: its next spawn data's entity becomes the egg's.
+    if let Some(entity) = item_name.and_then(|n| n.strip_suffix("_spawn_egg"))
+        && p.game_mode != 3
+        && let Some(worked) = crate::mob_spawner::use_egg(level, bp, entity)
+    {
+        if !worked {
+            // `advMode.notEnabled.spawner`.
+            p.send(kiln_proto::packets::system_chat(crate::container::translatable("advMode.notEnabled.spawner"), false));
+            return;
+        }
+        let egg = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
+        p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, egg), 1);
+        if p.game_mode != 1 {
+            let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
+            kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
+        }
         return;
     }
     // `SpawnEggItem.useOn`: the mob appears in the clicked block if it has no collision,
@@ -1261,6 +1326,8 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    // `SignBlock.setPlacedBy`: the placer edits the new sign.
+    crate::signs::placed_by(p, level, placed_at);
     crate::golems::try_spawn_golem(p, level, placed_at, spawns);
     // `WitherSkullBlock.setPlacedBy`.
     crate::wither::check_spawn(level, placed_at, spawns);
@@ -1375,7 +1442,8 @@ fn handle_move(
     }
     let to = pos.map_or(p.pos, movement::clamp_position);
     p.move_packets += 1;
-    if env.movement_check && movement::too_fast(p.first_good, to, 0.0, p.move_packets, p.fall_flying) {
+    // `ServerGamePacketListenerImpl.shouldCheckPlayerMovement`.
+    if env.movement_check && (!p.fall_flying || env.elytra_movement_check) && movement::too_fast(p.first_good, to, 0.0, p.move_packets, p.fall_flying) {
         let d = [to[0] - p.first_good[0], to[1] - p.first_good[1], to[2] - p.first_good[2]];
         warn!("{} moved too quickly! {d:?}", p.name);
         p.teleport(p.pos, p.rot, now);
@@ -1461,11 +1529,12 @@ fn send_chunks(p: &mut Player, missing: Vec<ChunkPos>, cells: &mut CellSet<Cell>
     let mut batch = Vec::new();
     // Ask for about what the client takes in the next tick or two, nearest first.
     let mut asked = 0;
+    let skipped = p.game_mode == 3 && !env.spectators_generate_chunks;
     for c in missing {
         match cells.chunk_mut(c) {
             Some(chunk) if batch.len() < budget => batch.push((c, chunk.packet(c.x, c.z, env.biome_count))),
             Some(_) => {}
-            None if asked < 2 * budget => {
+            None if asked < 2 * budget && !skipped => {
                 wanted.push((asked as u32, p.conn, c));
                 asked += 1;
             }

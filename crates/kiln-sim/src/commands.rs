@@ -78,6 +78,8 @@ pub struct PlayerRef {
     living: bool,
     /// `Entity.entityTags`.
     tags: Vec<String>,
+    /// A player's `experienceLevel` (`level=`).
+    xp_level: Option<i32>,
 }
 
 /// The connection of a non-player selector target: no player has it.
@@ -102,6 +104,7 @@ impl PlayerRef {
             alive: true,
             living: true,
             tags: p.tags(),
+            xp_level: Some(p.xp_level),
         }
     }
 
@@ -133,6 +136,7 @@ impl PlayerRef {
             alive,
             living: e.phys.as_deref().is_some_and(|p| kiln_entity::mob::data(p).is_some()),
             tags: e.phys.as_deref().map_or_else(Vec::new, |p| crate::command_data::tags_in(&Tag::Compound(p.extra.clone()))),
+            xp_level: None,
         }
     }
 }
@@ -189,6 +193,9 @@ impl SelectorTarget for PlayerRef {
     fn tags(&self) -> &[String] {
         &self.tags
     }
+    fn experience_level(&self) -> Option<i32> {
+        self.xp_level
+    }
 }
 
 /// Server-wide state the commands change.
@@ -205,7 +212,11 @@ pub(crate) struct CommandState {
     pub packs: crate::datapacks::Packs,
     /// Operators by name (permission level 4).
     pub ops: std::collections::HashSet<String>,
+    /// Permission levels of the operators `ops.json` lists (others, `KILN_OPS` and `/op`, have 4).
+    pub op_levels: HashMap<String, u8>,
     pub difficulty: Difficulty,
+    /// `WorldData.isDifficultyLocked` (`Data.difficulty_settings.locked`).
+    pub difficulty_locked: bool,
     pub game_rules: HashMap<String, GameRuleValue>,
     pub seed: i64,
     /// Shuffle state for `@r` / `sort=random` (xorshift).
@@ -257,7 +268,9 @@ impl CommandState {
             storage: kiln_command::CommandStorage::default(),
             packs: crate::datapacks::Packs::new(None, "work/generated".into(), crate::datapacks::PackConfig { enabled: vec!["vanilla".into()], disabled: Vec::new(), features: None }),
             ops,
+            op_levels: HashMap::new(),
             difficulty: Difficulty::Normal,
+            difficulty_locked: false,
             game_rules: HashMap::new(),
             seed: 0,
             rng: 0x9E37_79B9_7F4A_7C15,
@@ -304,13 +317,22 @@ impl Sim {
             let (cells, part) = region.cells_and_part_mut();
             if let Some(chunk) = cells.chunk_mut(chunk_pos) {
                 part.1.containers.store(chunk_pos, chunk);
+                part.1.spawners.store(chunk_pos, chunk);
             }
         }
         let Some(chunk) = self.dims[dim].regions.chunk_mut(chunk_pos) else { return false };
         let Some(old) = chunk.block_entity(lx, y, lz).cloned() else { return false };
         let mut be = kiln_world::block_entity::BlockEntity::new(old.kind);
         if let Tag::Compound(out) = &mut be.nbt {
-            out.extend(fields.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")).cloned());
+            // The new contents replace the defaults a block entity starts with (a sign's empty sides).
+            for (k, v) in fields.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")) {
+                out.retain(|(ok, _)| ok != k);
+                out.push((k.clone(), v.clone()));
+            }
+            // Vanilla parses the data and saves it again: a sign's sides come back complete.
+            if matches!(kiln_world::block_entity::type_name(old.kind), "minecraft:sign" | "minecraft:hanging_sign") {
+                crate::signs::canonical(out);
+            }
         }
         if be == old {
             return false;
@@ -323,6 +345,7 @@ impl Sim {
             part.1.containers.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.sculk.reload(kiln_blocks::BlockPos::new(x, y, z), be);
             part.1.hearts.reload(kiln_blocks::BlockPos::new(x, y, z), be);
+            part.1.spawners.reload(kiln_blocks::BlockPos::new(x, y, z), be);
         }
         let Some((kind, tag)) = self.dims[dim].regions.block_entity_data(x, y, z) else { return true };
         let pkt = packets::block_entity_data(pos, kind as i32, &tag);
@@ -353,7 +376,7 @@ impl Sim {
 
     pub(crate) fn permission_level_of(&self, conn: ConnId) -> u8 {
         match self.players.get(&conn) {
-            Some(p) if self.commands.is_op(&p.name) => 4,
+            Some(p) if self.commands.is_op(&p.name) => self.commands.op_levels.get(&p.name).copied().unwrap_or(4),
             _ => 0,
         }
     }
@@ -519,6 +542,9 @@ impl Source for Sim {
             "minecraft:worldgen/template_pool" => crate::world_state::worldgen_ids("worldgen/template_pool").clone(),
             "minecraft:test_instance" => self.commands.gametests.defs.test_ids(),
             "minecraft:loot_table" => self.loot.as_ref().map_or_else(Vec::new, |l| l.table_ids().iter().map(|i| i.to_string()).collect()),
+            "minecraft:predicate" => {
+                self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::Predicate).iter().map(|i| i.to_string()).collect())
+            }
             "minecraft:context_int_provider" => {
                 self.loot.as_ref().map_or_else(Vec::new, |l| l.ids(kiln_loot::Kind::IntProvider).iter().map(|i| i.to_string()).collect())
             }
@@ -606,32 +632,63 @@ impl SelectorWorld for Sim {
         let Some(actual) = self.entity_data_of(entity.conn, entity.entity, entity.dim) else { return false };
         kiln_command::blocks::compare_nbt(&expected, &actual, true)
     }
+
+    /// `advancements=`: `PlayerAdvancements.getOrStartProgress(advancement).isDone()`; `None` when
+    /// the advancement does not exist.
+    fn entity_advancement_done(&self, entity: &PlayerRef, id: &str) -> Option<bool> {
+        let p = self.players.get(&entity.conn)?;
+        let i = p.advancements.data.get(id)?;
+        Some(p.advancements.is_done(i))
+    }
+
+    /// `advancements={id={criterion=..}}`: `None` when the advancement or criterion does not exist.
+    fn entity_criterion_done(&self, entity: &PlayerRef, id: &str, criterion: &str) -> Option<bool> {
+        self.criterion_done(entity.conn, id, criterion)
+    }
+
+    /// `predicate=`: the loot predicate with the entity as `this_entity` at its position (the
+    /// `SELECTOR` parameter set); a predicate that does not exist matches nothing.
+    fn entity_predicate(&self, entity: &PlayerRef, id: &str) -> Option<bool> {
+        self.test_predicate_at(&kiln_command::host::LootTableArg::Id(id.to_owned()), Some(entity), entity.pos, entity.dim)
+    }
 }
 
 impl Host for Sim {
+    /// `CommandSourceStack.sendSuccess`: the source gets the message unless it is a player and
+    /// `send_command_feedback` is off (the console always does); when the command may be
+    /// logged, the other operators see "[Source: message]" with the rule on, and the server log
+    /// has it for a player's command with `log_admin_commands` on.
     fn send_success(&mut self, text: Text, broadcast: bool) {
         if self.commands.stack.silent {
             return;
         }
+        let feedback = self.rule_bool("minecraft:send_command_feedback");
+        let me = match self.commands.source {
+            CommandSource::Player(c) => Some(c),
+            CommandSource::Console => None,
+        };
         if broadcast {
             // Other operators see a gray, italic "[Source: message]" (chat.type.admin).
             let admin = kiln_command::tr!("chat.type.admin", self.source_name(), text.clone()).color("gray").italic();
-            let pkt = packets::system_chat(admin.to_nbt(), false);
-            let me = match self.commands.source {
-                CommandSource::Player(c) => Some(c),
-                CommandSource::Console => None,
-            };
-            let ops: Vec<ConnId> = self
-                .players
-                .iter()
-                .filter(|(c, p)| Some(**c) != me && self.commands.is_op(&p.name))
-                .map(|(c, _)| *c)
-                .collect();
-            for c in ops {
-                self.send_to(c, pkt.clone());
+            if feedback {
+                let pkt = packets::system_chat(admin.to_nbt(), false);
+                let ops: Vec<ConnId> = self
+                    .players
+                    .iter()
+                    .filter(|(c, p)| Some(**c) != me && self.commands.is_op(&p.name))
+                    .map(|(c, _)| *c)
+                    .collect();
+                for c in ops {
+                    self.send_to(c, pkt.clone());
+                }
+            }
+            if me.is_some() && self.rule_bool("minecraft:log_admin_commands") {
+                self.reply_console(&admin);
             }
         }
-        self.reply(text);
+        if me.is_none() || feedback {
+            self.reply(text);
+        }
     }
 
     fn send_system(&mut self, player: &PlayerRef, text: Text) {
@@ -986,10 +1043,21 @@ impl Host for Sim {
     }
 
     fn set_operator(&mut self, profile: &Profile, op: bool) {
-        if op {
-            self.commands.ops.insert(profile.name.clone());
-        } else {
-            self.commands.ops.remove(&profile.name);
+        {
+            // `PlayerList.op` / `deop`: `ops.json` follows.
+            let mut access = self.config.access.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let key = profile.uuid.to_string();
+            if op {
+                self.commands.ops.insert(profile.name.clone());
+                self.commands.op_levels.remove(&profile.name);
+                let user = kiln_link::access::NameAndId { uuid: profile.uuid, name: profile.name.clone() };
+                access.op_list.put(key, kiln_link::access::OpEntry { user, level: 4, bypasses_player_limit: false });
+            } else {
+                self.commands.ops.remove(&profile.name);
+                self.commands.op_levels.remove(&profile.name);
+                access.op_list.remove(&key);
+            }
+            access.save_ops();
         }
         self.sync_ops();
         let conn = self.players.iter().find(|(_, p)| p.name == profile.name).map(|(c, _)| *c);
@@ -1003,8 +1071,10 @@ impl Host for Sim {
     }
 
     fn set_difficulty(&mut self, difficulty: Difficulty) {
-        self.commands.difficulty = difficulty;
-        self.broadcast(packets::change_difficulty(difficulty as u8, false));
+        // `MinecraftServer.setDifficulty`: a hardcore world stays hard.
+        let hardcore = self.storage.as_ref().is_some_and(|s| s.level.hardcore());
+        self.commands.difficulty = if hardcore { Difficulty::Hard } else { difficulty };
+        self.broadcast(packets::change_difficulty(self.commands.difficulty as u8, self.commands.difficulty_locked));
     }
 
     fn set_weather(&mut self, weather: Weather, duration: Option<i32>) -> i32 {
@@ -1033,6 +1103,25 @@ impl Host for Sim {
 
     fn set_game_rule(&mut self, rule: &str, value: GameRuleValue) {
         self.commands.game_rules.insert(rule.to_owned(), value);
+        // `MinecraftServer.onGameRuleChanged`: what clients show follows the rule.
+        let on = matches!(value, GameRuleValue::Bool(true));
+        match rule {
+            "minecraft:reduced_debug_info" => {
+                let status = if on { 22 } else { 23 };
+                let ids: Vec<(ConnId, i32)> = self.players.iter().map(|(c, p)| (*c, p.entity_id)).collect();
+                for (conn, id) in ids {
+                    self.send_to(conn, kiln_proto::packets::entity::entity_event(id, status));
+                }
+            }
+            "minecraft:immediate_respawn" => self.broadcast(packets::game_event(11, f32::from(on))),
+            "minecraft:limited_crafting" => {
+                for p in self.players.values_mut() {
+                    p.limited_crafting = on;
+                }
+                self.broadcast(packets::game_event(12, f32::from(on)));
+            }
+            _ => {}
+        }
         // `MinecraftServer.onGameRuleChanged`: clients stop or restart their clocks.
         if rule == "minecraft:advance_time" {
             let pkt = self.time_packet();
@@ -1055,7 +1144,9 @@ impl Host for Sim {
     fn summon(&mut self, entity: &Identifier, pos: [f64; 3], nbt: Option<&Tag>, initialize: bool) -> Result<Text, CommandError> {
         let dim = crate::dim_id(kiln_command::host::Source::dimension(self)).unwrap_or(0);
         let seed = crate::mobs::loot_seed(self.config.noise.as_ref().map_or(0, |n| n.seed), self.game_time, self.dims[dim].spawns.len() as i32, 0x73756d6d);
-        let name = crate::mobs::summon(&mut self.dims[dim].spawns, entity.as_str(), pos, nbt, initialize, self.commands.difficulty as u8, self.game_time, seed)
+        // `ServerLevel.getCurrentDifficultyAt`: the chunk the mob appears in has been inhabited so long.
+        let inhabited = self.dims[dim].regions.chunk(kiln_world::ChunkPos::of_block(pos[0].floor() as i32, pos[2].floor() as i32)).map_or(0, |c| c.inhabited_time());
+        let name = crate::mobs::summon(&mut self.dims[dim].spawns, entity.as_str(), pos, nbt, initialize, self.commands.difficulty as u8, self.game_time, inhabited, seed)
             .ok_or_else(|| CommandError::new(kiln_command::tr!("commands.summon.failed")))?;
         Ok(Text::raw(name))
     }
@@ -1178,6 +1269,7 @@ impl Host for Sim {
             let (cells, part) = region.cells_and_part_mut();
             if let Some(chunk) = cells.chunk_mut(ChunkPos::of_block(x, z)) {
                 part.1.containers.store(ChunkPos::of_block(x, z), chunk);
+                part.1.spawners.store(ChunkPos::of_block(x, z), chunk);
             }
         }
         let chunk = self.dims[dim].regions.chunk(ChunkPos::of_block(x, z))?;
@@ -1354,6 +1446,13 @@ impl Host for Sim {
         self.commands.stopwatches.push((id.to_owned(), std::time::Instant::now(), 0));
         self.commands.stopwatches_dirty = true;
         true
+    }
+
+    fn test_loot_predicate(&mut self, predicate: &kiln_command::host::LootTableArg) -> Result<bool, CommandError> {
+        let this = kiln_command::host::Source::source_entity(self);
+        let origin = kiln_command::host::Source::origin(self);
+        let dim = kiln_command::host::Source::dimension(self).to_owned();
+        self.test_predicate_at(predicate, this.as_ref(), origin, &dim).ok_or_else(|| CommandError::unsupported("Loot predicates"))
     }
 
     fn stopwatch_seconds(&self, id: &str) -> Option<f64> {
@@ -1682,6 +1781,12 @@ impl Host for Sim {
         Some(kiln_command::host::Located { pos, id })
     }
 
+    fn locate_structure(&mut self, dimension: &str, origin: [i32; 3], structures: &[String]) -> Option<kiln_command::host::Located> {
+        let d = crate::dim_id(dimension)?;
+        let (pos, id) = Sim::locate_structure(self, d, origin, structures)?;
+        Some(kiln_command::host::Located { pos, id })
+    }
+
     fn locate_poi(&mut self, dimension: &str, origin: [i32; 3], matches: &dyn Fn(&str) -> bool) -> Option<kiln_command::host::Located> {
         let d = crate::dim_id(dimension)?;
         let (pos, id) = Sim::locate_poi(self, d, origin, matches)?;
@@ -1724,9 +1829,9 @@ impl Host for Sim {
             Placement::Template { id, rotation, mirror, integrity, seed, strict } => {
                 self.place_template(dim, id.as_str(), pos, *rotation, *mirror, *integrity, *seed, *strict)
             }
-            Placement::Feature { .. } => Err(CommandError::unsupported("place feature")),
-            Placement::Jigsaw { .. } => Err(CommandError::unsupported("place jigsaw")),
-            Placement::Structure(_) => Err(CommandError::unsupported("place structure")),
+            Placement::Feature { id, .. } => self.place_generated_feature(dim, id.as_ref().map(|i| i.as_str()), pos),
+            Placement::Jigsaw { pool, target, max_depth } => self.place_generated_jigsaw(dim, pool.as_str(), target.as_str(), *max_depth, pos),
+            Placement::Structure(id) => self.place_generated_structure(dim, id.as_str(), pos),
         }
     }
 }

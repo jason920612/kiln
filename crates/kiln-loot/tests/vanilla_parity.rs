@@ -400,6 +400,10 @@ fn loot_tables_match_vanilla() {
     let mut failures: BTreeMap<String, (usize, String)> = BTreeMap::new();
     for f in &files {
         let kind = f.file_stem().unwrap().to_string_lossy().to_string();
+        // Block experience has its own test and format.
+        if kind == "block_xp" {
+            continue;
+        }
         let text = std::fs::read_to_string(f).unwrap();
         let entry = report.entry(kind.clone()).or_default();
         let mut tables = std::collections::HashSet::new();
@@ -429,5 +433,48 @@ fn loot_tables_match_vanilla() {
     }
     let total_fail: usize = report.values().map(|r| r.1).sum();
     assert_eq!(total_fail, 0, "{total_fail} cases differ from vanilla");
+}
+
+/// `Block.spawnAfterBreak(.., tool, true)` of every block (`block_xp.jsonl`): the total
+/// experience, the orbs it splits into and where the level random stands afterwards.
+#[test]
+fn block_experience_matches_vanilla() {
+    use kiln_javamath::random::{LegacyRandom, RandomSource};
+    let Some((data, _)) = data() else { return };
+    let Some(path) = [work().join("wp4-loot"), work().join("wp44/interact/loot")]
+        .into_iter()
+        .map(|d| d.join("block_xp.jsonl"))
+        .find(|p| p.is_file())
+    else {
+        return;
+    };
+    let text = std::fs::read_to_string(path).unwrap();
+    let mut n = 0;
+    let mut nonzero = 0;
+    for line in text.lines() {
+        let c: serde_json::Value = serde_json::from_str(line).unwrap();
+        let block = c["block"].as_str().unwrap();
+        let tool = stack(c["tool"].as_str().unwrap());
+        let seed = c["seed"].as_i64().unwrap();
+        let mut rng = LegacyRandom::new(seed);
+        let amount = data.block_experience(block, &tool, &mut rng);
+        let mut orbs = kiln_loot::block_xp::orb_values(amount, &mut rng);
+        orbs.sort_unstable();
+        let mut want: Vec<i64> = c["orbs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|o| std::iter::repeat_n(o[0].as_i64().unwrap(), o[1].as_i64().unwrap() as usize))
+            .collect();
+        want.sort_unstable();
+        let got: Vec<i64> = orbs.iter().map(|&v| v as i64).collect();
+        assert_eq!(amount as i64, c["amount"].as_i64().unwrap(), "{line}");
+        assert_eq!(got, want, "{line}");
+        assert_eq!(rng.next_long(), c["next"].as_i64().unwrap(), "random after: {line}");
+        n += 1;
+        nonzero += usize::from(amount > 0);
+    }
+    eprintln!("block experience: {n} cases ({nonzero} with experience)");
+    assert!(nonzero > 100);
 }
 

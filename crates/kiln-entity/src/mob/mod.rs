@@ -56,6 +56,8 @@ pub enum MobKind {
     Skeleton,
     Creeper,
     Spider,
+    /// `CaveSpider`: a spider that poisons, with 12 health and no `finalizeSpawn`.
+    CaveSpider,
     // Extension types (behaviour in `kinds`).
     Husk,
     Stray,
@@ -232,6 +234,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Skeleton,
     MobKind::Creeper,
     MobKind::Spider,
+    MobKind::CaveSpider,
     MobKind::Husk,
     MobKind::Stray,
     MobKind::Drowned,
@@ -355,6 +358,7 @@ impl MobKind {
             MobKind::Skeleton => "minecraft:skeleton",
             MobKind::Creeper => "minecraft:creeper",
             MobKind::Spider => "minecraft:spider",
+            MobKind::CaveSpider => "minecraft:cave_spider",
             _ => unreachable!("extension type"),
         }
     }
@@ -412,6 +416,7 @@ impl MobKind {
             ]),
             MobKind::Skeleton | MobKind::Creeper => v.push((MovementSpeed, 0.25)),
             MobKind::Spider => v.extend([(MaxHealth, 16.0), (MovementSpeed, 0.30000001192092896)]),
+            MobKind::CaveSpider => v.extend([(MaxHealth, 12.0), (MovementSpeed, 0.30000001192092896)]),
             _ => {}
         }
         Attributes::new(&v)
@@ -472,7 +477,7 @@ impl MobKind {
 
     /// The type's `entity.<name>.<what>` sound, if it has one.
     fn sound_opt(self, what: &str) -> Option<&'static str> {
-        let base = self.ext().and_then(|k| k.info().sounds).unwrap_or(self.short_name());
+        let base = self.ext().and_then(|k| k.info().sounds).unwrap_or(if self == MobKind::CaveSpider { "spider" } else { self.short_name() });
         let s = format!("minecraft:entity.{base}.{what}");
         kiln_data::builtin_entries("minecraft:sound_event").and_then(|e| e.iter().find(|x| **x == s).copied())
     }
@@ -617,6 +622,8 @@ pub struct MobData {
     pub is_vehicle: bool,
     /// Arm swung this tick (for the animation packet).
     pub swing: bool,
+    /// `Mob.spawnAnim` (a spawner's new mob): the poof entity event for its viewers, once.
+    pub spawn_anim: bool,
     /// Entity events for viewers (hurt, death, eating...) are emitted as [`Event::EntityEvent`].
     pub air_supply_max: i32,
     /// `ServerEntity` needs the last hurt direction for the damage event.
@@ -678,7 +685,7 @@ impl MobData {
             MobKind::Creeper => {
                 Species::Creeper { swell: 0, old_swell: 0, swell_dir: -1, max_swell: 30, radius: 3, powered: false, ignited: false }
             }
-            MobKind::Spider => Species::Spider { climbing: false },
+            MobKind::Spider | MobKind::CaveSpider => Species::Spider { climbing: false },
             _ => Species::Plain,
         };
         let mut m = MobData {
@@ -730,7 +737,7 @@ impl MobData {
             mov: control::MoveControl::default(),
             jump: control::JumpControl::default(),
             body: control::BodyRotationControl::default(),
-            nav: path::Navigation::new(kind == MobKind::Spider),
+            nav: path::Navigation::new(matches!(kind, MobKind::Spider | MobKind::CaveSpider)),
             maluses: Vec::new(),
             seen: Vec::new(),
             unseen: Vec::new(),
@@ -745,6 +752,7 @@ impl MobData {
             sound_variant: kiln_data::synced_id(&format!("{}_sound_variant", kind.type_name()), "minecraft:classic").unwrap_or(0),
             is_vehicle: false,
             swing: false,
+            spawn_anim: false,
             air_supply_max: 300,
             hurt_by: None,
             equip_mods: Vec::new(),
@@ -1040,8 +1048,10 @@ fn register_goals(m: &mut MobData) {
         MobKind::Creeper => {
             g.add(1, Goal::Float);
             g.add(2, Goal::Swell { target: None });
-            g.add(3, Goal::AvoidEntity);
-            g.add(3, Goal::AvoidEntity);
+            // `AvoidEntityGoal<Ocelot>` and `<Cat>` (6.0F, 1.0, 1.2).
+            for types in [&["minecraft:ocelot"], &["minecraft:cat"]] {
+                g.add(3, Goal::Custom(Box::new(kinds::common_a::AvoidEntityGoal::new("AvoidEntityGoal", kinds::common_a::Avoid::Types(types), 6.0, 1.0, 1.2))));
+            }
             g.add(4, melee(MeleeKind::Plain, 1.0, false));
             g.add(5, stroll(0.8));
             g.add(6, look(8.0));
@@ -1049,9 +1059,16 @@ fn register_goals(m: &mut MobData) {
             t.add(1, nearest(Wanted::Player, true));
             t.add(2, hurt_by(false));
         }
-        MobKind::Spider => {
+        MobKind::Spider | MobKind::CaveSpider => {
             g.add(1, Goal::Float);
-            g.add(2, Goal::AvoidEntity);
+            // `AvoidEntityGoal<Armadillo>(this, Armadillo.class, 6.0F, 1.0, 1.2, e -> !e.isScared())`.
+            g.add(
+                2,
+                Goal::Custom(Box::new(
+                    kinds::common_a::AvoidEntityGoal::new("AvoidEntityGoal", kinds::common_a::Avoid::Types(&["minecraft:armadillo"]), 6.0, 1.0, 1.2)
+                        .filter(|_, level, t| !level.entity(t.id).and_then(data).is_some_and(kinds::armadillo::is_scared)),
+                )),
+            );
             g.add(3, Goal::LeapAtTarget { yd: 0.4, target: None });
             g.add(4, melee(MeleeKind::Spider, 1.0, true));
             g.add(5, stroll(0.8));
@@ -1063,8 +1080,9 @@ fn register_goals(m: &mut MobData) {
                 *spider = true;
             }
             t.add(2, sp.clone());
+            // `SpiderTargetGoal<IronGolem>`.
             if let Goal::NearestAttackable { wanted, .. } = &mut sp {
-                *wanted = Wanted::Unsimulated;
+                *wanted = Wanted::Types(kinds::zombie::IRON_GOLEM);
             }
             t.add(3, sp);
         }
@@ -2154,8 +2172,23 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     // Players first: they joined the entity sections before the mobs around them (the order
     // the pushes add up in shows in the last bits of the motion). Riding together: no pushes
     // between a vehicle and its passengers or passengers of the same vehicle.
-    let near = level.entities_in(&bb, EntityFilter::Living, e.id);
     let riding = |id: i32, vehicle: Option<i32>| e.vehicle == Some(id) || e.passengers.contains(&id) || (e.vehicle.is_some() && vehicle == e.vehicle);
+    // (One search: the living and the boats and minecarts among what is there.)
+    let found = level.entities_in(&bb, EntityFilter::Any, e.id);
+    let mut near = Vec::with_capacity(found.len());
+    let mut vehicles: Vec<i32> = Vec::new();
+    for id in found {
+        let Some(o) = level.entity(id) else { continue };
+        match &o.kind {
+            EntityKind::Other { .. } | EntityKind::Player(_) | EntityKind::Mob(_) => near.push(id),
+            EntityKind::Ext(_)
+                if (crate::ext_entity::boat::is_boat(o.type_name) || crate::ext_entity::minecart::is_minecart(o.type_name)) && !o.is_removed() && !riding(id, o.vehicle) =>
+            {
+                vehicles.push(id)
+            }
+            _ => {}
+        }
+    }
     for &id in &near {
         if let Some(p) = level.player(id)
             && !p.spectator
@@ -2183,9 +2216,16 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             // `AbstractHorse.isPushable` (horses, donkeys, camels...): `!isVehicle()`.
             && !(!o.passengers.is_empty() && (kinds::horse::is_equine(om.kind) || matches!(om.kind, MobKind::Camel | MobKind::CamelHusk | MobKind::Nautilus | MobKind::ZombieNautilus)))
             && !riding(id, o.vehicle)
+            // `LivingEntity.isPushable`: not while climbing (`getPushableEntities` leaves it out).
+            && !on_climbable(o, om, &*level)
         {
             others.push((id, o.x(), o.z(), false));
         }
+    }
+    // Boats and minecarts are pushable too (`isPushable`): `doPush(vehicle)` is `vehicle.push(mob)`,
+    // with the vehicle's own rules (see [`push_vehicle`]). Not the one the mob rides.
+    for id in vehicles {
+        push_vehicle(e, m, level, id);
     }
     for (id, ox, oz, player) in others {
         // `doPush` of a parrot ignores players (wp32).
@@ -2213,7 +2253,7 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         dx *= 0.05000000074505806;
         dz *= 0.05000000074505806;
         // `Entity.push`: vehicles and dead (not `isPushable`) mobs are not pushed.
-        if e.passengers.is_empty() && m.health > 0.0 && m.kind.ext().is_none_or(|k| k.can_be_pushed(m)) {
+        if e.passengers.is_empty() && m.health > 0.0 && m.kind.ext().is_none_or(|k| k.can_be_pushed(m)) && !on_climbable(e, m, &*level) {
             e.delta = e.delta.add(-dx, 0.0, -dz);
             e.needs_sync = true;
         }
@@ -2224,6 +2264,62 @@ fn push_entities(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             o.delta = o.delta.add(dx, 0.0, dz);
             o.needs_sync = true;
         }
+    }
+}
+
+/// `vehicle.push(mob)` for a boat or minecart touched by mob `e` (`LivingEntity.doPush`). A boat
+/// takes it only when the mob's box starts no higher than the boat's bottom (`AbstractBoat.push`),
+/// then the two are pushed apart by `Entity.push` (neither with riders); a minecart is pushed
+/// away by 0.05 (0.1 * 0.5 of the unit vector) and the mob by a quarter of that, whatever either
+/// carries.
+fn push_vehicle(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, id: i32) {
+    let Some(o) = level.entity(id) else { return };
+    if e.no_physics || o.no_physics {
+        return;
+    }
+    let (ox, oz) = (o.x(), o.z());
+    if crate::ext_entity::boat::is_boat(o.type_name) {
+        if e.bounding_box().min_y > o.bounding_box().min_y {
+            return;
+        }
+        let (dx, dz) = (e.x() - ox, e.z() - oz);
+        let mut d = dx.abs().max(dz.abs());
+        if d < 0.009999999776482582 {
+            return;
+        }
+        d = d.sqrt();
+        let (mut dx, mut dz) = (dx / d, dz / d);
+        let f = (1.0 / d).min(1.0);
+        dx *= f;
+        dz *= f;
+        dx *= 0.05000000074505806;
+        dz *= 0.05000000074505806;
+        let boat_free = o.passengers.is_empty();
+        if e.passengers.is_empty() && m.health > 0.0 && m.kind.ext().is_none_or(|k| k.can_be_pushed(m)) {
+            e.delta = e.delta.add(dx, 0.0, dz);
+            e.needs_sync = true;
+        }
+        if boat_free {
+            level.push(id, Vec3::new(-dx, 0.0, -dz));
+        }
+    } else {
+        let (dx, dz) = (e.x() - ox, e.z() - oz);
+        let mut dd = dx * dx + dz * dz;
+        if dd < 9.999999747378752E-5 {
+            return;
+        }
+        dd = dd.sqrt();
+        let (mut dx, mut dz) = (dx / dd, dz / dd);
+        let pow = (1.0 / dd).min(1.0);
+        dx *= pow;
+        dz *= pow;
+        dx *= 0.10000000149011612;
+        dz *= 0.10000000149011612;
+        dx *= 0.5;
+        dz *= 0.5;
+        level.push(id, Vec3::new(-dx, 0.0, -dz));
+        e.delta = e.delta.add(dx / 4.0, 0.0, dz / 4.0);
+        e.needs_sync = true;
     }
 }
 
@@ -2247,6 +2343,10 @@ pub fn make_sound(e: &mut Entity, m: &MobData, level: &mut dyn EntityLevel, soun
     if let Some(k) = m.kind.ext() {
         volume = k.sound_volume(m);
         pitch = k.voice_pitch(m, pitch);
+    }
+    // `AbstractCow.getSoundVolume`.
+    if m.kind == MobKind::Cow {
+        volume = 0.4;
     }
     play_sound(e, m, level, sound, volume, pitch);
 }
@@ -2298,6 +2398,16 @@ pub fn thunder_hit(e: &mut Entity, level: &mut dyn EntityLevel, _bolt: i32) -> b
         }
         _ => false,
     }
+}
+
+/// `LivingEntity.addEffect(effect, source)` on a mob entity from outside its tick (bane of
+/// arthropods' slowness).
+pub fn add_effect_entity(e: &mut Entity, level: &mut dyn EntityLevel, effect: crate::effect::Effect, source: Option<i32>) -> bool {
+    let Some(_) = data(e) else { return false };
+    let mut m = take(e);
+    let r = effects::add(e, &mut m, level, effect, source);
+    put(e, m);
+    r
 }
 
 pub fn hurt_entity(e: &mut Entity, level: &mut dyn EntityLevel, source: DamageSource, amount: f32) -> bool {
@@ -2438,13 +2548,13 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     }
     if m.is_dead_or_dying() {
         if full {
-            let sound = m.kind.ext().and_then(|k| k.death_sound_for(m)).unwrap_or_else(|| m.kind.death_sound());
+            let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.death_sound_for(m)).unwrap_or_else(|| m.kind.death_sound())));
             make_sound(e, m, level, sound);
         }
         die(e, m, level, source);
     } else if full {
         m.ambient_sound_time = -m.kind.ambient_sound_interval();
-        let sound = m.kind.ext().and_then(|k| k.hurt_sound_for(m)).unwrap_or_else(|| m.kind.hurt_sound());
+        let sound = land_variant(e, m, baby_variant(m, m.kind.ext().and_then(|k| k.hurt_sound_for(m)).unwrap_or_else(|| m.kind.hurt_sound())));
         make_sound(e, m, level, sound);
     }
     m.last_damage_source = Some(source);
@@ -2456,6 +2566,25 @@ pub fn hurt_base(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, s
     true
 }
 
+/// `Guardian.getHurtSound` / `getDeathSound`: out of water the `_land` sounds.
+fn land_variant(e: &Entity, m: &MobData, sound: &'static str) -> &'static str {
+    if !matches!(m.kind.type_name(), "minecraft:guardian" | "minecraft:elder_guardian") || e.was_touching_water {
+        return sound;
+    }
+    let name = format!("{sound}_land");
+    kiln_item::registry::SOUND_EVENT.id(&name).and_then(|id| kiln_item::registry::SOUND_EVENT.name(id)).unwrap_or(sound)
+}
+
+/// The voice of a baby (`entity.baby_pig.hurt` for `entity.pig.hurt`), where the game has one.
+fn baby_variant(m: &MobData, sound: &'static str) -> &'static str {
+    if !m.baby() {
+        return sound;
+    }
+    let Some((ty, event)) = sound.strip_prefix("minecraft:entity.").and_then(|r| r.split_once('.')) else { return sound };
+    let name = format!("minecraft:entity.baby_{ty}.{event}");
+    kiln_item::registry::SOUND_EVENT.id(&name).and_then(|id| kiln_item::registry::SOUND_EVENT.name(id)).unwrap_or(sound)
+}
+
 /// `LivingEntity.actuallyHurt`: armor, absorption, health.
 fn actually_hurt(id: i32, m: &mut MobData, source: DamageSource, amount: f32) {
     let mut amount = amount;
@@ -2464,10 +2593,34 @@ fn actually_hurt(id: i32, m: &mut MobData, source: DamageSource, amount: f32) {
         let toughness = m.attrs.value(Attr::ArmorToughness) as f32;
         let f = 2.0 + toughness / 4.0;
         let g = mth::clamp(armor - amount / f, armor * 0.2, 20.0);
-        amount *= 1.0 - g / 25.0;
+        // The weapon's enchantments change how much the armor counts (breach).
+        let victim_view = crate::enchanting::EntityView { type_id: kiln_item::registry::ENTITY_TYPE.id(m.kind.type_name()).unwrap_or(-1), ..Default::default() };
+        let damage_type = kiln_data::synced_id("minecraft:damage_type", source.kind.type_name()).unwrap_or(0);
+        let mut random = kiln_javamath::random::LegacyRandom::new(0);
+        let h = crate::enchanting::armor_effectiveness(&victim_view, damage_type, g / 25.0, &mut random).clamp(0.0, 1.0);
+        amount *= 1.0 - h;
     }
     // `getDamageAfterMagicAbsorb`: resistance, then the type's additions.
     amount = effects::resist(m, &source, amount);
+    // The equipment's enchantment protection, unless the type bypasses enchantments.
+    if amount > 0.0 && !source.kind.is_tag("minecraft:bypasses_enchantments") && !source.kind.is_tag("minecraft:bypasses_effects") {
+        use kiln_item::component::EquipmentSlot as S;
+        let equipment: Vec<(S, &ItemStack)> = [(S::MainHand, MAINHAND), (S::OffHand, OFFHAND), (S::Feet, FEET), (S::Legs, LEGS), (S::Chest, CHEST), (S::Head, HEAD)]
+            .into_iter()
+            .filter(|(_, i)| !m.equipment[*i].is_empty())
+            .map(|(s, i)| (s, &m.equipment[i]))
+            .collect();
+        if !equipment.is_empty() {
+            let victim_view = crate::enchanting::EntityView { type_id: kiln_item::registry::ENTITY_TYPE.id(m.kind.type_name()).unwrap_or(-1), ..Default::default() };
+            let damage_type = kiln_data::synced_id("minecraft:damage_type", source.kind.type_name()).unwrap_or(0);
+            let mut random = kiln_javamath::random::LegacyRandom::new(0);
+            let protection = crate::enchanting::damage_protection(&equipment, &victim_view, damage_type, &mut random);
+            if protection > 0.0 {
+                // `CombatRules.getDamageAfterMagicAbsorb`.
+                amount *= 1.0 - protection.clamp(0.0, 20.0) / 25.0;
+            }
+        }
+    }
     if let Some(k) = m.kind.ext() {
         amount = k.damage_after_magic_absorb(id, m, &source, amount);
     }
@@ -2624,7 +2777,7 @@ fn die(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: Dam
 fn extends_monster(kind: MobKind) -> bool {
     match kind.ext() {
         Some(k) => k.info().extends_monster,
-        None => matches!(kind, MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper | MobKind::Spider),
+        None => matches!(kind, MobKind::Zombie | MobKind::Skeleton | MobKind::Creeper | MobKind::Spider | MobKind::CaveSpider),
     }
 }
 
@@ -2803,6 +2956,17 @@ pub fn do_hurt_target(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLev
     let r = do_hurt_target_base(e, m, level, t);
     if r && let Some(k) = k {
         k.after_hurt_target(e, m, level, t);
+    }
+    // `CaveSpider.doHurtTarget`: poison for 7 seconds on normal, 15 on hard.
+    if r && m.kind == MobKind::CaveSpider {
+        let seconds = match level.difficulty() {
+            2 => 7,
+            3 => 15,
+            _ => 0,
+        };
+        if seconds > 0 {
+            level.add_effect(t.id, "minecraft:poison", seconds * 20, 0, Some(e.id));
+        }
     }
     r
 }
@@ -3005,6 +3169,11 @@ pub fn finalize_spawn(e: &mut Entity, r: &mut dyn RandomSource, ctx: &SpawnConte
     let mut m = take(e);
     let kind = m.kind;
     group.natural = natural;
+    // `CaveSpider.finalizeSpawn` returns the group data as it is: nothing is drawn.
+    if kind == MobKind::CaveSpider {
+        put(e, m);
+        return;
+    }
     if kind == MobKind::Zombie {
         kinds::zombie::finalize(e, &mut m, r, ctx, group, false);
         put(e, m);

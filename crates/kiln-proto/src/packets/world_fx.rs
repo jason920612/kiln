@@ -247,6 +247,26 @@ pub fn level_particles(p: &LevelParticles) -> Bytes {
     b.freeze()
 }
 
+/// `ClientboundExplodePacket` without block particles: an explosion of `radius` at `center` that
+/// destroyed `block_count` blocks, with the knockback the receiving player takes (if any).
+pub fn explode(center: [f64; 3], radius: f32, block_count: i32, knockback: Option<[f64; 3]>, particle: &Particle, sound: &Sound, play_sound: bool) -> Bytes {
+    let mut b = packet(ids::EXPLODE);
+    center.iter().for_each(|c| b.put_f64(*c));
+    b.put_f32(radius);
+    b.put_i32(block_count);
+    b.put_bool(knockback.is_some());
+    if let Some(k) = knockback {
+        k.iter().for_each(|c| b.put_f64(*c));
+    }
+    b.put_varint(particle.kind);
+    particle.options.write(&mut b);
+    sound.write(&mut b);
+    // The (empty) weighted list of block particles.
+    b.put_varint(0);
+    b.put_bool(play_sound);
+    b.freeze()
+}
+
 // ---- level and game events ----------------------------------------------------------------
 
 /// A `LevelEvent` (sound and/or particles the client derives from an id, e.g. 2001 block
@@ -417,6 +437,13 @@ pub fn section_blocks_update(section: [i32; 3], blocks: &[([u8; 3], u32)]) -> By
         let local = ((*lx as i64 & 15) << 8) | ((*lz as i64 & 15) << 4) | (*ly as i64 & 15);
         b.put_varlong((*state as i64) << 12 | local);
     }
+    b.freeze()
+}
+
+/// Opens the book in a hand (0 main hand, 1 off hand).
+pub fn open_book(hand: i32) -> Bytes {
+    let mut b = packet(ids::OPEN_BOOK);
+    b.put_varint(hand);
     b.freeze()
 }
 

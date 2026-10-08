@@ -34,6 +34,20 @@ impl WorldgenRandom {
         Self { bits: Bits::Legacy(LegacyRandom::new(seed)), next_gaussian: None }
     }
 
+    /// Draws from the state of `r` (a feature placed with the level's own random, as saplings
+    /// and bone meal do); [`WorldgenRandom::into_legacy`] gives the advanced state back.
+    pub fn from_legacy(r: LegacyRandom) -> Self {
+        Self { bits: Bits::Legacy(r), next_gaussian: None }
+    }
+
+    /// The legacy source of a [`WorldgenRandom::legacy`] or [`WorldgenRandom::from_legacy`].
+    pub fn into_legacy(self) -> Option<LegacyRandom> {
+        match self.bits {
+            Bits::Legacy(r) => Some(r),
+            Bits::Xoroshiro(_) => None,
+        }
+    }
+
     /// `setSeed`: reseeds the underlying source.
     pub fn set_seed(&mut self, seed: i64) {
         match &mut self.bits {

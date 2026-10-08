@@ -41,6 +41,8 @@ import net.minecraft.network.protocol.game.ClientboundBundlePacket;
 import net.minecraft.network.protocol.game.ClientboundEntityEventPacket;
 import net.minecraft.network.protocol.game.ClientboundRemoveMobEffectPacket;
 import net.minecraft.network.protocol.game.ClientboundUpdateMobEffectPacket;
+import net.minecraft.network.protocol.game.ServerboundClientTickEndPacket;
+import net.minecraft.network.protocol.game.ServerboundMovePlayerPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
@@ -91,6 +93,12 @@ public class EffectVectors {
         List<Object[]> blocks = new ArrayList<>();
         // Actions before a tick (1-based): each a map with "op".
         TreeMap<Integer, List<Map<String, Object>>> actions = new TreeMap<>();
+        // wp44 (player hazards): a shadow client drives the player with move packets, as a real
+        // client does; the packets it sent are recorded in `moves` (one per tick).
+        boolean client;
+        List<Object> moves = new ArrayList<>();
+        // Attribute base values set at the start: {attribute id, value}.
+        List<Object[]> attrs = new ArrayList<>();
 
         Scenario(String name) {
             this.name = name;
@@ -150,6 +158,15 @@ public class EffectVectors {
             Map<String, Object> acts = new LinkedHashMap<>();
             for (var e : actions.entrySet()) acts.put(String.valueOf(e.getKey()), e.getValue());
             m.put("actions", acts);
+            if (client) {
+                m.put("client", true);
+                m.put("moves", moves);
+            }
+            if (!attrs.isEmpty()) {
+                List<Object> al = new ArrayList<>();
+                for (Object[] a : attrs) al.add(List.of(a[0], a[1]));
+                m.put("attrs", al);
+            }
             return m;
         }
     }
@@ -596,6 +613,7 @@ public class EffectVectors {
         s.ticks = 30;
         s.at(1, hold("spider_eye")).at(1, op("op", "finish"));
         out.add(s);
+        playerScenarios(out);
         // The server moves a player it gets no movement from (gravity, then tickPlayer snaps it
         // back): a floor keeps it standing like a client that reports standing still.
         for (Scenario x : out) {
@@ -603,6 +621,663 @@ public class EffectVectors {
             if (!floor) x.blocks.add(0, new Object[] {0, -1, 0, "minecraft:stone"});
         }
         return out;
+    }
+
+    // ---------------------------------------------------------------- wp44: player hazards
+    // (scenarios driven by a shadow client; see the "shadow client" section)
+
+    /** Ticks a free fall of `h` blocks from rest takes (client physics: move, then gravity and drag). */
+    static int fallTicks(double h) {
+        double v = 0, d = 0;
+        int n = 0;
+        while (d < h && n < 400) {
+            d -= v;
+            v = (v - 0.08) * 0.98;
+            n++;
+        }
+        return n;
+    }
+
+    /** A fall from `h` blocks above the floor surface (y 100), the player starting in the air. */
+    static Scenario fall(String name, double h) {
+        Scenario s = new Scenario(name);
+        s.client = true;
+        s.onGround = false;
+        s.dy = h;
+        s.ticks = fallTicks(h) + 6;
+        return s;
+    }
+
+    /** The landing block variants: blocks (relative to BASE) replacing the stone floor. */
+    static Scenario landing(Scenario s, String kind) {
+        switch (kind) {
+            case "stone" -> s.block(0, -1, 0, "minecraft:stone");
+            case "hay" -> s.block(0, -1, 0, "minecraft:hay_block");
+            case "bed" -> s.block(0, -1, 0, "minecraft:white_bed[facing=north,part=foot]")
+                    .block(0, -1, -1, "minecraft:white_bed[facing=north,part=head]");
+            case "slime" -> s.block(0, -1, 0, "minecraft:slime_block").block(0, -2, 0, "minecraft:stone");
+            case "honey" -> s.block(0, -1, 0, "minecraft:honey_block");
+            case "cobweb" -> s.block(0, -1, 0, "minecraft:cobweb").block(0, -2, 0, "minecraft:stone");
+            case "vine" -> s.block(0, -1, 0, "minecraft:vine[up=true]").block(0, -2, 0, "minecraft:stone");
+            case "scaffolding" -> s.block(0, -1, 0, "minecraft:scaffolding[bottom=false,distance=0]").block(0, -2, 0, "minecraft:stone");
+            case "powder_snow" -> s.block(0, -1, 0, "minecraft:powder_snow").block(0, -2, 0, "minecraft:powder_snow")
+                    .block(0, -3, 0, "minecraft:stone");
+            case "water" -> {
+                s.fill(-1, -4, -1, 1, -1, 1, "minecraft:glass").fill(0, -3, 0, 0, -1, 0, "minecraft:water");
+                s.block(0, -4, 0, "minecraft:stone");
+            }
+            case "water1" -> {
+                s.fill(-1, -2, -1, 1, -1, 1, "minecraft:glass").block(0, -1, 0, "minecraft:water");
+                s.block(0, -2, 0, "minecraft:stone");
+            }
+            case "lava" -> {
+                s.fill(-1, -4, -1, 1, -1, 1, "minecraft:glass").fill(0, -3, 0, 0, -1, 0, "minecraft:lava");
+                s.block(0, -4, 0, "minecraft:stone");
+            }
+            case "sweet_berry_bush" -> s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:sweet_berry_bush[age=3]");
+            case "dripstone" -> s.block(0, -1, 0, "minecraft:stone")
+                    .block(0, 0, 0, "minecraft:pointed_dripstone[vertical_direction=up,thickness=tip,waterlogged=false]");
+            case "dripstone_frustum" -> s.block(0, -1, 0, "minecraft:stone")
+                    .block(0, 0, 0, "minecraft:pointed_dripstone[vertical_direction=up,thickness=frustum,waterlogged=false]");
+            case "dripstone_down" -> s.block(0, -1, 0, "minecraft:stone")
+                    .block(0, 0, 0, "minecraft:pointed_dripstone[vertical_direction=down,thickness=tip,waterlogged=false]");
+            case "farmland" -> s.block(0, -1, 0, "minecraft:farmland[moisture=0]");
+            case "snow" -> s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:snow[layers=3]");
+            case "carpet_on_hay" -> s.block(0, -1, 0, "minecraft:hay_block").block(0, 0, 0, "minecraft:white_carpet");
+            case "slab_on_hay" -> s.block(0, -1, 0, "minecraft:hay_block").block(0, 0, 0, "minecraft:stone_slab[type=bottom]");
+            case "fence_on_hay" -> s.block(0, -1, 0, "minecraft:hay_block").block(0, 0, 0, "minecraft:oak_fence");
+            case "soul_sand" -> s.block(0, -1, 0, "minecraft:soul_sand");
+            case "ice" -> s.block(0, -1, 0, "minecraft:blue_ice");
+            case "bubble" -> {
+                s.fill(-1, -3, -1, 1, -1, 1, "minecraft:glass").fill(0, -2, 0, 0, -1, 0, "minecraft:water");
+                s.block(0, -3, 0, "minecraft:soul_sand").block(0, -2, 0, "minecraft:bubble_column[drag=false]")
+                        .block(0, -1, 0, "minecraft:bubble_column[drag=false]");
+            }
+            case "twisting_vines" -> s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:twisting_vines[age=1]");
+            case "ladder" -> s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:ladder[facing=south]")
+                    .block(0, 0, -1, "minecraft:stone");
+            case "cactus" -> s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+            case "magma" -> s.block(0, -1, 0, "minecraft:magma_block");
+            case "stairs" -> s.block(0, -1, 0, "minecraft:stone")
+                    .block(0, 0, 0, "minecraft:oak_stairs[facing=north,half=bottom,shape=straight]");
+            default -> throw new IllegalArgumentException(kind);
+        }
+        return s;
+    }
+
+    static void playerScenarios(List<Scenario> out) {
+        Scenario s;
+        // ---- fall heights on stone: every height from 2 to 40
+        for (int h = 2; h <= 40; h++) {
+            out.add(landing(fall("fall_stone_" + h, h), "stone"));
+        }
+        for (double h : new double[] {1.0, 1.4, 1.62, 2.5, 3.2, 3.9, 4.5, 6.3}) {
+            out.add(landing(fall("fall_stone_frac_" + h, h), "stone"));
+        }
+        // ---- landing blocks
+        String[] blocks = {"hay", "bed", "slime", "honey", "cobweb", "vine", "scaffolding", "powder_snow", "water", "water1",
+                "lava", "sweet_berry_bush", "dripstone", "dripstone_frustum", "dripstone_down", "farmland", "snow",
+                "carpet_on_hay", "slab_on_hay", "fence_on_hay", "soul_sand", "ice", "bubble", "twisting_vines", "ladder",
+                "cactus", "magma", "stairs"};
+        for (String b : blocks) {
+            for (int h : new int[] {3, 4, 6, 10, 20, 40}) {
+                out.add(landing(fall("fall_" + b + "_" + h, h), b));
+            }
+        }
+        // ---- bouncing and sneaking
+        for (String b : new String[] {"slime", "bed"}) {
+            for (int h : new int[] {5, 12}) {
+                s = landing(fall("fall_" + b + "_sneak_" + h, h), b);
+                s.sneaking = true;
+                s.ticks += 30;
+                out.add(s);
+                s = landing(fall("fall_" + b + "_bounce_" + h, h), b);
+                s.ticks += 90;
+                out.add(s);
+            }
+        }
+        // ---- effects, enchantments and attributes on stone and hay
+        int[] heights = {4, 6, 10, 20};
+        for (int h : heights) {
+            for (int amp = 0; amp <= 3; amp++) {
+                s = landing(fall("fall_jump_boost" + amp + "_" + h, h), "stone");
+                s.at(1, effect("jump_boost", 600, amp));
+                out.add(s);
+            }
+            s = landing(fall("fall_slow_falling_" + h, h), "stone");
+            s.ticks += 80;
+            s.at(1, effect("slow_falling", 600, 0));
+            out.add(s);
+            s = landing(fall("fall_slow_falling_ends_" + h, h), "stone");
+            s.ticks += 80;
+            s.at(1, effect("slow_falling", 12, 0));
+            out.add(s);
+            for (int amp = 0; amp <= 2; amp++) {
+                s = landing(fall("fall_resistance" + amp + "_" + h, h), "stone");
+                s.at(1, effect("resistance", 600, amp));
+                out.add(s);
+            }
+            s = landing(fall("fall_absorption_" + h, h), "stone");
+            s.at(1, effect("absorption", 600, 1));
+            out.add(s);
+            for (int lvl = 1; lvl <= 4; lvl++) {
+                s = landing(fall("fall_feather_falling" + lvl + "_" + h, h), "stone");
+                s.armor = new String[] {"minecraft:diamond_boots", null, null, null};
+                s.armorEnch.get(0).put("minecraft:feather_falling", lvl);
+                out.add(s);
+            }
+            s = landing(fall("fall_protection4_" + h, h), "stone");
+            s.armor = new String[] {"minecraft:diamond_boots", "minecraft:diamond_leggings", "minecraft:diamond_chestplate", "minecraft:diamond_helmet"};
+            for (int i = 0; i < 4; i++) s.armorEnch.get(i).put("minecraft:protection", 4);
+            out.add(s);
+            s = landing(fall("fall_ff4_prot4_all_" + h, h), "stone");
+            s.armor = new String[] {"minecraft:netherite_boots", "minecraft:netherite_leggings", "minecraft:netherite_chestplate", "minecraft:netherite_helmet"};
+            s.armorEnch.get(0).put("minecraft:feather_falling", 4);
+            for (int i = 0; i < 4; i++) s.armorEnch.get(i).put("minecraft:protection", 4);
+            out.add(s);
+            s = landing(fall("fall_ff4_hay_" + h, h), "hay");
+            s.armor = new String[] {"minecraft:diamond_boots", null, null, null};
+            s.armorEnch.get(0).put("minecraft:feather_falling", 4);
+            out.add(s);
+            for (double m : new double[] {0.0, 0.5, 2.0, 5.0}) {
+                s = landing(fall("fall_multiplier_" + m + "_" + h, h), "stone");
+                s.attrs.add(new Object[] {"minecraft:fall_damage_multiplier", m});
+                out.add(s);
+            }
+            for (double m : new double[] {0.0, 1.0, 5.5, 20.0, -1.0}) {
+                s = landing(fall("fall_safe_distance_" + m + "_" + h, h), "stone");
+                s.attrs.add(new Object[] {"minecraft:safe_fall_distance", m});
+                out.add(s);
+            }
+            s = landing(fall("fall_multiplier_resistance_jump_" + h, h), "stone");
+            s.attrs.add(new Object[] {"minecraft:fall_damage_multiplier", 1.5});
+            s.at(1, effect("jump_boost", 600, 1)).at(1, effect("resistance", 600, 0));
+            out.add(s);
+        }
+        // ---- game modes, game rule, difficulty
+        for (String mode : new String[] {"creative", "adventure", "spectator"}) {
+            for (int h : new int[] {6, 40}) {
+                s = landing(fall("fall_mode_" + mode + "_" + h, h), "stone");
+                s.gameMode = mode;
+                out.add(s);
+            }
+        }
+        for (String diff : new String[] {"peaceful", "easy", "hard"}) {
+            for (int h : new int[] {6, 20}) {
+                s = landing(fall("fall_difficulty_" + diff + "_" + h, h), "stone");
+                s.difficulty = diff;
+                out.add(s);
+            }
+        }
+        s = landing(fall("fall_rule_off_10", 10), "stone");
+        s.at(1, op("op", "gamerule", "name", "fall_damage", "value", "false"));
+        s.at(s.ticks - 1, op("op", "gamerule", "name", "fall_damage", "value", "true"));
+        out.add(s);
+        // ---- low health, death
+        s = landing(fall("fall_low_health_10", 10), "stone");
+        s.health = 4f;
+        out.add(s);
+        s = landing(fall("fall_death_40", 40), "stone");
+        s.health = 10f;
+        out.add(s);
+        // ---- jumps from the ground
+        for (int amp = -1; amp <= 3; amp++) {
+            s = new Scenario("jump_" + amp);
+            s.client = true;
+            s.ticks = 40;
+            if (amp >= 0) s.at(1, effect("jump_boost", 600, amp));
+            s.at(2, op("op", "jump"));
+            out.add(s);
+        }
+        // ---- landing on the edge of two blocks: the supporting block is the nearer one
+        for (double dx : new double[] {0.29, 0.49, 0.51, 0.71, 0.99}) {
+            for (String b : new String[] {"hay", "slime", "bed"}) {
+                s = fall("fall_edge_" + b + "_" + dx, 8);
+                s.dx = dx;
+                s.block(0, -1, 0, b.equals("hay") ? "minecraft:hay_block" : b.equals("slime") ? "minecraft:slime_block"
+                        : "minecraft:white_bed[facing=east,part=foot]");
+                if (b.equals("bed")) s.block(1, -1, 0, "minecraft:white_bed[facing=east,part=head]");
+                else s.block(1, -1, 0, "minecraft:stone");
+                out.add(s);
+            }
+        }
+        // ---- stepping off a ledge (the client keeps its momentum)
+        for (int drop : new int[] {2, 3, 4, 5, 9}) {
+            s = new Scenario("ledge_" + drop);
+            s.client = true;
+            s.ticks = 30 + fallTicks(drop);
+            s.block(0, -1, 0, "minecraft:stone").fill(1, -1 - drop, -1, 3, -1 - drop, 1, "minecraft:stone");
+            s.at(2, op("op", "velocity", "x", 0.2, "y", 0.0, "z", 0.0));
+            out.add(s);
+        }
+        hazardScenarios(out);
+        survivalScenarios(out);
+    }
+
+    // ---------------------------------------------------------------- wp44: block hazards
+    // Cactus, sweet berries, wither roses, powder snow (freezing) and suffocation in walls,
+    // with and without protections, per difficulty and game mode.
+
+    static final String[] ARMOR_FULL_DIAMOND = {"minecraft:diamond_boots", "minecraft:diamond_leggings",
+            "minecraft:diamond_chestplate", "minecraft:diamond_helmet"};
+
+    static Scenario hazard(String name, int ticks) {
+        Scenario s = new Scenario(name);
+        s.client = true;
+        s.ticks = ticks;
+        return s;
+    }
+
+    /** Pushes the client toward +x now and then (a player walking into something). */
+    static Scenario walkInto(Scenario s, double v, int from, int to, int every) {
+        for (int t = from; t <= to; t += every) s.at(t, op("op", "velocity", "x", v, "y", 0.0, "z", 0.0));
+        return s;
+    }
+
+    static void hazardScenarios(List<Scenario> out) {
+        Scenario s;
+        // ---- cactus: standing in it, and walking into one
+        s = hazard("haz_cactus_inside", 60);
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+        out.add(s);
+        s = hazard("haz_cactus_walk", 80);
+        s.block(0, -1, 0, "minecraft:stone").block(1, -2, 0, "minecraft:stone").block(1, -1, 0, "minecraft:sand").block(1, 0, 0, "minecraft:cactus[age=3]");
+        walkInto(s, 0.4, 3, 40, 2);
+        out.add(s);
+        s = hazard("haz_cactus_walk_sneaking", 80);
+        s.sneaking = true;
+        s.block(0, -1, 0, "minecraft:stone").block(1, -2, 0, "minecraft:stone").block(1, -1, 0, "minecraft:sand").block(1, 0, 0, "minecraft:cactus[age=3]");
+        walkInto(s, 0.2, 3, 40, 2);
+        out.add(s);
+        s = hazard("haz_cactus_armor", 60);
+        s.armor = ARMOR_FULL_DIAMOND;
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+        out.add(s);
+        s = hazard("haz_cactus_protection4", 60);
+        s.armor = ARMOR_FULL_DIAMOND;
+        for (int i = 0; i < 4; i++) s.armorEnch.get(i).put("minecraft:protection", 4);
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+        out.add(s);
+        s = hazard("haz_cactus_resistance", 60);
+        s.at(1, effect("resistance", 400, 1));
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+        out.add(s);
+        s = hazard("haz_cactus_absorption", 60);
+        s.at(1, effect("absorption", 400, 0));
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+        out.add(s);
+        for (String mode : new String[] {"creative", "adventure", "spectator"}) {
+            s = hazard("haz_cactus_" + mode, 40);
+            s.gameMode = mode;
+            s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+            out.add(s);
+        }
+        for (String diff : new String[] {"peaceful", "easy", "hard"}) {
+            s = hazard("haz_cactus_" + diff, 40);
+            s.difficulty = diff;
+            s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+            out.add(s);
+        }
+        s = hazard("haz_cactus_low_health", 60);
+        s.health = 3f;
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]");
+        out.add(s);
+        s = hazard("haz_cactus_two_tall", 40);
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand").block(0, 0, 0, "minecraft:cactus[age=0]").block(0, 1, 0, "minecraft:cactus[age=0]");
+        out.add(s);
+
+        // ---- sweet berry bushes: slow, and hurt a player that moves in them
+        for (int age = 0; age <= 3; age++) {
+            s = hazard("haz_berry_still_" + age, 40);
+            s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:sweet_berry_bush[age=" + age + "]");
+            out.add(s);
+            s = hazard("haz_berry_walk_" + age, 80);
+            s.block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(-1, -1, 0, "minecraft:stone")
+                    .block(0, 0, 0, "minecraft:sweet_berry_bush[age=" + age + "]");
+            s.dx = -0.4;
+            walkInto(s, 0.1, 3, 60, 3);
+            out.add(s);
+        }
+        s = hazard("haz_berry_walk_armor", 80);
+        s.armor = ARMOR_FULL_DIAMOND;
+        s.block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(-1, -1, 0, "minecraft:stone")
+                .block(0, 0, 0, "minecraft:sweet_berry_bush[age=3]");
+        s.dx = -0.4;
+        walkInto(s, 0.1, 3, 60, 3);
+        out.add(s);
+        s = hazard("haz_berry_walk_sneaking", 80);
+        s.sneaking = true;
+        s.block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(-1, -1, 0, "minecraft:stone")
+                .block(0, 0, 0, "minecraft:sweet_berry_bush[age=3]");
+        s.dx = -0.4;
+        walkInto(s, 0.1, 3, 60, 3);
+        out.add(s);
+        s = hazard("haz_berry_walk_creative", 60);
+        s.gameMode = "creative";
+        s.block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(-1, -1, 0, "minecraft:stone")
+                .block(0, 0, 0, "minecraft:sweet_berry_bush[age=3]");
+        s.dx = -0.4;
+        walkInto(s, 0.1, 3, 40, 3);
+        out.add(s);
+        s = hazard("haz_berry_jump_in", 60);
+        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:sweet_berry_bush[age=3]");
+        s.dy = 4;
+        s.onGround = false;
+        out.add(s);
+
+        // ---- wither rose: wither for 8 seconds unless peaceful or invulnerable
+        for (String diff : new String[] {"peaceful", "easy", "normal", "hard"}) {
+            s = hazard("haz_wither_rose_" + diff, 120);
+            s.difficulty = diff;
+            s.block(0, -1, 0, "minecraft:dirt").block(0, 0, 0, "minecraft:wither_rose");
+            out.add(s);
+        }
+        for (String mode : new String[] {"creative", "spectator", "adventure"}) {
+            s = hazard("haz_wither_rose_" + mode, 60);
+            s.gameMode = mode;
+            s.block(0, -1, 0, "minecraft:dirt").block(0, 0, 0, "minecraft:wither_rose");
+            out.add(s);
+        }
+        s = hazard("haz_wither_rose_walk", 200);
+        s.fill(-1, -1, -1, 4, -1, 1, "minecraft:dirt").block(1, 0, 0, "minecraft:wither_rose");
+        walkInto(s, 0.25, 3, 6, 1);
+        out.add(s);
+        s = hazard("haz_wither_rose_long", 400);
+        s.health = 20f;
+        s.food = 18;
+        s.block(0, -1, 0, "minecraft:dirt").block(0, 0, 0, "minecraft:wither_rose");
+        out.add(s);
+        s = hazard("haz_wither_rose_potted", 60);
+        s.block(0, -1, 0, "minecraft:dirt").block(0, 0, 0, "minecraft:potted_wither_rose");
+        out.add(s);
+
+        // ---- powder snow: freezing
+        String[][] snowLayouts = {{"sink", "none"}, {"boots_top", "leather_boots"}, {"helmet", "leather_helmet"},
+                {"leggings", "leather_leggings"}, {"chest", "leather_chestplate"}, {"iron_boots", "iron_boots"}};
+        for (String[] l : snowLayouts) {
+            s = hazard("haz_snow_" + l[0], 360);
+            snowColumn(s);
+            if (l[0].equals("boots_top")) s.dy = 1;
+            if (!l[1].equals("none")) {
+                String slot = l[1].contains("boots") ? "boots" : l[1].contains("helmet") ? "helmet" : l[1].contains("leggings") ? "leggings" : "chestplate";
+                s.armor = new String[] {slot.equals("boots") ? "minecraft:" + l[1] : null, slot.equals("leggings") ? "minecraft:" + l[1] : null,
+                        slot.equals("chestplate") ? "minecraft:" + l[1] : null, slot.equals("helmet") ? "minecraft:" + l[1] : null};
+            }
+            out.add(s);
+        }
+        s = hazard("haz_snow_thaw", 260);
+        snowColumn(s);
+        s.at(100, op("op", "setblock", "pos", List.of(0, 100, 0), "state", "minecraft:air"));
+        s.at(100, op("op", "setblock", "pos", List.of(0, 99, 0), "state", "minecraft:air"));
+        out.add(s);
+        s = hazard("haz_snow_leave_early", 200);
+        snowColumn(s);
+        s.at(60, op("op", "setblock", "pos", List.of(0, 100, 0), "state", "minecraft:air"));
+        s.at(60, op("op", "setblock", "pos", List.of(0, 99, 0), "state", "minecraft:air"));
+        out.add(s);
+        s = hazard("haz_snow_rule_off", 360);
+        snowColumn(s);
+        s.at(1, op("op", "gamerule", "name", "freeze_damage", "value", "false"));
+        out.add(s);
+        for (String mode : new String[] {"creative", "adventure", "spectator"}) {
+            s = hazard("haz_snow_" + mode, 300);
+            s.gameMode = mode;
+            snowColumn(s);
+            out.add(s);
+        }
+        s = hazard("haz_snow_burning", 60);
+        snowColumn(s);
+        s.fire = 200;
+        out.add(s);
+        s = hazard("haz_snow_fire_resistance_burning", 60);
+        snowColumn(s);
+        s.fire = 200;
+        s.at(1, effect("fire_resistance", 400, 0));
+        out.add(s);
+        s = hazard("haz_snow_armor", 360);
+        s.armor = ARMOR_FULL_DIAMOND;
+        snowColumn(s);
+        out.add(s);
+        s = hazard("haz_snow_hard", 360);
+        s.difficulty = "hard";
+        snowColumn(s);
+        out.add(s);
+        s = hazard("haz_snow_low_health", 360);
+        s.health = 3f;
+        snowColumn(s);
+        out.add(s);
+        s = hazard("haz_snow_stand_on_top_no_boots", 60);
+        s.dy = 3;
+        s.onGround = false;
+        snowColumn(s);
+        out.add(s);
+        s = hazard("haz_snow_fall_in", 200);
+        s.dy = 8;
+        s.onGround = false;
+        snowColumn(s);
+        out.add(s);
+        s = hazard("haz_snow_lava_clears", 80);
+        snowColumn(s);
+        s.at(30, op("op", "setblock", "pos", List.of(0, 99, 0), "state", "minecraft:lava"));
+        out.add(s);
+
+        // ---- suffocation in walls
+        String[] walls = {"stone", "dirt", "sand", "gravel", "glass", "oak_leaves", "stone_slab[type=top]", "stone_slab[type=bottom]",
+                "oak_stairs[facing=north,half=top,shape=straight]", "iron_bars", "barrier", "honey_block", "slime_block", "tinted_glass",
+                "ice", "soul_sand", "anvil", "chest[facing=north]", "bookshelf", "snow[layers=8]", "snow[layers=3]", "oak_trapdoor[facing=north,half=top,open=false]",
+                "oak_fence", "cobblestone_wall", "farmland[moisture=0]", "dirt_path", "oak_door[facing=north,half=lower]", "white_bed[facing=north,part=foot]",
+                "cactus", "magma_block", "composter", "cauldron", "hopper", "oak_log", "spawner", "sculk_sensor", "campfire[lit=false]"};
+        for (String w : walls) {
+            String id = w.contains("[") ? w.substring(0, w.indexOf('[')) : w;
+            s = hazard("haz_wall_" + id + (w.contains("=") ? "_" + Math.abs(w.hashCode() % 1000) : ""), 45);
+            s.onGround = true;
+            // (A cactus needs sand under it, and the sand something under that.)
+            if (w.equals("cactus")) s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:sand");
+            else s.block(0, -1, 0, "minecraft:stone");
+            s.block(0, 0, 0, "minecraft:" + w).block(0, 1, 0, "minecraft:" + w);
+            out.add(s);
+        }
+        s = hazard("haz_wall_head_only", 45);
+        s.block(0, -1, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone");
+        out.add(s);
+        s = hazard("haz_wall_head_only_sneaking", 45);
+        s.sneaking = true;
+        s.block(0, -1, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone");
+        out.add(s);
+        s = hazard("haz_wall_ceiling_slab", 45);
+        s.block(0, -1, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone_slab[type=bottom]");
+        out.add(s);
+        s = hazard("haz_wall_ceiling_slab_top", 45);
+        s.block(0, -1, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone_slab[type=top]");
+        out.add(s);
+        s = hazard("haz_wall_edge", 45);
+        s.dx = 0.49;
+        s.block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:stone").block(1, 1, 0, "minecraft:stone");
+        out.add(s);
+        s = hazard("haz_wall_edge_in", 45);
+        s.dx = 0.45;
+        s.block(0, -1, 0, "minecraft:stone").block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:stone").block(1, 1, 0, "minecraft:stone");
+        out.add(s);
+        for (String mode : new String[] {"creative", "adventure", "spectator"}) {
+            s = hazard("haz_wall_stone_" + mode, 45);
+            s.gameMode = mode;
+            s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone");
+            out.add(s);
+        }
+        for (String diff : new String[] {"peaceful", "easy", "hard"}) {
+            s = hazard("haz_wall_stone_" + diff, 45);
+            s.difficulty = diff;
+            s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone");
+            out.add(s);
+        }
+        s = hazard("haz_wall_stone_armor", 45);
+        s.armor = ARMOR_FULL_DIAMOND;
+        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone");
+        out.add(s);
+        s = hazard("haz_wall_stone_protection4", 45);
+        s.armor = ARMOR_FULL_DIAMOND;
+        for (int i = 0; i < 4; i++) s.armorEnch.get(i).put("minecraft:protection", 4);
+        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone");
+        out.add(s);
+        s = hazard("haz_wall_stone_low_health", 60);
+        s.health = 3f;
+        s.block(0, -1, 0, "minecraft:stone").block(0, 0, 0, "minecraft:stone").block(0, 1, 0, "minecraft:stone");
+        out.add(s);
+        s = hazard("haz_wall_placed_over_player", 60);
+        s.block(0, -1, 0, "minecraft:stone");
+        s.at(10, op("op", "setblock", "pos", List.of(0, 101, 0), "state", "minecraft:stone"));
+        s.at(30, op("op", "setblock", "pos", List.of(0, 101, 0), "state", "minecraft:air"));
+        out.add(s);
+    }
+
+    // ---------------------------------------------------------------- wp44: totems and regeneration
+
+    static Map<String, Object> offhand(String item) {
+        return op("op", "offhand", "item", "minecraft:" + item);
+    }
+
+    static void survivalScenarios(List<Scenario> out) {
+        Scenario s;
+        String totem = "totem_of_undying";
+        // ---- the totem of undying: lethal damage in either hand
+        s = new Scenario("totem_main_hand");
+        s.ticks = 60;
+        s.at(1, hold(totem)).at(2, hurt("generic", 30f));
+        out.add(s);
+        s = new Scenario("totem_off_hand");
+        s.ticks = 60;
+        s.at(1, offhand(totem)).at(2, hurt("generic", 30f));
+        out.add(s);
+        s = new Scenario("totem_both_hands");
+        s.ticks = 60;
+        s.at(1, hold(totem)).at(1, offhand(totem)).at(2, hurt("generic", 30f)).at(10, hurt("generic", 30f)).at(25, hurt("generic", 30f));
+        out.add(s);
+        s = new Scenario("totem_none");
+        s.ticks = 20;
+        s.at(2, hurt("generic", 30f));
+        out.add(s);
+        s = new Scenario("totem_not_lethal");
+        s.ticks = 20;
+        s.at(1, hold(totem)).at(2, hurt("generic", 5f));
+        out.add(s);
+        s = new Scenario("totem_void");
+        s.ticks = 20;
+        s.at(1, hold(totem)).at(2, hurt("out_of_world", 30f));
+        out.add(s);
+        s = new Scenario("totem_kill");
+        s.ticks = 20;
+        s.at(1, hold(totem)).at(2, hurt("generic_kill", 30f));
+        out.add(s);
+        s = new Scenario("totem_fire");
+        s.ticks = 40;
+        s.at(1, hold(totem)).at(2, hurt("in_fire", 30f)).at(3, hurt("magic", 30f));
+        out.add(s);
+        s = new Scenario("totem_with_effects");
+        s.ticks = 80;
+        s.at(1, effect("poison", 400, 1)).at(1, effect("speed", 400, 1)).at(1, effect("absorption", 400, 0)).at(1, hold(totem))
+                .at(5, hurt("generic", 40f));
+        out.add(s);
+        s = new Scenario("totem_regeneration_window");
+        s.ticks = 1000;
+        s.at(1, hold(totem)).at(2, hurt("generic", 30f));
+        out.add(s);
+        s = new Scenario("totem_creative");
+        s.gameMode = "creative";
+        s.ticks = 20;
+        s.at(1, hold(totem)).at(2, hurt("generic", 30f));
+        out.add(s);
+        s = new Scenario("totem_low_health_effect_tick");
+        s.health = 2f;
+        s.ticks = 60;
+        s.at(1, effect("poison", 400, 4)).at(1, effect("wither", 400, 2)).at(1, hold(totem));
+        out.add(s);
+        s = new Scenario("totem_resistance");
+        s.ticks = 20;
+        s.at(1, effect("resistance", 400, 4)).at(1, hold(totem)).at(2, hurt("generic", 200f));
+        out.add(s);
+        s = fall("totem_fall", 30);
+        s.at(1, hold(totem));
+        out.add(s);
+        s = new Scenario("totem_drowning");
+        s.air = 5;
+        s.ticks = 120;
+        s.pool("minecraft:water", 3);
+        s.health = 2f;
+        s.at(1, hold(totem));
+        out.add(s);
+
+        // ---- natural regeneration, saturation and starvation
+        for (String diff : new String[] {"peaceful", "easy", "normal", "hard"}) {
+            for (int food : new int[] {20, 19, 18, 17, 0}) {
+                for (float sat : new float[] {0f, 5f}) {
+                    if (food != 20 && sat > 0f && food != 18) continue;
+                    s = new Scenario("regen_" + diff + "_f" + food + "_s" + (int) sat);
+                    s.difficulty = diff;
+                    s.food = food;
+                    s.saturation = sat;
+                    s.health = food == 0 ? 14f : 6f;
+                    s.ticks = food == 0 ? 400 : 260;
+                    out.add(s);
+                }
+            }
+        }
+        s = new Scenario("regen_hard_starve_to_death");
+        s.difficulty = "hard";
+        s.food = 0;
+        s.saturation = 0f;
+        s.health = 5f;
+        s.ticks = 600;
+        out.add(s);
+        s = new Scenario("regen_easy_starve_floor");
+        s.difficulty = "easy";
+        s.food = 0;
+        s.saturation = 0f;
+        s.health = 11f;
+        s.ticks = 800;
+        out.add(s);
+        s = new Scenario("regen_normal_starve_floor");
+        s.difficulty = "normal";
+        s.food = 0;
+        s.saturation = 0f;
+        s.health = 4f;
+        s.ticks = 800;
+        out.add(s);
+        s = new Scenario("regen_full_saturation_burst");
+        s.food = 20;
+        s.saturation = 20f;
+        s.health = 1f;
+        s.ticks = 300;
+        out.add(s);
+        s = new Scenario("regen_hunger_effect");
+        s.food = 20;
+        s.saturation = 0f;
+        s.health = 10f;
+        s.ticks = 400;
+        s.at(1, effect("hunger", 400, 3));
+        out.add(s);
+        s = new Scenario("regen_rule_off");
+        s.food = 20;
+        s.saturation = 5f;
+        s.health = 10f;
+        s.ticks = 200;
+        s.at(1, op("op", "gamerule", "name", "natural_health_regeneration", "value", "false"));
+        out.add(s);
+        s = new Scenario("regen_creative");
+        s.gameMode = "creative";
+        s.health = 10f;
+        s.ticks = 200;
+        out.add(s);
+        s = new Scenario("regen_exhaustion_damage");
+        s.food = 20;
+        s.saturation = 0f;
+        s.ticks = 300;
+        s.at(5, hurt("generic", 4f)).at(60, hurt("in_fire", 2f)).at(120, hurt("magic", 3f));
+        out.add(s);
+    }
+
+    /** Two blocks of powder snow over a stone floor, the player at the top. */
+    static void snowColumn(Scenario s) {
+        s.block(0, -2, 0, "minecraft:stone").block(0, -1, 0, "minecraft:powder_snow").block(0, 0, 0, "minecraft:powder_snow");
     }
 
     // ---------------------------------------------------------------- registries
@@ -704,7 +1379,7 @@ public class EffectVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=25595",
+                "server-port=" + harnessPort(),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
@@ -832,6 +1507,7 @@ public class EffectVectors {
         set(p.getFoodData(), "tickTimer", 0);
         p.setAirSupply(s.air);
         p.setRemainingFireTicks(s.fire);
+        for (Object[] at : s.attrs) setAttribute(p, (String) at[0], ((Number) at[1]).doubleValue());
         p.tickCount = 0;
         p.getCombatTracker().recheckStatus();
     }
@@ -839,6 +1515,10 @@ public class EffectVectors {
     static String run(MinecraftServer server, Scenario s) throws Exception {
         ServerLevel level = server.overworld();
         command(server, "difficulty " + s.difficulty);
+        // Rules scenarios toggle go back to their defaults.
+        command(server, "gamerule fall_damage true");
+        command(server, "gamerule freeze_damage true");
+        command(server, "gamerule natural_health_regeneration true");
         for (Object[] b : s.blocks) {
             command(server, String.format(Locale.ROOT, "setblock %d %d %d %s", BASE[0] + (int) b[0], BASE[1] + (int) b[1],
                     BASE[2] + (int) b[2], b[3]));
@@ -849,13 +1529,20 @@ public class EffectVectors {
         level.getRandom().setSeed(s.seed);
         p.getRandom().setSeed(s.seed + 1);
         List<Object> ticks = new ArrayList<>();
+        ServerPlayer shadowPlayer = s.client ? startClient(server, p, s) : null;
+        shadow = shadowPlayer;
+        ClientState cs = new ClientState();
         for (int t = 1; t <= s.ticks; t++) {
             for (Map<String, Object> a : s.actions.getOrDefault(t, List.of())) act(server, p, a);
+            if (shadowPlayer != null) clientTick(p, shadowPlayer, s, cs);
             p.commonTick();
             p.tick();
             call(p.connection, "tickPlayer");
+            if (shadowPlayer != null) p.connection.handleClientTickEnd(ServerboundClientTickEndPacket.INSTANCE);
             ticks.add(state(p));
         }
+        if (shadowPlayer != null) server.getPlayerList().remove(shadowPlayer);
+        shadow = null;
         for (Object[] b : s.blocks) {
             command(server, String.format(Locale.ROOT, "setblock %d %d %d air", BASE[0] + (int) b[0], BASE[1] + (int) b[1],
                     BASE[2] + (int) b[2]));
@@ -870,10 +1557,38 @@ public class EffectVectors {
     static void act(MinecraftServer server, ServerPlayer p, Map<String, Object> a) throws Exception {
         ServerLevel level = server.overworld();
         switch ((String) a.get("op")) {
-            case "effect" -> p.addEffect(new MobEffectInstance(effectHolder((String) a.get("id")), (Integer) a.get("duration"),
-                    (Integer) a.get("amp"), (Boolean) a.get("ambient"), (Boolean) a.get("visible"), (Boolean) a.get("icon")));
-            case "remove" -> p.removeEffect(effectHolder((String) a.get("id")));
-            case "clear" -> p.removeAllEffects();
+            case "effect" -> {
+                for (ServerPlayer q : actors(p)) {
+                    q.addEffect(new MobEffectInstance(effectHolder((String) a.get("id")), (Integer) a.get("duration"),
+                            (Integer) a.get("amp"), (Boolean) a.get("ambient"), (Boolean) a.get("visible"), (Boolean) a.get("icon")));
+                }
+            }
+            case "remove" -> {
+                for (ServerPlayer q : actors(p)) q.removeEffect(effectHolder((String) a.get("id")));
+            }
+            case "clear" -> {
+                for (ServerPlayer q : actors(p)) q.removeAllEffects();
+            }
+            // wp44: the shadow client jumps; attributes and sneaking apply to both; a game rule.
+            case "jump" -> {
+                if (shadow != null) shadow.jumpFromGround();
+            }
+            case "attribute" -> {
+                for (ServerPlayer q : actors(p)) setAttribute(q, (String) a.get("id"), ((Number) a.get("value")).doubleValue());
+            }
+            case "sneak" -> {
+                for (ServerPlayer q : actors(p)) {
+                    q.setShiftKeyDown((Boolean) a.get("on"));
+                    q.setPose((Boolean) a.get("on") ? Pose.CROUCHING : Pose.STANDING);
+                }
+            }
+            case "gamerule" -> command(server, "gamerule " + a.get("name") + " " + a.get("value"));
+            case "velocity" -> {
+                if (shadow != null) {
+                    shadow.setDeltaMovement(((Number) a.get("x")).doubleValue(), ((Number) a.get("y")).doubleValue(),
+                            ((Number) a.get("z")).doubleValue());
+                }
+            }
             case "hurt" -> {
                 var type = level.registryAccess().lookupOrThrow(Registries.DAMAGE_TYPE)
                         .getOrThrow(ResourceKey.create(Registries.DAMAGE_TYPE, Identifier.parse((String) a.get("type"))));
@@ -900,6 +1615,8 @@ public class EffectVectors {
                 }
                 p.setItemInHand(InteractionHand.MAIN_HAND, st);
             }
+            case "offhand" -> p.setItemInHand(InteractionHand.OFF_HAND,
+                    new ItemStack(BuiltInRegistries.ITEM.getValue(Identifier.parse((String) a.get("item")))));
             case "finish" -> {
                 ItemStack st = p.getMainHandItem();
                 ItemStack rest = st.finishUsingItem(level, p);
@@ -942,6 +1659,8 @@ public class EffectVectors {
         m.put("dead", p.isDeadOrDying());
         m.put("y", p.getY());
         m.put("on_ground", p.onGround());
+        m.put("fall_distance", p.fallDistance);
+        m.put("frozen", p.getTicksFrozen());
         List<MobEffectInstance> effects = new ArrayList<>(p.getActiveEffects());
         effects.sort(Comparator.comparingInt(e -> BuiltInRegistries.MOB_EFFECT.getId(e.getEffect().value())));
         List<Object> ej = new ArrayList<>();
@@ -968,6 +1687,71 @@ public class EffectVectors {
         }
         m.put("packets", packets);
         return m;
+    }
+
+    // ---------------------------------------------------------------- wp44: the shadow client
+
+    // A second mock player plays the client: it runs the movement (gravity, collisions, bounces,
+    // block effects) as `ServerPlayer.doTick` does without the connection's snap back, and its
+    // position after each tick goes to the real mock player as a move packet, the way
+    // `LocalPlayer.sendPosition` sends it (a position when it moved or every 20 ticks, else only
+    // the on-ground and collision flags). The packets are recorded in the scenario.
+
+    static ServerPlayer shadow;
+
+    static final class ClientState {
+        Vec3 last;
+        int reminder;
+    }
+
+    static List<ServerPlayer> actors(ServerPlayer p) {
+        return shadow == null ? List.of(p) : List.of(p, shadow);
+    }
+
+    static void setAttribute(ServerPlayer p, String id, double value) {
+        Holder<Attribute> h = BuiltInRegistries.ATTRIBUTE.getOrThrow(ResourceKey.create(Registries.ATTRIBUTE, Identifier.parse(id)));
+        p.getAttribute(h).setBaseValue(value);
+    }
+
+    static ServerPlayer startClient(MinecraftServer server, ServerPlayer p, Scenario s) throws Exception {
+        ServerPlayer c = mockPlayer(server, "Shadow" + players++);
+        setup(server, c, s);
+        drain(c);
+        // The join teleport is long confirmed on a real connection.
+        set(p.connection, "awaitingPositionFromClient", null);
+        p.connection.resetPosition();
+        return c;
+    }
+
+    static void clientTick(ServerPlayer p, ServerPlayer c, Scenario s, ClientState cs) throws Exception {
+        if (cs.last == null) cs.last = c.position();
+        c.setHealth(c.getMaxHealth());
+        // The shadow burns nothing down: a burning body melts the powder snow it stands in.
+        c.setRemainingFireTicks(-20);
+        c.commonTick();
+        c.tick();
+        c.doTick();
+        drain(c);
+        Vec3 pos = c.position();
+        cs.reminder++;
+        boolean moved = pos.subtract(cs.last).lengthSqr() > 2.0E-4 * 2.0E-4 || cs.reminder >= 20;
+        boolean onGround = c.onGround();
+        boolean hcol = c.horizontalCollision;
+        Map<String, Object> rec = new LinkedHashMap<>();
+        if (moved) {
+            rec.put("pos", new double[] {pos.x, pos.y, pos.z});
+            cs.last = pos;
+            cs.reminder = 0;
+        } else {
+            rec.put("pos", null);
+        }
+        rec.put("on_ground", onGround);
+        rec.put("hcol", hcol);
+        s.moves.add(rec);
+        ServerboundMovePlayerPacket pkt = moved
+                ? new ServerboundMovePlayerPacket.Pos(pos.x, pos.y, pos.z, onGround, hcol)
+                : new ServerboundMovePlayerPacket.StatusOnly(onGround, hcol);
+        p.connection.handleMovePlayer(pkt);
     }
 
     // ---------------------------------------------------------------- reflection and JSON
@@ -1044,5 +1828,26 @@ public class EffectVectors {
             return b.append("}").toString();
         }
         return toJson(String.format(Locale.ROOT, "%s", o));
+    }
+
+    /// $KILN_HARNESS_PORT, else the first free port of 25581-25583 (wp44's; waits while all are busy).
+    static String harnessPort() {
+        String env = System.getenv("KILN_HARNESS_PORT");
+        if (env != null) return env;
+        for (int i = 0; i < 900; i++) {
+            for (int p = 25581; p <= 25583; p++) {
+                try (var s = new java.net.ServerSocket(p)) {
+                    return Integer.toString(p);
+                } catch (java.io.IOException e) {
+                    // busy
+                }
+            }
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        throw new IllegalStateException("no free harness port");
     }
 }

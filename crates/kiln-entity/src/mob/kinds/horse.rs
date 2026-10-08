@@ -4,8 +4,7 @@
 //! on donkeys, mules and llamas (15 slots; a llama's three per strength), body armor (a llama's
 //! carpet), the inventory the screen shows (saddle, armor and the chest's slots, kept in
 //! [`State`], dropped when the animal dies), breeding. The llamas' own goals and spit are in
-//! [`super::llama`].
-//! Not modelled: horse-donkey cross breeding (mules).
+//! [`super::llama`]. A horse and a donkey have a mule.
 
 use super::tame::TamableAnimalPanicGoal;
 use crate::custom_goal_boilerplate;

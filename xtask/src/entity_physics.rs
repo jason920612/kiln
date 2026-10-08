@@ -19,7 +19,7 @@ use std::path::Path;
 
 /// Bit order of the per-state flags.
 pub const STATE_FLAGS: &[&str] =
-    &["falling", "source", "air", "liquid", "solid", "replaceable", "offset", "suffocating", "large", "cube"];
+    &["falling", "source", "air", "liquid", "solid", "replaceable", "offset", "suffocating", "large", "cube", "suffocating_default"];
 
 const FLUIDS: &[&str] =
     &["minecraft:empty", "minecraft:flowing_water", "minecraft:water", "minecraft:flowing_lava", "minecraft:lava"];

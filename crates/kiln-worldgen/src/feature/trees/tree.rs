@@ -156,6 +156,11 @@ impl Tree {
         })
     }
 
+    /// `TreeFeature.trunkPlacer().getBaseHeight()`.
+    pub fn base_height(&self) -> i32 {
+        self.trunk_placer.base_height()
+    }
+
     /// `TreeFeature.place`.
     pub fn place(&self, f: &Features, r: &mut Region, random: &mut WorldgenRandom, origin: BlockPos) -> bool {
         let mut cx = Ctx { tree: self, r, random, roots: JHashSet::new(), logs: JHashSet::new(), leaves: JHashSet::new() };

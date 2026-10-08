@@ -53,6 +53,10 @@ pub(crate) struct RegionBlocks {
     pub sculk: crate::sculk::Sculk,
     /// Creaking heart block entities.
     pub hearts: crate::heart::Hearts,
+    /// Who may edit which sign (`SignBlockEntity.playerWhoMayEdit`).
+    pub sign_editors: crate::signs::SignEditors,
+    /// Mob spawner block entities.
+    pub spawners: crate::mob_spawner::Spawners,
 }
 
 impl Default for RegionBlocks {
@@ -68,6 +72,8 @@ impl Default for RegionBlocks {
             raid_events: Vec::new(),
             sculk: Default::default(),
             hearts: Default::default(),
+            sign_editors: Default::default(),
+            spawners: Default::default(),
         }
     }
 }
@@ -99,6 +105,7 @@ impl RegionBlocks {
         self.containers.chunk_loaded(pos, chunk);
         self.sculk.chunk_loaded(pos, chunk);
         self.hearts.chunk_loaded(pos, chunk);
+        self.spawners.chunk_loaded(pos, chunk);
         let moving = kiln_data::blocks::default_state::MOVING_PISTON;
         for ((x, y, z), be) in chunk.block_entities() {
             if chunk.get(x, y, z) == moving {
@@ -129,6 +136,7 @@ impl RegionBlocks {
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
+        self.spawners.chunk_unloaded(pos);
     }
 
     /// Puts the chunk's scheduled ticks and moving pistons on it in their saved form.
@@ -136,6 +144,7 @@ impl RegionBlocks {
         self.containers.store(pos, chunk);
         self.sculk.store(pos, chunk);
         self.hearts.store(pos, chunk);
+        self.spawners.store(pos, chunk);
         let k = key(pos);
         let block = self.block_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
         let fluid = self.fluid_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
@@ -187,6 +196,8 @@ impl RegionPart for RegionBlocks {
         into.raid_events.append(&mut from.raid_events);
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
+        into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
+        into.spawners.merge(std::mem::take(&mut from.spawners));
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -232,13 +243,21 @@ impl RegionPart for RegionBlocks {
             let mut hearts: SmallVec<[&mut crate::heart::Hearts; 4]> = parts.iter_mut().map(|p| &mut p.hearts).collect();
             self.hearts.split_into(&mut hearts, |c| owner((c.x, c.z)));
         }
+        {
+            let mut editors: SmallVec<[&mut crate::signs::SignEditors; 4]> = parts.iter_mut().map(|p| &mut p.sign_editors).collect();
+            self.sign_editors.split_into(&mut editors, |p| owner(p.chunk()));
+        }
+        {
+            let mut spawners: SmallVec<[&mut crate::mob_spawner::Spawners; 4]> = parts.iter_mut().map(|p| &mut p.spawners).collect();
+            self.spawners.split_into(&mut spawners, |c| owner((c.x, c.z)));
+        }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
         parts
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len() + self.spawners.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -286,10 +305,16 @@ pub(crate) struct BlockEnv {
     pub raids: std::sync::Arc<Vec<kiln_entity::level::RaidView>>,
     /// The End's dragon fight as the level's entities see it (`None` elsewhere).
     pub dragon_fight: Option<crate::dragon_fight::FightEnv>,
+    /// The level's generation pipeline, for the eye of ender's `findNearestMapStructure`
+    /// (`None` without generated terrain).
+    pub pipeline: Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>,
     /// How a crowded region's entities tick.
     pub entity_ticking: crate::EntityTicking,
     /// Serial entity turns tried side by side first (`SimConfig::speculate`).
     pub speculate: bool,
+    /// The level's worldgen, for what grows in it (saplings, bone meal); `None` without a
+    /// datapack (nothing grows then).
+    pub features: Option<std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -428,6 +453,7 @@ impl Level for RegionLevel<'_> {
             crate::container::block_set(self, pos, flags);
             crate::sculk::block_set(self, pos);
             crate::heart::block_set(self, pos);
+            crate::mob_spawner::block_set(self, pos);
         }
         Some(old)
     }
@@ -584,6 +610,13 @@ impl Level for RegionLevel<'_> {
         self.env.mobs.creaking_active
     }
 
+    /// `gameplay/turtle_egg_hatch_chance`: certain for 843 ticks around dawn in the overworld,
+    /// otherwise the default 1/500.
+    fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
+        let dawn = self.env.dim == crate::OVERWORLD_ID && (21062..21905).contains(&self.env.mobs.day_time.rem_euclid(24000));
+        if dawn { 1.0 } else { 0.002 }
+    }
+
     fn is_raining_at(&self, pos: BlockPos) -> bool {
         crate::weather::is_raining_at(self.cells, self.env, pos)
     }
@@ -595,6 +628,14 @@ impl Level for RegionLevel<'_> {
 
     fn block_light(&self, pos: BlockPos) -> i32 {
         self.cells.light_at(LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from)
+    }
+
+    fn sky_darken(&self) -> i32 {
+        self.env.mobs.sky_darken
+    }
+
+    fn is_end(&self) -> bool {
+        self.env.dim == crate::END_ID
     }
 
     fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
@@ -609,6 +650,35 @@ impl Level for RegionLevel<'_> {
 
     fn increased_fire_burnout(&self, pos: BlockPos) -> bool {
         self.env.weather.climates.as_ref().is_some_and(|c| c.increased_fire_burnout(crate::weather::biome_at(self.cells, self.env, pos)))
+    }
+
+    fn feature_host(&self) -> Option<std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>> {
+        self.env.features.clone()
+    }
+
+    fn legacy_random(&mut self) -> Option<&mut LegacyRandom> {
+        Some(&mut self.blocks.random)
+    }
+
+    fn biome_name(&self, pos: BlockPos) -> Option<String> {
+        let id = crate::weather::biome_at(self.cells, self.env, pos);
+        let (_, names) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
+        names.get(id as usize).map(|n| (*n).to_owned())
+    }
+
+    fn set_block_entity_data(&mut self, pos: BlockPos, data: &Tag) {
+        let Some(chunk) = self.cells.chunk_mut(chunk_of(pos)) else { return };
+        let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
+        let Some(mut be) = chunk.block_entity(x, pos.y, z).cloned() else { return };
+        if let (Tag::Compound(fields), Tag::Compound(extra)) = (&mut be.nbt, data) {
+            for (k, v) in extra {
+                match fields.iter_mut().find(|(f, _)| f == k) {
+                    Some((_, old)) => *old = v.clone(),
+                    None => fields.push((k.clone(), v.clone())),
+                }
+            }
+        }
+        chunk.set_block_entity(x, pos.y, z, be);
     }
 }
 
@@ -711,6 +781,8 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
         }
     }
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
+    // `SignBlockEntity.tick`: editing locks of players who left.
+    crate::signs::tick(level);
 }
 
 /// `ServerLevel.tickThunder` for chunk `c`, with the chunk's random: during a thunderstorm one
@@ -868,10 +940,13 @@ pub(crate) fn tick_pistons(level: &mut RegionLevel, ticking: &Ticking) {
     kiln_blocks::tick_moving_pistons(level, |p| ticking.contains(chunk_of(p)));
 }
 
-/// `Entity.checkInsideBlocks` for pressure plates: every body standing in a plate presses it.
+/// `Entity.checkInsideBlocks` for pressure plates and tripwires: every body standing in a plate
+/// presses it, every body whose box meets a tripwire's shape presses that.
 pub(crate) fn press_plates(level: &mut RegionLevel) {
+    use kiln_data::block_logic::{BlockClass, is_instance};
     let mut plates = Vec::new();
-    let is_plate = |s: u16| kiln_data::block_logic::is_instance(s, kiln_data::block_logic::BlockClass::BasePressurePlateBlock);
+    let mut wires = Vec::new();
+    let is_plate = |s: u16| is_instance(s, BlockClass::BasePressurePlateBlock) || is_instance(s, BlockClass::TripWireBlock);
     // Whether a section's palette has a plate, looked at once per section: most bodies stand
     // in sections without any and skip the block lookups.
     let mut may_have: crate::FastMap<(i32, i32, i32), bool> = Default::default();
@@ -896,8 +971,17 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
             for y in lo[1]..=hi[1] {
                 for z in lo[2]..=hi[2] {
                     let pos = BlockPos::new(x, y, z);
-                    if kiln_data::block_logic::is_instance(level.block(pos), kiln_data::block_logic::BlockClass::BasePressurePlateBlock) {
+                    let s = level.block(pos);
+                    if is_instance(s, BlockClass::BasePressurePlateBlock) {
                         plates.push(pos);
+                    } else if is_instance(s, BlockClass::TripWireBlock) {
+                        // `getEntityInsideCollisionShape` is the string's shape: a flat strip when
+                        // attached, a low slab otherwise.
+                        let (y0, y1) = if kiln_blocks::state::get_bool(s, "attached") { (1.0 / 16.0, 2.5 / 16.0) } else { (0.0, 0.5) };
+                        let (by0, by1) = (y as f64 + y0, y as f64 + y1);
+                        if b.min[1] + 1e-5 < by1 && b.max[1] - 1e-5 > by0 {
+                            wires.push(pos);
+                        }
                     }
                 }
             }
@@ -907,6 +991,11 @@ pub(crate) fn press_plates(level: &mut RegionLevel) {
     plates.dedup();
     for pos in plates {
         kiln_blocks::redstone::components::plate_entity_inside(level, pos);
+    }
+    wires.sort_unstable();
+    wires.dedup();
+    for pos in wires {
+        kiln_blocks::behaviour::tripwire::wire_entity_inside(level, pos, false);
     }
 }
 
@@ -958,7 +1047,12 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
     for (i, (actor, effect)) in std::mem::take(&mut out.effects).into_iter().enumerate() {
         let others = |p: &&mut Player| Some(p.conn) != actor;
         match effect {
-            Effect::Drop { pos, state } => {
+            effect @ (Effect::Drop { .. } | Effect::ExplosionDrop { .. }) => {
+                let (pos, state, explosion) = match effect {
+                    Effect::Drop { pos, state } => (pos, state, None),
+                    Effect::ExplosionDrop { pos, state, radius } => (pos, state, Some(radius)),
+                    _ => unreachable!("matched above"),
+                };
                 let i = {
                     let n = drops_at.entry(pos).or_insert(0);
                     *n += 1;
@@ -977,8 +1071,14 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                         let at = [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5];
                         spawns.push(crate::mobs::spawn(kiln_entity::mob::MobKind::Silverfish, at, Some(0.0), None));
                     }
+                    // `Block.dropResources` then `spawnAfterBreak(.., dropExperience = true)` for a
+                    // player's break: ores, sculk and spawners pop experience (explosions and
+                    // other breaks pass false, or have no tool).
+                    if let (Some(loot), Some(tool)) = (&env.loot, tool.as_ref()) {
+                        spawns.extend(block_experience_orbs(loot, pos, state, tool, env, i));
+                    }
                     match &env.loot {
-                        Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i)),
+                        Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i, explosion)),
                         None => spawns.extend(drop_stand_in(pos, state, env, i)),
                     }
                 }
@@ -986,6 +1086,13 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
             Effect::LevelEvent { id, pos, data } => {
                 let pkt = world_fx::level_event(id, [pos.x, pos.y, pos.z], data, false);
                 send_near(players, pos, 64.0, &pkt, |_| true);
+            }
+            // Approximation as for the entities' global events: every player of the region.
+            Effect::GlobalLevelEvent { id, pos, data } => {
+                let pkt = world_fx::level_event(id, [pos.x, pos.y, pos.z], data, true);
+                for p in players.iter_mut() {
+                    p.send(pkt.clone());
+                }
             }
             Effect::ActorLevelEvent { id, pos, data } => {
                 let pkt = world_fx::level_event(id, [pos.x, pos.y, pos.z], data, false);
@@ -1034,6 +1141,34 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                 vel: [0.0; 3],
                 body: entities::Body::FallingBlock { state },
             }),
+            Effect::FallingStalactite { pos, state, per_distance } => spawns.push(Spawn {
+                kind: &kiln_data::entities::types::FALLING_BLOCK,
+                pos: [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5],
+                vel: [0.0; 3],
+                body: entities::Body::FallingStalactite { state, per_distance },
+            }),
+            // `TurtleEggBlock.randomTick`: baby turtles whose home is the egg, side by side.
+            Effect::HatchTurtles { pos, eggs } => {
+                for k in 0..eggs {
+                    let h = effect_hash(env, pos, 0x7475 + k as usize);
+                    let mut e = kiln_entity::mob::new(kiln_entity::mob::MobKind::Turtle, 0, 0, h as i64);
+                    if let Some(mut md) = kiln_entity::mob::data(&e).cloned() {
+                        kiln_entity::mob::set_age(&mut e, &mut md, -24000);
+                        kiln_entity::mob::kinds::turtle::set_home(&mut md, kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z));
+                        if let Some(slot) = kiln_entity::mob::data_mut(&mut e) {
+                            *slot = md;
+                        }
+                    }
+                    let at = [pos.x as f64 + 0.3 + k as f64 * 0.2, pos.y as f64, pos.z as f64 + 0.3];
+                    e.set_pos(kiln_entity::math::Vec3::new(at[0], at[1], at[2]));
+                    e.y_rot = 0.0;
+                    e.x_rot = 0.0;
+                    e.set_old_pos_and_rot();
+                    spawns.push(Spawn { kind: &kiln_data::entities::types::TURTLE, pos: at, vel: [0.0; 3], body: entities::Body::Ready(Box::new(e)) });
+                }
+            }
+            // `DriedGhastBlock.spawnGhastling`: the happy ghast is not a mob Kiln has yet.
+            Effect::HatchGhastling { .. } => {}
             Effect::PrimedTnt { pos } => spawns.push(Spawn {
                 kind: &kiln_data::entities::types::TNT,
                 pos: [pos.x as f64 + 0.5, pos.y as f64, pos.z as f64 + 0.5],
@@ -1127,6 +1262,22 @@ fn note_sound(instrument: &str, note: i32) -> (&'static str, f32) {
     (sound, kiln_javamath::pow::pow(2.0, (note - 12) as f64 / 12.0) as f32)
 }
 
+/// `Block.spawnAfterBreak` of a block a player broke with `tool`: the experience orbs
+/// (`popExperience` at the block's centre). The level random is stood in for by a random seeded
+/// from the position and tick, like the drops.
+fn block_experience_orbs(loot: &kiln_loot::LootData, pos: BlockPos, state: u16, tool: &kiln_item::ItemStack, env: &BlockEnv, i: usize) -> Vec<Spawn> {
+    use kiln_javamath::random::LegacyRandom;
+    if !env.drops || kiln_loot::block_xp::xp_rule(BlockId::of(state).name()).is_none() {
+        return Vec::new();
+    }
+    let mut rng = LegacyRandom::new((effect_hash(env, pos, i.wrapping_add(0x58)) | 1) as i64);
+    let amount = loot.block_experience(BlockId::of(state).name(), tool, &mut rng);
+    let at = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
+    let mut spawns = Vec::new();
+    crate::container::furnace::award_experience(at, amount, &mut rng, &mut spawns);
+    spawns
+}
+
 /// What a broken block drops (`Block.getDrops` with the block loot table), each stack popped
 /// like `Block.popResource`.
 fn block_drops(
@@ -1137,13 +1288,14 @@ fn block_drops(
     block_entity: Option<Vec<kiln_item::component::Component>>,
     env: &BlockEnv,
     i: usize,
+    explosion: Option<f32>,
 ) -> Vec<Spawn> {
     // Vanilla draws block drops from the server-wide random sequence of the table; parallel
     // regions cannot share one without the order depending on the partition, so each drop gets
     // its own seed from the position and tick (an approximation, I class).
     let origin = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
     let seed = (effect_hash(env, pos, i) | 1) as i64;
-    let items = block_items(loot, origin, state, tool, block_entity, seed);
+    let items = block_items_with(loot, origin, state, tool, block_entity, seed, explosion);
     items
         .into_iter()
         .filter(|s| !s.is_empty())
@@ -1163,11 +1315,25 @@ pub(crate) fn block_items(
     block_entity: Option<Vec<kiln_item::component::Component>>,
     seed: i64,
 ) -> Vec<kiln_item::ItemStack> {
+    block_items_with(loot, origin, state, tool, block_entity, seed, None)
+}
+
+/// [`block_items`] for a block an explosion destroyed: `explosion` is the `explosion_radius`
+/// parameter, set when the drops decay (`survives_explosion`, `explosion_decay`).
+pub(crate) fn block_items_with(
+    loot: &kiln_loot::LootData,
+    origin: [f64; 3],
+    state: u16,
+    tool: Option<kiln_item::ItemStack>,
+    block_entity: Option<Vec<kiln_item::component::Component>>,
+    seed: i64,
+    explosion: Option<f32>,
+) -> Vec<kiln_item::ItemStack> {
     let Some(table_id) = loot.block_table(BlockId::of(state).name()) else { return Vec::new() };
     let Some(table) = loot.table(&table_id) else { return Vec::new() };
     // A player break also sets `this_entity` (the player).
     let player = tool.is_some();
-    let ctx = BreakContext { tool: tool.unwrap_or_else(kiln_item::ItemStack::empty), player, state, origin, block_entity };
+    let ctx = BreakContext { tool: tool.unwrap_or_else(kiln_item::ItemStack::empty), player, state, origin, block_entity, explosion };
     let (mut sequences, mut level) = (kiln_loot::RandomSequences::new(0), kiln_javamath::random::LegacyRandom::new(seed));
     let mut rng = table.random(seed, &mut sequences, &mut level);
     loot.random_items(&table_id, &ctx, rng.source())
@@ -1181,9 +1347,14 @@ pub(crate) struct BreakContext {
     pub origin: [f64; 3],
     /// The components of the block's block entity (`collectComponents`), if it had one.
     pub block_entity: Option<Vec<kiln_item::component::Component>>,
+    /// `explosion_radius`: set when an explosion with drop decay broke the block.
+    pub explosion: Option<f32>,
 }
 
 impl kiln_loot::LootContext for BreakContext {
+    fn explosion_radius(&self) -> Option<f32> {
+        self.explosion
+    }
     fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
         self.player && target == kiln_loot::EntityTarget::This
     }
@@ -1346,6 +1517,7 @@ mod tests {
                 fast_lava: false,
                 water_evaporates: false,
                 tnt_explodes: true,
+                spread_vines: true,
                 infiniburn: "minecraft:infiniburn_overworld",
             },
             dim: crate::OVERWORLD_ID,
@@ -1365,12 +1537,14 @@ mod tests {
             fire_watchers: Default::default(),
             raids: Default::default(),
             dragon_fight: None,
+            pipeline: None,
             entity_ticking: crate::EntityTicking::Serial,
             speculate: true,
+            features: None,
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {
-            block_drops(&loot, BlockPos::new(0, 64, 0), state, tool, None, &env, 0)
+            block_drops(&loot, BlockPos::new(0, 64, 0), state, tool, None, &env, 0, None)
                 .into_iter()
                 .map(|s| {
                     let entities::Body::Item { stack, .. } = s.body else { panic!("not an item") };
@@ -1382,6 +1556,33 @@ mod tests {
         assert_eq!(drops(d::WALL_TORCH, None), ["minecraft:torch"]);
         assert!(drops(d::GLASS, pick).is_empty());
         assert!(drops(d::WATER, None).is_empty());
+        // Ores pop experience orbs for a player's break, silk touch takes it away, and plain
+        // blocks have none (`spawnAfterBreak`).
+        let orbs = |state: u16, tool: &kiln_item::ItemStack, i: usize| -> i32 {
+            block_experience_orbs(&loot, BlockPos::new(0, 64, 0), state, tool, &env, i)
+                .into_iter()
+                .map(|s| match s.body {
+                    entities::Body::Ready(e) => match e.kind {
+                        kiln_entity::EntityKind::ExperienceOrb(o) => o.value,
+                        _ => panic!("not an orb"),
+                    },
+                    _ => panic!("not a ready entity"),
+                })
+                .sum()
+        };
+        let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1).unwrap();
+        let mut silk = pick.clone();
+        silk.insert(kiln_item::keys::ENCHANTMENTS, {
+            let mut e = kiln_item::component::Enchantments::default();
+            e.0.push((kiln_item::registry::ENCHANTMENT.id("minecraft:silk_touch").unwrap(), 1));
+            e
+        });
+        let diamond: Vec<i32> = (0..40).map(|i| orbs(d::DIAMOND_ORE, &pick, i)).collect();
+        assert!(diamond.iter().all(|&v| (3..=7).contains(&v)), "{diamond:?}");
+        assert!(diamond.iter().collect::<std::collections::HashSet<_>>().len() > 2);
+        assert!((0..40).all(|i| orbs(d::DIAMOND_ORE, &silk, i) == 0));
+        assert!((0..40).all(|i| orbs(d::STONE, &pick, i) == 0));
+        assert!((0..40).all(|i| orbs(d::SPAWNER, &silk, i) >= 15));
     }
 
     #[test]

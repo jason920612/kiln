@@ -42,7 +42,7 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
         "eat_block" => "EatBlockGoal",
         "melee" => match kind {
             k if k.is_zombie() => "ZombieAttackGoal",
-            MobKind::Spider => "SpiderAttackGoal",
+            MobKind::Spider | MobKind::CaveSpider => "SpiderAttackGoal",
             // `AbstractSkeleton$1` (an anonymous class: no simple name).
             k if k.is_skeleton() => "",
             _ => "MeleeAttackGoal",
@@ -55,7 +55,7 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
         "turtle_egg" => "ZombieAttackTurtleEggGoal",
         "hurt_by" => "HurtByTargetGoal",
         "nearest_attackable" => {
-            if kind == MobKind::Spider {
+            if matches!(kind, MobKind::Spider | MobKind::CaveSpider) {
                 "SpiderTargetGoal"
             } else {
                 "NearestAttackableTargetGoal"
@@ -85,6 +85,20 @@ fn tag_of(v: &Value) -> kiln_proto::nbt::Tag {
         "ba" => Tag::ByteArray(x.as_array().unwrap().iter().map(|v| v.as_i64().unwrap() as i8).collect()),
         "la" => Tag::LongArray(x.as_array().unwrap().iter().map(|v| v.as_str().unwrap().parse().unwrap()).collect()),
         _ => panic!("tag {k}"),
+    }
+}
+
+/// A tag as text with the keys of compounds sorted (vanilla saves them in an order of its own).
+fn canon(t: &kiln_proto::nbt::Tag) -> String {
+    use kiln_proto::nbt::Tag;
+    match t {
+        Tag::Compound(f) => {
+            let mut v: Vec<(&String, String)> = f.iter().map(|(k, v)| (k, canon(v))).collect();
+            v.sort();
+            format!("{{{}}}", v.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join(","))
+        }
+        Tag::List(l) => format!("[{}]", l.iter().map(canon).collect::<Vec<_>>().join(",")),
+        other => format!("{other:?}"),
     }
 }
 
@@ -188,6 +202,18 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
                 if let Some(e) = level.entity_mut(id) {
                     e.invulnerable = creative;
                 }
+            }
+        }
+        // wp44 spawners: a spawn egg used on the spawner at pos (`SpawnEggItem.useOn` -> `setEntityId`, which draws
+        // from the level's random when no spawn data was chosen yet).
+        "egg" => {
+            let at = BlockPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+            let id = format!("{}", what.strip_suffix("_spawn_egg").map(|n| n.to_owned()).unwrap());
+            if let Some(mut be) = level.spawners.remove(&at) {
+                let mut r = level.random().clone();
+                be.set_entity_id(&id, &mut r);
+                *level.random() = r;
+                level.spawners.insert(at, be);
             }
         }
         "move" => {
@@ -339,6 +365,11 @@ fn pin_fresh(level: &mut MemoryLevel, id: i32, n: i64, tick: i64, pin_yaw: bool,
 }
 
 fn replay(s: &Value) -> Result<usize, String> {
+    if std::env::var_os("KILN_SPAWN_DEBUG").is_some() {
+        for sp in s.get("spawned").and_then(Value::as_array).into_iter().flatten() {
+            eprintln!("vanilla spawn tick {}: {} at {} yaw {}", sp["tick"], sp["type"], sp["pos"], sp["yaw"]);
+        }
+    }
     // Diverging (brain-driven) scenarios compare the body only: not the random or the goals.
     let loose = s.get("diverges").and_then(Value::as_bool) == Some(true);
     let pin_yaw = s.get("pin_yaw").and_then(Value::as_bool) == Some(true);
@@ -356,6 +387,29 @@ fn replay(s: &Value) -> Result<usize, String> {
     for b in s["blocks"].as_array().unwrap() {
         let p = BlockPos::new(b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
         level.blocks.insert(p, b[3].as_u64().unwrap() as u16);
+    }
+    // wp44 spawners: the block entities, the recorded light around them and the game rule.
+    level.spawner_blocks_work = s.get("spawner_blocks_work").and_then(Value::as_bool).unwrap_or(true);
+    for l in s.get("lights").and_then(Value::as_array).into_iter().flatten() {
+        let p = BlockPos::new(l[0].as_i64().unwrap() as i32, l[1].as_i64().unwrap() as i32, l[2].as_i64().unwrap() as i32);
+        level.lights.insert(p, (l[3].as_i64().unwrap() as i32, l[4].as_i64().unwrap() as i32));
+    }
+    let spawners: Vec<(BlockPos, &Value)> = s
+        .get("spawners")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|sp| (BlockPos::new(sp["pos"][0].as_i64().unwrap() as i32, sp["pos"][1].as_i64().unwrap() as i32, sp["pos"][2].as_i64().unwrap() as i32), sp))
+        .collect();
+    for (p, sp) in &spawners {
+        let be = kiln_entity::spawner::SpawnerBe::load(&tag_of(&sp["nbt"]));
+        // What vanilla saved right after loading it: the same compound.
+        let got = canon(&kiln_proto::nbt::Tag::Compound(be.save()));
+        let want = canon(&tag_of(&sp["loaded"]));
+        if got != want {
+            return Err(format!("spawner {p:?} saved after loading\n  kiln    {got}\n  vanilla {want}"));
+        }
+        level.spawners.insert(*p, be);
     }
     let mut player = s.get("player").filter(|p| !p.is_null()).map(|p| {
         let mut v = PlayerView::new(p["id"].as_i64().unwrap() as i32, vec3(&p["pos"]));
@@ -621,6 +675,8 @@ fn replay(s: &Value) -> Result<usize, String> {
         }
         // `Level.tickBlockEntities`: the creaking hearts, after the entities.
         level.tick_hearts();
+        // `Level.tickBlockEntities`: the mob spawners.
+        level.tick_spawners();
         let before_flush = known;
         level.flush_spawned();
         known = level.len();
@@ -680,6 +736,11 @@ fn replay(s: &Value) -> Result<usize, String> {
         let mut fresh = fresh;
         fresh.sort_by_key(|id| order.iter().position(|o| o == id).unwrap_or(usize::MAX));
         for id in fresh {
+            if std::env::var_os("KILN_SPAWN_DEBUG").is_some()
+                && let Some(e) = level.entity(id)
+            {
+                eprintln!("kiln spawn tick {tick}: {} id {id} at {:?} yaw {}", e.type_name, e.position(), e.y_rot);
+            }
             let n = (ids.len() - initial) as i64;
             pin_fresh(&mut level, id, n, tick, pin_yaw, recorded_yaws.next());
             ids.push(id);
@@ -715,11 +776,30 @@ fn replay(s: &Value) -> Result<usize, String> {
                 }
             }
         }
+        // wp41: the scenario's boats and minecarts (position and motion, bit for bit).
+        if let Some(others) = s.get("others_trace").and_then(Value::as_array).and_then(|t| t.get(tick as usize)).and_then(Value::as_array) {
+            for (k, want) in others.iter().enumerate() {
+                let want: Vec<f64> = want.as_array().unwrap().iter().map(f).collect();
+                let Some(e) = other_ids.get(k).and_then(|&id| level.entity(id)) else { continue };
+                let got = [e.x(), e.y(), e.z(), e.delta.x, e.delta.y, e.delta.z];
+                for (i, name) in ["x", "y", "z", "vx", "vy", "vz"].iter().enumerate() {
+                    if got[i].to_bits() != want[1 + i].to_bits() {
+                        return Err(format!("tick {tick} other {k} ({}): {name} = {} (kiln) vs {} (vanilla)
+  kiln    {got:?}
+  vanilla {:?}", e.type_name, got[i], want[1 + i], &want[1..7]));
+                    }
+                }
+            }
+        }
+        // wp44 spawners: the same number of mobs as vanilla at every tick (what spawned, and when).
+        if !spawners.is_empty() && ids.len() != expected.as_array().unwrap().len() {
+            return Err(format!("tick {tick}: {} mobs (kiln) vs {} (vanilla)", ids.len(), expected.as_array().unwrap().len()));
+        }
         for (k, want) in expected.as_array().unwrap().iter().enumerate() {
             let want = want.as_array().unwrap();
             let want_goals = want.last().unwrap().as_str().unwrap();
             let want: Vec<f64> = want[..want.len() - 1].iter().map(f).collect();
-            let e = level.entity(ids[k]).ok_or_else(|| format!("tick {tick}: mob {k} missing"))?;
+            let e = ids.get(k).and_then(|&id| level.entity(id)).ok_or_else(|| format!("tick {tick}: mob {k} missing"))?;
             let (got, goals) = state(e, &level);
             for (i, (g, w)) in got.iter().zip(&want).enumerate() {
                 // Mobs that appeared have ids of their own on each side.
@@ -730,6 +810,13 @@ fn replay(s: &Value) -> Result<usize, String> {
                 let float = matches!(i, 7..=10 | 12 | 19);
                 let same = if float { (*g as f32).to_bits() == (*w as f32).to_bits() } else { g.to_bits() == w.to_bits() };
                 if !same {
+                    if std::env::var_os("KILN_SPAWN_DEBUG").is_some() {
+                        for (j, w) in expected.as_array().unwrap().iter().enumerate() {
+                            let w: Vec<f64> = w.as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+                            let kp = ids.get(j).and_then(|&id| level.entity(id)).map(|e| e.position());
+                            eprintln!("  mob {j}: kiln {:?} vanilla [{}, {}, {}] v[{}, {}, {}]", kp, w[1], w[2], w[3], w[4], w[5], w[6]);
+                        }
+                    }
                     return Err(format!(
                         "tick {tick} mob {k}: {} = {g} (kiln) vs {w} (vanilla)\n  kiln    {got:?} [{goals}]\n  vanilla {want:?} [{want_goals}]",
                         FIELDS[i]
@@ -751,6 +838,14 @@ fn replay(s: &Value) -> Result<usize, String> {
         && level.random_state() != want
     {
         return Err(format!("level random {} (kiln) vs {want} (vanilla)", level.random_state()));
+    }
+    // wp44 spawners: each spawner saves as vanilla's did at the end.
+    for (p, sp) in &spawners {
+        let got = canon(&kiln_proto::nbt::Tag::Compound(level.spawners[p].save()));
+        let want = canon(&tag_of(&sp["end"]));
+        if got != want {
+            return Err(format!("spawner {p:?} at the end\n  kiln    {got}\n  vanilla {want}"));
+        }
     }
     // wp28 creaking: the blocks around the hearts (resin) are the same.
     for b in s.get("end_blocks").and_then(Value::as_array).into_iter().flatten() {

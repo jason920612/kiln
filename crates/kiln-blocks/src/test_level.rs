@@ -64,6 +64,27 @@ pub struct TestLevel {
     pub climate: Option<Box<dyn Fn(BlockPos, BlockPos) -> Option<crate::weather::Climate>>>,
     /// `Difficulty.getId` (fire spread odds).
     pub difficulty: i32,
+    /// Raw brightness of positions the table names (the light engine is not simulated; the
+    /// vanilla parity replay feeds the numbers vanilla had); [`TestLevel::default_brightness`]
+    /// elsewhere.
+    pub brightness: HashMap<BlockPos, i32>,
+    pub default_brightness: i32,
+    /// The overworld clock (`gameplay/turtle_egg_hatch_chance` follows it); noon.
+    pub day_time: i64,
+    /// `ServerLevel.canSpreadFireAround`: whether a player is near (lava's random tick needs one).
+    pub player_near_for_fire: bool,
+    /// Block light (`getBrightness(LightLayer.BLOCK, pos)`) of the positions the table names, 0 elsewhere.
+    pub block_brightness: HashMap<BlockPos, i32>,
+    /// `Level.getSkyDarken`.
+    pub sky_darken: i32,
+    /// Whether this level is the End (`dimension() == Level.END`).
+    pub end: bool,
+    /// The worldgen features grow with (saplings, bone meal); `None`: nothing grows.
+    pub feature_host: Option<std::sync::Arc<dyn crate::feature_host::FeatureHost>>,
+    /// The biome everywhere (`minecraft:plains`...), for what reads `Level.getBiome`.
+    pub biome: Option<String>,
+    /// Fields features filled into block entities, by position.
+    pub block_entity_data: HashMap<BlockPos, kiln_proto::nbt::Tag>,
 }
 
 impl TestLevel {
@@ -89,6 +110,16 @@ impl TestLevel {
             weather: Default::default(),
             climate: None,
             difficulty: 2,
+            brightness: HashMap::new(),
+            default_brightness: 15,
+            day_time: 6000,
+            player_near_for_fire: true,
+            block_brightness: HashMap::new(),
+            sky_darken: 0,
+            end: false,
+            feature_host: None,
+            biome: None,
+            block_entity_data: HashMap::new(),
         }
     }
 
@@ -282,5 +313,45 @@ impl Level for TestLevel {
 
     fn difficulty(&self) -> i32 {
         self.difficulty
+    }
+
+    fn can_spread_fire_around(&self, _pos: BlockPos) -> bool {
+        self.player_near_for_fire
+    }
+
+    fn turtle_egg_hatch_chance(&self, _pos: BlockPos) -> f32 {
+        if (21062..21905).contains(&self.day_time.rem_euclid(24000)) { 1.0 } else { 0.002 }
+    }
+
+    fn raw_brightness(&self, pos: BlockPos, _sky_darken: i32) -> i32 {
+        self.brightness.get(&pos).copied().unwrap_or(self.default_brightness)
+    }
+
+    fn block_light(&self, pos: BlockPos) -> i32 {
+        self.block_brightness.get(&pos).copied().unwrap_or(0)
+    }
+
+    fn feature_host(&self) -> Option<std::sync::Arc<dyn crate::feature_host::FeatureHost>> {
+        self.feature_host.clone()
+    }
+
+    fn legacy_random(&mut self) -> Option<&mut LegacyRandom> {
+        Some(&mut self.random)
+    }
+
+    fn biome_name(&self, _pos: BlockPos) -> Option<String> {
+        self.biome.clone()
+    }
+
+    fn sky_darken(&self) -> i32 {
+        self.sky_darken
+    }
+
+    fn is_end(&self) -> bool {
+        self.end
+    }
+
+    fn set_block_entity_data(&mut self, pos: BlockPos, data: &kiln_proto::nbt::Tag) {
+        self.block_entity_data.insert(pos, data.clone());
     }
 }

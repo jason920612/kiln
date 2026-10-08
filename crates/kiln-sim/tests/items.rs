@@ -410,19 +410,8 @@ fn bone_meal_grows_crops() {
     let age = state::get_int(w.block(crop), "age");
     assert!((2..=5).contains(&age), "age {age}");
     assert_eq!(w.held(), Some(("minecraft:bone_meal".into(), 2)));
-    // Grass spreads short grass around.
-    let g = w.at(-3, 0, -3);
-    for dx in -3..=3 {
-        for dz in -3..=3 {
-            w.set([g[0] + dx, g[1], g[2] + dz], "minecraft:grass_block");
-        }
-    }
-    w.use_on_top(g);
-    let grass = (-3..=3).flat_map(|dx| (-3..=3).map(move |dz| (dx, dz))).filter(|&(dx, dz)| {
-        let s = w.block([g[0] + dx, g[1] + 1, g[2] + dz]);
-        state::same_block(s, d::SHORT_GRASS) || state::same_block(s, d::TALL_GRASS)
-    });
-    assert!(grass.count() > 3);
+    // (Bone meal on grass places the biome's features through the level's worldgen, which a flat
+    // test world has not: tests/trees.rs grows grass and flowers on a generated one.)
 }
 
 #[test]

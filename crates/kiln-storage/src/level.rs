@@ -8,6 +8,44 @@ use std::path::{Path, PathBuf};
 use tracing::warn;
 
 const OVERWORLD_CLOCK: &str = "minecraft:overworld";
+/// `Difficulty` names by id (`Data.difficulty_settings.difficulty`).
+const DIFFICULTIES: [&str; 4] = ["peaceful", "easy", "normal", "hard"];
+
+/// `world_gen_settings.dat` of a default world with this seed: the vanilla generators of the
+/// three dimensions.
+fn world_gen_settings(seed: i64) -> Tag {
+    let s = |v: &str| Tag::String(v.to_owned());
+    let compound = |fields: Vec<(&str, Tag)>| Tag::Compound(fields.into_iter().map(|(k, v)| (k.to_owned(), v)).collect());
+    let multi_noise = |preset: &str| compound(vec![("preset", s(preset)), ("type", s("minecraft:multi_noise"))]);
+    let dimension = |key: &str, settings: &str, biome_source: Tag| {
+        (
+            format!("minecraft:{key}"),
+            compound(vec![
+                (
+                    "generator",
+                    compound(vec![
+                        ("settings", s(&format!("minecraft:{settings}"))),
+                        ("biome_source", biome_source),
+                        ("type", s("minecraft:noise")),
+                    ]),
+                ),
+                ("type", s(&format!("minecraft:{key}"))),
+            ]),
+        )
+    };
+    let dimensions = Tag::Compound(vec![
+        dimension("overworld", "overworld", multi_noise("minecraft:overworld")),
+        dimension("the_nether", "nether", multi_noise("minecraft:nether")),
+        dimension("the_end", "end", compound(vec![("type", s("minecraft:the_end"))])),
+    ]);
+    let data = compound(vec![
+        ("bonus_chest", Tag::Byte(0)),
+        ("seed", Tag::Long(seed)),
+        ("generate_structures", Tag::Byte(1)),
+        ("dimensions", dimensions),
+    ]);
+    compound(vec![("data", data), ("DataVersion", Tag::Int(DATA_VERSION as i32))])
+}
 /// This build's brand in `ServerBrands`.
 const BRAND: &str = "kiln";
 
@@ -33,6 +71,16 @@ pub struct LevelState {
     pub data_packs: Option<(Vec<String>, Vec<String>)>,
     /// `Data.enabled_features`: the world's feature flags; `None` keeps the saved list.
     pub enabled_features: Option<Vec<String>>,
+    /// `Data.difficulty_settings`: the difficulty (0 peaceful .. 3 hard) and whether it is
+    /// locked; `None` keeps the saved settings (and leaves a new world's to vanilla's default).
+    pub difficulty: Option<(u8, bool)>,
+}
+
+/// A saved game rule: booleans are bytes in `game_rules.dat`, integers ints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavedRule {
+    Bool(bool),
+    Int(i32),
 }
 
 pub struct LevelStore {
@@ -41,8 +89,14 @@ pub struct LevelStore {
     level: Option<Tag>,
     /// `world_clocks.dat` as loaded.
     clocks: Option<Tag>,
-    /// `game_rules.dat` (read only: Kiln does not persist game rule changes yet).
+    /// `game_rules.dat` as loaded or last written.
     game_rules: Option<Tag>,
+    /// `world_gen_settings.dat` as loaded (the seed and the dimensions' generators).
+    world_gen: Option<Tag>,
+    /// The seed a world without `world_gen_settings.dat` is given with the next save.
+    new_seed: Option<i64>,
+    /// `game_rules.dat` needs writing.
+    rules_dirty: bool,
     /// Game time when the clocks were last read or written, to advance the clocks Kiln does
     /// not run.
     clocks_game_time: i64,
@@ -64,7 +118,17 @@ impl LevelStore {
             path.exists().then(|| read_nbt_file(&path)).and_then(|r| r.map_err(|e| warn!("cannot read {}: {e}", path.display())).ok())
         };
         let (clocks, game_rules) = (saved_data("world_clocks.dat"), saved_data("game_rules.dat"));
-        let mut store = Self { dir: world_dir.to_owned(), level, clocks, game_rules, clocks_game_time: 0 };
+        let world_gen = saved_data("world_gen_settings.dat");
+        let mut store = Self {
+            dir: world_dir.to_owned(),
+            level,
+            clocks,
+            game_rules,
+            world_gen,
+            new_seed: None,
+            rules_dirty: false,
+            clocks_game_time: 0,
+        };
         store.clocks_game_time = store.state().game_time;
         store
     }
@@ -105,6 +169,63 @@ impl LevelStore {
             },
             data_packs: self.data_packs(),
             enabled_features: self.enabled_features(),
+            difficulty: self.difficulty(),
+        }
+    }
+
+    /// `Data.difficulty_settings`: the difficulty (0..=3) and the lock, if saved.
+    pub fn difficulty(&self) -> Option<(u8, bool)> {
+        let settings = self.data()?.get("difficulty_settings")?;
+        let name = settings.get("difficulty")?.as_str()?;
+        let id = DIFFICULTIES.iter().position(|d| *d == name)?;
+        Some((id as u8, settings.get("locked").and_then(Tag::as_i64) == Some(1)))
+    }
+
+    /// `Data.difficulty_settings.hardcore`.
+    pub fn hardcore(&self) -> bool {
+        self.data().and_then(|d| d.get("difficulty_settings")?.get("hardcore")?.as_i64()) == Some(1)
+    }
+
+    /// The world seed (`world_gen_settings.dat`), if the world has one.
+    pub fn seed(&self) -> Option<i64> {
+        self.world_gen.as_ref()?.get("data")?.get("seed")?.as_i64()
+    }
+
+    /// Gives a world that has no `world_gen_settings.dat` this seed with the next save (a seed
+    /// the world has is never replaced).
+    pub fn set_seed_if_missing(&mut self, seed: i64) {
+        if self.world_gen.is_none() {
+            self.new_seed = Some(seed);
+        }
+    }
+
+    /// The saved game rules (`game_rules.dat`), by their ids.
+    pub fn game_rules(&self) -> Vec<(String, SavedRule)> {
+        let Some(Tag::Compound(rules)) = self.game_rules.as_ref().and_then(|g| g.get("data")) else { return Vec::new() };
+        rules
+            .iter()
+            .filter_map(|(name, value)| match value {
+                Tag::Byte(b) => Some((name.clone(), SavedRule::Bool(*b != 0))),
+                other => other.as_i64().map(|v| (name.clone(), SavedRule::Int(v as i32))),
+            })
+            .collect()
+    }
+
+    /// Sets the game rules written with the next save (vanilla writes every rule; saved rules not
+    /// listed stay as they are). Nothing is written when they are what the file already has.
+    pub fn set_game_rules(&mut self, rules: &[(String, SavedRule)]) {
+        let root = self.game_rules.get_or_insert_with(|| Tag::Compound(Vec::new()));
+        let before = root.get("data").cloned();
+        let data = child(root, "data");
+        for (name, rule) in rules {
+            let tag = match rule {
+                SavedRule::Bool(b) => Tag::Byte(i8::from(*b)),
+                SavedRule::Int(v) => Tag::Int(*v),
+            };
+            put(data, name, tag);
+        }
+        if before.as_ref() != root.get("data") || !self.dir.join("data/minecraft/game_rules.dat").exists() {
+            self.rules_dirty = true;
         }
     }
 
@@ -146,6 +267,17 @@ impl LevelStore {
         write_nbt_file(&self.dir.join("level.dat"), &root, Some(&self.dir.join("level.dat_old")))?;
         self.level = Some(root);
 
+        if self.rules_dirty && let Some(rules) = &mut self.game_rules {
+            put(rules, "DataVersion", Tag::Int(DATA_VERSION as i32));
+            write_nbt_file(&self.dir.join("data/minecraft/game_rules.dat"), rules, None)?;
+            self.rules_dirty = false;
+        }
+        if self.world_gen.is_none() && let Some(seed) = self.new_seed.take() {
+            let settings = world_gen_settings(seed);
+            write_nbt_file(&self.dir.join("data/minecraft/world_gen_settings.dat"), &settings, None)?;
+            self.world_gen = Some(settings);
+        }
+
         let mut clocks = self.clocks.clone().unwrap_or_else(|| Tag::Compound(Vec::new()));
         let elapsed = state.game_time - self.clocks_game_time;
         update_clocks(child(&mut clocks, "data"), state.day_time, elapsed);
@@ -160,6 +292,14 @@ impl LevelStore {
 /// Overwrites the `Data` fields Kiln owns, as vanilla `PrimaryLevelData.setTagData` writes them.
 fn update_level(data: &mut Tag, state: &LevelState) {
     put(data, "Time", Tag::Long(state.game_time));
+    if let Some((difficulty, locked)) = state.difficulty {
+        let settings = child(data, "difficulty_settings");
+        put(settings, "difficulty", Tag::String(DIFFICULTIES[usize::from(difficulty.min(3))].to_owned()));
+        if settings.get("hardcore").is_none() {
+            put(settings, "hardcore", Tag::Byte(0));
+        }
+        put(settings, "locked", Tag::Byte(i8::from(locked)));
+    }
     let now_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64);
     put(data, "LastPlayed", Tag::Long(now_ms));
     let spawn = child(data, "spawn");
@@ -246,6 +386,7 @@ mod tests {
             spawn: WorldSpawn { dimension: "minecraft:overworld".into(), pos: [8, 64, 8], yaw: 90.0, pitch: 0.0 },
             data_packs: Some((vec!["vanilla".into(), "file/p".into()], vec!["trade_rebalance".into()])),
             enabled_features: Some(vec!["minecraft:vanilla".into(), "minecraft:minecart_improvements".into()]),
+            difficulty: Some((3, true)),
         };
         store.save(&state).unwrap();
         let back = LevelStore::open(&dir);

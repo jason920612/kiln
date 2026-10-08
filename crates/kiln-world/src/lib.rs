@@ -575,7 +575,16 @@ mod tests {
 
         w.set_block(3, 0, 3, block::OAK_SIGN);
         let (sign, tag) = w.block_entity_data(3, 0, 3).unwrap();
-        assert_eq!((block_entity::type_name(sign), tag), ("minecraft:sign", Tag::Compound(Vec::new())));
+        // A new sign sends both sides empty, black and unwaxed (`SignBlockEntity.getUpdateTag`).
+        let side = || {
+            Tag::Compound(vec![
+                ("color".into(), Tag::String("black".into())),
+                ("has_glowing_text".into(), Tag::Byte(0)),
+                ("messages".into(), Tag::List(vec![Tag::String(String::new()); 4])),
+            ])
+        };
+        let want = Tag::Compound(vec![("front_text".into(), side()), ("back_text".into(), side()), ("is_waxed".into(), Tag::Byte(0))]);
+        assert_eq!((block_entity::type_name(sign), tag), ("minecraft:sign", want));
         assert_eq!(w.block_entity_data(2, 0, 2), None, "chests send no block entity data");
     }
 

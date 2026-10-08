@@ -53,7 +53,7 @@ impl Kind for Pillager {
         raider::register_raider_goals(m);
         let g = &mut m.goals;
         g.add(0, Goal::Float);
-        g.add(1, raider::never());
+        g.add(1, raider::avoid_creaking(1.0, 1.2));
         g.add(2, Goal::Custom(Box::new(raider::HoldGroundAttackGoal { hostile_radius_sqr: 100.0 })));
         g.add(3, Goal::Custom(Box::new(RangedCrossbowAttackGoal::new(1.0, 8.0))));
         g.add(8, Goal::RandomStroll { speed: 0.6, interval: 120, check_no_action: true, water_avoiding: None, wanted: Vec3::ZERO, force: false });

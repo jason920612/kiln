@@ -155,9 +155,16 @@ impl Player {
         let mut out = Vec::new();
         let player = self.player_flags();
         let result = {
-            let Player { inv, menu, open_menu, containers: pc, loot, level_rng, entity_rng, .. } = self;
+            let Player { inv, menu, open_menu, containers: pc, loot, level_rng, entity_rng, limited_crafting, recipe_book, .. } = self;
             let PlayerContainers { open, ender, cart, bookshelves, .. } = pc;
-            let mut world = super::world::SimWorld { loot: loot.as_deref(), rng: level_rng, player_rng: entity_rng, bookshelves: *bookshelves };
+            let mut world = super::world::SimWorld {
+                loot: loot.as_deref(),
+                rng: level_rng,
+                player_rng: entity_rng,
+                bookshelves: *bookshelves,
+                limited_crafting: *limited_crafting,
+                recipes: &*recipe_book,
+            };
             // A double chest's second half is taken out while the menu works on both.
             let mut second_taken: Option<(BlockPos, ContainerBe)> = None;
             if let (Some(OpenBlock::Containers { second: Some((p, _)), .. }), Some(cs)) = (&*open, containers.as_deref_mut()) {
@@ -221,6 +228,8 @@ impl Player {
                     }
                 }
                 kiln_inventory::Effect::InventoryChanged { stack, .. } => self.inventory_changed(&stack),
+                // `ArmorSlot.setByPlayer` → `LivingEntity.onEquipItem`: the equip sound.
+                kiln_inventory::Effect::Equip { slot, old, new } => self.on_equip_item(slot, &old, &new),
                 // `BrewedPotionTrigger`.
                 kiln_inventory::Effect::BrewedPotion { potion } => {
                     self.fire_conds("minecraft:brewed_potion", None, |c, _, _| {

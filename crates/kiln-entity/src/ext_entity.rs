@@ -13,6 +13,7 @@ pub mod area_effect_cloud;
 pub mod evoker_fangs;
 pub mod dragon_fireball;
 pub mod end_crystal;
+pub mod eye_of_ender;
 pub mod fireball;
 pub mod minecart;
 pub mod firework;
@@ -69,7 +70,14 @@ pub trait EntityExt: Any + Debug + Send + Sync {
     fn container_mut(&mut self) -> Option<&mut minecart::Contents> {
         None
     }
-    /// `hurtServer`: whether the hit did something (a deflected fireball).
+    /// `Projectile.deflect(ProjectileDeflection.AIM_DEFLECT, by, owner = by, byAttack = true, 1.0)`
+    /// as `Player.deflectProjectile` does for a projectile of `#minecraft:redirectable_projectile`:
+    /// it flies on along `look` (the player's) with `by` (network id, UUID) as its owner. False for the rest.
+    fn aim_deflect(&mut self, e: &mut Entity, by: (i32, u128), look: crate::math::Vec3) -> bool {
+        let _ = (e, by, look);
+        false
+    }
+    /// `hurtServer`: whether the hit did something.
     fn hurt(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>) -> bool {
         let _ = (e, level, kind, amount, attacker);
         false
@@ -123,6 +131,8 @@ pub const TYPES: &[&str] = &[
     "minecraft:llama_spit",
     // -- wp32: leads
     "minecraft:leash_knot",
+    // -- wp44: the End
+    "minecraft:eye_of_ender",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -142,6 +152,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:wither_skull" => wither_skull::load(r),
         "minecraft:llama_spit" => llama_spit::load(r),
         "minecraft:leash_knot" => leash_knot::load(r),
+        "minecraft:eye_of_ender" => eye_of_ender::load(r),
         _ => None,
     }
 }
