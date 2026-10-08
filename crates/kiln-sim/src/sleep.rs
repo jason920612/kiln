@@ -530,9 +530,17 @@ impl Sim {
     /// `ServerLevel.updateSleepingPlayerList` for levels whose sleepers changed, with the
     /// "players sleeping" or "sleeping through this night" overlay.
     pub(crate) fn update_sleeping(&mut self) {
+        // Which levels' sleeper lists changed, in one pass over the players.
+        let mut dirty = vec![false; self.dims.len()];
+        for p in self.players.values_mut() {
+            if std::mem::take(&mut p.sleep.list_dirty)
+                && let Some(d) = dirty.get_mut(p.dim)
+            {
+                *d = true;
+            }
+        }
         for dim in 0..self.dims.len() {
-            let dirty = self.players.values_mut().filter(|p| p.dim == dim).fold(false, |a, p| std::mem::take(&mut p.sleep.list_dirty) | a);
-            if !dirty && !std::mem::take(&mut self.sleep_status[dim].dirty) {
+            if !dirty[dim] && !std::mem::take(&mut self.sleep_status[dim].dirty) {
                 continue;
             }
             let (active, sleeping) = self
@@ -576,8 +584,12 @@ impl Sim {
         for dim in 0..self.dims.len() {
             let st = self.sleep_status[dim];
             let needed = st.needed(pct);
+            // (At least one must sleep: the players are counted only when enough are in bed.)
+            if st.sleeping < needed {
+                continue;
+            }
             let deep = self.players.values().filter(|p| p.dim == dim && p.sleep.pos.is_some() && p.sleep.counter >= 100).count() as i32;
-            if st.sleeping < needed || deep < needed {
+            if deep < needed {
                 continue;
             }
             if self.rule_bool("minecraft:advance_time") && dim == OVERWORLD_ID {

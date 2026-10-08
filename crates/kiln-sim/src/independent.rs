@@ -348,6 +348,7 @@ impl Sim {
                     packets: Vec::new(),
                     plugins: None,
                     delay,
+                    unlit: Vec::new(),
                     out: RegionOut::default(),
                 };
                 pool.serial(|ctx| work.tick(&env, ctx));

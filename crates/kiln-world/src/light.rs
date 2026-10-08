@@ -103,25 +103,38 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
     let (bx, bz) = (pos.x * 16, pos.z * 16);
     let mut block = Queue::new();
     let mut sky = Queue::new();
-    for y in min_y..=max_y {
-        for z in 0..16 {
-            for x in 0..16 {
-                let e = light_emission(c.get(x, y, z));
-                if e > 0 {
-                    block.push_back((bx + x as i32, y, bz + z as i32, e));
+    // Emitters, bottom up (sections whose palette has none are skipped whole).
+    for (si, section) in c.sections.iter().enumerate() {
+        if !section.blocks.maybe_has(|s| light_emission(s) > 0) {
+            continue;
+        }
+        let y0 = min_y + 16 * si as i32;
+        for ly in 0..16 {
+            if y0 + ly > max_y {
+                break;
+            }
+            for z in 0..16 {
+                for x in 0..16 {
+                    let e = light_emission(section.get(x, ly as usize, z));
+                    if e > 0 {
+                        block.push_back((bx + x as i32, y0 + ly, bz + z as i32, e));
+                    }
                 }
             }
         }
     }
     // Column tops (y above the highest non-air block) of the chunk and the ring around it.
-    let top = |w: &S, x: i32, z: i32| {
-        w.chunk(ChunkPos::of_block(x, z))
-            .map(|c| c.column_height((x & 15) as usize, (z & 15) as usize, |s| !kiln_data::blocks_types::is_air(s)))
-    };
     let mut tops = [[None; 18]; 18];
-    for (i, row) in tops.iter_mut().enumerate() {
-        for (j, t) in row.iter_mut().enumerate() {
-            *t = top(w, bx + i as i32 - 1, bz + j as i32 - 1);
+    {
+        // The 3×3 chunks the ring touches, each looked up once.
+        let around: [[Option<&crate::chunk::Chunk>; 3]; 3] =
+            std::array::from_fn(|dx| std::array::from_fn(|dz| w.chunk(ChunkPos::new(pos.x + dx as i32 - 1, pos.z + dz as i32 - 1))));
+        for (i, row) in tops.iter_mut().enumerate() {
+            for (j, t) in row.iter_mut().enumerate() {
+                let (x, z) = (bx + i as i32 - 1, bz + j as i32 - 1);
+                let chunk = around[((x >> 4) - pos.x + 1) as usize][((z >> 4) - pos.z + 1) as usize];
+                *t = chunk.map(|c| c.surface_y((x & 15) as usize, (z & 15) as usize));
+            }
         }
     }
     for &(x, y, z, e) in &block {
@@ -159,21 +172,27 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
             }
         }
     }
-    // The neighbours' border columns shine in.
+    // The neighbours' border columns shine in (each neighbour looked up once).
+    let sides = [ChunkPos::new(pos.x - 1, pos.z), ChunkPos::new(pos.x + 1, pos.z), ChunkPos::new(pos.x, pos.z - 1), ChunkPos::new(pos.x, pos.z + 1)];
+    let neighbours = sides.map(|p| w.chunk(p));
     for k in 0..16 {
-        for (x, z) in [(bx - 1, bz + k), (bx + 16, bz + k), (bx + k, bz - 1), (bx + k, bz + 16)] {
-            if w.chunk(ChunkPos::of_block(x, z)).is_none() {
-                continue;
-            }
+        for (side, (x, z)) in [(bx - 1, bz + k), (bx + 16, bz + k), (bx + k, bz - 1), (bx + k, bz + 16)].into_iter().enumerate() {
+            let Some(n) = neighbours[side] else { continue };
+            let (lx, lz) = ((x & 15) as usize, (z & 15) as usize);
             for y in min_y..=max_y {
-                if let Some(l) = light_at(w, LightLayer::Block, x, y, z).filter(|&l| l > 1) {
+                if !n.in_light_range(y) {
+                    continue;
+                }
+                let l = n.light(LightLayer::Block, lx, y, lz);
+                if l > 1 {
                     block.push_back((x, y, z, l));
                 }
                 // Above every column of the chunk, its sky light is full already.
-                if y < chunk_top
-                    && let Some(l) = light_at(w, LightLayer::Sky, x, y, z).filter(|&l| l > 1)
-                {
-                    sky.push_back((x, y, z, l));
+                if y < chunk_top {
+                    let l = n.light(LightLayer::Sky, lx, y, lz);
+                    if l > 1 {
+                        sky.push_back((x, y, z, l));
+                    }
                 }
             }
         }

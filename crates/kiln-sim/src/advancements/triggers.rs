@@ -652,7 +652,7 @@ impl Sim {
     }
 
     /// `players/advancements/<uuid>.json`.
-    fn advancements_path(&self, uuid: uuid::Uuid) -> Option<std::path::PathBuf> {
+    pub(crate) fn advancements_path(&self, uuid: uuid::Uuid) -> Option<std::path::PathBuf> {
         self.storage.as_ref().map(|s| s.dir.join("players/advancements").join(format!("{}.json", uuid.hyphenated())))
     }
 

@@ -74,6 +74,9 @@ pub(crate) struct RegionOut {
     /// Entities that came out of saved compounds this phase (what sat on a player's shoulder),
     /// to be loaded like the ones a chunk brings.
     pub saved_entities: Vec<kiln_proto::nbt::Tag>,
+    /// Entities that may be touching a nether or end portal block at the end of the tick (the
+    /// only ones [`crate::Sim::entity_portals`] looks at, with the entities spawned after).
+    pub portal_candidates: Vec<i32>,
     /// CPU time per sub-phase, for the statistics.
     pub times: [Duration; SUB_PHASES.len()],
     /// Of which in split windows (owner's wall time).
@@ -103,7 +106,25 @@ pub(crate) struct RegionWork<'a> {
     pub plugins: Option<crate::plugins::RegionHook<'a>>,
     /// Injected at the start of each tick ([`crate::SimConfig::inject_delay`], tests).
     pub delay: Duration,
+    /// Chunks generated and installed since the region last ran, still to light (in the order
+    /// they came in), before anything else reads them.
+    pub unlit: Vec<kiln_world::ChunkPos>,
     pub out: RegionOut,
+}
+
+impl RegionWork<'_> {
+    /// Lights the chunks installed since the region last ran ([`kiln_world::light::light_new_chunk`]):
+    /// light spreads at most one chunk, so it stays within the region's own cells.
+    pub(crate) fn light_new_chunks(&mut self) {
+        if self.unlit.is_empty() {
+            return;
+        }
+        let dt = std::time::Instant::now();
+        for pos in std::mem::take(&mut self.unlit) {
+            kiln_world::light::light_new_chunk(&mut *self.cells, pos);
+        }
+        crate::diag::lap("r.light_new", dt);
+    }
 }
 
 impl RegionWork<'_> {
@@ -453,6 +474,16 @@ impl RegionWork<'_> {
         if env.game_time % 20 == 0 {
             self.find_unloads();
         }
+        // Encoded chunk packets are shared by the players a chunk goes to around the same time;
+        // a minute on they only take memory (a later viewer gets the chunk encoded again, the
+        // same bytes).
+        if env.game_time % 1200 == 600 {
+            for (cell_pos, cell) in self.cells.iter_mut() {
+                for (_, chunk) in cell.chunks_mut(cell_pos) {
+                    chunk.drop_packet_cache();
+                }
+            }
+        }
         mark(&mut self.out.times, 2);
         // The chunks that tick, for the block and entity phases (no player changes chunk
         // between them).
@@ -486,6 +517,7 @@ impl RegionWork<'_> {
         crate::diag::lap("mv.track", dt);
         mark(&mut self.out.times, 6);
         self.send_light_updates();
+        self.out.portal_candidates = crate::portal::portal_candidates(self.entities, self.cells, env.min_y);
         mark(&mut self.out.times, 7);
         for p in self.players.iter_mut() {
             self.out.saved_entities.append(&mut p.released_shoulders);

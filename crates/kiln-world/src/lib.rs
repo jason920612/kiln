@@ -145,6 +145,62 @@ pub trait ChunkSource: Send {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+
+    /// Lets the source read and write on threads of its own ([`ChunkSource::start_load`],
+    /// [`ChunkSource::save_owned`] and `flush` return before the work is done). Off by default.
+    fn set_background(&mut self, _on: bool) {}
+
+    /// Starts loading `pos` on another thread, if the source does that; the chunk comes back
+    /// through [`ChunkSource::poll_loads`].
+    fn start_load(&mut self, _pos: ChunkPos, _dimension: Dimension) -> StartLoad {
+        StartLoad::Unsupported
+    }
+
+    /// Loads started earlier that finished: the chunk, or `None` if it could not be read (or is
+    /// not fully generated), with the thread time the load took.
+    fn poll_loads(&mut self) -> Vec<(ChunkPos, Option<Chunk>, std::time::Duration)> {
+        Vec::new()
+    }
+
+    /// [`ChunkSource::save`] for a chunk the caller gives up (it is leaving memory): the source
+    /// may encode it on another thread.
+    fn save_owned(&mut self, pos: ChunkPos, chunk: Chunk) {
+        self.save(pos, &chunk);
+    }
+
+    /// Waits until everything queued has reached storage (shutdown).
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.flush()
+    }
+
+    /// Hands what is ready to the writing side without waiting for anything (a source writing in
+    /// the background); nothing otherwise.
+    fn flush_ready(&mut self) {}
+
+    /// Saves handed over ([`ChunkSource::save_owned`]) still being encoded.
+    fn encoding(&mut self) -> usize {
+        0
+    }
+
+    /// [`ChunkSource::save`] for many chunks at once (a save of the whole world): the source may
+    /// encode them side by side.
+    fn save_many(&mut self, chunks: &[(ChunkPos, &Chunk)]) {
+        for &(pos, chunk) in chunks {
+            self.save(pos, chunk);
+        }
+    }
+}
+
+/// What [`ChunkSource::start_load`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartLoad {
+    /// The load runs on another thread.
+    Started,
+    /// Nothing is stored at the position.
+    Missing,
+    /// Load it with [`ChunkSource::load`] (the source does not load in the background, or not
+    /// this chunk now).
+    Unsupported,
 }
 
 /// Generates chunks, e.g. vanilla's noise-based generation (`kiln-worldgen`). Called for
@@ -156,6 +212,11 @@ pub trait ChunkGenerator: Send {
     /// An independent instance for another thread (same world, its own scratch space), for
     /// generating off the tick thread.
     fn fork(&self) -> Box<dyn ChunkGenerator>;
+
+    /// Unfinished chunks the generator holds (shared between its forks), for monitoring memory.
+    fn held(&self) -> usize {
+        0
+    }
 }
 
 /// What to create where the chunk source has nothing (unless a [`ChunkGenerator`] is set).
@@ -258,12 +319,58 @@ impl ChunkProvider {
     }
 
     /// Saves a chunk that is leaving memory if it needs it, and lets the source forget it.
-    pub fn unload(&mut self, pos: ChunkPos, chunk: &mut Chunk) -> bool {
-        let saved = self.save(pos, chunk);
-        if let Some(source) = self.source.as_mut() {
-            source.unloaded(pos);
+    pub fn unload(&mut self, pos: ChunkPos, mut chunk: Chunk) -> bool {
+        let Some(source) = self.source.as_mut() else { return false };
+        let saved = chunk.needs_save();
+        if saved {
+            chunk.mark_saved();
+            source.save_owned(pos, chunk);
         }
+        source.unloaded(pos);
         saved
+    }
+
+    /// See [`ChunkSource::set_background`].
+    pub fn set_background(&mut self, on: bool) {
+        if let Some(s) = self.source.as_mut() {
+            s.set_background(on);
+        }
+    }
+
+    /// See [`ChunkSource::start_load`].
+    pub fn start_load(&mut self, pos: ChunkPos) -> StartLoad {
+        let dim = self.dimension;
+        self.source.as_mut().map_or(StartLoad::Missing, |s| s.start_load(pos, dim))
+    }
+
+    /// See [`ChunkSource::poll_loads`].
+    pub fn poll_loads(&mut self) -> Vec<(ChunkPos, Option<Chunk>, std::time::Duration)> {
+        self.source.as_mut().map_or_else(Vec::new, |s| s.poll_loads())
+    }
+
+    /// Queues a copy of a chunk for writing ([`ChunkSource::save_owned`]); the caller marked the
+    /// chunk saved.
+    pub fn save_owned_copy(&mut self, pos: ChunkPos, copy: Chunk) {
+        if let Some(s) = self.source.as_mut() {
+            s.save_owned(pos, copy);
+        }
+    }
+
+    /// See [`ChunkSource::encoding`].
+    pub fn encoding(&mut self) -> usize {
+        self.source.as_mut().map_or(0, |s| s.encoding())
+    }
+
+    /// See [`ChunkSource::flush_ready`].
+    pub fn flush_ready(&mut self) {
+        if let Some(s) = self.source.as_mut() {
+            s.flush_ready();
+        }
+    }
+
+    /// See [`ChunkSource::sync`].
+    pub fn sync(&mut self) -> std::io::Result<()> {
+        self.source.as_mut().map_or(Ok(()), |s| s.sync())
     }
 
     /// Whether unloaded chunks can be written somewhere (a superflat test world cannot).
@@ -273,14 +380,27 @@ impl ChunkProvider {
 
     /// Queues every changed chunk in `cells` and flushes; returns how many were written.
     pub fn save_all<S: CellStore + ?Sized>(&mut self, cells: &mut S) -> std::io::Result<usize> {
-        let mut saved = 0;
+        let Some(source) = self.source.as_mut() else { return Ok(0) };
+        let mut changed: Vec<(ChunkPos, &Chunk)> = Vec::new();
+        let mut saved = Vec::new();
         cells.for_each_cell_mut(&mut |pos, cell| {
             for (chunk_pos, chunk) in cell.chunks_mut(pos) {
-                saved += self.save(chunk_pos, chunk) as usize;
+                if chunk.needs_save() {
+                    chunk.mark_saved();
+                    saved.push(chunk_pos);
+                }
             }
         });
+        let saved_set: std::collections::HashSet<ChunkPos> = saved.iter().copied().collect();
+        cells.for_each_cell(&mut |pos, cell| {
+            changed.extend(cell.chunks(pos).filter(|(c, _)| saved_set.contains(c)));
+        });
+        changed.sort_unstable_by_key(|(c, _)| *c);
+        source.save_many(&changed);
+        let n = changed.len();
+        drop(changed);
         self.flush()?;
-        Ok(saved)
+        Ok(n)
     }
 }
 

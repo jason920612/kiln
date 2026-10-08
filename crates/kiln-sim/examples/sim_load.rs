@@ -6,7 +6,14 @@
 //!        [--spacing 48] [--radius 6] [--ticks 1200] [--view-distance 2] [--behavior crowd|walk]
 //!        [--threads n] [--unified] [--inline] [--independent] [--slow-ms n]
 //!        [--spin-us n] [--inline-below-us n] [--chunk-us n] [--helper-share-us n]
-//!        [--priority n] [--tick-ms n]
+//!        [--priority n] [--tick-ms n] [--noise seed] [--gen-threads n]
+//!        [--world dir [--save]] [--template dir]
+//!
+//! `--noise seed`: vanilla overworld terrain (the datapack from `KILN_DATAPACK`); measuring
+//! starts once every player's chunks are in, and the generation's cost is reported apart.
+//! `--world dir` runs in that world (`--save`: saved at the end, e.g. to make a template);
+//! `--template dir` runs in a fresh copy of that world (deleted afterwards), so runs start
+//! from the same state without generating it again.
 //!
 //! Prints the process CPU time per measured tick next to the wall time: idle workers spinning
 //! cost CPU without showing in mspt.
@@ -111,6 +118,28 @@ struct Args {
     priority: Option<i32>,
     /// `--tick-ms n`: ticks start n ms apart, as a server paces them (0: back to back).
     tick_ms: u64,
+    /// `--noise seed`: vanilla overworld terrain from `KILN_DATAPACK` (default superflat); each
+    /// group stands on the highest block of its area.
+    noise: Option<i64>,
+    gen_threads: usize,
+    world: Option<std::path::PathBuf>,
+    save: bool,
+    template: Option<std::path::PathBuf>,
+}
+
+/// Copies the directory tree `from` to `to`.
+fn copy_dir(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 fn args() -> Args {
@@ -142,6 +171,11 @@ fn args() -> Args {
         prewake_us: 0,
         priority: None,
         tick_ms: 0,
+        noise: None,
+        gen_threads: 3,
+        world: None,
+        save: false,
+        template: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(flag) = it.next() {
@@ -170,6 +204,11 @@ fn args() -> Args {
             "--prewake-us" => a.prewake_us = value().parse().unwrap(),
             "--priority" => a.priority = Some(value().parse().unwrap()),
             "--tick-ms" => a.tick_ms = value().parse().unwrap(),
+            "--noise" => a.noise = Some(value().parse().unwrap()),
+            "--gen-threads" => a.gen_threads = value().parse().unwrap(),
+            "--world" => a.world = Some(value().into()),
+            "--save" => a.save = true,
+            "--template" => a.template = Some(value().into()),
             "--day-time" => a.day_time = Some(value().parse().unwrap()),
             "--kinds" => a.kinds = value().split(',').map(str::to_owned).collect(),
             "--helper-share-us" => a.helper_share_us = Some(value().parse().unwrap()),
@@ -185,7 +224,15 @@ fn percentile(sorted: &[f64], p: f64) -> f64 {
 
 fn main() {
     let a = args();
-    let mut config = SimConfig::new(a.players, 10, None);
+    // A template world runs in a fresh copy beside it.
+    let copy = a.template.as_ref().map(|t| {
+        let mut name = t.file_name().expect("template directory").to_os_string();
+        name.push(format!(".run-{}", std::process::id()));
+        let to = t.with_file_name(name);
+        copy_dir(t, &to).expect("copying the template world");
+        to
+    });
+    let mut config = SimConfig::new(a.players, 10, copy.clone().or_else(|| a.world.clone()));
     config.pool.workers = a.threads;
     config.unified_regions = a.unified;
     if let Some(t) = a.entity_ticking {
@@ -224,9 +271,28 @@ fn main() {
             delay: std::time::Duration::from_millis(a.slow_ms),
         });
     }
+    if let Some(seed) = a.noise {
+        let datapack = std::env::var_os("KILN_DATAPACK").map_or_else(|| "work/generated".into(), Into::into);
+        config.noise = Some(kiln_sim::NoiseConfig { seed, datapack, threads: a.gen_threads });
+    }
     let mut sim = Sim::new(config);
     let mut walkers: Vec<Walker> = Vec::with_capacity(a.players);
     let mut inbox = Vec::new();
+    // Where each group stands: superflat's surface, or on noise terrain the top of the highest
+    // block in the group's area, found once its chunks have loaded (the players wait high
+    // above until then).
+    let mut surface: Vec<Option<f64>> = vec![a.noise.is_none().then_some(SURFACE_Y); a.groups];
+    const WAITING_Y: f64 = 300.0;
+    let area = a.radius.ceil() as i32 + 1;
+    let group_block = |g: usize| {
+        let [ox, oz] = group_offset(g, a.groups, a.spacing);
+        ((8.5 + ox).floor() as i32, (8.5 + oz).floor() as i32)
+    };
+    let gen0 = kiln_sim::generation_totals();
+    let mut gen_m0 = gen0;
+    let setup = Instant::now();
+    // Ticks in a row without chunk work (noise terrain measures once the chunks are in).
+    let mut chunks_quiet = 0;
     // Joins at 100 per second, like the network bots.
     let joins_per_tick = 5;
     let mut tick = 0usize;
@@ -252,14 +318,18 @@ fn main() {
             inbox.push(msg);
             let [ox, oz] = group_offset(i % a.groups, a.groups, a.spacing);
             let center = [8.5 + ox, 8.5 + oz];
-            inbox.push(kiln_link::ToSim::Console(format!("tp {name} {} {SURFACE_Y} {}", center[0], center[1])));
-            walkers.push(Walker::new(Client::new(i as u64 + 1, stats), center, i as u64 + 1));
+            let y = surface[i % a.groups].unwrap_or(WAITING_Y);
+            inbox.push(kiln_link::ToSim::Console(format!("tp {name} {} {y} {}", center[0], center[1])));
+            let mut client = Client::new(i as u64 + 1, stats);
+            // On noise terrain the clients take their whole view, as real ones do.
+            client.ack_batches = a.noise.is_some();
+            walkers.push(Walker::new(client, center, i as u64 + 1));
         }
         for w in &mut walkers {
             w.tick(a.radius, a.walk, &mut inbox);
         }
         if a.churn && let Some(since) = measuring_since {
-            churn.tick(tick - since, &mut walkers, &mut inbox, a.groups, a.spacing, a.view_distance, SURFACE_Y);
+            churn.tick(tick - since, &mut walkers, &mut inbox, a.groups, a.spacing, a.view_distance, surface[0].unwrap_or(SURFACE_Y));
         }
         if a.tick_ms > 0 {
             // A server sleeps out the rest of the tick (spinning for the last stretch, as a
@@ -276,8 +346,39 @@ fn main() {
         assert!(sim.step(inbox.drain(..)), "simulation stopped");
         let elapsed = start.elapsed().as_secs_f64() * 1e3;
         tick += 1;
+        if measuring_since.is_none() && a.noise.is_some() {
+            for g in 0..a.groups {
+                let (cx, cz) = group_block(g);
+                let columns = || (cx - area..=cx + area).flat_map(|x| (cz - area..=cz + area).map(move |z| (x, z)));
+                if surface[g].is_some() || !columns().all(|(x, z)| sim.block_in("minecraft:overworld", x, 0, z).is_some()) {
+                    continue;
+                }
+                let top = columns()
+                    .map(|(x, z)| {
+                        (-64..320)
+                            .rev()
+                            .find(|&y| sim.block_in("minecraft:overworld", x, y, z).is_some_and(|s| !kiln_data::blocks_types::is_air(s)))
+                            .map_or(-64, |y| y + 1)
+                    })
+                    .max()
+                    .unwrap_or(64) as f64;
+                surface[g] = Some(top);
+                for (i, w) in walkers.iter().enumerate().filter(|(i, _)| i % a.groups == g) {
+                    inbox.push(kiln_link::ToSim::Console(format!("tp W{i} {} {top} {}", w.center[0], w.center[1])));
+                }
+            }
+            chunks_quiet = if sim.chunk_backlog() == 0 { chunks_quiet + 1 } else { 0 };
+        }
+        let ready = warmup_done(&walkers) && surface.iter().all(Option::is_some) && (a.noise.is_none() || chunks_quiet >= 20);
         match measuring_since {
-            None if warmup_done(&walkers) => {
+            None if ready => {
+                if a.noise.is_some() {
+                    println!(
+                        "noise terrain: group surfaces {:?}; chunks in after {:.1} s",
+                        surface.iter().map(|y| y.unwrap_or(0.0) as i32).collect::<Vec<_>>(),
+                        setup.elapsed().as_secs_f64()
+                    );
+                }
                 measuring_since = Some(tick);
                 const DEFAULT_KINDS: [&str; 8] = ["rabbit", "fox", "cat", "ocelot", "zombie", "piglin", "hoglin", "wolf"];
                 let kinds: Vec<String> = if a.kinds.is_empty() { DEFAULT_KINDS.iter().map(|k| k.to_string()).collect() } else { a.kinds.clone() };
@@ -288,7 +389,7 @@ fn main() {
                     for g in 0..a.groups {
                         let [ox, oz] = group_offset(g, a.groups, a.spacing);
                         let (cx, cz) = ((8.5 + ox) as i32, (8.5 + oz) as i32);
-                        let y = SURFACE_Y as i32;
+                        let y = surface[g].unwrap_or(SURFACE_Y) as i32;
                         let mut set = |dx: i32, dz: i32, block: &str| {
                             inbox.push(kiln_link::ToSim::Console(format!("setblock {} {y} {} {block}", cx + dx, cz + dz)));
                         };
@@ -310,13 +411,15 @@ fn main() {
                     let ang = i as f64 * 2.399;
                     let r = 3.0 + (i % 9) as f64;
                     inbox.push(kiln_link::ToSim::Console(format!(
-                        "summon minecraft:{} {} {SURFACE_Y} {} {{PersistenceRequired:1b}}",
+                        "summon minecraft:{} {} {} {} {{PersistenceRequired:1b}}",
                         kinds[i % kinds.len()],
                         8.5 + ox + r * ang.cos(),
+                        surface[i % a.groups].unwrap_or(SURFACE_Y),
                         8.5 + oz + r * ang.sin()
                     )));
                 }
                 cpu0 = cpu::now();
+                gen_m0 = kiln_sim::generation_totals();
                 sim.reset_pool_stats();
                 sim.reset_phase_totals();
                 kiln_entity::prof::start();
@@ -351,6 +454,7 @@ fn main() {
         }
     }
     let cpu1 = cpu::now();
+    let gen1 = kiln_sim::generation_totals();
     #[cfg(windows)]
     let sampling = sampling.take();
     let wall = wall0.elapsed().as_secs_f64();
@@ -402,6 +506,19 @@ fn main() {
     let total: usize = census.iter().map(|(_, n)| n).sum();
     let top: Vec<String> = census.iter().take(10).map(|(k, n)| format!("{k} {n}")).collect();
     println!("entities at the end: {total} ({})", top.join(", "));
+    if a.noise.is_some() {
+        // Generation runs on its own threads; the tick installs what they finished (b0.chunks).
+        let per = |n: u64, d: std::time::Duration| if n == 0 { 0.0 } else { d.as_secs_f64() * 1e3 / n as f64 };
+        let (wn, wd) = (gen_m0.0 - gen0.0, gen_m0.1 - gen0.1);
+        let (mn, md) = (gen1.0 - gen_m0.0, gen1.1 - gen_m0.1);
+        println!(
+            "generation: {wn} chunks before measuring ({:.2} ms each); while measuring {mn} chunks, {:.3} ms/tick on the generation threads ({:.2} ms each); {} chunks loaded",
+            per(wn, wd),
+            md.as_secs_f64() * 1e3 / times.len() as f64,
+            per(mn, md),
+            sim.loaded_chunks().iter().sum::<usize>()
+        );
+    }
     if std::env::var_os("KILN_SINK_DIGEST").is_some() {
         println!("packet stream digest {:016x} ({} players)", churn.stream_digest(&walkers), walkers.len());
     }
@@ -450,5 +567,15 @@ fn main() {
     }
     if let Some(r) = sim.last_report() {
         println!("last window: {r}");
+    }
+    if a.save {
+        // Shutting down saves the world (the copy is let go afterwards).
+        let (done, wait) = std::sync::mpsc::channel();
+        sim.step([kiln_link::ToSim::Shutdown { done }]);
+        let _ = wait.recv();
+        drop(sim);
+    }
+    if let Some(dir) = copy {
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

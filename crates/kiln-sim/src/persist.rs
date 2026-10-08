@@ -189,13 +189,82 @@ impl Sim {
         if level.and_then(LevelStore::game_type) == Some(ADVENTURE) {
             return kiln_world::spawn::free_spawn_at(&mut self.dims[crate::OVERWORLD_ID], self.spawn);
         }
+        let radius = self.respawn_radius();
+        let (hi, lo) = uuid.as_u64_pair();
+        let offset = ((hi ^ lo) % 1024) as u32;
+        kiln_world::spawn::find_spawn(&mut self.dims[crate::OVERWORLD_ID], self.spawn, radius, offset)
+    }
+
+    /// The `respawn_radius` game rule.
+    fn respawn_radius(&self) -> i32 {
+        let level = self.storage.as_ref().map(|s| &s.level);
         let radius = match self.commands.game_rules.get("minecraft:respawn_radius") {
             Some(kiln_command::GameRuleValue::Int(r)) => *r as i64,
             _ => level.and_then(|l| l.game_rule("minecraft:respawn_radius")).unwrap_or(DEFAULT_RESPAWN_RADIUS),
         };
-        let (hi, lo) = uuid.as_u64_pair();
-        let offset = ((hi ^ lo) % 1024) as u32;
-        kiln_world::spawn::find_spawn(&mut self.dims[crate::OVERWORLD_ID], self.spawn, radius.clamp(0, i32::MAX as i64) as i32, offset)
+        radius.clamp(0, i32::MAX as i64) as i32
+    }
+
+    /// `MinecraftServer.prepareLevels`: the chunks new players are placed in (the respawn
+    /// radius around the world spawn, and the blocks next to it) are made before anyone joins,
+    /// so that the first joins do not generate them on the tick thread. Only where terrain is
+    /// generated in the background (elsewhere a chunk costs next to nothing).
+    pub(crate) fn prepare_spawn(&mut self) {
+        let r = self.respawn_radius().min(64) + 1;
+        let [x, _, z] = self.spawn;
+        let d = &mut self.dims[crate::OVERWORLD_ID];
+        if d.generation.is_none() {
+            return;
+        }
+        for cz in (z - r) >> 4..=(z + r) >> 4 {
+            for cx in (x - r) >> 4..=(x + r) >> 4 {
+                let pos = kiln_world::ChunkPos::new(cx, cz);
+                if !d.is_loaded(pos) {
+                    let chunk = d.provider.load_or_generate(pos);
+                    d.install(pos, chunk);
+                }
+            }
+        }
+    }
+
+    /// Every player's data, statistics and advancements: encoded here, written side by side
+    /// (each file is written through a temporary file and synced; many players' files one
+    /// after another hold a save up).
+    pub(crate) fn save_players(&self) {
+        let Some(storage) = &self.storage else { return };
+        let mut players: Vec<&Player> = self.players.values().collect();
+        players.sort_by_key(|p| p.uuid);
+        type Job = (uuid::Uuid, String, Tag, Option<(std::path::PathBuf, String)>, Option<(std::path::PathBuf, String)>);
+        let jobs: Vec<Job> = players
+            .iter()
+            .map(|p| {
+                let stats = self.stats_path(p.uuid).map(|path| (path, p.stats.to_json()));
+                let advancements = self.advancements_path(p.uuid).map(|path| (path, p.advancements.to_json()));
+                (p.uuid, p.name.clone(), self.player_nbt(p), stats, advancements)
+            })
+            .collect();
+        let write = |job: &Job| {
+            let (uuid, name, nbt, stats, advancements) = job;
+            if let Err(e) = storage.players.save_nbt(*uuid, nbt) {
+                warn!("failed to save player data for {name}: {e}");
+            }
+            for (path, json) in [stats, advancements].into_iter().flatten() {
+                if let Err(e) = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, json)) {
+                    tracing::error!("Couldn't save {}: {e}", path.display());
+                }
+            }
+        };
+        if jobs.len() < 4 {
+            jobs.iter().for_each(write);
+            return;
+        }
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        let per = jobs.len().div_ceil(threads);
+        std::thread::scope(|scope| {
+            for part in jobs.chunks(per) {
+                scope.spawn(move || part.iter().for_each(write));
+            }
+        });
     }
 
     pub(crate) fn save_player(&self, p: &Player) {
@@ -719,9 +788,12 @@ impl crate::Dim {
         let owner = |id: i32| owners.get(&id).copied();
         let mut groups: HashMap<ChunkPos, Vec<Tag>> = HashMap::new();
         let mut leaving: HashSet<i32> = HashSet::new();
+        // The entities to write, by region, in list order: (chunk, index).
+        let mut to_save: Vec<Vec<(ChunkPos, usize)>> = Vec::new();
         for r in self.regions.iter() {
             // Lightning bolts and fishing bobbers are never saved (`EntityType.noSave`).
             let list = &r.part().0.list;
+            let mut mine = Vec::new();
             for (i, e) in list.iter().enumerate().filter(|(_, e)| !e.removed && !matches!(e.kind.name, "minecraft:lightning_bolt" | "minecraft:fishing_bobber")) {
                 // A stack is saved, and unloaded, by its root (`Entity.save`: a passenger is
                 // saved inside its vehicle, in the chunk the root is in).
@@ -729,12 +801,31 @@ impl crate::Dim {
                 let c = entities::chunk_of(list[root].pos);
                 let loaded = self.regions.chunk(c).is_some();
                 if root == i && storing && (all || !loaded) {
-                    groups.entry(c).or_default().push(entities::save_in(list, i, &owner));
+                    mine.push((c, i));
                 }
                 if !loaded {
                     leaving.insert(e.id);
                 }
             }
+            to_save.push(mine);
+        }
+        // Encoding the entities reads them only: a whole-world save (thousands of entities)
+        // encodes side by side, in the same order.
+        let lists: Vec<&[entities::Entity]> = self.regions.iter().map(|r| &r.part().0.list[..]).collect();
+        let jobs: Vec<(usize, ChunkPos, usize)> = to_save.iter().enumerate().flat_map(|(r, v)| v.iter().map(move |&(c, i)| (r, c, i))).collect();
+        let encode = |part: &[(usize, ChunkPos, usize)]| part.iter().map(|&(r, c, i)| (c, entities::save_in(lists[r], i, &owner))).collect::<Vec<_>>();
+        let encoded: Vec<(ChunkPos, Tag)> = if jobs.len() >= 512 {
+            let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+            let per = jobs.len().div_ceil(threads);
+            std::thread::scope(|scope| {
+                let workers: Vec<_> = jobs.chunks(per).map(|part| scope.spawn(move || encode(part))).collect();
+                workers.into_iter().flat_map(|w| w.join().expect("encoding entities")).collect()
+            })
+        } else {
+            encode(&jobs)
+        };
+        for (c, tag) in encoded {
+            groups.entry(c).or_default().push(tag);
         }
         let mut gone = Vec::new();
         if !leaving.is_empty() {

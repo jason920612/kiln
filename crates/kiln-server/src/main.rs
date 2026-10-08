@@ -5,6 +5,10 @@ use tracing_subscriber::EnvFilter;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+fn env_number<T: std::str::FromStr>(name: &str) -> Option<T> {
+    std::env::var(name).ok().and_then(|v| v.parse().ok())
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
@@ -21,8 +25,10 @@ fn main() -> Result<()> {
         bind: ([0, 0, 0, 0], port).into(),
         motd: "A Kiln server".into(),
         max_players: std::env::var("KILN_MAX_PLAYERS").ok().and_then(|v| v.parse().ok()).unwrap_or(100),
-        view_distance: 10,
-        simulation_distance: 10,
+        // KILN_VIEW_DISTANCE / KILN_SIMULATION_DISTANCE: server.properties' view-distance and
+        // simulation-distance (10 by default).
+        view_distance: env_number("KILN_VIEW_DISTANCE").unwrap_or(10),
+        simulation_distance: env_number("KILN_SIMULATION_DISTANCE").unwrap_or(10),
         compression_threshold: Some(256),
     };
     let max_players = net_config.max_players;
@@ -111,7 +117,11 @@ fn main() -> Result<()> {
         let saved = sim_config.world.as_deref().and_then(kiln_storage::read_seed);
         let seed = std::env::var("KILN_SEED").ok().and_then(|v| v.parse().ok()).or(saved).unwrap_or(0);
         let datapack = std::env::var_os("KILN_DATAPACK").map_or_else(|| "work/generated".into(), Into::into);
-        sim_config.noise = Some(kiln_sim::NoiseConfig { seed, datapack, threads: 3 });
+        // KILN_GEN_THREADS: chunk generation threads per dimension (as many as tick, on CPU
+        // time nothing else wants).
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let threads = env_number("KILN_GEN_THREADS").unwrap_or_else(|| kiln_sim::default_workers(cores).max(2));
+        sim_config.noise = Some(kiln_sim::NoiseConfig { seed, datapack, threads });
     }
 
     // The simulation also ends on its own after /stop; that ends the process.

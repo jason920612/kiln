@@ -159,9 +159,51 @@ pub struct ProtoChunk {
     /// Entities generation added (`ProtoChunk.addEntity`: end crystals, end city shulkers and
     /// item frames...), in saved form (`id`, `Pos`, ...), in the order they were added.
     pub entities: Vec<Tag>,
+    /// `blocks`, LZ4-compressed, while the chunk waits in the pipeline unused ([`ProtoChunk::park`];
+    /// `blocks` is empty meanwhile).
+    parked: Option<Vec<u8>>,
 }
 
 impl ProtoChunk {
+    /// Compresses the block states while the chunk waits (a waiting chunk's blocks are most of
+    /// the generator's memory). Lossless; [`ProtoChunk::unpark`] before any use.
+    pub fn park(&mut self) {
+        if self.parked.is_some() {
+            return;
+        }
+        let bytes: Vec<u8> = self.blocks.iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.parked = Some(lz4_flex::compress_prepend_size(&bytes));
+        self.blocks = Vec::new();
+    }
+
+    /// Restores the block states of a parked chunk (nothing for one in use).
+    pub fn unpark(&mut self) {
+        let Some(packed) = self.parked.take() else { return };
+        let bytes = lz4_flex::decompress_size_prepended(&packed).expect("a parked chunk decompresses");
+        self.blocks = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+    }
+
+    pub fn is_parked(&self) -> bool {
+        self.parked.is_some()
+    }
+
+    #[cfg(test)]
+    fn park_roundtrip_check() {
+        let mut c = ProtoChunk::new(3, -4, -64, 24, vec![0; 24 * 64]);
+        let mut seed = 7u64;
+        for _ in 0..3000 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let i = (seed >> 33) as usize % c.blocks.len();
+            c.blocks[i] = (seed >> 50) as u16;
+        }
+        let before = c.blocks.clone();
+        c.park();
+        assert!(c.is_parked() && c.blocks.is_empty());
+        c.unpark();
+        assert!(!c.is_parked());
+        assert_eq!(c.blocks, before);
+    }
+
     /// An empty chunk (all air) at BIOMES.
     pub fn new(x: i32, z: i32, min_y: i32, sections: usize, biomes: Vec<u16>) -> Self {
         Self {
@@ -180,6 +222,7 @@ impl ProtoChunk {
             fluid_ticks: Vec::new(),
             block_entities: BTreeMap::new(),
             entities: Vec::new(),
+            parked: None,
         }
     }
 
@@ -360,4 +403,13 @@ pub fn stored_biome(biomes: &[u16], min_y: i32, qx: i32, qy: i32, qz: i32) -> u1
     let sections = (biomes.len() / 64) as i32;
     let ry = (qy - (min_y >> 2)).clamp(0, sections * 4 - 1);
     biomes[((ry >> 2) * 64 + (((ry & 3) << 4) | ((qz & 3) << 2) | (qx & 3))) as usize]
+}
+
+#[cfg(test)]
+mod park_tests {
+    /// A parked proto-chunk keeps its blocks.
+    #[test]
+    fn parking_keeps_the_blocks() {
+        super::ProtoChunk::park_roundtrip_check();
+    }
 }

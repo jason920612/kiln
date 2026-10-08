@@ -12,12 +12,18 @@
 pub mod behavior;
 mod bot;
 mod metrics;
+mod physics;
 pub mod proto;
+pub mod survival;
 pub mod text;
 pub mod wire;
+mod world;
 
 pub use behavior::Behavior;
-pub use metrics::{Report, Traffic};
+pub use metrics::{Latency, Report, Traffic};
+pub use survival::Role;
+
+pub(crate) use bot::{Out, unix_millis};
 
 use anyhow::{Context, Result, bail, ensure};
 use metrics::Shared;
@@ -63,6 +69,11 @@ pub struct Config {
     pub group_spacing: f64,
     /// Bots whose group centre is far from where they spawned `/tp` there (they must be ops).
     pub teleport_to_group: bool,
+    /// Survival: roles dealt to bots in turn (bot `i` gets `roles[i % len]`).
+    pub roles: Vec<Role>,
+    /// Survival: bots `[k * group_size, (k + 1) * group_size)` share a site; `None` deals
+    /// the bots round-robin into `groups`.
+    pub group_size: Option<usize>,
 }
 
 impl Default for Config {
@@ -86,11 +97,21 @@ impl Default for Config {
             groups: 1,
             group_spacing: 48.0,
             teleport_to_group: false,
+            roles: vec![Role::Explorer, Role::Miner, Role::Builder, Role::Redstone],
+            group_size: None,
         }
     }
 }
 
 impl Config {
+    /// The group bot `i` belongs to, and how many groups there are.
+    pub fn group_of(&self, i: usize) -> (usize, usize) {
+        match self.group_size {
+            Some(n) => (i / n.max(1), self.count.div_ceil(n.max(1)).max(1)),
+            None => (i % self.groups, self.groups),
+        }
+    }
+
     /// Offset of group `g`'s centre from the shared centre: groups fill a square grid.
     pub fn group_offset(&self, g: usize) -> [f64; 2] {
         let cols = (self.groups as f64).sqrt().ceil().max(1.0) as usize;
@@ -99,7 +120,17 @@ impl Config {
         [at(g % cols, cols), at(g / cols, rows)]
     }
 
+    /// Like [`Config::group_offset`] for a given number of groups.
+    pub fn group_offset_in(&self, g: usize, groups: usize) -> [f64; 2] {
+        let cols = (groups as f64).sqrt().ceil().max(1.0) as usize;
+        let rows = groups.div_ceil(cols);
+        let at = |i: usize, n: usize| (i as f64 - (n - 1) as f64 / 2.0) * self.group_spacing;
+        [at(g % cols, cols), at(g / cols, rows)]
+    }
+
     fn validate(&self) -> Result<()> {
+        ensure!(!self.roles.is_empty(), "at least one role is needed");
+        ensure!(self.group_size != Some(0), "group size must be positive");
         ensure!(self.rate.is_finite() && self.rate > 0.0, "rate must be positive");
         ensure!(self.speed.is_finite() && self.speed >= 0.0, "speed must be non-negative");
         ensure!(self.radius.is_none_or(|r| r.is_finite() && r >= 0.0), "radius must be non-negative");

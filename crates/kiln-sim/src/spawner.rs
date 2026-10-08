@@ -699,12 +699,15 @@ fn spawn_category_for_chunk(
             }
             let pos = KBlockPos::new(px, y, pz);
             let biome = biome_at(level, pos);
+            // What spawns at this very place (looked up once: the pick and `canSpawnMobAt` below
+            // ask the same).
+            let here = s.table.mobs_at(level, biome, cat, pos);
             if data.is_none() {
                 // `getRandomSpawnMobAt`: rivers have most of their ambient water spawns taken away.
                 if cat == Category::WaterAmbient && kiln_entity::mob::kinds::slime::biome_in_tag(biome as i32, "minecraft:reduce_water_ambient_spawns") && r.next_float() < 0.98 {
                     break;
                 }
-                match pick(s.table.mobs_at(level, biome, cat, pos), r) {
+                match pick(here, r) {
                     None => break,
                     Some(d) => {
                         let d = d.clone();
@@ -721,7 +724,7 @@ fn spawn_category_for_chunk(
                 continue;
             }
             // `canSpawnMobAt`: what was picked is among what spawns at this very place.
-            if !s.table.mobs_at(level, biome, cat, pos).iter().any(|e| *e == d_) {
+            if !here.iter().any(|e| *e == d_) {
                 continue;
             }
             if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {

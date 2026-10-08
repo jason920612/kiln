@@ -283,6 +283,46 @@ pub fn pack(values: &[u64], bits: u32) -> Vec<u64> {
     out
 }
 
+/// One bit per block of `blocks` that ticks randomly.
+fn tick_bits(blocks: &BlockContainer) -> Box<[u64; 64]> {
+    let mut bits = Box::new([0u64; 64]);
+    let mut set = |i: usize| bits[i >> 6] |= 1 << (i & 63);
+    match blocks {
+        BlockContainer::Single(s) => {
+            if randomly_ticks(*s) {
+                bits.fill(u64::MAX);
+            }
+        }
+        BlockContainer::Nibble { palette, indices } => {
+            let ticks: Vec<bool> = palette.iter().map(|&s| randomly_ticks(s)).collect();
+            for (k, b) in indices.iter().enumerate() {
+                if ticks.get((b & 15) as usize) == Some(&true) {
+                    set(2 * k);
+                }
+                if ticks.get((b >> 4) as usize) == Some(&true) {
+                    set(2 * k + 1);
+                }
+            }
+        }
+        BlockContainer::Byte { palette, indices } => {
+            let ticks: Vec<bool> = palette.iter().map(|&s| randomly_ticks(s)).collect();
+            for (i, &b) in indices.iter().enumerate() {
+                if ticks.get(b as usize) == Some(&true) {
+                    set(i);
+                }
+            }
+        }
+        BlockContainer::Direct(d) => {
+            for (i, &s) in d.iter().enumerate() {
+                if randomly_ticks(s) {
+                    set(i);
+                }
+            }
+        }
+    }
+    bits
+}
+
 #[derive(Clone)]
 pub struct Section {
     pub blocks: BlockContainer,
@@ -291,6 +331,9 @@ pub struct Section {
     fluids: u16,
     /// Blocks that tick randomly (`LevelChunkSection.tickingBlockCount` plus fluids).
     ticking: u16,
+    /// Which blocks tick randomly, one bit per block (by [`block_index`]), whenever any does:
+    /// a random tick's pick is checked here, in 512 bytes, instead of in the block data.
+    tick_bits: Option<Box<[u64; 64]>>,
 }
 
 impl Section {
@@ -324,7 +367,8 @@ impl Section {
                 Self::tally(palette, &counts)
             }
         };
-        Self { blocks, biomes, non_air, fluids, ticking }
+        let tick_bits = (ticking > 0).then(|| tick_bits(&blocks));
+        Self { blocks, biomes, non_air, fluids, ticking, tick_bits }
     }
 
     /// (non-air, fluid, randomly ticking) block counts from per-palette-entry counts.
@@ -344,9 +388,21 @@ impl Section {
         if old != state {
             self.non_air = self.non_air + !is_air(state) as u16 - !is_air(old) as u16;
             self.fluids = self.fluids + has_fluid(state) as u16 - has_fluid(old) as u16;
-            self.ticking = self.ticking + randomly_ticks(state) as u16 - randomly_ticks(old) as u16;
+            let (was, is) = (randomly_ticks(old), randomly_ticks(state));
+            self.ticking = self.ticking + is as u16 - was as u16;
+            if was != is {
+                let i = block_index(x, y, z);
+                let bits = self.tick_bits.get_or_insert_with(|| Box::new([0; 64]));
+                bits[i >> 6] ^= 1 << (i & 63);
+            }
         }
         old
+    }
+
+    /// Whether the block at `x`, `y`, `z` ticks randomly (`BlockState.isRandomlyTicking`).
+    pub fn ticks_randomly_at(&self, x: usize, y: usize, z: usize) -> bool {
+        let i = block_index(x, y, z);
+        self.tick_bits.as_ref().is_some_and(|b| b[i >> 6] >> (i & 63) & 1 != 0)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -430,6 +486,31 @@ mod tests {
         assert!(s.is_randomly_ticking());
         s.set(2, 0, 0, d::DIRT);
         assert!(!s.is_randomly_ticking());
+    }
+
+    #[test]
+    fn random_tick_bits_follow_the_blocks() {
+        // Every container kind, built and then edited: the bits say what `randomly_ticks` says.
+        let check = |s: &Section| {
+            for i in 0..4096 {
+                let (x, y, z) = (i & 15, i >> 8, (i >> 4) & 15);
+                assert_eq!(s.ticks_randomly_at(x, y, z), randomly_ticks(s.get(x, y, z)), "block {i}");
+            }
+        };
+        let mut s = Section::filled(d::GRASS_BLOCK, 0);
+        check(&s);
+        let states = [d::AIR, d::STONE, d::GRASS_BLOCK, d::WATER, d::LAVA, d::DIRT, d::OAK_LEAVES];
+        let mut seed = 12345u64;
+        for step in 0..20_000 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let i = (seed >> 33) as usize % 4096;
+            // Many distinct states now and then, so the palette grows to bytes and direct.
+            let state = if step % 7 == 0 { (seed >> 20) as u16 % 20000 } else { states[(seed >> 40) as usize % states.len()] };
+            s.set(i & 15, i >> 8, (i >> 4) & 15, state);
+        }
+        check(&s);
+        let rebuilt = Section::new(s.blocks.clone(), Biomes::Single(0));
+        check(&rebuilt);
     }
 
     #[test]

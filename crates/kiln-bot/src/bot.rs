@@ -2,9 +2,10 @@
 //! client tick. Outgoing packets are batched and written once per wakeup.
 
 use crate::Config;
-use crate::behavior::{Mover, Rng};
+use crate::behavior::{Behavior, Mover, Rng};
 use crate::metrics::{Shared, Traffic};
 use crate::proto::{self, Teleport};
+use crate::survival::{Agent, Settings};
 use crate::wire::{self, Frame, Inbound};
 use anyhow::{Context, Result};
 use bytes::BytesMut;
@@ -68,7 +69,7 @@ impl State {
 }
 
 /// Whether the bot reads the body of a clientbound packet; everything else is only counted.
-fn needs_body(state: State, id: i32) -> bool {
+fn needs_body(state: State, id: i32, survival: bool) -> bool {
     match state {
         State::Login => true,
         State::Configuration => {
@@ -78,12 +79,37 @@ fn needs_body(state: State, id: i32) -> bool {
         State::Play => {
             use ids::play::clientbound as cb;
             matches!(id, cb::PLAYER_POSITION | cb::KEEP_ALIVE | cb::PING | cb::DISCONNECT | cb::COOKIE_REQUEST)
+                || (survival
+                    && matches!(
+                        id,
+                        cb::LOGIN
+                            | cb::LEVEL_CHUNK_WITH_LIGHT
+                            | cb::BLOCK_UPDATE
+                            | cb::SECTION_BLOCKS_UPDATE
+                            | cb::FORGET_LEVEL_CHUNK
+                            | cb::SET_CHUNK_CACHE_CENTER
+                            | cb::SET_CHUNK_CACHE_RADIUS
+                            | cb::SET_HEALTH
+                            | cb::RESPAWN
+                            | cb::OPEN_SCREEN
+                            | cb::CONTAINER_SET_CONTENT
+                            | cb::CONTAINER_SET_SLOT
+                            | cb::CONTAINER_CLOSE
+                            | cb::SET_PLAYER_INVENTORY
+                            | cb::ADD_ENTITY
+                            | cb::REMOVE_ENTITIES
+                            | cb::MOVE_ENTITY_POS
+                            | cb::MOVE_ENTITY_POS_ROT
+                            | cb::ENTITY_POSITION_SYNC
+                            | cb::TELEPORT_ENTITY
+                            | cb::BLOCK_CHANGED_ACK
+                    ))
         }
     }
 }
 
 /// Outgoing packets, framed into one buffer until the next write.
-struct Out {
+pub(crate) struct Out {
     threshold: Option<usize>,
     scratch: BytesMut,
     buf: BytesMut,
@@ -91,7 +117,17 @@ struct Out {
 }
 
 impl Out {
-    fn send(&mut self, build: impl FnOnce(&mut BytesMut)) {
+    pub(crate) fn new(threshold: Option<usize>) -> Self {
+        Out { threshold, scratch: BytesMut::with_capacity(256), buf: BytesMut::with_capacity(1024), packets: 0 }
+    }
+
+    /// The framed packets written so far (tests decode them with the server's codec).
+    #[cfg(test)]
+    pub(crate) fn take_framed(&mut self) -> BytesMut {
+        self.buf.split()
+    }
+
+    pub(crate) fn send(&mut self, build: impl FnOnce(&mut BytesMut)) {
         self.scratch.clear();
         build(&mut self.scratch);
         wire::encode(self.threshold, &self.scratch, &mut self.buf);
@@ -120,6 +156,8 @@ struct Bot {
     terrain: bool,
     /// Created at the first teleport.
     mover: Option<Mover>,
+    /// Survival bots: the player (created at Play Login).
+    agent: Option<Agent>,
     joined: bool,
     play_ticks: u64,
     next_chat_tick: u64,
@@ -143,12 +181,7 @@ pub(crate) async fn run(
         shared: shared.clone(),
         state: State::Login,
         inbound: Inbound::default(),
-        out: Out {
-            threshold: None,
-            scratch: BytesMut::with_capacity(256),
-            buf: BytesMut::with_capacity(1024),
-            packets: 0,
-        },
+        out: Out::new(None),
         traffic: Traffic::default(),
         started: now,
         last_flush: None,
@@ -157,6 +190,7 @@ pub(crate) async fn run(
         pending_teleport: None,
         terrain: false,
         mover: None,
+        agent: None,
         joined: false,
         play_ticks: 0,
         next_chat_tick: 0,
@@ -221,9 +255,10 @@ impl Bot {
                     self.last_rx = Instant::now();
                     loop {
                         let state = self.state;
+                        let survival = self.cfg.behavior == Behavior::Survival;
                         let frame = self
                             .inbound
-                            .decode(&mut rbuf, |id| needs_body(state, id))
+                            .decode(&mut rbuf, |id| needs_body(state, id, survival))
                             .map_err(|e| format!("bad frame: {e}"))?;
                         let Some(frame) = frame else { break };
                         self.traffic.rx_packets += 1;
@@ -315,9 +350,76 @@ impl Bot {
         use ids::play::clientbound as cb;
         use ids::play::serverbound as sb;
         match id {
-            cb::LEVEL_CHUNK_WITH_LIGHT => self.traffic.chunks += 1,
+            cb::LEVEL_CHUNK_WITH_LIGHT => {
+                self.traffic.chunks += 1;
+                if let Some(a) = &mut self.agent {
+                    a.on_chunk(r.rest());
+                }
+            }
+            cb::BLOCK_UPDATE if self.agent.is_some() => {
+                let pos = kiln_proto::packets::read_position(r)?;
+                let state = r.varint()?;
+                self.agent.as_mut().unwrap().on_block_update(pos, state as u16);
+            }
+            cb::SECTION_BLOCKS_UPDATE if self.agent.is_some() => self.agent.as_mut().unwrap().on_section_update(r)?,
+            cb::FORGET_LEVEL_CHUNK if self.agent.is_some() => {
+                let v = r.i64()?;
+                self.agent.as_mut().unwrap().on_forget_chunk(v as i32, (v >> 32) as i32);
+            }
+            cb::SET_CHUNK_CACHE_CENTER if self.agent.is_some() => {
+                let (x, z) = (r.varint()?, r.varint()?);
+                self.agent.as_mut().unwrap().on_chunk_center(x, z);
+            }
+            cb::SET_CHUNK_CACHE_RADIUS if self.agent.is_some() => {
+                let radius = r.varint()?;
+                self.agent.as_mut().unwrap().on_chunk_radius(radius);
+            }
+            cb::SET_HEALTH if self.agent.is_some() => {
+                let health = r.f32()?;
+                let food = r.varint()?;
+                self.agent.as_mut().unwrap().on_health(health, food);
+            }
+            cb::RESPAWN if self.agent.is_some() => self.agent.as_mut().unwrap().on_respawn(),
+            cb::OPEN_SCREEN if self.agent.is_some() => {
+                let id = r.varint()?;
+                self.agent.as_mut().unwrap().on_open_screen(id);
+            }
+            cb::CONTAINER_SET_CONTENT if self.agent.is_some() => {
+                let (id, state, n) = (r.varint()?, r.varint()?, r.varint()?);
+                self.agent.as_mut().unwrap().on_container_content(id, state, n);
+            }
+            cb::CONTAINER_SET_SLOT if self.agent.is_some() => {
+                let (id, state, slot) = (r.varint()?, r.varint()?, r.i16()?);
+                self.agent.as_mut().unwrap().on_container_slot(id, state, slot as i32);
+            }
+            cb::CONTAINER_CLOSE if self.agent.is_some() => self.agent.as_mut().unwrap().on_container_close(),
+            cb::ADD_ENTITY if self.agent.is_some() => self.agent.as_mut().unwrap().on_add_entity(r)?,
+            cb::REMOVE_ENTITIES if self.agent.is_some() => self.agent.as_mut().unwrap().on_remove_entities(r)?,
+            cb::MOVE_ENTITY_POS | cb::MOVE_ENTITY_POS_ROT if self.agent.is_some() => self.agent.as_mut().unwrap().on_entity_move(r)?,
+            cb::ENTITY_POSITION_SYNC if self.agent.is_some() => self.agent.as_mut().unwrap().on_entity_sync(r)?,
+            cb::TELEPORT_ENTITY if self.agent.is_some() => self.agent.as_mut().unwrap().on_entity_teleport(r)?,
+            cb::SET_PLAYER_INVENTORY if self.agent.is_some() => {
+                let slot = r.varint()?;
+                self.agent.as_mut().unwrap().on_inventory_slot(slot);
+            }
+            cb::BLOCK_CHANGED_ACK if self.agent.is_some() => {
+                let seq = r.varint()?;
+                self.agent.as_mut().unwrap().on_ack(seq);
+            }
             cb::SYSTEM_CHAT | cb::PLAYER_CHAT | cb::DISGUISED_CHAT => self.traffic.chat_received += 1,
-            cb::LOGIN => self.world_since = Some(Instant::now()),
+            cb::LOGIN => {
+                self.world_since = Some(Instant::now());
+                if self.cfg.behavior == Behavior::Survival {
+                    let entity_id = r.i32()?;
+                    let _hardcore = r.bool()?;
+                    for _ in 0..r.varint()? {
+                        r.string(256)?;
+                    }
+                    let _max_players = r.varint()?;
+                    let view = r.varint()?;
+                    self.agent = Some(self.make_agent(entity_id, view));
+                }
+            }
             // A real client needs a while to set up its level after Login, so its first
             // confirmation reaches the server after the connection's first tick. Vanilla relies
             // on that: a confirmation processed earlier fails its movement check against an
@@ -364,9 +466,44 @@ impl Bot {
         Ok(Handled::Continue)
     }
 
+    fn make_agent(&self, entity_id: i32, server_view: i32) -> Agent {
+        let cfg = &self.cfg;
+        let (group, groups) = cfg.group_of(self.index);
+        let [cx, cz] = cfg.center.unwrap_or([0.0, 0.0]);
+        let [dx, dz] = cfg.group_offset_in(group, groups);
+        let role = cfg.roles[self.index % cfg.roles.len()];
+        let settings = Settings {
+            role,
+            site: [cx + dx, cz + dz],
+            view_distance: server_view.min(cfg.view_distance as i32),
+            seed: cfg.seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (self.index as u64).wrapping_mul(0xd1b5_4a32_d192_ed03),
+            chat_interval: cfg.chat_interval,
+            stay: groups <= 1 && cfg.group_size.is_none(),
+            roam: cfg.radius,
+        };
+        Agent::new(settings, self.shared.clone(), [0.0; 3], 0.0, 0.0, entity_id)
+    }
+
     /// Confirms a teleport like the 26.3 client: Accept Teleportation carrying the resulting
     /// position and nothing else (a Move Player too would be a second position this tick).
     fn teleport(&mut self, t: Teleport) {
+        if let Some(agent) = &mut self.agent {
+            let spawned = self.mover.is_some();
+            let (pos, yaw, pitch) = if spawned {
+                t.apply(agent.body.pos, agent.body.yaw, agent.body.pitch)
+            } else {
+                t.apply([0.0; 3], 0.0, 0.0)
+            };
+            self.out.send(|b| proto::accept_teleportation(b, t.id, pos, yaw, pitch));
+            if spawned {
+                agent.on_teleport(pos, yaw, pitch);
+            } else {
+                agent.spawn_at(pos, yaw, pitch);
+                // The bot has a body now; the connection counts it as spawned like a walker.
+                self.mover = Some(Mover::new(Behavior::Idle, Rng::new(1), [pos[0], pos[2]], 0.0, 0.0));
+            }
+            return;
+        }
         let (pos, yaw, pitch) = match &self.mover {
             Some(m) => t.apply(m.pos, m.yaw, m.pitch),
             None => t.apply([0.0; 3], 0.0, 0.0),
@@ -414,6 +551,12 @@ impl Bot {
             self.play_ticks += 1;
             // Vanilla ignores movement until the client reports its terrain loaded.
             if self.joined
+                && let Some(agent) = &mut self.agent
+            {
+                agent.tick(&mut self.out);
+                let counts = std::mem::take(&mut agent.counts);
+                self.traffic.merge(&counts);
+            } else if self.joined
                 && let Some(m) = &mut self.mover
             {
                 // At most one position per client tick: vanilla kicks for a second one.
@@ -460,7 +603,7 @@ fn offline_uuid(name: &str) -> Uuid {
     Uuid::from_bytes(h)
 }
 
-fn unix_millis() -> i64 {
+pub(crate) fn unix_millis() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 

@@ -282,3 +282,99 @@ mod tests {
         assert_eq!(lz4_block_stream(&stream).unwrap(), payload);
     }
 }
+
+/// A chunk payload handed to a [`BackgroundWriter`] (empty: the chunk is deleted).
+pub type Payload = std::sync::Arc<[u8]>;
+/// A region's payloads by local chunk coordinates.
+pub type Updates = Vec<(usize, usize, Payload)>;
+
+/// Region file writes done since start: readers with region files open reopen them when this
+/// moved (a written file is a new file, swapped in by rename).
+pub static REGION_WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Writes one region's updates, stamped now.
+pub fn write_now(path: &Path, updates: &Updates) -> std::io::Result<()> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as u32);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let stamped: Vec<(usize, usize, &[u8], u32)> = updates.iter().map(|(x, z, p)| (*x, *z, &p[..], now)).collect();
+    write_region_stamped(path, &stamped).map_err(std::io::Error::other)
+}
+
+/// Writes region files on a thread of its own, in the order handed over. What was handed over
+/// stays readable here ([`BackgroundWriter::find`]) until its region is written.
+pub struct BackgroundWriter {
+    tx: std::sync::mpsc::Sender<((i32, i32), std::path::PathBuf, Updates)>,
+    done: std::sync::mpsc::Receiver<((i32, i32), std::io::Result<()>)>,
+    writing: std::collections::HashMap<(i32, i32), Vec<Updates>>,
+}
+
+impl BackgroundWriter {
+    pub fn start(name: &str) -> BackgroundWriter {
+        let (tx, rx) = std::sync::mpsc::channel::<((i32, i32), std::path::PathBuf, Updates)>();
+        let (done_tx, done) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                for (key, path, updates) in rx {
+                    let r = write_now(&path, &updates);
+                    REGION_WRITES.fetch_add(1, std::sync::atomic::Ordering::Release);
+                    if done_tx.send((key, r)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawning a region writing thread");
+        BackgroundWriter { tx, done, writing: Default::default() }
+    }
+
+    pub fn submit(&mut self, key: (i32, i32), path: std::path::PathBuf, updates: Updates) {
+        self.writing.entry(key).or_default().push(updates.clone());
+        let _ = self.tx.send((key, path, updates));
+    }
+
+    /// The newest payload handed over for a chunk and not written yet.
+    pub fn find(&self, key: (i32, i32), local: (usize, usize)) -> Option<&Payload> {
+        self.writing.get(&key)?.iter().rev().find_map(|u| u.iter().find(|(x, z, _)| (*x, *z) == local).map(|(_, _, p)| p))
+    }
+
+    /// Whether a write of the region is under way.
+    pub fn writing(&self, key: (i32, i32)) -> bool {
+        self.writing.contains_key(&key)
+    }
+
+    fn finished(&mut self, key: (i32, i32), r: std::io::Result<()>) {
+        if let Err(e) = r {
+            tracing::warn!("writing region {key:?} failed: {e}");
+        }
+        if let Some(list) = self.writing.get_mut(&key) {
+            list.remove(0);
+            if list.is_empty() {
+                self.writing.remove(&key);
+            }
+        }
+    }
+
+    /// Regions written since the last call: their read handles must go.
+    pub fn written(&mut self) -> Vec<(i32, i32)> {
+        let done: Vec<_> = self.done.try_iter().collect();
+        done.into_iter()
+            .map(|(key, r)| {
+                self.finished(key, r);
+                key
+            })
+            .collect()
+    }
+
+    /// Waits until everything handed over is written; the regions written.
+    pub fn wait(&mut self) -> Vec<(i32, i32)> {
+        let mut keys = self.written();
+        while !self.writing.is_empty() {
+            let Ok((key, r)) = self.done.recv() else { break };
+            self.finished(key, r);
+            keys.push(key);
+        }
+        keys
+    }
+}

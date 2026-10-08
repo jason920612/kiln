@@ -66,6 +66,13 @@ Settings come from the environment until there is a config file:
 | `KILN_MEMO` | `0` turns off the reuse of block scans by entities that stand still (collisions, supporting block, in-wall, inside blocks; results are identical, for comparisons) |
 | `KILN_MEMO_CHECK` | `1` checks every such reuse against a fresh scan and panics on a difference (tests, parity and sim_load runs) |
 | `KILN_PROFILE_LOOKUP` | `fetchprofile` looks names and ids up through the session service (default: on in online mode); a lookup sends only the name or id asked for |
+| `KILN_VIEW_DISTANCE`, `KILN_SIMULATION_DISTANCE` | `view-distance` and `simulation-distance` (10 and 10) |
+| `KILN_GENERATOR`, `KILN_SEED`, `KILN_DATAPACK` | `noise`: vanilla overworld terrain from this seed; the data generator output (`work/generated`) |
+| `KILN_GEN_THREADS` | chunk generation threads per level (as many as the tick pool, at background priority: `SCHED_IDLE` on Linux, below normal on Windows) |
+| `KILN_SYNC_PLACEMENT` | `1`: a player joining or teleported into terrain not generated yet gets the chunk generated on the tick thread at once (every player waits, as before wp47); by default the player waits outside the regions, untouched by the region ticks, while the chunk is generated ahead of everything else |
+| `KILN_BACKGROUND_STORAGE` | `0`: chunk reads and writes on the tick thread even where chunks generate in the background (by default Anvil worlds read on two loader threads, encode unloaded chunks on an encoder thread and write region files on a writer thread) |
+| `KILN_TICK_TRACE` | a file that gets one line per tick: `<unix ms> <players> <tick micros>` (exact percentiles over any stretch of a run) |
+| `KILN_SLOW_PRINT` | ticks slower than this many milliseconds are logged with their phases |
 | `KILN_PROXY` | `none`, `velocity` or `bungeecord` |
 | `KILN_VELOCITY_SECRET`, `KILN_VELOCITY_SECRET_FILE` | Velocity modern forwarding secret |
 | `KILN_BUNGEEGUARD_TOKENS` | accepted BungeeGuard tokens |
@@ -95,6 +102,7 @@ cargo test --workspace
 python tools/e2e.py [--client]       # tests, release build, server, smoke client, vanilla-codec
                                      # decoding of captured packets; --client joins a real 26.3 client
 python tools/load_test.py --count 1000 --groups 20    # server + kiln-bot, tick statistics
+cargo run --release -p kiln-bot --example survival_bench -- --count 200 --world scratch/world     --datapack work/generated        # real survival play on vanilla terrain, see below
 cargo run --release -p kiln-sim --example sim_load -- --players 1000 --groups 20
                                      # the simulation alone with scripted in-process players
 cargo run --release -p kiln-sim --features prof --example sim_load -- --players 40 --groups 20 \
@@ -173,6 +181,58 @@ cargo test -p kiln-sim --test region_stacks
                                      # (entities as saved, riding, menus, packets) equal on one region, one
                                      # per group and parallel workers; invariants under independent scheduling
 
+```
+
+### Survival benchmark
+
+`survival_bench` (an example of `kiln-bot`) measures the server on real survival play instead of
+a synthetic crowd. It starts a release `kiln` on vanilla noise terrain (`KILN_GENERATOR=noise`, a
+fixed seed, a new world directory), connects `--count` survival bots in groups of `--group-size`
+whose sites lie `--spacing` blocks apart, waits until 95% have arrived, and measures `--measure`
+seconds after a `--warmup`. `--phase both` then copies the saved world (without the players'
+positions) and runs the same bots on it, so that chunks load from disk instead of being
+generated; `--format native` does both phases on native cell files.
+
+The bots (`kiln-bot --behavior survival`) speak the real protocol and play by the 26.3 client's
+rules: vanilla movement and collision (walk, sprint, jump, swim, fall) on the blocks they receive,
+digging with the right tool for the vanilla break time (Player Action start and stop), placing
+blocks with Use Item On, opening chests and hoppers and shift-clicking items, eating, fighting
+hostile mobs, chatting. They are operators and take their tools and building blocks with
+`/item replace`, which keeps the packets they send real. Roles are dealt in turn:
+
+* explorer: walks and sprints across far terrain, steering around cliffs, lava and obstacles,
+  waiting when the terrain ahead has not arrived (the vanilla client does not walk into unloaded chunks)
+* miner: digs a shaft down, then tunnels with torches, stripping the ores it meets
+* builder: finds flat ground, builds a house block by block from the inside, then takes it down
+* redstone: builds an observer clock, a hopper clock, a feeder chest over a hopper line into a
+  chest, a piston door with a lever and a dust and repeater line to a lamp, and keeps toggling the levers
+
+It reports server MSPT (mean, p50, p99, max, share over 50 ms) from the per-tick trace and the
+phases from the server's reports; chunk generation and loading from the server's `chunk totals`
+lines (chunks per second, generation thread utilisation, request to delivery, disk time per chunk,
+install time, chunks generated synchronously on the tick thread); and from the bots chunk arrival
+latency, the time until a new view was complete (walking, teleporting, joining), time spent
+waiting for terrain, corrections (server teleports the bot did not ask for), disconnects, decode
+errors, digging and placing success, plus the CPU of server, bots and machine. `KILN_BOT_TRACE=1`
+makes a bot print what it does; `--phase-detail` and `--slow-print <ms>` pass `KILN_PHASE_DETAIL`
+and `KILN_SLOW_PRINT` to the server.
+
+Groups' sites are `--spacing` blocks apart (1536 by default) and explorers roam at most `--roam`
+blocks (320) from their site, so that groups stay in regions of their own (regions merge across
+gaps of two 128-block cells or less). `--save-all-at <s>` tells the server `save-all` that many
+seconds into the measured stretch, which puts a world save (an autosave comes every 5 minutes)
+inside the measurement.
+
+The server can run on another machine, with the bots connecting over the network as remote
+players would (and without taking the server's CPU): `--ssh user@host` starts it there over
+ssh (`--remote-dir` its working directory; `--server`, `--datapack` and `--world` are paths on
+that machine), reads its tick trace, world size and CPU there, and connects the bots through an
+ssh tunnel (`--tunnel-port`, for a machine whose game port is not reachable, such as a VM behind
+NAT) unless `--connect host[:port]` names the address to use:
+
+```
+cargo build --release -p kiln-bot --bin kiln-bot --example survival_bench   # on the bot machine
+survival_bench --ssh test@192.168.1.169 --remote-dir /home/test/wt/<branch>     --server target/release/kiln --datapack /home/test/kiln/work/generated     --world /home/test/bench/w200 --bot target/release/kiln-bot.exe --count 200 --port 25565     --phase both --format anvil --save-all-at 60 --phase-detail --slow-print 40
 ```
 
 Packets Kiln encodes are checked by decoding them with vanilla's own codecs

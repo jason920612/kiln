@@ -1,7 +1,37 @@
 //! Tick duration statistics (MSPT percentiles) over a fixed window.
 
 use std::fmt;
+use std::io::Write;
+use std::sync::Mutex;
 use std::time::Duration;
+
+/// `KILN_TICK_TRACE=<file>`: one line per tick, `<unix ms> <players> <tick micros>`, so a
+/// benchmark can compute exact percentiles over the stretch of a run it cares about.
+static TRACE: Mutex<Option<std::io::BufWriter<std::fs::File>>> = Mutex::new(None);
+static TRACE_INIT: std::sync::Once = std::sync::Once::new();
+
+/// Appends a tick to the trace file, if one is configured.
+pub fn trace(micros: u64, players: usize) {
+    TRACE_INIT.call_once(|| {
+        if let Some(path) = std::env::var_os("KILN_TICK_TRACE") {
+            match std::fs::File::create(&path) {
+                Ok(f) => *TRACE.lock().unwrap() = Some(std::io::BufWriter::new(f)),
+                Err(e) => tracing::warn!("cannot write the tick trace {}: {e}", path.to_string_lossy()),
+            }
+        }
+    });
+    if let Some(w) = TRACE.lock().unwrap().as_mut() {
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let _ = writeln!(w, "{ms} {players} {micros}");
+    }
+}
+
+/// Writes out what the trace file has buffered.
+pub fn flush_trace() {
+    if let Some(w) = TRACE.lock().unwrap().as_mut() {
+        let _ = w.flush();
+    }
+}
 
 const WINDOW_TICKS: usize = 600; // 30 s at 20 TPS
 
@@ -12,6 +42,14 @@ pub struct TickStats {
     phases: Vec<(&'static str, Duration)>,
     /// The same, since the last `reset_totals` (not cleared by a completed window).
     totals: Vec<(&'static str, Duration)>,
+    /// This tick's phases, for `KILN_SLOW_PRINT`.
+    tick: Vec<(&'static str, Duration)>,
+}
+
+/// `KILN_SLOW_PRINT=<ms>`: ticks slower than this are logged with their phases.
+pub fn slow_print_ms() -> Option<f64> {
+    static MS: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| std::env::var("KILN_SLOW_PRINT").ok().and_then(|v| v.parse().ok()))
 }
 
 pub struct Report {
@@ -40,6 +78,9 @@ impl fmt::Display for Report {
 impl TickStats {
     /// Adds time spent in a phase this tick.
     pub fn phase(&mut self, name: &'static str, d: Duration) {
+        if slow_print_ms().is_some() {
+            self.tick.push((name, d));
+        }
         match self.totals.iter_mut().find(|(n, _)| *n == name) {
             Some((_, t)) => *t += d,
             None => self.totals.push((name, d)),
@@ -48,6 +89,14 @@ impl TickStats {
             Some((_, t)) => *t += d,
             None => self.phases.push((name, d)),
         }
+    }
+
+    /// This tick's phases (`KILN_SLOW_PRINT`), as `name ms | ...`; clears them.
+    pub fn take_tick(&mut self) -> String {
+        let out: Vec<String> =
+            self.tick.iter().filter(|(_, d)| d.as_micros() >= 50).map(|(n, d)| format!("{n} {:.2}", d.as_secs_f64() * 1e3)).collect();
+        self.tick.clear();
+        out.join(" | ")
     }
 
     /// Time per phase since the last reset, in the order the phases first appeared.

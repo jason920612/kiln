@@ -140,6 +140,35 @@ impl Chunk {
         Self::with_light(sections, min_y, None, None)
     }
 
+    /// A copy of what saving writes (blocks, light, block entities, ticks, structures, points of
+    /// interest, inhabited time), for encoding on another thread while the chunk plays on.
+    /// Packet caches are left behind.
+    pub fn snapshot(&self) -> Chunk {
+        Chunk {
+            sections: self.sections.clone(),
+            min_y: self.min_y,
+            sky: self.sky.clone(),
+            block: self.block.clone(),
+            surface: self.surface.clone(),
+            version: self.version,
+            saved_version: self.saved_version,
+            epoch: next_epoch(),
+            edits: self.edits,
+            light_trusted: self.light_trusted,
+            cached: None,
+            cached_packet: None,
+            light_dirty: [0, 0],
+            block_entities: self.block_entities.clone(),
+            saved_ticks: self.saved_ticks.clone(),
+            structures: self.structures.clone(),
+            pending: self.pending.clone(),
+            generated_entities: self.generated_entities.clone(),
+            pois: self.pois.clone(),
+            inhabited_time: self.inhabited_time,
+            inhabited_saved: self.inhabited_saved,
+        }
+    }
+
     /// A chunk with stored light (e.g. from a world save); missing layers are derived.
     pub fn with_light(sections: Vec<Section>, min_y: i32, sky: Option<Vec<Light>>, block: Option<Vec<Light>>) -> Self {
         let n = sections.len();
@@ -286,6 +315,12 @@ impl Chunk {
             }
         }
         Light::Nibbles(n)
+    }
+
+    /// The y above the column's highest non-air block (the chunk's bottom if all air): what
+    /// `column_height(x, z, |s| !is_air(s))` finds, from the heights kept up to date.
+    pub fn surface_y(&self, x: usize, z: usize) -> i32 {
+        self.min_y + self.surface[(z << 4) | x] as i32
     }
 
     fn column_top(&self, x: usize, z: usize) -> u16 {
@@ -542,6 +577,12 @@ impl Chunk {
         self.min_y
     }
 
+    /// Whether the block at local `x`, `z` and absolute `y` ticks randomly.
+    pub fn ticks_randomly_at(&self, x: usize, y: i32, z: usize) -> bool {
+        let rel = y - self.min_y;
+        rel >= 0 && self.sections.get((rel >> 4) as usize).is_some_and(|s| s.ticks_randomly_at(x, (rel & 15) as usize, z))
+    }
+
     /// Whether light is stored at absolute `y`: the chunk's height plus one section each side.
     pub fn in_light_range(&self, y: i32) -> bool {
         self.light_section(y).is_some()
@@ -594,6 +635,12 @@ impl Chunk {
         put_light_data(b, &self.sky, sky, &self.block, block);
     }
 
+    /// Forgets the encoded packet (it is made again when next needed).
+    pub fn drop_packet_cache(&mut self) {
+        self.cached = None;
+        self.cached_packet = None;
+    }
+
     /// Chunk Data body after the coordinates; re-encoded only when the chunk changed.
     pub fn packet_body(&mut self, biome_count: usize) -> Bytes {
         if let Some((v, body)) = &self.cached {
@@ -614,7 +661,12 @@ impl Chunk {
         {
             return p.clone();
         }
-        let p = kiln_proto::packets::level_chunk_with_light(x, z, &self.packet_body(biome_count));
+        // The body is kept inside the packet only (one copy of the chunk's encoding).
+        let body = match self.cached.take() {
+            Some((v, body)) if v == self.version => body,
+            _ => self.encode(biome_count),
+        };
+        let p = kiln_proto::packets::level_chunk_with_light(x, z, &body);
         self.cached_packet = Some((self.version, p.clone()));
         p
     }
@@ -698,6 +750,30 @@ fn put_light_data(b: &mut BytesMut, sky: &[Light], sky_sel: u64, block: &[Light]
                 Light::Full => b.put_bytes(0xff, 2048),
                 Light::Nibbles(n) => b.put_slice(&n[..]),
                 Light::Zero => unreachable!("zero sections go in the empty mask"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    /// The kept heights say what scanning the column finds, through any edits.
+    #[test]
+    fn surface_y_matches_a_column_scan() {
+        let d = kiln_data::blocks::default_state::STONE;
+        let mut c = Chunk::new((0..4).map(|_| Section::filled(kiln_data::blocks::default_state::AIR, 0)).collect(), -64);
+        let mut seed = 99u64;
+        for _ in 0..5000 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let (x, z, y) = ((seed >> 20) as usize & 15, (seed >> 24) as usize & 15, -64 + ((seed >> 28) % 64) as i32);
+            let state = if (seed >> 40) % 3 == 0 { kiln_data::blocks::default_state::AIR } else { d };
+            c.set(x, y, z, state);
+        }
+        for x in 0..16 {
+            for z in 0..16 {
+                assert_eq!(c.surface_y(x, z), c.column_height(x, z, |s| !is_air(s)), "column {x},{z}");
             }
         }
     }

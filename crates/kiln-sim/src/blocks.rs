@@ -26,7 +26,7 @@ use kiln_region::{CellPos, CellSet, RegionPart};
 use kiln_world::chunk::{Chunk, LightLayer, SavedTicks};
 use kiln_world::{Blocks, Cell, CellStore, ChunkPos};
 use smallvec::SmallVec;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 /// `max-chained-neighbor-updates` default.
 const MAX_CHAINED_NEIGHBOR_UPDATES: i32 = 1_000_000;
@@ -683,14 +683,14 @@ impl Level for RegionLevel<'_> {
 }
 
 /// Chunks within simulation distance of a player: a bit per chunk of each cell.
-pub(crate) struct Ticking(HashMap<CellPos, u64>);
+pub(crate) struct Ticking(crate::FastMap<CellPos, u64>);
 
 impl Ticking {
     pub fn around(centers: impl Iterator<Item = ChunkPos>, r: i32) -> Self {
         let mut centers: Vec<ChunkPos> = centers.collect();
         centers.sort_unstable();
         centers.dedup();
-        let mut cells: HashMap<CellPos, u64> = HashMap::new();
+        let mut cells: crate::FastMap<CellPos, u64> = Default::default();
         for c in centers {
             let (x0, x1, z0, z1) = (c.x - r, c.x + r, c.z - r, c.z + r);
             for cx in x0.div_euclid(CELL_CHUNKS)..=x1.div_euclid(CELL_CHUNKS) {
@@ -747,10 +747,14 @@ fn chunk_random(seed: i64, game_time: i64, c: ChunkPos) -> (LegacyRandom, i32) {
 /// fluid ticks, random ticks in ticking chunks, then block events. Moving pistons tick
 /// later, after the entities ([`tick_pistons`]).
 pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
+    let dt = std::time::Instant::now();
     apply_generated(level);
+    let dt = crate::diag::lap("tb.generated", dt);
     let can_tick = |k: ChunkKey| ticking.contains(ChunkPos::new(k.0, k.1));
     kiln_blocks::tick::run_block_ticks(level, can_tick);
+    let dt = crate::diag::lap("tb.block_ticks", dt);
     kiln_blocks::tick::run_fluid_ticks(level, can_tick);
+    let dt = crate::diag::lap("tb.fluid_ticks", dt);
     let speed = level.env.random_tick_speed;
     // Every ticking chunk rolls for precipitation while it rains (and freezes water in any
     // weather); otherwise only chunks with randomly ticking sections have work.
@@ -765,6 +769,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
             );
         });
         chunks.sort_unstable();
+        crate::diag::add("tb.list", dt.elapsed());
         let mut sections = Vec::new();
         for c in chunks {
             let Some(chunk) = level.cells.chunk(c) else { continue };
@@ -775,14 +780,51 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
             let saved = std::mem::replace(&mut level.blocks.random, random);
             let saved_value = std::mem::replace(&mut level.blocks.data.rand_value, rand_value);
             tick_thunder(level, c);
-            kiln_blocks::tick::tick_chunk_blocks(level, key(c), &sections, speed);
+            tick_chunk_blocks(level, c, &sections, speed);
             level.blocks.random = saved;
             level.blocks.data.rand_value = saved_value;
         }
     }
+    let dt = crate::diag::lap("tb.random", dt);
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
     // `SignBlockEntity.tick`: editing locks of players who left.
     crate::signs::tick(level);
+    crate::diag::lap("tb.events", dt);
+}
+
+/// [`kiln_blocks::tick::tick_chunk_blocks`] for chunk `c` with the picked blocks looked up in
+/// the sections' random tick bits: most picks land on blocks that do not tick, and those cost
+/// one bit read instead of a level lookup and a block read. The same picks, in the same order, reading the blocks as they are at the
+/// moment of each pick.
+fn tick_chunk_blocks(level: &mut RegionLevel, c: ChunkPos, sections: &[(i32, bool)], speed: i32) {
+    let (x, z) = (c.x * 16, c.z * 16);
+    for _ in 0..speed {
+        if level.blocks.random.next_int_bounded(48) == 0 {
+            let pos = kiln_blocks::tick::block_random_pos(level, x, 0, z, 15);
+            kiln_blocks::weather::tick_precipitation(level, pos);
+        }
+    }
+    if speed <= 0 {
+        return;
+    }
+    let mut chunk = level.cells.chunk(c);
+    for &(sy, ticking) in sections {
+        if !ticking {
+            continue;
+        }
+        for _ in 0..speed {
+            // `block_random_pos`.
+            let data = &mut level.blocks.data;
+            data.rand_value = data.rand_value.wrapping_mul(3).wrapping_add(1013904223);
+            let j = data.rand_value >> 2;
+            let pos = BlockPos::new(x + (j & 15), sy * 16 + ((j >> 16) & 15), z + (j >> 8 & 15));
+            // (Lava, the one fluid that ticks randomly, is a randomly ticking block too.)
+            if chunk.is_some_and(|ch| ch.ticks_randomly_at((pos.x & 15) as usize, pos.y, (pos.z & 15) as usize)) {
+                kiln_blocks::tick::random_tick_at(level, pos);
+                chunk = level.cells.chunk(c);
+            }
+        }
+    }
 }
 
 /// `ServerLevel.tickThunder` for chunk `c`, with the chunk's random: during a thunderstorm one
@@ -897,6 +939,9 @@ fn find_lightning_rod(level: &RegionLevel, center: BlockPos) -> Option<BlockPos>
 /// blocks marked for post-processing take their shape from their neighbours, and the
 /// scheduled block and fluid ticks start. Vanilla sets them with flags 20 before any player
 /// has the chunk; Kiln may have sent it already, so clients hear about the change.
+/// Region tick time spent on generation leftovers per tick at most (the rest wait a tick).
+const GENERATED_BUDGET: std::time::Duration = std::time::Duration::from_millis(1);
+
 fn apply_generated(level: &mut RegionLevel) {
     if level.blocks.generated.is_empty() {
         return;
@@ -904,9 +949,12 @@ fn apply_generated(level: &mut RegionLevel) {
     let mut pending = std::mem::take(&mut level.blocks.generated);
     pending.sort_by_key(|(c, _)| *c);
     let mut later = Vec::new();
+    // A burst of chunks becoming full (players arriving somewhere new) spreads over a few ticks:
+    // in vanilla too a chunk's leftovers run whenever the chunk pipeline promotes it.
+    let started = std::time::Instant::now();
     for (c, updates) in pending {
         let ready = (-1..=1).all(|dx| (-1..=1).all(|dz| level.cells.chunk(ChunkPos::new(c.x + dx, c.z + dz)).is_some()));
-        if !ready {
+        if !ready || started.elapsed() >= GENERATED_BUDGET {
             later.push((c, updates));
             continue;
         }
@@ -1466,6 +1514,17 @@ pub(crate) fn direction(face: i32) -> Option<Direction> {
 mod tests {
     use super::*;
     use kiln_blocks::{ScheduledTick, TickPriority};
+
+    /// The random tick fast path picks blocks by their random tick bit alone: every state whose
+    /// fluid ticks randomly (lava) must tick randomly as a block too.
+    #[test]
+    fn lava_states_tick_randomly() {
+        for state in 0..kiln_data::blocks::STATE_COUNT as u16 {
+            if kiln_data::block_logic::fluid(state).kind == kiln_data::block_logic::FluidKind::Lava {
+                assert!(kiln_blocks::tick::randomly_ticks(state), "state {state}");
+            }
+        }
+    }
 
     fn with_ticks(chunks: &[(i32, i32)]) -> RegionBlocks {
         let mut b = RegionBlocks::default();

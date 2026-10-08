@@ -310,6 +310,9 @@ pub struct NativeStore {
     stale: HashSet<(i32, i32)>,
     done_tx: Sender<CompactionResult>,
     done_rx: Receiver<CompactionResult>,
+    /// Flushes go to a thread that writes one cell file at a time, taking the lock for each
+    /// ([`NativeStore::flush_in_background`]); `flush` only wakes it.
+    flusher: Option<Sender<()>>,
 }
 
 impl NativeStore {
@@ -328,6 +331,7 @@ impl NativeStore {
             pending: HashMap::new(),
             compressor,
             remaps: HashMap::new(),
+            flusher: None,
             sync: true,
             stats: LoadStats::new("native chunk storage"),
             // KILN_COMPACTION=inline compacts in the flush, as before (for comparisons).
@@ -478,43 +482,95 @@ impl NativeStore {
         Ok(())
     }
 
-    /// Writes the queued records, one append per cell file.
+    /// Writes the queued records, one append per cell file; with a background flusher
+    /// ([`NativeStore::flush_in_background`]) it is only woken, and the records stay readable
+    /// here until written.
     pub fn flush(&mut self) -> std::io::Result<usize> {
-        if self.pending.is_empty() {
+        if let Some(tx) = &self.flusher {
+            let _ = tx.send(());
             return Ok(0);
         }
+        self.flush_now()
+    }
+
+    /// Writes every queued record now.
+    pub fn flush_now(&mut self) -> std::io::Result<usize> {
+        let (mut written, mut after) = (0, None);
+        while let Some((cell, n)) = self.flush_step(after)? {
+            written += n;
+            after = Some(cell);
+        }
+        Ok(written)
+    }
+
+    /// Writes the queued records of one cell (the lowest after `after`): the cell and how many
+    /// records; `None` when no cell is left.
+    pub fn flush_step(&mut self, after: Option<(i32, i32)>) -> std::io::Result<Option<((i32, i32), usize)>> {
+        let Some(&cell) = self.pending.keys().filter(|&&c| after.is_none_or(|a| c > a)).min() else { return Ok(None) };
         std::fs::create_dir_all(&self.dir)?;
         Registry::save_current(&self.dir)?;
         self.poll_compactions();
-        let mut written = 0;
-        let mut cells: Vec<_> = std::mem::take(&mut self.pending).into_iter().collect();
-        cells.sort_unstable_by_key(|(c, _)| *c);
-        for (cell, updates) in cells {
-            written += updates.len();
-            let sync = self.sync;
-            let path = cell_path(&self.dir, cell);
-            if self.file(cell).is_none() {
-                if updates.values().all(Option::is_none) {
-                    continue;
-                }
-                if path.exists() {
-                    // It could not be opened (and is not corrupt): never replace it; retry later.
-                    warn!("{} is unavailable; its writes wait for the next save", path.display());
-                    self.files.remove(&cell);
-                    self.pending.insert(cell, updates);
-                    continue;
-                }
-                if self.inflight.contains_key(&cell) {
-                    self.stale.insert(cell);
-                }
-                let f = CellFile::create(&path)?;
-                self.files.insert(cell, (Some(f), self.clock));
+        let updates = self.pending.remove(&cell).expect("a queued cell");
+        let written = updates.len();
+        let sync = self.sync;
+        let path = cell_path(&self.dir, cell);
+        if self.file(cell).is_none() {
+            if updates.values().all(Option::is_none) {
+                return Ok(Some((cell, 0)));
             }
-            let file = self.file(cell).expect("just created");
-            file.commit(updates, sync)?;
-            self.compact_if_wasteful(cell)?;
+            if path.exists() {
+                // It could not be opened (and is not corrupt): never replace it; retry later.
+                warn!("{} is unavailable; its writes wait for the next save", path.display());
+                self.files.remove(&cell);
+                self.pending.insert(cell, updates);
+                return Ok(Some((cell, 0)));
+            }
+            if self.inflight.contains_key(&cell) {
+                self.stale.insert(cell);
+            }
+            let f = CellFile::create(&path)?;
+            self.files.insert(cell, (Some(f), self.clock));
         }
-        Ok(written)
+        let file = self.file(cell).expect("just created");
+        file.commit(updates, sync)?;
+        self.compact_if_wasteful(cell)?;
+        Ok(Some((cell, written)))
+    }
+
+    /// From now on `flush` hands the writing to a thread of its own, which writes one cell file
+    /// at a time under the lock (users of the store wait at most one cell's write, not the whole
+    /// flush).
+    pub fn flush_in_background(store: &Arc<Mutex<NativeStore>>) {
+        let mut s = store.lock().unwrap();
+        if s.flusher.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        s.flusher = Some(tx);
+        drop(s);
+        let weak = Arc::downgrade(store);
+        std::thread::Builder::new()
+            .name("kiln-native-flush".into())
+            .spawn(move || {
+                while rx.recv().is_ok() {
+                    // Several wake-ups in a row are one flush.
+                    while rx.try_recv().is_ok() {}
+                    let Some(store) = weak.upgrade() else { break };
+                    let mut after = None;
+                    loop {
+                        let step = store.lock().unwrap().flush_step(after);
+                        match step {
+                            Ok(Some((cell, _))) => after = Some(cell),
+                            Ok(None) => break,
+                            Err(e) => {
+                                warn!("writing native cell files failed: {e}");
+                                break;
+                            }
+                        }
+                    }
+                }
+            })
+            .expect("spawning the native flush thread");
     }
 
     /// After a commit: an emptied file is deleted, and a file that is mostly stale records is
@@ -673,11 +729,15 @@ pub struct NativeSource {
     codec: AnvilSource,
     /// Loaded chunks' fields other than sections and block entities, written back.
     preserved: HashMap<ChunkPos, Tag>,
+    /// Loader and encoder threads, once [`ChunkSource::set_background`] asked.
+    background: Option<NativeBackground>,
+    /// The dimension's shape, for chunks loaded in the background.
+    pub dimension: Dimension,
 }
 
 impl NativeSource {
     pub fn new(store: Arc<Mutex<NativeStore>>) -> NativeSource {
-        NativeSource { store, codec: AnvilSource::new(PathBuf::new()), preserved: HashMap::new() }
+        NativeSource { store, codec: AnvilSource::new(PathBuf::new()), preserved: HashMap::new(), background: None, dimension: kiln_world::OVERWORLD }
     }
 
     pub fn store(&self) -> &Arc<Mutex<NativeStore>> {
@@ -685,44 +745,140 @@ impl NativeSource {
     }
 }
 
+/// A stored chunk record decoded: the chunk and the save fields kept for writing it back.
+fn decode_record(
+    codec: &mut AnvilSource,
+    form: u8,
+    raw: &[u8],
+    remap: Option<Arc<Remap>>,
+    pos: ChunkPos,
+    dim: Dimension,
+) -> Result<(Chunk, Tag), crate::anvil::ChunkError> {
+    match form {
+        FORM_NATIVE => match NativeChunk::decode(raw) {
+            Some(mut c) => {
+                if let Some(m) = remap {
+                    c.remap(&m);
+                }
+                c.into_chunk(codec, dim)
+            }
+            None => {
+                warn!("chunk {pos:?}: corrupt native record");
+                Err(crate::anvil::ChunkError::Field("native record"))
+            }
+        },
+        _ => codec.decode(raw, dim).map(|c| {
+            let preserved = match nbt::read_named(raw) {
+                Ok((_, Tag::Compound(mut f))) => {
+                    f.retain(|(k, _)| k != "sections" && k != "block_entities");
+                    Tag::Compound(f)
+                }
+                _ => Tag::Compound(Vec::new()),
+            };
+            (c, preserved)
+        }),
+    }
+}
+
+/// Structure starts and references stay readable from the kept fields (location predicates).
+fn with_structures(mut chunk: Chunk, preserved: &Tag) -> Chunk {
+    if let Some(s) = preserved.get("structures") {
+        chunk.structures = Some(Box::new(s.clone()));
+    }
+    chunk
+}
+
+/// The background side of a [`NativeSource`] (see [`ChunkSource::set_background`]): loads on
+/// two reader threads, encoding (and the write into the store's queue) on an encoder thread.
+/// The tick thread waits for a chunk still being encoded before reading it.
+struct NativeBackground {
+    load_tx: Sender<ChunkPos>,
+    loaded_rx: Receiver<(ChunkPos, Option<(Chunk, Tag)>, std::time::Duration)>,
+    encode_tx: Sender<(ChunkPos, Box<Chunk>, Option<Tag>)>,
+    encoded_rx: Receiver<ChunkPos>,
+    encoding: HashSet<ChunkPos>,
+}
+
+impl NativeBackground {
+    fn start(store: Arc<Mutex<NativeStore>>, dim: Dimension) -> NativeBackground {
+        let (load_tx, load_rx) = std::sync::mpsc::channel::<ChunkPos>();
+        let load_rx = Arc::new(Mutex::new(load_rx));
+        let (loaded_tx, loaded_rx) = std::sync::mpsc::channel();
+        for i in 0..2 {
+            let (rx, tx, store) = (load_rx.clone(), loaded_tx.clone(), store.clone());
+            std::thread::Builder::new()
+                .name(format!("kiln-nload-{i}"))
+                .spawn(move || {
+                    let mut codec = AnvilSource::new(PathBuf::new());
+                    loop {
+                        let next = rx.lock().unwrap().recv();
+                        let Ok(pos) = next else { break };
+                        let start = Instant::now();
+                        let record = {
+                            let mut store = store.lock().unwrap();
+                            store.read(CHUNK, pos).map(|(form, raw, registry)| (form, raw, store.remap(registry)))
+                        };
+                        let chunk = record.and_then(|(form, raw, remap)| match decode_record(&mut codec, form, &raw, remap, pos, dim) {
+                            Ok((c, preserved)) => Some((with_structures(c, &preserved), preserved)),
+                            Err(crate::anvil::ChunkError::NotFull(_)) => None,
+                            Err(e) => {
+                                warn!("chunk {pos:?}: {e}");
+                                None
+                            }
+                        });
+                        if tx.send((pos, chunk, start.elapsed())).is_err() {
+                            break;
+                        }
+                    }
+                })
+                .expect("spawning a chunk loading thread");
+        }
+        let (encode_tx, encode_rx) = std::sync::mpsc::channel::<(ChunkPos, Box<Chunk>, Option<Tag>)>();
+        let (encoded_tx, encoded_rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("kiln-nencode".into())
+            .spawn(move || {
+                for (pos, chunk, preserved) in encode_rx {
+                    let raw = NativeChunk::encode_chunk(pos, &chunk, preserved.as_ref());
+                    store.lock().unwrap().write(CHUNK, pos, FORM_NATIVE, Some(&raw));
+                    if encoded_tx.send(pos).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawning the chunk encoding thread");
+        NativeBackground { load_tx, loaded_rx, encode_tx, encoded_rx, encoding: HashSet::new() }
+    }
+}
+
+impl NativeSource {
+    /// Takes in finished encodings; with `wait_for`, until that chunk's is in; with `all`,
+    /// until none is out.
+    fn collect(&mut self, wait_for: Option<ChunkPos>, all: bool) {
+        let Some(bg) = self.background.as_mut() else { return };
+        loop {
+            let waiting = (all && !bg.encoding.is_empty()) || wait_for.is_some_and(|p| bg.encoding.contains(&p));
+            let next = if waiting { bg.encoded_rx.recv().ok() } else { bg.encoded_rx.try_recv().ok() };
+            let Some(pos) = next else { break };
+            bg.encoding.remove(&pos);
+        }
+    }
+}
+
 impl ChunkSource for NativeSource {
     fn load(&mut self, pos: ChunkPos, dim: Dimension) -> Option<Chunk> {
+        self.collect(Some(pos), false);
         let start = Instant::now();
         let mut store = self.store.lock().unwrap();
         let (form, raw, registry) = store.read(CHUNK, pos)?;
-        let decoded = match form {
-            FORM_NATIVE => match NativeChunk::decode(&raw) {
-                Some(mut c) => {
-                    if let Some(m) = store.remap(registry) {
-                        c.remap(&m);
-                    }
-                    c.into_chunk(&mut self.codec, dim)
-                }
-                None => {
-                    warn!("chunk {pos:?}: corrupt native record");
-                    return None;
-                }
-            },
-            _ => self.codec.decode(&raw, dim).map(|c| {
-                let preserved = match nbt::read_named(&raw) {
-                    Ok((_, Tag::Compound(mut f))) => {
-                        f.retain(|(k, _)| k != "sections" && k != "block_entities");
-                        Tag::Compound(f)
-                    }
-                    _ => Tag::Compound(Vec::new()),
-                };
-                (c, preserved)
-            }),
-        };
+        let remap = store.remap(registry);
+        let decoded = decode_record(&mut self.codec, form, &raw, remap, pos, dim);
         if decoded.is_ok() {
             store.stats.record(start);
         }
         match decoded {
-            Ok((mut chunk, preserved)) => {
-                // Structure starts and references stay readable (location predicates).
-                if let Some(s) = preserved.get("structures") {
-                    chunk.structures = Some(Box::new(s.clone()));
-                }
+            Ok((chunk, preserved)) => {
+                let chunk = with_structures(chunk, &preserved);
                 self.preserved.insert(pos, preserved);
                 Some(chunk)
             }
@@ -734,8 +890,73 @@ impl ChunkSource for NativeSource {
         }
     }
 
+    fn set_background(&mut self, on: bool) {
+        if on && self.background.is_none() {
+            self.background = Some(NativeBackground::start(self.store.clone(), self.dimension));
+            NativeStore::flush_in_background(&self.store);
+        }
+    }
+
+    fn flush_ready(&mut self) {
+        if self.background.is_some() {
+            self.collect(None, false);
+            let _ = self.store.lock().unwrap().flush();
+        }
+    }
+
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.collect(None, true);
+        self.store.lock().unwrap().flush_now().map(|_| ())
+    }
+
+    fn start_load(&mut self, pos: ChunkPos, dim: Dimension) -> kiln_world::StartLoad {
+        use kiln_world::StartLoad;
+        if self.background.is_none() || (dim.min_y, dim.height) != (self.dimension.min_y, self.dimension.height) {
+            return StartLoad::Unsupported;
+        }
+        // A copy still being encoded is in the store's queue once it is back.
+        self.collect(Some(pos), false);
+        if !self.store.lock().unwrap().contains(CHUNK, pos) {
+            return StartLoad::Missing;
+        }
+        let _ = self.background.as_ref().unwrap().load_tx.send(pos);
+        StartLoad::Started
+    }
+
+    fn poll_loads(&mut self) -> Vec<(ChunkPos, Option<Chunk>, std::time::Duration)> {
+        let Some(bg) = self.background.as_mut() else { return Vec::new() };
+        let done: Vec<_> = bg.loaded_rx.try_iter().collect();
+        done.into_iter()
+            .map(|(pos, loaded, took)| {
+                let chunk = loaded.map(|(c, kept)| {
+                    self.preserved.insert(pos, kept);
+                    c
+                });
+                (pos, chunk, took)
+            })
+            .collect()
+    }
+
+    fn encoding(&mut self) -> usize {
+        self.collect(None, false);
+        self.background.as_ref().map_or(0, |bg| bg.encoding.len())
+    }
+
+    fn save_owned(&mut self, pos: ChunkPos, chunk: Chunk) {
+        if self.background.is_none() {
+            return self.save(pos, &chunk);
+        }
+        self.collect(Some(pos), false);
+        let preserved = self.preserved.get(&pos).cloned();
+        let bg = self.background.as_mut().unwrap();
+        bg.encoding.insert(pos);
+        let _ = bg.encode_tx.send((pos, Box::new(chunk), preserved));
+    }
+
     fn save(&mut self, pos: ChunkPos, chunk: &Chunk) {
         let raw = NativeChunk::encode_chunk(pos, chunk, self.preserved.get(&pos));
+        // An older copy still with the encoder must not land after this one.
+        self.collect(Some(pos), false);
         self.store.lock().unwrap().write(CHUNK, pos, FORM_NATIVE, Some(&raw));
     }
 
@@ -744,6 +965,7 @@ impl ChunkSource for NativeSource {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        self.collect(None, true);
         let mut store = self.store.lock().unwrap();
         store.flush().map(|_| ())
     }
