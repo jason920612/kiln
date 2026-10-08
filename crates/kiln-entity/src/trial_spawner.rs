@@ -906,7 +906,7 @@ fn spawn_mob(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut TrialBe, confi
         return None;
     }
     let at = BlockPos::containing(x, y, z);
-    if !spawner::check_spawn_rules(&*level, et.name, at, r) {
+    if !spawner::check_spawn_rules_for(&*level, et.name, at, r, true) {
         return None;
     }
     if let Some(rules) = &data.rules {

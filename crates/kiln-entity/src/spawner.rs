@@ -696,6 +696,11 @@ pub fn allowed_in_peaceful(type_name: &str) -> bool {
 /// `SpawnPlacements.checkSpawnRules(type, level, EntitySpawnReason.SPAWNER, pos, random)`: not
 /// a monster in a peaceful world, then the type's registered rule (types without one pass).
 pub fn check_spawn_rules(level: &dyn EntityLevel, type_name: &str, pos: BlockPos, r: &mut LegacyRandom) -> bool {
+    check_spawn_rules_for(level, type_name, pos, r, false)
+}
+
+/// [`check_spawn_rules`] for `EntitySpawnReason.TRIAL_SPAWNER` when `trial` (monsters then ignore the light: `ignoresLightRequirements`).
+pub fn check_spawn_rules_for(level: &dyn EntityLevel, type_name: &str, pos: BlockPos, r: &mut LegacyRandom, trial: bool) -> bool {
     if !allowed_in_peaceful(type_name) && level.difficulty() == 0 {
         return false;
     }
@@ -708,9 +713,9 @@ pub fn check_spawn_rules(level: &dyn EntityLevel, type_name: &str, pos: BlockPos
         "blaze" | "breeze" | "zoglin" => true,
         // `Monster.checkMonsterSpawnRules`: dark enough.
         "bogged" | "cave_spider" | "creeper" | "enderman" | "giant" | "skeleton" | "spider" | "witch" | "wither" | "wither_skeleton" | "creaking" | "zombie" | "zombie_horse" | "zombie_villager"
-        | "evoker" | "illusioner" | "ravager" | "vex" | "vindicator" | "warden" => crate::mob::kinds::zombie::dark_enough_view(&view, pos, r),
+        | "evoker" | "illusioner" | "ravager" | "vex" | "vindicator" | "warden" => trial || crate::mob::kinds::zombie::dark_enough_view(&view, pos, r),
         // `Monster.checkSurfaceMonstersSpawnRules`: dark enough (the sky is not looked at).
-        "camel_husk" | "husk" | "parched" => crate::mob::kinds::zombie::dark_enough_view(&view, pos, r),
+        "camel_husk" | "husk" | "parched" => trial || crate::mob::kinds::zombie::dark_enough_view(&view, pos, r),
         "silverfish" => true,
         _ => match MobKind::by_name(type_name).and_then(MobKind::ext) {
             Some(k) => k.check_spawn_rules(&view, pos, r).unwrap_or(true),

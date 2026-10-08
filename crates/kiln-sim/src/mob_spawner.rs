@@ -196,18 +196,22 @@ pub(crate) fn tick_all(sim: &mut SimLevel, ticking: &Ticking) {
                 }
             }
         }
-        let updated = match &mut e.be {
-            Be::Trial(b) => std::mem::take(&mut b.updated),
-            Be::Mob(_) => false,
+        let (trial, updated) = match &mut e.be {
+            Be::Trial(b) => (true, std::mem::take(&mut b.updated)),
+            Be::Mob(_) => (false, false),
         };
+        let sync = trial && e.dirty;
         if let Some(l) = sim.level.region() {
             l.blocks.spawners.map.insert(p, e);
-            if updated {
-                // `Level.sendBlockUpdated`: the chunk's block entity follows, and the players that have the chunk get it.
+            // The chunk's block entity follows (a block change this tick sends it to the players that have the chunk,
+            // `Level.sendBlockUpdated` asks for it too).
+            if sync {
                 let chunk_pos = chunk_of(p);
                 if let Some(chunk) = l.cells.chunk_mut(chunk_pos) {
                     l.blocks.spawners.store(chunk_pos, chunk);
                 }
+            }
+            if updated {
                 l.out.changed.push([p.x, p.y, p.z]);
             }
         }
