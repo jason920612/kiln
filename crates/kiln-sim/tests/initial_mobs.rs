@@ -59,7 +59,7 @@ fn initial_mobs_parity() {
     }
     log_initial_mobs(true);
     let mut config = SimConfig::new(4, view as u8, None);
-    config.noise = Some(NoiseConfig { seed, datapack: pack, threads: 3 });
+    config.noise = Some(NoiseConfig { seed, datapack: pack, threads: 8 });
     let mut sim = Sim::new(config);
     let (msg, stats) = join(1, "Walker", view as u8);
     assert!(sim.step([msg, ToSim::Console("gamemode spectator Walker".into()), ToSim::Console("tp Walker 8.5 200 8.5".into())]));
@@ -73,7 +73,7 @@ fn initial_mobs_parity() {
         if corners.iter().all(|&(cx, cz)| sim.block_at(cx * 16 + 8, 0, cz * 16 + 8).is_some()) {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        std::thread::yield_now();
     }
     for _ in 0..40 {
         let mut inbox = Vec::new();
