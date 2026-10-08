@@ -3125,6 +3125,7 @@ impl Sim {
         self.materialize_spawns();
         let owners = self.owner_uuids();
         let mut queue = Vec::new();
+        let (mut t_entities, mut t_files) = (Duration::ZERO, Duration::ZERO);
         for dim in 0..self.dims.len() {
             let d = &mut self.dims[dim];
             for r in d.regions.iter() {
@@ -3132,18 +3133,32 @@ impl Sim {
                     queue.extend(cell.chunks(cell_pos).map(|(p, _)| (dim, p)));
                 }
             }
+            let t = Instant::now();
             let gone = d.store_entities(&[], true, &owners);
             self.forget_entities(gone);
+            t_entities += t.elapsed();
+            let t = Instant::now();
             if let Err(e) = self.dims[dim].flush_entities() {
                 warn!("saving entities failed: {e}");
             }
             if let Some(Err(e)) = self.dims[dim].poi_store.as_mut().map(kiln_storage::PoiStore::flush) {
                 warn!("saving points of interest failed: {e}");
             }
+            t_files += t.elapsed();
         }
+        let t = Instant::now();
         self.save_rest();
+        let t_rest = t.elapsed();
         queue.sort_unstable();
-        info!("saving {} chunks over the next ticks (entities and the rest saved in {:.1} ms)", queue.len(), start.elapsed().as_secs_f64() * 1e3);
+        let ms = |d: Duration| d.as_secs_f64() * 1e3;
+        info!(
+            "saving {} chunks over the next ticks (entities and the rest saved in {:.1} ms: entities {:.1}, entity and poi files {:.1}, players and level {:.1})",
+            queue.len(),
+            ms(start.elapsed()),
+            ms(t_entities),
+            ms(t_files),
+            ms(t_rest)
+        );
         queue.reverse();
         self.save_run = Some(queue);
     }
