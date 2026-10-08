@@ -74,6 +74,7 @@ fn check(path: &Path, pack: &Path) {
     let (msg, stats) = join(1, "Walker", view as u8);
     assert!(sim.step([msg, ToSim::Console("gamemode spectator Walker".into()), ToSim::Console("tp Walker 8.5 200 8.5".into())]));
     let mut client = Client::new(1, stats);
+    client.ack_batches = true;
     // Until the window's corners are loaded (generation runs on its own threads in real time).
     let corners: Vec<(i32, i32)> = (-radius..=radius).flat_map(|x| (-radius..=radius).map(move |z| (x, z))).collect();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(std::env::var("KILN_INITIAL_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(600));
