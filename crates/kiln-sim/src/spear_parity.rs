@@ -130,7 +130,9 @@ impl World {
                 equipment.push(format!("{slot}:{{id:\"{item}\",count:1}}"));
             }
         }
-        let nbt = format!("{{NoAI:1b,PersistenceRequired:1b,Rotation:[180f,0f],equipment:{{{}}}}}", equipment.join(","));
+        // (Projectiles hover with the motion the vectors gave them.)
+        let motion = if ty.ends_with("fireball") || ty.ends_with("wind_charge") { "Motion:[0.0d,0.0d,0.5d]," } else { "" };
+        let nbt = format!("{{{motion}NoAI:1b,PersistenceRequired:1b,Rotation:[180f,0f],equipment:{{{}}}}}", equipment.join(","));
         self.console(&format!("summon {ty} {x} {y} {z} {nbt}"));
         assert!(self.sim.step([]));
     }
@@ -194,7 +196,7 @@ fn stab(line: &Value) -> Vec<String> {
         w.summon(mob.as_array().unwrap());
     }
     match line["twist"].as_str().unwrap() {
-        "wall" | "wall_close" => w.setblock(0, 1, 1, "minecraft:stone"),
+        "wall" | "wall_close" | "wall_high" => w.setblock(0, 1, 1, "minecraft:stone"),
         "mounted" => {
             w.summon(&[Value::from("minecraft:pig"), Value::from("0.0"), Value::from("0.0"), Value::from("0.0")]);
         }
@@ -247,7 +249,14 @@ fn stab(line: &Value) -> Vec<String> {
         }
     }
     w.start_logs();
-    assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 8, pos: [0, 0, 0], face: 0, sequence: 0 })]));
+    if line["twist"].as_str() == Some("melee") {
+        // `Player.attack(entity)` on the first thing the vectors made.
+        let ty = line["mobs"][0][0].as_str().unwrap();
+        let target = w.sim.entity_ids_of(ty)[0];
+        assert!(w.sim.step([ToSim::Packet(1, PlayIn::Attack { entity_id: target })]));
+    } else {
+        assert!(w.sim.step([ToSim::Packet(1, PlayIn::PlayerAction { action: 8, pos: [0, 0, 0], face: 0, sequence: 0 })]));
+    }
     let want = &line["result"];
     let mut errors = Vec::new();
     check_player(&mut w, 1, &want["attacker"], &mut errors, "attacker");
@@ -261,6 +270,14 @@ fn stab(line: &Value) -> Vec<String> {
         let index = mobs[..i].iter().filter(|o| o["type"].as_str() == Some(ty)).count();
         let got = w.entities_of(ty);
         check_mob(got.get(index), m, &mut errors, &format!("mob {i} ({ty})"));
+        // A turned projectile belongs to the attacker (`Projectile.setOwner`) and accelerates anew.
+        if let Some(acc) = m.get("acceleration").and_then(Value::as_f64) {
+            let got_acc = got.get(index).and_then(|t| t.get("acceleration_power")).and_then(|a| a.as_f64());
+            eq(&mut errors, &format!("mob {i} ({ty}).acceleration"), format!("{got_acc:?}"), format!("{:?}", Some(acc)));
+            let owner = got.get(index).and_then(|t| t.get("Owner")).cloned();
+            let want_owner = m["owner"].as_i64().map(|_| kiln_entity::persist::uuid_to_tag(w.sim.players[&1].uuid.as_u128()));
+            eq(&mut errors, &format!("mob {i} ({ty}).owner"), format!("{owner:?}"), format!("{want_owner:?}"));
+        }
     }
     errors
 }

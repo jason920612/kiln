@@ -1451,6 +1451,56 @@ execute as @e[tag=s4] on vehicle if entity @s[type=minecraft:minecart]
 summon minecraft:pig 5 101 5 {NoAI:1b,Silent:1b,Passengers:[{id:"minecraft:pig",NoAI:1b,Silent:1b,Tags:["s5"]}]}
 execute as @e[tag=s5] on vehicle if entity @s[type=minecraft:pig]
 ! kill @e[type=!minecraft:player]
+# execute on controller (wp41): getControllingPassenger of boats, saddled mounts and mob mounts
+! fill 2 100 2 8 100 8 stone
+! summon minecraft:horse 5 101 5 {Silent:1b,Tags:["c0"],Passengers:[{id:"minecraft:pig",NoAI:1b,Silent:1b,Tags:["c1"]}]}
+execute as @e[tag=c0] on controller if entity @s[tag=c1]
+execute as @e[tag=c0] on controller if entity @s[type=minecraft:pig]
+execute as @e[tag=c1] on controller run say none
+execute as @e[tag=c1] on vehicle on controller if entity @s[tag=c1]
+! kill @e[type=!minecraft:player]
+! summon minecraft:horse 5 101 5 {NoAI:1b,Silent:1b,Tags:["c0"],Passengers:[{id:"minecraft:pig",NoAI:1b,Silent:1b,Tags:["c1"]}]}
+execute as @e[tag=c0] on controller if entity @s
+! kill @e[type=!minecraft:player]
+! summon minecraft:cow 5 101 5 {Silent:1b,Tags:["c0"],Passengers:[{id:"minecraft:slime",NoAI:1b,Silent:1b,Size:0,Tags:["c1"]}]}
+execute as @e[tag=c0] on controller if entity @s
+! kill @e[type=!minecraft:player]
+! summon minecraft:oak_boat 5 101 5 {Tags:["c2"],Passengers:[{id:"minecraft:pig",NoAI:1b,Silent:1b,Tags:["c1"]}]}
+execute as @e[tag=c2] on controller if entity @s
+execute as @e[tag=c2] on passengers if entity @s[tag=c1]
+! ride Diff0 mount @e[tag=c2,limit=1]
+execute as @e[tag=c2] on controller if entity @s[name=Diff0]
+execute as @e[tag=c2] on controller on vehicle if entity @s[tag=c2]
+execute as Diff0 on vehicle on controller if entity @s[name=Diff0]
+! ride Diff0 dismount
+! kill @e[type=!minecraft:player]
+! summon minecraft:minecart 5 101 5 {NoGravity:1b,Tags:["c3"]}
+! ride Diff0 mount @e[tag=c3,limit=1]
+execute as @e[tag=c3] on controller if entity @s
+execute as @e[tag=c3] on passengers if entity @s[name=Diff0]
+! ride Diff0 dismount
+! kill @e[type=!minecraft:player]
+! summon minecraft:horse 5 101 5 {NoAI:1b,Silent:1b,Tags:["c4"]}
+! ride Diff0 mount @e[tag=c4,limit=1]
+execute as @e[tag=c4] on controller if entity @s
+! ride Diff0 dismount
+! kill @e[type=!minecraft:player]
+! summon minecraft:horse 5 101 5 {NoAI:1b,Silent:1b,Tame:1b,Tags:["c4"],equipment:{saddle:{id:"minecraft:saddle",count:1}}}
+! ride Diff0 mount @e[tag=c4,limit=1]
+execute as @e[tag=c4] on controller if entity @s[name=Diff0]
+execute as Diff0 on vehicle on controller if entity @s[name=Diff0]
+! ride Diff0 dismount
+! kill @e[type=!minecraft:player]
+! summon minecraft:strider 5 101 5 {NoAI:1b,Silent:1b,Tags:["c5"],equipment:{saddle:{id:"minecraft:saddle",count:1}}}
+! ride Diff0 mount @e[tag=c5,limit=1]
+execute as @e[tag=c5] on controller if entity @s
+! item replace entity Diff0 weapon.mainhand with minecraft:warped_fungus_on_a_stick
+execute as @e[tag=c5] on controller if entity @s[name=Diff0]
+! item replace entity Diff0 weapon.mainhand with minecraft:air
+execute as @e[tag=c5] on controller if entity @s
+! ride Diff0 dismount
+! kill @e[type=!minecraft:player]
+! fill 2 100 2 8 100 8 air
 ! gamerule mob_drops true
 ! difficulty peaceful
 

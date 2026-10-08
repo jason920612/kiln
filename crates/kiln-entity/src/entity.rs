@@ -529,6 +529,20 @@ impl Entity {
         }
     }
 
+    /// `Player.deflectProjectile`: a projectile of `#minecraft:redirectable_projectile` turned
+    /// along `look` with `by` as its owner (see [`crate::ext_entity::EntityExt::aim_deflect`]).
+    pub fn aim_deflect(&mut self, by: (i32, u128), look: Vec3) -> bool {
+        if !crate::spear::redirectable_projectile(self.type_name) || !matches!(self.kind, EntityKind::Ext(_)) {
+            return false;
+        }
+        let EntityKind::Ext(mut x) = std::mem::replace(&mut self.kind, EntityKind::Other { type_name: self.type_name }) else {
+            unreachable!()
+        };
+        let r = x.aim_deflect(self, by, look);
+        self.kind = EntityKind::Ext(x);
+        r
+    }
+
     /// `hurtServer` for a hit by a projectile (`on_fire`, `speed_sqr`: the projectile's state at
     /// the hit) on an extension entity that cares about it; the others take it as [`Entity::hurt`].
     pub fn hurt_by_projectile(&mut self, level: &mut dyn EntityLevel, kind: DamageKind, amount: f32, attacker: Option<i32>, on_fire: bool, speed_sqr: f64) -> bool {

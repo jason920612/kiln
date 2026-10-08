@@ -20,14 +20,18 @@ pub const TYPE: &str = "minecraft:breeze_wind_charge";
 #[derive(Clone, Debug)]
 pub struct WindCharge {
     pub owner: Option<i32>,
+    /// The owner's UUID, as it is saved (`Owner`).
+    pub owner_uuid: Option<u128>,
     pub left_owner: bool,
     pub has_been_shot: bool,
+    /// `AbstractHurtingProjectile.accelerationPower`: 0 until a player deflects the charge.
+    pub acceleration_power: f64,
 }
 
 /// `new BreezeWindCharge(breeze, level)` at `pos` (the breeze's firing height), owned by
 /// `owner`; the caller shoots it (`Projectile.shoot`) and adds it.
-pub fn new(id: i32, owner: i32, pos: Vec3, seed: i64) -> Entity {
-    let x = WindCharge { owner: Some(owner), left_owner: false, has_been_shot: false };
+pub fn new(id: i32, owner: i32, owner_uuid: u128, pos: Vec3, seed: i64) -> Entity {
+    let x = WindCharge { owner: Some(owner), owner_uuid: Some(owner_uuid), left_owner: false, has_been_shot: false, acceleration_power: 0.0 };
     let mut e = Entity::new(TYPE, id, 0, EntityKind::Ext(Box::new(x)), seed);
     set_pos(&mut e, pos);
     e.set_old_pos_and_rot();
@@ -42,7 +46,13 @@ fn set_pos(e: &mut Entity, p: Vec3) {
 }
 
 pub fn load(r: &mut Input) -> Option<Box<dyn EntityExt>> {
-    Some(Box::new(WindCharge { owner: None, left_owner: r.bool_or("leftOwner", false), has_been_shot: r.bool_or("HasBeenShot", false) }))
+    Some(Box::new(WindCharge {
+        owner: None,
+        owner_uuid: r.uuid("Owner"),
+        left_owner: r.bool_or("leftOwner", false),
+        has_been_shot: r.bool_or("HasBeenShot", false),
+        acceleration_power: r.num("acceleration_power").unwrap_or(0.0),
+    }))
 }
 
 /// The wind burst at `center` from charge `source`.
@@ -106,7 +116,7 @@ impl WindCharge {
         level.emit(Event::ProjectileHit { projectile: e.id, projectile_type: TYPE, owner: self.owner, hit });
         match hit {
             Hit::Entity { id, .. } => {
-                let source = DamageSource { kind: DamageKind::WindCharge, attacker: self.owner, direct: Some(e.id), pos: Some(e.position()), attacker_is_player: false };
+                let source = DamageSource { kind: DamageKind::WindCharge, attacker: self.owner, direct: Some(e.id), pos: Some(e.position()), attacker_is_player: self.owner.is_some_and(|o| level.player(o).is_some()) };
                 if let Some(t) = mob::goals::living(level, id) {
                     mob::hurt_living(level, &t, source, 1.0);
                 } else if let Some(t) = level.entity_mut(id) {
@@ -133,6 +143,10 @@ impl EntityExt for WindCharge {
 
     /// `AbstractWindCharge.tick` → `AbstractHurtingProjectile.tick` (no acceleration, inertia 1).
     fn tick(&mut self, e: &mut Entity, level: &mut dyn EntityLevel) {
+        // `applyInertia`: inertia 1 in the air (`getInertia`) and in water (`getLiquidInertia` of
+        // `AbstractWindCharge` is the same), plus the acceleration a player's deflection gave it.
+        let v = e.delta;
+        e.delta = (v + v.normalize().scale(self.acceleration_power)).scale(1.0);
         if crate::math::floor(e.y()) > level.max_y() + 30 {
             burst(level, Some(e.id), e.position());
             e.discard();
@@ -166,7 +180,20 @@ impl EntityExt for WindCharge {
     fn save(&self, _e: &Entity, o: &mut Output) {
         o.put("leftOwner", Tag::Byte(self.left_owner as i8));
         o.put("HasBeenShot", Tag::Byte(self.has_been_shot as i8));
-        o.put("acceleration_power", Tag::Double(0.0));
+        if let Some(u) = self.owner_uuid {
+            o.put("Owner", crate::persist::uuid_to_tag(u));
+        }
+        o.put("acceleration_power", Tag::Double(self.acceleration_power));
+    }
+
+    /// `AIM_DEFLECT` by a player (`onDeflection(true)`: the acceleration starts at 0.1).
+    fn aim_deflect(&mut self, e: &mut Entity, by: (i32, u128), look: Vec3) -> bool {
+        e.delta = look;
+        e.needs_sync = true;
+        self.owner = Some(by.0);
+        self.owner_uuid = Some(by.1);
+        self.acceleration_power = 0.1;
+        true
     }
 
     fn spawn_data(&self) -> i32 {

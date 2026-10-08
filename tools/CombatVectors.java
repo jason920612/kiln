@@ -1682,15 +1682,28 @@ class SpearVectors {
         return m;
     }
 
-    static Map<String, Object> mobOutcome(net.minecraft.world.entity.LivingEntity e) {
+    /** A fireball or wind charge hovering at an offset of the attacker (it does not tick here). */
+    static net.minecraft.world.entity.Entity projectile(ServerLevel level, String type, double dx, double dy, double dz) {
+        var e = BuiltInRegistries.ENTITY_TYPE.getValue(Identifier.parse(type)).create(level, net.minecraft.world.entity.EntitySpawnReason.COMMAND);
+        e.setPos(CombatVectors.BX + dx, CombatVectors.BY + dy, CombatVectors.BZ + dz);
+        if (type.endsWith("fireball") || type.endsWith("wind_charge")) e.setDeltaMovement(0.0, 0.0, 0.5);
+        level.addFreshEntity(e);
+        return e;
+    }
+
+    static Map<String, Object> mobOutcome(net.minecraft.world.entity.Entity e) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("type", BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString());
-        m.put("health", e.getHealth());
+        if (e instanceof net.minecraft.world.entity.projectile.Projectile p) {
+            m.put("owner", p.getOwner() == null ? null : p.getOwner().getId());
+            if (e instanceof net.minecraft.world.entity.projectile.hurtingprojectile.AbstractHurtingProjectile h) m.put("acceleration", h.accelerationPower);
+        }
+        m.put("health", e instanceof net.minecraft.world.entity.LivingEntity l ? l.getHealth() : 0.0f);
         m.put("alive", e.isAlive());
         m.put("velocity", CombatVectors.vec(e.getDeltaMovement()));
         m.put("vehicle", e.getVehicle() == null ? null : BuiltInRegistries.ENTITY_TYPE.getKey(e.getVehicle().getType()).toString());
         m.put("fire_ticks", e.getRemainingFireTicks());
-        m.put("hurt_time", e.hurtTime);
+        m.put("hurt_time", e instanceof net.minecraft.world.entity.LivingEntity l ? l.hurtTime : 0);
         return m;
     }
 
@@ -1714,9 +1727,13 @@ class SpearVectors {
         if (t != null) CombatVectors.setup(server, t, tgt);
         a.setXRot(pitch);
         a.getFoodData().setFoodLevel(food);
-        List<net.minecraft.world.entity.LivingEntity> made = new ArrayList<>();
+        List<net.minecraft.world.entity.Entity> made = new ArrayList<>();
         if (mobs != null) {
             for (String[] mb : mobs) {
+                if (mb[0].endsWith("fireball") || mb[0].endsWith("wind_charge") || mb[0].endsWith("boat") || mb[0].endsWith("raft") || mb[0].endsWith("minecart")) {
+                    made.add(projectile(level, mb[0], Double.parseDouble(mb[1]), Double.parseDouble(mb[2]), Double.parseDouble(mb[3])));
+                    continue;
+                }
                 var e = mob(level, mb[0], Double.parseDouble(mb[1]), Double.parseDouble(mb[2]), Double.parseDouble(mb[3]), 180f);
                 if (mb.length > 4 && !mb[4].isEmpty()) {
                     for (String piece : mb[4].split(",")) {
@@ -1731,6 +1748,7 @@ class SpearVectors {
         switch (twist) {
             case "wall" -> level.setBlock(at(0, 1, 1), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), 2);
             case "wall_close" -> level.setBlock(at(0, 1, 1), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), 2);
+            case "wall_high" -> level.setBlock(at(0, 1, 1), net.minecraft.world.level.block.Blocks.STONE.defaultBlockState(), 2);
             case "mounted" -> {
                 var pig = mob(level, "minecraft:pig", 0.0, 0.0, 0.0, 0f);
                 a.setPos(CombatVectors.BX + att.dx, CombatVectors.BY + att.dy, CombatVectors.BZ + att.dz);
@@ -1755,7 +1773,7 @@ class SpearVectors {
         level.getRandom().setSeed(seed);
         a.getRandom().setSeed(seed + 1);
         if (t != null) t.getRandom().setSeed(seed + 2);
-        stab(a);
+        if (twist.equals("melee")) a.attack(made.get(0)); else stab(a);
         Map<String, Object> m = line("stab");
         m.put("name", name);
         m.put("level_seed", seed);
@@ -1867,6 +1885,26 @@ class SpearVectors {
         stabCase(server, out, "stab_mob/smite", ench(player("minecraft:iron_spear", 0.0, 0f), "minecraft:smite", 4), null,
                 new String[][] {{"minecraft:zombie", "0.0", "0.0", "3.0"}}, 0f, 17, "", n++);
         stabCase(server, out, "stab_mob/baby_far", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {{"minecraft:chicken", "0.0", "0.0", "4.4"}}, 0f, 17, "", n++);
+        // wp41: `Player.deflectProjectile`: a fireball or wind charge hit with a knockback stab (or
+        // a melee attack) flies on along the attacker's look with the attacker as its owner.
+        String[] fb = {"minecraft:fireball", "0.0", "1.0", "3.0"};
+        stabCase(server, out, "stab_projectile/fireball", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {fb}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_projectile/fireball_pitch", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {{"minecraft:fireball", "0.0", "0.0", "3.0"}}, 15f, 17, "", n++);
+        stabCase(server, out, "stab_projectile/fireball_up", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {{"minecraft:fireball", "0.0", "3.0", "2.0"}}, -50f, 17, "", n++);
+        stabCase(server, out, "stab_projectile/breeze_wind_charge", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {{"minecraft:breeze_wind_charge", "0.0", "1.6", "3.0"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_projectile/small_fireball", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {{"minecraft:small_fireball", "0.0", "1.4", "3.0"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_projectile/fireball_and_pig", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {fb, {"minecraft:pig", "0.0", "0.0", "4.0"}}, 0f, 17, "", n++);
+        stabCase(server, out, "stab_projectile/fireball_wall", player("minecraft:iron_spear", 0.0, 0f), null, new String[][] {fb}, 0f, 17, "wall_high", n++);
+        stabCase(server, out, "melee_projectile/fireball", player("minecraft:iron_sword", 0.0, 0f), null, new String[][] {{"minecraft:fireball", "0.0", "1.0", "2.0"}}, 0f, 17, "melee", n++);
+        stabCase(server, out, "melee_projectile/fireball_pitch", player("minecraft:iron_sword", 0.0, 0f), null, new String[][] {{"minecraft:fireball", "0.0", "1.0", "2.0"}}, -30f, 17, "melee", n++);
+        stabCase(server, out, "melee_projectile/breeze_wind_charge", player("minecraft:iron_sword", 0.0, 0f), null, new String[][] {{"minecraft:breeze_wind_charge", "0.0", "1.6", "2.0"}}, 0f, 17, "melee", n++);
+        // Vehicles (boats and carts are pickable and attackable): stabbed, pushed, broken.
+        for (String vehicle : new String[] {"minecraft:oak_boat", "minecraft:bamboo_raft", "minecraft:minecart", "minecraft:chest_minecart", "minecraft:tnt_minecart"}) {
+            for (String spear : new String[] {"minecraft:wooden_spear", "minecraft:iron_spear"}) {
+                stabCase(server, out, "stab_vehicle/" + vehicle.substring(10) + "/" + spear.substring(10), player(spear, 0.0, 0f), null, new String[][] {{vehicle, "0.0", "0.0", "3.0"}}, 30f, 17, "", n++);
+            }
+        }
+        stabCase(server, out, "melee_projectile/fist", player(null, 0.0, 0f), null, new String[][] {{"minecraft:fireball", "0.0", "1.0", "2.0"}}, 0f, 17, "melee", n++);
         stabCase(server, out, "stab_mob/player_and_mob", player("minecraft:iron_spear", 0.0, 0f), player(null, 3.0, 180f), new String[][] {{"minecraft:pig", "0.0", "0.0", "4.0"}}, 0f, 17, "", n++);
     }
 

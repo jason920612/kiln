@@ -80,8 +80,13 @@ impl Boat {
         }
     }
 
-    fn max_passengers(&self) -> usize {
+    pub(crate) fn max_passengers(&self) -> usize {
         if self.chest { 1 } else { 2 }
+    }
+
+    /// `deltaRotation`: how much the boat turned this tick (what a rider's yaw follows).
+    pub(crate) fn delta_rotation(&self) -> f32 {
+        self.delta_rotation
     }
 
     /// `rideHeight` of the type (`Raft`: 0.888889 of the height, `Boat`: a third).
@@ -378,19 +383,23 @@ impl EntityExt for Boat {
                 self.paddle_positions[i] = 0.0;
             }
         }
-        // Things bumping into the boat: mobs climb aboard when nobody steers, the rest is
-        // pushed away.
+        // Things bumping into the boat (`EntitySelector.pushableBy`: living things, boats and
+        // minecarts): mobs climb aboard when nobody steers, the rest is pushed away.
         let area = e.bounding_box().inflate(0.2, -0.009999999776482582, 0.2);
         let can_board = !player_controlled;
-        for id in level.entities_in(&area, EntityFilter::Living, e.id) {
+        for id in level.entities_in(&area, EntityFilter::Any, e.id) {
             if e.passengers.contains(&id) {
                 continue;
             }
             let Some(other) = level.entity(id) else { continue };
-            if other.is_removed() || other.vehicle.is_some() || !matches!(other.kind, EntityKind::Mob(_)) {
+            if other.is_removed() {
                 continue;
             }
-            let boards = can_board && e.passengers.len() < self.max_passengers() && other.width < e.width && !cannot_board(other.type_name);
+            let mob = matches!(&other.kind, EntityKind::Mob(m) if m.health > 0.0);
+            if !(mob || is_boat(other.type_name) || crate::ext_entity::minecart::is_minecart(other.type_name)) {
+                continue;
+            }
+            let boards = mob && can_board && other.vehicle.is_none() && e.passengers.len() < self.max_passengers() && other.width < e.width && !cannot_board(other.type_name);
             if boards {
                 if let Some(rider) = level.entity_mut(id) {
                     crate::ride::start_riding(rider, e, false);
@@ -556,23 +565,40 @@ impl Boat {
     }
 }
 
-/// `Entity.push(entity)`: the two are pushed apart a little.
+/// `AbstractBoat.push(entity)` for the boat `e`: `Entity.push` when `other` is a boat that starts
+/// below the top of this one, or anything else whose box starts no higher than this one's bottom.
+fn accepts_push(e: &Entity, other: &Entity) -> bool {
+    if is_boat(other.type_name) { other.bounding_box().min_y < e.bounding_box().max_y } else { other.bounding_box().min_y <= e.bounding_box().min_y }
+}
+
+/// `AbstractBoat.push(entity)` of boat `e` for the entity `id` (a mob, boat or minecart bumping
+/// into it, or in it): `Entity.push(entity)` when [`accepts_push`] says so, the two pushed apart
+/// a little.
 fn push_apart(e: &mut Entity, _b: &Boat, level: &mut dyn EntityLevel, id: i32) {
     let Some(other) = level.entity(id) else { return };
+    if !accepts_push(e, other) || e.no_physics || other.no_physics {
+        return;
+    }
     let (mut dx, mut dz) = (other.x() - e.x(), other.z() - e.z());
     let mut d2 = dx.abs().max(dz.abs());
-    if d2 < 0.01 {
+    if d2 < 0.009999999776482582 {
         return;
     }
     d2 = d2.sqrt();
     dx /= d2;
     dz /= d2;
     let d3 = (1.0 / d2).min(1.0);
-    dx *= d3 * 0.05;
-    dz *= d3 * 0.05;
-    // Neither is a vehicle with riders: both are pushed.
+    dx *= d3;
+    dz *= d3;
+    dx *= 0.05000000074505806;
+    dz *= 0.05000000074505806;
+    // Only what is not a vehicle with riders is pushed (`isVehicle`; a boat is always `isPushable`).
+    let other_free = other.passengers.is_empty();
     if e.passengers.is_empty() {
         e.delta = e.delta.add(-dx, 0.0, -dz);
+        e.needs_sync = true;
     }
-    level.push(id, Vec3::new(dx, 0.0, dz));
+    if other_free {
+        level.push(id, Vec3::new(dx, 0.0, dz));
+    }
 }

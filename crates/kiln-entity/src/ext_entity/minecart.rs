@@ -537,15 +537,17 @@ fn push_apart(e: &mut Entity, level: &mut dyn EntityLevel, id: i32) {
     let Some(other) = level.entity(id) else { return };
     let (mut dx, mut dz) = (e.x() - other.x(), e.z() - other.z());
     let mut d2 = dx.abs().max(dz.abs());
-    if d2 < 0.01 {
+    if d2 < 0.009999999776482582 {
         return;
     }
     d2 = d2.sqrt();
     dx /= d2;
     dz /= d2;
     let d3 = (1.0 / d2).min(1.0);
-    dx *= d3 * 0.05;
-    dz *= d3 * 0.05;
+    dx *= d3;
+    dz *= d3;
+    dx *= 0.05000000074505806;
+    dz *= 0.05000000074505806;
     // The other pushes `e`: `e` moves by `dx`, the other by `-dx`.
     e.delta = e.delta.add(dx, 0.0, dz);
     e.needs_sync = true;

@@ -9,7 +9,7 @@
 //! `EnchantmentHelper` (see [`crate::enchant`]): damage immunity (frost walker), protection,
 //! armor effectiveness (breach) and unbreaking on armor. Mob effects take part too: fire
 //! resistance makes fire damage miss, resistance takes 20% per level after armor. Totems of
-//! undying (`death_protection` in a hand) save a dying player. Not modelled yet: shields.
+//! undying (`death_protection` in a hand) save a dying player; shields block (see below).
 //!
 //! Food follows `FoodData`: exhaustion from sprinting, jumping, fighting and breaking blocks
 //! uses up saturation then food; a well-fed player heals, a starving one takes damage.

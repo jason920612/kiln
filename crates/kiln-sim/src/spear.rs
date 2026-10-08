@@ -250,7 +250,8 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
             if phys.invulnerable || phys.invulnerable_time > 0 || !phys.is_alive() {
                 continue;
             }
-            if !matches!(classify(phys), EntityClass::Mob) {
+            // (`canBeHitByProjectile`: also what `deflectProjectile` turns around.)
+            if !matches!(classify(phys), EntityClass::Mob | EntityClass::Redirectable) {
                 continue;
             }
             if root_of_entity(self.entities, e.id) == root {
@@ -312,8 +313,21 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                 scale * scale * 0.8
             };
         }
-        // (A redirectable projectile in the way of a knockback stab is turned back: Kiln's
-        // projectiles are not hit by spears.)
+        // `if (dealsKnockback && deflectProjectile(target)) return true`: a fireball or wind
+        // charge hit by a stab with knockback flies on along the wielder's look. Without the
+        // knockback the stab hurts nothing (`AbstractHurtingProjectile.hurtServer` is false).
+        if let Victim::Entity(id) = victim
+            && let Ok(i) = self.entities.list.binary_search_by_key(&id, |e| e.id)
+            && self.entities.list[i].phys.as_deref().is_some_and(|e| matches!(classify(e), EntityClass::Redirectable))
+        {
+            if !s.knockback {
+                return false;
+            }
+            let (by, at, rot) = ((self.players[a].entity_id, self.players[a].uuid.as_u128()), self.players[a].pos, self.players[a].rot);
+            crate::entities::aim_deflect(self.entities, id, by, rot);
+            play_sound(self.players, at, "minecraft:entity.player.attack.nodamage", SoundSource::Players, 1.0, 1.0, None, self.level.env.game_time);
+            return true;
+        }
         let dealt = if s.damage { amount + enchant_bonus } else { 0.0 };
         match victim {
             Victim::Player(t) => self.stab_player(a, t, slot, &weapon, &source, s, dealt, enchant_bonus),

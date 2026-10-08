@@ -47,7 +47,7 @@ impl Kind for Vindicator {
         raider::register_raider_goals(m);
         let g = &mut m.goals;
         g.add(0, Goal::Float);
-        g.add(1, raider::never());
+        g.add(1, raider::avoid_creaking(1.0, 1.2));
         g.add(2, Goal::Custom(Box::new(BreakDoorGoal)));
         g.add(3, Goal::Custom(Box::new(RaiderOpenDoorGoal)));
         g.add(4, Goal::Custom(Box::new(raider::HoldGroundAttackGoal { hostile_radius_sqr: 100.0 })));
