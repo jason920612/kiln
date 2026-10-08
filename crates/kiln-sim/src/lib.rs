@@ -1400,6 +1400,7 @@ impl Sim {
         // Tables built on first use, built now rather than in the middle of a tick (the path
         // types of every block state: 13 ms the first time a mob looks for a path).
         kiln_entity::mob::path::path_type_from_state(0);
+        sim.prepare_spawn();
         sim
     }
 
@@ -1589,6 +1590,13 @@ impl Sim {
             self.stats.phase(name, d);
         }
         self.record_tick_time(start.elapsed().as_nanos() as i64);
+        if let Some(ms) = stats::slow_print_ms() {
+            let took = start.elapsed().as_secs_f64() * 1e3;
+            let phases = self.stats.take_tick();
+            if took > ms {
+                info!("slow tick {took:.1} ms ({} players): {phases}", self.players.len());
+            }
+        }
         stats::trace(start.elapsed().as_micros() as u64, self.players.len());
         if let Some(report) = self.stats.record(start.elapsed()) {
             stats::flush_trace();

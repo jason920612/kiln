@@ -24,6 +24,38 @@ pub fn generation_totals() -> (u64, std::time::Duration) {
     (chunkstats::GEN_DONE.load(Relaxed), std::time::Duration::from_nanos(chunkstats::GEN_BUSY_NS.load(Relaxed)))
 }
 
+/// Generation threads run only on CPU time nothing else wants (`SCHED_IDLE` on Linux, below
+/// normal priority on Windows): ticks and other programs go first, and idle cores generate.
+fn background_priority() {
+    #[cfg(target_os = "linux")]
+    {
+        #[repr(C)]
+        struct SchedParam {
+            priority: i32,
+        }
+        unsafe extern "C" {
+            fn sched_setscheduler(pid: i32, policy: i32, param: *const SchedParam) -> i32;
+        }
+        const SCHED_IDLE: i32 = 5;
+        // SAFETY: pid 0 is the calling thread; the parameter outlives the call.
+        unsafe {
+            sched_setscheduler(0, SCHED_IDLE, &SchedParam { priority: 0 });
+        }
+    }
+    #[cfg(windows)]
+    {
+        unsafe extern "system" {
+            fn GetCurrentThread() -> isize;
+            fn SetThreadPriority(thread: isize, priority: i32) -> i32;
+        }
+        const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
+        // SAFETY: the current-thread pseudo-handle and a documented priority value.
+        unsafe {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+        }
+    }
+}
+
 /// Whether a requested chunk is still waiting in a queue or a thread took it. A chunk can sit
 /// in both queues (made urgent after it was queued): the first thread to take it generates it,
 /// the other copy is skipped, as is a copy whose result the tick thread already collected.
@@ -56,6 +88,7 @@ impl GenPool {
             std::thread::Builder::new()
                 .name(format!("kiln-gen-{i}"))
                 .spawn(move || {
+                    background_priority();
                     loop {
                         // Urgent chunks first; otherwise whichever queue has work.
                         let pos = match urgent_jobs.try_recv() {

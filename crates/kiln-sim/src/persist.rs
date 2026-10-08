@@ -189,13 +189,42 @@ impl Sim {
         if level.and_then(LevelStore::game_type) == Some(ADVENTURE) {
             return kiln_world::spawn::free_spawn_at(&mut self.dims[crate::OVERWORLD_ID], self.spawn);
         }
+        let radius = self.respawn_radius();
+        let (hi, lo) = uuid.as_u64_pair();
+        let offset = ((hi ^ lo) % 1024) as u32;
+        kiln_world::spawn::find_spawn(&mut self.dims[crate::OVERWORLD_ID], self.spawn, radius, offset)
+    }
+
+    /// The `respawn_radius` game rule.
+    fn respawn_radius(&self) -> i32 {
+        let level = self.storage.as_ref().map(|s| &s.level);
         let radius = match self.commands.game_rules.get("minecraft:respawn_radius") {
             Some(kiln_command::GameRuleValue::Int(r)) => *r as i64,
             _ => level.and_then(|l| l.game_rule("minecraft:respawn_radius")).unwrap_or(DEFAULT_RESPAWN_RADIUS),
         };
-        let (hi, lo) = uuid.as_u64_pair();
-        let offset = ((hi ^ lo) % 1024) as u32;
-        kiln_world::spawn::find_spawn(&mut self.dims[crate::OVERWORLD_ID], self.spawn, radius.clamp(0, i32::MAX as i64) as i32, offset)
+        radius.clamp(0, i32::MAX as i64) as i32
+    }
+
+    /// `MinecraftServer.prepareLevels`: the chunks new players are placed in (the respawn
+    /// radius around the world spawn, and the blocks next to it) are made before anyone joins,
+    /// so that the first joins do not generate them on the tick thread. Only where terrain is
+    /// generated in the background (elsewhere a chunk costs next to nothing).
+    pub(crate) fn prepare_spawn(&mut self) {
+        let r = self.respawn_radius().min(64) + 1;
+        let [x, _, z] = self.spawn;
+        let d = &mut self.dims[crate::OVERWORLD_ID];
+        if d.generation.is_none() {
+            return;
+        }
+        for cz in (z - r) >> 4..=(z + r) >> 4 {
+            for cx in (x - r) >> 4..=(x + r) >> 4 {
+                let pos = kiln_world::ChunkPos::new(cx, cz);
+                if !d.is_loaded(pos) {
+                    let chunk = d.provider.load_or_generate(pos);
+                    d.install(pos, chunk);
+                }
+            }
+        }
     }
 
     pub(crate) fn save_player(&self, p: &Player) {

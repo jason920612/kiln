@@ -42,6 +42,14 @@ pub struct TickStats {
     phases: Vec<(&'static str, Duration)>,
     /// The same, since the last `reset_totals` (not cleared by a completed window).
     totals: Vec<(&'static str, Duration)>,
+    /// This tick's phases, for `KILN_SLOW_PRINT`.
+    tick: Vec<(&'static str, Duration)>,
+}
+
+/// `KILN_SLOW_PRINT=<ms>`: ticks slower than this are logged with their phases.
+pub fn slow_print_ms() -> Option<f64> {
+    static MS: std::sync::OnceLock<Option<f64>> = std::sync::OnceLock::new();
+    *MS.get_or_init(|| std::env::var("KILN_SLOW_PRINT").ok().and_then(|v| v.parse().ok()))
 }
 
 pub struct Report {
@@ -70,6 +78,9 @@ impl fmt::Display for Report {
 impl TickStats {
     /// Adds time spent in a phase this tick.
     pub fn phase(&mut self, name: &'static str, d: Duration) {
+        if slow_print_ms().is_some() {
+            self.tick.push((name, d));
+        }
         match self.totals.iter_mut().find(|(n, _)| *n == name) {
             Some((_, t)) => *t += d,
             None => self.totals.push((name, d)),
@@ -78,6 +89,14 @@ impl TickStats {
             Some((_, t)) => *t += d,
             None => self.phases.push((name, d)),
         }
+    }
+
+    /// This tick's phases (`KILN_SLOW_PRINT`), as `name ms | ...`; clears them.
+    pub fn take_tick(&mut self) -> String {
+        let out: Vec<String> =
+            self.tick.iter().filter(|(_, d)| d.as_micros() >= 50).map(|(n, d)| format!("{n} {:.2}", d.as_secs_f64() * 1e3)).collect();
+        self.tick.clear();
+        out.join(" | ")
     }
 
     /// Time per phase since the last reset, in the order the phases first appeared.

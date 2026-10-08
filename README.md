@@ -68,8 +68,9 @@ Settings come from the environment until there is a config file:
 | `KILN_PROFILE_LOOKUP` | `fetchprofile` looks names and ids up through the session service (default: on in online mode); a lookup sends only the name or id asked for |
 | `KILN_VIEW_DISTANCE`, `KILN_SIMULATION_DISTANCE` | `view-distance` and `simulation-distance` (10 and 10) |
 | `KILN_GENERATOR`, `KILN_SEED`, `KILN_DATAPACK` | `noise`: vanilla overworld terrain from this seed; the data generator output (`work/generated`) |
-| `KILN_GEN_THREADS` | chunk generation threads per level (3) |
+| `KILN_GEN_THREADS` | chunk generation threads per level (as many as the tick pool, at background priority: `SCHED_IDLE` on Linux, below normal on Windows) |
 | `KILN_TICK_TRACE` | a file that gets one line per tick: `<unix ms> <players> <tick micros>` (exact percentiles over any stretch of a run) |
+| `KILN_SLOW_PRINT` | ticks slower than this many milliseconds are logged with their phases |
 | `KILN_PROXY` | `none`, `velocity` or `bungeecord` |
 | `KILN_VELOCITY_SECRET`, `KILN_VELOCITY_SECRET_FILE` | Velocity modern forwarding secret |
 | `KILN_BUNGEEGUARD_TOKENS` | accepted BungeeGuard tokens |

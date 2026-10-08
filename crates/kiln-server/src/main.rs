@@ -117,8 +117,10 @@ fn main() -> Result<()> {
         let saved = sim_config.world.as_deref().and_then(kiln_storage::read_seed);
         let seed = std::env::var("KILN_SEED").ok().and_then(|v| v.parse().ok()).or(saved).unwrap_or(0);
         let datapack = std::env::var_os("KILN_DATAPACK").map_or_else(|| "work/generated".into(), Into::into);
-        // KILN_GEN_THREADS: chunk generation threads per dimension (3).
-        let threads = env_number("KILN_GEN_THREADS").unwrap_or(3);
+        // KILN_GEN_THREADS: chunk generation threads per dimension (as many as tick, on CPU
+        // time nothing else wants).
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let threads = env_number("KILN_GEN_THREADS").unwrap_or_else(|| kiln_sim::default_workers(cores).max(2));
         sim_config.noise = Some(kiln_sim::NoiseConfig { seed, datapack, threads });
     }
 
