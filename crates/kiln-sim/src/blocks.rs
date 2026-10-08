@@ -26,7 +26,7 @@ use kiln_region::{CellPos, CellSet, RegionPart};
 use kiln_world::chunk::{Chunk, LightLayer, SavedTicks};
 use kiln_world::{Blocks, Cell, CellStore, ChunkPos};
 use smallvec::SmallVec;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 /// `max-chained-neighbor-updates` default.
 const MAX_CHAINED_NEIGHBOR_UPDATES: i32 = 1_000_000;
@@ -747,10 +747,14 @@ fn chunk_random(seed: i64, game_time: i64, c: ChunkPos) -> (LegacyRandom, i32) {
 /// fluid ticks, random ticks in ticking chunks, then block events. Moving pistons tick
 /// later, after the entities ([`tick_pistons`]).
 pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
+    let dt = std::time::Instant::now();
     apply_generated(level);
+    let dt = crate::diag::lap("tb.generated", dt);
     let can_tick = |k: ChunkKey| ticking.contains(ChunkPos::new(k.0, k.1));
     kiln_blocks::tick::run_block_ticks(level, can_tick);
+    let dt = crate::diag::lap("tb.block_ticks", dt);
     kiln_blocks::tick::run_fluid_ticks(level, can_tick);
+    let dt = crate::diag::lap("tb.fluid_ticks", dt);
     let speed = level.env.random_tick_speed;
     // Every ticking chunk rolls for precipitation while it rains (and freezes water in any
     // weather); otherwise only chunks with randomly ticking sections have work.
@@ -765,6 +769,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
             );
         });
         chunks.sort_unstable();
+        crate::diag::add("tb.list", dt.elapsed());
         let mut sections = Vec::new();
         for c in chunks {
             let Some(chunk) = level.cells.chunk(c) else { continue };
@@ -780,9 +785,11 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
             level.blocks.data.rand_value = saved_value;
         }
     }
+    let dt = crate::diag::lap("tb.random", dt);
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
     // `SignBlockEntity.tick`: editing locks of players who left.
     crate::signs::tick(level);
+    crate::diag::lap("tb.events", dt);
 }
 
 /// [`kiln_blocks::tick::tick_chunk_blocks`] for chunk `c` with the picked blocks read straight
