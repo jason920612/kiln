@@ -737,6 +737,11 @@ impl Player {
         for (i, s) in self.inv.items.iter().enumerate() {
             out[if i < 9 { HOTBAR_START + i } else { i }] = view(s);
         }
+        // The inventory menu's armor slots 5 (head) to 8 (feet), and the off hand, 45.
+        for (i, s) in self.inv.equipment.iter().take(5).enumerate() {
+            let slot = [8, 7, 6, 5, 45][i];
+            out[slot] = view(s);
+        }
         out
     }
 

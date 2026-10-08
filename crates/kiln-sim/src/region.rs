@@ -874,9 +874,7 @@ pub(crate) fn player_packet(
             // `player.onGround()` as the server holds it (its own body's, not the client's).
             let was_on_ground = p.on_ground;
             let y0 = p.pos[1];
-            let dbg_ok = handle_move(p, cells, env, pos, rot, on_ground);
-            if std::env::var_os("KILN_DBG_MOVE").is_some() { eprintln!("DBG move {pos:?} og={on_ground} ok={dbg_ok} lt={} aw={:?} fg={:?}", p.load_timeout, p.awaiting_teleport, p.first_good); }
-            if dbg_ok {
+            if handle_move(p, cells, env, pos, rot, on_ground) {
                 // `setOnGroundWithMovement`: the client's own report of running into a wall.
                 p.horizontal_collision = horizontal_collision;
                 let feet = p.pos.map(|c| c.floor() as i32);

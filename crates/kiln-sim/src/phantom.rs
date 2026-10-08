@@ -179,11 +179,7 @@ impl Player {
             water_efficiency: self.attribute(crate::combat::WATER_MOVEMENT_EFFICIENCY) as f32,
             sprinting: self.sprinting,
         };
-        let before = (e.y(), e.delta.y, e.on_ground);
         kiln_entity::player::travel(&mut level, &mut e, &t);
-        if std::env::var_os("KILN_DBG_PHANTOM").is_some() {
-            eprintln!("DBG phantom tick {} before y={:.4} vy={:.4} og={} after y={:.4} vy={:.4} og={}", self.tick_count, before.0, before.1, before.2, e.y(), e.delta.y, e.on_ground);
-        }
         self.phantom_out(e, true);
     }
 
@@ -227,11 +223,5 @@ impl Player {
         }
         let from = vec(from);
         self.movements.push(Mv { from, to: from + movement, original: Some(movement) });
-    }
-
-    /// `Entity.makeStuckInBlock`: the fall ends and the next move is slowed.
-    pub(crate) fn make_stuck_in_block(&mut self, multiplier: [f64; 3]) {
-        self.reset_fall_distance();
-        self.stuck_speed = multiplier;
     }
 }

@@ -160,9 +160,6 @@ impl Player {
         // `LivingEntity.baseTick`: suffocation in a wall, else a player outside the world
         // border past its buffer.
         if self.alive() {
-            if std::env::var_os("KILN_DBG_MOVE").is_some() && self.tick_count < 4 {
-                eprintln!("DBG wall {} pos {:?} gm {}", self.is_in_wall(block), self.pos, self.game_mode);
-            }
             if self.is_in_wall(block) {
                 self.hurt(1.0, &Cause::Other("minecraft:in_wall").into(), ctx);
             } else {
@@ -280,9 +277,6 @@ impl Player {
         let was_on_fire = self.fire_ticks > 0;
         let was_freezing = self.ticks_frozen > 0;
         let fire_before = self.fire_ticks;
-        if std::env::var_os("KILN_DBG_MOVE").is_some() && self.tick_count < 6 {
-            eprintln!("DBG movements tick {} {:?}", self.tick_count, movements);
-        }
         let effects = self.inside_blocks(block, dim, &movements, ctx);
         for e in effects {
             if !self.alive() {

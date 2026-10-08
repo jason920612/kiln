@@ -264,14 +264,6 @@ pub(crate) enum Target {
     Entity { bb: kiln_entity::math::Aabb, kind: EntityClass, type_id: i32, pos: [f64; 3], part: Option<usize> },
 }
 
-impl Target {
-    fn part(&self) -> Option<usize> {
-        match self {
-            Target::Entity { part, .. } => *part,
-            Target::Player(_) => None,
-        }
-    }
-}
 
 /// An ender dragon part by its id (the dragon's id plus 1 to 8): the part's box, the dragon.
 fn dragon_part(entities: &entities::Entities, id: i32) -> Option<Target> {

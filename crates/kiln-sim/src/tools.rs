@@ -295,7 +295,7 @@ fn max_age(s: u16) -> i32 {
 }
 
 /// `BonemealableBlock.isValidBonemealTarget`.
-fn valid_target(level: &RegionLevel, pos: BlockPos, s: u16) -> bool {
+fn valid_target(_level: &RegionLevel, _pos: BlockPos, s: u16) -> bool {
     match logic::block_class(s) {
         C::CropBlock | C::BeetrootBlock | C::TorchflowerCropBlock => state::get_int(s, "age") < max_age(s),
         C::StemBlock => state::get_int(s, "age") != 7,

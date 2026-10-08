@@ -2834,7 +2834,13 @@ fn carry_out(
             if let Some(p) = players.iter_mut().find(|p| p.entity_id == target) {
                 // kiln-entity's attacker is the entity that dealt the damage (TNT, a falling
                 // block); none of them is a player.
-                let source = health::Source { cause: health::Cause::Entity(kind), attacker: None, direct: attacker, weapon: None, position: None };
+                // A guardian's thorns (`DamageSources.thorns(guardian)`) come from the guardian itself: the
+                // hurt player is knocked away from it like from any melee hit.
+                let thorns_from = (kind == kiln_entity::level::DamageKind::Thorns)
+                    .then(|| attacker.and_then(|id| list.binary_search_by_key(&id, |e| e.id).ok()))
+                    .flatten()
+                    .map(|i| health::Attacker::mob(list[i].id, list[i].kind.name, list[i].pos));
+                let source = health::Source { cause: health::Cause::Entity(kind), attacker: thorns_from, direct: attacker, weapon: None, position: None };
                 let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
                 p.hurt(amount, &source, &mut ctx);
             }

@@ -51,11 +51,15 @@ impl Player {
         self.inv.times_changed += 1;
     }
 
-    /// `WritableBookItem.use` / `WrittenBookItem.use`: counted as a use, and the book opens in
-    /// the hand it is held in.
+    /// `WritableBookItem.use` / `WrittenBookItem.use` (`Player.openItemGui`): counted as a use;
+    /// a written book opens in the hand it is held in (the book and quill's editor is the
+    /// client's own and needs no packet).
     pub(crate) fn use_book(&mut self, off_hand: bool) {
-        let item = self.in_hand(off_hand).item();
+        let held = self.in_hand(off_hand);
+        let (item, written) = (held.item(), held.has(ids::WRITTEN_BOOK_CONTENT));
         self.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, item), 1);
-        self.send(world_fx::open_book(off_hand as i32));
+        if written {
+            self.send(world_fx::open_book(off_hand as i32));
+        }
     }
 }

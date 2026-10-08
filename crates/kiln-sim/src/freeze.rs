@@ -76,13 +76,6 @@ impl Player {
         }
         let (w, _, _) = self.dimensions();
         let f = (w * 0.8) as f64;
-        if std::env::var_os("KILN_DBG_MOVE").is_some() && self.tick_count < 3 {
-            let at = |x: i32, y: i32, z: i32| {
-                let s = block(BlockPos::new(x, y, z));
-                (s, kiln_entity::physics::is_suffocating(s))
-            };
-            eprintln!("DBG inwall eye {} b100 {:?} b101 {:?}", self.eye_y(), at(0, 100, 0), at(0, 101, 0));
-        }
         let eye = self.eye_y();
         let b = Aabb::new(self.pos[0] - f / 2.0, eye - 5.0e-7, self.pos[2] - f / 2.0, self.pos[0] + f / 2.0, eye + 5.0e-7, self.pos[2] + f / 2.0);
         let floor = |v: f64| v.floor() as i32;

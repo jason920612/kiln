@@ -246,6 +246,8 @@ impl RegionPart for RegionBlocks {
         {
             let mut editors: SmallVec<[&mut crate::signs::SignEditors; 4]> = parts.iter_mut().map(|p| &mut p.sign_editors).collect();
             self.sign_editors.split_into(&mut editors, |p| owner(p.chunk()));
+        }
+        {
             let mut spawners: SmallVec<[&mut crate::mob_spawner::Spawners; 4]> = parts.iter_mut().map(|p| &mut p.spawners).collect();
             self.spawners.split_into(&mut spawners, |c| owner((c.x, c.z)));
         }
@@ -662,10 +664,6 @@ impl Level for RegionLevel<'_> {
         let id = crate::weather::biome_at(self.cells, self.env, pos);
         let (_, names) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
         names.get(id as usize).map(|n| (*n).to_owned())
-    }
-
-    fn sky_darken(&self) -> i32 {
-        self.env.mobs.sky_darken
     }
 
     fn set_block_entity_data(&mut self, pos: BlockPos, data: &Tag) {

@@ -163,6 +163,7 @@ impl Cause {
 }
 
 impl Source {
+    #[cfg(test)]
     pub(crate) fn melee(attacker: Attacker, weapon: kiln_item::ItemStack) -> Source {
         Source { cause: Cause::PlayerAttack, attacker: Some(attacker), direct: None, weapon: Some(weapon), position: None }
     }
@@ -659,7 +660,7 @@ impl Player {
             }
             // `dealDefaultKnockback` from the source's position (melee: the attacker's).
             if !source.is("minecraft:no_knockback")
-                && matches!(source.cause, Cause::PlayerAttack | Cause::Other(_) | Cause::Entity(DamageKind::MobAttack))
+                && matches!(source.cause, Cause::PlayerAttack | Cause::Other(_) | Cause::Entity(DamageKind::MobAttack | DamageKind::Thorns))
                 && let Some(a) = &source.attacker
             {
                 let (dx, dz) = (a.pos[0] - self.pos[0], a.pos[2] - self.pos[2]);

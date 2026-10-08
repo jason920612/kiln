@@ -21,7 +21,7 @@ use kiln_worldgen::proto::ProtoChunk;
 use kiln_worldgen::random::WorldgenRandom;
 use kiln_worldgen::region::Region;
 use kiln_worldgen::structure::bbox::BoundingBox;
-use kiln_worldgen::structure::piece::{Piece, PlaceContext};
+use kiln_worldgen::structure::piece::PlaceContext;
 use std::collections::HashSet;
 use std::sync::Arc;
 

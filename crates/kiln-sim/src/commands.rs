@@ -324,7 +324,15 @@ impl Sim {
         let Some(old) = chunk.block_entity(lx, y, lz).cloned() else { return false };
         let mut be = kiln_world::block_entity::BlockEntity::new(old.kind);
         if let Tag::Compound(out) = &mut be.nbt {
-            out.extend(fields.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")).cloned());
+            // The new contents replace the defaults a block entity starts with (a sign's empty sides).
+            for (k, v) in fields.iter().filter(|(k, _)| !matches!(k.as_str(), "id" | "x" | "y" | "z")) {
+                out.retain(|(ok, _)| ok != k);
+                out.push((k.clone(), v.clone()));
+            }
+            // Vanilla parses the data and saves it again: a sign's sides come back complete.
+            if matches!(kiln_world::block_entity::type_name(old.kind), "minecraft:sign" | "minecraft:hanging_sign") {
+                crate::signs::canonical(out);
+            }
         }
         if be == old {
             return false;

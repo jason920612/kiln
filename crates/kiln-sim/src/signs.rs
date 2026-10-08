@@ -82,6 +82,16 @@ fn side_from(tag: Option<&Tag>) -> SignText {
     tag.and_then(|t| SignText::from_value(&Value::from_nbt(t)).ok()).unwrap_or_default()
 }
 
+/// A sign's data as vanilla saves it after loading it: both sides parsed and written whole
+/// (color, glow, four messages), whatever fields the loaded data had.
+pub(crate) fn canonical(fields: &mut [(String, Tag)]) {
+    for (k, v) in fields.iter_mut() {
+        if k == "front_text" || k == "back_text" {
+            *v = side_from(Some(v)).to_value().to_nbt();
+        }
+    }
+}
+
 fn chunk_pos(pos: BlockPos) -> kiln_world::ChunkPos {
     kiln_world::ChunkPos::of_block(pos.x, pos.z)
 }

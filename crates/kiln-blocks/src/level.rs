@@ -314,11 +314,6 @@ pub trait Level {
         None
     }
 
-    /// `Level.getSkyDarken`: how much the sky light is dimmed by time and weather (0 by day).
-    fn sky_darken(&self) -> i32 {
-        0
-    }
-
     /// Stores fields of a block entity a placed feature filled in (a beehive's bees) in the
     /// block entity at `pos`.
     fn set_block_entity_data(&mut self, _pos: BlockPos, _data: &kiln_proto::nbt::Tag) {}
