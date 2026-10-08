@@ -93,6 +93,17 @@ pub(crate) fn max_ns(counter: &AtomicU64, d: Duration) {
     counter.fetch_max(d.as_nanos() as u64, Relaxed);
 }
 
+/// Proto-chunks the overworld's generator holds (set by the tick thread).
+pub(crate) static GEN_HELD: AtomicU64 = AtomicU64::new(0);
+
+/// The process's resident memory in MiB (Linux; 0 elsewhere).
+pub(crate) fn rss_mb() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| s.lines().find(|l| l.starts_with("VmRSS:")).and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()))
+        .map_or(0, |kb| kb / 1024)
+}
+
 /// One log line with the totals: `key=value` pairs a benchmark parses.
 pub(crate) fn line(gen_threads: usize) -> String {
     let (n, mean, p50, p99, max) = GEN_LATENCY.summary();
@@ -105,7 +116,8 @@ pub(crate) fn line(gen_threads: usize) -> String {
          gen_latency_p50_ms={p50} gen_latency_p99_ms={p99} gen_latency_max_ms={max} \
          disk_hits={} disk_ms={:.1} disk_max_ms={:.2} disk_misses={} disk_miss_ms={:.1} \
          installed={} install_ms={:.1} install_max_ms={:.2} sync_loads={} sync_ms={:.1} sync_max_ms={:.1} \
-         limbo_n={} limbo_mean_ms={:.1} limbo_p99_ms={} limbo_max_ms={} join_wait_n={} join_wait_mean_ms={:.1} join_wait_max_ms={}",
+         limbo_n={} limbo_mean_ms={:.1} limbo_p99_ms={} limbo_max_ms={} join_wait_n={} join_wait_mean_ms={:.1} join_wait_max_ms={} \
+         gen_held={} rss_mb={}",
         GEN_DONE.load(Relaxed),
         ms(&GEN_BUSY_NS),
         DISK_HITS.load(Relaxed),
@@ -126,6 +138,8 @@ pub(crate) fn line(gen_threads: usize) -> String {
         joins.0,
         joins.1,
         joins.4,
+        GEN_HELD.load(Relaxed),
+        rss_mb(),
     );
     s
 }

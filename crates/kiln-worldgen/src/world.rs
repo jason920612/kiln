@@ -128,6 +128,10 @@ impl ChunkGenerator for FullChunks {
     fn fork(&self) -> Box<dyn ChunkGenerator> {
         Box::new(FullChunks { pipeline: self.pipeline.clone(), scratch: GenScratch::default(), biome_ids: self.biome_ids.clone() })
     }
+
+    fn held(&self) -> usize {
+        self.pipeline.stats().held
+    }
 }
 
 /// A `ChunkGenerator` running BIOMES and TERRAIN only (no structures, features or spawning).

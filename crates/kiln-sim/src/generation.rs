@@ -76,6 +76,8 @@ pub(crate) struct GenPool {
     /// Finished chunks not installed yet (still in `in_flight`, so not asked for again).
     ready: std::collections::BTreeMap<ChunkPos, Chunk>,
     claims: Arc<Mutex<HashMap<ChunkPos, Claim>>>,
+    /// A fork of the generator kept for its statistics.
+    probe: Box<dyn ChunkGenerator>,
 }
 
 impl GenPool {
@@ -119,7 +121,7 @@ impl GenPool {
                 })
                 .expect("spawning a generation thread");
         }
-        Self { requests, urgent, results, in_flight: HashMap::new(), urgent_sent: Default::default(), ready: Default::default(), claims }
+        Self { requests, urgent, results, in_flight: HashMap::new(), urgent_sent: Default::default(), ready: Default::default(), claims, probe: generator.fork() }
     }
 
     /// Queues `pos` unless it is already queued; `false` when the queue is full.
@@ -167,6 +169,11 @@ impl GenPool {
         self.in_flight.remove(&pos);
         self.urgent_sent.remove(&pos);
         true
+    }
+
+    /// Unfinished chunks the generator holds (see [`ChunkGenerator::held`]).
+    pub fn held(&self) -> usize {
+        self.probe.held()
     }
 
     /// Chunks queued or being generated.

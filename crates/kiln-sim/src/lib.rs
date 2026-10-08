@@ -1332,6 +1332,8 @@ pub struct Sim {
 
 /// Tick time a world save spends per tick copying chunks for the storage threads.
 const SAVE_BUDGET: Duration = Duration::from_millis(2);
+/// Chunk copies of a save waiting for the encoders at most.
+const SAVE_COPIES_AHEAD: usize = 256;
 
 /// `KILN_SYNC_PLACEMENT=1`: players joining or teleported into terrain not generated yet get
 /// their chunk generated on the tick thread at once (holding every player up), instead of
@@ -1801,6 +1803,8 @@ impl Sim {
             );
             self.commands.last_report = Some(report.to_string());
             let gen_threads = self.config.noise.as_ref().map_or(0, |n| n.threads);
+            let held = self.dims[OVERWORLD_ID].generation.as_ref().map_or(0, |g| g.held());
+            chunkstats::GEN_HELD.store(held as u64, std::sync::atomic::Ordering::Relaxed);
             info!("{}", chunkstats::line(gen_threads));
         }
         if self.commands.stop_requested {
@@ -3225,7 +3229,9 @@ impl Sim {
         let Some(mut queue) = self.save_run.take() else { return };
         let start = Instant::now();
         let game_time = self.game_time;
-        while start.elapsed() < SAVE_BUDGET {
+        // Copies wait while the encoders are behind (each copy is a chunk's worth of memory).
+        let behind = self.dims.iter_mut().map(|d| d.provider.encoding()).sum::<usize>() > SAVE_COPIES_AHEAD;
+        while !behind && start.elapsed() < SAVE_BUDGET {
             let Some((dim, pos)) = queue.pop() else { break };
             let d = &mut self.dims[dim];
             if d.unlit.contains(&pos) {

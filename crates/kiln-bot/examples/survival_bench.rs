@@ -802,6 +802,8 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         "ticks_over_1s_whole_run": { "count": long_ticks, "total_ms": long_ms, "longest_ms": longest },
         "limbo_whole_run": { "n": last.get("limbo_n"), "mean_ms": last.get("limbo_mean_ms"), "p99_ms": last.get("limbo_p99_ms"), "max_ms": last.get("limbo_max_ms") },
         "join_wait_whole_run": { "n": last.get("join_wait_n"), "mean_ms": last.get("join_wait_mean_ms"), "max_ms": last.get("join_wait_max_ms") },
+        "server_rss_mb_max": totals.iter().filter_map(|(_, t)| t.get("rss_mb").copied()).fold(0.0, f64::max),
+        "gen_held_last": last.get("gen_held"),
         "gen_request_to_ready_ms_whole_run": {
             "n": last.get("gen_latency_n"), "mean": last.get("gen_latency_mean_ms"), "p50": last.get("gen_latency_p50_ms"),
             "p99": last.get("gen_latency_p99_ms"), "max": last.get("gen_latency_max_ms"),
@@ -908,6 +910,10 @@ fn print_summary(r: &Value) {
         "waits whole run: teleported into terrain not made yet {:.0} times (waited mean {:.0}, p99 {:.0}, max {:.0} ms); joins waiting for their chunk {:.0} (mean {:.0}, max {:.0} ms)",
         f(c, "limbo_whole_run.n"), f(c, "limbo_whole_run.mean_ms"), f(c, "limbo_whole_run.p99_ms"), f(c, "limbo_whole_run.max_ms"),
         f(c, "join_wait_whole_run.n"), f(c, "join_wait_whole_run.mean_ms"), f(c, "join_wait_whole_run.max_ms")
+    );
+    println!(
+        "memory server peak {:.0} MiB (reports every 30 s); generator holds {:.0} unfinished chunks at the end",
+        f(c, "server_rss_mb_max"), f(c, "gen_held_last")
     );
     let b = &r["bots"];
     let lat = |name: &str, k: &str| {

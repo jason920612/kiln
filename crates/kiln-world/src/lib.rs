@@ -212,6 +212,11 @@ pub trait ChunkGenerator: Send {
     /// An independent instance for another thread (same world, its own scratch space), for
     /// generating off the tick thread.
     fn fork(&self) -> Box<dyn ChunkGenerator>;
+
+    /// Unfinished chunks the generator holds (shared between its forks), for monitoring memory.
+    fn held(&self) -> usize {
+        0
+    }
 }
 
 /// What to create where the chunk source has nothing (unless a [`ChunkGenerator`] is set).
