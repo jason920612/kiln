@@ -305,7 +305,7 @@ pub fn living(level: &dyn EntityLevel, id: i32) -> Option<Living> {
 pub fn living_player(p: &crate::level::PlayerView) -> Living {
     {
         let id = p.id;
-        let h = p.height;
+        let h = p.height as f64;
         return Living {
             id,
             type_name: "minecraft:player",

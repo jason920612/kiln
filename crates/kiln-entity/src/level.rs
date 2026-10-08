@@ -372,7 +372,7 @@ pub fn stop_riding_entity<L: EntityLevel + ?Sized>(level: &mut L, id: i32) {
 
 /// A player's collision box from its view.
 pub fn player_box(p: &PlayerView) -> Aabb {
-    let h = p.height;
+    let h = p.height as f64;
     Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3)
 }
 

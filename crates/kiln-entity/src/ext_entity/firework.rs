@@ -127,7 +127,7 @@ impl Firework {
             if !v.alive || v.spectator || !self.can_hit(v.id) {
                 continue;
             }
-            let h = v.height;
+            let h = v.height as f64;
             let bb = Aabb::new(v.pos.x - 0.3, v.pos.y, v.pos.z - 0.3, v.pos.x + 0.3, v.pos.y + h, v.pos.z + 0.3);
             if let Some(p) = bb.inflate_all(margin).clip(from, to) {
                 let d = from.distance_to_sqr(p);
