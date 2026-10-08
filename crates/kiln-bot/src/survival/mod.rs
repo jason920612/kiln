@@ -196,6 +196,9 @@ pub(crate) struct Settings {
     pub chat_interval: Option<std::time::Duration>,
     /// Do not teleport to the site (a single bot at the world spawn).
     pub stay: bool,
+    /// Explorers turn back towards the site beyond this distance from it (`None`: they roam
+    /// freely), so that groups far apart stay apart.
+    pub roam: Option<f64>,
 }
 
 pub(crate) struct Agent {

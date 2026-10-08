@@ -32,8 +32,9 @@ struct Args {
     /// Bot i is named <prefix><i>.
     #[arg(long, default_value = "Bot")]
     name_prefix: String,
-    /// Radius of the behavior [default: walk 64, circle 16, crowd 6, spread 256]. Survival bots
-    /// ignore it; their group sites are --group-spacing apart around --center.
+    /// Radius of the behavior [default: walk 64, circle 16, crowd 6, spread 256]. Survival: how
+    /// far explorers roam from their group's site [default: no limit]; the sites are
+    /// --group-spacing apart around --center.
     #[arg(long)]
     radius: Option<f64>,
     /// Seconds between chat messages per bot [default: no chat].

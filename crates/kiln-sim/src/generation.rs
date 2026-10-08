@@ -1,52 +1,82 @@
 //! Chunk generation off the tick thread (design §4.2 gen pool, §5.4–5.5): worker threads with
 //! their own generator instances; finished chunks wait until B0 installs them.
+//!
+//! Two queues: the chunks the players' views ask for, and urgent ones (the chunk a player
+//! joins or is teleported into, which waits for it in a loading state). The threads take
+//! urgent chunks first.
 
+use crate::chunkstats;
 use crossbeam_channel::{Receiver, Sender};
 use kiln_world::chunk::Chunk;
 use kiln_world::{ChunkGenerator, ChunkPos, Dimension};
-use crate::chunkstats;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-/// Chunks queued or being generated at most; further requests wait for the next tick.
+/// Chunks queued or being generated at most; further requests wait for the next tick
+/// (urgent requests do not count against it).
 const MAX_IN_FLIGHT: usize = 256;
-
-/// Chunks the generation threads finished and the time they took (all levels, since start).
-static GENERATED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static GENERATING_NS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// How many chunks the generation threads have made since start, and the time they spent on
 /// them (summed over the threads), for load tools.
 pub fn generation_totals() -> (u64, std::time::Duration) {
     use std::sync::atomic::Ordering::Relaxed;
-    (GENERATED.load(Relaxed), std::time::Duration::from_nanos(GENERATING_NS.load(Relaxed)))
+    (chunkstats::GEN_DONE.load(Relaxed), std::time::Duration::from_nanos(chunkstats::GEN_BUSY_NS.load(Relaxed)))
+}
+
+/// Whether a requested chunk is still waiting in a queue or a thread took it. A chunk can sit
+/// in both queues (made urgent after it was queued): the first thread to take it generates it,
+/// the other copy is skipped, as is a copy whose result the tick thread already collected.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Claim {
+    Queued,
+    Taken,
 }
 
 pub(crate) struct GenPool {
     requests: Sender<ChunkPos>,
+    urgent: Sender<ChunkPos>,
     results: Receiver<(ChunkPos, Chunk)>,
     /// Queued or running chunks and when each was requested.
     in_flight: HashMap<ChunkPos, Instant>,
+    /// Chunks sent to the urgent queue (a subset of `in_flight`).
+    urgent_sent: std::collections::HashSet<ChunkPos>,
+    claims: Arc<Mutex<HashMap<ChunkPos, Claim>>>,
 }
 
 impl GenPool {
     pub fn new(generator: &dyn ChunkGenerator, dimension: Dimension, threads: usize) -> Self {
         let (requests, jobs) = crossbeam_channel::unbounded::<ChunkPos>();
+        let (urgent, urgent_jobs) = crossbeam_channel::unbounded::<ChunkPos>();
         let (done, results) = crossbeam_channel::unbounded();
+        let claims: Arc<Mutex<HashMap<ChunkPos, Claim>>> = Arc::default();
         for i in 0..threads.max(1) {
-            let (jobs, done) = (jobs.clone(), done.clone());
+            let (jobs, urgent_jobs, done, claims) = (jobs.clone(), urgent_jobs.clone(), done.clone(), claims.clone());
             let mut generator = generator.fork();
             std::thread::Builder::new()
                 .name(format!("kiln-gen-{i}"))
                 .spawn(move || {
-                    for pos in jobs {
+                    loop {
+                        // Urgent chunks first; otherwise whichever queue has work.
+                        let pos = match urgent_jobs.try_recv() {
+                            Ok(pos) => pos,
+                            Err(_) => crossbeam_channel::select! {
+                                recv(urgent_jobs) -> p => match p { Ok(p) => p, Err(_) => break },
+                                recv(jobs) -> p => match p { Ok(p) => p, Err(_) => break },
+                            },
+                        };
+                        {
+                            let mut claims = claims.lock().unwrap();
+                            match claims.get_mut(&pos) {
+                                Some(c @ Claim::Queued) => *c = Claim::Taken,
+                                _ => continue,
+                            }
+                        }
                         let started = Instant::now();
                         let mut chunk = generator.generate(pos, dimension);
                         chunkstats::count(&chunkstats::GEN_DONE);
                         chunkstats::add_ns(&chunkstats::GEN_BUSY_NS, started.elapsed());
                         chunk.mark_new();
-                        GENERATING_NS.fetch_add(started.elapsed().as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
-                        GENERATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if done.send((pos, chunk)).is_err() {
                             break;
                         }
@@ -54,7 +84,7 @@ impl GenPool {
                 })
                 .expect("spawning a generation thread");
         }
-        Self { requests, results, in_flight: HashMap::new() }
+        Self { requests, urgent, results, in_flight: HashMap::new(), urgent_sent: Default::default(), claims }
     }
 
     /// Queues `pos` unless it is already queued; `false` when the queue is full.
@@ -66,8 +96,22 @@ impl GenPool {
             return false;
         }
         self.in_flight.insert(pos, Instant::now());
+        self.claims.lock().unwrap().insert(pos, Claim::Queued);
         let _ = self.requests.send(pos);
         true
+    }
+
+    /// Queues `pos` ahead of everything else (whatever the queue holds), or moves it ahead if it
+    /// is queued already.
+    pub fn request_urgent(&mut self, pos: ChunkPos) {
+        if !self.urgent_sent.insert(pos) {
+            return;
+        }
+        if !self.in_flight.contains_key(&pos) {
+            self.in_flight.insert(pos, Instant::now());
+            self.claims.lock().unwrap().insert(pos, Claim::Queued);
+        }
+        let _ = self.urgent.send(pos);
     }
 
     /// Chunks queued or being generated.
@@ -82,11 +126,21 @@ impl GenPool {
     /// Chunks finished since the last call, in position order.
     pub fn finished(&mut self) -> Vec<(ChunkPos, Chunk)> {
         let mut out: Vec<_> = self.results.try_iter().collect();
-        for (pos, _) in &out {
-            if let Some(at) = self.in_flight.remove(pos) {
-                chunkstats::GEN_LATENCY.add(at.elapsed());
-            }
+        if out.is_empty() {
+            return out;
         }
+        let mut claims = self.claims.lock().unwrap();
+        // Only chunks still asked for: a result for a position no longer in flight is a copy.
+        out.retain(|(pos, _)| match self.in_flight.remove(pos) {
+            Some(at) => {
+                chunkstats::GEN_LATENCY.add(at.elapsed());
+                claims.remove(pos);
+                self.urgent_sent.remove(pos);
+                true
+            }
+            None => false,
+        });
+        drop(claims);
         out.sort_unstable_by_key(|(pos, _)| *pos);
         out
     }

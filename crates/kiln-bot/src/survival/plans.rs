@@ -91,14 +91,19 @@ impl Agent {
             self.plan.heading_set = true;
             self.plan.heading = self.rng.range(0.0, TAU);
         }
+        let p = self.body.pos;
         if self.plan.fails > 0 {
             self.plan.fails = 0;
             self.plan.heading += self.rng.range(1.5, 4.5);
         } else {
             self.plan.heading += self.rng.range(-0.5, 0.5);
         }
+        // Beyond the roaming distance: back towards the site, more or less.
+        let [sx, sz] = self.site_target();
+        if self.cfg.roam.is_some_and(|r| (p[0] - sx).hypot(p[2] - sz) > r) {
+            self.plan.heading = (sz - p[2]).atan2(sx - p[0]) + self.rng.range(-0.6, 0.6);
+        }
         let dist = self.rng.range(60.0, 160.0);
-        let p = self.body.pos;
         let h = self.plan.heading;
         let to = [p[0] + h.cos() * dist, p[2] + h.sin() * dist];
         let sprint = self.rng.unit() < 0.8;

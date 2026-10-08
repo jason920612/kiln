@@ -8,6 +8,18 @@
 //!     --datapack work/generated --world scratch/world
 //! ```
 //!
+//! With `--ssh user@host` the server runs on that machine (started over ssh, its console on the
+//! ssh session's standard input and output) and the bots connect to it over the network from
+//! this one, as real remote players would, without taking the server's CPU. `--server`,
+//! `--datapack` and `--world` are then paths on the remote machine (relative to `--remote-dir`),
+//! and the tick trace, world sizes and the server's CPU are read there:
+//!
+//! ```text
+//! survival_bench --ssh test@192.168.1.169 --remote-dir /home/test/wt/wp47-survival-perf \
+//!     --server target/release/kiln --datapack /home/test/kiln/work/generated \
+//!     --world /home/test/bench/world --bot target/release/kiln-bot.exe --count 200
+//! ```
+//!
 //! A run starts the server (`--phase gen` on an empty world directory, `--phase reload` on a copy
 //! of a saved one, `both` does the two in a row), lets the bots join and walk to their sites,
 //! then measures a stretch of `--measure` seconds with all of them in play:
@@ -59,9 +71,13 @@ struct Args {
     /// Bots per group site.
     #[arg(long, default_value_t = 10)]
     group_size: usize,
-    /// Blocks between group sites.
-    #[arg(long, default_value_t = 700.0)]
+    /// Blocks between group sites: far enough apart that groups stay in their own regions
+    /// (cells of 128 blocks, regions merge across gaps of two cells or less).
+    #[arg(long, default_value_t = 1536.0)]
     spacing: f64,
+    /// How far explorers roam from their group's site (0: no limit).
+    #[arg(long, default_value_t = 320.0)]
+    roam: f64,
     #[arg(long, default_value_t = 25584)]
     port: u16,
     #[arg(long, default_value_t = 4242)]
@@ -102,8 +118,134 @@ struct Args {
     tag: String,
     /// Windows priority class of the server and bot processes: `normal`, `above-normal` or `high`.
     /// Other programs on the machine (builds, browsers) then take less of the benchmark's CPU.
-    #[arg(long, default_value = "above-normal")]
+    #[arg(long, default_value = "normal")]
     priority: String,
+    /// Run the server on this ssh destination (`user@host`) instead of locally.
+    #[arg(long)]
+    ssh: Option<String>,
+    /// Working directory of the server on the remote machine.
+    #[arg(long, default_value = ".")]
+    remote_dir: String,
+    /// Address the bots connect to (host or host:port) [default: 127.0.0.1; with --ssh, a
+    /// tunnel through ssh to the server's port].
+    #[arg(long)]
+    connect: Option<String>,
+    /// With --ssh and no --connect: the local port of the ssh tunnel (`ssh -L`) to the server,
+    /// for a server machine whose game port cannot be reached directly (a VM behind NAT).
+    #[arg(long, default_value_t = 35565)]
+    tunnel_port: u16,
+}
+
+/// Where the server runs: here, or on another machine reached over ssh.
+#[derive(Clone)]
+enum Host {
+    Local,
+    Ssh { dest: String, dir: String },
+}
+
+/// `s` quoted for a POSIX shell.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+impl Host {
+    fn of(a: &Args) -> Host {
+        match &a.ssh {
+            Some(dest) => Host::Ssh { dest: dest.clone(), dir: a.remote_dir.clone() },
+            None => Host::Local,
+        }
+    }
+
+    fn ssh(dest: &str) -> Command {
+        let mut c = Command::new("ssh");
+        c.args(["-o", "BatchMode=yes", "-o", "ServerAliveInterval=15", dest]);
+        c
+    }
+
+    /// Runs a shell script on the remote machine (in its working directory); its output.
+    fn sh(&self, script: &str) -> Result<String> {
+        let Host::Ssh { dest, dir } = self else { bail!("not a remote host") };
+        let out = Self::ssh(dest).arg(format!("cd {} && {script}", sh_quote(dir))).stdin(Stdio::null()).output()?;
+        if !out.status.success() {
+            bail!("ssh {script:?}: {}", String::from_utf8_lossy(&out.stderr));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    fn read(&self, path: &Path) -> String {
+        match self {
+            Host::Local => std::fs::read_to_string(path).unwrap_or_default(),
+            Host::Ssh { .. } => self.sh(&format!("cat {} 2>/dev/null || true", sh_quote(&path.to_string_lossy()))).unwrap_or_default(),
+        }
+    }
+
+    fn remove_dir(&self, path: &Path) -> Result<()> {
+        match self {
+            Host::Local => {
+                if path.exists() {
+                    std::fs::remove_dir_all(path)?;
+                }
+                Ok(())
+            }
+            Host::Ssh { .. } => self.sh(&format!("rm -rf {}", sh_quote(&path.to_string_lossy()))).map(drop),
+        }
+    }
+
+    /// Copies a world without the players' saved state.
+    fn copy_world(&self, src: &Path, dst: &Path) -> Result<()> {
+        match self {
+            Host::Local => copy_dir(src, dst, &["playerdata", "players"]),
+            Host::Ssh { .. } => {
+                let (src, dst) = (sh_quote(&src.to_string_lossy()), sh_quote(&dst.to_string_lossy()));
+                self.sh(&format!(
+                    "rm -rf {dst} && mkdir -p {dst} && (cd {src} && tar cf - --exclude=./playerdata --exclude=./players .) | (cd {dst} && tar xf -)"
+                ))
+                .map(drop)
+            }
+        }
+    }
+
+    fn dir_size(&self, path: &Path) -> u64 {
+        match self {
+            Host::Local => dir_size(path),
+            Host::Ssh { .. } => self
+                .sh(&format!("du -sb {} 2>/dev/null | cut -f1", sh_quote(&path.to_string_lossy())))
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0),
+        }
+    }
+
+    fn cores(&self) -> f64 {
+        match self {
+            Host::Local => logical_cores(),
+            Host::Ssh { .. } => self.sh("nproc").ok().and_then(|s| s.trim().parse().ok()).unwrap_or(1.0),
+        }
+    }
+
+    /// CPU seconds the server process has used, and (busy, total) CPU seconds of its machine.
+    fn server_cpu(&self, server: &Server) -> (Option<f64>, Option<(f64, f64)>) {
+        match self {
+            Host::Local => (cpu::process(&server.child), cpu::system()),
+            Host::Ssh { .. } => {
+                let Some(pid) = server.remote_pid() else { return (None, None) };
+                let Ok(out) = self.sh(&format!("cat /proc/{pid}/stat; head -1 /proc/stat")) else { return (None, None) };
+                let mut lines = out.lines();
+                // Clock ticks of 10 ms (USER_HZ).
+                let process = lines.next().and_then(|l| {
+                    let rest: Vec<&str> = l.rsplit_once(')')?.1.split_whitespace().collect();
+                    Some((rest.get(11)?.parse::<f64>().ok()? + rest.get(12)?.parse::<f64>().ok()?) / 100.0)
+                });
+                let system = lines.next().and_then(|l| {
+                    let v: Vec<f64> = l.split_whitespace().skip(1).filter_map(|w| w.parse().ok()).collect();
+                    let total: f64 = v.iter().take(8).sum();
+                    let idle = v.get(3)? + v.get(4)?;
+                    Some(((total - idle) / 100.0, total / 100.0))
+                });
+                (process, system)
+            }
+        }
+    }
 }
 
 /// Process creation flag for a Windows priority class.
@@ -179,6 +321,7 @@ mod cpu {
 struct Server {
     child: Child,
     lines: Arc<Mutex<Vec<(u128, String)>>>,
+    host: Host,
 }
 
 fn strip_ansi(s: &str) -> String {
@@ -200,36 +343,60 @@ fn strip_ansi(s: &str) -> String {
 
 impl Server {
     fn start(a: &Args, world: &Path, trace: &Path, log: &Path, format: &str) -> Result<Server> {
-        let mut cmd = Command::new(&a.server);
-        cmd.env("KILN_PORT", a.port.to_string())
-            .env("KILN_GENERATOR", "noise")
-            .env("KILN_SEED", a.seed.to_string())
-            .env("KILN_DATAPACK", &a.datapack)
-            .env("KILN_OPS", "SB*")
-            .env("KILN_MAX_PLAYERS", (a.count + 20).to_string())
-            .env("KILN_WORLD", world)
-            .env("KILN_VIEW_DISTANCE", a.view_distance.to_string())
-            .env("KILN_SIMULATION_DISTANCE", a.simulation_distance.to_string())
-            .env("KILN_TICK_TRACE", trace)
-            .env("RUST_LOG", "info");
+        let mut env: Vec<(String, String)> = vec![
+            ("KILN_PORT".into(), a.port.to_string()),
+            ("KILN_GENERATOR".into(), "noise".into()),
+            ("KILN_SEED".into(), a.seed.to_string()),
+            ("KILN_DATAPACK".into(), a.datapack.to_string_lossy().into_owned()),
+            ("KILN_OPS".into(), "SB*".into()),
+            ("KILN_MAX_PLAYERS".into(), (a.count + 20).to_string()),
+            ("KILN_WORLD".into(), world.to_string_lossy().into_owned()),
+            ("KILN_VIEW_DISTANCE".into(), a.view_distance.to_string()),
+            ("KILN_SIMULATION_DISTANCE".into(), a.simulation_distance.to_string()),
+            ("KILN_TICK_TRACE".into(), trace.to_string_lossy().into_owned()),
+            ("RUST_LOG".into(), "info".into()),
+        ];
         if format == "native" {
-            cmd.env("KILN_WORLD_FORMAT", "native");
+            env.push(("KILN_WORLD_FORMAT".into(), "native".into()));
         }
         if a.phase_detail {
-            cmd.env("KILN_PHASE_DETAIL", "1");
+            env.push(("KILN_PHASE_DETAIL".into(), "1".into()));
         }
         if let Some(ms) = a.slow_print {
-            cmd.env("KILN_SLOW_PRINT", ms.to_string());
+            env.push(("KILN_SLOW_PRINT".into(), ms.to_string()));
         }
         for kv in &a.env {
             let (k, v) = kv.split_once('=').context("--env wants KEY=VALUE")?;
-            cmd.env(k, v);
+            env.push((k.into(), v.into()));
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(priority_flag(&a.priority));
-        }
+        let host = Host::of(a);
+        let mut cmd = match &host {
+            Host::Local => {
+                let mut cmd = Command::new(&a.server);
+                cmd.envs(env.iter().map(|(k, v)| (k, v)));
+                #[cfg(windows)]
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(priority_flag(&a.priority));
+                }
+                cmd
+            }
+            Host::Ssh { dest, dir } => {
+                // The shell becomes the server (`exec`), so the pid it prints is the server's.
+                let vars: Vec<String> = env.iter().map(|(k, v)| format!("{k}={}", sh_quote(v))).collect();
+                let trace_dir = trace.parent().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| ".".into());
+                let script = format!(
+                    "cd {} && mkdir -p {} && echo KILN_PID=$$ && exec env {} {}",
+                    sh_quote(dir),
+                    sh_quote(&trace_dir),
+                    vars.join(" "),
+                    sh_quote(&a.server.to_string_lossy())
+                );
+                let mut cmd = Host::ssh(dest);
+                cmd.arg(script);
+                cmd
+            }
+        };
         let mut child = cmd
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -251,7 +418,12 @@ impl Server {
                 }
             });
         }
-        Ok(Server { child, lines })
+        Ok(Server { child, lines, host })
+    }
+
+    /// The server's pid on the remote machine.
+    fn remote_pid(&self) -> Option<u32> {
+        self.lines.lock().unwrap().iter().find_map(|(_, l)| l.strip_prefix("KILN_PID=")?.trim().parse().ok())
     }
 
     fn command(&mut self, c: &str) {
@@ -286,6 +458,9 @@ impl Server {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(200));
+        }
+        if let (Host::Ssh { .. }, Some(pid)) = (&self.host, self.remote_pid()) {
+            let _ = self.host.sh(&format!("kill -9 {pid}"));
         }
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -400,7 +575,11 @@ fn dir_size(p: &Path) -> u64 {
 
 fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     std::fs::create_dir_all(&a.out)?;
-    let trace = a.out.join(format!("{}-{label}.ticks", a.tag));
+    // The trace is written by the server, on its machine: next to the world there.
+    let trace = match &a.ssh {
+        Some(_) => PathBuf::from(format!("{}-{}-{label}.ticks", world.display(), a.tag)),
+        None => a.out.join(format!("{}-{label}.ticks", a.tag)),
+    };
     let log = a.out.join(format!("{}-{label}.server.log", a.tag));
     let bot_log = a.out.join(format!("{}-{label}.bots.log", a.tag));
     eprintln!("[{label}] starting the server on {} ({format}, {} bots)", world.display(), a.count);
@@ -414,11 +593,36 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     // Everyone joins and walks to a site; once 95% have arrived and the warmup is over, the
     // measured stretch starts. The bots run until told to stop.
     let join_secs = a.count as f64 / a.rate;
+    let host = Host::of(a);
+    // The bots' way to the server: directly, or through an ssh tunnel to its machine.
+    let mut tunnel = None;
+    let connect = match (&a.connect, &a.ssh) {
+        (Some(c), _) if c.contains(':') => c.clone(),
+        (Some(c), _) => format!("{c}:{}", a.port),
+        (None, None) => format!("127.0.0.1:{}", a.port),
+        (None, Some(dest)) => {
+            let mut t = Host::ssh(dest);
+            t.args(["-N", "-o", "ExitOnForwardFailure=yes", "-c", "aes128-gcm@openssh.com", "-L"])
+                .arg(format!("127.0.0.1:{}:127.0.0.1:{}", a.tunnel_port, a.port))
+                .stdin(Stdio::null());
+            tunnel = Some(t.spawn().context("starting the ssh tunnel")?);
+            let addr: std::net::SocketAddr = ([127, 0, 0, 1], a.tunnel_port).into();
+            let end = Instant::now() + Duration::from_secs(20);
+            while std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(1)).is_err() {
+                if Instant::now() > end {
+                    bail!("the ssh tunnel to the server did not open");
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            addr.to_string()
+        }
+    };
     let mut bot_cmd = Command::new(&a.bot);
     bot_cmd
-        .args(["--addr", &format!("127.0.0.1:{}", a.port), "--count", &a.count.to_string(), "--rate", &a.rate.to_string()])
+        .args(["--addr", &connect, "--count", &a.count.to_string(), "--rate", &a.rate.to_string()])
         .args(["--behavior", "survival", "--duration", "86400", "--stdin-control", "--name-prefix", "SB"])
         .args(["--group-size", &a.group_size.to_string(), "--group-spacing", &a.spacing.to_string()])
+        .args(if a.roam > 0.0 { vec!["--radius".to_string(), a.roam.to_string()] } else { Vec::new() })
         .args(["--view-distance", &a.view_distance.to_string(), "--roles", &a.roles])
         .args(["--chat-interval", &a.chat_interval.to_string(), "--seed", &a.seed.to_string()])
         .args(["--report-interval", "10", "--json", "--center", "0,0", "--join-timeout", "900"])
@@ -431,7 +635,6 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         bot_cmd.creation_flags(priority_flag(&a.priority));
     }
     let bots_started = now_ms();
-    let sys0 = cpu::system();
     let mut bots = bot_cmd.spawn().with_context(|| format!("starting {}", a.bot.display()))?;
     let (out_buf, err_buf) = (Arc::new(Mutex::new(String::new())), Arc::new(Mutex::new(String::new())));
     for (stream, buf) in [
@@ -478,10 +681,12 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
             }
         }
         if at_from.is_none() && t >= measure_from {
-            at_from = Some((cpu::process(&server.child).unwrap_or(0.0), cpu::process(&bots).unwrap_or(0.0), cpu::system()));
+            let (sp, sys) = host.server_cpu(&server);
+            at_from = Some((sp.unwrap_or(0.0), cpu::process(&bots).unwrap_or(0.0), sys));
         }
         if at_to.is_none() && t >= measure_to {
-            at_to = Some((cpu::process(&server.child).unwrap_or(0.0), cpu::process(&bots).unwrap_or(0.0), cpu::system()));
+            let (sp, sys) = host.server_cpu(&server);
+            at_to = Some((sp.unwrap_or(0.0), cpu::process(&bots).unwrap_or(0.0), sys));
         }
         if let Ok(Some(_)) = bots.try_wait() {
             break;
@@ -500,6 +705,10 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         std::thread::sleep(Duration::from_millis(250));
     }
     let _ = bots.wait();
+    if let Some(mut t) = tunnel {
+        let _ = t.kill();
+        let _ = t.wait();
+    }
     std::thread::sleep(Duration::from_secs(1));
     let stopped_clean = server.stop(Duration::from_secs(180));
     let bot_out = out_buf.lock().unwrap().clone();
@@ -512,7 +721,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         .unwrap_or(Value::Null);
 
     // Tick trace: ticks of the measured stretch (and of the whole run, for comparison).
-    let text = std::fs::read_to_string(&trace).unwrap_or_default();
+    let text = host.read(&trace);
     let mut all = Vec::new();
     let mut measured = Vec::new();
     // Ticks that took over a second: they freeze every player, whatever the cause.
@@ -588,6 +797,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         },
     });
 
+    let server_cores = host.cores();
     let cpu_json = match (at_from, at_to) {
         (Some(f), Some(t)) => {
             let sys = match (f.2, t.2) {
@@ -597,13 +807,17 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
             json!({
                 "server_cores": (t.0 - f.0) / secs,
                 "bots_cores": (t.1 - f.1) / secs,
-                "machine_utilisation": sys,
-                "background_cores": sys.map(|u| (u * logical_cores() - (t.0 - f.0) / secs - (t.1 - f.1) / secs).max(0.0)),
+                "server_machine_cores": server_cores,
+                "server_machine_utilisation": sys,
+                // On the server's machine, besides the server (and the bots, when they run there).
+                "background_cores": sys.map(|u| {
+                    let bots = if matches!(host, Host::Local) { (t.1 - f.1) / secs } else { 0.0 };
+                    (u * server_cores - (t.0 - f.0) / secs - bots).max(0.0)
+                }),
             })
         }
         _ => Value::Null,
     };
-    let _ = sys0;
     let ok_window = measured.len() as f64 > a.measure * 20.0 * 0.5;
     let result = json!({
         "label": label,
@@ -624,7 +838,8 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         "cpu": cpu_json,
         "bots": report,
         "server_stopped_cleanly": stopped_clean,
-        "world_size_mb": dir_size(world) as f64 / 1e6,
+        "world_size_mb": host.dir_size(world) as f64 / 1e6,
+        "server_host": a.ssh.clone().unwrap_or_else(|| "local".into()),
         "measured_window_complete": ok_window,
         "in_window_reports_seen": reports.iter().filter(|r| in_window(r.unix_ms)).count(),
     });
@@ -699,9 +914,9 @@ fn print_summary(r: &Value) {
         f(t, "containers_opened"), f(t, "commands"), f(t, "chat_sent")
     );
     println!(
-        "cpu    server {:.2} cores, bots {:.2} cores, machine {:.0}% busy (other programs about {:.1} cores of {:.0})",
-        f(&r["cpu"], "server_cores"), f(&r["cpu"], "bots_cores"), f(&r["cpu"], "machine_utilisation") * 100.0,
-        f(&r["cpu"], "background_cores"), logical_cores()
+        "cpu    server {:.2} cores, bots {:.2} cores; server's machine {:.0}% busy (other programs about {:.1} cores of {:.0})",
+        f(&r["cpu"], "server_cores"), f(&r["cpu"], "bots_cores"), f(&r["cpu"], "server_machine_utilisation") * 100.0,
+        f(&r["cpu"], "background_cores"), f(&r["cpu"], "server_machine_cores")
     );
     if let Some(p) = b["problems"].as_array() {
         for x in p.iter().take(12) {
@@ -723,21 +938,18 @@ fn main() -> Result<()> {
         p @ ("gen" | "reload") => vec![p],
         p => bail!("--phase gen, reload or both, not {p}"),
     };
+    let host = Host::of(&a);
     let reload_dir = PathBuf::from(format!("{}-reload", a.world.display()));
     for p in phases {
         match p {
             "gen" => {
-                if a.world.exists() {
-                    std::fs::remove_dir_all(&a.world)?;
-                }
+                host.remove_dir(&a.world)?;
                 results.push(run(&a, &a.world, &a.format, &format!("gen-{}", a.format))?);
             }
             _ => {
-                if reload_dir.exists() {
-                    std::fs::remove_dir_all(&reload_dir)?;
-                }
+                host.remove_dir(&reload_dir)?;
                 // The same chunks, without the bots' saved positions: they start from the spawn again.
-                copy_dir(&a.world, &reload_dir, &["playerdata", "players"])?;
+                host.copy_world(&a.world, &reload_dir)?;
                 results.push(run(&a, &reload_dir, &a.format, &format!("reload-{}", a.format))?);
             }
         }

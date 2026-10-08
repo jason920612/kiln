@@ -8,7 +8,7 @@ use kiln_data::blocks::default_state as d;
 use kiln_proto::packets::{self as server, PlayIn};
 
 fn agent(role: Role) -> Agent {
-    let cfg = Settings { role, site: [0.0, 0.0], view_distance: 2, seed: 7, chat_interval: None, stay: true };
+    let cfg = Settings { role, site: [0.0, 0.0], view_distance: 2, seed: 7, chat_interval: None, stay: true, roam: None };
     let mut a = Agent::new(cfg, Arc::new(Shared::default()), [0.5, 0.0, 0.5], 0.0, 0.0, 1);
     a.world = crate::world::test_world();
     a.phase = Phase::Active;
@@ -153,7 +153,7 @@ fn walking_never_enters_a_wall() {
 #[test]
 fn chunk_waits_are_measured_per_chunk_and_per_view() {
     let shared = Arc::new(Shared::default());
-    let cfg = Settings { role: Role::Explorer, site: [0.0, 0.0], view_distance: 2, seed: 1, chat_interval: None, stay: true };
+    let cfg = Settings { role: Role::Explorer, site: [0.0, 0.0], view_distance: 2, seed: 1, chat_interval: None, stay: true, roam: None };
     let mut a = Agent::new(cfg, shared.clone(), [0.5, 0.0, 0.5], 0.0, 0.0, 1);
     a.on_chunk_center(0, 0);
     assert_eq!(a.track.want.len(), 25);

@@ -479,6 +479,7 @@ impl Bot {
             seed: cfg.seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (self.index as u64).wrapping_mul(0xd1b5_4a32_d192_ed03),
             chat_interval: cfg.chat_interval,
             stay: groups <= 1 && cfg.group_size.is_none(),
+            roam: cfg.radius,
         };
         Agent::new(settings, self.shared.clone(), [0.0; 3], 0.0, 0.0, entity_id)
     }
