@@ -470,9 +470,9 @@ impl EntityExt for ArmorStand {
     }
 
     fn attackable(&self) -> bool {
-        // `ArmorStand.attackable` is false, and `isPickable` false for a marker: players hit it
-        // all the same through `skipAttackInteraction`.
-        !self.marker
+        // (`Entity.isAttackable`: players can hit it; `ArmorStand.attackable`, the mobs' targeting,
+        // is false, which no mob here asks.)
+        true
     }
 
     /// `ArmorStand.interact`.

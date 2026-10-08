@@ -30,6 +30,7 @@ mod consume;
 mod buckets;
 mod bell;
 mod campfire;
+mod stands;
 mod frames;
 mod bookshelf;
 mod use_item;

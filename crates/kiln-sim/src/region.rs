@@ -1318,6 +1318,10 @@ fn use_on_block(
         }
         return;
     }
+    // `ArmorStandItem.useOn`.
+    if item_name == Some("minecraft:armor_stand") && crate::stands::use_on(p, level, bp, dir, !main_hand, spawns) {
+        return;
+    }
     // `HangingEntityItem.useOn`: item frames and paintings.
     if item_name.is_some_and(crate::frames::is_hanging_item) && crate::frames::use_on(p, level, bp, dir, !main_hand, spawns) {
         return;
