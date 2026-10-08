@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use kiln_bot::{Behavior, Config};
+use kiln_bot::{Behavior, Config, Role};
 use std::time::Duration;
 
 #[global_allocator]
@@ -32,7 +32,8 @@ struct Args {
     /// Bot i is named <prefix><i>.
     #[arg(long, default_value = "Bot")]
     name_prefix: String,
-    /// Radius of the behavior [default: walk 64, circle 16, crowd 6, spread 256].
+    /// Radius of the behavior [default: walk 64, circle 16, crowd 6, spread 256]. Survival bots
+    /// ignore it; their group sites are --group-spacing apart around --center.
     #[arg(long)]
     radius: Option<f64>,
     /// Seconds between chat messages per bot [default: no chat].
@@ -53,9 +54,18 @@ struct Args {
     /// Blocks between neighbouring group centres.
     #[arg(long, default_value_t = 48.0)]
     group_spacing: f64,
+    /// Survival roles dealt to the bots in turn (explorer, miner, builder, redstone).
+    #[arg(long, value_delimiter = ',')]
+    roles: Option<Vec<Role>>,
+    /// Survival: bots [k*size, (k+1)*size) share a site (overrides --groups).
+    #[arg(long)]
+    group_size: Option<usize>,
     /// Teleport bots to their group centre with /tp (the server must make them operators).
     #[arg(long)]
     teleport_to_group: bool,
+    /// Seconds a bot waits for the world after connecting before it gives up.
+    #[arg(long, default_value_t = 60.0)]
+    join_timeout: f64,
     /// Seconds between progress lines.
     #[arg(long, default_value_t = 5.0)]
     report_interval: f64,
@@ -65,6 +75,9 @@ struct Args {
     /// Print the final report as JSON.
     #[arg(long)]
     json: bool,
+    /// Stop (and print the report) when a line `stop` arrives on standard input.
+    #[arg(long)]
+    stdin_control: bool,
 }
 
 fn secs(s: f64, what: &str) -> Result<Duration> {
@@ -90,6 +103,9 @@ fn main() -> Result<()> {
         groups: a.groups,
         group_spacing: a.group_spacing,
         teleport_to_group: a.teleport_to_group,
+        group_size: a.group_size,
+        join_timeout: secs(a.join_timeout, "join timeout")?,
+        roles: a.roles.unwrap_or_else(|| Config::default().roles),
         ..Config::default()
     };
 
@@ -98,9 +114,29 @@ fn main() -> Result<()> {
         rt.worker_threads(n);
     }
     let rt = rt.thread_name("bot").enable_all().build()?;
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    if a.stdin_control {
+        std::thread::spawn(move || {
+            for line in std::io::stdin().lines().map_while(Result::ok) {
+                if line.trim() == "stop" {
+                    let _ = stop_tx.send(());
+                    return;
+                }
+            }
+        });
+    }
     let ctrl_c = async {
-        if tokio::signal::ctrl_c().await.is_err() {
-            std::future::pending::<()>().await;
+        tokio::select! {
+            r = tokio::signal::ctrl_c() => {
+                if r.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
+            r = stop_rx => {
+                if r.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            }
         }
     };
     let report = rt.block_on(kiln_bot::run_with(config, |r| println!("{}", r.summary_line()), ctrl_c))?;

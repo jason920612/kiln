@@ -1,7 +1,37 @@
 //! Tick duration statistics (MSPT percentiles) over a fixed window.
 
 use std::fmt;
+use std::io::Write;
+use std::sync::Mutex;
 use std::time::Duration;
+
+/// `KILN_TICK_TRACE=<file>`: one line per tick, `<unix ms> <players> <tick micros>`, so a
+/// benchmark can compute exact percentiles over the stretch of a run it cares about.
+static TRACE: Mutex<Option<std::io::BufWriter<std::fs::File>>> = Mutex::new(None);
+static TRACE_INIT: std::sync::Once = std::sync::Once::new();
+
+/// Appends a tick to the trace file, if one is configured.
+pub fn trace(micros: u64, players: usize) {
+    TRACE_INIT.call_once(|| {
+        if let Some(path) = std::env::var_os("KILN_TICK_TRACE") {
+            match std::fs::File::create(&path) {
+                Ok(f) => *TRACE.lock().unwrap() = Some(std::io::BufWriter::new(f)),
+                Err(e) => tracing::warn!("cannot write the tick trace {}: {e}", path.to_string_lossy()),
+            }
+        }
+    });
+    if let Some(w) = TRACE.lock().unwrap().as_mut() {
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let _ = writeln!(w, "{ms} {players} {micros}");
+    }
+}
+
+/// Writes out what the trace file has buffered.
+pub fn flush_trace() {
+    if let Some(w) = TRACE.lock().unwrap().as_mut() {
+        let _ = w.flush();
+    }
+}
 
 const WINDOW_TICKS: usize = 600; // 30 s at 20 TPS
 

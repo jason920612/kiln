@@ -65,6 +65,7 @@ mod fishing;
 mod gametest;
 mod profiles;
 mod generation;
+mod chunkstats;
 mod golem;
 mod independent;
 pub use independent::{InjectedDelay, ScheduleMode};
@@ -844,7 +845,11 @@ impl LoadChunks for Dim {
             return self.regions.chunk_mut(pos).unwrap();
         }
         if !self.pending.contains_key(&pos) {
+            let started = Instant::now();
             let chunk = self.provider.load_or_generate(pos);
+            chunkstats::count(&chunkstats::SYNC_LOADS);
+            chunkstats::add_ns(&chunkstats::SYNC_NS, started.elapsed());
+            chunkstats::max_ns(&chunkstats::SYNC_MAX_NS, started.elapsed());
             if self.install(pos, chunk) {
                 return self.regions.chunk_mut(pos).unwrap();
             }
@@ -959,13 +964,33 @@ impl Dim {
         if pool.is_queued(pos) {
             return true;
         }
+        let started = Instant::now();
         match self.provider.load(pos) {
             Some(chunk) => {
-                self.install(pos, chunk);
+                let read = started.elapsed();
+                chunkstats::count(&chunkstats::DISK_HITS);
+                chunkstats::add_ns(&chunkstats::DISK_NS, read);
+                chunkstats::max_ns(&chunkstats::DISK_MAX_NS, read);
+                self.timed_install(pos, chunk);
                 true
             }
-            None => pool.request(pos),
+            None => {
+                chunkstats::count(&chunkstats::DISK_MISSES);
+                chunkstats::add_ns(&chunkstats::DISK_MISS_NS, started.elapsed());
+                self.generation.as_mut().is_some_and(|p| p.request(pos))
+            }
         }
+    }
+
+    /// `install`, counted in the chunk statistics.
+    fn timed_install(&mut self, pos: ChunkPos, chunk: Chunk) -> bool {
+        let started = Instant::now();
+        let r = self.install(pos, chunk);
+        let took = started.elapsed();
+        chunkstats::count(&chunkstats::INSTALLED);
+        chunkstats::add_ns(&chunkstats::INSTALL_NS, took);
+        chunkstats::max_ns(&chunkstats::INSTALL_MAX_NS, took);
+        r
     }
 
     /// Installs the chunks generation finished since the last tick.
@@ -976,7 +1001,7 @@ impl Dim {
         for (pos, chunk) in done {
             // Loaded synchronously in the meantime (a join or teleport needed it).
             if !self.is_loaded(pos) {
-                self.install(pos, chunk);
+                self.timed_install(pos, chunk);
             }
         }
         n
@@ -1200,7 +1225,11 @@ impl Sim {
                         };
                         let provider = ChunkProvider::with_source(dimension, source, Terrain::Void, biome, biome_count);
                         if id == OVERWORLD_ID {
-                            let s = kiln_storage::read_spawn(dir).unwrap_or([0, 64, 0]);
+                            // A world without a saved spawn (a new directory) starts where the
+                            // generator would put it, not inside whatever terrain is at (0, 64, 0).
+                            let s = kiln_storage::read_spawn(dir)
+                                .or_else(|| generator.as_ref().map(|g| initial_spawn(g.pipeline())))
+                                .unwrap_or([0, 64, 0]);
                             info!("loaded world {} (spawn {s:?})", dir.display());
                             spawn = Some(s);
                         }
@@ -1488,7 +1517,9 @@ impl Sim {
             self.stats.phase(name, d);
         }
         self.record_tick_time(start.elapsed().as_nanos() as i64);
+        stats::trace(start.elapsed().as_micros() as u64, self.players.len());
         if let Some(report) = self.stats.record(start.elapsed()) {
+            stats::flush_trace();
             info!(
                 "{} players, {} regions, {} chunks | {report}",
                 self.players.len(),
@@ -1496,6 +1527,8 @@ impl Sim {
                 self.dims.iter().map(|d| d.regions.loaded_chunks()).sum::<usize>()
             );
             self.commands.last_report = Some(report.to_string());
+            let gen_threads = self.config.noise.as_ref().map_or(0, |n| n.threads);
+            info!("{}", chunkstats::line(gen_threads));
         }
         if self.commands.stop_requested {
             self.shut_down();
@@ -2714,6 +2747,8 @@ impl Sim {
     }
 
     fn shut_down(&mut self) {
+        stats::flush_trace();
+        info!("{}", chunkstats::line(self.config.noise.as_ref().map_or(0, |n| n.threads)));
         self.rendezvous();
         for p in self.players.values_mut() {
             p.disconnect("Server closed");

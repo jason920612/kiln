@@ -13,6 +13,9 @@ use kiln_proto::{MAX_FRAME_LEN, MAX_UNCOMPRESSED_LEN, Reader, WriteExt};
 use std::cell::RefCell;
 use std::io::Write;
 
+/// Body bytes after the packet id that `decode_peek` shows its callback.
+pub const PEEK: usize = 8;
+
 thread_local! {
     static INFLATER: RefCell<Decompress> = RefCell::new(Decompress::new(true));
 }
@@ -39,6 +42,16 @@ impl Inbound {
     /// Splits the next packet off `buf`; `want(id)` decides whether its body is needed.
     /// Returns `Ok(None)` if the frame is not complete yet.
     pub fn decode(&mut self, buf: &mut BytesMut, want: impl Fn(i32) -> bool) -> Result<Option<Frame>, FrameError> {
+        self.decode_peek(buf, |id, _| want(id))
+    }
+
+    /// Like [`Inbound::decode`], but `want(id, head)` also sees the first bytes of the body
+    /// (up to [`PEEK`] of them), enough to read a chunk's coordinates before deciding to inflate it.
+    pub fn decode_peek(
+        &mut self,
+        buf: &mut BytesMut,
+        want: impl Fn(i32, &[u8]) -> bool,
+    ) -> Result<Option<Frame>, FrameError> {
         let mut len = 0usize;
         let mut header = 0;
         loop {
@@ -69,7 +82,8 @@ impl Inbound {
         if data_len == 0 {
             let id = r.varint().map_err(|_| FrameError::Malformed)?;
             let offset = len - r.remaining();
-            let body = if want(id) {
+            let head = &buf[offset..len.min(offset + PEEK)];
+            let body = if want(id, head) {
                 buf.advance(offset);
                 Some(buf.split_to(len - offset).freeze())
             } else {
@@ -88,8 +102,8 @@ impl Inbound {
         }
         let compressed = r.rest();
         let result = INFLATER.with_borrow_mut(|inflater| {
-            let (id, id_len) = peek_id(inflater, compressed, data_len)?;
-            let body = match want(id) {
+            let (id, id_len, head, got) = peek_id(inflater, compressed, data_len)?;
+            let body = match want(id, &head[id_len..got]) {
                 true => Some(Bytes::from(inflate(inflater, compressed, data_len)?).slice(id_len..)),
                 false => None,
             };
@@ -102,15 +116,17 @@ impl Inbound {
 
 /// Inflates only the first few bytes of a zlib stream: enough for the packet id and its
 /// encoded length. Corruption past that point goes unnoticed for packets we skip.
-fn peek_id(inflater: &mut Decompress, input: &[u8], data_len: usize) -> Result<(i32, usize), FrameError> {
+type Peeked = (i32, usize, [u8; 5 + PEEK], usize);
+
+fn peek_id(inflater: &mut Decompress, input: &[u8], data_len: usize) -> Result<Peeked, FrameError> {
     inflater.reset(true);
-    let mut head = [0u8; 5];
+    let mut head = [0u8; 5 + PEEK];
     let n = data_len.min(head.len());
     inflater.decompress(input, &mut head[..n], FlushDecompress::None).map_err(|_| FrameError::BadCompression)?;
     let got = inflater.total_out() as usize;
     let mut r = Reader::new(&head[..got]);
     let id = r.varint().map_err(|_| FrameError::BadCompression)?;
-    Ok((id, got - r.remaining()))
+    Ok((id, got - r.remaining(), head, got))
 }
 
 /// Inflates a whole zlib stream that must decompress to exactly `len` bytes.

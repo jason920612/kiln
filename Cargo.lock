@@ -1083,6 +1083,7 @@ dependencies = [
  "flate2",
  "kiln-data",
  "kiln-proto",
+ "kiln-world",
  "md-5",
  "mimalloc",
  "serde",

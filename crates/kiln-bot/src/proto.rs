@@ -143,6 +143,17 @@ pub fn move_player(b: &mut BytesMut, m: Move, on_ground: bool) {
     b.put_u8(flags);
 }
 
+/// Move Player with both flags the vanilla client sends: on ground and horizontal collision.
+pub fn move_player_flags(b: &mut BytesMut, m: Move, on_ground: bool, collision: bool) {
+    let start = b.len();
+    move_player(b, m, on_ground);
+    if collision {
+        let last = b.len() - 1;
+        b[last] |= 2;
+    }
+    debug_assert!(b.len() > start);
+}
+
 pub fn client_tick_end(b: &mut BytesMut) {
     b.put_varint(ids::play::serverbound::CLIENT_TICK_END);
 }
@@ -176,6 +187,113 @@ pub fn chat(b: &mut BytesMut, message: &str, timestamp_ms: i64, salt: i64) {
     b.put_varint(0); // last seen: offset
     b.put_slice(&[0; 3]); // last seen: acknowledged, a fixed 20-bit set
     b.put_u8(0); // last seen: checksum (0 = not checked)
+}
+
+// ---- survival actions -----------------------------------------------------------------------
+
+/// `ServerboundPlayerActionPacket.Action` ordinals the bots use (26.3).
+pub mod action {
+    pub const START_DESTROY_BLOCK: i32 = 0;
+    pub const ABORT_DESTROY_BLOCK: i32 = 2;
+    pub const STOP_DESTROY_BLOCK: i32 = 3;
+}
+
+/// Block faces in `Direction` order: down, up, north, south, west, east.
+pub mod face {
+    pub const DOWN: u8 = 0;
+    pub const UP: u8 = 1;
+    pub const NORTH: u8 = 2;
+    pub const SOUTH: u8 = 3;
+    pub const WEST: u8 = 4;
+    pub const EAST: u8 = 5;
+}
+
+pub fn player_action(b: &mut BytesMut, action: i32, pos: [i32; 3], face: u8, sequence: i32) {
+    b.put_varint(ids::play::serverbound::PLAYER_ACTION);
+    b.put_varint(action);
+    b.put_position(pos[0], pos[1], pos[2]);
+    b.put_u8(face);
+    b.put_varint(sequence);
+}
+
+/// Right click on a block face; `cursor` is the hit point inside the block (0..1 per axis).
+pub fn use_item_on(b: &mut BytesMut, pos: [i32; 3], face: u8, cursor: [f32; 3], sequence: i32) {
+    b.put_varint(ids::play::serverbound::USE_ITEM_ON);
+    b.put_varint(0); // main hand
+    b.put_position(pos[0], pos[1], pos[2]);
+    b.put_varint(face as i32);
+    for c in cursor {
+        b.put_f32(c);
+    }
+    b.put_bool(false); // inside block
+    b.put_bool(false); // world border hit
+    b.put_varint(sequence);
+}
+
+/// Right click in the air (eating, drinking, bows).
+pub fn use_item(b: &mut BytesMut, sequence: i32, yaw: f32, pitch: f32) {
+    b.put_varint(ids::play::serverbound::USE_ITEM);
+    b.put_varint(0);
+    b.put_varint(sequence);
+    b.put_f32(yaw);
+    b.put_f32(pitch);
+}
+
+pub fn set_carried_item(b: &mut BytesMut, slot: u8) {
+    b.put_varint(ids::play::serverbound::SET_CARRIED_ITEM);
+    b.put_i16(slot as i16);
+}
+
+/// Arm swing (`punch` since 26.3).
+pub fn punch(b: &mut BytesMut) {
+    b.put_varint(ids::play::serverbound::PUNCH);
+}
+
+pub fn attack(b: &mut BytesMut, entity_id: i32) {
+    b.put_varint(ids::play::serverbound::ATTACK);
+    b.put_varint(entity_id);
+}
+
+pub mod input {
+    pub const FORWARD: u8 = 1;
+    pub const JUMP: u8 = 1 << 4;
+    pub const SNEAK: u8 = 1 << 5;
+    pub const SPRINT: u8 = 1 << 6;
+}
+
+pub fn player_input(b: &mut BytesMut, flags: u8) {
+    b.put_varint(ids::play::serverbound::PLAYER_INPUT);
+    b.put_u8(flags);
+}
+
+pub fn start_sprinting(b: &mut BytesMut, entity_id: i32, on: bool) {
+    b.put_varint(ids::play::serverbound::PLAYER_COMMAND);
+    b.put_varint(entity_id);
+    b.put_varint(if on { 1 } else { 2 });
+    b.put_varint(0);
+}
+
+pub fn perform_respawn(b: &mut BytesMut) {
+    b.put_varint(ids::play::serverbound::CLIENT_COMMAND);
+    b.put_varint(0);
+}
+
+pub fn container_close(b: &mut BytesMut, container_id: i32) {
+    b.put_varint(ids::play::serverbound::CONTAINER_CLOSE);
+    b.put_varint(container_id);
+}
+
+/// Shift click on a slot (`QUICK_MOVE`). The bot does not predict the resulting slots, so the
+/// server answers with the slot updates a predicting client would not have needed.
+pub fn container_quick_move(b: &mut BytesMut, container_id: i32, state_id: i32, slot: i16) {
+    b.put_varint(ids::play::serverbound::CONTAINER_CLICK);
+    b.put_varint(container_id);
+    b.put_varint(state_id);
+    b.put_i16(slot);
+    b.put_i8(0);
+    b.put_varint(1); // quick move
+    b.put_varint(0); // no changed slots
+    b.put_bool(false); // empty carried item
 }
 
 // ---- clientbound --------------------------------------------------------------------------
