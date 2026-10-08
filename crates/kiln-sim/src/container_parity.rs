@@ -149,6 +149,10 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     }
     // The game time is a multiple of 20 as the scenario begins (daylight detectors work on it).
     if line["align20"].as_bool() == Some(true) {
+        // (The harness ticks the level alone, which leaves the world clock where `/time` put it.)
+        let mut inbox = vec![ToSim::Console("gamerule advance_time false".into())];
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
         while sim.game_time() % 20 != 0 {
             let mut inbox = Vec::new();
             client.tick(None, &mut inbox);
