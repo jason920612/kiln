@@ -254,7 +254,7 @@ public class ItemUseVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=25594",
+                "server-port=" + harnessPort(),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
@@ -316,5 +316,26 @@ public class ItemUseVectors {
             return b.append("}").toString();
         }
         return toJson(o.toString());
+    }
+
+    /// $KILN_HARNESS_PORT, else the first free port of 25581-25583 (wp44's; waits while all are busy).
+    static String harnessPort() {
+        String env = System.getenv("KILN_HARNESS_PORT");
+        if (env != null) return env;
+        for (int i = 0; i < 900; i++) {
+            for (int p = 25581; p <= 25583; p++) {
+                try (var s = new java.net.ServerSocket(p)) {
+                    return Integer.toString(p);
+                } catch (java.io.IOException e) {
+                    // busy
+                }
+            }
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                throw new IllegalStateException(e);
+            }
+        }
+        throw new IllegalStateException("no free harness port");
     }
 }

@@ -6,12 +6,18 @@
 
 pub mod connect;
 pub mod container;
+pub mod farming;
+pub mod copper;
 pub mod misc;
+pub mod misc2;
+pub mod misc3;
 pub mod piston;
 pub mod portal;
 pub mod rail;
 pub mod sculk;
+pub mod speleothem;
 pub mod support;
+pub mod tripwire;
 
 use crate::fluid;
 use crate::level::Level;
@@ -42,10 +48,12 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::NoteBlock => devices::note_neighbor_changed(level, s, pos),
         C::TntBlock => devices::tnt_neighbor_changed(level, pos),
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
+        C::BigDripleafBlock => misc3::dripleaf_neighbor_changed(level, s, pos),
         C::PistonBaseBlock => piston::check_if_extend(level, s, pos),
         C::PistonHeadBlock => piston::head_neighbor_changed(level, s, pos, source),
         C::HopperBlock => container::hopper_check_powered(level, s, pos),
         C::DispenserBlock | C::DropperBlock => container::dispenser_neighbor_changed(level, s, pos),
+        _ if logic::is_instance(s, C::CopperBulbBlock) => misc3::bulb_check_and_flip(level, s, pos),
         _ if logic::is_instance(s, C::TrapDoorBlock) => misc::powered_open_neighbor_changed(level, s, pos),
         _ if logic::is_instance(s, C::DoorBlock) => components::door_neighbor_changed(level, s, pos, source),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::neighbor_changed(level, s, pos, source, moved_by_piston),
@@ -62,6 +70,12 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
     if class == C::LiquidBlock {
         return fluid::liquid_update_shape(level, s, pos, dir, neighbor_state);
     }
+    // These look at their support before (or instead of) their water.
+    match class {
+        C::BigDripleafBlock => return misc3::dripleaf_update_shape(level, s, pos, dir, neighbor_state),
+        C::BigDripleafStemBlock => return misc3::stem_update_shape(level, s, pos, dir),
+        _ => {}
+    }
     if logic::implements(s, interface::SIMPLE_WATERLOGGED_BLOCK) {
         fluid::tick_water_if_waterlogged(level, s, pos);
     }
@@ -76,6 +90,8 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         }
         C::WallBlock if dir != Direction::Down => return connect::wall_update(level, s, pos, dir, neighbor_state),
         C::FenceGateBlock => return misc::gate_update_shape(level, s, pos, dir, neighbor_state),
+        C::TripWireBlock => return tripwire::wire_update_shape(s, dir, neighbor_state),
+        C::TripWireHookBlock => return tripwire::hook_update_shape(level, s, pos, dir),
         C::ObserverBlock => return devices::observer_update_shape(level, s, pos, dir),
         C::NoteBlock => return devices::note_update_shape(level, s, pos, dir),
         C::PistonHeadBlock => return piston::head_update_shape(level, s, pos, dir),
@@ -118,6 +134,9 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         if !kiln_data::blocks_types::is_air(new) {
             crate::level::schedule_fluid_tick(level, pos, crate::FluidType::Water, 5);
         }
+        return new;
+    }
+    if let Some(new) = farming::update_shape(level, s, pos, dir, neighbor_state) {
         return new;
     }
     if let Some(new) = support::pop_off(level, s, pos, dir, neighbor_state) {
@@ -225,6 +244,9 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_on_place(level, s, pos, old),
         C::SnifferEggBlock if !state::same_block(old, s) => misc::sniffer_egg_on_place(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_on_place(level, s, pos),
+        C::TurtleEggBlock => misc2::turtle_egg_on_place(level, pos),
+        C::TripWireBlock => tripwire::wire_on_place(level, s, pos, old),
+        C::TargetBlock => misc3::target_on_place(level, s, pos, old),
         // `BaseFireBlock.onPlace`: a new fire in an empty frame lights it; one that cannot
         // survive goes out.
         C::FireBlock | C::SoulFireBlock => {
@@ -236,6 +258,7 @@ pub fn on_place<L: Level>(level: &mut L, s: u16, pos: BlockPos, old: u16, moved_
                 crate::fire::schedule_fire_tick(level, pos);
             }
         }
+        _ if logic::is_instance(s, C::CopperBulbBlock) => misc3::bulb_on_place(level, s, pos, old),
         _ if logic::is_instance(s, C::FallingBlock) => misc::falling_schedule(level, s, pos),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::on_place(level, s, pos, old, moved_by_piston),
         _ => {}
@@ -250,6 +273,8 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
         C::RedstoneTorchBlock | C::RedstoneWallTorchBlock => torch::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         C::RepeaterBlock | C::ComparatorBlock => diode::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         C::LeverBlock | C::ButtonBlock => components::attached_removed(level, s, pos, moved_by_piston),
+        C::TripWireBlock => tripwire::wire_removed(level, s, pos, moved_by_piston),
+        C::TripWireHookBlock => tripwire::hook_removed(level, s, pos, moved_by_piston),
         C::ObserverBlock => devices::observer_removed(level, s, pos),
         C::PistonHeadBlock => piston::head_removed(level, s, pos),
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_removed(level, s, pos),
@@ -282,6 +307,17 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::SnifferEggBlock => misc::sniffer_egg_tick(level, s, pos),
         C::FrogspawnBlock => misc::frogspawn_tick(level, pos),
         C::CreakingHeartBlock => misc::creaking_heart_tick(level, s, pos),
+        C::FarmlandBlock | C::SugarCaneBlock | C::CactusBlock | C::BambooStalkBlock => {
+            farming::tick(level, s, pos);
+        }
+        C::DriedGhastBlock => misc2::dried_ghast_tick(level, s, pos),
+        C::TripWireBlock => tripwire::wire_tick(level, pos),
+        C::TripWireHookBlock => tripwire::hook_tick(level, s, pos),
+        C::TargetBlock => misc3::target_tick(level, s, pos),
+        C::BigDripleafBlock => misc3::dripleaf_tick(level, s, pos),
+        C::BigDripleafStemBlock => misc3::stem_tick(level, s, pos),
+        C::CauldronBlock | C::LayeredCauldronBlock | C::LavaCauldronBlock => speleothem::cauldron_tick(level, s, pos),
+        C::PointedDripstoneBlock | C::SulfurSpikeBlock => speleothem::tick(level, s, pos),
         // `ChestBlock.tick` / `BarrelBlock.tick` / `EnderChestBlock.tick` (recheck the openers)
         // and `DispenserBlock.tick` (dispense): the block entity's.
         C::BarrelBlock | C::EnderChestBlock | C::DispenserBlock | C::DropperBlock => level.block_entity_tick(pos, s),
@@ -293,15 +329,37 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     }
 }
 
-/// `randomTick`: leaf decay and lava setting fire (`LiquidBlock.randomTick`: the fluid's).
-/// Other random-tick behaviour (crop growth, grass spread, ...) is not simulated yet; the
-/// positions are still drawn so the random-tick sequence stays aligned.
+/// `randomTick`: copper oxidation, leaf decay, lava setting fire (`LiquidBlock.randomTick`: the
+/// fluid's), turtle eggs, redstone ore, budding amethyst, dripstone and dried ghasts. Other
+/// random-tick behaviour (crop growth, grass spread, ...) lives in sibling modules or is not
+/// simulated yet; the positions are still drawn so the random-tick sequence stays aligned.
 pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
-    if logic::is_instance(s, BlockClass::LeavesBlock) {
+    if farming::random_tick(level, s, pos) {
+        return;
+    }
+    if copper::is_weathering(s) {
+        copper::random_tick(level, s, pos);
+    } else if let Some(class) = misc2_random_tick_class(s) {
+        use BlockClass as C;
+        match class {
+            C::TurtleEggBlock => misc2::turtle_egg_random_tick(level, s, pos),
+            C::RedStoneOreBlock => misc2::redstone_ore_random_tick(level, s, pos),
+            C::BuddingAmethystBlock => misc2::budding_amethyst_random_tick(level, pos),
+            C::DriedGhastBlock => misc2::dried_ghast_random_tick(level, s, pos),
+            _ => speleothem::random_tick(level, s, pos),
+        }
+    } else if logic::is_instance(s, BlockClass::LeavesBlock) {
         misc::leaves_random_tick(level, s, pos);
     } else if logic::block_class(s) == BlockClass::LiquidBlock && logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
         crate::fire::lava_random_tick(level, pos);
     }
+}
+
+/// The class of a block whose random tick `misc2` / `speleothem` handle.
+fn misc2_random_tick_class(s: u16) -> Option<BlockClass> {
+    use BlockClass as C;
+    let class = logic::block_class(s);
+    matches!(class, C::TurtleEggBlock | C::RedStoneOreBlock | C::BuddingAmethystBlock | C::DriedGhastBlock | C::PointedDripstoneBlock | C::SulfurSpikeBlock).then_some(class)
 }
 
 /// `triggerEvent` for a block event; true if it should reach clients. Note blocks and

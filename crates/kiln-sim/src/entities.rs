@@ -34,6 +34,9 @@ pub(crate) enum Body {
     Item { stack: kiln_item::ItemStack, pickup_delay: i32, thrower: Option<u128> },
     /// `FallingBlockEntity.fall` of `state` from the block at the spawn position.
     FallingBlock { state: u16 },
+    /// `SpeleothemBlock.spawnFallingStalactite` for the tip: a falling block that hurts what it
+    /// lands on (`setHurtsEntities(per_distance, 40)`).
+    FallingStalactite { state: u16, per_distance: f32 },
     /// `TntBlock.prime`: a primed TNT with vanilla's random hop.
     Tnt,
     /// An entity kiln-entity built during a tick (its id is replaced by the assigned one).
@@ -281,6 +284,15 @@ impl Entity {
             }
             Body::FallingBlock { state } => {
                 kiln_entity::falling_block::fall(id, u, BlockPos::containing(pos.x, pos.y, pos.z), state, seed)
+            }
+            Body::FallingStalactite { state, per_distance } => {
+                let mut e = kiln_entity::falling_block::fall(id, u, BlockPos::containing(pos.x, pos.y, pos.z), state, seed);
+                if let EntityKind::FallingBlock(d) = &mut e.kind {
+                    d.hurt_entities = true;
+                    d.fall_damage_per_distance = per_distance;
+                    d.fall_damage_max = 40;
+                }
+                e
             }
             Body::Tnt => kiln_entity::tnt::ignite(id, u, pos, None, seed),
             Body::Lightning { visual_only } => kiln_entity::ext_entity::lightning::new(id, u, pos, visual_only, seed),

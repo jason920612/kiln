@@ -56,6 +56,19 @@ pub fn randomly_ticks(state: u16) -> bool {
     block_props::randomly_ticks(state)
 }
 
+/// What `ServerLevel.tickChunk` does for a position it picked: the block's `randomTick` if
+/// it ticks randomly, then its fluid's (lava) on the state read before the block's tick.
+pub fn random_tick_at<L: Level>(level: &mut L, pos: BlockPos) {
+    let s = level.block(pos);
+    if block_props::randomly_ticks(s) {
+        behaviour::random_tick(level, s, pos);
+    }
+    // `FluidState.randomTick` of the state read before the block's tick (lava).
+    if kiln_data::block_logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
+        crate::fire::lava_random_tick(level, pos);
+    }
+}
+
 /// The block part of `ServerLevel.tickChunk` for the chunk at `chunk`: the precipitation
 /// rolls (`tickPrecipitation`: ice, snow, cauldrons), then `speed` random ticks in each
 /// section that `section_ticks` reports as holding randomly ticking blocks or fluids
@@ -77,14 +90,7 @@ pub fn tick_chunk_blocks<L: Level>(level: &mut L, chunk: ChunkKey, sections: &[(
         }
         for _ in 0..speed {
             let pos = block_random_pos(level, x, sy * 16, z, 15);
-            let s = level.block(pos);
-            if block_props::randomly_ticks(s) {
-                behaviour::random_tick(level, s, pos);
-            }
-            // `FluidState.randomTick` of the state read before the block's tick (lava).
-            if kiln_data::block_logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
-                crate::fire::lava_random_tick(level, pos);
-            }
+            random_tick_at(level, pos);
         }
     }
 }
