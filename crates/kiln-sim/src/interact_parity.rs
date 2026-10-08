@@ -674,6 +674,11 @@ fn run_case(line: &Value) -> Vec<String> {
             // (Kiln sends what a packet changed before its block entities tick, vanilla at the tick's end: a block entity with nothing yet to tell,
             // and the same update twice, are not part of the comparison.)
             got_packets.retain(|p| !p.contains("\"tag\":\"0a00\""));
+            // (A config of the datapack puts its mobs around the spawner at random: where is not compared.)
+            if line["name"].as_str() == Some("trial_key_config") {
+                got_packets.retain(|p| !p.contains("\"event\":3012"));
+                want_packets.retain(|p| !p.contains("\"event\":3012"));
+            }
             want_packets.retain(|p| !p.contains("\"tag\":\"0a00\""));
             got_packets.sort();
             got_packets.dedup();
