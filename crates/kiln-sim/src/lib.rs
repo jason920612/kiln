@@ -29,6 +29,7 @@ mod commands;
 mod consume;
 mod buckets;
 mod campfire;
+mod bookshelf;
 mod use_item;
 mod ranged;
 mod spear;

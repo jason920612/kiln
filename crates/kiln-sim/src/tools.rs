@@ -350,7 +350,7 @@ fn perform(level: &mut RegionLevel, pos: BlockPos, s: u16, spawns: &mut Vec<Spaw
 /// `useItemOn` of blocks that react to the item in hand: cauldrons, composters, pumpkins and
 /// shears. `Some(true)`: the item was used; `Some(false)`: the block wants the empty-hand use;
 /// `None`: no such block.
-pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction, off_hand: bool, spawns: &mut Vec<Spawn>) -> Option<bool> {
+pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction, cursor: [f32; 3], off_hand: bool, spawns: &mut Vec<Spawn>) -> Option<bool> {
     if let Some(r) = crate::buckets::use_cauldron(p, level, pos, off_hand, spawns) {
         return Some(r);
     }
@@ -361,6 +361,8 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
         C::JukeboxBlock => crate::jukebox::use_item_on(p, level, pos, s, off_hand),
         C::CampfireBlock => crate::campfire::use_item_on(p, level, pos, s, off_hand),
         C::CakeBlock => cake_candle(p, level, pos, s, off_hand, &stack),
+        C::FlowerPotBlock => pot_plant(p, level, pos, s, off_hand, &stack),
+        C::ChiseledBookShelfBlock => crate::bookshelf::use_item_on(p, level, pos, s, face, cursor, off_hand, &stack),
         C::PumpkinBlock if !stack.is_empty() && stack.item_name() == "minecraft:shears" => {
             carve(p, level, pos, face, off_hand, spawns);
             Some(true)
@@ -370,13 +372,19 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
 }
 
 /// `ComposterBlock.useWithoutItem`: a full composter gives its bone meal.
-pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, spawns: &mut Vec<Spawn>) -> bool {
+pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, face: Direction, cursor: [f32; 3], spawns: &mut Vec<Spawn>) -> bool {
     if crate::jukebox::use_without_item(level, pos, spawns) {
         return true;
     }
     let s = level.block(pos);
     if matches!(logic::block_class(s), C::CakeBlock | C::CandleCakeBlock) {
         return eat_cake(p, level, pos, s);
+    }
+    if logic::block_class(s) == C::FlowerPotBlock {
+        return pot_take(p, level, pos, s, spawns);
+    }
+    if logic::block_class(s) == C::ChiseledBookShelfBlock {
+        return crate::bookshelf::use_without_item(p, level, pos, s, face, cursor, spawns);
     }
     if logic::block_class(s) != C::ComposterBlock || state::get_int(s, "level") != 8 {
         return false;
@@ -396,6 +404,62 @@ pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, po
     }
     kiln_blocks::set_block_and_update(level, pos, state::set_int(s, "level", 0));
     level.effect(Effect::Sound { pos, sound: "minecraft:block.composter.empty", volume: 1.0, pitch: 1.0 });
+    true
+}
+
+/// The potted block for a plant item (`FlowerPotBlock.POTTED_BY_CONTENT` of its block), if any.
+fn potted_for(item: &str) -> Option<u16> {
+    let n = item.strip_prefix("minecraft:")?;
+    let potted = match n {
+        "azalea" => "minecraft:potted_azalea_bush".to_owned(),
+        "flowering_azalea" => "minecraft:potted_flowering_azalea_bush".to_owned(),
+        _ => format!("minecraft:potted_{n}"),
+    };
+    kiln_data::blocks_types::block_by_name(&potted).map(|b| b.default)
+}
+
+/// The plant item a potted block holds (`new ItemStack(potted)`), none for an empty pot.
+fn pot_content(s: u16) -> Option<ItemStack> {
+    let name = kiln_blocks::BlockId::of(s).name();
+    let n = name.strip_prefix("minecraft:potted_")?;
+    let item = match n {
+        "azalea_bush" => "azalea",
+        "flowering_azalea_bush" => "flowering_azalea",
+        other => other,
+    };
+    ItemStack::of(&format!("minecraft:{item}"), 1)
+}
+
+/// `FlowerPotBlock.useItemOn`: a plant item goes into an empty pot (one of it); a full pot takes
+/// no second plant (the click is consumed); anything else is for the empty hand's use, which takes
+/// the plant out.
+fn pot_plant(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16, off_hand: bool, stack: &ItemStack) -> Option<bool> {
+    let Some(potted) = potted_for(stack.item_name()) else { return Some(false) };
+    if pot_content(s).is_some() {
+        return Some(true);
+    }
+    kiln_blocks::set_block_and_update(level, pos, potted);
+    level.effect(Effect::GameEvent { pos, event: "minecraft:block_change" });
+    p.award_stat(*crate::player_stats::stat::POT_FLOWER, 1);
+    if !p.infinite_materials() {
+        let i = p.hand_index(off_hand);
+        kiln_inventory::Container::item_mut(&mut p.inv, i).shrink(1);
+        p.inv.times_changed += 1;
+    }
+    Some(true)
+}
+
+/// `FlowerPotBlock.useWithoutItem`: the plant comes out into the player's hands (or at their feet).
+fn pot_take(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16, spawns: &mut Vec<Spawn>) -> bool {
+    let Some(mut plant) = pot_content(s) else { return true };
+    p.add_to_inventory(&mut plant);
+    if !plant.is_empty() {
+        spawns.push(p.throw(plant));
+    }
+    if let Some(empty) = kiln_data::blocks_types::block_by_name("minecraft:flower_pot") {
+        kiln_blocks::set_block_and_update(level, pos, empty.default);
+    }
+    level.effect(Effect::GameEvent { pos, event: "minecraft:block_change" });
     true
 }
 

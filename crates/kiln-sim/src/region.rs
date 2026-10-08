@@ -1233,7 +1233,7 @@ fn use_on_block(
     // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
     if !(p.sneaking && have_something) && !held.is_empty() && actor.may_build {
         let used = held.clone();
-        if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, !main_hand, spawns) {
+        if let Some(true) = crate::tools::block_use_item_on(p, level, bp, dir, cursor, !main_hand, spawns) {
             let probe = crate::advancements::triggers::CellProbe::new(&*level.cells, level.env);
             p.used_on_block("minecraft:item_used_on_block", pos, level.block(bp), &used, &probe);
             return;
@@ -1250,7 +1250,7 @@ fn use_on_block(
             if consumed {
                 return;
             }
-        } else if crate::tools::block_use_without_item(p, level, bp, spawns) || interact::use_without_item(level, bp, &actor) {
+        } else if crate::tools::block_use_without_item(p, level, bp, dir, cursor, spawns) || interact::use_without_item(level, bp, &actor) {
             return;
         }
     }

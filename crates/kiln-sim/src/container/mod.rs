@@ -53,6 +53,8 @@ pub(crate) enum BeKind {
     Jukebox,
     /// Four spots for food to cook on (`CampfireBlockEntity`; not a `Container`).
     Campfire,
+    /// Six slots for one book each (`ChiseledBookShelfBlockEntity`).
+    ChiseledBookshelf,
 }
 
 impl BeKind {
@@ -74,6 +76,7 @@ impl BeKind {
             "beacon" => BeKind::Beacon,
             "jukebox" => BeKind::Jukebox,
             "campfire" => BeKind::Campfire,
+            "chiseled_bookshelf" => BeKind::ChiseledBookshelf,
             _ => return None,
         })
     }
@@ -88,13 +91,14 @@ impl BeKind {
             BeKind::BrewingStand => 5,
             BeKind::Jukebox => 1,
             BeKind::Campfire => 4,
+            BeKind::ChiseledBookshelf => 6,
             BeKind::EnderChest | BeKind::Beacon => 0,
         }
     }
 
     /// `RandomizableContainerBlockEntity`: can hold an unopened loot table.
     pub fn randomizable(self) -> bool {
-        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire)
+        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf)
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
@@ -119,12 +123,14 @@ impl BeKind {
             BeKind::Beacon => "container.beacon",
             BeKind::Jukebox => "container.jukebox",
             BeKind::Campfire => "container.campfire",
+            BeKind::ChiseledBookshelf => "container.chiseled_bookshelf",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 28] = [
+const MODELED: [&str; 29] = [
+    "last_interacted_slot",
     "CookingTimes",
     "CookingTotalTimes",
     "RecordItem",
@@ -208,6 +214,8 @@ pub(crate) struct ContainerBe {
     pub song_unchecked: bool,
     /// A campfire's `cookingTimes` and `cookingTotalTimes` per spot.
     pub cooking: [i32; 4],
+    /// A chiseled bookshelf's `lastInteractedSlot` (-1: none).
+    pub last_slot: i32,
     pub cooking_total: [i32; 4],
     /// A jukebox's item changed (`setTheItem`): its block state, song and neighbours follow once
     /// the block entity is back in the level.
@@ -280,6 +288,7 @@ impl ContainerBe {
             song,
             song_unchecked,
             cooking: [0; 4],
+            last_slot: if kind == BeKind::ChiseledBookshelf { int("last_interacted_slot", -1) } else { -1 },
             cooking_total: [0; 4],
             item_changed: false,
             changes: 0,
@@ -315,6 +324,10 @@ impl ContainerBe {
                 if let Some(b) = &self.beacon {
                     b.save(&mut out);
                 }
+            }
+            BeKind::ChiseledBookshelf => {
+                out.push(("Items".into(), self.item_list().save()));
+                out.push(("last_interacted_slot".into(), Tag::Int(self.last_slot)));
             }
             BeKind::Campfire => {
                 out.push(("Items".into(), self.item_list().save()));
@@ -513,7 +526,7 @@ impl kiln_inventory::Container for ContainerBe {
 
     /// `JukeboxBlockEntity.getMaxStackSize`: one disc.
     fn max_stack_size(&self) -> i32 {
-        if self.kind == BeKind::Jukebox { 1 } else { 99 }
+        if matches!(self.kind, BeKind::Jukebox | BeKind::ChiseledBookshelf) { 1 } else { 99 }
     }
 
     fn set_changed(&mut self) {
@@ -716,6 +729,9 @@ pub(crate) fn analog(level: &RegionLevel, pos: BlockPos, s: u16) -> i32 {
     }
     if c.kind == BeKind::Jukebox {
         return crate::jukebox::comparator_output(level, c);
+    }
+    if c.kind == BeKind::ChiseledBookshelf {
+        return crate::bookshelf::analog(c);
     }
     if kiln_blocks::behaviour::container::is_chest(s) {
         let blocked = |p: BlockPos| kiln_data::block_logic::is_redstone_conductor(level.block(p.above()));

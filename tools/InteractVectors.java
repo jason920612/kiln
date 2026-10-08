@@ -336,6 +336,159 @@ public class InteractVectors {
         }
     }
 
+    /** `use_on` with a chosen cursor (the hit position inside the block). */
+    static Map<String, Object> useOnAt(int x, int y, int z, int face, int hand, double cx, double cy, double cz) {
+        return op("op", "use_on", "hand", hand, "pos", List.of(x, y, z), "face", face, "cursor", List.of(cx, cy, cz));
+    }
+
+    /** wp49: campfires (food on the fire), flower pots, chiseled bookshelves. */
+    static void blocks49(List<Case> out) {
+        Case c;
+        // ---- campfires
+        String lit = "minecraft:campfire[facing=north,lit=true,waterlogged=false,signal_fire=false]";
+        c = blockCase("campfire_five_foods", lit).custom("minecraft:interact_with_campfire");
+        c.slot("h0", stack("minecraft:beef", 6));
+        for (int i = 0; i < 6; i++) c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("campfire_unlit_food", "minecraft:campfire[facing=north,lit=false,waterlogged=false,signal_fire=false]").custom("minecraft:interact_with_campfire");
+        c.slot("h0", stack("minecraft:potato", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("campfire_soul", "minecraft:soul_campfire[facing=east,lit=true,waterlogged=false,signal_fire=false]").custom("minecraft:interact_with_campfire");
+        c.slot("h0", stack("minecraft:cod", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("campfire_creative", lit).custom("minecraft:interact_with_campfire");
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:chicken", 2)).step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("campfire_offhand", lit).custom("minecraft:interact_with_campfire");
+        c.slot("offhand", stack("minecraft:kelp", 2)).step(useOn(2, 100, 0, 1, 1));
+        out.add(c);
+        c = blockCase("campfire_not_food", lit).custom("minecraft:interact_with_campfire");
+        c.slot("h0", stack("minecraft:apple", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("campfire_sneaking_food", lit).custom("minecraft:interact_with_campfire");
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:beef", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("campfire_adventure", lit).custom("minecraft:interact_with_campfire");
+        c.gameMode = "adventure";
+        c.slot("h0", stack("minecraft:beef", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // A block against the campfire goes up next to it (the fire does not take the click).
+        c = blockCase("campfire_place_block_against", lit);
+        c.slot("h0", stack("minecraft:stone", 2)).step(useOn(2, 100, 0, 4, 0));
+        out.add(c);
+
+        // ---- flower pots
+        String[] plants = {"poppy", "dandelion", "oak_sapling", "cactus", "azalea", "flowering_azalea", "bamboo", "red_mushroom", "fern", "dead_bush",
+                "crimson_fungus", "warped_roots", "torchflower", "wither_rose", "closed_eyeblossom", "cherry_sapling", "mangrove_propagule", "lily_of_the_valley"};
+        for (String plant : plants) {
+            c = blockCase("pot_plant_" + plant, "minecraft:flower_pot").custom("minecraft:pot_flower").stat("minecraft:" + plant);
+            c.slot("h0", stack("minecraft:" + plant, 2)).step(useOn(2, 100, 0, 1, 0));
+            out.add(c);
+        }
+        c = blockCase("pot_not_a_plant", "minecraft:flower_pot").custom("minecraft:pot_flower");
+        c.slot("h0", stack("minecraft:stone", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_empty_hand_empty_pot", "minecraft:flower_pot").custom("minecraft:pot_flower");
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_take_plant_empty_hand", "minecraft:potted_poppy").custom("minecraft:pot_flower");
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_take_plant_stone_in_hand", "minecraft:potted_oak_sapling").custom("minecraft:pot_flower");
+        c.slot("h0", stack("minecraft:stone", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_second_plant_refused", "minecraft:potted_poppy").custom("minecraft:pot_flower");
+        c.slot("h0", stack("minecraft:dandelion", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_take_azalea", "minecraft:potted_azalea_bush");
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_take_inventory_full", "minecraft:potted_cactus");
+        for (int i = 0; i < 9; i++) c.slot("h" + i, stack("minecraft:dirt", 64));
+        for (int i = 9; i < 36; i++) c.slot("m" + i, stack("minecraft:stone", 64));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_creative_plant", "minecraft:flower_pot").custom("minecraft:pot_flower");
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:poppy", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_sneaking_plant", "minecraft:flower_pot").custom("minecraft:pot_flower");
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:poppy", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("pot_adventure_plant", "minecraft:flower_pot").custom("minecraft:pot_flower");
+        c.gameMode = "adventure";
+        c.slot("h0", stack("minecraft:poppy", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+
+        // ---- chiseled bookshelves (facing west: toward the player; the front's z runs across)
+        double[][] spots = {{0.17, 0.75}, {0.5, 0.75}, {0.83, 0.75}, {0.17, 0.25}, {0.5, 0.25}, {0.83, 0.25}};
+        String shelf = "minecraft:chiseled_bookshelf[facing=west]";
+        for (int slot = 0; slot < 6; slot++) {
+            c = blockCase("shelf_insert_" + slot, shelf).stat("minecraft:book");
+            c.slot("h0", stack("minecraft:book", 3)).step(useOnAt(2, 100, 0, 4, 0, 0.0, spots[slot][1], spots[slot][0]));
+            out.add(c);
+        }
+        for (String book : new String[] {"writable_book", "written_book", "enchanted_book", "knowledge_book", "stone", "paper"}) {
+            c = blockCase("shelf_insert_" + book, shelf).stat("minecraft:" + book);
+            c.slot("h0", stack("minecraft:" + book, 2)).step(useOnAt(2, 100, 0, 4, 0, 0.0, 0.75, 0.5));
+            out.add(c);
+        }
+        // Boundaries of the thirds and halves.
+        double[][] edges = {{0.33, 0.51}, {0.34, 0.49}, {0.66, 0.99}, {0.67, 0.0}, {0.0, 0.5}, {1.0, 0.5}};
+        for (int k = 0; k < edges.length; k++) {
+            c = blockCase("shelf_insert_edge_" + k, shelf);
+            c.slot("h0", stack("minecraft:book", 6));
+            c.step(useOnAt(2, 100, 0, 4, 0, 0.0, edges[k][1], edges[k][0]));
+            out.add(c);
+        }
+        // Other faces of the shelf, and from other sides.
+        c = blockCase("shelf_wrong_face_top", shelf);
+        c.slot("h0", stack("minecraft:book", 3)).step(useOnAt(2, 100, 0, 1, 0, 0.5, 1.0, 0.5));
+        out.add(c);
+        c = blockCase("shelf_wrong_face_back", shelf);
+        c.slot("h0", stack("minecraft:book", 3)).step(useOnAt(2, 100, 0, 5, 0, 1.0, 0.5, 0.5));
+        out.add(c);
+        for (String face : new String[] {"north", "south", "east"}) {
+            int f = switch (face) { case "north" -> 2; case "south" -> 3; default -> 5; };
+            c = blockCase("shelf_facing_" + face, "minecraft:chiseled_bookshelf[facing=" + face + "]");
+            c.slot("h0", stack("minecraft:book", 3));
+            c.step(useOnAt(2, 100, 0, f, 0, f == 5 ? 1.0 : 0.3, 0.8, f == 2 ? 0.0 : (f == 3 ? 1.0 : 0.3)));
+            out.add(c);
+        }
+        // Taking books: all six in place, one click on each (the first slot's comparator-visible state remembered).
+        String full = shelf.replace("]", ",slot_0_occupied=true,slot_1_occupied=true,slot_2_occupied=true,slot_3_occupied=true,slot_4_occupied=true,slot_5_occupied=true]")
+                + "{Items:[{Slot:0b,id:\"minecraft:book\",count:1},{Slot:1b,id:\"minecraft:written_book\",count:1,components:{\"minecraft:written_book_content\":{title:\"A\",author:\"B\",pages:[]}}},"
+                + "{Slot:2b,id:\"minecraft:enchanted_book\",count:1},{Slot:3b,id:\"minecraft:writable_book\",count:1},{Slot:4b,id:\"minecraft:knowledge_book\",count:1},{Slot:5b,id:\"minecraft:book\",count:1}],last_interacted_slot:2}";
+        c = blockCase("shelf_take_all", full);
+        for (int slot = 0; slot < 6; slot++) c.step(useOnAt(2, 100, 0, 4, 0, 0.0, spots[slot][1], spots[slot][0]));
+        out.add(c);
+        c = blockCase("shelf_take_empty_slot", shelf);
+        c.step(useOnAt(2, 100, 0, 4, 0, 0.0, 0.75, 0.5));
+        out.add(c);
+        c = blockCase("shelf_take_inventory_full", full);
+        for (int i = 0; i < 9; i++) c.slot("h" + i, stack("minecraft:dirt", 64));
+        for (int i = 9; i < 36; i++) c.slot("m" + i, stack("minecraft:stone", 64));
+        c.step(useOnAt(2, 100, 0, 4, 0, 0.0, 0.25, 0.83));
+        out.add(c);
+        c = blockCase("shelf_insert_occupied_slot", full);
+        c.slot("h0", stack("minecraft:book", 3)).step(useOnAt(2, 100, 0, 4, 0, 0.0, 0.75, 0.5));
+        out.add(c);
+        c = blockCase("shelf_creative_insert", shelf);
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:book", 3)).step(useOnAt(2, 100, 0, 4, 0, 0.0, 0.75, 0.5));
+        out.add(c);
+        c = blockCase("shelf_sneaking_insert", shelf);
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:book", 3)).step(useOnAt(2, 100, 0, 4, 0, 0.0, 0.75, 0.5));
+        out.add(c);
+        c = blockCase("shelf_take_with_item_in_hand", full);
+        c.slot("h0", stack("minecraft:apple", 3)).step(useOnAt(2, 100, 0, 4, 0, 0.0, 0.75, 0.17));
+        out.add(c);
+    }
+
     // ---------------------------------------------------------------- sign scenarios
 
     static final int SX = 4, SY = 100, SZ = 4;
@@ -1147,6 +1300,7 @@ public class InteractVectors {
             books(all);
             picks(all);
             cakes(all);
+            blocks49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

@@ -156,6 +156,7 @@ pub mod stat {
         TALKED_TO_VILLAGER = "minecraft:talked_to_villager",
         EAT_CAKE_SLICE = "minecraft:eat_cake_slice",
         INTERACT_WITH_CAMPFIRE = "minecraft:interact_with_campfire",
+        POT_FLOWER = "minecraft:pot_flower",
         ENCHANT_ITEM = "minecraft:enchant_item",
         OPEN_CHEST = "minecraft:open_chest",
         OPEN_ENDERCHEST = "minecraft:open_enderchest",
