@@ -89,6 +89,8 @@ public class InteractVectors {
         // wp49: the food level the player starts with, and whether the food data is recorded.
         int food = 20;
         boolean watchFood;
+        // wp49: the hanging entities (item frames, paintings) around are recorded after every step.
+        boolean watchHanging;
         // wp49: the custom stats (by name) whose change is recorded.
         List<String> customStats = new ArrayList<>();
 
@@ -124,6 +126,11 @@ public class InteractVectors {
         Case food(int level) {
             food = level;
             watchFood = true;
+            return this;
+        }
+
+        Case hanging() {
+            watchHanging = true;
             return this;
         }
 
@@ -489,6 +496,151 @@ public class InteractVectors {
         out.add(c);
         c = blockCase("shelf_take_with_item_in_hand", full);
         c.slot("h0", stack("minecraft:apple", 3)).step(useOnAt(2, 100, 0, 4, 0, 0.0, 0.75, 0.17));
+        out.add(c);
+    }
+
+    static Map<String, Object> useEntity(double x, double y, double z, int hand, boolean sneak) {
+        return op("op", "use_entity", "pos", List.of(x, y, z), "hand", hand, "sneak", sneak);
+    }
+
+    static Map<String, Object> attackEntity(double x, double y, double z) {
+        return op("op", "attack_entity", "pos", List.of(x, y, z));
+    }
+
+    /** wp49: item frames, glow item frames and paintings. */
+    static void frames49(List<Case> out) {
+        Case c;
+        // ---- a stone block at (2, 100, 0), a frame on each of its faces (the player at 0.5, 100, 0.5)
+        String[] names = {"down", "up", "north", "south", "west", "east"};
+        for (int face = 0; face < 6; face++) {
+            for (String kind : new String[] {"item_frame", "glow_item_frame"}) {
+                c = new Case("frame_place_" + kind + "_" + names[face]).hanging().stat("minecraft:" + kind);
+                c.cmd("setblock 2 100 0 minecraft:stone");
+                c.slot("h0", stack("minecraft:" + kind, 3)).step(useOn(2, 100, 0, face, 0));
+                out.add(c);
+            }
+        }
+        c = new Case("frame_place_creative").hanging().stat("minecraft:item_frame");
+        c.gameMode = "creative";
+        c.cmd("setblock 2 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:item_frame", 3)).step(useOn(2, 100, 0, 4, 0));
+        out.add(c);
+        c = new Case("frame_place_adventure").hanging().stat("minecraft:item_frame");
+        c.gameMode = "adventure";
+        c.cmd("setblock 2 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:item_frame", 3)).step(useOn(2, 100, 0, 4, 0));
+        out.add(c);
+        c = new Case("frame_place_offhand").hanging().stat("minecraft:item_frame");
+        c.cmd("setblock 2 100 0 minecraft:stone");
+        c.slot("offhand", stack("minecraft:item_frame", 3)).step(useOn(2, 100, 0, 4, 1));
+        out.add(c);
+        // Two on the same face: the second finds the first in the way; one on another face of the block is fine.
+        c = new Case("frame_place_twice").hanging().stat("minecraft:item_frame");
+        c.cmd("setblock 2 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:item_frame", 4)).step(useOn(2, 100, 0, 4, 0)).step(useOn(2, 100, 0, 4, 0)).step(useOn(2, 100, 0, 2, 0));
+        out.add(c);
+        // A frame beside a frame: the neighbour's wall is a block that has its own frame in front.
+        c = new Case("frame_place_row").hanging().stat("minecraft:item_frame");
+        c.cmd("fill 2 99 -1 2 101 1 minecraft:stone");
+        c.slot("h0", stack("minecraft:item_frame", 6));
+        for (int z = -1; z <= 1; z++) for (int y = 99; y <= 101; y += 1) if (y != 100 || z != 0) c.step(useOn(2, y, z, 4, 0));
+        out.add(c);
+        // On things that are not a wall: glass, a slab, a fence, a repeater's side, a stair.
+        for (String block : new String[] {"minecraft:glass", "minecraft:oak_slab[type=bottom]", "minecraft:oak_fence", "minecraft:repeater[facing=east]", "minecraft:oak_stairs[facing=east]",
+                "minecraft:chest[facing=east]", "minecraft:oak_leaves", "minecraft:iron_bars", "minecraft:ice", "minecraft:barrier", "minecraft:oak_trapdoor[half=top,open=false]"}) {
+            c = new Case("frame_place_on_" + block.replaceAll("[^a-z_]", "_")).hanging();
+            c.cmd("setblock 2 100 0 " + block);
+            c.slot("h0", stack("minecraft:item_frame", 2)).step(useOn(2, 100, 0, 4, 0));
+            out.add(c);
+        }
+        // ---- using a frame: item in, rotations, item out, frame out
+        c = new Case("frame_use").hanging();
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:item_frame 1 100 0 {Facing:4b}");
+        c.slot("h0", stack("minecraft:apple", 2));
+        c.step(useEntity(1.96875, 100.5, 0.5, 0, false));
+        for (int i = 0; i < 9; i++) c.step(useEntity(1.96875, 100.5, 0.5, 0, false));
+        out.add(c);
+        c = new Case("frame_use_empty_hand").hanging();
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:item_frame 1 100 0 {Facing:4b}");
+        c.step(useEntity(1.96875, 100.5, 0.5, 0, false));
+        out.add(c);
+        c = new Case("frame_use_creative").hanging();
+        c.gameMode = "creative";
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:item_frame 1 100 0 {Facing:4b}");
+        c.slot("h0", stack("minecraft:diamond_sword", 1));
+        c.step(useEntity(1.96875, 100.5, 0.5, 0, false)).step(useEntity(1.96875, 100.5, 0.5, 0, false));
+        out.add(c);
+        c = new Case("frame_use_sneaking").hanging();
+        c.sneaking = true;
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:item_frame 1 100 0 {Facing:4b}");
+        c.slot("h0", stack("minecraft:apple", 2));
+        c.step(useEntity(1.96875, 100.5, 0.5, 0, true)).step(useEntity(1.96875, 100.5, 0.5, 0, true));
+        out.add(c);
+        c = new Case("frame_use_offhand").hanging();
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:glow_item_frame 1 100 0 {Facing:4b}");
+        c.slot("offhand", stack("minecraft:stick", 2));
+        c.step(useEntity(1.96875, 100.5, 0.5, 1, false)).step(useEntity(1.96875, 100.5, 0.5, 1, false));
+        out.add(c);
+        c = new Case("frame_use_fixed").hanging();
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:item_frame 1 100 0 {Facing:4b,Fixed:1b,Item:{id:\"minecraft:stick\",count:1}}");
+        c.slot("h0", stack("minecraft:apple", 2));
+        c.step(useEntity(1.96875, 100.5, 0.5, 0, false)).step(attackEntity(1.96875, 100.5, 0.5));
+        out.add(c);
+        c = new Case("frame_use_adventure").hanging();
+        c.gameMode = "adventure";
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:item_frame 1 100 0 {Facing:4b}");
+        c.slot("h0", stack("minecraft:apple", 2));
+        c.step(useEntity(1.96875, 100.5, 0.5, 0, false));
+        out.add(c);
+        // ---- hitting a frame: the item first, then the frame
+        for (String mode : new String[] {"survival", "creative", "adventure"}) {
+            c = new Case("frame_hit_" + mode).hanging();
+            c.gameMode = mode;
+            c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:item_frame 1 100 0 {Facing:4b,Item:{id:\"minecraft:diamond\",count:1}}");
+            c.step(attackEntity(1.96875, 100.5, 0.5)).step(attackEntity(1.96875, 100.5, 0.5));
+            out.add(c);
+        }
+        c = new Case("frame_hit_drop_chance").hanging();
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:glow_item_frame 1 100 0 {Facing:4b,ItemDropChance:0f,Item:{id:\"minecraft:diamond\",count:1}}");
+        c.step(attackEntity(1.96875, 100.5, 0.5)).step(attackEntity(1.96875, 100.5, 0.5));
+        out.add(c);
+        c = new Case("frame_hit_named").hanging();
+        c.cmd("setblock 2 100 0 minecraft:stone").cmd("summon minecraft:item_frame 1 100 0 {Facing:4b,CustomName:'\"Gallery\"'}");
+        c.step(attackEntity(1.96875, 100.5, 0.5));
+        out.add(c);
+        // ---- paintings on walls of several sizes (the variant among the ones of one area is the entity's random: only the area is compared)
+        int[][] walls = {{1, 1}, {2, 1}, {1, 2}, {2, 2}, {3, 3}, {4, 2}, {4, 3}, {4, 4}, {3, 4}, {5, 5}};
+        for (int[] w : walls) {
+            c = new Case("painting_wall_" + w[0] + "x" + w[1]).hanging().stat("minecraft:painting");
+            c.cmd("fill 3 100 -1 3 " + (100 + w[1] - 1 + 0) + " " + (w[0] - 2) + " minecraft:stone");
+            c.slot("h0", stack("minecraft:painting", 2)).step(useOn(3, 100, 0, 4, 0));
+            out.add(c);
+        }
+        c = new Case("painting_on_floor").hanging().stat("minecraft:painting");
+        c.cmd("fill 1 99 -2 4 99 3 minecraft:stone");
+        c.slot("h0", stack("minecraft:painting", 2)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("painting_no_wall").hanging().stat("minecraft:painting");
+        c.cmd("setblock 3 100 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:painting", 2)).step(useOn(3, 100, 0, 4, 0));
+        out.add(c);
+        c = new Case("painting_creative").hanging().stat("minecraft:painting");
+        c.gameMode = "creative";
+        c.cmd("fill 3 100 -1 3 101 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:painting", 2)).step(useOn(3, 100, 0, 4, 0));
+        out.add(c);
+        c = new Case("painting_two_on_a_wall").hanging().stat("minecraft:painting");
+        c.cmd("fill 3 100 -3 3 103 3 minecraft:stone");
+        c.slot("h0", stack("minecraft:painting", 4)).step(useOn(3, 100, 0, 4, 0)).step(useOn(3, 100, 0, 4, 0)).step(useOn(3, 102, 2, 4, 0));
+        out.add(c);
+        c = new Case("painting_hit").hanging();
+        c.cmd("fill 3 100 -1 3 101 0 minecraft:stone").cmd("summon minecraft:painting 2 100 0 {facing:1b,variant:\"minecraft:courbet\"}");
+        c.step(attackEntity(2.5, 100.5, 0.0)).step(attackEntity(2.5, 100.5, 0.0));
+        out.add(c);
+        c = new Case("painting_hit_creative").hanging();
+        c.gameMode = "creative";
+        c.cmd("fill 3 100 -1 3 101 0 minecraft:stone").cmd("summon minecraft:painting 2 100 0 {facing:1b,variant:\"minecraft:courbet\"}");
+        c.step(attackEntity(2.5, 100.5, 0.0));
         out.add(c);
     }
 
@@ -1062,6 +1214,38 @@ public class InteractVectors {
         return out;
     }
 
+    static net.minecraft.world.entity.Entity nearestHanging(double x, double y, double z) {
+        ServerLevel level = server.overworld();
+        net.minecraft.world.entity.Entity best = null;
+        double bd = 1e18;
+        for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.HangingEntity.class, new AABB(x - 2, y - 2, z - 2, x + 2, y + 2, z + 2))) {
+            double d = e.position().distanceToSqr(x, y, z);
+            if (d < bd) { bd = d; best = e; }
+        }
+        return best;
+    }
+
+    /** The hanging entities in the scenario's area, sorted: [type, x, y, z, facing, item, rotation, painting area]. */
+    static List<Object> hangings() {
+        ServerLevel level = server.overworld();
+        List<Object[]> rows = new ArrayList<>();
+        for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.HangingEntity.class, new AABB(-16, 90, -16, 32, 120, 32))) {
+            String type = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();
+            String item = null;
+            int rot = 0, area = 0;
+            if (e instanceof net.minecraft.world.entity.decoration.ItemFrame f) {
+                item = f.getItem().isEmpty() ? null : hex(f.getItem());
+                rot = f.getRotation();
+            }
+            if (e instanceof net.minecraft.world.entity.decoration.painting.Painting pt) area = pt.getVariant().value().area();
+            rows.add(new Object[] {type, e.getX(), e.getY(), e.getZ(), e.getDirection().get3DDataValue(), item, rot, area});
+        }
+        rows.sort(Comparator.comparing((Object[] r) -> (String) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]).thenComparingDouble(r -> (Double) r[3]));
+        List<Object> out = new ArrayList<>();
+        for (Object[] r : rows) out.add(java.util.Arrays.asList(r));
+        return out;
+    }
+
     static List<Object> itemEntities() {
         ServerLevel level = server.overworld();
         List<Object> out = new ArrayList<>();
@@ -1108,6 +1292,19 @@ public class InteractVectors {
                 @SuppressWarnings("unchecked")
                 List<Integer> at = (List<Integer>) s.get("pos");
                 p.connection.handlePickItemFromBlock(new ServerboundPickItemFromBlockPacket(new BlockPos(at.get(0), at.get(1), at.get(2)), (boolean) s.get("include")));
+            }
+            // wp49: right click or attack on the hanging entity nearest to `pos`.
+            case "use_entity", "attack_entity" -> {
+                @SuppressWarnings("unchecked")
+                List<Double> at = (List<Double>) s.get("pos");
+                var target = nearestHanging(at.get(0), at.get(1), at.get(2));
+                if (target == null) throw new IllegalStateException("no hanging entity near " + at);
+                if (s.get("op").equals("attack_entity")) {
+                    p.connection.handleAttack(new ServerboundAttackPacket(target.getId()));
+                } else {
+                    InteractionHand hand = (int) s.get("hand") == 0 ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
+                    p.connection.handleInteract(new ServerboundInteractPacket(target.getId(), hand, target.position(), (boolean) s.get("sneak")));
+                }
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
             case "cooldown" -> p.getCooldowns().addCooldown(stack((String) s.get("item")), (int) s.get("ticks"));
@@ -1174,6 +1371,7 @@ public class InteractVectors {
                 used.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))) - usedBefore.get(item));
             }
             r.put("used", used);
+            if (c.watchHanging) r.put("hangings", hangings());
             if (c.watchFood) r.put("food", List.of(p.getFoodData().getFoodLevel(), p.getFoodData().getSaturationLevel(), (float) get(p.getFoodData(), "exhaustionLevel")));
             if (!c.customStats.isEmpty()) {
                 Map<String, Object> cs = new LinkedHashMap<>();
@@ -1184,6 +1382,10 @@ public class InteractVectors {
         }
         server.getPlayerList().remove(p);
         command("fill 0 90 0 15 110 15 minecraft:air");
+        command("kill @e[type=minecraft:item]");
+        command("kill @e[type=minecraft:item_frame]");
+        command("kill @e[type=minecraft:glow_item_frame]");
+        command("kill @e[type=minecraft:painting]");
         command("kill @e[type=minecraft:item]");
         Map<String, Object> line = new LinkedHashMap<>();
         line.put("name", c.name);
@@ -1202,6 +1404,7 @@ public class InteractVectors {
         line.put("watch", watch);
         line.put("stat_items", c.statItems);
         line.put("food", c.watchFood ? c.food : null);
+        line.put("hanging", c.watchHanging);
         line.put("custom_stats", c.customStats);
         line.put("result", results);
         return toJson(line);
@@ -1304,6 +1507,7 @@ public class InteractVectors {
             picks(all);
             cakes(all);
             blocks49(all);
+            frames49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

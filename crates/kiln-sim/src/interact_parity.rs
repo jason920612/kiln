@@ -169,6 +169,49 @@ fn set_slot(p: &mut crate::Player, key: &str, s: ItemStack) {
     }
 }
 
+/// The hanging entities of the level, as `InteractVectors.hangings` lists them: [type, x, y, z,
+/// facing, item, rotation, painting area], sorted.
+fn hangings_json(sim: &Sim) -> Value {
+    let mut rows: Vec<(String, f64, f64, f64, Value)> = Vec::new();
+    for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
+        for e in region.part().0.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_deref() else { continue };
+            let Some(dir) = kiln_entity::ext_entity::hanging::direction_of(phys) else { continue };
+            let (item, rot, area) = if let Some(f) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::item_frame::ItemFrame>(phys) {
+                (if f.item.is_empty() { Value::Null } else { Value::String(stack_hex(&f.item)) }, f.rotation, 0)
+            } else if let Some(p) = kiln_entity::ext_entity::get::<kiln_entity::ext_entity::painting::Painting>(phys) {
+                let (w, h) = p.size();
+                (Value::Null, 0, w * h)
+            } else {
+                continue;
+            };
+            let p = phys.position();
+            rows.push((phys.type_name.to_owned(), p.x, p.y, p.z, json!([phys.type_name, p.x, p.y, p.z, dir.index(), item, rot, area])));
+        }
+    }
+    rows.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.total_cmp(&b.2)).then(a.3.total_cmp(&b.3)));
+    Value::Array(rows.into_iter().map(|r| r.4).collect())
+}
+
+/// The id of the hanging entity nearest to `at`.
+fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
+    let mut best: Option<(f64, i32)> = None;
+    for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
+        for e in region.part().0.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_deref() else { continue };
+            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() {
+                continue;
+            }
+            let p = phys.position();
+            let d = (p.x - at[0]).powi(2) + (p.y - at[1]).powi(2) + (p.z - at[2]).powi(2);
+            if best.is_none_or(|b| d < b.0) {
+                best = Some((d, e.id));
+            }
+        }
+    }
+    best.map(|b| b.1)
+}
+
 fn run_case(line: &Value) -> Vec<String> {
     let mut sim = Sim::new(SimConfig::new(2, 2, None));
     let (msg, stats) = join(1, "Interact", 2);
@@ -259,6 +302,19 @@ fn run_case(line: &Value) -> Vec<String> {
                 ));
             }
             "pick_block" => inbox.push(ToSim::Packet(1, PlayIn::PickItemFromBlock { pos: arr3(&step["pos"]), include_data: step["include"].as_bool().unwrap() })),
+            "use_entity" | "attack_entity" => {
+                let at: Vec<f64> = step["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+                let id = nearest_hanging(&sim, [at[0], at[1], at[2]]).expect("a hanging entity near the target");
+                if step["op"] == "attack_entity" {
+                    inbox.push(ToSim::Packet(1, PlayIn::Attack { entity_id: id }));
+                } else {
+                    // (The hit point is relative to the entity, which is where the vectors aim: its middle.)
+                    inbox.push(ToSim::Packet(
+                        1,
+                        PlayIn::Interact { entity_id: id, hand: hand_of(&step["hand"]), location: [0.0; 3], sneaking: step["sneak"].as_bool().unwrap() },
+                    ));
+                }
+            }
             "select" => inbox.push(ToSim::Packet(1, PlayIn::SetCarriedItem { slot: i32_of(&step["slot"]) as i16 })),
             "cooldown" => {
                 let item = ItemStack::of(step["item"].as_str().unwrap(), 1).unwrap();
@@ -324,6 +380,9 @@ fn run_case(line: &Value) -> Vec<String> {
         let want_items: Vec<String> = want["entities"].as_array().unwrap().iter().map(|e| e["item"].as_str().unwrap().to_owned()).collect();
         eq("item entities", format!("{got_items:?}"), format!("{want_items:?}"));
         let p = &sim.players[&1];
+        if want.get("hangings").is_some() {
+            eq("hanging entities", hangings_json(&sim).to_string(), want["hangings"].to_string());
+        }
         if let Some(f) = want["food"].as_array() {
             eq("food", format!("{:?}", (p.food, p.saturation, p.exhaustion)), format!("{:?}", (f[0].as_i64().unwrap() as i32, f[1].as_f64().unwrap() as f32, f[2].as_f64().unwrap() as f32)));
         }
