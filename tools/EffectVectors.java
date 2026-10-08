@@ -1538,8 +1538,12 @@ public class EffectVectors {
             if (System.getenv("KILN_DEBUG_MOVES") != null && s.name.contains(System.getenv("KILN_DEBUG_MOVES"))) {
                 System.err.println("DBG " + s.name + " tick " + t + " pos " + p.position() + " delta " + p.getDeltaMovement() + " onGround " + p.onGround() + " shadowGround " + (shadow == null ? null : shadow.onGround()) + " moves " + get(p, "movementThisTick"));
             }
+            boolean dbg = System.getenv("KILN_DEBUG_MOVES") != null && s.name.contains(System.getenv("KILN_DEBUG_MOVES"));
+            if (dbg) System.err.println("DBG   fire before commonTick " + p.getRemainingFireTicks());
             p.commonTick();
+            if (dbg) System.err.println("DBG   fire after commonTick " + p.getRemainingFireTicks());
             p.tick();
+            if (dbg) System.err.println("DBG   fire after tick " + p.getRemainingFireTicks());
             call(p.connection, "tickPlayer");
             if (System.getenv("KILN_DEBUG_MOVES") != null && s.name.contains(System.getenv("KILN_DEBUG_MOVES"))) {
                 System.err.println("DBG   after tick " + t + " pos " + p.position() + " final " + get(p, "finalMovementsThisTick") + " frozen " + p.getTicksFrozen());
