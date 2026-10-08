@@ -367,10 +367,14 @@ impl Kind for Bee {
         let _ = who;
         let item = if stack.is_empty() { 0 } else { stack.item() };
         if item > 0 && crate::mob::item_tag(item, "minecraft:bee_food") {
-            let effects = super::mooshroom::flower_effects(stack);
-            if let Some(fx) = effects.and_then(|v| v.into_iter().next()) {
-                let _ = level;
-                let effect = crate::effect::Effect::new(fx.effect, fx.duration, 0, false, true, true);
+            // `FlowerBlock.getBeeInteractionEffect`: only the eyeblossoms (poison) and the wither rose.
+            let name = crate::mob::item_name(stack);
+            let fx = match name {
+                "minecraft:open_eyeblossom" | "minecraft:closed_eyeblossom" => Some(("minecraft:poison", 25)),
+                "minecraft:wither_rose" => Some(("minecraft:wither", 40)),
+                _ => None,
+            };
+            if let Some(effect) = fx.and_then(|(n, d)| crate::effect::Effect::named(n, d, 0)) {
                 crate::mob::effects::add(e, m, level, effect, None);
                 return Some(Outcome::success(HeldChange::Consume(1)));
             }
@@ -556,7 +560,7 @@ impl CustomGoal for ValidateHiveGoal {
         0
     }
     fn can_use(&mut self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        calm(m, level) && level.game_time() > self.last_validate + self.cooldown as i64
+        calm(m, level) && level.game_time() > self.last_validate + st(m).validate_hive as i64
     }
     fn can_continue(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
         false
@@ -588,7 +592,7 @@ impl CustomGoal for ValidateFlowerGoal {
         0
     }
     fn can_use(&mut self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        calm(m, level) && level.game_time() > self.last_validate + self.cooldown as i64
+        calm(m, level) && level.game_time() > self.last_validate + st(m).validate_flower as i64
     }
     fn can_continue(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
         false
@@ -1154,4 +1158,14 @@ pub fn set_target(e: &mut Entity, target: i32) {
 /// Whether the bee has a target.
 pub fn has_target(e: &Entity) -> bool {
     crate::mob::data(e).is_some_and(|m| m.target.is_some())
+}
+
+/// For the parity replay: the constructor's draws as the recording had them (vanilla draws them from
+/// the mob's unseeded random): the flower-search cooldown and the validate goals' cooldowns.
+pub fn pin_constructor_draws(e: &mut Entity, flower: i32, validate_hive: i32, validate_flower: i32) {
+    if let Some(s) = crate::mob::data_mut(e).and_then(ext::state_mut::<State>) {
+        s.cooldown_flower = flower;
+        s.validate_hive = validate_hive;
+        s.validate_flower = validate_flower;
+    }
 }

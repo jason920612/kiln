@@ -663,6 +663,18 @@ public class MobVectors {
             }
             m.getRandom().setSeed(spec.seed);
             pinCubeMoveYaw(m);
+            // wp49 bees: the constructor draws the flower-search cooldown and the validate goals' cooldowns from
+            // the mob's unseeded random: recorded, and set in the replay.
+            String beeJson = "null";
+            if (m instanceof net.minecraft.world.entity.animal.bee.Bee) {
+                int vh = -1, vf = -1;
+                for (WrappedGoal g : ((net.minecraft.world.entity.ai.goal.GoalSelector) get(m, "goalSelector")).getAvailableGoals()) {
+                    String n = g.getGoal().getClass().getSimpleName();
+                    if (n.equals("ValidateHiveGoal")) vh = (Integer) get(g.getGoal(), "VALIDATE_HIVE_COOLDOWN");
+                    if (n.equals("ValidateFlowerGoal")) vf = (Integer) get(g.getGoal(), "validateFlowerCooldown");
+                }
+                beeJson = "[" + get(m, "remainingCooldownBeforeLocatingNewFlower") + "," + vh + "," + vf + "]";
+            }
             int eggTime = m instanceof net.minecraft.world.entity.animal.chicken.Chicken c ? (Integer) get(c, "eggTime") : 0;
             if (!level.addFreshEntity(m)) throw new IllegalStateException("could not add " + spec.type);
             if (spec.heart != null) {
@@ -675,11 +687,11 @@ public class MobVectors {
             tracked.add(m);
             if (specs.length() > 0) specs.append(',');
             specs.append(String.format(Locale.ROOT,
-                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s,\"vehicle\":%d}",
+                    "{\"type\":\"%s\",\"id\":%d,\"seed\":%d,\"pos\":[%s,%s,%s],\"yaw\":%s,\"main_hand\":%s,\"egg_time\":%d,\"age\":%d,\"in_love\":%d,\"nbt\":%s,\"effects\":%s,\"heart\":%s,\"vehicle\":%d,\"bee\":%s}",
                     spec.type, m.getId(), spec.seed, d(spec.x), d(spec.y), d(spec.z), Float.toString(spec.yaw),
                     spec.mainHand == null ? "null" : "\"" + spec.mainHand + "\"", eggTime,
                     spec.age == null ? 0 : spec.age, spec.inLove == null ? 0 : spec.inLove, nbtJson, effectsJson(spec.effects),
-                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]", spec.vehicle));
+                    spec.heart == null ? "null" : "[" + spec.heart.getX() + "," + spec.heart.getY() + "," + spec.heart.getZ() + "]", spec.vehicle, beeJson));
         }
         // wp29: riders sit on their mounts before the first tick.
         for (int i = 0; i < s.mobs.size(); i++) {

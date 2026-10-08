@@ -489,6 +489,9 @@ fn replay(s: &Value) -> Result<usize, String> {
                 mob::reassess_weapon_goal(m, false);
             }
         }
+        if let Some(b) = spec.get("bee").and_then(Value::as_array) {
+            kiln_entity::mob::kinds::bee::pin_constructor_draws(&mut e, b[0].as_i64().unwrap() as i32, b[1].as_i64().unwrap() as i32, b[2].as_i64().unwrap() as i32);
+        }
         if let Some(nbt) = spec.get("nbt").filter(|v| !v.is_null()) {
             mob::persist::apply_nbt(&mut e, &tag_of(nbt));
         }
