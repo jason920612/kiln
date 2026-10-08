@@ -181,9 +181,8 @@ impl LegacyRandom {
     }
 
     /// `nextGaussian` (`MarsagliaPolarGaussian`): pairs of normal values from pairs of doubles
-    /// inside the unit circle; the second of a pair is kept for the next call. The values use
-    /// the platform's `ln` (vanilla: `StrictMath.log`), so their last bits may differ; the
-    /// draws do not.
+    /// inside the unit circle; the second of a pair is kept for the next call. The logarithm is
+    /// [`crate::pow::log`] (vanilla: `Math.log`).
     pub fn next_gaussian(&mut self) -> f64 {
         if let Some(g) = self.next_gaussian.take() {
             return g;
@@ -193,7 +192,7 @@ impl LegacyRandom {
             let b = 2.0 * self.next_double() - 1.0;
             let s = a * a + b * b;
             if s < 1.0 && s != 0.0 {
-                let m = (-2.0 * s.ln() / s).sqrt();
+                let m = (-2.0 * crate::pow::log(s) / s).sqrt();
                 self.next_gaussian = Some(b * m);
                 return a * m;
             }

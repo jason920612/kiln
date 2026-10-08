@@ -20,8 +20,9 @@ const LIBM: &[&str] = &[
 
 /// Files (path suffixes) allowed to call libm, and why.
 const ALLOWED_FILES: &[(&str, &str)] = &[
-    // The implementations themselves (`trig` falls back to the platform libm beyond 1e9 radians).
-    ("kiln-javamath/", "the Java-exact math library"),
+    // Beyond 1e9 radians the double-double reduction runs out of bits and `sin`/`cos` fall back to
+    // the platform libm; no game code passes such an angle (they stay within a few thousand).
+    ("kiln-javamath/src/trig.rs", "huge-argument fallback"),
     // Load-generating bot clients choose where to walk; nothing in the server depends on it.
     ("kiln-bot/", "client-side bot behaviour, not simulation"),
 ];
