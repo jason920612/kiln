@@ -455,7 +455,7 @@ impl RegionWork<'_> {
         // itself and reads the region's blocks, so the players split into windows; what they
         // leave behind is merged in connection order, as a serial loop would have left it.
         let cells = &*self.cells;
-        let ticked = ctx.map_mut_with(PLAYER_TICK_WINDOW, &mut self.players, |_, p| player_tick(p, cells, env));
+        let ticked = ctx.map_mut_with(PLAYER_TICK_WINDOW, &mut self.players, |_, p| player_tick(p, cells, env, true));
         for t in ticked {
             self.out.spawns.extend(t.spawns);
             self.out.deaths.extend(t.deaths);
@@ -717,15 +717,21 @@ const PACKET_WINDOW: Window = Window::new().item_ns(600);
 
 /// What one player's tick leaves for its region, merged in connection order.
 #[derive(Default)]
-struct PlayerTicked {
-    spawns: Vec<Spawn>,
-    deaths: Vec<crate::health::Death>,
-    portals: Vec<crate::portal::Travel>,
+pub(crate) struct PlayerTicked {
+    pub spawns: Vec<Spawn>,
+    pub deaths: Vec<crate::health::Death>,
+    pub portals: Vec<crate::portal::Travel>,
 }
 
 /// One player's part of the connection phase: connection upkeep and the player tick. It
 /// changes only the player and reads the region's blocks.
-fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked {
+///
+/// `entity_ticking` is whether the player's chunk ticks entities. A player whose chunk is not
+/// loaded yet (it waits for it) runs only what the connection drives in vanilla
+/// (`ServerGamePacketListenerImpl.tick` -> `ServerPlayer.doTick`: the base tick, effects, food,
+/// stats and the health and experience sync, against void air); `ServerPlayer.tick`, which the
+/// level's entity ticking calls, waits for the chunk.
+pub(crate) fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env, entity_ticking: bool) -> PlayerTicked {
     let mut t = PlayerTicked::default();
     let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
     tick_connection(p, env);
@@ -772,9 +778,11 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     p.tick_food(env.natural_regen, &mut ctx);
     p.tick_stats();
     // `ServerPlayer.tick`.
-    p.warden_tracker.tick();
-    let probe = crate::advancements::triggers::CellProbe::new(cells, &env.blocks);
-    p.tick_triggers(&probe);
+    if entity_ticking {
+        p.warden_tracker.tick();
+        let probe = crate::advancements::triggers::CellProbe::new(cells, &env.blocks);
+        p.tick_triggers(&probe);
+    }
     // `onInsideBlock` (Kiln checks the block at the feet).
     let feet = kiln_entity::math::BlockPos::new(p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32);
     let inside = block(feet);

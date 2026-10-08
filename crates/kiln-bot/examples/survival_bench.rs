@@ -800,8 +800,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
         "sync_ms_whole_run": last.get("sync_ms"),
         "sync_max_ms_whole_run": last.get("sync_max_ms"),
         "ticks_over_1s_whole_run": { "count": long_ticks, "total_ms": long_ms, "longest_ms": longest },
-        "limbo_whole_run": { "n": last.get("limbo_n"), "mean_ms": last.get("limbo_mean_ms"), "p99_ms": last.get("limbo_p99_ms"), "max_ms": last.get("limbo_max_ms") },
-        "join_wait_whole_run": { "n": last.get("join_wait_n"), "mean_ms": last.get("join_wait_mean_ms"), "max_ms": last.get("join_wait_max_ms") },
+        "chunk_wait_whole_run": { "n": last.get("chunk_wait_n"), "mean_ms": last.get("chunk_wait_mean_ms"), "p99_ms": last.get("chunk_wait_p99_ms"), "max_ms": last.get("chunk_wait_max_ms") },
         "server_rss_mb_max": totals.iter().filter_map(|(_, t)| t.get("rss_mb").copied()).fold(0.0, f64::max),
         "gen_held_last": last.get("gen_held"),
         "gen_request_to_ready_ms_whole_run": {
@@ -907,9 +906,8 @@ fn print_summary(r: &Value) {
         f(c, "ticks_over_1s_whole_run.count"), f(c, "ticks_over_1s_whole_run.total_ms") / 1000.0, f(c, "ticks_over_1s_whole_run.longest_ms") / 1000.0
     );
     println!(
-        "waits whole run: teleported into terrain not made yet {:.0} times (waited mean {:.0}, p99 {:.0}, max {:.0} ms); joins waiting for their chunk {:.0} (mean {:.0}, max {:.0} ms)",
-        f(c, "limbo_whole_run.n"), f(c, "limbo_whole_run.mean_ms"), f(c, "limbo_whole_run.p99_ms"), f(c, "limbo_whole_run.max_ms"),
-        f(c, "join_wait_whole_run.n"), f(c, "join_wait_whole_run.mean_ms"), f(c, "join_wait_whole_run.max_ms")
+        "waits whole run: joined or teleported into terrain not made yet {:.0} times (waited for the chunk mean {:.0}, p99 {:.0}, max {:.0} ms)",
+        f(c, "chunk_wait_whole_run.n"), f(c, "chunk_wait_whole_run.mean_ms"), f(c, "chunk_wait_whole_run.p99_ms"), f(c, "chunk_wait_whole_run.max_ms")
     );
     println!(
         "memory server peak {:.0} MiB (reports every 30 s); generator holds {:.0} unfinished chunks at the end",

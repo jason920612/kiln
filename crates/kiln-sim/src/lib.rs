@@ -403,8 +403,8 @@ struct Player {
     awaiting_teleport: Option<i32>,
     keep_alive: Option<(i64, Instant)>,
     last_keep_alive: Instant,
-    /// Since when the player waits in [`LIMBO`].
-    limbo_since: Option<Instant>,
+    /// Since when the player waits in [`WAITING`].
+    wait_since: Option<Instant>,
     chunks_per_tick: f32,
     unacked_batches: u32,
     /// Main slots, equipment and the selected hotbar slot.
@@ -787,7 +787,7 @@ impl Player {
         self.pos = pos;
         self.rot = rot;
         // `ServerPlayer.teleport` resets the connection's position (`resetPosition`): the
-        // "moved too quickly" check measures from here (a player whose tick waited in limbo
+        // "moved too quickly" check measures from here (a player waiting for its chunk
         // has its accept and first moves applied in one tick).
         self.first_good = pos;
         // A teleport is not movement through blocks, and it ends the server body's momentum.
@@ -1079,9 +1079,8 @@ impl Dim {
             self.timed_install(pos, chunk);
             return true;
         }
-        // `KILN_SYNC_PLACEMENT=1`: the chunk is made here and now, holding the tick up (the
-        // player never waits outside the regions, so its own tick never pauses).
-        if self.generation.is_none() || sync_placement() {
+        // Without background generation (tests) the chunk is made here and now.
+        if self.generation.is_none() {
             self.load_chunk(pos);
             return true;
         }
@@ -1323,12 +1322,8 @@ pub struct Sim {
     trader: trader::TraderSpawner,
     /// Borders, tick rate, forced chunks and random sequences (the world commands).
     world: world_state::WorldState,
-    /// Joins waiting for the chunk they stand in (generated ahead of everything else); the
-    /// client stays on its joining screen meanwhile.
-    waiting_joins: Vec<(persist::Joining, JoinInfo)>,
-    /// When each waiting join arrived.
-    join_arrival: HashMap<ConnId, Instant>,
-    /// Packets of players in [`LIMBO`], applied once they are placed.
+    /// Packets of players in [`WAITING`] that need their region's blocks (clicks on blocks and
+    /// entities, container clicks, ...), applied once they are placed.
     held_packets: Vec<(ConnId, PlayIn)>,
     /// A world save going on over several ticks: the chunks still to copy, by level.
     save_run: Option<Vec<(DimId, ChunkPos)>>,
@@ -1339,19 +1334,16 @@ const SAVE_BUDGET: Duration = Duration::from_millis(2);
 /// Chunk copies of a save waiting for the encoders at most.
 const SAVE_COPIES_AHEAD: usize = 256;
 
-/// `KILN_SYNC_PLACEMENT=1`: players joining or teleported into terrain not generated yet get
-/// their chunk generated on the tick thread at once (holding every player up), instead of
-/// waiting in [`LIMBO`] while it is generated in the background.
-fn sync_placement() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("KILN_SYNC_PLACEMENT").is_ok_and(|v| v == "1"))
-}
-
-/// The region of players whose chunk is still being generated (teleported or moved to another
-/// level into terrain not made yet): they wait outside every region, untouched by the region
-/// ticks, until the chunk is in, as a vanilla client waits on its loading screen. Only levels
-/// that generate terrain in the background have such players; elsewhere the chunk loads at once.
-pub(crate) const LIMBO: RegionId = RegionId(u64::MAX);
+/// The region of players whose chunk is not loaded yet (joined, teleported or moved to another
+/// level into terrain not made yet). As in vanilla, where the player is in the level at once
+/// and its chunk loads meanwhile (the client shows "Loading terrain"), nothing waits: the
+/// server keeps ticking them every tick against void air (effects, hunger, timers, keep-alives,
+/// the health and experience sync) and applies the packets that need no blocks; the chunk is
+/// generated ahead of every other, and movement is not accepted before the client reports it
+/// loaded. They are in no region, so the region ticks do not touch them ([`Sim::tick_waiting`]
+/// does). Only levels that generate terrain in the background have such players; elsewhere the
+/// chunk loads at once.
+pub(crate) const WAITING: RegionId = RegionId(u64::MAX);
 
 /// Operator names from `KILN_OPS` (comma separated).
 fn ops_from_env() -> HashSet<String> {
@@ -1566,8 +1558,6 @@ impl Sim {
             post_effects_pending: false,
             trader: Default::default(),
             world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
-            waiting_joins: Vec::new(),
-            join_arrival: HashMap::new(),
             held_packets: Vec::new(),
             save_run: None,
         };
@@ -1619,13 +1609,7 @@ impl Sim {
                 // A connection that joined and left in the same batch never enters the game.
                 ToSim::Leave(conn) => match joins.iter().position(|j: &JoinInfo| j.conn == conn) {
                     Some(i) => drop(joins.remove(i)),
-                    None => match self.waiting_joins.iter().position(|(_, j)| j.conn == conn) {
-                        Some(i) => {
-                            self.join_arrival.remove(&conn);
-                            drop(self.waiting_joins.remove(i));
-                        }
-                        None => leaves.push(conn),
-                    },
+                    None => leaves.push(conn),
                 },
                 ToSim::Packet(conn, pkt) => packets.push((conn, pkt)),
                 ToSim::Console(command) => console.push(command),
@@ -1648,21 +1632,13 @@ impl Sim {
         self.maintain_chunks();
         let dt = diag::lap("b0.chunks", dt);
         self.rendezvous_for_topology();
-        // A join waits (no level yet, the client on its joining screen) until the chunk it
-        // stands in is loaded; terrain not made yet is generated ahead of everything else.
-        let mut joining = std::mem::take(&mut self.waiting_joins);
-        joining.extend(joins.into_iter().map(|j| (self.joining(j.uuid), j)));
-        let (joining, waiting): (Vec<_>, Vec<_>) =
-            joining.into_iter().partition(|(jn, _)| self.dims[jn.dim].request_urgent(player_chunk(jn.pos)));
-        for (_, j) in &waiting {
-            self.join_arrival.entry(j.conn).or_insert_with(Instant::now);
+        // A join enters the level at once, as in vanilla; the chunk it stands in is loaded now or,
+        // if it has to be generated, ahead of everything else while the player waits for it
+        // ([`WAITING`]).
+        let joining: Vec<_> = joins.into_iter().map(|j| (self.joining(j.uuid), j)).collect();
+        for (jn, _) in &joining {
+            self.dims[jn.dim].request_urgent(player_chunk(jn.pos));
         }
-        for (_, j) in &joining {
-            if let Some(at) = self.join_arrival.remove(&j.conn) {
-                chunkstats::JOIN_WAIT.add(at.elapsed());
-            }
-        }
-        self.waiting_joins = waiting;
         let changed = self.apply_topology();
         let dt = diag::lap("b0.topology", dt);
         self.plugins_b0();
@@ -1679,7 +1655,7 @@ impl Sim {
         // P: region-local packets in parallel.
         let w0 = kiln_sched::window_ns();
         let dt = Instant::now();
-        let packets = self.hold_limbo_packets(packets);
+        let packets = self.take_waiting_packets(packets);
         let (local, exclusive) = self.route(packets);
         let dt = diag::lap("p.route", dt);
         let outs = self.run_regions(0, local, |w, env, ctx| w.apply_packets(env, ctx));
@@ -1728,8 +1704,10 @@ impl Sim {
         // L: regions tick in parallel; in independent mode, regions too slow for the tick
         // tick away on their own.
         self.lend_slow_regions();
-        let outs = self.run_regions(1, BTreeMap::new(), |w, env, ctx| w.tick(env, ctx));
+        let mut outs = self.run_regions(1, BTreeMap::new(), |w, env, ctx| w.tick(env, ctx));
         self.note_region_ticks();
+        // Players whose chunk is not loaded yet tick too.
+        outs.extend(self.tick_waiting());
         let mut times = [Duration::ZERO; region::SUB_PHASES.len()];
         let mut travels = Vec::new();
         let mut portal_candidates = Vec::new();
@@ -1780,8 +1758,8 @@ impl Sim {
             self.stats.phase(name, d);
         }
 
-        // Players in limbo get what was sent to them (their regions' flush does not see them).
-        for p in self.players.values_mut().filter(|p| p.region == LIMBO) {
+        // Players waiting for their chunk get what was sent to them (no region flushes them).
+        for p in self.players.values_mut().filter(|p| p.region == WAITING) {
             p.flush();
         }
 
@@ -2193,6 +2171,12 @@ impl Sim {
         Some(p.effects.values().map(|e| (kiln_item::registry::MOB_EFFECT.name(e.id).unwrap_or("?"), e.amplifier, e.duration)).collect())
     }
 
+    /// Whether a player is in the level but its chunk is not loaded yet, so it ticks outside
+    /// every region ([`WAITING`]); `None` if there is no such player (for tests and tools).
+    pub fn waiting_for_chunk(&self, conn: ConnId) -> Option<bool> {
+        self.players.get(&conn).map(|p| p.region == WAITING)
+    }
+
     /// A player's remaining fire ticks and air supply (for tests and tools).
     pub fn fire_and_air(&self, conn: ConnId) -> Option<(i32, i32)> {
         self.players.get(&conn).map(|p| (p.fire_ticks, p.air))
@@ -2473,7 +2457,7 @@ impl Sim {
         let envs: Vec<Option<Env>> = (0..self.dims.len()).map(|d| self.dims[d].regions.iter().next().is_some().then(|| self.env(d))).collect();
         let dt = diag::lap("rr.envs", dt);
         let mut buckets: BTreeMap<(DimId, RegionId), Vec<(ConnId, &mut Player)>> = BTreeMap::new();
-        for (&conn, p) in self.players.iter_mut().filter(|(_, p)| p.region != LIMBO) {
+        for (&conn, p) in self.players.iter_mut().filter(|(_, p)| p.region != WAITING) {
             buckets.entry((p.dim, p.region)).or_default().push((conn, p));
         }
         let mut hooks = self.plugins.as_mut().map(|pl| pl.hooks()).unwrap_or_default();
@@ -2553,17 +2537,75 @@ impl Sim {
         work.into_iter().map(|w| (w.dim, w.out)).collect()
     }
 
-    /// Packets of players in limbo wait with them; those held for players placed since go first.
-    fn hold_limbo_packets(&mut self, packets: Vec<(ConnId, PlayIn)>) -> Vec<(ConnId, PlayIn)> {
-        if self.held_packets.is_empty() && !self.players.values().any(|p| p.region == LIMBO) {
+    /// The levels' environments for the players waiting for their chunk (see [`WAITING`]).
+    fn waiting_envs(&self) -> BTreeMap<DimId, Env> {
+        let dims: std::collections::BTreeSet<DimId> = self.players.values().filter(|p| p.region == WAITING).map(|p| p.dim).collect();
+        dims.into_iter().map(|d| (d, self.env(d))).collect()
+    }
+
+    /// Packets of players in [`WAITING`]. The ones that need no blocks apply here at once, as
+    /// vanilla applies them while a chunk loads (keep-alives, teleport confirmations, the
+    /// loaded report, chunk batch acknowledgements, settings); movement is dropped (a client
+    /// on its loading screen sends none, and the server holds the position until it is loaded);
+    /// chat and commands go on with everyone else's. The rest wait for the player's region,
+    /// behind what was held before; the packets held for players placed since go first.
+    fn take_waiting_packets(&mut self, packets: Vec<(ConnId, PlayIn)>) -> Vec<(ConnId, PlayIn)> {
+        if self.held_packets.is_empty() && !self.players.values().any(|p| p.region == WAITING) {
             return packets;
         }
         let mut all = std::mem::take(&mut self.held_packets);
         all.extend(packets);
-        let players = &self.players;
-        let (held, go): (Vec<_>, Vec<_>) = all.into_iter().partition(|(c, _)| players.get(c).is_some_and(|p| p.region == LIMBO));
-        self.held_packets = held;
+        let envs = self.waiting_envs();
+        let no_blocks = kiln_region::CellSet::<Cell>::default();
+        let (mut go, mut blocked, mut deaths) = (Vec::new(), HashSet::new(), Vec::new());
+        for (conn, pkt) in all {
+            let Some(p) = self.players.get_mut(&conn).filter(|p| p.region == WAITING) else {
+                go.push((conn, pkt));
+                continue;
+            };
+            if blocked.contains(&conn) {
+                self.held_packets.push((conn, pkt));
+            } else if matches!(pkt, PlayIn::Move { .. }) {
+            } else if region::is_player_packet(&pkt) {
+                let dim = p.dim;
+                let mut spawns = Vec::new();
+                let rest = region::player_packet(p, &no_blocks, &envs[&dim], pkt, &mut spawns, &mut deaths);
+                debug_assert!(rest.is_none(), "a player packet came back");
+                self.dims[dim].spawns.extend(spawns);
+            } else if region::is_exclusive(&pkt) {
+                go.push((conn, pkt));
+            } else {
+                blocked.insert(conn);
+                self.held_packets.push((conn, pkt));
+            }
+        }
+        self.announce_deaths(deaths);
         go
+    }
+
+    /// The tick of the players in [`WAITING`], in connection order: what vanilla's connection
+    /// drives for a player whose chunk is not loaded (`ServerPlayer.doTick`), against void air.
+    /// Effects, hunger, fire, air and the other timers advance every tick like anyone's; the
+    /// level's entity ticking (`ServerPlayer.tick`), the chunk view and the trackers wait for
+    /// the chunk. What the ticks leave behind is returned like a region's.
+    fn tick_waiting(&mut self) -> Vec<(DimId, RegionOut)> {
+        let mut conns: Vec<ConnId> = self.players.iter().filter(|(_, p)| p.region == WAITING).map(|(&c, _)| c).collect();
+        if conns.is_empty() {
+            return Vec::new();
+        }
+        conns.sort_unstable();
+        let envs = self.waiting_envs();
+        let no_blocks = kiln_region::CellSet::<Cell>::default();
+        let mut outs = Vec::new();
+        for conn in conns {
+            let p = self.players.get_mut(&conn).unwrap();
+            let t = region::player_tick(p, &no_blocks, &envs[&p.dim], false);
+            p.decay_velocity();
+            let mut out = RegionOut { spawns: t.spawns, deaths: t.deaths, portals: t.portals, ..Default::default() };
+            out.saved_entities.append(&mut p.released_shoulders);
+            outs.push((p.dim, out));
+        }
+        outs
     }
 
     /// Splits this tick's packets into each region's local stream and the serial PX stream:
@@ -2675,7 +2717,7 @@ impl Sim {
             d.install_generated(&keep);
             let dt = diag::lap("ch.install_generated", dt);
             // Every player's own chunk, uncapped: each player must stand in an owned cell (or
-            // waits in limbo while it is generated).
+            // waits for it while it is generated).
             for pos in keep {
                 d.request_urgent(pos);
             }
@@ -2686,7 +2728,7 @@ impl Sim {
             wanted.sort_unstable_by_key(|&(rank, conn, _)| (rank, conn));
             // Chunks queued for generation that no player can see any more (they moved on) leave
             // the queue before a thread takes them, as vanilla drops generation work whose
-            // ticket went (the chunks players wait for in limbo stay).
+            // ticket went (the chunks players wait for stay).
             if self.game_time % 20 == 0 && d.generation.is_some() {
                 let reach = self.config.view_distance as i32 + 1;
                 let viewers = &own_chunks_all[dim];
@@ -2730,12 +2772,12 @@ impl Sim {
         let Sim { players, dims, .. } = self;
         for p in players.values_mut() {
             // No owner: the chunk is still being generated.
-            let r = dims[p.dim].regions.owner(player_chunk(p.pos).cell()).unwrap_or(LIMBO);
+            let r = dims[p.dim].regions.owner(player_chunk(p.pos).cell()).unwrap_or(WAITING);
             if r != p.region {
-                if r == LIMBO {
-                    p.limbo_since = Some(Instant::now());
-                } else if let Some(since) = p.limbo_since.take() {
-                    chunkstats::LIMBO.add(since.elapsed());
+                if r == WAITING {
+                    p.wait_since = Some(Instant::now());
+                } else if let Some(since) = p.wait_since.take() {
+                    chunkstats::CHUNK_WAIT.add(since.elapsed());
                 }
                 p.region = r;
                 moved = true;
@@ -3349,7 +3391,7 @@ impl Sim {
         let move_state = packets::entity::MoveState { pos: spawn, yaw, pitch, head_yaw: yaw, on_ground: true };
         let dim = joining.dim;
         let dimension_type = kiln_data::synced_id("minecraft:dimension_type", DIMENSIONS[dim].0).expect("dimension type");
-        let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).expect("spawn chunk loaded");
+        let region = self.dims[dim].regions.owner(player_chunk(spawn).cell()).unwrap_or(WAITING);
         let mut recipe_book = recipe_book::RecipeBook::load(joining.saved.raw().get("recipeBook"));
         let shoulders = [shoulder::load(joining.saved.raw(), "ShoulderEntityLeft"), shoulder::load(joining.saved.raw(), "ShoulderEntityRight")];
         let returning_vehicle = persist::returning_vehicle(joining.saved.raw().get("RootVehicle"));
@@ -3386,7 +3428,7 @@ impl Sim {
             awaiting_teleport: Some(1),
             keep_alive: None,
             last_keep_alive: Instant::now(),
-            limbo_since: None,
+            wait_since: (region == WAITING).then(Instant::now),
             chunks_per_tick: 9.0,
             unacked_batches: 0,
             inv: joining.inv,

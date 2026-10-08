@@ -32,6 +32,13 @@ pub struct CellSet<C> {
     index: Vec<u32>,
 }
 
+/// No cells: every block read misses (a player waiting for its chunk ticks against it).
+impl<C> Default for CellSet<C> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<C> CellSet<C> {
     fn new() -> Self {
         Self { slots: Vec::new(), cells: Vec::new(), index: Vec::new() }
