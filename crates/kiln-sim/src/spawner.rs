@@ -973,7 +973,9 @@ fn zoomed_biome_at(level: &RegionLevel, x: i32, y: i32, z: i32) -> u16 {
     if let Some(p) = &level.env.pipeline {
         let world = p.world().clone();
         let mut gs = kiln_worldgen::generator::GenScratch::default();
-        return kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, y, z, &mut |qx, qy, qz| gs.noise_biome(&world.generator, qx, qy, qz));
+        // (`ChunkAccess.getNoiseBiome` clamps the height to the chunk's.)
+        let (lo, hi) = (level.env.min_y >> 2, ((level.env.min_y + level.env.height) >> 2) - 1);
+        return kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, y, z, &mut |qx, qy, qz| gs.noise_biome(&world.generator, qx, qy.clamp(lo, hi), qz));
     }
     biome_at(level, KBlockPos::new(x, y, z))
 }
