@@ -64,6 +64,8 @@ public class ContainerVectors {
         boolean dropsLag;
         /** The bees appearing each tick (where) and their number are recorded. */
         boolean watchBees;
+        /** wp49: the new entities of each tick are recorded. */
+        boolean watchEntities;
 
         Scenario(String name, int ticks) {
             this.name = name;
@@ -126,6 +128,12 @@ public class ContainerVectors {
             return this;
         }
 
+        /** wp49: the entities (other than items and players) that appear are recorded each tick (type and where). */
+        Scenario entities() {
+            watchEntities = true;
+            return this;
+        }
+
         Scenario at(int tick, String command) {
             actions.computeIfAbsent(tick, k -> new ArrayList<>()).add(command);
             return this;
@@ -149,6 +157,7 @@ public class ContainerVectors {
             m.put("align20", align20);
             m.put("drops_lag", dropsLag);
             m.put("bees", watchBees);
+            m.put("entities", watchEntities);
             return m;
         }
 
@@ -287,7 +296,76 @@ public class ContainerVectors {
         hiveScenarios(out);
         potScenarios(out);
         lecternScenarios(out);
+        dispenserScenarios(out);
         return out;
+    }
+
+    /**
+     * wp49: a dispenser facing east is powered from above at tick 2 and fires at tick 6; what it does to the
+     * block (1, 0, 0) in front, to its own slot, to the items about and to the entities that appear is recorded.
+     */
+    static Scenario dispense(String name, String item, int count) {
+        return new Scenario("dispenser_" + name, 14)
+                .container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(slot(0, item, count)))
+                .state(1, 0, 0).drops().entities()
+                .at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block");
+    }
+
+    static void dispenserScenarios(List<Scenario> out) {
+        // Bone meal: crops that take a fixed step, one that is full grown, something that is no plant.
+        out.add(dispense("bone_meal_torchflower", "bone_meal", 3).block(1, -1, 0, "minecraft:farmland[moisture=7]").block(1, 0, 0, "minecraft:torchflower_crop[age=0]"));
+        out.add(dispense("bone_meal_berries", "bone_meal", 3).block(1, -1, 0, "minecraft:dirt").block(1, 0, 0, "minecraft:sweet_berry_bush[age=1]"));
+        out.add(dispense("bone_meal_cocoa", "bone_meal", 3).block(1, 0, -1, "minecraft:jungle_log").block(1, 0, 0, "minecraft:cocoa[age=0,facing=north]"));
+        out.add(dispense("bone_meal_full_grown", "bone_meal", 3).block(1, -1, 0, "minecraft:farmland[moisture=7]").block(1, 0, 0, "minecraft:wheat[age=7]"));
+        out.add(dispense("bone_meal_stone", "bone_meal", 3).block(1, 0, 0, "minecraft:stone"));
+        // Flint and steel: fire on a floor, a campfire and a candle lit, TNT primed, a stone that takes nothing.
+        out.add(dispense("flint_fire", "flint_and_steel", 1).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("flint_netherrack_fire", "flint_and_steel", 1).block(1, -1, 0, "minecraft:netherrack"));
+        out.add(dispense("flint_campfire", "flint_and_steel", 1).block(1, 0, 0, "minecraft:campfire[lit=false,facing=north,waterlogged=false,signal_fire=false]"));
+        out.add(dispense("flint_candle", "flint_and_steel", 1).block(1, 0, 0, "minecraft:candle[lit=false,candles=2,waterlogged=false]"));
+        out.add(dispense("flint_tnt", "flint_and_steel", 1).block(1, 0, 0, "minecraft:tnt"));
+        out.add(dispense("flint_stone", "flint_and_steel", 1).block(1, 0, 0, "minecraft:stone"));
+        out.add(dispense("flint_air_over_air", "flint_and_steel", 1));
+        // Honeycomb on copper.
+        out.add(dispense("honeycomb_copper", "honeycomb", 2).block(1, 0, 0, "minecraft:copper_block"));
+        out.add(dispense("honeycomb_cut_copper_stairs", "honeycomb", 2).block(1, 0, 0, "minecraft:weathered_cut_copper_stairs[facing=north,half=top,shape=straight,waterlogged=false]"));
+        out.add(dispense("honeycomb_stone", "honeycomb", 2).block(1, 0, 0, "minecraft:stone"));
+        // Glowstone on a respawn anchor, a full one, anything else.
+        out.add(dispense("glowstone_anchor", "glowstone", 2).block(1, 0, 0, "minecraft:respawn_anchor[charge=1]"));
+        out.add(dispense("glowstone_full_anchor", "glowstone", 2).block(1, 0, 0, "minecraft:respawn_anchor[charge=4]"));
+        out.add(dispense("glowstone_stone", "glowstone", 2).block(1, 0, 0, "minecraft:stone"));
+        // Glass bottles: honey from a full hive, water from water, nothing from stone.
+        out.add(dispense("bottle_hive", "glass_bottle", 2).block(1, 0, 0, "minecraft:beehive[facing=north,honey_level=5]"));
+        out.add(dispense("bottle_hive_one", "glass_bottle", 1).block(1, 0, 0, "minecraft:beehive[facing=north,honey_level=5]"));
+        out.add(dispense("bottle_hive_unripe", "glass_bottle", 2).block(1, 0, 0, "minecraft:beehive[facing=north,honey_level=4]"));
+        out.add(dispense("bottle_water", "glass_bottle", 2).block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:water[level=0]"));
+        out.add(dispense("bottle_stone", "glass_bottle", 2).block(1, 0, 0, "minecraft:stone"));
+        // Water bottles: dirt becomes mud, a bottle of another potion is dropped.
+        String water = "{Slot:0b,id:\"minecraft:potion\",count:2,components:{\"minecraft:potion_contents\":{potion:\"minecraft:water\"}}}";
+        out.add(new Scenario("dispenser_water_bottle_dirt", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(water)).state(1, 0, 0).drops().entities()
+                .block(1, 0, 0, "minecraft:dirt").at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+        out.add(new Scenario("dispenser_water_bottle_stone", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(water)).state(1, 0, 0).drops().entities()
+                .block(1, 0, 0, "minecraft:stone").at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+        String awkward = "{Slot:0b,id:\"minecraft:potion\",count:2,components:{\"minecraft:potion_contents\":{potion:\"minecraft:awkward\"}}}";
+        out.add(new Scenario("dispenser_awkward_potion_dirt", 14).container(0, 0, 0, "minecraft:dispenser[facing=east]" + items(awkward)).state(1, 0, 0).drops().entities()
+                .block(1, 0, 0, "minecraft:dirt").at(2, "setblock ~0 ~1 ~0 minecraft:redstone_block"));
+        // TNT is primed where it is dispensed.
+        out.add(dispense("tnt", "tnt", 2));
+        out.add(dispense("tnt_over_a_hole", "tnt", 2).block(1, -1, 0, "minecraft:stone"));
+        // Shears on a hive, on nothing.
+        out.add(dispense("shears_hive", "shears", 1).block(1, 0, 0, "minecraft:bee_nest[facing=north,honey_level=5]"));
+        out.add(dispense("shears_unripe_hive", "shears", 1).block(1, 0, 0, "minecraft:bee_nest[facing=north,honey_level=3]"));
+        out.add(dispense("shears_stone", "shears", 1).block(1, 0, 0, "minecraft:stone"));
+        // Shulker boxes are put down (on the floor facing up, or facing the way the dispenser does over a drop).
+        out.add(dispense("shulker_box_floor", "shulker_box", 1).block(1, -1, 0, "minecraft:stone"));
+        out.add(dispense("shulker_box_over_air", "red_shulker_box", 2));
+        out.add(dispense("shulker_box_blocked", "shulker_box", 1).block(1, 0, 0, "minecraft:stone"));
+        // Boats go on water (or on the air over it).
+        out.add(dispense("boat_water", "oak_boat", 2).block(1, -1, 0, "minecraft:stone").block(1, 0, 0, "minecraft:water[level=0]"));
+        out.add(dispense("boat_over_water", "birch_chest_boat", 2).block(1, -1, 0, "minecraft:water[level=0]"));
+        out.add(dispense("boat_on_land", "oak_boat", 2).block(1, -1, 0, "minecraft:stone"));
+        // Armor stands.
+        out.add(dispense("armor_stand", "armor_stand", 2).block(1, -1, 0, "minecraft:stone"));
     }
 
     /** wp49: a comparator reads how far into the book a lectern is open. */
@@ -874,6 +952,7 @@ public class ContainerVectors {
         }
         List<Object> ticks = new ArrayList<>();
         java.util.Set<java.util.UUID> seenBees = new java.util.HashSet<>();
+        java.util.Set<java.util.UUID> seenEntities = new java.util.HashSet<>();
         // Whole level ticks while the server's own ticking stays frozen: `runsNormally` is what
         // `ServerLevel.tick` checks (the manager only updates it in its own tick).
         setRunsNormally(level, true);
@@ -901,6 +980,20 @@ public class ContainerVectors {
                     fresh.sort(Comparator.<List<Double>>comparingDouble(l -> l.get(0)).thenComparingDouble(l -> l.get(1)).thenComparingDouble(l -> l.get(2)));
                     tick.put("bees_new", new ArrayList<Object>(fresh));
                     tick.put("bee_count", all.size());
+                }
+                if (s.watchEntities) {
+                    var box = new net.minecraft.world.phys.AABB(BASE[0] - 8, BASE[1] - 8, BASE[2] - 8, BASE[0] + 12, BASE[1] + 12, BASE[2] + 12);
+                    List<List<Object>> fresh = new ArrayList<>();
+                    for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.Entity.class, box)) {
+                        if (e instanceof net.minecraft.world.entity.item.ItemEntity || e instanceof net.minecraft.world.entity.player.Player) continue;
+                        if (seenEntities.add(e.getUUID())) {
+                            fresh.add(List.of(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString(), Math.round(e.getX() * 10000) / 10000.0,
+                                    Math.round(e.getY() * 10000) / 10000.0, Math.round(e.getZ() * 10000) / 10000.0));
+                        }
+                    }
+                    fresh.sort(Comparator.<List<Object>, String>comparing(l -> (String) l.get(0)).thenComparingDouble(l -> (Double) l.get(1))
+                            .thenComparingDouble(l -> (Double) l.get(2)).thenComparingDouble(l -> (Double) l.get(3)));
+                    tick.put("entities_new", new ArrayList<Object>(fresh));
                 }
                 if (s.watchDrops) {
                     tick.put("drops", dropsState(level));
@@ -930,6 +1023,9 @@ public class ContainerVectors {
         command(server, "kill @e[type=arrow]");
         command(server, "kill @e[type=spectral_arrow]");
         command(server, "kill @e[type=snowball]");
+        // (wp49: boats, armor stands and what else a dispenser put out.)
+        command(server, "kill @e[type=!minecraft:player,type=!minecraft:item]");
+        command(server, "kill @e[type=item]");
         Map<String, Object> line = s.json();
         line.put("result", ticks);
         return toJson(line);

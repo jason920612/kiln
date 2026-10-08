@@ -177,6 +177,9 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     let mut kill_items = false;
     let mut previous_drops = serde_json::json!([]);
     let mut seen_bees: std::collections::HashSet<i32> = Default::default();
+    let mut seen_entities: std::collections::HashSet<i32> = Default::default();
+    let mut pending_entities: Vec<i32> = Vec::new();
+    let mut previous_entities = serde_json::json!([]);
     for (t, want) in line["result"].as_array().unwrap().iter().enumerate() {
         let tick = t + 1;
         let mut inbox = Vec::new();
@@ -236,6 +239,31 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             }
             if Some(count) != want["bee_count"].as_i64() {
                 errors.push(format!("tick {tick} bee count: kiln {count}, vanilla {}", want["bee_count"]));
+            }
+        }
+        if line["entities"].as_bool() == Some(true) {
+            // The entities that appeared: vanilla ticks them in the tick they are made, Kiln's join the level after
+            // the tick's work, so those that came last tick are reported now and compared with last tick's vanilla.
+            let mut reported: Vec<(String, f64, f64, f64)> = Vec::new();
+            let mut now_new: Vec<i32> = Vec::new();
+            for region in sim.dims[OVERWORLD_ID].regions.iter() {
+                for e in region.part().0.list.iter().filter(|e| !e.removed && e.kind.name != "minecraft:item" && e.kind.name != "minecraft:player") {
+                    if pending_entities.contains(&e.id) {
+                        let r = |v: f64| (v * 10000.0).round() / 10000.0;
+                        reported.push((e.kind.name.to_owned(), r(e.pos[0]), r(e.pos[1]), r(e.pos[2])));
+                    }
+                    if seen_entities.insert(e.id) {
+                        now_new.push(e.id);
+                    }
+                }
+            }
+            pending_entities = now_new;
+            reported.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.total_cmp(&b.2)).then(a.3.total_cmp(&b.3)));
+            let got = json!(reported.iter().map(|r| json!([r.0, r.1, r.2, r.3])).collect::<Vec<_>>());
+            let expected = std::mem::replace(&mut previous_entities, want["entities_new"].clone());
+            compared += 1;
+            if tick > 1 && got != expected {
+                errors.push(format!("tick {tick} new entities: kiln {got}, vanilla {expected}"));
             }
         }
         if line["drops"].as_bool() == Some(true) {
