@@ -802,11 +802,11 @@ public class InteractVectors {
         out.add(c);
         c = new Case("stand_hit_waiting").stands();
         c.cmd(full);
-        c.step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 3)).step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 6)).step(attackEntity(2.5, 100, 0.5));
+        c.step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 3)).step(attackEntity(2.5, 100, 0.5));
         out.add(c);
         c = new Case("stand_hit_waiting_long").stands();
         c.cmd(full);
-        c.step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 6)).step(attackEntity(2.5, 100, 0.5));
+        c.step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 6)).step(attackEntity(2.5, 100, 0.5)).step(op("op", "wait", "ticks", 2)).step(attackEntity(2.5, 100, 0.5));
         out.add(c);
         c = new Case("stand_hit_once").stands();
         c.cmd(full);
