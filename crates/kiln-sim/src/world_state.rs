@@ -585,12 +585,15 @@ pub(crate) struct WorldState {
     pub forced_dirty: bool,
     /// Each level's generation pipeline (none for flat levels), for `/locate`.
     pub pipelines: Vec<Option<std::sync::Arc<kiln_worldgen::pipeline::Pipeline>>>,
+    /// Each level's worldgen as block behaviour uses it (what grows: saplings, bone meal).
+    pub feature_hosts: Vec<Option<std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>>>,
 }
 
 impl Default for WorldState {
     fn default() -> Self {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         WorldState {
+            feature_hosts: Vec::new(),
             borders: Default::default(),
             tick_rate: TickRate::default(),
             forced: Default::default(),

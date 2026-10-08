@@ -291,6 +291,31 @@ pub trait Level {
         2
     }
 
+    /// The worldgen the level places features with when something grows (saplings, bone meal
+    /// on grass and mushrooms); `None` without worldgen data (nothing grows then).
+    fn feature_host(&self) -> Option<std::sync::Arc<dyn crate::feature_host::FeatureHost>> {
+        None
+    }
+
+    /// The level random as the legacy generator it is, for features that draw from it.
+    fn legacy_random(&mut self) -> Option<&mut kiln_javamath::random::LegacyRandom> {
+        None
+    }
+
+    /// `Level.getBiome(pos)`: the registry name of the biome at `pos` (`minecraft:plains`).
+    fn biome_name(&self, _pos: BlockPos) -> Option<String> {
+        None
+    }
+
+    /// `Level.getSkyDarken`: how much the sky light is dimmed by time and weather (0 by day).
+    fn sky_darken(&self) -> i32 {
+        0
+    }
+
+    /// Stores fields of a block entity a placed feature filled in (a beehive's bees) in the
+    /// block entity at `pos`.
+    fn set_block_entity_data(&mut self, _pos: BlockPos, _data: &kiln_proto::nbt::Tag) {}
+
     /// The `minecraft:gameplay/increased_fire_burnout` environment attribute at `pos` (wet
     /// biomes).
     fn increased_fire_burnout(&self, _pos: BlockPos) -> bool {

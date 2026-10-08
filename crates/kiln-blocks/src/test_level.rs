@@ -79,6 +79,12 @@ pub struct TestLevel {
     pub sky_darken: i32,
     /// Whether this level is the End (`dimension() == Level.END`).
     pub end: bool,
+    /// The worldgen features grow with (saplings, bone meal); `None`: nothing grows.
+    pub feature_host: Option<std::sync::Arc<dyn crate::feature_host::FeatureHost>>,
+    /// The biome everywhere (`minecraft:plains`...), for what reads `Level.getBiome`.
+    pub biome: Option<String>,
+    /// Fields features filled into block entities, by position.
+    pub block_entity_data: HashMap<BlockPos, kiln_proto::nbt::Tag>,
 }
 
 impl TestLevel {
@@ -111,6 +117,9 @@ impl TestLevel {
             block_brightness: HashMap::new(),
             sky_darken: 0,
             end: false,
+            feature_host: None,
+            biome: None,
+            block_entity_data: HashMap::new(),
         }
     }
 
@@ -322,11 +331,27 @@ impl Level for TestLevel {
         self.block_brightness.get(&pos).copied().unwrap_or(0)
     }
 
+    fn feature_host(&self) -> Option<std::sync::Arc<dyn crate::feature_host::FeatureHost>> {
+        self.feature_host.clone()
+    }
+
+    fn legacy_random(&mut self) -> Option<&mut LegacyRandom> {
+        Some(&mut self.random)
+    }
+
+    fn biome_name(&self, _pos: BlockPos) -> Option<String> {
+        self.biome.clone()
+    }
+
     fn sky_darken(&self) -> i32 {
         self.sky_darken
     }
 
     fn is_end(&self) -> bool {
         self.end
+    }
+
+    fn set_block_entity_data(&mut self, pos: BlockPos, data: &kiln_proto::nbt::Tag) {
+        self.block_entity_data.insert(pos, data.clone());
     }
 }

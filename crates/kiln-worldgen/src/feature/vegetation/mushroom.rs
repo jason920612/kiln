@@ -36,6 +36,11 @@ impl HugeMushroom {
         })
     }
 
+    /// `AbstractHugeMushroomFeature.foliageRadius()`.
+    pub fn foliage_radius(&self) -> i32 {
+        self.foliage_radius
+    }
+
     /// `getTreeRadiusForHeight(-1, -1, foliageRadius, y)`, as `isValidPosition` calls it.
     fn radius_for_height(&self, y: i32) -> i32 {
         if self.red {

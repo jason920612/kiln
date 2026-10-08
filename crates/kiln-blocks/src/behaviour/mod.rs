@@ -19,6 +19,7 @@ pub mod sculk;
 pub mod speleothem;
 pub mod spread;
 pub mod support;
+pub mod trees;
 pub mod tripwire;
 pub mod wet;
 
@@ -346,6 +347,8 @@ pub fn random_tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         }
     } else if logic::is_instance(s, BlockClass::LeavesBlock) {
         misc::leaves_random_tick(level, s, pos);
+    } else if trees::ticks_randomly(s) {
+        trees::random_tick(level, s, pos);
     } else if logic::block_class(s) == C::LiquidBlock && logic::fluid(s).kind == kiln_data::block_logic::FluidKind::Lava {
         crate::fire::lava_random_tick(level, pos);
     } else if logic::is_instance(s, C::SpreadingSnowyBlock) {

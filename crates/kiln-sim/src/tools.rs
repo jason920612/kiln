@@ -2,9 +2,10 @@
 //! to an item): hoes till (`HoeItem.TILLABLES`), shovels flatten paths and put out campfires
 //! (`ShovelItem`), axes strip logs, scrape copper and take wax off (`AxeItem`), honeycomb waxes
 //! copper (`HoneycombItem`), shears trim growing plant heads and carve pumpkins, bone meal
-//! grows crops, stems, berries, cocoa, saplings (a stage; the tree itself is not grown), grass
-//! and tall plants (`BoneMealItem`), flint and steel and fire charges light campfires and
-//! candles, fire charges set fire, and composters take compostable items and give bone meal
+//! grows crops, stems, berries, cocoa, tall flowers, and (in kiln-blocks, with the level's
+//! worldgen) saplings into trees, azaleas, huge mushrooms, grass and its flowers
+//! (`BoneMealItem`), flint and steel and fire charges light campfires and candles, fire
+//! charges set fire, and composters take compostable items and give bone meal
 //! (`ComposterBlock`).
 
 use crate::Player;
@@ -257,11 +258,18 @@ fn next_int_between(r: &mut dyn RandomSource, lo: i32, hi: i32) -> i32 {
 /// or not it took), with the growth particles.
 fn bone_meal(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, _face: Direction, off_hand: bool, spawns: &mut Vec<Spawn>) -> bool {
     let s = level.block(pos);
-    if !valid_target(level, pos, s) {
-        return false;
-    }
-    if success(level, s) {
-        perform(level, pos, s, spawns);
+    // Saplings, propagules, azaleas, huge mushrooms, grass: kiln-blocks (with the level's worldgen).
+    match kiln_blocks::behaviour::trees::grow_crop(level, pos) {
+        Some(true) => {}
+        Some(false) => return false,
+        None => {
+            if !valid_target(level, pos, s) {
+                return false;
+            }
+            if success(level, s) {
+                perform(level, pos, s, spawns);
+            }
+        }
     }
     let i = p.hand_index(off_hand);
     kiln_inventory::Container::item_mut(&mut p.inv, i).shrink(1);
@@ -293,20 +301,14 @@ fn valid_target(level: &RegionLevel, pos: BlockPos, s: u16) -> bool {
         C::StemBlock => state::get_int(s, "age") != 7,
         C::SweetBerryBushBlock => state::get_int(s, "age") < 3,
         C::CocoaBlock => state::get_int(s, "age") < 2,
-        C::SaplingBlock => true,
-        C::GrassBlock => kiln_data::blocks_types::is_air(level.block(pos.above())),
-        C::TallGrassBlock => kiln_data::blocks_types::is_air(level.block(pos.above())),
         C::TallFlowerBlock => true,
         _ => false,
     }
 }
 
-/// `BonemealableBlock.isBonemealSuccess` (saplings: 45%).
-fn success(level: &mut RegionLevel, s: u16) -> bool {
-    match logic::block_class(s) {
-        C::SaplingBlock => (level.random().next_float() as f64) < 0.45,
-        _ => true,
-    }
+/// `BonemealableBlock.isBonemealSuccess`.
+fn success(_level: &mut RegionLevel, _s: u16) -> bool {
+    true
 }
 
 /// `BonemealableBlock.performBonemeal`.
@@ -329,16 +331,6 @@ fn perform(level: &mut RegionLevel, pos: BlockPos, s: u16, spawns: &mut Vec<Spaw
             let age = state::get_int(s, "age") + 1;
             kiln_blocks::set_block(level, pos, state::set_int(s, "age", age), flags::CLIENTS);
         }
-        C::SaplingBlock => {
-            // `advanceTree`: the first stage; the tree feature itself is not grown by Kiln.
-            if state::get_int(s, "stage") == 0 {
-                kiln_blocks::set_block(level, pos, state::set_int(s, "stage", 1), flags::INVISIBLE);
-            }
-        }
-        C::TallGrassBlock => {
-            let tall = if short(s) == "fern" { d::LARGE_FERN } else { d::TALL_GRASS };
-            place_double(level, pos, tall);
-        }
         C::TallFlowerBlock => {
             // `popResource(level, pos, new ItemStack(this))`.
             if let Some(item) = ItemStack::of(BlockId::of(s).name(), 1) {
@@ -351,50 +343,7 @@ fn perform(level: &mut RegionLevel, pos: BlockPos, s: u16, spawns: &mut Vec<Spaw
                 spawns.push(crate::mobs::drop_item(item, at, (pos.x as u64) << 24 ^ pos.z as u64 ^ pos.y as u64));
             }
         }
-        C::GrassBlock => grass_bonemeal(level, pos),
         _ => {}
-    }
-}
-
-/// `DoublePlantBlock.placeAt`.
-fn place_double(level: &mut RegionLevel, pos: BlockPos, plant: u16) {
-    let lower = state::set(plant, "half", "lower");
-    let upper = state::set(plant, "half", "upper");
-    kiln_blocks::set_block(level, pos, lower, flags::CLIENTS);
-    kiln_blocks::set_block(level, pos.above(), upper, flags::CLIENTS);
-}
-
-/// `GrassBlock.performBonemeal`: 128 random walks from above the block along grass; short grass
-/// sprouts where they end in air (and one in ten short grass there grows tall). Approximation:
-/// the biome's flowers (one walk in eight) are not placed.
-fn grass_bonemeal(level: &mut RegionLevel, pos: BlockPos) {
-    let above = pos.above();
-    'walk: for i in 0..128 {
-        let mut p = above;
-        for _ in 0..i / 16 {
-            let r = level.random();
-            let dx = r.next_int_bounded(3) - 1;
-            let a = r.next_int_bounded(3) - 1;
-            let b = r.next_int_bounded(3);
-            let dz = r.next_int_bounded(3) - 1;
-            p = BlockPos::new(p.x + dx, p.y + a * b / 2, p.z + dz);
-            if !state::same_block(level.block(p.below()), d::GRASS_BLOCK) || kiln_data::block_props::full_collision(level.block(p)) {
-                continue 'walk;
-            }
-        }
-        let s = level.block(p);
-        if state::same_block(s, d::SHORT_GRASS) && level.random().next_int_bounded(10) == 0 && kiln_data::blocks_types::is_air(level.block(p.above())) {
-            place_double(level, p, d::TALL_GRASS);
-        }
-        if kiln_data::blocks_types::is_air(s) {
-            if level.random().next_int_bounded(8) == 0 {
-                continue;
-            }
-            // `GRASS_BONEMEAL`: a simple block of short grass where it can stay.
-            if kiln_blocks::behaviour::can_survive(level, d::SHORT_GRASS, p) {
-                kiln_blocks::set_block(level, p, d::SHORT_GRASS, flags::CLIENTS);
-            }
-        }
     }
 }
 

@@ -145,7 +145,7 @@ impl Datapack {
             for (id, json) in entries(&ns_dir.join("tags").join("block"), &ns)? {
                 block_tags.insert(id, tag_values(&json)?);
             }
-            for dir in ["fluid", "worldgen/biome", "worldgen/structure"] {
+            for dir in ["fluid", "worldgen/biome", "worldgen/structure", "worldgen/feature"] {
                 for (id, json) in entries(&ns_dir.join("tags").join(dir), &ns)? {
                     tags.entry(dir.to_string()).or_default().insert(id, tag_values(&json)?);
                 }

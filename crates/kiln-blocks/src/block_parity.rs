@@ -241,7 +241,8 @@ fn block_parity() {
         let name = v["name"].as_str().unwrap().to_string();
         assert_ne!(name, "error", "{line}");
         assert!(v.get("error").is_none(), "{name}: {line}");
-        if filter.as_ref().is_some_and(|f| !f(&name)) {
+        // The `trees_` scenarios grow trees through worldgen: kiln-sim's `tree_parity` replays them.
+        if filter.as_ref().is_some_and(|f| !f(&name)) || name.starts_with("trees_") {
             continue;
         }
         total += 1;

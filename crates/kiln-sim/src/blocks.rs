@@ -290,6 +290,9 @@ pub(crate) struct BlockEnv {
     pub entity_ticking: crate::EntityTicking,
     /// Serial entity turns tried side by side first (`SimConfig::speculate`).
     pub speculate: bool,
+    /// The level's worldgen, for what grows in it (saplings, bone meal); `None` without a
+    /// datapack (nothing grows then).
+    pub features: Option<std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>>,
 }
 
 /// An entity's box for block behaviour that counts entities (pressure plates).
@@ -624,6 +627,39 @@ impl Level for RegionLevel<'_> {
 
     fn increased_fire_burnout(&self, pos: BlockPos) -> bool {
         self.env.weather.climates.as_ref().is_some_and(|c| c.increased_fire_burnout(crate::weather::biome_at(self.cells, self.env, pos)))
+    }
+
+    fn feature_host(&self) -> Option<std::sync::Arc<dyn kiln_blocks::feature_host::FeatureHost>> {
+        self.env.features.clone()
+    }
+
+    fn legacy_random(&mut self) -> Option<&mut LegacyRandom> {
+        Some(&mut self.blocks.random)
+    }
+
+    fn biome_name(&self, pos: BlockPos) -> Option<String> {
+        let id = crate::weather::biome_at(self.cells, self.env, pos);
+        let (_, names) = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome")?;
+        names.get(id as usize).map(|n| (*n).to_owned())
+    }
+
+    fn sky_darken(&self) -> i32 {
+        self.env.mobs.sky_darken
+    }
+
+    fn set_block_entity_data(&mut self, pos: BlockPos, data: &Tag) {
+        let Some(chunk) = self.cells.chunk_mut(chunk_of(pos)) else { return };
+        let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
+        let Some(mut be) = chunk.block_entity(x, pos.y, z).cloned() else { return };
+        if let (Tag::Compound(fields), Tag::Compound(extra)) = (&mut be.nbt, data) {
+            for (k, v) in extra {
+                match fields.iter_mut().find(|(f, _)| f == k) {
+                    Some((_, old)) => *old = v.clone(),
+                    None => fields.push((k.clone(), v.clone())),
+                }
+            }
+        }
+        chunk.set_block_entity(x, pos.y, z, be);
     }
 }
 
@@ -1428,6 +1464,7 @@ mod tests {
             dragon_fight: None,
             entity_ticking: crate::EntityTicking::Serial,
             speculate: true,
+            features: None,
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {

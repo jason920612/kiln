@@ -300,6 +300,50 @@ impl Features {
         }
     }
 
+    /// `PlacedFeature.getFeatures()`: the configured feature and what its configuration nests,
+    /// appended to `out` in vanilla's order.
+    pub fn placed_features_of(&self, placed: usize, out: &mut Vec<usize>) {
+        self.configured_features_of(self.placed[placed].feature, out);
+    }
+
+    /// `ConfiguredFeature.getFeatures()`.
+    pub fn configured_features_of(&self, id: usize, out: &mut Vec<usize>) {
+        out.push(id);
+        match &self.configured[id].feature {
+            Feature::RandomSelector { features, default } => {
+                for (f, _) in features {
+                    self.placed_features_of(*f, out);
+                }
+                self.placed_features_of(*default, out);
+            }
+            Feature::SimpleRandomSelector(l) | Feature::Sequence(l) | Feature::Overlay(l) => {
+                for f in l {
+                    self.placed_features_of(*f, out);
+                }
+            }
+            Feature::WeightedRandomSelector(w) => {
+                for (f, _) in &w.entries {
+                    self.placed_features_of(*f, out);
+                }
+            }
+            Feature::RandomBooleanSelector { if_true, if_false } => {
+                self.placed_features_of(*if_true, out);
+                self.placed_features_of(*if_false, out);
+            }
+            Feature::Terrain(k) => {
+                for f in k.nested() {
+                    self.placed_features_of(f, out);
+                }
+            }
+            Feature::Vegetation(k) => {
+                for f in k.nested() {
+                    self.placed_features_of(f, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Whether a configured feature (or anything it places) is unimplemented.
     pub fn is_supported(&self, id: usize) -> bool {
         let mut seen = HashSet::new();
