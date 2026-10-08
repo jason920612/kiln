@@ -56,6 +56,7 @@ public class InitialMobVectors {
                 level.tickRateManager().setFrozen(true);
                 for (int cx = -radius; cx <= radius; cx++) {
                     for (int cz = -radius; cz <= radius; cz++) {
+                        level.setChunkForced(cx, cz, true);
                         level.getChunk(cx, cz, ChunkStatus.FULL, true);
                     }
                 }
