@@ -415,6 +415,9 @@ pub fn check_mob_spawn_rules(view: &dyn SpawnView, pos: BlockPos) -> bool {
 }
 
 impl Kind for Slime {
+    fn sound_volume(&self, m: &MobData) -> f32 {
+        0.4 * size(m) as f32
+    }
     fn touches_players(&self) -> bool {
         true
     }

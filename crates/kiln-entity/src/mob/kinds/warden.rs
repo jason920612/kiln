@@ -885,6 +885,9 @@ fn update_activity(m: &mut MobData) {
 }
 
 impl Kind for Warden {
+    fn sound_volume(&self, _m: &MobData) -> f32 {
+        4.0
+    }
     fn info(&self) -> &'static Info {
         &INFO
     }

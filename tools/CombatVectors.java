@@ -600,6 +600,28 @@ public class CombatVectors {
             server.halt(false);
             System.exit(0);
         }
+        // wp44: the melee vectors (melee.jsonl beside the output file); `--filter melee...` writes only those.
+        List<String> meleeLines = new ArrayList<>();
+        if (filter == null || filter.startsWith("melee") || filter.startsWith("mace") || filter.startsWith("sweep")) {
+            String meleeFilter = filter == null ? null : filter;
+            server.submit(() -> {
+                try {
+                    MeleeVectors.run(server, meleeLines, meleeFilter == null ? null : (meleeFilter.startsWith("melee/") ? meleeFilter : meleeFilter.equals("melee") ? "melee" : "melee/" + meleeFilter));
+                } catch (Throwable t) {
+                    t.printStackTrace();
+                    meleeLines.add("{\"kind\":\"error\",\"error\":\"" + t.toString().replace('"', '\'') + "\"}");
+                }
+            }).get();
+            Path meleePath = outPath.resolveSibling("melee.jsonl");
+            try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(meleePath))) {
+                for (String l : meleeLines) w.println(l);
+            }
+            System.out.println("CombatVectors: wrote " + meleeLines.size() + " melee vectors to " + meleePath);
+        }
+        if (filter != null && (filter.startsWith("melee") || filter.startsWith("mace") || filter.startsWith("sweep"))) {
+            server.halt(false);
+            System.exit(0);
+        }
         List<String> lines = new ArrayList<>();
         server.submit(() -> {
             for (Scenario s : selected) {
@@ -685,7 +707,7 @@ public class CombatVectors {
     static void writeServerFiles() throws Exception {
         Files.writeString(Path.of("eula.txt"), "eula=true\n");
         Files.writeString(Path.of("server.properties"), String.join("\n",
-                "server-port=" + harnessPort(),
+                "server-port=" + SpearVectors.harnessPort(),
                 "online-mode=false",
                 "level-name=world",
                 "level-type=minecraft\\:flat",
@@ -710,7 +732,7 @@ public class CombatVectors {
 
     /** Finds the server through the "Server thread" task (MinecraftServer.spin's AtomicReference). */
     static MinecraftServer awaitServer() throws Exception {
-        for (int i = 0; i < 600; i++) {
+        for (int i = 0; i < 3000; i++) {
             for (Thread t : Thread.getAllStackTraces().keySet()) {
                 if (!t.getName().equals("Server thread")) continue;
                 Field holderField = Thread.class.getDeclaredField("holder");
@@ -875,6 +897,11 @@ public class CombatVectors {
     }
 
     static Map<String, Object> outcome(ServerPlayer p, ServerPlayer target) throws Exception {
+        return outcome(p, drain(p));
+    }
+
+    /** The outcome of `p` from the packets it was sent (already drained). */
+    static Map<String, Object> outcome(ServerPlayer p, List<Object> packets) throws Exception {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("health", p.getHealth());
         m.put("absorption", p.getAbsorptionAmount());
@@ -901,7 +928,7 @@ public class CombatVectors {
         // player himself), and the tilt his own client got (`ServerPlayer.indicateDamage`).
         List<Object> hurtSounds = new ArrayList<>();
         Object hurtAnimation = null;
-        for (Object pkt : drain(p)) {
+        for (Object pkt : packets) {
             if (pkt instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket sp) {
                 String sound = sp.getSound().value().location().toString();
                 if (sound.startsWith("minecraft:entity.player.hurt") || sound.equals("minecraft:entity.player.death") || sound.equals("minecraft:enchant.thorns.hit")) {
@@ -2065,5 +2092,920 @@ class SpearVectors {
     static void run(MinecraftServer server, List<String> out) throws Exception {
         stabs(server, out);
         charges(server, out);
+    }
+}
+
+// wp44 melee vectors: `Player.attack` against mobs and players with every wrinkle (sweeping against
+// both, critical hits, effects, armored and enchanted mobs, riding, water) and the mace (smash
+// attack, density, breach, wind burst, the knockback blast). One scenario sets the attacker, a list
+// of victims (players or /summoned frozen mobs, the first `target` is hit) and blocks, then attacks
+// one or more times (each time after setting the attack strength ticker) and records after each hit:
+// the attacker, every victim and the world packets the attacker got (sounds, particles, level
+// events, animations, explosions, motions).
+class MeleeVectors {
+    static final class Victim {
+        CombatVectors.Side player;
+        String name;
+        String type;
+        String nbt = "";
+        double dx, dy, dz;
+        float yaw = 180f;
+        String vehicle;
+        List<Object[]> effects = new ArrayList<>(); // players: {id, amplifier, duration}
+
+        Victim(CombatVectors.Side p) {
+            player = p;
+        }
+
+        Victim(String type, double dx, double dy, double dz, String nbt) {
+            this.type = type;
+            this.dx = dx;
+            this.dy = dy;
+            this.dz = dz;
+            this.nbt = nbt;
+        }
+
+        Victim vehicle(String v) {
+            vehicle = v;
+            return this;
+        }
+
+        String command() {
+            double x = CombatVectors.BX + dx, y = CombatVectors.BY + dy, z = CombatVectors.BZ + dz;
+            String inner = "NoAI:1b,PersistenceRequired:1b" + (nbt.isEmpty() ? "" : "," + nbt);
+            if (vehicle == null) return "summon " + type + " " + x + " " + y + " " + z + " {" + inner + ",Rotation:[" + yaw + "f,0f]}";
+            return "summon " + vehicle + " " + x + " " + y + " " + z + " {Rotation:[" + yaw + "f,0f],Passengers:[{id:\"" + type + "\"," + inner + "}]}";
+        }
+    }
+
+    static final class Case {
+        final String name;
+        final CombatVectors.Side attacker = new CombatVectors.Side();
+        final List<Victim> victims = new ArrayList<>();
+        int target;
+        boolean fallFlying, mounted;
+        final List<Object[]> blocks = new ArrayList<>(); // {x, y, z, state}
+        final List<Object[]> effects = new ArrayList<>(); // attacker effects {id, amplifier, duration}
+        int[] later = new int[0]; // attack strength tickers of the attacks after the first
+        String difficulty = "normal";
+        boolean pvp = true;
+        float pitch;
+
+        Case(String name) {
+            this.name = "melee/" + name;
+        }
+
+        Case weapon(String item) {
+            attacker.mainHand = item;
+            return this;
+        }
+
+        Case ench(String id, int level) {
+            attacker.ench(id, level);
+            return this;
+        }
+
+        Case mob(String type, double dx, double dy, double dz, String nbt) {
+            victims.add(new Victim(type, dx, dy, dz, nbt));
+            return this;
+        }
+
+        Case mob(String type, double dz, String nbt) {
+            return mob(type, 0.0, 0.0, dz, nbt);
+        }
+
+        Case player(CombatVectors.Side s) {
+            victims.add(new Victim(s));
+            return this;
+        }
+
+        Case fall(double d) {
+            attacker.onGround = false;
+            attacker.fallDistance = d;
+            return this;
+        }
+
+        Case effect(String id, int amp, int dur) {
+            effects.add(new Object[] {id, amp, dur});
+            return this;
+        }
+
+        Case vehicle(int victim, String v) {
+            victims.get(victim).vehicle = v;
+            return this;
+        }
+
+        Case block(int x, int y, int z, String state) {
+            blocks.add(new Object[] {x, y, z, state});
+            return this;
+        }
+    }
+
+    // ---------------------------------------------------------------- scenario tables
+
+    static CombatVectors.Side side(double dx, double dz) {
+        CombatVectors.Side s = new CombatVectors.Side();
+        s.dx = dx;
+        s.dz = dz;
+        s.yaw = 180f;
+        return s;
+    }
+
+    static CombatVectors.Side armored(CombatVectors.Side s, String mat) {
+        s.armor = new String[] {"minecraft:" + mat + "_boots", "minecraft:" + mat + "_leggings", "minecraft:" + mat + "_chestplate", "minecraft:" + mat + "_helmet"};
+        return s;
+    }
+
+    /** `equipment:{...}` of a mob: slot name, item, and an optional `components` body. */
+    static String equipment(String... slotItemComponents) {
+        StringBuilder b = new StringBuilder("equipment:{");
+        for (int i = 0; i < slotItemComponents.length; i += 3) {
+            if (i > 0) b.append(",");
+            b.append(slotItemComponents[i]).append(":{id:\"").append(slotItemComponents[i + 1]).append("\",count:1");
+            if (slotItemComponents[i + 2] != null && !slotItemComponents[i + 2].isEmpty()) b.append(",components:{").append(slotItemComponents[i + 2]).append("}");
+            b.append("}");
+        }
+        return b.append("}").toString();
+    }
+
+    static String ironSet() {
+        return equipment("head", "minecraft:iron_helmet", "", "chest", "minecraft:iron_chestplate", "", "legs", "minecraft:iron_leggings", "", "feet", "minecraft:iron_boots", "");
+    }
+
+    static String diamondSet(String components) {
+        return equipment("head", "minecraft:diamond_helmet", components, "chest", "minecraft:diamond_chestplate", components,
+                "legs", "minecraft:diamond_leggings", components, "feet", "minecraft:diamond_boots", components);
+    }
+
+    static String protection(int level) {
+        return "\"minecraft:enchantments\":{\"minecraft:protection\":" + level + "}";
+    }
+
+    static String join(String... parts) {
+        StringBuilder b = new StringBuilder();
+        for (String p : parts) {
+            if (p == null || p.isEmpty()) continue;
+            if (b.length() > 0) b.append(",");
+            b.append(p);
+        }
+        return b.toString();
+    }
+
+    static final String[][] MOB_TYPES = {
+        {"pig", ""}, {"cow", ""}, {"sheep", ""}, {"chicken", ""}, {"rabbit", ""}, {"horse", ""}, {"wolf", ""}, {"cat", ""}, {"goat", ""}, {"llama", ""},
+        {"zombie", ""}, {"husk", ""}, {"drowned", ""}, {"zombie_villager", ""}, {"zombified_piglin", ""}, {"skeleton", ""}, {"stray", ""},
+        {"wither_skeleton", ""}, {"spider", ""}, {"silverfish", ""}, {"endermite", ""}, {"creeper", ""}, {"blaze", ""},
+        {"slime", "Size:1"}, {"magma_cube", "Size:1"}, {"iron_golem", ""}, {"snow_golem", ""}, {"villager", ""}, {"polar_bear", ""},
+        {"ravager", ""}, {"hoglin", ""}, {"piglin", ""}, {"guardian", ""}, {"turtle", ""}, {"phantom", ""}, {"vex", ""}, {"witch", ""},
+        {"pillager", ""}, {"vindicator", ""}, {"evoker", ""}, {"ghast", ""}, {"strider", ""}, {"cod", ""},
+        {"zoglin", ""}, {"enderman", ""}, {"allay", ""}, {"armadillo", ""}, {"camel", ""}, {"frog", ""}, {"axolotl", ""},
+    };
+
+    static void mobTypes(List<Case> out) {
+        for (String[] t : MOB_TYPES) {
+            String id = "minecraft:" + t[0];
+            Case c = new Case("type/" + t[0] + "/fist").mob(id, 2.0, t[1]);
+            out.add(c);
+            c = new Case("type/" + t[0] + "/sword").weapon("minecraft:iron_sword").mob(id, 2.0, t[1]);
+            c.attacker.sprinting = true;
+            out.add(c);
+        }
+        for (String t : new String[] {"zombie", "pig", "skeleton", "iron_golem"}) {
+            out.add(new Case("type_baby/" + t).weapon("minecraft:diamond_sword").mob("minecraft:" + t, 2.0, t.equals("pig") ? "Age:-24000" : "IsBaby:1b"));
+        }
+        out.add(new Case("type_ground/zombie").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "OnGround:1b"));
+        out.add(new Case("type_ground/pig_sprint").weapon("minecraft:stone_sword").mob("minecraft:pig", 2.0, "OnGround:1b"));
+        out.get(out.size() - 1).attacker.sprinting = true;
+        out.add(new Case("type_ground/iron_golem").weapon("minecraft:netherite_sword").mob("minecraft:iron_golem", 2.0, "OnGround:1b"));
+        out.add(new Case("type_ground/ravager_kb").weapon("minecraft:diamond_sword").ench("minecraft:knockback", 2).mob("minecraft:ravager", 2.0, "OnGround:1b"));
+    }
+
+    static void weapons(List<Case> out) {
+        String[] weapons = {null, "minecraft:stick", "minecraft:wooden_sword", "minecraft:stone_sword", "minecraft:iron_sword", "minecraft:diamond_sword",
+                "minecraft:netherite_sword", "minecraft:golden_sword", "minecraft:wooden_axe", "minecraft:iron_axe", "minecraft:diamond_axe", "minecraft:netherite_axe",
+                "minecraft:iron_shovel", "minecraft:diamond_pickaxe", "minecraft:iron_hoe", "minecraft:trident", "minecraft:shears", "minecraft:copper_sword", "minecraft:copper_axe"};
+        for (String w : weapons) {
+            for (int ticker : new int[] {100, 13, 6, 0}) {
+                String n = (w == null ? "fist" : w.substring(10)) + "/" + ticker;
+                Case c = new Case("weapon/zombie/" + n).weapon(w).mob("minecraft:zombie", 2.0, "");
+                c.attacker.ticker = ticker;
+                out.add(c);
+            }
+        }
+        for (String w : new String[] {"minecraft:diamond_sword", "minecraft:iron_axe", null}) {
+            Case c = new Case("weapon/worn/" + (w == null ? "fist" : w.substring(10))).weapon(w).mob("minecraft:pig", 2.0, "");
+            c.attacker.mainHandDamage = w == null ? 0 : (w.contains("sword") ? 1560 : 249);
+            out.add(c);
+        }
+        Case c = new Case("weapon/breaks").weapon("minecraft:wooden_sword").mob("minecraft:pig", 2.0, "");
+        c.attacker.mainHandDamage = 58;
+        out.add(c);
+    }
+
+    static void enchants(List<Case> out) {
+        for (int l : new int[] {1, 3, 5}) {
+            out.add(new Case("ench/sharpness_" + l + "/zombie").weapon("minecraft:diamond_sword").ench("minecraft:sharpness", l).mob("minecraft:zombie", 2.0, ""));
+            out.add(new Case("ench/sharpness_" + l + "/axe_pig_partial").weapon("minecraft:iron_axe").ench("minecraft:sharpness", l).mob("minecraft:pig", 2.0, ""));
+            out.get(out.size() - 1).attacker.ticker = 8;
+            for (String t : new String[] {"zombie", "skeleton", "drowned", "pig", "phantom", "wither_skeleton", "zombified_piglin"}) {
+                out.add(new Case("ench/smite_" + l + "/" + t).weapon("minecraft:iron_sword").ench("minecraft:smite", l).mob("minecraft:" + t, 2.0, ""));
+            }
+            for (String t : new String[] {"spider", "silverfish", "endermite", "pig", "zombie"}) {
+                out.add(new Case("ench/bane_" + l + "/" + t).weapon("minecraft:iron_sword").ench("minecraft:bane_of_arthropods", l).mob("minecraft:" + t, 2.0, ""));
+            }
+        }
+        for (int l : new int[] {1, 3}) {
+            for (String t : new String[] {"guardian", "drowned", "cod", "zombie", "turtle", "axolotl"}) {
+                out.add(new Case("ench/impaling_" + l + "/" + t).weapon("minecraft:trident").ench("minecraft:impaling", l).mob("minecraft:" + t, 2.0, ""));
+            }
+        }
+        out.add(new Case("ench/impaling_in_water").weapon("minecraft:trident").ench("minecraft:impaling", 3).mob("minecraft:zombie", 2.0, "").block(0, 0, 2, "minecraft:water"));
+        for (int l : new int[] {1, 2}) {
+            for (String t : new String[] {"pig", "zombie", "blaze", "wither_skeleton", "zombified_piglin", "strider", "skeleton", "magma_cube", "iron_golem", "ghast"}) {
+                out.add(new Case("ench/fire_" + l + "/" + t).weapon("minecraft:diamond_sword").ench("minecraft:fire_aspect", l).mob("minecraft:" + t, 2.0, t.equals("magma_cube") ? "Size:1" : ""));
+            }
+            out.add(new Case("ench/fire_" + l + "/zombie_fire_resistance").weapon("minecraft:diamond_sword").ench("minecraft:fire_aspect", l)
+                    .mob("minecraft:zombie", 2.0, "active_effects:[{id:\"minecraft:fire_resistance\",amplifier:0b,duration:600}]"));
+            out.add(new Case("ench/fire_" + l + "/pig_already_burning").weapon("minecraft:diamond_sword").ench("minecraft:fire_aspect", l).mob("minecraft:pig", 2.0, "Fire:30s"));
+            out.add(new Case("ench/fire_" + l + "/pig_in_water").weapon("minecraft:diamond_sword").ench("minecraft:fire_aspect", l).mob("minecraft:pig", 2.0, "").block(0, 0, 2, "minecraft:water"));
+        }
+        for (int l : new int[] {1, 2, 3}) {
+            for (String t : new String[] {"pig", "zombie", "iron_golem", "ravager", "enderman", "warden_none", "hoglin", "polar_bear"}) {
+                if (t.equals("warden_none")) continue;
+                Case c = new Case("ench/knockback_" + l + "/" + t).weapon("minecraft:stone_sword").ench("minecraft:knockback", l).mob("minecraft:" + t, 2.0, "OnGround:1b");
+                out.add(c);
+            }
+        }
+        out.add(new Case("ench/knockback_sprint").weapon("minecraft:stone_sword").ench("minecraft:knockback", 1).mob("minecraft:zombie", -1.0, 0.0, 1.7, "OnGround:1b"));
+        out.get(out.size() - 1).attacker.sprinting = true;
+        out.get(out.size() - 1).attacker.yaw = 30f;
+        for (long seed : new long[] {1, 2, 3, 4, 5, 6}) {
+            Case c = new Case("ench/unbreaking_" + seed).weapon("minecraft:diamond_sword").ench("minecraft:unbreaking", 3).mob("minecraft:pig", 2.0, "");
+            c.attacker.mainHandDamage = 100;
+            out.add(c);
+        }
+        out.add(new Case("ench/everything").weapon("minecraft:netherite_sword").ench("minecraft:sharpness", 5).ench("minecraft:fire_aspect", 2).ench("minecraft:knockback", 2)
+                .ench("minecraft:looting", 3).mob("minecraft:zombie", 2.0, ironSet()));
+        out.add(new Case("ench/smite_bane_split").weapon("minecraft:iron_sword").ench("minecraft:smite", 5).mob("minecraft:spider", 2.0, ""));
+    }
+
+    static void crits(List<Case> out) {
+        for (String t : new String[] {"pig", "zombie", "iron_golem"}) {
+            for (String w : new String[] {"minecraft:diamond_sword", "minecraft:iron_axe", null}) {
+                String n = t + "/" + (w == null ? "fist" : w.substring(10));
+                out.add(new Case("crit/" + n).weapon(w).fall(0.5).mob("minecraft:" + t, 2.0, ""));
+                out.add(new Case("crit_sprint/" + n).weapon(w).fall(0.5).mob("minecraft:" + t, 2.0, ""));
+                out.get(out.size() - 1).attacker.sprinting = true;
+                Case c = new Case("crit_partial/" + n).weapon(w).fall(0.5).mob("minecraft:" + t, 2.0, "");
+                c.attacker.ticker = 6;
+                out.add(c);
+            }
+        }
+        out.add(new Case("crit/sharpness_fire").weapon("minecraft:diamond_sword").fall(3.0).ench("minecraft:sharpness", 4).ench("minecraft:fire_aspect", 1).mob("minecraft:zombie", 2.0, ""));
+        out.add(new Case("crit/in_water").weapon("minecraft:diamond_sword").fall(1.0).mob("minecraft:zombie", 2.0, "").block(0, 0, 0, "minecraft:water"));
+        out.add(new Case("crit/on_ladder").weapon("minecraft:diamond_sword").fall(1.0).mob("minecraft:zombie", 2.0, "").block(0, 0, 0, "minecraft:ladder[facing=north]"));
+        Case c = new Case("crit/mounted").weapon("minecraft:diamond_sword").fall(1.0).mob("minecraft:zombie", 2.0, "");
+        c.mounted = true;
+        out.add(c);
+        out.add(new Case("crit/blind").weapon("minecraft:diamond_sword").fall(1.0).effect("minecraft:blindness", 0, 200).mob("minecraft:zombie", 2.0, ""));
+        out.add(new Case("crit/gliding").weapon("minecraft:diamond_sword").fall(1.0).mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).fallFlying = true;
+        out.add(new Case("crit/zero_fall").weapon("minecraft:diamond_sword").fall(0.0).mob("minecraft:zombie", 2.0, ""));
+        out.add(new Case("crit/on_ground_with_fall").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).attacker.fallDistance = 2.0;
+        out.add(new Case("crit/vs_armor_stand_like_boat").weapon("minecraft:diamond_sword").fall(1.0).mob("minecraft:zombie", 2.0, "").vehicle(0, "minecraft:oak_boat"));
+    }
+
+    static void effects(List<Case> out) {
+        for (int amp : new int[] {0, 1, 3}) {
+            out.add(new Case("effect/strength_" + amp).weapon("minecraft:iron_sword").effect("minecraft:strength", amp, 600).mob("minecraft:zombie", 2.0, ""));
+            out.add(new Case("effect/weakness_" + amp).weapon("minecraft:iron_sword").effect("minecraft:weakness", amp, 600).mob("minecraft:zombie", 2.0, ""));
+            out.add(new Case("effect/strength_fist_" + amp).effect("minecraft:strength", amp, 600).mob("minecraft:pig", 2.0, ""));
+            out.add(new Case("effect/weakness_fist_" + amp).effect("minecraft:weakness", amp, 600).mob("minecraft:pig", 2.0, ""));
+        }
+        out.add(new Case("effect/haste_ticker").weapon("minecraft:diamond_sword").effect("minecraft:haste", 1, 600).mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).attacker.ticker = 7;
+        out.add(new Case("effect/mining_fatigue_ticker").weapon("minecraft:diamond_sword").effect("minecraft:mining_fatigue", 1, 600).mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).attacker.ticker = 11;
+        out.add(new Case("effect/strength_crit").weapon("minecraft:diamond_axe").effect("minecraft:strength", 1, 600).fall(1.0).mob("minecraft:zombie", 2.0, ""));
+        out.add(new Case("effect/weakness_sharpness").weapon("minecraft:diamond_sword").ench("minecraft:sharpness", 5).effect("minecraft:weakness", 1, 600).mob("minecraft:zombie", 2.0, ""));
+        // Effects on the mob.
+        out.add(new Case("target_effect/resistance_1").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "active_effects:[{id:\"minecraft:resistance\",amplifier:1b,duration:600}]"));
+        out.add(new Case("target_effect/resistance_4").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "active_effects:[{id:\"minecraft:resistance\",amplifier:4b,duration:600}]"));
+        out.add(new Case("target_effect/resistance_armor").weapon("minecraft:netherite_sword").mob("minecraft:zombie", 2.0, join(ironSet(), "active_effects:[{id:\"minecraft:resistance\",amplifier:0b,duration:600}]")));
+        out.add(new Case("target_effect/absorption").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "AbsorptionAmount:4f"));
+        out.add(new Case("target_effect/absorption_partial").weapon("minecraft:iron_sword").mob("minecraft:zombie", 2.0, join(ironSet(), "AbsorptionAmount:2.5f")));
+        out.add(new Case("target_effect/slowness").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "active_effects:[{id:\"minecraft:slowness\",amplifier:2b,duration:600}]"));
+        out.add(new Case("target_effect/regeneration").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "active_effects:[{id:\"minecraft:regeneration\",amplifier:2b,duration:600}]"));
+        out.add(new Case("target_effect/weakness_bane").weapon("minecraft:iron_sword").ench("minecraft:bane_of_arthropods", 3).mob("minecraft:spider", 2.0, "active_effects:[{id:\"minecraft:slowness\",amplifier:1b,duration:30}]"));
+        out.add(new Case("target_effect/bane_long").weapon("minecraft:iron_sword").ench("minecraft:bane_of_arthropods", 5).mob("minecraft:spider", 2.0, "active_effects:[{id:\"minecraft:slowness\",amplifier:6b,duration:900}]"));
+    }
+
+    static void armorOnMobs(List<Case> out) {
+        for (String mat : new String[] {"leather", "golden", "chainmail", "iron", "diamond", "netherite", "turtle"}) {
+            String set = mat.equals("turtle") ? equipment("head", "minecraft:turtle_helmet", "") : equipment("head", "minecraft:" + mat + "_helmet", "", "chest", "minecraft:" + mat + "_chestplate", "",
+                    "legs", "minecraft:" + mat + "_leggings", "", "feet", "minecraft:" + mat + "_boots", "");
+            for (String t : new String[] {"zombie", "skeleton"}) {
+                out.add(new Case("armor/" + mat + "/" + t).weapon("minecraft:diamond_sword").mob("minecraft:" + t, 2.0, set));
+            }
+        }
+        out.add(new Case("armor/diamond_axe_netherite").weapon("minecraft:netherite_axe").mob("minecraft:zombie", 2.0, diamondSet("")));
+        out.add(new Case("armor/protection_4").weapon("minecraft:netherite_sword").mob("minecraft:zombie", 2.0, diamondSet(protection(4))));
+        out.add(new Case("armor/protection_10").weapon("minecraft:diamond_axe").mob("minecraft:zombie", 2.0, diamondSet(protection(10))));
+        out.add(new Case("armor/mixed").weapon("minecraft:netherite_sword").fall(1.0).mob("minecraft:zombie", 2.0,
+                equipment("head", "minecraft:turtle_helmet", "", "chest", "minecraft:diamond_chestplate", protection(3), "legs", "minecraft:iron_leggings", "")));
+        out.add(new Case("armor/worn_out").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0,
+                equipment("chest", "minecraft:iron_chestplate", "\"minecraft:damage\":240", "head", "minecraft:leather_helmet", "\"minecraft:damage\":54")));
+        out.add(new Case("armor/fire_protection_fire_aspect").weapon("minecraft:golden_sword").ench("minecraft:fire_aspect", 1).mob("minecraft:zombie", 2.0,
+                equipment("chest", "minecraft:iron_chestplate", "\"minecraft:enchantments\":{\"minecraft:fire_protection\":4}")));
+        out.add(new Case("armor/holding_sword").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, equipment("mainhand", "minecraft:iron_sword", "")));
+        out.add(new Case("armor/pumpkin_head").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, equipment("head", "minecraft:carved_pumpkin", "")));
+        out.add(new Case("armor/horse_armor").weapon("minecraft:diamond_sword").mob("minecraft:horse", 2.0, "equipment:{body:{id:\"minecraft:diamond_horse_armor\",count:1}}"));
+        out.add(new Case("armor/thorns_chest").weapon("minecraft:iron_sword").mob("minecraft:zombie", 2.0, equipment("chest", "minecraft:iron_chestplate", "\"minecraft:enchantments\":{\"minecraft:thorns\":3}")));
+        out.add(new Case("armor/thorns_helmet_1").weapon("minecraft:iron_sword").mob("minecraft:zombie", 2.0, equipment("head", "minecraft:iron_helmet", "\"minecraft:enchantments\":{\"minecraft:thorns\":1}")));
+        out.add(new Case("armor/unbreaking_armor").weapon("minecraft:iron_sword").mob("minecraft:zombie", 2.0, ironSet().replace("count:1}", "count:1,components:{\"minecraft:enchantments\":{\"minecraft:unbreaking\":3}}}")));
+    }
+
+    static void states(List<Case> out) {
+        // The hurt cooldown: a second hit while the mob is still invulnerable (damage <= last hurt) and
+        // one that adds the difference.
+        out.add(cases2("cooldown/same_weapon", "minecraft:diamond_sword", "minecraft:diamond_sword", new int[] {100}, "minecraft:pig"));
+        out.add(cases2("cooldown/stronger_second", "minecraft:wooden_sword", "minecraft:diamond_sword", new int[] {100}, "minecraft:pig"));
+        out.add(cases2("cooldown/weaker_second", "minecraft:diamond_sword", "minecraft:wooden_sword", new int[] {100}, "minecraft:pig"));
+        out.add(cases2("cooldown/partial_second", "minecraft:diamond_sword", "minecraft:diamond_sword", new int[] {8}, "minecraft:pig"));
+        out.add(cases2("cooldown/three_hits", "minecraft:iron_sword", "minecraft:iron_sword", new int[] {100, 100}, "minecraft:zombie"));
+        // Health: killing blow, exact kill, fractional health.
+        for (float h : new float[] {1.0f, 3.0f, 7.0f, 7.5f, 0.5f, 100.0f}) {
+            out.add(new Case("health/" + h).weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "Health:" + h + "f"));
+            out.add(new Case("health_pig/" + h).weapon("minecraft:iron_sword").mob("minecraft:pig", 2.0, "Health:" + h + "f"));
+        }
+        out.add(new Case("health/kill_with_fire").weapon("minecraft:diamond_sword").ench("minecraft:fire_aspect", 2).mob("minecraft:pig", 2.0, "Health:2f"));
+        out.add(new Case("health/kill_baby").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "IsBaby:1b,Health:3f"));
+        out.add(new Case("health/kill_slime").weapon("minecraft:diamond_sword").mob("minecraft:slime", 2.0, "Size:2,Health:3f"));
+        // Directions: the attacker faces other ways, the mob is higher or lower, near or far.
+        for (float yaw : new float[] {0f, 45f, 90f, -90f, 135f, -37.5f}) {
+            Case c = new Case("dir/yaw_" + yaw).weapon("minecraft:diamond_sword").ench("minecraft:knockback", 1);
+            // The mob stands where the attacker looks (x = -sin(yaw) * 2, z = cos(yaw) * 2).
+            c.mob("minecraft:zombie", -Math.sin(Math.toRadians(yaw)) * 2.0, 0.0, Math.cos(Math.toRadians(yaw)) * 2.0, "OnGround:1b");
+            c.attacker.yaw = yaw;
+            out.add(c);
+        }
+        for (double dy : new double[] {-1.0, 0.5, 1.2}) {
+            out.add(new Case("dir/dy_" + dy).weapon("minecraft:iron_sword").mob("minecraft:zombie", 0.0, dy, 2.0, "OnGround:1b"));
+        }
+        for (double dz : new double[] {0.6, 1.0, 3.0, 3.5}) {
+            out.add(new Case("dir/dz_" + dz).weapon("minecraft:iron_sword").mob("minecraft:pig", dz, ""));
+        }
+        out.add(new Case("dir/same_spot").weapon("minecraft:iron_sword").mob("minecraft:pig", 0.0, 0.0, 0.0, ""));
+        // Water, boat, riding, difficulty.
+        out.add(new Case("world/zombie_in_water").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "").block(0, 0, 2, "minecraft:water").block(0, 1, 2, "minecraft:water"));
+        out.add(new Case("world/attacker_in_water").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "").block(0, 0, 0, "minecraft:water").block(0, 1, 0, "minecraft:water"));
+        out.add(new Case("world/zombie_on_boat").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "").vehicle(0, "minecraft:oak_boat"));
+        out.add(new Case("world/pig_on_boat_kb").weapon("minecraft:diamond_sword").ench("minecraft:knockback", 2).mob("minecraft:pig", 2.0, "").vehicle(0, "minecraft:oak_boat"));
+        out.add(new Case("world/skeleton_in_cobweb").weapon("minecraft:diamond_sword").mob("minecraft:skeleton", 2.0, "").block(0, 0, 2, "minecraft:cobweb"));
+        out.add(new Case("world/hard").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).difficulty = "hard";
+        out.add(new Case("world/peaceful_pig").weapon("minecraft:diamond_sword").mob("minecraft:pig", 2.0, ""));
+        out.get(out.size() - 1).difficulty = "peaceful";
+        out.add(new Case("world/easy").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).difficulty = "easy";
+        Case c = new Case("world/attacker_creative").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "");
+        c.attacker.gameMode = "creative";
+        out.add(c);
+        c = new Case("world/attacker_adventure").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "");
+        c.attacker.gameMode = "adventure";
+        out.add(c);
+        out.add(new Case("world/invulnerable_mob").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 2.0, "Invulnerable:1b"));
+        out.add(new Case("world/pitch_up").weapon("minecraft:diamond_sword").mob("minecraft:zombie", 0.0, 1.0, 2.0, ""));
+        out.get(out.size() - 1).pitch = -25f;
+        out.add(new Case("world/no_gravity_bat").weapon("minecraft:diamond_sword").mob("minecraft:bat", 2.0, ""));
+        out.add(new Case("world/item_frame").weapon("minecraft:diamond_sword").mob("minecraft:minecart", 2.0, ""));
+    }
+
+    static Case cases2(String name, String first, String second, int[] later, String mob) {
+        // The weapon changes between hits: modelled with one weapon and a second attack through the
+        // same item (the second hit's strength is what differs); `second` is documented in the name.
+        Case c = new Case(name).weapon(first).mob(mob, 2.0, "");
+        c.later = later;
+        return c;
+    }
+
+    // Sweeping: bystanders (mobs and players) around the target at different distances.
+    static void sweeps(List<Case> out) {
+        String sword = "minecraft:diamond_sword";
+        out.add(new Case("sweep/mob_target_mob_bystander").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:zombie", 1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/mob_target_player_bystander").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").player(side(1.0, 2.2)));
+        out.add(new Case("sweep/player_target_mob_bystander").weapon(sword).player(side(0.0, 2.0)).mob("minecraft:zombie", 1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/player_target_player_bystander").weapon(sword).player(side(0.0, 2.0)).player(side(1.0, 2.2)));
+        for (int level = 0; level <= 3; level++) {
+            Case c = new Case("sweep/edge_" + level + "/mobs").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "").mob("minecraft:cow", -1.0, 0.0, 2.0, "");
+            if (level > 0) c.ench("minecraft:sweeping_edge", level);
+            out.add(c);
+            c = new Case("sweep/edge_" + level + "/mixed").weapon("minecraft:netherite_sword").mob("minecraft:zombie", 0.0, 0.0, 2.0, "").player(side(1.0, 2.2)).mob("minecraft:skeleton", -1.0, 0.0, 2.1, "");
+            if (level > 0) c.ench("minecraft:sweeping_edge", level);
+            out.add(c);
+        }
+        // Four bystanders, some armored, one out of reach.
+        Case c = new Case("sweep/four").weapon(sword).ench("minecraft:sweeping_edge", 2).mob("minecraft:zombie", 0.0, 0.0, 2.0, "")
+                .mob("minecraft:zombie", 0.8, 0.0, 2.0, ironSet()).player(armored(side(-0.9, 1.9), "iron")).mob("minecraft:pig", 0.5, 0.0, 2.9, "").mob("minecraft:pig", 4.0, 0.0, 2.0, "");
+        out.add(c);
+        c = new Case("sweep/far_from_attacker").weapon(sword).ench("minecraft:sweeping_edge", 3).mob("minecraft:zombie", 0.0, 0.0, 2.9, "").mob("minecraft:zombie", 0.0, 0.0, 3.8, "").mob("minecraft:zombie", 0.0, 0.0, 2.0, "");
+        out.add(c);
+        // The box: x within 1 of the target's box, y within 0.25, z within 1.
+        for (double dx : new double[] {0.5, 0.9, 1.2, 1.5, 1.7, -1.4}) {
+            out.add(new Case("sweep/box_x_" + dx).weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", dx, 0.0, 2.0, ""));
+        }
+        for (double dy : new double[] {0.1, 0.3, 1.0, 1.9, 2.1, -0.5, -1.7, -1.9}) {
+            out.add(new Case("sweep/box_y_" + dy).weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 0.3, dy, 2.0, ""));
+        }
+        // Conditions: partial strength, sprint, crit, in the air, moving, an axe, a trident.
+        c = new Case("sweep/partial").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "");
+        c.attacker.ticker = 10;
+        out.add(c);
+        c = new Case("sweep/ticker_just_full").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "");
+        c.attacker.ticker = 12;
+        out.add(c);
+        c = new Case("sweep/sprint").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "");
+        c.attacker.sprinting = true;
+        out.add(c);
+        out.add(new Case("sweep/crit").weapon(sword).fall(1.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, ""));
+        c = new Case("sweep/in_air_no_fall").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "");
+        c.attacker.onGround = false;
+        out.add(c);
+        for (double v : new double[] {0.1, 0.2, 0.26, 0.3}) {
+            c = new Case("sweep/moving_" + v).weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "");
+            c.attacker.kmz = v;
+            out.add(c);
+        }
+        out.add(new Case("sweep/axe").weapon("minecraft:diamond_axe").mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/trident").weapon("minecraft:trident").mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/fist").mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/copper_sword").weapon("minecraft:copper_sword").ench("minecraft:sweeping_edge", 1).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, ""));
+        c = new Case("sweep/strength").weapon(sword).effect("minecraft:strength", 2, 600).ench("minecraft:sweeping_edge", 3).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "");
+        out.add(c);
+        // Enchanted sweeps: sharpness, smite and bane count per bystander; fire aspect and knockback.
+        out.add(new Case("sweep/sharpness").weapon(sword).ench("minecraft:sweeping_edge", 3).ench("minecraft:sharpness", 5).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/smite").weapon(sword).ench("minecraft:sweeping_edge", 3).ench("minecraft:smite", 5).mob("minecraft:pig", 0.0, 0.0, 2.0, "").mob("minecraft:zombie", 1.0, 0.0, 2.2, "").mob("minecraft:skeleton", -1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/bane").weapon(sword).ench("minecraft:sweeping_edge", 2).ench("minecraft:bane_of_arthropods", 5).mob("minecraft:spider", 0.0, 0.0, 2.0, "").mob("minecraft:zombie", 1.0, 0.0, 2.2, "").mob("minecraft:silverfish", -1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/fire").weapon(sword).ench("minecraft:sweeping_edge", 1).ench("minecraft:fire_aspect", 2).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "").mob("minecraft:blaze", -1.0, 0.0, 2.2, "").player(side(0.3, 2.9)));
+        out.add(new Case("sweep/knockback").weapon(sword).ench("minecraft:knockback", 2).ench("minecraft:sweeping_edge", 1).mob("minecraft:zombie", 0.0, 0.0, 2.0, "OnGround:1b").mob("minecraft:pig", 1.0, 0.0, 2.2, "OnGround:1b").mob("minecraft:iron_golem", -1.0, 0.0, 2.2, "OnGround:1b"));
+        out.add(new Case("sweep/armored_bystanders").weapon("minecraft:netherite_sword").ench("minecraft:sweeping_edge", 3).mob("minecraft:zombie", 0.0, 0.0, 2.0, "")
+                .mob("minecraft:zombie", 1.0, 0.0, 2.2, diamondSet(protection(4))).mob("minecraft:skeleton", -1.0, 0.0, 2.2, ironSet()));
+        out.add(new Case("sweep/low_health_bystanders").weapon(sword).ench("minecraft:sweeping_edge", 3).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "Health:1f").mob("minecraft:cow", -1.0, 0.0, 2.2, "Health:2f"));
+        out.add(new Case("sweep/baby_bystander").weapon(sword).ench("minecraft:sweeping_edge", 3).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:zombie", 0.4, 0.0, 2.2, "IsBaby:1b"));
+        out.add(new Case("sweep/dead_target").weapon(sword).ench("minecraft:sweeping_edge", 3).mob("minecraft:zombie", 0.0, 0.0, 2.0, "Health:2f").mob("minecraft:pig", 1.0, 0.0, 2.2, ""));
+        out.add(new Case("sweep/boat_bystander").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, "").vehicle(1, "minecraft:oak_boat"));
+        out.add(new Case("sweep/second_mob_cooldown").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.0, 0.0, 2.2, ""));
+        out.get(out.size() - 1).later = new int[] {100};
+        // Player targets with the sweep (armor, creative bystander, pvp off, spectator).
+        out.add(new Case("sweep/players_armor").weapon(sword).ench("minecraft:sweeping_edge", 3).player(armored(side(0.0, 2.0), "iron")).player(armored(side(1.0, 2.2), "diamond")).player(side(-1.0, 2.2)));
+        CombatVectors.Side creative = side(1.0, 2.2);
+        creative.gameMode = "creative";
+        out.add(new Case("sweep/creative_bystander").weapon(sword).player(side(0.0, 2.0)).player(creative));
+        CombatVectors.Side spectator = side(1.0, 2.2);
+        spectator.gameMode = "spectator";
+        out.add(new Case("sweep/spectator_bystander").weapon(sword).player(side(0.0, 2.0)).player(spectator).mob("minecraft:pig", -1.0, 0.0, 2.2, ""));
+        c = new Case("sweep/pvp_off").weapon(sword).player(side(0.0, 2.0)).player(side(1.0, 2.2)).mob("minecraft:pig", -1.0, 0.0, 2.2, "");
+        c.pvp = false;
+        out.add(c);
+        out.add(new Case("sweep/mob_target_pvp_off_player").weapon(sword).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").player(side(1.0, 2.2)));
+        out.get(out.size() - 1).pvp = false;
+        out.add(new Case("sweep/player_thorns").weapon(sword).player(side(0.0, 2.0)).player(armored(side(1.0, 2.2), "iron")));
+        ((Victim) out.get(out.size() - 1).victims.get(1)).player.armorEnch(2, "minecraft:thorns", 3);
+        out.add(new Case("sweep/all_knockback_players").weapon(sword).ench("minecraft:knockback", 1).player(side(0.0, 2.0)).player(side(1.0, 2.2)).player(side(-1.0, 2.2)));
+    }
+
+    static final String[] MACE_FALLS = {"0.0", "1.0", "1.5", "1.6", "3.0", "3.5", "5.0", "5.1", "8.0", "10.0", "25.0", "40.0"};
+
+    static void maces(List<Case> out) {
+        String mace = "minecraft:mace";
+        // Falls onto a pig, a zombie and a player; in the air and on the ground.
+        for (String f : MACE_FALLS) {
+            double fall = Double.parseDouble(f);
+            for (String t : new String[] {"pig", "zombie", "iron_golem"}) {
+                out.add(new Case("mace/fall_" + f + "/" + t).weapon(mace).fall(fall).mob("minecraft:" + t, 2.0, "OnGround:1b"));
+            }
+            out.add(new Case("mace/fall_" + f + "/player").weapon(mace).fall(fall).player(side(0.0, 2.0)));
+            Case c = new Case("mace/ground_" + f + "/pig").weapon(mace).mob("minecraft:pig", 2.0, "");
+            c.attacker.fallDistance = fall;
+            out.add(c);
+            c = new Case("mace/ground_" + f + "/player").weapon(mace).player(side(0.0, 2.0));
+            c.attacker.fallDistance = fall;
+            out.add(c);
+        }
+        // Armor variants against the smash (and breach).
+        for (String mat : new String[] {"leather", "iron", "diamond", "netherite"}) {
+            for (int breach : new int[] {0, 1, 4}) {
+                Case c = new Case("mace/armor_" + mat + "/breach_" + breach + "/player").weapon(mace).fall(2.5).player(armored(side(0.0, 2.0), mat));
+                if (breach > 0) c.ench("minecraft:breach", breach);
+                out.add(c);
+                c = new Case("mace/armor_" + mat + "/breach_" + breach + "/zombie").weapon(mace).fall(2.5).mob("minecraft:zombie", 2.0,
+                        equipment("head", "minecraft:" + mat + "_helmet", "", "chest", "minecraft:" + mat + "_chestplate", "", "legs", "minecraft:" + mat + "_leggings", "", "feet", "minecraft:" + mat + "_boots", ""));
+                if (breach > 0) c.ench("minecraft:breach", breach);
+                out.add(c);
+            }
+        }
+        out.add(new Case("mace/protection_4").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, diamondSet(protection(4))));
+        out.add(new Case("mace/blast_protection").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, equipment("chest", "minecraft:diamond_chestplate", "\"minecraft:enchantments\":{\"minecraft:blast_protection\":4}")));
+        out.add(new Case("mace/feather_falling").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, equipment("feet", "minecraft:diamond_boots", "\"minecraft:enchantments\":{\"minecraft:feather_falling\":4}")));
+        // Density.
+        for (int d = 1; d <= 5; d++) {
+            for (String f : new String[] {"2.0", "5.0", "10.0", "40.0"}) {
+                out.add(new Case("mace/density_" + d + "/fall_" + f).weapon(mace).ench("minecraft:density", d).fall(Double.parseDouble(f)).mob("minecraft:zombie", 2.0, ""));
+            }
+        }
+        // Sharpness, smite, fire aspect, knockback with the mace.
+        out.add(new Case("mace/smite").weapon(mace).ench("minecraft:smite", 5).fall(4.0).mob("minecraft:zombie", 2.0, ""));
+        out.add(new Case("mace/bane").weapon(mace).ench("minecraft:bane_of_arthropods", 5).fall(4.0).mob("minecraft:spider", 2.0, ""));
+        out.add(new Case("mace/fire").weapon(mace).ench("minecraft:fire_aspect", 2).fall(4.0).mob("minecraft:zombie", 2.0, ""));
+        out.add(new Case("mace/knockback").weapon(mace).ench("minecraft:knockback", 2).fall(4.0).mob("minecraft:zombie", 2.0, "OnGround:1b"));
+        out.add(new Case("mace/unbreaking").weapon(mace).ench("minecraft:unbreaking", 3).fall(4.0).mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).attacker.mainHandDamage = 100;
+        out.add(new Case("mace/worn").weapon(mace).fall(4.0).mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).attacker.mainHandDamage = 400;
+        out.add(new Case("mace/breaks").weapon(mace).fall(4.0).mob("minecraft:zombie", 2.0, ""));
+        out.get(out.size() - 1).attacker.mainHandDamage = 499;
+        // Conditions that cannot smash: gliding, a weak swing, sprinting (smashes anyway), creative.
+        Case c = new Case("mace/gliding").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, "");
+        c.fallFlying = true;
+        out.add(c);
+        c = new Case("mace/partial").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, "");
+        c.attacker.ticker = 20;
+        out.add(c);
+        c = new Case("mace/partial_pig").weapon(mace).fall(6.0).mob("minecraft:pig", 2.0, "");
+        c.attacker.ticker = 40;
+        out.add(c);
+        c = new Case("mace/sprint").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, "");
+        c.attacker.sprinting = true;
+        out.add(c);
+        c = new Case("mace/creative").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, "");
+        c.attacker.gameMode = "creative";
+        out.add(c);
+        c = new Case("mace/mounted").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, "");
+        c.mounted = true;
+        out.add(c);
+        out.add(new Case("mace/in_water").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, "").block(0, 0, 0, "minecraft:water"));
+        out.add(new Case("mace/strength").weapon(mace).fall(6.0).effect("minecraft:strength", 1, 600).mob("minecraft:zombie", 2.0, ""));
+        out.add(new Case("mace/weakness").weapon(mace).fall(6.0).effect("minecraft:weakness", 1, 600).mob("minecraft:zombie", 2.0, ""));
+        out.add(new Case("mace/kill").weapon(mace).fall(10.0).mob("minecraft:zombie", 2.0, "Health:5f"));
+        out.add(new Case("mace/kill_player").weapon(mace).fall(10.0).player(side(0.0, 2.0)));
+        out.get(out.size() - 1).victims.get(0).player.health = 5f;
+        // The knockback blast: bystanders at distances (the target is at 2).
+        for (double d : new double[] {0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.4, 3.6, 4.5}) {
+            out.add(new Case("mace/blast_pig_at_" + d).weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "OnGround:1b").mob("minecraft:pig", 0.0, 0.0, -d + 0.0, "OnGround:1b"));
+            out.add(new Case("mace/blast_side_" + d).weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "OnGround:1b").mob("minecraft:pig", d, 0.0, 0.0, "OnGround:1b"));
+        }
+        out.add(new Case("mace/blast_heavy").weapon(mace).fall(8.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "OnGround:1b").mob("minecraft:pig", 1.5, 0.0, 0.5, "OnGround:1b").mob("minecraft:cow", -1.5, 0.0, 0.5, "OnGround:1b")
+                .mob("minecraft:iron_golem", 0.0, 0.0, -1.5, "OnGround:1b").player(side(2.0, 1.0)));
+        out.add(new Case("mace/blast_light").weapon(mace).fall(2.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "OnGround:1b").mob("minecraft:pig", 1.5, 0.0, 0.5, "OnGround:1b").player(side(-2.0, 1.0)));
+        out.add(new Case("mace/blast_player_target_mobs").weapon(mace).fall(6.0).player(side(0.0, 2.0)).mob("minecraft:pig", 1.5, 0.0, 0.5, "OnGround:1b").mob("minecraft:zombie", -1.5, 0.0, 1.0, ""));
+        out.add(new Case("mace/blast_players").weapon(mace).fall(6.0).player(side(0.0, 2.0)).player(side(1.5, 0.5)).player(armored(side(-1.5, 1.0), "diamond")));
+        CombatVectors.Side flying = side(1.5, 0.5);
+        flying.gameMode = "creative";
+        out.add(new Case("mace/blast_creative_player").weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").player(flying));
+        CombatVectors.Side sp = side(1.5, 0.5);
+        sp.gameMode = "spectator";
+        out.add(new Case("mace/blast_spectator").weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").player(sp));
+        out.add(new Case("mace/blast_knockback_resistance").weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:ravager", 1.5, 0.0, 0.5, "OnGround:1b"));
+        out.add(new Case("mace/blast_in_air_mobs").weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:pig", 1.5, 0.0, 0.5, ""));
+        out.add(new Case("mace/blast_baby").weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:zombie", 1.5, 0.0, 0.5, "IsBaby:1b,OnGround:1b"));
+        out.add(new Case("mace/blast_tamed_wolf").weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "").mob("minecraft:wolf", 1.5, 0.0, 0.5, "OnGround:1b"));
+        out.add(new Case("mace/blast_dead_target").weapon(mace).fall(6.0).mob("minecraft:zombie", 0.0, 0.0, 2.0, "Health:3f").mob("minecraft:pig", 1.5, 0.0, 0.5, "OnGround:1b"));
+        // Wind burst.
+        for (int w = 1; w <= 3; w++) {
+            for (String f : new String[] {"1.0", "1.6", "4.0", "10.0", "40.0"}) {
+                out.add(new Case("mace/wind_" + w + "/fall_" + f).weapon(mace).ench("minecraft:wind_burst", w).fall(Double.parseDouble(f)).mob("minecraft:iron_golem", 2.0, "OnGround:1b"));
+            }
+            out.add(new Case("mace/wind_" + w + "/bystanders").weapon(mace).ench("minecraft:wind_burst", w).fall(6.0).mob("minecraft:iron_golem", 0.0, 0.0, 2.0, "OnGround:1b").mob("minecraft:pig", 1.5, 0.0, 0.5, "OnGround:1b")
+                    .mob("minecraft:cow", -2.5, 0.0, 0.0, "OnGround:1b").mob("minecraft:iron_golem", 0.0, 0.0, -1.5, "OnGround:1b").player(side(2.0, 1.0)));
+            c = new Case("mace/wind_" + w + "/ground").weapon(mace).ench("minecraft:wind_burst", w).mob("minecraft:iron_golem", 2.0, "OnGround:1b");
+            c.attacker.fallDistance = 6.0;
+            out.add(c);
+            c = new Case("mace/wind_" + w + "/glide").weapon(mace).ench("minecraft:wind_burst", w).fall(6.0).mob("minecraft:zombie", 2.0, "");
+            c.fallFlying = true;
+            out.add(c);
+        }
+        out.add(new Case("mace/wind_density_breach").weapon(mace).ench("minecraft:wind_burst", 2).ench("minecraft:density", 3).fall(12.0).mob("minecraft:iron_golem", 2.0, "OnGround:1b"));
+        out.add(new Case("mace/wind_target_player").weapon(mace).ench("minecraft:wind_burst", 2).fall(6.0).player(side(0.0, 2.0)));
+        out.add(new Case("mace/wind_partial").weapon(mace).ench("minecraft:wind_burst", 2).fall(6.0).mob("minecraft:iron_golem", 2.0, ""));
+        out.get(out.size() - 1).attacker.ticker = 20;
+        out.add(new Case("mace/wind_water_block").weapon(mace).ench("minecraft:wind_burst", 2).fall(6.0).mob("minecraft:iron_golem", 2.0, "").block(0, -1, 0, "minecraft:stone").block(0, 0, 2, "minecraft:water"));
+        // Two hits: the fall distance is gone after a smash.
+        c = new Case("mace/second_hit").weapon(mace).fall(6.0).mob("minecraft:zombie", 2.0, "");
+        c.later = new int[] {100};
+        out.add(c);
+        c = new Case("mace/second_hit_pig_far").weapon(mace).fall(6.0).mob("minecraft:pig", 2.0, "").mob("minecraft:cow", 1.0, 0.0, 1.5, "OnGround:1b");
+        c.later = new int[] {100, 100};
+        out.add(c);
+    }
+
+    static List<Case> cases() {
+        List<Case> out = new ArrayList<>();
+        mobTypes(out);
+        weapons(out);
+        enchants(out);
+        crits(out);
+        effects(out);
+        armorOnMobs(out);
+        states(out);
+        sweeps(out);
+        maces(out);
+        return out;
+    }
+
+    // ---------------------------------------------------------------- recording
+
+    static Object effectsOf(net.minecraft.world.entity.LivingEntity e) {
+        List<Object> l = new ArrayList<>();
+        for (var inst : e.getActiveEffects()) {
+            l.add(List.of(inst.getEffect().unwrapKey().orElseThrow().identifier().toString(), inst.getAmplifier(), inst.getDuration()));
+        }
+        return l;
+    }
+
+    static Map<String, Object> mobState(net.minecraft.world.entity.LivingEntity e) throws Exception {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", "mob");
+        m.put("type", BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString());
+        m.put("health", e.getHealth());
+        m.put("alive", e.isAlive());
+        m.put("velocity", CombatVectors.vec(e.getDeltaMovement()));
+        m.put("fire_ticks", e.getRemainingFireTicks());
+        m.put("hurt_time", e.hurtTime);
+        m.put("damage_cooldown", e.damageCooldownTime);
+        m.put("last_hurt", (Float) CombatVectors.get(e, "lastHurt"));
+        m.put("absorption", e.getAbsorptionAmount());
+        EquipmentSlot[] slots = {EquipmentSlot.FEET, EquipmentSlot.LEGS, EquipmentSlot.CHEST, EquipmentSlot.HEAD, EquipmentSlot.MAINHAND, EquipmentSlot.OFFHAND, EquipmentSlot.BODY};
+        List<Object> eq = new ArrayList<>();
+        for (EquipmentSlot s : slots) {
+            ItemStack st = e.getItemBySlot(s);
+            eq.add(st.isEmpty() ? null : st.getDamageValue());
+        }
+        m.put("equipment_damage", eq);
+        m.put("effects", effectsOf(e));
+        m.put("on_ground", e.onGround());
+        m.put("vehicle", e.getVehicle() == null ? null : BuiltInRegistries.ENTITY_TYPE.getKey(e.getVehicle().getType()).toString());
+        m.put("pos", new double[] {e.getX() - CombatVectors.BX, e.getY() - CombatVectors.BY, e.getZ() - CombatVectors.BZ});
+        return m;
+    }
+
+    static String name(Map<Integer, String> names, int id) {
+        String n = names.get(id);
+        return n != null ? n : "other";
+    }
+
+    static Map<String, Object> packets(List<Object> pk, Map<Integer, String> names) {
+        List<Object> sounds = new ArrayList<>(), particles = new ArrayList<>(), events = new ArrayList<>(), animates = new ArrayList<>(),
+                explodes = new ArrayList<>(), motions = new ArrayList<>(), entityEvents = new ArrayList<>();
+        for (Object p : pk) {
+            if (p instanceof net.minecraft.network.protocol.game.ClientboundSoundPacket s) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("sound", s.getSound().value().location().toString());
+                m.put("source", s.getSource().getName());
+                m.put("volume", s.getVolume());
+                m.put("pitch", s.getPitch());
+                m.put("pos", new double[] {s.getX() - CombatVectors.BX, s.getY() - CombatVectors.BY, s.getZ() - CombatVectors.BZ});
+                sounds.add(m);
+            } else if (p instanceof net.minecraft.network.protocol.game.ClientboundLevelParticlesPacket s) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("particle", BuiltInRegistries.PARTICLE_TYPE.getKey(s.particle().getType()).toString());
+                m.put("count", s.count());
+                m.put("pos", new double[] {s.x() - CombatVectors.BX, s.y() - CombatVectors.BY, s.z() - CombatVectors.BZ});
+                m.put("offset", new double[] {s.xDist(), s.yDist(), s.zDist()});
+                m.put("speed", new double[] {s.xMaxSpeed(), s.yMaxSpeed(), s.zMaxSpeed()});
+                m.put("override_limiter", s.overrideLimiter());
+                m.put("always_show", s.alwaysShow());
+                particles.add(m);
+            } else if (p instanceof net.minecraft.network.protocol.game.ClientboundLevelEventPacket s) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("type", s.getType());
+                m.put("pos", new int[] {s.getPos().getX(), s.getPos().getY() - (int) CombatVectors.BY, s.getPos().getZ()});
+                m.put("data", s.getData());
+                m.put("global", s.isGlobalEvent());
+                events.add(m);
+            } else if (p instanceof net.minecraft.network.protocol.game.ClientboundAnimatePacket s) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("who", name(names, s.getId()));
+                m.put("action", s.getAction());
+                animates.add(m);
+            } else if (p instanceof net.minecraft.network.protocol.game.ClientboundExplodePacket s) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("center", new double[] {s.center().x - CombatVectors.BX, s.center().y - CombatVectors.BY, s.center().z - CombatVectors.BZ});
+                m.put("radius", s.radius());
+                m.put("block_count", s.blockCount());
+                m.put("knockback", s.playerKnockback().map(CombatVectors::vec).orElse(null));
+                m.put("particle", BuiltInRegistries.PARTICLE_TYPE.getKey(s.explosionParticle().getType()).toString());
+                m.put("sound", s.explosionSound().value().location().toString());
+                m.put("play_sound", s.playSound());
+                explodes.add(m);
+            } else if (p instanceof ClientboundSetEntityMotionPacket s) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("who", name(names, s.id()));
+                m.put("motion", CombatVectors.vec(s.movement()));
+                motions.add(m);
+            } else if (p instanceof net.minecraft.network.protocol.game.ClientboundEntityEventPacket s) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                try {
+                    m.put("who", name(names, (Integer) CombatVectors.get(s, "entityId")));
+                } catch (Exception e) {
+                    m.put("who", "?");
+                }
+                m.put("event", (int) s.getEventId());
+                entityEvents.add(m);
+            }
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("sounds", sounds);
+        m.put("particles", particles);
+        m.put("level_events", events);
+        m.put("animates", animates);
+        m.put("explodes", explodes);
+        m.put("motions", motions);
+        m.put("entity_events", entityEvents);
+        return m;
+    }
+
+    static net.minecraft.core.Holder<net.minecraft.world.effect.MobEffect> effect(String id) {
+        return BuiltInRegistries.MOB_EFFECT.get(Identifier.parse(id)).orElseThrow();
+    }
+
+    static List<Object> effectJson(List<Object[]> effects) {
+        List<Object> l = new ArrayList<>();
+        for (Object[] e : effects) l.add(List.of(e[0], e[1], e[2]));
+        return l;
+    }
+
+    static String blockCommand(Object[] b) {
+        return "setblock " + b[0] + " " + ((int) CombatVectors.BY + (Integer) b[1]) + " " + b[2] + " " + b[3];
+    }
+
+    static void run(MinecraftServer server, List<String> out, String filter) throws Exception {
+        List<Case> all = cases();
+        int n = 0;
+        for (Case c : all) {
+            if (filter != null && !filter.equals("melee") && !c.name.contains(filter)) continue;
+            try {
+                out.add(runCase(server, c, n++));
+            } catch (Throwable t) {
+                t.printStackTrace();
+                out.add("{\"name\":\"" + c.name + "\",\"error\":\"" + t.toString().replace('"', '\'').replace('\\', '/') + "\"}");
+            }
+        }
+    }
+
+    static String runCase(MinecraftServer server, Case c, int n) throws Exception {
+        ServerLevel level = server.overworld();
+        SpearVectors.clear(level);
+        SpearVectors.gameTime(level, 5000);
+        var cmd = server.createCommandSourceStack();
+        server.getCommands().performPrefixedCommand(cmd, "gamerule minecraft:pvp " + c.pvp);
+        server.getCommands().performPrefixedCommand(cmd, "difficulty " + c.difficulty);
+        for (Object[] b : c.blocks) server.getCommands().performPrefixedCommand(cmd, blockCommand(b));
+        String attackerName = "Att" + n;
+        ServerPlayer a = CombatVectors.mockPlayer(server, attackerName);
+        CombatVectors.setup(server, a, c.attacker);
+        a.setXRot(c.pitch);
+        List<ServerPlayer> vp = new ArrayList<>();
+        List<net.minecraft.world.entity.LivingEntity> made = new ArrayList<>();
+        List<net.minecraft.world.entity.Entity> extras = new ArrayList<>();
+        java.util.Set<Integer> seen = new java.util.HashSet<>();
+        for (int i = 0; i < c.victims.size(); i++) {
+            Victim v = c.victims.get(i);
+            if (v.player != null) {
+                v.name = "Vic" + n + "x" + i;
+                ServerPlayer p = CombatVectors.mockPlayer(server, v.name);
+                CombatVectors.setup(server, p, v.player);
+                for (Object[] e : v.effects) p.addEffect(new net.minecraft.world.effect.MobEffectInstance(effect((String) e[0]), (Integer) e[2], (Integer) e[1]));
+                vp.add(p);
+                made.add(null);
+            } else {
+                server.getCommands().performPrefixedCommand(cmd, v.command());
+                net.minecraft.world.entity.Entity found = null;
+                var fresh = new ArrayList<>(level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-10, 90, -10, 10, 120, 20), e -> !(e instanceof ServerPlayer)));
+                fresh.sort(java.util.Comparator.comparingInt(net.minecraft.world.entity.Entity::getId));
+                String want = v.type;
+                for (var e : fresh) {
+                    if (seen.contains(e.getId())) continue;
+                    seen.add(e.getId());
+                    if (found == null && BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString().equals(want)) found = e;
+                    else extras.add(e);
+                }
+                if (found == null) throw new IllegalStateException("summon failed: " + v.command());
+                made.add(found instanceof net.minecraft.world.entity.LivingEntity le ? le : null);
+                vp.add(null);
+                CombatVectors.set(found, "random", net.minecraft.util.RandomSource.create(n * 31L + i));
+            }
+        }
+        for (Object[] e : c.effects) a.addEffect(new net.minecraft.world.effect.MobEffectInstance(effect((String) e[0]), (Integer) e[2], (Integer) e[1]));
+        if (c.fallFlying) a.startFallFlying();
+        // The fluids the attacker stands in (what its ticks would have found out).
+        CombatVectors.call(a, "updateFluidInteraction");
+        if (c.mounted) {
+            var pig = SpearVectors.mob(level, "minecraft:pig", 0.0, 0.0, 0.0, 0f);
+            a.setPos(CombatVectors.BX + c.attacker.dx, CombatVectors.BY + c.attacker.dy, CombatVectors.BZ + c.attacker.dz);
+            a.startRiding(pig, true, false);
+            extras.add(pig);
+        }
+        net.minecraft.world.entity.Entity target = vp.get(c.target) != null ? vp.get(c.target) : (made.get(c.target) != null ? made.get(c.target) : null);
+        if (target == null) {
+            // A non-living victim (armor stand is living; end crystal, minecart are not): find by type.
+            var fresh = new ArrayList<>(level.getEntities((net.minecraft.world.entity.Entity) null, new net.minecraft.world.phys.AABB(-10, 90, -10, 10, 120, 20), e -> !(e instanceof ServerPlayer)));
+            fresh.sort(java.util.Comparator.comparingInt(net.minecraft.world.entity.Entity::getId));
+            target = fresh.isEmpty() ? null : fresh.get(0);
+        }
+        Map<Integer, String> names = new java.util.HashMap<>();
+        names.put(a.getId(), "attacker");
+        for (int i = 0; i < c.victims.size(); i++) {
+            if (vp.get(i) != null) names.put(vp.get(i).getId(), "victim" + i);
+            else if (made.get(i) != null) names.put(made.get(i).getId(), "victim" + i);
+        }
+        CombatVectors.drain(a);
+        for (ServerPlayer p : vp) if (p != null) CombatVectors.drain(p);
+        long seed = c.name.hashCode();
+        level.getRandom().setSeed(seed);
+        a.getRandom().setSeed(seed + 1);
+        for (int i = 0; i < vp.size(); i++) if (vp.get(i) != null) vp.get(i).getRandom().setSeed(seed + 2 + i);
+
+        // What the attacker's state came to after the fluids and the riding.
+        Map<String, Object> atAttack = new LinkedHashMap<>();
+        atAttack.put("pos", new double[] {a.getX() - CombatVectors.BX, a.getY() - CombatVectors.BY, a.getZ() - CombatVectors.BZ});
+        atAttack.put("fall_distance", a.fallDistance);
+        atAttack.put("on_ground", a.onGround());
+        List<Object> steps = new ArrayList<>();
+        for (int step = 0; step <= c.later.length; step++) {
+            if (step > 0) CombatVectors.set(a, "attackStrengthTicker", c.later[step - 1]);
+            a.attack(target);
+            Map<String, Object> s = new LinkedHashMap<>();
+            List<Object> apk = CombatVectors.drain(a);
+            Map<String, Object> ao = CombatVectors.outcome(a, apk);
+            ao.put("pending_motion", a.syncVelocity ? CombatVectors.vec(a.getDeltaMovement()) : null);
+            ao.put("packets", packets(apk, names));
+            ao.put("fall_distance", a.fallDistance);
+            ao.put("on_ground", a.onGround());
+            s.put("attacker", ao);
+            List<Object> vs = new ArrayList<>();
+            for (int i = 0; i < c.victims.size(); i++) {
+                if (vp.get(i) != null) {
+                    ServerPlayer p = vp.get(i);
+                    List<Object> pk = CombatVectors.drain(p);
+                    Map<String, Object> o = CombatVectors.outcome(p, pk);
+                    if (i != c.target) o.put("pending_motion", p.syncVelocity ? CombatVectors.vec(p.getDeltaMovement()) : null);
+                    o.put("kind", "player");
+                    o.put("packets", packets(pk, names));
+                    vs.add(o);
+                } else if (made.get(i) != null) {
+                    vs.add(mobState(made.get(i)));
+                } else {
+                    Map<String, Object> o = new LinkedHashMap<>();
+                    o.put("kind", "other");
+                    vs.add(o);
+                }
+            }
+            s.put("victims", vs);
+            steps.add(s);
+        }
+        Map<String, Object> line = new LinkedHashMap<>();
+        line.put("name", c.name);
+        line.put("level_seed", seed);
+        line.put("difficulty", c.difficulty);
+        line.put("pvp", c.pvp);
+        line.put("attacker_name", attackerName);
+        line.put("attacker", c.attacker.json());
+        line.put("attacker_effects", effectJson(c.effects));
+        line.put("attacker_pitch", c.pitch);
+        line.put("attacker_at_attack", atAttack);
+        line.put("fall_flying", c.fallFlying);
+        line.put("mounted", c.mounted);
+        line.put("blocks", c.blocks.stream().map(b -> blockCommand(b)).toList());
+        line.put("later", c.later);
+        List<Object> victims = new ArrayList<>();
+        int vi = 0;
+        for (Victim v : c.victims) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("seed", n * 31L + vi++);
+            if (v.player != null) {
+                m.put("kind", "player");
+                m.put("name", v.name);
+                m.put("side", v.player.json());
+                m.put("effects", effectJson(v.effects));
+            } else {
+                m.put("kind", "mob");
+                m.put("type", v.type);
+                m.put("pos", new double[] {v.dx, v.dy, v.dz});
+                m.put("yaw", v.yaw);
+                m.put("nbt", v.nbt);
+                m.put("vehicle", v.vehicle);
+            }
+            victims.add(m);
+        }
+        line.put("victims", victims);
+        line.put("target", c.target);
+        line.put("steps", steps);
+        for (ServerPlayer p : vp) if (p != null) server.getPlayerList().remove(p);
+        server.getPlayerList().remove(a);
+        for (var e : made) if (e != null) e.discard();
+        for (var e : extras) e.discard();
+        SpearVectors.clear(level);
+        return CombatVectors.toJson(line);
     }
 }

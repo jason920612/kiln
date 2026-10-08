@@ -189,6 +189,9 @@ fn heal(m: &mut MobData, amount: f32) {
 }
 
 impl Kind for Wolf {
+    fn sound_volume(&self, _m: &MobData) -> f32 {
+        0.4
+    }
     fn info(&self) -> &'static Info {
         &INFO
     }

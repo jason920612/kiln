@@ -41,6 +41,18 @@ pub trait Enchanter {
         value
     }
 
+    /// `EnchantmentHelper.modifyArmorEffectiveness` of the weapon of a blow to a mob.
+    fn armor_effectiveness(&self, weapon: &ItemStack, attacker: &EntityView, victim: &EntityView, damage_type: i32, value: f32, random: &mut dyn RandomSource) -> f32 {
+        let _ = (weapon, attacker, victim, damage_type, random);
+        value
+    }
+
+    /// `EnchantmentHelper.getDamageProtection` of a mob's equipment.
+    fn damage_protection(&self, equipment: &[(kiln_item::component::EquipmentSlot, &ItemStack)], victim: &EntityView, attacker: &EntityView, damage_type: i32, random: &mut dyn RandomSource) -> f32 {
+        let _ = (equipment, victim, attacker, damage_type, random);
+        0.0
+    }
+
     /// What the weapon's `post_attack` enchantments do to the victim.
     fn post_attack(&self, hit: &Hit, random: &mut dyn RandomSource) -> Vec<MobPostAttack> {
         let _ = (hit, random);
@@ -108,4 +120,49 @@ pub fn enchant_spawned_equipment(stack: &mut ItemStack, chance: f32, special_mul
     if !stack.is_empty() && random.next_float() < chance * special_multiplier {
         enchant_from_provider(stack, "minecraft:mob_spawn_equipment", special_multiplier, random);
     }
+}
+
+/// The weapon of the blow being dealt to a mob (`DamageSource.getWeaponItem`) and the attacker
+/// as enchantment predicates see it, for the armor effectiveness the weapon's enchantments change
+/// (breach).
+struct AttackScope {
+    weapon: ItemStack,
+    attacker: EntityView,
+}
+
+thread_local! {
+    static ATTACK: RefCell<Option<AttackScope>> = const { RefCell::new(None) };
+}
+
+/// What [`attack_scope`] replaced, put back when dropped.
+pub struct ScopeGuard(Option<AttackScope>);
+
+impl Drop for ScopeGuard {
+    fn drop(&mut self) {
+        ATTACK.with(|a| *a.borrow_mut() = self.0.take());
+    }
+}
+
+/// The blow dealt while the result lives is by `attacker` with `weapon`.
+pub fn attack_scope(weapon: ItemStack, attacker: EntityView) -> ScopeGuard {
+    ScopeGuard(ATTACK.with(|a| a.borrow_mut().replace(AttackScope { weapon, attacker })))
+}
+
+/// `EnchantmentHelper.modifyArmorEffectiveness` for the blow in scope (`value` unchanged without
+/// one, or without a datapack).
+pub fn armor_effectiveness(victim: &EntityView, damage_type: i32, value: f32, random: &mut dyn RandomSource) -> f32 {
+    let enchanter = ENCHANTER.with(|e| e.borrow().clone());
+    let Some(e) = enchanter else { return value };
+    ATTACK.with(|a| match &*a.borrow() {
+        Some(s) if !s.weapon.is_empty() => e.armor_effectiveness(&s.weapon, &s.attacker, victim, damage_type, value, random),
+        _ => value,
+    })
+}
+
+/// `EnchantmentHelper.getDamageProtection(level, victim, source)` of a mob's equipment.
+pub fn damage_protection(equipment: &[(kiln_item::component::EquipmentSlot, &ItemStack)], victim: &EntityView, damage_type: i32, random: &mut dyn RandomSource) -> f32 {
+    let enchanter = ENCHANTER.with(|e| e.borrow().clone());
+    let Some(e) = enchanter else { return 0.0 };
+    let attacker = ATTACK.with(|a| a.borrow().as_ref().map(|s| s.attacker.clone())).unwrap_or_default();
+    e.damage_protection(equipment, victim, &attacker, damage_type, random)
 }

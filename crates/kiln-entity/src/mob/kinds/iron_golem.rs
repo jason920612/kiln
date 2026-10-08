@@ -24,6 +24,20 @@ use kiln_proto::packets::entity::{DataValue, EntityData};
 
 pub struct IronGolem;
 
+/// `Crackiness.GOLEM.byFraction(health / maxHealth)` as a level (0 none to 3 high).
+fn crackiness(m: &MobData) -> u8 {
+    let fraction = m.health / m.attrs.value(Attr::MaxHealth) as f32;
+    if fraction < 0.25 {
+        3
+    } else if fraction < 0.5 {
+        2
+    } else if fraction < 0.75 {
+        1
+    } else {
+        0
+    }
+}
+
 pub static KIND: IronGolem = IronGolem;
 
 static INFO: Info = Info {
@@ -101,6 +115,16 @@ impl Kind for IronGolem {
         t.add(3, Goal::NearestAttackable { wanted: Wanted::Types(ENEMIES), interval: reduced_tick_delay(5), must_see: false, target: None, unseen: 0, spider: false });
         // `ResetUniversalAngerTargetGoal`: the `universal_anger` game rule is off.
         t.add(4, Goal::Never);
+    }
+
+    /// `IronGolem.hurtServer`: a hit that cracks it further makes the damage sound.
+    fn hurt(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, source: &DamageSource, amount: f32) -> Option<bool> {
+        let before = crackiness(m);
+        let hurt = crate::mob::hurt_base(e, m, level, *source, amount);
+        if hurt && crackiness(m) != before {
+            level.emit(Event::Sound { pos: e.position(), sound: "minecraft:entity.iron_golem.damage", source: "neutral", volume: 1.0, pitch: 1.0 });
+        }
+        Some(hurt)
     }
 
     fn pre_tick(&self, e: &mut Entity, _m: &mut MobData, level: &mut dyn EntityLevel) {

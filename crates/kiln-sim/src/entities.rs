@@ -679,6 +679,9 @@ pub(crate) struct SimLevel<'a, 'l, 'p> {
     /// While an entity's turn runs in place of its speculation: the entities it reached with
     /// `entity_mut`, with their box and whether they were alive before.
     touched: Option<Vec<(i32, Aabb, bool)>>,
+    /// The type and position of the entity whose state is out of the list for this turn, for
+    /// what it does to players meanwhile (thorns damage names it as the attacker).
+    current_info: Option<(&'static str, [f64; 3])>,
 }
 
 /// The non-spectator players' positions by 32-block cube, for `Mob.checkDespawn`'s nearest
@@ -1472,8 +1475,13 @@ impl EntityLevel for SimLevel<'_, '_, '_> {
         // A player's projectile credits the player.
         let player_attacker = source.attacker.and_then(|a| self.players.iter().find(|p| p.entity_id == a).map(|p| p.as_attacker()));
         let Some(p) = self.players.iter_mut().find(|p| p.entity_id == id).inspect(|_| self.player_writes += 1) else { return false };
+        let current = self.current;
+        let current_info = self.current_info;
         let attacker = player_attacker.or_else(|| {
             let a = source.attacker?;
+            if a == current && let Some((type_name, pos)) = current_info {
+                return Some(health::Attacker::mob(a, type_name, pos));
+            }
             let e = self.list.binary_search_by_key(&a, |e| e.id).ok().and_then(|i| self.list[i].phys.as_deref())?;
             Some(health::Attacker::mob(a, e.type_name, arr(e.position())))
         });
@@ -1887,6 +1895,7 @@ pub(crate) fn tick(
         despawn: Some(&nearest),
         player_writes: 0,
         touched: None,
+        current_info: None,
     };
     let dt = crate::diag::lap("e.index", dt);
     // Creakings that lost their heart in the block phase go before the entities tick.
@@ -2268,27 +2277,28 @@ pub(crate) fn riding_jump(entities: &mut Entities, players: &mut [&mut Player], 
     }
 }
 
-/// A player's melee hit on a mob (`Player.attack` → `LivingEntity.hurtServer`), carried out
-/// against the region's entities: damage, the extra knockback, fire aspect, then what the mob
-/// did (death loot, sounds, damage events).
-pub(crate) fn hit_mob(
+/// Runs `f` on entity `target` of the region with the level around it (what `Player.attack` does
+/// to a victim that is not a player: hurt it, push it, set it on fire, give it an effect), then
+/// carries out what the entity did meanwhile (death loot, sounds, damage events). `salt` seeds
+/// the level random the entity sees. `None` when the entity is gone.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn with_mob<R>(
     entities: &mut Entities,
     level: &mut RegionLevel,
     players: &mut [&mut Player],
     spawns: &mut Vec<Spawn>,
     deaths: &mut Vec<health::Death>,
-    hit: &crate::combat::MobHit,
-) {
-    if hit.deflect {
-        aim_deflect(entities, hit.target, (hit.attacker, hit.attacker_uuid), [hit.yaw, hit.pitch]);
-        return;
-    }
-    let target = hit.target - hit.part.map_or(0, |p| p as i32 + 1);
-    let Ok(i) = entities.list.binary_search_by_key(&target, |e| e.id) else { return };
+    target: i32,
+    salt: u64,
+    f: impl FnOnce(&mut kiln_entity::Entity, &mut SimLevel<'_, '_, '_>) -> R,
+) -> Option<R> {
+    let i = entities.list.binary_search_by_key(&target, |e| e.id).ok()?;
+    // The datapack's enchantments act on the blow (armor protection, breach).
+    let _enchanting = crate::enchant::install_enchanter(level.env.loot.as_ref());
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
-    let rng = entity_level_random(level.env.seed, level.env.game_time ^ 0x6869_74, hit.target);
+    let rng = entity_level_random(level.env.seed, level.env.game_time ^ salt as i64, target);
     let mut sim = SimLevel {
         level: World::Region(level),
         list: &mut entities.list,
@@ -2299,7 +2309,7 @@ pub(crate) fn hit_mob(
         spawns,
         events: Vec::new(),
         next_placeholder: -1_000_000,
-        current: hit.target,
+        current: target,
         seeds: 0x6869_7400,
         current_source: None,
         rng,
@@ -2310,58 +2320,22 @@ pub(crate) fn hit_mob(
         despawn: None,
         player_writes: 0,
         touched: None,
+        current_info: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
-    let Some(mut phys) = sim.list[i].phys.take() else { return };
-    let source = kiln_entity::mob::DamageSource {
-        kind: DamageKind::PlayerAttack,
-        attacker: Some(hit.attacker),
-        direct: Some(hit.attacker),
-        pos: Some(vec3(hit.attacker_pos)),
-        attacker_is_player: true,
-    };
-    let health_before = kiln_entity::mob::data(&phys).map(|m| m.health);
-    // `EnderDragonPart.hurtServer` → `EnderDragon.hurt(part)`; an end crystal explodes.
-    let hurt = match hit.part {
-        Some(part) => kiln_entity::mob::kinds::ender_dragon::hurt_entity_part(&mut phys, &mut sim, part, source, hit.amount),
-        None if kiln_entity::mob::data(&phys).is_none() => phys.hurt(&mut sim, DamageKind::PlayerAttack, hit.amount, Some(hit.attacker)),
-        None => kiln_entity::mob::hurt_entity(&mut phys, &mut sim, source, hit.amount),
-    };
-    // `Player.damageStatsAndHearts`.
-    if hurt
-        && let (Some(before), Some(after)) = (health_before, kiln_entity::mob::data(&phys).map(|m| m.health))
-        && let Some(p) = sim.players.iter_mut().find(|p| p.entity_id == hit.attacker)
-    {
-        p.award_stat(*crate::player_stats::stat::DAMAGE_DEALT, ((before - after) * 10.0).round() as i32);
-    }
-    if hurt && kiln_entity::mob::data(&phys).is_some() {
-        if hit.knockback > 0.0 {
-            let rad = (hit.yaw * 0.017453292) as f64;
-            let (s, c) = (kiln_entity::mob::mth::sin(rad) as f64, kiln_entity::mob::mth::cos(rad) as f64);
-            kiln_entity::mob::knockback_entity(&mut phys, hit.knockback as f64, s, -c);
-        }
-        if hit.fire_seconds > 0.0 {
-            phys.ignite_for_seconds(hit.fire_seconds);
-        }
-    }
-    let victim = kiln_entity::level::Seen::of(&phys);
-    let health_after = kiln_entity::mob::data(&phys).map(|m| m.health);
+    let mut phys = sim.list[i].phys.take()?;
+    sim.current_info = Some((phys.type_name, arr(phys.position())));
+    let out = f(&mut phys, &mut sim);
     let e = &mut sim.list[i];
     e.phys = Some(phys);
     e.sync();
     let SimLevel { level, list, events, spawns, players, deaths, .. } = sim;
     let level = level.into_region();
-    if hurt && let Some(p) = players.iter_mut().find(|p| p.entity_id == hit.attacker) {
-        p.last_hurt_mob = Some((hit.target, level.env.game_time));
-        // `PlayerHurtEntityTrigger` (dealt before armor and effects, taken after).
-        let taken = health_before.zip(health_after).map_or(hit.amount, |(b, a)| b - a);
-        let subject = crate::advancements::triggers::seen_subject(&victim, crate::DIMENSIONS[level.env.dim].0);
-        p.player_hurt_entity(&subject, hit.amount, taken, "minecraft:player_attack", true);
-    }
     for (n, event) in keyed(events) {
         carry_out(event, n, level, list, players, spawns, deaths);
     }
+    Some(out)
 }
 
 /// `Player.deflectProjectile` on entity `id`: a fireball or wind charge flies on along the look
@@ -2439,6 +2413,7 @@ pub(crate) fn stab_mob(
         despawn: None,
         player_writes: 0,
         touched: None,
+        current_info: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2577,6 +2552,7 @@ pub(crate) fn interact_mob(
         despawn: None,
         player_writes: 0,
         touched: None,
+        current_info: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2737,6 +2713,7 @@ pub(crate) fn with_entity<R>(
         despawn: None,
         player_writes: 0,
         touched: None,
+        current_info: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();
@@ -2790,6 +2767,7 @@ pub(crate) fn with_level<R>(
         despawn: None,
         player_writes: 0,
         touched: None,
+        current_info: None,
     };
     sim.grid = Grid::build(sim.list);
     sim.index_players();

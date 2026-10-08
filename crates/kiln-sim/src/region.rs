@@ -149,21 +149,15 @@ impl RegionWork<'_> {
             }
             if let PlayIn::Attack { entity_id } = pkt {
                 if !self.players[i].dead {
-                    let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
-                    let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
-                    let mut hits = Vec::new();
-                    crate::combat::handle_attack(&mut self.players, i, entity_id, self.entities, &attack_env, &mut ctx, &mut hits);
-                    for hit in hits {
-                        let mut level = RegionLevel {
-                            cells: &mut *self.cells,
-                            blocks: &mut *self.blocks,
-                            env: &env.blocks,
-                            out: &mut out,
-                            bodies: &bodies,
-                            actor: None,
-                        };
-                        entities::hit_mob(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &hit);
-                    }
+                    let mut level = RegionLevel {
+                        cells: &mut *self.cells,
+                        blocks: &mut *self.blocks,
+                        env: &env.blocks,
+                        out: &mut out,
+                        bodies: &bodies,
+                        actor: None,
+                    };
+                    crate::combat::handle_attack(self.entities, &mut level, &mut self.players, i, entity_id, &mut self.out.spawns, &mut self.out.deaths);
                 }
                 continue;
             }
@@ -296,16 +290,9 @@ impl RegionWork<'_> {
                 self.players[i].end_spin_on_collision();
             }
             if !self.players[i].dead && let Some(target) = touch.living {
-                let attack_env = crate::combat::AttackEnv { cells: &*self.cells, game_time: env.game_time, seed: env.blocks.seed };
-                let mut hits = Vec::new();
+                let bodies = Vec::new();
+                let mut out = BlockOut::default();
                 {
-                    let mut ctx = damage_ctx(env, &mut self.out.spawns, &mut self.out.deaths);
-                    crate::combat::spin_attack(&mut self.players, i, target, self.entities, &attack_env, &mut ctx, &mut hits);
-                }
-                self.players[i].stop_spin_on_hit();
-                if !hits.is_empty() {
-                    let bodies = Vec::new();
-                    let mut out = BlockOut::default();
                     let mut level = RegionLevel {
                         cells: &mut *self.cells,
                         blocks: &mut *self.blocks,
@@ -314,11 +301,10 @@ impl RegionWork<'_> {
                         bodies: &bodies,
                         actor: None,
                     };
-                    for hit in hits {
-                        entities::hit_mob(self.entities, &mut level, &mut self.players, &mut self.out.spawns, &mut self.out.deaths, &hit);
-                    }
-                    blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
+                    crate::combat::spin_attack(self.entities, &mut level, &mut self.players, i, target, &mut self.out.spawns, &mut self.out.deaths);
                 }
+                self.players[i].stop_spin_on_hit();
+                blocks::finish(self.cells, out, &mut self.players, &mut self.out.spawns, &env.blocks);
             }
             self.players[i].spin_finished();
         }

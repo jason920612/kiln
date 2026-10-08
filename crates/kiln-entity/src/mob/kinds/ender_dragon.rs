@@ -1553,6 +1553,9 @@ pub fn on_crystal_destroyed(e: &mut Entity, level: &mut dyn EntityLevel, crystal
 // ---------------------------------------------------------------------- the type
 
 impl Kind for EnderDragon {
+    fn sound_volume(&self, _m: &MobData) -> f32 {
+        5.0
+    }
     fn info(&self) -> &'static Info {
         &INFO
     }

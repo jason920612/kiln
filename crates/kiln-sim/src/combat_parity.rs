@@ -153,7 +153,7 @@ fn plain(tag: &Tag) -> String {
 }
 
 /// The death message a player's client got: (translation key, plain arguments).
-fn death_message(stats: &SinkStats) -> Option<(String, Vec<String>)> {
+pub(crate) fn death_message(stats: &SinkStats) -> Option<(String, Vec<String>)> {
     let pkt = packets_with_id(stats, kiln_data::packets::play::clientbound::PLAYER_COMBAT_KILL).pop()?;
     let mut r = kiln_proto::codec::Reader::new(&pkt);
     r.varint().unwrap();
