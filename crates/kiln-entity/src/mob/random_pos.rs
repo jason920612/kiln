@@ -34,15 +34,9 @@ fn generate(e: &mut Entity, m: &MobData, level: &dyn EntityLevel, mut next: impl
     let mut found = None;
     for _ in 0..10 {
         let Some(p) = next(e) else {
-            if std::env::var_os("KILN_RP_DEBUG").is_some() {
-                eprintln!("RP attempt null");
-            }
             continue;
         };
         let v = super::walk_target_value(m, level, p) as f64;
-        if std::env::var_os("KILN_RP_DEBUG").is_some() {
-            eprintln!("RP attempt {p:?} weight {v}");
-        }
         if v > best {
             best = v;
             found = Some(p);
