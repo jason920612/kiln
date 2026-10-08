@@ -79,6 +79,10 @@ pub enum SlotKind {
     BrewingFuel,
     /// A beacon's payment slot (`BeaconMenu$PaymentSlot`): one beacon payment item.
     BeaconPayment,
+    /// A crafter's slot (`CrafterSlot`): takes anything, unless the slot is disabled (the menu's data).
+    CrafterInput,
+    /// The crafter's result slot (`NonInteractiveResultSlot`): shows the recipe's result and nothing else.
+    NonInteractiveResult,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,7 +108,8 @@ impl Slot {
     /// `mayPlace`.
     pub fn may_place(&self, stack: &ItemStack, rules: &Rules) -> bool {
         match self.kind {
-            SlotKind::Normal | SlotKind::Offhand => true,
+            SlotKind::Normal | SlotKind::Offhand | SlotKind::CrafterInput => true,
+            SlotKind::NonInteractiveResult => false,
             SlotKind::Armor(slot) => rules.is_equippable_in_slot(stack, slot),
             SlotKind::Mount { slot, entity, usable } => usable && mount_may_wear(stack, slot, entity),
             SlotKind::CraftResult
@@ -141,6 +146,7 @@ impl Slot {
     pub fn may_pickup(&self, item: &ItemStack, creative: bool, rules: &Rules) -> bool {
         match self.kind {
             SlotKind::Armor(_) | SlotKind::Mount { .. } => item.is_empty() || creative || !rules.prevents_armor_change(item),
+            SlotKind::NonInteractiveResult => false,
             _ => true,
         }
     }

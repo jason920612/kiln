@@ -131,6 +131,39 @@ pub fn dispenser_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos
     }
 }
 
+/// `CrafterBlock.neighborChanged`: a rising edge (no quasi-connectivity) crafts 4 ticks later; the
+/// block entity's own `triggered` flag follows the state.
+pub fn crafter_neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
+    let powered = has_neighbor_signal(level, pos);
+    let triggered = state::get_bool(s, "triggered");
+    if powered && !triggered {
+        schedule_block_tick(level, pos, BlockId::of(s), 4, TickPriority::Normal);
+        set_block(level, pos, state::set_bool(s, "triggered", true), flags::CLIENTS);
+        level.crafter_triggered(pos, true);
+    } else if !powered && triggered {
+        set_block(level, pos, state::set_bool(state::set_bool(s, "triggered", false), "crafting", false), flags::CLIENTS);
+        level.crafter_triggered(pos, false);
+    }
+}
+
+/// `CrafterBlock.getStateForPlacement`: the front is opposite to where the player looks (nearest
+/// first); the top follows the player's way for a vertical front, else it is up.
+pub fn crafter_placement<L: Level + ?Sized>(level: &L, d: u16, pos: BlockPos, nearest_looking: Direction, horizontal: Direction) -> u16 {
+    let front = nearest_looking.opposite();
+    let top = match front {
+        Direction::Down => horizontal.opposite(),
+        Direction::Up => horizontal,
+        _ => Direction::Up,
+    };
+    let s = state::set(d, "orientation", &format!("{}_{}", front.name(), top.name()));
+    state::set_bool(s, "triggered", has_neighbor_signal(level, pos))
+}
+
+/// `CrafterBlock.getStateForPlacement`'s front: where the crafter dispenses.
+pub fn crafter_front(s: u16) -> Direction {
+    state::get(s, "orientation").and_then(|v| v.split_once('_')).and_then(|(front, _)| Direction::from_name(front)).unwrap_or(Direction::North)
+}
+
 /// `TrappedChestBlock.getSignal`: the number of players looking inside, at most 15.
 pub fn trapped_chest_signal<L: Level + ?Sized>(level: &L, pos: BlockPos) -> i32 {
     level.container_openers(pos).clamp(0, 15)

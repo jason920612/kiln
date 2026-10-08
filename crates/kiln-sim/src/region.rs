@@ -1057,6 +1057,22 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 kiln_inventory::click::handle_rename_item(menu, env, &name, true)
             });
         }
+        // `handleContainerSlotStateChanged`: a crafter's slot switched off or on from its screen.
+        PlayIn::ContainerSlotStateChanged { slot, container_id, enabled } => {
+            let crafter = p.open_menu.as_ref().is_some_and(|m| m.container_id == container_id && m.kind == kiln_inventory::MenuKind::Crafter);
+            if p.game_mode != 3
+                && crafter
+                && let Some(crate::container::open::OpenBlock::Containers { first, .. }) = &p.containers.open
+            {
+                let at = first.0;
+                let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+                if let Some(c) = level.blocks.containers.get_mut(at)
+                    && let Ok(slot) = usize::try_from(slot)
+                {
+                    crate::container::crafter::set_slot_state(c, slot, enabled);
+                }
+            }
+        }
         PlayIn::ContainerButtonClick { container_id, button_id } => {
             let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
             crate::container::open::menu_op(p, &mut level, fx.spawns, |menu, _, env| {

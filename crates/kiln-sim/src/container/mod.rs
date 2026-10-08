@@ -15,6 +15,7 @@
 
 pub(crate) mod beacon;
 pub(crate) mod brewing;
+pub(crate) mod crafter;
 pub(crate) mod dispense;
 mod dispense_items;
 pub(crate) mod furnace;
@@ -68,6 +69,8 @@ pub(crate) enum BeKind {
     Lectern,
     /// A trial chamber's reward block (`VaultBlockEntity`; holds no items).
     Vault,
+    /// Nine slots, some of them switched off, and the recipe they make (`CrafterBlockEntity`).
+    Crafter,
 }
 
 impl BeKind {
@@ -96,6 +99,7 @@ impl BeKind {
             "decorated_pot" => BeKind::DecoratedPot,
             "lectern" => BeKind::Lectern,
             "vault" => BeKind::Vault,
+            "crafter" => BeKind::Crafter,
             _ => return None,
         })
     }
@@ -105,7 +109,7 @@ impl BeKind {
         match self {
             BeKind::Chest | BeKind::TrappedChest | BeKind::Barrel | BeKind::ShulkerBox => 27,
             BeKind::Hopper => 5,
-            BeKind::Dispenser | BeKind::Dropper => 9,
+            BeKind::Dispenser | BeKind::Dropper | BeKind::Crafter => 9,
             BeKind::Furnace(_) => 3,
             BeKind::BrewingStand => 5,
             BeKind::Jukebox => 1,
@@ -153,12 +157,16 @@ impl BeKind {
             BeKind::DecoratedPot => "block.minecraft.decorated_pot",
             BeKind::Lectern => "container.lectern",
             BeKind::Vault => "block.minecraft.vault",
+            BeKind::Crafter => "container.crafter",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 37] = [
+const MODELED: [&str; 40] = [
+    "crafting_ticks_remaining",
+    "disabled_slots",
+    "triggered",
     "config",
     "shared_data",
     "server_data",
@@ -286,6 +294,8 @@ pub(crate) struct ContainerBe {
     pub hive: Option<Box<crate::beehive::Hive>>,
     /// A vault's state.
     pub vault: Option<Box<crate::vault::Vault>>,
+    /// A crafter's switched-off slots and countdown.
+    pub crafter: Option<Box<crafter::Crafter>>,
     /// Changed since its NBT was last written into the chunk.
     pub dirty: bool,
     /// Saved fields not modeled here (`components`, ...).
@@ -374,6 +384,7 @@ impl ContainerBe {
             page_turned: false,
             hive: (kind == BeKind::Beehive).then(|| Box::new(crate::beehive::Hive::load(nbt))),
             vault: (kind == BeKind::Vault).then(|| Box::new(crate::vault::Vault::load(nbt))),
+            crafter: (kind == BeKind::Crafter).then(|| Box::new(crafter::Crafter::load(nbt))),
             dirty: false,
             extra,
         };
@@ -465,6 +476,9 @@ impl ContainerBe {
                 out.push(("RecipesUsed".into(), Tag::Compound(used)));
             }
             _ => {
+                if let Some(cr) = &self.crafter {
+                    cr.save_head(&mut out);
+                }
                 match &self.loot_table {
                     // `trySaveLootTable`.
                     Some(table) => {
@@ -477,6 +491,9 @@ impl ContainerBe {
                 }
                 if self.kind == BeKind::Hopper {
                     out.push(("TransferCooldown".into(), Tag::Int(self.cooldown)));
+                }
+                if let Some(cr) = &self.crafter {
+                    cr.save_tail(&mut out);
                 }
             }
         }
@@ -600,6 +617,10 @@ impl kiln_inventory::Container for ContainerBe {
     }
 
     fn set_item(&mut self, slot: usize, mut stack: ItemStack) {
+        // `CrafterBlockEntity.setItem`: an item put into a switched-off slot switches it on.
+        if self.crafter.as_ref().is_some_and(|c| c.disabled.get(slot) == Some(&true)) {
+            crafter::set_slot_state(self, slot, true);
+        }
         if let BeKind::Furnace(_) = self.kind {
             // `AbstractFurnaceBlockEntity.setItem`: another input item restarts the cooking.
             let same = !stack.is_empty() && kiln_inventory::stack::same_item_same_components(&self.items[slot], &stack);
@@ -669,6 +690,14 @@ impl kiln_inventory::Container for ContainerBe {
     }
 
     fn data(&self, index: usize) -> i32 {
+        // `CrafterBlockEntity.containerData`: a flag per switched-off slot, then whether it is powered.
+        if let Some(c) = &self.crafter {
+            return match index {
+                0..=8 => i32::from(c.disabled[index]),
+                9 => i32::from(c.triggered),
+                _ => 0,
+            };
+        }
         if self.kind == BeKind::Lectern {
             return if index == 0 { self.page } else { 0 };
         }
@@ -880,6 +909,9 @@ pub(crate) fn analog(level: &RegionLevel, pos: BlockPos, s: u16) -> i32 {
     if c.kind == BeKind::ChiseledBookshelf {
         return crate::bookshelf::analog(c);
     }
+    if c.kind == BeKind::Crafter {
+        return crafter::analog(c);
+    }
     if kiln_blocks::behaviour::container::is_chest(s) {
         let blocked = |p: BlockPos| kiln_data::block_logic::is_redstone_conductor(level.block(p.above()));
         if blocked(pos) {
@@ -905,6 +937,7 @@ pub(crate) fn scheduled_tick(level: &mut RegionLevel, pos: BlockPos, s: u16) {
     use kiln_data::block_logic::{self as logic, BlockClass as C};
     match logic::block_class(s) {
         C::DispenserBlock | C::DropperBlock => dispense::dispense_from(level, pos, s),
+        C::CrafterBlock => crafter::dispense_from(level, pos, s),
         _ => level.out.rechecks.push(pos),
     }
 }
@@ -916,7 +949,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
         .containers
         .map
         .iter()
-        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Beehive | BeKind::Vault))
+        .filter(|(_, c)| matches!(c.kind, BeKind::Hopper | BeKind::Furnace(_) | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Beehive | BeKind::Vault | BeKind::Crafter))
         .filter(|(p, _)| ticking.contains(chunk_of(**p)))
         .map(|(p, c)| (*p, c.kind))
         .collect();
@@ -937,6 +970,7 @@ pub(crate) fn tick_block_entities(level: &mut RegionLevel, items: &mut dyn hoppe
             BeKind::Campfire => crate::campfire::tick(level, pos),
             BeKind::Beehive => crate::beehive::tick(level, pos),
             BeKind::Vault => crate::vault::tick(level, pos),
+            BeKind::Crafter => crafter::tick(level, pos),
             BeKind::DaylightDetector => {
                 // `DaylightDetectorBlock.tickEntity` (only where the level has sky light).
                 let s = level.block(pos);

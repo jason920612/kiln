@@ -218,6 +218,9 @@ pub trait Level {
     /// and ender chests recheck their openers, dispensers and droppers dispense.
     fn block_entity_tick(&mut self, _pos: BlockPos, _state: u16) {}
 
+    /// `CrafterBlockEntity.setTriggered`: the crafter's block entity follows its block's `triggered`.
+    fn crafter_triggered(&mut self, _pos: BlockPos, _triggered: bool) {}
+
     /// The analog output of the single item frame at `pos` facing `facing`, if exactly one.
     fn item_frame_analog(&self, _pos: BlockPos, _facing: Direction) -> Option<i32> {
         None

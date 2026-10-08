@@ -368,7 +368,17 @@ impl Menu {
     }
 
     fn may_place(&self, env: &Env, i: usize, stack: &ItemStack) -> bool {
-        self.slots[i].may_place(stack, env.rules)
+        let slot = self.slots[i];
+        // `CrafterSlot.mayPlace`: not into a slot the crafter has disabled.
+        if slot.kind == SlotKind::CrafterInput && self.slot_disabled(env, slot.index) {
+            return false;
+        }
+        slot.may_place(stack, env.rules)
+    }
+
+    /// `CrafterMenu.isSlotDisabled`: the block entity's data value for the slot.
+    fn slot_disabled(&self, env: &Env, index: usize) -> bool {
+        index < 9 && self.data(env, index) == 1
     }
 
     fn may_pickup(&self, env: &Env, i: usize) -> bool {
@@ -747,6 +757,10 @@ impl Menu {
     /// `broadcastChanges`: sends every slot, the carried stack and the data values the client
     /// does not have yet.
     pub fn broadcast_changes(&mut self, env: &mut Env) {
+        // `CrafterMenu.slotChanged` (the menu listens to itself): the result follows the 3x3 container's items.
+        if self.kind == MenuKind::Crafter {
+            crate::menus::crafter_refresh_result(self, env);
+        }
         for i in 0..self.slots.len() {
             if self.settled[i] && matches(&self.last_slots[i], self.item(env, i)) {
                 continue;

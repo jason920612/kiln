@@ -48,6 +48,8 @@ pub enum MenuKind {
     CartographyTable,
     /// `EnchantmentMenu`.
     Enchantment,
+    /// `CrafterMenu`: nine slots a recipe is dispensed from, any of which can be disabled, and a result slot that only shows.
+    Crafter,
     /// `BrewingStandMenu`.
     BrewingStand,
     /// `BeaconMenu`.
@@ -86,6 +88,7 @@ impl MenuKind {
             MenuKind::BrewingStand => "minecraft:brewing_stand",
             MenuKind::Beacon => "minecraft:beacon",
             MenuKind::Lectern => "minecraft:lectern",
+            MenuKind::Crafter => "minecraft:crafter_3x3",
             // Opened with its own packet (`ClientboundMountScreenOpenPacket`), not a menu type.
             MenuKind::Mount { .. } => return None,
         })
@@ -111,7 +114,7 @@ impl MenuKind {
             | MenuKind::Beacon
             | MenuKind::Merchant => 0,
             MenuKind::Generic { rows } => rows as usize * 9,
-            MenuKind::Generic3x3 => 9,
+            MenuKind::Generic3x3 | MenuKind::Crafter => 9,
             MenuKind::Lectern => 1,
             MenuKind::Hopper => 5,
             MenuKind::Mount { columns } => 2 + columns as usize * 3,
@@ -172,6 +175,15 @@ impl Menu {
     /// `DispenserMenu` (dispenser, dropper).
     pub fn generic_3x3(container_id: i32) -> Menu {
         Self::over_block(MenuKind::Generic3x3, container_id, SlotKind::Normal, 0)
+    }
+
+    /// `CrafterMenu`: the crafter's nine slots, the player's, then the result; ten data values (a flag per disabled slot,
+    /// and whether the crafter is powered).
+    pub fn crafter(container_id: i32) -> Menu {
+        let mut slots = block_slots(9, SlotKind::CrafterInput);
+        player_slots(&mut slots);
+        slots.push(Slot::new(Source::Result, 0, SlotKind::NonInteractiveResult));
+        Menu::with_slots(MenuKind::Crafter, container_id, slots, 10, CraftGrid::default())
     }
 
     /// `HopperMenu`.
@@ -773,7 +785,7 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
             }
             menu.finish_quick_move(env, i, stack, copy, false).0
         }
-        MenuKind::Generic3x3 => {
+        MenuKind::Generic3x3 | MenuKind::Crafter => {
             let ok = if i < 9 {
                 menu.move_item_stack_to(env, &mut stack, 9, 45, true)
             } else {
@@ -832,6 +844,16 @@ pub(crate) fn quick_move_stack(menu: &mut Menu, env: &mut Env, i: usize) -> Item
             copy
         }
     }
+}
+
+/// `CrafterMenu.refreshRecipeResult`: the recipe the crafter's nine slots match, its result shown in the last slot.
+pub(crate) fn crafter_refresh_result(menu: &mut Menu, env: &mut Env) {
+    let Some(block) = env.block.as_deref() else { return };
+    let items: Vec<ItemStack> = (0..9).map(|i| block.item(i).clone()).collect();
+    let input = crate::recipe::CraftingInput::new(3, 3, &items);
+    let recipes = &env.rules.recipes;
+    let result = recipes.find_crafting(&input, None, &*env.world).map_or_else(ItemStack::empty, |id| recipes.assemble(id, &input, &*env.world));
+    menu.result.item = result;
 }
 
 fn env_drop(env: &mut Env, stack: ItemStack) {

@@ -615,6 +615,12 @@ impl Level for RegionLevel<'_> {
         self.blocks.containers.get(pos).map_or(0, |c| c.openers)
     }
 
+    fn crafter_triggered(&mut self, pos: BlockPos, triggered: bool) {
+        if let Some(cr) = self.blocks.containers.get_mut(pos).and_then(|c| c.crafter.as_mut()) {
+            cr.triggered = triggered;
+        }
+    }
+
     fn block_entity_tick(&mut self, pos: BlockPos, state: u16) {
         if kiln_data::block_logic::block_class(state) == kiln_data::block_logic::BlockClass::SculkShriekerBlock {
             crate::sculk::shrieker::try_respond(self, pos);

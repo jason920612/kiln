@@ -252,6 +252,7 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
         C::RepeaterBlock | C::ComparatorBlock => diode::placement(level, pos, state::set_dir(d, "facing", c.horizontal().opposite())),
         C::RedstoneWireBlock => wire::placement(level, pos),
         C::HopperBlock => container::hopper_placement(d, c.face),
+        C::CrafterBlock => container::crafter_placement(level, d, pos, c.nearest()[0], c.horizontal()),
         C::ShulkerBoxBlock => container::shulker_placement(d, c.face),
         _ if container::is_chest(d) => c.waterlogged(container::chest_placement(level, d, pos, c.horizontal(), c.face, c.sneaking)),
         C::ObserverBlock => state::set_dir(d, "facing", c.nearest()[0]),
@@ -404,6 +405,9 @@ pub fn placed_by<L: Level>(level: &mut L, pos: BlockPos, s: u16) {
         diode::placed(level, s, pos);
     } else if logic::block_class(s) == C::PistonBaseBlock {
         crate::behaviour::piston::check_if_extend(level, s, pos);
+    } else if logic::block_class(s) == C::CrafterBlock && state::get_bool(s, "triggered") {
+        // `CrafterBlock.setPlacedBy`: placed onto power, it crafts in 4 ticks.
+        crate::level::schedule_block_tick(level, pos, BlockId::of(s), 4, crate::ticks::TickPriority::Normal);
     }
 }
 

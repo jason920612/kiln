@@ -158,6 +158,8 @@ impl<'a> View<'a> {
                 _ => true,
             },
             BeKind::BrewingStand => self.rules.as_deref().is_some_and(|r| super::brewing::can_place_item(&self.parts[0], slot, stack, r)),
+            // `CrafterBlockEntity.canPlaceItem`.
+            BeKind::Crafter => super::crafter::can_place_item(&self.parts[0], slot, stack),
             // `JukeboxBlockEntity.canPlaceItem`: a disc, into the empty slot.
             BeKind::Jukebox => stack.get(kiln_item::keys::JUKEBOX_PLAYABLE).is_some() && self.parts[0].items[0].is_empty(),
             _ => true,
