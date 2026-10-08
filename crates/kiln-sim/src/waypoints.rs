@@ -453,7 +453,7 @@ fn azimuth_deadline(odo: f64, src: &Snap, me: &Snap, now: f32, told: f32) -> f64
     let slack = f64::from(AZIMUTH_STEP) - f64::from((now - told).abs()) - 2.0 * ATAN2_ERROR - 1e-5;
     let cut = std::f64::consts::PI - f64::from(now.abs()) - ATAN2_ERROR - 1e-5;
     // An offset `horizontal` long moved by `b` turns by at most `asin(b / horizontal)`.
-    let turn = horizontal * slack.min(cut).min(std::f64::consts::FRAC_PI_2).sin() * (1.0 - 1e-9);
+    let turn = horizontal * kiln_javamath::trig::sin(slack.min(cut).min(std::f64::consts::FRAC_PI_2)) * (1.0 - 1e-9);
 
     let budget = far.min(turn) - 1e-6;
     if budget <= 0.0 { 0.0 } else { odo + budget }
