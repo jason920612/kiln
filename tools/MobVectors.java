@@ -1788,6 +1788,7 @@ public class MobVectors {
         scenariosParrot(out);
         // -- wp49: bees
         scenariosBee(out);
+        scenariosGiant(out);
         // -- wp33: mule breeding, jockeys, the undead mounts, projectile deflection
         scenariosWp33(out);
         scenariosSpears(out);
