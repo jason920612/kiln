@@ -97,6 +97,9 @@ public class InteractVectors {
         List<String> customStats = new ArrayList<>();
         // wp49: the bees that appear (where, and whether they target someone) are recorded after every step.
         boolean watchBees;
+        // wp49: commands the replay runs together with the first step (after the level has settled), not before it
+        // (a hive ages while the replay's level ticks; the recorded one stands still).
+        List<String> late = new ArrayList<>();
 
         Case(String name) {
             this.name = name;
@@ -140,6 +143,11 @@ public class InteractVectors {
 
         Case bees() {
             watchBees = true;
+            return this;
+        }
+
+        Case late(String c) {
+            late.add(c);
             return this;
         }
 
@@ -526,98 +534,104 @@ public class InteractVectors {
     }
 
     /** wp49: beehives and bee nests: a bottle or shears on a full hive, its bees coming out (angry, or calmed by smoke). */
+    static Case hiveCase(String name, String block) {
+        Case c = new Case(name);
+        c.cmd("setblock 2 99 0 minecraft:stone").late("setblock 2 100 0 " + block).watch(2, 100, 0);
+        return c;
+    }
+
     static void hives49(List<Case> out) {
         Case c;
         String bees2 = "{bees:[{entity_data:{id:\"minecraft:bee\",HasNectar:1b},min_ticks_in_hive:100000,ticks_in_hive:7},{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100000,ticks_in_hive:0}]}";
         for (String kind : new String[] {"beehive", "bee_nest"}) {
             for (String facing : new String[] {"west", "north"}) {
-                c = blockCase("hive_bottle_" + kind + "_" + facing, "minecraft:" + kind + "[facing=" + facing + ",honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+                c = hiveCase("hive_bottle_" + kind + "_" + facing, "minecraft:" + kind + "[facing=" + facing + ",honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
                 c.slot("h0", stack("minecraft:glass_bottle", 2));
                 c.step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
                 out.add(c);
             }
         }
-        c = blockCase("hive_bottle_no_bees", "minecraft:beehive[facing=west,honey_level=5]").bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_no_bees", "minecraft:beehive[facing=west,honey_level=5]").bees().stat("minecraft:glass_bottle");
         c.slot("h0", stack("minecraft:glass_bottle", 1));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("hive_bottle_level_4", "minecraft:beehive[facing=west,honey_level=4]" + bees2).bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_level_4", "minecraft:beehive[facing=west,honey_level=4]" + bees2).bees().stat("minecraft:glass_bottle");
         c.slot("h0", stack("minecraft:glass_bottle", 1));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("hive_bottle_creative", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_creative", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
         c.gameMode = "creative";
         c.slot("h0", stack("minecraft:glass_bottle", 3));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("hive_bottle_full_inventory", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_full_inventory", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
         c.slot("h0", stack("minecraft:glass_bottle", 2));
         for (int i = 1; i < 9; i++) c.slot("h" + i, stack("minecraft:dirt", 64));
         for (int i = 9; i < 36; i++) c.slot("m" + i, stack("minecraft:cobblestone", 64));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
         for (String kind : new String[] {"beehive", "bee_nest"}) {
-            c = blockCase("hive_shears_" + kind, "minecraft:" + kind + "[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:shears");
+            c = hiveCase("hive_shears_" + kind, "minecraft:" + kind + "[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:shears");
             c.slot("h0", stack("minecraft:shears"));
             c.step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
             out.add(c);
         }
-        c = blockCase("hive_shears_level_3", "minecraft:beehive[facing=west,honey_level=3]" + bees2).bees().stat("minecraft:shears");
+        c = hiveCase("hive_shears_level_3", "minecraft:beehive[facing=west,honey_level=3]" + bees2).bees().stat("minecraft:shears");
         c.slot("h0", stack("minecraft:shears"));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
         // Smoke from a lit campfire below calms them: they stay in the hive's front without a target.
-        c = blockCase("hive_bottle_smoked", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_smoked", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
         c.cmd("setblock 2 99 0 minecraft:campfire[lit=true]");
         c.slot("h0", stack("minecraft:glass_bottle", 1));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("hive_bottle_smoked_hay", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_smoked_hay", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
         c.cmd("setblock 2 99 0 minecraft:hay_block").cmd("setblock 2 98 0 minecraft:campfire[lit=true]");
         c.slot("h0", stack("minecraft:glass_bottle", 1));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("hive_bottle_unlit_campfire", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_unlit_campfire", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
         c.cmd("setblock 2 99 0 minecraft:campfire[lit=false]");
         c.slot("h0", stack("minecraft:glass_bottle", 1));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);
-        c = blockCase("hive_empty_hand_and_stick", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees();
+        c = hiveCase("hive_empty_hand_and_stick", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees();
         c.slot("h1", stack("minecraft:stick"));
         c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "select", "slot", 1)).step(useOn(2, 100, 0, 1, 0));
         out.add(c);
         // Breaking a hive: creative keeps the bees in the item it drops; survival lets them out (angry) and the drop is
         // the plain item, or with silk touch the hive with its bees; honey is kept in the item (a state).
         String dig = "dig";
-        c = blockCase("hive_break_creative_with_bees", "minecraft:bee_nest[facing=west,honey_level=0]" + bees2).bees();
+        c = hiveCase("hive_break_creative_with_bees", "minecraft:bee_nest[facing=west,honey_level=0]" + bees2).bees();
         c.gameMode = "creative";
         c.step(op("op", dig, "pos", List.of(2, 100, 0)));
         out.add(c);
-        c = blockCase("hive_break_creative_honey_only", "minecraft:beehive[facing=west,honey_level=3]").bees();
+        c = hiveCase("hive_break_creative_honey_only", "minecraft:beehive[facing=west,honey_level=3]").bees();
         c.gameMode = "creative";
         c.step(op("op", dig, "pos", List.of(2, 100, 0)));
         out.add(c);
-        c = blockCase("hive_break_creative_empty", "minecraft:beehive[facing=west,honey_level=0]").bees();
+        c = hiveCase("hive_break_creative_empty", "minecraft:beehive[facing=west,honey_level=0]").bees();
         c.gameMode = "creative";
         c.step(op("op", dig, "pos", List.of(2, 100, 0)));
         out.add(c);
-        c = blockCase("hive_break_survival_axe", "minecraft:bee_nest[facing=west,honey_level=2]" + bees2).bees();
+        c = hiveCase("hive_break_survival_axe", "minecraft:bee_nest[facing=west,honey_level=2]" + bees2).bees();
         c.slot("h0", enchanted("minecraft:netherite_axe", "minecraft:efficiency", 5));
         c.step(op("op", dig, "pos", List.of(2, 100, 0)));
         out.add(c);
-        c = blockCase("hive_break_survival_silk_touch", "minecraft:bee_nest[facing=west,honey_level=4]" + bees2).bees();
+        c = hiveCase("hive_break_survival_silk_touch", "minecraft:bee_nest[facing=west,honey_level=4]" + bees2).bees();
         ItemStack silkAxe = enchanted("minecraft:netherite_axe", "minecraft:efficiency", 5);
         silkAxe.enchant(server.registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(ResourceKey.create(Registries.ENCHANTMENT, Identifier.parse("minecraft:silk_touch"))), 1);
         c.slot("h0", silkAxe);
         c.step(op("op", dig, "pos", List.of(2, 100, 0)));
         out.add(c);
-        c = blockCase("hive_break_survival_smoked", "minecraft:beehive[facing=west,honey_level=0]" + bees2).bees();
+        c = hiveCase("hive_break_survival_smoked", "minecraft:beehive[facing=west,honey_level=0]" + bees2).bees();
         c.cmd("setblock 2 99 0 minecraft:campfire[lit=true]");
         c.slot("h0", enchanted("minecraft:netherite_axe", "minecraft:efficiency", 5));
         c.step(op("op", dig, "pos", List.of(2, 100, 0)));
         out.add(c);
         // A player far from the hive: the bees come out but do not turn on them.
-        c = blockCase("hive_bottle_player_far", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
+        c = hiveCase("hive_bottle_player_far", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
         c.slot("h0", stack("minecraft:glass_bottle", 1));
         c.pos = new double[] {-1.5, 100.0, 0.5};
         c.step(useOnAt(2, 100, 0, 1, 0, 0.5, 1.0, 0.5));
@@ -1856,6 +1870,7 @@ public class InteractVectors {
 
     static String run(Case c) throws Exception {
         for (String cmd : c.commands) command(cmd);
+        for (String cmd : c.late) command(cmd);
         // The recorded level does not tick: what the commands made has had its first tick for the cases that
         // do something to it (a stand's equipment sounds only after its first tick).
         for (var stand : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.ArmorStand.class, new AABB(-16, 90, -16, 32, 120, 32))) {
@@ -1936,6 +1951,7 @@ public class InteractVectors {
         line.put("sneaking", c.sneaking);
         line.put("selected", c.selected);
         line.put("commands", c.commands);
+        line.put("late", c.late);
         Map<String, Object> slots = new LinkedHashMap<>();
         for (var e : c.slots.entrySet()) slots.put(e.getKey(), hex(e.getValue()));
         line.put("slots", slots);

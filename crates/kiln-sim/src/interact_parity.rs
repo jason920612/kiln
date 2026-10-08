@@ -337,6 +337,7 @@ fn run_case(line: &Value) -> Vec<String> {
             "spectator" => 3,
             _ => 0,
         };
+        p.loot = crate::combat_parity::vanilla_loot();
         p.inv = kiln_inventory::PlayerInventory::new();
         p.inv.selected = line["selected"].as_u64().unwrap() as usize;
         for (k, h) in line["slots"].as_object().unwrap() {
@@ -359,6 +360,10 @@ fn run_case(line: &Value) -> Vec<String> {
     let results = line["result"].as_array().unwrap();
     for (n, (step, want)) in steps.iter().zip(results).enumerate() {
         let mut inbox = Vec::new();
+        // (Commands the vectors ran at the start but the replay runs with the first step.)
+        if n == 0 {
+            inbox.extend(line["late"].as_array().into_iter().flatten().map(|c| ToSim::Console(c.as_str().unwrap().to_owned())));
+        }
         let hand_of = |v: &Value| if i32_of(v) == 0 { Hand::Main } else { Hand::Off };
         match step["op"].as_str().unwrap() {
             "use" => inbox.push(ToSim::Packet(1, PlayIn::UseItem { hand: hand_of(&step["hand"]), sequence: 1, yaw: rot[0], pitch: rot[1] })),

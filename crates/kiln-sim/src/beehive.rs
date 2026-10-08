@@ -250,7 +250,7 @@ fn release_occupant(
     o: &Occupant,
     status: Release,
     saved_flower: Option<BlockPos>,
-    player: Option<(i32, [f64; 3])>,
+    player: Option<(i32, [f64; 3], bool)>,
     salt: usize,
 ) -> bool {
     if bees_stay_in_hive(level.env) && status != Release::Emergency {
@@ -302,11 +302,14 @@ fn release_occupant(
     e.set_old_pos_and_rot();
     // `emptyAllLivingFromHive`: bees within 4 blocks of the player turn on them, unless smoke
     // calms them.
-    if let Some((pid, p)) = player {
+    if let Some((pid, p, attackable)) = player {
         let d = (p[0] - x).powi(2) + (p[1] - y).powi(2) + (p[2] - z).powi(2);
         if d <= 16.0 {
             if !is_smokey_pos(level, pos) {
-                kiln_entity::mob::kinds::bee::set_target(&mut e, pid);
+                // (`Mob.setTarget` takes no creative or spectator player.)
+                if attackable {
+                    kiln_entity::mob::kinds::bee::set_target(&mut e, pid);
+                }
             } else {
                 kiln_entity::mob::kinds::bee::set_stay_out_of_hive(&mut e, 400);
             }
@@ -322,7 +325,7 @@ fn release_occupant(
 }
 
 /// `BeehiveBlockEntity.emptyAllLivingFromHive(player, state, status)`.
-pub(crate) fn empty_all(level: &mut RegionLevel, pos: BlockPos, state_: u16, player: Option<(i32, [f64; 3])>, status: Release) {
+pub(crate) fn empty_all(level: &mut RegionLevel, pos: BlockPos, state_: u16, player: Option<(i32, [f64; 3], bool)>, status: Release) {
     let Some(h) = hive(level, pos) else { return };
     let (saved_flower, occupants) = (h.flower_pos, h.occupants.clone());
     let mut kept = Vec::new();
@@ -398,7 +401,7 @@ pub(crate) fn player_destroy(level: &mut RegionLevel, pos: BlockPos, s: u16, p: 
     if silk {
         return;
     }
-    empty_all(level, pos, s, Some((p.entity_id, p.pos)), Release::Emergency);
+    empty_all(level, pos, s, Some((p.entity_id, p.pos, p.game_mode == 0 || p.game_mode == 2)), Release::Emergency);
     level.blocks.bee_anger.push(pos);
 }
 
@@ -484,7 +487,7 @@ pub(crate) fn use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
         }
         // `releaseBeesAndResetHoneyLevel`.
         reset_honey(level, pos, s);
-        empty_all(level, pos, s, Some((p.entity_id, p.pos)), Release::Emergency);
+        empty_all(level, pos, s, Some((p.entity_id, p.pos, p.game_mode == 0 || p.game_mode == 2)), Release::Emergency);
     } else {
         reset_honey(level, pos, s);
     }
@@ -520,13 +523,13 @@ pub(crate) fn anger_requests(level: &mut RegionLevel, entities: &mut Entities, p
         if bees.is_empty() {
             continue;
         }
-        let near: Vec<i32> = players
+        let near: Vec<(i32, bool)> = players
             .iter()
             .filter(|p| {
                 let h = p.dimensions().1 as f64;
                 hits([p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3], [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3])
             })
-            .map(|p| p.entity_id)
+            .map(|p| (p.entity_id, p.game_mode == 0 || p.game_mode == 2))
             .collect();
         if near.is_empty() {
             continue;
@@ -536,8 +539,10 @@ pub(crate) fn anger_requests(level: &mut RegionLevel, entities: &mut Entities, p
             if kiln_entity::mob::kinds::bee::has_target(phys) {
                 continue;
             }
-            let pick = near[level.random().next_int_bounded(near.len() as i32) as usize];
-            kiln_entity::mob::kinds::bee::set_target(phys, pick);
+            let (pick, attackable) = near[level.random().next_int_bounded(near.len() as i32) as usize];
+            if attackable {
+                kiln_entity::mob::kinds::bee::set_target(phys, pick);
+            }
         }
     }
 }
