@@ -794,6 +794,10 @@ public class ContainerVectors {
         command(server, "kill @e[type=chest_minecart]");
         command(server, "kill @e[type=hopper_minecart]");
         command(server, "kill @e[type=item]");
+        command(server, "kill @e[type=tnt]");
+        command(server, "kill @e[type=arrow]");
+        command(server, "kill @e[type=spectral_arrow]");
+        command(server, "kill @e[type=snowball]");
         Map<String, Object> line = s.json();
         line.put("result", ticks);
         return toJson(line);
