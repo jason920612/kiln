@@ -1237,7 +1237,10 @@ public class InteractVectors {
                 item = f.getItem().isEmpty() ? null : hex(f.getItem());
                 rot = f.getRotation();
             }
-            if (e instanceof net.minecraft.world.entity.decoration.painting.Painting pt) area = pt.getVariant().value().area();
+            if (e instanceof net.minecraft.world.entity.decoration.painting.Painting pt) {
+                area = pt.getVariant().value().area();
+                if (System.getenv("INTERACT_DEBUG") != null) System.out.println("DEBUG painting " + pt.getVariant().getRegisteredName() + " " + pt.getVariant().value().width() + "x" + pt.getVariant().value().height() + " bb " + pt.getBoundingBox());
+            }
             rows.add(new Object[] {type, e.getX(), e.getY(), e.getZ(), e.getDirection().get3DDataValue(), item, rot, area});
         }
         rows.sort(Comparator.comparing((Object[] r) -> (String) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]).thenComparingDouble(r -> (Double) r[3]));
