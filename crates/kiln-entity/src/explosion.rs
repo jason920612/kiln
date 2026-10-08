@@ -20,13 +20,34 @@ pub enum Interaction {
     Destroy,
     DestroyWithDecay,
     TriggerBlock,
-    /// `Level.ExplosionInteraction.TNT` with default game rules (`Destroy`).
+    /// `Level.ExplosionInteraction.TNT`: `Destroy`, or `DestroyWithDecay` when
+    /// `tnt_explosion_drop_decay` is on.
+    Tnt,
+    /// `Level.ExplosionInteraction.MOB` with `mob_griefing` on (creepers, ghast fireballs, the
+    /// wither): `DestroyWithDecay` unless `mob_explosion_drop_decay` is off.
+    Mob,
+    /// `Level.ExplosionInteraction.BLOCK` (end crystals, beds and respawn anchors): decays
+    /// with `block_explosion_drop_decay`.
+    Block,
+}
+
+/// The game rule that makes an explosion's drops decay (`ServerLevel.getDestroyType`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DecayRule {
+    Block,
+    Mob,
     Tnt,
 }
 
 impl Interaction {
-    fn resolved(self) -> Interaction {
-        if self == Interaction::Tnt { Interaction::Destroy } else { self }
+    fn resolved(self, level: &dyn EntityLevel) -> Interaction {
+        let by_rule = |rule| if level.explosion_drop_decay(rule) { Interaction::DestroyWithDecay } else { Interaction::Destroy };
+        match self {
+            Interaction::Tnt => by_rule(DecayRule::Tnt),
+            Interaction::Mob => by_rule(DecayRule::Mob),
+            Interaction::Block => by_rule(DecayRule::Block),
+            other => other,
+        }
     }
 }
 
@@ -88,7 +109,7 @@ pub fn explode_ruled(
     rules: BlockRules,
     damage: bool,
 ) -> Vec<BlockPos> {
-    let interaction = interaction.resolved();
+    let interaction = interaction.resolved(&*level);
     level.emit(Event::GameEvent { event: "minecraft:explode", pos: center, entity: source });
     // `getIndirectSourceEntity` of a primed TNT is its owner.
     let causing = rules.causing.or_else(|| {
@@ -103,7 +124,7 @@ pub fn explode_ruled(
         shuffle(&mut positions, level);
         for &pos in &positions {
             let state = level.block(pos);
-            on_explosion_hit(level, source, causing, pos, state, interaction);
+            on_explosion_hit(level, source, causing, pos, state, interaction, radius);
         }
     }
     if fire {
@@ -202,12 +223,12 @@ fn shuffle(list: &mut [BlockPos], level: &mut dyn EntityLevel) {
 }
 
 /// `BlockBehaviour.onExplosionHit` (+ `TntBlock.wasExploded`).
-fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, pos: BlockPos, state: u16, interaction: Interaction) {
+fn on_explosion_hit(level: &mut dyn EntityLevel, source: Option<i32>, causing: Option<i32>, pos: BlockPos, state: u16, interaction: Interaction, radius: f32) {
     if physics::is_air(state) || interaction == Interaction::TriggerBlock {
         return;
     }
     if kind(state) != Kind::Tnt {
-        level.emit(Event::BlockExploded { pos, state, decay: interaction == Interaction::DestroyWithDecay, source });
+        level.emit(Event::BlockExploded { pos, state, decay: interaction == Interaction::DestroyWithDecay, radius, source });
     }
     level.set_block(pos, 0, 3);
     if kind(state) == Kind::Tnt {

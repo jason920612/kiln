@@ -43,7 +43,7 @@ pub fn pre_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             let power = *radius as f32 * if *powered { 2.0 } else { 1.0 };
             m.dead = true;
             let pos = e.position();
-            let interaction = if level.mob_griefing() { crate::explosion::Interaction::DestroyWithDecay } else { crate::explosion::Interaction::Keep };
+            let interaction = if level.mob_griefing() { crate::explosion::Interaction::Mob } else { crate::explosion::Interaction::Keep };
             crate::explosion::explode(level, Some(e.id), pos, power, false, interaction);
             e.discard();
         }

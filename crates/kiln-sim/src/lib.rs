@@ -197,6 +197,10 @@ pub struct SimConfig {
     pub profile_lookup: Option<std::sync::Arc<dyn kiln_link::ProfileLookup>>,
     /// The simulation's own inbox, for answers that arrive from other threads.
     pub replies: Option<crossbeam_channel::Sender<ToSim>>,
+    /// The difficulty the server starts in (`KILN_DIFFICULTY`, 0 peaceful .. 3 hard), as the
+    /// dedicated server's `difficulty` property, which it applies over the save's at every start.
+    /// Without it a world starts in its saved difficulty, a new one in normal.
+    pub difficulty: Option<u8>,
 }
 
 /// How a region with many entities ticks them (`entities/islands.rs`). Every choice is
@@ -275,6 +279,7 @@ impl SimConfig {
             data_sync: Default::default(),
             profile_lookup: None,
             replies: None,
+            difficulty: None,
         }
     }
 }
@@ -599,6 +604,9 @@ struct Player {
     advancements: advancements::progress::PlayerAdvancements,
     /// Base values and permanent modifiers `/attribute` set.
     command_attributes: combat::CommandAttributes,
+    /// `minecraft:limited_crafting`, kept up to date for the menus (only recipes the player's
+    /// recipe book has can be crafted).
+    limited_crafting: bool,
 }
 
 impl Player {
@@ -1169,8 +1177,18 @@ impl Sim {
         let spawn = spawn.expect("overworld spawn");
         let policy = if config.unified_regions { RegionPolicy::unified() } else { RegionPolicy::default() };
         let threads = config.noise.as_ref().map_or(1, |n| n.threads);
-        let storage = config.world.as_deref().map(persist::Storage::open);
+        let mut storage = config.world.as_deref().map(persist::Storage::open);
         let level = storage.as_ref().filter(|s| s.level.exists()).map(|s| s.level.state());
+        // The seed: the generator's, else the save's (`world_gen_settings.dat`); a world that
+        // generates with a seed and has none saved gets it written, so vanilla loads the same.
+        let seed = match (&config.noise, storage.as_mut()) {
+            (Some(n), Some(s)) => {
+                s.level.set_seed_if_missing(n.seed);
+                n.seed
+            }
+            (Some(n), None) => n.seed,
+            (None, s) => s.and_then(|s| s.level.seed()).unwrap_or(0),
+        };
         let game_time = level.as_ref().map_or(0, |l| l.game_time);
         let dims = providers
             .into_iter()
@@ -1190,7 +1208,6 @@ impl Sim {
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
-        let seed = config.noise.as_ref().map_or(0, |n| n.seed);
         let mut sim = Sim {
             rules,
             loot,
@@ -1230,6 +1247,7 @@ impl Sim {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         sim.commands.bossbars.seed(now.as_nanos() as u64);
         sim.commands.seed = seed;
+        sim.load_admin_state();
         sim.load_scoreboard();
         sim.load_stopwatches();
         sim.load_weather();
@@ -1516,9 +1534,29 @@ impl Sim {
         self.game_time
     }
 
+    /// The world seed (`/seed`).
+    pub fn seed(&self) -> i64 {
+        self.commands.seed
+    }
+
+    /// Whether the difficulty is locked (`Data.difficulty_settings.locked`).
+    pub fn difficulty_locked(&self) -> bool {
+        self.commands.difficulty_locked
+    }
+
+    /// The permission level a player of this name would have (0 for non-operators).
+    pub fn permission_level_of_name(&self, name: &str) -> u8 {
+        if self.commands.is_op(name) { self.commands.op_levels.get(name).copied().unwrap_or(4) } else { 0 }
+    }
+
     /// Block state at a position in the overworld, if its chunk is loaded.
     pub fn block_at(&self, x: i32, y: i32, z: i32) -> Option<u16> {
         self.dims[OVERWORLD_ID].regions.get_block(x, y, z)
+    }
+
+    /// Ticks players spent near the loaded overworld chunk holding `x`, `z` (`InhabitedTime`).
+    pub fn inhabited_time_at(&self, x: i32, z: i32) -> Option<i64> {
+        self.dims[OVERWORLD_ID].regions.chunk(ChunkPos::of_block(x, z)).map(|c| c.inhabited_time())
     }
 
     /// The saved form of the live sculk block entity (sensor, shrieker, catalyst) at an
@@ -1885,6 +1923,8 @@ impl Sim {
             game_time: self.game_time,
             max_view: self.config.view_distance as i32,
             movement_check: self.rule_bool("minecraft:player_movement_check"),
+            elytra_movement_check: self.rule_bool("minecraft:elytra_movement_check"),
+            spectators_generate_chunks: self.rule_bool("minecraft:spectators_generate_chunks"),
             natural_regen: self.rule_bool("minecraft:natural_health_regeneration"),
             biome_count: self.dims[dim].provider.biome_count,
             now: Instant::now(),
@@ -1932,6 +1972,17 @@ impl Sim {
                 spawn_mobs: self.rule_bool("minecraft:spawn_mobs"),
                 spawn_monsters: self.rule_bool("minecraft:spawn_monsters"),
                 spawn_wardens: self.rule_bool("minecraft:spawn_wardens"),
+                spawn_phantoms: self.rule_bool("minecraft:spawn_phantoms"),
+                universal_anger: self.rule_bool("minecraft:universal_anger"),
+                forgive_dead_players: self.rule_bool("minecraft:forgive_dead_players"),
+                ender_pearls_vanish: self.rule_bool("minecraft:ender_pearls_vanish_on_death"),
+                explosion_decay: [
+                    self.rule_bool("minecraft:block_explosion_drop_decay"),
+                    self.rule_bool("minecraft:mob_explosion_drop_decay"),
+                    self.rule_bool("minecraft:tnt_explosion_drop_decay"),
+                ],
+                global_sound_events: self.rule_bool("minecraft:global_sound_events"),
+                projectiles_break_blocks: self.rule_bool("minecraft:projectiles_can_break_blocks"),
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,
@@ -2818,6 +2869,7 @@ impl Sim {
             recipe_book,
             advancements: self.load_player_advancements(j.uuid),
             command_attributes: combat::CommandAttributes::default(),
+            limited_crafting: self.rule_bool("minecraft:limited_crafting"),
         };
 
         player.send(packets::play_login(&packets::Login {
@@ -2832,7 +2884,14 @@ impl Sim {
             is_flat: self.is_flat(dim),
             sea_level: SEA_LEVELS[dim],
             online_mode: self.config.online_mode,
+            hashed_seed: self.zoom_seed,
+            hardcore: self.storage.as_ref().is_some_and(|s| s.level.hardcore()),
+            reduced_debug_info: self.rule_bool("minecraft:reduced_debug_info"),
+            show_death_screen: !self.rule_bool("minecraft:immediate_respawn"),
+            limited_crafting: self.rule_bool("minecraft:limited_crafting"),
         }));
+        // `PlayerList.placeNewPlayer`: the difficulty follows the login.
+        player.send(packets::change_difficulty(self.commands.difficulty as u8, self.commands.difficulty_locked));
         player.send(packets::player_position(player.teleport_id, spawn, yaw, pitch));
         let [spawn_yaw, spawn_pitch] = self.spawn_rot;
         player.send(packets::set_default_spawn_position(OVERWORLD, self.spawn, spawn_yaw, spawn_pitch));

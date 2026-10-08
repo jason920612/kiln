@@ -272,7 +272,7 @@ pub enum Event {
     EntityEvent { entity: i32, event: u8 },
     /// A block an explosion destroyed: the simulation drops its loot (`decay`: the
     /// `explosion_radius` loot parameter applies) before this crate sets it to air.
-    BlockExploded { pos: BlockPos, state: u16, decay: bool, source: Option<i32> },
+    BlockExploded { pos: BlockPos, state: u16, decay: bool, radius: f32, source: Option<i32> },
     /// Vanilla block side effects of an entity inside a block that this crate does not
     /// simulate (hoppers, pressure plates, tripwires, portals, detector rails).
     EntityInsideBlock { pos: BlockPos, state: u16, entity: i32 },
@@ -945,6 +945,19 @@ pub trait EntityLevel {
     /// wp28 nether: the `minecraft:universal_anger` game rule (off by default).
     fn universal_anger(&self) -> bool {
         false
+    }
+
+    /// `minecraft:ender_pearls_vanish_on_death` (on by default): a pearl whose dead owner is
+    /// a player is discarded.
+    fn ender_pearls_vanish_on_death(&self) -> bool {
+        true
+    }
+
+    /// `ServerLevel.getDestroyType`: whether the explosions of this kind drop with decay (the
+    /// `block_explosion_drop_decay`, `mob_explosion_drop_decay` and `tnt_explosion_drop_decay`
+    /// game rules: on, on and off by default).
+    fn explosion_drop_decay(&self, rule: crate::explosion::DecayRule) -> bool {
+        rule != crate::explosion::DecayRule::Tnt
     }
 
     /// wp28 nether: the `minecraft:forgive_dead_players` game rule (on by default).

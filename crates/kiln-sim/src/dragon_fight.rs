@@ -918,7 +918,7 @@ impl Sim {
         }
         let at = Vec3::new(s.center_x as f64 + 0.5, s.height as f64, s.center_z as f64 + 0.5);
         self.with_end_level(top, 0x7069_6c6c, |level| {
-            let griefing = kiln_entity::explosion::Interaction::DestroyWithDecay;
+            let griefing = kiln_entity::explosion::Interaction::Block;
             kiln_entity::explosion::explode(level, None, at, 5.0, false, griefing);
         });
         let min_y = self.dims[END_ID].kind.min_y;

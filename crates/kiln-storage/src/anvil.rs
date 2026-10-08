@@ -174,6 +174,7 @@ impl AnvilSource {
         let sky = if light_on { Some(fill_missing_sky(sky)) } else { None };
         let mut chunk = Chunk::with_light(sections, dim.min_y, sky, light_on.then_some(block));
         chunk.set_light_trusted(light_on);
+        chunk.set_inhabited_time(root.get("InhabitedTime").and_then(Tag::as_i64).unwrap_or(0));
         let origin = match (root.get("xPos").and_then(Tag::as_i64), root.get("zPos").and_then(Tag::as_i64)) {
             (Some(x), Some(z)) => Some((x as i32, z as i32)),
             _ => None,
@@ -357,6 +358,7 @@ pub(crate) fn chunk_fields(pos: ChunkPos, chunk: &Chunk, preserved: Option<&Tag>
     };
     let min_section = chunk.min_y() >> 4;
     set(&mut fields, "DataVersion", Tag::Int(DATA_VERSION as i32));
+    set(&mut fields, "InhabitedTime", Tag::Long(chunk.inhabited_time()));
     set(&mut fields, "xPos", Tag::Int(pos.x));
     set(&mut fields, "zPos", Tag::Int(pos.z));
     set(&mut fields, "yPos", Tag::Int(min_section));

@@ -516,7 +516,7 @@ pub(crate) fn use_item_on(
                 kiln_entity::math::Vec3::new(at[0], at[1], at[2]),
                 5.0,
                 true,
-                kiln_entity::explosion::Interaction::DestroyWithDecay,
+                kiln_entity::explosion::Interaction::Block,
             );
         });
     }

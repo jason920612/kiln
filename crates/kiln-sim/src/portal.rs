@@ -1035,7 +1035,7 @@ impl Sim {
         }
         let from = p.dim;
         let info = packets::player::respawn(&self.spawn_info(dim, p), packets::player::respawn_keep::ALL);
-        let difficulty = packets::change_difficulty(self.commands.difficulty as u8, false);
+        let difficulty = packets::change_difficulty(self.commands.difficulty as u8, self.commands.difficulty_locked);
         let (spawn, spawn_rot) = (self.spawn, self.spawn_rot);
         let time = self.time_packet();
         let weather = self.level_info_packets(dim);

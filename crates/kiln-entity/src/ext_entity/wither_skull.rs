@@ -108,7 +108,7 @@ impl WitherSkull {
         }
         // `onHit`: the explosion (`ExplosionInteraction.MOB`).
         let griefing = level.mob_griefing();
-        let interaction = if griefing { crate::explosion::Interaction::DestroyWithDecay } else { crate::explosion::Interaction::Keep };
+        let interaction = if griefing { crate::explosion::Interaction::Mob } else { crate::explosion::Interaction::Keep };
         let resist = |state: u16, r: f32| if wither_can_destroy(state) { r.min(0.8) } else { r };
         let resistance: Option<crate::explosion::Resistance> = if self.dangerous { Some(&resist) } else { None };
         crate::explosion::explode_with(level, Some(e.id), e.position(), 1.0, false, interaction, resistance, true);

@@ -286,8 +286,14 @@ fn conditionals<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool) 
     .then(literal("entity").then(numeric_conditional(exec, argument("entities", ArgumentType::entities()), positive, |c, s| {
         Ok(c.selector("entities").find_entities(s)?.len() as i32)
     })))
-    .then(literal("predicate").then(conditional(exec, argument("predicate", ArgumentType::LootPredicate), positive, |_, _| {
-        Err(CommandError::unsupported("Loot predicates"))
+    .then(literal("predicate").then(conditional(exec, argument("predicate", ArgumentType::LootPredicate), positive, |c, s| {
+        // `ExecuteCommand.checkCustomPredicate`.
+        let predicate = match c.get("predicate") {
+            Some(crate::arguments::ArgumentValue::Nbt(t)) => crate::host::LootTableArg::Inline(t.clone()),
+            Some(crate::arguments::ArgumentValue::Identifier(id)) => crate::host::LootTableArg::Id(id.to_string()),
+            other => unreachable!("predicate argument {other:?}"),
+        };
+        s.test_loot_predicate(&predicate)
     })))
     .then(literal("function").then(
         argument("name", ArgumentType::Function).suggests_server(super::function::suggest_functions)
@@ -299,9 +305,13 @@ fn conditionals<S: Host + 'static>(exec: NodeId, b: Builder<S>, positive: bool) 
         exec,
         argument("range", ArgumentType::FloatRange),
         positive,
-        |c, _| {
-            // No stopwatches exist until `/stopwatch create` is implemented.
-            Err(CommandError::new(tr!("commands.stopwatch.does_not_exist", c.identifier("id").to_string())))
+        |c, s| {
+            // `ExecuteCommand.checkStopwatch`.
+            let id = c.identifier("id").to_string();
+            let Some(seconds) = s.stopwatch_seconds(&id) else {
+                return Err(CommandError::new(tr!("commands.stopwatch.does_not_exist", id)));
+            };
+            Ok(c.double_range("range").matches(seconds))
         },
     ))))
     .then(data_conditionals(exec, positive))

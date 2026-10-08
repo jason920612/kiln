@@ -187,12 +187,22 @@ pub struct Login<'a> {
     pub is_flat: bool,
     pub sea_level: i32,
     pub online_mode: bool,
+    /// First 8 bytes of the SHA-256 of the world seed.
+    pub hashed_seed: i64,
+    /// The world is hardcore (hearts, no respawn).
+    pub hardcore: bool,
+    /// `reduced_debug_info`.
+    pub reduced_debug_info: bool,
+    /// The death screen shows (`!immediate_respawn`).
+    pub show_death_screen: bool,
+    /// `limited_crafting`.
+    pub limited_crafting: bool,
 }
 
 pub fn play_login(l: &Login) -> Bytes {
     let mut b = packet(ids::play::clientbound::LOGIN);
     b.put_i32(l.entity_id);
-    b.put_bool(false); // hardcore
+    b.put_bool(l.hardcore);
     b.put_varint(l.dimensions.len() as i32);
     for d in l.dimensions {
         b.put_string(d);
@@ -200,15 +210,15 @@ pub fn play_login(l: &Login) -> Bytes {
     b.put_varint(l.max_players);
     b.put_varint(l.view_distance);
     b.put_varint(l.simulation_distance);
-    b.put_bool(false); // reduced debug info
-    b.put_bool(true); // show respawn screen
-    b.put_bool(false); // limited crafting
+    b.put_bool(l.reduced_debug_info);
+    b.put_bool(l.show_death_screen);
+    b.put_bool(l.limited_crafting);
     player::put_spawn_info(
         &mut b,
         &player::SpawnInfo {
             dimension_type: l.dimension_type,
             dimension: l.dimension,
-            hashed_seed: 0,
+            hashed_seed: l.hashed_seed,
             game_mode: l.game_mode,
             previous_game_mode: None,
             is_debug: false,

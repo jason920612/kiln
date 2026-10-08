@@ -340,14 +340,12 @@ pub(crate) fn tick(
 ) {
     let env = level.env;
     let rules = env.mobs;
+
     let Some(table) = env.spawn_table.clone() else { return };
-    if !rules.spawn_mobs {
-        return;
-    }
     let dt = std::time::Instant::now();
     let spawn_enemies = rules.difficulty != 0 && rules.spawn_monsters;
     let spawn_persistent = env.game_time % 400 == 0;
-    if spawn_enemies {
+    if spawn_enemies && rules.spawn_phantoms {
         phantoms(level, players, spawns);
     }
     let players: Vec<[f64; 3]> =
@@ -456,9 +454,20 @@ pub(crate) fn tick(
     }
     // `getFilteredSpawningCategories`; the global cap is checked per cluster below, with
     // the counts as they were at the start of the tick.
-    let categories: Vec<Category> =
-        CATEGORIES.into_iter().filter(|c| (spawn_enemies || c.friendly()) && (spawn_persistent || !c.persistent())).collect();
+    let categories: Vec<Category> = CATEGORIES
+        .into_iter()
+        .filter(|c| rules.spawn_mobs && (spawn_enemies || c.friendly()) && (spawn_persistent || !c.persistent()))
+        .collect();
     let start_counts = s.counts.clone();
+    // `ServerChunkCache.tickSpawningChunk`: every ticking chunk with a player near gets one more
+    // tick of `InhabitedTime`, whether or not anything may spawn.
+    level.cells.for_each_cell_mut(&mut |pos, cell| {
+        for (c, chunk) in cell.chunks_mut(pos) {
+            if ticking.contains(c) && s.any_close(c) {
+                chunk.increment_inhabited_time();
+            }
+        }
+    });
     if categories.is_empty() {
         return;
     }
@@ -572,7 +581,8 @@ fn phantoms(level: &RegionLevel, players: &[&mut Player], spawns: &mut Vec<Spawn
         if skylight && (pos.y < 63 || sky < 15) {
             continue;
         }
-        let ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, moon_brightness(env.mobs.day_time));
+        let inhabited = inhabited_at(&*level.cells, pos.x, pos.z);
+        let ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, inhabited, moon_brightness(env.mobs.day_time));
         if !(ctx.effective_difficulty > r.next_float() * 3.0) {
             continue;
         }
@@ -693,7 +703,8 @@ fn spawn_category_for_chunk(
                 continue;
             }
             // `finalizeSpawn` draws from the chunk's random.
-            let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, moon_brightness(env.mobs.day_time));
+            let inhabited = inhabited_at(&*level.cells, fx.floor() as i32, fz.floor() as i32);
+            let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, inhabited, moon_brightness(env.mobs.day_time));
             ctx.biome = Some(biome as i32);
             let seed = r.next_long();
             let _ = &mut group;
@@ -712,6 +723,12 @@ fn spawn_category_for_chunk(
             let _ = in_group;
         }
     }
+}
+
+/// `ChunkAccess.getInhabitedTime` of the chunk holding block column `x`, `z` (0 when it is not
+/// loaded), for the regional difficulty there (`ServerLevel.getCurrentDifficultyAt`).
+pub(crate) fn inhabited_at(cells: &impl kiln_world::Blocks, x: i32, z: i32) -> i64 {
+    cells.chunk(ChunkPos::of_block(x, z)).map_or(0, |c| c.inhabited_time())
 }
 
 /// The biome of the stored 4×4×4 cell holding `pos`.

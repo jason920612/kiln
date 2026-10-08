@@ -591,6 +591,24 @@ impl<S: Source> Dispatcher<S> {
                         None => {}
                     }
                 }
+                // A loot predicate is an id of `predicate/` or an inline condition.
+                if let ArgumentType::LootPredicate = ty {
+                    match &value {
+                        ArgumentValue::Identifier(id) => {
+                            let ids = source.registry_ids("minecraft:predicate");
+                            if !ids.iter().any(|r| r == id.as_str()) {
+                                let e = crate::tr!("argument.resource_or_id.no_such_element", id.to_string(), "minecraft:predicate");
+                                return Err(CommandError::new(e).at(reader));
+                            }
+                        }
+                        ArgumentValue::Nbt(d) => {
+                            if let Some(message) = source.definition_error("minecraft:predicate", d) {
+                                return Err(CommandError::new(crate::tr!("argument.resource_or_id.failed_to_parse", message)).at(reader));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 // Loot registry ids are looked up while parsing, as `ResourceOrIdArgument` does.
                 if let (ArgumentType::LootResource { registry }, ArgumentValue::Identifier(id)) = (ty, &value)
                     && let ids = source.registry_ids(registry)

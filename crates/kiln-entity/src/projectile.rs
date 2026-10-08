@@ -83,6 +83,16 @@ fn data(e: &mut Entity) -> &mut ThrowableData {
 
 /// `ThrowableProjectile.tick`.
 pub fn tick(e: &mut Entity, level: &mut dyn EntityLevel) {
+    // `ThrownEnderpearl.tick`: a pearl whose owner (a player) is dead vanishes, with the
+    // `ender_pearls_vanish_on_death` game rule.
+    if let EntityKind::Throwable(d) = &e.kind
+        && d.kind == Throwable::EnderPearl
+        && level.ender_pearls_vanish_on_death()
+        && d.owner.and_then(|o| level.player(o)).is_some_and(|p| !p.alive)
+    {
+        e.discard();
+        return;
+    }
     if e.first_tick {
         first_tick_bubble_columns(e, level);
     }

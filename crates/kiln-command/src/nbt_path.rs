@@ -510,34 +510,62 @@ fn element(items: &mut [Tag], i: i32) -> Option<&mut Tag> {
 /// `CommandStorage`: compound tags by id for `execute store ... storage` and
 /// `execute if data storage`.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct CommandStorage(std::collections::BTreeMap<String, Tag>);
+pub struct CommandStorage {
+    tags: std::collections::BTreeMap<String, Tag>,
+    /// Changed since [`CommandStorage::take_dirty`] (`SavedData.setDirty`).
+    dirty: bool,
+}
 
 impl CommandStorage {
     /// `get`: an empty compound for ids never written.
     pub fn get(&self, id: &str) -> Tag {
-        self.0.get(id).cloned().unwrap_or(Tag::Compound(Vec::new()))
+        self.tags.get(id).cloned().unwrap_or(Tag::Compound(Vec::new()))
     }
 
-    /// `CommandStorage.set` (`/data` on storage).
+    /// `CommandStorage.set` (`/data` on storage): an empty compound removes the id
+    /// (`CommandStorage.Container.put`).
     pub fn set(&mut self, id: &str, data: Tag) {
-        self.0.insert(id.to_owned(), data);
+        if matches!(&data, Tag::Compound(f) if f.is_empty()) {
+            self.tags.remove(id);
+        } else {
+            self.tags.insert(id.to_owned(), data);
+        }
+        self.dirty = true;
     }
 
     /// Ids with stored data, sorted (suggestions).
     pub fn keys(&self) -> impl Iterator<Item = &str> {
-        self.0.keys().map(String::as_str)
+        self.tags.keys().map(String::as_str)
+    }
+
+    /// The stored tags with their ids, sorted by id.
+    pub fn entries(&self) -> impl Iterator<Item = (&str, &Tag)> {
+        self.tags.iter().map(|(k, v)| (k.as_str(), v))
+    }
+
+    /// Whether anything changed since the last call (what needs saving).
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
+    }
+
+    /// Loading a save: sets `id` without marking the storage changed.
+    pub fn load(&mut self, id: &str, data: Tag) {
+        let dirty = self.dirty;
+        self.set(id, data);
+        self.dirty = dirty;
     }
 
     /// `ExecuteCommand.storeData` through `StorageDataAccessor`: `get` hands out the stored
     /// compound itself (so parents created by a failed set stay), or a fresh one that is
     /// only kept when the set succeeds.
     pub fn store(&mut self, id: &str, path: &NbtPath, value: &Tag) -> Result<i32> {
-        match self.0.get_mut(id) {
+        self.dirty = true;
+        match self.tags.get_mut(id) {
             Some(tag) => path.set(tag, value),
             None => {
                 let mut tag = Tag::Compound(Vec::new());
                 let changed = path.set(&mut tag, value)?;
-                self.0.insert(id.to_owned(), tag);
+                self.tags.insert(id.to_owned(), tag);
                 Ok(changed)
             }
         }

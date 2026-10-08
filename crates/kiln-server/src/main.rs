@@ -95,10 +95,21 @@ fn main() -> Result<()> {
         }
         sim_config.plugins = Some(plugins);
     }
+    // KILN_DIFFICULTY=peaceful|easy|normal|hard (or 0..3): the server's difficulty, applied over
+    // the world's saved one at every start (vanilla's `difficulty` property).
+    sim_config.difficulty = std::env::var("KILN_DIFFICULTY").ok().and_then(|v| {
+        ["peaceful", "easy", "normal", "hard"]
+            .iter()
+            .position(|d| d.eq_ignore_ascii_case(v.trim()))
+            .map(|i| i as u8)
+            .or_else(|| v.trim().parse::<u8>().ok().filter(|d| *d <= 3))
+    });
     // KILN_GENERATOR=noise: vanilla overworld terrain (KILN_SEED, KILN_DATAPACK = the data
     // generator output, default work/generated).
     if std::env::var("KILN_GENERATOR").is_ok_and(|v| v == "noise") {
-        let seed = std::env::var("KILN_SEED").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        // Without KILN_SEED the world's own seed (`world_gen_settings.dat`) generates.
+        let saved = sim_config.world.as_deref().and_then(kiln_storage::read_seed);
+        let seed = std::env::var("KILN_SEED").ok().and_then(|v| v.parse().ok()).or(saved).unwrap_or(0);
         let datapack = std::env::var_os("KILN_DATAPACK").map_or_else(|| "work/generated".into(), Into::into);
         sim_config.noise = Some(kiln_sim::NoiseConfig { seed, datapack, threads: 3 });
     }

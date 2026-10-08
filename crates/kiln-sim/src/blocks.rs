@@ -1036,7 +1036,12 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
     for (i, (actor, effect)) in std::mem::take(&mut out.effects).into_iter().enumerate() {
         let others = |p: &&mut Player| Some(p.conn) != actor;
         match effect {
-            Effect::Drop { pos, state } => {
+            effect @ (Effect::Drop { .. } | Effect::ExplosionDrop { .. }) => {
+                let (pos, state, explosion) = match effect {
+                    Effect::Drop { pos, state } => (pos, state, None),
+                    Effect::ExplosionDrop { pos, state, radius } => (pos, state, Some(radius)),
+                    _ => unreachable!("matched above"),
+                };
                 let i = {
                     let n = drops_at.entry(pos).or_insert(0);
                     *n += 1;
@@ -1062,7 +1067,7 @@ pub(crate) fn finish(cells: &CellSet<Cell>, mut out: BlockOut, players: &mut [&m
                         spawns.extend(block_experience_orbs(loot, pos, state, tool, env, i));
                     }
                     match &env.loot {
-                        Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i)),
+                        Some(loot) => spawns.extend(block_drops(loot, pos, state, tool, components, env, i, explosion)),
                         None => spawns.extend(drop_stand_in(pos, state, env, i)),
                     }
                 }
@@ -1265,13 +1270,14 @@ fn block_drops(
     block_entity: Option<Vec<kiln_item::component::Component>>,
     env: &BlockEnv,
     i: usize,
+    explosion: Option<f32>,
 ) -> Vec<Spawn> {
     // Vanilla draws block drops from the server-wide random sequence of the table; parallel
     // regions cannot share one without the order depending on the partition, so each drop gets
     // its own seed from the position and tick (an approximation, I class).
     let origin = [pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5];
     let seed = (effect_hash(env, pos, i) | 1) as i64;
-    let items = block_items(loot, origin, state, tool, block_entity, seed);
+    let items = block_items_with(loot, origin, state, tool, block_entity, seed, explosion);
     items
         .into_iter()
         .filter(|s| !s.is_empty())
@@ -1291,11 +1297,25 @@ pub(crate) fn block_items(
     block_entity: Option<Vec<kiln_item::component::Component>>,
     seed: i64,
 ) -> Vec<kiln_item::ItemStack> {
+    block_items_with(loot, origin, state, tool, block_entity, seed, None)
+}
+
+/// [`block_items`] for a block an explosion destroyed: `explosion` is the `explosion_radius`
+/// parameter, set when the drops decay (`survives_explosion`, `explosion_decay`).
+pub(crate) fn block_items_with(
+    loot: &kiln_loot::LootData,
+    origin: [f64; 3],
+    state: u16,
+    tool: Option<kiln_item::ItemStack>,
+    block_entity: Option<Vec<kiln_item::component::Component>>,
+    seed: i64,
+    explosion: Option<f32>,
+) -> Vec<kiln_item::ItemStack> {
     let Some(table_id) = loot.block_table(BlockId::of(state).name()) else { return Vec::new() };
     let Some(table) = loot.table(&table_id) else { return Vec::new() };
     // A player break also sets `this_entity` (the player).
     let player = tool.is_some();
-    let ctx = BreakContext { tool: tool.unwrap_or_else(kiln_item::ItemStack::empty), player, state, origin, block_entity };
+    let ctx = BreakContext { tool: tool.unwrap_or_else(kiln_item::ItemStack::empty), player, state, origin, block_entity, explosion };
     let (mut sequences, mut level) = (kiln_loot::RandomSequences::new(0), kiln_javamath::random::LegacyRandom::new(seed));
     let mut rng = table.random(seed, &mut sequences, &mut level);
     loot.random_items(&table_id, &ctx, rng.source())
@@ -1309,9 +1329,14 @@ pub(crate) struct BreakContext {
     pub origin: [f64; 3],
     /// The components of the block's block entity (`collectComponents`), if it had one.
     pub block_entity: Option<Vec<kiln_item::component::Component>>,
+    /// `explosion_radius`: set when an explosion with drop decay broke the block.
+    pub explosion: Option<f32>,
 }
 
 impl kiln_loot::LootContext for BreakContext {
+    fn explosion_radius(&self) -> Option<f32> {
+        self.explosion
+    }
     fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
         self.player && target == kiln_loot::EntityTarget::This
     }
@@ -1500,7 +1525,7 @@ mod tests {
         };
         let pick = kiln_item::ItemStack::of("minecraft:diamond_pickaxe", 1);
         let drops = |state: u16, tool: Option<kiln_item::ItemStack>| -> Vec<&'static str> {
-            block_drops(&loot, BlockPos::new(0, 64, 0), state, tool, None, &env, 0)
+            block_drops(&loot, BlockPos::new(0, 64, 0), state, tool, None, &env, 0, None)
                 .into_iter()
                 .map(|s| {
                     let entities::Body::Item { stack, .. } = s.body else { panic!("not an item") };

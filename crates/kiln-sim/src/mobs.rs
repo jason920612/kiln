@@ -26,6 +26,19 @@ pub(crate) struct MobRules {
     pub spawn_monsters: bool,
     /// `minecraft:spawn_wardens`.
     pub spawn_wardens: bool,
+    /// `minecraft:spawn_phantoms`.
+    pub spawn_phantoms: bool,
+    /// `minecraft:universal_anger` and `minecraft:forgive_dead_players`.
+    pub universal_anger: bool,
+    pub forgive_dead_players: bool,
+    /// `minecraft:ender_pearls_vanish_on_death`.
+    pub ender_pearls_vanish: bool,
+    /// `block_explosion_drop_decay`, `mob_explosion_drop_decay` and `tnt_explosion_drop_decay`.
+    pub explosion_decay: [bool; 3],
+    /// `minecraft:global_sound_events`.
+    pub global_sound_events: bool,
+    /// `minecraft:projectiles_can_break_blocks`.
+    pub projectiles_break_blocks: bool,
     pub cramming: i32,
     pub difficulty: u8,
     /// The world spawn (no natural spawns within 24 blocks).
@@ -45,6 +58,13 @@ impl Default for MobRules {
             spawn_mobs: true,
             spawn_monsters: true,
             spawn_wardens: true,
+            spawn_phantoms: true,
+            universal_anger: false,
+            forgive_dead_players: true,
+            ender_pearls_vanish: true,
+            explosion_decay: [true, true, false],
+            global_sound_events: true,
+            projectiles_break_blocks: true,
             cramming: 24,
             difficulty: 2,
             spawn_point: [0, 64, 0],
@@ -185,6 +205,7 @@ pub(crate) fn summon(
     initialize: bool,
     difficulty: u8,
     game_time: i64,
+    inhabited: i64,
     seed: i64,
 ) -> Option<kiln_proto::nbt::Tag> {
     use kiln_proto::nbt::Tag;
@@ -214,7 +235,7 @@ pub(crate) fn summon(
             spawns.push(Spawn::from_saved(&Tag::Compound(c), seed, false).ok()?);
         }
         _ => {
-            let finalize = initialize.then(|| Finalize::command(difficulty_instance(difficulty, game_time, 0, 1.0), seed, false, difficulty == 0));
+            let finalize = initialize.then(|| Finalize::command(difficulty_instance(difficulty, game_time, inhabited, 1.0), seed, false, difficulty == 0));
             spawns.push(spawn(kind, pos, None, finalize));
         }
     }
