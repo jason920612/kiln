@@ -837,6 +837,11 @@ impl MapStore {
         Arc::new(Mutex::new(MapStore::new(dir)))
     }
 
+    /// The id of the last map made (-1 before the first).
+    pub(crate) fn last_id(&self) -> i32 {
+        self.last_id
+    }
+
     /// `ServerLevel.getFreeMapId`.
     pub(crate) fn free_id(&mut self) -> i32 {
         self.last_id += 1;

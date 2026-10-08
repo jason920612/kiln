@@ -2251,15 +2251,10 @@ public class InteractVectors {
 
     /** The saved data of the maps in the player's inventory. */
     static List<Object> mapsOf(ServerPlayer p) throws Exception {
+        // Every map made so far (they all begin at id 0 in a case).
         java.util.TreeSet<Integer> ids = new java.util.TreeSet<>();
-        for (int i = 0; i < p.getInventory().getContainerSize(); i++) {
-            var id = p.getInventory().getItem(i).get(DataComponents.MAP_ID);
-            if (id != null) ids.add(id.id());
-        }
-        for (var frame : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.ItemFrame.class, new AABB(-128, -64, -128, 128, 320, 128))) {
-            var id = frame.getItem().get(DataComponents.MAP_ID);
-            if (id != null) ids.add(id.id());
-        }
+        var index = server.getDataStorage().computeIfAbsent(net.minecraft.world.level.saveddata.maps.MapIndex.TYPE);
+        for (int i = 0; i <= field(net.minecraft.world.level.saveddata.maps.MapIndex.class, "lastMapId").getInt(index); i++) ids.add(i);
         List<Object> out = new ArrayList<>();
         for (int id : ids) {
             var d = server.overworld().getMapData(new net.minecraft.world.level.saveddata.maps.MapId(id));

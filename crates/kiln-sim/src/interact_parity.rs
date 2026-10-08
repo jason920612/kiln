@@ -285,12 +285,9 @@ fn hangings_json(sim: &Sim) -> Value {
 
 /// The saved data of the maps in the player's inventory, as `InteractVectors.mapsOf` lists them.
 fn maps_json(sim: &Sim) -> Value {
-    let p = &sim.players[&1];
-    let mut ids: Vec<i32> = p.inv.items.iter().chain(p.inv.equipment.iter()).filter_map(|s| if s.is_empty() { None } else { crate::maps::map_id_of(s) }).collect();
-    ids.extend(sim.map_frames().iter().map(|f| f.map));
-    ids.sort();
-    ids.dedup();
+    // Every map made so far (they all begin at id 0 in a case).
     let mut store = sim.maps.lock().unwrap();
+    let ids: Vec<i32> = (0..=store.last_id()).collect();
     let mut rows = Vec::new();
     for id in ids {
         let Some(d) = store.get(id) else { continue };
