@@ -57,14 +57,46 @@ pub fn rotations(d: Direction) -> (f32, f32) {
     }
 }
 
-/// `HangingEntity.hasLevelCollision`: a block shape in the box (the world border is the level's).
-pub fn has_block_collision(level: &dyn EntityLevel, e: &Entity, bx: &Aabb) -> bool {
-    let mut blocked = false;
-    crate::collision::for_each_block_collision(level, &e.collision_context(), bx, |_, _, _| {
-        blocked = true;
-        false
-    });
-    blocked
+/// What a hanging entity looks at to decide whether it survives: the blocks, the block shapes in
+/// a box, and the other hanging entities.
+pub trait HangingWorld {
+    fn block(&self, pos: BlockPos) -> u16;
+    /// `HangingEntity.hasLevelCollision`: a block shape in the box.
+    fn block_collision(&self, bx: &Aabb) -> bool;
+    /// The hanging entities other than `exclude` (an entity id) whose box meets `bx`: facing and
+    /// type name.
+    fn hanging_in(&self, bx: &Aabb, exclude: i32) -> Vec<(Direction, &'static str)>;
+}
+
+/// The world as an entity level shows it.
+pub struct LevelWorld<'a> {
+    pub level: &'a dyn EntityLevel,
+    pub e: &'a Entity,
+}
+
+impl HangingWorld for LevelWorld<'_> {
+    fn block(&self, pos: BlockPos) -> u16 {
+        self.level.block(pos)
+    }
+
+    fn block_collision(&self, bx: &Aabb) -> bool {
+        let mut blocked = false;
+        crate::collision::for_each_block_collision(self.level, &self.e.collision_context(), bx, |_, _, _| {
+            blocked = true;
+            false
+        });
+        blocked
+    }
+
+    fn hanging_in(&self, bx: &Aabb, exclude: i32) -> Vec<(Direction, &'static str)> {
+        self.level
+            .entities_in(bx, EntityFilter::Any, exclude)
+            .into_iter()
+            .filter_map(|id| self.level.entity(id))
+            .filter(|o| o.id != exclude)
+            .filter_map(|o| direction_of(o).map(|d| (d, o.type_name)))
+            .collect()
+    }
 }
 
 /// `HangingEntity.isSupportingBlock`: a solid block or a repeater or comparator.
@@ -74,19 +106,8 @@ pub fn is_supporting_block(state: u16) -> bool {
 
 /// `HangingEntity.canCoexist(checkSameType)`: no other hanging entity in the box that is of the
 /// same type (when asked) or faces the same way.
-pub fn can_coexist(level: &dyn EntityLevel, e: &Entity, direction: Direction, pop_box: &Aabb, same_type_counts: bool) -> bool {
-    for id in level.entities_in(pop_box, EntityFilter::Any, e.id) {
-        let Some(o) = level.entity(id) else { continue };
-        let Some(other_dir) = direction_of(o) else { continue };
-        if o.id == e.id {
-            continue;
-        }
-        let same_type = same_type_counts && o.type_name == e.type_name;
-        if same_type || other_dir == direction {
-            return false;
-        }
-    }
-    true
+pub fn can_coexist(world: &dyn HangingWorld, e: &Entity, direction: Direction, pop_box: &Aabb, same_type_counts: bool) -> bool {
+    !world.hanging_in(pop_box, e.id).into_iter().any(|(d, t)| (same_type_counts && t == e.type_name) || d == direction)
 }
 
 /// The facing of a hanging entity.
@@ -116,4 +137,12 @@ pub fn saved_pos(tag: Option<&Tag>, at: Vec3) -> BlockPos {
 /// Whether `e` is a hanging entity.
 pub fn is_hanging(e: &Entity) -> bool {
     matches!(e.kind, EntityKind::Ext(_)) && direction_of(e).is_some()
+}
+
+/// The block a hanging entity hangs in.
+pub fn block_pos_of(e: &Entity) -> Option<BlockPos> {
+    if let Some(f) = crate::ext_entity::get::<crate::ext_entity::item_frame::ItemFrame>(e) {
+        return Some(f.pos);
+    }
+    crate::ext_entity::get::<crate::ext_entity::painting::Painting>(e).map(|p| p.pos)
 }

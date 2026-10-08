@@ -111,19 +111,19 @@ impl ItemFrame {
     }
 
     /// `survives`.
-    fn survives(&self, e: &Entity, level: &dyn EntityLevel) -> bool {
+    pub fn survives(&self, e: &Entity, world: &dyn hanging::HangingWorld) -> bool {
         if self.fixed {
             return true;
         }
         let pop = self.pop_box();
-        if hanging::has_block_collision(level, e, &pop) {
+        if world.block_collision(&pop) {
             return false;
         }
-        let behind = level.block(hanging::offset(self.pos, self.direction.opposite()));
+        let behind = world.block(hanging::offset(self.pos, self.direction.opposite()));
         if !crate::physics::is_solid(behind) && !(self.direction.axis() != crate::math::Axis::Y && crate::blocks::is_diode(behind)) {
             return false;
         }
-        hanging::can_coexist(level, e, self.direction, &pop, true)
+        hanging::can_coexist(world, e, self.direction, &pop, true)
     }
 
     /// `getAnalogOutput`.
@@ -244,7 +244,7 @@ impl EntityExt for ItemFrame {
         self.since_check += 1;
         if self.since_check >= 100 {
             self.since_check = 0;
-            if !e.is_removed() && !self.survives(e, &*level) {
+            if !e.is_removed() && !self.survives(e, &hanging::LevelWorld { level: &*level, e }) {
                 e.discard();
                 self.drop_all(e, level, None);
             }

@@ -47,7 +47,7 @@ pub fn bare(id: i32, pos: BlockPos, direction: Direction, seed: i64) -> Entity {
 /// `Painting.create(level, pos, direction)`: of the placeable variants that survive on this wall,
 /// the ones of the largest area; one of those at random (the painting's own random). `None`:
 /// nothing fits.
-pub fn create(level: &dyn EntityLevel, id: i32, pos: BlockPos, direction: Direction, seed: i64) -> Option<Entity> {
+pub fn create(world_of: &dyn Fn(&Entity) -> Box<dyn hanging::HangingWorld + '_>, id: i32, pos: BlockPos, direction: Direction, seed: i64) -> Option<Entity> {
     let mut e = bare(id, pos, direction, seed);
     let mut fits: Vec<usize> = Vec::new();
     for (i, v) in VARIANTS.iter().enumerate() {
@@ -58,7 +58,7 @@ pub fn create(level: &dyn EntityLevel, id: i32, pos: BlockPos, direction: Direct
         p.variant = i;
         let p = p.clone();
         p.place(&mut e);
-        if p.survives(&e, level) {
+        if p.survives(&e, &*world_of(&e)) {
             fits.push(i);
         }
     }
@@ -136,9 +136,9 @@ impl Painting {
     }
 
     /// `HangingEntity.survives`.
-    fn survives(&self, e: &Entity, level: &dyn EntityLevel) -> bool {
+    pub fn survives(&self, e: &Entity, world: &dyn hanging::HangingWorld) -> bool {
         let pop = self.create_box();
-        if hanging::has_block_collision(level, e, &pop) {
+        if world.block_collision(&pop) {
             return false;
         }
         // `calculateSupportBox`: the box moved half a block into the wall, deflated.
@@ -148,13 +148,13 @@ impl Painting {
         for x in lo.x..=hi.x {
             for y in lo.y..=hi.y {
                 for z in lo.z..=hi.z {
-                    if !hanging::is_supporting_block(level.block(BlockPos::new(x, y, z))) {
+                    if !hanging::is_supporting_block(world.block(BlockPos::new(x, y, z))) {
                         return false;
                     }
                 }
             }
         }
-        hanging::can_coexist(level, e, self.direction, &pop, false)
+        hanging::can_coexist(world, e, self.direction, &pop, false)
     }
 
     /// `dropItem(level, entity)`.
@@ -194,7 +194,7 @@ impl EntityExt for Painting {
         self.since_check += 1;
         if self.since_check >= 100 {
             self.since_check = 0;
-            if !e.is_removed() && !self.survives(e, &*level) {
+            if !e.is_removed() && !self.survives(e, &hanging::LevelWorld { level: &*level, e }) {
                 e.discard();
                 self.drop_item(e, level, None);
             }
