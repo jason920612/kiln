@@ -766,20 +766,21 @@ pub(crate) fn attack(w: &mut Work<'_, '_, '_>, a: usize, target: Target, target_
         Target::Player(t) => Victim::Player(*t),
         Target::Entity { part, .. } => Victim::Entity(target_id - part.map_or(0, |p| p as i32 + 1), *part),
     };
+    // `Player.attack`: `target.skipAttackInteraction(this)` is a hanging entity's `hurtOrSimulate(playerAttack, 0)`;
+    // when it did something the attack is over, else it goes on as any hit.
+    if let Target::Entity { kind: EntityClass::Hanging, .. } = &target {
+        let p = &mut *w.players[a];
+        let source = Source { cause: Cause::PlayerAttack, attacker: Some(p.as_attacker()), direct: None, weapon: Some(p.inv.selected_item().clone()), position: None };
+        if w.hurt(a, victim, 0.0, &source) {
+            return;
+        }
+    }
     let (living, target_view, target_bb) = match &target {
         Target::Player(t) => {
             let f = w.facts(Victim::Player(*t)).expect("player target");
             (true, f.view, f.bb)
         }
         Target::Entity { kind: EntityClass::NotAttackable, .. } => return,
-        // `Player.attack`: `target.skipAttackInteraction(this)` is true for a hanging entity, whose hit
-        // is `hurtOrSimulate(playerAttack, 0)` and no more.
-        Target::Entity { kind: EntityClass::Hanging, .. } => {
-            let p = &mut *w.players[a];
-            let source = Source { cause: Cause::PlayerAttack, attacker: Some(p.as_attacker()), direct: None, weapon: Some(p.inv.selected_item().clone()), position: None };
-            w.hurt(a, victim, 0.0, &source);
-            return;
-        }
         Target::Entity { kind, bb, type_id, pos, part } => {
             let live = w.facts(victim);
             let mut view = live.as_ref().map(|f| f.view.clone()).unwrap_or_default();
