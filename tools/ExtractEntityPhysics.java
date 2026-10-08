@@ -33,6 +33,31 @@ public class ExtractEntityPhysics {
     static final List<String> SHAPES = new ArrayList<>();
     static Field shapeField;
 
+    /** The block's own `isSuffocating` predicate, unless it is the default one (`#causes_suffocation` with a full cube,
+     *  which needs the tags vanilla has not loaded here: kiln-entity applies it). */
+    static Object defaultSuffocating;
+    static java.lang.reflect.Field suffocatingField;
+
+    static boolean isDefaultSuffocating(BlockState s) {
+        try {
+            if (suffocatingField == null) {
+                suffocatingField = net.minecraft.world.level.block.state.BlockBehaviour.BlockStateBase.class.getDeclaredField("isSuffocating");
+                suffocatingField.setAccessible(true);
+                var propsField = net.minecraft.world.level.block.state.BlockBehaviour.Properties.class.getDeclaredField("isSuffocating");
+                propsField.setAccessible(true);
+                defaultSuffocating = propsField.get(net.minecraft.world.level.block.state.BlockBehaviour.Properties.of());
+            }
+            return suffocatingField.get(s).getClass() == defaultSuffocating.getClass();
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** `BlockState.isSuffocating` for blocks with a predicate of their own (always, never...). */
+    static boolean suffocating(BlockState s) {
+        return !isDefaultSuffocating(s) && s.isSuffocating(EmptyBlockGetter.INSTANCE, BlockPos.ZERO);
+    }
+
     public static void main(String[] args) throws Exception {
         net.minecraft.SharedConstants.tryDetectVersion();
         net.minecraft.server.Bootstrap.bootStrap();
@@ -85,10 +110,10 @@ public class ExtractEntityPhysics {
             states.add(String.format(Locale.ROOT,
                     "{\"id\":%d,\"collision\":%d,\"cube\":%b,\"large\":%b,\"inside\":%d,\"sturdy\":%d,\"fluid\":\"%s\",\"amount\":%d,"
                             + "\"falling\":%b,\"source\":%b,\"air\":%b,\"liquid\":%b,\"solid\":%b,\"replaceable\":%b,"
-                            + "\"offset\":%b,\"suffocating\":%b,\"max_offset\":%s,\"outline\":%d,\"outline_offset\":%b}",
+                            + "\"offset\":%b,\"suffocating\":%b,\"suffocating_default\":%b,\"max_offset\":%s,\"outline\":%d,\"outline_offset\":%b}",
                     id, collision, collisionShape == Shapes.block(), s.hasLargeCollisionShape(), inside, sturdy,
                     BuiltInRegistries.FLUID.getKey(f.getType()), f.getAmount(), falling, f.isSource(), s.isAir(),
-                    s.liquid(), s.isSolid(), s.canBeReplaced(), s.hasOffsetFunction(), s.isSuffocating(getter, pos),
+                    s.liquid(), s.isSolid(), s.canBeReplaced(), s.hasOffsetFunction(), suffocating(s), isDefaultSuffocating(s),
                     Float.toString(maxOffset), outline, outlineOffset));
         }
         List<String> blocks = new ArrayList<>();
