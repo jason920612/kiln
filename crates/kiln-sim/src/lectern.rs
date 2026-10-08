@@ -60,6 +60,9 @@ pub(crate) fn after_menu(level: &mut RegionLevel, pos: BlockPos) {
         c.page = 0;
     }
     let s = level.block(pos);
+    if std::env::var_os("KILN_LEC_DEBUG").is_some() {
+        eprintln!("after_menu {pos:?} state {s} turned {turned} gone {gone}");
+    }
     if logic::block_class(s) != C::LecternBlock {
         return;
     }
