@@ -47,7 +47,7 @@ pub fn bare(id: i32, pos: BlockPos, direction: Direction, seed: i64) -> Entity {
 /// `Painting.create(level, pos, direction)`: of the placeable variants that survive on this wall,
 /// the ones of the largest area; one of those at random (the painting's own random). `None`:
 /// nothing fits.
-pub fn create(world_of: &dyn Fn(&Entity) -> Box<dyn hanging::HangingWorld + '_>, id: i32, pos: BlockPos, direction: Direction, seed: i64) -> Option<Entity> {
+pub fn create(survives: &dyn Fn(&Entity) -> bool, id: i32, pos: BlockPos, direction: Direction, seed: i64) -> Option<Entity> {
     let mut e = bare(id, pos, direction, seed);
     let mut fits: Vec<usize> = Vec::new();
     for (i, v) in VARIANTS.iter().enumerate() {
@@ -58,7 +58,7 @@ pub fn create(world_of: &dyn Fn(&Entity) -> Box<dyn hanging::HangingWorld + '_>,
         p.variant = i;
         let p = p.clone();
         p.place(&mut e);
-        if p.survives(&e, &*world_of(&e)) {
+        if survives(&e) {
             fits.push(i);
         }
     }

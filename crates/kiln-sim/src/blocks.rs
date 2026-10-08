@@ -331,6 +331,8 @@ pub(crate) struct EntityBox {
     pub prevents_rest: bool,
     /// A player as the source of the game events it causes.
     pub player_source: Option<kiln_entity::vibration::EventSource>,
+    /// A hanging entity (item frame, painting): its facing and type.
+    pub hanging: Option<(kiln_entity::math::Direction, &'static str)>,
 }
 
 impl EntityBox {
@@ -353,6 +355,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
                 conn: Some(p.conn),
                 prevents_rest: false,
                 player_source: Some(player_source(p)),
+                hanging: None,
             }
         })
         .collect();
@@ -360,7 +363,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
         let (min, max, blocks_building) = e.body();
         // Mobs are living entities (pressure plates, lightning targets).
         let living = e.phys.as_deref().and_then(kiln_entity::mob::data).is_some_and(|m| m.health > 0.0);
-        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None }
+        EntityBox { min, max, living, blocks_building, conn: None, prevents_rest: e.prevents_rest(), player_source: None, hanging: e.phys.as_deref().and_then(crate::frames::hanging_of) }
     }));
     out
 }

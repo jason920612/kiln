@@ -1316,6 +1316,10 @@ fn use_on_block(
         }
         return;
     }
+    // `HangingEntityItem.useOn`: item frames and paintings.
+    if item_name.is_some_and(crate::frames::is_hanging_item) && crate::frames::use_on(p, level, bp, dir, !main_hand, spawns) {
+        return;
+    }
     // `EndCrystalItem.useOn`: on obsidian or bedrock with air above and no entity in the two
     // blocks there; the fight looks for its respawn crystals.
     if item_name == Some("minecraft:end_crystal") {
@@ -1432,6 +1436,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
         conn: Some(p.conn),
         prevents_rest: false,
         player_source: None,
+        hanging: None,
     };
     let origin = [at.x as f64, at.y as f64, at.z as f64];
     let others = bodies.iter().filter(|b| b.conn != Some(p.conn));

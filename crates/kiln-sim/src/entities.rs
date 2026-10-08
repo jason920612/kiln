@@ -506,7 +506,21 @@ impl Entity {
             _ => 0,
         };
         // `LeashFenceKnotEntity.getAddEntityPacket`: the spawn position is the block's own.
-        let spawn = if self.phys().type_name == kiln_entity::leash::KNOT {
+        // `HangingEntity.getAddEntityPacket`: the spawn position is the block it hangs in; the angles are its own.
+        let spawn = if let Some(b) = kiln_entity::ext_entity::hanging::block_pos_of(self.phys()) {
+            let p = self.phys();
+            entity::add_entity(&entity::AddEntity {
+                entity_id: self.id,
+                uuid: self.uuid,
+                kind: self.kind.id,
+                pos: [b.x as f64, b.y as f64, b.z as f64],
+                velocity: [0.0; 3],
+                pitch: kiln_proto::packets::entity::Angle::from_degrees(p.x_rot),
+                yaw: kiln_proto::packets::entity::Angle::from_degrees(p.y_rot),
+                head_yaw: kiln_proto::packets::entity::Angle::from_degrees(0.0),
+                data: spawn_data,
+            })
+        } else if self.phys().type_name == kiln_entity::leash::KNOT {
             let p = self.phys().position();
             let at = [p.x.floor(), p.y.floor(), p.z.floor()];
             entity::add_entity(&entity::AddEntity {
