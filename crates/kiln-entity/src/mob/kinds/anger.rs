@@ -75,6 +75,12 @@ fn valid_player_target(level: &dyn EntityLevel, t: &Living) -> bool {
 
 /// `updatePersistentAnger(level, true)`.
 pub fn update_persistent_anger(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel) {
+    update_persistent_anger_with(e, m, level, true);
+}
+
+/// `updatePersistentAnger(level, updateAnger)`: bees pass false (the timer starts only when the
+/// target changes).
+pub fn update_persistent_anger_with(e: &mut Entity, m: &mut MobData, level: &dyn EntityLevel, update: bool) {
     let anger_ref = get(m).and_then(|a| a.target);
     if let Some(u) = m.target.and_then(|id| goals::living(level, id))
         && !u.alive
@@ -86,14 +92,15 @@ pub fn update_persistent_anger(e: &mut Entity, m: &mut MobData, level: &dyn Enti
     }
     let target = goals::target(m, level);
     if let Some(t) = target {
-        if anger_ref != Some(t.id)
-            && let Some(a) = get_mut(m)
-        {
+        let changed = anger_ref != Some(t.id);
+        if changed && let Some(a) = get_mut(m) {
             a.target = Some(t.id);
         }
-        start_timer(e, m, level);
+        if changed || update {
+            start_timer(e, m, level);
+        }
     }
-    if anger_ref.is_some() && !is_angry(m, level) && target.is_none_or(|t| !valid_player_target(level, &t)) {
+    if anger_ref.is_some() && !is_angry(m, level) && (target.is_none_or(|t| !valid_player_target(level, &t)) || !update) {
         stop_being_angry(m);
     }
     if let Some(p) = anger_ref.and_then(|id| level.player(id))

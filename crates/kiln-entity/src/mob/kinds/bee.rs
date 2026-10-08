@@ -330,7 +330,7 @@ impl Kind for Bee {
         if !st(m).nectar {
             st_mut(m).ticks_without_nectar += 1;
         }
-        anger::update_persistent_anger(e, m, level);
+        anger::update_persistent_anger_with(e, m, level, false);
     }
 
     /// `Bee.hurtServer`: a bee that is hurt stops pollinating.
