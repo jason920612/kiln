@@ -1054,6 +1054,14 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                     continue;
                 };
                 let top = top_non_colliding(level, kind, x, z);
+                if std::env::var_os("KILN_INITIAL_DEBUG").is_some() {
+                    use std::io::Write as _;
+                    let nm = |p: KBlockPos| kiln_data::blocks_types::block_of(level.block(p)).name;
+                    let line = format!("T chunk ({},{}) {:?} xz {x},{z} top {top:?} placement {} below {} at {} above {} bright {}", c.x, c.z, kind, placement_ok(level, top, kind), nm(top.below()), nm(top), nm(top.above()), level.raw_brightness(top, 0));
+                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
+                        let _ = writeln!(f, "{line}");
+                    }
+                }
                 if placement_ok(level, top, kind) {
                     let t = kiln_data::entities::by_name(kind.type_name()).unwrap();
                     let w = t.width as f64;
