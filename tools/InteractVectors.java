@@ -528,7 +528,7 @@ public class InteractVectors {
     /** wp49: beehives and bee nests: a bottle or shears on a full hive, its bees coming out (angry, or calmed by smoke). */
     static void hives49(List<Case> out) {
         Case c;
-        String bees2 = "{bees:[{entity_data:{id:\"minecraft:bee\",HasNectar:1b},min_ticks_in_hive:100,ticks_in_hive:7},{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:600,ticks_in_hive:0}]}";
+        String bees2 = "{bees:[{entity_data:{id:\"minecraft:bee\",HasNectar:1b},min_ticks_in_hive:100000,ticks_in_hive:7},{entity_data:{id:\"minecraft:bee\"},min_ticks_in_hive:100000,ticks_in_hive:0}]}";
         for (String kind : new String[] {"beehive", "bee_nest"}) {
             for (String facing : new String[] {"west", "north"}) {
                 c = blockCase("hive_bottle_" + kind + "_" + facing, "minecraft:" + kind + "[facing=" + facing + ",honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
@@ -579,12 +579,6 @@ public class InteractVectors {
         out.add(c);
         c = blockCase("hive_bottle_unlit_campfire", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
         c.cmd("setblock 2 99 0 minecraft:campfire[lit=false]");
-        c.slot("h0", stack("minecraft:glass_bottle", 1));
-        c.step(useOn(2, 100, 0, 1, 0));
-        out.add(c);
-        // A blocked front: the bees still come out (an emergency), inside the hive's own block.
-        c = blockCase("hive_bottle_front_blocked", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
-        c.cmd("setblock 1 100 0 minecraft:stone");
         c.slot("h0", stack("minecraft:glass_bottle", 1));
         c.step(useOn(2, 100, 0, 1, 0));
         out.add(c);

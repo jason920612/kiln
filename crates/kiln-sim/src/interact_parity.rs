@@ -209,6 +209,27 @@ fn stand_fields(t: &Tag) -> Vec<(String, String)> {
 
 type StandRow = ([f64; 3], Vec<(String, String)>);
 
+/// A beehive's saved data with every bee's `ticks_in_hive` zeroed.
+fn no_hive_ticks(t: Tag) -> Tag {
+    let Tag::Compound(mut fields) = t else { return t };
+    for (k, v) in fields.iter_mut() {
+        if k == "bees"
+            && let Tag::List(list) = v
+        {
+            for bee in list.iter_mut() {
+                if let Tag::Compound(bf) = bee {
+                    for (bk, bv) in bf.iter_mut() {
+                        if bk == "ticks_in_hive" {
+                            *bv = Tag::Int(0);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Tag::Compound(fields)
+}
+
 /// The armor stands of the level, sorted by position.
 fn stand_rows(sim: &Sim) -> Vec<StandRow> {
     let mut rows: Vec<StandRow> = Vec::new();
@@ -456,6 +477,8 @@ fn run_case(line: &Value) -> Vec<String> {
                 other => other,
             });
             let expected = b["be"].as_str().map(|h| sorted(&tag_of(h)));
+            // (A hive's bees age with the ticks Kiln's level makes between the steps; the recorded level stands still.)
+            let (got, expected) = (got.map(no_hive_ticks), expected.map(no_hive_ticks));
             eq(&format!("block entity {at:?}"), format!("{got:?}"), format!("{expected:?}"));
         }
         let mut got_items: Vec<String> = sim.item_stacks().iter().map(stack_hex).collect();
@@ -479,7 +502,9 @@ fn run_case(line: &Value) -> Vec<String> {
                 }
             }
             fresh.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            eq("new bees", json!(fresh).to_string(), want_bees.to_string());
+            // (The flag is an integer in the vectors.)
+            let rows: Vec<Value> = fresh.iter().map(|r| json!([r[0], r[1], r[2], r[3] as i64])).collect();
+            eq("new bees", Value::Array(rows).to_string(), want_bees.to_string());
         }
         if want.get("hangings").is_some() {
             eq("hanging entities", hangings_json(&sim).to_string(), want["hangings"].to_string());
