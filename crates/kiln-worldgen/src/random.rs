@@ -94,7 +94,7 @@ impl WorldgenRandom {
             let b = 2.0 * self.next_double() - 1.0;
             let s = a * a + b * b;
             if s < 1.0 && s != 0.0 {
-                let m = (-2.0 * s.ln() / s).sqrt();
+                let m = (-2.0 * kiln_javamath::pow::log(s) / s).sqrt();
                 self.next_gaussian = Some(b * m);
                 return a * m;
             }

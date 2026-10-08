@@ -8,24 +8,17 @@ use crate::json::Json;
 use crate::material::Anchor;
 use kiln_javamath::math as jm;
 use kiln_javamath::random::{LegacyRandom, RandomSource};
-use std::sync::OnceLock;
-
-/// `Mth.SIN`: `sin(i / 10430.378350470453)` as `float` for every 16-bit angle.
-fn sin_table() -> &'static [f32] {
-    static TABLE: OnceLock<Vec<f32>> = OnceLock::new();
-    TABLE.get_or_init(|| (0..65536).map(|i| (i as f64 / 10430.378350470453).sin() as f32).collect())
-}
 
 /// `Mth.sin(double)`.
 #[inline]
 pub fn sin(x: f64) -> f32 {
-    sin_table()[((x * 10430.378350470453) as i64 & 65535) as usize]
+    kiln_javamath::mth::sin(x)
 }
 
 /// `Mth.cos(double)`.
 #[inline]
 pub fn cos(x: f64) -> f32 {
-    sin_table()[((x * 10430.378350470453 + 16384.0) as i64 & 65535) as usize]
+    kiln_javamath::mth::cos(x)
 }
 
 /// `FloatProvider`.

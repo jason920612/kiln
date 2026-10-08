@@ -35,7 +35,7 @@ fn kernel() -> &'static [f32] {
                 for y in 0..24 {
                     let (dx, dy, dz) = ((x - 12) as f64, (y - 12) as f64 + 0.5, (z - 12) as f64);
                     let d = dx * dx + dy * dy + dz * dz;
-                    k[(z * 576 + x * 24 + y) as usize] = std::f64::consts::E.powf(-d / 16.0) as f32;
+                    k[(z * 576 + x * 24 + y) as usize] = kiln_javamath::pow::pow(std::f64::consts::E, -d / 16.0) as f32;
                 }
             }
         }

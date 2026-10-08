@@ -330,7 +330,7 @@ pub fn on_hurt(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, _so
         let look = e.view_vector();
         let (x, y, z) = (look.x as f32 * 0.3, look.y as f32 * 0.3 * 1.5, look.z as f32 * 0.3);
         // JOML `Vector3f.rotateY`: the cosine from the sine (`Math.cosFromSin`), in floats.
-        let sin = (angle as f64).sin() as f32;
+        let sin = kiln_javamath::trig::sin(angle as f64) as f32;
         let cos = ((1.0f32 - sin * sin) as f64).sqrt() as f32;
         let v = Vec3::new((cos * x + sin * z) as f64, y as f64, (-sin * x + cos * z) as f64);
         let id = level.next_entity_id();

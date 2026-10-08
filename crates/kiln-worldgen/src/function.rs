@@ -89,7 +89,7 @@ impl UnaryOp {
             UnaryOp::Reciprocal => 1.0 / x,
             UnaryOp::Negate => -x,
             UnaryOp::Squeeze => Self::squeeze(x),
-            UnaryOp::Log => (x as f64).ln() as f32,
+            UnaryOp::Log => kiln_javamath::pow::log(x as f64) as f32,
             UnaryOp::Sign => jm::signum(x),
         }
     }

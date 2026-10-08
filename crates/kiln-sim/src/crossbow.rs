@@ -159,7 +159,7 @@ pub(crate) fn shot_vector(rot: [f32; 2], angle: f32) -> Vec3 {
     let (v, k) = ([view.x as f32, view.y as f32, view.z as f32], [up.x as f32, up.y as f32, up.z as f32]);
     // Rodrigues' rotation of `v` about the unit axis `k`.
     let a = angle * 0.017453292;
-    let (s, c) = (a.sin(), a.cos());
+    let (s, c) = (kiln_javamath::trig::sin(a as f64) as f32, kiln_javamath::trig::cos(a as f64) as f32);
     let cross = [k[1] * v[2] - k[2] * v[1], k[2] * v[0] - k[0] * v[2], k[0] * v[1] - k[1] * v[0]];
     let dot = k[0] * v[0] + k[1] * v[1] + k[2] * v[2];
     let r: [f32; 3] = std::array::from_fn(|i| v[i] * c + cross[i] * s + k[i] * dot * (1.0 - c));

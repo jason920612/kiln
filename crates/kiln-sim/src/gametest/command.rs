@@ -54,9 +54,9 @@ impl Sim {
                 let player = self.source_player_ref().ok_or_else(command_failed)?;
                 let [x, y, z] = player.position();
                 let eye = [x, y + player.eye_height(), z];
-                let [yaw, pitch] = player.rotation();
-                let (yaw, pitch) = (f64::from(yaw).to_radians(), f64::from(pitch).to_radians());
-                let look = [-yaw.sin() * pitch.cos(), -pitch.sin(), yaw.cos() * pitch.cos()];
+                let rot = player.rotation();
+                let look = crate::use_item::view_vector(rot);
+                let look = [look.x, look.y, look.z];
                 let end = [eye[0] + look[0] * 250.0, eye[1] + look[1] * 250.0, eye[2] + look[2] * 250.0];
                 let mut hits: Vec<Pos> = self
                     .find_test_blocks(dim, at, FULL_RADIUS)
@@ -366,9 +366,8 @@ impl Sim {
         let dim = dim_id(player.dimension()).unwrap_or(crate::OVERWORLD_ID);
         let [x, y, z] = player.position();
         let eye = [x, y + player.eye_height(), z];
-        let [yaw, pitch] = player.rotation();
-        let (yaw, pitch) = (f64::from(yaw).to_radians(), f64::from(pitch).to_radians());
-        let look = [-yaw.sin() * pitch.cos(), -pitch.sin(), yaw.cos() * pitch.cos()];
+        let look = crate::use_item::view_vector(player.rotation());
+        let look = [look.x, look.y, look.z];
         // `pick(10, 0, false)`: the first solid block along the view, else the point 10 away.
         let mut hit = None;
         for i in 0..=100 {

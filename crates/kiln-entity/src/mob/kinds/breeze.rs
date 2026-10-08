@@ -168,7 +168,7 @@ fn jump_vector(e: &Entity, m: &MobData, target: Vec3, max_v: f32, angle: i32) ->
     let plane = Vec3::new(target.x - pos.x, 0.0, target.z - pos.z).normalize().scale(0.5);
     let d = (target - plane) - pos;
     let a = angle as f32 * std::f32::consts::PI / 180.0;
-    let xz = trig::atan2(d.z, d.x);
+    let xz = kiln_javamath::atan::atan2(d.z, d.x);
     let r2 = Vec3::new(d.x, 0.0, d.z).length_sqr();
     let r = r2.sqrt();
     let g = m.attrs.value(Attr::Gravity);

@@ -322,7 +322,7 @@ impl TrunkPlacer {
         let h = height + 2;
         let trunk = floor(h as f64 * 0.618);
         Self::place_below_trunk(cx, origin.below());
-        let clusters = 1.min(floor(1.382 + (1.0 * h as f64 / 13.0).powf(2.0)));
+        let clusters = 1.min(floor(1.382 + kiln_javamath::pow::pow(1.0 * h as f64 / 13.0, 2.0)));
         let trunk_top = origin.y + trunk;
         let mut y = h - 5;
         let mut coords: Vec<(Attachment, i32)> = vec![(Attachment::new(origin.above_n(y), 0, false), trunk_top)];
@@ -332,8 +332,8 @@ impl TrunkPlacer {
                 for _ in 0..clusters {
                     let len = 1.0 * shape as f64 * (cx.random.next_float() as f64 + 0.328);
                     let angle = (cx.random.next_float() * 2.0) as f64 * std::f64::consts::PI;
-                    let bx = len * angle.sin() + 0.5;
-                    let bz = len * angle.cos() + 0.5;
+                    let bx = len * kiln_javamath::trig::sin(angle) + 0.5;
+                    let bz = len * kiln_javamath::trig::cos(angle) + 0.5;
                     let end = origin.offset(floor(bx), y - 1, floor(bz));
                     let up = end.above_n(5);
                     if self.make_limb(cx, end, up, false) {

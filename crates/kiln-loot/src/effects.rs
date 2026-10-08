@@ -64,7 +64,7 @@ impl ValueEffect {
             ValueEffect::Multiply(v) => value * v.calculate(level),
             ValueEffect::Set(v) => v.calculate(level),
             ValueEffect::Exponential { base, exponent } => {
-                (value as f64 * (base.calculate(level) as f64).powf(exponent.calculate(level) as f64)) as f32
+                (value as f64 * kiln_javamath::pow::pow(base.calculate(level) as f64, exponent.calculate(level) as f64)) as f32
             }
             ValueEffect::AllOf(effects) => effects.iter().fold(value, |v, e| e.process(level, rng, v)),
             ValueEffect::RemoveBinomial(chance) => {
@@ -100,7 +100,7 @@ fn gaussian(rng: &mut dyn RandomSource) -> f64 {
         let b = 2.0 * rng.next_double() - 1.0;
         let s = a * a + b * b;
         if s < 1.0 && s != 0.0 {
-            return a * (-2.0 * s.ln() / s).sqrt();
+            return a * (-2.0 * kiln_javamath::pow::log(s) / s).sqrt();
         }
     }
 }

@@ -573,9 +573,9 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
 fn look_rotate(rot: [f32; 2], direction: [f64; 3]) -> [f64; 3] {
     // `Quaternionf.rotationYXZ(-yRot * (PI / 180), xRot * (PI / 180), 0)`.
     let (ay, ax) = (-rot[0] * 0.017453292, rot[1] * 0.017453292);
-    let sx = (ax * 0.5).sin();
+    let sx = kiln_javamath::trig::sin((ax * 0.5) as f64) as f32;
     let cx = cos_from_sin(sx, ax * 0.5);
-    let sy = (ay * 0.5).sin();
+    let sy = kiln_javamath::trig::sin((ay * 0.5) as f64) as f32;
     let cy = cos_from_sin(sy, ay * 0.5);
     let (x, y, z, w) = (cy * sx, sy * cx, -sy * sx, cy * cx);
     // `Quaternionf.transform(x, y, z, dest)` in `double`s from the float components.

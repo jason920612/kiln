@@ -35,7 +35,7 @@ impl<T> Shuffled<T> {
     pub fn shuffle(&mut self) {
         for e in self.entries.iter_mut() {
             let f = self.random.next_float();
-            e.2 = -(f as f64).powf((1.0f32 / e.1 as f32) as f64);
+            e.2 = -kiln_javamath::pow::pow(f as f64, (1.0f32 / e.1 as f32) as f64);
         }
         self.entries.sort_by(|a, b| a.2.total_cmp(&b.2));
     }

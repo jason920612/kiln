@@ -1120,8 +1120,9 @@ impl Player {
     /// An item flung in a random direction (`Player.drop(stack, throwRandomly = true)`).
     fn throw_randomly(&mut self, stack: kiln_item::ItemStack) -> entities::Spawn {
         let f = self.rng.next_f32() * 0.5;
-        let a = self.rng.next_f32() * std::f32::consts::TAU;
-        let vel = [(-a.sin() * f) as f64, 0.2, (a.cos() * f) as f64];
+        let a = (self.rng.next_f32() * std::f32::consts::TAU) as f64;
+        // `Mth.sin`/`Mth.cos`: the table.
+        let vel = [(-kiln_javamath::mth::sin(a) * f) as f64, 0.2, (kiln_javamath::mth::cos(a) * f) as f64];
         entities::Spawn {
             kind: &kiln_data::entities::types::ITEM,
             pos: [self.pos[0], self.pos[1] + 1.62 - 0.3, self.pos[2]],

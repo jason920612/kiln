@@ -823,7 +823,7 @@ impl CustomGoal for FoxPounceGoal {
                 let len = (dir * dir + by * by).sqrt();
                 if len > 1.0e-5f32 as f64 {
                     // `Mth.RAD_TO_DEG` (a float).
-                    let r = (-by).signum() * (dir / len).acos() * 57.2957763671875;
+                    let r = (-by).signum() * kiln_javamath::strict::acos(dir / len) * 57.2957763671875;
                     e.x_rot = r as f32;
                 }
             }

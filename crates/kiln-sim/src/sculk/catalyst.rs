@@ -185,7 +185,7 @@ pub(crate) fn tick(level: &mut RegionLevel, origin: BlockPos) {
         if charge > 0
             && let Some(faces) = faces
         {
-            let n = ((charge as f64).ln_1p() / 2.3f32 as f64) as i32 + 1;
+            let n = (kiln_javamath::strict::log1p(charge as f64) / 2.3f32 as f64) as i32 + 1;
             let mask = faces.iter().fold(0, |m, d| m | 1 << (*d as i32));
             level.effect(kiln_blocks::Effect::LevelEvent { id: 3006, pos, data: (n << 6) + mask });
         }

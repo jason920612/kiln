@@ -13,7 +13,6 @@ use crate::state::{self, BlockId};
 use crate::update::{set_block, set_block_and_update};
 use kiln_data::block_logic::{self as logic, BlockClass, FluidKind};
 use kiln_data::block_props;
-use std::sync::OnceLock;
 
 /// Where and how the player clicked.
 #[derive(Clone, Copy, Debug)]
@@ -57,18 +56,12 @@ struct Ctx<'a, L: ?Sized> {
 }
 
 /// `Mth.sin` / `Mth.cos` (the 65536-entry table, double-argument versions).
-fn mth_table(x: f32, offset: f64) -> f32 {
-    static SIN: OnceLock<Vec<f32>> = OnceLock::new();
-    let t = SIN.get_or_init(|| (0..65536).map(|i| (i as f64 * std::f64::consts::PI * 2.0 / 65536.0).sin() as f32).collect());
-    t[((x as f64 * 10430.378350470453 + offset) as i64 & 65535) as usize]
-}
-
 fn mth_sin(x: f32) -> f32 {
-    mth_table(x, 0.0)
+    kiln_javamath::mth::sin(x as f64)
 }
 
 fn mth_cos(x: f32) -> f32 {
-    mth_table(x, 16384.0)
+    kiln_javamath::mth::cos(x as f64)
 }
 
 /// `Direction.orderedByNearest`: the six directions by how directly the player looks along them.

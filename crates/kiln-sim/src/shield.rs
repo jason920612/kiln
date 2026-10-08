@@ -58,7 +58,7 @@ impl Player {
                 let (dx, dz) = (at[0] - self.pos[0], at[2] - self.pos[2]);
                 let len = (dx * dx + dz * dz).sqrt();
                 let (nx, nz) = if len < 1.0e-4 { (0.0, 0.0) } else { (dx / len, dz / len) };
-                (nx * view.x + nz * view.z).acos()
+                kiln_javamath::strict::acos(nx * view.x + nz * view.z)
             }
             None => 3.1415927410125732,
         };
