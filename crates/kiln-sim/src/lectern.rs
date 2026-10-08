@@ -13,7 +13,7 @@ use kiln_item::ItemStack;
 
 /// `LecternBlockEntity.hasBook`: the item has the contents of a written or writable book.
 fn has_book(book: &ItemStack) -> bool {
-    book.has(kiln_item::keys::WRITABLE_BOOK_CONTENT) || book.has(kiln_item::keys::WRITTEN_BOOK_CONTENT)
+    book.get(kiln_item::keys::WRITABLE_BOOK_CONTENT).is_some() || book.get(kiln_item::keys::WRITTEN_BOOK_CONTENT).is_some()
 }
 
 /// `LecternBlockEntity.getRedstoneSignal`: how far into the book the page is, 1 to 15.
