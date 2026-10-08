@@ -167,6 +167,9 @@ impl EntityStore {
 
     /// Flushes and waits until everything is written.
     pub fn sync(&mut self) -> std::io::Result<usize> {
+        if let Some(store) = &self.native {
+            return store.lock().unwrap().flush_now();
+        }
         let n = self.flush()?;
         if let Some(w) = self.writer.as_mut() {
             for k in w.wait() {

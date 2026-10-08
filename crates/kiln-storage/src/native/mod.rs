@@ -310,6 +310,9 @@ pub struct NativeStore {
     stale: HashSet<(i32, i32)>,
     done_tx: Sender<CompactionResult>,
     done_rx: Receiver<CompactionResult>,
+    /// Flushes go to a thread that writes one cell file at a time, taking the lock for each
+    /// ([`NativeStore::flush_in_background`]); `flush` only wakes it.
+    flusher: Option<Sender<()>>,
 }
 
 impl NativeStore {
@@ -328,6 +331,7 @@ impl NativeStore {
             pending: HashMap::new(),
             compressor,
             remaps: HashMap::new(),
+            flusher: None,
             sync: true,
             stats: LoadStats::new("native chunk storage"),
             // KILN_COMPACTION=inline compacts in the flush, as before (for comparisons).
@@ -478,43 +482,95 @@ impl NativeStore {
         Ok(())
     }
 
-    /// Writes the queued records, one append per cell file.
+    /// Writes the queued records, one append per cell file; with a background flusher
+    /// ([`NativeStore::flush_in_background`]) it is only woken, and the records stay readable
+    /// here until written.
     pub fn flush(&mut self) -> std::io::Result<usize> {
-        if self.pending.is_empty() {
+        if let Some(tx) = &self.flusher {
+            let _ = tx.send(());
             return Ok(0);
         }
+        self.flush_now()
+    }
+
+    /// Writes every queued record now.
+    pub fn flush_now(&mut self) -> std::io::Result<usize> {
+        let (mut written, mut after) = (0, None);
+        while let Some((cell, n)) = self.flush_step(after)? {
+            written += n;
+            after = Some(cell);
+        }
+        Ok(written)
+    }
+
+    /// Writes the queued records of one cell (the lowest after `after`): the cell and how many
+    /// records; `None` when no cell is left.
+    pub fn flush_step(&mut self, after: Option<(i32, i32)>) -> std::io::Result<Option<((i32, i32), usize)>> {
+        let Some(&cell) = self.pending.keys().filter(|&&c| after.is_none_or(|a| c > a)).min() else { return Ok(None) };
         std::fs::create_dir_all(&self.dir)?;
         Registry::save_current(&self.dir)?;
         self.poll_compactions();
-        let mut written = 0;
-        let mut cells: Vec<_> = std::mem::take(&mut self.pending).into_iter().collect();
-        cells.sort_unstable_by_key(|(c, _)| *c);
-        for (cell, updates) in cells {
-            written += updates.len();
-            let sync = self.sync;
-            let path = cell_path(&self.dir, cell);
-            if self.file(cell).is_none() {
-                if updates.values().all(Option::is_none) {
-                    continue;
-                }
-                if path.exists() {
-                    // It could not be opened (and is not corrupt): never replace it; retry later.
-                    warn!("{} is unavailable; its writes wait for the next save", path.display());
-                    self.files.remove(&cell);
-                    self.pending.insert(cell, updates);
-                    continue;
-                }
-                if self.inflight.contains_key(&cell) {
-                    self.stale.insert(cell);
-                }
-                let f = CellFile::create(&path)?;
-                self.files.insert(cell, (Some(f), self.clock));
+        let updates = self.pending.remove(&cell).expect("a queued cell");
+        let written = updates.len();
+        let sync = self.sync;
+        let path = cell_path(&self.dir, cell);
+        if self.file(cell).is_none() {
+            if updates.values().all(Option::is_none) {
+                return Ok(Some((cell, 0)));
             }
-            let file = self.file(cell).expect("just created");
-            file.commit(updates, sync)?;
-            self.compact_if_wasteful(cell)?;
+            if path.exists() {
+                // It could not be opened (and is not corrupt): never replace it; retry later.
+                warn!("{} is unavailable; its writes wait for the next save", path.display());
+                self.files.remove(&cell);
+                self.pending.insert(cell, updates);
+                return Ok(Some((cell, 0)));
+            }
+            if self.inflight.contains_key(&cell) {
+                self.stale.insert(cell);
+            }
+            let f = CellFile::create(&path)?;
+            self.files.insert(cell, (Some(f), self.clock));
         }
-        Ok(written)
+        let file = self.file(cell).expect("just created");
+        file.commit(updates, sync)?;
+        self.compact_if_wasteful(cell)?;
+        Ok(Some((cell, written)))
+    }
+
+    /// From now on `flush` hands the writing to a thread of its own, which writes one cell file
+    /// at a time under the lock (users of the store wait at most one cell's write, not the whole
+    /// flush).
+    pub fn flush_in_background(store: &Arc<Mutex<NativeStore>>) {
+        let mut s = store.lock().unwrap();
+        if s.flusher.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+        s.flusher = Some(tx);
+        drop(s);
+        let weak = Arc::downgrade(store);
+        std::thread::Builder::new()
+            .name("kiln-native-flush".into())
+            .spawn(move || {
+                while rx.recv().is_ok() {
+                    // Several wake-ups in a row are one flush.
+                    while rx.try_recv().is_ok() {}
+                    let Some(store) = weak.upgrade() else { break };
+                    let mut after = None;
+                    loop {
+                        let step = store.lock().unwrap().flush_step(after);
+                        match step {
+                            Ok(Some((cell, _))) => after = Some(cell),
+                            Ok(None) => break,
+                            Err(e) => {
+                                warn!("writing native cell files failed: {e}");
+                                break;
+                            }
+                        }
+                    }
+                }
+            })
+            .expect("spawning the native flush thread");
     }
 
     /// After a commit: an emptied file is deleted, and a file that is mostly stale records is
@@ -837,7 +893,20 @@ impl ChunkSource for NativeSource {
     fn set_background(&mut self, on: bool) {
         if on && self.background.is_none() {
             self.background = Some(NativeBackground::start(self.store.clone(), self.dimension));
+            NativeStore::flush_in_background(&self.store);
         }
+    }
+
+    fn flush_ready(&mut self) {
+        if self.background.is_some() {
+            self.collect(None, false);
+            let _ = self.store.lock().unwrap().flush();
+        }
+    }
+
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.collect(None, true);
+        self.store.lock().unwrap().flush_now().map(|_| ())
     }
 
     fn start_load(&mut self, pos: ChunkPos, dim: Dimension) -> kiln_world::StartLoad {
