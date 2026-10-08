@@ -142,7 +142,7 @@ impl SpawnTable {
 }
 
 /// `WeightedList.getRandom`.
-fn pick<'a>(list: &'a [SpawnerData], r: &mut LegacyRandom) -> Option<&'a SpawnerData> {
+fn pick<'a>(list: &'a [SpawnerData], r: &mut (impl RandomSource + ?Sized)) -> Option<&'a SpawnerData> {
     let total: i32 = list.iter().map(|s| s.weight).sum();
     if total <= 0 {
         return None;
@@ -1062,7 +1062,7 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                     if !no_collision(level, [px, top.y as f64, pz], t.width, t.height) {
                         continue;
                     }
-                    let at = KBlockPos::containing(px, top.y as f64, pz);
+                    let at = KBlockPos::new(px.floor() as i32, top.y, pz.floor() as i32);
                     if !check_spawn_rules(level, at, kind, &mut LegacyRandom::new(0)) {
                         continue;
                     }
