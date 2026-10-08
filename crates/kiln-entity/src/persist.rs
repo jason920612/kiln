@@ -229,6 +229,7 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
     match e.type_name {
         "minecraft:item_frame" | "minecraft:glow_item_frame" => crate::ext_entity::item_frame::after_load(&mut e, block_pos),
         "minecraft:painting" => crate::ext_entity::painting::after_load(&mut e, block_pos),
+        "minecraft:armor_stand" => crate::ext_entity::armor_stand::after_load(&mut e),
         _ => {}
     }
     // (`Passengers` is `EntityType.loadEntityRecursive`'s: see [`load_stack`].)

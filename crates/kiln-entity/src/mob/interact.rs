@@ -16,6 +16,10 @@ pub struct Interactor {
     pub creative: bool,
     /// `isSecondaryUseActive` (sneaking).
     pub sneaking: bool,
+    /// Spectator mode.
+    pub spectator: bool,
+    /// Where the click hit the entity, relative to its position.
+    pub hit: crate::math::Vec3,
 }
 
 /// What becomes of the held stack.
@@ -30,6 +34,8 @@ pub enum HeldChange {
     Damage(i32),
     /// `ItemStack.shrink(n)`: taken in every game mode (a lead put on a mob).
     Shrink(i32),
+    /// `Player.setItemInHand`: the held stack becomes this (an armor stand's swap).
+    Replace(ItemStack),
 }
 
 /// `InteractionResult`, as far as the caller cares.

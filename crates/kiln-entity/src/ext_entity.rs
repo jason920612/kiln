@@ -10,6 +10,7 @@ use std::fmt::Debug;
 
 pub mod boat;
 pub mod area_effect_cloud;
+pub mod armor_stand;
 pub mod evoker_fangs;
 pub mod dragon_fireball;
 pub mod end_crystal;
@@ -50,6 +51,11 @@ pub trait EntityExt: Any + Debug + Send + Sync {
         let _ = (e, d);
     }
     /// The spawn packet's data field (`getAddEntityPacket`: often the owner's id).
+    /// What a viewer sees it wear: (equipment slot id, stack), the filled slots.
+    fn equipment_shown(&self) -> Vec<(u8, kiln_item::ItemStack)> {
+        Vec::new()
+    }
+
     fn spawn_data(&self) -> i32 {
         0
     }
@@ -141,6 +147,7 @@ pub const TYPES: &[&str] = &[
     "minecraft:item_frame",
     "minecraft:glow_item_frame",
     "minecraft:painting",
+    "minecraft:armor_stand",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -164,6 +171,7 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:item_frame" => item_frame::load(false, r),
         "minecraft:glow_item_frame" => item_frame::load(true, r),
         "minecraft:painting" => painting::load(r),
+        "minecraft:armor_stand" => armor_stand::load(r),
         _ => None,
     }
 }

@@ -249,7 +249,7 @@ fn act(level: &mut MemoryLevel, ids: &[i32], other_ids: &[i32], initial: usize, 
         "interact" => {
             let id = ids[a["mob"].as_u64().unwrap() as usize];
             let p = player.expect("an interacting player");
-            let who = mob::interact::Interactor { id: p.id, creative: p.creative, sneaking: p.sneaking };
+            let who = mob::interact::Interactor { id: p.id, creative: p.creative, sneaking: p.sneaking, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
             let stack = kiln_item::ItemStack::of(what, 1).unwrap();
             // The harness puts the item in the player's hand, where it stays.
             for p in level.players.iter_mut() {

@@ -83,7 +83,7 @@ fn a_water_bucket_takes_an_axolotl_and_lets_it_out_again() {
         ext::state_mut::<axolotl::State>(m).unwrap().variant = 3;
         m.health = 9.0;
     });
-    let who = Interactor { id: 1, creative: false, sneaking: false };
+    let who = Interactor { id: 1, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
     let bucket = ItemStack::of("minecraft:water_bucket", 1).unwrap();
     let out = mob::interact::interact(&mut e, &mut level, &who, &bucket);
     assert!(out.success);
@@ -109,7 +109,7 @@ fn a_tropical_fish_bucket_feeds_an_axolotl_and_comes_back_as_water() {
     let mut level = floor_level();
     let mut e = mob::new(MobKind::Axolotl, 10, 0, 3);
     e.set_pos(Vec3::new(0.5, 100.0, 0.5));
-    let who = Interactor { id: 1, creative: false, sneaking: false };
+    let who = Interactor { id: 1, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
     let bucket = ItemStack::of("minecraft:tropical_fish_bucket", 1).unwrap();
     let out = mob::interact::interact(&mut e, &mut level, &who, &bucket);
     assert!(out.success);
@@ -281,7 +281,7 @@ fn goat_state_is_saved_and_babies_hit_softer() {
 fn goats_are_milked_with_a_bucket_unless_babies() {
     let mut level = floor_level();
     let mut e = goat_at(6, 8);
-    let who = Interactor { id: 1, creative: false, sneaking: false };
+    let who = Interactor { id: 1, creative: false, sneaking: false, spectator: false, hit: kiln_entity::math::Vec3::ZERO };
     let bucket = ItemStack::of("minecraft:bucket", 1).unwrap();
     let out = mob::interact::interact(&mut e, &mut level, &who, &bucket);
     assert!(out.success);

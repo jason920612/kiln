@@ -215,7 +215,7 @@ impl RegionWork<'_> {
                 entities::riding_jump(self.entities, &mut self.players, i, data, &env.blocks);
                 continue;
             }
-            if let PlayIn::Interact { entity_id, hand, sneaking, .. } = pkt {
+            if let PlayIn::Interact { entity_id, hand, sneaking, location, .. } = pkt {
                 if let Some(h) = self.plugins.as_mut()
                     && crate::plugins::deny_interact(h, self.players[i], self.entities, entity_id)
                 {
@@ -228,7 +228,7 @@ impl RegionWork<'_> {
                 }
                 let mut level = RegionLevel { cells: &mut *self.cells, blocks: &mut *self.blocks, env: &env.blocks, out: &mut out, bodies: &bodies, actor: None };
                 let off = hand == kiln_proto::packets::serverbound::Hand::Off;
-                let open = entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, &mut self.out.spawns, &mut self.out.deaths);
+                let open = entities::interact_mob(self.entities, &mut level, &mut self.players, i, entity_id, off, location, &mut self.out.spawns, &mut self.out.deaths);
                 if open {
                     crate::carts::open(self.entities, &mut level, self.players[i], entity_id, &mut self.out.spawns);
                 }

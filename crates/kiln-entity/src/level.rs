@@ -89,6 +89,8 @@ pub struct PlayerView {
     pub height: f32,
     pub spectator: bool,
     pub creative: bool,
+    /// `Abilities.mayBuild`: survival or creative mode.
+    pub may_build: bool,
     pub sneaking: bool,
     /// `isSprinting`.
     pub sprinting: bool,
@@ -147,6 +149,7 @@ impl PlayerView {
             height: 1.8,
             spectator: false,
             creative: false,
+            may_build: true,
             sneaking: false,
             sprinting: false,
             alive: true,

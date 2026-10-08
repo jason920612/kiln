@@ -545,6 +545,12 @@ impl Entity {
                 let slots: Vec<(u8, &kiln_item::ItemStack)> = worn.iter().map(|(i, s)| (*i, s)).collect();
                 out.push(crate::players::set_equipment(self.id, &slots));
             }
+        } else if let EntityKind::Ext(x) = &self.phys().kind {
+            let worn = x.equipment_shown();
+            if !worn.is_empty() {
+                let slots: Vec<(u8, &kiln_item::ItemStack)> = worn.iter().map(|(i, s)| (*i, s)).collect();
+                out.push(crate::players::set_equipment(self.id, &slots));
+            }
         }
         if !self.phys().passengers.is_empty() {
             out.push(entity::set_passengers(self.id, &self.phys().passengers));
@@ -2512,6 +2518,7 @@ pub(crate) fn interact_mob(
     i: usize,
     target: i32,
     off_hand: bool,
+    hit: [f64; 3],
     spawns: &mut Vec<Spawn>,
     deaths: &mut Vec<health::Death>,
 ) -> bool {
@@ -2543,7 +2550,13 @@ pub(crate) fn interact_mob(
     }
     let slot = if off_hand { EquipmentSlot::OffHand } else { EquipmentSlot::MainHand };
     let stack = players[i].inv.equipped(slot).clone();
-    let who = kiln_entity::mob::interact::Interactor { id: players[i].entity_id, creative: players[i].game_mode == 1, sneaking: players[i].sneaking };
+    let who = kiln_entity::mob::interact::Interactor {
+        id: players[i].entity_id,
+        creative: players[i].game_mode == 1,
+        sneaking: players[i].sneaking,
+        spectator: false,
+        hit: vec3(hit),
+    };
     let live = |p: &Player| !p.disconnected && !p.dead;
     let proxies: Vec<Proxy> = players.iter().filter(|p| live(p) && p.game_mode != 3).map(|p| Proxy::of(p)).collect();
     let views: Vec<PlayerView> = players.iter().filter(|p| live(p)).map(|p| view(p, level.env.game_time)).collect();
@@ -2651,6 +2664,11 @@ pub(crate) fn interact_mob(
         }
         HeldChange::Shrink(n) => {
             kiln_inventory::Container::item_mut(&mut p.inv, index).shrink(*n);
+        }
+        // `Player.setItemInHand`.
+        HeldChange::Replace(stack) => {
+            *kiln_inventory::Container::item_mut(&mut p.inv, index) = stack.clone();
+            p.inv.times_changed += 1;
         }
         HeldChange::Damage(n) => p.hurt_and_break(slot, *n, None),
         HeldChange::Fill(filled) => {
@@ -3144,6 +3162,7 @@ pub(crate) fn view(p: &Player, now: i64) -> PlayerView {
         height: p.dimensions().1,
         spectator: p.game_mode == 3,
         creative: p.game_mode == 1,
+        may_build: p.game_mode <= 1,
         sneaking: p.sneaking,
         sprinting: p.sprinting,
         alive: !p.dead && !p.disconnected,
@@ -3520,6 +3539,25 @@ fn track_entity(e: &mut Entity, viewers: &[Viewer], movers: &[usize], present: &
                 packets.push(entity::set_entity_data(e.id, &meta));
             }
             e.meta_sent = meta.entries().to_vec();
+        }
+    }
+    // An extension entity that wears things (an armor stand): the equipment packet when it changes.
+    if let Some(phys) = e.phys.as_deref()
+        && let EntityKind::Ext(x) = &phys.kind
+    {
+        let worn = x.equipment_shown();
+        if worn.len() != e.equipment_sent.len() || worn.iter().zip(&e.equipment_sent).any(|(a, b)| a.0 != b.0 || !kiln_inventory::stack::matches(&a.1, &b.1)) {
+            let mut slots: Vec<(u8, kiln_item::ItemStack)> = worn.clone();
+            for (i, _) in &e.equipment_sent {
+                if !slots.iter().any(|(j, _)| j == i) {
+                    slots.push((*i, kiln_item::ItemStack::empty()));
+                }
+            }
+            if !slots.is_empty() && !(e.equipment_sent.is_empty() && e.age <= 1) {
+                let refs: Vec<(u8, &kiln_item::ItemStack)> = slots.iter().map(|(i, s)| (*i, s)).collect();
+                packets.push(crate::players::set_equipment(e.id, &refs));
+            }
+            e.equipment_sent = worn;
         }
     }
     if let Some(phys) = e.phys.as_deref()
