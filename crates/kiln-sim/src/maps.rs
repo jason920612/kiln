@@ -37,7 +37,6 @@ fn track_count(kind: i32) -> bool {
 const WATER: u8 = 12;
 const DIRT: u8 = 10;
 const STONE: u8 = 11;
-const FIRE: u8 = 4;
 
 /// `MapColor.Brightness` ids.
 const LOW: u8 = 0;
@@ -980,7 +979,8 @@ impl kiln_loot::MapExplorer for Explorer {
         let sea = world.generator.sea_level;
         let mut gs2 = kiln_worldgen::generator::GenScratch::default();
         let mut watery = |x: i32, z: i32| {
-            let b = gs2.noise_biome(&world.generator, x >> 2, sea >> 2, z >> 2);
+            // (`Level.getBiome`: the biome manager's zoomed lookup.)
+            let b = kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, sea, z, &mut |qx, qy, qz| gs2.noise_biome(&world.generator, qx, qy, qz));
             self.watery.contains(&b)
         };
         render_biome_preview(&mut data, &mut watery);
