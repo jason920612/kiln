@@ -957,6 +957,7 @@ fn no_collision(level: &RegionLevel, pos: [f64; 3], w: f32, h: f32) -> bool {
 /// feature of a farther chunk reaches it).
 pub(crate) fn initial_mobs(level: &RegionLevel, pending: &[ChunkPos], spawns: &mut Vec<Spawn>) {
     let env = level.env;
+    crate::testing::trace(&format!("initial_mobs {} pending, spawn_mobs {} table {}", pending.len(), env.mobs.spawn_mobs, env.spawn_table.is_some()));
     if !env.mobs.spawn_mobs {
         return;
     }
