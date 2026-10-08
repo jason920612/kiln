@@ -193,10 +193,18 @@ fn hangings_json(sim: &Sim) -> Value {
     Value::Array(rows.into_iter().map(|r| r.4).collect())
 }
 
-/// The armor stands of the level, as `InteractVectors.stands` lists them: [x, y, z, saved data],
-/// sorted by position; the data without what Kiln's ticks and vanilla's frozen level differ in.
-fn stands_json(sim: &Sim) -> Value {
-    let mut rows: Vec<(f64, f64, f64, String)> = Vec::new();
+/// A stand's saved data as compared: its fields (no uuid; where it stands and how it moved are
+/// the level's), sorted, each as text.
+fn stand_fields(t: &Tag) -> Vec<(String, String)> {
+    let Tag::Compound(fields) = sorted(t) else { return Vec::new() };
+    fields.into_iter().filter(|(k, _)| !matches!(k.as_str(), "UUID" | "OnGround" | "Motion" | "fall_distance" | "id")).map(|(k, v)| (k, format!("{v:?}"))).collect()
+}
+
+type StandRow = ([f64; 3], Vec<(String, String)>);
+
+/// The armor stands of the level, sorted by position.
+fn stand_rows(sim: &Sim) -> Vec<StandRow> {
+    let mut rows: Vec<StandRow> = Vec::new();
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
@@ -204,26 +212,39 @@ fn stands_json(sim: &Sim) -> Value {
                 continue;
             }
             let p = phys.position();
-            rows.push((p.x, p.y, p.z, normalized_stand(&kiln_entity::persist::save(phys, &|_| None))));
+            rows.push(([p.x, p.y, p.z], stand_fields(&kiln_entity::persist::save(phys, &|_| None))));
         }
     }
-    rows.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.total_cmp(&b.2)));
-    Value::Array(rows.into_iter().map(|r| json!([r.0, r.1, r.2, r.3])).collect())
+    rows.sort_by(|a, b| a.0[0].total_cmp(&b.0[0]).then(a.0[1].total_cmp(&b.0[1])).then(a.0[2].total_cmp(&b.0[2])));
+    rows
 }
 
-/// A stand's saved data as compared: no uuid; where it stands and how it moved are the level's.
-fn normalized_stand(t: &Tag) -> String {
-    let Tag::Compound(fields) = t else { return String::new() };
-    let kept: Vec<(String, Tag)> =
-        fields.iter().filter(|(k, _)| !matches!(k.as_str(), "UUID" | "OnGround" | "Motion" | "fall_distance" | "id")).cloned().collect();
-    let mut out = BytesMut::new();
-    sorted(&Tag::Compound(kept)).write_network(&mut out);
-    hex(&out)
+/// The stands the vectors name (`[x, y, z, saved data (hex)]` each), as rows.
+fn want_stand_rows(v: &Value) -> Vec<StandRow> {
+    v.as_array().unwrap().iter().map(|r| ([r[0].as_f64().unwrap(), r[1].as_f64().unwrap(), r[2].as_f64().unwrap()], stand_fields(&tag_of(r[3].as_str().unwrap())))).collect()
 }
 
-/// The vectors' hex of a stand's saved data, normalized the same way.
-fn normalized_want_stand(h: &str) -> String {
-    normalized_stand(&tag_of(h))
+/// What differs between the stands Kiln has and the vectors name ("" when nothing).
+fn stand_diff(got: &[StandRow], want: &[StandRow]) -> String {
+    if got.len() != want.len() {
+        return format!("{} stands at {:?}, vanilla {} at {:?}", got.len(), got.iter().map(|r| r.0).collect::<Vec<_>>(), want.len(), want.iter().map(|r| r.0).collect::<Vec<_>>());
+    }
+    let mut out = Vec::new();
+    for (g, w) in got.iter().zip(want) {
+        if g.0.iter().zip(&w.0).any(|(a, b)| (a - b).abs() > 1.0e-6) {
+            out.push(format!("stand at {:?}, vanilla {:?}", g.0, w.0));
+        }
+        let mut keys: Vec<&String> = g.1.iter().chain(&w.1).map(|(k, _)| k).collect();
+        keys.sort();
+        keys.dedup();
+        for k in keys {
+            let (a, b) = (g.1.iter().find(|(x, _)| x == k), w.1.iter().find(|(x, _)| x == k));
+            if a.map(|f| &f.1) != b.map(|f| &f.1) {
+                out.push(format!("{k}: kiln {}, vanilla {}", a.map_or("-", |f| f.1.as_str()), b.map_or("-", |f| f.1.as_str())));
+            }
+        }
+    }
+    out.join("; ")
 }
 
 /// The id of the hanging entity (or armor stand) nearest to `at`.
@@ -432,8 +453,8 @@ fn run_case(line: &Value) -> Vec<String> {
         eq("item entities", format!("{got_items:?}"), format!("{want_items:?}"));
         let p = &sim.players[&1];
         if want.get("stands").is_some() {
-            let want_rows: Vec<Value> = want["stands"].as_array().unwrap().iter().map(|r| json!([r[0], r[1], r[2], normalized_want_stand(r[3].as_str().unwrap())])).collect();
-            eq("armor stands", stands_json(&sim).to_string(), Value::Array(want_rows).to_string());
+            let diff = stand_diff(&stand_rows(&sim), &want_stand_rows(&want["stands"]));
+            eq("armor stands", diff, String::new());
         }
         if want.get("hangings").is_some() {
             eq("hanging entities", hangings_json(&sim).to_string(), want["hangings"].to_string());
