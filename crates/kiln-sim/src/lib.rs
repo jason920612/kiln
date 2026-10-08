@@ -871,6 +871,11 @@ impl LoadChunks for Dim {
             chunkstats::add_ns(&chunkstats::SYNC_NS, started.elapsed());
             chunkstats::max_ns(&chunkstats::SYNC_MAX_NS, started.elapsed());
             if self.install(pos, chunk) {
+                // Whoever needs the chunk at once reads it lit, as without background generation.
+                if let Some(i) = self.unlit.iter().position(|&p| p == pos) {
+                    self.unlit.remove(i);
+                    kiln_world::light::light_new_chunk(&mut self.regions, pos);
+                }
                 return self.regions.chunk_mut(pos).unwrap();
             }
         }
