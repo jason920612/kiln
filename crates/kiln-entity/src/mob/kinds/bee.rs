@@ -774,8 +774,7 @@ impl CustomGoal for PollinateGoal {
             } else {
                 flag = false;
             }
-            let h = self.hover_pos.unwrap_or(target);
-            control::look_at(m, h.x, h.y, h.z);
+            control::look_at(m, target.x, target.y, target.z);
         }
         if flag {
             self.set_wanted_pos(m);
