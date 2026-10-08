@@ -1535,6 +1535,9 @@ public class EffectVectors {
         for (int t = 1; t <= s.ticks; t++) {
             for (Map<String, Object> a : s.actions.getOrDefault(t, List.of())) act(server, p, a);
             if (shadowPlayer != null) clientTick(p, shadowPlayer, s, cs);
+            if (System.getenv("KILN_DEBUG_MOVES") != null && s.name.contains(System.getenv("KILN_DEBUG_MOVES"))) {
+                System.err.println("DBG " + s.name + " tick " + t + " pos " + p.position() + " delta " + p.getDeltaMovement() + " moves " + get(p, "movementThisTick"));
+            }
             p.commonTick();
             p.tick();
             call(p.connection, "tickPlayer");
