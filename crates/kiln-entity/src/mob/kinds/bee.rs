@@ -410,6 +410,11 @@ impl Kind for Bee {
         true
     }
 
+    /// `Bee$1.isStableDestination`: anything with a block under it.
+    fn stable_destination_for(&self, _m: &MobData, level: &dyn EntityLevel, p: BlockPos) -> Option<bool> {
+        Some(!kiln_data::blocks_types::is_air(level.block(p.below())))
+    }
+
     /// `Bee$1.tick`: no navigation while pollinating.
     fn ticks_navigation(&self, m: &MobData) -> bool {
         !st(m).pollinating
