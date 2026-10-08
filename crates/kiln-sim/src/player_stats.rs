@@ -158,6 +158,7 @@ pub mod stat {
         INTERACT_WITH_CAMPFIRE = "minecraft:interact_with_campfire",
         POT_FLOWER = "minecraft:pot_flower",
         BELL_RING = "minecraft:bell_ring",
+        TARGET_HIT = "minecraft:target_hit",
         ENCHANT_ITEM = "minecraft:enchant_item",
         OPEN_CHEST = "minecraft:open_chest",
         OPEN_ENDERCHEST = "minecraft:open_enderchest",

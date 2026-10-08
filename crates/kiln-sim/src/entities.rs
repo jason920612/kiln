@@ -2825,7 +2825,7 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
 }
 
 /// `BlockBehaviour.onProjectileHit` of the block at `pos`; `owner` is the projectile's owner.
-fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], pos: kiln_blocks::BlockPos, face: kiln_blocks::Direction, owner: Option<i32>) {
+fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], pos: kiln_blocks::BlockPos, face: kiln_blocks::Direction, location: [f64; 3], projectile_type: &str, owner: Option<i32>) {
     use kiln_data::block_logic::BlockClass as C;
     let s = level.block(pos);
     match kiln_data::block_logic::block_class(s) {
@@ -2833,6 +2833,15 @@ fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], po
             let (_, rang) = kiln_blocks::behaviour::bell::on_hit(level, pos, face, 0.0, false);
             if rang && let Some(p) = owner.and_then(|id| players.iter_mut().find(|p| p.entity_id == id)) {
                 p.award_stat(*crate::player_stats::stat::BELL_RING, 1);
+            }
+        }
+        C::TargetBlock => {
+            // `AbstractArrow` (arrows, spectral arrows, tridents) hold the signal longer.
+            let arrow = matches!(projectile_type, "minecraft:arrow" | "minecraft:spectral_arrow" | "minecraft:trident");
+            let signal = kiln_blocks::behaviour::misc3::target_hit(level, s, pos, face, location, arrow);
+            if let Some(p) = owner.and_then(|id| players.iter_mut().find(|p| p.entity_id == id)) {
+                p.award_stat(*crate::player_stats::stat::TARGET_HIT, 1);
+                let _ = signal;
             }
         }
         _ => {}
@@ -3011,8 +3020,8 @@ fn carry_out(
             p.sound_for_all("minecraft:entity.player.teleport", world_fx::SoundSource::Players, 1.0, 1.0);
         }
         // `Block.onProjectileHit` of the block a projectile hit.
-        Event::ProjectileHit { owner, hit: kiln_entity::projectile::Hit::Block { pos, face, .. }, .. } => {
-            block_projectile_hit(level, players, kb(pos), kiln_blocks::Direction::from_index(face as usize), owner);
+        Event::ProjectileHit { owner, projectile_type, hit: kiln_entity::projectile::Hit::Block { pos, face, location }, .. } => {
+            block_projectile_hit(level, players, kb(pos), kiln_blocks::Direction::from_index(face as usize), [location.x, location.y, location.z], projectile_type, owner);
         }
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.

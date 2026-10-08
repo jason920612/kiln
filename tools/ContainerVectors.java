@@ -266,6 +266,7 @@ public class ContainerVectors {
         jukeboxScenarios(out);
         campfireScenarios(out);
         daylightScenarios(out);
+        targetScenarios(out);
         return out;
     }
 
@@ -365,6 +366,35 @@ public class ContainerVectors {
         s = new Scenario("daylight_rain", 300).align20()
                 .block(0, 0, 0, sensor).state(0, 0, 0).block(2, 0, 0, inverted).state(2, 0, 0)
                 .at(1, "time set 6000").at(1, "weather rain 100000").at(160, "weather thunder 100000");
+        out.add(s);
+    }
+
+    /** wp49: target blocks hit by arrows and snowballs at different spots (the signal, how long it holds). */
+    static void targetScenarios(List<Scenario> out) {
+        String target = "minecraft:target[power=0]";
+        // {name, y offset of the flight in the block, z offset, projectile}
+        Object[][] shots = {
+            {"center", 0.5, 0.5, "arrow"}, {"quarter", 0.75, 0.5, "arrow"}, {"edge", 0.95, 0.5, "arrow"}, {"corner", 0.9, 0.1, "arrow"},
+            {"low", 0.2, 0.55, "arrow"}, {"snowball_center", 0.5, 0.5, "snowball"}, {"snowball_edge", 0.8, 0.3, "snowball"}, {"spectral", 0.6, 0.6, "spectral_arrow"},
+        };
+        for (Object[] sh : shots) {
+            Scenario s = new Scenario("target_" + sh[0], 45).block(0, 0, 0, target).state(0, 0, 0)
+                    .block(1, 0, 0, "minecraft:redstone_lamp[lit=false]").state(1, 0, 0);
+            // From the west, three blocks away, along x.
+            s.at(1, String.format(Locale.ROOT, "summon minecraft:%s ~-3 ~%s ~%s {NoGravity:1b,Motion:[1.0d,0.0d,0.0d]}", sh[3], sh[1], sh[2]));
+            out.add(s);
+        }
+        // Two arrows into one target: the second finds it already giving.
+        Scenario s = new Scenario("target_two_arrows", 60).block(0, 0, 0, target).state(0, 0, 0);
+        s.at(1, "summon minecraft:arrow ~-3 ~0.5 ~0.5 {NoGravity:1b,Motion:[1.0d,0.0d,0.0d]}");
+        s.at(10, "summon minecraft:arrow ~-3 ~0.9 ~0.9 {NoGravity:1b,Motion:[1.0d,0.0d,0.0d]}");
+        out.add(s);
+        // From above and from the south.
+        s = new Scenario("target_from_above", 45).block(0, 0, 0, target).state(0, 0, 0);
+        s.at(1, "summon minecraft:arrow ~0.3 ~4 ~0.6 {NoGravity:1b,Motion:[0.0d,-1.0d,0.0d]}");
+        out.add(s);
+        s = new Scenario("target_from_south", 45).block(0, 0, 0, target).state(0, 0, 0);
+        s.at(1, "summon minecraft:arrow ~0.3 ~0.7 ~4 {NoGravity:1b,Motion:[0.0d,0.0d,-1.0d]}");
         out.add(s);
     }
 
