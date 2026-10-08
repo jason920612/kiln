@@ -791,6 +791,17 @@ public class InteractVectors {
             out.add(c);
         }
 
+        // ---- the saved data of a stand made with all sorts of data
+        c = new Case("stand_nbt_pose").stands();
+        c.cmd("summon minecraft:armor_stand 2.5 100 0.5 {NoGravity:1b,Pose:{Head:[10f,20f,30f],Body:[1f,2f,3f],LeftArm:[-10f,0f,-10f],RightLeg:[5f,5f,5f]},Small:1b,ShowArms:1b,NoBasePlate:1b,Invisible:1b,"
+                + "DisabledSlots:4144,CustomName:\"Zed\",CustomNameVisible:1b,Tags:[\"a\",\"b\"],Rotation:[45f,10f],Health:7f,Silent:1b,Glowing:1b,Fire:30s,Air:200s,Invulnerable:1b}");
+        c.step(op("op", "select", "slot", 0));
+        out.add(c);
+        c = new Case("stand_nbt_marker").stands();
+        c.cmd("summon minecraft:armor_stand 2.5 100 0.5 {NoGravity:1b,Marker:1b,Pose:{LeftArm:[1f,1f,1f]},equipment:{head:{id:\"minecraft:player_head\",count:1}}}");
+        c.step(op("op", "select", "slot", 0));
+        out.add(c);
+
         // ---- hit it
         c = new Case("stand_hit_twice").stands();
         c.cmd(full);
