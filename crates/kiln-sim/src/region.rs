@@ -1250,7 +1250,7 @@ fn use_on_block(
             if consumed {
                 return;
             }
-        } else if crate::tools::block_use_without_item(level, bp, spawns) || interact::use_without_item(level, bp, &actor) {
+        } else if crate::tools::block_use_without_item(p, level, bp, spawns) || interact::use_without_item(level, bp, &actor) {
             return;
         }
     }

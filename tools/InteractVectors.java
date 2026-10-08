@@ -86,6 +86,11 @@ public class InteractVectors {
         List<int[]> watch = new ArrayList<>();
         // Items whose use statistic is recorded.
         List<String> statItems = new ArrayList<>();
+        // wp49: the food level the player starts with, and whether the food data is recorded.
+        int food = 20;
+        boolean watchFood;
+        // wp49: the custom stats (by name) whose change is recorded.
+        List<String> customStats = new ArrayList<>();
 
         Case(String name) {
             this.name = name;
@@ -113,6 +118,17 @@ public class InteractVectors {
 
         Case stat(String item) {
             statItems.add(item);
+            return this;
+        }
+
+        Case food(int level) {
+            food = level;
+            watchFood = true;
+            return this;
+        }
+
+        Case custom(String stat) {
+            customStats.add(stat);
             return this;
         }
     }
@@ -255,6 +271,69 @@ public class InteractVectors {
         c.slot("h0", stack("minecraft:iron_helmet")).step(op("op", "cooldown", "item", "minecraft:iron_helmet", "ticks", 20))
                 .step(op("op", "use", "hand", 0));
         out.add(c);
+    }
+
+    // ---------------------------------------------------------------- wp49: blocks eaten from and put things on
+
+    /** A stone floor and the block at (2, 100, 0), a step from the player. */
+    static Case blockCase(String name, String block) {
+        Case c = new Case(name);
+        c.cmd("setblock 2 99 0 minecraft:stone").cmd("setblock 2 100 0 " + block).watch(2, 100, 0);
+        return c;
+    }
+
+    static void cakes(List<Case> out) {
+        Case c;
+        for (int bites = 0; bites <= 6; bites++) {
+            c = blockCase("cake_eat_" + bites, "minecraft:cake[bites=" + bites + "]").food(10).custom("minecraft:eat_cake_slice");
+            c.step(useOn(2, 100, 0, 1, 0));
+            c.step(useOn(2, 100, 0, 1, 0));
+            out.add(c);
+        }
+        c = blockCase("cake_full_stomach", "minecraft:cake[bites=2]").food(20).custom("minecraft:eat_cake_slice");
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("cake_almost_full", "minecraft:cake[bites=2]").food(19).custom("minecraft:eat_cake_slice");
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("cake_creative_full", "minecraft:cake[bites=2]").food(20).custom("minecraft:eat_cake_slice");
+        c.gameMode = "creative";
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("cake_adventure", "minecraft:cake[bites=2]").food(5).custom("minecraft:eat_cake_slice");
+        c.gameMode = "adventure";
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("cake_with_apple_in_hand", "minecraft:cake[bites=1]").food(8).custom("minecraft:eat_cake_slice");
+        c.slot("h0", stack("minecraft:apple", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("cake_sneaking_empty_hand", "minecraft:cake[bites=1]").food(8).custom("minecraft:eat_cake_slice");
+        c.sneaking = true;
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("cake_sneaking_with_item", "minecraft:cake[bites=1]").food(8).custom("minecraft:eat_cake_slice");
+        c.sneaking = true;
+        c.slot("h0", stack("minecraft:apple", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // Candles on a whole cake only.
+        for (String candle : new String[] {"candle", "red_candle", "white_candle"}) {
+            for (int bites : new int[] {0, 1}) {
+                c = blockCase("cake_" + candle + "_" + bites, "minecraft:cake[bites=" + bites + "]").food(10).stat("minecraft:" + candle);
+                c.slot("h0", stack("minecraft:" + candle, 2)).step(useOn(2, 100, 0, 1, 0));
+                out.add(c);
+            }
+        }
+        c = blockCase("cake_candle_creative", "minecraft:cake[bites=0]").stat("minecraft:candle");
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:candle", 2)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // A cake with a candle is eaten like any (the candle drops, the cake is whole again to its first bite).
+        for (String lit : new String[] {"false", "true"}) {
+            c = blockCase("cake_candle_cake_eat_" + lit, "minecraft:blue_candle_cake[lit=" + lit + "]").food(10).custom("minecraft:eat_cake_slice");
+            c.step(useOn(2, 100, 0, 1, 0));
+            c.step(useOn(2, 100, 0, 1, 0));
+            out.add(c);
+        }
     }
 
     // ---------------------------------------------------------------- sign scenarios
@@ -754,7 +833,7 @@ public class InteractVectors {
             }
         }
         call(p, "detectEquipmentUpdates");
-        p.getFoodData().setFoodLevel(20);
+        p.getFoodData().setFoodLevel(c.food);
         p.tickCount = 0;
         // One tick, like a connected player's first (it clears `firstTick`).
         p.commonTick();
@@ -925,6 +1004,8 @@ public class InteractVectors {
         for (String item : c.statItems) {
             usedBefore.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))));
         }
+        Map<String, Integer> customBefore = new HashMap<>();
+        for (String n : c.customStats) customBefore.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(Identifier.parse(n))));
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
             Map<String, Object> r = new LinkedHashMap<>();
@@ -937,6 +1018,12 @@ public class InteractVectors {
                 used.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))) - usedBefore.get(item));
             }
             r.put("used", used);
+            if (c.watchFood) r.put("food", List.of(p.getFoodData().getFoodLevel(), p.getFoodData().getSaturationLevel(), (float) get(p.getFoodData(), "exhaustionLevel")));
+            if (!c.customStats.isEmpty()) {
+                Map<String, Object> cs = new LinkedHashMap<>();
+                for (String n : c.customStats) cs.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(Identifier.parse(n))) - customBefore.get(n));
+                r.put("custom", cs);
+            }
             results.add(r);
         }
         server.getPlayerList().remove(p);
@@ -958,6 +1045,8 @@ public class InteractVectors {
         for (int[] w : c.watch) watch.add(List.of(w[0], w[1], w[2]));
         line.put("watch", watch);
         line.put("stat_items", c.statItems);
+        line.put("food", c.watchFood ? c.food : null);
+        line.put("custom_stats", c.customStats);
         line.put("result", results);
         return toJson(line);
     }
@@ -1057,6 +1146,7 @@ public class InteractVectors {
             signs(all);
             books(all);
             picks(all);
+            cakes(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

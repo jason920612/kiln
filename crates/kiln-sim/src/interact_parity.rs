@@ -205,6 +205,7 @@ fn run_case(line: &Value) -> Vec<String> {
         p.on_ground = true;
         p.set_shift_key(line["sneaking"].as_bool().unwrap());
         p.fall_distance = 0.0;
+        p.food = line["food"].as_i64().map_or(20, |f| f as i32);
         p.game_mode = match line["game_mode"].as_str().unwrap() {
             "creative" => 1,
             "adventure" => 2,
@@ -323,6 +324,15 @@ fn run_case(line: &Value) -> Vec<String> {
         let want_items: Vec<String> = want["entities"].as_array().unwrap().iter().map(|e| e["item"].as_str().unwrap().to_owned()).collect();
         eq("item entities", format!("{got_items:?}"), format!("{want_items:?}"));
         let p = &sim.players[&1];
+        if let Some(f) = want["food"].as_array() {
+            eq("food", format!("{:?}", (p.food, p.saturation, p.exhaustion)), format!("{:?}", (f[0].as_i64().unwrap() as i32, f[1].as_f64().unwrap() as f32, f[2].as_f64().unwrap() as f32)));
+        }
+        if let Some(cs) = want["custom"].as_object() {
+            for (name, want_count) in cs {
+                let stat = crate::player_stats::Stat::custom(name).unwrap_or_else(|| panic!("stat {name}"));
+                eq(&format!("custom {name}"), p.stats.get(stat).to_string(), want_count.to_string());
+            }
+        }
         for (item, want_count) in want["used"].as_object().unwrap() {
             let id = kiln_item::registry::ITEM.id(item).unwrap();
             eq(&format!("used {item}"), p.stats.get(crate::player_stats::Stat::item(crate::player_stats::USED, id)).to_string(), want_count.to_string());

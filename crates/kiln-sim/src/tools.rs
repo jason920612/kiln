@@ -360,6 +360,7 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
         C::ComposterBlock => compost(p, level, pos, s, off_hand, &stack),
         C::JukeboxBlock => crate::jukebox::use_item_on(p, level, pos, s, off_hand),
         C::CampfireBlock => crate::campfire::use_item_on(p, level, pos, s, off_hand),
+        C::CakeBlock => cake_candle(p, level, pos, s, off_hand, &stack),
         C::PumpkinBlock if !stack.is_empty() && stack.item_name() == "minecraft:shears" => {
             carve(p, level, pos, face, off_hand, spawns);
             Some(true)
@@ -369,11 +370,14 @@ pub(crate) fn block_use_item_on(p: &mut Player, level: &mut RegionLevel, pos: Bl
 }
 
 /// `ComposterBlock.useWithoutItem`: a full composter gives its bone meal.
-pub(crate) fn block_use_without_item(level: &mut RegionLevel, pos: BlockPos, spawns: &mut Vec<Spawn>) -> bool {
+pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, spawns: &mut Vec<Spawn>) -> bool {
     if crate::jukebox::use_without_item(level, pos, spawns) {
         return true;
     }
     let s = level.block(pos);
+    if matches!(logic::block_class(s), C::CakeBlock | C::CandleCakeBlock) {
+        return eat_cake(p, level, pos, s);
+    }
     if logic::block_class(s) != C::ComposterBlock || state::get_int(s, "level") != 8 {
         return false;
     }
@@ -392,6 +396,55 @@ pub(crate) fn block_use_without_item(level: &mut RegionLevel, pos: BlockPos, spa
     }
     kiln_blocks::set_block_and_update(level, pos, state::set_int(s, "level", 0));
     level.effect(Effect::Sound { pos, sound: "minecraft:block.composter.empty", volume: 1.0, pitch: 1.0 });
+    true
+}
+
+/// `CakeBlock.useItemOn`: a candle on a whole cake makes it a candle cake. Anything else is for
+/// the empty hand's use (`TRY_WITH_EMPTY_HAND`).
+fn cake_candle(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16, off_hand: bool, stack: &ItemStack) -> Option<bool> {
+    let name = stack.item_name();
+    if state::get_int(s, "bites") != 0 || !name.ends_with("candle") {
+        return None;
+    }
+    let cake = format!("{name}_cake");
+    let target = kiln_data::blocks_types::block_by_name(&cake)?.default;
+    if !p.infinite_materials() {
+        let i = p.hand_index(off_hand);
+        kiln_inventory::Container::item_mut(&mut p.inv, i).shrink(1);
+        p.inv.times_changed += 1;
+    }
+    level.effect(Effect::Sound { pos, sound: "minecraft:block.cake.add_candle", volume: 1.0, pitch: 1.0 });
+    kiln_blocks::set_block_and_update(level, pos, target);
+    level.effect(Effect::BlockGameEvent { pos, event: "minecraft:block_change", state: target });
+    p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, stack.item()), 1);
+    Some(true)
+}
+
+/// `CakeBlock.eat`: a slice (2 food, 0.1 saturation) for a player that can eat (or cannot be
+/// hurt); the last slice takes the cake. A cake with a candle is eaten as a plain cake would be
+/// and gives its candle back (`CandleCakeBlock.useWithoutItem`).
+fn eat_cake(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, s: u16) -> bool {
+    // `Player.canEat(false)`: `abilities.invulnerable || foodData.needsFood()`.
+    if !(p.game_mode == 1 || p.food < 20) {
+        return false;
+    }
+    p.award_stat(*crate::player_stats::stat::EAT_CAKE_SLICE, 1);
+    // `FoodData.eat(2, 0.1F)`: the saturation is `nutrition * modifier * 2`.
+    p.eat(2, 2.0f32 * 0.1f32 * 2.0f32);
+    let candle = logic::block_class(s) == C::CandleCakeBlock;
+    let bites = if candle { 0 } else { state::get_int(s, "bites") };
+    level.effect(Effect::GameEvent { pos, event: "minecraft:eat" });
+    if bites < 6 {
+        let cake = kiln_data::blocks_types::block_by_name("minecraft:cake").map_or(s, |b| b.default);
+        kiln_blocks::set_block(level, pos, state::set_int(cake, "bites", bites + 1), kiln_blocks::flags::ALL);
+    } else {
+        kiln_blocks::remove_block(level, pos, false);
+        level.effect(Effect::GameEvent { pos, event: "minecraft:block_destroy" });
+    }
+    if candle {
+        // `dropResources(state, level, pos)`: the candle cake's loot is its candle.
+        level.effect(Effect::Drop { pos, state: s });
+    }
     true
 }
 
