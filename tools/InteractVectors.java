@@ -91,6 +91,8 @@ public class InteractVectors {
         boolean watchFood;
         // wp49: the hanging entities (item frames, paintings) around are recorded after every step.
         boolean watchHanging;
+        // wp49: the armor stands around (their saved data without the uuid) are recorded after every step.
+        boolean watchStands;
         // wp49: the custom stats (by name) whose change is recorded.
         List<String> customStats = new ArrayList<>();
 
@@ -126,6 +128,11 @@ public class InteractVectors {
         Case food(int level) {
             food = level;
             watchFood = true;
+            return this;
+        }
+
+        Case stands() {
+            watchStands = true;
             return this;
         }
 
@@ -503,6 +510,10 @@ public class InteractVectors {
         return op("op", "use_entity", "pos", List.of(x, y, z), "hand", hand, "sneak", sneak);
     }
 
+    static Map<String, Object> useStand(double x, double y, double z, int hand, boolean sneak, double hitY) {
+        return op("op", "use_entity", "pos", List.of(x, y, z), "hand", hand, "sneak", sneak, "hit", List.of(0.0, hitY, 0.0));
+    }
+
     static Map<String, Object> attackEntity(double x, double y, double z) {
         return op("op", "attack_entity", "pos", List.of(x, y, z));
     }
@@ -615,6 +626,242 @@ public class InteractVectors {
 
     static Map<String, Object> cmdStep(String cmd) {
         return op("op", "command", "command", cmd);
+    }
+
+    /** wp49: armor stands (placing one, dressing one, taking its things, hitting it). */
+    static void stands49(List<Case> out) {
+        Case c;
+        String floor = "setblock 2 99 0 minecraft:stone";
+        // ---- put up
+        float[] yaws = {0f, 22f, 23f, 45f, 67.4f, 90f, 135f, 179f, -45f, -100f};
+        for (float yaw : yaws) {
+            c = new Case("stand_place_yaw_" + (int) (yaw * 10)).stands().stat("minecraft:armor_stand");
+            c.yaw = yaw;
+            c.cmd(floor);
+            c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
+            out.add(c);
+        }
+        for (int face = 0; face < 6; face++) {
+            c = new Case("stand_place_face_" + face).stands().stat("minecraft:armor_stand");
+            c.cmd("setblock 2 100 0 minecraft:stone");
+            c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 100, 0, face, 0));
+            out.add(c);
+        }
+        c = new Case("stand_place_creative").stands().stat("minecraft:armor_stand");
+        c.gameMode = "creative";
+        c.cmd(floor);
+        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_adventure").stands().stat("minecraft:armor_stand");
+        c.gameMode = "adventure";
+        c.cmd(floor);
+        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_offhand").stands().stat("minecraft:armor_stand");
+        c.cmd(floor);
+        c.slot("offhand", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 1));
+        out.add(c);
+        c = new Case("stand_place_twice").stands().stat("minecraft:armor_stand");
+        c.cmd(floor);
+        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_in_grass").stands().stat("minecraft:armor_stand");
+        c.cmd(floor).cmd("setblock 2 100 0 minecraft:short_grass");
+        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_under_roof").stands().stat("minecraft:armor_stand");
+        c.cmd(floor).cmd("setblock 2 101 0 minecraft:stone");
+        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_in_slab").stands().stat("minecraft:armor_stand");
+        c.cmd(floor).cmd("setblock 2 102 0 minecraft:oak_slab[type=bottom]");
+        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_on_slab_top").stands().stat("minecraft:armor_stand");
+        c.cmd("setblock 2 99 0 minecraft:oak_slab[type=top]");
+        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_in_water").stands().stat("minecraft:armor_stand");
+        c.cmd(floor).cmd("setblock 2 100 0 minecraft:water");
+        c.slot("h0", stack("minecraft:armor_stand", 3)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_named").stands().stat("minecraft:armor_stand");
+        c.cmd(floor);
+        c.slot("h0", named("minecraft:armor_stand", 2, "Bob")).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+        c = new Case("stand_place_with_data").stands().stat("minecraft:armor_stand");
+        c.cmd(floor);
+        c.slot("h0", standWithData()).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+
+        // ---- dress one: the item goes where it belongs (or to the hand), whatever the height clicked
+        String summon = "summon minecraft:armor_stand 2.5 100 0.5 {ShowArms:1b}";
+        String[] items = {"minecraft:diamond_helmet", "minecraft:iron_chestplate", "minecraft:leather_leggings", "minecraft:netherite_boots", "minecraft:carved_pumpkin",
+                "minecraft:player_head", "minecraft:elytra", "minecraft:iron_sword", "minecraft:shield", "minecraft:stone", "minecraft:white_banner", "minecraft:turtle_helmet",
+                "minecraft:saddle", "minecraft:wolf_armor"};
+        for (String item : items) {
+            c = new Case("stand_dress_" + item.substring(10)).stands();
+            c.cmd(summon);
+            c.slot("h0", stack(item, 3)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+            out.add(c);
+        }
+        c = new Case("stand_dress_offhand_item").stands();
+        c.cmd(summon);
+        c.slot("offhand", stack("minecraft:diamond_chestplate", 1)).step(useStand(2.5, 100, 0.5, 1, false, 0.5));
+        out.add(c);
+        c = new Case("stand_dress_no_arms").stands();
+        c.cmd("summon minecraft:armor_stand 2.5 100 0.5");
+        c.slot("h0", stack("minecraft:iron_sword", 1)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        c = new Case("stand_dress_creative").stands();
+        c.gameMode = "creative";
+        c.cmd(summon);
+        c.slot("h0", stack("minecraft:iron_sword", 2)).step(useStand(2.5, 100, 0.5, 0, false, 0.5)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        c = new Case("stand_dress_spectator").stands();
+        c.gameMode = "spectator";
+        c.cmd(summon);
+        c.slot("h0", stack("minecraft:iron_sword", 2)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        c = new Case("stand_dress_marker").stands();
+        c.cmd("summon minecraft:armor_stand 2.5 100 0.5 {ShowArms:1b,Marker:1b}");
+        c.slot("h0", stack("minecraft:iron_helmet", 2)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        c = new Case("stand_dress_name_tag").stands();
+        c.cmd(summon);
+        c.slot("h0", named("minecraft:name_tag", 1, "Zed")).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        // Swapping: what is worn comes into the hand; a stack of two puts one on (only on an empty slot).
+        c = new Case("stand_swap_helmet").stands();
+        c.cmd("summon minecraft:armor_stand 2.5 100 0.5 {ShowArms:1b,equipment:{head:{id:\"minecraft:iron_helmet\",count:1}}}");
+        c.slot("h0", stack("minecraft:diamond_helmet", 1)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        c = new Case("stand_swap_helmet_stack").stands();
+        c.cmd("summon minecraft:armor_stand 2.5 100 0.5 {ShowArms:1b,equipment:{head:{id:\"minecraft:iron_helmet\",count:1}}}");
+        c.slot("h0", stack("minecraft:diamond_helmet", 2)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        c = new Case("stand_swap_helmet_creative").stands();
+        c.gameMode = "creative";
+        c.cmd("summon minecraft:armor_stand 2.5 100 0.5 {ShowArms:1b,equipment:{head:{id:\"minecraft:iron_helmet\",count:1}}}");
+        c.slot("h0", stack("minecraft:diamond_helmet", 1)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        c = new Case("stand_stack_one").stands();
+        c.cmd(summon);
+        c.slot("h0", stack("minecraft:iron_helmet", 3)).step(useStand(2.5, 100, 0.5, 0, false, 0.5)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+
+        // ---- take things off, by the height clicked (a full stand, empty hand and a stone in the hand)
+        String full = "summon minecraft:armor_stand 2.5 100 0.5 {ShowArms:1b,equipment:{mainhand:{id:\"minecraft:iron_sword\",count:1},offhand:{id:\"minecraft:shield\",count:1},"
+                + "feet:{id:\"minecraft:iron_boots\",count:1},legs:{id:\"minecraft:iron_leggings\",count:1},chest:{id:\"minecraft:iron_chestplate\",count:1},head:{id:\"minecraft:iron_helmet\",count:1}}}";
+        double[] ys = {0.0, 0.05, 0.1, 0.3, 0.5, 0.55, 0.85, 0.9, 1.0, 1.2, 1.55, 1.6, 1.9};
+        for (double y : ys) {
+            c = new Case("stand_take_y" + (int) Math.round(y * 100)).stands();
+            c.cmd(full);
+            c.step(useStand(2.5, 100, 0.5, 0, false, y)).step(useStand(2.5, 100, 0.5, 0, false, y));
+            out.add(c);
+        }
+        for (double y : new double[] {0.05, 0.5, 1.0, 1.7}) {
+            c = new Case("stand_take_small_y" + (int) Math.round(y * 100)).stands();
+            c.cmd(full.replace("{ShowArms:1b,", "{ShowArms:1b,Small:1b,"));
+            c.step(useStand(2.5, 100, 0.5, 0, false, y)).step(useStand(2.5, 100, 0.5, 0, false, y)).step(useStand(2.5, 100, 0.5, 0, false, y));
+            out.add(c);
+        }
+        c = new Case("stand_take_hands").stands();
+        c.cmd("summon minecraft:armor_stand 2.5 100 0.5 {ShowArms:1b,equipment:{offhand:{id:\"minecraft:shield\",count:1}}}");
+        c.step(useStand(2.5, 100, 0.5, 0, false, 0.5)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+        out.add(c);
+        c = new Case("stand_take_with_stone").stands();
+        c.cmd(full);
+        c.slot("h0", stack("minecraft:stone", 3)).step(useStand(2.5, 100, 0.5, 0, false, 1.9));
+        out.add(c);
+        c = new Case("stand_take_nothing").stands();
+        c.cmd(summon);
+        c.step(useStand(2.5, 100, 0.5, 0, false, 1.9));
+        out.add(c);
+        // Disabled slots: nothing may be taken (8), nothing put on (16), the slot is gone (1 << filter bit).
+        int[] disabled = {1 << 1, 1 << 2, 1 << 3, 1 << 4, 1 << 0, 1 << 5, 1 << 9, 1 << 10, 1 << 11, 1 << 12, 1 << 13, 1 << 16, 1 << 17, 1 << 18, 1 << 19, 1 << 20, 1 << 21, 0xffffff};
+        for (int d : disabled) {
+            c = new Case("stand_disabled_" + d + "_take").stands();
+            c.cmd(full.replace("{ShowArms:1b,", "{ShowArms:1b,DisabledSlots:" + d + ","));
+            c.step(useStand(2.5, 100, 0.5, 0, false, 1.9)).step(useStand(2.5, 100, 0.5, 0, false, 1.0)).step(useStand(2.5, 100, 0.5, 0, false, 0.05)).step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+            out.add(c);
+            c = new Case("stand_disabled_" + d + "_put").stands();
+            c.cmd("summon minecraft:armor_stand 2.5 100 0.5 {ShowArms:1b,DisabledSlots:" + d + "}");
+            c.slot("h0", stack("minecraft:iron_helmet", 3)).slot("h1", stack("minecraft:iron_chestplate", 3)).slot("h2", stack("minecraft:iron_leggings", 3)).slot("h3", stack("minecraft:iron_boots", 3))
+                    .slot("h4", stack("minecraft:iron_sword", 3));
+            c.step(useStand(2.5, 100, 0.5, 0, false, 0.5)).step(op("op", "select", "slot", 1)).step(useStand(2.5, 100, 0.5, 0, false, 0.5)).step(op("op", "select", "slot", 2))
+                    .step(useStand(2.5, 100, 0.5, 0, false, 0.5)).step(op("op", "select", "slot", 3)).step(useStand(2.5, 100, 0.5, 0, false, 0.5)).step(op("op", "select", "slot", 4))
+                    .step(useStand(2.5, 100, 0.5, 0, false, 0.5));
+            out.add(c);
+        }
+
+        // ---- hit it
+        c = new Case("stand_hit_twice").stands();
+        c.cmd(full);
+        c.step(attackEntity(2.5, 100, 0.5)).step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        c = new Case("stand_hit_once").stands();
+        c.cmd(full);
+        c.step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        c = new Case("stand_hit_creative").stands();
+        c.gameMode = "creative";
+        c.cmd(full);
+        c.step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        c = new Case("stand_hit_adventure").stands();
+        c.gameMode = "adventure";
+        c.cmd(full);
+        c.step(attackEntity(2.5, 100, 0.5)).step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        c = new Case("stand_hit_named").stands();
+        c.cmd(full.replace("{ShowArms:1b,", "{ShowArms:1b,CustomName:\"Bob\","));
+        c.step(attackEntity(2.5, 100, 0.5)).step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        c = new Case("stand_hit_invisible").stands();
+        c.cmd(full.replace("{ShowArms:1b,", "{ShowArms:1b,Invisible:1b,"));
+        c.step(attackEntity(2.5, 100, 0.5)).step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        c = new Case("stand_hit_marker").stands();
+        c.cmd(full.replace("{ShowArms:1b,", "{ShowArms:1b,Marker:1b,"));
+        c.step(attackEntity(2.5, 100, 0.5)).step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        c = new Case("stand_hit_invulnerable").stands();
+        c.cmd(full.replace("{ShowArms:1b,", "{ShowArms:1b,Invulnerable:1b,"));
+        c.step(attackEntity(2.5, 100, 0.5)).step(attackEntity(2.5, 100, 0.5));
+        out.add(c);
+        // Damage of other kinds (the /damage command).
+        String[] kinds = {"minecraft:explosion", "minecraft:player_explosion", "minecraft:in_fire", "minecraft:on_fire", "minecraft:lava", "minecraft:hot_floor", "minecraft:generic",
+                "minecraft:fall", "minecraft:drown", "minecraft:arrow", "minecraft:out_of_world", "minecraft:generic_kill", "minecraft:magic", "minecraft:lightning_bolt", "minecraft:wither",
+                "minecraft:cactus", "minecraft:fireball", "minecraft:player_attack", "minecraft:mob_attack", "minecraft:thrown", "minecraft:fireworks", "minecraft:campfire", "minecraft:freeze"};
+        for (String kind : kinds) {
+            c = new Case("stand_damage_" + kind.substring(10)).stands();
+            c.cmd(full);
+            c.step(cmdStep("damage @e[type=minecraft:armor_stand,limit=1] 5 " + kind)).step(cmdStep("damage @e[type=minecraft:armor_stand,limit=1] 5 " + kind))
+                    .step(cmdStep("damage @e[type=minecraft:armor_stand,limit=1] 5 " + kind)).step(cmdStep("damage @e[type=minecraft:armor_stand,limit=1] 20 " + kind));
+            out.add(c);
+        }
+        c = new Case("stand_kill_command").stands();
+        c.cmd(full);
+        c.step(cmdStep("kill @e[type=minecraft:armor_stand]"));
+        out.add(c);
+    }
+
+    static ItemStack named(String item, int count, String name) {
+        ItemStack s = stack(item, count);
+        s.set(DataComponents.CUSTOM_NAME, net.minecraft.network.chat.Component.literal(name));
+        return s;
+    }
+
+    /** An armor stand item with `entity_data` (arms, small, no base plate). */
+    static ItemStack standWithData() {
+        ItemStack s = stack("minecraft:armor_stand", 2);
+        net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
+        tag.putBoolean("ShowArms", true);
+        tag.putBoolean("Small", true);
+        tag.putBoolean("NoBasePlate", true);
+        s.set(DataComponents.ENTITY_DATA, net.minecraft.world.item.component.TypedEntityData.of(net.minecraft.world.entity.EntityType.ARMOR_STAND, tag));
+        return s;
     }
 
     static void frames49(List<Case> out) {
@@ -1328,7 +1575,8 @@ public class InteractVectors {
         ServerLevel level = server.overworld();
         net.minecraft.world.entity.Entity best = null;
         double bd = 1e18;
-        for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.HangingEntity.class, new AABB(x - 2, y - 2, z - 2, x + 2, y + 2, z + 2))) {
+        for (var e : level.getEntities((net.minecraft.world.entity.Entity) null, new AABB(x - 2, y - 2, z - 2, x + 2, y + 2, z + 2),
+                en -> en instanceof net.minecraft.world.entity.decoration.HangingEntity || en instanceof net.minecraft.world.entity.decoration.ArmorStand)) {
             double d = e.position().distanceToSqr(x, y, z);
             if (d < bd) { bd = d; best = e; }
         }
@@ -1354,6 +1602,23 @@ public class InteractVectors {
             rows.add(new Object[] {type, e.getX(), e.getY(), e.getZ(), e.getDirection().get3DDataValue(), item, rot, area});
         }
         rows.sort(Comparator.comparing((Object[] r) -> (String) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]).thenComparingDouble(r -> (Double) r[3]));
+        List<Object> out = new ArrayList<>();
+        for (Object[] r : rows) out.add(java.util.Arrays.asList(r));
+        return out;
+    }
+
+    /** The armor stands in the scenario's area, sorted by position: [x, y, z, saved data (hex)]. */
+    static List<Object> stands() throws Exception {
+        ServerLevel level = server.overworld();
+        List<Object[]> rows = new ArrayList<>();
+        for (var e : level.getEntitiesOfClass(net.minecraft.world.entity.decoration.ArmorStand.class, new AABB(-16, 90, -16, 32, 120, 32))) {
+            var out = net.minecraft.world.level.storage.TagValueOutput.createWithContext(net.minecraft.util.ProblemReporter.DISCARDING, level.registryAccess());
+            e.saveWithoutId(out);
+            net.minecraft.nbt.CompoundTag tag = out.buildResult();
+            tag.remove("UUID");
+            rows.add(new Object[] {e.getX(), e.getY(), e.getZ(), nbtHex(tag)});
+        }
+        rows.sort(Comparator.comparingDouble((Object[] r) -> (Double) r[0]).thenComparingDouble(r -> (Double) r[1]).thenComparingDouble(r -> (Double) r[2]));
         List<Object> out = new ArrayList<>();
         for (Object[] r : rows) out.add(java.util.Arrays.asList(r));
         return out;
@@ -1416,7 +1681,13 @@ public class InteractVectors {
                     p.connection.handleAttack(new ServerboundAttackPacket(target.getId()));
                 } else {
                     InteractionHand hand = (int) s.get("hand") == 0 ? InteractionHand.MAIN_HAND : InteractionHand.OFF_HAND;
-                    p.connection.handleInteract(new ServerboundInteractPacket(target.getId(), hand, target.position(), (boolean) s.get("sneak")));
+                    Vec3 where = target.position();
+                    if (s.containsKey("hit")) {
+                        @SuppressWarnings("unchecked")
+                        List<Double> hit = (List<Double>) s.get("hit");
+                        where = new Vec3(hit.get(0), hit.get(1), hit.get(2));
+                    }
+                    p.connection.handleInteract(new ServerboundInteractPacket(target.getId(), hand, where, (boolean) s.get("sneak")));
                 }
             }
             case "command" -> command((String) s.get("command"));
@@ -1487,6 +1758,7 @@ public class InteractVectors {
             }
             r.put("used", used);
             if (c.watchHanging) r.put("hangings", hangings());
+            if (c.watchStands) r.put("stands", stands());
             if (c.watchFood) r.put("food", List.of(p.getFoodData().getFoodLevel(), p.getFoodData().getSaturationLevel(), (float) get(p.getFoodData(), "exhaustionLevel")));
             if (!c.customStats.isEmpty()) {
                 Map<String, Object> cs = new LinkedHashMap<>();
@@ -1520,6 +1792,7 @@ public class InteractVectors {
         line.put("stat_items", c.statItems);
         line.put("food", c.watchFood ? c.food : null);
         line.put("hanging", c.watchHanging);
+        line.put("stands", c.watchStands);
         line.put("custom_stats", c.customStats);
         line.put("result", results);
         return toJson(line);
@@ -1623,6 +1896,7 @@ public class InteractVectors {
             cakes(all);
             blocks49(all);
             frames49(all);
+            stands49(all);
             bells49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
