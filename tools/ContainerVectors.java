@@ -585,7 +585,7 @@ public class ContainerVectors {
                 if (!st.isEmpty()) items.add(List.of(i, BuiltInRegistries.ITEM.getKey(st.getItem()).toString(), st.getCount()));
             }
             m.put("items", items);
-            int[] times = (int[]) field(be, "cookingTimes"), totals = (int[]) field(be, "cookingTotalTimes");
+            int[] times = (int[]) field(be, "cookingProgress"), totals = (int[]) field(be, "cookingTime");
             m.put("campfire", List.of(times[0], times[1], times[2], times[3], totals[0], totals[1], totals[2], totals[3]));
             return m;
         }
