@@ -194,6 +194,10 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             if got != want["drops"] {
                 errors.push(format!("tick {tick} dropped items: kiln {got}, vanilla {}", want["drops"]));
             }
+            // (Only what each tick makes is compared: the items are removed after it.)
+            let mut kill = vec![ToSim::Console("kill @e[type=item]".into())];
+            client.tick(None, &mut kill);
+            assert!(sim.step(kill));
         }
         for (i, &p) in comparators.iter().enumerate() {
             let got = comparator_output(&sim, p);

@@ -661,7 +661,11 @@ public class ContainerVectors {
                 List<Object> carts = new ArrayList<>();
                 for (int[] p : s.carts) carts.add(cartState(level, p));
                 tick.put("carts", carts);
-                if (s.watchDrops) tick.put("drops", dropsState(level));
+                if (s.watchDrops) {
+                    tick.put("drops", dropsState(level));
+                    // What lies about burns, merges or is picked up in its own ways: only what each tick makes is compared.
+                    command(server, "kill @e[type=item]");
+                }
                 List<Object> cmp = new ArrayList<>();
                 for (int[] p : s.comparators) {
                     cmp.add(level.getBlockEntity(pos(p)) instanceof ComparatorBlockEntity c ? c.getOutputSignal() : -1);
