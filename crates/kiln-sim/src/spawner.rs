@@ -1022,6 +1022,13 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
     // `region.getBiome(center.getWorldPosition().atY(region.getMaxY()))`.
     let biome = zoomed_biome_at(level, min_x, env.min_y + env.height - 1, min_z);
     let list = table.list(biome, Category::Creature);
+    if std::env::var_os("KILN_INITIAL_DEBUG").is_some() {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
+            let nm = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").map_or("?", |(_, e)| e[biome as usize]);
+            let _ = writeln!(f, "C chunk ({},{}) biome {nm} creatures {} p {}", c.x, c.z, list.len(), table.world_gen_probability(biome));
+        }
+    }
     if list.is_empty() {
         return;
     }
