@@ -1536,7 +1536,7 @@ public class EffectVectors {
             for (Map<String, Object> a : s.actions.getOrDefault(t, List.of())) act(server, p, a);
             if (shadowPlayer != null) clientTick(p, shadowPlayer, s, cs);
             if (System.getenv("KILN_DEBUG_MOVES") != null && s.name.contains(System.getenv("KILN_DEBUG_MOVES"))) {
-                System.err.println("DBG " + s.name + " tick " + t + " pos " + p.position() + " delta " + p.getDeltaMovement() + " moves " + get(p, "movementThisTick"));
+                System.err.println("DBG " + s.name + " tick " + t + " pos " + p.position() + " delta " + p.getDeltaMovement() + " onGround " + p.onGround() + " shadowGround " + (shadow == null ? null : shadow.onGround()) + " moves " + get(p, "movementThisTick"));
             }
             p.commonTick();
             p.tick();
