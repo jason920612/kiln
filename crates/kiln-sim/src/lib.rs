@@ -826,6 +826,9 @@ struct Dim {
     install_spent: Duration,
     /// A save handed its chunks to the encoders: they go to the writer once all are encoded.
     flush_when_encoded: bool,
+    /// Generated chunks installed and not lit yet (with background generation): their regions
+    /// light them at the start of their next run, side by side, instead of the tick thread.
+    unlit: Vec<ChunkPos>,
 
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
@@ -929,6 +932,7 @@ impl Dim {
             urgent: HashSet::new(),
             install_spent: Duration::ZERO,
             flush_when_encoded: false,
+            unlit: Vec::new(),
             game_time,
             entity_store,
             poi_store,
@@ -991,9 +995,13 @@ impl Dim {
         let generated = std::mem::take(&mut chunk.generated_entities);
         cell.insert(pos, chunk);
         // A generated chunk gets its light from its blocks and loaded neighbours (vanilla's
-        // LIGHT status).
+        // LIGHT status): at once, or with background generation in its region's next run.
         if new {
-            kiln_world::light::light_new_chunk(cells, pos);
+            if self.generation.is_some() {
+                self.unlit.push(pos);
+            } else {
+                kiln_world::light::light_new_chunk(cells, pos);
+            }
         }
         let dt = diag::lap("in.light", dt);
         self.load_entities(pos);
@@ -2430,6 +2438,22 @@ impl Sim {
             buckets.entry((p.dim, p.region)).or_default().push((conn, p));
         }
         let mut hooks = self.plugins.as_mut().map(|pl| pl.hooks()).unwrap_or_default();
+        // Chunks to light, by the region now owning them (a lent region's wait).
+        let mut unlit: BTreeMap<(DimId, RegionId), Vec<ChunkPos>> = BTreeMap::new();
+        for (dim, d) in self.dims.iter_mut().enumerate() {
+            if d.unlit.is_empty() {
+                continue;
+            }
+            let mut wait = Vec::new();
+            for pos in std::mem::take(&mut d.unlit) {
+                match d.regions.owner(pos.cell()) {
+                    Some(r) if !d.lent.contains(&r) && d.regions.chunk(pos).is_some() => unlit.entry((dim, r)).or_default().push(pos),
+                    Some(_) => wait.push(pos),
+                    None => {}
+                }
+            }
+            d.unlit = wait;
+        }
         let mut work: Vec<RegionWork> = Vec::new();
         let inject = self.config.inject_delay.as_ref();
         for (dim, d) in self.dims.iter_mut().enumerate() {
@@ -2445,7 +2469,8 @@ impl Sim {
                 let (cells, (entities, blocks)) = r.cells_and_part_mut();
                 let plugins = hooks.remove(&key);
                 let delay = inject.map_or(Duration::ZERO, |i| i.delay_for(dim, cells));
-                RegionWork { dim, region: key.1, cells, entities, blocks, players, conns, packets, plugins, delay, out: RegionOut::default() }
+                let unlit = unlit.remove(&key).unwrap_or_default();
+                RegionWork { dim, region: key.1, cells, entities, blocks, players, conns, packets, plugins, delay, unlit, out: RegionOut::default() }
             }));
         }
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
@@ -2471,7 +2496,10 @@ impl Sim {
             }
         }
         let dt = diag::lap("rr.work", dt);
-        let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, envs[w.dim].as_ref().expect("the environment of a level with regions"), ctx));
+        let report = self.pool.run_units(&mut work, cost, |w, ctx| {
+            w.light_new_chunks();
+            f(w, envs[w.dim].as_ref().expect("the environment of a level with regions"), ctx)
+        });
         diag::lap("rr.units", dt);
         self.independent.last_fork = work.iter().zip(&report.unit_ns).map(|(w, &ns)| (w.dim, w.region, ns)).collect();
         // Smoothed (a quarter of the new time), so one tick held up by the machine does not
@@ -3117,6 +3145,7 @@ impl Sim {
             return;
         }
         let start = Instant::now();
+        self.light_unlit();
         self.materialize_spawns();
         let owners = self.owner_uuids();
         let mut queue = Vec::new();
@@ -3158,6 +3187,17 @@ impl Sim {
         self.save_run = Some(queue);
     }
 
+    /// Lights the generated chunks waiting for their region's next run, here (before saving).
+    fn light_unlit(&mut self) {
+        for d in &mut self.dims {
+            for pos in std::mem::take(&mut d.unlit) {
+                if d.regions.chunk(pos).is_some() {
+                    kiln_world::light::light_new_chunk(&mut d.regions, pos);
+                }
+            }
+        }
+    }
+
     /// Copies chunks of the save going on for the storage threads, within [`SAVE_BUDGET`];
     /// once all are copied, hands them to the writer.
     fn continue_save(&mut self) {
@@ -3167,6 +3207,11 @@ impl Sim {
         while start.elapsed() < SAVE_BUDGET {
             let Some((dim, pos)) = queue.pop() else { break };
             let d = &mut self.dims[dim];
+            if d.unlit.contains(&pos) {
+                // Lit in its region's next run; saved then.
+                queue.insert(0, (dim, pos));
+                break;
+            }
             let Some(region) = d.regions.at_mut(pos.cell()) else { continue };
             let (cells, part) = region.cells_and_part_mut();
             let Some(chunk) = cells.get_mut(pos.cell()).and_then(|c| c.chunk_mut(pos)) else { continue };
@@ -3196,6 +3241,7 @@ impl Sim {
     fn save(&mut self) {
         // Everything is saved together: regions ticking away come back first.
         self.rendezvous();
+        self.light_unlit();
         let start = Instant::now();
         // Entities waiting for their ids are saved with the rest.
         self.materialize_spawns();

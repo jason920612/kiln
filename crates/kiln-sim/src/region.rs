@@ -106,7 +106,20 @@ pub(crate) struct RegionWork<'a> {
     pub plugins: Option<crate::plugins::RegionHook<'a>>,
     /// Injected at the start of each tick ([`crate::SimConfig::inject_delay`], tests).
     pub delay: Duration,
+    /// Chunks generated and installed since the region last ran, still to light (in the order
+    /// they came in), before anything else reads them.
+    pub unlit: Vec<kiln_world::ChunkPos>,
     pub out: RegionOut,
+}
+
+impl RegionWork<'_> {
+    /// Lights the chunks installed since the region last ran ([`kiln_world::light::light_new_chunk`]):
+    /// light spreads at most one chunk, so it stays within the region's own cells.
+    pub(crate) fn light_new_chunks(&mut self) {
+        for pos in std::mem::take(&mut self.unlit) {
+            kiln_world::light::light_new_chunk(&mut *self.cells, pos);
+        }
+    }
 }
 
 impl RegionWork<'_> {
