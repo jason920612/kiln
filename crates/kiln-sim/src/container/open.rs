@@ -415,7 +415,7 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         BeKind::Furnace(kind) => single(furnace_menu(kind)),
         BeKind::BrewingStand => single(Menu::brewing_stand),
         BeKind::Beacon => single(Menu::beacon),
-        BeKind::EnderChest | BeKind::Jukebox => return None,
+        BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire => return None,
     })
 }
 

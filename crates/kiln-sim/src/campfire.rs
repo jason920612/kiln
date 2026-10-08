@@ -11,6 +11,7 @@ use crate::Player;
 use crate::blocks::RegionLevel;
 use crate::container::{BeKind, ContainerBe, drop_item_stack, pos_random};
 use kiln_blocks::{BlockPos, Effect, Level, state};
+use kiln_world::Blocks;
 use kiln_data::block_logic::{self as logic, BlockClass as C};
 use kiln_inventory::recipe::{CookingKind, Recipe};
 use kiln_inventory::stack::StackExt;
