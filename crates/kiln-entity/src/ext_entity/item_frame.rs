@@ -219,7 +219,7 @@ impl ItemFrame {
             self.spawn_at_location(e, level, frame);
         }
         if !item.is_empty() {
-            let item = item.copy();
+            let item = item.clone();
             if e.random.next_float() < self.drop_chance {
                 self.spawn_at_location(e, level, item);
             }
