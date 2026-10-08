@@ -30,6 +30,8 @@ pub(crate) struct SimWorld<'a> {
     /// `minecraft:limited_crafting` and the player's recipe book.
     pub limited_crafting: bool,
     pub recipes: &'a crate::recipe_book::RecipeBook,
+    /// The server's maps (cartography tables, crafted map copies).
+    pub maps: &'a crate::maps::SharedMaps,
 }
 
 impl SimWorld<'_> {
@@ -39,6 +41,18 @@ impl SimWorld<'_> {
 }
 
 impl kiln_inventory::World for SimWorld<'_> {
+    fn map_scale(&self, map_id: i32) -> Option<i8> {
+        self.maps.lock().ok()?.get(map_id).map(|m| m.scale)
+    }
+
+    fn map_locked(&self, map_id: i32) -> Option<bool> {
+        self.maps.lock().ok()?.get(map_id).map(|m| m.locked)
+    }
+
+    fn post_process_map(&mut self, stack: &mut kiln_item::ItemStack) {
+        crate::map_items::post_process(self.maps, stack);
+    }
+
     fn limited_crafting(&self) -> bool {
         self.limited_crafting
     }

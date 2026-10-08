@@ -56,6 +56,11 @@ pub trait World {
         None
     }
 
+    /// Whether the map's saved data is locked (`MapItemSavedData.locked`); `None` without data.
+    fn map_locked(&self, _map_id: i32) -> Option<bool> {
+        None
+    }
+
     /// `MapItem.onCraftedPostProcess`: applies and removes `minecraft:map_post_processing`
     /// (vanilla locks or scales the map, creating new map data).
     fn post_process_map(&mut self, _stack: &mut ItemStack) {}
@@ -501,7 +506,7 @@ impl Menu {
     fn safe_clone(&mut self, env: &mut Env, i: usize) -> ItemStack {
         let item = self.item(env, i);
         let mut clone = item.copy_with_count(item.max_stack_size());
-        if self.slots[i].kind == SlotKind::CraftResult {
+        if matches!(self.slots[i].kind, SlotKind::CraftResult | SlotKind::CartographyResult) {
             self.crafted_post_process(env, &mut clone);
         }
         clone
@@ -527,6 +532,8 @@ impl Menu {
                 self.on_crafted_by(env, stack, self.remove_count, None);
                 self.remove_count = 0;
             }
+            // `CartographyTableMenu$5.onTake`: `Item.onCraftedBy` (the map is locked or scaled).
+            SlotKind::CartographyResult => self.crafted_post_process(env, stack),
             SlotKind::StonecutterResult | SlotKind::SmithingResult => {
                 let n = stack.count();
                 self.on_crafted_by(env, stack, n, self.result.recipe_used);
@@ -584,6 +591,10 @@ impl Menu {
             SlotKind::AnvilResult => crate::workstation::anvil_take(self, env),
             SlotKind::LoomResult => {
                 crate::stations::loom_take(self, env);
+                self.set_changed(env, i);
+            }
+            SlotKind::CartographyResult => {
+                crate::stations::cartography_take(self, env);
                 self.set_changed(env, i);
             }
             _ => self.set_changed(env, i),

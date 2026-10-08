@@ -1105,6 +1105,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 crate::firework::use_item(p, &mut level, off, fx.spawns);
             } else if matches!(name, "minecraft:writable_book" | "minecraft:written_book") {
                 p.use_book(off);
+            } else if name == "minecraft:map" {
+                crate::map_items::use_empty_map(p, off, env.dim, fx.spawns);
             } else if name == crate::end_eye::ITEM {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::end_eye::use_item(p, &mut level, off, fx.spawns);
@@ -1268,6 +1270,12 @@ fn use_on_block(
         return;
     }
     if item_name == Some(crate::end_eye::ITEM) && actor.may_build && crate::end_eye::use_on(p, level, bp, !main_hand) {
+        return;
+    }
+    // `MapItem.useOn`: a banner is put on the map or taken off it.
+    if item_name == Some("minecraft:filled_map")
+        && crate::map_items::use_on_banner(p, !main_hand, &*level.cells, level.env.min_y, crate::map_items::has_ceiling(level.env.dim), pos, level.env.game_time).is_some()
+    {
         return;
     }
     if actor.may_build && crate::tools::item_use_on(p, level, bp, dir, !main_hand, spawns) {

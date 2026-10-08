@@ -667,6 +667,7 @@ impl Sim {
             }
         }
         self.world.forced_dirty = false;
+        self.maps.lock().unwrap_or_else(|e| e.into_inner()).save();
         if let Some(storage) = &self.storage {
             if let Err(e) = kiln_storage::saved_data::write(&storage.dir, RANDOM_SEQUENCES, self.world.sequences.to_nbt()) {
                 tracing::warn!("failed to save the random sequences: {e}");

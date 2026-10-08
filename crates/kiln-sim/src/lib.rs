@@ -31,6 +31,8 @@ mod buckets;
 mod beehive;
 mod decorated_pot;
 mod lectern;
+mod maps;
+mod map_items;
 mod bell;
 mod campfire;
 mod stands;
@@ -424,6 +426,8 @@ struct Player {
     menu: kiln_inventory::Menu,
     /// A block or entity menu the player has open.
     open_menu: Option<kiln_inventory::Menu>,
+    /// The server's maps (an empty map used makes one; the cartography table reads them).
+    maps: maps::SharedMaps,
     /// What an open merchant screen told its villager, for [`trading::apply_events`].
     merchant_events: Vec<(i32, kiln_inventory::merchant::MerchantEvent)>,
     /// What the open menu is on, the menu counter and the ender chest items.
@@ -1350,6 +1354,8 @@ pub struct Sim {
     held_packets: Vec<(ConnId, PlayIn)>,
     /// A world save going on over several ticks: the chunks still to copy, by level.
     save_run: Option<Vec<(DimId, ChunkPos)>>,
+    /// The maps (`data/minecraft/maps`), shared with the players that use empty maps.
+    maps: maps::SharedMaps,
 }
 
 /// Tick time a world save spends per tick copying chunks for the storage threads.
@@ -1548,6 +1554,7 @@ impl Sim {
         let rules = std::sync::Arc::new(load_rules(datapack));
         let loot = load_loot(datapack);
         let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
+        let maps = maps::MapStore::shared(storage.as_ref().map(|s| s.dir.clone()));
         let mut sim = Sim {
             rules,
             loot,
@@ -1588,6 +1595,7 @@ impl Sim {
             join_arrival: HashMap::new(),
             held_packets: Vec::new(),
             save_run: None,
+            maps,
         };
         // Boss bar ids are random per server run, as vanilla draws them from the level random.
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
@@ -1739,6 +1747,8 @@ impl Sim {
         lap(&mut self.stats, "g.advancements");
         // Players teleported in PX or G tick in their destination's region from now on.
         self.settle_teleported();
+        // Filled maps redraw and send what changed (the players' own part of `ServerPlayer.tick`).
+        self.tick_maps();
         lap(&mut self.stats, "g.settle");
         self.deliver_plugin_messages();
         lap(&mut self.stats, "global");
@@ -3411,6 +3421,7 @@ impl Sim {
             inv_extra: joining.inv_extra,
             menu: kiln_inventory::Menu::inventory(),
             open_menu: None,
+            maps: self.maps.clone(),
             merchant_events: Vec::new(),
             containers: container::open::PlayerContainers::load(joining.saved.raw()),
             command_slots: Default::default(),

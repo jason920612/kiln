@@ -136,13 +136,56 @@ pub(crate) fn loom_take(menu: &mut Menu, env: &mut Env) {
 // ---- cartography table --------------------------------------------------------------------
 
 /// `CartographyTableMenu.slotsChanged`: a result without both inputs goes; with both, the result
-/// needs the map's saved data, which Kiln's maps do not have (`MapItem.getSavedData` is null),
-/// so none appears.
-pub(crate) fn cartography_slots_changed(menu: &mut Menu, _env: &mut Env) {
-    let (map, additional) = (&menu.input.items[0], &menu.input.items[1]);
-    if !menu.result.item.is_empty() && (map.is_empty() || additional.is_empty()) {
+/// is worked out from the map's saved data (`setupResultSlot`).
+pub(crate) fn cartography_slots_changed(menu: &mut Menu, env: &mut Env) {
+    let (map, additional) = (menu.input.items[0].clone(), menu.input.items[1].clone());
+    let current = menu.result.item.clone();
+    if !current.is_empty() && (map.is_empty() || additional.is_empty()) {
         menu.result.item = ItemStack::empty();
+    } else if !map.is_empty() && !additional.is_empty() {
+        cartography_setup_result(menu, env, &map, &additional, &current);
     }
+}
+
+/// `CartographyTableMenu.setupResultSlot`: paper zooms an unlocked map out, a glass pane locks it,
+/// an empty map copies it.
+fn cartography_setup_result(menu: &mut Menu, env: &mut Env, map: &ItemStack, additional: &ItemStack, current: &ItemStack) {
+    let Some(id) = map.get(keys::MAP_ID).map(|m| m.0) else { return };
+    let (Some(scale), Some(locked)) = (env.world.map_scale(id), env.world.map_locked(id)) else { return };
+    let result;
+    if is(additional, "minecraft:paper") && crate::tags::contains("minecraft:item", "minecraft:extendable_maps", map.item()) && !locked && scale < 4 {
+        let mut r = map.copy_with_count(1);
+        r.insert(keys::MAP_POST_PROCESSING, kiln_item::component::MapPostProcessing::Scale);
+        result = r;
+        menu.broadcast_changes(env);
+    } else if is(additional, "minecraft:glass_pane") && !locked {
+        let mut r = map.copy_with_count(1);
+        r.insert(keys::MAP_POST_PROCESSING, kiln_item::component::MapPostProcessing::Lock);
+        result = r;
+        menu.broadcast_changes(env);
+    } else if is(additional, "minecraft:map") {
+        result = map.copy_with_count(2);
+        menu.broadcast_changes(env);
+    } else {
+        menu.result.item = ItemStack::empty();
+        menu.broadcast_changes(env);
+        return;
+    }
+    if !matches(&result, current) {
+        menu.result.item = result;
+        menu.broadcast_changes(env);
+    }
+}
+
+/// `CartographyTableMenu$5.onTake`: one map and one additional item are used, and the table sounds.
+pub(crate) fn cartography_take(menu: &mut Menu, env: &mut Env) {
+    for slot in [0, 1] {
+        let removed = crate::container::remove_item(&mut menu.input.items, slot, 1);
+        if !removed.is_empty() {
+            menu.slots_changed(env, Source::Input);
+        }
+    }
+    env.out.push(crate::Effect::CartographyUsed);
 }
 
 /// The cartography table's additional slot: paper, an empty map or a glass pane.

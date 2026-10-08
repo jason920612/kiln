@@ -66,6 +66,7 @@ pub(crate) struct PlayerContainers {
     pub bookshelves: i32,
     /// `LoomMenu.lastSoundTime`.
     pub last_loom_sound: i64,
+    pub last_cartography_sound: i64,
 }
 
 impl PlayerContainers {
@@ -85,6 +86,7 @@ impl PlayerContainers {
             enchantment_seed: player.get("XpSeed").and_then(Tag::as_i64).unwrap_or(0) as i32,
             bookshelves: 0,
             last_loom_sound: i64::MIN,
+            last_cartography_sound: i64::MIN,
         }
     }
 
@@ -155,7 +157,7 @@ impl Player {
         let mut out = Vec::new();
         let player = self.player_flags();
         let result = {
-            let Player { inv, menu, open_menu, containers: pc, loot, level_rng, entity_rng, limited_crafting, recipe_book, .. } = self;
+            let Player { inv, menu, open_menu, maps, containers: pc, loot, level_rng, entity_rng, limited_crafting, recipe_book, .. } = self;
             let PlayerContainers { open, ender, cart, bookshelves, .. } = pc;
             let mut world = super::world::SimWorld {
                 loot: loot.as_deref(),
@@ -164,6 +166,7 @@ impl Player {
                 bookshelves: *bookshelves,
                 limited_crafting: *limited_crafting,
                 recipes: &*recipe_book,
+                maps,
             };
             // A double chest's second half is taken out while the menu works on both.
             let mut second_taken: Option<(BlockPos, ContainerBe)> = None;
@@ -243,6 +246,7 @@ impl Player {
                 e @ (kiln_inventory::Effect::GrindstoneUsed { .. }
                 | kiln_inventory::Effect::AnvilUsed { .. }
                 | kiln_inventory::Effect::LoomUsed
+                | kiln_inventory::Effect::CartographyUsed
                 | kiln_inventory::Effect::Enchanted { .. }) => self.containers.pending.push(e),
                 _ => {}
             }
@@ -935,6 +939,13 @@ fn workstation_effects(p: &mut Player, level: &mut RegionLevel) {
                 if p.containers.last_loom_sound != now {
                     p.containers.last_loom_sound = now;
                     level.effect(Effect::Sound { pos, sound: "minecraft:ui.loom.take_result", volume: 1.0, pitch: 1.0 });
+                }
+            }
+            kiln_inventory::Effect::CartographyUsed => {
+                let now = level.env.game_time;
+                if p.containers.last_cartography_sound != now {
+                    p.containers.last_cartography_sound = now;
+                    level.effect(Effect::Sound { pos, sound: "minecraft:ui.cartography_table.take_result", volume: 1.0, pitch: 1.0 });
                 }
             }
             kiln_inventory::Effect::Enchanted { levels, seed } => {
