@@ -927,7 +927,7 @@ pub(crate) fn player_packet(
                 if was_on_ground && !on_ground && d[1] > 0.0 {
                     p.server_jump(from, cells, env.game_time, env.min_y);
                 }
-                p.record_packet_move(from, d);
+                p.server_packet_move(from, d, was_on_ground, cells, env.game_time, env.min_y, env.dim == crate::NETHER_ID);
                 let mut ctx = damage_ctx(env, spawns, deaths);
                 let blocks = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z);
                 p.after_move_fall(d, on_ground, p.pos[1] - y0 > 0.0, &blocks, &mut ctx);
