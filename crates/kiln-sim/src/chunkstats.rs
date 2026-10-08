@@ -71,10 +71,9 @@ pub(crate) static DISK_MISS_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static INSTALLED: AtomicU64 = AtomicU64::new(0);
 pub(crate) static INSTALL_NS: AtomicU64 = AtomicU64::new(0);
 pub(crate) static INSTALL_MAX_NS: AtomicU64 = AtomicU64::new(0);
-/// How long players waited outside every region for the chunk they stand in (teleported or
-/// moved to another level into terrain not generated yet), and joins for theirs.
-pub(crate) static LIMBO: Hist = Hist::new();
-pub(crate) static JOIN_WAIT: Hist = Hist::new();
+/// How long players waited outside every region for the chunk they stand in (joined,
+/// teleported or moved to another level into terrain not generated yet).
+pub(crate) static CHUNK_WAIT: Hist = Hist::new();
 /// Chunks generated on the tick thread because something needed them at once (joins,
 /// teleports, commands), and the time that took (ns).
 pub(crate) static SYNC_LOADS: AtomicU64 = AtomicU64::new(0);
@@ -107,7 +106,7 @@ pub(crate) fn rss_mb() -> u64 {
 /// One log line with the totals: `key=value` pairs a benchmark parses.
 pub(crate) fn line(gen_threads: usize) -> String {
     let (n, mean, p50, p99, max) = GEN_LATENCY.summary();
-    let (limbo, joins) = (LIMBO.summary(), JOIN_WAIT.summary());
+    let wait = CHUNK_WAIT.summary();
     let mut s = String::new();
     let ms = |c: &AtomicU64| c.load(Relaxed) as f64 / 1e6;
     let _ = write!(
@@ -116,7 +115,7 @@ pub(crate) fn line(gen_threads: usize) -> String {
          gen_latency_p50_ms={p50} gen_latency_p99_ms={p99} gen_latency_max_ms={max} \
          disk_hits={} disk_ms={:.1} disk_max_ms={:.2} disk_misses={} disk_miss_ms={:.1} \
          installed={} install_ms={:.1} install_max_ms={:.2} sync_loads={} sync_ms={:.1} sync_max_ms={:.1} \
-         limbo_n={} limbo_mean_ms={:.1} limbo_p99_ms={} limbo_max_ms={} join_wait_n={} join_wait_mean_ms={:.1} join_wait_max_ms={} \
+         chunk_wait_n={} chunk_wait_mean_ms={:.1} chunk_wait_p99_ms={} chunk_wait_max_ms={} \
          gen_held={} rss_mb={}",
         GEN_DONE.load(Relaxed),
         ms(&GEN_BUSY_NS),
@@ -131,13 +130,10 @@ pub(crate) fn line(gen_threads: usize) -> String {
         SYNC_LOADS.load(Relaxed),
         ms(&SYNC_NS),
         ms(&SYNC_MAX_NS),
-        limbo.0,
-        limbo.1,
-        limbo.3,
-        limbo.4,
-        joins.0,
-        joins.1,
-        joins.4,
+        wait.0,
+        wait.1,
+        wait.3,
+        wait.4,
         GEN_HELD.load(Relaxed),
         rss_mb(),
     );
