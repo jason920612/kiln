@@ -148,6 +148,19 @@ python tools/spawn_vectors.py        # natural spawning's structure overrides: t
                                      # gives in and around fortresses, bastions, swamp huts, monuments,
                                      # outposts, trial chambers, ancient cities... of a generated vanilla world
                                      # against kiln-sim's spawn table (cargo test -p kiln-sim structure_spawns)
+python tools/block_vectors.py        # what blocks do on their own, tick by tick against vanilla: random and scheduled
+                                     # ticks of crops, vines and kelp, grass spreading, melting, copper, turtle eggs,
+                                     # corals, sponges, tripwires, the end portal frame; kiln-blocks block_parity, and
+                                     # trees grown through the real worldgen features (kiln-sim --test tree_parity)
+python tools/interact_vectors.py     # signs (editing, dyes, wax, locks), books, armor worn by right click and middle
+                                     # click picking against vanilla (cargo test -p kiln-sim interact_parity)
+python tools/combat_vectors.py --filter melee --out work/wp45/combat/vectors.jsonl
+                                     # players' melee on mobs and players: sweeping, critical hits, the mace; replay:
+                                     # KILN_MELEE_VECTORS=work/wp45/combat/melee.jsonl cargo test -p kiln-sim --lib melee_parity
+python tools/effect_vectors.py       # also the player's falls (blocks that stop or bounce them) and hazards (cactus,
+                                     # powder snow, suffocation); effect_parity lists the few scenarios it does not match
+python tools/admin_check.py          # vanilla and Kiln load each other's saves: seed, game rules, command storage, ops
+python tools/parity_suites.py        # every suite that replays vanilla data, with its pass counts
 python tools/container_vectors.py --filter jukebox --out work/wp36/containers/vectors.jsonl
 KILN_CONTAINER_VECTORS=work/wp36/containers/vectors.jsonl cargo test -p kiln-sim container_parity
                                      # jukeboxes (song end, comparator, hoppers, power) tick by tick
