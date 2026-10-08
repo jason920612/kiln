@@ -95,10 +95,20 @@ public class ExploreMapVectors {
                     MapId id = stack.get(DataComponents.MAP_ID);
                     MapItemSavedData data = level.getMapData(id);
                     var d = stack.get(DataComponents.MAP_DECORATIONS).decorations().get("+");
+                    StringBuilder biomes = new StringBuilder();
+                    int sc = 1 << data.scale;
+                    var biomeReg = level.registryAccess().lookupOrThrow(Registries.BIOME);
+                    BlockPos.MutableBlockPos bp = new BlockPos.MutableBlockPos();
+                    for (int k = 0; k < 128; k++) {
+                        for (int l = 0; l < 128; l++) {
+                            bp.set((data.centerX / sc - 64 + l) * sc, level.getSeaLevel(), (data.centerZ / sc - 64 + k) * sc);
+                            biomes.append(biomeReg.getId(level.getBiome(bp).value())).append(l == 127 && k == 127 ? "" : ",");
+                        }
+                    }
                     lines.add("{\"tag\":\"" + c[0] + "\",\"decoration\":\"" + c[1] + "\",\"zoom\":" + c[2] + ",\"radius\":" + c[5] + ",\"skip\":" + c[6] + ",\"origin\":[" + c[3] + "," + c[4] + "],\"found\":["
                             + found.getX() + "," + found.getY() + "," + found.getZ() + "],\"center\":[" + data.centerX + "," + data.centerZ + "],\"colors\":\""
                             + ByteBufUtil.hexDump(data.colors) + "\",\"component\":[" + BuiltInRegistries.MAP_DECORATION_TYPE.getId(d.type().value()) + "," + d.x() + ","
-                            + d.z() + "," + d.rotation() + "]}");
+                            + d.z() + "," + d.rotation() + "],\"biomes\":[" + biomes + "]}");
                 }
             } catch (Throwable t) {
                 t.printStackTrace();

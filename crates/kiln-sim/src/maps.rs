@@ -963,6 +963,25 @@ impl Explorer {
     }
 }
 
+impl Explorer {
+    /// The biome (`Level.getBiome`) at each pixel of a map centred on `center`, for tests.
+    #[cfg(test)]
+    fn biome_grid(&self, center: [i32; 2], scale: i8) -> Vec<u16> {
+        let world = self.pipeline.world().clone();
+        let sea = world.generator.sea_level;
+        let mut gs = kiln_worldgen::generator::GenScratch::default();
+        let sc = 1i32 << scale;
+        let mut out = Vec::new();
+        for k in 0..128 {
+            for l in 0..128 {
+                let (x, z) = ((center[0] / sc - 64 + l) * sc, (center[1] / sc - 64 + k) * sc);
+                out.push(kiln_worldgen::generator::zoomed_biome(world.generator.zoom_seed, x, sea, z, &mut |qx, qy, qz| gs.noise_biome(&world.generator, qx, qy, qz)));
+            }
+        }
+        out
+    }
+}
+
 impl kiln_loot::MapExplorer for Explorer {
     fn explore(&self, stack: &ItemStack, origin: [f64; 3], request: &kiln_loot::ExplorationMap<'_>) -> Option<ItemStack> {
         if stack.is_empty() {
@@ -1061,6 +1080,18 @@ mod tests {
             let want_colors = unhex(v["colors"].as_str().unwrap());
             let diff = data.colors.iter().zip(&want_colors).filter(|(a, b)| a != b).count();
             if diff > 0 && std::env::var_os("KILN_EXPLORE_DEBUG").is_some() {
+                let want_biomes: Vec<u16> = v["biomes"].as_array().unwrap().iter().map(|b| b.as_u64().unwrap() as u16).collect();
+                let got_biomes = explorer.biome_grid(data.center, data.scale);
+                let names = kiln_data::registries::SYNCHRONIZED.iter().find(|(r, _)| *r == "minecraft:worldgen/biome").unwrap().1;
+                let bd: Vec<String> = got_biomes
+                    .iter()
+                    .zip(&want_biomes)
+                    .enumerate()
+                    .filter(|(_, (a, b))| a != b)
+                    .take(8)
+                    .map(|(i, (a, b))| format!("({},{}) kiln {} vanilla {}", i % 128, i / 128, names[*a as usize], names[*b as usize]))
+                    .collect();
+                println!("{tag}: {} biome pixels differ: {bd:?}", got_biomes.iter().zip(&want_biomes).filter(|(a, b)| a != b).count());
                 let first: Vec<String> = data
                     .colors
                     .iter()
