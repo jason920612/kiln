@@ -364,7 +364,7 @@ fn mob_rows(sim: &Sim) -> Vec<(String, f64, f64, f64)> {
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
-            if matches!(phys.kind, kiln_entity::entity::EntityKind::Mob(_)) && phys.is_alive() {
+            if matches!(phys.kind, kiln_entity::entity::EntityKind::Mob(_)) && kiln_entity::mob::data(phys).is_some_and(|m| kiln_entity::mob::is_alive(phys, m)) {
                 let p = phys.position();
                 rows.push((phys.type_name.to_owned(), p.x, p.y, p.z));
             }
@@ -660,8 +660,8 @@ fn run_case(line: &Value) -> Vec<String> {
         want_packets.retain(|p| !p.contains("entity.player.attack."));
         // (Kiln's mobs tick between the steps and make their idle noises; the vectors' level does not tick them.)
         if line["ticking"].as_bool() == Some(true) {
-            got_packets.retain(|p| !p.contains(".ambient"));
-            want_packets.retain(|p| !p.contains(".ambient"));
+            got_packets.retain(|p| !p.contains("\"source\":\"hostile\""));
+            want_packets.retain(|p| !p.contains("\"source\":\"hostile\""));
         }
         got_packets.sort();
         want_packets.sort();

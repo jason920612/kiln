@@ -739,7 +739,7 @@ pub fn tick(level: &mut dyn EntityLevel, pos: BlockPos, be: &mut TrialBe) {
     be.current_mobs.retain(|u| {
         level.entity_by_uuid(*u).is_some_and(|e| {
             let b = e.block_position();
-            e.is_alive() && {
+            (mob::data(e).map_or(e.is_alive(), |m| mob::is_alive(e, m))) && {
                 let (dx, dy, dz) = ((b.x - pos.x) as i64, (b.y - pos.y) as i64, (b.z - pos.z) as i64);
                 dx * dx + dy * dy + dz * dz <= MAX_TRACKING_SQR
             }
