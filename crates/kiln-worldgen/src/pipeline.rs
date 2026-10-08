@@ -88,6 +88,10 @@ enum Slot {
 #[derive(Default)]
 struct State {
     chunks: HashMap<(i32, i32), Slot>,
+    /// When each waiting chunk was last put back ([`State::ops`] then): the long-idle ones
+    /// are parked (compressed).
+    stamps: HashMap<(i32, i32), u64>,
+    ops: u64,
     decorated: HashSet<(i32, i32)>,
     /// Handed out by [`Pipeline::full`].
     finished: HashSet<(i32, i32)>,
@@ -163,7 +167,12 @@ impl Pipeline {
             match s.chunks.remove(&(x, z)) {
                 Some(Slot::Ready(c)) => {
                     s.finished.insert((x, z));
-                    return *c;
+                    s.stamps.remove(&(x, z));
+                    Self::park_idle(&mut s);
+                    drop(s);
+                    let mut c = *c;
+                    c.unpark();
+                    return c;
                 }
                 Some(other) => {
                     s.chunks.insert((x, z), other);
@@ -226,8 +235,36 @@ impl Pipeline {
         drop(s);
         let chunk = self.generate_terrain(gs, x, z);
         let mut s = self.state.lock().unwrap();
-        s.chunks.insert((x, z), Slot::Ready(chunk));
+        Self::put_back(&mut s, (x, z), chunk);
         self.wake.notify_all();
+    }
+
+    /// A chunk back in the pipeline, waiting; stamped for parking.
+    fn put_back(s: &mut State, key: (i32, i32), chunk: Box<ProtoChunk>) {
+        s.ops += 1;
+        let ops = s.ops;
+        s.stamps.insert(key, ops);
+        s.chunks.insert(key, Slot::Ready(chunk));
+    }
+
+    /// Every so often, with many chunks waiting, compresses those idle for a while (their
+    /// neighbourhood is done or far from what is being asked for).
+    fn park_idle(s: &mut State) {
+        const EVERY: u64 = 64;
+        const MIN_HELD: usize = 1024;
+        const IDLE_OPS: u64 = 2048;
+        s.ops += 1;
+        if s.ops % EVERY != 0 || s.chunks.len() < MIN_HELD {
+            return;
+        }
+        let horizon = s.ops.saturating_sub(IDLE_OPS);
+        let idle: Vec<(i32, i32)> = s.stamps.iter().filter(|&(_, &t)| t < horizon).map(|(&k, _)| k).collect();
+        for k in idle {
+            s.stamps.remove(&k);
+            if let Some(Slot::Ready(c)) = s.chunks.get_mut(&k) {
+                c.park();
+            }
+        }
     }
 
     /// BIOMES and TERRAIN (with the chunk's beardifier when structures generate).
@@ -250,7 +287,7 @@ impl Pipeline {
             drop(s);
             let chunk = self.generate_terrain(gs, p.0, p.1);
             let mut s = self.state.lock().unwrap();
-            s.chunks.insert(p, Slot::Ready(chunk));
+            Self::put_back(&mut s, p, chunk);
             self.wake.notify_all();
             return s;
         }
@@ -290,6 +327,10 @@ impl Pipeline {
                 })
                 .collect::<Vec<_>>()
         };
+        let mut window = window;
+        for c in &mut window {
+            c.unpark();
+        }
         let starts = self.world.generate_structures.then(|| {
             ChunkStarts::new(&self.world.structures, &self.world.generator, &self.starts, &mut gs.structures, x, z)
         });
@@ -302,7 +343,7 @@ impl Pipeline {
             if i == 4 {
                 c.status = Status::Features;
             }
-            s.chunks.insert((c.x, c.z), Slot::Ready(c));
+            Self::put_back(&mut s, (c.x, c.z), c);
         }
         s.decorated.insert((x, z));
         self.wake.notify_all();

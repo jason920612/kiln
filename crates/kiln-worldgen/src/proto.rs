@@ -159,9 +159,34 @@ pub struct ProtoChunk {
     /// Entities generation added (`ProtoChunk.addEntity`: end crystals, end city shulkers and
     /// item frames...), in saved form (`id`, `Pos`, ...), in the order they were added.
     pub entities: Vec<Tag>,
+    /// `blocks`, LZ4-compressed, while the chunk waits in the pipeline unused ([`ProtoChunk::park`];
+    /// `blocks` is empty meanwhile).
+    parked: Option<Vec<u8>>,
 }
 
 impl ProtoChunk {
+    /// Compresses the block states while the chunk waits (a waiting chunk's blocks are most of
+    /// the generator's memory). Lossless; [`ProtoChunk::unpark`] before any use.
+    pub fn park(&mut self) {
+        if self.parked.is_some() {
+            return;
+        }
+        let bytes: Vec<u8> = self.blocks.iter().flat_map(|v| v.to_le_bytes()).collect();
+        self.parked = Some(lz4_flex::compress_prepend_size(&bytes));
+        self.blocks = Vec::new();
+    }
+
+    /// Restores the block states of a parked chunk (nothing for one in use).
+    pub fn unpark(&mut self) {
+        let Some(packed) = self.parked.take() else { return };
+        let bytes = lz4_flex::decompress_size_prepended(&packed).expect("a parked chunk decompresses");
+        self.blocks = bytes.chunks_exact(2).map(|b| u16::from_le_bytes([b[0], b[1]])).collect();
+    }
+
+    pub fn is_parked(&self) -> bool {
+        self.parked.is_some()
+    }
+
     /// An empty chunk (all air) at BIOMES.
     pub fn new(x: i32, z: i32, min_y: i32, sections: usize, biomes: Vec<u16>) -> Self {
         Self {
@@ -180,6 +205,7 @@ impl ProtoChunk {
             fluid_ticks: Vec::new(),
             block_entities: BTreeMap::new(),
             entities: Vec::new(),
+            parked: None,
         }
     }
 
