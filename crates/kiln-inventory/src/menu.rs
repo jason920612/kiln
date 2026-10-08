@@ -25,6 +25,8 @@ pub struct PlayerFlags {
     /// `hasInfiniteMaterials()` (the `instabuild` ability).
     pub infinite_materials: bool,
     pub spectator: bool,
+    /// `Player.mayBuild()` (not in adventure or spectator mode).
+    pub may_build: bool,
     /// `isDeadOrDying()`.
     pub dead: bool,
     /// Removed from the world (other than by changing dimension) or disconnected: items that
@@ -129,7 +131,7 @@ pub struct Env<'a> {
 }
 
 impl Env<'_> {
-    fn drop_item(&mut self, stack: ItemStack, retain_ownership: bool) {
+    pub(crate) fn drop_item(&mut self, stack: ItemStack, retain_ownership: bool) {
         if !stack.is_empty() {
             self.out.push(Effect::Drop { stack, retain_ownership });
         }
@@ -711,7 +713,7 @@ impl Menu {
         }
     }
 
-    fn data(&self, env: &Env, i: usize) -> i32 {
+    pub(crate) fn data(&self, env: &Env, i: usize) -> i32 {
         match self.local_data.get(i) {
             Some(v) => *v,
             None => env.block.as_deref().map_or(0, |b| b.data(i)),

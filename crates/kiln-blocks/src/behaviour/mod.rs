@@ -12,6 +12,7 @@ pub mod farming;
 pub mod copper;
 pub mod daylight;
 pub mod growth;
+pub mod lectern;
 pub mod end_portal;
 pub mod misc;
 pub mod misc2;
@@ -282,6 +283,7 @@ pub fn affect_neighbors_after_removal<L: Level>(level: &mut L, s: u16, pos: Bloc
         C::ObserverBlock => devices::observer_removed(level, s, pos),
         C::PistonHeadBlock => piston::head_removed(level, s, pos),
         C::SculkSensorBlock | C::CalibratedSculkSensorBlock => sculk::sensor_removed(level, s, pos),
+        C::LecternBlock => lectern::removed(level, s, pos),
         _ if logic::is_instance(s, C::BasePressurePlateBlock) => components::plate_removed(level, s, pos, moved_by_piston),
         _ if logic::is_instance(s, C::BaseRailBlock) => rail::affect_neighbors_after_removal(level, s, pos, moved_by_piston),
         _ => {}
@@ -325,6 +327,7 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::TripWireBlock => tripwire::wire_tick(level, pos),
         C::TripWireHookBlock => tripwire::hook_tick(level, s, pos),
         C::TargetBlock => misc3::target_tick(level, s, pos),
+        C::LecternBlock => lectern::tick(level, s, pos),
         C::BigDripleafBlock => misc3::dripleaf_tick(level, s, pos),
         C::BigDripleafStemBlock => misc3::stem_tick(level, s, pos),
         C::CauldronBlock | C::LayeredCauldronBlock | C::LavaCauldronBlock => speleothem::cauldron_tick(level, s, pos),

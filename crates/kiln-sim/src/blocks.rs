@@ -461,7 +461,7 @@ impl Level for RegionLevel<'_> {
             self.out.changed.push([pos.x, pos.y, pos.z]);
         }
         if kiln_data::block_props::has_block_entity(old) || kiln_data::block_props::has_block_entity(state) {
-            crate::container::block_set(self, pos, flags);
+            crate::container::block_set(self, pos, flags, old);
             crate::sculk::block_set(self, pos);
             crate::heart::block_set(self, pos);
             crate::mob_spawner::block_set(self, pos);

@@ -30,6 +30,7 @@ mod consume;
 mod buckets;
 mod beehive;
 mod decorated_pot;
+mod lectern;
 mod bell;
 mod campfire;
 mod stands;
@@ -724,6 +725,7 @@ impl Player {
             removed: self.disconnected,
             xp_level: self.xp_level,
             enchantment_seed: self.containers.enchantment_seed,
+            may_build: self.game_mode <= 1,
         }
     }
 

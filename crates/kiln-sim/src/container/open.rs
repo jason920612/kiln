@@ -415,6 +415,9 @@ fn container_provider(level: &RegionLevel, pos: BlockPos, s: u16) -> Option<Prov
         BeKind::Furnace(kind) => single(furnace_menu(kind)),
         BeKind::BrewingStand => single(Menu::brewing_stand),
         BeKind::Beacon => single(Menu::beacon),
+        // `LecternBlock.getMenuProvider`: only with a book.
+        BeKind::Lectern if state::get_bool(s, "has_book") => single(Menu::lectern),
+        BeKind::Lectern => return None,
         BeKind::EnderChest | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::DecoratedPot => return None,
     })
 }
@@ -460,6 +463,16 @@ pub(crate) fn use_block(p: &mut Player, level: &mut RegionLevel, pos: BlockPos, 
         open_menu(p, level, provider, spawns);
         if let Some(stat) = crate::player_stats::interact_stat(s) {
             p.award_stat(stat, 1);
+        }
+        return Some(true);
+    }
+    // `LecternBlock.useWithoutItem`: a lectern with a book opens its menu; without one the click is consumed.
+    if logic::block_class(s) == C::LecternBlock {
+        if state::get_bool(s, "has_book")
+            && let Some(provider) = container_provider(level, pos, s)
+        {
+            open_menu(p, level, provider, spawns);
+            p.award_stat(*crate::player_stats::stat::INTERACT_WITH_LECTERN, 1);
         }
         return Some(true);
     }
@@ -781,6 +794,9 @@ pub(crate) fn menu_op<R>(
     workstation_effects(p, level);
     for (pos, n) in before {
         if level.blocks.containers.get(pos).is_some_and(|c| c.changes != n) {
+            // A lectern's page turned or its book taken: its block follows (`LecternBlock.signalPageChange`,
+            // `resetBookState`) before the comparators read it.
+            crate::lectern::after_menu(level, pos);
             let s = level.block(pos);
             kiln_blocks::update::update_neighbour_for_output_signal(level, pos, BlockId::of(s));
         }

@@ -44,6 +44,9 @@ pub trait Container {
     fn data(&self, _index: usize) -> i32 {
         0
     }
+
+    /// `ContainerData.set` (a lectern's page).
+    fn set_data(&mut self, _index: usize, _value: i32) {}
 }
 
 /// `ContainerHelper.removeItem`.

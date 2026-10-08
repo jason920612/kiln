@@ -63,6 +63,8 @@ pub(crate) enum BeKind {
     Beehive,
     /// One slot, and four sherds that decorate the sides (`DecoratedPotBlockEntity`).
     DecoratedPot,
+    /// One book and the page it is open at (`LecternBlockEntity`; not a `Container` for hoppers).
+    Lectern,
 }
 
 impl BeKind {
@@ -89,6 +91,7 @@ impl BeKind {
             "bell" => BeKind::Bell,
             "beehive" => BeKind::Beehive,
             "decorated_pot" => BeKind::DecoratedPot,
+            "lectern" => BeKind::Lectern,
             _ => return None,
         })
     }
@@ -104,7 +107,7 @@ impl BeKind {
             BeKind::Jukebox => 1,
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
-            BeKind::DecoratedPot => 1,
+            BeKind::DecoratedPot | BeKind::Lectern => 1,
             BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive => 0,
         }
     }
@@ -113,13 +116,13 @@ impl BeKind {
     pub fn randomizable(self) -> bool {
         !matches!(
             self,
-            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive
+            BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern
         )
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell | BeKind::Beehive | BeKind::Lectern)
     }
 
     /// `getDefaultName` translation key.
@@ -144,12 +147,15 @@ impl BeKind {
             BeKind::Bell => "block.minecraft.bell",
             BeKind::Beehive => "block.minecraft.beehive",
             BeKind::DecoratedPot => "block.minecraft.decorated_pot",
+            BeKind::Lectern => "container.lectern",
         }
     }
 }
 
 /// Saved fields a container block entity models; the rest of its NBT is kept as is.
-const MODELED: [&str; 32] = [
+const MODELED: [&str; 34] = [
+    "Book",
+    "Page",
     "item",
     "bees",
     "flower_pos",
@@ -183,6 +189,14 @@ const MODELED: [&str; 32] = [
     "z",
     "keepPacked",
 ];
+
+/// `LecternBlockEntity.getPageCount`: the pages of a written or writable book (0 for anything else).
+pub(crate) fn page_count(book: &ItemStack) -> i32 {
+    if let Some(w) = book.get(kiln_item::keys::WRITTEN_BOOK_CONTENT) {
+        return w.pages.len() as i32;
+    }
+    book.get(kiln_item::keys::WRITABLE_BOOK_CONTENT).map_or(0, |w| w.pages.len() as i32)
+}
 
 /// A container block entity's live state.
 #[derive(Debug, Clone)]
@@ -247,6 +261,9 @@ pub(crate) struct ContainerBe {
     pub changes: u64,
     /// A bell's shaking.
     pub bell: Option<Box<crate::bell::BellState>>,
+    /// A lectern's page (`LecternBlockEntity.page`) and whether it was turned and its block is yet to pulse.
+    pub page: i32,
+    pub page_turned: bool,
     /// A beehive's bees.
     pub hive: Option<Box<crate::beehive::Hive>>,
     /// Changed since its NBT was last written into the chunk.
@@ -283,6 +300,13 @@ impl ContainerBe {
                 song_unchecked = true;
             }
             list.stacks = vec![disc];
+        }
+        // `LecternBlockEntity.loadAdditional`: the book and the page it is open at.
+        let mut page = 0;
+        if kind == BeKind::Lectern {
+            let book = nbt.get("Book").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty);
+            page = int("Page", 0).clamp(0, (page_count(&book) - 1).max(0));
+            list.stacks = vec![book];
         }
         // `DecoratedPotBlockEntity.loadAdditional`: its one item is saved as `item`.
         if kind == BeKind::DecoratedPot {
@@ -325,6 +349,8 @@ impl ContainerBe {
             item_changed: false,
             changes: 0,
             bell: (kind == BeKind::Bell).then(Default::default),
+            page,
+            page_turned: false,
             hive: (kind == BeKind::Beehive).then(|| Box::new(crate::beehive::Hive::load(nbt))),
             dirty: false,
             extra,
@@ -349,6 +375,12 @@ impl ContainerBe {
             BeKind::Beehive => {
                 if let Some(h) = &self.hive {
                     h.save(&mut out);
+                }
+            }
+            BeKind::Lectern => {
+                if let Some(book) = self.items.first().filter(|s| !s.is_empty()) {
+                    out.push(("Book".into(), book.to_nbt()));
+                    out.push(("Page".into(), Tag::Int(self.page)));
                 }
             }
             // `sherds` is kept in `extra`; then the loot table or the item.
@@ -597,7 +629,22 @@ impl kiln_inventory::Container for ContainerBe {
         self.mark_changed();
     }
 
+    fn set_data(&mut self, index: usize, value: i32) {
+        // `LecternBlockEntity.dataAccess` / `setPage`: clamped to the book, the pulse follows a change.
+        if self.kind == BeKind::Lectern && index == 0 {
+            let page = value.clamp(0, (page_count(&self.items[0]) - 1).max(0));
+            if page != self.page {
+                self.page = page;
+                self.page_turned = true;
+                self.mark_changed();
+            }
+        }
+    }
+
     fn data(&self, index: usize) -> i32 {
+        if self.kind == BeKind::Lectern {
+            return if index == 0 { self.page } else { 0 };
+        }
         if let Some(b) = &self.beacon {
             // `BeaconBlockEntity.dataAccess`.
             return b.data(index);
@@ -748,7 +795,7 @@ impl Containers {
 /// Keeps the region's containers in step with a block change at `pos` (`LevelChunk.
 /// setBlockState`): a container that went away runs `preRemoveSideEffects` (drops its
 /// contents, except shulker boxes; a furnace pops its experience) unless `flags` skip it.
-pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
+pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32, old: u16) {
     let (x, z) = ((pos.x & 15) as usize, (pos.z & 15) as usize);
     let now = level.cells.chunk(chunk_of(pos)).and_then(|c| c.block_entity(x, pos.y, z));
     let Some(mut removed) = level.blocks.containers.block_changed(pos, now) else { return };
@@ -761,6 +808,11 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
         } else {
             crate::jukebox::removed(level, pos, &mut removed);
         }
+        return;
+    }
+    // `LecternBlockEntity.preRemoveSideEffects`: the book pops out.
+    if removed.kind == BeKind::Lectern && flags & kiln_blocks::flags::SKIP_BLOCK_ENTITY_SIDEEFFECTS == 0 {
+        crate::lectern::removed(level, pos, old, &removed);
         return;
     }
     // `CampfireBlockEntity.preRemoveSideEffects`: the food on the fire drops.
@@ -788,6 +840,10 @@ pub(crate) fn block_set(level: &mut RegionLevel, pos: BlockPos, flags: u32) {
 /// chest reads nothing and a double chest reads both halves).
 pub(crate) fn analog(level: &RegionLevel, pos: BlockPos, s: u16) -> i32 {
     let Some(c) = level.blocks.containers.get(pos) else { return 0 };
+    // `LecternBlock.getAnalogOutputSignal`: how far into the book the page is.
+    if c.kind == BeKind::Lectern {
+        return if kiln_blocks::state::get_bool(s, "has_book") { crate::lectern::analog(c) } else { 0 };
+    }
     if !c.kind.is_container() {
         return 0;
     }

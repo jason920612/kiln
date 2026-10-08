@@ -247,6 +247,8 @@ fn state_for_placement<L: Level + ?Sized>(c: &Ctx<L>, block: BlockId) -> Option<
         C::BeehiveBlock => state::set_dir(d, "facing", c.horizontal().opposite()),
         // `DecoratedPotBlock.getStateForPlacement`: the player's own way, in water waterlogged.
         C::DecoratedPotBlock => c.waterlogged(state::set_dir(d, "facing", c.horizontal())),
+        // `LecternBlock.getStateForPlacement` (a game master's item with a `Book` aside).
+        C::LecternBlock => state::set_dir(d, "facing", c.horizontal().opposite()),
         C::RepeaterBlock | C::ComparatorBlock => diode::placement(level, pos, state::set_dir(d, "facing", c.horizontal().opposite())),
         C::RedstoneWireBlock => wire::placement(level, pos),
         C::HopperBlock => container::hopper_placement(d, c.face),

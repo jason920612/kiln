@@ -176,6 +176,7 @@ pub mod stat {
         INTERACT_WITH_SMITHING_TABLE = "minecraft:interact_with_smithing_table",
         INTERACT_WITH_LOOM = "minecraft:interact_with_loom",
         INTERACT_WITH_CARTOGRAPHY_TABLE = "minecraft:interact_with_cartography_table",
+        INTERACT_WITH_LECTERN = "minecraft:interact_with_lectern",
         INSPECT_HOPPER = "minecraft:inspect_hopper",
         INSPECT_DROPPER = "minecraft:inspect_dropper",
         INSPECT_DISPENSER = "minecraft:inspect_dispenser",
