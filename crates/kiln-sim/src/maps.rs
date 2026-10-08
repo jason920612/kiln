@@ -1092,6 +1092,23 @@ mod tests {
                     .map(|(i, (a, b))| format!("({},{}) kiln {} vanilla {}", i % 128, i / 128, names[*a as usize], names[*b as usize]))
                     .collect();
                 println!("{tag}: {} biome pixels differ: {bd:?}", got_biomes.iter().zip(&want_biomes).filter(|(a, b)| a != b).count());
+                // The stored biomes (no zoom) at the same blocks.
+                let raw: Vec<u16> = v["raw"].as_array().unwrap().iter().map(|b| b.as_u64().unwrap() as u16).collect();
+                let world = explorer.pipeline.world().clone();
+                let sea = world.generator.sea_level;
+                let mut gs = kiln_worldgen::generator::GenScratch::default();
+                let sc = 1i32 << data.scale;
+                let mut rd = Vec::new();
+                for k in 0..128 {
+                    for l in 0..128 {
+                        let (x, z) = ((data.center[0] / sc - 64 + l) * sc, (data.center[1] / sc - 64 + k) * sc);
+                        let b = gs.noise_biome(&world.generator, x >> 2, sea >> 2, z >> 2);
+                        if b != raw[(k * 128 + l) as usize] {
+                            rd.push(format!("({l},{k}) kiln {} vanilla {}", names[b as usize], names[raw[(k * 128 + l) as usize] as usize]));
+                        }
+                    }
+                }
+                println!("{tag}: {} stored-biome pixels differ: {:?}", rd.len(), &rd[..rd.len().min(5)]);
                 let first: Vec<String> = data
                     .colors
                     .iter()
