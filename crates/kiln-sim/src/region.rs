@@ -1107,6 +1107,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 p.use_book(off);
             } else if name == "minecraft:map" {
                 crate::map_items::use_empty_map(p, off, env.dim, fx.spawns);
+                // `ServerPlayerGameMode.useItem`: a changed stack sends the inventory menu whole.
+                p.with_menu(&env.rules, fx.spawns, |menu, _, e| menu.send_all_data_to_remote(e));
             } else if name == crate::end_eye::ITEM {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::end_eye::use_item(p, &mut level, off, fx.spawns);

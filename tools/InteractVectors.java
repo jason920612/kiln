@@ -716,7 +716,7 @@ public class InteractVectors {
             if (extra.equals("paper")) {
                 // The zoomed map goes in again for a second zoom.
                 c.step(op("op", "menu_click", "slot", 38, "button", 0, "input", 1)).step(op("op", "menu_click", "slot", 31, "button", 0, "input", 1))
-                        .step(op("op", "menu_click", "slot", 2, "button", 0, "input", 1));
+                        .step(op("op", "wait", "ticks", 1)).step(op("op", "menu_click", "slot", 2, "button", 0, "input", 1));
             }
             c.step(op("op", "menu_close"));
             out.add(c);
@@ -2213,6 +2213,7 @@ public class InteractVectors {
 
     /** One server tick of the player's maps: `Inventory.tick`, `EntityEquipment.tick` and `ServerPlayer.doTick`'s sync. */
     static void mapTick(ServerPlayer p) throws Exception {
+        p.containerMenu.broadcastChanges();
         p.getInventory().tick();
         var equipment = (net.minecraft.world.entity.EntityEquipment) field(net.minecraft.world.entity.LivingEntity.class, "equipment").get(p);
         equipment.tick(p);
