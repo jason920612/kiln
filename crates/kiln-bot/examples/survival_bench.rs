@@ -101,6 +101,10 @@ struct Args {
     /// Seconds between chat messages per bot.
     #[arg(long, default_value_t = 120.0)]
     chat_interval: f64,
+    /// Seconds into the measured stretch at which the server is told `save-all` (an autosave
+    /// comes every 5 minutes of play; this puts one inside the measurement).
+    #[arg(long)]
+    save_all_at: Option<f64>,
     /// Passed to the server: `KILN_PHASE_DETAIL=1`.
     #[arg(long)]
     phase_detail: bool,
@@ -659,6 +663,7 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
     let mut at_to: Option<(f64, f64, Option<(f64, f64)>)> = None;
     let mut next_note = Instant::now();
     let mut stop_sent = false;
+    let mut save_sent = false;
     loop {
         let t = now_ms();
         if arrived_at.is_none() {
@@ -672,6 +677,13 @@ fn run(a: &Args, world: &Path, format: &str, label: &str) -> Result<Value> {
                 measure_to = measure_from + (a.measure * 1000.0) as u128;
                 eprintln!("[{label}] {} bots arrived after {:.0} s; measuring from +{:.0} s", arrived.unwrap_or(0), (t - bots_started) as f64 / 1000.0, (measure_from - bots_started) as f64 / 1000.0);
             }
+        }
+        if let Some(at) = a.save_all_at
+            && !save_sent
+            && t >= measure_from.saturating_add((at * 1000.0) as u128)
+        {
+            save_sent = true;
+            server.command("save-all");
         }
         if !stop_sent && t >= measure_to.saturating_add(2000) {
             stop_sent = true;

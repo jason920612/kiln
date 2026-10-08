@@ -423,6 +423,24 @@ impl ChunkSource for AnvilSource {
         self.queue(pos, payload);
     }
 
+    fn save_many(&mut self, chunks: &[(ChunkPos, &Chunk)]) {
+        // Older copies still with the encoder land first.
+        self.collect(None, true);
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        let per = chunks.len().div_ceil(threads).max(1);
+        let preserved = &self.preserved;
+        let payloads: Vec<Vec<Vec<u8>>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = chunks
+                .chunks(per)
+                .map(|part| scope.spawn(move || part.iter().map(|&(pos, chunk)| encode_payload(pos, chunk, preserved.get(&pos))).collect::<Vec<_>>()))
+                .collect();
+            workers.into_iter().map(|w| w.join().expect("encoding chunks")).collect()
+        });
+        for (&(pos, _), payload) in chunks.iter().zip(payloads.into_iter().flatten()) {
+            self.queue(pos, payload);
+        }
+    }
+
     fn save_owned(&mut self, pos: ChunkPos, chunk: Chunk) {
         if self.background.is_none() {
             return self.save(pos, &chunk);

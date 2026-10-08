@@ -172,6 +172,14 @@ pub trait ChunkSource: Send {
     fn sync(&mut self) -> std::io::Result<()> {
         self.flush()
     }
+
+    /// [`ChunkSource::save`] for many chunks at once (a save of the whole world): the source may
+    /// encode them side by side.
+    fn save_many(&mut self, chunks: &[(ChunkPos, &Chunk)]) {
+        for &(pos, chunk) in chunks {
+            self.save(pos, chunk);
+        }
+    }
 }
 
 /// What [`ChunkSource::start_load`] did.
@@ -338,14 +346,27 @@ impl ChunkProvider {
 
     /// Queues every changed chunk in `cells` and flushes; returns how many were written.
     pub fn save_all<S: CellStore + ?Sized>(&mut self, cells: &mut S) -> std::io::Result<usize> {
-        let mut saved = 0;
+        let Some(source) = self.source.as_mut() else { return Ok(0) };
+        let mut changed: Vec<(ChunkPos, &Chunk)> = Vec::new();
+        let mut saved = Vec::new();
         cells.for_each_cell_mut(&mut |pos, cell| {
             for (chunk_pos, chunk) in cell.chunks_mut(pos) {
-                saved += self.save(chunk_pos, chunk) as usize;
+                if chunk.needs_save() {
+                    chunk.mark_saved();
+                    saved.push(chunk_pos);
+                }
             }
         });
+        let saved_set: std::collections::HashSet<ChunkPos> = saved.iter().copied().collect();
+        cells.for_each_cell(&mut |pos, cell| {
+            changed.extend(cell.chunks(pos).filter(|(c, _)| saved_set.contains(c)));
+        });
+        changed.sort_unstable_by_key(|(c, _)| *c);
+        source.save_many(&changed);
+        let n = changed.len();
+        drop(changed);
         self.flush()?;
-        Ok(saved)
+        Ok(n)
     }
 }
 
