@@ -1430,6 +1430,10 @@ impl kiln_loot::LootContext for BreakContext {
     fn has_entity(&self, target: kiln_loot::EntityTarget) -> bool {
         self.player && target == kiln_loot::EntityTarget::This
     }
+    /// The empty predicate (snow, chorus flowers: "broken by something") matches any entity.
+    fn entity_matches(&self, target: kiln_loot::EntityTarget, predicate: &kiln_loot::predicate::EntityPredicate) -> bool {
+        self.player && target == kiln_loot::EntityTarget::This && predicate.parts.is_empty()
+    }
     fn origin(&self) -> Option<[f64; 3]> {
         Some(self.origin)
     }
