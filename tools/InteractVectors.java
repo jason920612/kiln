@@ -586,6 +586,36 @@ public class InteractVectors {
         c.slot("h1", stack("minecraft:stick"));
         c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "select", "slot", 1)).step(useOn(2, 100, 0, 1, 0));
         out.add(c);
+        // Breaking a hive: creative keeps the bees in the item it drops; survival lets them out (angry) and the drop is
+        // the plain item, or with silk touch the hive with its bees; honey is kept in the item (a state).
+        String dig = "dig";
+        c = blockCase("hive_break_creative_with_bees", "minecraft:bee_nest[facing=west,honey_level=0]" + bees2).bees();
+        c.gameMode = "creative";
+        c.step(op("op", dig, "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("hive_break_creative_honey_only", "minecraft:beehive[facing=west,honey_level=3]").bees();
+        c.gameMode = "creative";
+        c.step(op("op", dig, "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("hive_break_creative_empty", "minecraft:beehive[facing=west,honey_level=0]").bees();
+        c.gameMode = "creative";
+        c.step(op("op", dig, "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("hive_break_survival_axe", "minecraft:bee_nest[facing=west,honey_level=2]" + bees2).bees();
+        c.slot("h0", enchanted("minecraft:netherite_axe", "minecraft:efficiency", 5));
+        c.step(op("op", dig, "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("hive_break_survival_silk_touch", "minecraft:bee_nest[facing=west,honey_level=4]" + bees2).bees();
+        ItemStack silkAxe = enchanted("minecraft:netherite_axe", "minecraft:efficiency", 5);
+        silkAxe.enchant(server.registryAccess().lookupOrThrow(Registries.ENCHANTMENT).getOrThrow(ResourceKey.create(Registries.ENCHANTMENT, Identifier.parse("minecraft:silk_touch"))), 1);
+        c.slot("h0", silkAxe);
+        c.step(op("op", dig, "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("hive_break_survival_smoked", "minecraft:beehive[facing=west,honey_level=0]" + bees2).bees();
+        c.cmd("setblock 2 99 0 minecraft:campfire[lit=true]");
+        c.slot("h0", enchanted("minecraft:netherite_axe", "minecraft:efficiency", 5));
+        c.step(op("op", dig, "pos", List.of(2, 100, 0)));
+        out.add(c);
         // A player far from the hive: the bees come out but do not turn on them.
         c = blockCase("hive_bottle_player_far", "minecraft:beehive[facing=west,honey_level=5]" + bees2).bees().stat("minecraft:glass_bottle");
         c.slot("h0", stack("minecraft:glass_bottle", 1));
@@ -1792,6 +1822,13 @@ public class InteractVectors {
                 data.setGameTime(data.getGameTime() + (int) s.get("ticks"));
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
+            // wp49: the player starts breaking the block (it goes at once in creative or with a tool that breaks it in a tick).
+            case "dig" -> {
+                @SuppressWarnings("unchecked")
+                List<Integer> at = (List<Integer>) s.get("pos");
+                p.connection.handlePlayerAction(new ServerboundPlayerActionPacket(ServerboundPlayerActionPacket.Action.START_DESTROY_BLOCK,
+                        new BlockPos(at.get(0), at.get(1), at.get(2)), Direction.UP, 1));
+            }
             case "cooldown" -> p.getCooldowns().addCooldown(stack((String) s.get("item")), (int) s.get("ticks"));
             case "lock_sign" -> {
                 @SuppressWarnings("unchecked")
@@ -1869,7 +1906,7 @@ public class InteractVectors {
             if (c.watchBees) {
                 List<List<Object>> fresh = new ArrayList<>();
                 for (var bee : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new AABB(-16, 90, -16, 32, 120, 32))) {
-                    if (seenBees.add(bee.getUUID())) fresh.add(List.of(bee.getX(), bee.getY(), bee.getZ(), bee.getTarget() != null ? 1 : 0));
+                    if (seenBees.add(bee.getUUID())) fresh.add(List.of(bee.getX(), bee.getY(), bee.getZ(), bee.getTargetUnchecked() != null ? 1 : 0));
                 }
                 fresh.sort(Comparator.<List<Object>>comparingDouble(l -> (Double) l.get(0)).thenComparingDouble(l -> (Double) l.get(1)).thenComparingDouble(l -> (Double) l.get(2)));
                 r.put("bees_new", new ArrayList<Object>(fresh));
