@@ -286,7 +286,35 @@ public class ContainerVectors {
         projectileBlockScenarios(out);
         hiveScenarios(out);
         potScenarios(out);
+        lecternScenarios(out);
         return out;
+    }
+
+    /** wp49: a comparator reads how far into the book a lectern is open. */
+    static void lecternScenarios(List<Scenario> out) {
+        String book = "{id:\"minecraft:written_book\",count:1,components:{\"minecraft:written_book_content\":{title:\"T\",author:\"A\",pages:[\"1\",\"2\",\"3\",\"4\",\"5\"]}}}";
+        String one = "{id:\"minecraft:written_book\",count:1,components:{\"minecraft:written_book_content\":{title:\"T\",author:\"A\",pages:[\"1\"]}}}";
+        String writable = "{id:\"minecraft:writable_book\",count:1,components:{\"minecraft:writable_book_content\":{pages:[\"a\",\"b\",\"c\"]}}}";
+        for (int page = 0; page < 5; page++) {
+            out.add(new Scenario("lectern_comparator_page_" + page, 6)
+                    .block(0, 0, 1, "minecraft:lectern[facing=north,has_book=true,powered=false]{Book:" + book + ",Page:" + page + "}")
+                    .comparator(0, 0, 0, "south"));
+        }
+        out.add(new Scenario("lectern_comparator_one_page", 6)
+                .block(0, 0, 1, "minecraft:lectern[facing=north,has_book=true,powered=false]{Book:" + one + "}").comparator(0, 0, 0, "south"));
+        out.add(new Scenario("lectern_comparator_writable_last", 6)
+                .block(0, 0, 1, "minecraft:lectern[facing=north,has_book=true,powered=false]{Book:" + writable + ",Page:2}").comparator(0, 0, 0, "south"));
+        out.add(new Scenario("lectern_comparator_no_book", 6)
+                .block(0, 0, 1, "minecraft:lectern[facing=north,has_book=false,powered=false]").comparator(0, 0, 0, "south"));
+        // Powered: the lectern gives 15 to the block under it and around; with a lamp beside it.
+        out.add(new Scenario("lectern_powered_lights_lamp", 8)
+                .block(1, 0, 1, "minecraft:redstone_lamp").state(1, 0, 1)
+                .block(0, 0, 1, "minecraft:lectern[facing=north,has_book=true,powered=true]{Book:" + book + "}").state(0, 0, 1));
+        // A pulse ends after two ticks.
+        out.add(new Scenario("lectern_pulse_ends", 8)
+                .block(1, 0, 1, "minecraft:redstone_lamp").state(1, 0, 1)
+                .block(0, 0, 1, "minecraft:lectern[facing=north,has_book=true,powered=false]{Book:" + book + "}").state(0, 0, 1)
+                .at(2, "setblock ~0 ~0 ~1 minecraft:lectern[facing=north,has_book=true,powered=true]{Book:" + book + "}"));
     }
 
     /** wp49: decorated pots as containers: hoppers fill and empty them, comparators read them, broken they drop what they hold. */
