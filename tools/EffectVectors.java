@@ -1541,6 +1541,9 @@ public class EffectVectors {
             p.commonTick();
             p.tick();
             call(p.connection, "tickPlayer");
+            if (System.getenv("KILN_DEBUG_MOVES") != null && s.name.contains(System.getenv("KILN_DEBUG_MOVES"))) {
+                System.err.println("DBG   after tick " + t + " pos " + p.position() + " final " + get(p, "finalMovementsThisTick") + " frozen " + p.getTicksFrozen());
+            }
             if (shadowPlayer != null) p.connection.handleClientTickEnd(ServerboundClientTickEndPacket.INSTANCE);
             ticks.add(state(p));
         }
