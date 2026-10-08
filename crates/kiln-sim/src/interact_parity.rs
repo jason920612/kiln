@@ -354,16 +354,20 @@ fn run_case(line: &Value) -> Vec<String> {
         assert!(sim.step([]));
     }
     *stats.log.lock().unwrap() = Some(Vec::new());
+    // Commands the vectors ran at the start but the replay runs now, after its level has settled (a
+    // hive ages with every tick; the vectors' level made one for it, `InteractVectors.run`).
+    if let Some(late) = line["late"].as_array().filter(|l| !l.is_empty()) {
+        let mut inbox: Vec<ToSim> = late.iter().map(|c| ToSim::Console(c.as_str().unwrap().to_owned())).collect();
+        client.tick(None, &mut inbox);
+        assert!(sim.step(inbox));
+        let _ = take_packets(&stats);
+    }
     let mut errors = Vec::new();
     let mut seen_bees: std::collections::HashSet<i32> = Default::default();
     let steps = line["steps"].as_array().unwrap();
     let results = line["result"].as_array().unwrap();
     for (n, (step, want)) in steps.iter().zip(results).enumerate() {
         let mut inbox = Vec::new();
-        // (Commands the vectors ran at the start but the replay runs with the first step.)
-        if n == 0 {
-            inbox.extend(line["late"].as_array().into_iter().flatten().map(|c| ToSim::Console(c.as_str().unwrap().to_owned())));
-        }
         let hand_of = |v: &Value| if i32_of(v) == 0 { Hand::Main } else { Hand::Off };
         match step["op"].as_str().unwrap() {
             "use" => inbox.push(ToSim::Packet(1, PlayIn::UseItem { hand: hand_of(&step["hand"]), sequence: 1, yaw: rot[0], pitch: rot[1] })),

@@ -1871,6 +1871,14 @@ public class InteractVectors {
     static String run(Case c) throws Exception {
         for (String cmd : c.commands) command(cmd);
         for (String cmd : c.late) command(cmd);
+        // The replay's level makes one tick between these commands and the first step: a hive's bees age by it.
+        if (!c.late.isEmpty()) {
+            for (int[] w : c.watch) {
+                BlockPos wp = new BlockPos(w[0], w[1], w[2]);
+                if (server.overworld().getBlockEntity(wp) instanceof net.minecraft.world.level.block.entity.BeehiveBlockEntity hb)
+                    net.minecraft.world.level.block.entity.BeehiveBlockEntity.serverTick(server.overworld(), wp, server.overworld().getBlockState(wp), hb);
+            }
+        }
         // The recorded level does not tick: what the commands made has had its first tick for the cases that
         // do something to it (a stand's equipment sounds only after its first tick).
         for (var stand : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.ArmorStand.class, new AABB(-16, 90, -16, 32, 120, 32))) {
