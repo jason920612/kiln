@@ -822,6 +822,7 @@ fn tick_chunk_blocks(level: &mut RegionLevel, c: ChunkPos, sections: &[(i32, boo
         if !ticking {
             continue;
         }
+        crate::diag::add("tb.n_sections_us", std::time::Duration::from_nanos(1000));
         for _ in 0..speed {
             // `block_random_pos`.
             let data = &mut level.blocks.data;
@@ -830,6 +831,7 @@ fn tick_chunk_blocks(level: &mut RegionLevel, c: ChunkPos, sections: &[(i32, boo
             let pos = BlockPos::new(x + (j & 15), sy * 16 + ((j >> 16) & 15), z + (j >> 8 & 15));
             let state = chunk.map_or(kiln_data::blocks::default_state::VOID_AIR, |ch| ch.get((pos.x & 15) as usize, pos.y, (pos.z & 15) as usize));
             if kiln_blocks::tick::randomly_ticks(state) || kiln_data::block_logic::fluid(state).kind == kiln_data::block_logic::FluidKind::Lava {
+                crate::diag::add("tb.n_ticks_us", std::time::Duration::from_nanos(1000));
                 kiln_blocks::tick::random_tick_at(level, pos);
                 chunk = level.cells.chunk(c);
             }
