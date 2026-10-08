@@ -157,6 +157,9 @@ pub(crate) fn player_action(p: &mut Player, level: &mut RegionLevel, action: i32
             }
             let state = level.block(bp);
             let progress = if is_air(state) { 1.0 } else { p.destroy_progress(level, state) };
+            if std::env::var_os("KILN_DIG_DEBUG").is_some() {
+                eprintln!("dig {pos:?} state {state} hardness {} speed {} correct {} progress {progress}", block_props::hardness(state), p.destroy_speed(state, false), has_correct_tool(p.inv.selected_item(), state));
+            }
             if !is_air(state) && progress >= 1.0 {
                 destroy_or_resend(p, level, pos);
                 return;
