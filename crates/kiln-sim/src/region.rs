@@ -572,7 +572,7 @@ impl RegionWork<'_> {
             let list = &self.entities.list;
             self.blocks.sculk.retain_allays(|id| list.binary_search_by_key(&id, |e| e.id).is_ok_and(|i| !list[i].removed));
         }
-        if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || env.blocks.spawn_table.is_none()) {
+        if self.entities.list.is_empty() && self.blocks.hearts.is_empty() && (self.players.is_empty() || (env.blocks.spawn_table.is_none() && self.blocks.spawners.is_empty())) {
             self.tick_block_entities(env, ticking_now);
             return;
         }
@@ -1212,6 +1212,24 @@ fn use_on_block(
     }
     if item_name == Some("minecraft:flint_and_steel") && actor.may_build {
         light_fire(p, level, main_hand, pos, dir);
+        return;
+    }
+    // `SpawnEggItem.useOn` on a mob spawner: its next spawn data's entity becomes the egg's.
+    if let Some(entity) = item_name.and_then(|n| n.strip_suffix("_spawn_egg"))
+        && p.game_mode != 3
+        && let Some(worked) = crate::mob_spawner::use_egg(level, bp, entity)
+    {
+        if !worked {
+            // `advMode.notEnabled.spawner`.
+            p.send(kiln_proto::packets::system_chat(crate::container::translatable("advMode.notEnabled.spawner"), false));
+            return;
+        }
+        let egg = if main_hand { p.inv.selected_item().item() } else { p.inv.equipped(EquipmentSlot::OffHand).item() };
+        p.award_stat(crate::player_stats::Stat::item(crate::player_stats::USED, egg), 1);
+        if p.game_mode != 1 {
+            let slot = kiln_inventory::inventory::equipment_index(if main_hand { EquipmentSlot::MainHand } else { EquipmentSlot::OffHand }, p.inv.selected);
+            kiln_inventory::Container::item_mut(&mut p.inv, slot).shrink(1);
+        }
         return;
     }
     // `SpawnEggItem.useOn`: the mob appears in the clicked block if it has no collision,

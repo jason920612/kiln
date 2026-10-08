@@ -13,8 +13,10 @@
 //!   tick and the chunk (like random ticks, see [`crate::blocks`]), and chunks go in an order
 //!   hashed from the same inputs.
 //!
-//! Spawn potentials (`spawn_costs`, soul sand valleys) and structure spawn overrides are not
-//! simulated; biomes are read at their stored 4×4×4 cells (vanilla fuzzes the lookup).
+//! Spawn potentials (`spawn_costs`, soul sand valleys) are not simulated; biomes are read at their
+//! stored 4×4×4 cells (vanilla fuzzes the lookup). Structure spawn overrides are
+//! ([`crate::structure_spawns`]): inside a fortress, a swamp hut, a monument... the structure's
+//! mobs replace the biome's.
 
 use crate::Player;
 use crate::blocks::{RegionLevel, Ticking};
@@ -29,6 +31,8 @@ use kiln_world::{Blocks, CellStore, ChunkPos};
 pub(crate) struct SpawnerData {
     /// `None`: a type Kiln does not simulate (the group is skipped when picked).
     pub kind: Option<MobKind>,
+    /// The entity type's name (empty: not a known type).
+    pub type_name: &'static str,
     pub weight: i32,
     pub min: i32,
     pub max: i32,
@@ -42,6 +46,8 @@ pub(crate) struct SpawnerData {
 pub(crate) struct SpawnTable {
     /// By biome network id (looked up for every spawn attempt).
     biomes: Vec<Option<[Vec<SpawnerData>; N]>>,
+    /// The structures' `spawn_overrides`.
+    pub structures: crate::structure_spawns::StructureSpawns,
 }
 
 /// The number of spawning categories.
@@ -51,7 +57,7 @@ impl SpawnTable {
     /// Reads `worldgen/biome/*.json` of the datapack at `dir`.
     pub fn load(dir: &std::path::Path) -> Option<SpawnTable> {
         let biome_dir = dir.join("data/minecraft/worldgen/biome");
-        let mut t = SpawnTable::default();
+        let mut t = SpawnTable { structures: crate::structure_spawns::StructureSpawns::load(dir), ..SpawnTable::default() };
         for entry in std::fs::read_dir(&biome_dir).ok()? {
             let path = entry.ok()?.path();
             let Some(name) = path.file_stem().and_then(|s| s.to_str()) else { continue };
@@ -59,24 +65,7 @@ impl SpawnTable {
             let Ok(text) = std::fs::read_to_string(&path) else { continue };
             let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else { continue };
             let spawns = &json["attributes"]["minecraft:gameplay/natural_mob_spawns"]["argument"]["spawns_by_category"];
-            let list = |cat: &str| -> Vec<SpawnerData> {
-                spawns[cat]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|s| {
-                                let kind = MobKind::by_name(s["type"].as_str()?);
-                                let weight = s["weight"].as_i64()? as i32;
-                                let (min, max, constant) = match &s["count"] {
-                                    serde_json::Value::Number(n) => (n.as_i64()? as i32, n.as_i64()? as i32, true),
-                                    c => (c["min_inclusive"].as_i64()? as i32, c["max_inclusive"].as_i64()? as i32, false),
-                                };
-                                Some(SpawnerData { kind, weight, min, max, constant })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
+            let list = |cat: &str| -> Vec<SpawnerData> { parse_spawner_list(&spawns[cat]) };
             let id = id as usize;
             if t.biomes.len() <= id {
                 t.biomes.resize_with(id + 1, || None);
@@ -86,8 +75,56 @@ impl SpawnTable {
         Some(t)
     }
 
-    fn list(&self, biome: u16, category: Category) -> &[SpawnerData] {
-        self.biomes.get(biome as usize).and_then(Option::as_ref).map_or(&[], |b| &b[cat_index(category)])
+    pub(crate) fn list(&self, biome: u16, category: Category) -> &[SpawnerData] {
+        // (`MISC` has no spawning list: the natural spawner never asks for it.)
+        let Some(i) = CATEGORIES.iter().position(|&x| x == category) else { return &[] };
+        self.biomes.get(biome as usize).and_then(Option::as_ref).map_or(&[], |b| &b[i])
+    }
+}
+
+/// A list of `MobSpawnSettings.SpawnerData` as JSON gives it (`type`, `weight`, `count`).
+pub(crate) fn parse_spawner_list(v: &serde_json::Value) -> Vec<SpawnerData> {
+    v.as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| {
+                    let name = s["type"].as_str()?;
+                    let kind = MobKind::by_name(name);
+                    let type_name = kiln_data::entities::by_name(name).map_or("", |t| t.name);
+                    let weight = s["weight"].as_i64()? as i32;
+                    let (min, max, constant) = match &s["count"] {
+                        serde_json::Value::Number(n) => (n.as_i64()? as i32, n.as_i64()? as i32, true),
+                        c => (c["min_inclusive"].as_i64()? as i32, c["max_inclusive"].as_i64()? as i32, false),
+                    };
+                    Some(SpawnerData { kind, type_name, weight, min, max, constant })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+impl SpawnTable {
+    /// `NaturalSpawner.mobsAt` for `category` at block `pos` of `biome`: the fortress's list above
+    /// nether bricks inside a fortress, else the list of a structure the position is in
+    /// (`ChunkGenerator.getMobsAt`), else the biome's.
+    pub(crate) fn mobs_at<'a>(&'a self, level: &RegionLevel, biome: u16, category: Category, pos: KBlockPos) -> &'a [SpawnerData] {
+        let structures = |c: ChunkPos| level.cells.chunk(c).and_then(|ch| ch.structures.as_deref());
+        let bricks = || kiln_data::blocks_types::block_of(level.block(pos.below())).name == "minecraft:nether_bricks";
+        self.mobs_in(&structures, bricks, biome, category, [pos.x, pos.y, pos.z])
+    }
+
+    /// [`SpawnTable::mobs_at`] over the loaded chunks' `structures` data.
+    pub(crate) fn mobs_in<'a, 'c, F>(&'a self, structures: &F, nether_bricks_below: impl FnOnce() -> bool, biome: u16, category: Category, at: [i32; 3]) -> &'a [SpawnerData]
+    where
+        F: Fn(ChunkPos) -> Option<&'c kiln_proto::nbt::Tag>,
+    {
+        if self.structures.is_empty() {
+            return self.list(biome, category);
+        }
+        if category == Category::Monster && nether_bricks_below() && self.structures.in_fortress(structures, at) {
+            return crate::structure_spawns::fortress_enemies();
+        }
+        self.structures.mobs_at(structures, at, category.name()).unwrap_or_else(|| self.list(biome, category))
     }
 }
 
@@ -663,7 +700,11 @@ fn spawn_category_for_chunk(
             let pos = KBlockPos::new(px, y, pz);
             let biome = biome_at(level, pos);
             if data.is_none() {
-                match pick(s.table.list(biome, cat), r) {
+                // `getRandomSpawnMobAt`: rivers have most of their ambient water spawns taken away.
+                if cat == Category::WaterAmbient && kiln_entity::mob::kinds::slime::biome_in_tag(biome as i32, "minecraft:reduce_water_ambient_spawns") && r.next_float() < 0.98 {
+                    break;
+                }
+                match pick(s.table.mobs_at(level, biome, cat, pos), r) {
                     None => break,
                     Some(d) => {
                         let d = d.clone();
@@ -679,7 +720,8 @@ fn spawn_category_for_chunk(
             if !s.player_within(fx, y as f64, fz, (cat.despawn_distance() * cat.despawn_distance()) as f64) {
                 continue;
             }
-            if !s.table.list(biome, cat).iter().any(|e| *e == d_) {
+            // `canSpawnMobAt`: what was picked is among what spawns at this very place.
+            if !s.table.mobs_at(level, biome, cat, pos).iter().any(|e| *e == d_) {
                 continue;
             }
             if !placement_ok(level, pos, kind) || !check_spawn_rules(level, pos, kind, r) {
@@ -810,6 +852,27 @@ impl kiln_entity::mob::ext::SpawnView for View<'_, '_> {
         let chunk = self.0.cells.chunk(ChunkPos::of_block(x, z))?;
         Some(chunk.column_height((x & 15) as usize, (z & 15) as usize, |b| !kiln_data::blocks_types::is_air(b)))
     }
+    fn monster_block_light_limit(&self) -> i32 {
+        monster_light_rules(self.0.env.dim).0
+    }
+    fn monster_light_test(&self) -> (i32, i32) {
+        let (_, lo, hi) = monster_light_rules(self.0.env.dim);
+        (lo, hi)
+    }
+    fn thundering(&self) -> bool {
+        self.0.env.weather.weather.thundering
+    }
+}
+
+/// The dimension type's `monster_spawn_block_light_limit` and the inclusive range of its
+/// `monster_spawn_light_level` (overworld: 0 and a uniform 0..=7; nether: 15 and 7; end: 0
+/// and 15).
+pub(crate) fn monster_light_rules(dim: usize) -> (i32, i32, i32) {
+    match dim {
+        1 => (15, 7, 7),
+        2 => (0, 15, 15),
+        _ => (0, 0, 7),
+    }
 }
 
 /// `SpawnPlacementTypes.ON_GROUND.isSpawnPositionOk`.
@@ -840,19 +903,8 @@ fn check_spawn_rules(level: &RegionLevel, pos: KBlockPos, kind: MobKind, r: &mut
     if level.env.mobs.difficulty == 0 {
         return false;
     }
-    let sky = kiln_world::light::light_at(&*level.cells, kiln_world::chunk::LightLayer::Sky, pos.x, pos.y, pos.z).map_or(15, i32::from);
-    if sky > r.next_int_bounded(32) {
-        return false;
-    }
-    let block = kiln_world::light::light_at(&*level.cells, kiln_world::chunk::LightLayer::Block, pos.x, pos.y, pos.z).map_or(0, i32::from);
-    if block > 0 {
-        return false;
-    }
-    let light = level.raw_brightness(pos, level.env.mobs.sky_darken);
-    if light > r.next_int_bounded(8) {
-        return false;
-    }
-    kiln_entity::mob::path::valid_spawn(below, false)
+    // `Monster.isDarkEnoughToSpawn` with the dimension's limits, then `Mob.checkMobSpawnRules`.
+    kiln_entity::mob::kinds::zombie::dark_enough_view(&View(level), kiln_entity::math::BlockPos::new(pos.x, pos.y, pos.z), r) && kiln_entity::mob::path::valid_spawn(below, false)
 }
 
 fn light_magic(level: &RegionLevel, pos: KBlockPos) -> f32 {

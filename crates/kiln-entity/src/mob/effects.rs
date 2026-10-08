@@ -52,7 +52,7 @@ pub fn can_be_affected(m: &MobData, e: &Effect) -> bool {
     };
     match m.kind.ext() {
         Some(k) => k.can_be_affected(m, e, base),
-        None => base && !(m.kind == MobKind::Spider && e.id == ids::poison()),
+        None => base && !(matches!(m.kind, MobKind::Spider | MobKind::CaveSpider) && e.id == ids::poison()),
     }
 }
 

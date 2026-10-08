@@ -81,6 +81,8 @@ mod region;
 mod rng;
 mod sculk;
 mod heart;
+mod mob_spawner;
+mod structure_spawns;
 mod sleep;
 mod stats;
 mod trading;
@@ -1565,7 +1567,13 @@ impl Sim {
         let region = self.dims[OVERWORLD_ID].regions.at(ChunkPos::of_block(x, z).cell())?;
         let p = kiln_blocks::BlockPos::new(x, y, z);
         let part = &region.part().1;
-        part.sculk.map.get(&p).map(|b| b.save()).or_else(|| part.hearts.map.get(&p).map(|h| h.save())).or_else(|| part.containers.map.get(&p).map(|c| c.save()))
+        part.sculk
+            .map
+            .get(&p)
+            .map(|b| b.save())
+            .or_else(|| part.hearts.map.get(&p).map(|h| h.save()))
+            .or_else(|| part.spawners.map.get(&p).map(|s| s.save()))
+            .or_else(|| part.containers.map.get(&p).map(|c| c.save()))
     }
 
     /// The saved form (`saveWithFullMetadata`) of the block entity at an overworld position as
@@ -1983,6 +1991,7 @@ impl Sim {
                 ],
                 global_sound_events: self.rule_bool("minecraft:global_sound_events"),
                 projectiles_break_blocks: self.rule_bool("minecraft:projectiles_can_break_blocks"),
+                spawner_blocks: self.rule_bool("minecraft:spawner_blocks_work"),
                 cramming: self.rule_int("minecraft:max_entity_cramming"),
                 difficulty: self.commands.difficulty as u8,
                 spawn_point: self.spawn,

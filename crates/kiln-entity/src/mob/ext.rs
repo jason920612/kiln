@@ -234,6 +234,24 @@ pub trait SpawnView {
         let _ = (x, z);
         None
     }
+    /// `EntitySpawnReason.isSpawner`: the spawn comes from a spawner block, which needs no valid
+    /// block below (`Mob.checkMobSpawnRules`) and no open sky (`checkSurfaceMonstersSpawnRules`).
+    fn spawner(&self) -> bool {
+        false
+    }
+    /// The dimension's `monster_spawn_block_light_limit` (overworld 0, nether 15).
+    fn monster_block_light_limit(&self) -> i32 {
+        0
+    }
+    /// The dimension's `monster_spawn_light_level` as an inclusive range (the overworld's
+    /// uniform 0..=7; a constant has equal ends and draws nothing).
+    fn monster_light_test(&self) -> (i32, i32) {
+        (0, 7)
+    }
+    /// `Level.isThundering` (monsters spawn in the thunder's light).
+    fn thundering(&self) -> bool {
+        false
+    }
 }
 
 /// `SpawnPlacementTypes` of a type.

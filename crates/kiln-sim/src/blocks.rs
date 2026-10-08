@@ -55,6 +55,8 @@ pub(crate) struct RegionBlocks {
     pub hearts: crate::heart::Hearts,
     /// Who may edit which sign (`SignBlockEntity.playerWhoMayEdit`).
     pub sign_editors: crate::signs::SignEditors,
+    /// Mob spawner block entities.
+    pub spawners: crate::mob_spawner::Spawners,
 }
 
 impl Default for RegionBlocks {
@@ -71,6 +73,7 @@ impl Default for RegionBlocks {
             sculk: Default::default(),
             hearts: Default::default(),
             sign_editors: Default::default(),
+            spawners: Default::default(),
         }
     }
 }
@@ -102,6 +105,7 @@ impl RegionBlocks {
         self.containers.chunk_loaded(pos, chunk);
         self.sculk.chunk_loaded(pos, chunk);
         self.hearts.chunk_loaded(pos, chunk);
+        self.spawners.chunk_loaded(pos, chunk);
         let moving = kiln_data::blocks::default_state::MOVING_PISTON;
         for ((x, y, z), be) in chunk.block_entities() {
             if chunk.get(x, y, z) == moving {
@@ -132,6 +136,7 @@ impl RegionBlocks {
         self.containers.chunk_unloaded(pos);
         self.sculk.chunk_unloaded(pos);
         self.hearts.chunk_unloaded(pos);
+        self.spawners.chunk_unloaded(pos);
     }
 
     /// Puts the chunk's scheduled ticks and moving pistons on it in their saved form.
@@ -139,6 +144,7 @@ impl RegionBlocks {
         self.containers.store(pos, chunk);
         self.sculk.store(pos, chunk);
         self.hearts.store(pos, chunk);
+        self.spawners.store(pos, chunk);
         let k = key(pos);
         let block = self.block_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
         let fluid = self.fluid_ticks.container(k).map(|c| c.pack(game_time)).unwrap_or_default();
@@ -191,6 +197,7 @@ impl RegionPart for RegionBlocks {
         into.sculk.merge(std::mem::take(&mut from.sculk));
         into.hearts.merge(std::mem::take(&mut from.hearts));
         into.sign_editors.merge(std::mem::take(&mut from.sign_editors));
+        into.spawners.merge(std::mem::take(&mut from.spawners));
     }
 
     fn split(mut self, owner_of: &dyn Fn(CellPos) -> usize, n: usize) -> SmallVec<[Self; 4]> {
@@ -239,6 +246,8 @@ impl RegionPart for RegionBlocks {
         {
             let mut editors: SmallVec<[&mut crate::signs::SignEditors; 4]> = parts.iter_mut().map(|p| &mut p.sign_editors).collect();
             self.sign_editors.split_into(&mut editors, |p| owner(p.chunk()));
+            let mut spawners: SmallVec<[&mut crate::mob_spawner::Spawners; 4]> = parts.iter_mut().map(|p| &mut p.spawners).collect();
+            self.spawners.split_into(&mut spawners, |c| owner((c.x, c.z)));
         }
         parts[0].random = self.random;
         parts[0].data.rand_value = self.data.rand_value;
@@ -246,7 +255,7 @@ impl RegionPart for RegionBlocks {
     }
 
     fn count(&self) -> usize {
-        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len()
+        self.block_ticks.chunks().count() + self.fluid_ticks.chunks().count() + self.data.pistons.len() + self.data.block_events.len() + self.containers.len() + self.sculk.len() + self.hearts.len() + self.sign_editors.len() + self.spawners.len()
     }
 
     fn for_each_cell(&self, f: &mut dyn FnMut(CellPos)) {
@@ -439,6 +448,7 @@ impl Level for RegionLevel<'_> {
             crate::container::block_set(self, pos, flags);
             crate::sculk::block_set(self, pos);
             crate::heart::block_set(self, pos);
+            crate::mob_spawner::block_set(self, pos);
         }
         Some(old)
     }

@@ -33,6 +33,7 @@ pub mod prof;
 pub mod projectile;
 pub mod ride;
 pub mod shape;
+pub mod spawner;
 pub mod spear;
 pub mod tnt;
 pub mod vibration;

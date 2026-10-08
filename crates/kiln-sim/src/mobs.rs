@@ -39,6 +39,8 @@ pub(crate) struct MobRules {
     pub global_sound_events: bool,
     /// `minecraft:projectiles_can_break_blocks`.
     pub projectiles_break_blocks: bool,
+    /// `minecraft:spawner_blocks_work`.
+    pub spawner_blocks: bool,
     pub cramming: i32,
     pub difficulty: u8,
     /// The world spawn (no natural spawns within 24 blocks).
@@ -65,6 +67,7 @@ impl Default for MobRules {
             explosion_decay: [true, true, false],
             global_sound_events: true,
             projectiles_break_blocks: true,
+            spawner_blocks: true,
             cramming: 24,
             difficulty: 2,
             spawn_point: [0, 64, 0],
