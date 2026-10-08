@@ -1924,7 +1924,7 @@ pub(crate) fn tick(
         .iter()
         .filter(|v| v.alive && !v.spectator)
         .map(|v| {
-            let h = v.height;
+            let h = v.height as f64;
             (v.id, Aabb::new(v.pos.x - 0.3, v.pos.y, v.pos.z - 0.3, v.pos.x + 0.3, v.pos.y + h, v.pos.z + 0.3).inflate(1.0, 0.5, 1.0))
         })
         .collect();
@@ -2177,7 +2177,7 @@ fn ride_players(sim: &mut SimLevel) {
                 kiln_entity::ride::remove_passenger(vp, pid);
             }
             let vp = sim.list[j].phys.clone().expect("vehicle state");
-            let height = sim.players[k].dimensions().1;
+            let height = sim.players[k].dimensions().1 as f64;
             to = arr(kiln_entity::ride::dismount_location(&*sim, &vp, 0.6, height));
         }
         let p = &mut *sim.players[k];
