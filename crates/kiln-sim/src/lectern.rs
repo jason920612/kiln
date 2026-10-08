@@ -41,6 +41,7 @@ pub(crate) fn use_item_on(p: &mut Player, level: &mut RegionLevel, pos: BlockPos
         p.inv.times_changed += 1;
     }
     let c = level.blocks.containers.get_mut(pos).filter(|c| c.kind == BeKind::Lectern)?;
+    crate::container::resolve_book(&mut one);
     c.items[0] = one;
     c.page = 0;
     c.mark_changed();

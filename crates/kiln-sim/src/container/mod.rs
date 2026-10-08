@@ -190,6 +190,16 @@ const MODELED: [&str; 34] = [
     "keepPacked",
 ];
 
+/// `LecternBlockEntity.resolveBook` (`WrittenBookContent.resolveForItem`): the pages are final (marked resolved).
+/// Selectors and scores in the pages are not evaluated (they stay as they are).
+pub(crate) fn resolve_book(book: &mut ItemStack) {
+    if let Some(content) = book.get(kiln_item::keys::WRITTEN_BOOK_CONTENT).filter(|c| !c.resolved) {
+        let mut content = content.clone();
+        content.resolved = true;
+        book.set(kiln_item::component::Component::WrittenBookContent(content));
+    }
+}
+
 /// `LecternBlockEntity.getPageCount`: the pages of a written or writable book (0 for anything else).
 pub(crate) fn page_count(book: &ItemStack) -> i32 {
     if let Some(w) = book.get(kiln_item::keys::WRITTEN_BOOK_CONTENT) {
@@ -304,7 +314,8 @@ impl ContainerBe {
         // `LecternBlockEntity.loadAdditional`: the book and the page it is open at.
         let mut page = 0;
         if kind == BeKind::Lectern {
-            let book = nbt.get("Book").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty);
+            let mut book = nbt.get("Book").and_then(|t| ItemStack::from_nbt(t).ok()).filter(|s| !s.is_empty()).unwrap_or_else(ItemStack::empty);
+            resolve_book(&mut book);
             page = int("Page", 0).clamp(0, (page_count(&book) - 1).max(0));
             list.stacks = vec![book];
         }
