@@ -811,6 +811,9 @@ public class MobVectors {
                         dbg.append("] target=").append(np.getTarget()).append(" reach=").append(np.canReach());
                     }
                     var mc = dm.getMoveControl();
+                    var lc = dm.getLookControl();
+                    dbg.append(" LOOK cd=").append(get(lc, "lookAtCooldown")).append(" want=").append(get(lc, "wantedX")).append(',').append(get(lc, "wantedY")).append(',').append(get(lc, "wantedZ"))
+                            .append(" xmax=").append(get(lc, "xMaxRotAngle")).append(" ymax=").append(get(lc, "yMaxRotSpeed")).append(" xRot=").append(dm.getXRot()).append(" eyeY=").append(dm.getEyeY());
                     dbg.append(" op=").append(get(mc, "operation")).append(" want=").append(get(mc, "wantedX")).append(',').append(get(mc, "wantedY")).append(',').append(get(mc, "wantedZ")).append(" speedMod=").append(get(mc, "speedModifier"));
                     Files.writeString(Path.of("dbg.txt"), dbg + "\n", java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
                 }
