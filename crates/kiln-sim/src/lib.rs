@@ -826,10 +826,7 @@ struct Dim {
     install_spent: Duration,
     /// A save handed its chunks to the encoders: they go to the writer once all are encoded.
     flush_when_encoded: bool,
-    /// When each chunk queued for generation was last asked for: chunks nobody asked for
-    /// lately (the players moved on) leave the queue before a thread takes them, as vanilla
-    /// drops generation work whose ticket went.
-    asked: HashMap<ChunkPos, i64>,
+
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
@@ -932,7 +929,6 @@ impl Dim {
             urgent: HashSet::new(),
             install_spent: Duration::ZERO,
             flush_when_encoded: false,
-            asked: HashMap::new(),
             game_time,
             entity_store,
             poi_store,
@@ -2574,6 +2570,7 @@ impl Sim {
                 list.push(player_chunk(p.pos));
             }
         }
+        let own_chunks_all = own_chunks.clone();
         for dim in 0..self.dims.len() {
             // (Sorted and without repeats; a set only when chunks are to unload.)
             let mut keep: Vec<ChunkPos> = std::mem::take(&mut own_chunks[dim]);
@@ -2630,20 +2627,18 @@ impl Sim {
             // order that does not depend on how regions split them.
             let mut wanted = std::mem::take(&mut d.requests);
             wanted.sort_unstable_by_key(|&(rank, conn, _)| (rank, conn));
-            // Generation nobody asked for in the last 2 s goes (not the players' own chunks).
-            if d.generation.is_some() {
-                let now = self.game_time;
-                for &(_, _, c) in &wanted {
-                    d.asked.insert(c, now);
-                }
-                if now % 20 == 0 {
-                    let pool = d.generation.as_mut().unwrap();
-                    for p in pool.queued() {
-                        if !d.urgent.contains(&p) && d.asked.get(&p).is_none_or(|&t| now - t > 40) {
-                            pool.cancel(p);
-                        }
+            // Chunks queued for generation that no player can see any more (they moved on) leave
+            // the queue before a thread takes them, as vanilla drops generation work whose
+            // ticket went (the chunks players wait for in limbo stay).
+            if self.game_time % 20 == 0 && d.generation.is_some() {
+                let reach = self.config.view_distance as i32 + 1;
+                let viewers = &own_chunks_all[dim];
+                let pool = d.generation.as_mut().unwrap();
+                for p in pool.queued() {
+                    let seen = viewers.iter().any(|v| (v.x - p.x).abs() <= reach && (v.z - p.z).abs() <= reach);
+                    if !seen && !d.urgent.contains(&p) {
+                        pool.cancel(p);
                     }
-                    d.asked.retain(|p, _| pool.is_queued(*p));
                 }
             }
             let mut loads = 0;

@@ -748,9 +748,12 @@ impl crate::Dim {
         let owner = |id: i32| owners.get(&id).copied();
         let mut groups: HashMap<ChunkPos, Vec<Tag>> = HashMap::new();
         let mut leaving: HashSet<i32> = HashSet::new();
+        // The entities to write, by region, in list order: (chunk, index).
+        let mut to_save: Vec<Vec<(ChunkPos, usize)>> = Vec::new();
         for r in self.regions.iter() {
             // Lightning bolts and fishing bobbers are never saved (`EntityType.noSave`).
             let list = &r.part().0.list;
+            let mut mine = Vec::new();
             for (i, e) in list.iter().enumerate().filter(|(_, e)| !e.removed && !matches!(e.kind.name, "minecraft:lightning_bolt" | "minecraft:fishing_bobber")) {
                 // A stack is saved, and unloaded, by its root (`Entity.save`: a passenger is
                 // saved inside its vehicle, in the chunk the root is in).
@@ -758,12 +761,31 @@ impl crate::Dim {
                 let c = entities::chunk_of(list[root].pos);
                 let loaded = self.regions.chunk(c).is_some();
                 if root == i && storing && (all || !loaded) {
-                    groups.entry(c).or_default().push(entities::save_in(list, i, &owner));
+                    mine.push((c, i));
                 }
                 if !loaded {
                     leaving.insert(e.id);
                 }
             }
+            to_save.push(mine);
+        }
+        // Encoding the entities reads them only: a whole-world save (thousands of entities)
+        // encodes side by side, in the same order.
+        let lists: Vec<&[entities::Entity]> = self.regions.iter().map(|r| &r.part().0.list[..]).collect();
+        let jobs: Vec<(usize, ChunkPos, usize)> = to_save.iter().enumerate().flat_map(|(r, v)| v.iter().map(move |&(c, i)| (r, c, i))).collect();
+        let encode = |part: &[(usize, ChunkPos, usize)]| part.iter().map(|&(r, c, i)| (c, entities::save_in(lists[r], i, &owner))).collect::<Vec<_>>();
+        let encoded: Vec<(ChunkPos, Tag)> = if jobs.len() >= 512 {
+            let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+            let per = jobs.len().div_ceil(threads);
+            std::thread::scope(|scope| {
+                let workers: Vec<_> = jobs.chunks(per).map(|part| scope.spawn(move || encode(part))).collect();
+                workers.into_iter().flat_map(|w| w.join().expect("encoding entities")).collect()
+            })
+        } else {
+            encode(&jobs)
+        };
+        for (c, tag) in encoded {
+            groups.entry(c).or_default().push(tag);
         }
         let mut gone = Vec::new();
         if !leaving.is_empty() {
