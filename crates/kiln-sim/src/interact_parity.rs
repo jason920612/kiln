@@ -650,6 +650,9 @@ fn run_case(line: &Value) -> Vec<String> {
         // the block changes at the end of the tick, Kiln's regions deliver both with the tick's
         // block work (the client cannot tell).
         let mut got_packets: Vec<String> = take_packets(&stats, line["menus"].as_bool() == Some(true), maps).iter().map(|v| v.to_string()).collect();
+        if std::env::var_os("KILN_TRACE_PACKETS").is_some() {
+            eprintln!("TRACE {} step {n}: {got_packets:?}", line["name"]);
+        }
         let mut want_packets: Vec<String> = want["packets"].as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
         // Vanilla sends two or more changes of one section as a Section Blocks Update, which the
         // vectors do not record (Kiln sends each change on its own).

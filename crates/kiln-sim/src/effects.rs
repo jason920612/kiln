@@ -143,7 +143,7 @@ impl Player {
         }
         // `MobEffect.onEffectAdded`: the omens announce themselves (`soundOnAdded`) to everyone near.
         if let Some(sound) = effect_type(e.id).and_then(|t| t.sound_on_added) {
-            self.sound_for_all(&format!("minecraft:{sound}"), kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
+            self.sound_for_all(sound, kiln_proto::packets::world_fx::SoundSource::Players, 1.0, 1.0);
         }
         if Some(e.id) == effect_id("minecraft:levitation") {
             self.levitation_start = Some((self.tick_count, self.pos));

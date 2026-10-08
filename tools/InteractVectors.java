@@ -946,7 +946,7 @@ public class InteractVectors {
         c.step(waitTicks(3)).step(useOn(3, 100, 0, 1, 0)).step(waitTicks(1)).step(waitTicks(1));
         out.add(c);
         // Bad Omen turns it ominous.
-        String ominous = "ominous_config:{total_mobs:6.0f,simultaneous_mobs:3.0f,ticks_between_spawn:10,spawn_potentials:[" + zombie + "],"
+        String ominous = "ominous_config:{total_mobs:6.0f,simultaneous_mobs:3.0f,ticks_between_spawn:40,spawn_potentials:[" + zombie + "],"
                 + "items_to_drop_when_ominous:\"minecraft:empty\"," + key + "}";
         c = trialCase("trial_ominous", "trial_spawner_state=waiting_for_players", "{" + normal + "," + ominous + "}");
         c.step(waitTicks(25)).step(cmdStep("effect give @a minecraft:bad_omen 600 0")).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20));
