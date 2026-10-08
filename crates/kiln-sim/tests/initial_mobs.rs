@@ -100,5 +100,8 @@ fn initial_mobs_parity() {
         }
     }
     println!("initial mobs: {checked} chunks compared, {} differ", wrong.len());
+    for w in &wrong {
+        println!("{w}");
+    }
     assert!(wrong.len() * 20 <= checked, "{} of {checked} chunks differ:\n{}", wrong.len(), wrong.iter().take(6).cloned().collect::<Vec<_>>().join("\n"));
 }
