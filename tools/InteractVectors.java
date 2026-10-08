@@ -662,12 +662,12 @@ public class InteractVectors {
         out.add(c);
         // The menu: opened, pages turned, jumped to, the book taken.
         // (Kiln's level ticks between the steps and the pulse ends two ticks after the turn; the recorded level stands
-        // still: a turn is followed by at most one more step.)
+        // still: a turn is the last step.)
         c = blockCase("lectern_open_and_next", with).menus().custom("minecraft:interact_with_lectern");
-        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 2)).step(op("op", "menu_close"));
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 2));
         out.add(c);
         c = blockCase("lectern_open_and_previous", with).menus();
-        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 1)).step(op("op", "menu_close"));
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 1));
         out.add(c);
         for (int jump : new int[] {100, 103, 104, 150}) {
             c = blockCase("lectern_jump_" + jump, with).menus();
