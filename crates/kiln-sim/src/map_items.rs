@@ -212,6 +212,11 @@ impl crate::Sim {
         // level note the frame and are sent what changed.
         let mut by_conn: Vec<_> = self.players.keys().copied().collect();
         by_conn.sort();
+        if std::env::var_os("KILN_MAP_DEBUG").is_some() {
+            for f in &frames {
+                eprintln!("map frame {} age {} at time {}", f.id, f.age, time);
+            }
+        }
         for f in frames.iter().filter(|f| f.age % 10 == 0) {
             let Some(data) = store.get(f.map) else { continue };
             for conn in by_conn.iter().copied() {
