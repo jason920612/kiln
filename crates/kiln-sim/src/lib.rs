@@ -68,6 +68,7 @@ mod generation;
 mod chunkstats;
 mod golem;
 mod independent;
+pub use generation::generation_totals;
 pub use independent::{InjectedDelay, ScheduleMode};
 mod hazards;
 mod health;
@@ -1118,6 +1119,10 @@ pub struct Sim {
     plugins: Option<plugins::SimPlugins>,
     /// Independent scheduling state: regions ticking away, their clocks.
     independent: independent::Independent,
+    /// What each region's packet and tick work took last time (ns), so the biggest start first.
+    unit_costs: [FastMap<(DimId, RegionId), u64>; 2],
+    /// Some player's post effects may have changed since they were last sent.
+    post_effects_pending: bool,
     /// `WanderingTraderSpawner` (the overworld's).
     trader: trader::TraderSpawner,
     /// Borders, tick rate, forced chunks and random sequences (the world commands).
@@ -1329,6 +1334,8 @@ impl Sim {
             advancements: Default::default(),
             plugins: None,
             independent: Default::default(),
+            unit_costs: Default::default(),
+            post_effects_pending: false,
             trader: Default::default(),
             world: world_state::WorldState { pipelines, feature_hosts, ..Default::default() },
         };
@@ -1424,7 +1431,7 @@ impl Sim {
         let dt = Instant::now();
         let (local, exclusive) = self.route(packets);
         let dt = diag::lap("p.route", dt);
-        let outs = self.run_regions(local, |w, env, ctx| w.apply_packets(env, ctx));
+        let outs = self.run_regions(0, local, |w, env, ctx| w.apply_packets(env, ctx));
         diag::lap("p.run", dt);
         for (dim, out) in outs {
             self.dims[dim].spawns.extend(out.spawns);
@@ -1470,10 +1477,11 @@ impl Sim {
         // L: regions tick in parallel; in independent mode, regions too slow for the tick
         // tick away on their own.
         self.lend_slow_regions();
-        let outs = self.run_regions(BTreeMap::new(), |w, env, ctx| w.tick(env, ctx));
+        let outs = self.run_regions(1, BTreeMap::new(), |w, env, ctx| w.tick(env, ctx));
         self.note_region_ticks();
         let mut times = [Duration::ZERO; region::SUB_PHASES.len()];
         let mut travels = Vec::new();
+        let mut portal_candidates = Vec::new();
         for (dim, out) in outs {
             let d = &mut self.dims[dim];
             d.requests.extend(out.wanted);
@@ -1486,6 +1494,7 @@ impl Sim {
                 }
             }
             travels.extend(out.portals);
+            portal_candidates.extend(out.portal_candidates.into_iter().map(|id| (dim, id)));
             self.announce_deaths(out.deaths);
             for (t, d) in times.iter_mut().zip(out.times) {
                 *t += d;
@@ -1494,18 +1503,25 @@ impl Sim {
                 diag::add(name, d);
             }
         }
+        // Entities from here on have newer ids.
+        let first_new = self.next_entity_id;
         self.materialize_spawns();
         // What the dragon and the crystals told the fight.
-        self.dragon_fight_messages();
+        let fight = self.dragon_fight_messages();
         // Players whose portal time ran out change level (serially: two levels take part).
         if !travels.is_empty() {
             self.rendezvous();
         }
         travels.sort_unstable_by_key(|t: &portal::Travel| t.conn);
+        // Entities in portals: those the regions found near portal blocks and the newer ones,
+        // unless blocks or entities may have changed since the regions looked (a fight's
+        // portal, players' trips, regions ticking away).
+        let looked = travels.is_empty() && !fight && self.dims.iter().all(|d| d.lent.is_empty());
         for t in travels {
             self.travel(t);
         }
-        self.entity_portals();
+        portal_candidates.sort_unstable();
+        self.entity_portals(looked.then_some((&portal_candidates[..], first_new)));
         self.materialize_spawns();
         lap(&mut self.stats, "regions");
         // CPU time summed over regions (the "regions" phase is wall time).
@@ -1689,6 +1705,12 @@ impl Sim {
     /// Loaded chunks per level, in [`DIMENSIONS`] order (for tests and tools).
     pub fn loaded_chunks(&self) -> Vec<usize> {
         self.dims.iter().map(|d| d.regions.loaded_chunks()).collect()
+    }
+
+    /// Chunk work not done yet: chunks players asked for this tick, queued or being generated,
+    /// or waiting for a cell (load tools wait for none before measuring).
+    pub fn chunk_backlog(&self) -> usize {
+        self.dims.iter().map(|d| d.requests.len() + d.pending.len() + d.generation.as_ref().map_or(0, |g| g.in_flight())).sum()
     }
 
     pub fn player_count(&self) -> usize {
@@ -2177,6 +2199,7 @@ impl Sim {
     /// output with its level.
     fn run_regions(
         &mut self,
+        kind: usize,
         mut packets: BTreeMap<(DimId, RegionId), Vec<(ConnId, PlayIn)>>,
         f: impl Fn(&mut RegionWork, &Env, &kiln_sched::Ctx<'_>) + Sync,
     ) -> Vec<(DimId, RegionOut)> {
@@ -2208,14 +2231,50 @@ impl Sim {
             }));
         }
         debug_assert!(buckets.is_empty(), "players in regions that do not exist");
-        // Rough estimate for the pool's start order: players dominate a region's cost.
+        // The pool starts the biggest first: what the region's work took lately, else a rough
+        // estimate (players dominate a crowd's region, entities a spread one's).
+        let last = &self.unit_costs[kind];
         let cost = |w: &RegionWork| {
-            20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
+            last.get(&(w.dim, w.region)).copied().unwrap_or_else(|| {
+                20_000 + w.players.len() as u64 * 5_000 + w.entities.list.len() as u64 * 500 + w.packets.len() as u64 * 500
+            })
         };
+        // Speculation (exact either way) pays only in a region that takes longer than its share
+        // of the workers' time: elsewhere the workers are busy with other regions anyway and the
+        // copies only cost CPU. Once on, it stays on until the region falls well below its share
+        // (a region it speeds up would otherwise flip back and forth).
+        if kind == 1 {
+            let costs: Vec<u64> = work.iter().map(&cost).collect();
+            let total: u64 = costs.iter().sum();
+            let workers = self.pool.workers() as u64;
+            for (w, c) in work.iter_mut().zip(costs) {
+                let pace = &mut w.entities.spec;
+                pace.wanted = if pace.wanted { c * workers * 10 >= total * 6 } else { c * workers > total };
+            }
+        }
         let dt = diag::lap("rr.work", dt);
         let report = self.pool.run_units(&mut work, cost, |w, ctx| f(w, envs[w.dim].as_ref().expect("the environment of a level with regions"), ctx));
         diag::lap("rr.units", dt);
         self.independent.last_fork = work.iter().zip(&report.unit_ns).map(|(w, &ns)| (w.dim, w.region, ns)).collect();
+        // Smoothed (a quarter of the new time), so one tick held up by the machine does not
+        // reorder everything.
+        let old = std::mem::take(&mut self.unit_costs[kind]);
+        self.unit_costs[kind] =
+            self.independent.last_fork.iter().map(|&(d, r, ns)| ((d, r), old.get(&(d, r)).map_or(ns, |&o| (o * 3 + ns) / 4))).collect();
+        if kind == 1 && self.game_time % 100 == 0 && std::env::var_os("KILN_TMP_REGIONS").is_some() {
+            let mut v: Vec<(u64, usize, String)> = work.iter().zip(&report.unit_ns).map(|(w, &ns)| {
+                let mut c: BTreeMap<&str, usize> = BTreeMap::new();
+                for e in &w.entities.list { *c.entry(e.kind.name.trim_start_matches("minecraft:")).or_default() += 1; }
+                let pos = w.players.first().map(|p| [p.pos[0] as i32, p.pos[1] as i32, p.pos[2] as i32]);
+                (ns / 1000, w.players.len(), format!("{pos:?} spec {} {c:?}", w.entities.spec.wanted))
+            }).collect();
+            v.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+            for r in v.iter().take(4) { eprintln!("TMP {r:?}"); }
+        }
+        if let Some(&max) = report.unit_ns.iter().max() {
+            diag::add(["rr.max_unit_p", "rr.max_unit"][kind], Duration::from_nanos(max));
+            diag::add(["rr.sum_units_p", "rr.sum_units"][kind], Duration::from_nanos(report.unit_ns.iter().sum()));
+        }
         work.into_iter().map(|w| (w.dim, w.out)).collect()
     }
 
@@ -2274,14 +2333,15 @@ impl Sim {
         // Entities loaded with a chunk have their ids before the chunk can leave again.
         self.materialize_spawns();
         // Every player's own chunk, by level (one pass over the players).
-        let mut own_chunks: Vec<HashSet<ChunkPos>> = (0..self.dims.len()).map(|_| HashSet::new()).collect();
+        let mut own_chunks: Vec<Vec<ChunkPos>> = (0..self.dims.len()).map(|_| Vec::new()).collect();
         for p in self.players.values() {
-            if let Some(set) = own_chunks.get_mut(p.dim) {
-                set.insert(player_chunk(p.pos));
+            if let Some(list) = own_chunks.get_mut(p.dim) {
+                list.push(player_chunk(p.pos));
             }
         }
         for dim in 0..self.dims.len() {
-            let mut keep: HashSet<ChunkPos> = std::mem::take(&mut own_chunks[dim]);
+            // (Sorted and without repeats; a set only when chunks are to unload.)
+            let mut keep: Vec<ChunkPos> = std::mem::take(&mut own_chunks[dim]);
             // Force-loaded chunks (`/forceload`) stay, and load like a player's own chunk.
             keep.extend(self.world.forced[dim].iter().map(|&[x, z]| ChunkPos::new(x, z)));
             // The dragon fight's arena stays while its boss bar has players (`TicketType.DRAGON`),
@@ -2299,8 +2359,10 @@ impl Sim {
                     }
                 }
             }
+            keep.sort_unstable();
+            keep.dedup();
             let unloads = std::mem::take(&mut self.dims[dim].unloads);
-            let unloaded = self.dims[dim].unload(unloads, &keep);
+            let unloaded = if unloads.is_empty() { Vec::new() } else { self.dims[dim].unload(unloads, &keep.iter().copied().collect()) };
             if !unloaded.is_empty() {
                 debug!("unloaded {} chunks of {}", unloaded.len(), self.dims[dim].key);
                 let owners = self.owner_uuids();
@@ -2310,9 +2372,7 @@ impl Sim {
             let d = &mut self.dims[dim];
             d.install_generated();
             // Every player's own chunk, uncapped: each player must stand in an owned cell.
-            let mut own: Vec<ChunkPos> = keep.into_iter().collect();
-            own.sort_unstable();
-            for pos in own {
+            for pos in keep {
                 if !d.is_loaded(pos) {
                     d.load_chunk(pos);
                 }
@@ -2570,6 +2630,7 @@ impl Sim {
         // Viewers in the old level saw the death (or the player walk into the portal): they
         // forget it and get the entity again once tracking re-evaluates it.
         self.untrack_everywhere(conn);
+        self.post_effects_pending = true;
         let p = self.players.get_mut(&conn).unwrap();
         p.send(info_packet);
         // `PlayerList.respawn` sends the post effects again; the new player starts its first
@@ -2819,6 +2880,7 @@ impl Sim {
     }
 
     fn join(&mut self, j: JoinInfo, joining: persist::Joining) {
+        self.post_effects_pending = true;
         let entity_id = self.next_entity_id;
         self.next_entity_id += 1;
         let spawn = joining.pos;

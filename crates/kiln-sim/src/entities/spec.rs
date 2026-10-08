@@ -28,6 +28,10 @@ const MIN_ENTITIES: usize = 8;
 #[derive(Default)]
 pub(crate) struct Pace {
     paused: u32,
+    /// Whether the region's turns are worth trying side by side this tick: only a region that
+    /// holds up the others (its tick takes more than its share of the workers' time) gains, the
+    /// copies and logs only cost CPU otherwise ([`crate::Sim::run_regions`] decides).
+    pub(crate) wanted: bool,
 }
 
 /// Ran-in-place share (numerator, denominator) above which speculation pauses.
@@ -727,7 +731,7 @@ fn shape(sim: &SimLevel, id: i32) -> Option<(Aabb, bool)> {
 /// The region's entity turns with speculation ([`self`]); `false` if the region does not qualify
 /// (the caller runs the turns in order).
 pub(super) fn tick_speculative(sim: &mut SimLevel, pace: &mut Pace, ticking: &blocks::Ticking, any_player: bool, ctx: &kiln_sched::Ctx<'_>) -> bool {
-    if !sim.level.env().speculate || sim.list.len() < MIN_ENTITIES || ctx.workers() < 2 {
+    if !sim.level.env().speculate || !pace.wanted || sim.list.len() < MIN_ENTITIES || ctx.workers() < 2 {
         return false;
     }
     if pace.paused > 0 {

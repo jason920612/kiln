@@ -163,11 +163,28 @@ fn each_bit(words: impl Iterator<Item = u64>) -> impl Iterator<Item = usize> {
 /// A receiver's connections by the transmitter's slot, with the sets of transmitters it has
 /// a block, chunk and azimuth connection from (so a turn can tell which steps may send
 /// anything without looking at each connection).
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone)]
 struct Row {
     data: Vec<Stored>,
     /// Block, chunk and azimuth connections.
     kinds: [Bits; 3],
+    /// Each azimuth connection's quiet deadline ([`azimuth_deadline`]) rounded down to `f32`, 0
+    /// elsewhere, side by side (as long as `data`): a turn compares a word of slots at a time
+    /// against the odometers instead of visiting each connection.
+    deadlines: Vec<f32>,
+}
+
+/// Equal connections; the deadlines are a cache.
+impl PartialEq for Row {
+    fn eq(&self, other: &Row) -> bool {
+        self.data == other.data && self.kinds == other.kinds
+    }
+}
+
+/// `d` rounded down to `f32` (a deadline that comes no later).
+fn round_down(d: f64) -> f32 {
+    let f = d as f32;
+    if f64::from(f) > d { f.next_down() } else { f }
 }
 
 impl Row {
@@ -182,9 +199,11 @@ impl Row {
                 return None;
             }
             self.data.resize(s + 1, Stored::NONE);
+            self.deadlines.resize(s + 1, 0.0);
         }
         let new = Stored::of(c);
         let old = std::mem::replace(&mut self.data[s], new);
+        self.deadlines[s] = 0.0;
         let (was, now) = ((old.meta & 3) as usize, (new.meta & 3) as usize);
         if was != now {
             if was != 0 {
@@ -433,7 +452,9 @@ fn azimuth_deadline(odo: f64, src: &Snap, me: &Snap, now: f32, told: f32) -> f64
     let far = dist - f64::from(REALLY_FAR) - 0.05;
     let slack = f64::from(AZIMUTH_STEP) - f64::from((now - told).abs()) - 2.0 * ATAN2_ERROR - 1e-5;
     let cut = std::f64::consts::PI - f64::from(now.abs()) - ATAN2_ERROR - 1e-5;
-    let turn = slack.min(cut) * horizontal / std::f64::consts::FRAC_PI_2;
+    // An offset `horizontal` long moved by `b` turns by at most `asin(b / horizontal)`.
+    let turn = horizontal * slack.min(cut).min(std::f64::consts::FRAC_PI_2).sin() * (1.0 - 1e-9);
+
     let budget = far.min(turn) - 1e-6;
     if budget <= 0.0 { 0.0 } else { odo + budget }
 }
@@ -649,8 +670,14 @@ fn run_share(share: &Share, t: &Turns) {
         assert!(out[sent..] == want[..] && *row == want_row, "locator bar: the quick share of slot {r} differs from stepping every pair");
         return;
     }
-    quick_share(row, r, me, t, out);
+    let sent = out.len();
+    let steps = quick_share(row, r, me, t, out);
+    COUNTS[0].fetch_add(steps, std::sync::atomic::Ordering::Relaxed);
+    COUNTS[1].fetch_add((out.len() - sent) as u64, std::sync::atomic::Ordering::Relaxed);
 }
+
+/// Steps run in full and packets sent by the shares since the last turns (`KILN_PHASE_DETAIL`).
+static COUNTS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 /// Checks every quick share against stepping every pair ([`verify`]).
 static VERIFY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -678,7 +705,9 @@ fn every_step(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes
     }
 }
 
-fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) {
+/// Returns how many steps it ran in full.
+fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Bytes>) -> u64 {
+    let steps = std::cell::Cell::new(0u64);
     let own;
     let vis: &Bits = match t.views.get(&(me.center, me.view)) {
         Some(v) => v,
@@ -705,19 +734,23 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
                 & !t.spectators[i]
                 & ((k1 & (t.settled_block[i] | st)) | (k2 & (t.settled_chunk[i] | st) & !vis[i]));
             let mut open = among(i) & t.present[i] & !quiet;
-            let mut azimuths = open & word(&row.kinds[2], i) & unbreakable(i);
-            while azimuths != 0 {
-                let b = azimuths.trailing_zeros() as usize;
-                azimuths &= azimuths - 1;
-                let s = i * 64 + b;
-                if t.odo[s] + odo_r < row.data[s].deadline() {
-                    open &= !(1 << b);
+            let azimuths = open & word(&row.kinds[2], i) & unbreakable(i);
+            if azimuths != 0 {
+                // The word's connections before their deadlines, all 64 compared at once.
+                let at = (i * 64).min(row.deadlines.len());
+                let deadlines = &row.deadlines[at..(at + 64).min(row.deadlines.len())];
+                let odo = &t.odo[at.min(t.odo.len())..(at + deadlines.len()).min(t.odo.len())];
+                let mut before = 0u64;
+                for (k, (&o, &d)) in odo.iter().zip(deadlines).enumerate() {
+                    before |= u64::from(o + odo_r < f64::from(d)) << k;
                 }
+                open &= !(azimuths & before);
             }
             open
         });
         let open: Vec<usize> = each_bit(words).filter(|&s| s != r).collect();
         prefetch(row, &open);
+        steps.set(steps.get() + open.len() as u64);
         open
     };
     let by_rank = |mut v: Vec<usize>| {
@@ -729,7 +762,7 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
         for s in by_rank(open(row, &|i| all_movers[i], &|_| 0)) {
             full_step(row, r, s, me, t, out, true);
         }
-        return;
+        return steps.get();
     }
     let earlier = earlier_than(own as usize);
     // `updateWaypoint` of the movers before this receiver: their connections to it.
@@ -747,6 +780,7 @@ fn quick_share(row: &mut Row, r: usize, me: &Snap, t: &Turns, out: &mut Vec<Byte
     for s in by_rank(open(row, &|i| all_movers[i] & !earlier[i], &|_| !0)) {
         full_step(row, r, s, me, t, out, true);
     }
+    steps.get()
 }
 
 /// Asks for the connections about to be stepped (scattered over a row that other work has
@@ -790,8 +824,10 @@ fn full_step(row: &mut Row, r: usize, s: usize, me: &Snap, t: &Turns, out: &mut 
             } else {
                 (stored, last)
             };
-            new.set_deadline(azimuth_deadline(odo, src, me, now, told));
+            let deadline = azimuth_deadline(odo, src, me, now, told);
+            new.set_deadline(deadline);
             row.data[s] = new;
+            row.deadlines[s] = round_down(deadline);
             return;
         }
     }
@@ -956,11 +992,14 @@ impl Sim {
     /// joined players' first tick ends.
     pub(crate) fn tick_waypoints(&mut self) {
         let on = self.locator_bar();
-        let mut conns: Vec<ConnId> = self.players.keys().copied().collect();
-        conns.sort_unstable();
-        for &conn in &conns {
-            let p = &self.players[&conn];
-            let (dim, uuid, registered, sneaking) = (p.dim, p.uuid, p.waypoint_dim, p.sneaking);
+        // One pass over the players: what each needs, in connection order.
+        let mut looked: Vec<(ConnId, DimId, Uuid, Option<DimId>, bool, bool)> = self
+            .players
+            .iter()
+            .map(|(&c, p)| (c, p.dim, p.uuid, p.waypoint_dim, p.sneaking, !p.waypoint_first_tick && p.waypoint_last_pos != p.pos))
+            .collect();
+        looked.sort_unstable_by_key(|l| l.0);
+        for &(conn, dim, uuid, registered, sneaking, _) in &looked {
             if registered != Some(dim) {
                 if let Some(old) = registered {
                     self.waypoints_remove_player(old, conn, uuid);
@@ -983,10 +1022,9 @@ impl Sim {
         let turns = !on || self.game_time % interval == 0;
         if on && turns {
             let mut moved: [Vec<ConnId>; 3] = Default::default();
-            for &conn in &conns {
-                let p = &self.players[&conn];
-                if !p.waypoint_first_tick && p.waypoint_last_pos != p.pos {
-                    moved[p.dim].push(conn);
+            for &(conn, dim, _, _, _, mover) in &looked {
+                if mover {
+                    moved[dim].push(conn);
                 }
             }
             for (dim, moved) in moved.iter().enumerate() {
@@ -1146,6 +1184,10 @@ impl Sim {
         drop(turns);
         for share in shares {
             mgr.members[share.slot].row = share.row.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+        // As thousands per tick.
+        for (i, name) in ["w.steps_k", "w.sent_k"].into_iter().enumerate() {
+            crate::diag::add(name, std::time::Duration::from_nanos(COUNTS[i].swap(0, std::sync::atomic::Ordering::Relaxed) * 1000));
         }
         crate::diag::add("w.snaps", ta - t0);
         crate::diag::add("w.sets", td - ta);

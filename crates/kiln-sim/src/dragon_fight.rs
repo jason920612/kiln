@@ -287,7 +287,7 @@ impl Sim {
 
     /// `EnderDragonFight.tick`, in the End's level tick.
     pub(crate) fn tick_dragon_fight(&mut self) {
-        self.dragon_fight_messages();
+        let _ = self.dragon_fight_messages();
         let killed = self.dragon_fight.dragon_killed;
         self.boss_visible(!killed);
         self.dragon_fight.ticks_since_player_scan += 1;
@@ -337,10 +337,11 @@ impl Sim {
     }
 
     /// The calls the regions made, in a region-independent order.
-    pub(crate) fn dragon_fight_messages(&mut self) {
+    /// Whether there were any.
+    pub(crate) fn dragon_fight_messages(&mut self) -> bool {
         let mut msgs = std::mem::take(&mut *self.dragon_fight.inbox.lock().unwrap());
         if msgs.is_empty() {
-            return;
+            return false;
         }
         msgs.sort_by_key(FightMsg::key);
         for m in msgs {
@@ -364,6 +365,7 @@ impl Sim {
                 FightMsg::TryRespawn => self.try_respawn(),
             }
         }
+        true
     }
 
     // ------------------------------------------------------------------ the boss bar
