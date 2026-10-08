@@ -788,7 +788,11 @@ impl Eval<'_> {
                     search_radius: *search_radius,
                     skip_existing_chunks: *skip_existing_chunks,
                 };
-                self.ctx.exploration_map(&stack, &request).unwrap_or(stack)
+                let made = match (&self.data.explorer, self.ctx.origin()) {
+                    (Some(ex), Some(origin)) => ex.0.explore(&stack, origin, &request),
+                    _ => self.ctx.exploration_map(&stack, &request),
+                };
+                made.unwrap_or(stack)
             }
             FunctionKind::SetStewEffect(effects) => {
                 if stack.item_name() != "minecraft:suspicious_stew" || effects.is_empty() {

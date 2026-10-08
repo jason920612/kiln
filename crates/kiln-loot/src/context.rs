@@ -144,6 +144,12 @@ pub struct ExplorationMap<'a> {
     pub skip_existing_chunks: bool,
 }
 
+/// The world part of an `exploration_map` function (`ServerLevel.findNearestMapStructure` and the map it makes).
+pub trait MapExplorer: Send + Sync {
+    /// The map for the nearest structure around `origin`, made from `stack` (`None`: nothing found, the stack is kept).
+    fn explore(&self, stack: &ItemStack, origin: [f64; 3], request: &ExplorationMap<'_>) -> Option<ItemStack>;
+}
+
 /// Where a `slot_range` slot source reads slots from (`SlotProvider`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SlotOwner {

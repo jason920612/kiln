@@ -144,6 +144,18 @@ pub struct LootData {
     pub trades: crate::trade::Trades,
     /// By `minecraft:jukebox_song` network id (`jukebox_song/`).
     pub(crate) songs: Vec<Option<JukeboxSong>>,
+    /// What `exploration_map` functions ask for the structure and the map (set by the server that has a world).
+    pub explorer: Option<ExplorerHandle>,
+}
+
+/// A [`crate::MapExplorer`] shared by the loot data.
+#[derive(Clone)]
+pub struct ExplorerHandle(pub std::sync::Arc<dyn crate::context::MapExplorer>);
+
+impl std::fmt::Debug for ExplorerHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ExplorerHandle")
+    }
 }
 
 /// A `minecraft:jukebox_song` (`JukeboxSong`): how long it plays and what a comparator reads.

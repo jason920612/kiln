@@ -893,6 +893,107 @@ impl MapStore {
     }
 }
 
+/// `MapItem.renderBiomePreviewMap`: the pixels of a map that has not been explored, drawn from the
+/// biomes (`watery`: whether the biome of the block at (x, z) draws water on maps).
+fn render_biome_preview(data: &mut MapData, watery: &mut dyn FnMut(i32, i32) -> bool) {
+    let scale = 1i32 << data.scale;
+    let (cx, cz) = (data.center[0], data.center[1]);
+    let mut water = vec![false; PIXELS];
+    let (x0, z0) = (cx / scale - 64, cz / scale - 64);
+    for z in 0..128 {
+        for x in 0..128 {
+            water[(z * 128 + x) as usize] = watery((x0 + x) * scale, (z0 + z) * scale);
+        }
+    }
+    let at = |x: i32, z: i32| water[(z * 128 + x) as usize];
+    for i in 1..127 {
+        for j in 1..127 {
+            let mut count = 0;
+            for k in -1..=1 {
+                for l in -1..=1 {
+                    if (k != 0 || l != 0) && at(i + k, j + l) {
+                        count += 1;
+                    }
+                }
+            }
+            let mut brightness = LOWEST;
+            let mut color = 0u8;
+            if at(i, j) {
+                color = 15; // COLOR_ORANGE
+                if count > 7 && j % 2 == 0 {
+                    // (`Mth.sin` is the table's.)
+                    let phase = i + (kiln_javamath::mth::sin(j as f32 as f64) * 7.0f32) as i32;
+                    brightness = match (phase / 8) % 5 {
+                        0 | 4 => LOW,
+                        1 | 3 => NORMAL,
+                        2 => HIGH,
+                        _ => brightness,
+                    };
+                } else if count > 7 {
+                    color = 0;
+                } else if count > 5 {
+                    brightness = NORMAL;
+                } else if count > 3 || count > 1 {
+                    brightness = LOW;
+                }
+            } else if count > 0 {
+                color = 26; // COLOR_BROWN
+                brightness = if count > 3 { NORMAL } else { LOWEST };
+            }
+            if color != 0 {
+                data.set_color(i, j, color.wrapping_mul(4).wrapping_add(brightness));
+            }
+        }
+    }
+}
+
+/// The world part of `exploration_map` loot functions (`MapExplorer`): finds the nearest structure in the
+/// overworld and makes the map for it.
+pub(crate) struct Explorer {
+    pub maps: SharedMaps,
+    pub pipeline: Arc<kiln_worldgen::pipeline::Pipeline>,
+    /// The biomes that draw water on maps (`#minecraft:water_on_map_outlines`), by `minecraft:worldgen/biome` id.
+    pub watery: Vec<u16>,
+}
+
+impl Explorer {
+    pub(crate) fn new(maps: SharedMaps, pipeline: Arc<kiln_worldgen::pipeline::Pipeline>) -> Explorer {
+        let names = crate::world_state::worldgen_tag("worldgen/biome", "minecraft:water_on_map_outlines").unwrap_or_default();
+        let watery = names.iter().filter_map(|n| kiln_data::synced_id("minecraft:worldgen/biome", n)).map(|i| i as u16).collect();
+        Explorer { maps, pipeline, watery }
+    }
+}
+
+impl kiln_loot::MapExplorer for Explorer {
+    fn explore(&self, stack: &ItemStack, origin: [f64; 3], request: &kiln_loot::ExplorationMap<'_>) -> Option<ItemStack> {
+        if stack.is_empty() {
+            return None;
+        }
+        let at = [origin[0].floor() as i32, origin[1].floor() as i32, origin[2].floor() as i32];
+        let names: Vec<String> = request.destination.names.iter().map(|n| n.to_string()).collect();
+        let mut gs = kiln_worldgen::generator::GenScratch::default();
+        let (target, _) = self.pipeline.find_nearest_structure(&mut gs, &names, at, request.search_radius)?;
+        // `MapItem.applyNewSavedData(level, stack, x, z, zoom, true, true)`.
+        let mut data = MapData::create_fresh(target[0] as f64, target[2] as f64, request.zoom, true, true, "minecraft:overworld");
+        // `renderBiomePreviewMap` at the sea level.
+        let world = self.pipeline.world().clone();
+        let sea = world.generator.sea_level;
+        let mut gs2 = kiln_worldgen::generator::GenScratch::default();
+        let mut watery = |x: i32, z: i32| {
+            let b = gs2.noise_biome(&world.generator, x >> 2, sea >> 2, z >> 2);
+            self.watery.contains(&b)
+        };
+        render_biome_preview(&mut data, &mut watery);
+        let mut store = self.maps.lock().unwrap_or_else(|e| e.into_inner());
+        let id = store.free_id();
+        store.set(id, data);
+        let mut out = stack.clone();
+        out.insert(kiln_item::keys::MAP_ID, kiln_item::component::MapId(id));
+        add_target_decoration(&mut out, target, "+", request.decoration);
+        Some(out)
+    }
+}
+
 /// The map id of an item, if it is a filled map.
 pub(crate) fn map_id_of(stack: &ItemStack) -> Option<i32> {
     stack.get(kiln_item::keys::MAP_ID).map(|m| m.0)

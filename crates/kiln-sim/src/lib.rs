@@ -1552,9 +1552,14 @@ impl Sim {
         let datapack = config.noise.as_ref().map(|n| n.datapack.as_path());
         let vanilla_pack = datapack_dir(datapack);
         let rules = std::sync::Arc::new(load_rules(datapack));
-        let loot = load_loot(datapack);
-        let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
         let maps = maps::MapStore::shared(storage.as_ref().map(|s| s.dir.clone()));
+        // Treasure and explorer maps look for structures in the overworld.
+        let explorer = pipelines
+            .first()
+            .and_then(Option::clone)
+            .map(|p| kiln_loot::ExplorerHandle(std::sync::Arc::new(maps::Explorer::new(maps.clone(), p))));
+        let loot = load_loot(datapack, explorer);
+        let spawn_table = spawner::SpawnTable::load(&vanilla_pack).map(std::sync::Arc::new);
         let mut sim = Sim {
             rules,
             loot,
@@ -3741,7 +3746,7 @@ fn load_rules(path: Option<&std::path::Path>) -> kiln_inventory::Rules {
 
 /// Loot tables from the datapack at `path`, `KILN_DATAPACK` or `work/generated`; none if absent
 /// (blocks then drop their own item).
-fn load_loot(path: Option<&std::path::Path>) -> Option<std::sync::Arc<kiln_loot::LootData>> {
+fn load_loot(path: Option<&std::path::Path>, explorer: Option<kiln_loot::ExplorerHandle>) -> Option<std::sync::Arc<kiln_loot::LootData>> {
     let dir = path.map(std::path::Path::to_path_buf).or_else(|| std::env::var_os("KILN_DATAPACK").map(Into::into));
     let dir = dir.unwrap_or_else(|| "work/generated".into());
     if !dir.join("data").is_dir() {
@@ -3749,10 +3754,11 @@ fn load_loot(path: Option<&std::path::Path>) -> Option<std::sync::Arc<kiln_loot:
         return None;
     }
     match kiln_loot::LootData::load_lenient(&dir) {
-        Ok(data) => {
+        Ok(mut data) => {
             for e in data.errors.iter().take(10) {
                 warn!("loot: {e}");
             }
+            data.explorer = explorer;
             info!("loot: {} tables", data.table_ids().len());
             Some(std::sync::Arc::new(data))
         }
