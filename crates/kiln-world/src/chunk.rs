@@ -317,6 +317,12 @@ impl Chunk {
         Light::Nibbles(n)
     }
 
+    /// The y above the column's highest non-air block (the chunk's bottom if all air): what
+    /// `column_height(x, z, |s| !is_air(s))` finds, from the heights kept up to date.
+    pub fn surface_y(&self, x: usize, z: usize) -> i32 {
+        self.min_y + self.surface[(z << 4) | x] as i32
+    }
+
     fn column_top(&self, x: usize, z: usize) -> u16 {
         for rel in (0..self.height()).rev() {
             let (s, ly) = ((rel >> 4) as usize, (rel & 15) as usize);
@@ -733,6 +739,30 @@ fn put_light_data(b: &mut BytesMut, sky: &[Light], sky_sel: u64, block: &[Light]
                 Light::Full => b.put_bytes(0xff, 2048),
                 Light::Nibbles(n) => b.put_slice(&n[..]),
                 Light::Zero => unreachable!("zero sections go in the empty mask"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+
+    /// The kept heights say what scanning the column finds, through any edits.
+    #[test]
+    fn surface_y_matches_a_column_scan() {
+        let d = kiln_data::blocks::default_state::STONE;
+        let mut c = Chunk::new((0..4).map(|_| Section::filled(kiln_data::blocks::default_state::AIR, 0)).collect(), -64);
+        let mut seed = 99u64;
+        for _ in 0..5000 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let (x, z, y) = ((seed >> 20) as usize & 15, (seed >> 24) as usize & 15, -64 + ((seed >> 28) % 64) as i32);
+            let state = if (seed >> 40) % 3 == 0 { kiln_data::blocks::default_state::AIR } else { d };
+            c.set(x, y, z, state);
+        }
+        for x in 0..16 {
+            for z in 0..16 {
+                assert_eq!(c.surface_y(x, z), c.column_height(x, z, |s| !is_air(s)), "column {x},{z}");
             }
         }
     }

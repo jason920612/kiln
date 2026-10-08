@@ -133,7 +133,7 @@ pub fn light_new_chunk<S: CellStore + ?Sized>(w: &mut S, pos: ChunkPos) {
             for (j, t) in row.iter_mut().enumerate() {
                 let (x, z) = (bx + i as i32 - 1, bz + j as i32 - 1);
                 let chunk = around[((x >> 4) - pos.x + 1) as usize][((z >> 4) - pos.z + 1) as usize];
-                *t = chunk.map(|c| c.column_height((x & 15) as usize, (z & 15) as usize, |s| !kiln_data::blocks_types::is_air(s)));
+                *t = chunk.map(|c| c.surface_y((x & 15) as usize, (z & 15) as usize));
             }
         }
     }
