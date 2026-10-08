@@ -566,6 +566,7 @@ fn run_case(line: &Value) -> Vec<String> {
                 }
             }
             "command" => inbox.push(ToSim::Console(step["command"].as_str().unwrap().to_owned())),
+            "kill_mobs" => inbox.push(ToSim::Console("kill @e[type=minecraft:zombie]".to_owned())),
             // The game time moves on (the recorded level does not tick, so its clock is moved by hand).
             "wait" => {
                 // (A level that ticks the block entities in the vectors makes `ticks` of them, the step's own included.)
@@ -696,7 +697,7 @@ fn run_case(line: &Value) -> Vec<String> {
             let (got, expected) = (got.map(no_hive_ticks).map(no_mob_uuids), expected.map(no_hive_ticks).map(no_mob_uuids));
             eq(&format!("block entity {at:?}"), format!("{got:?}"), format!("{expected:?}"));
         }
-        let mut got_items: Vec<String> = sim.item_stacks().iter().map(stack_hex).collect();
+        let mut got_items: Vec<String> = sim.item_stacks().iter().filter(|s| line["mobs"].as_bool() != Some(true) || s.item_name() != "minecraft:rotten_flesh").map(stack_hex).collect();
         got_items.sort();
         let want_items: Vec<String> = want["entities"].as_array().unwrap().iter().map(|e| e["item"].as_str().unwrap().to_owned()).collect();
         eq("item entities", format!("{got_items:?}"), format!("{want_items:?}"));

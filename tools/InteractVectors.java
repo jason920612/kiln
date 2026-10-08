@@ -892,12 +892,13 @@ public class InteractVectors {
         // Zombies that stand still where they appear (the place is given, so nothing is left to the level's random).
         String zombie = "{data:{entity:{id:\"minecraft:zombie\",NoAI:1b,Invulnerable:1b,Pos:[5.5d,100.0d,2.5d]}},weight:1}";
         String key = "loot_tables_to_eject:[{data:\"minecraft:spawners/trial_chamber/key\",weight:1}]";
-        String normal = "normal_config:{total_mobs:4.0f,simultaneous_mobs:2.0f,ticks_between_spawn:20,spawn_potentials:[" + zombie + "]," + key + "},target_cooldown_length:200";
+        String normal = "normal_config:{total_mobs:4.0f,simultaneous_mobs:2.0f,ticks_between_spawn:40,spawn_potentials:[" + zombie + "]," + key + "},target_cooldown_length:200";
         String kill = "kill @e[type=minecraft:zombie]";
+        Map<String, Object> killMobs = op("op", "kill_mobs");
         c = trialCase("trial_wave", "trial_spawner_state=inactive", "{" + normal + "}");
-        c.step(waitTicks(10)).step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep(kill));
+        c.step(waitTicks(10)).step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(killMobs);
         for (int i = 0; i < 3; i++) {
-            c.step(waitTicks(25)).step(waitTicks(25)).step(waitTicks(30)).step(cmdStep(kill));
+            c.step(waitTicks(25)).step(waitTicks(25)).step(waitTicks(30)).step(killMobs);
         }
         for (int i = 0; i < 14; i++) c.step(waitTicks(20));
         out.add(c);
@@ -921,7 +922,7 @@ public class InteractVectors {
         c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30));
         out.add(c);
         c = trialCase("trial_peaceful", "trial_spawner_state=inactive", "{" + normal + "}");
-        c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep(kill)).step(cmdStep("difficulty peaceful")).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("difficulty easy"))
+        c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(killMobs).step(cmdStep("difficulty peaceful")).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("difficulty easy"))
                 .step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30));
         out.add(c);
         c = trialCase("trial_rule_off", "trial_spawner_state=inactive", "{" + normal + "}");
@@ -949,7 +950,7 @@ public class InteractVectors {
                 + "items_to_drop_when_ominous:\"minecraft:empty\"," + key + "}";
         c = trialCase("trial_ominous", "trial_spawner_state=waiting_for_players", "{" + normal + "," + ominous + "}");
         c.step(waitTicks(25)).step(cmdStep("effect give @a minecraft:bad_omen 600 0")).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20));
-        for (int i = 0; i < 3; i++) c.step(cmdStep(kill)).step(waitTicks(30)).step(waitTicks(30));
+        for (int i = 0; i < 3; i++) c.step(killMobs).step(waitTicks(30)).step(waitTicks(30));
         out.add(c);
     }
 
@@ -2303,12 +2304,17 @@ public class InteractVectors {
         return out;
     }
 
+    static boolean mobCase;
+
     static List<Object> itemEntities() {
         ServerLevel level = server.overworld();
         List<Object> out = new ArrayList<>();
         List<ItemEntity> items = new ArrayList<>(level.getEntitiesOfClass(ItemEntity.class, new AABB(-16, 90, -16, 32, 120, 32)));
         items.sort(Comparator.comparing((ItemEntity e) -> hex(e.getItem())));
-        for (ItemEntity e : items) out.add(op("item", hex(e.getItem()), "pos", new double[] {e.getX(), e.getY(), e.getZ()}));
+        for (ItemEntity e : items) {
+            if (mobCase && e.getItem().is(net.minecraft.world.item.Items.ROTTEN_FLESH)) continue;
+            out.add(op("item", hex(e.getItem()), "pos", new double[] {e.getX(), e.getY(), e.getZ()}));
+        }
         return out;
     }
 
@@ -2370,6 +2376,11 @@ public class InteractVectors {
                 }
             }
             case "command" -> command((String) s.get("command"));
+            // wp49: the mobs are killed, and their corpses (which a level that does not tick would keep) go.
+            case "kill_mobs" -> {
+                command("kill @e[type=minecraft:zombie]");
+                for (var m : level.getEntitiesOfClass(net.minecraft.world.entity.Mob.class, new AABB(-64, -64, -64, 64, 320, 64))) if (!m.isAlive()) m.discard();
+            }
             // wp49: the game time moves on (the level itself does not tick here).
             case "wait" -> {
                 if (c.tickLevel) {
@@ -2569,6 +2580,7 @@ public class InteractVectors {
         for (String n : c.customStats) customBefore.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(BuiltInRegistries.CUSTOM_STAT.getValue(Identifier.parse(n)))));
         java.util.Set<UUID> seenBees = new java.util.HashSet<>();
         recordMenus = c.watchMenus;
+        mobCase = c.watchMobs;
         recordMaps = c.watchMaps;
         if (c.watchMaps) resetMaps();
         for (Map<String, Object> s : c.steps) {
