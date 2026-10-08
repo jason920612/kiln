@@ -427,7 +427,7 @@ public class ContainerVectors {
             {"chorus_ball", "minecraft:chorus_flower[age=5]", ball},
         };
         for (Object[] c : cases) {
-            Scenario s = new Scenario("projectile_" + c[0], 40).drops().dropsLag().block(0, -1, 0, "minecraft:end_stone").block(0, 0, 0, (String) c[1]).state(0, 0, 0);
+            Scenario s = new Scenario("projectile_" + c[0], 40).drops().block(0, -1, 0, "minecraft:end_stone").block(0, 0, 0, (String) c[1]).state(0, 0, 0);
             s.at(1, (String) c[2]);
             out.add(s);
         }
