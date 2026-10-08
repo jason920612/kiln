@@ -129,10 +129,11 @@ fn locator_events(k: usize, inbox: &mut Vec<kiln_link::ToSim>) {
 /// Two groups with chunk links, and the events above.
 ///
 /// The packet digest is the first recording; the state hash was re-recorded on Linux after the
-/// walkers (`testing::Walker`) stopped using the platform's `hypot`/`cos`/`sin`: the first
-/// recording came from a platform whose `hypot` rounded a few of this scenario's long nether
-/// walks one ulp differently (players' positions are hashed bit for bit, the packets quantize
-/// them). The other three scenarios kept their recorded constants.
+/// walkers (`testing::Walker`) stopped using the platform's `hypot`/`cos`/`sin`. The first
+/// recording (a different platform) differed from Linux only in this hash, never in the
+/// packets, which fits a last-bit difference in a walker's position (positions are hashed bit
+/// for bit, the packets quantize them); the cause was not traced further. The other three
+/// scenarios kept their first constants, which Linux now reproduces.
 #[test]
 fn locator_bar_commands_and_dimensions() {
     check(Scenario { players: 40, groups: 2, spacing: 120.0, walk: true, ticks: 120, events: locator_events }, 0xff6bf67d90731153, 0xc1f7b7558f5a5e4f, 2);
