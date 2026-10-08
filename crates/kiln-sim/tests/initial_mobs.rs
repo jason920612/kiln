@@ -84,6 +84,17 @@ fn initial_mobs_parity() {
     for (c, name, pos, yaw) in take_initial_mobs() {
         got.entry(c).or_default().push((name.to_owned(), pos, yaw, false));
     }
+    // Debug: the top block of every column of a box (`x0,z0,x1,z1`), to compare with `InitialMobVectors` (INITIAL_MOB_TOP).
+    if let Ok(top) = std::env::var("KILN_INITIAL_TOP") {
+        let c: Vec<i32> = top.split(',').map(|v| v.parse().unwrap()).collect();
+        for x in c[0]..=c[2] {
+            for z in c[1]..=c[3] {
+                let y = (-64..320).rev().find(|&y| sim.block_at(x, y, z).is_some_and(|s| !kiln_data::blocks_types::is_air(s))).unwrap_or(-64);
+                let name = sim.block_at(x, y, z).map_or("none", |s| kiln_blocks::state::BlockId::of(s).name());
+                println!("TOP {x} {z} {y} {name}");
+            }
+        }
+    }
     // Debug: the blocks of a box by type (`x0,z0,x1,z1`), to compare with `InitialMobVectors` (INITIAL_MOB_COUNT).
     if let Ok(count) = std::env::var("KILN_INITIAL_COUNT") {
         let c: Vec<i32> = count.split(',').map(|v| v.parse().unwrap()).collect();

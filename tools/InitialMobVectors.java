@@ -69,6 +69,18 @@ public class InitialMobVectors {
                         System.out.println("BLOCK " + p + " " + level.getBlockState(bp));
                     }
                 }
+                // Debug: INITIAL_MOB_TOP="x0,z0,x1,z1" lists the top block of every column of that box.
+                String top = System.getenv("INITIAL_MOB_TOP");
+                if (top != null) {
+                    String[] c = top.split(",");
+                    for (int x = Integer.parseInt(c[0]); x <= Integer.parseInt(c[2]); x++) {
+                        for (int z = Integer.parseInt(c[1]); z <= Integer.parseInt(c[3]); z++) {
+                            int y = level.getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, x, z) - 1;
+                            String n = BuiltInRegistries.BLOCK.getKey(level.getBlockState(new net.minecraft.core.BlockPos(x, y, z)).getBlock()).toString();
+                            System.out.println("TOP " + x + " " + z + " " + y + " " + n);
+                        }
+                    }
+                }
                 // Debug: INITIAL_MOB_COUNT="x0,z0,x1,z1" counts the blocks of that box by type.
                 String count = System.getenv("INITIAL_MOB_COUNT");
                 if (count != null) {
