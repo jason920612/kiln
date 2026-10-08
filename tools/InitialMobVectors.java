@@ -54,8 +54,11 @@ public class InitialMobVectors {
             try {
                 ServerLevel level = server.overworld();
                 level.tickRateManager().setFrozen(true);
-                for (int cx = -radius; cx <= radius; cx++) {
-                    for (int cz = -radius; cz <= radius; cz++) {
+                // Debug: INITIAL_MOB_REVERSE=1 generates the chunks in the opposite order (do the trees depend on it?).
+                boolean reverse = System.getenv("INITIAL_MOB_REVERSE") != null;
+                for (int i = -radius; i <= radius; i++) {
+                    for (int j = -radius; j <= radius; j++) {
+                        int cx = reverse ? -i : i, cz = reverse ? -j : j;
                         level.setChunkForced(cx, cz, true);
                         level.getChunk(cx, cz, ChunkStatus.FULL, true);
                     }
