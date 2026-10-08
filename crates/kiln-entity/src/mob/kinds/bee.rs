@@ -364,7 +364,7 @@ impl Kind for Bee {
 
     /// `Bee.mobInteract`: a flower in hand is eaten (it breeds, and the flower's own effect).
     fn interact(&self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel, who: &Interactor, stack: &kiln_item::ItemStack) -> Option<Outcome> {
-        let _ = (e, who);
+        let _ = who;
         let item = if stack.is_empty() { 0 } else { stack.item() };
         if item > 0 && crate::mob::item_tag(item, "minecraft:bee_food") {
             let effects = super::mooshroom::flower_effects(stack);
@@ -745,7 +745,7 @@ impl CustomGoal for PollinateGoal {
             return;
         }
         let target = Vec3::new(flower.x as f64 + 0.5, flower.y as f64, flower.z as f64 + 0.5).add(0.0, 0.6000000238418579, 0.0);
-        if target.distance_to(e.position()) > 1.0 {
+        if target.distance_to_sqr(e.position()).sqrt() > 1.0 {
             self.hover_pos = Some(target);
             self.set_wanted_pos(m);
             return;
@@ -754,7 +754,7 @@ impl CustomGoal for PollinateGoal {
             self.hover_pos = Some(target);
         }
         let hover = self.hover_pos.unwrap_or(target);
-        let reached = e.position().distance_to(hover) <= 0.1;
+        let reached = e.position().distance_to_sqr(hover).sqrt() <= 0.1;
         let mut flag = true;
         if !reached && self.pollinating_ticks > 600 {
             drop_flower(e, m);
@@ -1063,7 +1063,7 @@ impl BeeWanderGoal {
     fn find_pos(e: &mut Entity, m: &MobData, level: &dyn EntityLevel) -> Option<Vec3> {
         let view = match st(m).hive_pos {
             Some(h) if is_hive_valid(e, m, level) && !closer_than(e, h, Self::wander_threshold(m)) => {
-                Vec3::new(h.x as f64 + 0.5, h.y as f64 + 0.5, h.z as f64 + 0.5).sub(e.position()).normalize()
+                (Vec3::new(h.x as f64 + 0.5, h.y as f64 + 0.5, h.z as f64 + 0.5) - e.position()).normalize()
             }
             _ => crate::ext_entity::fireball::view_vector(e.x_rot_o, m.y_head_rot_o),
         };
