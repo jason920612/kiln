@@ -1083,7 +1083,8 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                     }
                     let yaw = r.next_float() * 360.0;
                     // `Mob.checkSpawnRules` (the walk target value) and `checkSpawnObstruction`.
-                    let magic = light_magic(level, at);
+                    // (`WorldGenRegion.getSkyDarken` is 0.)
+                    let magic = { let f = level.raw_brightness(at, 0) as f32 / 15.0; f / (4.0 - 3.0 * f) };
                     let walk = if kind.is_animal() {
                         if kiln_data::blocks_types::block_of(level.block(at.below())).name == "minecraft:grass_block" { 10.0 } else { magic - 0.5 }
                     } else {
@@ -1092,6 +1093,12 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                     let ignores_light = kind.ext().is_some_and(|k| k.spawn_ignores_light());
                     let liquid_ok = kind.ext().is_some_and(|k| k.spawn_in_liquids());
                     let fits = !(walk < 0.0 && !ignores_light) && (liquid_ok || !contains_liquid(level, [px, top.y as f64, pz], t.width, t.height));
+                    if std::env::var_os("KILN_INITIAL_DEBUG").is_some() {
+                        use std::io::Write as _;
+                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
+                            let _ = writeln!(f, "F chunk ({},{}) at {at:?} px {px} pz {pz} walk {walk} magic {magic} bright {} fits {fits} below {} liquid {}", c.x, c.z, level.raw_brightness(at, 0), kiln_data::blocks_types::block_of(level.block(at.below())).name, contains_liquid(level, [px, top.y as f64, pz], t.width, t.height));
+                        }
+                    }
                     if fits {
                         let mut ctx = crate::mobs::difficulty_instance(env.mobs.difficulty, env.game_time, 0, moon);
                         ctx.biome = Some(biome as i32);
