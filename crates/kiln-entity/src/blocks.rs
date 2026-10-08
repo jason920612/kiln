@@ -171,3 +171,8 @@ mod tests {
         assert!(has_tag(d::WATER, Tag::FallDamageResetting) || !has_tag(d::STONE, Tag::FallDamageResetting));
     }
 }
+
+/// `DiodeBlock.isDiode`: a repeater or a comparator.
+pub fn is_diode(state: u16) -> bool {
+    matches!(kiln_data::block_logic::block_class(state), kiln_data::block_logic::BlockClass::RepeaterBlock | kiln_data::block_logic::BlockClass::ComparatorBlock)
+}

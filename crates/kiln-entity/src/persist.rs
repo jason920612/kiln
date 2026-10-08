@@ -223,6 +223,14 @@ pub fn load(tag: &Tag, id: i32, seed: i64) -> Result<Entity, LoadError> {
     e.silent = r.bool_or("Silent", false);
     e.no_gravity = r.bool_or("NoGravity", false);
     e.ticks_frozen = r.int_or("TicksFrozen", 0);
+    // `BlockAttachedEntity.readAdditionalSaveData`: a hanging entity hangs in the block `block_pos` names
+    // (when it is near), and its box follows.
+    let block_pos = r.get("block_pos");
+    match e.type_name {
+        "minecraft:item_frame" | "minecraft:glow_item_frame" => crate::ext_entity::item_frame::after_load(&mut e, block_pos),
+        "minecraft:painting" => crate::ext_entity::painting::after_load(&mut e, block_pos),
+        _ => {}
+    }
     // (`Passengers` is `EntityType.loadEntityRecursive`'s: see [`load_stack`].)
     r.get("Passengers");
     e.extra = r.rest();

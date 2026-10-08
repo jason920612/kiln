@@ -18,6 +18,10 @@ pub mod fireball;
 pub mod minecart;
 pub mod firework;
 pub mod fishing_hook;
+pub mod hanging;
+pub mod item_frame;
+pub mod painting;
+pub mod painting_variants;
 pub mod leash_knot;
 pub mod lightning;
 pub mod llama_spit;
@@ -133,6 +137,10 @@ pub const TYPES: &[&str] = &[
     "minecraft:leash_knot",
     // -- wp44: the End
     "minecraft:eye_of_ender",
+    // -- wp49: hanging entities
+    "minecraft:item_frame",
+    "minecraft:glow_item_frame",
+    "minecraft:painting",
 ];
 
 /// Reads a saved extension entity (`None`: not one of these types, or not simulated yet).
@@ -153,6 +161,9 @@ pub fn load(type_name: &'static str, r: &mut Input) -> Option<Box<dyn EntityExt>
         "minecraft:llama_spit" => llama_spit::load(r),
         "minecraft:leash_knot" => leash_knot::load(r),
         "minecraft:eye_of_ender" => eye_of_ender::load(r),
+        "minecraft:item_frame" => item_frame::load(false, r),
+        "minecraft:glow_item_frame" => item_frame::load(true, r),
+        "minecraft:painting" => painting::load(r),
         _ => None,
     }
 }
