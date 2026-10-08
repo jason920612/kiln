@@ -66,7 +66,7 @@ fn bezier(x: f32) -> f32 {
 /// `DaylightDetectorBlock.updateSignalStrength`.
 pub fn update_signal<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
     // `getEffectiveSkyBrightness`.
-    let mut i = level.sky_light(pos) - level.sky_darken();
+    let mut i = (level.sky_light(pos) - level.sky_darken()).max(0);
     let mut f = level.sun_angle() * 0.017453292f32;
     if state::get_bool(s, "inverted") {
         i = 15 - i;

@@ -673,6 +673,18 @@ public class ContainerVectors {
         return m;
     }
 
+    /// The light engine runs on its own thread: the light a roof takes has to be settled before the tick.
+    static void awaitLight(ServerLevel level) {
+        var engine = level.getChunkSource().getLightEngine();
+        for (int i = 0; i < 2; i++) {
+            engine.tryScheduleUpdate();
+            var done = engine.waitForPendingTasks(0, 0);
+            long deadline = System.nanoTime() + 60_000_000_000L;
+            level.getServer().managedBlock(() -> done.isDone() || System.nanoTime() > deadline);
+            if (!done.isDone()) throw new IllegalStateException("light engine did not settle");
+        }
+    }
+
     static String run(MinecraftServer server, Scenario s) throws Exception {
         ServerLevel level = server.overworld();
         if (s.align20) {
@@ -690,6 +702,7 @@ public class ContainerVectors {
         try {
             for (int t = 1; t <= s.ticks; t++) {
                 for (String cmd : s.actions.getOrDefault(t, List.of())) command(server, absolute(cmd));
+                if (s.align20) awaitLight(level);
                 level.tick(() -> true);
                 Map<String, Object> tick = new LinkedHashMap<>();
                 List<Object> cs = new ArrayList<>();
