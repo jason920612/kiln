@@ -320,7 +320,10 @@ fn main() {
             let center = [8.5 + ox, 8.5 + oz];
             let y = surface[i % a.groups].unwrap_or(WAITING_Y);
             inbox.push(kiln_link::ToSim::Console(format!("tp {name} {} {y} {}", center[0], center[1])));
-            walkers.push(Walker::new(Client::new(i as u64 + 1, stats), center, i as u64 + 1));
+            let mut client = Client::new(i as u64 + 1, stats);
+            // On noise terrain the clients take their whole view, as real ones do.
+            client.ack_batches = a.noise.is_some();
+            walkers.push(Walker::new(client, center, i as u64 + 1));
         }
         for w in &mut walkers {
             w.tick(a.radius, a.walk, &mut inbox);

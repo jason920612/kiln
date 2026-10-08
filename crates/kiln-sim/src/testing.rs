@@ -21,6 +21,8 @@ pub struct SinkStats {
     pub teleport: Mutex<Option<(i32, [f64; 3])>>,
     /// Latest keep-alive id not answered yet.
     pub keep_alive: Mutex<Option<i64>>,
+    /// Chunk batches finished and not acknowledged yet (for clients that acknowledge them).
+    pub batches: AtomicU64,
     /// Packets and bytes per packet id, when `KILN_SINK_IDS` is set or `count_ids` (costs time
     /// per packet).
     pub by_id: Mutex<std::collections::BTreeMap<i32, (u64, u64)>>,
@@ -62,6 +64,7 @@ impl SinkStats {
     fn record(&self, batch: &[Bytes]) {
         const KEEP_ALIVE: i32 = kiln_data::packets::play::clientbound::KEEP_ALIVE;
         const PLAYER_POSITION: i32 = kiln_data::packets::play::clientbound::PLAYER_POSITION;
+        const CHUNK_BATCH_FINISHED: i32 = kiln_data::packets::play::clientbound::CHUNK_BATCH_FINISHED;
         if let Some(log) = self.log.lock().unwrap().as_mut() {
             log.extend(batch.iter().cloned());
         }
@@ -112,6 +115,9 @@ impl SinkStats {
                         *self.teleport.lock().unwrap() = Some((id, [x, y, z]));
                     }
                 }
+                Some(CHUNK_BATCH_FINISHED) => {
+                    self.batches.fetch_add(1, Relaxed);
+                }
                 _ => {}
             }
             packets += 1;
@@ -160,11 +166,14 @@ pub struct Client {
     pub pos: [f64; 3],
     confirmed: i32,
     loaded: bool,
+    /// Acknowledges chunk batches like the 26.3 client (Chunk Batch Received, 64 chunks a tick),
+    /// so the server keeps streaming the whole view; off, it stops after a few batches.
+    pub ack_batches: bool,
 }
 
 impl Client {
     pub fn new(conn: ConnId, stats: Arc<SinkStats>) -> Self {
-        Self { conn, stats, pos: [0.0; 3], confirmed: 0, loaded: false }
+        Self { conn, stats, pos: [0.0; 3], confirmed: 0, loaded: false, ack_batches: false }
     }
 
     /// Packets for this client tick: a keep-alive answer, a teleport confirmation (which replaces movement this
@@ -173,6 +182,11 @@ impl Client {
         // Answered at once, so a slow simulation does not time scripted clients out.
         if let Some(id) = self.stats.keep_alive.lock().unwrap().take() {
             out.push(ToSim::Packet(self.conn, PlayIn::KeepAlive { id }));
+        }
+        if self.ack_batches {
+            for _ in 0..self.stats.batches.swap(0, Relaxed) {
+                out.push(ToSim::Packet(self.conn, PlayIn::ChunkBatchReceived { chunks_per_tick: 64.0 }));
+            }
         }
         let teleport = *self.stats.teleport.lock().unwrap();
         if let Some((id, pos)) = teleport.filter(|(id, _)| *id != self.confirmed) {
