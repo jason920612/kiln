@@ -44,6 +44,7 @@ pub mod evoker;
 pub mod vex;
 pub mod ravager;
 pub mod illusioner;
+pub mod giant;
 
 // -- slice 3: the end
 pub mod ender_dragon;
@@ -138,6 +139,7 @@ pub fn of(kind: MobKind) -> Option<&'static dyn Kind> {
         MobKind::Vex => &vex::KIND,
         MobKind::Ravager => &ravager::KIND,
         MobKind::Illusioner => &illusioner::KIND,
+        MobKind::Giant => &giant::KIND,
 
         // -- slice 3: the end
         MobKind::EnderDragon => &ender_dragon::KIND,

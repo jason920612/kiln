@@ -2919,6 +2919,32 @@ public class MobVectors {
         return String.format(Locale.ROOT, "Owner:[I;%d,%d,%d,%d]", u[0], u[1], u[2], u[3]);
     }
 
+    // ---------------------------------------------------------- wp49: giants
+    static void scenariosGiant(List<Scenario> out) {
+        // A giant has no goals: it stands where it is put, with a player near or far, by day and by night.
+        for (int i = 0; i < 3; i++) {
+            Scenario s = new Scenario("giant_idle_" + i);
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:giant", 0.5, BY, 0.5, 70f * i, 36000L + 5 * i));
+            s.player = new double[] {i == 0 ? 6.5 : 12.5, BY, 0.5};
+            s.levelSeed = 120 + i;
+            s.dayTime = i == 2 ? 18000 : 1000;
+            s.ticks = 200;
+            out.add(s);
+        }
+        // Hit by the player: it takes the knockback and nothing else.
+        {
+            Scenario s = new Scenario("giant_hurt");
+            floor(s, 24, "minecraft:stone");
+            s.mobs.add(new MobSpec("minecraft:giant", 0.5, BY, 0.5, 0f, 36100L));
+            s.player = new double[] {6.5, BY, 0.5};
+            s.levelSeed = 125;
+            s.hurts.put(10, new double[] {0, 5.0});
+            s.ticks = 120;
+            out.add(s);
+        }
+    }
+
     // ---------------------------------------------------------- wp49: bees
     static void scenariosBee(List<Scenario> out) {
         String[] flowers = {"minecraft:poppy", "minecraft:dandelion", "minecraft:cornflower", "minecraft:azure_bluet", "minecraft:oxeye_daisy", "minecraft:allium"};

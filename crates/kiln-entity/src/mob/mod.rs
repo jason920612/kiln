@@ -94,6 +94,7 @@ pub enum MobKind {
     Vex,
     Ravager,
     Illusioner,
+    Giant,
 
     // -- slice 3: the end
     EnderDragon,
@@ -270,6 +271,7 @@ pub const ALL_KINDS: &[MobKind] = &[
     MobKind::Vex,
     MobKind::Ravager,
     MobKind::Illusioner,
+    MobKind::Giant,
 
     // -- slice 3: the end
     MobKind::EnderDragon,
