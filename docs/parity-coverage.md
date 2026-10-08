@@ -59,35 +59,45 @@
 
 環境：`KILN_WORK` 指向有 vanilla 資料與錄製向量的 work 目錄，`KILN_DATAPACK` 指向 `work/generated`，release 建置。數字是 cargo 與測試自己印的。
 
-| 套件（指令） | 比對對象 | 結果（main 72ef868） |
+| 套件（指令） | 比對對象 | 結果（wp45-integrate，VM，release） |
 |---|---|---|
-| `cargo test --workspace --release`，不設環境變數 | 全部單元與整合測試（parity 測試靜默略過） | 1,068 通過、0 失敗、11 ignored（137 個測試行程） |
-| 同上，設 `KILN_WORK`＋`KILN_DATAPACK` | 同上，有 datapack 的測試實際執行 | 1,068 通過、0 失敗、11 ignored |
-| `mob_parity`（`work/m6-mobs2/vectors.jsonl`） | 生物逐 tick 的位置、速度、旋轉、health、目標、運行中的 goal | **867/867 scenario、400,824 個生物狀態相同** |
+| `cargo test --workspace --release`，不設環境變數 | 全部單元與整合測試（parity 測試靜默略過） | 1,120 通過、0 失敗、11 ignored（144 個測試行程；main 為 1,068） |
+| 同上，設 `KILN_WORK`＋`KILN_DATAPACK` | 同上，有 datapack 的測試實際執行 | 1,120 通過、0 失敗、11 ignored |
+| `mob_parity`（`work/m6-mobs2/vectors.jsonl`，wp45 併入 wp41 與 wp44 的向量） | 生物逐 tick 的位置、速度、旋轉、health、目標、運行中的 goal | **988/988 scenario、457,518 個生物狀態相同**（原 867／400,824；併入的 121 個：推船與礦車、躲貓狼犰狳、蜘蛛獵鐵傀儡、刷怪磚、洞穴蜘蛛） |
 | `mob_parity`（`wp34/mob_spear`、`wp36/mob_kills`、`wp36/mob_ench`） | 矛、殭屍殺村民、附魔矛 | 17／22／16 scenario 全過（8,800／3,972／4,800 狀態相同） |
 | `finalize_parity`（`wp33/finalize.jsonl`、`wp34/finalize_hard.jsonl`） | 自然生成的 `finalizeSpawn`（裝備、騎乘者、附魔、level random 之後） | 31,900 筆相同、0 不同 |
-| `entity_parity`（`wp4-entities/vectors.jsonl`，舊檔） | 物品、經驗球、TNT、掉落方塊、投射物等實體物理 | 951/951（現行 harness 約 1,201 個，存檔過期） |
+| `entity_parity`（`wp45/entity/vectors.jsonl`；舊檔 `wp4-entities` 951） | 物品、經驗球、TNT、掉落方塊、投射物、載具、末影之眼等實體物理 | **1,241/1,241**（含末影之眼飛行 40 個） |
 | `fire_parity`（`wp-fire`） | 火的蔓延、燃燒、老化 | 7 scenario、270/270 輪 |
 | `combat`（`wp34/combat/*`） | 戰鬥、riptide、馬物品欄、矛、附魔 helper | 戰鬥 114、riptide 110、矛 127、馬物品欄 240、附魔 helper 1,381 筆（damage 648、destroy_speed 280、durability 300、protection 45、armor_effectiveness 24、modifiers 72、knockback 12），0 失敗 |
+| `melee_parity`（`wp45/combat/melee.jsonl`） | 玩家對生物與玩家的近戰：橫掃、暴擊、重錘、附魔、護甲、效果、騎乘 | **690/690** |
+| `spear_parity`（`wp45/combat/spear.jsonl`） | 矛的刺與衝鋒、打偏火球與風彈、刺船與礦車 | **148/148**（原 127） |
 | `effect_parity`（`wp9-effects`） | 效果、飢餓、溺水、火、飲食 | 131 scenario（5,908 tick）全過 |
+| `effect_parity`（`wp45/effects/vectors.jsonl`） | 上列加玩家的摔落（361）與環境傷害（110）：仙人掌、甜莓、凋零玫瑰、粉雪凍傷、窒息 | **651 相符＋12 個已知差異（3.3 節）**，39,645 tick |
 | `container_parity`（`wp15-containers`、`wp36/containers`） | 漏斗、熔爐、比較器、唱片機 | 30 scenario（8,144 值）、14 scenario（1,400 值）全過 |
 | `sculk_parity`（`m6s3-warden`） | sculk 感測器、催化劑、尖叫者 | 12 scenario、4,160/4,160 值 |
 | `weather_parity`（`wx-weather`） | 天氣週期、天空暗度、降水、睡眠 | 674/674 |
 | `item_parity`（`wp-itemuse`） | 視線射線（桶）、射擊、弩 | clip 1,983/2,000（互動形狀的面不同）、shoot 400/400、crossbow 69/300 逐位元（300 皆在 1e-6 內：JOML 以 float 旋轉） |
 | `click_parity` 等（`KILN_PARITY=1`） | 物品欄點擊、合成、單一配方查詢、選單同步 | 31,000 序列、743,196 步、0 失敗（kiln-inventory 43 個測試） |
 | `kiln-item`（`wp2-items/corpus.jsonl`） | 122 種物品元件 wire／NBT／hash／patch | 10,745 個物品堆、10,670 個元件值、整堆 64,444 通過（31 個測試） |
-| `kiln-loot`（`KILN_PARITY=1`） | 戰利品表 | 36,336 case（1,445 張表）全過 |
+| `kiln-loot`（`KILN_PARITY=1`） | 戰利品表與挖礦經驗 | 36,336 case（1,445 張表）全過；挖礦經驗 2,491 個 case（624 個有經驗）全過 |
 | `kiln-worldgen`（`KILN_PARITY=1`，約 18 分鐘） | 密度函數、biome、地形、表面、洞穴、特徵、結構、高度、出生點 | 34 個測試全過；每個 seed 2,560 chunk、四層 0 不符；特徵 0 不符、0 略過 |
 | `kiln-storage` | Anvil 往返、原生格式、原版世界讀取 | 39 個測試全過 |
 | `kiln-proto` | 封包 golden、serverbound 向量 | 60 個測試全過 |
 | `kiln-command` | 指令註冊與指令樹 | 119 個測試全過；92 條指令（2,470 個節點）與 `commands.json` 相符 |
-| `region_stacks`、`determinism` | region 合併與分割、決定性（含多 worker） | 5／6 個測試全過 |
-| `tools/blocks_diff.py`（原版伺服器現場） | 45 個方塊 scenario 的快照 | **45/45 scenario、1,125/1,125 快照相同** |
+| `region_stacks`、`determinism` | region 合併與分割、決定性（含多 worker） | 5＋6 個測試全過（`determinism.rs` 的 2＋1＋6 個全過） |
+| `tools/blocks_diff.py`（原版伺服器現場） | 45 個方塊 scenario 的快照 | **45/45 scenario、1,125/1,125 快照相同**（wp44 的紀錄，wp45 未重跑） |
+| `block_parity`（`wp45/block/block_vectors.jsonl`，kiln-blocks） | 方塊自驅行為：隨機 tick、排程 tick、亮度與亂數，逐輪 | **185/185 scenario、26,767/26,767 步** |
+| `tree_parity`（同檔，kiln-sim） | 樹苗、苗木、骨粉長樹與花草（真正的 worldgen 特徵） | **129/129 scenario、12,483/12,675 步**（其餘在原版掉落方塊之後的亂數無法重播處截止） |
+| `interact_parity`（`wp45/interact/vectors.jsonl`） | 告示牌、書、右鍵穿裝備、中鍵挑選；挑選表 | **409/409 scenario；挑選表 35,723 個方塊狀態 0 不同** |
+| `structure_spawns`（`wp45/spawn/structure_spawns.jsonl`） | 結構內外 `NaturalSpawner.mobsAt` 的清單 | 23,073 個樣本、184,584 張清單相同 |
+| `tools/admin_check.py` | 原版與 Kiln 互載存檔：seed、規則、command storage、ops、難度 | **27/27** |
+| `tools/command_diff.py`（wp45 重跑） | 指令回饋逐行 | **1,956/1,956**；`--structures` 的 `/locate structure` 393/393 |
 
 重要觀察：
 
 - **預設 `cargo test` 在沒有 `work/` 時靜默略過所有 parity 測試**（測試直接 return，算「通過」）。本表的數字是設了環境變數才有的。CI 若要有意義，必須設 `KILN_WORK` 與 `KILN_PARITY=1`；沒設 `KILN_PARITY=1` 時 click 序列只跑前 300 個（共 31,000）、loot 每種只跑前 400 個 case。
-- **`work/` 內有些錄製檔已過期**：`work/wp4-entities/vectors.jsonl` 只有 951 個 scenario，現行 `EntityVectors.java` 約產生 1,201 個（minecart、boat、firework、cart_*、arrow_vehicle 缺）；`work/m6-combat/vectors.jsonl` 49 個，最新的 `work/wp36/combat/vectors.jsonl` 114 個。已存在的 harness 重錄後與存檔逐位元相同（例：`FireVectors` 重錄 `cmp` 一致），所以過期只表示「測試沒打到新場景」。
+- **`work/` 內有些錄製檔已過期**：`work/wp4-entities/vectors.jsonl` 只有 951 個 scenario（wp45 重錄到 `work/wp45/entity/`：1,241 個）；`work/m6-combat/vectors.jsonl` 49 個，`work/wp36/combat/vectors.jsonl` 114 個。已存在的 harness 重錄後與存檔逐位元相同（例：`FireVectors` 重錄 `cmp` 一致），所以過期只表示「測試沒打到新場景」。wp45 的新向量都在 `work/wp45/`（`block`、`interact`、`combat`、`effects`、`entity`、`spawn`），`tools/parity_suites.py` 指向它們。
+- **重放端的玩家不是原版的 mock 玩家**：原版 harness 的玩家不被 tick（站著、浮空、卡在方塊裡都不動），Kiln 的玩家有自己的身體（重力、阻力、落地）。重放因此要為每個 scenario 重設身體的速度、給玩家腳下一塊地板（矛），並在需要時把 `on_ground` 設成向量當時的值（riptide）；這些都寫在各 `*_parity.rs` 的註解裡。
 - 所有 `tools/*Vectors.java` 現在讀 `KILN_HARNESS_PORT`，未設時自己找 25581–25583 中第一個空的埠。
 
 ## 3. 逐區域矩陣
@@ -138,7 +148,7 @@
 | 海龜蛋、紅石礦、紫水晶、滴水石、乾燥的哈氣、硫磺 | A | 9 | `misc` 44 個 scenario（生長、掉落、滴水、鍋釜、泥） | 模擬端讓身體壓到絆線與海龜蛋 |
 | 珊瑚、海綿、鷹架、絆線與鉤、目標方塊、大型垂葉 | A | 13 | `wet` 7＋`misc` 的絆線、目標、垂葉、銅燈 scenario | 鷹架塌落的實體部分為 C |
 | 刷怪磚、試煉刷怪磚、寶庫 | 刷怪磚 A／其餘 D | 3 | 刷怪磚：mob_parity 的 `spawner_` 49 個 scenario（延遲、潛在生成物與權重、範圍、上限、光線與自訂規則、生怪蛋、`spawner_blocks_work`、亂數與存檔）；試煉刷怪磚與寶庫只存 NBT | 試煉刷怪磚、寶庫不運作 |
-| 告示牌、懸掛式告示牌 | A | 4 | `interact_parity` 的 sign／equip／book／pick 共 410 個 scenario（編輯與編輯鎖、染色、上蠟、螢光墨囊、點擊事件、牆上與懸掛式放置） | 懸掛告示牌的存活（支撐消失會掉）未模擬 |
+| 告示牌、懸掛式告示牌 | A | 4 | `interact_parity` 的 sign／equip／book／pick 共 409 個 scenario（編輯與編輯鎖、染色、上蠟、螢光墨囊、點擊事件、牆上與懸掛式放置） | 懸掛告示牌的存活（支撐消失會掉）未模擬 |
 | 營火、蜂巢、鐘、講台、裝飾陶罐、書架、擱板、合成器、製圖台、潛影導管 | D | 10 | 只存 NBT 或選單不完整 | 營火不烹飪、蜂巢無蜜蜂、鐘不響、講台無選單 |
 | 指令方塊、結構方塊、拼圖方塊 | D | 3 | 只存 NBT；封包被丟棄 |  |
 | 其他：日光感測器、旗幟、花盆、蛋糕、凋零玫瑰、終界傳送門框架、氣泡柱、可摔落的刷子方塊 | 框架與凋零玫瑰 A／其餘 D | 9 | 終界傳送門框架：`end` 28 個 scenario（放眼、比較器、環形開啟、1503／1038 事件）；凋零玫瑰：`effect_parity` `haz_wither_rose_*` | 日光感測器無輸出、蛋糕不能吃、氣泡柱無作用 |
