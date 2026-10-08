@@ -340,7 +340,7 @@ impl Player {
             mods.push(("minecraft:sprinting".into(), SPRINT_SPEED, AttributeOperation::AddMultipliedTotal));
         }
         // `ServerPlayer.updatePlayerAttributes`: crouching hides the player's waypoint.
-        if attr.name == WAYPOINT_TRANSMIT_RANGE.name && self.is_crouching() {
+        if attr.name == WAYPOINT_TRANSMIT_RANGE.name && self.crouch_attr {
             mods.push(("minecraft:waypoint_transmit_range_crouch".into(), -1.0, AttributeOperation::AddMultipliedTotal));
         }
         for (id, amount, op) in self.effect_modifiers(attr.name) {

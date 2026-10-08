@@ -30,6 +30,7 @@ impl Player {
     pub(crate) fn set_shift_key(&mut self, on: bool) {
         self.sneaking = on;
         self.pose = if on { pose::CROUCHING } else { pose::STANDING };
+        self.crouch_attr = on;
     }
 
     /// `Avatar.updateSwimming` (and `Player.updateSwimming`: a flying player never swims):

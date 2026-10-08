@@ -435,6 +435,9 @@ struct Player {
     swimming: bool,
     /// `Entity.getPose`, settled at the end of every tick (see `pose.rs`).
     pose: i32,
+    /// Whether the pose was crouching when the tick began (`updatePlayerAttributes` runs before
+    /// the pose is settled): the waypoint is hidden by it.
+    crouch_attr: bool,
     /// Gliding with an elytra (shared flag 7) and the ticks it has lasted.
     fall_flying: bool,
     fall_fly_ticks: i32,
@@ -3413,6 +3416,7 @@ impl Sim {
             sprinting: false,
             swimming: false,
             pose: kiln_data::entities::pose::STANDING,
+            crouch_attr: false,
             fall_flying: false,
             fall_fly_ticks: 0,
             spin_ticks: 0,
