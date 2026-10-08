@@ -454,18 +454,7 @@ fn sort_removal_runs(mut packets: Vec<bytes::Bytes>) -> Vec<bytes::Bytes> {
 /// shows, and so that nothing else slips in: the test fails on any other difference, and on a
 /// listed scenario that now passes).
 const KNOWN_GAPS: &[(&str, &str)] = &[
-    ("fall_powder_snow_4", "entering powder snow in a fall freezes one tick more than vanilla (two steps of the tick's path)"),
-    ("fall_powder_snow_40", "as fall_powder_snow_4"),
     ("haz_snow_lava_clears", "a burning player in powder snow next to lava: the fire is put out one tick early"),
-    ("fall_bubble_6", "bubble column: the drag changes the exhaustion of the first ticks of the rise"),
-    ("fall_bubble_10", "as fall_bubble_6"),
-    ("fall_bubble_20", "as fall_bubble_6"),
-    ("fall_bubble_40", "as fall_bubble_6"),
-    ("fall_bed_bounce_12", "the jump exhaustion after a bed's bounce"),
-    ("haz_wall_head_only", "only the head in a block: vanilla stops suffocating after the first hit (the body moves out), Kiln keeps the player in place"),
-    ("haz_wall_head_only_sneaking", "as haz_wall_head_only"),
-    ("haz_wall_placed_over_player", "as haz_wall_head_only"),
-    ("haz_wall_ceiling_slab_top", "a low ceiling forces the crouching pose (and with it the locator bar attribute); poses are not tracked"),
 ];
 
 #[test]
