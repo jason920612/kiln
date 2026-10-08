@@ -41,7 +41,7 @@ pub(crate) fn use_on(p: &mut Player, level: &mut RegionLevel, clicked: BlockPos,
     // `EntityType.create`: the stand starts a block up and falls (at most two blocks) onto what is under.
     let start = Aabb::new(cx - w / 2.0, cy + 1.0, cz - w / 2.0, cx + w / 2.0, cy + 1.0 + h, cz + w / 2.0);
     let column = Aabb::new(pos.x as f64, pos.y as f64 - 1.0, pos.z as f64, pos.x as f64 + 1.0, pos.y as f64 + 1.0, pos.z as f64 + 1.0);
-    let mut drop = -2.0;
+    let mut drop: f64 = -2.0;
     kiln_entity::collision::for_each_block_collision(&phantom, &ctx, &column, |_, shape, _| {
         if drop.abs() >= 1.0e-7 {
             drop = shape.collide(Axis::Y, &start, drop, [0.0; 3]);

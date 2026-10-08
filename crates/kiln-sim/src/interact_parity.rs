@@ -193,13 +193,46 @@ fn hangings_json(sim: &Sim) -> Value {
     Value::Array(rows.into_iter().map(|r| r.4).collect())
 }
 
-/// The id of the hanging entity nearest to `at`.
+/// The armor stands of the level, as `InteractVectors.stands` lists them: [x, y, z, saved data],
+/// sorted by position; the data without what Kiln's ticks and vanilla's frozen level differ in.
+fn stands_json(sim: &Sim) -> Value {
+    let mut rows: Vec<(f64, f64, f64, String)> = Vec::new();
+    for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
+        for e in region.part().0.list.iter().filter(|e| !e.removed) {
+            let Some(phys) = e.phys.as_deref() else { continue };
+            if phys.type_name != "minecraft:armor_stand" {
+                continue;
+            }
+            let p = phys.position();
+            rows.push((p.x, p.y, p.z, normalized_stand(&kiln_entity::persist::save(phys, &|_| None))));
+        }
+    }
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.total_cmp(&b.2)));
+    Value::Array(rows.into_iter().map(|r| json!([r.0, r.1, r.2, r.3])).collect())
+}
+
+/// A stand's saved data as compared: no uuid; where it stands and how it moved are the level's.
+fn normalized_stand(t: &Tag) -> String {
+    let Tag::Compound(fields) = t else { return String::new() };
+    let kept: Vec<(String, Tag)> =
+        fields.iter().filter(|(k, _)| !matches!(k.as_str(), "UUID" | "OnGround" | "Motion" | "fall_distance" | "id")).cloned().collect();
+    let mut out = BytesMut::new();
+    sorted(&Tag::Compound(kept)).write_network(&mut out);
+    hex(&out)
+}
+
+/// The vectors' hex of a stand's saved data, normalized the same way.
+fn normalized_want_stand(h: &str) -> String {
+    normalized_stand(&tag_of(h))
+}
+
+/// The id of the hanging entity (or armor stand) nearest to `at`.
 fn nearest_hanging(sim: &Sim, at: [f64; 3]) -> Option<i32> {
     let mut best: Option<(f64, i32)> = None;
     for region in sim.dims[crate::OVERWORLD_ID].regions.iter() {
         for e in region.part().0.list.iter().filter(|e| !e.removed) {
             let Some(phys) = e.phys.as_deref() else { continue };
-            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() {
+            if kiln_entity::ext_entity::hanging::direction_of(phys).is_none() && phys.type_name != "minecraft:armor_stand" {
                 continue;
             }
             let p = phys.position();
@@ -266,6 +299,10 @@ fn run_case(line: &Value) -> Vec<String> {
     }
     // The settling step: the player's own packets of setup are not part of the scenario.
     assert!(sim.step([]));
+    // The recorded level's clock stands at 100 as each scenario begins.
+    while sim.game_time() < 100 {
+        assert!(sim.step([]));
+    }
     *stats.log.lock().unwrap() = Some(Vec::new());
     let mut errors = Vec::new();
     let steps = line["steps"].as_array().unwrap();
@@ -304,18 +341,26 @@ fn run_case(line: &Value) -> Vec<String> {
             "pick_block" => inbox.push(ToSim::Packet(1, PlayIn::PickItemFromBlock { pos: arr3(&step["pos"]), include_data: step["include"].as_bool().unwrap() })),
             "use_entity" | "attack_entity" => {
                 let at: Vec<f64> = step["pos"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
-                let id = nearest_hanging(&sim, [at[0], at[1], at[2]]).expect("a hanging entity near the target");
+                let Some(id) = nearest_hanging(&sim, [at[0], at[1], at[2]]) else { panic!("{}: no hanging entity near {at:?} at step {n}", line["name"]) };
                 if step["op"] == "attack_entity" {
                     inbox.push(ToSim::Packet(1, PlayIn::Attack { entity_id: id }));
                 } else {
                     // (The hit point is relative to the entity, which is where the vectors aim: its middle.)
                     inbox.push(ToSim::Packet(
                         1,
-                        PlayIn::Interact { entity_id: id, hand: hand_of(&step["hand"]), location: [0.0; 3], sneaking: step["sneak"].as_bool().unwrap() },
+                        PlayIn::Interact { entity_id: id, hand: hand_of(&step["hand"]), location: step["hit"].as_array().map_or([0.0; 3], |h| [h[0].as_f64().unwrap(), h[1].as_f64().unwrap(), h[2].as_f64().unwrap()]), sneaking: step["sneak"].as_bool().unwrap() },
                     ));
                 }
             }
             "command" => inbox.push(ToSim::Console(step["command"].as_str().unwrap().to_owned())),
+            // The game time moves on (the recorded level does not tick, so its clock is moved by hand).
+            "wait" => {
+                for _ in 0..i32_of(&step["ticks"]) {
+                    let mut idle = Vec::new();
+                    client.tick(None, &mut idle);
+                    assert!(sim.step(idle));
+                }
+            }
             "select" => inbox.push(ToSim::Packet(1, PlayIn::SetCarriedItem { slot: i32_of(&step["slot"]) as i16 })),
             "cooldown" => {
                 let item = ItemStack::of(step["item"].as_str().unwrap(), 1).unwrap();
@@ -386,6 +431,10 @@ fn run_case(line: &Value) -> Vec<String> {
         let want_items: Vec<String> = want["entities"].as_array().unwrap().iter().map(|e| e["item"].as_str().unwrap().to_owned()).collect();
         eq("item entities", format!("{got_items:?}"), format!("{want_items:?}"));
         let p = &sim.players[&1];
+        if want.get("stands").is_some() {
+            let want_rows: Vec<Value> = want["stands"].as_array().unwrap().iter().map(|r| json!([r[0], r[1], r[2], normalized_want_stand(r[3].as_str().unwrap())])).collect();
+            eq("armor stands", stands_json(&sim).to_string(), Value::Array(want_rows).to_string());
+        }
         if want.get("hangings").is_some() {
             eq("hanging entities", hangings_json(&sim).to_string(), want["hangings"].to_string());
         }
