@@ -7,13 +7,16 @@
 //! The functions with no HotSpot intrinsic (`atan2`, `asin`, `acos`, `log1p`: `StrictMath`, fdlibm)
 //! must agree on every line. `sin`, `cos`, `log` and `pow` are intrinsics (Intel's libm stubs,
 //! accurate to under an ulp but not correctly rounded); the correctly rounded results here match
-//! them on all but a small fraction of arguments, bounded below.
+//! them on all but a small fraction of arguments, bounded below. `Mth.SIN` (the table the game
+//! actually reads, `float`s of `Math.sin`) must agree on every entry.
 
 use kiln_javamath::{atan, pow, strict, trig};
 use std::collections::BTreeMap;
 
 fn run(text: &str) -> BTreeMap<String, (u64, u64)> {
     let mut stats: BTreeMap<String, (u64, u64)> = BTreeMap::new();
+    // The dump starts with `Mth.SIN`'s inputs (`i / 10430.378350470453`), before any other function.
+    let mut in_table = true;
     for line in text.lines() {
         let mut it = line.split_whitespace();
         let name = it.next().unwrap();
@@ -29,6 +32,12 @@ fn run(text: &str) -> BTreeMap<String, (u64, u64)> {
             "pow" => (pow::pow(v[0], v[1]), v[2]),
             other => panic!("unknown function {other}"),
         };
+        in_table &= name == "sin";
+        if in_table {
+            let e = stats.entry("Mth.SIN".to_string()).or_default();
+            e.0 += 1;
+            e.1 += u64::from((got as f32).to_bits() != (want as f32).to_bits());
+        }
         let same = got.to_bits() == want.to_bits() || (got.is_nan() && want.is_nan());
         let e = stats.entry(name.to_string()).or_default();
         e.0 += 1;
@@ -52,7 +61,7 @@ fn agrees_with_the_jvm() {
     for (name, (n, bad)) in &stats {
         eprintln!("{name:<8} {n:>9} {bad:>9} {:>9.4}", 100.0 * (*n - *bad) as f64 / *n as f64);
     }
-    for name in ["atan2", "asin", "acos", "log1p"] {
+    for name in ["atan2", "asin", "acos", "log1p", "Mth.SIN"] {
         let (n, bad) = stats[name];
         assert_eq!(bad, 0, "{name} differs from the JDK in {bad} of {n} lines");
     }

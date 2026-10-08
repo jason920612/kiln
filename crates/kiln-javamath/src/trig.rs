@@ -3,8 +3,10 @@
 //! On x86-64, HotSpot computes `Math.sin`/`Math.cos` with Intel's libm stubs (in the
 //! interpreter too), which are correctly rounded except within about 1% of an ulp of a
 //! rounding midpoint. These functions return the correctly rounded result (double-double
-//! reduction and series), which agrees with the JVM on about 99.75% of arguments (measured on
-//! 600,000 values against JDK 25), against about 94% for the platform C library.
+//! reduction and series), which agrees with the JVM on 99.89% (sin) and 99.91% (cos) of arguments
+//! (measured on 200,000 values of each kind against JDK 25, `tests/jvm_dump.rs`), against about
+//! 94% for the platform C library. The `Mth.sin` table is filled with these, and a table entry
+//! only changes when a disagreement also moves the rounding to `float`, which is far rarer still.
 
 use crate::dd::{Dd, add, div_f64, mul};
 
