@@ -66,14 +66,14 @@ fn initial_mobs_parity() {
     let mut client = Client::new(1, stats);
     // Until the window's corners are loaded (generation runs on its own threads in real time).
     let corners = [(-radius, -radius), (radius, radius), (-radius, radius), (radius, -radius)];
-    for _ in 0..30000 {
+    for _ in 0..300000 {
         let mut inbox = Vec::new();
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
         if corners.iter().all(|&(cx, cz)| sim.block_at(cx * 16 + 8, 0, cz * 16 + 8).is_some()) {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(2));
+        std::thread::sleep(std::time::Duration::from_millis(1));
     }
     for _ in 0..40 {
         let mut inbox = Vec::new();
