@@ -505,11 +505,6 @@ impl Kind for Bee {
 
 // ---------------------------------------------------------------------- goals
 
-/// `BaseBeeGoal.canUse` / `canContinueToUse`: not while angry.
-fn calm(m: &MobData, level: &dyn EntityLevel) -> bool {
-    !is_angry(m, level)
-}
-
 /// `BeeEnterHiveGoal`: at its hive, wanting in, the bee goes inside.
 #[derive(Clone, Debug)]
 struct EnterHiveGoal;
@@ -519,13 +514,13 @@ impl CustomGoal for EnterHiveGoal {
     fn name(&self) -> &'static str {
         "BeeEnterHiveGoal"
     }
+    fn bee_base(&self) -> bool {
+        true
+    }
     fn flags(&self) -> u8 {
         0
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if !calm(m, level) {
-            return false;
-        }
         let Some(hive) = st(m).hive_pos else { return false };
         let near = Vec3::new(hive.x as f64 + 0.5, hive.y as f64 + 0.5, hive.z as f64 + 0.5).distance_to_sqr(e.position()) < 4.0;
         if wants_to_enter_hive(e, m, level) && near && let Some(b) = beehive(e, m, level) {
@@ -561,11 +556,14 @@ impl CustomGoal for ValidateHiveGoal {
     fn name(&self) -> &'static str {
         "ValidateHiveGoal"
     }
+    fn bee_base(&self) -> bool {
+        true
+    }
     fn flags(&self) -> u8 {
         0
     }
     fn can_use(&mut self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        calm(m, level) && level.game_time() > self.last_validate + st(m).validate_hive as i64
+        level.game_time() > self.last_validate + st(m).validate_hive as i64
     }
     fn can_continue(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
         false
@@ -593,11 +591,14 @@ impl CustomGoal for ValidateFlowerGoal {
     fn name(&self) -> &'static str {
         "ValidateFlowerGoal"
     }
+    fn bee_base(&self) -> bool {
+        true
+    }
     fn flags(&self) -> u8 {
         0
     }
     fn can_use(&mut self, _e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        calm(m, level) && level.game_time() > self.last_validate + st(m).validate_flower as i64
+        level.game_time() > self.last_validate + st(m).validate_flower as i64
     }
     fn can_continue(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
         false
@@ -676,6 +677,9 @@ impl CustomGoal for PollinateGoal {
     fn name(&self) -> &'static str {
         "BeePollinateGoal"
     }
+    fn bee_base(&self) -> bool {
+        true
+    }
     fn flags(&self) -> u8 {
         MOVE
     }
@@ -683,9 +687,6 @@ impl CustomGoal for PollinateGoal {
         true
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if !calm(m, level) {
-            return false;
-        }
         if st(m).cooldown_flower > 0 {
             return false;
         }
@@ -708,9 +709,6 @@ impl CustomGoal for PollinateGoal {
         }
     }
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if !calm(m, level) {
-            return false;
-        }
         if !st(m).pollinating {
             return false;
         }
@@ -803,11 +801,14 @@ impl CustomGoal for LocateHiveGoal {
     fn name(&self) -> &'static str {
         "BeeLocateHiveGoal"
     }
+    fn bee_base(&self) -> bool {
+        true
+    }
     fn flags(&self) -> u8 {
         0
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        calm(m, level) && st(m).cooldown_hive == 0 && st(m).hive_pos.is_none() && wants_to_enter_hive(e, m, level)
+        st(m).cooldown_hive == 0 && st(m).hive_pos.is_none() && wants_to_enter_hive(e, m, level)
     }
     fn can_continue(&mut self, _e: &mut Entity, _m: &mut MobData, _level: &mut dyn EntityLevel) -> bool {
         false
@@ -881,13 +882,13 @@ impl CustomGoal for GoToHiveGoal {
     fn name(&self) -> &'static str {
         "BeeGoToHiveGoal"
     }
+    fn bee_base(&self) -> bool {
+        true
+    }
     fn flags(&self) -> u8 {
         MOVE
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if !calm(m, level) {
-            return false;
-        }
         let Some(hive) = st(m).hive_pos else { return false };
         !too_far(e, hive)
             && !has_home(m)
@@ -948,13 +949,13 @@ impl CustomGoal for GoToKnownFlowerGoal {
     fn name(&self) -> &'static str {
         "BeeGoToKnownFlowerGoal"
     }
+    fn bee_base(&self) -> bool {
+        true
+    }
     fn flags(&self) -> u8 {
         MOVE
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if !calm(m, level) {
-            return false;
-        }
         match st(m).flower_pos {
             Some(f) => !has_home(m) && st(m).ticks_without_nectar > 600 && !closer_than(e, f, 2),
             None => false,
@@ -995,13 +996,13 @@ impl CustomGoal for GrowCropGoal {
     fn name(&self) -> &'static str {
         "BeeGrowCropGoal"
     }
+    fn bee_base(&self) -> bool {
+        true
+    }
     fn flags(&self) -> u8 {
         0
     }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
-        if !calm(m, level) {
-            return false;
-        }
         if st(m).crops_grown >= 10 {
             return false;
         }

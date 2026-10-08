@@ -68,6 +68,7 @@ fn goal_class(name: &'static str, kind: MobKind) -> &'static str {
                 "NearestAttackableTargetGoal"
             }
         }
+        "NearestAttackableTargetGoal" if kind == MobKind::Bee => "BeeBecomeAngryTargetGoal",
         // Extension goals are named after their vanilla class.
         n if n.starts_with(|c: char| c.is_ascii_uppercase()) => n,
         _ => "?",

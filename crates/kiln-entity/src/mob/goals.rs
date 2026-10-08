@@ -493,7 +493,10 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
     let every = g.every_tick();
     let adj = |t: i32| if every { t } else { reduced_tick_delay(t) };
     match g {
-        Goal::Custom(c) => c.can_use(e, m, level),
+        Goal::Custom(c) => {
+            let r = c.can_use(e, m, level);
+            r && (!c.bee_base() || !super::kinds::bee::is_angry(m, level))
+        }
         Goal::Float => (e.fluid_height_water() > fluid_jump_threshold(e)) || e.is_in_lava(),
         Goal::Panic { pos, .. } => {
             if !should_panic(m, level) {
@@ -725,7 +728,10 @@ pub(crate) fn can_use(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut
 
 pub(crate) fn can_continue(g: &mut Goal, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
     match g {
-        Goal::Custom(c) => c.can_continue(e, m, level),
+        Goal::Custom(c) => {
+            let r = c.can_continue(e, m, level);
+            r && (!c.bee_base() || !super::kinds::bee::is_angry(m, level))
+        }
         Goal::Panic { .. } | Goal::FleeSun { .. } => !nav_done(m),
         Goal::RandomStroll { .. } => !nav_done(m),
         Goal::Tempt { .. } => can_use(g, e, m, level),

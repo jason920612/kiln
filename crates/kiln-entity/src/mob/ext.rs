@@ -169,6 +169,11 @@ pub trait CustomGoal: Debug + Send + Sync {
     fn every_tick(&self) -> bool {
         false
     }
+    /// `Bee$BaseBeeGoal`: `canUse` and `canContinueToUse` are the goal's own check (with its side
+    /// effects) and then "not angry".
+    fn bee_base(&self) -> bool {
+        false
+    }
     fn can_use(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool;
     fn can_continue(&mut self, e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) -> bool {
         self.can_use(e, m, level)
