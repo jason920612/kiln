@@ -60,6 +60,15 @@ public class InitialMobVectors {
                         level.getChunk(cx, cz, ChunkStatus.FULL, true);
                     }
                 }
+                // Debug: INITIAL_MOB_DUMP="x,y,z;x,y,z" prints the blocks at those places.
+                String dump = System.getenv("INITIAL_MOB_DUMP");
+                if (dump != null) {
+                    for (String p : dump.split(";")) {
+                        String[] c = p.split(",");
+                        var bp = new net.minecraft.core.BlockPos(Integer.parseInt(c[0]), Integer.parseInt(c[1]), Integer.parseInt(c[2]));
+                        System.out.println("BLOCK " + p + " " + level.getBlockState(bp));
+                    }
+                }
                 Map<Long, List<Entity>> byChunk = new TreeMap<>();
                 for (Entity e : level.getAllEntities()) {
                     if (!(e instanceof Mob)) continue;

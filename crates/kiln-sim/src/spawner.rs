@@ -1061,7 +1061,7 @@ fn initial_chunk(level: &RegionLevel, table: &SpawnTable, c: ChunkPos, spawns: &
                 let dbg = std::env::var_os("KILN_INITIAL_DEBUG").is_some();
                 if dbg {
                     use std::io::Write as _;
-                    let line = format!("INITIAL chunk ({}, {}) {:?} at {x},{z} top {top:?} placement {} below {} at {} sky {} bright {}", c.x, c.z, kind, placement_ok(level, top, kind), kiln_data::blocks_types::block_of(level.block(top.below())).name, kiln_data::blocks_types::block_of(level.block(top)).name, level.raw_brightness(top, 0), level.raw_brightness(top.above(), 0));
+                    let line = format!("INITIAL chunk ({}, {}) {:?} at {x},{z} top {top:?} placement {} below {} at {} sky {} bright {}", c.x, c.z, kind, placement_ok(level, top, kind), kiln_data::blocks_types::block_of(level.block(top.below())).name, kiln_data::blocks_types::block_of(level.block(top)).name, level.raw_brightness(top, 0), level.raw_brightness(top.above(), 0)) + &format!(" above {} above2 {}", kiln_data::blocks_types::block_of(level.block(top.above())).name, kiln_data::blocks_types::block_of(level.block(top.above().above())).name);
                     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/initial_debug.txt") {
                         let _ = writeln!(f, "{line}");
                     }
