@@ -7,7 +7,7 @@
 
 use crate::blocks::{RegionLevel, Ticking};
 use crate::entities::SimLevel;
-use kiln_blocks::BlockPos;
+use kiln_blocks::{BlockPos, Level as _};
 use kiln_entity::spawner::SpawnerBe;
 use kiln_entity::trial_spawner::TrialBe;
 use kiln_proto::nbt::Tag;
@@ -196,7 +196,10 @@ pub(crate) fn tick_all(sim: &mut SimLevel, ticking: &Ticking) {
                 }
             }
         }
-        let updated = matches!(&mut e.be, Be::Trial(b) if std::mem::take(&mut b.updated));
+        let updated = match &mut e.be {
+            Be::Trial(b) => std::mem::take(&mut b.updated),
+            Be::Mob(_) => false,
+        };
         if let Some(l) = sim.level.region() {
             l.blocks.spawners.map.insert(p, e);
             if updated {
