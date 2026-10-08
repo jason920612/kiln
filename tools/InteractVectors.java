@@ -101,6 +101,8 @@ public class InteractVectors {
         boolean watchMenus;
         // wp49: maps are watched.
         boolean watchMaps;
+        // wp49: the watched block entities are ticked after every step.
+        boolean tickLevel;
         // wp49: commands the replay runs together with the first step (after the level has settled), not before it
         // (a hive ages while the replay's level ticks; the recorded one stands still).
         List<String> late = new ArrayList<>();
@@ -168,6 +170,12 @@ public class InteractVectors {
 
         Case hanging() {
             watchHanging = true;
+            return this;
+        }
+
+        /** wp49: the level ticks the watched block entities after every step (and `wait` is that many ticks). */
+        Case ticking() {
+            tickLevel = true;
             return this;
         }
 
@@ -754,6 +762,113 @@ public class InteractVectors {
         c = mapCase("map_banner_outside").cmd("setblock 70 62 70 minecraft:red_banner[rotation=4]");
         c.slot("h0", stack("minecraft:map", 1));
         c.step(op("op", "use", "hand", 0)).step(useOn(70, 62, 70, 1, 0)).step(op("op", "map_wait", "ticks", 6));
+        out.add(c);
+    }
+
+    /** wp49: a vault at (3, 100, 0) put there when the level has settled; the level ticks it after every step. */
+    static Case vaultCase(String name, String props, String nbt) {
+        Case c = new Case(name).ticking();
+        c.cmd("setblock 3 99 0 minecraft:stone").late("setblock 3 100 0 minecraft:vault[" + props + "]" + nbt).watch(3, 100, 0);
+        return c;
+    }
+
+    static Map<String, Object> waitTicks(int n) {
+        return op("op", "wait", "ticks", n);
+    }
+
+    static String playerUuidTag() {
+        UUID u = UUID.nameUUIDFromBytes("Interact".getBytes());
+        long hi = u.getMostSignificantBits(), lo = u.getLeastSignificantBits();
+        return "[I;" + (int) (hi >> 32) + "," + (int) hi + "," + (int) (lo >> 32) + "," + (int) lo + "]";
+    }
+
+    static void vaults49(List<Case> out) {
+        Case c;
+        String stone = "config:{loot_table:\"minecraft:blocks/stone\"}";
+        // Waking up and going back to sleep with the players near.
+        c = vaultCase("vault_wake", "vault_state=inactive", "{" + stone + "}");
+        c.step(waitTicks(1)).step(waitTicks(19)).step(waitTicks(1)).step(waitTicks(40));
+        out.add(c);
+        c = vaultCase("vault_far_player", "vault_state=inactive", "{" + stone + "}");
+        c.pos = new double[] {0.5, 100.0, 12.5};
+        c.step(waitTicks(21)).step(waitTicks(20));
+        out.add(c);
+        c = vaultCase("vault_creative_player", "vault_state=inactive", "{" + stone + "}");
+        c.gameMode = "creative";
+        c.step(waitTicks(2)).step(waitTicks(20));
+        out.add(c);
+        c = vaultCase("vault_spectator_player", "vault_state=inactive", "{" + stone + "}");
+        c.gameMode = "spectator";
+        c.step(waitTicks(2)).step(waitTicks(20));
+        out.add(c);
+        c = vaultCase("vault_edge_of_range", "vault_state=inactive", "{" + stone + "}");
+        c.pos = new double[] {-0.5, 100.0, 0.5};
+        c.step(waitTicks(3)).step(waitTicks(20));
+        out.add(c);
+        // A key opens it: unlocking, then the reward comes out, then it closes (the player has been rewarded).
+        c = vaultCase("vault_key", "vault_state=active", "{" + stone + "}").stat("minecraft:trial_key");
+        c.slot("h0", stack("minecraft:trial_key", 2));
+        c.step(useOn(3, 100, 0, 1, 0)).step(waitTicks(13)).step(waitTicks(1)).step(waitTicks(1)).step(waitTicks(20)).step(waitTicks(1)).step(waitTicks(20)).step(waitTicks(25));
+        out.add(c);
+        c = vaultCase("vault_key_creative", "vault_state=active", "{" + stone + "}").stat("minecraft:trial_key");
+        c.gameMode = "creative";
+        c.slot("h0", stack("minecraft:trial_key", 1));
+        c.step(useOn(3, 100, 0, 1, 0)).step(waitTicks(14)).step(waitTicks(21)).step(waitTicks(20));
+        out.add(c);
+        c = vaultCase("vault_key_offhand", "vault_state=active", "{" + stone + "}").stat("minecraft:trial_key");
+        c.slot("offhand", stack("minecraft:trial_key", 1));
+        c.step(useOn(3, 100, 0, 1, 1)).step(waitTicks(14)).step(waitTicks(21));
+        out.add(c);
+        // A key of the wrong kind, too few of them, something else, nothing: only the failing sound (once every 15 ticks).
+        c = vaultCase("vault_wrong_key", "vault_state=active", "{" + stone + "}").stat("minecraft:ominous_trial_key");
+        c.slot("h0", stack("minecraft:ominous_trial_key", 1));
+        c.step(useOn(3, 100, 0, 1, 0)).step(useOn(3, 100, 0, 1, 0)).step(waitTicks(14)).step(useOn(3, 100, 0, 1, 0)).step(waitTicks(15)).step(useOn(3, 100, 0, 1, 0));
+        out.add(c);
+        c = vaultCase("vault_two_keys_needed", "vault_state=active", "{config:{loot_table:\"minecraft:blocks/stone\",key_item:{id:\"minecraft:trial_key\",count:2}}}").stat("minecraft:trial_key");
+        c.slot("h0", stack("minecraft:trial_key", 1));
+        c.step(useOn(3, 100, 0, 1, 0)).step(waitTicks(1));
+        out.add(c);
+        c = vaultCase("vault_two_keys_given", "vault_state=active", "{config:{loot_table:\"minecraft:blocks/stone\",key_item:{id:\"minecraft:trial_key\",count:2}}}").stat("minecraft:trial_key");
+        c.slot("h0", stack("minecraft:trial_key", 3));
+        c.step(useOn(3, 100, 0, 1, 0)).step(waitTicks(14)).step(waitTicks(21));
+        out.add(c);
+        c = vaultCase("vault_stick_and_empty_hand", "vault_state=active", "{" + stone + "}");
+        c.slot("h0", stack("minecraft:stick", 1));
+        c.step(useOn(3, 100, 0, 1, 0)).step(op("op", "select", "slot", 1)).step(useOn(3, 100, 0, 1, 0));
+        out.add(c);
+        // The player has been rewarded before: the key is refused with its own sound.
+        c = vaultCase("vault_rewarded_player", "vault_state=active",
+                "{" + stone + ",server_data:{rewarded_players:[" + playerUuidTag() + "],state_updating_resumes_at:100000L}}").stat("minecraft:trial_key");
+        c.slot("h0", stack("minecraft:trial_key", 2));
+        c.step(useOn(3, 100, 0, 1, 0)).step(useOn(3, 100, 0, 1, 0)).step(waitTicks(14)).step(useOn(3, 100, 0, 1, 0));
+        out.add(c);
+        // Items waiting to come out, one every second; the pitch rises with the progress.
+        c = vaultCase("vault_eject_three", "vault_state=ejecting",
+                "{" + stone + ",server_data:{items_to_eject:[{id:\"minecraft:stone\",count:1},{id:\"minecraft:dirt\",count:2},{id:\"minecraft:sand\",count:3}],total_ejections_needed:3,state_updating_resumes_at:101L}}");
+        c.step(waitTicks(1)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20));
+        out.add(c);
+        c = vaultCase("vault_eject_one", "vault_state=ejecting",
+                "{" + stone + ",server_data:{items_to_eject:[{id:\"minecraft:diamond\",count:1}],total_ejections_needed:1,state_updating_resumes_at:101L}}");
+        c.step(waitTicks(1)).step(waitTicks(20)).step(waitTicks(20));
+        out.add(c);
+        // Ominous vaults want ominous keys.
+        c = vaultCase("vault_ominous_key", "vault_state=inactive,ominous=true",
+                "{config:{loot_table:\"minecraft:blocks/stone\",key_item:{id:\"minecraft:ominous_trial_key\",count:1}}}").stat("minecraft:ominous_trial_key");
+        c.slot("h0", stack("minecraft:ominous_trial_key", 1));
+        c.step(waitTicks(1)).step(useOn(3, 100, 0, 1, 0)).step(waitTicks(14)).step(waitTicks(21)).step(waitTicks(20));
+        out.add(c);
+        // What the vault shows while waiting comes from another table when it is told to.
+        c = vaultCase("vault_display_override", "vault_state=inactive",
+                "{config:{loot_table:\"minecraft:blocks/stone\",override_loot_table_to_display:\"minecraft:blocks/composter\"}}");
+        c.step(waitTicks(1)).step(waitTicks(20));
+        out.add(c);
+        // A vault with no key does not wake up its display.
+        c = vaultCase("vault_no_key_item", "vault_state=inactive", "{config:{loot_table:\"minecraft:blocks/stone\",key_item:{id:\"minecraft:air\",count:1}}}");
+        c.step(waitTicks(1)).step(waitTicks(20));
+        out.add(c);
+        // A smaller range.
+        c = vaultCase("vault_small_range", "vault_state=inactive", "{config:{loot_table:\"minecraft:blocks/stone\",activation_range:2.0d,deactivation_range:2.5d}}");
+        c.step(waitTicks(1)).step(waitTicks(20));
         out.add(c);
     }
 
@@ -2163,8 +2278,15 @@ public class InteractVectors {
             case "command" -> command((String) s.get("command"));
             // wp49: the game time moves on (the level itself does not tick here).
             case "wait" -> {
-                var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
-                data.setGameTime(data.getGameTime() + (int) s.get("ticks"));
+                if (c.tickLevel) {
+                    for (int i = 0; i < (int) s.get("ticks"); i++) {
+                        levelTick(c);
+                        broadcastChanges();
+                    }
+                } else {
+                    var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
+                    data.setGameTime(data.getGameTime() + (int) s.get("ticks"));
+                }
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
             // wp49: a click on a menu button (`ServerboundContainerButtonClickPacket`) of the player's open menu.
@@ -2195,6 +2317,7 @@ public class InteractVectors {
             }
             default -> throw new IllegalArgumentException("unknown op " + s.get("op"));
         }
+        if (c.tickLevel && !"wait".equals(s.get("op"))) levelTick(c);
         // Queued work (the sign text filter completes on the server thread's executor).
         for (int i = 0; i < 3; i++) call(server, "runAllTasks");
         broadcastChanges();
@@ -2226,7 +2349,24 @@ public class InteractVectors {
         field(net.minecraft.world.level.saveddata.maps.MapIndex.class, "lastMapId").setInt(index, -1);
     }
 
-    /** One server tick of the player's maps: `Inventory.tick`, `EntityEquipment.tick` and `ServerPlayer.doTick`'s sync. */
+    /** wp49: one tick of the level as far as the watched block entities go: the clock moves on, their tickers run. */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static void levelTick(Case c) {
+        ServerLevel level = server.overworld();
+        var data = (net.minecraft.world.level.storage.ServerLevelData) level.getLevelData();
+        data.setGameTime(data.getGameTime() + 1);
+        for (int[] w : c.watch) {
+            BlockPos wp = new BlockPos(w[0], w[1], w[2]);
+            BlockState st = level.getBlockState(wp);
+            BlockEntity be = level.getBlockEntity(wp);
+            if (be != null && st.getBlock() instanceof net.minecraft.world.level.block.EntityBlock eb) {
+                var ticker = eb.getTicker(level, st, (net.minecraft.world.level.block.entity.BlockEntityType) be.getType());
+                if (ticker != null) ticker.tick(level, wp, st, be);
+            }
+        }
+    }
+
+    /** One server tick of the player's maps:`Inventory.tick`, `EntityEquipment.tick` and `ServerPlayer.doTick`'s sync. */
     static void mapTick(ServerPlayer p) throws Exception {
         p.containerMenu.broadcastChanges();
         p.getInventory().tick();
@@ -2279,7 +2419,7 @@ public class InteractVectors {
 
     static String run(Case c) throws Exception {
         for (String cmd : c.commands) command(cmd);
-        for (String cmd : c.late) command(cmd);
+        if (!c.tickLevel) for (String cmd : c.late) command(cmd);
         // The replay's level makes one tick between these commands and the first step: a hive's bees age by it.
         if (!c.late.isEmpty()) {
             for (int[] w : c.watch) {
@@ -2300,6 +2440,12 @@ public class InteractVectors {
         setup(p, c);
         broadcastChanges();
         drain(p);
+        if (c.tickLevel) {
+            for (String cmd : c.late) command(cmd);
+            levelTick(c);
+            broadcastChanges();
+            drain(p);
+        }
         if (System.getenv("INTERACT_DEBUG") != null) {
             System.out.println("DEBUG " + c.name + " pos " + p.getX() + " " + p.getY() + " " + p.getZ());
             var dbe = server.overworld().getBlockEntity(new BlockPos(4, 100, 4));
@@ -2388,6 +2534,8 @@ public class InteractVectors {
         line.put("bees", c.watchBees);
         line.put("menus", c.watchMenus);
         line.put("maps", c.watchMaps);
+        line.put("ticking", c.tickLevel);
+        line.put("player_uuid", p.getUUID().toString());
         line.put("custom_stats", c.customStats);
         line.put("result", results);
         return toJson(line);
@@ -2498,6 +2646,7 @@ public class InteractVectors {
             pots49(all);
             lecterns49(all);
             maps49(all);
+            vaults49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

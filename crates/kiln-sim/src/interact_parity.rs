@@ -447,6 +447,10 @@ fn run_case(line: &Value) -> Vec<String> {
         p.set_shift_key(line["sneaking"].as_bool().unwrap());
         p.fall_distance = 0.0;
         p.food = line["food"].as_i64().map_or(20, |f| f as i32);
+        // (Vaults remember players by uuid: the vectors' mock player's.)
+        if let Some(u) = line["player_uuid"].as_str() {
+            p.uuid = uuid::Uuid::parse_str(u).unwrap();
+        }
         p.game_mode = match line["game_mode"].as_str().unwrap() {
             "creative" => 1,
             "adventure" => 2,
