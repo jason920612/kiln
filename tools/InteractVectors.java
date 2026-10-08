@@ -921,7 +921,7 @@ public class InteractVectors {
         c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30));
         out.add(c);
         c = trialCase("trial_peaceful", "trial_spawner_state=inactive", "{" + normal + "}");
-        c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("difficulty peaceful")).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("difficulty easy"))
+        c.step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep(kill)).step(cmdStep("difficulty peaceful")).step(waitTicks(30)).step(waitTicks(30)).step(cmdStep("difficulty easy"))
                 .step(waitTicks(30)).step(waitTicks(30)).step(waitTicks(30));
         out.add(c);
         c = trialCase("trial_rule_off", "trial_spawner_state=inactive", "{" + normal + "}");

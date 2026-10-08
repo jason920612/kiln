@@ -243,18 +243,22 @@ pub(crate) fn use_egg(level: &mut RegionLevel, pos: BlockPos, entity_type: &str)
         }
     };
     e.dirty = true;
-    if trial {
-        // ... and the spawner goes inactive.
-        let s = level.block(pos);
-        if let Some(new) = kiln_data::blocks_types::block_of(s).with_property(s, "trial_spawner_state", "inactive") {
-            kiln_blocks::set_block_and_update(level, pos, new);
-        }
-    }
-    // `Level.sendBlockUpdated`: the chunk's block entity follows, and the players that have the chunk get it.
+    // The chunk's block entity follows, and the players that have the chunk get it.
     let chunk_pos = chunk_of(pos);
     if let Some(chunk) = level.cells.chunk_mut(chunk_pos) {
         level.blocks.spawners.store(chunk_pos, chunk);
     }
+    // ... and the trial spawner goes inactive (that block change sends the block entity along).
+    if trial {
+        let s = level.block(pos);
+        if let Some(new) = kiln_data::blocks_types::block_of(s).with_property(s, "trial_spawner_state", "inactive")
+            && new != s
+        {
+            kiln_blocks::set_block_and_update(level, pos, new);
+            return Some(true);
+        }
+    }
+    // `Level.sendBlockUpdated`.
     level.out.changed.push([pos.x, pos.y, pos.z]);
     Some(true)
 }

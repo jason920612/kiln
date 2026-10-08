@@ -658,6 +658,11 @@ fn run_case(line: &Value) -> Vec<String> {
         // (The attack sound is the cooldown's: this level does not tick between the vanilla steps.)
         got_packets.retain(|p| !p.contains("entity.player.attack."));
         want_packets.retain(|p| !p.contains("entity.player.attack."));
+        // (Kiln's mobs tick between the steps and make their idle noises; the vectors' level does not tick them.)
+        if line["ticking"].as_bool() == Some(true) {
+            got_packets.retain(|p| !p.contains(".ambient"));
+            want_packets.retain(|p| !p.contains(".ambient"));
+        }
         got_packets.sort();
         want_packets.sort();
         eq("packets", format!("{got_packets:?}"), format!("{want_packets:?}"));
