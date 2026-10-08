@@ -552,8 +552,8 @@ public class InteractVectors {
         out.add(c);
         // Redstone: a bell rings when power reaches it, once.
         c = blockCase("bell_powered", floor);
-        c.step(command("setblock 3 100 0 minecraft:redstone_block")).step(command("setblock 3 100 0 minecraft:air"))
-                .step(command("setblock 2 101 0 minecraft:redstone_block"));
+        c.step(cmdStep("setblock 3 100 0 minecraft:redstone_block")).step(cmdStep("setblock 3 100 0 minecraft:air"))
+                .step(cmdStep("setblock 2 101 0 minecraft:redstone_block"));
         out.add(c);
 
         // ---- put up against a support
@@ -601,19 +601,19 @@ public class InteractVectors {
         out.add(c);
         // Losing the support: the stone under a floor bell goes; a double wall bell loses one wall, then the other.
         c = blockCase("bell_floor_loses_floor", floor);
-        c.step(command("setblock 2 99 0 minecraft:air"));
+        c.step(cmdStep("setblock 2 99 0 minecraft:air"));
         out.add(c);
         c = new Case("bell_double_loses_one").cmd("setblock 1 100 0 minecraft:stone").cmd("setblock 3 100 0 minecraft:stone")
                 .cmd("setblock 2 100 0 minecraft:bell[attachment=double_wall,facing=east,powered=false]").watch(2, 100, 0);
-        c.step(command("setblock 1 100 0 minecraft:air")).step(command("setblock 3 100 0 minecraft:air"));
+        c.step(cmdStep("setblock 1 100 0 minecraft:air")).step(cmdStep("setblock 3 100 0 minecraft:air"));
         out.add(c);
         c = new Case("bell_single_gains_second").cmd("setblock 1 100 0 minecraft:stone")
                 .cmd("setblock 2 100 0 minecraft:bell[attachment=single_wall,facing=east,powered=false]").watch(2, 100, 0);
-        c.step(command("setblock 3 100 0 minecraft:stone")).step(command("setblock 3 100 0 minecraft:air"));
+        c.step(cmdStep("setblock 3 100 0 minecraft:stone")).step(cmdStep("setblock 3 100 0 minecraft:air"));
         out.add(c);
     }
 
-    static Map<String, Object> command(String cmd) {
+    static Map<String, Object> cmdStep(String cmd) {
         return op("op", "command", "command", cmd);
     }
 
