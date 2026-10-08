@@ -138,7 +138,7 @@ impl Vault {
             v.server.rewarded = uuids(s.get("rewarded_players"));
             v.server.resumes_at = s.get("state_updating_resumes_at").and_then(Tag::as_i64).unwrap_or(0);
             v.server.eject = s.get("items_to_eject").and_then(Tag::as_list).unwrap_or(&[]).iter().filter_map(|t| ItemStack::from_nbt(t).ok()).collect();
-            v.server.total = s.get("total_ejections_needed").and_then(Tag::as_i64).unwrap_or(0) as i32;
+            // (`VaultServerData.set` does not copy `total_ejections_needed`: it is 0 after a load.)
         }
         v
     }

@@ -538,7 +538,9 @@ fn run_case(line: &Value) -> Vec<String> {
             "command" => inbox.push(ToSim::Console(step["command"].as_str().unwrap().to_owned())),
             // The game time moves on (the recorded level does not tick, so its clock is moved by hand).
             "wait" => {
-                for _ in 0..i32_of(&step["ticks"]) {
+                // (A level that ticks the block entities in the vectors makes `ticks` of them, the step's own included.)
+                let first = i32::from(line["ticking"].as_bool() == Some(true));
+                for _ in first..i32_of(&step["ticks"]) {
                     let mut idle = Vec::new();
                     client.tick(None, &mut idle);
                     assert!(sim.step(idle));
