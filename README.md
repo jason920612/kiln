@@ -69,6 +69,7 @@ Settings come from the environment until there is a config file:
 | `KILN_VIEW_DISTANCE`, `KILN_SIMULATION_DISTANCE` | `view-distance` and `simulation-distance` (10 and 10) |
 | `KILN_GENERATOR`, `KILN_SEED`, `KILN_DATAPACK` | `noise`: vanilla overworld terrain from this seed; the data generator output (`work/generated`) |
 | `KILN_GEN_THREADS` | chunk generation threads per level (as many as the tick pool, at background priority: `SCHED_IDLE` on Linux, below normal on Windows) |
+| `KILN_BACKGROUND_STORAGE` | `0`: chunk reads and writes on the tick thread even where chunks generate in the background (by default Anvil worlds read on two loader threads, encode unloaded chunks on an encoder thread and write region files on a writer thread) |
 | `KILN_TICK_TRACE` | a file that gets one line per tick: `<unix ms> <players> <tick micros>` (exact percentiles over any stretch of a run) |
 | `KILN_SLOW_PRINT` | ticks slower than this many milliseconds are logged with their phases |
 | `KILN_PROXY` | `none`, `velocity` or `bungeecord` |

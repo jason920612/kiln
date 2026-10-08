@@ -879,8 +879,10 @@ impl Dim {
         let kind = kiln_data::dimension_type(key).expect("vanilla dimension type");
         let generation = provider.fork_generator().map(|g| generation::GenPool::new(g.as_ref(), provider.dimension, threads));
         let mut provider = provider;
-        // With chunks generated in the background, storage reads and writes go there too.
-        if generation.is_some() {
+        // With chunks generated in the background, storage reads and writes go there too
+        // (`KILN_BACKGROUND_STORAGE=0` keeps them on the tick thread: the order chunks arrive
+        // in then depends on nothing but the requests, for comparing runs).
+        if generation.is_some() && std::env::var("KILN_BACKGROUND_STORAGE").map_or(true, |v| v != "0") {
             provider.set_background(true);
         }
         let entity_store = match native.clone() {
