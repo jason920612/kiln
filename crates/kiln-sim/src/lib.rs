@@ -29,6 +29,7 @@ mod commands;
 mod consume;
 mod buckets;
 mod beehive;
+mod vault;
 mod decorated_pot;
 mod lectern;
 mod maps;
@@ -2450,6 +2451,13 @@ impl Sim {
             pipeline: self.world.pipelines.get(dim).cloned().flatten(),
             // Only asked whether any is near (in no order).
             fire_watchers: std::sync::Arc::new(self.players.values().filter(|p| p.dim == dim && p.game_mode != 3).map(|p| p.pos).collect()),
+            players: std::sync::Arc::new(
+                self.players
+                    .values()
+                    .filter(|p| p.dim == dim)
+                    .map(|p| vault::Near { uuid: p.uuid, block: [p.pos[0].floor() as i32, p.pos[1].floor() as i32, p.pos[2].floor() as i32], game_mode: p.game_mode })
+                    .collect(),
+            ),
             raids: self.dims[dim].raids.views.clone(),
             entity_ticking: self.config.entity_ticking,
             speculate: self.config.speculate,

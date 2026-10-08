@@ -37,7 +37,7 @@ pub(super) fn dispense_position(pos: BlockPos, facing: Direction) -> [f64; 3] {
 }
 
 /// `DefaultDispenseItemBehavior.spawnItem`.
-pub(super) fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack: ItemStack, accuracy: i32, facing: Direction, at: [f64; 3]) {
+pub(crate) fn spawn_item(level: &mut RegionLevel, rng: &mut LegacyRandom, stack: ItemStack, accuracy: i32, facing: Direction, at: [f64; 3]) {
     let y = at[1] - if facing.axis() == kiln_blocks::Axis::Y { 0.125 } else { 0.15625 };
     // The `ItemEntity` constructor's random throw, replaced below.
     rng.next_double();

@@ -307,6 +307,8 @@ pub(crate) struct BlockEnv {
     /// Where the level's non-spectator players stood when the tick began (fire spreads near
     /// them; the same in every region).
     pub fire_watchers: std::sync::Arc<Vec<[f64; 3]>>,
+    /// The level's players as they stood when the tick began (vaults detect them).
+    pub players: std::sync::Arc<Vec<crate::vault::Near>>,
     /// The level's raids as they stood when the tick began.
     pub raids: std::sync::Arc<Vec<kiln_entity::level::RaidView>>,
     /// The End's dragon fight as the level's entities see it (`None` elsewhere).
@@ -1656,6 +1658,7 @@ mod tests {
             weather: Default::default(),
             fire_spread_radius: 128,
             fire_watchers: Default::default(),
+            players: Default::default(),
             raids: Default::default(),
             dragon_fight: None,
             pipeline: None,
