@@ -770,10 +770,10 @@ impl Sim {
                 };
                 if let Some(chunk) = d.regions.chunk(pos).or_else(|| d.pending.get(&pos)) {
                     scan(chunk, &mut consider);
-                } else if let Some(mut chunk) = d.provider.load(pos) {
+                } else if let Some(chunk) = d.provider.load(pos) {
                     // A saved chunk nobody needs: read and let go.
                     scan(&chunk, &mut consider);
-                    d.provider.unload(pos, &mut chunk);
+                    d.provider.unload(pos, chunk);
                 }
             }
         }

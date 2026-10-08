@@ -145,6 +145,45 @@ pub trait ChunkSource: Send {
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
+
+    /// Lets the source read and write on threads of its own ([`ChunkSource::start_load`],
+    /// [`ChunkSource::save_owned`] and `flush` return before the work is done). Off by default.
+    fn set_background(&mut self, _on: bool) {}
+
+    /// Starts loading `pos` on another thread, if the source does that; the chunk comes back
+    /// through [`ChunkSource::poll_loads`].
+    fn start_load(&mut self, _pos: ChunkPos, _dimension: Dimension) -> StartLoad {
+        StartLoad::Unsupported
+    }
+
+    /// Loads started earlier that finished: the chunk, or `None` if it could not be read (or is
+    /// not fully generated), with the thread time the load took.
+    fn poll_loads(&mut self) -> Vec<(ChunkPos, Option<Chunk>, std::time::Duration)> {
+        Vec::new()
+    }
+
+    /// [`ChunkSource::save`] for a chunk the caller gives up (it is leaving memory): the source
+    /// may encode it on another thread.
+    fn save_owned(&mut self, pos: ChunkPos, chunk: Chunk) {
+        self.save(pos, &chunk);
+    }
+
+    /// Waits until everything queued has reached storage (shutdown).
+    fn sync(&mut self) -> std::io::Result<()> {
+        self.flush()
+    }
+}
+
+/// What [`ChunkSource::start_load`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartLoad {
+    /// The load runs on another thread.
+    Started,
+    /// Nothing is stored at the position.
+    Missing,
+    /// Load it with [`ChunkSource::load`] (the source does not load in the background, or not
+    /// this chunk now).
+    Unsupported,
 }
 
 /// Generates chunks, e.g. vanilla's noise-based generation (`kiln-worldgen`). Called for
@@ -258,12 +297,38 @@ impl ChunkProvider {
     }
 
     /// Saves a chunk that is leaving memory if it needs it, and lets the source forget it.
-    pub fn unload(&mut self, pos: ChunkPos, chunk: &mut Chunk) -> bool {
-        let saved = self.save(pos, chunk);
-        if let Some(source) = self.source.as_mut() {
-            source.unloaded(pos);
+    pub fn unload(&mut self, pos: ChunkPos, mut chunk: Chunk) -> bool {
+        let Some(source) = self.source.as_mut() else { return false };
+        let saved = chunk.needs_save();
+        if saved {
+            chunk.mark_saved();
+            source.save_owned(pos, chunk);
         }
+        source.unloaded(pos);
         saved
+    }
+
+    /// See [`ChunkSource::set_background`].
+    pub fn set_background(&mut self, on: bool) {
+        if let Some(s) = self.source.as_mut() {
+            s.set_background(on);
+        }
+    }
+
+    /// See [`ChunkSource::start_load`].
+    pub fn start_load(&mut self, pos: ChunkPos) -> StartLoad {
+        let dim = self.dimension;
+        self.source.as_mut().map_or(StartLoad::Missing, |s| s.start_load(pos, dim))
+    }
+
+    /// See [`ChunkSource::poll_loads`].
+    pub fn poll_loads(&mut self) -> Vec<(ChunkPos, Option<Chunk>, std::time::Duration)> {
+        self.source.as_mut().map_or_else(Vec::new, |s| s.poll_loads())
+    }
+
+    /// See [`ChunkSource::sync`].
+    pub fn sync(&mut self) -> std::io::Result<()> {
+        self.source.as_mut().map_or(Ok(()), |s| s.sync())
     }
 
     /// Whether unloaded chunks can be written somewhere (a superflat test world cannot).

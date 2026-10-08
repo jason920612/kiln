@@ -814,6 +814,10 @@ struct Dim {
     emptied: Vec<kiln_world::CellPos>,
     /// Generation threads, when missing chunks come from an expensive generator.
     generation: Option<generation::GenPool>,
+    /// Chunks being read from storage on its own threads (with generation threads only), and
+    /// those read and not installed yet.
+    loading: HashSet<ChunkPos>,
+    loaded: BTreeMap<ChunkPos, Chunk>,
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
@@ -874,6 +878,11 @@ impl Dim {
     ) -> Dim {
         let kind = kiln_data::dimension_type(key).expect("vanilla dimension type");
         let generation = provider.fork_generator().map(|g| generation::GenPool::new(g.as_ref(), provider.dimension, threads));
+        let mut provider = provider;
+        // With chunks generated in the background, storage reads and writes go there too.
+        if generation.is_some() {
+            provider.set_background(true);
+        }
         let entity_store = match native.clone() {
             Some(store) => Some(kiln_storage::EntityStore::native(store)),
             None => world.map(|dir| kiln_storage::EntityStore::new(dir.join(dimension_dir(key)).join("entities"))),
@@ -894,6 +903,8 @@ impl Dim {
             spawns: Vec::new(),
             emptied: Vec::new(),
             generation,
+            loading: HashSet::new(),
+            loaded: BTreeMap::new(),
             game_time,
             entity_store,
             poi_store,
@@ -971,10 +982,22 @@ impl Dim {
             self.load_chunk(pos);
             return true;
         };
-        if pool.is_queued(pos) {
+        if pool.is_queued(pos) || self.loading.contains(&pos) || self.loaded.contains_key(&pos) {
             return true;
         }
         let started = Instant::now();
+        match self.provider.start_load(pos) {
+            kiln_world::StartLoad::Started => {
+                self.loading.insert(pos);
+                return true;
+            }
+            kiln_world::StartLoad::Missing => {
+                chunkstats::count(&chunkstats::DISK_MISSES);
+                chunkstats::add_ns(&chunkstats::DISK_MISS_NS, started.elapsed());
+                return self.generation.as_mut().is_some_and(|p| p.request(pos));
+            }
+            kiln_world::StartLoad::Unsupported => {}
+        }
         match self.provider.load(pos) {
             Some(chunk) => {
                 let read = started.elapsed();
@@ -997,6 +1020,10 @@ impl Dim {
     /// generated ahead of every other chunk while the player waits. Whether it is loaded.
     fn request_urgent(&mut self, pos: ChunkPos) -> bool {
         if self.is_loaded(pos) {
+            return true;
+        }
+        if let Some(chunk) = self.loaded.remove(&pos) {
+            self.timed_install(pos, chunk);
             return true;
         }
         let Some(pool) = &self.generation else {
@@ -1041,17 +1068,40 @@ impl Dim {
     fn install_generated(&mut self, first: &[ChunkPos]) {
         let Some(pool) = &mut self.generation else { return };
         pool.collect();
-        if !pool.has_ready() {
+        // Chunks read from storage: a chunk that could not be read is generated.
+        for (pos, chunk, took) in self.provider.poll_loads() {
+            if !self.loading.remove(&pos) || self.is_loaded(pos) {
+                continue;
+            }
+            match chunk {
+                Some(chunk) => {
+                    chunkstats::count(&chunkstats::DISK_HITS);
+                    chunkstats::add_ns(&chunkstats::DISK_NS, took);
+                    chunkstats::max_ns(&chunkstats::DISK_MAX_NS, took);
+                    self.loaded.insert(pos, chunk);
+                }
+                None => {
+                    self.generation.as_mut().map(|p| p.request_urgent(pos));
+                }
+            }
+        }
+        let pool = self.generation.as_mut().unwrap();
+        if !pool.has_ready() && self.loaded.is_empty() {
             return;
         }
-        let ready: Vec<ChunkPos> = pool.ready().collect();
+        let mut ready: Vec<ChunkPos> = pool.ready().chain(self.loaded.keys().copied()).collect();
+        ready.sort_unstable();
         let started = Instant::now();
         let (now, later): (Vec<ChunkPos>, Vec<ChunkPos>) = ready.into_iter().partition(|p| first.binary_search(p).is_ok());
         for pos in now.into_iter().chain(later) {
             if first.binary_search(&pos).is_err() && started.elapsed() >= INSTALL_BUDGET {
                 break;
             }
-            let Some(chunk) = self.generation.as_mut().and_then(|p| p.take(pos)) else { continue };
+            let chunk = match self.loaded.remove(&pos) {
+                Some(c) => Some(c),
+                None => self.generation.as_mut().and_then(|p| p.take(pos)),
+            };
+            let Some(chunk) = chunk else { continue };
             // Loaded synchronously in the meantime (a command needed it).
             if !self.is_loaded(pos) {
                 self.timed_install(pos, chunk);
@@ -1082,7 +1132,7 @@ impl Dim {
                 {
                     store.store(pos, Some(p.to_nbt(kiln_storage::anvil::DATA_VERSION as i32)));
                 }
-                self.provider.unload(pos, &mut chunk);
+                self.provider.unload(pos, *chunk);
                 unloaded.push(pos);
             }
             if cell.is_empty() {
@@ -1288,7 +1338,9 @@ impl Sim {
                             Box::new(kiln_storage::NativeSource::new(store))
                         } else {
                             native_stores.push(None);
-                            Box::new(kiln_storage::AnvilSource::new(dir.join(dimension_dir(key)).join("region")))
+                            let mut anvil = kiln_storage::AnvilSource::new(dir.join(dimension_dir(key)).join("region"));
+                            anvil.dimension = dimension;
+                            Box::new(anvil)
                         };
                         let provider = ChunkProvider::with_source(dimension, source, Terrain::Void, biome, biome_count);
                         if id == OVERWORLD_ID {
@@ -2920,6 +2972,12 @@ impl Sim {
             p.disconnect("Server closed");
         }
         self.save();
+        // Writes still running on the storage threads reach the disk before the server stops.
+        for d in &mut self.dims {
+            if let Err(e) = d.provider.sync() {
+                warn!("saving {} failed: {e}", d.key);
+            }
+        }
         // Compactions still copying cell files in the background finish and swap in before the
         // server stops, so a store opened right after (a restart, a tool) sees the final files.
         for d in &self.dims {
