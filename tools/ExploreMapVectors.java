@@ -62,14 +62,17 @@ public class ExploreMapVectors {
             try {
                 ServerLevel level = server.overworld();
                 String[][] cases = {
-                    {"minecraft:on_ocean_explorer_maps", "monument", "2", "0", "0"},
-                    {"minecraft:on_woodland_explorer_maps", "mansion", "2", "0", "0"},
-                    {"minecraft:on_treasure_maps", "red_x", "1", "0", "0"},
-                    {"minecraft:on_treasure_maps", "red_x", "1", "700", "-300"},
-                    {"minecraft:on_trial_chambers_maps", "trial_chambers", "2", "0", "0"},
-                    {"minecraft:village", "village_plains", "2", "100", "100"},
-                    {"minecraft:on_swamp_explorer_maps", "swamp_hut", "2", "0", "0"},
-                    {"minecraft:on_jungle_explorer_maps", "jungle_temple", "2", "0", "0"},
+                    {"minecraft:on_ocean_monument_maps", "monument", "2", "0", "0", "100", "true"},
+                    {"minecraft:on_woodland_mansion_maps", "mansion", "2", "0", "0", "100", "true"},
+                    {"minecraft:on_treasure_maps", "red_x", "1", "0", "0", "50", "false"},
+                    {"minecraft:on_treasure_maps", "red_x", "1", "700", "-300", "50", "false"},
+                    {"minecraft:on_buried_trial_chambers_maps", "trial_chambers", "2", "0", "0", "100", "true"},
+                    {"minecraft:on_plains_village_maps", "village_plains", "2", "100", "100", "100", "true"},
+                    {"minecraft:on_desert_village_maps", "village_desert", "2", "0", "0", "100", "true"},
+                    {"minecraft:on_swamp_hut_maps", "swamp_hut", "2", "0", "0", "100", "true"},
+                    {"minecraft:on_jungle_pyramid_maps", "jungle_temple", "2", "0", "0", "100", "true"},
+                    {"minecraft:on_taiga_village_maps", "village_taiga", "2", "0", "0", "100", "true"},
+                    {"minecraft:on_mineshaft_maps", "mineshaft", "2", "0", "0", "100", "true"},
                 };
                 for (String[] c : cases) {
                     TagKey<Structure> tag = TagKey.create(Registries.STRUCTURE, Identifier.parse(c[0]));
@@ -79,7 +82,7 @@ public class ExploreMapVectors {
                         continue;
                     }
                     BlockPos origin = new BlockPos(Integer.parseInt(c[3]), 64, Integer.parseInt(c[4]));
-                    BlockPos found = level.findNearestMapStructure(set.get(), origin, 100, false);
+                    BlockPos found = level.findNearestMapStructure(set.get(), origin, Integer.parseInt(c[5]), Boolean.parseBoolean(c[6]));
                     if (found == null) {
                         lines.add("{\"tag\":\"" + c[0] + "\",\"origin\":[" + c[3] + "," + c[4] + "],\"found\":null}");
                         continue;
@@ -92,7 +95,7 @@ public class ExploreMapVectors {
                     MapId id = stack.get(DataComponents.MAP_ID);
                     MapItemSavedData data = level.getMapData(id);
                     var d = stack.get(DataComponents.MAP_DECORATIONS).decorations().get("+");
-                    lines.add("{\"tag\":\"" + c[0] + "\",\"decoration\":\"" + c[1] + "\",\"zoom\":" + c[2] + ",\"origin\":[" + c[3] + "," + c[4] + "],\"found\":["
+                    lines.add("{\"tag\":\"" + c[0] + "\",\"decoration\":\"" + c[1] + "\",\"zoom\":" + c[2] + ",\"radius\":" + c[5] + ",\"skip\":" + c[6] + ",\"origin\":[" + c[3] + "," + c[4] + "],\"found\":["
                             + found.getX() + "," + found.getY() + "," + found.getZ() + "],\"center\":[" + data.centerX + "," + data.centerZ + "],\"colors\":\""
                             + ByteBufUtil.hexDump(data.colors) + "\",\"component\":[" + BuiltInRegistries.MAP_DECORATION_TYPE.getId(d.type().value()) + "," + d.x() + ","
                             + d.z() + "," + d.rotation() + "]}");
