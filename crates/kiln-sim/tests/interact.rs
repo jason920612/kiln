@@ -151,7 +151,7 @@ fn a_sign_is_edited_by_the_player_it_opened_the_editor_for() {
     w.use_on(sign, 0);
     assert_eq!(w.editor_opened(), Some(true));
     w.sign_update(sign, ["Hello", "\u{a7}cRed", "caf\u{e9}", ""], true);
-    assert_eq!(w.side(sign, true).0, ["Hello", "cRed", "caf\u{e9}", ""], "formatting codes are stripped");
+    assert_eq!(w.side(sign, true).0, ["Hello", "Red", "caf\u{e9}", ""], "formatting codes are stripped");
     // The lock was used up.
     w.sign_update(sign, ["again", "", "", ""], true);
     assert_eq!(w.side(sign, true).0[0], "Hello");
@@ -216,6 +216,7 @@ fn creative_players_keep_their_dye_and_adventure_players_change_nothing() {
     w.use_on(sign, 0);
     assert_eq!(w.side(sign, true).1, "blue");
     assert_eq!(w.inventory_item(36), Some(("minecraft:blue_dye".into(), 2)));
+    assert_eq!(w.editor_opened(), Some(true), "creative players edit");
     w.run("gamemode adventure User");
     w.give(1, "minecraft:red_dye", 2);
     w.select(1);
@@ -259,17 +260,18 @@ fn a_sign_in_use_by_another_player_cannot_be_edited() {
 #[test]
 fn armor_is_worn_with_a_right_click() {
     let mut w = World::new("survival");
-    w.give(0, "minecraft:iron_helmet", 2);
+    w.give(0, "minecraft:iron_helmet", 1);
     w.use_item(Hand::Main);
-    let inv = w.sim.inventory(1).unwrap();
     let helmet = kiln_data::builtin_id("minecraft:item", "minecraft:iron_helmet").unwrap();
     // The head slot is inventory slot 5 of the player's menu.
-    assert_eq!(inv[5], Some((helmet, 1)), "one helmet is worn");
-    assert_eq!(w.inventory_item(36), Some(("minecraft:iron_helmet".into(), 1)));
-    // A second helmet swaps with the worn one (an identical one changes nothing).
+    assert_eq!(w.sim.inventory(1).unwrap()[5], Some((helmet, 1)), "the helmet is worn");
+    assert_eq!(w.inventory_item(36), None, "and gone from the hand");
+    // An identical helmet changes nothing.
+    w.give(0, "minecraft:iron_helmet", 1);
     w.use_item(Hand::Main);
     assert_eq!(w.sim.inventory(1).unwrap()[5], Some((helmet, 1)));
     assert_eq!(w.inventory_item(36), Some(("minecraft:iron_helmet".into(), 1)));
+    // Another one swaps with the worn one.
     w.give(1, "minecraft:diamond_helmet", 1);
     w.select(1);
     w.use_item(Hand::Main);

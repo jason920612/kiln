@@ -25,6 +25,8 @@ impl World {
             ToSim::Console("gamemode creative Keeper".into()),
             ToSim::Console("difficulty normal".into()),
             ToSim::Console("time set 18000".into()),
+            // Natural spawning off: only the spawners make mobs here.
+            ToSim::Console("gamerule minecraft:spawn_mobs false".into()),
         ]));
         let mut client = Client::new(1, stats);
         for _ in 0..5 {

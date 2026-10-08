@@ -47,8 +47,21 @@ impl World {
         let client = Client::new(1, stats);
         let mut w = Self { sim, client, ground: [0; 3] };
         w.ticks(40);
-        let p = w.client.pos;
-        w.ground = [p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32];
+        // The player settles on the generated ground (it may be sent after the join); the test boxes
+        // reach 7 blocks around him and 26 above: wait for those chunks.
+        // (Generation runs on its own threads in real time, and a tick here takes microseconds.)
+        for _ in 0..12000 {
+            let p = w.client.pos;
+            w.ground = [p[0].floor() as i32, p[1].floor() as i32 - 1, p[2].floor() as i32];
+            let [gx, gy, gz] = w.ground;
+            let corners = [(-7, 0, -7), (7, 0, 7), (-7, 26, 7), (7, 26, -7), (0, 0, 0)];
+            let loaded = corners.iter().all(|&(dx, dy, dz)| w.sim.block_at(gx + dx, gy + dy, gz + dz).is_some());
+            if loaded && w.sim.block_at(gx, gy, gz).is_some_and(|b| b != 0) {
+                break;
+            }
+            w.ticks(1);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         w
     }
 
@@ -65,7 +78,7 @@ impl World {
     }
 
     fn block(&self, p: [i32; 3]) -> u16 {
-        self.sim.block_at(p[0], p[1], p[2]).expect("loaded")
+        self.sim.block_at(p[0], p[1], p[2]).unwrap_or_else(|| panic!("{p:?} not loaded (ground {:?})", self.ground))
     }
 
     fn name(&self, p: [i32; 3]) -> &'static str {

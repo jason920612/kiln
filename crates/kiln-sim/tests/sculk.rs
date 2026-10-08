@@ -57,6 +57,13 @@ impl World {
         self.sim.block_at(p[0], p[1], p[2]).expect("loaded")
     }
 
+    /// A shrieker is half a block high: the player (whose client here never moves by itself)
+    /// is put down onto it, as the fall would have done.
+    fn stand_on_shrieker(&mut self) {
+        let p = self.client.pos;
+        self.run(&format!("tp Listener {} {} {}", p[0], p[1] - 0.5, p[2]));
+    }
+
     fn phase(&self, p: [i32; 3]) -> &'static str {
         state::get(self.block(p), "sculk_sensor_phase").unwrap_or("?")
     }
@@ -169,6 +176,7 @@ fn shriekers_warn_players_and_can_summon_darkness() {
     // A summoning shrieker right under the player: standing on it sets it off.
     let under = w.ground;
     w.setblock(under, "minecraft:sculk_shrieker[can_summon=true]");
+    w.stand_on_shrieker();
     w.ticks(2);
     assert!(state::get_bool(w.block(under), "shrieking"), "the player standing on it makes it shriek");
     // The shriek lasts 90 ticks; then it answers with darkness.
@@ -205,6 +213,7 @@ fn shriekers_summon_a_warden_at_the_fourth_warning() {
     w.run("difficulty normal");
     let under = w.ground;
     w.setblock(under, "minecraft:sculk_shrieker[can_summon=true]");
+    w.stand_on_shrieker();
     // Each shriek raises the warning level once the 200-tick cooldown is over; the fourth
     // shriek's answer is a warden digging out nearby.
     let mut summoned = None;
