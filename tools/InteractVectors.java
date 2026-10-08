@@ -97,6 +97,8 @@ public class InteractVectors {
         List<String> customStats = new ArrayList<>();
         // wp49: the bees that appear (where, and whether they target someone) are recorded after every step.
         boolean watchBees;
+        // wp49: the menu packets are recorded.
+        boolean watchMenus;
         // wp49: commands the replay runs together with the first step (after the level has settled), not before it
         // (a hive ages while the replay's level ticks; the recorded one stands still).
         List<String> late = new ArrayList<>();
@@ -143,6 +145,11 @@ public class InteractVectors {
 
         Case bees() {
             watchBees = true;
+            return this;
+        }
+
+        Case menus() {
+            watchMenus = true;
             return this;
         }
 
@@ -618,6 +625,80 @@ public class InteractVectors {
         c = new Case("pot_place_plain").cmd("setblock 2 99 0 minecraft:stone").watch(2, 100, 0);
         c.slot("h0", stack("minecraft:decorated_pot", 2));
         c.step(useOn(2, 99, 0, 1, 0)).step(useOn(2, 99, 0, 1, 0));
+        out.add(c);
+    }
+
+    /** wp49: lecterns: putting a book on, the menu (pages, jump, take), redstone pulse, breaking. */
+    static void lecterns49(List<Case> out) {
+        Case c;
+        String stand = "minecraft:lectern[facing=north,has_book=false,powered=false]";
+        String written = "{id:'minecraft:written_book',count:1,components:{'minecraft:written_book_content':{title:'Tome',author:'Me',pages:['One','Two','Three','Four','Five']}}}";
+        String writable = "{id:'minecraft:writable_book',count:3,components:{'minecraft:writable_book_content':{pages:['a','b']}}}";
+        String with = "minecraft:lectern[facing=east,has_book=true,powered=false]{Book:" + written + ",Page:1}";
+        c = blockCase("lectern_place_written_book", stand).stat("minecraft:written_book");
+        c.slot("h0", parseStack(written));
+        c.step(useOn(2, 100, 0, 1, 0)).step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("lectern_place_writable_book", stand).stat("minecraft:writable_book");
+        c.slot("h0", parseStack(writable));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("lectern_place_book_creative", stand);
+        c.gameMode = "creative";
+        c.slot("h0", parseStack(writable));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("lectern_place_plain_book", stand);
+        c.slot("h0", stack("minecraft:book", 2));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("lectern_empty_hand_no_book", stand);
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("lectern_sneaking_with_book", stand);
+        c.sneaking = true;
+        c.slot("h0", parseStack(written));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // The menu: opened, pages turned, jumped to, the book taken.
+        c = blockCase("lectern_open_and_turn", with).menus().custom("minecraft:interact_with_lectern");
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 2)).step(op("op", "menu_button", "button", 1)).step(op("op", "menu_close"));
+        out.add(c);
+        c = blockCase("lectern_jump_and_clamp", with).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 103)).step(op("op", "menu_button", "button", 2)).step(op("op", "menu_button", "button", 100));
+        out.add(c);
+        c = blockCase("lectern_first_page_back", with.replace("Page:1", "Page:0")).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 1));
+        out.add(c);
+        c = blockCase("lectern_take_book", with).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 3));
+        out.add(c);
+        c = blockCase("lectern_take_book_full_inventory", with).menus();
+        for (int i = 0; i < 9; i++) c.slot("h" + i, stack("minecraft:dirt", 64));
+        for (int i = 9; i < 36; i++) c.slot("m" + i, stack("minecraft:cobblestone", 64));
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 3));
+        out.add(c);
+        c = blockCase("lectern_take_book_adventure", with).menus();
+        c.gameMode = "adventure";
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 3));
+        out.add(c);
+        c = blockCase("lectern_unknown_button", with).menus();
+        c.step(useOn(2, 100, 0, 1, 0)).step(op("op", "menu_button", "button", 50));
+        out.add(c);
+        c = blockCase("lectern_spectator_open", with).menus();
+        c.gameMode = "spectator";
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        c = blockCase("lectern_open_holding_book", with).menus();
+        c.slot("h0", parseStack(writable));
+        c.step(useOn(2, 100, 0, 1, 0));
+        out.add(c);
+        // Broken: the book pops out (and the lectern gives up its power).
+        c = blockCase("lectern_break_drops_book", with);
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
+        out.add(c);
+        c = blockCase("lectern_break_empty", stand);
+        c.step(op("op", "dig", "pos", List.of(2, 100, 0)));
         out.add(c);
     }
 
@@ -1754,6 +1835,9 @@ public class InteractVectors {
         return s.getSound().unwrapKey().map(k -> k.identifier().toString()).orElse("?");
     }
 
+    /// wp49: the menu packets (open, contents, slots, data, close) are recorded for cases that watch menus.
+    static boolean recordMenus;
+
     static List<Object> packets(ServerPlayer p) throws Exception {
         List<Object> out = new ArrayList<>();
         for (Object o : drain(p)) {
@@ -1779,6 +1863,19 @@ public class InteractVectors {
             } else if (o instanceof ClientboundLevelEventPacket l) {
                 out.add(op("t", "level_event", "event", l.getType(), "pos", List.of(l.getPos().getX(), l.getPos().getY(), l.getPos().getZ()),
                         "data", l.getData(), "global", l.isGlobalEvent()));
+            } else if (recordMenus && o instanceof ClientboundOpenScreenPacket m) {
+                out.add(op("t", "open_screen", "id", m.getContainerId(), "type", BuiltInRegistries.MENU.getId(m.getType()), "title", nbtHex(net.minecraft.network.chat.ComponentSerialization.CODEC
+                        .encodeStart(server.registryAccess().createSerializationContext(net.minecraft.nbt.NbtOps.INSTANCE), m.getTitle()).getOrThrow())));
+            } else if (recordMenus && o instanceof ClientboundContainerSetContentPacket m) {
+                List<Object> items = new ArrayList<>();
+                for (ItemStack st : m.items()) items.add(hex(st));
+                out.add(op("t", "set_content", "id", m.containerId(), "items", items, "carried", hex(m.carriedItem())));
+            } else if (recordMenus && o instanceof ClientboundContainerSetSlotPacket m) {
+                out.add(op("t", "set_slot", "id", m.getContainerId(), "slot", m.getSlot(), "item", hex(m.getItem())));
+            } else if (recordMenus && o instanceof ClientboundContainerSetDataPacket m) {
+                out.add(op("t", "set_data", "id", m.getContainerId(), "index", m.getId(), "value", m.getValue()));
+            } else if (recordMenus && o instanceof ClientboundContainerClosePacket m) {
+                out.add(op("t", "container_close", "id", m.getContainerId()));
             }
         }
         return out;
@@ -1923,6 +2020,10 @@ public class InteractVectors {
                 data.setGameTime(data.getGameTime() + (int) s.get("ticks"));
             }
             case "select" -> p.connection.handleSetCarriedItem(new ServerboundSetCarriedItemPacket((int) s.get("slot")));
+            // wp49: a click on a menu button (`ServerboundContainerButtonClickPacket`) of the player's open menu.
+            case "menu_button" -> p.connection.handleContainerButtonClick(new ServerboundContainerButtonClickPacket(p.containerMenu.containerId, (int) s.get("button")));
+            // wp49: the player closes the menu.
+            case "menu_close" -> p.connection.handleContainerClose(new ServerboundContainerClosePacket(p.containerMenu.containerId));
             // wp49: the player starts breaking the block (it goes at once in creative or with a tool that breaks it in a tick).
             case "dig" -> {
                 @SuppressWarnings("unchecked")
@@ -1999,6 +2100,7 @@ public class InteractVectors {
         Map<String, Integer> customBefore = new HashMap<>();
         for (String n : c.customStats) customBefore.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(BuiltInRegistries.CUSTOM_STAT.getValue(Identifier.parse(n)))));
         java.util.Set<UUID> seenBees = new java.util.HashSet<>();
+        recordMenus = c.watchMenus;
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
             Map<String, Object> r = new LinkedHashMap<>();
@@ -2059,6 +2161,7 @@ public class InteractVectors {
         line.put("hanging", c.watchHanging);
         line.put("stands", c.watchStands);
         line.put("bees", c.watchBees);
+        line.put("menus", c.watchMenus);
         line.put("custom_stats", c.customStats);
         line.put("result", results);
         return toJson(line);
@@ -2166,6 +2269,7 @@ public class InteractVectors {
             bells49(all);
             hives49(all);
             pots49(all);
+            lecterns49(all);
         }).get();
         List<Case> selected = new ArrayList<>();
         for (Case c : all) {

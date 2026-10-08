@@ -100,6 +100,32 @@ fn decode(pkt: &Bytes) -> Option<Value> {
             let p = pos(&mut r).ok()?;
             json!({"t": "level_event", "event": event, "pos": p, "data": r.i32().ok()?, "global": r.bool().ok()?})
         }
+        // The menu packets (recorded for cases that watch menus).
+        ids::OPEN_SCREEN => {
+            let (container, kind) = (r.varint().ok()?, r.varint().ok()?);
+            let (tag, _) = kiln_proto::nbt::read_network(r.rest()).ok()?;
+            let mut out = BytesMut::new();
+            sorted(&tag).write_network(&mut out);
+            json!({"t": "open_screen", "id": container, "type": kind, "title": hex(&out)})
+        }
+        ids::CONTAINER_SET_CONTENT => {
+            let (container, _state) = (r.varint().ok()?, r.varint().ok()?);
+            let n = r.varint().ok()?;
+            let items: Vec<Value> = (0..n).map(|_| ItemStack::read_optional(&mut r).ok().map(|s| Value::String(stack_hex(&s)))).collect::<Option<_>>()?;
+            let carried = ItemStack::read_optional(&mut r).ok()?;
+            json!({"t": "set_content", "id": container, "items": items, "carried": stack_hex(&carried)})
+        }
+        ids::CONTAINER_SET_SLOT => {
+            let (container, _state) = (r.varint().ok()?, r.varint().ok()?);
+            let slot = r.i16().ok()?;
+            let item = ItemStack::read_optional(&mut r).ok()?;
+            json!({"t": "set_slot", "id": container, "slot": slot, "item": stack_hex(&item)})
+        }
+        ids::CONTAINER_SET_DATA => {
+            let container = r.varint().ok()?;
+            json!({"t": "set_data", "id": container, "index": r.i16().ok()?, "value": r.i16().ok()?})
+        }
+        ids::CONTAINER_CLOSE => json!({"t": "container_close", "id": r.varint().ok()?}),
         ids::SYSTEM_CHAT => {
             let rest = r.rest();
             let (tag, n) = kiln_proto::nbt::read_network(rest).ok()?;
@@ -112,7 +138,12 @@ fn decode(pkt: &Bytes) -> Option<Value> {
     })
 }
 
-const INTERESTING: [i32; 8] = [
+const INTERESTING: [i32; 13] = [
+    kiln_data::packets::play::clientbound::OPEN_SCREEN,
+    kiln_data::packets::play::clientbound::CONTAINER_SET_CONTENT,
+    kiln_data::packets::play::clientbound::CONTAINER_SET_SLOT,
+    kiln_data::packets::play::clientbound::CONTAINER_SET_DATA,
+    kiln_data::packets::play::clientbound::CONTAINER_CLOSE,
     kiln_data::packets::play::clientbound::SET_HELD_SLOT,
     kiln_data::packets::play::clientbound::SOUND,
     kiln_data::packets::play::clientbound::OPEN_SIGN_EDITOR,
@@ -123,10 +154,15 @@ const INTERESTING: [i32; 8] = [
     kiln_data::packets::play::clientbound::SYSTEM_CHAT,
 ];
 
-fn take_packets(stats: &SinkStats) -> Vec<Value> {
+fn take_packets(stats: &SinkStats, menus: bool) -> Vec<Value> {
+    use kiln_data::packets::play::clientbound as ids;
     let all = std::mem::take(stats.log.lock().unwrap().as_mut().unwrap());
     all.iter()
-        .filter(|p| kiln_proto::codec::Reader::new(p).varint().ok().is_some_and(|id| INTERESTING.contains(&id)))
+        .filter(|p| {
+            kiln_proto::codec::Reader::new(p).varint().ok().is_some_and(|id| {
+                INTERESTING.contains(&id) && (menus || !matches!(id, ids::OPEN_SCREEN | ids::CONTAINER_SET_CONTENT | ids::CONTAINER_SET_SLOT | ids::CONTAINER_SET_DATA | ids::CONTAINER_CLOSE))
+            })
+        })
         .filter_map(decode)
         .collect()
 }
@@ -135,8 +171,12 @@ fn take_packets(stats: &SinkStats) -> Vec<Value> {
 fn normalize_want(v: &Value) -> Value {
     let mut v = v.clone();
     match v["t"].as_str().unwrap() {
-        "block_entity_data" | "system_chat" => {
-            let key = if v["t"] == "system_chat" { "text" } else { "tag" };
+        "block_entity_data" | "system_chat" | "open_screen" => {
+            let key = match v["t"].as_str().unwrap() {
+                "system_chat" => "text",
+                "open_screen" => "title",
+                _ => "tag",
+            };
             let tag = tag_of(v[key].as_str().unwrap());
             let mut out = BytesMut::new();
             sorted(&tag).write_network(&mut out);
@@ -360,7 +400,7 @@ fn run_case(line: &Value) -> Vec<String> {
         let mut inbox: Vec<ToSim> = late.iter().map(|c| ToSim::Console(c.as_str().unwrap().to_owned())).collect();
         client.tick(None, &mut inbox);
         assert!(sim.step(inbox));
-        let _ = take_packets(&stats);
+        let _ = take_packets(&stats, false);
     }
     let mut errors = Vec::new();
     let mut seen_bees: std::collections::HashSet<i32> = Default::default();
@@ -421,6 +461,14 @@ fn run_case(line: &Value) -> Vec<String> {
                 }
             }
             "select" => inbox.push(ToSim::Packet(1, PlayIn::SetCarriedItem { slot: i32_of(&step["slot"]) as i16 })),
+            "menu_button" => {
+                let id = sim.players[&1].containers.counter;
+                inbox.push(ToSim::Packet(1, PlayIn::ContainerButtonClick { container_id: id, button_id: i32_of(&step["button"]) }));
+            }
+            "menu_close" => {
+                let id = sim.players[&1].containers.counter;
+                inbox.push(ToSim::Packet(1, PlayIn::ContainerClose { container_id: id }));
+            }
             "dig" => {
                 // (The recorded player stands on the ground; this one has had ticks to fall in.)
                 sim.players.get_mut(&1).unwrap().on_ground = true;
@@ -452,7 +500,7 @@ fn run_case(line: &Value) -> Vec<String> {
         // The same packets, whatever the order: vanilla sends a sound the moment it is made and
         // the block changes at the end of the tick, Kiln's regions deliver both with the tick's
         // block work (the client cannot tell).
-        let mut got_packets: Vec<String> = take_packets(&stats).iter().map(|v| v.to_string()).collect();
+        let mut got_packets: Vec<String> = take_packets(&stats, line["menus"].as_bool() == Some(true)).iter().map(|v| v.to_string()).collect();
         let mut want_packets: Vec<String> = want["packets"].as_array().unwrap().iter().map(|v| normalize_want(v).to_string()).collect();
         // Vanilla sends two or more changes of one section as a Section Blocks Update, which the
         // vectors do not record (Kiln sends each change on its own).
