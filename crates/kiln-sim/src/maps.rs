@@ -999,6 +999,81 @@ pub(crate) fn map_id_of(stack: &ItemStack) -> Option<i32> {
     stack.get(kiln_item::keys::MAP_ID).map(|m| m.0)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kiln_loot::MapExplorer;
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
+    }
+
+    /// `ExplorationMapFunction` against the vectors of `tools/ExploreMapVectors.java` (`KILN_EXPLORE_VECTORS`): the
+    /// structure found, the map's centre, its biome preview and the marker on the item.
+    #[test]
+    fn exploration_map_parity() {
+        let Some(path) = std::env::var_os("KILN_EXPLORE_VECTORS") else {
+            eprintln!("skipped: set KILN_EXPLORE_VECTORS (tools/ExploreMapVectors.java)");
+            return;
+        };
+        let seed: i64 = std::env::var("KILN_EXPLORE_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(12345);
+        let pack = kiln_worldgen::Datapack::load(&crate::datapack_dir(None)).expect("datapack");
+        let world = kiln_worldgen::Worldgen::overworld(&pack, seed, true).expect("overworld");
+        let pipeline = Arc::new(kiln_worldgen::Pipeline::new(Arc::new(world)));
+        let store = MapStore::shared(None);
+        let explorer = Explorer::new(store.clone(), pipeline);
+        let (mut checked, mut failed) = (0, Vec::new());
+        for line in std::fs::read_to_string(path).unwrap().lines().filter(|l| !l.trim().is_empty()) {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            if v.get("error").is_some() || v["found"].is_null() {
+                continue;
+            }
+            let tag = v["tag"].as_str().unwrap();
+            let names: Vec<kiln_item::Identifier> = crate::world_state::worldgen_tag("worldgen/structure", tag)
+                .unwrap()
+                .iter()
+                .filter_map(|n| kiln_item::Identifier::parse(n))
+                .collect();
+            let destination = kiln_loot::parse::NameSet { tag: None, names };
+            let kind = kiln_data::builtin_id("minecraft:map_decoration_type", &format!("minecraft:{}", v["decoration"].as_str().unwrap())).unwrap();
+            let request = kiln_loot::ExplorationMap {
+                destination: &destination,
+                decoration: kind,
+                zoom: v["zoom"].as_i64().unwrap() as i8,
+                search_radius: v["radius"].as_i64().unwrap() as i32,
+                skip_existing_chunks: v["skip"].as_bool().unwrap(),
+            };
+            let o = v["origin"].as_array().unwrap();
+            let origin = [o[0].as_f64().unwrap(), 64.0, o[1].as_f64().unwrap()];
+            let stack = ItemStack::of("minecraft:filled_map", 1).unwrap();
+            let made = explorer.explore(&stack, origin, &request);
+            checked += 1;
+            let Some(made) = made else {
+                failed.push(format!("{tag} at {origin:?}: nothing found, vanilla {}", v["found"]));
+                continue;
+            };
+            let id = map_id_of(&made).unwrap();
+            let mut s = store.lock().unwrap();
+            let data = s.get(id).unwrap();
+            let want_center = v["center"].as_array().unwrap();
+            let comp = made.get(kiln_item::keys::MAP_DECORATIONS).unwrap().0.iter().find(|(k, _)| k == "+").unwrap().1.clone();
+            let want_comp = v["component"].as_array().unwrap();
+            let want_colors = unhex(v["colors"].as_str().unwrap());
+            let diff = data.colors.iter().zip(&want_colors).filter(|(a, b)| a != b).count();
+            if data.center != [want_center[0].as_i64().unwrap() as i32, want_center[1].as_i64().unwrap() as i32]
+                || comp.kind as i64 != want_comp[0].as_i64().unwrap()
+                || comp.x != want_comp[1].as_f64().unwrap()
+                || comp.z != want_comp[2].as_f64().unwrap()
+                || diff != 0
+            {
+                failed.push(format!("{tag} at {origin:?}: centre {:?} (vanilla {want_center:?}), marker {} {} (vanilla {want_comp:?}), {diff} colours differ", data.center, comp.x, comp.z));
+            }
+        }
+        println!("exploration maps: {checked} checked, {} differ", failed.len());
+        assert!(failed.is_empty(), "{failed:#?}");
+    }
+}
+
 /// `MapItemSavedData.addTargetDecoration`: the map item shows a marker at `pos` named `key`.
 pub(crate) fn add_target_decoration(stack: &mut ItemStack, pos: [i32; 3], key: &str, kind: i32) {
     let mut list = stack.get(kiln_item::keys::MAP_DECORATIONS).cloned().unwrap_or_default();
