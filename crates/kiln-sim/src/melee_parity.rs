@@ -37,7 +37,9 @@ impl World {
         for (i, name) in names.iter().enumerate() {
             let conn = i as u64 + 1;
             let (msg, s) = join(conn, name, 2);
-            assert!(sim.step([msg]));
+            // (No natural spawns from the first tick: a slime chunk of the flat world would put one in
+            // reach of the mobs the scenario counts.)
+            assert!(sim.step([msg, ToSim::Console("gamerule minecraft:spawn_mobs false".into())]));
             clients.push(Client::new(conn, s.clone()));
             stats.push(s);
         }

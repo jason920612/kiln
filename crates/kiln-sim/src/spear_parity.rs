@@ -69,7 +69,7 @@ struct World {
 }
 
 impl World {
-    fn new(names: &[String]) -> World {
+    fn new(names: &[String], floor: bool) -> World {
         let mut sim = Sim::new(SimConfig::new(4, 4, None));
         let (mut clients, mut stats) = (Vec::new(), Vec::new());
         for (i, name) in names.iter().enumerate() {
@@ -94,7 +94,19 @@ impl World {
         // Vanilla's level is a void: nothing but what a scenario places is in the way.
         let (lo, hi) = (w.at(-4, -3, -4), w.at(4, 6, 14));
         w.console(&format!("fill {} {} {} {} {} {} minecraft:air", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]));
+        // (Vanilla's mock players stand on nothing and are told so; Kiln's bodies fall without a floor.)
+        if floor {
+            let (lo, hi) = (w.at(-4, -1, -4), w.at(4, -1, 14));
+            w.console(&format!("fill {} {} {} {} {} {} minecraft:stone", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]));
+        }
         w
+    }
+
+    /// A stone block under a player recorded at `rel` (relative to the attacker), where the
+    /// ray of a stab does not run through a floor.
+    fn floor_under(&mut self, rel: &Value) {
+        let off: Vec<f64> = rel.as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        self.setblock(off[0].floor() as i32, off[1].floor() as i32 - 1, off[2].floor() as i32, "minecraft:stone");
     }
 
     fn console(&mut self, cmd: &str) {
@@ -133,6 +145,10 @@ impl World {
         // (Projectiles hover with the motion the vectors gave them.)
         let motion = if ty.ends_with("fireball") || ty.ends_with("wind_charge") { "Motion:[0.0d,0.0d,0.5d]," } else { "" };
         let nbt = format!("{{{motion}NoAI:1b,PersistenceRequired:1b,Rotation:[180f,0f],equipment:{{{}}}}}", equipment.join(","));
+        // (A mob below the attacker's feet stands in the void: the floor gives way under it.)
+        if y.floor() < self.base[1].round() {
+            self.console(&format!("setblock {} {} {} minecraft:air", x.floor() as i32, y.floor() as i32, z.floor() as i32));
+        }
         self.console(&format!("summon {ty} {x} {y} {z} {nbt}"));
         assert!(self.sim.step([]));
     }
@@ -172,9 +188,13 @@ fn eq(errors: &mut Vec<String>, what: &str, got: String, want: String) {
 
 fn stab(line: &Value) -> Vec<String> {
     let has_target = !line["target"].is_null();
-    let mut w = World::new(&names(line, has_target));
+    let mut w = World::new(&names(line, has_target), false);
     let (attacker, target) = (&line["attacker"], &line["target"]);
     let base = w.base;
+    w.floor_under(&attacker["pos"]);
+    if has_target {
+        w.floor_under(&target["pos"]);
+    }
     setup(&mut w.sim, 1, attacker, base);
     if has_target {
         setup(&mut w.sim, 2, target, base);
@@ -318,7 +338,7 @@ fn check_mob(got: Option<&kiln_proto::nbt::Tag>, want: &Value, errors: &mut Vec<
 
 fn charge(line: &Value) -> Vec<String> {
     let kind = line["target_kind"].as_str().unwrap();
-    let mut w = World::new(&names(line, kind == "player"));
+    let mut w = World::new(&names(line, kind == "player"), true);
     let base = w.base;
     setup(&mut w.sim, 1, &line["attacker"], base);
     let seed = line["level_seed"].as_i64().unwrap();
