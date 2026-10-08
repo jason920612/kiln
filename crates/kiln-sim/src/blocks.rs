@@ -405,6 +405,8 @@ pub(crate) struct BlockOut {
     /// Sculk shriekers whose shriek ended (`tryRespond`) and their warning level: the region
     /// answers with darkness and maybe a warden.
     pub responds: Vec<(BlockPos, i32)>,
+    /// Bells that rang this phase (their block events ran): the region lists what hears them.
+    pub bell_events: Vec<BlockPos>,
     /// Block states changed so far (whatever the flags).
     pub edits: u64,
 }
@@ -516,6 +518,14 @@ impl Level for RegionLevel<'_> {
 
     fn sun_angle(&self) -> f32 {
         kiln_blocks::behaviour::daylight::sun_angle(self.env.mobs.day_time)
+    }
+
+    fn bell_hit(&mut self, pos: BlockPos, dir: kiln_blocks::Direction) -> bool {
+        crate::bell::on_hit(self, pos, dir)
+    }
+
+    fn bell_event(&mut self, pos: BlockPos, dir: kiln_blocks::Direction) -> bool {
+        crate::bell::trigger_event(self, pos, dir)
     }
 
     fn raw_brightness(&self, pos: BlockPos, sky_darken: i32) -> i32 {

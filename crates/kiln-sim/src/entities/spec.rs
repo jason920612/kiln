@@ -627,7 +627,7 @@ fn speculate(sim: &SimLevel, i: usize, ticking: &blocks::Ticking, any_player: bo
         return None;
     }
     let base = e.phys.as_deref()?;
-    if base.vehicle.is_some() || !base.passengers.is_empty() || !base.pending_hurts.is_empty() {
+    if base.vehicle.is_some() || !base.passengers.is_empty() || !base.pending_hurts.is_empty() || !base.pending_effects.is_empty() {
         return None;
     }
     let env = sim.level.env();

@@ -157,6 +157,7 @@ pub mod stat {
         EAT_CAKE_SLICE = "minecraft:eat_cake_slice",
         INTERACT_WITH_CAMPFIRE = "minecraft:interact_with_campfire",
         POT_FLOWER = "minecraft:pot_flower",
+        BELL_RING = "minecraft:bell_ring",
         ENCHANT_ITEM = "minecraft:enchant_item",
         OPEN_CHEST = "minecraft:open_chest",
         OPEN_ENDERCHEST = "minecraft:open_enderchest",

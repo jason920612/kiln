@@ -72,6 +72,8 @@ pub struct Entity {
     /// Damage a minecart took from what it stood in (lava, fire) while its own tick held its
     /// state: (kind, amount, attacker), taken by the cart right after.
     pub pending_hurts: Vec<(DamageKind, f32, Option<i32>)>,
+    /// Effects the world gives it between ticks (a bell's glow), added at the start of the next entity phase.
+    pub pending_effects: Vec<crate::effect::Effect>,
     /// `Projectile.lastDeflectedBy`: the entity that last deflected this projectile (it flies
     /// through that one's box without being turned again).
     pub last_deflected_by: Option<i32>,
@@ -153,6 +155,7 @@ impl Entity {
         let mut e = Entity {
             pending_fall: None,
             pending_hurts: Vec::new(),
+            pending_effects: Vec::new(),
             last_deflected_by: None,
             id,
             uuid,

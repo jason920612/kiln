@@ -4,6 +4,7 @@
 //! unchanged by shape updates, always surviving. Waterlogged blocks of any class re-check
 //! their water on shape updates, as almost every `SimpleWaterloggedBlock` does.
 
+pub mod bell;
 pub mod bubble;
 pub mod connect;
 pub mod container;
@@ -54,6 +55,7 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
         C::RedstoneLampBlock => components::lamp_neighbor_changed(level, s, pos),
         C::NoteBlock => devices::note_neighbor_changed(level, s, pos),
         C::TntBlock => devices::tnt_neighbor_changed(level, pos),
+        C::BellBlock => bell::neighbor_changed(level, s, pos),
         C::FrostedIceBlock => spread::frosted_neighbor_changed(level, s, pos, source),
         C::SpongeBlock => wet::sponge_try_absorb(level, pos),
         C::FenceGateBlock => misc::powered_open_neighbor_changed(level, s, pos),
@@ -74,7 +76,6 @@ pub fn neighbor_changed<L: Level>(level: &mut L, s: u16, pos: BlockPos, source: 
 /// is `neighbor_state`. May schedule ticks.
 pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Direction, neighbor_pos: BlockPos, neighbor_state: u16) -> u16 {
     use BlockClass as C;
-    let _ = neighbor_pos;
     let class = logic::block_class(s);
     if class == C::LiquidBlock {
         return fluid::liquid_update_shape(level, s, pos, dir, neighbor_state);
@@ -111,6 +112,7 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
         }
         C::NetherPortalBlock => return portal::portal_update_shape(level, s, pos, dir, neighbor_state),
         C::BubbleColumnBlock => return bubble::update_shape(level, s, pos, dir, neighbor_state),
+        C::BellBlock => return bell::update_shape(level, s, pos, dir, neighbor_pos, neighbor_state),
         C::FireBlock | C::SoulFireBlock => return crate::fire::update_shape(level, s, pos),
         _ => {}
     }
@@ -389,6 +391,7 @@ pub fn trigger_event<L: Level>(level: &mut L, s: u16, pos: BlockPos, a: i32, b: 
     match logic::block_class(s) {
         BlockClass::NoteBlock => devices::note_trigger(level, s, pos),
         BlockClass::PistonBaseBlock => piston::trigger_event(level, s, pos, a, b),
+        BlockClass::BellBlock => bell::trigger_event(level, pos, a, b),
         // `BaseEntityBlock.triggerEvent`: the lids of chests, ender chests and shulker boxes
         // (their block entities answer event 1 with the openers count).
         BlockClass::EnderChestBlock | BlockClass::ShulkerBoxBlock => a == 1,

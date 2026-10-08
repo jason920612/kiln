@@ -271,6 +271,18 @@ pub trait Level {
         0.0
     }
 
+    /// `BellBlockEntity.onHit`: the bell at `pos` starts shaking toward `dir`; false when the
+    /// level has no bell block entity there.
+    fn bell_hit(&mut self, _pos: BlockPos, _dir: Direction) -> bool {
+        false
+    }
+
+    /// `BellBlockEntity.triggerEvent(1, dir)`: the shaking starts and the villagers around hear
+    /// it; whether the event was taken.
+    fn bell_event(&mut self, _pos: BlockPos, _dir: Direction) -> bool {
+        false
+    }
+
     /// `LevelReader.getMaxLocalRawBrightness(pos)`.
     fn max_local_raw_brightness(&self, pos: BlockPos) -> i32 {
         self.raw_brightness(pos, self.sky_darken())

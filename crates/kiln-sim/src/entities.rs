@@ -2044,7 +2044,7 @@ fn tick_turn(sim: &mut SimLevel, i: usize, ticking: &blocks::Ticking, any_player
 /// equipment drops, death events), in loaded chunks that do not tick too.
 fn process_pending_kills(sim: &mut SimLevel) {
     for i in 0..sim.list.len() {
-        let queued = sim.list[i].phys.as_deref().is_some_and(|p| !p.pending_hurts.is_empty() && matches!(p.kind, EntityKind::Mob(_)));
+        let queued = sim.list[i].phys.as_deref().is_some_and(|p| (!p.pending_hurts.is_empty() || !p.pending_effects.is_empty()) && matches!(p.kind, EntityKind::Mob(_)));
         if !queued {
             continue;
         }
@@ -2056,6 +2056,9 @@ fn process_pending_kills(sim: &mut SimLevel) {
             let mut source = kiln_entity::mob::DamageSource::of(kind);
             source.attacker = attacker;
             kiln_entity::mob::hurt_entity(&mut phys, sim, source, amount);
+        }
+        for effect in std::mem::take(&mut phys.pending_effects) {
+            kiln_entity::mob::add_effect_entity(&mut phys, sim, effect, None);
         }
         let e = &mut sim.list[i];
         e.phys = Some(phys);

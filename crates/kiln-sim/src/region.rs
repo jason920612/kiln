@@ -662,6 +662,8 @@ impl RegionWork<'_> {
                 actor: None,
             };
             crate::container::tick_block_entities(&mut level, &mut items, &ticking);
+            crate::bell::requests(&mut level, items.entities_mut());
+            crate::bell::tick(&mut level, items.entities_mut(), &ticking);
             crate::sculk::tick_block_entities(&mut level, &ticking);
             crate::sculk::requests(&mut level, &mut self.players, items.entities(), &mut self.out.spawns);
         }

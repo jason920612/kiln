@@ -388,6 +388,14 @@ pub(crate) fn block_use_without_item(p: &mut Player, level: &mut RegionLevel, po
         kiln_blocks::behaviour::daylight::toggle(level, s, pos);
         return true;
     }
+    // `BellBlock.useWithoutItem`: a hit on the body rings it.
+    if logic::block_class(s) == C::BellBlock {
+        let (proper, rang) = kiln_blocks::behaviour::bell::on_hit(level, pos, face, cursor[1] as f64, true);
+        if rang {
+            p.award_stat(*crate::player_stats::stat::BELL_RING, 1);
+        }
+        return proper;
+    }
     if logic::block_class(s) == C::ChiseledBookShelfBlock {
         return crate::bookshelf::use_without_item(p, level, pos, s, face, cursor, spawns);
     }

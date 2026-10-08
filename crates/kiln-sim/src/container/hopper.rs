@@ -611,6 +611,10 @@ impl<'a> EntityItems<'a> {
         self.entities
     }
 
+    pub fn entities_mut(&mut self) -> &mut crate::entities::Entities {
+        self.entities
+    }
+
     pub fn new(entities: &'a mut crate::entities::Entities) -> Self {
         let items = entities
             .list

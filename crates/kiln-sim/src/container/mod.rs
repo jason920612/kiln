@@ -57,6 +57,8 @@ pub(crate) enum BeKind {
     ChiseledBookshelf,
     /// Holds nothing; works its signal out every 20 ticks (`DaylightDetectorBlockEntity`).
     DaylightDetector,
+    /// Holds nothing; shakes when hit (`BellBlockEntity`).
+    Bell,
 }
 
 impl BeKind {
@@ -80,6 +82,7 @@ impl BeKind {
             "campfire" => BeKind::Campfire,
             "chiseled_bookshelf" => BeKind::ChiseledBookshelf,
             "daylight_detector" => BeKind::DaylightDetector,
+            "bell" => BeKind::Bell,
             _ => return None,
         })
     }
@@ -95,18 +98,18 @@ impl BeKind {
             BeKind::Jukebox => 1,
             BeKind::Campfire => 4,
             BeKind::ChiseledBookshelf => 6,
-            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector => 0,
+            BeKind::EnderChest | BeKind::Beacon | BeKind::DaylightDetector | BeKind::Bell => 0,
         }
     }
 
     /// `RandomizableContainerBlockEntity`: can hold an unopened loot table.
     pub fn randomizable(self) -> bool {
-        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector)
+        !matches!(self, BeKind::Furnace(_) | BeKind::EnderChest | BeKind::BrewingStand | BeKind::Beacon | BeKind::Jukebox | BeKind::Campfire | BeKind::ChiseledBookshelf | BeKind::DaylightDetector | BeKind::Bell)
     }
 
     /// A `Container` (dropped when its block goes, read by comparators).
     pub fn is_container(self) -> bool {
-        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector)
+        !matches!(self, BeKind::EnderChest | BeKind::Beacon | BeKind::Campfire | BeKind::DaylightDetector | BeKind::Bell)
     }
 
     /// `getDefaultName` translation key.
@@ -128,6 +131,7 @@ impl BeKind {
             BeKind::Campfire => "container.campfire",
             BeKind::ChiseledBookshelf => "container.chiseled_bookshelf",
             BeKind::DaylightDetector => "container.daylight_detector",
+            BeKind::Bell => "block.minecraft.bell",
         }
     }
 }
@@ -226,6 +230,8 @@ pub(crate) struct ContainerBe {
     pub item_changed: bool,
     /// `setChanged` calls: comparators and the chunk's saved data follow.
     pub changes: u64,
+    /// A bell's shaking.
+    pub bell: Option<Box<crate::bell::BellState>>,
     /// Changed since its NBT was last written into the chunk.
     pub dirty: bool,
     /// Saved fields not modeled here (`components`, ...).
@@ -296,6 +302,7 @@ impl ContainerBe {
             cooking_total: [0; 4],
             item_changed: false,
             changes: 0,
+            bell: (kind == BeKind::Bell).then(Default::default),
             dirty: false,
             extra,
         };

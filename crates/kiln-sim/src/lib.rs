@@ -28,6 +28,7 @@ mod command_data;
 mod commands;
 mod consume;
 mod buckets;
+mod bell;
 mod campfire;
 mod frames;
 mod bookshelf;
