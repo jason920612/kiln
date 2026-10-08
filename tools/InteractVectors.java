@@ -940,6 +940,11 @@ public class InteractVectors {
         c = trialCase("trial_resume_active", "trial_spawner_state=active", "{" + normal + ",total_mobs_spawned:3,registered_players:[" + playerUuidTag() + "]}");
         for (int i = 0; i < 8; i++) c.step(waitTicks(20));
         out.add(c);
+        // The config the datapack holds under a key (the trial chambers' own); no mob is watched, they appear around the spawner.
+        c = new Case("trial_key_config").ticking();
+        c.cmd("setblock 3 99 0 minecraft:stone").late("setblock 3 100 0 minecraft:trial_spawner[trial_spawner_state=inactive]{normal_config:\"minecraft:trial_chamber/melee/zombie/normal\",ominous_config:\"minecraft:trial_chamber/melee/zombie/ominous\"}").watch(3, 100, 0);
+        c.step(waitTicks(5)).step(waitTicks(20)).step(waitTicks(20)).step(waitTicks(20));
+        out.add(c);
         // A spawn egg changes what it spawns and starts it over.
         c = trialCase("trial_egg", "trial_spawner_state=active", "{" + normal + ",total_mobs_spawned:1,registered_players:[" + playerUuidTag() + "]}");
         c.slot("h0", stack("minecraft:skeleton_spawn_egg", 2));
