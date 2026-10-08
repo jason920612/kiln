@@ -157,8 +157,8 @@ fn dispense_projectile(level: &mut RegionLevel, rng: &mut LegacyRandom, pos: Blo
     let v = v.map(|c| c * 1.1);
     entity.delta = Vec3::new(v[0], v[1], v[2]);
     let horizontal = (v[0] * v[0] + v[2] * v[2]).sqrt();
-    entity.y_rot = (v[0].atan2(v[2]) * 57.2957763671875) as f32;
-    entity.x_rot = (v[1].atan2(horizontal) * 57.2957763671875) as f32;
+    entity.y_rot = (kiln_javamath::mth::atan2(v[0], v[2]) * 57.2957763671875) as f32;
+    entity.x_rot = (kiln_javamath::mth::atan2(v[1], horizontal) * 57.2957763671875) as f32;
     entity.y_rot_o = entity.y_rot;
     entity.x_rot_o = entity.x_rot;
     level.out.spawns.push(crate::entities::Spawn { kind, pos: at, vel: v, body: crate::entities::Body::Ready(Box::new(entity)) });

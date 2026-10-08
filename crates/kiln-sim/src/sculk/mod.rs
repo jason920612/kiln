@@ -694,7 +694,7 @@ fn to_entity_pos(p: BlockPos) -> kiln_entity::math::BlockPos {
 /// `NoteBlock.getPitchFromNote` of `SculkSensorBlock.RESONANCE_PITCH_BEND`'s tones.
 fn resonance_pitch(frequency: i32) -> f32 {
     const TONES: [i32; 16] = [0, 0, 2, 4, 6, 7, 9, 10, 12, 14, 15, 18, 19, 21, 22, 24];
-    2f32.powf((TONES[frequency.clamp(0, 15) as usize] - 12) as f32 / 12.0)
+    kiln_javamath::pow::pow(2.0, (TONES[frequency.clamp(0, 15) as usize] - 12) as f64 / 12.0) as f32
 }
 
 /// `SculkSensorBlock.activate`: active with the power of the distance, then resonance, the

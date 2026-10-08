@@ -304,61 +304,7 @@ pub(crate) fn lerp_rotation(mut current: f32, target: f32) -> f32 {
 }
 
 /// `Mth.atan2`: vanilla's table-driven arc tangent.
-pub fn mth_atan2(mut y: f64, mut x: f64) -> f64 {
-    use std::sync::OnceLock;
-    static TABLES: OnceLock<(Vec<f64>, Vec<f64>)> = OnceLock::new();
-    let (asin_tab, cos_tab) = TABLES.get_or_init(|| {
-        (0..257)
-            .map(|i| {
-                let a = (i as f64 / 256.0).asin();
-                (a, a.cos())
-            })
-            .unzip()
-    });
-    let frac_bias = f64::from_bits(4805340802404319232);
-    let d = x * x + y * y;
-    if d.is_nan() {
-        return f64::NAN;
-    }
-    let neg_y = y < 0.0;
-    if neg_y {
-        y = -y;
-    }
-    let neg_x = x < 0.0;
-    if neg_x {
-        x = -x;
-    }
-    let swap = y > x;
-    if swap {
-        std::mem::swap(&mut x, &mut y);
-    }
-    let half = 0.5 * d;
-    let inv = {
-        let i = 6910469410427058090i64.wrapping_sub((d.to_bits() as i64) >> 1);
-        let g = f64::from_bits(i as u64);
-        g * (1.5 - half * g * g)
-    };
-    x *= inv;
-    y *= inv;
-    let yb = frac_bias + y;
-    let idx = yb.to_bits() as i32 as usize;
-    let asin = asin_tab[idx];
-    let cos = cos_tab[idx];
-    let yd = yb - frac_bias;
-    let s = y * cos - x * yd;
-    let f = (6.0 + s * s) * s * 0.16666666666666666;
-    let mut r = asin + f;
-    if swap {
-        r = std::f64::consts::FRAC_PI_2 - r;
-    }
-    if neg_x {
-        r = std::f64::consts::PI - r;
-    }
-    if neg_y {
-        r = -r;
-    }
-    r
-}
+pub use kiln_javamath::mth::atan2 as mth_atan2;
 
 /// `onHit`: every throwable breaks on impact; the effect is the simulation's.
 fn on_hit(e: &mut Entity, level: &mut dyn EntityLevel, hit: Hit) {

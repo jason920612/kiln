@@ -27,8 +27,8 @@ impl Generator {
             let mut angle = 0.0f32;
             let mut r = step;
             while r <= max {
-                let x = center.0 + ((angle as f64).sin() * r as f64) as i32;
-                let z = center.1 + ((angle as f64).cos() * r as f64) as i32;
+                let x = center.0 + (kiln_javamath::trig::sin(angle as f64) * r as f64) as i32;
+                let z = center.1 + (kiln_javamath::trig::cos(angle as f64) * r as f64) as i32;
                 let candidate = self.spawn_fitness(gs, x, z);
                 if candidate.1 < best.1 {
                     best = candidate;

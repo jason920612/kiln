@@ -1124,7 +1124,7 @@ fn note_sound(instrument: &str, note: i32) -> (&'static str, f32) {
     let sound = kiln_data::builtin_entries("minecraft:sound_event")
         .and_then(|e| e.iter().find(|s| s.strip_prefix("minecraft:block.note_block.") == Some(instrument)).copied())
         .unwrap_or("minecraft:block.note_block.harp");
-    (sound, 2f32.powf((note - 12) as f32 / 12.0))
+    (sound, kiln_javamath::pow::pow(2.0, (note - 12) as f64 / 12.0) as f32)
 }
 
 /// What a broken block drops (`Block.getDrops` with the block loot table), each stack popped

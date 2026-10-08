@@ -681,14 +681,19 @@ impl Player {
     /// An item thrown from the eyes in the look direction (`LivingEntity.createItemStackToDrop`
     /// with `throwRandomly` false).
     fn throw(&mut self, stack: kiln_item::ItemStack) -> entities::Spawn {
-        let (yaw, pitch) = (self.rot[0].to_radians(), self.rot[1].to_radians());
+        use kiln_javamath::{mth, trig};
+        // `Mth.sin`/`Mth.cos` (the table) for the look angles, `Math.sin`/`Math.cos` for the
+        // spread angle, the sums in doubles as the bytecode has them.
+        let (yaw, pitch) = ((self.rot[0] * 0.017453292f32) as f64, (self.rot[1] * 0.017453292f32) as f64);
+        let (sin_pitch, cos_pitch) = (mth::sin(pitch), mth::cos(pitch));
+        let (sin_yaw, cos_yaw) = (mth::sin(yaw), mth::cos(yaw));
         let f = 0.3f32;
-        let angle = self.rng.next_f32() * std::f32::consts::TAU;
-        let spread = 0.02 * self.rng.next_f32();
+        let angle = (self.rng.next_f32() * 6.2831855f32) as f64;
+        let spread = (0.02f32 * self.rng.next_f32()) as f64;
         let vel = [
-            (-yaw.sin() * pitch.cos() * f + angle.cos() * spread) as f64,
-            (-pitch.sin() * f + 0.1 + (self.rng.next_f32() - self.rng.next_f32()) * 0.1) as f64,
-            (yaw.cos() * pitch.cos() * f + angle.sin() * spread) as f64,
+            (-sin_yaw * cos_pitch * f) as f64 + trig::cos(angle) * spread,
+            (-sin_pitch * f + 0.1 + (self.rng.next_f32() - self.rng.next_f32()) * 0.1) as f64,
+            (cos_yaw * cos_pitch * f) as f64 + trig::sin(angle) * spread,
         ];
         let eye_y = self.pos[1] + if self.sneaking { 1.27 } else { 1.62 };
         entities::Spawn {

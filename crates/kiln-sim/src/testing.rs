@@ -234,10 +234,10 @@ impl Walker {
         }
         let [x, y, z] = self.client.pos;
         let (dx, dz) = (self.target[0] - x, self.target[1] - z);
-        let d = dx.hypot(dz);
+        let d = (dx * dx + dz * dz).sqrt();
         if d < WALK_PER_TICK {
             let (a, r) = (self.rng.unit() * std::f64::consts::TAU, radius * self.rng.unit().sqrt());
-            self.target = [self.center[0] + r * a.cos(), self.center[1] + r * a.sin()];
+            self.target = [self.center[0] + r * kiln_javamath::trig::cos(a), self.center[1] + r * kiln_javamath::trig::sin(a)];
             if !walk {
                 self.pause = (self.rng.unit() * 60.0) as u32;
             }

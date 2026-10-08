@@ -4,19 +4,14 @@ use kiln_javamath::random::RandomSource;
 
 pub use crate::projectile::mth_atan2 as atan2;
 
-fn sin_table() -> &'static [f32] {
-    static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| (0..65536).map(|i| kiln_javamath::trig::sin(i as f64 * std::f64::consts::PI * 2.0 / 65536.0) as f32).collect())
-}
-
 /// `Mth.sin`: the 65536-entry table.
 pub fn sin(v: f64) -> f32 {
-    sin_table()[((v * 10430.378350470453) as i64 & 0xffff) as usize]
+    kiln_javamath::mth::sin(v)
 }
 
 /// `Mth.cos`.
 pub fn cos(v: f64) -> f32 {
-    sin_table()[((v * 10430.378350470453 + 16384.0) as i64 & 0xffff) as usize]
+    kiln_javamath::mth::cos(v)
 }
 
 /// `Mth.wrapDegrees(float)`: Java's `%` on floats is `fmod`, like Rust's.

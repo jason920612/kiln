@@ -38,12 +38,12 @@ impl Default for TntData {
 
 /// `new PrimedTnt(level, x, y, z, owner)`: a small random hop.
 ///
-/// Vanilla uses `Math.sin`/`Math.cos`; Rust's may differ from HotSpot's in the last bit.
+/// Vanilla's `Math.sin`/`Math.cos`.
 pub fn ignite(id: i32, uuid: u128, pos: Vec3, owner: Option<i32>, seed: i64) -> Entity {
     let mut e = Entity::new("minecraft:tnt", id, uuid, EntityKind::Tnt(TntData { owner, ..TntData::new() }), seed);
     e.set_pos(pos);
     let angle = e.random.next_double() * (std::f32::consts::PI as f64) * 2.0;
-    e.delta = Vec3::new(-angle.sin() * 0.02, 0.2f32 as f64, -angle.cos() * 0.02);
+    e.delta = Vec3::new(-kiln_javamath::trig::sin(angle) * 0.02, 0.2f32 as f64, -kiln_javamath::trig::cos(angle) * 0.02);
     e.set_old_pos_and_rot();
     e
 }

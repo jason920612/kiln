@@ -164,7 +164,24 @@ pub fn pow(x: f64, y: f64) -> f64 {
     } else {
         (x, false)
     };
-    let r = if ax == 1.0 { 1.0 } else { exp_dd(mul_f64(log_dd(ax), y)) };
+    let r = if ax == 1.0 {
+        1.0
+    } else if y == 0.5 && !neg {
+        // Exactly the square root (HotSpot special-cases it too); the series is not exact enough
+        // at the edge of the range.
+        ax.sqrt()
+    } else {
+        let l = log_dd(ax);
+        // Far outside the range of results (and keeps the double-double product finite).
+        let approx = l.0 * y;
+        if approx > 710.0 {
+            f64::INFINITY
+        } else if approx < -746.0 {
+            0.0
+        } else {
+            exp_dd(mul_f64(l, y))
+        }
+    };
     if neg { -r } else { r }
 }
 

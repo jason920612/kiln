@@ -3,7 +3,6 @@
 
 use crate::error::CommandError;
 use crate::reader::StringReader;
-use std::sync::OnceLock;
 
 type Result<T> = std::result::Result<T, CommandError>;
 
@@ -224,81 +223,19 @@ fn local_to_world(origin: [f64; 3], [yaw, pitch]: [f32; 2], left: f64, up: f64, 
     std::array::from_fn(|a| origin[a] + (fwd[a] * forwards + upv[a] * up + lft[a] * left))
 }
 
-fn sin_table() -> &'static [f32] {
-    static TABLE: OnceLock<Vec<f32>> = OnceLock::new();
-    TABLE.get_or_init(|| (0..65536).map(|i| (i as f64 / 10430.378350470453).sin() as f32).collect())
-}
-
 /// `Mth.sin`.
 pub fn mth_sin(v: f64) -> f32 {
-    sin_table()[((v * 10430.378350470453) as i64 & 0xffff) as usize]
+    kiln_javamath::mth::sin(v)
 }
 
 /// `Mth.cos`.
 pub fn mth_cos(v: f64) -> f32 {
-    sin_table()[((v * 10430.378350470453 + 16384.0) as i64 & 0xffff) as usize]
-}
-
-fn atan_tables() -> &'static ([f64; 257], [f64; 257]) {
-    static TABLES: OnceLock<([f64; 257], [f64; 257])> = OnceLock::new();
-    TABLES.get_or_init(|| {
-        let mut asin = [0.0; 257];
-        let mut cos = [0.0; 257];
-        for i in 0..257 {
-            let a = (i as f64 / 256.0).asin();
-            asin[i] = a;
-            cos[i] = a.cos();
-        }
-        (asin, cos)
-    })
-}
-
-/// `Mth.fastInvSqrt(double)`.
-fn fast_inv_sqrt(v: f64) -> f64 {
-    let half = 0.5 * v;
-    let x = f64::from_bits((6910469410427058090i64 - ((v.to_bits() as i64) >> 1)) as u64);
-    x * (1.5 - half * x * x)
+    kiln_javamath::mth::cos(v)
 }
 
 /// `Mth.atan2`: the table-based arctangent vanilla uses for facing rotations.
-pub fn mth_atan2(mut y: f64, mut x: f64) -> f64 {
-    let d = x * x + y * y;
-    if d.is_nan() {
-        return f64::NAN;
-    }
-    let neg_y = y < 0.0;
-    if neg_y {
-        y = -y;
-    }
-    let neg_x = x < 0.0;
-    if neg_x {
-        x = -x;
-    }
-    let swap = y > x;
-    if swap {
-        std::mem::swap(&mut x, &mut y);
-    }
-    let inv = fast_inv_sqrt(d);
-    x *= inv;
-    y *= inv;
-    let frac_bias = f64::from_bits(4805340802404319232);
-    let f = frac_bias + y;
-    let i = f.to_bits() as i32 as usize;
-    let (asin, cos) = atan_tables();
-    let j = f - frac_bias;
-    let k = y * cos[i] - x * j;
-    let l = (6.0 + k * k) * k * 0.16666666666666666;
-    let mut m = asin[i] + l;
-    if swap {
-        m = std::f64::consts::FRAC_PI_2 - m;
-    }
-    if neg_x {
-        m = std::f64::consts::PI - m;
-    }
-    if neg_y {
-        m = -m;
-    }
-    m
+pub fn mth_atan2(y: f64, x: f64) -> f64 {
+    kiln_javamath::mth::atan2(y, x)
 }
 
 /// `Mth.wrapDegrees(float)`: into `[-180, 180)`.

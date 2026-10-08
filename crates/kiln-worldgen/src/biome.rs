@@ -188,7 +188,7 @@ fn sort(nodes: &[Node], list: &mut [u32], start: usize, absolute: bool) {
 /// `RTree.bucketize`: consecutive runs of `19^floor(log19(n - 0.01))` children.
 fn bucketize(nodes: &mut Vec<Node>, children: &[u32]) -> Vec<u32> {
     let size = CHILDREN_PER_NODE as f64;
-    let exponent = (((children.len() as f64 - 0.01).ln() / size.ln()).floor()) as u32;
+    let exponent = ((kiln_javamath::pow::log(children.len() as f64 - 0.01) / kiln_javamath::pow::log(size)).floor()) as u32;
     let per_bucket = CHILDREN_PER_NODE.pow(exponent);
     let mut buckets = Vec::new();
     let mut current = Vec::new();

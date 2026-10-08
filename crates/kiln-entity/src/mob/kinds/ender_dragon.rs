@@ -876,7 +876,7 @@ fn strafe_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
             let r = (e.y_rot * 0.017453292) as f64;
             let dir = Vec3::new(mth::sin(r) as f64, 0.0, -mth::cos(r) as f64).normalize();
             let dt = dot(dir, aim) as f32;
-            let angle = ((dt as f64).acos() * 180.0 / std::f32::consts::PI as f64) as f32 + 0.5;
+            let angle = (kiln_javamath::strict::acos(dt as f64) * 180.0 / std::f32::consts::PI as f64) as f32 + 0.5;
             if dragon(m).ph.strafe_charge >= 5 && (0.0..10.0).contains(&angle) {
                 let view = view_vector(e.x_rot, m.y_head_rot);
                 let head = dragon(m).parts[HEAD];
@@ -1031,7 +1031,7 @@ fn scanning_tick(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
         let r = (e.y_rot * 0.017453292) as f64;
         let dir = Vec3::new(mth::sin(r) as f64, 0.0, -mth::cos(r) as f64).normalize();
         let dt = dot(dir, aim) as f32;
-        let angle = ((dt as f64).acos() * 180.0 / std::f32::consts::PI as f64) as f32 + 0.5;
+        let angle = (kiln_javamath::strict::acos(dt as f64) * 180.0 / std::f32::consts::PI as f64) as f32 + 0.5;
         if angle < 0.0 || angle > 10.0 {
             let head = dragon(m).parts[HEAD];
             let (xa, za) = (t.pos.x - head.x, t.pos.z - head.z);
@@ -1250,7 +1250,7 @@ fn ai_step(e: &mut Entity, m: &mut MobData, level: &mut dyn EntityLevel) {
     check_crystals(e, m, level);
     let v = e.delta;
     let mut flap_speed = 0.2f32 / (v.horizontal_distance() as f32 * 10.0 + 1.0);
-    flap_speed *= 2.0f64.powf(v.y) as f32;
+    flap_speed *= kiln_javamath::pow::pow(2.0, v.y) as f32;
     let s = dragon_mut(m);
     if s.phase.is_sitting() {
         s.flap_time += 0.1;

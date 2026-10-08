@@ -266,7 +266,7 @@ pub(crate) fn stop_sleep_in_bed(p: &mut Player, level: &mut RegionLevel, wake_im
         let to_bed = [bed.x as f64 + 0.5 - stand[0], bed.y as f64 - stand[1], bed.z as f64 + 0.5 - stand[2]];
         let len = (to_bed[0] * to_bed[0] + to_bed[1] * to_bed[1] + to_bed[2] * to_bed[2]).sqrt();
         let (nx, nz) = if len < 1.0e-4 { (0.0, 0.0) } else { (to_bed[0] / len, to_bed[2] / len) };
-        let yaw = kiln_entity::mob::mth::wrap_degrees((nz.atan2(nx) * 57.295_776_367_187_5 - 90.0) as f32);
+        let yaw = kiln_entity::mob::mth::wrap_degrees_d(kiln_javamath::mth::atan2(nz, nx) * 57.2957763671875 - 90.0) as f32;
         p.pos = stand;
         p.rot = [yaw, 0.0];
     }
@@ -443,7 +443,7 @@ pub(crate) fn find_respawn(level: &mut RegionLevel, pos: [i32; 3], forced: bool)
     let facing_block = |v: [f64; 3]| {
         let d = [bp.x as f64 + 0.5 - v[0], bp.z as f64 + 0.5 - v[2]];
         let len = (d[0] * d[0] + d[1] * d[1]).sqrt().max(1.0e-4);
-        kiln_entity::mob::mth::wrap_degrees(((d[1] / len).atan2(d[0] / len) * 57.295_776_367_187_5 - 90.0) as f32)
+        kiln_entity::mob::mth::wrap_degrees_d(kiln_javamath::mth::atan2(d[1] / len, d[0] / len) * 57.2957763671875 - 90.0) as f32
     };
     if is_anchor(s) && (forced || kiln_blocks::state::get_int(s, "charges") > 0) && respawn_anchor_works(dim) {
         let Some(v) = anchor_stand_up(level, bp) else { return RespawnAt::Invalid };

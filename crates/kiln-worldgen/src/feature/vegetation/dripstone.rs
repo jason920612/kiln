@@ -431,9 +431,9 @@ fn speleothem_height(mut at: f64, radius: f64, scale: f64, bluntness: f64) -> f6
         at = bluntness;
     }
     let t = at / radius * 0.384;
-    let a = 0.75 * t.powf(1.3333333333333333);
-    let b = t.powf(0.6666666666666666);
-    let c = 0.3333333333333333 * t.ln();
+    let a = 0.75 * kiln_javamath::pow::pow(t, 1.3333333333333333);
+    let b = kiln_javamath::pow::pow(t, 0.6666666666666666);
+    let c = 0.3333333333333333 * kiln_javamath::pow::log(t);
     let h = (scale * (a - b - c)).max(0.0);
     h / 0.384 * radius
 }

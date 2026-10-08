@@ -131,17 +131,12 @@ pub(crate) fn floor_f32(x: f32) -> i32 {
 }
 
 /// `Mth.sin` / `Mth.cos`: the 65536-entry table.
-fn sin_table() -> &'static [f32] {
-    static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| (0..65536).map(|i| (i as f64 * std::f64::consts::PI * 2.0 / 65536.0).sin() as f32).collect())
-}
-
 pub(crate) fn mth_sin(v: f64) -> f32 {
-    sin_table()[((v * 10430.378350470453) as i64 & 0xffff) as usize]
+    kiln_javamath::mth::sin(v)
 }
 
 pub(crate) fn mth_cos(v: f64) -> f32 {
-    sin_table()[((v * 10430.378350470453 + 16384.0) as i64 & 0xffff) as usize]
+    kiln_javamath::mth::cos(v)
 }
 
 /// `CombatRules.getDamageAfterAbsorb`: `effectiveness` maps the armor's share of the damage

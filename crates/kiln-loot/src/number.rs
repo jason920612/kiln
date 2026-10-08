@@ -139,7 +139,7 @@ impl LevelBasedValue {
                 if d == 0.0 { 0.0 } else { numerator.calculate(level) / d }
             }
             LevelBasedValue::Exponent { base, power } => {
-                (base.calculate(level) as f64).powf(power.calculate(level) as f64) as f32
+                kiln_javamath::pow::pow(base.calculate(level) as f64, power.calculate(level) as f64) as f32
             }
             LevelBasedValue::Lookup { values, fallback } => {
                 if level <= values.len() as i32 && level >= 1 {
@@ -684,7 +684,7 @@ impl Eval<'_> {
                 if b == 0.0 && e == 0.0 {
                     return Ok(f32::NAN);
                 }
-                Ok((b as f64).powf(e as f64) as f32)
+                Ok(kiln_javamath::pow::pow(b as f64, e as f64) as f32)
             }
             FloatProvider::Conditional { condition, on_true, on_false } => {
                 let branch = if self.test(condition) { on_true } else { on_false };
@@ -729,20 +729,14 @@ pub fn java_round(v: f32) -> i32 {
     r as i32
 }
 
-/// The SIN lookup table of `Mth`.
-fn sin_table() -> &'static [f32] {
-    static TABLE: std::sync::OnceLock<Vec<f32>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| (0..65536).map(|i| (i as f64 / 10430.378350470453).sin() as f32).collect())
-}
-
 /// `Mth.sin(double)`.
 pub fn mth_sin(v: f64) -> f32 {
-    sin_table()[((v * 10430.378350470453) as i64 & 65535) as usize]
+    kiln_javamath::mth::sin(v)
 }
 
 /// `Mth.cos(double)`.
 pub fn mth_cos(v: f64) -> f32 {
-    sin_table()[((v * 10430.378350470453 + 16384.0) as i64 & 65535) as usize]
+    kiln_javamath::mth::cos(v)
 }
 
 #[cfg(test)]

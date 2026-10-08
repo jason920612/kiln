@@ -77,10 +77,11 @@ impl Ore {
         let angle = random.next_float() * std::f32::consts::PI;
         let spread = self.size as f32 / 8.0;
         let pad = ceil((self.size as f32 / 16.0 * 2.0 + 1.0) / 2.0);
-        let x0 = p.x as f64 + (angle as f64).sin() * spread as f64;
-        let x1 = p.x as f64 - (angle as f64).sin() * spread as f64;
-        let z0 = p.z as f64 + (angle as f64).cos() * spread as f64;
-        let z1 = p.z as f64 - (angle as f64).cos() * spread as f64;
+        let (sin, cos) = (kiln_javamath::trig::sin(angle as f64), kiln_javamath::trig::cos(angle as f64));
+        let x0 = p.x as f64 + sin * spread as f64;
+        let x1 = p.x as f64 - sin * spread as f64;
+        let z0 = p.z as f64 + cos * spread as f64;
+        let z1 = p.z as f64 - cos * spread as f64;
         let y0 = (p.y + random.next_int_bounded(3) - 2) as f64;
         let y1 = (p.y + random.next_int_bounded(3) - 2) as f64;
         let min_x = p.x - ceil(spread) - pad;

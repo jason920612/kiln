@@ -94,7 +94,7 @@ impl Player {
             speed *= 1.0 + (amplifier + 1) as f32 * 0.2;
         }
         if let Some(amplifier) = self.effect_amplifier("minecraft:mining_fatigue") {
-            speed *= 0.3f64.powf((amplifier + 1) as f64) as f32;
+            speed *= kiln_javamath::pow::pow(0.3, (amplifier + 1) as f64) as f32;
         }
         speed *= self.attribute(combat::BLOCK_BREAK_SPEED) as f32;
         if eye_in_water {

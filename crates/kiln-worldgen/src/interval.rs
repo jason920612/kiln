@@ -173,7 +173,7 @@ impl Interval {
     /// (`sqrt` uses 0.5).
     pub fn pow_exact(i: Interval, exponent: f32) -> Interval {
         let base = |b: f32| -> Interval {
-            let v = (b as f64).powf(exponent as f64) as f32;
+            let v = kiln_javamath::pow::pow(b as f64, exponent as f64) as f32;
             if v.is_nan() { Self::NAI } else { Self::exact(v) }
         };
         if i.is_nai() {
@@ -198,7 +198,7 @@ impl Interval {
         if i.max < 0.0 {
             return Self::NAI;
         }
-        Self::map_monotonic(Self::max_of(i, Self::exact(0.0)), |v| (v as f64).ln() as f32)
+        Self::map_monotonic(Self::max_of(i, Self::exact(0.0)), |v| kiln_javamath::pow::log(v as f64) as f32)
     }
 
     pub fn sign(i: Interval) -> Interval {

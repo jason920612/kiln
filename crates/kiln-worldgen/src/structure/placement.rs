@@ -219,8 +219,8 @@ fn compute_rings(structures: &Structures, generator: &Generator, set: usize) -> 
     let mut starts = Vec::with_capacity(count as usize);
     for i in 0..count {
         let dist = (4 * distance + distance * circle * 6) as f64 + (random.next_double() - 0.5) * (distance as f64 * 2.5);
-        let x = (angle.cos() * dist).round_ties_even_java();
-        let z = (angle.sin() * dist).round_ties_even_java();
+        let x = (kiln_javamath::trig::cos(angle) * dist).round_ties_even_java();
+        let z = (kiln_javamath::trig::sin(angle) * dist).round_ties_even_java();
         let forked = LegacyRandom::new(random.next_long());
         starts.push((x, z, forked));
         angle += std::f64::consts::PI * 2.0 / spread as f64;
