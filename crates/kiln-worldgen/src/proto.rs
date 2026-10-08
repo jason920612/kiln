@@ -187,6 +187,23 @@ impl ProtoChunk {
         self.parked.is_some()
     }
 
+    #[cfg(test)]
+    fn park_roundtrip_check() {
+        let mut c = ProtoChunk::new(3, -4, -64, 24, vec![0; 24 * 64]);
+        let mut seed = 7u64;
+        for _ in 0..3000 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let i = (seed >> 33) as usize % c.blocks.len();
+            c.blocks[i] = (seed >> 50) as u16;
+        }
+        let before = c.blocks.clone();
+        c.park();
+        assert!(c.is_parked() && c.blocks.is_empty());
+        c.unpark();
+        assert!(!c.is_parked());
+        assert_eq!(c.blocks, before);
+    }
+
     /// An empty chunk (all air) at BIOMES.
     pub fn new(x: i32, z: i32, min_y: i32, sections: usize, biomes: Vec<u16>) -> Self {
         Self {
@@ -386,4 +403,13 @@ pub fn stored_biome(biomes: &[u16], min_y: i32, qx: i32, qy: i32, qz: i32) -> u1
     let sections = (biomes.len() / 64) as i32;
     let ry = (qy - (min_y >> 2)).clamp(0, sections * 4 - 1);
     biomes[((ry >> 2) * 64 + (((ry & 3) << 4) | ((qz & 3) << 2) | (qx & 3))) as usize]
+}
+
+#[cfg(test)]
+mod park_tests {
+    /// A parked proto-chunk keeps its blocks.
+    #[test]
+    fn parking_keeps_the_blocks() {
+        super::ProtoChunk::park_roundtrip_check();
+    }
 }
