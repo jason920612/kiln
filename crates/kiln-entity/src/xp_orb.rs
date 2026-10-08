@@ -25,14 +25,16 @@ impl OrbData {
     }
 }
 
-/// `new ExperienceOrb(level, x, y, z, value)`: a random yaw and a small random throw.
+/// `new ExperienceOrb(level, pos, Vec3.ZERO, value)` (26.3): a random yaw (a float draw) and a
+/// small random throw. Vanilla then moves a stuck orb to free space (`unstuckIfPossible`); the
+/// orbs here appear in empty blocks.
 pub fn new_at(id: i32, uuid: u128, pos: Vec3, value: i32, seed: i64) -> Entity {
     let mut e = Entity::new("minecraft:experience_orb", id, uuid, EntityKind::ExperienceOrb(OrbData::new(value)), seed);
     e.set_pos(pos);
-    e.y_rot = (e.random.next_double() * 360.0) as f32;
-    let dx = (e.random.next_double() * 0.2f32 as f64 - 0.1f32 as f64) * 2.0;
+    e.y_rot = e.random.next_float() * 360.0;
+    let dx = (e.random.next_double() * 0.2 - 0.1) * 2.0;
     let dy = e.random.next_double() * 0.2 * 2.0;
-    let dz = (e.random.next_double() * 0.2f32 as f64 - 0.1f32 as f64) * 2.0;
+    let dz = (e.random.next_double() * 0.2 - 0.1) * 2.0;
     e.delta = Vec3::new(dx, dy, dz);
     e
 }

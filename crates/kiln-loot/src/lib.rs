@@ -15,6 +15,7 @@
 //! Randomness goes through `kiln-javamath`'s Java-exact sources, so a given seed and context
 //! give vanilla's items.
 
+pub mod block_xp;
 pub mod condition;
 pub mod context;
 pub mod data;

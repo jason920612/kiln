@@ -1043,6 +1043,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             } else if name == crate::firework::ITEM {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::firework::use_item(p, &mut level, off, fx.spawns);
+            } else if matches!(name, "minecraft:writable_book" | "minecraft:written_book") {
+                p.use_book(off);
             } else if crate::boats::is_boat_item(name) {
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::boats::use_item(p, &mut level, off, fx.spawns);
@@ -1056,6 +1058,8 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
                 let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
                 crate::trident::use_item(p, &mut level, off);
             } else if crate::ranged::use_held(p, off, &held) {
+            } else if held.get(kiln_item::keys::CONSUMABLE).is_none() && p.use_equippable(off, &env.blocks.menus, fx.spawns) {
+                // `Item.use` of armor and the like: swapped with what is worn.
             } else {
                 let cells = &*world.cells;
                 let block = |pos: kiln_entity::math::BlockPos| cells.get_block(pos.x, pos.y, pos.z).unwrap_or(0);
@@ -1069,6 +1073,15 @@ pub(crate) fn local_packet(p: &mut Player, world: &mut World, env: &Env, pkt: Pl
             let may_interact = env.border.contains(pos[0] as f64, pos[2] as f64);
             use_item_on(p, &mut level, hand, pos, face, cursor, may_interact, fx.spawns);
             p.ack_block_changes = p.ack_block_changes.max(sequence);
+        }
+        PlayIn::EditBook { slot, pages, title } => p.edit_book(slot, &pages, title.as_deref()),
+        PlayIn::PickItemFromBlock { pos, .. } => {
+            let state = world.cells.get_block(pos[0], pos[1], pos[2]);
+            p.pick_item_from_block(BlockPos::new(pos[0], pos[1], pos[2]), state);
+        }
+        PlayIn::SignUpdate { pos, lines, front } => {
+            let mut level = world.level(env, fx.blocks, fx.bodies, p.conn);
+            crate::signs::update_text(p, &mut level, BlockPos::new(pos[0], pos[1], pos[2]), &lines, front);
         }
         // `handlePunch`: the swing resets the attack strength.
         PlayIn::Punch => {
@@ -1148,10 +1161,15 @@ fn use_on_block(
 ) {
     use kiln_item::component::EquipmentSlot;
     let main_hand = hand == 0;
-    let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     let have_something = !p.inv.selected_item().is_empty() || !p.inv.equipped(EquipmentSlot::OffHand).is_empty();
     let bp = BlockPos::new(pos[0], pos[1], pos[2]);
     let actor = Actor { yaw: p.rot[0], may_build: p.game_mode <= 1, creative: p.game_mode == 1 };
+    // `SignBlock.useItemOn`, then `useWithoutItem` for the main hand: dyes and honeycomb, the
+    // editor, the refusal of waxed signs.
+    if !(p.sneaking && have_something) && crate::signs::use_on(p, level, bp, !main_hand) {
+        return;
+    }
+    let held = if main_hand { p.inv.selected_item() } else { p.inv.equipped(EquipmentSlot::OffHand) };
     // `BlockState.useItemOn` of blocks that react to the item itself (either hand).
     if !(p.sneaking && have_something) && !held.is_empty() && actor.may_build {
         let used = held.clone();
@@ -1261,6 +1279,8 @@ fn use_on_block(
     let placed_from = if main_hand { p.inv.selected_item().clone() } else { p.inv.equipped(EquipmentSlot::OffHand).clone() };
     let Some((placed_at, _)) = placement::place(level, &item, &ctx) else { return };
     crate::container::open::apply_item_components(level, placed_at, &placed_from);
+    // `SignBlock.setPlacedBy`: the placer edits the new sign.
+    crate::signs::placed_by(p, level, placed_at);
     crate::golems::try_spawn_golem(p, level, placed_at, spawns);
     // `WitherSkullBlock.setPlacedBy`.
     crate::wither::check_spawn(level, placed_at, spawns);

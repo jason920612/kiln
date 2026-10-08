@@ -128,6 +128,8 @@ public class LootVectors {
     static long WORLD_SEED;
     static final Map<BlockPos, BlockState> WORLD = new HashMap<>();
     static Holder<Biome> BIOME;
+    static final List<net.minecraft.world.entity.ExperienceOrb> ORBS = new ArrayList<>();
+    static net.minecraft.world.level.gamerules.GameRules RULES;
     static Path DATAPACK;
 
     record Loaded(ReloadableServerResources resources, RegistryAccess.Frozen access) {}
@@ -144,7 +146,10 @@ public class LootVectors {
         collectPredicates();
         Files.createDirectories(out);
         if (args.length > 4) synthetic(Path.of(args[4]), out, contexts, seed);
-        else run(out, contexts, seed);
+        else {
+            run(out, contexts, seed);
+            blockExperience(out, seed);
+        }
     }
 
     // ---- loading and fakes ----------------------------------------------------------------------
@@ -184,6 +189,7 @@ public class LootVectors {
         set(LEVEL, Level.class, "registryAccess", access);
         set(LEVEL, Level.class, "random", RandomSource.create(0));
         DAMAGE = new DamageSources(access);
+        RULES = new net.minecraft.world.level.gamerules.GameRules(FeatureFlags.DEFAULT_FLAGS);
         BIOME = access.lookupOrThrow(Registries.BIOME).getOrThrow(Biomes.PLAINS);
         STRUCTURES = (FakeStructureManager) U.allocateInstance(FakeStructureManager.class);
     }
@@ -293,6 +299,34 @@ public class LootVectors {
         }
 
         int nextEntityId;
+
+        @Override
+        public net.minecraft.world.level.gamerules.GameRules getGameRules() {
+            return RULES;
+        }
+
+        /** The empty block the orbs of a broken block appear in: nothing to be stuck in. */
+        @Override
+        public boolean noCollision(net.minecraft.world.phys.AABB box) {
+            return true;
+        }
+
+        @Override
+        public boolean addFreshEntity(Entity entity) {
+            if (entity instanceof net.minecraft.world.entity.ExperienceOrb orb) ORBS.add(orb);
+            return true;
+        }
+
+        @Override
+        public <T extends Entity> List<T> getEntities(net.minecraft.world.level.entity.EntityTypeTest<Entity, T> test,
+                net.minecraft.world.phys.AABB box, java.util.function.Predicate<? super T> predicate) {
+            List<T> found = new ArrayList<>();
+            for (var orb : ORBS) {
+                T t = test.tryCast(orb);
+                if (t != null && predicate.test(t)) found.add(t);
+            }
+            return found;
+        }
 
         @Override
         public net.minecraft.world.Difficulty getDifficulty() {
@@ -870,5 +904,68 @@ public class LootVectors {
             }
         }
         return c;
+    }
+
+    // ---- block experience (Block.spawnAfterBreak) ---------------------------------------------------
+
+    static boolean overridesSpawnAfterBreak(Block b) {
+        for (Class<?> c = b.getClass(); c != null && c != Block.class; c = c.getSuperclass()) {
+            try {
+                c.getDeclaredMethod("spawnAfterBreak", BlockState.class, ServerLevel.class, BlockPos.class, ItemStack.class, boolean.class);
+                return true;
+            } catch (NoSuchMethodException e) {
+                // keep looking up the hierarchy
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Breaks every block with tools (hand, pickaxes, fortune, silk touch) and records the experience orbs
+     * `BlockState.spawnAfterBreak(level, pos, tool, true)` creates, with the level random seeded, plus the
+     * level random's next long (so the number of draws is checked too). Blocks that do not override
+     * `spawnAfterBreak` are recorded once with an empty hand.
+     */
+    static void blockExperience(Path out, long seed) throws Exception {
+        Random rnd = new Random(seed ^ 0x5851F42D4C957F2DL);
+        List<ItemStack> tools = blockTools();
+        BlockPos pos = new BlockPos(8, 64, 8);
+        int cases = 0;
+        Field countField = net.minecraft.world.entity.ExperienceOrb.class.getDeclaredField("count");
+        countField.setAccessible(true);
+        try (PrintWriter w = new PrintWriter(Files.newBufferedWriter(out.resolve("block_xp.jsonl")))) {
+            for (Block block : BuiltInRegistries.BLOCK) {
+                boolean interesting = overridesSpawnAfterBreak(block);
+                if (interesting) OUT.println("spawnAfterBreak: " + BuiltInRegistries.BLOCK.getKey(block) + " (" + block.getClass().getSimpleName() + ")");
+                BlockState state = block.defaultBlockState();
+                int seeds = interesting ? 4 : 1;
+                for (ItemStack tool : interesting ? tools : List.of(ItemStack.EMPTY)) {
+                    for (int s = 0; s < seeds; s++) {
+                        long levelSeed = rnd.nextLong();
+                        ORBS.clear();
+                        set(LEVEL, Level.class, "random", RandomSource.create(levelSeed));
+                        try {
+                            state.spawnAfterBreak(LEVEL, pos, tool.copy(), true);
+                        } catch (NullPointerException e) {
+                            // Spawns a mob (infested blocks): needs a real chunk source; not an experience source.
+                            continue;
+                        }
+                        long next = LEVEL.getRandom().nextLong();
+                        int total = 0;
+                        List<String> orbs = new ArrayList<>();
+                        for (var orb : ORBS) {
+                            int count = countField.getInt(orb);
+                            total += orb.getValue() * count;
+                            orbs.add("[" + orb.getValue() + ", " + count + "]");
+                        }
+                        w.println("{\"block\": " + str(BuiltInRegistries.BLOCK.getKey(block).toString()) + ", \"state\": " + Block.getId(state)
+                                + ", \"tool\": \"" + hex(tool) + "\", \"seed\": " + levelSeed + ", \"amount\": " + total
+                                + ", \"orbs\": [" + String.join(", ", orbs) + "], \"next\": " + next + "}");
+                        cases++;
+                    }
+                }
+            }
+        }
+        OUT.println("block_xp: " + cases + " cases");
     }
 }

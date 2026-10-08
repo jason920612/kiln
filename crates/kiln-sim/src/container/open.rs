@@ -221,6 +221,8 @@ impl Player {
                     }
                 }
                 kiln_inventory::Effect::InventoryChanged { stack, .. } => self.inventory_changed(&stack),
+                // `ArmorSlot.setByPlayer` → `LivingEntity.onEquipItem`: the equip sound.
+                kiln_inventory::Effect::Equip { slot, old, new } => self.on_equip_item(slot, &old, &new),
                 // `BrewedPotionTrigger`.
                 kiln_inventory::Effect::BrewedPotion { potion } => {
                     self.fire_conds("minecraft:brewed_potion", None, |c, _, _| {
