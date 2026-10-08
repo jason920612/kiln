@@ -2824,6 +2824,21 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
         .collect()
 }
 
+/// `BlockBehaviour.onProjectileHit` of the block at `pos`; `owner` is the projectile's owner.
+fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], pos: kiln_blocks::BlockPos, face: kiln_blocks::Direction, owner: Option<i32>) {
+    use kiln_data::block_logic::BlockClass as C;
+    let s = level.block(pos);
+    match kiln_data::block_logic::block_class(s) {
+        C::BellBlock => {
+            let (_, rang) = kiln_blocks::behaviour::bell::on_hit(level, pos, face, 0.0, false);
+            if rang && let Some(p) = owner.and_then(|id| players.iter_mut().find(|p| p.entity_id == id)) {
+                p.award_stat(*crate::player_stats::stat::BELL_RING, 1);
+            }
+        }
+        _ => {}
+    }
+}
+
 fn carry_out(
     event: Event,
     n: usize,
@@ -2994,6 +3009,10 @@ fn carry_out(
             let mut ctx = health::DamageCtx { rules: env.damage, game_time: env.game_time, spawns, deaths, level_rng: None };
             p.hurt(5.0, &source, &mut ctx);
             p.sound_for_all("minecraft:entity.player.teleport", world_fx::SoundSource::Players, 1.0, 1.0);
+        }
+        // `Block.onProjectileHit` of the block a projectile hit.
+        Event::ProjectileHit { owner, hit: kiln_entity::projectile::Hit::Block { pos, face, .. }, .. } => {
+            block_projectile_hit(level, players, kb(pos), kiln_blocks::Direction::from_index(face as usize), owner);
         }
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.

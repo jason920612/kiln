@@ -7,7 +7,7 @@
 use crate::blocks::RegionLevel;
 use crate::container::BeKind;
 use crate::entities::Entities;
-use kiln_blocks::{BlockPos, Direction, Effect};
+use kiln_blocks::{BlockPos, Direction, Effect, Level};
 use kiln_entity::mob::brain::village::closer_to_center_than;
 use kiln_entity::mob::brain::{Mem, Val};
 use kiln_world::ChunkPos;
