@@ -152,9 +152,13 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
     let comparators: Vec<BlockPos> = line["comparators"].as_array().unwrap().iter().map(pos_of).collect();
     let carts: Vec<BlockPos> = line["carts"].as_array().map_or(Vec::new(), |a| a.iter().map(pos_of).collect());
     let (mut compared, mut errors) = (0, Vec::new());
+    let mut kill_items = false;
     for (t, want) in line["result"].as_array().unwrap().iter().enumerate() {
         let tick = t + 1;
         let mut inbox = Vec::new();
+        if std::mem::take(&mut kill_items) {
+            inbox.push(ToSim::Console("kill @e[type=item]".into()));
+        }
         if tick == 1 {
             for b in line["blocks"].as_array().unwrap() {
                 let p = pos_of(b);
@@ -194,10 +198,8 @@ fn run_scenario(line: &Value) -> (usize, Vec<String>) {
             if got != want["drops"] {
                 errors.push(format!("tick {tick} dropped items: kiln {got}, vanilla {}", want["drops"]));
             }
-            // (Only what each tick makes is compared: the items are removed after it.)
-            let mut kill = vec![ToSim::Console("kill @e[type=item]".into())];
-            client.tick(None, &mut kill);
-            assert!(sim.step(kill));
+            // (Only what each tick makes is compared: the items are removed before the next.)
+            kill_items = true;
         }
         for (i, &p) in comparators.iter().enumerate() {
             let got = comparator_output(&sim, p);
