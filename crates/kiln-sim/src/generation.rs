@@ -149,6 +149,26 @@ impl GenPool {
         let _ = self.urgent.send(pos);
     }
 
+    /// Chunks waiting in a queue (not taken by a thread, not finished).
+    pub fn queued(&self) -> Vec<ChunkPos> {
+        let claims = self.claims.lock().unwrap();
+        self.in_flight.keys().filter(|p| claims.get(p) == Some(&Claim::Queued)).copied().collect()
+    }
+
+    /// Drops a chunk still waiting in a queue (a thread that took it already finishes it);
+    /// whether it was dropped.
+    pub fn cancel(&mut self, pos: ChunkPos) -> bool {
+        let mut claims = self.claims.lock().unwrap();
+        if claims.get(&pos) != Some(&Claim::Queued) {
+            return false;
+        }
+        claims.remove(&pos);
+        drop(claims);
+        self.in_flight.remove(&pos);
+        self.urgent_sent.remove(&pos);
+        true
+    }
+
     /// Chunks queued or being generated.
     pub fn in_flight(&self) -> usize {
         self.in_flight.len()

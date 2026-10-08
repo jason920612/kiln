@@ -355,7 +355,7 @@ const INVENTORY_SLOTS: usize = 46;
 const CHUNK_LOADS_PER_TICK: usize = 256;
 /// Tick time spent installing generated chunks per level at most (the chunks players stand in
 /// do not wait); the rest are installed in the next ticks.
-const INSTALL_BUDGET: Duration = Duration::from_millis(3);
+const INSTALL_BUDGET: Duration = Duration::from_micros(1500);
 
 struct Player {
     conn: ConnId,
@@ -824,6 +824,10 @@ struct Dim {
     install_spent: Duration,
     /// A save handed its chunks to the encoders: they go to the writer once all are encoded.
     flush_when_encoded: bool,
+    /// When each chunk queued for generation was last asked for: chunks nobody asked for
+    /// lately (the players moved on) leave the queue before a thread takes them, as vanilla
+    /// drops generation work whose ticket went.
+    asked: HashMap<ChunkPos, i64>,
     /// World age, for the scheduled ticks of chunks that load or unload.
     game_time: i64,
     /// Entity chunks (`entities/`), when the world is saved somewhere.
@@ -926,6 +930,7 @@ impl Dim {
             urgent: HashSet::new(),
             install_spent: Duration::ZERO,
             flush_when_encoded: false,
+            asked: HashMap::new(),
             game_time,
             entity_store,
             poi_store,
@@ -2609,6 +2614,22 @@ impl Sim {
             // order that does not depend on how regions split them.
             let mut wanted = std::mem::take(&mut d.requests);
             wanted.sort_unstable_by_key(|&(rank, conn, _)| (rank, conn));
+            // Generation nobody asked for in the last 2 s goes (not the players' own chunks).
+            if d.generation.is_some() {
+                let now = self.game_time;
+                for &(_, _, c) in &wanted {
+                    d.asked.insert(c, now);
+                }
+                if now % 20 == 0 {
+                    let pool = d.generation.as_mut().unwrap();
+                    for p in pool.queued() {
+                        if !d.urgent.contains(&p) && d.asked.get(&p).is_none_or(|&t| now - t > 40) {
+                            pool.cancel(p);
+                        }
+                    }
+                    d.asked.retain(|p, _| pool.is_queued(*p));
+                }
+            }
             let mut loads = 0;
             for pos in region::merge_requests(wanted.into_iter().map(|(_, _, c)| c)) {
                 if d.is_loaded(pos) {
