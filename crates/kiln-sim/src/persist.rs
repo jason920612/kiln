@@ -227,6 +227,46 @@ impl Sim {
         }
     }
 
+    /// Every player's data, statistics and advancements: encoded here, written side by side
+    /// (each file is written through a temporary file and synced; many players' files one
+    /// after another hold a save up).
+    pub(crate) fn save_players(&self) {
+        let Some(storage) = &self.storage else { return };
+        let mut players: Vec<&Player> = self.players.values().collect();
+        players.sort_by_key(|p| p.uuid);
+        type Job = (uuid::Uuid, String, Tag, Option<(std::path::PathBuf, String)>, Option<(std::path::PathBuf, String)>);
+        let jobs: Vec<Job> = players
+            .iter()
+            .map(|p| {
+                let stats = self.stats_path(p.uuid).map(|path| (path, p.stats.to_json()));
+                let advancements = self.advancements_path(p.uuid).map(|path| (path, p.advancements.to_json()));
+                (p.uuid, p.name.clone(), self.player_nbt(p), stats, advancements)
+            })
+            .collect();
+        let write = |job: &Job| {
+            let (uuid, name, nbt, stats, advancements) = job;
+            if let Err(e) = storage.players.save_nbt(*uuid, nbt) {
+                warn!("failed to save player data for {name}: {e}");
+            }
+            for (path, json) in [stats, advancements].into_iter().flatten() {
+                if let Err(e) = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, json)) {
+                    tracing::error!("Couldn't save {}: {e}", path.display());
+                }
+            }
+        };
+        if jobs.len() < 4 {
+            jobs.iter().for_each(write);
+            return;
+        }
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).clamp(1, 8);
+        let per = jobs.len().div_ceil(threads);
+        std::thread::scope(|scope| {
+            for part in jobs.chunks(per) {
+                scope.spawn(move || part.iter().for_each(write));
+            }
+        });
+    }
+
     pub(crate) fn save_player(&self, p: &Player) {
         let Some(storage) = &self.storage else { return };
         let nbt = self.player_nbt(p);

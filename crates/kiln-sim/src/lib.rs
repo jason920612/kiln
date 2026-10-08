@@ -3301,9 +3301,7 @@ impl Sim {
 
     /// The parts of a save besides chunks and entities: players, the level and the saved data.
     fn save_rest(&mut self) {
-        for p in self.players.values() {
-            self.save_player(p);
-        }
+        self.save_players();
         self.save_level();
         self.save_weather();
         self.save_world_state();
