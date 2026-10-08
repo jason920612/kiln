@@ -267,6 +267,7 @@ public class ContainerVectors {
         campfireScenarios(out);
         daylightScenarios(out);
         targetScenarios(out);
+        projectileBlockScenarios(out);
         return out;
     }
 
@@ -396,6 +397,32 @@ public class ContainerVectors {
         s = new Scenario("target_from_south", 45).block(0, 0, 0, target).state(0, 0, 0);
         s.at(1, "summon minecraft:arrow ~0.3 ~0.7 ~4 {NoGravity:1b,Motion:[0.0d,0.0d,-1.0d]}");
         out.add(s);
+    }
+
+    /** wp49: what arrows (burning or not) and snowballs do to the blocks they hit. */
+    static void projectileBlockScenarios(List<Scenario> out) {
+        String fire = "summon minecraft:arrow ~-3 ~0.5 ~0.5 {NoGravity:1b,Fire:200s,Motion:[1.0d,0.0d,0.0d]}";
+        String plain = "summon minecraft:arrow ~-3 ~0.5 ~0.5 {NoGravity:1b,Motion:[1.0d,0.0d,0.0d]}";
+        String ball = "summon minecraft:snowball ~-3 ~0.5 ~0.5 {NoGravity:1b,Motion:[1.0d,0.0d,0.0d]}";
+        Object[][] cases = {
+            {"tnt_fire", "minecraft:tnt", fire}, {"tnt_plain", "minecraft:tnt", plain}, {"tnt_ball", "minecraft:tnt", ball},
+            {"campfire_fire", "minecraft:campfire[facing=north,lit=false,waterlogged=false,signal_fire=false]", fire},
+            {"campfire_plain", "minecraft:campfire[facing=north,lit=false,waterlogged=false,signal_fire=false]", plain},
+            {"campfire_wet", "minecraft:campfire[facing=north,lit=false,waterlogged=true,signal_fire=false]", fire},
+            {"soul_campfire_fire", "minecraft:soul_campfire[facing=north,lit=false,waterlogged=false,signal_fire=false]", fire},
+            {"candle_fire", "minecraft:candle[candles=2,lit=false,waterlogged=false]", fire},
+            {"candle_plain", "minecraft:candle[candles=2,lit=false,waterlogged=false]", plain},
+            {"candle_wet", "minecraft:candle[candles=1,lit=false,waterlogged=true]", fire},
+            {"candle_cake_fire", "minecraft:red_candle_cake[lit=false]", fire},
+            {"candle_lit_fire", "minecraft:candle[candles=1,lit=true,waterlogged=false]", fire},
+            {"chorus_plain", "minecraft:chorus_flower[age=5]", plain}, {"chorus_fire", "minecraft:chorus_flower[age=5]", fire},
+            {"chorus_ball", "minecraft:chorus_flower[age=5]", ball},
+        };
+        for (Object[] c : cases) {
+            Scenario s = new Scenario("projectile_" + c[0], 40).drops().block(0, -1, 0, "minecraft:end_stone").block(0, 0, 0, (String) c[1]).state(0, 0, 0);
+            s.at(1, (String) c[2]);
+            out.add(s);
+        }
     }
 
     /** wp49: campfires cooking food, cooling down, going out, dropping what they hold. */

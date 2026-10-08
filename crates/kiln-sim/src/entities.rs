@@ -2825,15 +2825,37 @@ fn keyed(events: Vec<Event>) -> Vec<(usize, Event)> {
 }
 
 /// `BlockBehaviour.onProjectileHit` of the block at `pos`; `owner` is the projectile's owner.
-fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], pos: kiln_blocks::BlockPos, face: kiln_blocks::Direction, location: [f64; 3], projectile_type: &str, owner: Option<i32>) {
+fn block_projectile_hit(level: &mut RegionLevel, players: &mut [&mut Player], pos: kiln_blocks::BlockPos, face: kiln_blocks::Direction, location: [f64; 3], projectile_type: &str, owner: Option<i32>, on_fire: bool) {
     use kiln_data::block_logic::BlockClass as C;
     let s = level.block(pos);
+    // `Projectile.mayInteract`: a player's shot always may; any other needs mob griefing.
+    let may_interact = owner.is_none_or(|id| players.iter().any(|p| p.entity_id == id) || level.env.mobs.griefing);
     match kiln_data::block_logic::block_class(s) {
+        // `TntBlock.onProjectileHit`: a burning projectile sets it off.
+        C::TntBlock if on_fire && may_interact => {
+            if kiln_blocks::redstone::devices::prime(level, pos) {
+                kiln_blocks::remove_block(level, pos, false);
+            }
+        }
+        // `CampfireBlock.onProjectileHit`, `AbstractCandleBlock.onProjectileHit`: a burning projectile lights them.
+        C::CampfireBlock | C::CandleBlock | C::CandleCakeBlock
+            if on_fire
+                && (kiln_data::block_logic::block_class(s) != C::CampfireBlock || may_interact)
+                && kiln_blocks::state::has(s, "lit")
+                && !kiln_blocks::state::get_bool(s, "lit")
+                && !kiln_blocks::state::get_bool(s, "waterlogged") =>
+        {
+            kiln_blocks::set_block(level, pos, kiln_blocks::state::set_bool(s, "lit", true), kiln_blocks::flags::ALL_IMMEDIATE);
+        }
         C::BellBlock => {
             let (_, rang) = kiln_blocks::behaviour::bell::on_hit(level, pos, face, 0.0, false);
             if rang && let Some(p) = owner.and_then(|id| players.iter_mut().find(|p| p.entity_id == id)) {
                 p.award_stat(*crate::player_stats::stat::BELL_RING, 1);
             }
+        }
+        // `ChorusFlowerBlock.onProjectileHit`: a flying thing that may break blocks breaks the flower.
+        C::ChorusFlowerBlock if may_interact && level.env.mobs.projectiles_break_blocks && crate::bell::in_tag(projectile_type, "minecraft:impact_projectiles") => {
+            kiln_blocks::destroy_block(level, pos, true, 512);
         }
         C::TargetBlock => {
             // `AbstractArrow` (arrows, spectral arrows, tridents) hold the signal longer.
@@ -3020,8 +3042,9 @@ fn carry_out(
             p.sound_for_all("minecraft:entity.player.teleport", world_fx::SoundSource::Players, 1.0, 1.0);
         }
         // `Block.onProjectileHit` of the block a projectile hit.
-        Event::ProjectileHit { owner, projectile_type, hit: kiln_entity::projectile::Hit::Block { pos, face, location }, .. } => {
-            block_projectile_hit(level, players, kb(pos), kiln_blocks::Direction::from_index(face as usize), [location.x, location.y, location.z], projectile_type, owner);
+        Event::ProjectileHit { projectile, owner, projectile_type, hit: kiln_entity::projectile::Hit::Block { pos, face, location } } => {
+            let on_fire = list.binary_search_by_key(&projectile, |e| e.id).ok().and_then(|i| list[i].phys.as_deref()).is_some_and(|p| p.remaining_fire_ticks > 0);
+            block_projectile_hit(level, players, kb(pos), kiln_blocks::Direction::from_index(face as usize), [location.x, location.y, location.z], projectile_type, owner, on_fire);
         }
         // Vibrations, other projectile hits and the block effects of entities inside blocks
         // (pressure plates are pressed through the entity boxes) are not simulated yet.
