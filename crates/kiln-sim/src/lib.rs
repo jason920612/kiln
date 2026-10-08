@@ -353,6 +353,9 @@ const HOTBAR_START: usize = 36;
 const INVENTORY_SLOTS: usize = 46;
 /// Chunks loaded or generated per tick at most (requests beyond wait for later ticks).
 const CHUNK_LOADS_PER_TICK: usize = 256;
+/// Tick time spent installing generated chunks per level at most (the chunks players stand in
+/// do not wait); the rest are installed in the next ticks.
+const INSTALL_BUDGET: Duration = Duration::from_millis(3);
 
 struct Player {
     conn: ConnId,
@@ -1031,18 +1034,29 @@ impl Dim {
         r
     }
 
-    /// Installs the chunks generation finished since the last tick.
-    fn install_generated(&mut self) -> usize {
-        let Some(pool) = &mut self.generation else { return 0 };
-        let done = pool.finished();
-        let n = done.len();
-        for (pos, chunk) in done {
-            // Loaded synchronously in the meantime (a join or teleport needed it).
+    /// Installs the chunks generation finished: those players stand in (`first`, sorted) at
+    /// once, the rest in position order within [`INSTALL_BUDGET`], so that a burst of finished
+    /// chunks spreads over a few ticks instead of holding one up; the others wait, still
+    /// counted as in flight.
+    fn install_generated(&mut self, first: &[ChunkPos]) {
+        let Some(pool) = &mut self.generation else { return };
+        pool.collect();
+        if !pool.has_ready() {
+            return;
+        }
+        let ready: Vec<ChunkPos> = pool.ready().collect();
+        let started = Instant::now();
+        let (now, later): (Vec<ChunkPos>, Vec<ChunkPos>) = ready.into_iter().partition(|p| first.binary_search(p).is_ok());
+        for pos in now.into_iter().chain(later) {
+            if first.binary_search(&pos).is_err() && started.elapsed() >= INSTALL_BUDGET {
+                break;
+            }
+            let Some(chunk) = self.generation.as_mut().and_then(|p| p.take(pos)) else { continue };
+            // Loaded synchronously in the meantime (a command needed it).
             if !self.is_loaded(pos) {
                 self.timed_install(pos, chunk);
             }
         }
-        n
     }
 
     /// Saves and drops chunks the regions released; cells left empty are vacated. Returns
@@ -2455,7 +2469,7 @@ impl Sim {
             }
             let dt = diag::lap("ch.unload", dt);
             let d = &mut self.dims[dim];
-            d.install_generated();
+            d.install_generated(&keep);
             let dt = diag::lap("ch.install_generated", dt);
             // Every player's own chunk, uncapped: each player must stand in an owned cell (or
             // waits in limbo while it is generated).

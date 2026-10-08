@@ -73,6 +73,8 @@ pub(crate) struct GenPool {
     in_flight: HashMap<ChunkPos, Instant>,
     /// Chunks sent to the urgent queue (a subset of `in_flight`).
     urgent_sent: std::collections::HashSet<ChunkPos>,
+    /// Finished chunks not installed yet (still in `in_flight`, so not asked for again).
+    ready: std::collections::BTreeMap<ChunkPos, Chunk>,
     claims: Arc<Mutex<HashMap<ChunkPos, Claim>>>,
 }
 
@@ -117,7 +119,7 @@ impl GenPool {
                 })
                 .expect("spawning a generation thread");
         }
-        Self { requests, urgent, results, in_flight: HashMap::new(), urgent_sent: Default::default(), claims }
+        Self { requests, urgent, results, in_flight: HashMap::new(), urgent_sent: Default::default(), ready: Default::default(), claims }
     }
 
     /// Queues `pos` unless it is already queued; `false` when the queue is full.
@@ -156,25 +158,33 @@ impl GenPool {
         self.in_flight.contains_key(&pos)
     }
 
-    /// Chunks finished since the last call, in position order.
-    pub fn finished(&mut self) -> Vec<(ChunkPos, Chunk)> {
-        let mut out: Vec<_> = self.results.try_iter().collect();
-        if out.is_empty() {
-            return out;
-        }
-        let mut claims = self.claims.lock().unwrap();
-        // Only chunks still asked for: a result for a position no longer in flight is a copy.
-        out.retain(|(pos, _)| match self.in_flight.remove(pos) {
-            Some(at) => {
-                chunkstats::GEN_LATENCY.add(at.elapsed());
-                claims.remove(pos);
-                self.urgent_sent.remove(pos);
-                true
+    /// Collects what the threads finished since the last call; a result for a position no
+    /// longer in flight is a copy and goes.
+    pub fn collect(&mut self) {
+        for (pos, chunk) in self.results.try_iter() {
+            if self.in_flight.contains_key(&pos) && !self.ready.contains_key(&pos) {
+                self.ready.insert(pos, chunk);
             }
-            None => false,
-        });
-        drop(claims);
-        out.sort_unstable_by_key(|(pos, _)| *pos);
-        out
+        }
+    }
+
+    /// Finished chunks waiting to be taken, in position order.
+    pub fn ready(&self) -> impl Iterator<Item = ChunkPos> + '_ {
+        self.ready.keys().copied()
+    }
+
+    pub fn has_ready(&self) -> bool {
+        !self.ready.is_empty()
+    }
+
+    /// Hands out a finished chunk; it is no longer in flight.
+    pub fn take(&mut self, pos: ChunkPos) -> Option<Chunk> {
+        let chunk = self.ready.remove(&pos)?;
+        if let Some(at) = self.in_flight.remove(&pos) {
+            chunkstats::GEN_LATENCY.add(at.elapsed());
+        }
+        self.claims.lock().unwrap().remove(&pos);
+        self.urgent_sent.remove(&pos);
+        Some(chunk)
     }
 }

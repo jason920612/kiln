@@ -683,14 +683,14 @@ impl Level for RegionLevel<'_> {
 }
 
 /// Chunks within simulation distance of a player: a bit per chunk of each cell.
-pub(crate) struct Ticking(HashMap<CellPos, u64>);
+pub(crate) struct Ticking(crate::FastMap<CellPos, u64>);
 
 impl Ticking {
     pub fn around(centers: impl Iterator<Item = ChunkPos>, r: i32) -> Self {
         let mut centers: Vec<ChunkPos> = centers.collect();
         centers.sort_unstable();
         centers.dedup();
-        let mut cells: HashMap<CellPos, u64> = HashMap::new();
+        let mut cells: crate::FastMap<CellPos, u64> = Default::default();
         for c in centers {
             let (x0, x1, z0, z1) = (c.x - r, c.x + r, c.z - r, c.z + r);
             for cx in x0.div_euclid(CELL_CHUNKS)..=x1.div_euclid(CELL_CHUNKS) {
@@ -775,7 +775,7 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
             let saved = std::mem::replace(&mut level.blocks.random, random);
             let saved_value = std::mem::replace(&mut level.blocks.data.rand_value, rand_value);
             tick_thunder(level, c);
-            kiln_blocks::tick::tick_chunk_blocks(level, key(c), &sections, speed);
+            tick_chunk_blocks(level, c, &sections, speed);
             level.blocks.random = saved;
             level.blocks.data.rand_value = saved_value;
         }
@@ -783,6 +783,41 @@ pub(crate) fn tick_blocks(level: &mut RegionLevel, ticking: &Ticking) {
     kiln_blocks::block_events::run_block_events(level, |p| ticking.contains(chunk_of(p)));
     // `SignBlockEntity.tick`: editing locks of players who left.
     crate::signs::tick(level);
+}
+
+/// [`kiln_blocks::tick::tick_chunk_blocks`] for chunk `c` with the picked blocks read straight
+/// from the chunk: most picks land on blocks that do not tick, and those cost one read instead
+/// of a level lookup. The same picks, in the same order, reading the blocks as they are at the
+/// moment of each pick.
+fn tick_chunk_blocks(level: &mut RegionLevel, c: ChunkPos, sections: &[(i32, bool)], speed: i32) {
+    let (x, z) = (c.x * 16, c.z * 16);
+    for _ in 0..speed {
+        if level.blocks.random.next_int_bounded(48) == 0 {
+            let pos = kiln_blocks::tick::block_random_pos(level, x, 0, z, 15);
+            kiln_blocks::weather::tick_precipitation(level, pos);
+        }
+    }
+    if speed <= 0 {
+        return;
+    }
+    let mut chunk = level.cells.chunk(c);
+    for &(sy, ticking) in sections {
+        if !ticking {
+            continue;
+        }
+        for _ in 0..speed {
+            // `block_random_pos`.
+            let data = &mut level.blocks.data;
+            data.rand_value = data.rand_value.wrapping_mul(3).wrapping_add(1013904223);
+            let j = data.rand_value >> 2;
+            let pos = BlockPos::new(x + (j & 15), sy * 16 + ((j >> 16) & 15), z + (j >> 8 & 15));
+            let state = chunk.map_or(kiln_data::blocks::default_state::VOID_AIR, |ch| ch.get((pos.x & 15) as usize, pos.y, (pos.z & 15) as usize));
+            if kiln_blocks::tick::randomly_ticks(state) || kiln_data::block_logic::fluid(state).kind == kiln_data::block_logic::FluidKind::Lava {
+                kiln_blocks::tick::random_tick_at(level, pos);
+                chunk = level.cells.chunk(c);
+            }
+        }
+    }
 }
 
 /// `ServerLevel.tickThunder` for chunk `c`, with the chunk's random: during a thunderstorm one
