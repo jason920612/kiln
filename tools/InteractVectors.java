@@ -784,7 +784,7 @@ public class InteractVectors {
 
     static void vaults49(List<Case> out) {
         Case c;
-        String stone = "config:{loot_table:\"minecraft:blocks/stone\"}";
+        String stone = "config:{loot_table:\"minecraft:blocks/stone\",key_item:{id:\"minecraft:trial_key\",count:1}}";
         // Waking up and going back to sleep with the players near.
         c = vaultCase("vault_wake", "vault_state=inactive", "{" + stone + "}");
         c.step(waitTicks(1)).step(waitTicks(19)).step(waitTicks(1)).step(waitTicks(40));
@@ -859,7 +859,7 @@ public class InteractVectors {
         out.add(c);
         // What the vault shows while waiting comes from another table when it is told to.
         c = vaultCase("vault_display_override", "vault_state=inactive",
-                "{config:{loot_table:\"minecraft:blocks/stone\",override_loot_table_to_display:\"minecraft:blocks/composter\"}}");
+                "{config:{loot_table:\"minecraft:blocks/stone\",override_loot_table_to_display:\"minecraft:blocks/composter\",key_item:{id:\"minecraft:trial_key\",count:1}}}");
         c.step(waitTicks(1)).step(waitTicks(20));
         out.add(c);
         // A vault with no key does not wake up its display.
@@ -867,7 +867,7 @@ public class InteractVectors {
         c.step(waitTicks(1)).step(waitTicks(20));
         out.add(c);
         // A smaller range.
-        c = vaultCase("vault_small_range", "vault_state=inactive", "{config:{loot_table:\"minecraft:blocks/stone\",activation_range:2.0d,deactivation_range:2.5d}}");
+        c = vaultCase("vault_small_range", "vault_state=inactive", "{config:{loot_table:\"minecraft:blocks/stone\",activation_range:2.0d,deactivation_range:2.5d,key_item:{id:\"minecraft:trial_key\",count:1}}}");
         c.step(waitTicks(1)).step(waitTicks(20));
         out.add(c);
     }

@@ -120,8 +120,10 @@ impl Vault {
             if let Some(a) = c.get("deactivation_range").and_then(Tag::as_f64) {
                 v.config.deactivation = a;
             }
-            if let Some(k) = c.get("key_item") {
-                v.config.key = stack_of(Some(k));
+            // (`ItemStack.lenientOptionalFieldOf`: no key, or one that cannot be read, is empty; only a vault with no `config` at all has the trial key.)
+            {
+                let k = c.get("key_item");
+                v.config.key = stack_of(k);
             }
             v.config.display_table = c.get("override_loot_table_to_display").and_then(Tag::as_str).map(str::to_owned);
         }
@@ -154,7 +156,7 @@ impl Vault {
         if self.config.deactivation != d.deactivation {
             c.push(("deactivation_range".to_owned(), Tag::Double(self.config.deactivation)));
         }
-        if self.config.key != d.key {
+        if !self.config.key.is_empty() {
             c.push(("key_item".to_owned(), self.config.key.to_nbt()));
         }
         if let Some(t) = &self.config.display_table {

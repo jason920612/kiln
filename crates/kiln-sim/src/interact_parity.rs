@@ -412,6 +412,10 @@ fn run_case(line: &Value) -> Vec<String> {
     let maps = line["maps"].as_bool() == Some(true);
     let view = if maps { 8 } else { 2 };
     let mut sim = Sim::new(SimConfig::new(2, view, None));
+    // (Vaults roll loot tables: the level has the vanilla ones whatever the working directory.)
+    if line["ticking"].as_bool() == Some(true) && sim.loot.is_none() {
+        sim.loot = crate::combat_parity::vanilla_loot();
+    }
     let (msg, stats) = join(1, "Interact", view);
     assert!(sim.step([msg]));
     let mut client = Client::new(1, stats.clone());
