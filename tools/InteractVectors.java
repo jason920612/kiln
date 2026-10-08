@@ -1005,7 +1005,7 @@ public class InteractVectors {
             usedBefore.put(item, p.getStats().getValue(net.minecraft.stats.Stats.ITEM_USED.get(BuiltInRegistries.ITEM.getValue(Identifier.parse(item)))));
         }
         Map<String, Integer> customBefore = new HashMap<>();
-        for (String n : c.customStats) customBefore.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(Identifier.parse(n))));
+        for (String n : c.customStats) customBefore.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(BuiltInRegistries.CUSTOM_STAT.getValue(Identifier.parse(n)))));
         for (Map<String, Object> s : c.steps) {
             step(p, c, s);
             Map<String, Object> r = new LinkedHashMap<>();
@@ -1021,7 +1021,7 @@ public class InteractVectors {
             if (c.watchFood) r.put("food", List.of(p.getFoodData().getFoodLevel(), p.getFoodData().getSaturationLevel(), (float) get(p.getFoodData(), "exhaustionLevel")));
             if (!c.customStats.isEmpty()) {
                 Map<String, Object> cs = new LinkedHashMap<>();
-                for (String n : c.customStats) cs.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(Identifier.parse(n))) - customBefore.get(n));
+                for (String n : c.customStats) cs.put(n, p.getStats().getValue(net.minecraft.stats.Stats.CUSTOM.get(BuiltInRegistries.CUSTOM_STAT.getValue(Identifier.parse(n)))) - customBefore.get(n));
                 r.put("custom", cs);
             }
             results.add(r);
