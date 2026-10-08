@@ -859,7 +859,8 @@ public class ContainerVectors {
         command(server, "kill @e[type=chest_minecart]");
         command(server, "kill @e[type=hopper_minecart]");
         command(server, "kill @e[type=item]");
-        command(server, "kill @e[type=bee]");
+        // (Killed bees would linger for their death animation: they are discarded.)
+        for (var bee : level.getEntitiesOfClass(net.minecraft.world.entity.animal.bee.Bee.class, new net.minecraft.world.phys.AABB(-64, -64, -64, 64, 320, 64))) bee.discard();
         command(server, "kill @e[type=tnt]");
         command(server, "kill @e[type=arrow]");
         command(server, "kill @e[type=spectral_arrow]");
