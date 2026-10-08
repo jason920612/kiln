@@ -1060,6 +1060,18 @@ mod tests {
             let want_comp = v["component"].as_array().unwrap();
             let want_colors = unhex(v["colors"].as_str().unwrap());
             let diff = data.colors.iter().zip(&want_colors).filter(|(a, b)| a != b).count();
+            if diff > 0 && std::env::var_os("KILN_EXPLORE_DEBUG").is_some() {
+                let first: Vec<String> = data
+                    .colors
+                    .iter()
+                    .zip(&want_colors)
+                    .enumerate()
+                    .filter(|(_, (a, b))| a != b)
+                    .take(12)
+                    .map(|(i, (a, b))| format!("({},{}) kiln {a} vanilla {b}", i % 128, i / 128))
+                    .collect();
+                println!("{tag}: {first:?}");
+            }
             if data.center != [want_center[0].as_i64().unwrap() as i32, want_center[1].as_i64().unwrap() as i32]
                 || comp.kind as i64 != want_comp[0].as_i64().unwrap()
                 || comp.x != want_comp[1].as_f64().unwrap()
