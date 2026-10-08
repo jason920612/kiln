@@ -551,6 +551,30 @@ fn run_case(line: &Value) -> Vec<String> {
                 let id = sim.players[&1].containers.counter;
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerButtonClick { container_id: id, button_id: i32_of(&step["button"]) }));
             }
+            "menu_click" => {
+                let m = sim.players[&1].open_menu.as_ref().unwrap_or(&sim.players[&1].menu);
+                let input = [
+                    kiln_inventory::ContainerInput::Pickup,
+                    kiln_inventory::ContainerInput::QuickMove,
+                    kiln_inventory::ContainerInput::Swap,
+                    kiln_inventory::ContainerInput::Clone,
+                    kiln_inventory::ContainerInput::Throw,
+                    kiln_inventory::ContainerInput::QuickCraft,
+                    kiln_inventory::ContainerInput::PickupAll,
+                ][i32_of(&step["input"]) as usize];
+                let click = kiln_inventory::ContainerClick {
+                    container_id: m.container_id,
+                    state_id: m.state_id(),
+                    slot: i32_of(&step["slot"]) as i16,
+                    button: i32_of(&step["button"]) as i8,
+                    input,
+                    changed: Vec::new(),
+                    carried: kiln_item::HashedStack::Empty,
+                };
+                let mut body = BytesMut::new();
+                click.write(&mut body);
+                inbox.push(ToSim::Packet(1, PlayIn::ContainerClick { body: body.freeze() }));
+            }
             "menu_close" => {
                 let id = sim.players[&1].containers.counter;
                 inbox.push(ToSim::Packet(1, PlayIn::ContainerClose { container_id: id }));

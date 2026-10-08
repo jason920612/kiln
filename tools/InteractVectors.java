@@ -705,6 +705,36 @@ public class InteractVectors {
         c.slot("h0", stack("minecraft:map", 1));
         c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20)).step(useOn(10, 62, 10, 1, 0)).step(op("op", "map_wait", "ticks", 6));
         out.add(c);
+        // The cartography table: paper zooms a map out, a glass pane locks it, an empty map copies it.
+        String table = "setblock 2 99 0 minecraft:stone";
+        for (String extra : new String[] {"paper", "glass_pane", "map"}) {
+            c = mapCase("map_cartography_" + extra).menus().cmd(table).cmd("setblock 2 100 0 minecraft:cartography_table");
+            c.slot("h0", stack("minecraft:map", 1)).slot("h1", stack("minecraft:" + extra, 2));
+            c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20)).step(useOn(2, 100, 0, 1, 0))
+                    .step(op("op", "menu_click", "slot", 30, "button", 0, "input", 1)).step(op("op", "menu_click", "slot", 31, "button", 0, "input", 1))
+                    .step(op("op", "menu_click", "slot", 2, "button", 0, "input", 1));
+            if (extra.equals("paper")) {
+                // The zoomed map goes in again for a second zoom.
+                c.step(op("op", "menu_click", "slot", 38, "button", 0, "input", 1)).step(op("op", "menu_click", "slot", 31, "button", 0, "input", 1))
+                        .step(op("op", "menu_click", "slot", 2, "button", 0, "input", 1));
+            }
+            c.step(op("op", "menu_close"));
+            out.add(c);
+        }
+        // Taking the result by hand, a glass pane on an already locked map, other things in the slots.
+        c = mapCase("map_cartography_pickup").menus().cmd(table).cmd("setblock 2 100 0 minecraft:cartography_table");
+        c.slot("h0", stack("minecraft:map", 1)).slot("h1", stack("minecraft:glass_pane", 3));
+        c.step(op("op", "use", "hand", 0)).step(op("op", "map_wait", "ticks", 20)).step(useOn(2, 100, 0, 1, 0))
+                .step(op("op", "menu_click", "slot", 30, "button", 0, "input", 1)).step(op("op", "menu_click", "slot", 31, "button", 0, "input", 1))
+                .step(op("op", "menu_click", "slot", 2, "button", 0, "input", 0)).step(op("op", "menu_click", "slot", 0, "button", 0, "input", 0))
+                .step(op("op", "menu_close"));
+        out.add(c);
+        c = mapCase("map_cartography_not_a_map").menus().cmd(table).cmd("setblock 2 100 0 minecraft:cartography_table");
+        c.slot("h0", stack("minecraft:map", 1)).slot("h1", stack("minecraft:stick", 2)).slot("h2", stack("minecraft:paper", 2));
+        c.step(op("op", "use", "hand", 0)).step(useOn(2, 100, 0, 1, 0))
+                .step(op("op", "menu_click", "slot", 30, "button", 0, "input", 1)).step(op("op", "menu_click", "slot", 31, "button", 0, "input", 1))
+                .step(op("op", "menu_click", "slot", 32, "button", 0, "input", 1)).step(op("op", "menu_close"));
+        out.add(c);
         // A banner outside the map's area is not taken.
         c = mapCase("map_banner_outside").cmd("setblock 70 62 70 minecraft:red_banner[rotation=4]");
         c.slot("h0", stack("minecraft:map", 1));
@@ -2134,6 +2164,10 @@ public class InteractVectors {
                         new BlockPos(at.get(0), at.get(1), at.get(2)), Direction.UP, 1));
             }
             case "cooldown" -> p.getCooldowns().addCooldown(stack((String) s.get("item")), (int) s.get("ticks"));
+            // wp49: a click on the open menu's slot (`input` is the `ContainerInput` ordinal), predicting nothing.
+            case "menu_click" -> p.connection.handleContainerClick(new ServerboundContainerClickPacket(p.containerMenu.containerId, p.containerMenu.getStateId(),
+                    (short) (int) s.get("slot"), (byte) (int) s.get("button"), net.minecraft.world.inventory.ContainerInput.values()[(int) s.get("input")],
+                    it.unimi.dsi.fastutil.ints.Int2ObjectMaps.emptyMap(), net.minecraft.network.HashedStack.EMPTY));
             // wp49: `ticks` server ticks pass for the player's maps (the step's own tick is one of them).
             case "map_wait" -> {
                 for (int i = 0; i < (int) s.get("ticks") - 1; i++) mapTick(p);
