@@ -72,8 +72,10 @@ fn decode(pkt: &Bytes) -> Option<Value> {
             let source = r.varint().ok()?;
             let (x, y, z) = (r.i32().ok()?, r.i32().ok()?, r.i32().ok()?);
             let (volume, pitch) = (r.f32().ok()?, r.f32().ok()?);
+            // (The vectors print floats the way Java does: the shortest text of the float.)
+            let java = |f: f32| format!("{f}").parse::<f64>().unwrap_or(f as f64);
             json!({"t": "sound", "name": name, "source": sound_source_name(source), "pos": [x as f64 / 8.0, y as f64 / 8.0, z as f64 / 8.0],
-                   "volume": volume, "pitch": pitch})
+                   "volume": java(volume), "pitch": java(pitch)})
         }
         ids::OPEN_SIGN_EDITOR => {
             let p = pos(&mut r).ok()?;

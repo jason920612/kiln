@@ -122,8 +122,8 @@ impl ArmorStand {
     /// `ArmorStand.getClickedSlot`: the part of the stand the click (a height above its feet) is on.
     fn clicked_slot(&self, y: f64) -> EquipmentSlot {
         let small = self.small;
-        // (`getScale() * getAgeScale()`: 1.)
-        let y = y / 1.0;
+        // (`getScale() * getAgeScale()`: a small stand counts as a baby.)
+        let y = y / if small { 0.5 } else { 1.0 };
         if y >= 0.1 && y < 0.1 + if small { 0.8 } else { 0.45 } && !self.item(EquipmentSlot::Feet).is_empty() {
             EquipmentSlot::Feet
         } else if y >= 0.9 + if small { 0.3 } else { 0.0 } && y < 0.9 + if small { 1.0 } else { 0.7 } && !self.item(EquipmentSlot::Chest).is_empty() {
@@ -478,6 +478,15 @@ impl EntityExt for ArmorStand {
     /// `ArmorStand.interact`.
     fn interact(&mut self, e: &mut Entity, level: &mut dyn EntityLevel, who: &Interactor, stack: &ItemStack) -> Option<Outcome> {
         if self.marker || (!stack.is_empty() && stack.item_name() == "minecraft:name_tag") {
+            // `NameTagItem.interactLivingEntity`: the stand takes the name.
+            if !stack.is_empty()
+                && let Some(name) = stack.get(keys::CUSTOM_NAME)
+                && !e.is_removed()
+            {
+                e.extra.retain(|(k, _)| k != "CustomName");
+                e.extra.push(("CustomName".into(), name.nbt().clone()));
+                return Some(Outcome::success(HeldChange::Consume(1)));
+            }
             return None;
         }
         if who.spectator {

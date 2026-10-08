@@ -1736,6 +1736,12 @@ public class InteractVectors {
 
     static String run(Case c) throws Exception {
         for (String cmd : c.commands) command(cmd);
+        // The recorded level does not tick: what the commands made has had its first tick for the cases that
+        // do something to it (a stand's equipment sounds only after its first tick).
+        for (var stand : server.overworld().getEntitiesOfClass(net.minecraft.world.entity.decoration.ArmorStand.class, new AABB(-16, 90, -16, 32, 120, 32))) {
+            java.lang.reflect.Field f = field(net.minecraft.world.entity.Entity.class, "firstTick");
+            f.set(stand, false);
+        }
         if (System.getenv("INTERACT_DEBUG") != null) { command("data get entity @e[type=minecraft:painting,limit=1]"); command("summon minecraft:painting 2 100 0 {facing:1b,variant:\"minecraft:courbet\"}"); }
         players++;
         ServerPlayer p = mockPlayer("Interact");
