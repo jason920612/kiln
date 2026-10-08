@@ -59,7 +59,7 @@ struct Target {
 
 fn target_of(level: &dyn EntityLevel, id: i32) -> Option<Target> {
     if let Some(p) = level.player(id) {
-        return Some(Target { pos: p.pos, height: if p.sneaking { 1.5 } else { 1.8 }, alive: p.alive, spectator: p.spectator });
+        return Some(Target { pos: p.pos, height: p.height as f64, alive: p.alive, spectator: p.spectator });
     }
     let e = level.entity(id)?;
     let alive = e.is_alive() && crate::mob::data(e).is_none_or(|m| m.health > 0.0);

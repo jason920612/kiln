@@ -201,7 +201,7 @@ fn run_scenario(line: &Value) -> Vec<String> {
         p.first_good = p.pos;
         p.rot = [0.0, 0.0];
         p.on_ground = line["on_ground"].as_bool().unwrap();
-        p.sneaking = line["sneaking"].as_bool().unwrap();
+        p.set_shift_key(line["sneaking"].as_bool().unwrap());
         p.fall_distance = 0.0;
         p.main_supporting_block = None;
         // The body of vanilla's fresh mock player has not moved yet (this one stood on the ground).
@@ -308,7 +308,7 @@ fn run_scenario(line: &Value) -> Vec<String> {
                 // (`jump` is the shadow client's: its moves arrive as packets.)
                 "jump" | "velocity" => {}
                 "attribute" => set_attributes(p, &serde_json::json!([[a["id"], a["value"]]])),
-                "sneak" => p.sneaking = a["on"].as_bool().unwrap(),
+                "sneak" => p.set_shift_key(a["on"].as_bool().unwrap()),
                 "gamerule" => inbox.push(ToSim::Console(format!("gamerule {} {}", a["name"].as_str().unwrap(), a["value"]))),
                 "setblock" => {
                     let at = a["pos"].as_array().unwrap();

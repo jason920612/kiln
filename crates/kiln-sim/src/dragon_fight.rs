@@ -1010,7 +1010,7 @@ pub(crate) fn bottle_breath(ents: &mut entities::Entities, p: &mut Player, off_h
     if p.dead || p.game_mode == 3 || p.inv.equipped(slot).item_name() != "minecraft:glass_bottle" {
         return false;
     }
-    let h = if p.sneaking { 1.5 } else { 1.8 };
+    let h = p.dimensions().1 as f64;
     let (lo, hi) = ([p.pos[0] - 2.3, p.pos[1] - 2.0, p.pos[2] - 2.3], [p.pos[0] + 2.3, p.pos[1] + h + 2.0, p.pos[2] + 2.3]);
     let dragons: Vec<i32> = ents.list.iter().filter(|e| !e.removed && e.kind.name == "minecraft:ender_dragon").map(|e| e.id).collect();
     let cloud = ents.list.iter_mut().filter(|e| !e.removed).find(|e| {

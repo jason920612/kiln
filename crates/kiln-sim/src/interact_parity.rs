@@ -203,7 +203,7 @@ fn run_case(line: &Value) -> Vec<String> {
         p.pos = [pos[0], pos[1], pos[2]];
         p.rot = [rot[0], rot[1]];
         p.on_ground = true;
-        p.sneaking = line["sneaking"].as_bool().unwrap();
+        p.set_shift_key(line["sneaking"].as_bool().unwrap());
         p.fall_distance = 0.0;
         p.game_mode = match line["game_mode"].as_str().unwrap() {
             "creative" => 1,

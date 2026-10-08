@@ -63,7 +63,7 @@ fn camera_height(block: BlockAt, pos: BlockPos, f: &FluidState) -> f32 {
 impl Player {
     /// `EntityDimensions` of the standing or crouching player: (width, height, eye height).
     pub(crate) fn dimensions(&self) -> (f32, f32, f32) {
-        if self.sneaking { (0.6, 1.5, 1.27) } else { (0.6, 1.8, 1.62) }
+        crate::pose::dimensions_of(self.pose)
     }
 
     /// `getEyeY`.
@@ -146,6 +146,12 @@ impl Player {
         }
         self.was_touching_water = fluids.in_water;
         self.was_eye_in_water = fluids.eye_in_water;
+        {
+            // `Entity.baseTick`'s `updateSwimming`: water at the feet is a water block or flowing water.
+            let feet = BlockPos::containing(self.pos[0], self.pos[1], self.pos[2]);
+            let water_at_feet = fluid_at(block, feet).kind.is_water();
+            self.update_swimming(fluids.in_water, fluids.eye_in_water && fluids.in_water, water_at_feet);
+        }
         if self.fire_ticks > 0 {
             if self.fire_ticks % 20 == 0 && !fluids.in_lava {
                 self.hurt(1.0, &Cause::Other("minecraft:on_fire").into(), ctx);

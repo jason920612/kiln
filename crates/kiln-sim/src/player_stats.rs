@@ -395,7 +395,7 @@ impl Player {
         }
         let full = ((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() as f32 * 100.0).round() as i32;
         let horizontal = ((d[0] * d[0] + d[2] * d[2]).sqrt() as f32 * 100.0).round() as i32;
-        if self.swimming() {
+        if self.swimming {
             if full > 0 {
                 self.award_stat(*stat::SWIM_ONE_CM, full);
                 self.exhaust(0.01f32 * full as f32 * 0.01f32);
@@ -419,7 +419,7 @@ impl Player {
                 let s = if self.sprinting {
                     self.exhaust(0.1f32 * horizontal as f32 * 0.01f32);
                     *stat::SPRINT_ONE_CM
-                } else if self.sneaking {
+                } else if self.is_crouching() {
                     *stat::CROUCH_ONE_CM
                 } else {
                     *stat::WALK_ONE_CM
@@ -472,10 +472,6 @@ impl Player {
         crate::combat::floor(self.attribute(crate::combat::ARMOR))
     }
 
-    /// Swimming pose: Kiln does not track the swimming flag yet.
-    fn swimming(&self) -> bool {
-        false
-    }
 }
 
 impl Sim {

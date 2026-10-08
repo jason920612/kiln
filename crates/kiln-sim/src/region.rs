@@ -765,6 +765,8 @@ fn player_tick(p: &mut Player, cells: &CellSet<Cell>, env: &Env) -> PlayerTicked
     let in_rain = crate::weather::in_rain(cells, &env.blocks, p.pos, p.pos[1] + h as f64);
     p.block_effects(&block, env.dim, in_rain, &mut ctx);
     p.tick_freezing(&block, &mut ctx);
+    // `Player.tick`'s last step.
+    p.update_pose(cells, env.game_time, env.min_y);
     p.pos = snap;
     if let Some(travel) = p.pending_travel.take() {
         t.portals.push(travel);
@@ -1419,7 +1421,7 @@ fn obstructed(p: &Player, bodies: &[EntityBox], at: BlockPos, state: u16) -> boo
     if boxes.is_empty() {
         return false;
     }
-    let h = if p.sneaking { 1.5 } else { 1.8 };
+    let h = p.dimensions().1 as f64;
     let me = EntityBox {
         min: [p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3],
         max: [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3],

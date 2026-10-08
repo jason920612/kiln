@@ -62,7 +62,7 @@ pub(crate) fn has_correct_tool(stack: &ItemStack, state: u16) -> bool {
 
 impl Player {
     fn eye_height(&self) -> f64 {
-        if self.sneaking { 1.27 } else { 1.62 }
+        self.dimensions().2
     }
 
     /// `Player.isWithinBlockInteractionRange`: the block's box within the block interaction

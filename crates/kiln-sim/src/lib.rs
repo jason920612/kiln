@@ -58,6 +58,7 @@ mod dragon_fight;
 mod effects;
 mod fall;
 mod phantom;
+mod pose;
 mod freeze;
 mod entities;
 mod entity_world;
@@ -427,8 +428,13 @@ struct Player {
     seen_by: Vec<ConnId>,
     /// Section at the last visibility update; `None` forces a re-evaluation.
     section: Option<[i32; 3]>,
+    /// The shift key (`isShiftKeyDown`); the pose follows it in `pose`.
     sneaking: bool,
     sprinting: bool,
+    /// `Avatar.updateSwimming`: sprinting in water (shared flag 4).
+    swimming: bool,
+    /// `Entity.getPose`, settled at the end of every tick (see `pose.rs`).
+    pose: i32,
     /// Gliding with an elytra (shared flag 7) and the ticks it has lasted.
     fall_flying: bool,
     fall_fly_ticks: i32,
@@ -773,7 +779,7 @@ impl Player {
             (-sin_pitch * f + 0.1 + (self.rng.next_f32() - self.rng.next_f32()) * 0.1) as f64,
             (cos_yaw * cos_pitch * f) as f64 + trig::sin(angle) * spread,
         ];
-        let eye_y = self.pos[1] + if self.sneaking { 1.27 } else { 1.62 };
+        let eye_y = self.pos[1] + self.dimensions().2 as f64;
         entities::Spawn {
             kind: &kiln_data::entities::types::ITEM,
             pos: [self.pos[0], eye_y - 0.3, self.pos[2]],
@@ -3405,6 +3411,8 @@ impl Sim {
             section: None,
             sneaking: false,
             sprinting: false,
+            swimming: false,
+            pose: kiln_data::entities::pose::STANDING,
             fall_flying: false,
             fall_fly_ticks: 0,
             spin_ticks: 0,

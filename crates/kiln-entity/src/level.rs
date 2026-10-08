@@ -85,6 +85,8 @@ pub struct PlayerView {
     pub uuid: u128,
     pub pos: Vec3,
     pub eye_height: f32,
+    /// The height of the hit box in the player's pose (1.8 standing, 1.5 crouching, 0.6 swimming).
+    pub height: f32,
     pub spectator: bool,
     pub creative: bool,
     pub sneaking: bool,
@@ -142,6 +144,7 @@ impl PlayerView {
             uuid: 0,
             pos,
             eye_height: 1.62,
+            height: 1.8,
             spectator: false,
             creative: false,
             sneaking: false,
@@ -369,7 +372,7 @@ pub fn stop_riding_entity<L: EntityLevel + ?Sized>(level: &mut L, id: i32) {
 
 /// A player's collision box from its view.
 pub fn player_box(p: &PlayerView) -> Aabb {
-    let h = if p.sneaking { 1.5 } else { 1.8 };
+    let h = p.height;
     Aabb::new(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3)
 }
 

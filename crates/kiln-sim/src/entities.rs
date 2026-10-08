@@ -1714,21 +1714,20 @@ struct ProxySeed {
     id: i32,
     uuid: u128,
     pos: [f64; 3],
-    sneaking: bool,
+    height: f32,
+    eye_height: f32,
     invulnerable: bool,
 }
 
 impl ProxySeed {
     fn of(p: &Player) -> ProxySeed {
-        ProxySeed { id: p.entity_id, uuid: p.uuid.as_u128(), pos: p.pos, sneaking: p.sneaking, invulnerable: matches!(p.game_mode, 1 | 3) }
+        ProxySeed { id: p.entity_id, uuid: p.uuid.as_u128(), pos: p.pos, height: p.dimensions().1, eye_height: p.dimensions().2, invulnerable: matches!(p.game_mode, 1 | 3) }
     }
 
     fn make(&self) -> kiln_entity::Entity {
         let mut e = kiln_entity::Entity::new("minecraft:player", self.id, self.uuid, EntityKind::Other { type_name: "minecraft:player" }, 0);
-        if self.sneaking {
-            e.height = 1.5;
-            e.eye_height = 1.27;
-        }
+        e.height = self.height;
+        e.eye_height = self.eye_height;
         e.set_pos(vec3(self.pos));
         e.invulnerable = self.invulnerable;
         e
@@ -1780,7 +1779,8 @@ impl Proxy {
             (t.width, t.height)
         });
         let w = width / 2.0;
-        let h: f32 = if self.seed.sneaking { 1.5 } else { height };
+        let _ = height;
+        let h: f32 = self.seed.height;
         let p = self.seed.pos;
         Aabb::new(p[0] - w as f64, p[1], p[2] - w as f64, p[0] + w as f64, p[1] + h as f64, p[2] + w as f64)
     }
@@ -1924,7 +1924,7 @@ pub(crate) fn tick(
         .iter()
         .filter(|v| v.alive && !v.spectator)
         .map(|v| {
-            let h = if v.sneaking { 1.5 } else { 1.8 };
+            let h = v.height;
             (v.id, Aabb::new(v.pos.x - 0.3, v.pos.y, v.pos.z - 0.3, v.pos.x + 0.3, v.pos.y + h, v.pos.z + 0.3).inflate(1.0, 0.5, 1.0))
         })
         .collect();
@@ -2177,7 +2177,7 @@ fn ride_players(sim: &mut SimLevel) {
                 kiln_entity::ride::remove_passenger(vp, pid);
             }
             let vp = sim.list[j].phys.clone().expect("vehicle state");
-            let height = if sim.players[k].sneaking { 1.5 } else { 1.8 };
+            let height = sim.players[k].dimensions().1;
             to = arr(kiln_entity::ride::dismount_location(&*sim, &vp, 0.6, height));
         }
         let p = &mut *sim.players[k];
@@ -3071,7 +3071,8 @@ pub(crate) fn view(p: &Player, now: i64) -> PlayerView {
         id: p.entity_id,
         uuid: p.uuid.as_u128(),
         pos: vec3(p.pos),
-        eye_height: if p.sneaking { 1.27 } else { 1.62 },
+        eye_height: p.dimensions().2,
+        height: p.dimensions().1,
         spectator: p.game_mode == 3,
         creative: p.game_mode == 1,
         sneaking: p.sneaking,

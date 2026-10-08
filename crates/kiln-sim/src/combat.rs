@@ -340,7 +340,7 @@ impl Player {
             mods.push(("minecraft:sprinting".into(), SPRINT_SPEED, AttributeOperation::AddMultipliedTotal));
         }
         // `ServerPlayer.updatePlayerAttributes`: crouching hides the player's waypoint.
-        if attr.name == WAYPOINT_TRANSMIT_RANGE.name && self.sneaking {
+        if attr.name == WAYPOINT_TRANSMIT_RANGE.name && self.is_crouching() {
             mods.push(("minecraft:waypoint_transmit_range_crouch".into(), -1.0, AttributeOperation::AddMultipliedTotal));
         }
         for (id, amount, op) in self.effect_modifiers(attr.name) {
@@ -433,27 +433,14 @@ impl Player {
     }
 
     pub(crate) fn eye_position(&self) -> [f64; 3] {
-        let eye = if self.fall_flying {
-            0.4
-        } else if self.sneaking {
-            1.27
-        } else {
-            1.62
-        };
-        [self.pos[0], self.pos[1] + eye, self.pos[2]]
+        [self.pos[0], self.pos[1] + self.dimensions().2 as f64, self.pos[2]]
     }
 
     /// The player's bounding box (standing or crouching).
     pub(crate) fn bounding_box(&self) -> kiln_entity::math::Aabb {
         // `EntityDimensions` are floats: the box is made of their float arithmetic.
-        let h: f32 = if self.fall_flying || self.spin_pose {
-            0.6
-        } else if self.sneaking {
-            1.5
-        } else {
-            1.8
-        };
-        let half = (0.6f32 / 2.0f32) as f64;
+        let (w, h, _) = self.dimensions();
+        let half = (w / 2.0f32) as f64;
         kiln_entity::math::Aabb::new(self.pos[0] - half, self.pos[1], self.pos[2] - half, self.pos[0] + half, self.pos[1] + h as f64, self.pos[2] + half)
     }
 

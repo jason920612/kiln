@@ -344,7 +344,7 @@ pub(crate) fn entity_boxes<'p>(players: impl Iterator<Item = &'p Player>, entiti
     let mut out: Vec<EntityBox> = players
         .filter(|p| p.game_mode != 3 && !p.dead)
         .map(|p| {
-            let h = if p.sneaking { 1.5 } else { 1.8 };
+            let h = p.dimensions().1 as f64;
             EntityBox {
                 min: [p.pos[0] - 0.3, p.pos[1], p.pos[2] - 0.3],
                 max: [p.pos[0] + 0.3, p.pos[1] + h, p.pos[2] + 0.3],

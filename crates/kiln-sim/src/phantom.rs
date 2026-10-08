@@ -183,6 +183,19 @@ impl Player {
         self.phantom_out(e, true);
     }
 
+    /// `Player.updatePlayerPose` where the server's body stands.
+    pub(crate) fn update_pose(&mut self, cells: &CellSet<Cell>, game_time: i64, min_y: i32) {
+        let level = PhantomLevel::new(cells, game_time, min_y, false);
+        let (pos, id, ctx) = (self.pos, self.entity_id, self.collision_context());
+        let fits = |pose: i32| {
+            let (w, h, _) = crate::pose::dimensions_of(pose);
+            let half = (w / 2.0) as f64;
+            let bb = Aabb::new(pos[0] - half, pos[1], pos[2] - half, pos[0] + half, pos[1] + h as f64, pos[2] + half).deflate_all(1.0e-7);
+            kiln_entity::collision::no_collision(&level, &ctx, id, &bb)
+        };
+        self.update_player_pose(&fits);
+    }
+
     /// `ServerPlayer.jumpFromGround`: the server's velocity gets the jump (and a sprinting
     /// player's push) when the client leaves the ground going up.
     pub(crate) fn server_jump(&mut self, from: [f64; 3], cells: &CellSet<Cell>, game_time: i64, min_y: i32) {

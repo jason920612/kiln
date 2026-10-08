@@ -148,7 +148,7 @@ impl<'a, 'l, 'p> Work<'a, 'l, 'p> {
                     view,
                     living: true,
                     on_ground: p.on_ground,
-                    height: if p.sneaking { 1.5 } else { 1.8 },
+                    height: p.dimensions().1,
                     knockback_resistance: p.attribute(KNOCKBACK_RESISTANCE),
                     spectator: p.game_mode == 3,
                     creative_flying: p.game_mode == 1 && p.flying,
