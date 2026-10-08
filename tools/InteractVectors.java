@@ -860,7 +860,7 @@ public class InteractVectors {
         tag.putBoolean("ShowArms", true);
         tag.putBoolean("Small", true);
         tag.putBoolean("NoBasePlate", true);
-        s.set(DataComponents.ENTITY_DATA, net.minecraft.world.item.component.TypedEntityData.of(net.minecraft.world.entity.EntityType.ARMOR_STAND, tag));
+        s.set(DataComponents.ENTITY_DATA, net.minecraft.world.item.component.TypedEntityData.of(net.minecraft.world.entity.EntityTypes.ARMOR_STAND, tag));
         return s;
     }
 
