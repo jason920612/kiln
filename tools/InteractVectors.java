@@ -890,7 +890,7 @@ public class InteractVectors {
     static void trials49(List<Case> out) {
         Case c;
         // Zombies that stand still where they appear (the place is given, so nothing is left to the level's random).
-        String zombie = "{data:{entity:{id:\"minecraft:zombie\",NoAI:1b,Pos:[5.5d,100.0d,2.5d]}},weight:1}";
+        String zombie = "{data:{entity:{id:\"minecraft:zombie\",NoAI:1b,Invulnerable:1b,Pos:[5.5d,100.0d,2.5d]}},weight:1}";
         String key = "loot_tables_to_eject:[{data:\"minecraft:spawners/trial_chamber/key\",weight:1}]";
         String normal = "normal_config:{total_mobs:4.0f,simultaneous_mobs:2.0f,ticks_between_spawn:20,spawn_potentials:[" + zombie + "]," + key + "},target_cooldown_length:200";
         String kill = "kill @e[type=minecraft:zombie]";
