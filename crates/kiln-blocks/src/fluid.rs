@@ -83,7 +83,7 @@ pub fn legacy_block(f: Fluid) -> u16 {
     state::set_int(block, "level", level)
 }
 
-fn tick_delay<L: Level + ?Sized>(level: &L, kind: FluidKind) -> i32 {
+pub(crate) fn tick_delay<L: Level + ?Sized>(level: &L, kind: FluidKind) -> i32 {
     match kind {
         FluidKind::Water => 5,
         FluidKind::Lava if level.rules().fast_lava => 10,

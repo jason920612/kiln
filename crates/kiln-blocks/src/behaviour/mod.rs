@@ -4,6 +4,7 @@
 //! unchanged by shape updates, always surviving. Waterlogged blocks of any class re-check
 //! their water on shape updates, as almost every `SimpleWaterloggedBlock` does.
 
+pub mod bubble;
 pub mod connect;
 pub mod container;
 pub mod farming;
@@ -108,6 +109,7 @@ pub fn update_shape<L: Level>(level: &mut L, s: u16, pos: BlockPos, dir: Directi
             return s;
         }
         C::NetherPortalBlock => return portal::portal_update_shape(level, s, pos, dir, neighbor_state),
+        C::BubbleColumnBlock => return bubble::update_shape(level, s, pos, dir, neighbor_state),
         C::FireBlock | C::SoulFireBlock => return crate::fire::update_shape(level, s, pos),
         _ => {}
     }
@@ -287,6 +289,8 @@ pub fn tick<L: Level>(level: &mut L, s: u16, pos: BlockPos) {
         C::ObserverBlock => devices::observer_tick(level, s, pos),
         C::FireBlock => crate::fire::fire_tick(level, s, pos),
         C::LightningRodBlock | C::WeatheringLightningRodBlock => crate::weather::rod_tick(level, s, pos),
+        C::LiquidBlock => bubble::liquid_tick(level, s, pos),
+        C::BubbleColumnBlock => bubble::tick(level, pos),
         C::DetectorRailBlock => rail::detector_tick(level, s, pos),
         // `ComposterBlock.tick`: a full composter's bone meal is ready.
         C::ComposterBlock if state::get_int(s, "level") == 7 => {
